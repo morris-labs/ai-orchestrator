@@ -10,7 +10,7 @@ import { CodexAdapter } from "../../src/adapters/codex.js";
 import { CopilotAdapter } from "../../src/adapters/copilot.js";
 import { VendorFindingsOutputSchema } from "../../src/adapters/output.js";
 import { retryOnce } from "../../src/adapters/retry.js";
-import { AdapterError, type VendorAdapter } from "../../src/adapters/types.js";
+import { AdapterError, type CliVendorAdapter } from "../../src/adapters/types.js";
 import { MOCK_BIN } from "./helpers.js";
 
 const finding = {
@@ -59,7 +59,7 @@ function setup() {
     ANTHROPIC_API_KEY: undefined,
   };
   const options = { env, account: "user@example.com" };
-  const adapters: Record<Vendor, VendorAdapter> = {
+  const adapters: Record<Vendor, CliVendorAdapter> = {
     claude: new ClaudeAdapter({ ...options, command: join(MOCK_BIN, "claude"), bare: false }),
     codex: new CodexAdapter({ ...options, command: join(MOCK_BIN, "codex"), codexHome }),
     copilot: new CopilotAdapter({ ...options, command: join(MOCK_BIN, "copilot") }),

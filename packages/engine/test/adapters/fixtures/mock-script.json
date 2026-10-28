@@ -29,7 +29,7 @@
           "spendUsd": null,
           "ceiling": { "kind": "utilization", "window": "5h", "max": 0.7 },
           "resetAt": "2026-10-28T12:00:00Z",
-          "source": "codex_session"
+          "sampleSource": "codex_session"
         }
       ]
     },

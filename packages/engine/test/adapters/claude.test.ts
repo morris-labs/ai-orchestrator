@@ -12,7 +12,7 @@ import {
 } from "../../src/adapters/claude.js";
 import { VendorFindingsOutputSchema } from "../../src/adapters/output.js";
 import type { AdapterError } from "../../src/adapters/types.js";
-import { type AdapterRequest } from "../../src/adapters/types.js";
+import { type CliRequest } from "../../src/adapters/types.js";
 import { fixture, lines } from "./helpers.js";
 
 const ceiling = DEFAULT_CEILINGS.claude;
@@ -20,8 +20,8 @@ const adapter = new ClaudeAdapter({ account: "user@example.com", bare: false });
 
 function req<T>(
   schema: z.ZodType<T, z.ZodTypeDef, unknown>,
-  extra: Partial<AdapterRequest<T>> = {},
-): AdapterRequest<T> {
+  extra: Partial<CliRequest<T>> = {},
+): CliRequest<T> {
   return {
     prompt: "p",
     cwd: "/work",
@@ -47,7 +47,7 @@ describe("ClaudeStreamParser on recorded output", () => {
     expect(summary.samples.map((s) => s.window).sort()).toEqual(["5h", "7d"]);
     for (const sample of summary.samples) {
       expect(UsageSampleSchema.parse(sample)).toEqual(sample);
-      expect(sample.source).toBe("rate_limit_event");
+      expect(sample.sampleSource).toBe("rate_limit_event");
       expect(sample.resetAt).toMatch(/Z$/);
     }
     expect(summary.result?.type).toBe("result");
@@ -253,6 +253,11 @@ describe("ClaudeAdapter.buildArgs", () => {
     expect(args[args.indexOf("--permission-mode") + 1]).toBe("bypassPermissions");
     expect(args[args.indexOf("--resume") + 1]).toBe("abc");
     expect(args).not.toContain("--tools");
+  });
+
+  it("adds each extra directory with --add-dir", () => {
+    const args = adapter.buildArgs(req(z.object({}), { addDirs: ["/base", "/scratch"] }));
+    expect(args.join(" ")).toContain("--add-dir /base --add-dir /scratch");
   });
 
   it("adds --bare when asked", () => {

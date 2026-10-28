@@ -9,10 +9,10 @@ import {
   METHOD_ROLES,
   type AdapterHealth,
   type AdapterMethod,
-  type AdapterRequest,
-  type AdapterResult,
-  type LimitInfo,
-  type VendorAdapter,
+  type CliRequest,
+  type CliResult,
+  type CliLimitInfo,
+  type CliVendorAdapter,
 } from "./types.js";
 
 const MethodSchema = z.enum(["review", "continueReview", "verify", "fix", "confirm", "sweep"]);
@@ -64,12 +64,12 @@ export type MockScriptInput = z.input<typeof MockScriptSchema>;
 export interface MockCall {
   method: AdapterMethod;
   role: (typeof METHOD_ROLES)[AdapterMethod];
-  request: AdapterRequest<unknown>;
+  request: CliRequest<unknown>;
   /** Index of the response that answered, or -1. */
   responseIndex: number;
 }
 
-export class MockAdapter implements VendorAdapter {
+export class MockAdapter implements CliVendorAdapter {
   readonly vendor: Vendor;
   readonly calls: MockCall[] = [];
   private readonly script: MockScript;
@@ -86,26 +86,26 @@ export class MockAdapter implements VendorAdapter {
     return new MockAdapter(JSON.parse(readFileSync(path, "utf8")) as MockScriptInput);
   }
 
-  review<T>(req: AdapterRequest<T>): Promise<AdapterResult<T>> {
+  review<T>(req: CliRequest<T>): Promise<CliResult<T>> {
     return this.answer("review", req);
   }
-  continueReview<T>(req: AdapterRequest<T> & { sessionId: string }): Promise<AdapterResult<T>> {
+  continueReview<T>(req: CliRequest<T> & { sessionId: string }): Promise<CliResult<T>> {
     return this.answer("continueReview", req);
   }
-  verify<T>(req: AdapterRequest<T>): Promise<AdapterResult<T>> {
+  verify<T>(req: CliRequest<T>): Promise<CliResult<T>> {
     return this.answer("verify", req);
   }
-  fix<T>(req: AdapterRequest<T>): Promise<AdapterResult<T>> {
+  fix<T>(req: CliRequest<T>): Promise<CliResult<T>> {
     return this.answer("fix", req);
   }
-  confirm<T>(req: AdapterRequest<T>): Promise<AdapterResult<T>> {
+  confirm<T>(req: CliRequest<T>): Promise<CliResult<T>> {
     return this.answer("confirm", req);
   }
-  sweep<T>(req: AdapterRequest<T>): Promise<AdapterResult<T>> {
+  sweep<T>(req: CliRequest<T>): Promise<CliResult<T>> {
     return this.answer("sweep", req);
   }
 
-  detectLimit(error: unknown): LimitInfo | null {
+  detectLimit(error: unknown): CliLimitInfo | null {
     return error instanceof AdapterError ? error.limit : null;
   }
 
@@ -125,10 +125,7 @@ export class MockAdapter implements VendorAdapter {
     ).length;
   }
 
-  private async answer<T>(
-    method: AdapterMethod,
-    req: AdapterRequest<T>,
-  ): Promise<AdapterResult<T>> {
+  private async answer<T>(method: AdapterMethod, req: CliRequest<T>): Promise<CliResult<T>> {
     const index = this.script.responses.findIndex(
       (r, i) =>
         (r.method === undefined || r.method === method) &&
@@ -138,7 +135,7 @@ export class MockAdapter implements VendorAdapter {
     this.calls.push({
       method,
       role: METHOD_ROLES[method],
-      request: req as AdapterRequest<unknown>,
+      request: req as CliRequest<unknown>,
       responseIndex: index,
     });
     const response = this.script.responses[index];
@@ -189,7 +186,7 @@ export class MockAdapter implements VendorAdapter {
   }
 }
 
-function delay(ms: number, req: AdapterRequest<unknown>, vendor: Vendor): Promise<void> {
+function delay(ms: number, req: CliRequest<unknown>, vendor: Vendor): Promise<void> {
   return new Promise((resolve, reject) => {
     if (ms > req.timeoutMs) {
       setTimeout(

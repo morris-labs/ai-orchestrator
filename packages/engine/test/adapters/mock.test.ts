@@ -2,11 +2,11 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { MockAdapter } from "../../src/adapters/mock.js";
 import { VendorFindingsOutputSchema } from "../../src/adapters/output.js";
-import { AdapterError, type AdapterRequest } from "../../src/adapters/types.js";
+import { AdapterError, type CliRequest } from "../../src/adapters/types.js";
 import { FIXTURES } from "./helpers.js";
 import { join } from "node:path";
 
-function req(prompt: string, extra: Omit<Partial<AdapterRequest<unknown>>, "outputSchema"> = {}) {
+function req(prompt: string, extra: Omit<Partial<CliRequest<unknown>>, "outputSchema"> = {}) {
   return {
     prompt,
     cwd: "/w",

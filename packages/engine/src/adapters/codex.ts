@@ -14,7 +14,7 @@ import {
 } from "./base.js";
 import { parseStructuredText, toStrictJsonSchema } from "./output.js";
 import { runProcess } from "./process.js";
-import { AdapterError, type AdapterRequest, type AdapterResult, type LimitInfo } from "./types.js";
+import { AdapterError, type CliRequest, type CliResult, type CliLimitInfo } from "./types.js";
 
 export interface CodexAdapterOptions extends CliAdapterOptions {
   /**
@@ -68,7 +68,7 @@ export class CodexAdapter extends CliAdapter {
   }
 
   /** The arguments for one call; the prompt goes on stdin through the `-` positional. */
-  buildArgs(req: AdapterRequest<unknown>, schemaFile: string): string[] {
+  buildArgs(req: CliRequest<unknown>, schemaFile: string): string[] {
     const args = ["exec"];
     // `--sandbox` isn't a global flag, so it goes before `resume`.
     const bypass =
@@ -84,7 +84,7 @@ export class CodexAdapter extends CliAdapter {
     return args;
   }
 
-  protected async call<T>(req: AdapterRequest<T>, _ctx: CallContext): Promise<AdapterResult<T>> {
+  protected async call<T>(req: CliRequest<T>, _ctx: CallContext): Promise<CliResult<T>> {
     const dir = mkdtempSync(join(tmpdir(), "agentbox-codex-"));
     try {
       const schemaFile = join(dir, "schema.json");
@@ -152,7 +152,7 @@ export class CodexAdapter extends CliAdapter {
     return codexRateLimitSamples(content, this.account, this.ceiling);
   }
 
-  detectLimit(error: unknown): LimitInfo | null {
+  detectLimit(error: unknown): CliLimitInfo | null {
     if (error instanceof AdapterError)
       return error.limit ?? detectLimitInText(`${error.message}\n${error.raw}`, this.now());
     if (error instanceof Error) return detectLimitInText(error.message, this.now());
@@ -266,7 +266,7 @@ export function codexRateLimitSamples(
       spendUsd: null,
       ceiling,
       resetAt: epochToIso(w.resets_at),
-      source: "codex_session",
+      sampleSource: "codex_session",
     });
   }
   return samples;

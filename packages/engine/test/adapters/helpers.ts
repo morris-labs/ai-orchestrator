@@ -21,3 +21,7 @@ export function fixture(name: string): string {
 export function lines(text: string): string[] {
   return text.split("\n").filter((line) => line.trim().length > 0);
 }
+
+export function fixturePath(name: string): string {
+  return join(FIXTURES, name);
+}

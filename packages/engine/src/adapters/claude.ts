@@ -16,7 +16,7 @@ import {
 } from "./base.js";
 import { parseStructured, parseStructuredText } from "./output.js";
 import { runProcess } from "./process.js";
-import { AdapterError, type AdapterRequest, type AdapterResult, type LimitInfo } from "./types.js";
+import { AdapterError, type CliRequest, type CliResult, type CliLimitInfo } from "./types.js";
 
 /** Tools a read-only Claude role gets. */
 export const CLAUDE_READ_ONLY_TOOLS = ["Read", "Grep", "Glob", "Bash"];
@@ -53,7 +53,7 @@ export interface ClaudeStreamSummary {
   model: string | null;
   samples: UsageSample[];
   /** A `rate_limit_event` whose status was `rejected`. */
-  rejected: LimitInfo | null;
+  rejected: CliLimitInfo | null;
   /** The `error` code of an API error message, such as `authentication_failed` or `rate_limit`. */
   apiError: string | null;
   apiErrorText: string | null;
@@ -80,7 +80,7 @@ export class ClaudeAdapter extends CliAdapter {
   }
 
   /** The arguments for one call. The prompt goes on stdin. */
-  buildArgs(req: AdapterRequest<unknown>): string[] {
+  buildArgs(req: CliRequest<unknown>): string[] {
     const args = ["-p", "--output-format", "stream-json", "--verbose"];
     const bare =
       this.claudeOptions.bare ??
@@ -92,6 +92,7 @@ export class ClaudeAdapter extends CliAdapter {
     if (req.maxBudgetUsd !== undefined) args.push("--max-budget-usd", String(req.maxBudgetUsd));
     if (req.sessionId) args.push("--resume", req.sessionId);
     if (req.systemPrompt) args.push("--append-system-prompt", req.systemPrompt);
+    for (const dir of req.addDirs ?? []) args.push("--add-dir", dir);
     args.push("--json-schema", JSON.stringify(this.jsonSchemaFor(req)));
     if (req.tools === "read-only") {
       args.push(
@@ -112,7 +113,7 @@ export class ClaudeAdapter extends CliAdapter {
     return args;
   }
 
-  protected async call<T>(req: AdapterRequest<T>, _ctx: CallContext): Promise<AdapterResult<T>> {
+  protected async call<T>(req: CliRequest<T>, _ctx: CallContext): Promise<CliResult<T>> {
     const parser = new ClaudeStreamParser(this.account, this.ceiling);
     const result = await runProcess({
       command: this.command,
@@ -141,13 +142,13 @@ export class ClaudeAdapter extends CliAdapter {
 
   /** Builds the result or the error from a finished stream. Exposed for fixture tests. */
   interpret<T>(
-    req: AdapterRequest<T>,
+    req: CliRequest<T>,
     summary: ClaudeStreamSummary,
     stdout: string,
     stderr: string,
     exitCode: number | null,
     durationMs: number,
-  ): AdapterResult<T> {
+  ): CliResult<T> {
     const res = summary.result;
     const sessionId = summary.sessionId;
     const resultText = typeof res?.result === "string" ? res.result : "";
@@ -214,7 +215,7 @@ export class ClaudeAdapter extends CliAdapter {
     };
   }
 
-  detectLimit(error: unknown): LimitInfo | null {
+  detectLimit(error: unknown): CliLimitInfo | null {
     if (error instanceof AdapterError) {
       if (error.limit) return error.limit;
       return detectLimitInText(`${error.message}\n${error.raw}`, this.now());
@@ -229,7 +230,7 @@ export class ClaudeStreamParser {
   private sessionId: string | null = null;
   private model: string | null = null;
   private readonly samples: UsageSample[] = [];
-  private rejected: LimitInfo | null = null;
+  private rejected: CliLimitInfo | null = null;
   private apiError: string | null = null;
   private apiErrorText: string | null = null;
   private result: Record<string, unknown> | null = null;
@@ -334,7 +335,7 @@ export class ClaudeStreamParser {
       spendUsd: null,
       ceiling: this.ceiling,
       resetAt,
-      source: "rate_limit_event",
+      sampleSource: "rate_limit_event",
     };
   }
 }

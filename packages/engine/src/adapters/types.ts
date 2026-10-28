@@ -1,20 +1,27 @@
-// The vendor adapter interface. Every adapter behavior the rest of the engine
-// relies on is declared here, so reconciling it with the engine core's own
-// interface touches one file.
+// The CLI adapter interface: one headless call to a vendor's CLI with any
+// output schema. The engine core talks to vendors through its own
+// `VendorAdapter` in `src/core.ts`; `bridge.ts` turns a `CliVendorAdapter`
+// into one.
 import type { AgentRole, Effort, UsageSample, Vendor } from "@agentbox/contracts";
 import type { z } from "zod";
+import type { AdapterMethod, LimitInfo } from "../core.js";
 
 /** What the agent may do to the working tree. */
 export type ToolAccess = "read-only" | "write";
 
 /** One model call. */
-export interface AdapterRequest<T = unknown> {
+export interface CliRequest<T = unknown> {
   /** The user prompt. Adapters pass it on stdin where the CLI allows it. */
   prompt: string;
   /** Extra instructions; appended to the CLI's own system prompt where it has one. */
   systemPrompt?: string;
   /** The directory the CLI runs in, normally the run's worktree. */
   cwd: string;
+  /**
+   * Directories outside `cwd` the agent may use, such as the base worktree or
+   * a scratch directory. Adapters whose CLI takes `--add-dir` pass each one.
+   */
+  addDirs?: string[];
   tools: ToolAccess;
   /** A model name or alias. Absent means the CLI's default (automatic for Copilot). */
   model?: string;
@@ -43,7 +50,7 @@ export interface TokenCounts {
 }
 
 /** The result of a successful call. */
-export interface AdapterResult<T = unknown> {
+export interface CliResult<T = unknown> {
   output: T;
   /** The session to pass back for a continuation; `null` when the CLI reported none. */
   sessionId: string | null;
@@ -55,18 +62,17 @@ export interface AdapterResult<T = unknown> {
   costUsd?: number;
   /** Copilot premium requests; 0 for other vendors. */
   premiumRequests: number;
+  /** Copilot AI credits, when the CLI reports them. */
+  aiCredits?: number;
   /** The CLI's stdout, for the run directory. */
   raw: string;
   durationMs: number;
 }
 
-/** A usage or rate limit a vendor reported. */
-export interface LimitInfo {
+/** A usage or rate limit a vendor reported: the core's `LimitInfo` plus its kind. */
+export interface CliLimitInfo extends LimitInfo {
   /** `usage_limit` is a plan window or budget running out; `rate_limit` is a short throttle. */
   kind: "usage_limit" | "rate_limit";
-  /** When the limit lifts, if the vendor said. */
-  resetAt: string | null;
-  message: string;
 }
 
 export type AdapterErrorKind =
@@ -76,7 +82,7 @@ export type AdapterErrorKind =
 export class AdapterError extends Error {
   readonly kind: AdapterErrorKind;
   readonly vendor: Vendor;
-  readonly limit: LimitInfo | null;
+  readonly limit: CliLimitInfo | null;
   readonly exitCode: number | null;
   readonly raw: string;
   readonly sessionId: string | null;
@@ -86,7 +92,7 @@ export class AdapterError extends Error {
     kind: AdapterErrorKind,
     message: string,
     extra: {
-      limit?: LimitInfo | null;
+      limit?: CliLimitInfo | null;
       exitCode?: number | null;
       raw?: string;
       sessionId?: string | null;
@@ -114,22 +120,22 @@ export interface AdapterHealth {
 }
 
 /** The calls the pipeline makes. Each method maps to an `AgentRole`. */
-export interface VendorAdapter {
+export interface CliVendorAdapter {
   readonly vendor: Vendor;
   /** A fresh finder. */
-  review<T>(req: AdapterRequest<T>): Promise<AdapterResult<T>>;
+  review<T>(req: CliRequest<T>): Promise<CliResult<T>>;
   /** Resumes a finder's session and asks for more findings. Needs `sessionId`. */
-  continueReview<T>(req: AdapterRequest<T> & { sessionId: string }): Promise<AdapterResult<T>>;
+  continueReview<T>(req: CliRequest<T> & { sessionId: string }): Promise<CliResult<T>>;
   /** The disprover. */
-  verify<T>(req: AdapterRequest<T>): Promise<AdapterResult<T>>;
+  verify<T>(req: CliRequest<T>): Promise<CliResult<T>>;
   /** The fixer; normally with `tools: "write"`. */
-  fix<T>(req: AdapterRequest<T>): Promise<AdapterResult<T>>;
+  fix<T>(req: CliRequest<T>): Promise<CliResult<T>>;
   /** The fix confirmer. */
-  confirm<T>(req: AdapterRequest<T>): Promise<AdapterResult<T>>;
+  confirm<T>(req: CliRequest<T>): Promise<CliResult<T>>;
   /** The pattern sweep's cheap agent. */
-  sweep<T>(req: AdapterRequest<T>): Promise<AdapterResult<T>>;
+  sweep<T>(req: CliRequest<T>): Promise<CliResult<T>>;
   /** Returns the limit an error reports, or `null` when it isn't a limit. */
-  detectLimit(error: unknown): LimitInfo | null;
+  detectLimit(error: unknown): CliLimitInfo | null;
   health(): Promise<AdapterHealth>;
 }
 
@@ -141,6 +147,6 @@ export const METHOD_ROLES = {
   fix: "fixer",
   confirm: "confirmer",
   sweep: "sweeper",
-} as const satisfies Record<string, AgentRole>;
+} as const satisfies Record<AdapterMethod, AgentRole>;
 
-export type AdapterMethod = keyof typeof METHOD_ROLES;
+export type { AdapterMethod };

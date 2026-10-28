@@ -8,10 +8,10 @@ import {
   METHOD_ROLES,
   type AdapterHealth,
   type AdapterMethod,
-  type AdapterRequest,
-  type AdapterResult,
-  type LimitInfo,
-  type VendorAdapter,
+  type CliRequest,
+  type CliResult,
+  type CliLimitInfo,
+  type CliVendorAdapter,
 } from "./types.js";
 import { runProcess } from "./process.js";
 
@@ -34,7 +34,7 @@ export interface CallContext {
   role: AgentRole;
 }
 
-export abstract class CliAdapter implements VendorAdapter {
+export abstract class CliAdapter implements CliVendorAdapter {
   abstract readonly vendor: Vendor;
   protected readonly options: CliAdapterOptions;
 
@@ -42,9 +42,9 @@ export abstract class CliAdapter implements VendorAdapter {
     this.options = options;
   }
 
-  protected abstract call<T>(req: AdapterRequest<T>, ctx: CallContext): Promise<AdapterResult<T>>;
+  protected abstract call<T>(req: CliRequest<T>, ctx: CallContext): Promise<CliResult<T>>;
   protected abstract versionArgs(): string[];
-  abstract detectLimit(error: unknown): LimitInfo | null;
+  abstract detectLimit(error: unknown): CliLimitInfo | null;
 
   protected get command(): string {
     return this.options.command ?? this.vendor;
@@ -62,15 +62,15 @@ export abstract class CliAdapter implements VendorAdapter {
     return this.options.now?.() ?? new Date();
   }
 
-  protected jsonSchemaFor(req: AdapterRequest<unknown>): Record<string, unknown> {
+  protected jsonSchemaFor(req: CliRequest<unknown>): Record<string, unknown> {
     return req.jsonSchema ?? toJsonSchema(req.outputSchema);
   }
 
-  review<T>(req: AdapterRequest<T>): Promise<AdapterResult<T>> {
+  review<T>(req: CliRequest<T>): Promise<CliResult<T>> {
     return this.dispatch("review", req);
   }
 
-  continueReview<T>(req: AdapterRequest<T> & { sessionId: string }): Promise<AdapterResult<T>> {
+  continueReview<T>(req: CliRequest<T> & { sessionId: string }): Promise<CliResult<T>> {
     if (!req.sessionId) {
       return Promise.reject(
         new AdapterError(
@@ -83,19 +83,19 @@ export abstract class CliAdapter implements VendorAdapter {
     return this.dispatch("continueReview", req);
   }
 
-  verify<T>(req: AdapterRequest<T>): Promise<AdapterResult<T>> {
+  verify<T>(req: CliRequest<T>): Promise<CliResult<T>> {
     return this.dispatch("verify", req);
   }
 
-  fix<T>(req: AdapterRequest<T>): Promise<AdapterResult<T>> {
+  fix<T>(req: CliRequest<T>): Promise<CliResult<T>> {
     return this.dispatch("fix", req);
   }
 
-  confirm<T>(req: AdapterRequest<T>): Promise<AdapterResult<T>> {
+  confirm<T>(req: CliRequest<T>): Promise<CliResult<T>> {
     return this.dispatch("confirm", req);
   }
 
-  sweep<T>(req: AdapterRequest<T>): Promise<AdapterResult<T>> {
+  sweep<T>(req: CliRequest<T>): Promise<CliResult<T>> {
     return this.dispatch("sweep", req);
   }
 
@@ -117,7 +117,7 @@ export abstract class CliAdapter implements VendorAdapter {
     return { vendor: this.vendor, available: true, version: version || null, error: null };
   }
 
-  private dispatch<T>(method: AdapterMethod, req: AdapterRequest<T>): Promise<AdapterResult<T>> {
+  private dispatch<T>(method: AdapterMethod, req: CliRequest<T>): Promise<CliResult<T>> {
     // A continuation keeps its session; every other role starts fresh, as the
     // design asks, even when the caller left a session id on the request.
     const request = method === "continueReview" ? req : { ...req, sessionId: undefined };
@@ -128,10 +128,7 @@ export abstract class CliAdapter implements VendorAdapter {
    * Turns a failed process into an `AdapterError`, or returns `null` when the
    * process neither failed to start, timed out, nor was cancelled.
    */
-  protected processFailure(
-    result: ProcessResult,
-    req: AdapterRequest<unknown>,
-  ): AdapterError | null {
+  protected processFailure(result: ProcessResult, req: CliRequest<unknown>): AdapterError | null {
     if (result.spawnError) {
       return new AdapterError(
         this.vendor,
@@ -195,7 +192,7 @@ const RATE_LIMIT_PATTERN = /rate[ _-]?limit|too many requests|\b429\b|rate_limit
  * minutes", "resets in 30m", "resets at <ISO time>", or an ISO time after
  * "until".
  */
-export function detectLimitInText(text: string, now: Date = new Date()): LimitInfo | null {
+export function detectLimitInText(text: string, now: Date = new Date()): CliLimitInfo | null {
   const usage = USAGE_LIMIT_PATTERN.exec(text);
   const rate = usage ? null : RATE_LIMIT_PATTERN.exec(text);
   const match = usage ?? rate;

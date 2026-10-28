@@ -1,3 +1,6 @@
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
@@ -8,11 +11,11 @@ import {
   parseCopilotText,
 } from "../../src/adapters/copilot.js";
 import { parseStructuredText, VendorFindingsOutputSchema } from "../../src/adapters/output.js";
-import type { AdapterRequest } from "../../src/adapters/types.js";
-import { fixture } from "./helpers.js";
+import type { CliRequest } from "../../src/adapters/types.js";
+import { fixture, fixturePath } from "./helpers.js";
 
 const now = new Date("2026-10-28T09:00:00Z");
-const base: AdapterRequest<unknown> = {
+const base: CliRequest<unknown> = {
   prompt: "Review it.",
   cwd: "/w",
   tools: "read-only",
@@ -158,6 +161,30 @@ describe("CopilotAdapter", () => {
       ]),
     );
     expect(args).not.toContain("--session-id");
+  });
+
+  it("adds each extra directory with --add-dir", () => {
+    const args = adapter.buildArgs({ ...base, addDirs: ["/base", "/scratch"] }, "P", "sid");
+    expect(args.join(" ")).toContain("--add-dir /base --add-dir /scratch");
+  });
+
+  it("returns the AI credits the exit summary reports", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "copilot-credits-"));
+    const cli = join(dir, "copilot");
+    writeFileSync(
+      cli,
+      `#!/bin/sh\ncat '${fixturePath("copilot-credits.stdout.txt")}'\ncat '${fixturePath("copilot-credits.stderr.txt")}' >&2\n`,
+      { mode: 0o755 },
+    );
+    const credits = new CopilotAdapter({ command: cli, outputFormat: "text" });
+    const out = await credits.review({
+      ...base,
+      cwd: dir,
+      timeoutMs: 10_000,
+      outputSchema: VendorFindingsOutputSchema,
+    });
+    expect(out.aiCredits).toBe(7.02);
+    expect(out.output).toEqual({ findings: [] });
   });
 
   it("points at a prompt file for a long prompt", () => {

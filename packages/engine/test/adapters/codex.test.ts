@@ -11,7 +11,7 @@ import {
   findRolloutFile,
 } from "../../src/adapters/codex.js";
 import { parseStructuredText, VendorFindingsOutputSchema } from "../../src/adapters/output.js";
-import type { AdapterRequest } from "../../src/adapters/types.js";
+import type { CliRequest } from "../../src/adapters/types.js";
 import { fixture, lines } from "./helpers.js";
 
 function parse(name: string) {
@@ -20,7 +20,7 @@ function parse(name: string) {
   return parser.summary();
 }
 
-const base: AdapterRequest<unknown> = {
+const base: CliRequest<unknown> = {
   prompt: "p",
   cwd: "/w",
   tools: "read-only",
@@ -62,7 +62,7 @@ describe("codexRateLimitSamples", () => {
         window: "5h",
         utilization: 0.145,
         resetAt: "2026-10-28T07:00:00.000Z",
-        source: "codex_session",
+        sampleSource: "codex_session",
       }),
       expect.objectContaining({ window: "7d", utilization: 0.41 }),
     ]);

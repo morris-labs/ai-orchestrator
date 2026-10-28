@@ -14,7 +14,7 @@ import {
 } from "./base.js";
 import { parseStructuredText } from "./output.js";
 import { runProcess } from "./process.js";
-import { AdapterError, type AdapterRequest, type AdapterResult, type LimitInfo } from "./types.js";
+import { AdapterError, type CliRequest, type CliResult, type CliLimitInfo } from "./types.js";
 
 /** Shell commands a read-only Copilot role may run. */
 export const COPILOT_READ_ONLY_ALLOW = [
@@ -91,7 +91,7 @@ export class CopilotAdapter extends CliAdapter {
   }
 
   /** The full prompt: the system prompt, the task, and the output instructions. */
-  buildPrompt(req: AdapterRequest<unknown>): string {
+  buildPrompt(req: CliRequest<unknown>): string {
     const schema = JSON.stringify(this.jsonSchemaFor(req));
     return [
       req.systemPrompt,
@@ -105,7 +105,7 @@ export class CopilotAdapter extends CliAdapter {
   }
 
   buildArgs(
-    req: AdapterRequest<unknown>,
+    req: CliRequest<unknown>,
     prompt: string,
     sessionId: string,
     promptFile?: string,
@@ -121,6 +121,7 @@ export class CopilotAdapter extends CliAdapter {
     } else {
       args.push("-p", prompt);
     }
+    for (const dir of req.addDirs ?? []) args.push("--add-dir", dir);
     if (this.copilotOptions.outputFormat !== "text") args.push("--output-format", "json");
     args.push("--no-color", "--no-ask-user", "--model", req.model ?? "auto");
     if (req.effort) args.push("--effort", req.effort);
@@ -138,7 +139,7 @@ export class CopilotAdapter extends CliAdapter {
     return args;
   }
 
-  protected async call<T>(req: AdapterRequest<T>, _ctx: CallContext): Promise<AdapterResult<T>> {
+  protected async call<T>(req: CliRequest<T>, _ctx: CallContext): Promise<CliResult<T>> {
     const prompt = this.buildPrompt(req);
     const sessionId = req.sessionId ?? randomUUID();
     let dir: string | undefined;
@@ -209,6 +210,7 @@ export class CopilotAdapter extends CliAdapter {
         tokens: summary.tokens,
         costUsd,
         premiumRequests,
+        ...(summary.aiCredits !== null ? { aiCredits: summary.aiCredits } : {}),
         raw: result.stdout,
         durationMs: result.durationMs,
       };
@@ -225,7 +227,7 @@ export class CopilotAdapter extends CliAdapter {
     return round(multiplier * (automatic ? COPILOT_AUTO_DISCOUNT : 1));
   }
 
-  detectLimit(error: unknown): LimitInfo | null {
+  detectLimit(error: unknown): CliLimitInfo | null {
     if (error instanceof AdapterError)
       return error.limit ?? detectLimitInText(`${error.message}\n${error.raw}`, this.now());
     if (error instanceof Error) return detectLimitInText(error.message, this.now());
@@ -237,7 +239,7 @@ export class CopilotAdapter extends CliAdapter {
 export function copilotErrorLimit(
   error: NonNullable<CopilotRunSummary["error"]>,
   now: Date,
-): LimitInfo | null {
+): CliLimitInfo | null {
   const resetAt = parseResetTime(error.message, now);
   if (error.type === "quota") {
     if (error.code === "billing_not_configured") return null;
