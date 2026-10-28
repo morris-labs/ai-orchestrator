@@ -20,7 +20,7 @@ import { Command, CommanderError, InvalidArgumentError, Option } from "commander
 import { ApiCallError, ServerClient, ServerUnreachableError } from "./client.js";
 import { tailEvents, type WebSocketCtor } from "./events.js";
 import { keyValues, percent, table } from "./format.js";
-import { resolveSettings } from "./settings.js";
+import { checkAttachArgv, checkServerUrl, resolveSettings } from "./settings.js";
 
 export interface CliDeps {
   env: Record<string, string | undefined>;
@@ -192,13 +192,21 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
       "--server <url>",
       "The server URL. Default: $AGENTBOX_SERVER or http://127.0.0.1:20400.",
     )
+    .option(
+      "--insecure",
+      "Allow a plain http server URL on another host. The token then crosses the network unencrypted.",
+    )
     .showHelpAfterError()
     .exitOverride()
     .configureOutput({ writeOut: deps.out, writeErr: deps.err });
 
-  const globals = () => program.opts<{ json?: boolean; server?: string }>();
-  const settings = () =>
-    resolveSettings({ env: deps.env, home: deps.home, server: globals().server });
+  const globals = () => program.opts<{ json?: boolean; server?: string; insecure?: boolean }>();
+  const settings = () => {
+    const s = resolveSettings({ env: deps.env, home: deps.home, server: globals().server });
+    const problem = checkServerUrl(s.baseUrl, globals().insecure ?? false);
+    if (problem) throw new UsageError(problem);
+    return s;
+  };
   const client = () => {
     const s = settings();
     return new ServerClient({ baseUrl: s.baseUrl, token: s.token, fetch: deps.fetch });
@@ -345,6 +353,8 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
       params: { boxId },
       query: { kind, platform: platform as "claude" | undefined },
     });
+    const problem = checkAttachArgv(r.argv);
+    if (problem) throw new UsageError(problem);
     state.code = await exec(r.argv);
   };
 

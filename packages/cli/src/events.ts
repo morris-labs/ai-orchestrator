@@ -51,7 +51,14 @@ export function tailEvents(options: TailOptions): Promise<void> {
       socket.send(JSON.stringify({ type: "hello", streamId: null, lastSeq: null })),
     );
     socket.on("message", (data) => {
-      const parsed = ServerStreamFrameSchema.safeParse(JSON.parse(data.toString()));
+      let json: unknown;
+      try {
+        json = JSON.parse(data.toString());
+      } catch {
+        finish(new Error("The server sent an event that isn't JSON."));
+        return;
+      }
+      const parsed = ServerStreamFrameSchema.safeParse(json);
       if (!parsed.success) {
         finish(new Error("The server sent an event that doesn't match the contract."));
         return;
