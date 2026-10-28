@@ -18,6 +18,14 @@ export class LateSink implements EventSink {
     this.pending.push(event);
     // Before the hub exists the event has no number yet; callers that need
     // the numbered event only run after startup.
-    return { ...event, id: "pending", time: new Date().toISOString(), source: "server", streamId: "pending", seq: 1, sourceSeq: 1 } as AgentBoxEvent;
+    return {
+      ...event,
+      id: "pending",
+      time: new Date().toISOString(),
+      source: "server",
+      streamId: "pending",
+      seq: 1,
+      sourceSeq: 1,
+    } as AgentBoxEvent;
   }
 }

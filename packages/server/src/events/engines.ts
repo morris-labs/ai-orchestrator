@@ -1,7 +1,13 @@
 // Keeps one `EngineClient` per running project container: relays engine
 // events into the server's stream, answers lease requests with the
 // scheduler, and resynchronizes the run mirror when events were missed.
-import type { AgentBoxEvent, EngineInfo, LeaseRequest, LeaseResponse, RunState } from "@agentbox/contracts";
+import type {
+  AgentBoxEvent,
+  EngineInfo,
+  LeaseRequest,
+  LeaseResponse,
+  RunState,
+} from "@agentbox/contracts";
 import type { CoreEngines, EngineEndpoint, SqlDatabase } from "../api/core-interface.js";
 import { ApiFailure } from "../api/errors.js";
 import { EngineClient, type EngineClientOptions, type StreamCursor } from "./engine-client.js";

@@ -10,13 +10,18 @@ export interface TestSocket {
   until(predicate: (s: TestSocket) => boolean, timeoutMs?: number): Promise<void>;
 }
 
-export async function connect(url: string, headers: Record<string, string> = {}): Promise<TestSocket> {
+export async function connect(
+  url: string,
+  headers: Record<string, string> = {},
+): Promise<TestSocket> {
   const ws = new WebSocket(url, { headers });
   const socket: TestSocket = {
     ws,
     texts: [],
     binary: [],
-    closed: new Promise((resolve) => ws.on("close", (code, reason) => resolve({ code, reason: reason.toString() }))),
+    closed: new Promise((resolve) =>
+      ws.on("close", (code, reason) => resolve({ code, reason: reason.toString() })),
+    ),
     async until(predicate, timeoutMs = 2000) {
       const start = Date.now();
       while (!predicate(socket)) {

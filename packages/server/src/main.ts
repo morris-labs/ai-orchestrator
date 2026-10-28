@@ -16,7 +16,9 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 
 /** The package version, which is also the engine version this server expects. */
 export function serverVersion(): string {
-  const pkg = JSON.parse(readFileSync(path.join(here, "..", "package.json"), "utf8")) as { version: string };
+  const pkg = JSON.parse(readFileSync(path.join(here, "..", "package.json"), "utf8")) as {
+    version: string;
+  };
   return pkg.version;
 }
 

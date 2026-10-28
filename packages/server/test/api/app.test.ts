@@ -26,7 +26,9 @@ beforeEach(async () => {
   home = await mkdtemp(path.join(os.tmpdir(), "agentbox-app-"));
   engine = await new FakeEngineServer().start();
   core = createFakeCore();
-  core.endpoints = [{ container: CONTAINER, projectId: PROJECT_ID, hostPort: engine.port, token: ENGINE_TOKEN }];
+  core.endpoints = [
+    { container: CONTAINER, projectId: PROJECT_ID, hostPort: engine.port, token: ENGINE_TOKEN },
+  ];
   runner = new FakeRunner();
   app = await startApp({
     home,
@@ -53,7 +55,10 @@ async function api(method: string, url: string, body?: unknown) {
   const token = (await readFile(path.join(home, ".claude-box", "server.token"), "utf8")).trim();
   const res = await fetch(`http://127.0.0.1:${app.port}${url}`, {
     method,
-    headers: { authorization: `Bearer ${token}`, ...(body ? { "content-type": "application/json" } : {}) },
+    headers: {
+      authorization: `Bearer ${token}`,
+      ...(body ? { "content-type": "application/json" } : {}),
+    },
     body: body ? JSON.stringify(body) : undefined,
   });
   return { status: res.status, json: (await res.json()) as Record<string, unknown> };
@@ -69,13 +74,28 @@ describe("startApp", () => {
     await waitFor(() => engine.sockets.length === 1);
     engine.emit({
       type: "run.changed",
-      run: { ...runState, status: "waiting_decision", decision: { kind: "round_cap", findingIds: [], options: ["cancel"], message: "Cap reached." } },
+      run: {
+        ...runState,
+        status: "waiting_decision",
+        decision: {
+          kind: "round_cap",
+          findingIds: [],
+          options: ["cancel"],
+          message: "Cap reached.",
+        },
+      },
       roundSummary: null,
     });
     await waitFor(() => app.hub.lastSeq >= 2);
     const events = app.hub.replay({ type: "hello", streamId: app.hub.streamId, lastSeq: 0 }).events;
-    expect(events[0]).toMatchObject({ type: "run.changed", sourceSeq: 1, source: `engine:${CONTAINER}` });
-    expect(events.some((e) => e.type === "notification" && e.kind === "decision_needed")).toBe(true);
+    expect(events[0]).toMatchObject({
+      type: "run.changed",
+      sourceSeq: 1,
+      source: `engine:${CONTAINER}`,
+    });
+    expect(events.some((e) => e.type === "notification" && e.kind === "decision_needed")).toBe(
+      true,
+    );
     const list = await api("GET", "/api/v1/notifications?unread=true");
     expect((list.json.notifications as unknown[]).length).toBe(1);
     const run = await api("GET", `/api/v1/runs/${RUN}`);
@@ -103,13 +123,26 @@ describe("startApp", () => {
       source: "rate_limit_event",
     });
     await waitFor(() => app.hub.lastSeq >= 1);
-    engine.sendRaw({ type: "lease.request", leaseId: "L-1", runId: RUN, vendor: "claude", role: "reviewer", estimate: { tokens: 10 } });
+    engine.sendRaw({
+      type: "lease.request",
+      leaseId: "L-1",
+      runId: RUN,
+      vendor: "claude",
+      role: "reviewer",
+      estimate: { tokens: 10 },
+    });
     await waitFor(() => engine.leaseResponses.length === 1);
-    expect(engine.leaseResponses[0]).toMatchObject({ decision: "granted", vendor: "codex", redirectedFrom: "claude" });
+    expect(engine.leaseResponses[0]).toMatchObject({
+      decision: "granted",
+      vendor: "codex",
+      redirectedFrom: "claude",
+    });
     const samples = await api("GET", "/api/v1/usage/samples?vendor=claude");
     expect((samples.json.samples as unknown[]).length).toBe(1);
     const usage = await api("GET", "/api/v1/usage");
-    expect(usage.json.vendors).toEqual(expect.arrayContaining([expect.objectContaining({ vendor: "claude", overCeiling: true })]));
+    expect(usage.json.vendors).toEqual(
+      expect.arrayContaining([expect.objectContaining({ vendor: "claude", overCeiling: true })]),
+    );
   });
 
   it("starts an SSH tunnel for a running box's remote", async () => {

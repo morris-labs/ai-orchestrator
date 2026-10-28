@@ -3,6 +3,7 @@
 import http from "node:http";
 import type { AgentBoxEvent, LeaseResponse } from "@agentbox/contracts";
 import WebSocket, { WebSocketServer } from "ws";
+import type { EventInput } from "../../src/api/core-interface.js";
 import { RUN, runState } from "../api/fixtures.js";
 
 export const ENGINE_TOKEN = "e".repeat(32);
@@ -68,12 +69,19 @@ export class FakeEngineServer {
   private accept(ws: WebSocket): void {
     this.sockets.push(ws);
     ws.on("message", (data) => {
-      const frame = JSON.parse(data.toString()) as { type: string; streamId?: string | null; lastSeq?: number | null; response?: LeaseResponse };
+      const frame = JSON.parse(data.toString()) as {
+        type: string;
+        streamId?: string | null;
+        lastSeq?: number | null;
+        response?: LeaseResponse;
+      };
       if (frame.type === "hello") {
         this.hellos.push(frame);
         const replaying = frame.streamId === this.streamId;
         const last = this.events.at(-1)?.seq ?? 0;
-        ws.send(JSON.stringify({ type: "hello", streamId: this.streamId, lastSeq: last, replaying }));
+        ws.send(
+          JSON.stringify({ type: "hello", streamId: this.streamId, lastSeq: last, replaying }),
+        );
         if (replaying) {
           for (const e of this.events) if (e.seq > (frame.lastSeq ?? 0)) ws.send(JSON.stringify(e));
         }
@@ -84,7 +92,7 @@ export class FakeEngineServer {
   }
 
   /** Emits an engine event to every connected socket. */
-  emit(event: Omit<AgentBoxEvent, "seq" | "sourceSeq" | "streamId" | "source" | "id" | "time">): void {
+  emit(event: EventInput): void {
     const seq = (this.events.at(-1)?.seq ?? 0) + 1;
     const full = {
       ...event,
@@ -96,11 +104,13 @@ export class FakeEngineServer {
       sourceSeq: seq,
     } as AgentBoxEvent;
     this.events.push(full);
-    for (const ws of this.sockets) if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(full));
+    for (const ws of this.sockets)
+      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(full));
   }
 
   sendRaw(frame: unknown): void {
-    for (const ws of this.sockets) if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(frame));
+    for (const ws of this.sockets)
+      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(frame));
   }
 
   dropSockets(): void {

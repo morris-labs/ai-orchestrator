@@ -71,7 +71,9 @@ export class DevServerProxy {
         up.pipe(res);
       },
     );
-    upstream.on("error", (err) => plainError(res, 502, `The engine is not reachable: ${err.message}`));
+    upstream.on("error", (err) =>
+      plainError(res, 502, `The engine is not reachable: ${err.message}`),
+    );
     req.pipe(upstream);
   }
 

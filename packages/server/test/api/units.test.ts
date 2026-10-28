@@ -42,7 +42,9 @@ describe("auth checks", () => {
   const token = "x".repeat(64);
   it("accepts the bearer header, the cookie, and the query token", () => {
     expect(isAuthorized({ authorization: `Bearer ${token}` }, token)).toBe(true);
-    expect(isAuthorized({ cookie: `a=1; agentbox_session=${sessionValue(token)}` }, token)).toBe(true);
+    expect(isAuthorized({ cookie: `a=1; agentbox_session=${sessionValue(token)}` }, token)).toBe(
+      true,
+    );
     expect(isAuthorized({ queryToken: token }, token)).toBe(true);
     expect(isAuthorized({ authorization: "Bearer y" }, token)).toBe(false);
     expect(isAuthorized({ cookie: "agentbox_session=nope" }, token)).toBe(false);
@@ -62,7 +64,9 @@ describe("errors", () => {
   it("maps codes to statuses and keeps details", () => {
     const f = new ApiFailure("session_tracked", "Held.", { holders: ["b"] });
     expect(f.status).toBe(409);
-    expect(f.toBody()).toEqual({ error: { code: "session_tracked", message: "Held.", details: { holders: ["b"] } } });
+    expect(f.toBody()).toEqual({
+      error: { code: "session_tracked", message: "Held.", details: { holders: ["b"] } },
+    });
     expect(new ApiFailure("secrets_locked", "x").status).toBe(503);
     expect(new ApiFailure("run_not_found", "x").status).toBe(404);
   });
@@ -144,7 +148,9 @@ describe("JobManager", () => {
     await new Promise((r) => setTimeout(r, 20));
     const att = jobs.attach(job.id)!;
     att.write(Buffer.from("hi\n"));
-    const done = await new Promise<{ status: string; exitCode: number | null }>((r) => att.onDone(r));
+    const done = await new Promise<{ status: string; exitCode: number | null }>((r) =>
+      att.onDone(r),
+    );
     expect(done).toMatchObject({ status: "failed", exitCode: 2 });
     expect(jobs.attach(job.id)!.backlog.toString()).toContain("got:hi");
   });

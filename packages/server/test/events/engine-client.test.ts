@@ -16,7 +16,12 @@ const runEvent = { type: "run.changed", run: runState, roundSummary: null } as c
 
 function build(overrides: Partial<ConstructorParameters<typeof EngineClient>[0]> = {}) {
   client = new EngineClient({
-    endpoint: { container: CONTAINER, projectId: PROJECT_ID, hostPort: engine.port, token: ENGINE_TOKEN },
+    endpoint: {
+      container: CONTAINER,
+      projectId: PROJECT_ID,
+      hostPort: engine.port,
+      token: ENGINE_TOKEN,
+    },
     expectedVersion: "4.0.0-dev",
     cursor,
     onEvent: (e) => received.push(e),
@@ -55,7 +60,12 @@ describe("EngineClient", () => {
   it("checks health and the version", async () => {
     const c = build();
     await c.health();
-    expect(c.info).toEqual({ hostPort: engine.port, version: "4.0.0-dev", healthy: true, versionMatches: true });
+    expect(c.info).toEqual({
+      hostPort: engine.port,
+      version: "4.0.0-dev",
+      healthy: true,
+      versionMatches: true,
+    });
     expect(() => c.assertVersion()).not.toThrow();
   });
 
@@ -71,7 +81,9 @@ describe("EngineClient", () => {
   it("calls engine routes with the token and validates responses", async () => {
     const c = build();
     expect(await c.call("engine.runs.get", { params: { runId: RUN } })).toEqual(runState);
-    await expect(c.call("engine.runs.get", { params: { runId: "01JB8Z5K3W6Q2V9X4T7R0M1N2Q" } })).rejects.toMatchObject({
+    await expect(
+      c.call("engine.runs.get", { params: { runId: "01JB8Z5K3W6Q2V9X4T7R0M1N2Q" } }),
+    ).rejects.toMatchObject({
       code: "run_not_found",
       status: 404,
     });
@@ -123,14 +135,32 @@ describe("EngineClient", () => {
     const c = build({
       onLease: async (req) => {
         requests.push(req);
-        return { decision: "pause", leaseId: req.leaseId, resumeAt: "2026-10-28T10:00:00.000Z", reason: "ceiling" };
+        return {
+          decision: "pause",
+          leaseId: req.leaseId,
+          resumeAt: "2026-10-28T10:00:00.000Z",
+          reason: "ceiling",
+        };
       },
     });
     c.start();
     await waitFor(() => engine.sockets.length === 1);
-    engine.sendRaw({ type: "lease.request", leaseId: "L-1", runId: RUN, vendor: "claude", role: "fixer", estimate: { tokens: 10 } });
+    engine.sendRaw({
+      type: "lease.request",
+      leaseId: "L-1",
+      runId: RUN,
+      vendor: "claude",
+      role: "fixer",
+      estimate: { tokens: 10 },
+    });
     await waitFor(() => engine.leaseResponses.length === 1);
-    expect(requests[0]).toEqual({ leaseId: "L-1", runId: RUN, vendor: "claude", role: "fixer", estimate: { tokens: 10 } });
+    expect(requests[0]).toEqual({
+      leaseId: "L-1",
+      runId: RUN,
+      vendor: "claude",
+      role: "fixer",
+      estimate: { tokens: 10 },
+    });
     expect(engine.leaseResponses[0]).toMatchObject({ decision: "pause", leaseId: "L-1" });
   });
 
@@ -150,7 +180,9 @@ describe("EngineSupervisor", () => {
     const db = new Database(":memory:");
     const relayed: AgentBoxEvent[] = [];
     const runs: unknown[] = [];
-    let endpoints = [{ container: CONTAINER, projectId: PROJECT_ID, hostPort: engine.port, token: ENGINE_TOKEN }];
+    let endpoints = [
+      { container: CONTAINER, projectId: PROJECT_ID, hostPort: engine.port, token: ENGINE_TOKEN },
+    ];
     const sup = new EngineSupervisor({
       engines: { list: async () => endpoints },
       db,
@@ -172,13 +204,25 @@ describe("EngineSupervisor", () => {
     expect(sup.requireProject(PROJECT_ID)).toBe(sup.get(CONTAINER));
     engine.emit(runEvent);
     await waitFor(() => relayed.length === 1);
-    engine.sendRaw({ type: "lease.request", leaseId: "L-2", runId: RUN, vendor: "codex", role: "reviewer", estimate: { tokens: 1 } });
+    engine.sendRaw({
+      type: "lease.request",
+      leaseId: "L-2",
+      runId: RUN,
+      vendor: "codex",
+      role: "reviewer",
+      estimate: { tokens: 1 },
+    });
     await waitFor(() => engine.leaseResponses.length === 1);
-    expect(engine.leaseResponses[0]).toMatchObject({ decision: "deny", reason: `${CONTAINER}/${PROJECT_ID}` });
+    expect(engine.leaseResponses[0]).toMatchObject({
+      decision: "deny",
+      reason: `${CONTAINER}/${PROJECT_ID}`,
+    });
     endpoints = [];
     await sup.refresh();
     expect(sup.get(CONTAINER)).toBeUndefined();
-    expect(() => sup.requireProject(PROJECT_ID)).toThrow(expect.objectContaining({ code: "conflict" }));
+    expect(() => sup.requireProject(PROJECT_ID)).toThrow(
+      expect.objectContaining({ code: "conflict" }),
+    );
     await sup.stop();
   });
 });

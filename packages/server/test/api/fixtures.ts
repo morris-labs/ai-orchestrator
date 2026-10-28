@@ -76,7 +76,13 @@ export const sshRemote: SshRemote = {
   name: "staging",
   host: "deploy@staging.example.com:2222",
   forwards: [
-    { direction: "L", bindAddress: "localhost", bindPort: 15432, destHost: "db.internal", destPort: 5432 },
+    {
+      direction: "L",
+      bindAddress: "localhost",
+      bindPort: 15432,
+      destHost: "db.internal",
+      destPort: 5432,
+    },
   ],
 };
 
@@ -95,7 +101,12 @@ export const runState: RunState = {
   stage: "find",
   round: 1,
   profile: "offload",
-  roles: { reviewer: ["codex", "copilot"], disprover: "copilot", confirmer: "codex", fixer: "claude" },
+  roles: {
+    reviewer: ["codex", "copilot"],
+    disprover: "copilot",
+    confirmer: "codex",
+    fixer: "claude",
+  },
   stopReason: null,
   decision: null,
   createdAt: T0,

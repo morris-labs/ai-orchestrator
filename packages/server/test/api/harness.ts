@@ -59,7 +59,8 @@ export class FakeEngines implements ApiEngines {
 export function defaultEngine(): FakeEngine {
   const runFor = (input: EngineCallInput): RunState => {
     const id = input.params?.runId;
-    if (id !== undefined && id !== runState.id) throw new ApiFailure("run_not_found", "No such run.");
+    if (id !== undefined && id !== runState.id)
+      throw new ApiFailure("run_not_found", "No such run.");
     return runState;
   };
   const finding = {
@@ -84,36 +85,43 @@ export function defaultEngine(): FakeEngine {
     origin: "reviewer",
     history: [],
   };
-  return new FakeEngine({ container: CONTAINER, projectId: PROJECT_ID }, {
-    "engine.runs.list": () => ({ runs: [runState] }),
-    "engine.runs.preview": () => ({
-      baseSha: "0123456789abcdef",
-      tipSha: "89abcdef",
-      diffBaseSha: "0123456789abcdef",
-      groups: [],
-      changedLines: 0,
-      dirty: false,
-    }),
-    "engine.runs.create": (input) => ({
-      ...runState,
-      id: (input.body as { runId: string }).runId,
-      status: "pending",
-    }),
-    "engine.runs.get": runFor,
-    "engine.runs.pause": (i) => ({ ...runFor(i), status: "paused", updatedAt: "2026-10-28T09:06:00.000Z" }),
-    "engine.runs.resume": runFor,
-    "engine.runs.cancel": runFor,
-    "engine.runs.profile": runFor,
-    "engine.runs.assign": runFor,
-    "engine.runs.rebaseBase": runFor,
-    "engine.runs.decide": runFor,
-    "engine.runs.push": runFor,
-    "engine.runs.groups": (i) => (runFor(i), { groups: [] }),
-    "engine.runs.rounds": (i) => (runFor(i), { rounds: [] }),
-    "engine.findings.list": (i) => (runFor(i), { findings: [finding] }),
-    "engine.findings.get": (i) => (runFor(i), { finding, diff: null, fixDiff: null }),
-    "engine.findings.waive": (i) => (runFor(i), finding),
-  });
+  return new FakeEngine(
+    { container: CONTAINER, projectId: PROJECT_ID },
+    {
+      "engine.runs.list": () => ({ runs: [runState] }),
+      "engine.runs.preview": () => ({
+        baseSha: "0123456789abcdef",
+        tipSha: "89abcdef",
+        diffBaseSha: "0123456789abcdef",
+        groups: [],
+        changedLines: 0,
+        dirty: false,
+      }),
+      "engine.runs.create": (input) => ({
+        ...runState,
+        id: (input.body as { runId: string }).runId,
+        status: "pending",
+      }),
+      "engine.runs.get": runFor,
+      "engine.runs.pause": (i) => ({
+        ...runFor(i),
+        status: "paused",
+        updatedAt: "2026-10-28T09:06:00.000Z",
+      }),
+      "engine.runs.resume": runFor,
+      "engine.runs.cancel": runFor,
+      "engine.runs.profile": runFor,
+      "engine.runs.assign": runFor,
+      "engine.runs.rebaseBase": runFor,
+      "engine.runs.decide": runFor,
+      "engine.runs.push": runFor,
+      "engine.runs.groups": (i) => (runFor(i), { groups: [] }),
+      "engine.runs.rounds": (i) => (runFor(i), { rounds: [] }),
+      "engine.findings.list": (i) => (runFor(i), { findings: [finding] }),
+      "engine.findings.get": (i) => (runFor(i), { finding, diff: null, fixDiff: null }),
+      "engine.findings.waive": (i) => (runFor(i), finding),
+    },
+  );
 }
 
 /** A fake exec: the test drives the container side of the stream. */

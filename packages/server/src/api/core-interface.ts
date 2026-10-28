@@ -233,4 +233,7 @@ export interface CoreServices {
 }
 
 /** The signature W1's `src/core.ts` exports as `createCore`. */
-export type CoreFactory = (options: { home: string; services: CoreServices }) => Promise<Core & { close?(): Promise<void> }>;
+export type CoreFactory = (options: {
+  home: string;
+  services: CoreServices;
+}) => Promise<Core & { close?(): Promise<void> }>;

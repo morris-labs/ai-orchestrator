@@ -75,7 +75,8 @@ export async function startApp(options: AppOptions): Promise<App> {
 
   const hub = new EventHub({
     db: core.db,
-    onListenerError: (err, event) => log(`A listener failed on ${event.type}: ${(err as Error).message}`),
+    onListenerError: (err, event) =>
+      log(`A listener failed on ${event.type}: ${(err as Error).message}`),
   });
   sink.attach(hub);
   runs = new RunMirror(core.db);
@@ -85,7 +86,8 @@ export async function startApp(options: AppOptions): Promise<App> {
   const scheduler = new Scheduler({
     usage,
     settings,
-    projectCeilings: async (projectId) => (await core.projects.get(projectId)).project.ceilingsOverride,
+    projectCeilings: async (projectId) =>
+      (await core.projects.get(projectId)).project.ceilingsOverride,
     runRound: (runId) => runMirror.round(runId),
     emit: (e) => hub.emit(e),
   });
@@ -96,7 +98,10 @@ export async function startApp(options: AppOptions): Promise<App> {
     settings,
     projectRefs: async (projectId) => (await core.projects.get(projectId)).project.secretRefs,
     listProjects: async () =>
-      (await core.projects.list()).map((p) => ({ projectId: p.project.id, refs: p.project.secretRefs })),
+      (await core.projects.list()).map((p) => ({
+        projectId: p.project.id,
+        refs: p.project.secretRefs,
+      })),
   });
   const jobs = new JobManager({
     onFinished: (job) =>
@@ -128,7 +133,11 @@ export async function startApp(options: AppOptions): Promise<App> {
       });
     },
   });
-  const updates = new UpdateChecker({ fetch: options.fetch, currentVersion: options.version, image: core.image });
+  const updates = new UpdateChecker({
+    fetch: options.fetch,
+    currentVersion: options.version,
+    image: core.image,
+  });
 
   const engines = new EngineSupervisor({
     engines: core.engines,
@@ -204,10 +213,16 @@ export async function startApp(options: AppOptions): Promise<App> {
   // A separate proxy port gets a listener that serves the proxy only.
   let proxyServer: http.Server | null = null;
   let proxyPort: number | null = null;
-  if (config.proxyPort !== undefined && config.proxyPort !== config.serverPort && options.port === undefined) {
+  if (
+    config.proxyPort !== undefined &&
+    config.proxyPort !== config.serverPort &&
+    options.port === undefined
+  ) {
     proxyServer = http.createServer((req, res) => void proxy.handleRequest(req, res));
     proxyServer.on("upgrade", (req, socket, head) => void proxy.handleUpgrade(req, socket, head));
-    await new Promise<void>((resolve) => proxyServer?.listen(config.proxyPort, "127.0.0.1", resolve));
+    await new Promise<void>((resolve) =>
+      proxyServer?.listen(config.proxyPort, "127.0.0.1", resolve),
+    );
     proxyPort = config.proxyPort;
   }
 

@@ -24,29 +24,48 @@ afterEach(async () => {
 
 describe("attach commands", () => {
   it("waits for the session and attaches with -d inside the container", () => {
-    expect(attachCmd("claude-agent-x")).toEqual(["bash", "-c", EMBEDDED_ATTACH_SCRIPT, "_", "claude-agent-x"]);
+    expect(attachCmd("claude-agent-x")).toEqual([
+      "bash",
+      "-c",
+      EMBEDDED_ATTACH_SCRIPT,
+      "_",
+      "claude-agent-x",
+    ]);
     expect(EMBEDDED_ATTACH_SCRIPT).toContain('tmux attach -d -t "=$1"');
     expect(EMBEDDED_ATTACH_SCRIPT).toContain("seq 1 300");
   });
 
   it("builds the external argv without -d", () => {
-    const argv = externalAttachArgv({ container: "c", kind: "side", session: "s", platform: "codex", workDir: "/w" });
+    const argv = externalAttachArgv({
+      container: "c",
+      kind: "side",
+      session: "s",
+      platform: "codex",
+      workDir: "/w",
+    });
     expect(argv.slice(0, 5)).toEqual(["docker", "exec", "-it", "--detach-keys=ctrl-],ctrl-]", "c"]);
     expect(argv.at(-1)).toBe("s-codex");
     expect(argv[7]).toContain('tmux attach -t "=$1"');
-    expect(externalAttachArgv({ container: "c", kind: "shell", session: "s", workDir: "/w" })).toEqual([
-      "docker", "exec", "-it", "-w", "/w", "c", "bash", "-l",
-    ]);
+    expect(
+      externalAttachArgv({ container: "c", kind: "shell", session: "s", workDir: "/w" }),
+    ).toEqual(["docker", "exec", "-it", "-w", "/w", "c", "bash", "-l"]);
     expect(sideSessionName("s", "copilot")).toBe("s-copilot");
   });
 });
 
 describe("terminals.open", () => {
   it("attaches to the session and carries bytes both ways", async () => {
-    const s = await connect(`${base}/terminals?kind=session&boxId=${box.id}&cols=100&rows=30&token=${TOKEN}`);
+    const s = await connect(
+      `${base}/terminals?kind=session&boxId=${box.id}&cols=100&rows=30&token=${TOKEN}`,
+    );
     await s.until((x) => x.texts.length === 1);
     expect(s.texts[0]).toMatchObject({ type: "ready" });
-    expect(h.exec.requests[0]).toMatchObject({ container: CONTAINER, cmd: attachCmd(box.session), cols: 100, rows: 30 });
+    expect(h.exec.requests[0]).toMatchObject({
+      container: CONTAINER,
+      cmd: attachCmd(box.session),
+      cols: 100,
+      rows: 30,
+    });
     const container = h.exec.sessions[0]!.container;
     container.write("hello from tmux");
     await s.until((x) => x.binary.length > 0);
@@ -56,7 +75,9 @@ describe("terminals.open", () => {
     s.ws.send(Buffer.from("ls\r"));
     s.ws.send(JSON.stringify({ type: "input", data: "x" }));
     s.ws.send(JSON.stringify({ type: "resize", cols: 120, rows: 40 }));
-    await s.until(() => Buffer.concat(received).toString() === "ls\rx" && h.exec.sizes.length === 1);
+    await s.until(
+      () => Buffer.concat(received).toString() === "ls\rx" && h.exec.sizes.length === 1,
+    );
     expect(h.exec.sizes[0]).toEqual([120, 40]);
     s.ws.close();
   });
@@ -89,13 +110,21 @@ describe("terminals.open", () => {
   });
 
   it("opens a side session and a shell", async () => {
-    const side = await connect(`${base}/terminals?kind=side&boxId=${box.id}&platform=codex&token=${TOKEN}`);
+    const side = await connect(
+      `${base}/terminals?kind=side&boxId=${box.id}&platform=codex&token=${TOKEN}`,
+    );
     await side.until((x) => x.texts.length === 1);
     expect(h.exec.requests[0]!.cmd.at(-1)).toBe(`${box.session}-codex`);
     side.ws.close();
-    const shell = await connect(`${base}/terminals?kind=shell&projectId=example-app-1a2b3c4d&token=${TOKEN}`);
+    const shell = await connect(
+      `${base}/terminals?kind=shell&projectId=example-app-1a2b3c4d&token=${TOKEN}`,
+    );
     await shell.until((x) => x.texts.length === 1);
-    expect(h.exec.requests[1]).toMatchObject({ cmd: ["bash", "-l"], workingDir: "/work/example-app", container: CONTAINER });
+    expect(h.exec.requests[1]).toMatchObject({
+      cmd: ["bash", "-l"],
+      workingDir: "/work/example-app",
+      container: CONTAINER,
+    });
     shell.ws.close();
     const boxShell = await connect(`${base}/terminals?kind=shell&boxId=${box.id}&token=${TOKEN}`);
     await boxShell.until((x) => x.texts.length === 1);
@@ -108,7 +137,9 @@ describe("terminals.open", () => {
     await bad.until((x) => x.texts.length === 1);
     expect(bad.texts[0]).toMatchObject({ type: "error", error: { code: "validation" } });
     expect((await bad.closed).code).toBe(1008);
-    const missing = await connect(`${base}/terminals?kind=session&boxId=claude-agent-zz&token=${TOKEN}`);
+    const missing = await connect(
+      `${base}/terminals?kind=session&boxId=claude-agent-zz&token=${TOKEN}`,
+    );
     await missing.until((x) => x.texts.length === 1);
     expect(missing.texts[0]).toMatchObject({ type: "error", error: { code: "not_found" } });
   });

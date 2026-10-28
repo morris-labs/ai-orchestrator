@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+# Host checks for workstream W2 (server services), for the host-side peer
+# session. The sandbox has no Docker, ssh, op, or systemd user manager, so
+# these run on the real host after W1 and W2 are merged and built.
+#
+# Run one step at a time: ./host-checks.sh STEP
+# Replace the following before you start:
+#   BOX_ID:   a running box, such as claude-agent-example
+#   PROJECT:  its project id
+#   REMOTE:   a saved SSH remote name
+#   DEV_PORT: a port a dev server listens on inside the box's container
+set -euo pipefail
+
+SERVER="${SERVER:-http://127.0.0.1:20400}"
+TOKEN="$(cat ~/.claude-box/server.token)"
+H=(-H "Authorization: Bearer ${TOKEN}")
+BOX_ID="${BOX_ID:?set BOX_ID}"
+PROJECT="${PROJECT:?set PROJECT}"
+REMOTE="${REMOTE:-staging}"
+DEV_PORT="${DEV_PORT:-5173}"
+WS="$(command -v websocat || true)"
+
+step="${1:-list}"
+case "$step" in
+  list)
+    sed -n 's/^  \([a-z0-9-]*\))$/\1/p' "$0"
+    ;;
+  token)
+    # Expect mode 600 and a 64-character token.
+    stat -c '%a %s' ~/.claude-box/server.token
+    curl -fsS "$SERVER/api/v1/health"
+    curl -s -o /dev/null -w '%{http_code}\n' "$SERVER/api/v1/projects"   # expect 401
+    ;;
+  routes)
+    # Every read route answers 200 against the real core.
+    for path in projects boxes settings prompts ssh-remotes global-mounts secrets setup image usage notifications "conversations?dir=$HOME" models; do
+      printf '%-20s ' "$path"
+      curl -s -o /dev/null -w '%{http_code}\n' "${H[@]}" "$SERVER/api/v1/$path"
+    done
+    ;;
+  terminal)
+    # Attach to the box's tmux session; type, resize the window, then detach.
+    [ -n "$WS" ] || { echo "Install websocat first." >&2; exit 1; }
+    "$WS" -b "ws://127.0.0.1:20400/api/v1/terminals?kind=session&boxId=$BOX_ID&cols=120&rows=40&token=$TOKEN"
+    ;;
+  shell)
+    [ -n "$WS" ] || { echo "Install websocat first." >&2; exit 1; }
+    "$WS" -b "ws://127.0.0.1:20400/api/v1/terminals?kind=shell&projectId=$PROJECT&token=$TOKEN"
+    ;;
+  events)
+    # Send {"type":"hello","streamId":null,"lastSeq":null}; then start and stop a box.
+    [ -n "$WS" ] || { echo "Install websocat first." >&2; exit 1; }
+    "$WS" "ws://127.0.0.1:20400/api/v1/events?token=$TOKEN"
+    ;;
+  proxy)
+    # Expect the dev server's page, through the engine's /proxy route.
+    KEY="$(curl -fsS "${H[@]}" "$SERVER/api/v1/boxes/$BOX_ID" | python3 -c 'import json,sys; print(json.load(sys.stdin)["box"]["hostKey"])')"
+    curl -sS -o /dev/null -w '%{http_code}\n' "http://$DEV_PORT.$KEY.localhost:20400/"
+    ;;
+  engine)
+    # Expect versionMatches true for the running project container.
+    curl -fsS "${H[@]}" "$SERVER/api/v1/projects/$PROJECT"
+    ;;
+  secrets)
+    # Signed in: ok per reference. Locked op: secrets_locked. No values appear.
+    curl -fsS "${H[@]}" -H 'content-type: application/json' -d "{\"projectId\":\"$PROJECT\"}" "$SERVER/api/v1/secrets/check"
+    ;;
+  ssh)
+    curl -fsS "${H[@]}" -X POST "$SERVER/api/v1/ssh-remotes/$REMOTE/test"
+    curl -fsS "${H[@]}" "$SERVER/api/v1/ssh-remotes"   # tunnelUp true while a box using it runs
+    ;;
+  image-build)
+    # Starts a job; stream it with: websocat -b ws://127.0.0.1:20400/api/v1/jobs/JOB_ID/stream?token=...
+    curl -fsS "${H[@]}" -H 'content-type: application/json' -d '{"kind":"packages"}' "$SERVER/api/v1/image/build"
+    ;;
+  setup)
+    curl -fsS "${H[@]}" "$SERVER/api/v1/setup"
+    ;;
+  service)
+    # Installs and starts the user unit; expect "active".
+    agentbox-server install-service
+    systemctl --user is-active agentbox-server.service
+    ;;
+  shutdown)
+    # Expect a clean exit within 10 seconds and no orphaned ssh processes.
+    systemctl --user stop agentbox-server.service
+    pgrep -a ssh | grep -c ExitOnForwardFailure || true
+    ;;
+  *)
+    echo "Unknown step: $step" >&2
+    exit 2
+    ;;
+esac

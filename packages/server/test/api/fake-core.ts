@@ -88,7 +88,9 @@ export function createFakeCore(): FakeCore {
     },
     boxes: {
       list: async (q) =>
-        [...views.values()].filter((v) => q.projectId === undefined || v.box.projectId === q.projectId),
+        [...views.values()].filter(
+          (v) => q.projectId === undefined || v.box.projectId === q.projectId,
+        ),
       get: async (id) => view(id),
       validateCreate: async (input) => {
         record("boxes.validateCreate");
@@ -98,12 +100,20 @@ export function createFakeCore(): FakeCore {
       },
       create: async (input, log) => {
         log("Creating\r\n");
-        const b: Box = { ...boxFixture, id: "claude-agent-new", hostKey: "new", conversationName: input.conversationName };
+        const b: Box = {
+          ...boxFixture,
+          id: "claude-agent-new",
+          hostKey: "new",
+          conversationName: input.conversationName,
+        };
         views.set(b.id, viewOf(b, "starting"));
         return b;
       },
       update: async (id, patch) => ({
-        box: { ...view(id), box: { ...view(id).box, conversationName: patch.conversationName ?? "" } },
+        box: {
+          ...view(id),
+          box: { ...view(id).box, conversationName: patch.conversationName ?? "" },
+        },
         restartRequired: patch.sessionUuid !== undefined,
       }),
       start: async (id) => {
@@ -130,7 +140,9 @@ export function createFakeCore(): FakeCore {
         keptRefs: [],
         notCarried: [],
       }),
-      startSideSession: async (id, platform) => ({ session: `${view(id).tmuxSession}-${platform}` }),
+      startSideSession: async (id, platform) => ({
+        session: `${view(id).tmuxSession}-${platform}`,
+      }),
       stopSideSession: async (id, platform) => void record(`stopSide:${id}:${platform}`),
       setPlatform: async (id, platform) => ({ ...view(id), box: { ...view(id).box, platform } }),
       message: async (id, text) => void record(`message:${id}:${text.slice(0, 20)}`),
@@ -193,7 +205,8 @@ export function createFakeCore(): FakeCore {
       list: async () => [...remotes.values()],
       get: async (name) => remotes.get(name) ?? notFound(`remote ${name}`),
       put: async (name, remote) => {
-        if (remote.name !== name && remotes.has(remote.name)) throw new ApiFailure("conflict", "Taken.");
+        if (remote.name !== name && remotes.has(remote.name))
+          throw new ApiFailure("conflict", "Taken.");
         remotes.delete(name);
         remotes.set(remote.name, remote);
         return remote;

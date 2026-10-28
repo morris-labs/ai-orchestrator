@@ -17,7 +17,7 @@ import {
   type PathParams,
 } from "@agentbox/contracts";
 import WebSocket from "ws";
-import { z } from "zod";
+import type { z } from "zod";
 import { ApiFailure } from "../api/errors.js";
 import type { EngineEndpoint } from "../api/core-interface.js";
 
@@ -98,7 +98,10 @@ export class EngineClient {
   private baseUrl(): string {
     const port = this.options.endpoint.hostPort;
     if (port === null) {
-      throw new ApiFailure("conflict", `The engine of ${this.options.endpoint.container} has no host port yet.`);
+      throw new ApiFailure(
+        "conflict",
+        `The engine of ${this.options.endpoint.container} has no host port yet.`,
+      );
     }
     return `http://127.0.0.1:${port}`;
   }
@@ -216,7 +219,9 @@ export class EngineClient {
     try {
       await this.health();
     } catch (err) {
-      this.options.log?.(`Engine ${this.options.endpoint.container} health check failed: ${(err as Error).message}`);
+      this.options.log?.(
+        `Engine ${this.options.endpoint.container} health check failed: ${(err as Error).message}`,
+      );
       this.scheduleReconnect();
       return;
     }
@@ -261,14 +266,19 @@ export class EngineClient {
     try {
       frame = EngineStreamFrameSchema.parse(JSON.parse(text));
     } catch (err) {
-      this.options.log?.(`Engine ${this.options.endpoint.container} sent an invalid frame: ${(err as Error).message}`);
+      this.options.log?.(
+        `Engine ${this.options.endpoint.container} sent an invalid frame: ${(err as Error).message}`,
+      );
       return;
     }
     if (frame.type === "hello") {
       // Without a replay the server has missed whatever happened before, so
       // the owner reloads the engine's state through its REST routes.
       const cursor = this.options.cursor.get();
-      this.options.cursor.set(frame.streamId, frame.replaying ? (cursor?.lastSeq ?? 0) : frame.lastSeq);
+      this.options.cursor.set(
+        frame.streamId,
+        frame.replaying ? (cursor?.lastSeq ?? 0) : frame.lastSeq,
+      );
       if (!frame.replaying) this.options.onResync?.();
       return;
     }
@@ -277,7 +287,9 @@ export class EngineClient {
       try {
         const response = await this.options.onLease(request);
         if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify(LeaseResponseFrameSchema.parse({ type: "lease.response", response })));
+          ws.send(
+            JSON.stringify(LeaseResponseFrameSchema.parse({ type: "lease.response", response })),
+          );
         }
       } catch (err) {
         this.options.log?.(`Lease ${request.leaseId} failed: ${(err as Error).message}`);

@@ -75,7 +75,8 @@ export async function serveTerminal(
       });
       return;
     }
-    if (parsed.type === "resize") void session.resize(parsed.cols, parsed.rows).catch(() => undefined);
+    if (parsed.type === "resize")
+      void session.resize(parsed.cols, parsed.rows).catch(() => undefined);
     else stream.write(parsed.data);
   };
   ws.on("message", onMessage);

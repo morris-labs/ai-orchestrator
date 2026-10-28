@@ -2,6 +2,7 @@
 // registered by iterating the table, plus the static apps and the dev-server
 // proxy, which shares the listener and is told apart by its `Host` header.
 import http from "node:http";
+import type { Duplex } from "node:stream";
 import { existsSync } from "node:fs";
 import {
   ClientHelloSchema,
@@ -21,7 +22,7 @@ import fastifyStatic from "@fastify/static";
 import fastifyWebsocket from "@fastify/websocket";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import type WebSocket from "ws";
-import { z } from "zod";
+import type { z } from "zod";
 import { isAuthorized } from "./auth.js";
 import type { ApiDeps } from "./deps.js";
 import { ApiFailure, toApiFailure } from "./errors.js";
@@ -80,7 +81,7 @@ export async function createApiServer(deps: ApiDeps): Promise<ApiServer> {
       const emit = server.emit.bind(server) as (event: string, ...args: unknown[]) => boolean;
       server.emit = ((event: string, ...args: unknown[]) => {
         if (event === "upgrade" && proxy?.matches(args[0] as http.IncomingMessage)) {
-          const [req, socket, head] = args as [http.IncomingMessage, import("node:stream").Duplex, Buffer];
+          const [req, socket, head] = args as [http.IncomingMessage, Duplex, Buffer];
           void proxy.handleUpgrade(req, socket, head);
           return true;
         }
@@ -108,7 +109,12 @@ export async function createApiServer(deps: ApiDeps): Promise<ApiServer> {
     if (status !== undefined && status >= 400 && status < 500) {
       return sendFailure(
         reply,
-        new ApiFailure(status === 404 ? "not_found" : "validation", (err as Error).message, undefined, status),
+        new ApiFailure(
+          status === 404 ? "not_found" : "validation",
+          (err as Error).message,
+          undefined,
+          status,
+        ),
       );
     }
     const failure = toApiFailure(err);
@@ -116,7 +122,10 @@ export async function createApiServer(deps: ApiDeps): Promise<ApiServer> {
     return sendFailure(reply, failure);
   });
   app.setNotFoundHandler((request, reply) =>
-    sendFailure(reply, new ApiFailure("not_found", `No route for ${request.method} ${request.url}.`)),
+    sendFailure(
+      reply,
+      new ApiFailure("not_found", `No route for ${request.method} ${request.url}.`),
+    ),
   );
 
   app.addHook("onRequest", async (request, reply) => {
@@ -144,11 +153,15 @@ export async function createApiServer(deps: ApiDeps): Promise<ApiServer> {
   for (const [key, def] of Object.entries(serverRoutes)) {
     if (def.kind === "http") registerHttp(app, key as HttpRouteKey, def, handlers);
   }
-  registerWs(app, serverRoutes["events.stream"], (socket, request) => serveEvents(deps, socket, request));
+  registerWs(app, serverRoutes["events.stream"], (socket, request) =>
+    serveEvents(deps, socket, request),
+  );
   registerWs(app, serverRoutes["terminals.open"], (socket, request) =>
     serveTerminalRoute(deps, socket, request),
   );
-  registerWs(app, serverRoutes["jobs.stream"], (socket, request) => serveJob(deps, socket, request));
+  registerWs(app, serverRoutes["jobs.stream"], (socket, request) =>
+    serveJob(deps, socket, request),
+  );
 
   const dirs = deps.staticDirs ?? {};
   let decorated = false;
@@ -157,7 +170,12 @@ export async function createApiServer(deps: ApiDeps): Promise<ApiServer> {
     ["/review/", dirs.review],
   ] as const) {
     if (root && existsSync(root)) {
-      await app.register(fastifyStatic, { root, prefix, decorateReply: !decorated, index: "index.html" });
+      await app.register(fastifyStatic, {
+        root,
+        prefix,
+        decorateReply: !decorated,
+        index: "index.html",
+      });
       decorated = true;
     }
   }
@@ -215,7 +233,11 @@ function registerHttp(
 function parse(schema: z.ZodTypeAny, value: unknown, where: string): unknown {
   const result = schema.safeParse(value);
   if (!result.success) {
-    throw new ApiFailure("validation", `The ${where} doesn't match its schema.`, result.error.issues);
+    throw new ApiFailure(
+      "validation",
+      `The ${where} doesn't match its schema.`,
+      result.error.issues,
+    );
   }
   return result.data;
 }
@@ -230,7 +252,10 @@ function registerWs(
     url: fastifyPath(def.path),
     config: { agentbox: { auth: def.auth, ws: true } },
     handler: (_request, reply) =>
-      sendFailure(reply, new ApiFailure("validation", "This route needs a WebSocket upgrade.", undefined, 426)),
+      sendFailure(
+        reply,
+        new ApiFailure("validation", "This route needs a WebSocket upgrade.", undefined, 426),
+      ),
     wsHandler: (socket, request) => {
       void Promise.resolve(handler(socket, request)).catch(() => socket.close(1011));
     },
@@ -245,9 +270,13 @@ const QUERY_TYPES = new Set<string>(EVENT_TYPES);
 /** Parses the `types` query: a comma-separated list, or all when absent. */
 export function parseTypes(types: string | undefined): Set<EventType> | null {
   if (types === undefined || types.trim() === "") return null;
-  const list = types.split(",").map((t) => t.trim()).filter(Boolean);
+  const list = types
+    .split(",")
+    .map((t) => t.trim())
+    .filter(Boolean);
   const unknown = list.filter((t) => !QUERY_TYPES.has(t));
-  if (unknown.length) throw new ApiFailure("validation", `Unknown event types: ${unknown.join(", ")}.`);
+  if (unknown.length)
+    throw new ApiFailure("validation", `Unknown event types: ${unknown.join(", ")}.`);
   return new Set(list as EventType[]);
 }
 
@@ -305,7 +334,13 @@ export async function resolveTerminal(
   if (query.boxId !== undefined) {
     const view = await deps.core.boxes.get(query.boxId);
     if (query.kind === "shell") {
-      return { container: view.container, cmd: shellCmd(), workingDir: boxWorkDir(view.box), boxId: view.box.id, ...size };
+      return {
+        container: view.container,
+        cmd: shellCmd(),
+        workingDir: boxWorkDir(view.box),
+        boxId: view.box.id,
+        ...size,
+      };
     }
     const session =
       query.kind === "side" && query.platform
@@ -361,7 +396,10 @@ function serveJob(deps: ApiDeps, socket: WebSocket, request: FastifyRequest): vo
   const jobId = (request.params as { jobId?: string }).jobId ?? "";
   const attachment = deps.jobs.attach(jobId);
   if (!attachment) {
-    sendControl(socket, { type: "error", error: { code: "not_found", message: `No job has the id ${jobId}.` } });
+    sendControl(socket, {
+      type: "error",
+      error: { code: "not_found", message: `No job has the id ${jobId}.` },
+    });
     socket.close(1008, "unknown job");
     return;
   }

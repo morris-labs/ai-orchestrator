@@ -5,7 +5,8 @@ import { LateSink } from "../../src/events/late-sink.js";
 import { RunMirror } from "../../src/events/run-mirror.js";
 import { RUN, runState } from "../api/fixtures.js";
 
-const box = (id: string) => ({ type: "box.changed", boxId: id, status: "running", box: null }) as const;
+const box = (id: string) =>
+  ({ type: "box.changed", boxId: id, status: "running", box: null }) as const;
 
 describe("EventHub", () => {
   it("numbers server events and sets sourceSeq to seq", () => {
@@ -28,12 +29,20 @@ describe("EventHub", () => {
       seq: 41,
       sourceSeq: 41,
     });
-    expect(relayed).toMatchObject({ id: "engine-id", seq: 2, sourceSeq: 41, source: "engine:claude-agent-proj-x", streamId: hub.streamId });
+    expect(relayed).toMatchObject({
+      id: "engine-id",
+      seq: 2,
+      sourceSeq: 41,
+      source: "engine:claude-agent-proj-x",
+      streamId: hub.streamId,
+    });
   });
 
   it("rejects an invalid event", () => {
     const hub = new EventHub();
-    expect(() => hub.emit({ type: "box.changed", boxId: "", status: "running", box: null })).toThrow();
+    expect(() =>
+      hub.emit({ type: "box.changed", boxId: "", status: "running", box: null }),
+    ).toThrow();
     expect(hub.lastSeq).toBe(0);
   });
 
@@ -55,11 +64,22 @@ describe("EventHub", () => {
   it("replays from memory, and refuses a gap or a foreign stream", () => {
     const hub = new EventHub({ bufferSize: 2 });
     for (const id of ["a", "b", "c"]) hub.emit(box(`claude-agent-${id}`));
-    expect(hub.replay({ type: "hello", streamId: hub.streamId, lastSeq: 1 }).events.map((e) => e.seq)).toEqual([2, 3]);
-    expect(hub.replay({ type: "hello", streamId: hub.streamId, lastSeq: 0 }).hello.replaying).toBe(false);
-    expect(hub.replay({ type: "hello", streamId: hub.streamId, lastSeq: 3 })).toMatchObject({ hello: { replaying: true }, events: [] });
-    expect(hub.replay({ type: "hello", streamId: hub.streamId, lastSeq: 9 }).hello.replaying).toBe(false);
-    expect(hub.replay({ type: "hello", streamId: "other", lastSeq: 1 }).hello.replaying).toBe(false);
+    expect(
+      hub.replay({ type: "hello", streamId: hub.streamId, lastSeq: 1 }).events.map((e) => e.seq),
+    ).toEqual([2, 3]);
+    expect(hub.replay({ type: "hello", streamId: hub.streamId, lastSeq: 0 }).hello.replaying).toBe(
+      false,
+    );
+    expect(hub.replay({ type: "hello", streamId: hub.streamId, lastSeq: 3 })).toMatchObject({
+      hello: { replaying: true },
+      events: [],
+    });
+    expect(hub.replay({ type: "hello", streamId: hub.streamId, lastSeq: 9 }).hello.replaying).toBe(
+      false,
+    );
+    expect(hub.replay({ type: "hello", streamId: "other", lastSeq: 1 }).hello.replaying).toBe(
+      false,
+    );
     expect(hub.replay({ type: "hello", streamId: null, lastSeq: null }).hello).toEqual({
       type: "hello",
       streamId: hub.streamId,
@@ -76,7 +96,11 @@ describe("EventHub", () => {
     expect(second.streamId).toBe(first.streamId);
     expect(second.lastSeq).toBe(3);
     expect(second.emit(box("claude-agent-d")).seq).toBe(4);
-    expect(second.replay({ type: "hello", streamId: first.streamId, lastSeq: 1 }).events.map((e) => e.seq)).toEqual([2, 3, 4]);
+    expect(
+      second
+        .replay({ type: "hello", streamId: first.streamId, lastSeq: 1 })
+        .events.map((e) => e.seq),
+    ).toEqual([2, 3, 4]);
   });
 
   it("prunes SQLite to the configured size", () => {
@@ -85,7 +109,9 @@ describe("EventHub", () => {
     for (let i = 0; i < 1000; i += 1) hub.emit(box(`claude-agent-${i}`));
     const { n } = db.prepare("SELECT COUNT(*) AS n FROM svc_events").get() as { n: number };
     expect(n).toBe(10);
-    expect(hub.replay({ type: "hello", streamId: hub.streamId, lastSeq: 900 }).hello.replaying).toBe(false);
+    expect(
+      hub.replay({ type: "hello", streamId: hub.streamId, lastSeq: 900 }).hello.replaying,
+    ).toBe(false);
   });
 });
 

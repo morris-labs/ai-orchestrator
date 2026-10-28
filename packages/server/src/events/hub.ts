@@ -55,8 +55,7 @@ export class EventHub implements EventSink {
     if (db) {
       db.exec(SCHEMA);
       const row = db.prepare("SELECT value FROM svc_event_meta WHERE key = 'streamId'").get() as
-        | { value: string }
-        | undefined;
+        { value: string } | undefined;
       const max = db.prepare("SELECT MAX(seq) AS seq FROM svc_events").get() as {
         seq: number | null;
       };
@@ -101,7 +100,12 @@ export class EventHub implements EventSink {
    * and keeps the engine's number in `sourceSeq`.
    */
   relay(event: AgentBoxEvent): AgentBoxEvent {
-    return this.publish({ ...event, streamId: this.streamId, seq: this.seq + 1, sourceSeq: event.seq });
+    return this.publish({
+      ...event,
+      streamId: this.streamId,
+      seq: this.seq + 1,
+      sourceSeq: event.seq,
+    });
   }
 
   private publish(candidate: unknown): AgentBoxEvent {

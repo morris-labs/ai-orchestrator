@@ -125,7 +125,12 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
     }),
     "auth.session": async ({ request, reply }) => {
       if (!hasBearer({ authorization: request.headers.authorization }, deps.token)) {
-        throw new ApiFailure("validation", "Setting the session cookie needs the bearer header.", undefined, 401);
+        throw new ApiFailure(
+          "validation",
+          "Setting the session cookie needs the bearer header.",
+          undefined,
+          401,
+        );
       }
       reply.header("set-cookie", sessionCookieHeader(deps.token));
       return { ok: true };
@@ -256,7 +261,9 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
       return {
         remotes: remotes.map((remote) => ({
           remote,
-          referencedBy: boxes.filter((b) => b.box.sshRemoteRefs.includes(remote.name)).map((b) => b.box.id),
+          referencedBy: boxes
+            .filter((b) => b.box.sshRemoteRefs.includes(remote.name))
+            .map((b) => b.box.id),
           ...deps.ssh.status(remote.name),
         })),
       };
@@ -266,7 +273,9 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
       const boxes = await core.boxes.list({});
       return {
         remote,
-        referencedBy: boxes.filter((b) => b.box.sshRemoteRefs.includes(remote.name)).map((b) => b.box.id),
+        referencedBy: boxes
+          .filter((b) => b.box.sshRemoteRefs.includes(remote.name))
+          .map((b) => b.box.id),
         ...deps.ssh.status(remote.name),
       };
     },
@@ -279,7 +288,9 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
       const boxes = await core.boxes.list({});
       return {
         remote,
-        referencedBy: boxes.filter((b) => b.box.sshRemoteRefs.includes(remote.name)).map((b) => b.box.id),
+        referencedBy: boxes
+          .filter((b) => b.box.sshRemoteRefs.includes(remote.name))
+          .map((b) => b.box.id),
         ...deps.ssh.status(remote.name),
       };
     },
@@ -309,13 +320,17 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
       await Promise.all(
         engines.map(async (engine) => {
           try {
-            const { runs } = (await engine.call("engine.runs.list", { query })) as { runs: RunState[] };
+            const { runs } = (await engine.call("engine.runs.list", { query })) as {
+              runs: RunState[];
+            };
             for (const run of runs) {
               deps.runs.upsert(run);
               byId.set(run.id, run);
             }
           } catch (err) {
-            deps.log?.(`Listing runs on ${engine.endpoint.container} failed: ${(err as Error).message}`);
+            deps.log?.(
+              `Listing runs on ${engine.endpoint.container} failed: ${(err as Error).message}`,
+            );
           }
         }),
       );

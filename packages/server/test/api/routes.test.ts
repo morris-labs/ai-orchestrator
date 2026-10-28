@@ -27,13 +27,24 @@ const cases: Case[] = [
   { key: "health", method: "GET", url: `${V1}/health`, status: 200 },
   { key: "auth.session", method: "POST", url: `${V1}/auth/session`, status: 200 },
   { key: "projects.list", method: "GET", url: `${V1}/projects`, status: 200 },
-  { key: "projects.create", method: "POST", url: `${V1}/projects`, body: { root: "/work/other" }, status: 201 },
+  {
+    key: "projects.create",
+    method: "POST",
+    url: `${V1}/projects`,
+    body: { root: "/work/other" },
+    status: 201,
+  },
   { key: "projects.get", method: "GET", url: P, status: 200 },
   { key: "projects.update", method: "PATCH", url: P, body: { name: "Renamed" }, status: 200 },
   { key: "projects.restartContainer", method: "POST", url: `${P}/container/restart`, status: 200 },
   { key: "projects.policy.get", method: "GET", url: `${P}/policy`, status: 200 },
   { key: "projects.policy.put", method: "PUT", url: `${P}/policy`, body: policy, status: 200 },
-  { key: "boxes.list", method: "GET", url: `${V1}/boxes?projectId=example-app-1a2b3c4d`, status: 200 },
+  {
+    key: "boxes.list",
+    method: "GET",
+    url: `${V1}/boxes?projectId=example-app-1a2b3c4d`,
+    status: 200,
+  },
   {
     key: "boxes.create",
     method: "POST",
@@ -61,13 +72,53 @@ const cases: Case[] = [
   },
   { key: "boxes.purge", method: "POST", url: `${B}/purge`, status: 200 },
   { key: "boxes.move", method: "POST", url: `${B}/move`, body: { newDir: "/work/b" }, status: 200 },
-  { key: "boxes.relink", method: "POST", url: `${B}/relink`, body: { targetDir: "/work/b" }, status: 200 },
-  { key: "boxes.convertToWorktree", method: "POST", url: `${B}/convert-to-worktree`, body: {}, status: 202 },
-  { key: "boxes.attachCommand", method: "GET", url: `${B}/attach-command?kind=session`, status: 200 },
-  { key: "boxes.sideSessions.start", method: "POST", url: `${B}/side-sessions`, body: { platform: "codex" }, status: 200 },
-  { key: "boxes.sideSessions.stop", method: "DELETE", url: `${B}/side-sessions/codex`, status: 200 },
-  { key: "boxes.platform", method: "PUT", url: `${B}/platform`, body: { platform: "codex" }, status: 200 },
-  { key: "boxes.message", method: "POST", url: `${B}/message`, body: { text: "hello" }, status: 200 },
+  {
+    key: "boxes.relink",
+    method: "POST",
+    url: `${B}/relink`,
+    body: { targetDir: "/work/b" },
+    status: 200,
+  },
+  {
+    key: "boxes.convertToWorktree",
+    method: "POST",
+    url: `${B}/convert-to-worktree`,
+    body: {},
+    status: 202,
+  },
+  {
+    key: "boxes.attachCommand",
+    method: "GET",
+    url: `${B}/attach-command?kind=session`,
+    status: 200,
+  },
+  {
+    key: "boxes.sideSessions.start",
+    method: "POST",
+    url: `${B}/side-sessions`,
+    body: { platform: "codex" },
+    status: 200,
+  },
+  {
+    key: "boxes.sideSessions.stop",
+    method: "DELETE",
+    url: `${B}/side-sessions/codex`,
+    status: 200,
+  },
+  {
+    key: "boxes.platform",
+    method: "PUT",
+    url: `${B}/platform`,
+    body: { platform: "codex" },
+    status: 200,
+  },
+  {
+    key: "boxes.message",
+    method: "POST",
+    url: `${B}/message`,
+    body: { text: "hello" },
+    status: 200,
+  },
   { key: "boxes.startAll", method: "POST", url: `${V1}/boxes/start-all`, body: {}, status: 200 },
   { key: "boxes.stopAll", method: "POST", url: `${V1}/boxes/stop-all`, status: 200 },
   { key: "boxes.restartAll", method: "POST", url: `${V1}/boxes/restart-all`, status: 200 },
@@ -78,17 +129,40 @@ const cases: Case[] = [
     url: `${V1}/jobs/JOB`,
     status: 200,
   },
-  { key: "conversations.list", method: "GET", url: `${V1}/conversations?dir=/work/example-app`, status: 200 },
+  {
+    key: "conversations.list",
+    method: "GET",
+    url: `${V1}/conversations?dir=/work/example-app`,
+    status: 200,
+  },
   { key: "models.list", method: "GET", url: `${V1}/models`, status: 200 },
   { key: "models.rescan", method: "POST", url: `${V1}/models/rescan`, status: 409 },
   { key: "image.status", method: "GET", url: `${V1}/image`, status: 200 },
-  { key: "image.build", method: "POST", url: `${V1}/image/build`, body: { kind: "packages" }, status: 202 },
+  {
+    key: "image.build",
+    method: "POST",
+    url: `${V1}/image/build`,
+    body: { kind: "packages" },
+    status: 202,
+  },
   { key: "updates.check", method: "GET", url: `${V1}/updates?force=true`, status: 200 },
   { key: "setup.get", method: "GET", url: `${V1}/setup`, status: 200 },
   { key: "setup.fix", method: "POST", url: `${V1}/setup/checks/ssh_key/fix`, status: 202 },
-  { key: "setup.complete", method: "PUT", url: `${V1}/setup`, body: { defaultTargetDir: "/work" }, status: 200 },
+  {
+    key: "setup.complete",
+    method: "PUT",
+    url: `${V1}/setup`,
+    body: { defaultTargetDir: "/work" },
+    status: 200,
+  },
   { key: "settings.get", method: "GET", url: `${V1}/settings`, status: 200 },
-  { key: "settings.patch", method: "PATCH", url: `${V1}/settings`, body: { engineImage: "x" }, status: 200 },
+  {
+    key: "settings.patch",
+    method: "PATCH",
+    url: `${V1}/settings`,
+    body: { engineImage: "x" },
+    status: 200,
+  },
   { key: "prompts.get", method: "GET", url: `${V1}/prompts`, status: 200 },
   {
     key: "prompts.put",
@@ -98,11 +172,27 @@ const cases: Case[] = [
     status: 200,
   },
   { key: "sshRemotes.list", method: "GET", url: `${V1}/ssh-remotes`, status: 200 },
-  { key: "sshRemotes.put", method: "PUT", url: `${V1}/ssh-remotes/staging`, body: { name: "staging", host: "a@b" }, status: 200 },
+  {
+    key: "sshRemotes.put",
+    method: "PUT",
+    url: `${V1}/ssh-remotes/staging`,
+    body: { name: "staging", host: "a@b" },
+    status: 200,
+  },
   { key: "sshRemotes.delete", method: "DELETE", url: `${V1}/ssh-remotes/staging`, status: 200 },
   { key: "sshRemotes.test", method: "POST", url: `${V1}/ssh-remotes/staging/test`, status: 200 },
-  { key: "sshRemotes.reconnect", method: "POST", url: `${V1}/ssh-remotes/staging/reconnect`, status: 200 },
-  { key: "sshRemotes.copyId", method: "POST", url: `${V1}/ssh-remotes/staging/copy-id`, status: 202 },
+  {
+    key: "sshRemotes.reconnect",
+    method: "POST",
+    url: `${V1}/ssh-remotes/staging/reconnect`,
+    status: 200,
+  },
+  {
+    key: "sshRemotes.copyId",
+    method: "POST",
+    url: `${V1}/ssh-remotes/staging/copy-id`,
+    status: 202,
+  },
   { key: "globalMounts.get", method: "GET", url: `${V1}/global-mounts`, status: 200 },
   {
     key: "globalMounts.put",
@@ -139,16 +229,40 @@ const cases: Case[] = [
   { key: "runs.pause", method: "POST", url: `${R}/pause`, status: 200 },
   { key: "runs.resume", method: "POST", url: `${R}/resume`, status: 200 },
   { key: "runs.cancel", method: "POST", url: `${R}/cancel`, status: 200 },
-  { key: "runs.profile", method: "PUT", url: `${R}/profile`, body: { profile: "fast" }, status: 200 },
-  { key: "runs.assign", method: "POST", url: `${R}/assign`, body: { role: "reviewer", vendors: ["codex"] }, status: 200 },
+  {
+    key: "runs.profile",
+    method: "PUT",
+    url: `${R}/profile`,
+    body: { profile: "fast" },
+    status: 200,
+  },
+  {
+    key: "runs.assign",
+    method: "POST",
+    url: `${R}/assign`,
+    body: { role: "reviewer", vendors: ["codex"] },
+    status: 200,
+  },
   { key: "runs.rebaseBase", method: "POST", url: `${R}/rebase-base`, status: 200 },
-  { key: "runs.decide", method: "POST", url: `${R}/decision`, body: { option: "resume" }, status: 200 },
+  {
+    key: "runs.decide",
+    method: "POST",
+    url: `${R}/decision`,
+    body: { option: "resume" },
+    status: 200,
+  },
   { key: "runs.push", method: "POST", url: `${R}/push`, body: {}, status: 200 },
   { key: "runs.groups", method: "GET", url: `${R}/groups`, status: 200 },
   { key: "runs.rounds", method: "GET", url: `${R}/rounds`, status: 200 },
   { key: "findings.list", method: "GET", url: `${R}/findings?round=1`, status: 200 },
   { key: "findings.get", method: "GET", url: `${R}/findings/F-0001`, status: 200 },
-  { key: "findings.waive", method: "POST", url: `${R}/findings/F-0001/waive`, body: { reason: "ok" }, status: 200 },
+  {
+    key: "findings.waive",
+    method: "POST",
+    url: `${R}/findings/F-0001/waive`,
+    body: { reason: "ok" },
+    status: 200,
+  },
   { key: "usage.samples", method: "GET", url: `${V1}/usage/samples?vendor=claude`, status: 200 },
   { key: "usage.get", method: "GET", url: `${V1}/usage`, status: 200 },
   { key: "notifications.list", method: "GET", url: `${V1}/notifications?unread=true`, status: 200 },
@@ -186,7 +300,9 @@ describe("route table", () => {
       c.setup?.(h);
       let url = c.url;
       if (c.key === "jobs.get") {
-        const job = h.jobs.start({ kind: "image_build", command: "docker build" }, async () => ({ exitCode: 0 }));
+        const job = h.jobs.start({ kind: "image_build", command: "docker build" }, async () => ({
+          exitCode: 0,
+        }));
         url = url.replace("JOB", job.id);
       }
       const res = await h.server.app.inject({
@@ -214,7 +330,10 @@ describe("authentication", () => {
       headers: { authorization: "Bearer nope" },
     });
     expect(wrong.statusCode).toBe(401);
-    const query = await h.server.app.inject({ method: "GET", url: `${V1}/projects?token=${TOKEN}` });
+    const query = await h.server.app.inject({
+      method: "GET",
+      url: `${V1}/projects?token=${TOKEN}`,
+    });
     expect(query.statusCode).toBe(401);
   });
 
@@ -225,7 +344,11 @@ describe("authentication", () => {
   });
 
   it("sets the session cookie and accepts it afterwards", async () => {
-    const res = await h.server.app.inject({ method: "POST", url: `${V1}/auth/session`, headers: AUTH });
+    const res = await h.server.app.inject({
+      method: "POST",
+      url: `${V1}/auth/session`,
+      headers: AUTH,
+    });
     const cookie = res.headers["set-cookie"] as string;
     expect(cookie).toContain("HttpOnly");
     expect(cookie).toContain("SameSite=Strict");
@@ -233,7 +356,11 @@ describe("authentication", () => {
     expect(cookie).not.toContain(TOKEN);
     const value = cookie.split(";")[0] as string;
     expect(value).toBe(`agentbox_session=${sessionValue(TOKEN)}`);
-    const next = await h.server.app.inject({ method: "GET", url: `${V1}/projects`, headers: { cookie: value } });
+    const next = await h.server.app.inject({
+      method: "GET",
+      url: `${V1}/projects`,
+      headers: { cookie: value },
+    });
     expect(next.statusCode).toBe(200);
   });
 
@@ -346,7 +473,11 @@ describe("review routes", () => {
   });
 
   it("forwards params, query, and body to the engine", async () => {
-    await h.server.app.inject({ method: "GET", url: `${R}/findings?verdict=fixed&round=2`, headers: AUTH });
+    await h.server.app.inject({
+      method: "GET",
+      url: `${R}/findings?verdict=fixed&round=2`,
+      headers: AUTH,
+    });
     const call = h.engine.calls.find((c) => c.key === "engine.findings.list");
     expect(call?.input.params).toEqual({ runId: RUN });
     expect(call?.input.query).toEqual({ verdict: "fixed", round: 2 });
@@ -369,7 +500,11 @@ describe("jobs", () => {
     const job = res.json();
     expect(job.kind).toBe("box_create");
     await new Promise((r) => setTimeout(r, 20));
-    const done = await h.server.app.inject({ method: "GET", url: `${V1}/jobs/${job.id}`, headers: AUTH });
+    const done = await h.server.app.inject({
+      method: "GET",
+      url: `${V1}/jobs/${job.id}`,
+      headers: AUTH,
+    });
     expect(done.json().status).toBe("finished");
     expect(done.json().result.box.id).toBe("claude-agent-new");
   });
@@ -382,7 +517,11 @@ describe("jobs", () => {
 
 describe("ssh remotes", () => {
   it("lists remotes with references and tunnel state", async () => {
-    const res = await h.server.app.inject({ method: "GET", url: `${V1}/ssh-remotes`, headers: AUTH });
+    const res = await h.server.app.inject({
+      method: "GET",
+      url: `${V1}/ssh-remotes`,
+      headers: AUTH,
+    });
     expect(res.json().remotes[0]).toMatchObject({
       remote: { name: sshRemote.name },
       referencedBy: [box.id],

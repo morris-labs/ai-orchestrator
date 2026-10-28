@@ -26,12 +26,16 @@ beforeEach(async () => {
   const wss = new WebSocketServer({ noServer: true });
   engine.on("upgrade", (req, socket, head) => {
     seen.push({ url: req.url, auth: req.headers.authorization });
-    wss.handleUpgrade(req, socket, head, (ws) => ws.on("message", (d) => ws.send(`echo:${d.toString()}`)));
+    wss.handleUpgrade(req, socket, head, (ws) =>
+      ws.on("message", (d) => ws.send(`echo:${d.toString()}`)),
+    );
   });
   await new Promise<void>((r) => engine.listen(0, "127.0.0.1", r));
   enginePort = (engine.address() as { port: number }).port;
   const proxy = new DevServerProxy(
-    cachedResolver(async (hostKey) => (hostKey === "emails" ? { enginePort, token: ENGINE_TOKEN } : null)),
+    cachedResolver(async (hostKey) =>
+      hostKey === "emails" ? { enginePort, token: ENGINE_TOKEN } : null,
+    ),
   );
   h = await createHarness({ proxy });
   port = await h.server.listen(0);
@@ -44,20 +48,30 @@ afterEach(async () => {
 });
 
 function request(host: string, path: string, method = "GET", body?: string) {
-  return new Promise<{ status: number; body: string; headers: http.IncomingHttpHeaders }>((resolve, reject) => {
-    const req = http.request({ host: "127.0.0.1", port, path, method, headers: { host } }, (res) => {
-      let data = "";
-      res.on("data", (d) => (data += d));
-      res.on("end", () => resolve({ status: res.statusCode ?? 0, body: data, headers: res.headers }));
-    });
-    req.on("error", reject);
-    req.end(body);
-  });
+  return new Promise<{ status: number; body: string; headers: http.IncomingHttpHeaders }>(
+    (resolve, reject) => {
+      const req = http.request(
+        { host: "127.0.0.1", port, path, method, headers: { host } },
+        (res) => {
+          let data = "";
+          res.on("data", (d) => (data += d));
+          res.on("end", () =>
+            resolve({ status: res.statusCode ?? 0, body: data, headers: res.headers }),
+          );
+        },
+      );
+      req.on("error", reject);
+      req.end(body);
+    },
+  );
 }
 
 describe("parseProxyHost", () => {
   it("reads the port and host key", () => {
-    expect(parseProxyHost("3000.emails.localhost:20400")).toEqual({ port: 3000, hostKey: "emails" });
+    expect(parseProxyHost("3000.emails.localhost:20400")).toEqual({
+      port: 3000,
+      hostKey: "emails",
+    });
     expect(parseProxyHost("8080.my-box.localhost")).toEqual({ port: 8080, hostKey: "my-box" });
     expect(parseProxyHost("127.0.0.1:20400")).toBeNull();
     expect(parseProxyHost("99999.emails.localhost")).toBeNull();
@@ -68,7 +82,12 @@ describe("parseProxyHost", () => {
 
 describe("dev-server proxy", () => {
   it("forwards HTTP to the engine's /proxy/<port>/ with the engine token and no API token", async () => {
-    const res = await request(`3000.emails.localhost:${port}`, "/assets/app.js?v=1", "POST", "data");
+    const res = await request(
+      `3000.emails.localhost:${port}`,
+      "/assets/app.js?v=1",
+      "POST",
+      "data",
+    );
     expect(res.status).toBe(200);
     expect(res.headers["x-engine"]).toBe("yes");
     expect(res.body).toBe("POST /proxy/3000/assets/app.js?v=1 data");
@@ -86,7 +105,9 @@ describe("dev-server proxy", () => {
   });
 
   it("forwards WebSocket upgrades", async () => {
-    const ws = new WebSocket(`ws://127.0.0.1:${port}/hmr`, { headers: { host: `5173.emails.localhost:${port}` } });
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/hmr`, {
+      headers: { host: `5173.emails.localhost:${port}` },
+    });
     await new Promise((r) => ws.once("open", r));
     ws.send("ping");
     const reply = await new Promise<string>((r) => ws.once("message", (d) => r(d.toString())));

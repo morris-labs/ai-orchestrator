@@ -2,7 +2,12 @@
 // keeps the latest `RunState` of every run it has seen, from `run.changed`
 // events and from the run routes it proxies, so it knows which engine holds a
 // run and which box a run holds.
-import { RunStateSchema, type AgentBoxEvent, type RunState, type RunStatus } from "@agentbox/contracts";
+import {
+  RunStateSchema,
+  type AgentBoxEvent,
+  type RunState,
+  type RunStatus,
+} from "@agentbox/contracts";
 import type { SqlDatabase } from "../api/core-interface.js";
 
 /** The statuses in which a run holds its box's working tree. */
@@ -63,8 +68,7 @@ export class RunMirror {
 
   get(runId: string): RunState | undefined {
     const row = this.db.prepare("SELECT json FROM svc_runs WHERE id = ?").get(runId) as
-      | { json: string }
-      | undefined;
+      { json: string } | undefined;
     return row ? RunStateSchema.parse(JSON.parse(row.json)) : undefined;
   }
 

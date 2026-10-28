@@ -34,7 +34,12 @@ describe("events.stream", () => {
     const s = await connect(`${base}?token=${TOKEN}`);
     s.ws.send(JSON.stringify({ type: "hello", streamId: null, lastSeq: null }));
     await s.until((x) => x.texts.length === 1);
-    expect(s.texts[0]).toEqual({ type: "hello", streamId: h.hub.streamId, lastSeq: 1, replaying: false });
+    expect(s.texts[0]).toEqual({
+      type: "hello",
+      streamId: h.hub.streamId,
+      lastSeq: 1,
+      replaying: false,
+    });
     h.hub.emit(boxEvent("claude-agent-b"));
     await s.until((x) => x.texts.length === 2);
     const event = ServerStreamFrameSchema.parse(s.texts[1]);
@@ -102,7 +107,10 @@ describe("events.stream", () => {
 
   it("parses the types query", () => {
     expect(parseTypes(undefined)).toBeNull();
-    expect([...(parseTypes("box.changed, notification") ?? [])]).toEqual(["box.changed", "notification"]);
+    expect([...(parseTypes("box.changed, notification") ?? [])]).toEqual([
+      "box.changed",
+      "notification",
+    ]);
     expect(() => parseTypes("nope")).toThrow();
   });
 });
