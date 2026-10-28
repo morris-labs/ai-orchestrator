@@ -1,0 +1,153 @@
+{
+  "codex": {
+    "responses": [
+      {
+        "method": "review",
+        "match": "shop/pricing\\.py",
+        "times": 1,
+        "model": "mock-codex",
+        "tokens": {
+          "input": 1200,
+          "output": 300
+        },
+        "usage": [
+          {
+            "vendor": "codex",
+            "account": "user@example.com",
+            "window": "5h",
+            "utilization": 0.25,
+            "spendUsd": null,
+            "ceiling": {
+              "kind": "utilization",
+              "window": "5h",
+              "max": 0.7
+            },
+            "resetAt": null,
+            "sampleSource": "codex_session"
+          },
+          {
+            "vendor": "claude",
+            "account": "user@example.com",
+            "window": "5h",
+            "utilization": 0.25,
+            "spendUsd": null,
+            "ceiling": {
+              "kind": "utilization",
+              "window": "5h",
+              "max": 0.7
+            },
+            "resetAt": null,
+            "sampleSource": "rate_limit_event"
+          }
+        ],
+        "output": {
+          "findings": [
+            {
+              "severity": "P2",
+              "title": "average_price divides by zero for an empty list",
+              "file": "shop/pricing.py",
+              "symbol": "average_price",
+              "lines": [28, 30],
+              "failure_case": "average_price([]) raises ZeroDivisionError instead of returning a price.",
+              "category": "correctness",
+              "introduced": true
+            },
+            {
+              "severity": "P2",
+              "title": "bulk_discount misses the 10 percent tier at exactly 100 items",
+              "file": "shop/pricing.py",
+              "symbol": "bulk_discount",
+              "lines": [21, 22],
+              "failure_case": "bulk_discount(100) returns 5, but the docstring promises 10 for 100 items or more.",
+              "category": "correctness",
+              "introduced": true
+            }
+          ],
+          "ledger": []
+        }
+      },
+      {
+        "method": "verify",
+        "match": "average_price|bulk_discount|page skips",
+        "output": {
+          "verdict": "confirmed",
+          "verification": "code-reading",
+          "evidence": "The planted bug is present at the tip.",
+          "presentAtBase": false,
+          "script": null
+        },
+        "model": "mock-codex"
+      }
+    ]
+  },
+  "copilot": {
+    "responses": [
+      {
+        "method": "review",
+        "match": "shop/inventory\\.py",
+        "times": 1,
+        "model": "mock-copilot",
+        "premiumRequests": 1,
+        "usage": [
+          {
+            "vendor": "copilot",
+            "account": "user@example.com",
+            "window": "5h",
+            "utilization": 0.25,
+            "spendUsd": null,
+            "ceiling": {
+              "kind": "utilization",
+              "window": "5h",
+              "max": 0.7
+            },
+            "resetAt": null,
+            "sampleSource": "billing_api"
+          }
+        ],
+        "output": {
+          "findings": [
+            {
+              "severity": "P1",
+              "title": "page skips the first page of items",
+              "file": "shop/inventory.py",
+              "symbol": "page",
+              "lines": [16, 17],
+              "failure_case": "page(items, 1, 3) returns items 3 to 5, so the first three items are never shown.",
+              "category": "correctness",
+              "introduced": true
+            }
+          ],
+          "ledger": []
+        }
+      },
+      {
+        "method": "verify",
+        "match": "average_price|bulk_discount|page skips",
+        "output": {
+          "verdict": "confirmed",
+          "verification": "code-reading",
+          "evidence": "The planted bug is present at the tip.",
+          "presentAtBase": false,
+          "script": null
+        },
+        "model": "mock-copilot"
+      }
+    ]
+  },
+  "claude": {
+    "responses": [
+      {
+        "method": "verify",
+        "match": "average_price|bulk_discount|page skips",
+        "output": {
+          "verdict": "confirmed",
+          "verification": "code-reading",
+          "evidence": "The planted bug is present at the tip.",
+          "presentAtBase": false,
+          "script": null
+        },
+        "model": "mock-claude"
+      }
+    ]
+  }
+}
