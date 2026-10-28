@@ -321,6 +321,7 @@ export class RunController {
     }
     if (decision.kind === "gate_failed") {
       ctx.eng.gateAttempts = 0;
+      ctx.eng.fixEpoch += 1;
       if (ctx.eng.phase === "post-push" && ctx.state.stage === "import") await ctx.setStage("push");
     }
     if (decision.kind === "push_blocked") ctx.eng.reviewRequestedFor = null;

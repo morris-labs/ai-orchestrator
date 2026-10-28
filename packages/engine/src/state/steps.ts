@@ -1,6 +1,7 @@
 // The stage bodies that the pre-push and post-push drivers share. Each step
 // reads its inputs from the run context, writes its output file to the run
 // directory, and emits handoff events with counts.
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type {
@@ -601,19 +602,21 @@ export async function runSweep(
 // ---------------------------------------------------------------------------
 // Fix, gate, confirm
 
+export interface FixBatchRecord {
+  findingIds: string[];
+  before: string;
+  after: string;
+  commits: string[];
+  output: FixOutput;
+}
+
 export interface FixRecord {
   attempt: number;
   preFixSha: string;
-  batches: Array<{
-    findingIds: string[];
-    before: string;
-    after: string;
-    commits: string[];
-    output: FixOutput;
-  }>;
+  batches: FixBatchRecord[];
 }
 
-/** Findings the fixer should work on: confirmed, above `nit`, and not declined twice. */
+/** Findings the fixer should work on: confirmed, above `nit`, and not declined. */
 export function fixTargets(ctx: RunContext): Finding[] {
   const declined = new Set(ctx.eng.declined);
   return ctx.findings.filter(
@@ -621,14 +624,73 @@ export function fixTargets(ctx: RunContext): Finding[] {
   );
 }
 
-/** The fix stage: the fixer fixes confirmed findings in batches per group and commits. */
+/** The name of a fix or gate attempt's files: the decision epoch and the attempt. */
+export function attemptName(ctx: RunContext, stage: "fix" | "gate"): string {
+  return `${stage}-${ctx.eng.fixEpoch}-${ctx.eng.gateAttempts + 1}`;
+}
+
+/** A short, stable key for a batch: a hash of its sorted finding ids. */
+export function batchKey(findingIds: readonly string[]): string {
+  return createHash("sha1")
+    .update([...findingIds].sort().join(","))
+    .digest("hex")
+    .slice(0, 12);
+}
+
+/** Splits the targets into batches: one per group, or one for a gate retry. */
+function planBatches(targets: readonly Finding[], gateFailure?: string): string[][] {
+  if (gateFailure) return [targets.map((f) => f.id)];
+  const byGroup = new Map<string, string[]>();
+  for (const f of targets) {
+    const k = f.groupId ?? "none";
+    byGroup.set(k, [...(byGroup.get(k) ?? []), f.id]);
+  }
+  return [...byGroup.keys()].sort().map((k) => byGroup.get(k) ?? []);
+}
+
+/**
+ * Applies one batch's outcome to the findings. Idempotent, so a resumed run
+ * can apply a saved batch again. The fixer may mark only the batch's own
+ * findings, and may decline one only with a reason, which the finding keeps.
+ */
+async function applyBatch(ctx: RunContext, batch: FixBatchRecord): Promise<void> {
+  const inBatch = new Set(batch.findingIds);
+  const fixedIds = new Set(batch.output.fixed.filter((id) => inBatch.has(id)));
+  for (const id of batch.findingIds) {
+    const finding = ctx.findingById(id);
+    if (finding && fixedIds.has(id) && batch.commits.length > 0) finding.fixCommit = batch.after;
+  }
+  for (const nf of batch.output.notFixed) {
+    const reason = nf.reason.trim();
+    if (!inBatch.has(nf.id) || fixedIds.has(nf.id) || reason === "") continue;
+    if (ctx.eng.declined.includes(nf.id)) continue;
+    ctx.eng.declined = [...ctx.eng.declined, nf.id];
+    const finding = ctx.findingById(nf.id);
+    if (finding) {
+      await ctx.setVerdict(
+        finding,
+        finding.verdict,
+        { kind: "agent", vendor: ctx.state.roles.fixer, role: "fixer" },
+        `The fixer declined to fix it: ${reason}`,
+      );
+    }
+  }
+  ctx.state.tipSha = batch.after;
+  await ctx.persist();
+}
+
+/**
+ * The fix stage: the fixer fixes confirmed findings in batches per group and
+ * commits. The batch plan and each batch's outcome are saved as they happen,
+ * so a resumed stage keeps the same batches and the commits each one made.
+ */
 export async function runFix(
   ctx: RunContext,
   targets: readonly Finding[],
   gateFailure?: string,
 ): Promise<FixRecord> {
-  const attempt = ctx.eng.gateAttempts + 1;
-  const file = ctx.store.roundFile(ctx.round, `fix-${attempt}`);
+  const name = attemptName(ctx, "fix");
+  const file = ctx.store.roundFile(ctx.round, name);
   const saved = await ctx.store.readJson<FixRecord>(file);
   if (saved) return saved;
   const branch = ctx.eng.tipRef;
@@ -642,68 +704,55 @@ export async function runFix(
   ctx.eng.preFixSha = preFixSha;
   await ctx.persist();
 
-  // On a gate retry, one batch carries every target and the failure report.
-  const batches: Finding[][] = [];
-  if (gateFailure) batches.push([...targets]);
-  else {
-    const byGroup = new Map<string, Finding[]>();
-    for (const f of targets) {
-      const k = f.groupId ?? "none";
-      byGroup.set(k, [...(byGroup.get(k) ?? []), f]);
-    }
-    for (const k of [...byGroup.keys()].sort()) batches.push(byGroup.get(k) ?? []);
+  const planFile = ctx.store.roundFile(ctx.round, `${name}-plan`);
+  let plan = await ctx.store.readJson<string[][]>(planFile);
+  if (!plan) {
+    plan = planBatches(targets, gateFailure);
+    await ctx.store.writeJson(planFile, plan);
   }
 
-  const record: FixRecord = { attempt, preFixSha, batches: [] };
-  for (const [index, batch] of batches.entries()) {
-    const before = await ctx.git.head();
-    const prompt = fixerPrompt({
-      range: ctx.range(),
-      findings: batch,
-      gateFailure,
-      policySection: policyPromptSection(
-        ctx.policy,
-        batch.flatMap((f) => (f.file ? [f.file] : [])),
-      ),
-    });
-    const out = await ctx.callAgent<FixOutput>({
-      key: `fix-${attempt}-${index + 1}`,
-      role: "fixer",
-      vendor: ctx.state.roles.fixer,
-      method: "fix",
-      request: { prompt, repoPath: ctx.state.request.repoPath, toolPolicy: "write" },
-      groupId: batch[0]?.groupId ?? null,
-      estimateTokens: estimateTokens(prompt) + 8000,
-      allowFallback: false,
-    });
-    const after = await ctx.git.head();
-    if (!(await ctx.git.ok(["merge-base", "--is-ancestor", before, after]))) {
-      throw new Error(
-        `The fixer rewrote history on ${branch}: ${before} is no longer an ancestor of ${after}.`,
-      );
+  const record: FixRecord = { attempt: ctx.eng.gateAttempts + 1, preFixSha, batches: [] };
+  for (const ids of plan) {
+    const key = `${name}-${batchKey(ids)}`;
+    const batchFile = ctx.store.roundFile(ctx.round, key);
+    let batch = await ctx.store.readJson<FixBatchRecord>(batchFile);
+    if (!batch) {
+      const findings = ids.flatMap((id) => ctx.findingById(id) ?? []);
+      const before = await ctx.git.head();
+      const prompt = fixerPrompt({
+        range: ctx.range(),
+        findings,
+        gateFailure,
+        policySection: policyPromptSection(
+          ctx.policy,
+          findings.flatMap((f) => (f.file ? [f.file] : [])),
+        ),
+      });
+      const out = await ctx.callAgent<FixOutput>({
+        key,
+        role: "fixer",
+        vendor: ctx.state.roles.fixer,
+        method: "fix",
+        request: { prompt, repoPath: ctx.state.request.repoPath, toolPolicy: "write" },
+        groupId: findings[0]?.groupId ?? null,
+        estimateTokens: estimateTokens(prompt) + 8000,
+        allowFallback: false,
+      });
+      const after = await ctx.git.head();
+      if (!(await ctx.git.ok(["merge-base", "--is-ancestor", before, after]))) {
+        throw new Error(
+          `The fixer rewrote history on ${branch}: ${before} is no longer an ancestor of ${after}.`,
+        );
+      }
+      const commits = after === before ? [] : await ctx.git.commitsBetween(before, after);
+      batch = { findingIds: ids, before, after, commits, output: out.output };
+      await ctx.store.writeJson(batchFile, batch);
     }
-    const commits = after === before ? [] : await ctx.git.commitsBetween(before, after);
-    record.batches.push({
-      findingIds: batch.map((f) => f.id),
-      before,
-      after,
-      commits,
-      output: out.output,
-    });
-    const fixedIds = new Set(out.output.fixed);
-    for (const f of batch) {
-      const finding = ctx.findingById(f.id);
-      if (!finding) continue;
-      if (fixedIds.has(f.id) && commits.length > 0) finding.fixCommit = after;
-    }
-    for (const nf of out.output.notFixed) {
-      ctx.eng.declined = [...new Set([...ctx.eng.declined, nf.id])];
-    }
-    ctx.state.tipSha = after;
-    await ctx.persist();
+    record.batches.push(batch);
+    await applyBatch(ctx, batch);
   }
   await ctx.store.writeJson(file, record);
-  const fixed = targets.filter((f) => ctx.findingById(f.id)?.fixCommit).length;
+  const fixed = plan.flat().filter((id) => ctx.findingById(id)?.fixCommit).length;
   await ctx.handoff(
     { stage: "fix", vendor: ctx.state.roles.fixer, role: "fixer" },
     { stage: "gate" },
@@ -727,7 +776,7 @@ export interface GateRecord {
  */
 export async function runGateStage(ctx: RunContext, nextStage: Stage): Promise<GateRecord> {
   const attempt = ctx.eng.gateAttempts + 1;
-  const file = ctx.store.roundFile(ctx.round, `gate-${attempt}`);
+  const file = ctx.store.roundFile(ctx.round, attemptName(ctx, "gate"));
   const saved = await ctx.store.readJson<GateRecord>(file);
   if (saved) return saved;
   const baseline = (await ctx.store.readJson<{ baseline: GateRun }>("preflight.json"))

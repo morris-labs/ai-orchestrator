@@ -39,6 +39,12 @@ export const EngineStateSchema = z.object({
   alternating: z.boolean().default(false),
   /** Fix and gate attempts in the current round. */
   gateAttempts: z.number().int().nonnegative().default(0),
+  /**
+   * Goes up each time a person answers a `gate_failed` decision. The fix and
+   * gate files of a round carry it, so a resumed run runs the fix and the
+   * gate again instead of replaying the attempts that led to the decision.
+   */
+  fixEpoch: z.number().int().nonnegative().default(0),
   /** Changes a person asked for, applied at the start of the next round. */
   pendingProfile: ProfileSchema.nullable().default(null),
   pendingAssign: z
@@ -57,7 +63,7 @@ export const EngineStateSchema = z.object({
   preFixSha: z.string().nullable().default(null),
   /** The gate's last failure report, for the next fix attempt. */
   lastGateFailure: z.string().nullable().default(null),
-  /** Findings the fixer declined as not real defects; not sent to it again. */
+  /** Findings the fixer declined, with a reason, as not real defects; not sent to it again. */
   declined: z.array(z.string()).default([]),
   /** Usage of the current round per vendor. */
   roundUsage: z.record(VendorSchema, VendorStatsSchema).default({}),
