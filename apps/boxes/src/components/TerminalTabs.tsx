@@ -56,7 +56,7 @@ export function TerminalTabs(props: TerminalTabsProps) {
               ]);
             }}
           >
-            <StatusDot state={t.ended ? "stopped" : "running"} />
+            <StatusDot decorative state={t.ended ? "stopped" : "running"} />
             <span>{tabTitle(t)}</span>
             <button
               type="button"

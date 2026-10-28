@@ -8,12 +8,22 @@ const colors: Record<DotState, string> = {
   pending: "var(--ab-pending)",
 };
 
-export function StatusDot({ state, title }: { state: DotState; title?: string }) {
+/** A status dot. `decorative` hides it from assistive technology when text next to it says the same. */
+export function StatusDot({
+  state,
+  title,
+  decorative,
+}: {
+  state: DotState;
+  title?: string;
+  decorative?: boolean;
+}) {
   return (
     <span
       className="ab-status-dot"
-      role="img"
-      aria-label={title ?? state}
+      role={decorative ? undefined : "img"}
+      aria-hidden={decorative ? true : undefined}
+      aria-label={decorative ? undefined : (title ?? state)}
       title={title}
       style={{ background: colors[state] }}
     />

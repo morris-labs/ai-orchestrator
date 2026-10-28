@@ -50,7 +50,7 @@ export function ProjectPanel({
             menu.open(e.clientX, e.clientY, menuFor(p));
           }}
         >
-          <StatusDot state={p.running > 0 ? "running" : "known"} />
+          <StatusDot decorative state={p.running > 0 ? "running" : "known"} />
           <span className="bx-project-name">{p.project.name}</span>
           <span className="bx-dim">
             ({p.running}/{p.total})
