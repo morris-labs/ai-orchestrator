@@ -402,6 +402,9 @@ a {
   align-items: center;
   justify-content: center;
 }
+.ab-dialog-backdrop.ab-stacked {
+  z-index: 950;
+}
 .ab-dialog {
   background: var(--ab-window-bg);
   border: 1px solid var(--ab-border);

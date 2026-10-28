@@ -22,6 +22,8 @@ export interface DialogProps {
   children: ReactNode;
   width?: number | string;
   className?: string;
+  /** Draws the dialog above message boxes, for a dialog that a message box button opens. */
+  stacked?: boolean;
 }
 
 /** A modal dialog. The first field, or the first button, takes focus when it opens. */
