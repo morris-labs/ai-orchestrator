@@ -101,6 +101,15 @@ export class TerminalConnection {
     this.socket.send(this.encoder.encode(text));
   }
 
+  /**
+   * Sends xterm.js binary input, such as X10 mouse reports: one byte per
+   * character, never UTF-8 encoded, so that bytes 0x80 to 0xFF pass intact.
+   */
+  writeBinary(data: string): void {
+    if (this.ended || this.socket.readyState !== 1) return;
+    this.socket.send(Uint8Array.from(data, (c) => c.charCodeAt(0) & 0xff));
+  }
+
   resize(cols: number, rows: number): void {
     if (this.ended) return;
     this.sendControl({ type: "resize", cols, rows });

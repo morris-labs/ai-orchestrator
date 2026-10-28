@@ -12,7 +12,7 @@ import { useContextMenu } from "../components/Menu";
 import { terminalTheme } from "../theme/tokens";
 import { beep } from "./beep";
 import { openTerminalSocket, TerminalConnection, type TerminalTarget } from "./connection";
-import { classifyTerminalKey, endedBanner } from "./keys";
+import { endedBanner, handleTerminalKey } from "./keys";
 
 /** Clipboard access; Electron and the browser both provide `navigator.clipboard`. */
 export interface ClipboardLike {
@@ -110,19 +110,7 @@ export function TerminalView(props: TerminalViewProps) {
       // A hidden pane has no size yet; the observer fits it later.
     }
 
-    term.attachCustomKeyEventHandler((e) => {
-      if (e.type !== "keydown") return true;
-      const action = classifyTerminalKey(e);
-      if (action === "copy") {
-        copy();
-        return false;
-      }
-      if (action === "paste") {
-        paste();
-        return false;
-      }
-      return action === "terminal";
-    });
+    term.attachCustomKeyEventHandler((e) => handleTerminalKey(e, { copy, paste }));
 
     const target: TerminalTarget = JSON.parse(targetKey) as TerminalTarget;
     const socket = openTerminalSocket(client, target, { cols: term.cols, rows: term.rows });
@@ -139,7 +127,7 @@ export function TerminalView(props: TerminalViewProps) {
     socket.addEventListener?.("open", () => conn.resize(term.cols, term.rows));
 
     const input = term.onData((data) => conn.write(data));
-    const bin = term.onBinary((data) => conn.write(data));
+    const bin = term.onBinary((data) => conn.writeBinary(data));
     const resize = term.onResize(({ cols, rows }) => conn.resize(cols, rows));
     const bell = term.onBell(() => beep());
 
