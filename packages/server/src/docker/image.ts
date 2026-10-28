@@ -122,9 +122,10 @@ export function imageBuildOptions(input: {
   now: Date;
 }): ImageBuildOptions {
   const epoch = String(Math.floor(input.now.getTime() / 1000));
-  const buildArgs: Record<string, string> = { USER_NAME: input.user };
+  const buildArgs: Record<string, string> = {};
   if (input.kind === "packages") buildArgs.CACHEBUST_PACKAGES = epoch;
   if (input.kind === "claude-code") buildArgs.CACHEBUST = epoch;
+  buildArgs.USER_NAME = input.user;
   return {
     context: input.context,
     tag: input.tag,
@@ -132,14 +133,4 @@ export function imageBuildOptions(input: {
     noCache: input.kind === "rebuild",
     pull: input.kind === "rebuild",
   };
-}
-
-/** The build as a person would type it, for a job's "Running: ..." label. */
-export function imageBuildCommand(o: ImageBuildOptions): string {
-  const parts = ["docker", "build", "-t", o.tag];
-  if (o.noCache) parts.push("--no-cache");
-  if (o.pull) parts.push("--pull");
-  for (const [k, v] of Object.entries(o.buildArgs)) parts.push("--build-arg", `${k}=${v}`);
-  parts.push(o.context);
-  return parts.join(" ");
 }

@@ -4,7 +4,6 @@
 // the server's services in as hooks, and starts polling. The core never
 // listens on a port itself.
 import fs from "node:fs";
-import path from "node:path";
 import type { ImageStatus, Platform } from "@agentbox/contracts";
 import { apiCoreOf, relayEvents, wireHooks } from "./api/core-adapter.js";
 import type { Core as ApiCore, CoreFactoryOptions } from "./api/core-interface.js";
@@ -15,13 +14,7 @@ import { ModelCatalog } from "./catalog/models.js";
 import { projectDirFor, transcriptPath } from "./catalog/paths.js";
 import { openDatabase, repositories, type Repositories } from "./db/index.js";
 import { DockerodeClient } from "./docker/dockerode.js";
-import {
-  ImageVersions,
-  imageBuildCommand,
-  imageBuildOptions,
-  imageStatus,
-  type ImageBuildKind,
-} from "./docker/image.js";
+import { ImageVersions, imageStatus } from "./docker/image.js";
 import type { DockerClient } from "./docker/types.js";
 import { needsImport, runImport, type ImportReport } from "./import/importer.js";
 import { ProjectService } from "./projects/service.js";
@@ -43,8 +36,6 @@ export interface CoreOptions {
   dbPath?: string;
   /** Default: dockerode on the local socket (`DOCKER_HOST` honored). */
   docker?: DockerClient;
-  /** The image build context (the repository's `image/` directory). */
-  imageContext?: string;
   /** Seconds a project container lingers with no sessions. Default 30. */
   graceSec?: number;
   /** Picks the engine's host port; tests replace it. */
@@ -65,16 +56,9 @@ export interface CoreStartOptions {
   watch?: boolean;
 }
 
-/** The image routes: status, build, and the command line a build job shows. */
+/** The image route the core serves; `SetupService` runs builds as `docker build` jobs. */
 export interface ImageApi {
   status(): Promise<ImageStatus>;
-  /** The build options and command line for a kind, for a job label. */
-  plan(kind: ImageBuildKind): { options: ReturnType<typeof imageBuildOptions>; command: string };
-  /** Builds the image, streaming output to `onOutput`. */
-  build(
-    kind: ImageBuildKind,
-    onOutput: (chunk: string) => void,
-  ): Promise<{ ok: boolean; error?: string }>;
 }
 
 export interface ServerCore {
@@ -164,23 +148,9 @@ export function createServerCore(options: CoreOptions): ServerCore {
       settings.setModelCache(cache);
     },
   });
-  const imageContext = options.imageContext ?? path.resolve("image");
   const image: ImageApi = {
     status: () =>
       imageStatus(imageVersions, docker, settings.get().engineImage, options.engineVersion),
-    plan(kind) {
-      const o = imageBuildOptions({
-        kind,
-        context: imageContext,
-        tag: settings.get().engineImage,
-        user: env.user,
-        now: env.now(),
-      });
-      return { options: o, command: imageBuildCommand(o) };
-    },
-    build(kind, onOutput) {
-      return docker.buildImage(this.plan(kind).options, onOutput);
-    },
   };
 
   const core: ServerCore = {
@@ -255,7 +225,6 @@ export async function createCore(
     engineVersion: options.engineVersion,
     env,
     docker: options.docker ?? dockerode,
-    imageContext: options.imageContext,
   });
   wireHooks(server, options.services);
   const stopRelay = relayEvents(server, options.services);

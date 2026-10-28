@@ -259,8 +259,6 @@ export interface CoreFactoryOptions {
   services: CoreServices;
   /** The engine version this server expects in the image and in each container. */
   engineVersion: string;
-  /** The image build context, the repository's `image/` directory. */
-  imageContext: string;
   log?(message: string): void;
 }
 

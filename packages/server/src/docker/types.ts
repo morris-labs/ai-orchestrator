@@ -172,11 +172,6 @@ export interface DockerClient {
   stats(nameOrId: string): Promise<StatsSample | null>;
   /** `null` when the image does not exist. */
   inspectImage(name: string): Promise<ImageInspect | null>;
-  /** Builds an image, passing every output line to `onOutput`. */
-  buildImage(
-    options: ImageBuildOptions,
-    onOutput: (chunk: string) => void,
-  ): Promise<{ ok: boolean; error?: string }>;
   /** Runs a throwaway container (`docker run --rm`) and collects its output. */
   runOnce(options: RunOnceOptions): Promise<ExecResult>;
 }

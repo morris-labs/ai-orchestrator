@@ -78,7 +78,6 @@ export async function startApp(options: AppOptions): Promise<App> {
     home: options.home,
     services,
     engineVersion: options.expectedEngineVersion,
-    imageContext: options.imageContext,
     log,
   });
   const settings = () => core.settings.get();

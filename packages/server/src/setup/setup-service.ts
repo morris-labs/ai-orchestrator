@@ -7,12 +7,13 @@ import type { Job, SetupCheck, SetupStatusSchema } from "@agentbox/contracts";
 import type { z } from "zod";
 import type { Core } from "../api/core-interface.js";
 import { ApiFailure, toApiFailure } from "../api/errors.js";
+import { imageBuildOptions, type ImageBuildKind } from "../docker/image.js";
 import { processJob, type JobIO, type JobManager } from "../jobs/jobs.js";
 import { commandLine, type ProcessRunner } from "../jobs/process.js";
 import type { OpClient } from "../secrets/op.js";
 
 export type SetupStatus = z.infer<typeof SetupStatusSchema>;
-export type ImageBuildKind = "rebuild" | "packages" | "claude-code";
+export type { ImageBuildKind };
 
 export interface SetupServiceOptions {
   core: Pick<Core, "docker" | "image" | "settings">;
@@ -330,26 +331,21 @@ export class SetupService {
     }
   }
 
-  /** The `docker build` argv for a build kind. */
+  /** The `docker build` argv for a build kind, rendered from `imageBuildOptions()`. */
   buildArgv(kind: ImageBuildKind): string[] {
-    const epoch = String(Math.floor((this.opts.now?.() ?? new Date()).getTime() / 1000));
-    const variant =
-      kind === "rebuild"
-        ? ["--no-cache", "--pull"]
-        : kind === "packages"
-          ? ["--build-arg", `CACHEBUST_PACKAGES=${epoch}`]
-          : ["--build-arg", `CACHEBUST=${epoch}`];
-    return [
-      "docker",
-      "build",
-      "-t",
-      this.opts.core.settings.get().engineImage,
-      ...variant,
-      "--build-arg",
-      `USER_NAME=${this.opts.user}`,
-      "--progress=plain",
-      this.opts.imageContext,
-    ];
+    const o = imageBuildOptions({
+      kind,
+      context: this.opts.imageContext,
+      tag: this.opts.core.settings.get().engineImage,
+      user: this.opts.user,
+      now: this.opts.now?.() ?? new Date(),
+    });
+    const argv = ["docker", "build", "-t", o.tag];
+    if (o.noCache) argv.push("--no-cache");
+    if (o.pull) argv.push("--pull");
+    for (const [k, v] of Object.entries(o.buildArgs)) argv.push("--build-arg", `${k}=${v}`);
+    argv.push("--progress=plain", o.context);
+    return argv;
   }
 
   /** Builds or updates the image as an `image_build` job. */

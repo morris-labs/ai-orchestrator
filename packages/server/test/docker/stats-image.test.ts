@@ -4,7 +4,6 @@ import { demuxBuffer } from "../../src/docker/dockerode.js";
 import {
   ImageVersions,
   VERSION_PROBE_COMMAND,
-  imageBuildCommand,
   imageBuildOptions,
   imageStatus,
   parseVersionProbe,
@@ -60,9 +59,6 @@ describe("image helpers", () => {
       noCache: true,
       pull: true,
     });
-    expect(imageBuildCommand(o)).toBe(
-      "docker build -t claude-code --no-cache --pull --build-arg USER_NAME=tester /repo/image",
-    );
     expect(
       imageBuildOptions({ kind: "packages", context: ".", tag: "t", user: "u", now }).buildArgs,
     ).toEqual({ USER_NAME: "u", CACHEBUST_PACKAGES: "1793178000" });

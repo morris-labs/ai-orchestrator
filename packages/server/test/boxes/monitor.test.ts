@@ -152,11 +152,6 @@ describe("core", () => {
     expect(second.imported).toBeNull();
     const status = await h.core.image.status();
     expect(status).toMatchObject({ exists: true, engineMatches: true });
-    expect(h.core.image.plan("claude-code").command).toMatch(
-      /^docker build -t claude-code --build-arg USER_NAME=tester --build-arg CACHEBUST=\d+ /,
-    );
-    const lines: string[] = [];
-    expect(await h.core.image.build("rebuild", (l) => lines.push(l))).toEqual({ ok: true });
     h.core.close();
   });
 });

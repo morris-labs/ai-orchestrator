@@ -1,6 +1,4 @@
 // `DockerClient` over the Docker Engine API through dockerode.
-import fs from "node:fs";
-import path from "node:path";
 import { PassThrough } from "node:stream";
 import Docker from "dockerode";
 import {
@@ -12,7 +10,6 @@ import {
   type DockerClient,
   type ExecOptions,
   type ExecResult,
-  type ImageBuildOptions,
   type ImageInspect,
   type RunOnceOptions,
   type StatsSample,
@@ -75,17 +72,6 @@ function mapBindings(
   const out: ContainerInspect["portBindings"] = {};
   for (const [port, list] of Object.entries(raw ?? {})) {
     out[port] = (list ?? []).map((b) => ({ hostIp: b.HostIp ?? "", hostPort: b.HostPort ?? "" }));
-  }
-  return out;
-}
-
-/** Lists every file under `dir`, relative to it, for the build context. */
-function contextFiles(dir: string, rel = ""): string[] {
-  const out: string[] = [];
-  for (const entry of fs.readdirSync(path.join(dir, rel), { withFileTypes: true })) {
-    const p = rel ? `${rel}/${entry.name}` : entry.name;
-    if (entry.isDirectory()) out.push(...contextFiles(dir, p));
-    else out.push(p);
   }
   return out;
 }
@@ -301,46 +287,6 @@ export class DockerodeClient implements DockerClient {
       if (statusOf(err) === 404) return null;
       return rethrow(err);
     }
-  }
-
-  async buildImage(
-    options: ImageBuildOptions,
-    onOutput: (chunk: string) => void,
-  ): Promise<{ ok: boolean; error?: string }> {
-    const stream = await call(() =>
-      this.docker.buildImage(
-        { context: options.context, src: contextFiles(options.context) },
-        {
-          t: options.tag,
-          buildargs: options.buildArgs,
-          nocache: options.noCache,
-          pull: options.pull,
-        },
-      ),
-    );
-    return new Promise((resolve) => {
-      let error: string | undefined;
-      this.docker.modem.followProgress(
-        stream,
-        (err: Error | null) => {
-          if (err) error = err.message;
-          resolve(error ? { ok: false, error } : { ok: true });
-        },
-        (event: {
-          stream?: string;
-          status?: string;
-          error?: string;
-          errorDetail?: { message?: string };
-        }) => {
-          if (event.stream) onOutput(event.stream);
-          else if (event.status) onOutput(`${event.status}\n`);
-          if (event.error) {
-            error = event.errorDetail?.message ?? event.error;
-            onOutput(`${error}\n`);
-          }
-        },
-      );
-    });
   }
 
   async runOnce(options: RunOnceOptions): Promise<ExecResult> {

@@ -14,7 +14,6 @@ import {
   type DockerClient,
   type ExecOptions,
   type ExecResult,
-  type ImageBuildOptions,
   type ImageInspect,
   type RunOnceOptions,
   type StatsSample,
@@ -59,11 +58,6 @@ export class MemoryDocker implements DockerClient {
    * between its check and the exec.
    */
   beforeExec: ((container: string, options: ExecOptions) => Promise<void>) | undefined;
-  /** Output lines a build produces, and whether it succeeds. */
-  buildResult: { lines: string[]; ok: boolean; error?: string } = {
-    lines: ["Step 1/1\n"],
-    ok: true,
-  };
   private nextId = 1;
   private cpuTick = 0;
 
@@ -297,21 +291,6 @@ export class MemoryDocker implements DockerClient {
   async inspectImage(name: string): Promise<ImageInspect | null> {
     this.record("inspectImage", name);
     return this.images.get(name) ?? null;
-  }
-
-  async buildImage(
-    options: ImageBuildOptions,
-    onOutput: (chunk: string) => void,
-  ): Promise<{ ok: boolean; error?: string }> {
-    this.record("buildImage", options);
-    for (const line of this.buildResult.lines) onOutput(line);
-    if (this.buildResult.ok) {
-      const prev = this.images.get(options.tag);
-      const n = prev ? Number(prev.id.split("-").pop()) + 1 : 1;
-      this.addImage(options.tag, prev?.labels ?? {}, `sha256:${options.tag}-${n}`);
-      return { ok: true };
-    }
-    return { ok: false, error: this.buildResult.error ?? "build failed" };
   }
 
   async runOnce(options: RunOnceOptions): Promise<ExecResult> {
