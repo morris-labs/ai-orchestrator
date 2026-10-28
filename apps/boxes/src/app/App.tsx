@@ -21,6 +21,7 @@ import {
   useContextMenu,
   useEvent,
   useMessageBox,
+  useMessageBoxOpen,
   useStreamStatus,
   useToast,
   type ChordBinding,
@@ -86,6 +87,7 @@ export function App() {
   const client = useApiClient();
   const data = useBoxesData();
   const { ask, confirm, inform } = useMessageBox();
+  const messageOpen = useMessageBoxOpen();
   const toast = useToast();
   const streamStatus = useStreamStatus();
   const tableMenu = useContextMenu();
@@ -1050,7 +1052,7 @@ export function App() {
       },
     })),
   ];
-  useChords(dialog === null ? bindings : []);
+  useChords(dialog === null && !messageOpen ? bindings : []);
 
   const sideMenus = (view: BoxView): MenuEntry[] => {
     const running = view.status === "running";

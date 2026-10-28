@@ -85,6 +85,18 @@ describe("main window", () => {
     await waitFor(() => expect(server.callsTo("boxes.stopAll")).toHaveLength(1));
   });
 
+  it("ignores application chords while a message box is open", async () => {
+    const user = userEvent.setup();
+    const server = new FakeServer({ boxes: boxes() });
+    await renderApp(server);
+    await user.keyboard("{Control>}{Shift>}A{/Shift}{/Control}");
+    await screen.findByRole("dialog", { name: "Stop All" });
+    await user.keyboard("{Control>}{Shift>}A{/Shift}{/Control}");
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+    await user.click(screen.getByRole("button", { name: "No" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
   it("refuses Purge while a box runs against the directory", async () => {
     const user = userEvent.setup();
     const server = new FakeServer({ boxes: boxes() });

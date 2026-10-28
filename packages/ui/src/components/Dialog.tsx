@@ -240,6 +240,12 @@ export interface MessageResult {
 type Ask = (options: MessageOptions) => Promise<MessageResult>;
 
 const MessageContext = createContext<Ask | null>(null);
+const MessageOpenContext = createContext(false);
+
+/** True while a message box is open; application chords stay off meanwhile. */
+export function useMessageBoxOpen(): boolean {
+  return useContext(MessageOpenContext);
+}
 
 interface Pending {
   options: MessageOptions;
@@ -256,7 +262,9 @@ export function MessageBoxProvider({ children }: { children: ReactNode }) {
   const current = queue[0];
   return (
     <MessageContext.Provider value={ask}>
-      {children}
+      <MessageOpenContext.Provider value={current !== undefined}>
+        {children}
+      </MessageOpenContext.Provider>
       {current && (
         <MessageBox
           key={queue.length + current.options.title}
