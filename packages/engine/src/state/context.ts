@@ -130,7 +130,8 @@ export class RunContext {
   private abort = new AbortController();
   private pauseRequested = false;
   private cancelRequested = false;
-  private resumeWaiter: (() => void) | null = null;
+  /** Every parallel call waits on the same gate while the run is paused. */
+  private pauseGate: { promise: Promise<void>; open: () => void } | null = null;
   /** Serializes writes, since parallel agent calls update the same files. */
   private writeChain: Promise<void> = Promise.resolve();
 
@@ -297,9 +298,9 @@ export class RunContext {
 
   requestResume(): void {
     this.pauseRequested = false;
-    const waiter = this.resumeWaiter;
-    this.resumeWaiter = null;
-    waiter?.();
+    const gate = this.pauseGate;
+    this.pauseGate = null;
+    gate?.open();
   }
 
   requestCancel(): void {
@@ -316,12 +317,19 @@ export class RunContext {
   async checkpoint(): Promise<void> {
     if (this.cancelRequested) throw new RunCancelled();
     if (!this.pauseRequested) return;
-    await this.setStatus("paused");
-    await new Promise<void>((resolve) => {
-      this.resumeWaiter = resolve;
-    });
+    let gate = this.pauseGate;
+    if (!gate) {
+      let open = () => undefined as void;
+      const promise = new Promise<void>((resolve) => {
+        open = resolve;
+      });
+      gate = { promise, open };
+      this.pauseGate = gate;
+      await this.setStatus("paused");
+    }
+    await gate.promise;
     if (this.cancelRequested) throw new RunCancelled();
-    await this.setStatus("running", { pausedUntil: undefined });
+    if (this.state.status === "paused") await this.setStatus("running", { pausedUntil: undefined });
   }
 
   /** Pauses the run until `until` (ISO time), as a ceiling or a limit asks. */

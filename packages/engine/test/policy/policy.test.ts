@@ -1,0 +1,82 @@
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { DEFAULT_POLICY, PolicyFileSchema } from "@agentbox/contracts";
+import { describe, expect, it } from "vitest";
+import { globToRegExp, matchesAny, matchesGlob } from "../../src/policy/glob.js";
+import { PolicyError, loadPolicy, parsePolicy, policyFilePath } from "../../src/policy/load.js";
+import { isRiskPath, policyPromptSection, rulesFor } from "../../src/policy/rules.js";
+
+describe("glob", () => {
+  it.each([
+    ["src/**/*.ts", "src/a/b/c.ts", true],
+    ["src/**/*.ts", "src/c.ts", true],
+    ["src/*.ts", "src/a/c.ts", false],
+    ["**/auth/**", "lib/auth/token.py", true],
+    ["*.md", "docs/guide.md", true],
+    ["src/auth", "src/auth/login.ts", true],
+    ["src/auth/", "src/authz.ts", false],
+    ["file?.{js,ts}", "dir/file1.ts", true],
+    ["[ab].py", "c.py", false],
+  ])("%s matches %s: %s", (glob, path, expected) => {
+    expect(matchesGlob(path, glob)).toBe(expected);
+  });
+
+  it("escapes regular expression characters", () => {
+    expect(globToRegExp("a+b.c").test("a+b.c")).toBe(true);
+    expect(globToRegExp("a+b.c").test("aab_c")).toBe(false);
+    expect(matchesAny("x/y.ts", ["*.py", "x/**"])).toBe(true);
+  });
+});
+
+describe("policy loading", () => {
+  it("fills defaults and rejects unknown keys", () => {
+    const p = parsePolicy("version: 1\nriskPaths: [src/auth/**]\n");
+    expect(p.groupSizeLimit).toBe(400);
+    expect(p.riskPaths).toEqual(["src/auth/**"]);
+    expect(() => parsePolicy("version: 1\nriskPath: []\n")).toThrow(PolicyError);
+    expect(() => parsePolicy("version: 2\n")).toThrow(/version/);
+    expect(() => parsePolicy("version: [1\n")).toThrow(PolicyError);
+    expect(parsePolicy("")).toEqual(DEFAULT_POLICY);
+  });
+
+  it("loads the file from the project, or the default when absent", async () => {
+    const root = mkdtempSync(join(tmpdir(), "agentbox-policy-"));
+    expect(await loadPolicy(root)).toEqual(DEFAULT_POLICY);
+    mkdirSync(join(root, ".claude-box"));
+    writeFileSync(join(root, ".claude-box/policy.yaml"), "version: 1\ngroupSizeLimit: 50\n");
+    expect((await loadPolicy(root)).groupSizeLimit).toBe(50);
+    expect(policyFilePath(root, "/etc/p.yaml")).toBe("/etc/p.yaml");
+    expect(policyFilePath("/r")).toBe("/r/.claude-box/policy.yaml");
+  });
+});
+
+describe("rules", () => {
+  const policy = PolicyFileSchema.parse({
+    version: 1,
+    riskPaths: ["src/auth/**"],
+    rules: [
+      { id: "phi", text: "Never log patient data.", appliesTo: ["src/records/**"] },
+      { id: "all", text: "Close every file handle." },
+    ],
+    environmentLimits: ["Windows-only code under win/."],
+  });
+
+  it("selects rules by the files in scope", () => {
+    expect(rulesFor(policy, ["src/ui/a.ts"]).map((r) => r.id)).toEqual(["all"]);
+    expect(rulesFor(policy, ["src/records/a.ts"]).map((r) => r.id)).toEqual(["phi", "all"]);
+    expect(rulesFor(policy).map((r) => r.id)).toEqual(["phi", "all"]);
+  });
+
+  it("detects risk paths", () => {
+    expect(isRiskPath(policy, "src/auth/login.ts")).toBe(true);
+    expect(isRiskPath(policy, "src/ui/login.ts")).toBe(false);
+  });
+
+  it("renders the prompt section with rules and limits", () => {
+    const text = policyPromptSection(policy, ["src/records/x.ts"]);
+    expect(text).toContain("[phi] Never log patient data.");
+    expect(text).toContain("Windows-only code under win/.");
+    expect(policyPromptSection(DEFAULT_POLICY)).toBe("");
+  });
+});
