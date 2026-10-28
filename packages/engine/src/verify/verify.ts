@@ -57,6 +57,7 @@ export async function removeBaseWorktree(git: Git, path: string): Promise<void> 
  */
 export class BaseWorktree {
   private path: Promise<string> | null = null;
+  private disposed = false;
 
   constructor(
     private readonly git: Git,
@@ -66,6 +67,7 @@ export class BaseWorktree {
 
   /** Creates the checkout on first use and returns its path. */
   ensure(): Promise<string> {
+    if (this.disposed) return Promise.reject(new Error("The base checkout was already removed."));
     // Parallel disprovers share one checkout, so the promise is the cache.
     this.path ??= (async () => {
       await removeBaseWorktree(this.git, this.dir);
@@ -86,6 +88,7 @@ export class BaseWorktree {
   }
 
   async dispose(): Promise<void> {
+    this.disposed = true;
     if (!this.path) return;
     const pending = this.path;
     this.path = null;

@@ -44,7 +44,7 @@ import {
   verifyFinding,
   type VerifyResult,
 } from "../verify/verify.js";
-import { DecisionNeeded, type RunContext } from "./context.js";
+import { DecisionNeeded, RunCancelled, type RunContext } from "./context.js";
 import { planReviews, type ReviewTask } from "./profiles.js";
 
 /** Ledger follow-ups per reviewer before the engine accepts missing verdicts. */
@@ -67,10 +67,18 @@ async function mapLimit<T, R>(
 ): Promise<R[]> {
   const results: R[] = new Array<R>(items.length);
   let next = 0;
+  let failed = false;
+  // After one item fails, the other workers take no new items: the stage is
+  // over, and work started now would outlive it.
   const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (next < items.length) {
+    while (next < items.length && !failed) {
       const index = next++;
-      results[index] = await fn(items[index] as T);
+      try {
+        results[index] = await fn(items[index] as T);
+      } catch (error) {
+        failed = true;
+        throw error;
+      }
     }
   });
   await Promise.all(workers);
@@ -495,6 +503,7 @@ function avoidFor(f: Finding): Vendor[] {
 const baseWorktrees = new WeakMap<RunContext, BaseWorktree>();
 
 export function baseWorktreeFor(ctx: RunContext): BaseWorktree {
+  if (ctx.cancelled) throw new RunCancelled();
   let wt = baseWorktrees.get(ctx);
   if (!wt) {
     wt = new BaseWorktree(ctx.git, ctx.state.baseSha ?? "HEAD", baseWorktreePath(ctx.state.id));

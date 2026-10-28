@@ -152,3 +152,15 @@ describe("base checkouts", () => {
     expect(existsSync(path)).toBe(false);
   });
 });
+
+describe("BaseWorktree after dispose", () => {
+  it("refuses to create the checkout again", async () => {
+    const repo = buildSampleRepo();
+    const path = baseWorktreePath(runId());
+    const wt = new BaseWorktree(new Git(new ExecaRunner(), repo), "HEAD", path);
+    await wt.ensure();
+    await wt.dispose();
+    await expect(wt.ensure()).rejects.toThrow(/already removed/);
+    expect(existsSync(path)).toBe(false);
+  });
+});
