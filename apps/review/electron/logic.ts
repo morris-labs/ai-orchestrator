@@ -101,7 +101,7 @@ export function noticeFor(
   const toggle: Record<string, keyof NotificationToggles> = {
     decision_needed: "decisionNeeded",
     run_finished: "runFinished",
-    ready_to_push: "runFinished",
+    ready_to_push: "readyToPush",
     round_summary: "roundSummary",
   };
   const key = toggle[event.kind];

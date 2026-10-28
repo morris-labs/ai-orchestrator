@@ -8,7 +8,12 @@ import {
 } from "../src/screens/findingsModel.js";
 import { DEFAULT_FORM, buildRunRequest, formFromBox } from "../src/screens/launcherModel.js";
 import { commaList, lines, parsePolicyYaml, policyToYaml } from "../src/screens/policyModel.js";
-import { draftFrom, settingsPatch, switchCeilingKind } from "../src/screens/settingsModel.js";
+import {
+  draftFrom,
+  settingsPatch,
+  switchCeilingKind,
+  vendorDefaultsPatch,
+} from "../src/screens/settingsModel.js";
 import { deepLink, href, parseHash } from "../src/state/router.js";
 import { demoBox, demoFindings } from "./helpers/data.js";
 
@@ -134,6 +139,33 @@ describe("settingsPatch", () => {
       ceilings: { codex: { kind: "utilization", window: "5h", max: 0.5 } },
       notifications: { roundSummary: false },
     });
+  });
+
+  it("sends changed vendor defaults and clears an emptied one with null", () => {
+    const set = {
+      ...s,
+      vendorDefaults: {
+        claude: { model: "claude-opus-5-5", effort: "high" as const },
+        codex: {},
+        copilot: { model: "auto" },
+      },
+    };
+    const d = draftFrom(set);
+    expect(d.vendorDefaults).toEqual({
+      claudeModel: "claude-opus-5-5",
+      claudeEffort: "high",
+      codexModel: "",
+      copilotModel: "auto",
+    });
+    d.vendorDefaults.claudeEffort = "";
+    d.vendorDefaults.codexModel = " gpt-6-codex ";
+    d.vendorDefaults.copilotModel = "";
+    expect(vendorDefaultsPatch(set, d.vendorDefaults)).toEqual({
+      claude: { effort: null },
+      codex: { model: "gpt-6-codex" },
+    });
+    d.vendorDefaults.copilotModel = "gpt-6";
+    expect(settingsPatch(set, d)?.vendorDefaults?.copilot).toEqual({ model: "gpt-6" });
   });
 
   it("switches a ceiling kind with defaults", () => {

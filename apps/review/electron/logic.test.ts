@@ -50,7 +50,13 @@ describe("ActiveRuns", () => {
 });
 
 describe("noticeFor", () => {
-  const on = { decisionNeeded: true, runFinished: true, boxEnded: true, roundSummary: true };
+  const on = {
+    decisionNeeded: true,
+    runFinished: true,
+    readyToPush: true,
+    boxEnded: true,
+    roundSummary: true,
+  };
   const notification = (kind: string, extra: object = {}) =>
     ({
       type: "notification",
@@ -68,7 +74,9 @@ describe("noticeFor", () => {
   it.each([
     ["decision_needed", on, "#/runs/01JB8Z5K3W6Q2V9X4T7R0M1N2P", true],
     ["run_finished", on, "#/runs/01JB8Z5K3W6Q2V9X4T7R0M1N2P", false],
-    ["ready_to_push", { ...on, runFinished: false }, null, false],
+    ["ready_to_push", on, "#/runs/01JB8Z5K3W6Q2V9X4T7R0M1N2P", false],
+    ["ready_to_push", { ...on, readyToPush: false }, null, false],
+    ["ready_to_push", { ...on, runFinished: false }, "#/runs/01JB8Z5K3W6Q2V9X4T7R0M1N2P", false],
     ["round_summary", { ...on, roundSummary: false }, null, false],
     ["box_ended", on, null, false],
   ])("%s", (kind, toggles, hash, urgent) => {

@@ -32,7 +32,7 @@ test("launches, prefills the launcher, and keeps a single instance", async () =>
     await page.getByRole("link", { name: "Dashboard" }).click();
     await expect(page.getByRole("heading", { name: "Infrastructure" })).toBeVisible();
     await page.getByRole("link", { name: "Settings" }).click();
-    await expect(page.getByText("Automatic model selection")).toBeVisible();
+    await expect(page.getByRole("group", { name: "Copilot defaults" })).toBeVisible();
 
     // A second launch hands its deep link to the first window and exits.
     const second = spawnSync(

@@ -67,6 +67,7 @@ const active = new ActiveRuns();
 let toggles: NotificationToggles = {
   decisionNeeded: true,
   runFinished: true,
+  readyToPush: true,
   boxEnded: true,
   roundSummary: true,
 };

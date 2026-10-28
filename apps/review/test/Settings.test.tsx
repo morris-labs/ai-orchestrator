@@ -26,7 +26,36 @@ describe("Settings", () => {
       ceilings: { codex: { kind: "utilization", window: "5h", max: 0.5 } },
       notifications: { roundSummary: false },
     });
-    expect(screen.getByText("Automatic model selection")).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("group", { name: "Copilot defaults" })).getByLabelText(/^Model/),
+    ).toHaveValue("auto");
+  });
+
+  it("edits vendor defaults and the ready-to-push toggle", async () => {
+    const settings = defaultConfig();
+    settings.vendorDefaults.codex = { model: "gpt-6-codex" };
+    const { server } = renderWithStore(<Settings />, { "settings.get": () => settings });
+    const claude = await screen.findByRole("group", { name: "Claude defaults" });
+    fireEvent.change(within(claude).getByLabelText(/^Model/), {
+      target: { value: "claude-opus-5-5" },
+    });
+    fireEvent.change(within(claude).getByLabelText("Effort"), { target: { value: "high" } });
+    fireEvent.change(
+      within(screen.getByRole("group", { name: "Codex defaults" })).getByLabelText(/^Model/),
+      { target: { value: "" } },
+    );
+    fireEvent.click(screen.getByLabelText(/ready to push/));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(server.callsTo("settings.patch")).toHaveLength(1));
+    expect(server.callsTo("settings.patch")[0]!.body).toEqual({
+      vendorDefaults: {
+        claude: { model: "claude-opus-5-5", effort: "high" },
+        codex: { model: null },
+      },
+      notifications: { readyToPush: false },
+    });
+    expect(await screen.findByText("✓ Saved.")).toBeInTheDocument();
+    expect(server.state.settings.vendorDefaults.codex.model).toBeUndefined();
   });
 
   it("switches Copilot's spend ceiling and follows settings.changed", async () => {
