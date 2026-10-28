@@ -26,8 +26,16 @@ function UsagePanel({ series }: { series: UsageSeries }) {
   const pts = series.points;
   const first = pts[0]!;
   const last = pts[pts.length - 1]!;
-  const xMaxCandidates = [last.time, series.resetAt ?? 0, series.forecastAt ?? 0];
-  const xMax = Math.max(...xMaxCandidates, first.time + 60_000);
+  // Show the forecast, and the reset when it is near enough not to squeeze
+  // the samples into a sliver; the caption always names the reset time.
+  const span = Math.max(last.time - first.time, 15 * 60_000);
+  const reach = last.time + span * 1.5;
+  const xMax = Math.max(
+    last.time,
+    first.time + 60_000,
+    Math.min(series.forecastAt ?? 0, reach),
+    Math.min(series.resetAt ?? 0, reach),
+  );
   const x = linearScale([first.time, xMax], [M.left, W - M.right]);
   const yMax = Math.max(1, ...pts.map((p) => p.utilization), series.ceiling) * 1.05;
   const y = linearScale([0, yMax], [H - M.bottom, M.top]);
@@ -125,7 +133,9 @@ function UsagePanel({ series }: { series: UsageSeries }) {
             strokeLinejoin="round"
             strokeLinecap="round"
           />
-          {series.forecastAt !== null && series.forecastAt > last.time ? (
+          {series.forecastAt !== null &&
+          series.forecastAt > last.time &&
+          series.forecastAt <= xMax ? (
             <g>
               <line
                 x1={x(last.time)}

@@ -243,6 +243,7 @@ export function RunHealth({ run }: { run: RunView | null }) {
     );
   }
   const points = roundPoints(run);
+  const finished = points.filter((p) => !p.live);
   const overlap = overallOverlap(run);
   const latestOverlap = run.rounds[run.rounds.length - 1]?.overlapRate ?? null;
   const table = (
@@ -294,8 +295,9 @@ export function RunHealth({ run }: { run: RunView | null }) {
             mark="line"
             items={VENDORS.map((v) => ({ key: v, label: VENDOR_LABELS[v], color: vendorColor(v) }))}
           />
-          {points.length > 0 ? (
-            <ConfirmedChart points={points} />
+          {/* A round in progress has no confirmed count yet, so it stays off this chart. */}
+          {finished.length > 0 ? (
+            <ConfirmedChart points={finished} />
           ) : (
             <p className="ab-empty">No round has finished.</p>
           )}
