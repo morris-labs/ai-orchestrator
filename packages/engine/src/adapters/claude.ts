@@ -36,7 +36,16 @@ export const CLAUDE_READ_ONLY_ALLOWED = [
   "Bash(git ls-files *)",
 ];
 
-export const CLAUDE_WRITE_DENIED_FOR_READ_ONLY = ["Edit", "Write", "NotebookEdit"];
+export const CLAUDE_WRITE_DENIED_FOR_READ_ONLY = [
+  "Edit",
+  "Write",
+  "NotebookEdit",
+  // `git diff`, `log`, and `show` write files with `--output`, and run
+  // programs with `--ext-diff` or `--textconv`. A deny wins over the allows.
+  "Bash(*--output*)",
+  "Bash(*--ext-diff*)",
+  "Bash(*--textconv*)",
+];
 
 /**
  * The tool lists for a read-only call. With a scratch directory, `Write` is

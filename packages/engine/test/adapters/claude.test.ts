@@ -218,7 +218,9 @@ describe("ClaudeAdapter.buildArgs", () => {
     const args = adapter.buildArgs(req(z.object({}), { scratchDir: "/runs/r1/scratch/F-1/" }));
     expect(args[args.indexOf("--tools") + 1]).toBe("Read,Grep,Glob,Bash,Write");
     expect(args[args.indexOf("--allowedTools") + 1]).toContain("Write(//runs/r1/scratch/F-1/**)");
-    expect(args[args.indexOf("--disallowedTools") + 1]).toBe("Edit,NotebookEdit");
+    expect(args[args.indexOf("--disallowedTools") + 1]).toBe(
+      "Edit,NotebookEdit,Bash(*--output*),Bash(*--ext-diff*),Bash(*--textconv*)",
+    );
     expect(args[args.indexOf("--permission-mode") + 1]).toBe("dontAsk");
   });
 
@@ -249,7 +251,9 @@ describe("ClaudeAdapter.buildArgs", () => {
     expect(args[args.indexOf("--append-system-prompt") + 1]).toBe("S");
     expect(args[args.indexOf("--permission-mode") + 1]).toBe("dontAsk");
     expect(args[args.indexOf("--tools") + 1]).toBe("Read,Grep,Glob,Bash");
-    expect(args[args.indexOf("--disallowedTools") + 1]).toBe("Edit,Write,NotebookEdit");
+    expect(args[args.indexOf("--disallowedTools") + 1]).toBe(
+      "Edit,Write,NotebookEdit,Bash(*--output*),Bash(*--ext-diff*),Bash(*--textconv*)",
+    );
     expect(JSON.parse(args[args.indexOf("--json-schema") + 1]!)).toHaveProperty(
       "properties.findings",
     );

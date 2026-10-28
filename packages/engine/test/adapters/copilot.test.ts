@@ -139,8 +139,11 @@ describe("CopilotAdapter", () => {
       ]),
     );
     expect(args).toEqual(
-      expect.arrayContaining(["--allow-tool", "shell(git diff:*)", "--deny-tool", "write"]),
+      expect.arrayContaining(["--allow-tool", "shell(git blame:*)", "--deny-tool", "write"]),
     );
+    // Commands that can write a file through an option are never allowed.
+    expect(args.filter((a) => /git (diff|log|show)/.test(a))).toEqual([]);
+    expect(args).toEqual(expect.arrayContaining(["--deny-tool", "write"]));
     expect(args).not.toContain("--allow-all-tools");
   });
 

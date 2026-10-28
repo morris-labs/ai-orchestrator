@@ -17,12 +17,14 @@ import { parseStructuredText } from "./output.js";
 import { runProcess } from "./process.js";
 import { AdapterError, type CliRequest, type CliResult, type CliLimitInfo } from "./types.js";
 
-/** Shell commands a read-only Copilot role may run. */
+/**
+ * Shell commands a read-only Copilot role may run. `git diff`, `log`, and
+ * `show` aren't here: they write files with `--output`, and Copilot's
+ * documented patterns match only a command's start, so they can't allow the
+ * command and deny the option. The prompt carries the diff instead.
+ */
 export const COPILOT_READ_ONLY_ALLOW = [
   "read",
-  "shell(git diff:*)",
-  "shell(git log:*)",
-  "shell(git show:*)",
   "shell(git blame:*)",
   "shell(git status:*)",
   "shell(git ls-files:*)",

@@ -915,11 +915,7 @@ export async function runConfirm(
     model: out.model,
     groupId: null,
   }));
-  const merged = await mergeInto(
-    ctx,
-    () => toCandidates(ctx, raw, "confirmer", groups),
-    "confirm",
-  );
+  const merged = await mergeInto(ctx, () => toCandidates(ctx, raw, "confirmer", groups), "confirm");
   const record: ConfirmRecord = {
     confirmer: out.vendor,
     fixedIds,
