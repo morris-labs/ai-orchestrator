@@ -155,6 +155,31 @@ describe("create", () => {
     expect(h.core.db.boxes.list().map((b) => b.id)).toEqual([box.id]);
   });
 
+  it("gives two concurrent creates of one name separate boxes and keeps the worktree", async () => {
+    const h = makeHarness();
+    const repo = initRepo(h.dir("repo"));
+    const req = { targetDir: repo, layout: "worktree" as const, conversationName: "Fix login" };
+    const results = await Promise.allSettled([
+      h.core.boxes.create(req),
+      h.core.boxes.create(req),
+    ]);
+    expect(results.map((r) => r.status)).toEqual(["fulfilled", "fulfilled"]);
+    const [a, b] = results.map((r) => (r as PromiseFulfilledResult<Box>).value) as [Box, Box];
+    expect(new Set([a.id, b.id]).size).toBe(2);
+    expect(h.core.db.boxes.list().map((x) => x.id).sort()).toEqual([a.id, b.id].sort());
+    expect(a.worktree).toBe(b.worktree);
+    expect(fs.existsSync(a.worktree!)).toBe(true);
+  });
+
+  it("removes the record of a create whose start fails", async () => {
+    const h = makeHarness();
+    h.docker.failingCommands = ["claude"];
+    await expect(
+      h.core.boxes.create({ targetDir: h.dir("app"), layout: "root" }),
+    ).rejects.toMatchObject({ code: "conflict" });
+    expect(h.core.db.boxes.list()).toEqual([]);
+  });
+
   it("refuses a worktree without a repository and falls back for auto", async () => {
     const h = makeHarness();
     const dir = h.dir("plain");

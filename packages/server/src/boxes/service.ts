@@ -47,6 +47,7 @@ import {
 import { ApiError, messageOf, notFound } from "../records/errors.js";
 import type { CoreEvents } from "../records/events.js";
 import type { CoreHooks } from "../records/hooks.js";
+import { KeyedMutex } from "../records/mutex.js";
 import type { SettingsService } from "../records/settings.js";
 import {
   executeMigration,
@@ -139,6 +140,8 @@ export class BoxService {
   /** Boxes whose stop a person asked for, so the monitor does not call it unexpected. */
   private readonly requestedStops = new Map<string, number>();
   private readonly converting = new Set<string>();
+  /** Serializes the part of `create()` that picks a name and saves the record. */
+  private readonly createLock = new KeyedMutex();
 
   constructor(private readonly deps: BoxServiceDeps) {}
 
@@ -435,132 +438,150 @@ export class BoxService {
       layout = "root";
     }
 
-    let conversationName = req.conversationName.trim();
-    const provision = !resumeExisting && conversationName !== "" && layout !== "root";
-    let slug = "";
-    let openingPrompt = "";
-    let worktree: string | undefined;
-    let branch: string | undefined;
-    let workspace: string | undefined;
-    let createdWorktree: { repo: string; path: string } | null = null;
+    // Name, worktree, and record are settled under one lock, so two creates
+    // that want the same name (a double-clicked Create) can't both take it,
+    // and the second sees the first one's worktree as existing.
+    const prepared = await this.createLock.run("create", async () => {
+      let conversationName = req.conversationName.trim();
+      const provision = !resumeExisting && conversationName !== "" && layout !== "root";
+      let slug = "";
+      let openingPrompt = "";
+      let worktree: string | undefined;
+      let branch: string | undefined;
+      let workspace: string | undefined;
+      let createdWorktree: { repo: string; path: string } | null = null;
 
-    if (provision) {
-      slug = slugifyIssueName(conversationName);
-      if (slug === "")
-        throw new ApiError("validation", "The conversation name has no usable characters.");
-      let workPath: string;
-      if (layout === "worktree") {
-        const repo = project.primaryRepo as string;
-        const existed = fs.existsSync(worktreePath(repo, slug));
-        const added = await addWorktree(repo, slug);
-        if (!added.ok)
-          throw new ApiError("conflict", `Could not create the worktree: ${added.error}`);
-        workPath = added.path;
-        worktree = added.path;
-        branch = branchFor(slug);
-        if (!existed) createdWorktree = { repo, path: added.path };
-      } else {
-        workPath = path.join(targetDir, slug);
-        if (!isDirectory(workPath)) {
-          try {
-            fs.mkdirSync(workPath, { recursive: true });
-          } catch (err) {
-            throw new ApiError(
-              "conflict",
-              `Could not create the workspace folder ${workPath}: ${messageOf(err)}`,
-            );
+      if (provision) {
+        slug = slugifyIssueName(conversationName);
+        if (slug === "")
+          throw new ApiError("validation", "The conversation name has no usable characters.");
+        let workPath: string;
+        if (layout === "worktree") {
+          const repo = project.primaryRepo as string;
+          const existed = fs.existsSync(worktreePath(repo, slug));
+          const added = await addWorktree(repo, slug);
+          if (!added.ok)
+            throw new ApiError("conflict", `Could not create the worktree: ${added.error}`);
+          workPath = added.path;
+          worktree = added.path;
+          branch = branchFor(slug);
+          if (!existed) createdWorktree = { repo, path: added.path };
+        } else {
+          workPath = path.join(targetDir, slug);
+          if (!isDirectory(workPath)) {
+            try {
+              fs.mkdirSync(workPath, { recursive: true });
+            } catch (err) {
+              throw new ApiError(
+                "conflict",
+                `Could not create the workspace folder ${workPath}: ${messageOf(err)}`,
+              );
+            }
           }
+          workspace = slug;
         }
-        workspace = slug;
+        const notes = worktree ? ensureWorktreeNotesDir(worktree) : ensureNotesDir(targetDir, slug);
+        if (project.primaryRepo) await ensureExcluded(project.primaryRepo);
+        const notesPath = promptPath(this.env, notes);
+        const infraPath = promptPath(this.env, infraFile(targetDir));
+        openingPrompt = worktree
+          ? expandTemplate(templates.worktree, [
+              slug,
+              conversationName,
+              promptPath(this.env, workPath),
+              notesPath,
+              infraPath,
+              promptPath(this.env, project.primaryRepo as string),
+              branch as string,
+            ])
+          : expandTemplate(templates.workspace, [
+              slug,
+              conversationName,
+              promptPath(this.env, workPath),
+              notesPath,
+              infraPath,
+            ]);
+        conversationName = slug;
+      } else if (!resumeExisting && templates.starter !== "") {
+        openingPrompt = expandTemplate(templates.starter, [
+          conversationName,
+          promptPath(this.env, targetDir),
+        ]);
       }
-      const notes = worktree ? ensureWorktreeNotesDir(worktree) : ensureNotesDir(targetDir, slug);
-      if (project.primaryRepo) await ensureExcluded(project.primaryRepo);
-      const notesPath = promptPath(this.env, notes);
-      const infraPath = promptPath(this.env, infraFile(targetDir));
-      openingPrompt = worktree
-        ? expandTemplate(templates.worktree, [
-            slug,
-            conversationName,
-            promptPath(this.env, workPath),
-            notesPath,
-            infraPath,
-            promptPath(this.env, project.primaryRepo as string),
-            branch as string,
-          ])
-        : expandTemplate(templates.workspace, [
-            slug,
-            conversationName,
-            promptPath(this.env, workPath),
-            notesPath,
-            infraPath,
-          ]);
-      conversationName = slug;
-    } else if (!resumeExisting && templates.starter !== "") {
-      openingPrompt = expandTemplate(templates.starter, [
-        conversationName,
-        promptPath(this.env, targetDir),
-      ]);
-    }
 
-    const containers = (await this.deps.docker.listContainers({ all: true })).map((c) => c.name);
-    const id = uniqueBoxName(slug || path.posix.basename(targetDir), this.takenNames(containers));
-    const sessionUuid = adoptUuid ?? crypto.randomUUID();
-    if (conversationName === "") conversationName = id;
-    const now = this.now();
-    let box: Box = BoxInputSchema.parse({
-      id,
-      projectId: project.id,
-      // Unique across every project: the proxy resolves a key without one.
-      hostKey: allocateHostKey(id, this.repos.boxes.list()),
-      targetDir,
-      sessionUuid,
-      conversationName,
-      transcriptSyncedName: conversationName,
-      platform: req.platform,
-      model: req.platform === "claude" ? req.model : undefined,
-      effort: req.platform === "claude" ? req.effort : undefined,
-      skipPermissions: req.skipPermissions,
-      workspace,
-      worktree,
-      branch,
-      container: projectContainerName(project.id),
-      session: id,
-      wasRunning: false,
-      sshRemoteRefs: req.sshRemoteRefs,
-      createdAt: now,
-      updatedAt: now,
+      const containers = (await this.deps.docker.listContainers({ all: true })).map(
+        (c) => c.name,
+      );
+      const id = uniqueBoxName(slug || path.posix.basename(targetDir), this.takenNames(containers));
+      const sessionUuid = adoptUuid ?? crypto.randomUUID();
+      if (conversationName === "") conversationName = id;
+      const now = this.now();
+      const box: Box = BoxInputSchema.parse({
+        id,
+        projectId: project.id,
+        // Unique across every project: the proxy resolves a key without one.
+        hostKey: allocateHostKey(id, this.repos.boxes.list()),
+        targetDir,
+        sessionUuid,
+        conversationName,
+        transcriptSyncedName: conversationName,
+        platform: req.platform,
+        model: req.platform === "claude" ? req.model : undefined,
+        effort: req.platform === "claude" ? req.effort : undefined,
+        skipPermissions: req.skipPermissions,
+        workspace,
+        worktree,
+        branch,
+        container: projectContainerName(project.id),
+        session: id,
+        wasRunning: false,
+        sshRemoteRefs: req.sshRemoteRefs,
+        createdAt: now,
+        updatedAt: now,
+      });
+      // The record reserves the name before the lock opens. A box saved
+      // without a start waits for its first start to resume or mint a session.
+      const saved = this.repos.boxes.put(req.start ? box : { ...box, sessionUuid: adoptUuid });
+      return { box: saved, openingPrompt, conversationName, createdWorktree };
     });
 
+    let box = prepared.box;
+    const { openingPrompt, conversationName, createdWorktree } = prepared;
+    const sessionUuid = box.sessionUuid as string;
     if (!req.start) {
-      // The record waits for its first start, which resumes or mints a session.
-      box = this.repos.boxes.put({ ...box, sessionUuid: adoptUuid });
       this.publish(box, "stopped");
       return box;
     }
 
     let args = [...baseClaudeArgs(box, project), "--name", conversationName];
     if (openingPrompt !== "") args.push(openingPrompt);
-    if (forkFrom) {
-      await this.copyForkTranscript(forkFrom, boxWorkDir(box));
-      args.push("--resume", forkFrom.uuid, "--fork-session", "--session-id", sessionUuid);
-    } else {
-      args.push(resumeExisting ? "--resume" : "--session-id", sessionUuid);
-    }
-    if (box.platform !== "claude")
-      args = platformArgs(box, project, box.platform, false, openingPrompt);
-
     this.mark(box, "starting");
     try {
+      if (forkFrom) {
+        await this.copyForkTranscript(forkFrom, boxWorkDir(box));
+        args.push("--resume", forkFrom.uuid, "--fork-session", "--session-id", sessionUuid);
+      } else {
+        args.push(resumeExisting ? "--resume" : "--session-id", sessionUuid);
+      }
+      if (box.platform !== "claude")
+        args = platformArgs(box, project, box.platform, false, openingPrompt);
       await this.startSession(box, box.platform, args);
     } catch (err) {
       this.transitions.delete(box.id);
-      if (createdWorktree)
+      this.repos.boxes.delete(box.id);
+      // Never take a worktree from under another record.
+      if (
+        createdWorktree &&
+        !this.repos.boxes.list().some((b) => b.worktree === createdWorktree.path)
+      )
         await removeWorktree(createdWorktree.repo, createdWorktree.path, this.env.now());
       this.publish(null, "stopped", box.id);
       throw err;
     }
+    // Re-read: an edit may have landed while the session started.
+    const current = this.repos.boxes.get(box.id) ?? box;
     box = this.repos.boxes.put({
-      ...box,
+      ...current,
       wasRunning: true,
       launchedModel: box.model,
       launchedEffort: box.effort,
