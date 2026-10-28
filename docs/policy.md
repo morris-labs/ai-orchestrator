@@ -78,6 +78,7 @@ fails the run's preflight instead of being ignored.
 | `lint` | List of commands | `[]` | Lint commands for the gate, in the same form as `tests`. |
 | `environmentLimits` | List of strings | `[]` | Facts about where the code runs, added to every reviewer and disprover prompt. |
 | `groupSizeLimit` | Positive integer | `400` | The changed-line count above which a file group splits. |
+| `commentAuthors` | List of strings | Absent | GitHub logins whose pull request comments the post-push loop imports. The loop always imports Copilot's comments. When you set this field, the loop imports comments from these logins instead of from the repository's collaborators. Logins are case-insensitive. |
 
 ## How the pipeline uses the policy
 
