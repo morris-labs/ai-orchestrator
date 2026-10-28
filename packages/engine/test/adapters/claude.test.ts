@@ -299,4 +299,17 @@ describe("claudeAccount", () => {
     expect(claudeAccount(file)).toBe("user@example.com");
     expect(claudeAccount(join(dir, "missing.json"))).toBeNull();
   });
+
+  it("keeps the last email while another claude rewrites the file", () => {
+    const dir = mkdtempSync(join(tmpdir(), "agentbox-acct-"));
+    const file = join(dir, "claude.json");
+    writeFileSync(file, JSON.stringify({ oauthAccount: { emailAddress: "user@example.com" } }));
+    expect(claudeAccount(file)).toBe("user@example.com");
+    writeFileSync(file, '{"oauthAccount": {"emailAdd');
+    expect(claudeAccount(file)).toBe("user@example.com");
+    writeFileSync(file, "");
+    expect(claudeAccount(file)).toBe("user@example.com");
+    writeFileSync(file, JSON.stringify({ oauthAccount: { emailAddress: "other@example.com" } }));
+    expect(claudeAccount(file)).toBe("other@example.com");
+  });
 });
