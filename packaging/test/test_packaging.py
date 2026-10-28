@@ -262,6 +262,35 @@ class VersionTest(unittest.TestCase):
             self.assertIn("AGENTBOX_ENGINE_VERSION=4.1.0-rc.1", (tmp / "image/versions.env").read_text())
 
 
+class DocsTest(unittest.TestCase):
+    def test_changelog_has_the_release_section(self):
+        version = read_versions()["AGENTBOX_ENGINE_VERSION"].split("-")[0]
+        text = (ROOT / "CHANGELOG.md").read_text()
+        self.assertRegex(text, rf"(?m)^## \[{re.escape(version)}\]")
+
+    def test_user_docs_exist_and_links_resolve(self):
+        names = (
+            "install", "daily-flow", "review-pipeline", "policy", "secrets",
+            "troubleshooting", "migration-3x", "architecture",
+        )
+        pages = [ROOT / "README.md", ROOT / "CHANGELOG.md"] + [ROOT / f"docs/{n}.md" for n in names]
+        for page in pages:
+            self.assertTrue(page.is_file(), page)
+            for target in re.findall(r"\]\(([^)#]+\.md)(?:#[^)]*)?\)", page.read_text()):
+                self.assertTrue((page.parent / target).is_file(), f"{page.name} links to missing {target}")
+        self.assertIn("## Migrating from 3.x", (ROOT / "README.md").read_text())
+
+    def test_policy_example_parses(self):
+        text = (ROOT / "docs/policy.md").read_text()
+        example = re.search(r"```yaml\n(.*?)```", text, re.S).group(1)
+        policy = yaml.safe_load(example)
+        allowed = {"version", "riskPaths", "rules", "tests", "lint", "environmentLimits", "groupSizeLimit"}
+        self.assertEqual(policy["version"], 1)
+        self.assertLessEqual(set(policy), allowed)
+        for rule in policy["rules"]:
+            self.assertLessEqual(set(rule), {"id", "text", "appliesTo"})
+
+
 class DesktopTest(unittest.TestCase):
     def test_entries_match_launchers_and_icons(self):
         config = load_yaml(NFPM)
