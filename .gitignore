@@ -1,0 +1,28 @@
+# Build output
+gui/build/
+
+# Release packages (AppImage, .deb, Windows installer) -- built artifacts, not source.
+/dist/
+/installer/
+
+# IDE/editor state -- local to each developer's machine.
+/.vscode/
+
+# Git credential store and env files -- hold live PATs/secrets, must never be committed.
+.git-credentials
+.env
+*.env
+
+# Per-platform release workspaces -- local working directories, not source.
+/Windows_Release/
+/Mac_Release/
+
+# Legacy bash launcher/manager -- kept on disk as a working fallback while
+# the C++/Qt6 app in gui/ is being built out, but not tracked here.
+/claude-box.bash
+/claude-box-manager.bash
+/claude-box-lib.bash
+/claude-box-resume-all.bash
+/claude-box-resume.service
+/docker-compose.yml
+/gitcontrol.sh
