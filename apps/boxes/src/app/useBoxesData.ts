@@ -38,11 +38,23 @@ export function useBoxesData(): BoxesData {
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<BoxesData["error"]>(null);
   const inFlight = useRef<Promise<void> | null>(null);
+  /**
+   * Box changes that arrived while a reload was in flight. The reload's
+   * snapshot may predate them, so they are applied again on top of it.
+   */
+  const pending = useRef<Array<(boxes: BoxView[]) => BoxView[]> | null>(null);
   const status = useStreamStatus();
+
+  /** Applies a change to the boxes now, and again after an in-flight reload. */
+  const changeBoxes = useCallback((op: (boxes: BoxView[]) => BoxView[]) => {
+    pending.current?.push(op);
+    setBoxes(op);
+  }, []);
 
   const reload = useCallback(() => {
     // One reload in flight at a time, as the Qt poll did.
     if (inFlight.current) return inFlight.current;
+    pending.current = [];
     const p = (async () => {
       try {
         const [pr, br, st] = await Promise.all([
@@ -51,7 +63,8 @@ export function useBoxesData(): BoxesData {
           client.call("settings.get", {}),
         ]);
         setProjects(pr.projects);
-        setBoxes(br.boxes);
+        const later = pending.current ?? [];
+        setBoxes(later.reduce((acc, op) => op(acc), br.boxes));
         setSettings(st);
         setError(null);
         setUpdatedAt(new Date());
@@ -62,6 +75,7 @@ export function useBoxesData(): BoxesData {
         });
       } finally {
         setLoaded(true);
+        pending.current = null;
         inFlight.current = null;
       }
     })();
@@ -86,14 +100,16 @@ export function useBoxesData(): BoxesData {
 
   useEvent("box.changed", (ev) => {
     const known = boxesRef.current.some((b) => b.box.id === ev.boxId);
-    setBoxes((all) => applyBoxChanged(all, ev).boxes);
+    changeBoxes((all) => applyBoxChanged(all, ev).boxes);
     setUpdatedAt(new Date());
     if (known || ev.box === null) return;
     // A box this client hasn't seen: fetch its full view, and the projects,
     // since a new box can create a project.
     void client
       .call("boxes.get", { params: { boxId: ev.boxId } })
-      .then((v) => setBoxes((all) => (all.some((b) => b.box.id === v.box.id) ? all : [...all, v])))
+      .then((v) =>
+        changeBoxes((all) => (all.some((b) => b.box.id === v.box.id) ? all : [...all, v])),
+      )
       .catch(() => undefined);
     void client
       .call("projects.list", {})
@@ -101,13 +117,13 @@ export function useBoxesData(): BoxesData {
       .catch(() => undefined);
   });
   useEvent("container.stats", (ev) => {
-    setBoxes((all) => applyStats(all, ev));
+    changeBoxes((all) => applyStats(all, ev));
     setDisk((d) => new Map(d).set(ev.container, ev.diskBytes));
     setUpdatedAt(new Date());
   });
   useEvent("ports.changed", (ev) => {
     const proxyPort = settings?.proxyPort ?? settings?.serverPort ?? 20400;
-    setBoxes((all) => applyPorts(all, ev, proxyPort));
+    changeBoxes((all) => applyPorts(all, ev, proxyPort));
   });
   useEvent("settings.changed", (ev) => setSettings(ev.settings));
   useEvent("container.changed", () => {
@@ -117,15 +133,17 @@ export function useBoxesData(): BoxesData {
       .catch(() => undefined);
   });
 
-  const putBox = useCallback((view: BoxView) => {
-    setBoxes((all) => {
-      const i = all.findIndex((b) => b.box.id === view.box.id);
-      if (i < 0) return [...all, view];
-      const next = [...all];
-      next[i] = view;
-      return next;
-    });
-  }, []);
+  const putBox = useCallback(
+    (view: BoxView) =>
+      changeBoxes((all) => {
+        const i = all.findIndex((b) => b.box.id === view.box.id);
+        if (i < 0) return [...all, view];
+        const next = [...all];
+        next[i] = view;
+        return next;
+      }),
+    [changeBoxes],
+  );
 
   const counted = useMemo(() => projectCounts(projects, boxes), [projects, boxes]);
 

@@ -297,6 +297,52 @@ describe("main window", () => {
     expect(screen.getByText("2 running \u00b7 0 not running")).toBeInTheDocument();
   });
 
+  it("keeps a box.changed that arrives while a reload is in flight", async () => {
+    const server = new FakeServer({ boxes: boxes() });
+    await renderApp(server);
+    await waitFor(() => expect(server.socketsFor("/api/v1/events")).toHaveLength(1));
+    const stale = JSON.parse(JSON.stringify(server.state.boxes)) as typeof server.state.boxes;
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    // The first reload answers late with the old list; later ones never
+    // answer, so the result shows only that reload and the replayed event.
+    let calls = 0;
+    server.on("boxes.list", async () => {
+      calls += 1;
+      if (calls > 1) await new Promise(() => undefined);
+      await gate;
+      return { boxes: stale };
+    });
+    // The server restarted: the app reloads through REST.
+    const [ws] = server.socketsFor("/api/v1/events");
+    await waitFor(() => expect(screen.getByText(/updated/)).toBeInTheDocument());
+    const before = server.callsTo("boxes.list").length;
+    act(() => {
+      ws!.serverSend({ type: "hello", streamId: "restarted", lastSeq: 0, replaying: false });
+    });
+    await waitFor(() => expect(server.callsTo("boxes.list").length).toBe(before + 1));
+    act(() => {
+      ws!.serverSend({
+        ...makeEvent("box.changed", {
+          boxId: "claude-agent-api",
+          status: "running",
+          box: stale[1]!.box,
+        }),
+        streamId: "restarted",
+        seq: 1,
+      });
+    });
+    await act(async () => {
+      release();
+      await gate;
+    });
+    await waitFor(() =>
+      expect(screen.getByText("2 running \u00b7 0 not running")).toBeInTheDocument(),
+    );
+  });
+
   it("shows dev-server links from ports.changed in the details panel", async () => {
     const server = new FakeServer({ boxes: boxes() });
     await renderApp(server);
