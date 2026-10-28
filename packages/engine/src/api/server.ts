@@ -180,9 +180,19 @@ export async function buildEngineApp(options: EngineAppOptions): Promise<Fastify
       });
     });
   });
-  app.addHook("onClose", (_instance, done) => {
+  // Close the event sockets before the HTTP server closes: the server waits
+  // for every open connection, upgraded ones included, so closing them in
+  // `onClose` would wait for the shutdown that waits for them.
+  app.addHook("preClose", (done) => {
     for (const client of wss.clients) client.close(1001, "The engine is shutting down.");
-    wss.close(() => done());
+    const force = setTimeout(() => {
+      for (const client of wss.clients) client.terminate();
+    }, 2_000);
+    force.unref();
+    wss.close(() => {
+      clearTimeout(force);
+      done();
+    });
   });
 
   return app;

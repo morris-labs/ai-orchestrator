@@ -52,6 +52,19 @@ const ask = {
 };
 
 describe("engine.events", () => {
+  it("closes a connected subscriber when the app closes", async () => {
+    engine = await listenEngine();
+    const c = connect();
+    await c.opened;
+    c.send({ type: "hello", streamId: null, lastSeq: null });
+    await c.take(1);
+    const closed = new Promise<number>((r) => c.socket.once("close", (code) => r(code)));
+    const started = Date.now();
+    await engine.app.close();
+    expect(await closed).toBe(1001);
+    expect(Date.now() - started).toBeLessThan(2_000);
+  });
+
   it("refuses a connection without the token", async () => {
     engine = await listenEngine();
     await expect(connect("").opened).rejects.toThrow("status 401");
