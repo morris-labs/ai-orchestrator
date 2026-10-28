@@ -364,30 +364,54 @@ async function symbolsOfFixed(ctx: RunContext): Promise<Map<string, string>> {
   return map;
 }
 
-/** Merges candidates into the run's findings and announces the new ones. */
+interface MergeCommit {
+  result: Omit<MergeResult, "findings">;
+  findings: Finding[];
+  findingCounter: number;
+}
+
+/**
+ * Merges candidates into the run's findings and announces the new ones,
+ * once. The merge result and the findings after it are saved in one file
+ * (`<name>-commit.json`) before the findings file, so a stage that resumes
+ * after a crash restores that result instead of merging the same
+ * candidates into their own copies.
+ */
 export async function mergeInto(
   ctx: RunContext,
-  candidates: readonly Candidate[],
-): Promise<MergeResult> {
-  const result = mergeCandidates(
-    ctx.findings,
-    candidates,
-    {
-      runId: ctx.state.id,
-      round: Math.max(1, ctx.round),
-      nextId: () => ctx.nextFindingId(),
-      acceptedOscillations: ctx.eng.acceptedOscillations,
-      now: () => ctx.nowIso(),
-    },
-    await symbolsOfFixed(ctx),
-  );
-  ctx.findings = result.findings;
-  await ctx.persist();
-  for (const id of result.created) {
-    const f = ctx.findingById(id);
-    if (f) await ctx.announceFinding(f);
+  candidates: readonly Candidate[] | (() => Promise<readonly Candidate[]>),
+  name: string,
+): Promise<Omit<MergeResult, "findings">> {
+  const file = ctx.store.roundFile(ctx.round, `${name}-commit`);
+  let commit = await ctx.store.readJson<MergeCommit>(file);
+  if (!commit) {
+    const list = typeof candidates === "function" ? await candidates() : candidates;
+    const { findings, ...result } = mergeCandidates(
+      ctx.findings,
+      list,
+      {
+        runId: ctx.state.id,
+        round: Math.max(1, ctx.round),
+        nextId: () => ctx.nextFindingId(),
+        acceptedOscillations: ctx.eng.acceptedOscillations,
+        now: () => ctx.nowIso(),
+      },
+      await symbolsOfFixed(ctx),
+    );
+    commit = { result, findings, findingCounter: ctx.eng.counters.finding };
+    await ctx.store.writeJson(file, commit);
   }
-  return result;
+  if (!ctx.eng.appliedMerges.includes(file)) {
+    ctx.findings = commit.findings;
+    ctx.eng.counters.finding = Math.max(ctx.eng.counters.finding, commit.findingCounter);
+    ctx.eng.appliedMerges = [...ctx.eng.appliedMerges, file];
+    await ctx.persist();
+    for (const id of commit.result.created) {
+      const f = ctx.findingById(id);
+      if (f) await ctx.announceFinding(f);
+    }
+  }
+  return commit.result;
 }
 
 /** The decision for findings that came back after their fix. */
@@ -430,8 +454,7 @@ export async function runMerge(
   );
   const raisedByVendor: Partial<Record<Vendor, number>> = {};
   for (const r of raw) raisedByVendor[r.vendor] = (raisedByVendor[r.vendor] ?? 0) + 1;
-  const candidates = await toCandidates(ctx, raw, "reviewer", groups);
-  const result = await mergeInto(ctx, candidates);
+  const result = await mergeInto(ctx, () => toCandidates(ctx, raw, "reviewer", groups), "merge");
   const output: MergeOutput = {
     round: ctx.round,
     created: result.created,
@@ -554,15 +577,17 @@ export async function runSweep(
   groups: readonly FileGroup[],
 ): Promise<MergeOutput | null> {
   const file = ctx.store.roundFile(ctx.round, "sweep");
-  const saved = await ctx.store.readJson<MergeOutput>(file);
-  if (saved) return saved;
+  // A sweep with no patterns saves `{ "skipped": true }`, since `readJson`
+  // can't tell a saved `null` from a missing file.
+  const saved = await ctx.store.readJson<MergeOutput | { skipped: true }>(file);
+  if (saved) return "skipped" in saved ? null : saved;
   const patterns = ctx.findings.filter(
     (f) =>
       f.verdict === "confirmed" &&
       f.history.some((h) => h.verdict === "confirmed" && h.round === ctx.round),
   );
   if (patterns.length === 0) {
-    await ctx.store.writeJson(file, null);
+    await ctx.store.writeJson(file, { skipped: true });
     return null;
   }
   const vendor =
@@ -591,8 +616,7 @@ export async function runSweep(
     model: out.model,
     groupId: null,
   }));
-  const candidates = await toCandidates(ctx, raw, "sweep", groups);
-  const result = await mergeInto(ctx, candidates);
+  const result = await mergeInto(ctx, () => toCandidates(ctx, raw, "sweep", groups), "sweep");
   const output: MergeOutput = {
     round: ctx.round,
     created: result.created,
@@ -891,8 +915,11 @@ export async function runConfirm(
     model: out.model,
     groupId: null,
   }));
-  const candidates = await toCandidates(ctx, raw, "confirmer", groups);
-  const merged = await mergeInto(ctx, candidates);
+  const merged = await mergeInto(
+    ctx,
+    () => toCandidates(ctx, raw, "confirmer", groups),
+    "confirm",
+  );
   const record: ConfirmRecord = {
     confirmer: out.vendor,
     fixedIds,

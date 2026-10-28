@@ -69,6 +69,8 @@ export const EngineStateSchema = z.object({
   preFixSha: z.string().nullable().default(null),
   /** The gate's last failure report, for the next fix attempt. */
   lastGateFailure: z.string().nullable().default(null),
+  /** Merges whose findings are saved, by commit file; a resumed stage never applies one twice. */
+  appliedMerges: z.array(z.string()).default([]),
   /** Findings the fixer declined, with a reason, as not real defects; not sent to it again. */
   declined: z.array(z.string()).default([]),
   /** Usage of the current round per vendor. */

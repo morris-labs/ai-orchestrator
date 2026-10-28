@@ -51,6 +51,11 @@ async function leftRun(repo: string, patch: Partial<RunState>): Promise<string> 
     readOnly: true,
   } as never);
   await settle(runs, id);
+  // Wait for the driver's last write before rewriting the file under it.
+  const controllers = (
+    runs as unknown as { controllers: Map<string, { settled(): Promise<unknown> }> }
+  ).controllers;
+  await controllers.get(id)?.settled();
   const file = join(repo, ".claude-box/runs", id, "state.json");
   const state = JSON.parse(readFileSync(file, "utf8")) as RunState;
   writeFileSync(
