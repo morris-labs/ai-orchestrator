@@ -231,7 +231,11 @@ export interface LeaseActual {
  * `settle` only tells the broker the lease is finished.
  */
 export interface LeaseBroker {
-  acquire(request: LeaseRequest): Promise<LeaseResponse>;
+  /**
+   * Asks for a lease. Rejects when `signal` aborts. The response's `leaseId`
+   * is the lease to settle, which can differ from the request's.
+   */
+  acquire(request: LeaseRequest, signal?: AbortSignal): Promise<LeaseResponse>;
   settle(leaseId: string, actual: LeaseActual): void;
 }
 

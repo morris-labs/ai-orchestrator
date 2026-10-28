@@ -456,6 +456,12 @@ export function reporterVendor(f: Finding): Vendor | null {
   return v === "claude" || v === "codex" || v === "copilot" ? v : null;
 }
 
+/** The vendors a disprover of `f` must not be: its reporter, when known. */
+function avoidFor(f: Finding): Vendor[] {
+  const reporter = reporterVendor(f);
+  return reporter ? [reporter] : [];
+}
+
 const baseWorktrees = new WeakMap<RunContext, BaseWorktree>();
 
 export function baseWorktreeFor(ctx: RunContext): BaseWorktree {
@@ -502,6 +508,7 @@ export async function verifyPending(ctx: RunContext, stageFile: string): Promise
           groupId: f.groupId,
           estimateTokens: estimateTokens(request.prompt) + 6000,
           allowFallback: true,
+          ...(ctx.state.request.crossVendor ? { avoid: avoidFor(f) } : {}),
         });
         return { vendor: out.vendor, model: out.model, output: out.output };
       },
@@ -834,7 +841,9 @@ export async function runConfirm(
     fixDiff,
     policySection: policyPromptSection(ctx.policy),
   });
-  const vendor = ctx.state.request.crossVendor ? ctx.state.roles.confirmer : ctx.state.roles.fixer;
+  const crossVendor = ctx.state.request.crossVendor;
+  const fixer = ctx.state.roles.fixer;
+  const vendor = crossVendor ? ctx.state.roles.confirmer : fixer;
   const out = await ctx.callAgent<ConfirmOutput>({
     key: "confirm",
     role: "confirmer",
@@ -844,6 +853,7 @@ export async function runConfirm(
     groupId: null,
     estimateTokens: estimateTokens(prompt) + 3000,
     allowFallback: true,
+    ...(crossVendor ? { avoid: [fixer] } : {}),
   });
   const actor = { kind: "agent" as const, vendor: out.vendor, model: out.model, role: "confirmer" };
   const incomplete = new Map(out.output.incomplete.map((i) => [i.id, i.reason]));

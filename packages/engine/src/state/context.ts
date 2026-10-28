@@ -100,6 +100,12 @@ export interface AgentCallSpec {
   estimateTokens: number;
   /** Move to another vendor when this one hits its limit. The fixer never moves. */
   allowFallback?: boolean;
+  /**
+   * Vendors that must not take this call: the finding's reporter for a
+   * disprover, the fixer for a confirmer. A limit fallback skips them, and a
+   * server grant that redirects to one stops the run for a decision instead.
+   */
+  avoid?: readonly Vendor[];
 }
 
 export interface AgentOutcome<T> {
@@ -117,6 +123,8 @@ const ROLE_FOR_AGENT: Record<AgentRole, Role> = {
   fixer: "fixer",
   sweeper: "reviewer",
 };
+
+const ZERO_USE: LeaseActual = { tokens: { in: 0, out: 0 }, premiumRequests: 0, costEstimate: 0 };
 
 const TERMINAL: readonly RunStatus[] = ["finished", "failed", "cancelled"];
 
@@ -399,6 +407,7 @@ export class RunContext {
     from: Vendor,
     to: Vendor,
     reason: "ceiling" | "limit",
+    announce = true,
   ): Promise<void> {
     const contractRole = ROLE_FOR_AGENT[role];
     const roles = this.state.roles;
@@ -415,6 +424,9 @@ export class RunContext {
       roles[contractRole] = to;
     }
     await this.persist();
+    // The server announces the moves it makes in a lease response; the
+    // engine announces only its own.
+    if (!announce) return;
     await this.emit({
       type: "role.reassigned",
       runId: this.state.id,
@@ -426,26 +438,51 @@ export class RunContext {
     });
   }
 
-  /** Requests a lease, waiting through `pause` answers. Returns the vendor to call. */
+  /**
+   * Requests a lease, waiting through `pause` answers. Returns the vendor to
+   * call and the lease id to settle, which is the server's.
+   */
   async acquireLease(
     vendor: Vendor,
     role: AgentRole,
     estimateTokens: number,
+    avoid: readonly Vendor[] = [],
   ): Promise<{ vendor: Vendor; leaseId: string }> {
     for (;;) {
       await this.checkpoint();
       this.eng.counters.lease += 1;
-      const leaseId = `${this.state.id}-L${this.eng.counters.lease}`;
-      const response = await this.deps.broker.acquire({
-        leaseId,
-        runId: this.state.id,
-        vendor,
-        role,
-        estimate: { tokens: Math.max(0, Math.round(estimateTokens)) },
-      });
+      const requested = `${this.state.id}-L${this.eng.counters.lease}`;
+      let response;
+      try {
+        response = await this.deps.broker.acquire(
+          {
+            leaseId: requested,
+            runId: this.state.id,
+            vendor,
+            role,
+            estimate: { tokens: Math.max(0, Math.round(estimateTokens)) },
+          },
+          this.signal,
+        );
+      } catch (error) {
+        if (this.cancelRequested) throw new RunCancelled();
+        throw error;
+      }
       if (response.decision === "granted") {
+        const leaseId = response.leaseId;
         if (response.vendor !== vendor && this.deps.adapters[response.vendor]) {
-          await this.reassign(role, vendor, response.vendor, "ceiling");
+          if (avoid.includes(response.vendor)) {
+            // Taking the grant would break the cross-vendor rule; hand the
+            // lease back unused and ask a person.
+            await this.settle(leaseId, response.vendor, role, ZERO_USE);
+            throw new DecisionNeeded({
+              kind: "ceiling",
+              findingIds: [],
+              options: ["resume", "cancel"],
+              message: `The server moved the ${role} call from ${vendor} to ${response.vendor}, but ${response.vendor} may not take it: a finding is never checked by the vendor that reported or fixed it. Resume when ${vendor} has room again, or assign the role to another vendor.`,
+            });
+          }
+          await this.reassign(role, vendor, response.vendor, "ceiling", false);
           return { vendor: response.vendor, leaseId };
         }
         return { vendor, leaseId };
@@ -464,10 +501,16 @@ export class RunContext {
     }
   }
 
-  private fallbackVendor(role: AgentRole, tried: readonly Vendor[]): Vendor | null {
+  private fallbackVendor(
+    role: AgentRole,
+    tried: readonly Vendor[],
+    avoid: readonly Vendor[] = [],
+  ): Vendor | null {
     if (role === "fixer") return null;
     return (
-      FALLBACK_ORDER.find((v) => !tried.includes(v) && this.deps.adapters[v] !== undefined) ?? null
+      FALLBACK_ORDER.find(
+        (v) => !tried.includes(v) && !avoid.includes(v) && this.deps.adapters[v] !== undefined,
+      ) ?? null
     );
   }
 
@@ -485,7 +528,7 @@ export class RunContext {
     let failures = 0;
     let limitHits = 0;
     for (;;) {
-      const lease = await this.acquireLease(vendor, spec.role, spec.estimateTokens);
+      const lease = await this.acquireLease(vendor, spec.role, spec.estimateTokens, spec.avoid);
       vendor = lease.vendor;
       const adapter: VendorAdapter | undefined = this.deps.adapters[vendor];
       if (!adapter)
@@ -544,7 +587,8 @@ export class RunContext {
               `${vendor} kept hitting its limit: ${limit.message}`,
             );
           tried.push(vendor);
-          const next = spec.allowFallback === false ? null : this.fallbackVendor(spec.role, tried);
+          const next =
+            spec.allowFallback === false ? null : this.fallbackVendor(spec.role, tried, spec.avoid);
           if (next) {
             await this.reassign(spec.role, vendor, next, "limit");
             vendor = next;

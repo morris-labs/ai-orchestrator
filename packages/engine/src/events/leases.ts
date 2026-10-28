@@ -42,6 +42,7 @@ interface Pending {
   /** When the frame last went to a transport; `null` while none was subscribed. */
   sentAt: number | null;
   detachAbort: () => void;
+  signal: AbortSignal | undefined;
 }
 
 export class LeaseBrokerClosedError extends Error {
@@ -78,9 +79,14 @@ export class EngineLeaseBroker implements LeaseBroker {
     return [...this.pending.keys()];
   }
 
-  /** The core's entry point: asks the server under the core's own lease id. */
-  acquire(request: LeaseRequest): Promise<LeaseResponse> {
-    return this.request(request);
+  /**
+   * The core's entry point: asks the server under the core's own lease id.
+   * Rejects when `signal` aborts, so a cancelled run stops waiting. The
+   * response's `leaseId` is the one to settle: it differs from the request's
+   * when an expired grant made the broker ask again.
+   */
+  acquire(request: LeaseRequest, signal?: AbortSignal): Promise<LeaseResponse> {
+    return this.request(request, { signal });
   }
 
   /**
@@ -146,7 +152,7 @@ export class EngineLeaseBroker implements LeaseBroker {
       this.options.log.info("A lease grant arrived expired; asking again", {
         leaseId: parsed.leaseId,
       });
-      this.enqueue({ ...ask, leaseId: this.newLeaseId() }, p.resolve, p.reject, undefined);
+      this.enqueue({ ...ask, leaseId: this.newLeaseId() }, p.resolve, p.reject, p.signal);
       return;
     }
     p.resolve(parsed);
@@ -185,6 +191,10 @@ export class EngineLeaseBroker implements LeaseBroker {
   ): void {
     const frame = LeaseRequestFrameSchema.parse({ type: "lease.request", ...request });
     let detachAbort = () => {};
+    if (signal?.aborted) {
+      reject(abortError(signal));
+      return;
+    }
     if (signal) {
       const onAbort = () => {
         this.pending.delete(frame.leaseId);
@@ -193,7 +203,7 @@ export class EngineLeaseBroker implements LeaseBroker {
       signal.addEventListener("abort", onAbort, { once: true });
       detachAbort = () => signal.removeEventListener("abort", onAbort);
     }
-    const p: Pending = { frame, resolve, reject, sentAt: null, detachAbort };
+    const p: Pending = { frame, resolve, reject, sentAt: null, detachAbort, signal };
     this.pending.set(frame.leaseId, p);
     if (this.transports.size > 0) {
       this.broadcast(frame);
