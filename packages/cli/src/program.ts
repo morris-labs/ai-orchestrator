@@ -325,14 +325,18 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
     .description("Delete the transcripts and records for the box's directory. Can't be undone.")
     .argument("<boxId>")
     .option("--yes", "Confirm the purge.")
-    .action(async (boxId: string, o: { yes?: boolean }) => {
-      if (!o.yes)
+    .option("--dry-run", "Report what the purge would delete without deleting it.")
+    .action(async (boxId: string, o: { yes?: boolean; dryRun?: boolean }) => {
+      if (!o.yes && !o.dryRun)
         throw new UsageError("Purge deletes transcripts. Run it again with --yes to confirm.");
-      const r = await client().call("boxes.purge", { params: { boxId } });
+      const r = await client().call("boxes.purge", {
+        params: { boxId },
+        body: { dryRun: o.dryRun ?? false },
+      });
       print(
         r,
         () =>
-          `Removed ${r.removedRecords.length} records and ${r.removedTranscriptDirs.length} transcript directories.\n`,
+          `${r.dryRun ? "Would remove" : "Removed"} ${r.removedRecords.length} records and ${r.removedTranscriptDirs.length} transcript directories.\n`,
       );
     });
 
@@ -673,8 +677,16 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
     .description("Import the 3.x records under ~/.claude-box into the server's database.")
     .option("--dry-run", "Report what would be imported without writing.")
     .action(async (o: { dryRun?: boolean }) => {
-      const r = await client().callExtra("import.run", { body: { dryRun: o.dryRun ?? false } });
-      deps.out(`${JSON.stringify(r, null, 2)}\n`);
+      const r = await client().call("import.run", { body: { dryRun: o.dryRun ?? false } });
+      print(r, () => {
+        const verb = r.dryRun ? "Would import" : "Imported";
+        const settings = r.settingsApplied ? "the global settings" : "no global settings";
+        const lines = [
+          `${verb} ${r.projects} projects, ${r.boxes} boxes, ${r.sshRemotes} SSH remotes, and ${settings}.`,
+          ...r.warnings.map((w) => `Warning: ${w}`),
+        ];
+        return `${lines.join("\n")}\n`;
+      });
     });
 
   program

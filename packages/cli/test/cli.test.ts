@@ -207,10 +207,20 @@ describe("box", () => {
     expect(await cli(["box", "purge", BOX_ID])).toBe(2);
     expect(server.requests).toHaveLength(0);
     server.on(`POST /api/v1/boxes/${BOX_ID}/purge`, {
-      body: { removedRecords: [BOX_ID], removedTranscriptDirs: ["/x"] },
+      body: { removedRecords: [BOX_ID], removedTranscriptDirs: ["/x"], dryRun: false },
     });
     expect(await cli(["box", "purge", BOX_ID, "--yes"])).toBe(0);
+    expect(last()?.body).toEqual({ dryRun: false });
     expect(out).toContain("Removed 1 records and 1 transcript directories.");
+  });
+
+  it("previews a purge with --dry-run and no --yes", async () => {
+    server.on(`POST /api/v1/boxes/${BOX_ID}/purge`, {
+      body: { removedRecords: [BOX_ID], removedTranscriptDirs: [], dryRun: true },
+    });
+    expect(await cli(["box", "purge", BOX_ID, "--dry-run"])).toBe(0);
+    expect(last()?.body).toEqual({ dryRun: true });
+    expect(out).toContain("Would remove 1 records and 0 transcript directories.");
   });
 
   it("attaches through the server's attach command", async () => {
@@ -393,10 +403,23 @@ describe("review", () => {
 
 describe("migrate, setup, doctor", () => {
   it("calls the import route", async () => {
-    server.on("POST /api/v1/import", { body: { boxes: 3, projects: 1 } });
+    const report = {
+      dryRun: true,
+      projects: 1,
+      boxes: 3,
+      sshRemotes: 0,
+      settingsApplied: true,
+      warnings: ["Skipped the record x: no target_dir."],
+    };
+    server.on("POST /api/v1/import", { body: report });
     expect(await cli(["migrate", "--dry-run"])).toBe(0);
     expect(last()?.body).toEqual({ dryRun: true });
-    expect(JSON.parse(out)).toEqual({ boxes: 3, projects: 1 });
+    expect(out).toContain(
+      "Would import 1 projects, 3 boxes, 0 SSH remotes, and the global settings.",
+    );
+    expect(out).toContain("Warning: Skipped the record x: no target_dir.");
+    expect(await cli(["migrate", "--json"])).toBe(0);
+    expect(JSON.parse(out.slice(out.indexOf("{")))).toEqual(report);
   });
 
   it("prints the setup checks", async () => {

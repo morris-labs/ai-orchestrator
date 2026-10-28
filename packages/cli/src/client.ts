@@ -11,7 +11,6 @@ import {
   type ServerRouteKey,
   type ServerRoutes,
 } from "@agentbox/contracts";
-import { z } from "zod";
 
 /** The server routes served over plain HTTP. */
 export type ServerHttpKey = {
@@ -27,27 +26,11 @@ export type CallInput<K extends ServerHttpKey> = (keyof RouteOf<K>["params"] ext
   Defined<RouteOf<K>["query"], { query?: RouteOf<K>["query"] }> &
   Defined<RouteOf<K>["body"], { body?: RouteOf<K>["body"] }>;
 
-/**
- * Routes the CLI needs that the contracts don't have yet. `import.run`
- * stands in for the server's import route until the contracts add it.
- */
-export const extraRoutes = {
-  "import.run": {
-    kind: "http",
-    method: "POST",
-    path: "/api/v1/import",
-    auth: true,
-    summary: "Import the 3.x records under ~/.claude-box into the database.",
-    body: z.object({ dryRun: z.boolean().default(false) }),
-    response: z.record(z.unknown()),
-  },
-} as const satisfies Record<string, HttpRouteDef>;
-
 /** A failed call that returned an `ApiError` body. */
 export class ApiCallError extends Error {
   constructor(
     readonly status: number,
-    readonly code: ApiErrorCode | "unauthorized" | "unknown",
+    readonly code: ApiErrorCode | "unknown",
     message: string,
     readonly details?: unknown,
   ) {
@@ -93,16 +76,6 @@ export class ServerClient {
   call<K extends ServerHttpKey>(key: K, input?: CallInput<K>): Promise<RouteOf<K>["response"]> {
     return this.request(serverRoutes[key] as HttpRouteDef, input ?? {}) as Promise<
       RouteOf<K>["response"]
-    >;
-  }
-
-  /** Calls one of `extraRoutes`. */
-  callExtra<K extends keyof typeof extraRoutes>(
-    key: K,
-    input: { body?: z.input<(typeof extraRoutes)[K]["body"]> } = {},
-  ): Promise<z.infer<(typeof extraRoutes)[K]["response"]>> {
-    return this.request(extraRoutes[key], input) as Promise<
-      z.infer<(typeof extraRoutes)[K]["response"]>
     >;
   }
 
