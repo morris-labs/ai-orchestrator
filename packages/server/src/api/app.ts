@@ -258,6 +258,8 @@ export async function startApp(options: AppOptions): Promise<App> {
     proxyPort,
     async close() {
       if (tunnelSync) clearTimeout(tunnelSync);
+      // A running image build would otherwise keep the process alive.
+      await jobs.stopAll();
       await api.close();
       if (proxyServer) await new Promise<void>((resolve) => proxyServer?.close(() => resolve()));
       await engines.stop();

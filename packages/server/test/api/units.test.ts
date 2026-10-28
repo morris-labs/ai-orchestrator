@@ -130,6 +130,42 @@ describe("JobManager", () => {
     expect(jobs.attach("nope")).toBeUndefined();
   });
 
+  it("drops the oldest finished jobs past the limit and stale ones past their age", async () => {
+    const jobs = new JobManager({ finishedLimit: 2, finishedTtlMs: 60_000 });
+    const ids: string[] = [];
+    for (let i = 0; i < 3; i += 1) {
+      ids.push(
+        jobs.start({ kind: "image_build", command: `b${i}` }, async () => ({ exitCode: 0 })).id,
+      );
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    const fourth = jobs.start({ kind: "image_build", command: "b3" }, async () => ({
+      exitCode: 0,
+    }));
+    expect(jobs.get(ids[0]!)).toBeUndefined();
+    expect(jobs.get(ids[1]!)?.status).toBe("finished");
+    expect(jobs.get(fourth.id)).toBeDefined();
+
+    const aged = new JobManager({ finishedTtlMs: 0 });
+    const old = aged.start({ kind: "image_build", command: "old" }, async () => ({ exitCode: 0 }));
+    await new Promise((r) => setTimeout(r, 5));
+    aged.start({ kind: "image_build", command: "new" }, async () => ({ exitCode: 0 }));
+    expect(aged.get(old.id)).toBeUndefined();
+  });
+
+  it("stops running jobs at shutdown", async () => {
+    const jobs = new JobManager();
+    const runner = new NodeProcessRunner();
+    const job = jobs.start({ kind: "image_build", command: "sleep" }, (io) =>
+      processJob(io, runner.spawn("sleep", ["30"])),
+    );
+    await new Promise((r) => setTimeout(r, 50));
+    const started = Date.now();
+    await jobs.stopAll(5000);
+    expect(Date.now() - started).toBeLessThan(4000);
+    expect(jobs.get(job.id)?.status).toBe("failed");
+  });
+
   it("fails a job that throws, with the error code", async () => {
     const jobs = new JobManager();
     const job = jobs.start({ kind: "box_create", command: "create" }, async () => {
