@@ -60,6 +60,26 @@ function sendFailure(reply: FastifyReply, failure: ApiFailure): FastifyReply {
   return reply.code(failure.status).send(failure.toBody());
 }
 
+/**
+ * The failure to answer for an error that reached Fastify's error handler.
+ * An error with a contract `code` keeps it, whatever else it carries; only
+ * Fastify's own 4xx errors (a bad body, a missing route) map by `statusCode`.
+ */
+export function failureOf(err: unknown): ApiFailure {
+  const failure = toApiFailure(err);
+  if (failure.code !== "internal" || err instanceof ApiFailure) return failure;
+  const status = (err as { statusCode?: number }).statusCode;
+  if (status !== undefined && status >= 400 && status < 500) {
+    return new ApiFailure(
+      status === 404 ? "not_found" : status === 401 ? "unauthorized" : "validation",
+      (err as Error).message,
+      undefined,
+      status,
+    );
+  }
+  return failure;
+}
+
 export interface ApiServer {
   app: FastifyInstance;
   /** Starts listening on 127.0.0.1; resolves with the bound port. */
@@ -104,21 +124,9 @@ export async function createApiServer(deps: ApiDeps): Promise<ApiServer> {
   });
 
   app.setErrorHandler((err, _request, reply) => {
-    if (err instanceof ApiFailure) return sendFailure(reply, err);
-    const status = (err as { statusCode?: number }).statusCode;
-    if (status !== undefined && status >= 400 && status < 500) {
-      return sendFailure(
-        reply,
-        new ApiFailure(
-          status === 404 ? "not_found" : status === 401 ? "unauthorized" : "validation",
-          (err as Error).message,
-          undefined,
-          status,
-        ),
-      );
-    }
-    const failure = toApiFailure(err);
-    if (failure.status >= 500) deps.log?.(`Request failed: ${failure.message}`);
+    const failure = failureOf(err);
+    if (failure.status >= 500 && failure.code !== "docker_unavailable")
+      deps.log?.(`Request failed: ${failure.message}`);
     return sendFailure(reply, failure);
   });
   app.setNotFoundHandler((request, reply) =>
