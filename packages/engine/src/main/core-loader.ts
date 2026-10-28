@@ -51,7 +51,10 @@ export async function loadCore(
   } catch (err) {
     const e = err as NodeJS.ErrnoException;
     const missing =
-      e.code === "ERR_MODULE_NOT_FOUND" && String(e.message).includes(fileURLToPath(specifier));
+      e.code === "ERR_MODULE_NOT_FOUND" &&
+      [fileURLToPath(specifier), specifier.href].some((name) =>
+        String(e.message).startsWith(`Cannot find module '${name}'`),
+      );
     if (!missing) throw err;
     deps.log.warn("The engine core isn't installed; run routes answer with errors");
     return { runs: unavailableRunManager(), available: false };

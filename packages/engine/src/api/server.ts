@@ -137,8 +137,16 @@ export async function buildEngineApp(options: EngineAppOptions): Promise<Fastify
           query: route.query ? route.query.parse(req.query ?? {}) : undefined,
           body: route.body ? route.body.parse(req.body ?? {}) : undefined,
         };
-        const output = route.response.parse(await handler(input));
-        const body = key === "engine.health" ? { ...output, versionMatches } : output;
+        const result = route.response.safeParse(await handler(input));
+        if (!result.success) {
+          log.error("A handler returned a body that breaks the contract", {
+            route: key,
+            issues: result.error.issues.slice(0, 5),
+          });
+          throw new Error(`Invalid response from ${key}.`);
+        }
+        const output: unknown = result.data;
+        const body = key === "engine.health" ? { ...(output as object), versionMatches } : output;
         return reply.code(route.status ?? 200).send(body);
       },
     });
