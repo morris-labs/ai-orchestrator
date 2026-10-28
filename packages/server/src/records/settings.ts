@@ -3,6 +3,7 @@
 import fs from "node:fs";
 import {
   DEFAULT_PROMPT_TEMPLATES,
+  ENGINE_ENV,
   GlobalSettingsPatchSchema,
   GlobalSettingsSchema,
   MountSchema,
@@ -184,10 +185,30 @@ function isDirectory(p: string): boolean {
   }
 }
 
-/** Refuses two references that set the same environment variable. */
+/**
+ * Environment variables the server sets on every project container. Docker
+ * keeps the last of two duplicates, so a secret with one of these names
+ * would replace the server's value, such as the engine token.
+ */
+export const RESERVED_ENV_NAMES: ReadonlySet<string> = new Set([
+  "IS_SANDBOX",
+  "DISABLE_AUTOUPDATER",
+  "GIT_CONFIG_GLOBAL",
+  ...Object.values(ENGINE_ENV),
+]);
+
+/**
+ * Refuses two references that set the same environment variable, and a
+ * reference that sets one the server reserves.
+ */
 export function assertUniqueNames(refs: readonly SecretRef[]): void {
   const seen = new Set<string>();
   for (const r of refs) {
+    if (RESERVED_ENV_NAMES.has(r.name))
+      throw new ApiError(
+        "validation",
+        `The secret name ${r.name} is reserved for a variable the server sets.`,
+      );
     if (seen.has(r.name)) throw new ApiError("validation", `The secret ${r.name} is listed twice.`);
     seen.add(r.name);
   }

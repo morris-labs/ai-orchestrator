@@ -37,6 +37,18 @@ const input: LaunchInput = {
 };
 
 describe("buildLaunchSpec", () => {
+  it("never lets a secret replace a variable the server sets", () => {
+    const spec = buildLaunchSpec(
+      env,
+      { ...input, extraEnv: { AGENTBOX_ENGINE_TOKEN: "evil", API_KEY: "k" } },
+      { projectsSymlinkTarget: null, hasGitconfig: false },
+    );
+    expect(spec.env.filter((e) => e.startsWith("AGENTBOX_ENGINE_TOKEN="))).toEqual([
+      "AGENTBOX_ENGINE_TOKEN=secret-token-value-0123456789",
+    ]);
+    expect(spec.env).toContain("API_KEY=k");
+  });
+
   // The golden spec is the 3.3.5 launch minus the port pool, plus the engine.
   // It differs from 3.3.5 in the command and one variable on purpose: the
   // container runs the image's keeper.sh (which also keeps the engine
