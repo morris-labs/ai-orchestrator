@@ -37,6 +37,31 @@ export const CLAUDE_READ_ONLY_ALLOWED = [
 
 export const CLAUDE_WRITE_DENIED_FOR_READ_ONLY = ["Edit", "Write", "NotebookEdit"];
 
+/**
+ * The tool lists for a read-only call. With a scratch directory, `Write` is
+ * available but allowed only under that directory: `dontAsk` denies every
+ * call no allow rule covers. A path rule starting with `//` is absolute.
+ */
+export function claudeReadOnlyPolicy(scratchDir?: string): {
+  tools: string[];
+  allowed: string[];
+  disallowed: string[];
+} {
+  if (!scratchDir) {
+    return {
+      tools: CLAUDE_READ_ONLY_TOOLS,
+      allowed: CLAUDE_READ_ONLY_ALLOWED,
+      disallowed: CLAUDE_WRITE_DENIED_FOR_READ_ONLY,
+    };
+  }
+  const dir = scratchDir.replace(/\/+$/, "");
+  return {
+    tools: [...CLAUDE_READ_ONLY_TOOLS, "Write"],
+    allowed: [...CLAUDE_READ_ONLY_ALLOWED, `Write(/${dir}/**)`],
+    disallowed: CLAUDE_WRITE_DENIED_FOR_READ_ONLY.filter((t) => t !== "Write"),
+  };
+}
+
 export interface ClaudeAdapterOptions extends CliAdapterOptions {
   /**
    * Pass `--bare`, which skips hooks, plugins, and CLAUDE.md discovery. It
@@ -96,13 +121,14 @@ export class ClaudeAdapter extends CliAdapter {
     for (const dir of req.addDirs ?? []) args.push("--add-dir", dir);
     args.push("--json-schema", JSON.stringify(this.jsonSchemaFor(req)));
     if (req.tools === "read-only") {
+      const policy = claudeReadOnlyPolicy(req.scratchDir);
       args.push(
         "--tools",
-        CLAUDE_READ_ONLY_TOOLS.join(","),
+        policy.tools.join(","),
         "--allowedTools",
-        CLAUDE_READ_ONLY_ALLOWED.join(","),
+        policy.allowed.join(","),
         "--disallowedTools",
-        CLAUDE_WRITE_DENIED_FOR_READ_ONLY.join(","),
+        policy.disallowed.join(","),
         "--permission-mode",
         "dontAsk",
         "--permission-prompts",

@@ -27,7 +27,12 @@ export const COPILOT_READ_ONLY_ALLOW = [
   "shell(git ls-files:*)",
 ];
 
-/** Denied for read-only roles. A deny wins over any allow. */
+/**
+ * Denied for read-only roles. A deny wins over any allow. Copilot's
+ * documentation doesn't say whether `write(PATH)` matches by path, so a
+ * read-only call gets no write access at all, scratch directory included: a
+ * Copilot disprover returns its reproduction script in `script.content`.
+ */
 export const COPILOT_READ_ONLY_DENY = ["write"];
 
 /**

@@ -217,8 +217,9 @@ export function disproverPrompt(input: DisproverPromptInput): string {
       [
         `The repository at the tip is ${input.range.repoPath}. Don't edit it.`,
         `A checkout of the base (${input.range.baseSha}) is at ${input.baseWorktree}. Don't edit it.`,
-        `Where you can, write a reproduction script in ${input.scratchDir} and run it. The script must exit non-zero when the flaw reproduces and zero when it doesn't, and it must take the repository directory as its first argument, so it runs against both checkouts.`,
-        "The engine reruns your script against the tip and the base. Return its path relative to the scratch directory, or `null` when you verified by reading the code.",
+        `Where you can, write a reproduction script in the scratch directory ${input.scratchDir}, the only place you may write. The script must exit 1 when the flaw reproduces and 0 when it doesn't, must let any other failure exit with a different code, and must take the repository directory as its first argument, so it runs against both checkouts.`,
+        "The engine runs your script against the tip and the base; you might not be able to run it yourself. Return its path relative to the scratch directory, or `null` when you verified by reading the code. When you can't write the file, put its text in `script.content` and the engine writes it.",
+        "Base your verdict and `presentAtBase` on your own reading too: a script that doesn't run counts for nothing.",
         "Set `presentAtBase` to true when the same flaw exists in the base checkout.",
       ].join("\n"),
     ),

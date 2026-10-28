@@ -30,6 +30,7 @@ describe("toCliRequest", () => {
       cwd: "/repo",
       tools: "read-only",
       addDirs: ["/base", "/scratch"],
+      scratchDir: "/scratch",
       model: "opus",
       timeoutMs: 1000,
     });

@@ -1,11 +1,19 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { RoleAssignment } from "@agentbox/contracts";
+import { FindingInputSchema, type RoleAssignment } from "@agentbox/contracts";
 import { describe, expect, it } from "vitest";
 import type { VerifyOutput } from "../../src/core.js";
 import { ExecaRunner } from "../../src/range/exec.js";
-import { chooseDisprover, decideVerdict, runReproScript } from "../../src/verify/verify.js";
+import { DEFAULT_POLICY } from "@agentbox/contracts";
+import {
+  chooseDisprover,
+  classifyRun,
+  decideVerdict,
+  runReproScript,
+  verifyFinding,
+  type BaseWorktree,
+} from "../../src/verify/verify.js";
 
 const roles: RoleAssignment = {
   reviewer: ["codex", "copilot"],
@@ -105,5 +113,141 @@ describe("runReproScript", () => {
     await expect(runReproScript(runner, scratch, { path: "../evil.sh" }, repo)).rejects.toThrow(
       /outside/,
     );
+  });
+});
+
+describe("classifyRun", () => {
+  const r = (extra: Partial<Parameters<typeof classifyRun>[0]>) => ({
+    exitCode: 0,
+    timedOut: false,
+    output: "",
+    ...extra,
+  });
+
+  it("counts only exit 1 without crash output as a reproduction", () => {
+    expect(classifyRun(r({ exitCode: 1 }))).toBe("reproduced");
+    expect(classifyRun(r({ exitCode: 0 }))).toBe("clean");
+    expect(classifyRun(r({ exitCode: 2 }))).toBe("failed");
+    expect(classifyRun(r({ exitCode: 127, notStarted: true }))).toBe("failed");
+    expect(classifyRun(r({ exitCode: 126 }))).toBe("failed");
+    expect(classifyRun(r({ exitCode: 1, timedOut: true }))).toBe("failed");
+    expect(classifyRun(r({ exitCode: 137, signal: "SIGKILL" }))).toBe("failed");
+    expect(
+      classifyRun(r({ exitCode: 1, output: "Traceback (most recent call last):\n  boom" })),
+    ).toBe("failed");
+  });
+});
+
+describe("decideVerdict with failed scripts", () => {
+  const ran = (exitCode: number, extra = {}) => ({
+    exitCode,
+    timedOut: false,
+    output: "",
+    ...extra,
+  });
+
+  it("never makes a finding pre-existing because the script failed at the tip and the base", () => {
+    const missing = ran(127, { notStarted: true });
+    const d = decideVerdict(out({ script: { path: "r.sh" } }), missing, missing);
+    expect(d).toMatchObject({
+      verdict: "confirmed",
+      verification: "code-reading",
+      introduced: true,
+    });
+  });
+
+  it("treats a base run that failed as introduced", () => {
+    const d = decideVerdict(out({ script: { path: "r.sh" } }), ran(1), ran(2));
+    expect(d).toMatchObject({ verdict: "confirmed", verification: "script", introduced: true });
+  });
+
+  it("ignores the base run when the tip didn't reproduce", () => {
+    const d = decideVerdict(out({ script: { path: "r.sh" } }), ran(2), ran(1));
+    expect(d.verdict).toBe("confirmed");
+  });
+});
+
+describe("verifyFinding", () => {
+  const finding = FindingInputSchema.parse({
+    id: "F-0001",
+    fingerprint: "f",
+    severity: "P1",
+    title: "Crash on empty input",
+    file: "a.py",
+    lines: [1, 2],
+    failureCase: "Empty input crashes.",
+    category: "crash",
+    introduced: true,
+    reportedBy: "copilot-x",
+    verdict: "pending",
+    evidence: "",
+    runId: "01JC0000000000000000000001",
+    round: 1,
+    groupId: null,
+    origin: "reviewer",
+  });
+
+  function deps(script: VerifyOutput["script"], scratch: string, repo: string, base: string) {
+    return {
+      runner: new ExecaRunner(),
+      range: { repoPath: repo, baseSha: "b", tipSha: "t", tipRef: "main" },
+      policy: DEFAULT_POLICY,
+      baseWorktree: { ensure: () => Promise.resolve(base) } as unknown as BaseWorktree,
+      scratchDirFor: () => scratch,
+      timeoutMs: 1000,
+      callDisprover: () =>
+        Promise.resolve({ vendor: "codex" as const, model: "m", output: out({ script }) }),
+    };
+  }
+
+  function dirs() {
+    const root = mkdtempSync(join(tmpdir(), "agentbox-verify-"));
+    const scratch = join(root, "scratch");
+    const repo = join(root, "repo");
+    const base = join(root, "base");
+    for (const d of [scratch, repo, base]) mkdirSync(d);
+    return { root, scratch, repo, base };
+  }
+
+  it("keeps a confirmed finding when the script the disprover named doesn't exist", async () => {
+    const { scratch, repo, base } = dirs();
+    const result = await verifyFinding(
+      finding,
+      "codex",
+      deps({ path: "repro.sh", interpreter: "sh" }, scratch, repo, base),
+    );
+    expect(result?.decision).toMatchObject({ verdict: "confirmed", verification: "code-reading" });
+    expect(result?.baseRun).toBeNull();
+  });
+
+  it("keeps a confirmed finding when the script crashes at the tip and the base", async () => {
+    const { scratch, repo, base } = dirs();
+    writeFileSync(join(scratch, "r.py"), "raise RuntimeError('broken script')\n");
+    const result = await verifyFinding(
+      finding,
+      "codex",
+      deps({ path: "r.py", interpreter: "python3" }, scratch, repo, base),
+    );
+    expect(result?.decision.verdict).toBe("confirmed");
+    expect(result?.decision.verification).toBe("code-reading");
+  });
+
+  it("writes the script text the disprover returned and runs it", async () => {
+    const { scratch, repo, base } = dirs();
+    const result = await verifyFinding(
+      finding,
+      "codex",
+      deps({ path: "r.sh", interpreter: "sh", content: "exit 1\n" }, scratch, repo, base),
+    );
+    expect(result?.decision).toMatchObject({ verdict: "pre-existing", verification: "script" });
+  });
+
+  it("refuses a script that links outside the scratch directory", async () => {
+    const { root, scratch, repo } = dirs();
+    writeFileSync(join(root, "evil.sh"), "exit 1\n");
+    symlinkSync(join(root, "evil.sh"), join(scratch, "link.sh"));
+    await expect(
+      runReproScript(new ExecaRunner(), scratch, { path: "link.sh", interpreter: "sh" }, repo),
+    ).rejects.toThrow(/outside/);
   });
 });

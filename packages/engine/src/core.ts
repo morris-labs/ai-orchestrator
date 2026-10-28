@@ -148,9 +148,9 @@ export const VerifyOutputSchema = z.object({
   /** Whether the flaw exists in the base worktree too, by the agent's reading. */
   presentAtBase: z.boolean().default(false),
   /**
-   * A reproduction script the agent wrote in the scratch directory. It must
-   * exit non-zero when the flaw reproduces. The engine reruns it at the tip
-   * and at the base.
+   * A reproduction script the agent wrote in the scratch directory. It exits
+   * 1 when the flaw reproduces and 0 when it doesn't. The engine reruns it at
+   * the tip and at the base.
    */
   script: z
     .object({
@@ -158,6 +158,11 @@ export const VerifyOutputSchema = z.object({
       path: z.string().min(1),
       /** The interpreter, such as `python3` or `bash`; absent runs the file directly. */
       interpreter: z.string().min(1).optional(),
+      /**
+       * The script's text, for an agent that couldn't write the file. The
+       * engine writes it to `path` when the file doesn't exist.
+       */
+      content: z.string().min(1).optional(),
     })
     .nullable()
     .default(null),

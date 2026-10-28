@@ -22,6 +22,12 @@ export interface CliRequest<T = unknown> {
    * a scratch directory. Adapters whose CLI takes `--add-dir` pass each one.
    */
   addDirs?: string[];
+  /**
+   * A directory a read-only agent may write to, such as the disprover's
+   * scratch directory. The repository stays read-only. Each adapter grants
+   * it the way its CLI allows (see the vendor assumption docs).
+   */
+  scratchDir?: string;
   tools: ToolAccess;
   /** A model name or alias. Absent means the CLI's default (automatic for Copilot). */
   model?: string;
