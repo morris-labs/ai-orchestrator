@@ -1,0 +1,101 @@
+{
+  "codex": {
+    "responses": [
+      {
+        "method": "review",
+        "times": 1,
+        "model": "mock-codex",
+        "tokens": {
+          "input": 1200,
+          "output": 300
+        },
+        "usage": [
+          {
+            "vendor": "codex",
+            "account": "user@example.com",
+            "window": "5h",
+            "utilization": 0.25,
+            "spendUsd": null,
+            "ceiling": {
+              "kind": "utilization",
+              "window": "5h",
+              "max": 0.7
+            },
+            "resetAt": "2026-10-28T12:00:00Z",
+            "sampleSource": "codex_session"
+          }
+        ],
+        "output": {
+          "findings": [
+            {
+              "severity": "P2",
+              "title": "average_price divides by zero for an empty list",
+              "file": "shop/pricing.py",
+              "symbol": "average_price",
+              "lines": [28, 30],
+              "failure_case": "average_price([]) raises ZeroDivisionError instead of returning 0.",
+              "category": "error-handling",
+              "introduced": true
+            },
+            {
+              "severity": "P2",
+              "title": "apply_discount accepts a discount above 100 percent",
+              "file": "shop/pricing.py",
+              "lines": [9, 13],
+              "failure_case": "apply_discount(10, 150) returns a negative price.",
+              "category": "correctness",
+              "introduced": true
+            }
+          ],
+          "ledger": []
+        },
+        "match": "shop/pricing\\.py"
+      },
+      {
+        "method": "verify",
+        "match": "average_price",
+        "model": "mock-codex",
+        "output": {
+          "verdict": "confirmed",
+          "verification": "code-reading",
+          "evidence": "sum([]) / len([]) divides by zero.",
+          "presentAtBase": false,
+          "script": null
+        }
+      }
+    ]
+  },
+  "copilot": {
+    "responses": [
+      {
+        "method": "verify",
+        "match": "average_price",
+        "model": "mock-copilot",
+        "output": {
+          "verdict": "confirmed",
+          "verification": "code-reading",
+          "evidence": "sum([]) / len([]) divides by zero.",
+          "presentAtBase": false,
+          "script": null
+        },
+        "premiumRequests": 1
+      }
+    ]
+  },
+  "claude": {
+    "responses": [
+      {
+        "method": "verify",
+        "match": "average_price",
+        "model": "mock-claude",
+        "output": {
+          "verdict": "confirmed",
+          "verification": "code-reading",
+          "evidence": "sum([]) / len([]) divides by zero.",
+          "presentAtBase": false,
+          "script": null
+        }
+      }
+    ]
+  }
+}

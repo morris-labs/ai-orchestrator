@@ -1,0 +1,182 @@
+#!/usr/bin/env node
+// A stand-in for `copilot -p`, driven by MOCK_CLI_SCENARIO. See README.md.
+import { readFileSync } from "node:fs";
+import {
+  answerText,
+  loadScenario,
+  logCall,
+  newId,
+  pickResponse,
+  sleep,
+  writeFiles,
+} from "../lib/scenario.mjs";
+
+const VALUE_FLAGS = new Set([
+  "-p",
+  "--prompt",
+  "--model",
+  "--output-format",
+  "--allow-tool",
+  "--deny-tool",
+  "--add-dir",
+  "--log-level",
+  "--effort",
+  "--reasoning-effort",
+  "--session-id",
+  "--agent",
+  "-C",
+  "--stream",
+  "--mode",
+  "-n",
+  "--name",
+]);
+const BOOL_FLAGS = new Set([
+  "--allow-all-tools",
+  "--allow-all-paths",
+  "--allow-all-urls",
+  "--allow-all",
+  "--yolo",
+  "--no-color",
+  "--no-ask-user",
+  "-s",
+  "--silent",
+  "--continue",
+  "--no-custom-instructions",
+  "--autopilot",
+]);
+
+const argv = process.argv.slice(2);
+if (argv.includes("--version") || argv.includes("-v")) {
+  console.log("1.0.105-mock");
+  process.exit(0);
+}
+
+const flags = {};
+for (let i = 0; i < argv.length; i += 1) {
+  let arg = argv[i];
+  let value;
+  const eq = arg.indexOf("=");
+  if (arg.startsWith("--") && eq > 0) {
+    value = arg.slice(eq + 1);
+    arg = arg.slice(0, eq);
+  }
+  if (arg === "--resume" || arg === "-r") {
+    flags["--resume"] =
+      value ?? (argv[i + 1] && !argv[i + 1].startsWith("-") ? argv[(i += 1)] : true);
+  } else if (VALUE_FLAGS.has(arg)) {
+    flags[arg] = [...(flags[arg] ?? []), value ?? argv[(i += 1)]];
+  } else if (BOOL_FLAGS.has(arg)) {
+    flags[arg] = true;
+  } else {
+    console.error(`error: unknown option '${arg}'`);
+    process.exit(2);
+  }
+}
+
+let prompt = (flags["-p"] ?? flags["--prompt"])?.at(-1);
+if (prompt === undefined) {
+  console.error("mock copilot: only headless mode (-p) is supported");
+  process.exit(2);
+}
+// The adapter passes a long prompt as a file reference.
+const fileRef = /^Read the file (\S+) and follow/.exec(prompt);
+if (fileRef) prompt = readFileSync(fileRef[1], "utf8");
+
+const json = flags["--output-format"]?.at(-1) === "json";
+const requested = flags["--model"]?.at(-1) ?? "claude-sonnet-5.5";
+const sessionId =
+  (typeof flags["--resume"] === "string" ? flags["--resume"] : undefined) ??
+  flags["--session-id"]?.at(-1) ??
+  newId();
+const writable = Boolean(flags["--allow-all-tools"] || flags["--allow-all"] || flags["--yolo"]);
+
+const scenario = loadScenario("copilot");
+const picked = pickResponse("copilot", scenario, prompt);
+logCall("copilot", {
+  argv,
+  prompt,
+  responseIndex: picked?.index ?? -1,
+  model: requested,
+  sessionId,
+  allowTools: flags["--allow-tool"] ?? [],
+  denyTools: flags["--deny-tool"] ?? [],
+  writable,
+});
+
+const emit = (type, data) =>
+  json &&
+  process.stdout.write(
+    `${JSON.stringify({ type, data, id: newId(), timestamp: new Date().toISOString() })}\n`,
+  );
+
+if (!picked) {
+  emit("session.error", {
+    errorType: "internal",
+    message: "mock copilot: the scenario has no response for this prompt",
+  });
+  if (!json) console.error("Error: mock copilot: the scenario has no response for this prompt");
+  process.exit(1);
+}
+const response = picked.response;
+const model = requested === "auto" ? (response.model ?? "gpt-5.1") : requested;
+if (response.delayMs) await sleep(response.delayMs);
+if (response.stderr) process.stderr.write(response.stderr);
+
+emit("session.start", { sessionId, selectedModel: model, copilotVersion: "1.0.105-mock" });
+
+const failures = {
+  usage_limit: {
+    errorType: "quota",
+    errorCode: "quota_exceeded",
+    message: "You have exceeded your Copilot AI credit budget for this month.",
+  },
+  rate_limit: {
+    errorType: "rate_limit",
+    errorCode: "user_global_rate_limited",
+    message: "Rate limit exceeded. Try again in 2 minutes.",
+  },
+  auth: {
+    errorType: "authentication",
+    errorCode: "unauthorized",
+    message: "Not authenticated. Run copilot and use /login.",
+  },
+  crash: { errorType: "internal", errorCode: "server_error", message: "Internal server error" },
+};
+if (response.error) {
+  const failure = {
+    ...(failures[response.error] ?? { errorType: response.error }),
+    ...(response.errorMessage ? { message: response.errorMessage } : {}),
+  };
+  emit("session.error", failure);
+  if (!json) console.error(`Error: ${failure.message}`);
+  process.exit(response.exitCode ?? 1);
+}
+
+if (writable && response.writeFiles) writeFiles(response);
+
+const text = answerText(response);
+const tokens = response.tokens ?? { input: 900, output: 60 };
+const premium = response.premiumRequests ?? 1;
+emit("assistant.message", {
+  content: text,
+  messageId: newId(),
+  model,
+  outputTokens: tokens.output,
+  toolRequests: [],
+});
+if (json) {
+  process.stdout.write(
+    `${JSON.stringify({ type: "result", sessionId, exitCode: 0, usage: { premiumRequests: premium, totalApiDurationMs: 1200, sessionDurationMs: 1500 } })}\n`,
+  );
+} else {
+  process.stdout.write(`${text}\n`);
+  if (!flags["-s"] && !flags["--silent"]) {
+    process.stderr.write(
+      `\nTotal usage est:       ${premium} Premium request${premium === 1 ? "" : "s"}\n` +
+        `Total duration (API):  1s\nTotal duration (wall): 2s\n` +
+        `Usage by model:\n    ${model} ${tokens.input} input, ${tokens.output} output, 0 cache read, 0 cache write (Est. ${premium} Premium request)\n` +
+        `Resume     copilot --resume=${sessionId}\n`,
+    );
+  }
+}
+process.exit(response.exitCode ?? 0);

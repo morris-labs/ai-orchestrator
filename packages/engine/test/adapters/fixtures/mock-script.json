@@ -1,0 +1,47 @@
+{
+  "vendor": "codex",
+  "responses": [
+    {
+      "method": "review",
+      "match": "group G-1",
+      "times": 1,
+      "sessionId": "thread-1",
+      "output": {
+        "findings": [
+          {
+            "severity": "P2",
+            "title": "Missing await",
+            "file": "src/a.ts",
+            "lines": [10, 12],
+            "failure_case": "The promise rejects unobserved.",
+            "category": "correctness",
+            "introduced": true
+          }
+        ]
+      },
+      "tokens": { "input": 1000, "output": 50 },
+      "usage": [
+        {
+          "vendor": "codex",
+          "account": "user@example.com",
+          "window": "5h",
+          "utilization": 0.3,
+          "spendUsd": null,
+          "ceiling": { "kind": "utilization", "window": "5h", "max": 0.7 },
+          "resetAt": "2026-10-28T12:00:00Z",
+          "sampleSource": "codex_session"
+        }
+      ]
+    },
+    { "method": "continueReview", "output": { "findings": [] } },
+    {
+      "method": "verify",
+      "error": {
+        "kind": "limit",
+        "message": "You’ve hit your usage limit.",
+        "limit": { "kind": "usage_limit", "resetAt": "2026-10-28T15:15:00Z" }
+      }
+    },
+    { "method": "review", "output": { "findings": [] } }
+  ]
+}

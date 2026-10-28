@@ -1,0 +1,14 @@
+version: 1
+riskPaths:
+  - shop/reports.py
+rules:
+  - id: no-path-escape
+    text: A file path built from caller input must stay inside its base directory.
+    appliesTo: ["shop/**"]
+tests:
+  - command: python3 -B -m unittest discover -s tests -q
+lint:
+  - command: python3 -B lint.py
+environmentLimits:
+  - The library runs on CPython 3.10 or later.
+groupSizeLimit: 400
