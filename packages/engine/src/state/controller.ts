@@ -141,6 +141,11 @@ export class RunController {
     return this.ctx.store.dir;
   }
 
+  /** The run's status, without copying the state. */
+  get status(): RunState["status"] {
+    return this.ctx.state.status;
+  }
+
   /** A copy of the run's state. */
   get state(): RunState {
     return structuredClone(this.ctx.state);

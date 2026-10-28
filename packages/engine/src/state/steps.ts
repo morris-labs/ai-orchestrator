@@ -320,7 +320,9 @@ export async function toCandidates(
   const out: Candidate[] = [];
   for (const r of raw) {
     const content = await read(r.finding.file);
-    const symbol = enclosingSymbol(content, r.finding.lines[0]);
+    // The engine's own reading keeps fingerprints the same across vendors; a
+    // symbol the reviewer named fills in where the scan finds none.
+    const symbol = enclosingSymbol(content, r.finding.lines[0]) || (r.finding.symbol ?? "");
     const hunks = r.groupId
       ? (groups.find((g) => g.id === r.groupId)?.hunks ?? [])
       : groups.flatMap((g) => g.hunks);
@@ -865,6 +867,7 @@ export function buildRoundSummary(
         tokensIn: Math.round(usage?.tokensIn ?? 0),
         tokensOut: Math.round(usage?.tokensOut ?? 0),
         premiumRequests: usage?.premiumRequests ?? 0,
+        ...(usage?.aiCredits !== undefined ? { aiCredits: usage.aiCredits } : {}),
         costUsd: usage?.costUsd ?? 0,
       };
       perVendor[v] = s;

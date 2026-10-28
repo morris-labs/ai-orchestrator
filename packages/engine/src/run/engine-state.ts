@@ -8,6 +8,7 @@ const VendorStatsSchema = z.object({
   tokensIn: z.number().nonnegative().default(0),
   tokensOut: z.number().nonnegative().default(0),
   premiumRequests: z.number().nonnegative().default(0),
+  aiCredits: z.number().nonnegative().optional(),
   costUsd: z.number().nonnegative().default(0),
 });
 export type VendorUsageTotals = z.infer<typeof VendorStatsSchema>;

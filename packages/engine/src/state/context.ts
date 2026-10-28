@@ -26,6 +26,7 @@ import {
   type CommandRunner,
   type EngineDeps,
   type EventDraft,
+  type LeaseActual,
   type RoleTimeouts,
   type VendorAdapter,
 } from "../core.js";
@@ -515,7 +516,8 @@ export class RunContext {
           continue;
         }
         failures += 1;
-        if (failures >= 2) {
+        // One retry per call, unless the adapter knows a retry fails the same way.
+        if (failures >= 2 || adapter.isRetryable?.(error) === false) {
           throw new AgentFailed(
             spec.role,
             vendor,
@@ -525,9 +527,10 @@ export class RunContext {
         continue;
       }
       const elapsedMs = Math.max(0, this.clock.now() - started);
-      const actual = {
+      const actual: LeaseActual = {
         tokens: { in: result.tokens.in, out: result.tokens.out },
         premiumRequests: result.premiumRequests,
+        ...(result.aiCredits !== undefined ? { aiCredits: result.aiCredits } : {}),
         costEstimate: result.costEstimate,
       };
       await this.emit({
@@ -538,6 +541,7 @@ export class RunContext {
         elapsedMs,
         tokens: actual.tokens,
         premiumRequests: actual.premiumRequests,
+        ...(actual.aiCredits !== undefined ? { aiCredits: actual.aiCredits } : {}),
         costEstimate: actual.costEstimate,
       });
       await this.settle(lease.leaseId, vendor, spec.role, actual);
@@ -603,7 +607,7 @@ export class RunContext {
     leaseId: string,
     vendor: Vendor,
     role: AgentRole,
-    actual: { tokens: { in: number; out: number }; premiumRequests: number; costEstimate: number },
+    actual: LeaseActual,
   ): Promise<void> {
     this.deps.broker.settle(leaseId, actual);
     const totals = this.eng.roundUsage[vendor] ?? {
@@ -615,6 +619,8 @@ export class RunContext {
     totals.tokensIn += actual.tokens.in;
     totals.tokensOut += actual.tokens.out;
     totals.premiumRequests += actual.premiumRequests;
+    if (actual.aiCredits !== undefined)
+      totals.aiCredits = (totals.aiCredits ?? 0) + actual.aiCredits;
     totals.costUsd += actual.costEstimate;
     this.eng.roundUsage[vendor] = totals;
     await this.emit({
@@ -623,7 +629,9 @@ export class RunContext {
       runId: this.state.id,
       vendor,
       role,
-      ...actual,
+      tokens: actual.tokens,
+      premiumRequests: actual.premiumRequests,
+      costEstimate: actual.costEstimate,
     });
   }
 }

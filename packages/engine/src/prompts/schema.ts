@@ -8,6 +8,11 @@ const FINDING_SCHEMA = {
     severity: { enum: ["P1", "P2", "P3", "nit"] },
     title: { type: "string", description: "One-line descriptive title." },
     file: { type: "string", description: "Path relative to the repository root." },
+    symbol: {
+      type: "string",
+      description:
+        "The function, class, or other symbol the finding is about, when you can name one.",
+    },
     lines: {
       type: "array",
       items: { type: "integer", minimum: 1 },
@@ -69,7 +74,7 @@ export const VERIFY_OUTPUT_JSON_SCHEMA = {
       description: "True when the same flaw exists in the base worktree.",
     },
     script: {
-      oneOf: [
+      anyOf: [
         { type: "null" },
         {
           type: "object",

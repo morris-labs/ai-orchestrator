@@ -200,6 +200,77 @@ describe("run controls", () => {
     expect(state).toMatchObject({ status: "finished", stopReason: "clean" });
   });
 
+  it("stops after one attempt when the adapter says a retry fails the same way", async () => {
+    const repo = buildSampleRepo();
+    const scenario = new Scenario();
+    const adapters = scenario.adapters();
+    const codex = adapters.codex as VendorAdapter;
+    let calls = 0;
+    adapters.codex = {
+      vendor: "codex",
+      review: () => {
+        calls += 1;
+        return Promise.reject(new Error("not logged in"));
+      },
+      continueReview: codex.continueReview.bind(codex),
+      verify: codex.verify.bind(codex),
+      fix: codex.fix.bind(codex),
+      confirm: codex.confirm.bind(codex),
+      sweep: codex.sweep.bind(codex),
+      detectLimit: () => null,
+      isRetryable: () => false,
+    };
+    const { deps } = setup(scenario, undefined, adapters);
+    const run = await create(repo, deps);
+    await run.start();
+    const state = await run.settled();
+    expect(state).toMatchObject({ status: "failed", stopReason: "error", stage: "find" });
+    expect(state.error).toMatch(/not logged in/);
+    // One call per review group that started before the first failure stopped the stage.
+    expect(calls).toBeGreaterThan(0);
+    const finished = deps.events as MemoryEventSink;
+    const failed = finished.ofType("agent.finished").filter((e) => e.vendor === "codex");
+    expect(failed.every((e) => e.outcome === "error")).toBe(true);
+    expect(failed.length).toBe(calls);
+  });
+
+  it("records Copilot AI credits on agent.finished and the round summary", async () => {
+    const repo = buildSampleRepo();
+    const scenario = new Scenario();
+    const adapters = scenario.adapters();
+    const copilot = adapters.copilot as VendorAdapter;
+    const withCredits =
+      <T>(call: (req: AdapterRequest) => Promise<AdapterResult<T>>) =>
+      async (req: AdapterRequest): Promise<AdapterResult<T>> => ({
+        ...(await call(req)),
+        aiCredits: 2.5,
+      });
+    adapters.copilot = {
+      vendor: "copilot",
+      review: withCredits((req) => copilot.review(req)),
+      continueReview: copilot.continueReview.bind(copilot),
+      verify: withCredits((req) => copilot.verify(req)),
+      fix: copilot.fix.bind(copilot),
+      confirm: copilot.confirm.bind(copilot),
+      sweep: copilot.sweep.bind(copilot),
+      detectLimit: copilot.detectLimit.bind(copilot),
+    };
+    const { deps, events } = setup(scenario, undefined, adapters);
+    const run = await create(repo, deps);
+    await run.start();
+    await run.settled();
+    const finished = events.ofType("agent.finished").filter((e) => e.vendor === "copilot");
+    // Review and verify calls carry credits; the other methods return none.
+    expect(finished.some((e) => e.aiCredits === 2.5)).toBe(true);
+    for (const e of finished) expect([undefined, 2.5]).toContain(e.aiCredits);
+    const summary = events
+      .ofType("run.changed")
+      .map((e) => e.roundSummary)
+      .find((r) => r?.perVendor.copilot);
+    expect(summary?.perVendor.copilot?.aiCredits).toBeGreaterThan(0);
+    expect(summary?.perVendor.codex?.aiCredits).toBeUndefined();
+  });
+
   it("switches reviewers to alternate after two rounds of high overlap", async () => {
     const repo = buildSampleRepo();
     // Both reviewers report the same new issue every round; the disprover rejects them all.

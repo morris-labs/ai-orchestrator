@@ -92,6 +92,8 @@ export interface AdapterResult<T> {
   usage: RawUsageSample[];
   /** Copilot premium requests; 0 for other vendors. */
   premiumRequests: number;
+  /** Copilot AI credits, when the CLI reports them; absent otherwise. */
+  aiCredits?: number;
   /** Estimated cost in US dollars. */
   costEstimate: number;
 }
@@ -167,7 +169,7 @@ export type ConfirmOutput = z.infer<typeof ConfirmOutputSchema>;
 /**
  * One vendor's CLI. Every method runs one headless call, enforces
  * `timeoutMs`, parses the reply into the method's output schema, and throws
- * when it can't. W4 implements one per vendor in `src/adapters`.
+ * when it can't. `src/adapters/bridge.ts` builds one from each CLI adapter.
  */
 export interface VendorAdapter {
   readonly vendor: Vendor;
@@ -180,6 +182,12 @@ export interface VendorAdapter {
   sweep(request: AdapterRequest): Promise<AdapterResult<SweepOutput>>;
   /** Returns limit details when `error` came from a usage or rate limit, or `null`. */
   detectLimit(error: unknown): LimitInfo | null;
+  /**
+   * Whether a failed call is worth its one retry. A sign-in failure or a
+   * missing CLI fails the same way twice, so the core stops at once. Absent
+   * means every failure that isn't a limit gets its retry.
+   */
+  isRetryable?(error: unknown): boolean;
 }
 
 export type AdapterMethod = "review" | "continueReview" | "verify" | "fix" | "confirm" | "sweep";
@@ -193,14 +201,16 @@ export type AdapterSet = Partial<Record<Vendor, VendorAdapter>>;
 export interface LeaseActual {
   tokens: { in: number; out: number };
   premiumRequests: number;
+  /** Copilot AI credits, when the CLI reports them. */
+  aiCredits?: number;
   costEstimate: number;
 }
 
 /**
  * Asks the server for permission before each model call (see `lease.ts` in
- * the contracts). W5 implements it over the `engine.events` socket. The core
- * emits the `lease.settled` event itself; `settle` only tells the broker
- * the lease is finished.
+ * the contracts). `EngineLeaseBroker` implements it over the
+ * `engine.events` socket. The core emits the `lease.settled` event itself;
+ * `settle` only tells the broker the lease is finished.
  */
 export interface LeaseBroker {
   acquire(request: LeaseRequest): Promise<LeaseResponse>;
@@ -233,28 +243,22 @@ export class GrantingBroker implements LeaseBroker {
 // ---------------------------------------------------------------------------
 // Events
 
-type BaseKeys = "id" | "time" | "source" | "streamId" | "seq" | "sourceSeq";
+/** The fields the event stream fills in; the core never sets them. */
+export type EventEnvelopeKey = "id" | "time" | "source" | "streamId" | "seq" | "sourceSeq";
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 
-type UsageSampleEvent = Extract<AgentBoxEvent, { type: "usage.sample" }>;
-
 /**
- * An event before the stream stamps its id, time, source, and sequence numbers.
- *
- * `usage.sample` is the exception: its `source` field is the usage source
- * (`rate_limit_event` and so on), because the contract spreads
- * `UsageSampleSchema` over the event's base fields. The stream must keep a
- * `usage.sample` draft's `source` as it is.
+ * An event before the stream stamps its id, time, source, and sequence
+ * numbers. A `usage.sample` draft names its reading's origin in
+ * `sampleSource`, so the stream's `source` never collides with it.
  */
-export type EventDraft =
-  | DistributiveOmit<Exclude<AgentBoxEvent, UsageSampleEvent>, BaseKeys>
-  | Omit<UsageSampleEvent, Exclude<BaseKeys, "source">>;
+export type EventDraft = DistributiveOmit<AgentBoxEvent, EventEnvelopeKey>;
 
 /**
- * Where the core sends events. W5's event stream implements it: it stamps
- * the base fields, keeps the log for replay, and sends it on `engine.events`.
- * `emit` returns the stamped event, which the run directory's
- * `events.jsonl` keeps.
+ * Where the core sends events. The engine's `EventHub` implements it: it
+ * stamps the base fields, keeps the log for replay, and sends it on
+ * `engine.events`. `emit` returns the stamped event, which the run
+ * directory's `events.jsonl` keeps.
  */
 export interface EventSink {
   emit(draft: EventDraft): AgentBoxEvent;
@@ -277,10 +281,10 @@ export class MemoryEventSink implements EventSink {
   emit(draft: EventDraft): AgentBoxEvent {
     this.seq += 1;
     const event = EventSchema.parse({
+      ...draft,
       id: `${this.streamId}-${this.seq}`,
       time: new Date(this.clock.now()).toISOString(),
       source: this.source,
-      ...draft,
       streamId: this.streamId,
       seq: this.seq,
       sourceSeq: this.seq,
