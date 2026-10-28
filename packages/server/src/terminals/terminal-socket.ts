@@ -51,6 +51,8 @@ export async function serveTerminal(
     ws.off("close", earlyClose);
   }
 
+  // Errors also end the stream; the listeners below handle the ending.
+  session.stream.on("error", () => undefined);
   if (closedByClient || ws.readyState !== WebSocket.OPEN) {
     session.close();
     return { terminalId, exitCode: null, closedByClient: true };

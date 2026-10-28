@@ -70,6 +70,7 @@ export async function createApiServer(deps: ApiDeps): Promise<ApiServer> {
   const proxy = deps.proxy;
   const app = Fastify({
     logger: false,
+    forceCloseConnections: true,
     serverFactory: (handler) => {
       const server = http.createServer((req, res) => {
         if (proxy?.matches(req)) void proxy.handleRequest(req, res);
@@ -122,11 +123,19 @@ export async function createApiServer(deps: ApiDeps): Promise<ApiServer> {
     const config = request.routeOptions.config.agentbox;
     if (!config?.auth) return;
     if (!isAuthorized(authInput(request, config.ws), deps.token)) {
+      // A refused upgrade leaves no HTTP connection worth keeping.
+      if (config.ws) reply.header("connection", "close");
       return sendFailure(
         reply,
         new ApiFailure("validation", "Missing or wrong bearer token.", undefined, 401),
       );
     }
+  });
+
+  // An upgrade request answered with a plain HTTP response keeps a detached
+  // socket that the server no longer tracks, so close it here.
+  app.addHook("onResponse", async (request, reply) => {
+    if (request.headers.upgrade && reply.statusCode !== 101) request.raw.socket?.destroy();
   });
 
   await app.register(fastifyWebsocket);

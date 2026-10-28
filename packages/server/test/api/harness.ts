@@ -130,6 +130,7 @@ export class FakeExec implements ExecBackend {
     const fromClient = new PassThrough();
     const stream = Duplex.from({ readable: toClient, writable: fromClient });
     const container = Duplex.from({ readable: fromClient, writable: toClient });
+    container.on("error", () => undefined);
     const entry = { container, closed: false, exitCode: 0 as number | null };
     this.sessions.push(entry);
     return {
