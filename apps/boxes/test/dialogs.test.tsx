@@ -4,12 +4,13 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { BoxDialog, type BoxDialogResult } from "../src/dialogs/BoxDialog";
-import { JobDialog, jobLabel, waitForJob } from "../src/dialogs/JobDialog";
+import { JobDialog, createJobMessage, jobLabel, waitForJob } from "../src/dialogs/JobDialog";
 import { MountsDialog } from "../src/dialogs/MountsDialog";
 import { PromptsDialog } from "../src/dialogs/PromptsDialog";
 import { SetupWizard } from "../src/dialogs/SetupWizard";
 import { SshRemoteDialog, remoteProblems } from "../src/dialogs/SshDialogs";
 import { updateBody } from "../src/logic/newBox";
+import { makeJob } from "@agentbox/ui/testing";
 import { renderWithServer } from "./helpers";
 
 const UUID1 = "11111111-1111-4111-8111-111111111111";
@@ -495,6 +496,16 @@ describe("SetupWizard and jobs", () => {
         "x",
       ),
     ).toBe("Failed to start docker build: no docker");
+  });
+
+  it("reports a create job that is still running as running, not failed", () => {
+    const job = (status: Job["status"], extra: Partial<Job> = {}) =>
+      makeJob({ id: "j", kind: "box_create", command: "create box", status, ...extra });
+    expect(createJobMessage(job("finished"))).toBeNull();
+    expect(createJobMessage(job("running"))).toMatch(/still running/);
+    expect(createJobMessage(job("failed", { exitCode: 2 }))).toBe(
+      "Creating the box failed (exit 2).",
+    );
   });
 
   it("polls a job until it leaves running", async () => {

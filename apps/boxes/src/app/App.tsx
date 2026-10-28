@@ -37,7 +37,7 @@ import { UpdateBars } from "../components/UpdateBars";
 import { UsageView } from "../components/UsageView";
 import { BoxDialog, type BoxDialogResult } from "../dialogs/BoxDialog";
 import { InputDialog } from "../dialogs/InputDialog";
-import { JobDialog, waitForJob } from "../dialogs/JobDialog";
+import { JobDialog, createJobMessage, waitForJob } from "../dialogs/JobDialog";
 import { MountsDialog } from "../dialogs/MountsDialog";
 import { PromptsDialog } from "../dialogs/PromptsDialog";
 import { SetupWizard } from "../dialogs/SetupWizard";
@@ -766,26 +766,25 @@ export function App() {
         toast(`Creating ${form.name || form.targetDir}...`);
         void waitForJob(() => client.call("jobs.get", { params: { jobId: job.id } }), {
           intervalMs: 700,
-        }).then(async (done) => {
-          if (done.status !== "finished") {
-            void inform(
-              title,
-              done.error?.message ??
-                `Creating the box failed (exit ${done.exitCode ?? "unknown"}).`,
-            );
-            return;
-          }
-          await data.reload();
-          const id = (done.result as { box?: { id: string } } | null)?.box?.id ?? done.boxId;
-          const v = id
-            ? await client.call("boxes.get", { params: { boxId: id } }).catch(() => null)
-            : null;
-          if (v) {
-            data.putBox(v);
-            setSelected(new Set([v.box.id]));
-            if (v.status === "running") openTerminal(v);
-          }
-        });
+        })
+          .then(async (done) => {
+            const message = createJobMessage(done);
+            if (message !== null) {
+              void inform(title, message);
+              return;
+            }
+            await data.reload();
+            const id = (done.result as { box?: { id: string } } | null)?.box?.id ?? done.boxId;
+            const v = id
+              ? await client.call("boxes.get", { params: { boxId: id } }).catch(() => null)
+              : null;
+            if (v) {
+              data.putBox(v);
+              setSelected(new Set([v.box.id]));
+              if (v.status === "running") openTerminal(v);
+            }
+          })
+          .catch((err: unknown) => void inform(title, errorMessage(err)));
         return null;
       } catch (err) {
         const a = await adoptionAnswer(title, err);

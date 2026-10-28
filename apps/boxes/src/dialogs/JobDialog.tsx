@@ -15,7 +15,20 @@ export function jobLabel(job: Job | null, command: string): string {
   return "Finished.";
 }
 
-/** Polls `jobs.get` until the job leaves `running`. */
+/**
+ * What to tell the person about a box-creation job that `waitForJob()`
+ * returned: `null` when it finished, a note that it still runs when the wait
+ * gave up first, else why it failed.
+ */
+export function createJobMessage(job: Job): string | null {
+  if (job.status === "finished") return null;
+  if (job.status === "running") {
+    return `Creating the box is still running after a long wait (${job.command}). It appears in the list when it finishes.`;
+  }
+  return job.error?.message ?? `Creating the box failed (exit ${job.exitCode ?? "unknown"}).`;
+}
+
+/** Polls `jobs.get` until the job leaves `running`, or until the deadline passes. */
 export async function waitForJob(
   get: () => Promise<Job>,
   options: { intervalMs?: number; timeoutMs?: number } = {},
