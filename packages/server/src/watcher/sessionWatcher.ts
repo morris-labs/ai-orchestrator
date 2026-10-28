@@ -77,6 +77,15 @@ export class SessionWatcher {
     void this.scan().catch(() => undefined);
   }
 
+  /**
+   * Returns the directories that have a live file watcher. A directory is
+   * missing when the operating system refused the watch (for example, no
+   * inotify instances are left); the backstop poll still covers it.
+   */
+  watchedDirs(): string[] {
+    return [...this.watchers.keys()];
+  }
+
   /** Stops every watcher and timer. */
   stop(): void {
     this.started = false;

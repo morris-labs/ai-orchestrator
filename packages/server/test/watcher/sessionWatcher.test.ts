@@ -216,7 +216,7 @@ describe("shared directory", () => {
 });
 
 describe("file events", () => {
-  it("scans after a change in a watched directory", async () => {
+  it("scans after a change in a watched directory", async (ctx) => {
     box("claude-agent-a", { container: "claude-agent-a", session: "main" });
     const dir = sessionsDirFor(env, "claude-agent-a");
     fs.mkdirSync(dir, { recursive: true });
@@ -229,6 +229,11 @@ describe("file events", () => {
     });
     watcher.start();
     await watcher.setRunning(["claude-agent-a"]);
+    // The operating system can refuse a watch when the host has run out of
+    // inotify instances, which happens when many test runs share a machine.
+    // The server covers that case with its backstop poll, which this test
+    // turns off, so there is no file event to wait for.
+    if (!watcher.watchedDirs().includes(dir)) ctx.skip("The host refused the file watch.");
     entry(dir, "11.json", { pid: 11, sessionId: U2, updatedAt: 1 });
     await expect
       .poll(() => repos.boxes.get("claude-agent-a")!.sessionUuid, { timeout: 3000 })
