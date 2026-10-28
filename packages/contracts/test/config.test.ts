@@ -53,6 +53,10 @@ describe("config", () => {
       UNRELATED: "x",
     };
     expect(parseEngineEnv(raw).AGENTBOX_ENGINE_PORT).toBe(20411);
+    expect(parseEngineEnv(raw).AGENTBOX_STATE_DIR).toBe("/run/claude-box");
+    expect(parseEngineEnv({ ...raw, [ENGINE_ENV.stateDir]: "/tmp/state" }).AGENTBOX_STATE_DIR).toBe(
+      "/tmp/state",
+    );
     expect(parseEngineEnv({ ...raw, [ENGINE_ENV.port]: "20500" }).AGENTBOX_ENGINE_PORT).toBe(20500);
     expect(() => parseEngineEnv({ ...raw, [ENGINE_ENV.token]: "short" })).toThrow();
     expect(() => parseEngineEnv({ ...raw, [ENGINE_ENV.port]: "http" })).toThrow();

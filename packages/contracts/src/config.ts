@@ -58,9 +58,18 @@ export const ENGINE_ENV = {
   projectRoot: "AGENTBOX_PROJECT_ROOT",
   /** The container's own name, used in event sources (`engine:<container>`). */
   container: "AGENTBOX_CONTAINER",
-  /** The engine version the server expects; the engine refuses to start on a mismatch. */
+  /**
+   * The engine version the server expects. On a mismatch the engine still
+   * starts, logs a warning, and reports `versionMatches: false` on its health
+   * route.
+   */
   engineVersion: "AGENTBOX_ENGINE_VERSION",
+  /** The keeper's state directory inside the container, which holds the `sessions` file. */
+  stateDir: "AGENTBOX_STATE_DIR",
 } as const;
+
+/** The container path the server mounts the keeper's state directory at. */
+export const DEFAULT_ENGINE_STATE_DIR = "/run/claude-box";
 
 /** The engine's view of its environment, after parsing. */
 export const EngineEnvSchema = z.object({
@@ -69,6 +78,7 @@ export const EngineEnvSchema = z.object({
   [ENGINE_ENV.projectRoot]: z.string().min(1),
   [ENGINE_ENV.container]: z.string().min(1),
   [ENGINE_ENV.engineVersion]: z.string().min(1),
+  [ENGINE_ENV.stateDir]: z.string().min(1).default(DEFAULT_ENGINE_STATE_DIR),
 });
 export type EngineEnv = z.infer<typeof EngineEnvSchema>;
 

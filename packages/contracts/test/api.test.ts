@@ -2,6 +2,7 @@ import { describe, expect, expectTypeOf, it } from "vitest";
 import {
   ApiErrorCodeSchema,
   ApiErrorSchema,
+  EngineHealthSchema,
   type RouteDef,
   type RouteOf,
   buildPath,
@@ -126,6 +127,27 @@ describe("route catalog", () => {
         expect(ApiErrorCodeSchema.safeParse(code).success, `${key} ${code}`).toBe(true);
     }
     expect(ApiErrorSchema.safeParse({ error: { code: "teapot", message: "x" } }).success).toBe(
+      false,
+    );
+  });
+
+  it("has codes for a failed authentication and an unexpected failure", () => {
+    for (const code of ["unauthorized", "internal"]) {
+      expect(ApiErrorCodeSchema.safeParse(code).success, code).toBe(true);
+    }
+  });
+
+  it("reports whether the engine version matches on the engine's health route", () => {
+    const health = {
+      version: "4.0.0",
+      uptimeS: 12,
+      engineVersion: "4.0.0",
+      container: "claude-agent-proj-example-app-1a2b3c4d",
+      projectRoot: "/home/user/src/example-app",
+      streamId: "S1",
+    };
+    expect(EngineHealthSchema.safeParse(health).success).toBe(false);
+    expect(EngineHealthSchema.parse({ ...health, versionMatches: false }).versionMatches).toBe(
       false,
     );
   });

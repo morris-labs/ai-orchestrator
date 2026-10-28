@@ -33,7 +33,8 @@
 // - Query values arrive as strings, so query schemas coerce them.
 // - A failed call returns a 4xx or 5xx status code with an `ApiError` body.
 //   `errors` on a route lists the codes specific to it; `validation`,
-//   `not_found`, and `docker_unavailable` can come from any route.
+//   `not_found`, `docker_unavailable`, `internal`, and, on routes with
+//   `auth: true`, `unauthorized` can come from any route.
 // - Responses use `null` for a missing value; stored records (`Box`,
 //   `Project`, `RunState`, `Finding`) keep optional fields absent.
 // - Run, finding, and round routes on the server proxy to the engine of the
@@ -658,6 +659,11 @@ export const EngineHealthSchema = HealthSchema.extend({
   projectRoot: z.string().min(1),
   /** The engine's event `streamId`. */
   streamId: z.string().min(1),
+  /**
+   * Whether `engineVersion` equals `AGENTBOX_ENGINE_VERSION`. The engine
+   * starts on a mismatch and reports `false` here.
+   */
+  versionMatches: z.boolean(),
 });
 
 export const RepoInfoSchema = z.object({
