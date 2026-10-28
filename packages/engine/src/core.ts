@@ -402,6 +402,14 @@ export interface EngineDeps {
   models?: Partial<Record<Vendor, string>>;
   /** Container name for `RunState.container`. */
   container: string;
+  /** Where the core reports problems it can't surface on the run, such as a failed write. */
+  log?: CoreLog;
+}
+
+/** The logger the core writes to; the engine's `Logger` fits it. */
+export interface CoreLog {
+  warn(message: string, fields?: Record<string, unknown>): void;
+  error(message: string, fields?: Record<string, unknown>): void;
 }
 
 /** Role names the engine requests leases for. */

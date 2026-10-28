@@ -180,24 +180,33 @@ export class RunContext {
   // -------------------------------------------------------------------------
   // Persistence and events
 
+  /**
+   * Queues a write behind the earlier ones. The caller sees its own write's
+   * failure; the queue doesn't, so one failed write never blocks the next.
+   */
+  private enqueue(write: () => Promise<void>): Promise<void> {
+    const done = this.writeChain.then(write);
+    this.writeChain = done.catch(() => undefined);
+    return done;
+  }
+
   /** Writes state.json, engine.json, and findings.json. */
   persist(): Promise<void> {
     this.state.updatedAt = this.nowIso();
     const state = structuredClone(this.state);
     const eng = structuredClone(this.eng);
     const findings = structuredClone(this.findings);
-    this.writeChain = this.writeChain.then(async () => {
+    return this.enqueue(async () => {
       await this.store.saveState(state);
       await this.store.saveEngineState(eng);
       await this.store.saveFindings(findings);
     });
-    return this.writeChain;
   }
 
+  /** Sends an event, then appends it to `events.jsonl`. The event goes out even when the write fails. */
   async emit(draft: EventDraft): Promise<void> {
     const event = this.deps.events.emit(draft);
-    this.writeChain = this.writeChain.then(() => this.store.appendEvent(event));
-    await this.writeChain;
+    await this.enqueue(() => this.store.appendEvent(event));
   }
 
   async emitRun(roundSummary: RoundSummary | null = null): Promise<void> {
@@ -223,6 +232,34 @@ export class RunContext {
     if (isTerminal(status)) this.state.finishedAt = this.nowIso();
     await this.persist();
     await this.emitRun();
+  }
+
+  /**
+   * Sets a final status and announces it, even when the run directory can't
+   * be written: a write failure is logged, and the `run.changed` event still
+   * goes out. Never rejects.
+   */
+  async settleStatus(status: RunStatus, patch: Partial<RunState> = {}): Promise<void> {
+    Object.assign(this.state, patch, { status });
+    if (isTerminal(status)) this.state.finishedAt = this.nowIso();
+    try {
+      await this.persist();
+    } catch (error) {
+      this.deps.log?.error("Couldn't write the run's state", {
+        runId: this.state.id,
+        status,
+        error: String(error),
+      });
+    }
+    try {
+      await this.emitRun();
+    } catch (error) {
+      this.deps.log?.error("Couldn't record the run's status change", {
+        runId: this.state.id,
+        status,
+        error: String(error),
+      });
+    }
   }
 
   async handoff(

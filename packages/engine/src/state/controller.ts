@@ -210,21 +210,25 @@ export class RunController {
       } finally {
         this.active = null;
       }
-    })();
+    })().catch((error: unknown) => {
+      // `stopOn` doesn't reject; this keeps a bug there from crashing the engine.
+      ctx.deps.log?.error("The run driver failed", { runId: ctx.state.id, error: String(error) });
+    });
   }
 
+  /** Records why the driver stopped. Never rejects, even when the run directory can't be written. */
   private async stopOn(error: unknown): Promise<void> {
     const ctx = this.ctx;
     if (error instanceof DecisionNeeded) {
-      await ctx.setStatus("waiting_decision", { decision: error.decision });
+      await ctx.settleStatus("waiting_decision", { decision: error.decision });
     } else if (error instanceof RunCancelled || ctx.cancelled) {
-      await ctx.setStatus("cancelled", { stopReason: "cancelled" });
+      await ctx.settleStatus("cancelled", { stopReason: "cancelled" });
     } else {
       const message =
         error instanceof AgentFailed || error instanceof RoleDenied
           ? error.message
           : `The ${ctx.state.stage} stage failed: ${(error as Error)?.message ?? String(error)}`;
-      await ctx.setStatus("failed", { stopReason: "error", error: message });
+      await ctx.settleStatus("failed", { stopReason: "error", error: message });
     }
   }
 

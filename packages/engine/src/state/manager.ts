@@ -98,6 +98,7 @@ export class EngineRunManager implements RunManager {
       ...(deps.clock ? { clock: deps.clock } : {}),
       ...(deps.models ? { models: deps.models } : {}),
       container: deps.container,
+      log: deps.log,
     };
   }
 
