@@ -1,10 +1,12 @@
-// The dashboard's state, built only from the event stream and the usage
-// routes. `applyEvent()` is a pure reducer: it returns a new state for every
-// event that changes something, so React can compare by reference.
+// The dashboard's state, built from a REST snapshot (`seedDashboard()`), the
+// event stream, and the usage routes. `applyEvent()` is a pure reducer: it
+// returns a new state for every event that changes something, so React can
+// compare by reference.
 import type {
   AgentBoxEvent,
   AgentRole,
   BoxStatus,
+  BoxView,
   ContainerState,
   EngineInfo,
   EventOf,
@@ -12,8 +14,10 @@ import type {
   FlowEndpoint,
   Listener,
   Notification,
+  ProjectSummary,
   RoundSummary,
   RunState,
+  RunStatus,
   Stage,
   TimedUsageSample,
   UsageWindow,
@@ -51,12 +55,12 @@ export interface AgentView {
 }
 
 export interface FlowEdge {
-  /** `from` and `to` endpoints joined, so repeated handoffs add up. */
+  /** The run and the `from` and `to` endpoints joined, so repeated handoffs of one run add up. */
   key: string;
   from: FlowEndpoint;
   to: FlowEndpoint;
   artifact: string;
-  /** Items handed over on this edge since the dashboard started. */
+  /** Items handed over on this edge in this run since the dashboard started. */
   total: number;
   /** Items in the most recent handoff. */
   last: number;
@@ -131,10 +135,15 @@ export function seriesKey(vendor: Vendor, account: string, window: UsageWindow):
   return `${vendor}|${account}|${window}`;
 }
 
-/** The key of a data-flow edge. */
+/** The key of a data-flow edge between two endpoints, without the run. */
 export function edgeKey(from: FlowEndpoint, to: FlowEndpoint): string {
   const end = (e: FlowEndpoint) => `${e.stage}:${e.vendor ?? "-"}:${e.role ?? "-"}`;
   return `${end(from)}>${end(to)}`;
+}
+
+/** The key of a data-flow edge in one run: edges of different runs never share a count. */
+export function runEdgeKey(runId: string, from: FlowEndpoint, to: FlowEndpoint): string {
+  return `${runId}|${edgeKey(from, to)}`;
 }
 
 /** Usage history kept per series; older samples drop off. */
@@ -184,21 +193,49 @@ export function upsertRound(rounds: RoundSummary[], summary: RoundSummary): Roun
   );
 }
 
-/** Adds samples to their series, in time order, without duplicates. */
+/**
+ * Adds samples to their series, in time order, without duplicates. Each
+ * touched series is merged and sorted once, so a large history loads in
+ * O(n log n).
+ */
 export function addUsageSamples(
   state: DashboardState,
   samples: readonly TimedUsageSample[],
 ): DashboardState {
   if (samples.length === 0) return state;
-  const usage = { ...state.usage };
+  const incoming = new Map<string, TimedUsageSample[]>();
   for (const s of samples) {
     const key = seriesKey(s.vendor, s.account, s.window);
-    const series = usage[key] ?? [];
-    if (series.some((p) => p.time === s.time)) continue;
-    const next = [...series, s].sort((a, b) => Date.parse(a.time) - Date.parse(b.time));
-    usage[key] = next.slice(-USAGE_HISTORY_LIMIT);
+    const list = incoming.get(key);
+    if (list) list.push(s);
+    else incoming.set(key, [s]);
   }
-  return { ...state, usage };
+  const usage = { ...state.usage };
+  let changed = false;
+  for (const [key, added] of incoming) {
+    const series = usage[key] ?? [];
+    const times = new Set(series.map((p) => p.time));
+    const fresh: TimedUsageSample[] = [];
+    for (const s of added) {
+      if (times.has(s.time)) continue;
+      times.add(s.time);
+      fresh.push(s);
+    }
+    if (fresh.length === 0) continue;
+    changed = true;
+    const last = series[series.length - 1];
+    const inOrder =
+      fresh.every((s, i) => i === 0 || Date.parse(fresh[i - 1]!.time) <= Date.parse(s.time)) &&
+      (last === undefined || Date.parse(last.time) <= Date.parse(fresh[0]!.time));
+    const next = inOrder
+      ? [...series, ...fresh]
+      : [...series, ...fresh]
+          .map((s) => ({ s, t: Date.parse(s.time) }))
+          .sort((a, b) => a.t - b.t)
+          .map((x) => x.s);
+    usage[key] = next.length > USAGE_HISTORY_LIMIT ? next.slice(-USAGE_HISTORY_LIMIT) : next;
+  }
+  return changed ? { ...state, usage } : state;
 }
 
 function agentKey(runId: string, agentId: string) {
@@ -274,7 +311,7 @@ export function applyEvent(prev: DashboardState, event: AgentBoxEvent): Dashboar
         run: r.run ? { ...r.run, stage: event.stage, round: event.round } : null,
       }));
     case "handoff": {
-      const key = edgeKey(event.from, event.to);
+      const key = runEdgeKey(event.runId, event.from, event.to);
       const old = state.flows[key];
       return {
         ...state,
@@ -427,6 +464,72 @@ export function applyEvent(prev: DashboardState, event: AgentBoxEvent): Dashboar
     case "settings.changed":
       return { ...state, settingsChangedAt: event.time };
   }
+}
+
+/** Runs whose rounds and findings a snapshot loads: those that can still change. */
+export const OPEN_RUN_STATUSES: readonly RunStatus[] = [
+  "pending",
+  "running",
+  "paused",
+  "waiting_decision",
+];
+
+/** What `seedDashboard()` takes from the REST routes. */
+export interface DashboardSnapshot {
+  /** From `runs.list`. */
+  runs: readonly RunState[];
+  /** From `runs.rounds`, by run id. */
+  rounds?: Readonly<Record<string, readonly RoundSummary[]>>;
+  /** From `findings.list`, by run id. */
+  findings?: Readonly<Record<string, readonly Finding[]>>;
+  /** From `projects.list`: each project's container. */
+  projects?: readonly ProjectSummary[];
+  /** From `boxes.list`. */
+  boxes?: readonly BoxView[];
+  /** When the snapshot was taken; the containers' `updatedAt`. */
+  time?: string;
+}
+
+/**
+ * Fills the state from a REST snapshot, as the event contract asks after a
+ * `hello` that can't replay. Events applied while the snapshot loaded are
+ * newer, so they win: a run, container, box, round, or finding the state
+ * already has keeps its value.
+ */
+export function seedDashboard(state: DashboardState, snap: DashboardSnapshot): DashboardState {
+  const runs = { ...state.runs };
+  for (const run of snap.runs) {
+    const r = runView(state, run.id);
+    const rounds = snap.rounds?.[run.id] ?? [];
+    const known = new Set(r.rounds.map((x) => x.round));
+    const findings = { ...r.findings };
+    for (const f of snap.findings?.[run.id] ?? []) findings[f.id] ??= f;
+    // A `run.changed` or `stage.changed` event already applied is newer.
+    const newer = r.run !== null || r.stage !== null;
+    runs[run.id] = {
+      ...r,
+      run: r.run ?? run,
+      stage: newer ? r.stage : run.stage,
+      round: newer ? r.round : run.round,
+      rounds: rounds
+        .filter((x) => !known.has(x.round))
+        .reduce((acc, x) => upsertRound(acc, x), r.rounds),
+      findings,
+    };
+  }
+  const containers = { ...state.containers };
+  for (const p of snap.projects ?? []) {
+    const c = p.container;
+    if (!c || containers[c.name] || c.state === "removed") continue;
+    containers[c.name] = {
+      ...container(state, c.name, p.project.id, snap.time ?? new Date().toISOString()),
+      state: c.state,
+      engine: c.engine,
+    };
+  }
+  const boxes = { ...state.boxes };
+  for (const b of snap.boxes ?? []) boxes[b.box.id] ??= b.status;
+  return { ...state, runs, containers, boxes };
 }
 
 /** Applies events in order. */
