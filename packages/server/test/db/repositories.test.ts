@@ -58,6 +58,29 @@ describe("openDatabase", () => {
   });
 });
 
+describe("database file modes", () => {
+  it("keeps the directory, the database, and its WAL files private under a loose umask", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agentbox-db-"));
+    const file = path.join(dir, "data", "agentbox.db");
+    const old = process.umask(0o022);
+    try {
+      const db = openDatabase(file);
+      repositories(db).projects.put(project());
+      expect(fs.statSync(path.dirname(file)).mode & 0o777).toBe(0o700);
+      for (const f of [file, `${file}-wal`, `${file}-shm`]) {
+        expect(fs.statSync(f).mode & 0o777).toBe(0o600);
+      }
+      db.close();
+      // A file left readable by an older version is tightened on open.
+      fs.chmodSync(file, 0o644);
+      openDatabase(file).close();
+      expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+    } finally {
+      process.umask(old);
+    }
+  });
+});
+
 describe("migration 2", () => {
   it("re-keys host keys that two projects share and then refuses a duplicate", () => {
     const db = new Database(":memory:");
