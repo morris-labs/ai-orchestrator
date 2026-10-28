@@ -697,7 +697,13 @@ export function App() {
     project: BoxDialogResult["project"],
   ): Promise<string | null> => {
     if (!project) return null;
-    let p = projectForDir(projects, dir);
+    // A box created just now may have created the project on the server.
+    let p =
+      projectForDir(projects, dir) ??
+      projectForDir(
+        (await client.call("projects.list", {})).projects.map((x) => x.project),
+        dir,
+      );
     if (!p) p = await client.call("projects.create", { body: { root: normalizeDir(dir) } });
     const res = await client.call("projects.update", {
       params: { projectId: p.id },
@@ -756,13 +762,22 @@ export function App() {
     title: string,
     form: BoxForm,
     mode: "new" | "fork",
-    forkFrom?: string,
+    forkFrom: string | undefined,
+    project: BoxDialogResult["project"],
   ): Promise<string | null> => {
+    // Project settings edited in the dialog are saved only once the server
+    // has accepted the box, so a refused create leaves the project as it
+    // was. The box then starts after them, so it gets the new mounts.
+    const deferStart = project !== null;
     let force = false;
     for (;;) {
       try {
         const job = await client.call("boxes.create", {
-          body: createBody(form, mode, { ...(forkFrom ? { forkFrom } : {}), force }),
+          body: createBody(form, mode, {
+            ...(forkFrom ? { forkFrom } : {}),
+            force,
+            start: !deferStart,
+          }),
         });
         setDialog(null);
         toast(`Creating ${form.name || form.targetDir}...`);
@@ -775,11 +790,21 @@ export function App() {
               void inform(title, message);
               return;
             }
-            await data.reload();
             const id = (done.result as { box?: { id: string } } | null)?.box?.id ?? done.boxId;
-            const v = id
+            let v = id
               ? await client.call("boxes.get", { params: { boxId: id } }).catch(() => null)
               : null;
+            if (deferStart) {
+              await saveProjectSettings(v?.box.targetDir ?? form.targetDir, project);
+              if (v) {
+                try {
+                  v = await client.call("boxes.start", { params: { boxId: v.box.id } });
+                } catch (err) {
+                  await handleLaunchError(title, err, v);
+                }
+              }
+            }
+            await data.reload();
             if (v) {
               data.putBox(v);
               setSelected(new Set([v.box.id]));
@@ -814,17 +839,11 @@ export function App() {
     }
   };
 
-  const acceptNew = async (r: BoxDialogResult) => {
-    const err = await saveProjectSettings(r.form.targetDir, r.project);
-    if (err) return err;
-    return runCreate("New Box", r.form, "new");
-  };
+  const acceptNew = (r: BoxDialogResult) =>
+    runCreate("New Box", r.form, "new", undefined, r.project);
 
-  const acceptFork = (source: BoxView) => async (r: BoxDialogResult) => {
-    const err = await saveProjectSettings(source.box.targetDir, r.project);
-    if (err) return err;
-    return runCreate("Fork Conversation", r.form, "fork", source.box.id);
-  };
+  const acceptFork = (source: BoxView) => (r: BoxDialogResult) =>
+    runCreate("Fork Conversation", r.form, "fork", source.box.id, r.project);
 
   const acceptEdit = (view: BoxView) => async (r: BoxDialogResult) => {
     await saveProjectSettings(view.box.targetDir, r.project);

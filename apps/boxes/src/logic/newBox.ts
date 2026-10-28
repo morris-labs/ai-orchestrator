@@ -124,7 +124,7 @@ export function validateForm(form: BoxForm, mode: DialogMode): string[] {
 export function createBody(
   form: BoxForm,
   mode: "new" | "fork",
-  options: { forkFrom?: string; rememberLayout?: boolean; force?: boolean } = {},
+  options: { forkFrom?: string; rememberLayout?: boolean; force?: boolean; start?: boolean } = {},
 ): BoxCreate {
   const claude = form.platform === "claude";
   let conversation: BoxCreate["conversation"] = { mode: "new" };
@@ -142,7 +142,7 @@ export function createBody(
     layout: form.layout,
     rememberLayout: options.rememberLayout ?? mode === "new",
     sshRemoteRefs: form.sshRemoteRefs,
-    start: true,
+    start: options.start ?? true,
     force: options.force ?? false,
   };
 }

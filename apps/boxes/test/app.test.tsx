@@ -454,6 +454,55 @@ describe("main window", () => {
     expect(server.contractViolations).toEqual([]);
   });
 
+  it("saves edited project settings only after the server accepts the box", async () => {
+    const user = userEvent.setup();
+    const server = new FakeServer({ boxes: boxes() });
+    await renderApp(server);
+    const open = async () => {
+      await user.keyboard("{Control>}{Shift>}N{/Shift}{/Control}");
+      const dialog = await screen.findByRole("dialog", { name: "New Box" });
+      await user.type(within(dialog).getByLabelText("Target directory"), "/w/new");
+      await user.type(within(dialog).getByLabelText("Conversation name"), "Ports");
+      await user.click(within(dialog).getByRole("button", { name: /TCP port maps/ }));
+      await user.click(within(dialog).getByRole("button", { name: "Add port" }));
+      await user.type(within(dialog).getByLabelText("Host port 1"), "8080");
+      await user.click(within(dialog).getByRole("button", { name: "Create" }));
+      return dialog;
+    };
+    server.on("boxes.create", () => {
+      throw new FakeApiError("validation", "That name is taken.", 400);
+    });
+    const dialog = await open();
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("That name is taken.");
+    expect(server.callsTo("projects.update")).toHaveLength(0);
+    expect(server.callsTo("projects.create")).toHaveLength(0);
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  });
+
+  it("creates the box first, then saves its project settings, then starts it", async () => {
+    const user = userEvent.setup();
+    const server = new FakeServer({ boxes: boxes() });
+    await renderApp(server);
+    await user.keyboard("{Control>}{Shift>}N{/Shift}{/Control}");
+    const dialog = await screen.findByRole("dialog", { name: "New Box" });
+    await user.type(within(dialog).getByLabelText("Target directory"), "/w/new");
+    await user.type(within(dialog).getByLabelText("Conversation name"), "Ports");
+    await user.click(within(dialog).getByRole("button", { name: /TCP port maps/ }));
+    await user.click(within(dialog).getByRole("button", { name: "Add port" }));
+    await user.type(within(dialog).getByLabelText("Host port 1"), "8080");
+    await user.click(within(dialog).getByRole("button", { name: "Create" }));
+    await waitFor(() => expect(server.callsTo("boxes.start")).toHaveLength(1), { timeout: 3000 });
+    expect(server.callsTo("boxes.create")[0]?.body).toMatchObject({ start: false });
+    const order = server.calls
+      .map((c) => c.key)
+      .filter((k) => k === "boxes.create" || k === "projects.update" || k === "boxes.start");
+    expect(order).toEqual(["boxes.create", "projects.update", "boxes.start"]);
+    expect(server.callsTo("projects.update")[0]?.body).toMatchObject({
+      tcpMaps: [{ host: 8080, container: 8080 }],
+    });
+    expect(server.contractViolations).toEqual([]);
+  });
+
   it("shows a bar when the server is unreachable", async () => {
     const server = new FakeServer();
     server.on("projects.list", () => {
