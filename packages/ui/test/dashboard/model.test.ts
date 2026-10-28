@@ -5,9 +5,13 @@ import {
   edgeKey,
   emptyDashboard,
   replay,
+  runEdgeKey,
+  seedDashboard,
   seriesKey,
   upsertRound,
+  USAGE_HISTORY_LIMIT,
 } from "../../src/dashboard";
+import { makeBoxView, makeEvent, makeProject } from "../../src/testing";
 import { describe, expect, it } from "vitest";
 import {
   buildDemoEvents,
@@ -19,9 +23,8 @@ const events = buildDemoEvents();
 const state = replay(events);
 
 describe("applyEvent over the demo stream", () => {
-  it("tracks the cursor and the event count", () => {
+  it("counts the events", () => {
     expect(state.eventCount).toBe(events.length);
-    expect(state.cursor).toEqual({ streamId: "server-demo-1", seq: events.length });
   });
 
   it("builds the container from changed, stats, and ports events", () => {
@@ -216,5 +219,88 @@ describe("upsertRound", () => {
       [1, 5],
       [2, 1],
     ]);
+  });
+});
+
+describe("handoff edges", () => {
+  const from = { stage: "find", vendor: "claude", role: "reviewer" } as const;
+  const to = { stage: "merge", vendor: null, role: null } as const;
+  const handoff = (runId: string, count: number) =>
+    makeEvent("handoff", { runId, round: 1, from, to, artifact: "findings", count, file: null });
+
+  it("keeps each run's edges and counts apart", () => {
+    const s = replay([handoff("run-a", 4), handoff("run-b", 2), handoff("run-a", 1)]);
+    expect(s.flows[runEdgeKey("run-a", from, to)]).toMatchObject({ total: 5, runId: "run-a" });
+    expect(s.flows[runEdgeKey("run-b", from, to)]).toMatchObject({ total: 2, runId: "run-b" });
+  });
+});
+
+describe("addUsageSamples with a long history", () => {
+  it("keeps the newest samples up to the limit, in order", () => {
+    const base = Date.parse("2026-10-28T00:00:00.000Z");
+    const samples = Array.from({ length: USAGE_HISTORY_LIMIT + 10 }, (_, i) => ({
+      vendor: "claude" as const,
+      account: "a",
+      window: "5h" as const,
+      utilization: i / 10_000,
+      spendUsd: null,
+      ceiling: { kind: "utilization" as const, window: "5h" as const, max: 0.6 },
+      resetAt: null,
+      sampleSource: "rate_limit_event" as const,
+      time: new Date(base + (USAGE_HISTORY_LIMIT + 10 - i) * 1000).toISOString(),
+    }));
+    const series = addUsageSamples(emptyDashboard(), samples).usage[
+      seriesKey("claude", "a", "5h")
+    ]!;
+    expect(series).toHaveLength(USAGE_HISTORY_LIMIT);
+    const times = series.map((x) => Date.parse(x.time));
+    expect(times).toEqual([...times].sort((a, b) => a - b));
+    expect(series[series.length - 1]!.utilization).toBe(0);
+  });
+});
+
+describe("seedDashboard", () => {
+  const demoRun = events.find(
+    (e) => e.type === "run.changed" && e.run.status === "waiting_decision",
+  );
+  const run = (demoRun as Extract<typeof demoRun, { type: "run.changed" }>)!.run;
+  const finding = events.find((e) => e.type === "finding.changed");
+  const f = (finding as Extract<typeof finding, { type: "finding.changed" }>)!.finding;
+
+  it("fills runs, findings, rounds, containers, and boxes from REST", () => {
+    const project = makeProject({ root: "/w/app", id: "app-1" });
+    const s = seedDashboard(emptyDashboard(), {
+      runs: [run],
+      rounds: { [run.id]: [] },
+      findings: { [run.id]: [f] },
+      projects: [
+        {
+          project,
+          running: 1,
+          total: 1,
+          container: { name: "claude-agent-proj-app-1", state: "running", engine: null },
+        },
+      ],
+      boxes: [
+        makeBoxView({ box: { id: "claude-agent-x", targetDir: "/w/app" }, status: "running" }),
+      ],
+    });
+    expect(s.runs[run.id]!.run?.status).toBe("waiting_decision");
+    expect(s.runs[run.id]!.stage).toBe(run.stage);
+    expect(s.runs[run.id]!.findings[f.id]).toEqual(f);
+    expect(s.containers["claude-agent-proj-app-1"]).toMatchObject({
+      projectId: "app-1",
+      state: "running",
+    });
+    expect(s.boxes["claude-agent-x"]).toBe("running");
+  });
+
+  it("keeps state that events applied while the snapshot loaded", () => {
+    const newer = applyEvent(
+      emptyDashboard(),
+      makeEvent("run.changed", { run: { ...run, status: "finished" }, roundSummary: null }),
+    );
+    const s = seedDashboard(newer, { runs: [run] });
+    expect(s.runs[run.id]!.run?.status).toBe("finished");
   });
 });

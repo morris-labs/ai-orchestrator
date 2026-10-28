@@ -1,4 +1,4 @@
-import { Dashboard, replay, emptyDashboard } from "../../src/dashboard";
+import { addUsageSamples, Dashboard, replay, emptyDashboard } from "../../src/dashboard";
 import { render, screen, within, fireEvent } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { buildDemoEvents, DEMO_CONTAINER as CONTAINER } from "../../src/testing/demoRun";
@@ -41,6 +41,34 @@ describe("Dashboard", () => {
         .map((li) => li.textContent),
     ).toEqual(["Raised8", "Merged6", "Confirmed2", "Fixed2"]);
     expect(screen.getByText("● Live")).toBeInTheDocument();
+  });
+
+  it("draws no ceiling on a window the ceiling doesn't govern, and marks estimates", () => {
+    const sample = (time: string, utilization: number) => ({
+      vendor: "claude" as const,
+      account: "a@example.com",
+      window: "7d" as const,
+      utilization,
+      spendUsd: null,
+      ceiling: { kind: "utilization" as const, window: "5h" as const, max: 0.6 },
+      resetAt: null,
+      sampleSource: "estimate" as const,
+      time,
+    });
+    const state = addUsageSamples(emptyDashboard(), [
+      sample("2026-10-28T09:00:00.000Z", 0.55),
+      sample("2026-10-28T09:30:00.000Z", 0.65),
+    ]);
+    const { container } = render(<Dashboard state={state} now={NOW} />);
+    const usage = screen.getByRole("region", { name: "Usage against ceilings" });
+    expect(within(usage).queryByText(/Over ceiling/)).not.toBeInTheDocument();
+    expect(within(usage).getByText("No ceiling for this window")).toBeInTheDocument();
+    expect(within(usage).getByRole("img", { name: /no ceiling/ })).toBeInTheDocument();
+    expect(container.querySelector(".ab-ceiling")).toBeNull();
+    expect(container.querySelector("[data-estimated]")).not.toBeNull();
+    fireEvent.click(within(usage).getByRole("button", { name: "Table" }));
+    expect(within(usage).getByRole("columnheader", { name: "Source" })).toBeInTheDocument();
+    expect(within(usage).getByRole("cell", { name: "estimate" })).toBeInTheDocument();
   });
 
   it("switches a chart to its table view", () => {

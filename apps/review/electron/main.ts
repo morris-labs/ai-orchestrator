@@ -4,15 +4,8 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
-import {
-  HOME_PATHS,
-  DEFAULT_SERVER_PORT,
-  RunStateSchema,
-  ServerStreamFrameSchema,
-  GlobalSettingsSchema,
-  type NotificationToggles,
-} from "@agentbox/contracts";
+import { HOME_PATHS, DEFAULT_SERVER_PORT, type NotificationToggles } from "@agentbox/contracts";
+import { ApiClient, EventsConnection, isAppPage, isWebUrl } from "@agentbox/ui/core";
 import {
   BrowserWindow,
   Menu,
@@ -23,7 +16,6 @@ import {
   nativeImage,
   shell,
 } from "electron";
-import { z } from "zod";
 import {
   ActiveRuns,
   PROTOCOL,
@@ -34,8 +26,6 @@ import {
   trayBitmap,
   trayTooltip,
 } from "./logic.js";
-
-const here = fileURLToPath(new URL(".", import.meta.url));
 
 function readServerConfig(): { serverUrl: string; token: string | null } {
   const home = homedir();
@@ -61,6 +51,10 @@ function readServerConfig(): { serverUrl: string; token: string | null } {
 }
 
 const config = readServerConfig();
+const DEV_URL = process.env.AGENTBOX_REVIEW_DEV_URL;
+/** The pages that get the token; anything else is foreign. */
+const APP_PAGES = [rendererUrl(config.serverUrl, null), ...(DEV_URL ? [DEV_URL] : [])];
+const client = new ApiClient({ baseUrl: config.serverUrl, token: config.token });
 let win: BrowserWindow | null = null;
 let tray: Tray | null = null;
 const active = new ActiveRuns();
@@ -71,18 +65,6 @@ let toggles: NotificationToggles = {
   boxEnded: true,
   roundSummary: true,
 };
-
-async function api(path: string, init: RequestInit = {}): Promise<unknown> {
-  const res = await fetch(`${config.serverUrl}${path}`, {
-    ...init,
-    headers: {
-      ...(config.token ? { authorization: `Bearer ${config.token}` } : {}),
-      ...init.headers,
-    },
-  });
-  if (!res.ok) throw new Error(`${init.method ?? "GET"} ${path} answered ${res.status}.`);
-  return res.status === 204 ? null : res.json();
-}
 
 function updateTray() {
   if (!tray) return;
@@ -118,17 +100,28 @@ function createWindow(link: ReturnType<typeof parseDeepLink>) {
     title: "Agent Box Review",
     backgroundColor: "#0d0d0d",
     webPreferences: {
-      preload: join(here, "preload.cjs"),
+      preload: join(__dirname, "preload.cjs"),
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,
+      webviewTag: false,
     },
   });
-  // Open external links, such as pull requests, in the default browser.
+  // Open web links, such as pull requests, in the default browser. A link
+  // from an imported finding can carry any scheme, so others never open.
   win.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
+    if (isWebUrl(url)) void shell.openExternal(url);
     return { action: "deny" };
   });
+  // A dropped link, a script, or a redirect must not take the window and its
+  // token to another page.
+  win.webContents.on("will-navigate", (e) => {
+    if (!isAppPage(e.url, APP_PAGES)) e.preventDefault();
+  });
+  win.webContents.on("will-redirect", (e) => {
+    if (!isAppPage(e.url, APP_PAGES)) e.preventDefault();
+  });
+  win.webContents.on("will-attach-webview", (e) => e.preventDefault());
   win.on("close", (e) => {
     // Closing hides the window; the tray keeps counting runs.
     if (!quitting) {
@@ -136,64 +129,53 @@ function createWindow(link: ReturnType<typeof parseDeepLink>) {
       win?.hide();
     }
   });
-  const dev = process.env.AGENTBOX_REVIEW_DEV_URL;
-  void win.loadURL(dev ?? rendererUrl(config.serverUrl, link));
+  void win.loadURL(DEV_URL ?? rendererUrl(config.serverUrl, link));
 }
 
 async function loadInitialState() {
   try {
-    const runs = z.object({ runs: z.array(RunStateSchema) }).parse(await api("/api/v1/runs"));
-    active.seed(runs.runs);
-    const settings = GlobalSettingsSchema.parse(await api("/api/v1/settings"));
-    toggles = settings.notifications;
+    const { runs } = await client.call("runs.list", {});
+    active.seed(runs);
+    toggles = (await client.call("settings.get", {})).notifications;
   } catch {
     // The server may be starting; the event stream retries and the counts catch up.
   }
   updateTray();
 }
 
-function connectEvents(attempt = 0) {
-  const url = new URL("/api/v1/events", config.serverUrl.replace(/^http/, "ws"));
-  url.searchParams.set("types", "run.changed,notification,settings.changed");
-  if (config.token) url.searchParams.set("token", config.token);
-  const ws = new WebSocket(url);
-  ws.onopen = () => {
-    attempt = 0;
-    ws.send(JSON.stringify({ type: "hello", streamId: null, lastSeq: null }));
-    void loadInitialState();
-  };
-  ws.onmessage = (msg) => {
-    let json: unknown;
-    try {
-      json = JSON.parse(String(msg.data));
-    } catch {
-      return;
-    }
-    const frame = ServerStreamFrameSchema.safeParse(json);
-    if (!frame.success || frame.data.type === "hello") return;
-    const event = frame.data;
-    if (event.type === "settings.changed") toggles = event.settings.notifications;
-    if (active.apply(event)) updateTray();
-    const notice = noticeFor(event, toggles);
-    if (notice && Notification.isSupported()) {
-      const n = new Notification({
-        title: notice.title,
-        body: notice.body,
-        urgency: notice.urgent ? "critical" : "normal",
-      });
-      n.on("click", () => {
-        show(notice.hash);
-        void api(`/api/v1/notifications/${encodeURIComponent(notice.notificationId)}/read`, {
-          method: "POST",
-        }).catch(() => undefined);
-      });
-      n.show();
-    }
-  };
-  ws.onclose = () => {
-    if (quitting) return;
-    setTimeout(() => connectEvents(attempt + 1), Math.min(10_000, 500 * 2 ** attempt));
-  };
+/**
+ * Follows the event stream with the shared client, which resumes from the
+ * last event it saw after a reconnect, so a notification sent while the
+ * socket was down still arrives. When the server can't replay, the counts
+ * and toggles reload through REST.
+ */
+function connectEvents() {
+  const conn = new EventsConnection({
+    client,
+    types: ["run.changed", "notification", "settings.changed"],
+    onResync: () => void loadInitialState(),
+    onEvent: (event) => {
+      if (event.type === "settings.changed") toggles = event.settings.notifications;
+      if (active.apply(event)) updateTray();
+      const notice = noticeFor(event, toggles);
+      if (notice && Notification.isSupported()) {
+        const n = new Notification({
+          title: notice.title,
+          body: notice.body,
+          urgency: notice.urgent ? "critical" : "normal",
+        });
+        n.on("click", () => {
+          show(notice.hash);
+          void client
+            .call("notifications.read", { params: { notificationId: notice.notificationId } })
+            .catch(() => undefined);
+        });
+        n.show();
+      }
+    },
+  });
+  conn.start();
+  app.on("before-quit", () => conn.stop());
 }
 
 let quitting = false;
@@ -216,10 +198,13 @@ if (!app.requestSingleInstanceLock()) {
   });
   app.on("activate", () => show());
   ipcMain.on("agentbox:config", (e) => {
+    // Only the app's own page gets the token.
+    const url = e.senderFrame?.url;
+    const trusted = typeof url === "string" && isAppPage(url, APP_PAGES);
     // Under the Vite dev server the page calls its own origin, which proxies to the server.
     e.returnValue = {
-      token: config.token,
-      serverUrl: process.env.AGENTBOX_REVIEW_DEV_URL ? null : config.serverUrl,
+      token: trusted ? config.token : null,
+      serverUrl: DEV_URL ? null : config.serverUrl,
     };
   });
   void app.whenReady().then(() => {

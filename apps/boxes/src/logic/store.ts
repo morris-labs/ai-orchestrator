@@ -3,13 +3,6 @@
 // container, so they update every box that runs in that container.
 import type { BoxView, EventOf, Listener, ProjectSummary } from "@agentbox/contracts";
 
-export interface ContainerStats {
-  cpuPercent: number;
-  memBytes: number;
-  memLimitBytes: number;
-  diskBytes: number;
-}
-
 /**
  * Applies `box.changed`. Returns the new list and whether the box is unknown
  * here, in which case the caller fetches its full view.
@@ -100,4 +93,29 @@ export function withTransient(
     const t = transient.get(b.box.id);
     return t ? { ...b, status: t } : b;
   });
+}
+
+/**
+ * Drops the optimistic overlay of a box once the server reports progress on
+ * that transition: `starting` or `running` for a start, `stopping` or
+ * `stopped` for a stop. The row then shows the server's state, even if the
+ * request that set the overlay never settles.
+ */
+export function settleTransient(
+  transient: ReadonlyMap<string, BoxView["status"]>,
+  boxId: string,
+  status: BoxView["status"],
+): ReadonlyMap<string, BoxView["status"]> {
+  const t = transient.get(boxId);
+  if (t === undefined) return transient;
+  const settles =
+    t === "starting"
+      ? status === "starting" || status === "running"
+      : t === "stopping"
+        ? status === "stopping" || status === "stopped"
+        : t === status;
+  if (!settles) return transient;
+  const next = new Map(transient);
+  next.delete(boxId);
+  return next;
 }

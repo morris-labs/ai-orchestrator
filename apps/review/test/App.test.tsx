@@ -68,6 +68,27 @@ describe("App with the scripted event stream", () => {
     store.stop();
   });
 
+  it("loads state through REST on the first hello and after a resync", async () => {
+    const { store, server } = renderWithStore(<App search="" />, handlers());
+    store.start();
+    const nav = screen.getByRole("navigation", { name: "Main" });
+    // No event says so: the badge comes from runs.list.
+    expect(await within(nav).findByLabelText("1 need a decision")).toBeInTheDocument();
+    expect(server.callsTo("findings.list")).toHaveLength(1);
+
+    // The server restarted and the run finished meanwhile.
+    server.on("runs.list", () => ({ runs: [{ ...lastRun(), status: "finished" as const }] }));
+    const [ws] = server.socketsFor("/api/v1/events");
+    act(() => {
+      ws!.serverSend({ type: "hello", streamId: "restarted", lastSeq: 0, replaying: false });
+    });
+    await waitFor(() =>
+      expect(within(nav).queryByLabelText("1 need a decision")).not.toBeInTheDocument(),
+    );
+    expect(store.getState().dashboard.runs[lastRun().id]?.run?.status).toBe("finished");
+    store.stop();
+  });
+
   it("opens the launcher prefilled from the deep link", async () => {
     renderWithStore(<App search={`?project=${project.project.id}`} />, handlers());
     await waitFor(() => expect(screen.getByLabelText("Container")).toHaveValue(project.project.id));

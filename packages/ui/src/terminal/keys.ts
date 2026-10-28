@@ -25,3 +25,24 @@ export function endedBanner(
   const head = exitCode === null ? "Session ended." : `Session ended (exit ${exitCode}).`;
   return `${head}\n${subject}`;
 }
+
+/**
+ * The xterm.js custom key handler: copy and paste run here, application
+ * chords go to the window, and every other key goes to the terminal.
+ * xterm.js ignores the handler's return value for the DOM event, so this
+ * cancels the browser's default itself; otherwise Chromium's own Ctrl+Shift+V
+ * paste would fire a `paste` event that xterm.js pastes a second time.
+ * Returns what xterm.js expects: true to let the terminal handle the key.
+ */
+export function handleTerminalKey(
+  e: KeyLike & { type: string; preventDefault(): void },
+  actions: { copy: () => void; paste: () => void },
+): boolean {
+  if (e.type !== "keydown") return true;
+  const action = classifyTerminalKey(e);
+  if (action === "terminal") return true;
+  e.preventDefault();
+  if (action === "copy") actions.copy();
+  if (action === "paste") actions.paste();
+  return false;
+}

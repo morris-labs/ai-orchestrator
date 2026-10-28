@@ -3,7 +3,6 @@ import {
   findTerminal,
   isBoxNotification,
   reviewCommand,
-  reviewQuery,
   serverUrl,
   terminalCandidates,
   terminalCommand,
@@ -40,6 +39,14 @@ describe("external terminals", () => {
     expect(terminalCommand("/usr/bin/xterm", argv, "t").args).toEqual(["-T", "t", "-e", ...argv]);
     expect(terminalCommand("kitty", argv, "t").args).toEqual(["--title", "t", ...argv]);
     expect(terminalCommand("alacritty", argv, "t").args).toEqual(["--title", "t", "-e", ...argv]);
+    expect(terminalCommand("/usr/bin/xfce4-terminal", argv, "t").args).toEqual([
+      "--title",
+      "t",
+      "-x",
+      ...argv,
+    ]);
+    expect(terminalCommand("foot", argv, "t").args).toEqual(["--title", "t", ...argv]);
+    expect(terminalCommand("wezterm", argv, "t").args).toEqual(["start", "--", ...argv]);
     expect(terminalCommand("/usr/bin/x-terminal-emulator", argv, "t").args).toEqual([
       "-e",
       ...argv,
@@ -88,7 +95,6 @@ describe("notifications and review", () => {
     ).toBe(false);
   });
   it("prefills the review launcher", () => {
-    expect(reviewQuery("p-1", "claude-agent-x")).toBe("?project=p-1&box=claude-agent-x");
     expect(reviewCommand("p", "b")).toEqual({
       file: "agentbox-review",
       args: ["--project=p", "--box=b"],

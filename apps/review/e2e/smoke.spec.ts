@@ -12,7 +12,7 @@ import { DEMO_PROJECT as PROJECT_ID, FakeServer, makeProject } from "@agentbox/u
 import { serveFake } from "@agentbox/ui/testing/node";
 
 const appDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const main = resolve(appDir, "dist/electron/main.js");
+const main = resolve(appDir, "dist/electron/main.cjs");
 
 test("launches, prefills the launcher, and keeps a single instance", async () => {
   const fake = new FakeServer({
@@ -52,6 +52,31 @@ test("launches, prefills the launcher, and keeps a single instance", async () =>
     expect(second.status).toBe(0);
     await expect(page).toHaveURL(/#\/launch\?project=other/);
     expect(app.windows()).toHaveLength(1);
+
+    // Only http and https links open outside the app.
+    await app.evaluate(({ shell }) => {
+      const opened: string[] = [];
+      (globalThis as { opened?: string[] }).opened = opened;
+      shell.openExternal = async (url: string) => {
+        opened.push(url);
+      };
+    });
+    await page.evaluate(() => {
+      window.open("file:///tmp/x.desktop");
+      window.open("smb://example.com/share");
+      window.open("https://example.com/pull/1");
+    });
+    await expect
+      .poll(() => app.evaluate(() => (globalThis as { opened?: string[] }).opened))
+      .toEqual(["https://example.com/pull/1"]);
+
+    // Navigating away leaves the window on the app's page.
+    const before = page.url();
+    await page.evaluate(() => {
+      window.location.href = "http://127.0.0.1:9/elsewhere";
+    });
+    await page.waitForTimeout(1000);
+    expect(page.url()).toBe(before);
   } finally {
     await app.evaluate(({ app: a }) => a.quit());
     await app.close().catch(() => undefined);

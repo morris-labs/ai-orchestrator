@@ -31,11 +31,18 @@ export interface EventsConnectionOptions {
   maxDelayMs?: number;
   setTimer?: (fn: () => void, ms: number) => unknown;
   clearTimer?: (handle: unknown) => void;
+  /** A number in [0, 1) that spreads reconnects out; `Math.random` by default. */
+  random?: () => number;
 }
 
-/** Computes the next reconnect delay: doubles from `initial`, capped at `max`. */
-export function nextDelay(attempt: number, initial: number, max: number): number {
-  return Math.min(max, initial * 2 ** Math.max(0, attempt));
+/**
+ * Computes the next reconnect delay: doubles from `initial`, capped at `max`.
+ * With `jitter` in [0, 1), the delay lands between 75 and 125 percent of
+ * that, so that clients don't all retry at once after a server restart.
+ */
+export function nextDelay(attempt: number, initial: number, max: number, jitter?: number): number {
+  const base = Math.min(max, initial * 2 ** Math.max(0, attempt));
+  return jitter === undefined ? base : Math.round(base * (0.75 + jitter * 0.5));
 }
 
 /** A self-reconnecting subscription to the server's event stream. */
@@ -50,7 +57,10 @@ export class EventsConnection {
   private awaitingHello = false;
   private status: StreamStatus = "closed";
   private readonly opts: Required<
-    Pick<EventsConnectionOptions, "initialDelayMs" | "maxDelayMs" | "setTimer" | "clearTimer">
+    Pick<
+      EventsConnectionOptions,
+      "initialDelayMs" | "maxDelayMs" | "setTimer" | "clearTimer" | "random"
+    >
   > &
     EventsConnectionOptions;
 
@@ -60,6 +70,7 @@ export class EventsConnection {
       maxDelayMs: 10_000,
       setTimer: (fn, ms) => setTimeout(fn, ms),
       clearTimer: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
+      random: Math.random,
       ...options,
     };
   }
@@ -115,10 +126,10 @@ export class EventsConnection {
       return;
     }
     this.socket = socket;
-    socket.onopen = () => {
-      this.attempt = 0;
-      this.sendHello();
-    };
+    // The backoff resets on the server's hello, not on open: a server that
+    // accepts the upgrade and then closes, such as one that rejects the
+    // token, keeps backing off.
+    socket.onopen = () => this.sendHello();
     socket.onmessage = (ev: MessageEvent) => {
       if (typeof ev.data !== "string") return;
       let raw: unknown;
@@ -143,7 +154,12 @@ export class EventsConnection {
   private scheduleReconnect() {
     if (this.stopped) return;
     this.setStatus("closed");
-    const delay = nextDelay(this.attempt, this.opts.initialDelayMs, this.opts.maxDelayMs);
+    const delay = nextDelay(
+      this.attempt,
+      this.opts.initialDelayMs,
+      this.opts.maxDelayMs,
+      this.opts.random(),
+    );
     this.attempt += 1;
     this.timer = this.opts.setTimer(() => {
       this.timer = null;
@@ -171,6 +187,7 @@ export class EventsConnection {
     const frame = parsed.data;
     if (frame.type === "hello") {
       this.awaitingHello = false;
+      this.attempt = 0;
       this.setStatus("open");
       const matched = frame.replaying && frame.streamId === this.streamId;
       if (!matched) {

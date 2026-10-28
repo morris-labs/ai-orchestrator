@@ -31,6 +31,13 @@ export function terminalCommand(
       return { file: terminal, args: ["--title", title, "-e", ...argv] };
     case "xterm":
       return { file: terminal, args: ["-T", title, "-e", ...argv] };
+    // xfce4-terminal's -e takes one command string; -x takes the rest as argv.
+    case "xfce4-terminal":
+      return { file: terminal, args: ["--title", title, "-x", ...argv] };
+    case "foot":
+      return { file: terminal, args: ["--title", title, ...argv] };
+    case "wezterm":
+      return { file: terminal, args: ["start", "--", ...argv] };
     default:
       return { file: terminal, args: ["-e", ...argv] };
   }
@@ -139,11 +146,6 @@ export const BOX_NOTIFICATION_KINDS: readonly NotificationKind[] = ["box_ended"]
 /** True for notifications this app shows: box kinds, or any notification about a box but no run. */
 export function isBoxNotification(n: Pick<Notification, "kind" | "runId" | "boxId">): boolean {
   return BOX_NOTIFICATION_KINDS.includes(n.kind) || (n.runId === null && n.boxId !== null);
-}
-
-/** The `?project=&box=` query the review app's page reads to prefill its launcher. */
-export function reviewQuery(projectId: string, boxId: string): string {
-  return `?${new URLSearchParams({ project: projectId, box: boxId }).toString()}`;
 }
 
 /**

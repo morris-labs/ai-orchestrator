@@ -1,6 +1,6 @@
 // A one-field dialog: rename a project, move or change a working directory,
 // relink a box.
-import { Button, Dialog, errorMessage } from "@agentbox/ui";
+import { Button, Dialog, errorMessage, useInFlight } from "@agentbox/ui";
 import { useState } from "react";
 import { useDirectoryPicker } from "./DirectoryPicker";
 
@@ -22,32 +22,31 @@ export interface InputDialogProps {
 export function InputDialog(props: InputDialogProps) {
   const [value, setValue] = useState(props.initial);
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const { busy, run } = useInFlight();
   const picker = useDirectoryPicker();
-  const accept = async () => {
-    if (!props.allowEmpty && value.trim() === "") {
-      setError(`Type a value for ${props.label.toLowerCase()}.`);
-      return;
-    }
-    setBusy(true);
-    try {
-      setError(await props.onAccept(value.trim()));
-    } catch (err) {
-      setError(errorMessage(err));
-    } finally {
-      setBusy(false);
-    }
-  };
+  const accept = () =>
+    run(async () => {
+      if (!props.allowEmpty && value.trim() === "") {
+        setError(`Type a value for ${props.label.toLowerCase()}.`);
+        return;
+      }
+      try {
+        setError(await props.onAccept(value.trim()));
+      } catch (err) {
+        setError(errorMessage(err));
+      }
+    });
   return (
     <Dialog
       title={props.title}
       width="min(620px, 94vw)"
       onClose={props.onCancel}
       onSubmit={() => void accept()}
+      busy={busy}
       buttons={
         <>
           <Button onClick={props.onCancel}>Cancel</Button>
-          <Button primary disabled={busy} onClick={() => void accept()}>
+          <Button primary onClick={() => void accept()}>
             {props.okLabel ?? "OK"}
           </Button>
         </>

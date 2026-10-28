@@ -1,5 +1,6 @@
 // The lists that confirmations show: what Resume, Restart All, and Purge
 // act on.
+import { normalizeDir } from "./newBox";
 import type { BoxView, PurgeResult } from "@agentbox/contracts";
 
 /**
@@ -18,9 +19,14 @@ export function resumeDetail(ids: readonly string[]): string {
     : `${ids.length} boxes were running before the last shutdown:\n\n  ${ids.join("\n  ")}`;
 }
 
-/** A box running against the same directory, which makes Purge refuse. Looks at every box, not the filtered ones. */
+/**
+ * A box running, starting, or stopping against the same directory, which
+ * makes Purge refuse. Looks at every box, not the filtered ones; trailing
+ * slashes don't count.
+ */
 export function runningOnDir(all: readonly BoxView[], dir: string): BoxView | undefined {
-  return all.find((b) => b.status === "running" && b.box.targetDir === dir);
+  const d = normalizeDir(dir);
+  return all.find((b) => b.status !== "stopped" && normalizeDir(b.box.targetDir) === d);
 }
 
 /** What Purge removes, for its confirmation, from the server's dry run: transcript folders, then records. */

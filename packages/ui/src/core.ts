@@ -8,3 +8,4 @@ export * from "./events/hub";
 export * from "./terminal/connection";
 export * from "./keys/chords";
 export * from "./theme/tokens";
+export * from "./electron/guards";

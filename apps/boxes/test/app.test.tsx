@@ -85,6 +85,18 @@ describe("main window", () => {
     await waitFor(() => expect(server.callsTo("boxes.stopAll")).toHaveLength(1));
   });
 
+  it("ignores application chords while a message box is open", async () => {
+    const user = userEvent.setup();
+    const server = new FakeServer({ boxes: boxes() });
+    await renderApp(server);
+    await user.keyboard("{Control>}{Shift>}A{/Shift}{/Control}");
+    await screen.findByRole("dialog", { name: "Stop All" });
+    await user.keyboard("{Control>}{Shift>}A{/Shift}{/Control}");
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+    await user.click(screen.getByRole("button", { name: "No" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
   it("refuses Purge while a box runs against the directory", async () => {
     const user = userEvent.setup();
     const server = new FakeServer({ boxes: boxes() });
@@ -297,6 +309,52 @@ describe("main window", () => {
     expect(screen.getByText("2 running \u00b7 0 not running")).toBeInTheDocument();
   });
 
+  it("keeps a box.changed that arrives while a reload is in flight", async () => {
+    const server = new FakeServer({ boxes: boxes() });
+    await renderApp(server);
+    await waitFor(() => expect(server.socketsFor("/api/v1/events")).toHaveLength(1));
+    const stale = JSON.parse(JSON.stringify(server.state.boxes)) as typeof server.state.boxes;
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    // The first reload answers late with the old list; later ones never
+    // answer, so the result shows only that reload and the replayed event.
+    let calls = 0;
+    server.on("boxes.list", async () => {
+      calls += 1;
+      if (calls > 1) await new Promise(() => undefined);
+      await gate;
+      return { boxes: stale };
+    });
+    // The server restarted: the app reloads through REST.
+    const [ws] = server.socketsFor("/api/v1/events");
+    await waitFor(() => expect(screen.getByText(/updated/)).toBeInTheDocument());
+    const before = server.callsTo("boxes.list").length;
+    act(() => {
+      ws!.serverSend({ type: "hello", streamId: "restarted", lastSeq: 0, replaying: false });
+    });
+    await waitFor(() => expect(server.callsTo("boxes.list").length).toBe(before + 1));
+    act(() => {
+      ws!.serverSend({
+        ...makeEvent("box.changed", {
+          boxId: "claude-agent-api",
+          status: "running",
+          box: stale[1]!.box,
+        }),
+        streamId: "restarted",
+        seq: 1,
+      });
+    });
+    await act(async () => {
+      release();
+      await gate;
+    });
+    await waitFor(() =>
+      expect(screen.getByText("2 running \u00b7 0 not running")).toBeInTheDocument(),
+    );
+  });
+
   it("shows dev-server links from ports.changed in the details panel", async () => {
     const server = new FakeServer({ boxes: boxes() });
     await renderApp(server);
@@ -393,6 +451,55 @@ describe("main window", () => {
     expect(
       await screen.findByRole("tab", { name: /Fresh_start/ }, { timeout: 3000 }),
     ).toBeInTheDocument();
+    expect(server.contractViolations).toEqual([]);
+  });
+
+  it("saves edited project settings only after the server accepts the box", async () => {
+    const user = userEvent.setup();
+    const server = new FakeServer({ boxes: boxes() });
+    await renderApp(server);
+    const open = async () => {
+      await user.keyboard("{Control>}{Shift>}N{/Shift}{/Control}");
+      const dialog = await screen.findByRole("dialog", { name: "New Box" });
+      await user.type(within(dialog).getByLabelText("Target directory"), "/w/new");
+      await user.type(within(dialog).getByLabelText("Conversation name"), "Ports");
+      await user.click(within(dialog).getByRole("button", { name: /TCP port maps/ }));
+      await user.click(within(dialog).getByRole("button", { name: "Add port" }));
+      await user.type(within(dialog).getByLabelText("Host port 1"), "8080");
+      await user.click(within(dialog).getByRole("button", { name: "Create" }));
+      return dialog;
+    };
+    server.on("boxes.create", () => {
+      throw new FakeApiError("validation", "That name is taken.", 400);
+    });
+    const dialog = await open();
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("That name is taken.");
+    expect(server.callsTo("projects.update")).toHaveLength(0);
+    expect(server.callsTo("projects.create")).toHaveLength(0);
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  });
+
+  it("creates the box first, then saves its project settings, then starts it", async () => {
+    const user = userEvent.setup();
+    const server = new FakeServer({ boxes: boxes() });
+    await renderApp(server);
+    await user.keyboard("{Control>}{Shift>}N{/Shift}{/Control}");
+    const dialog = await screen.findByRole("dialog", { name: "New Box" });
+    await user.type(within(dialog).getByLabelText("Target directory"), "/w/new");
+    await user.type(within(dialog).getByLabelText("Conversation name"), "Ports");
+    await user.click(within(dialog).getByRole("button", { name: /TCP port maps/ }));
+    await user.click(within(dialog).getByRole("button", { name: "Add port" }));
+    await user.type(within(dialog).getByLabelText("Host port 1"), "8080");
+    await user.click(within(dialog).getByRole("button", { name: "Create" }));
+    await waitFor(() => expect(server.callsTo("boxes.start")).toHaveLength(1), { timeout: 3000 });
+    expect(server.callsTo("boxes.create")[0]?.body).toMatchObject({ start: false });
+    const order = server.calls
+      .map((c) => c.key)
+      .filter((k) => k === "boxes.create" || k === "projects.update" || k === "boxes.start");
+    expect(order).toEqual(["boxes.create", "projects.update", "boxes.start"]);
+    expect(server.callsTo("projects.update")[0]?.body).toMatchObject({
+      tcpMaps: [{ host: 8080, container: 8080 }],
+    });
     expect(server.contractViolations).toEqual([]);
   });
 

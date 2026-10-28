@@ -3,7 +3,6 @@
 import type {
   Box,
   BoxCreate,
-  BoxView,
   ConversationSummary,
   Effort,
   GlobalSettings,
@@ -106,8 +105,9 @@ export function validateForm(form: BoxForm, mode: DialogMode): string[] {
   const out: string[] = [];
   if (mode !== "edit") {
     if (form.targetDir.trim() === "") out.push("Choose a target directory.");
-    else if (!form.targetDir.trim().startsWith("/") && !form.targetDir.trim().startsWith("~")) {
-      out.push("The target directory must be an absolute path.");
+    else if (!form.targetDir.trim().startsWith("/")) {
+      // The server doesn't expand `~`.
+      out.push("The target directory must be an absolute path, such as /home/you/project.");
     }
     if ((form.layout === "worktree" || form.layout === "workspace") && slugify(form.name) === "") {
       out.push(
@@ -123,7 +123,7 @@ export function validateForm(form: BoxForm, mode: DialogMode): string[] {
 export function createBody(
   form: BoxForm,
   mode: "new" | "fork",
-  options: { forkFrom?: string; rememberLayout?: boolean; force?: boolean } = {},
+  options: { forkFrom?: string; rememberLayout?: boolean; force?: boolean; start?: boolean } = {},
 ): BoxCreate {
   const claude = form.platform === "claude";
   let conversation: BoxCreate["conversation"] = { mode: "new" };
@@ -141,7 +141,7 @@ export function createBody(
     layout: form.layout,
     rememberLayout: options.rememberLayout ?? mode === "new",
     sshRemoteRefs: form.sshRemoteRefs,
-    start: true,
+    start: options.start ?? true,
     force: options.force ?? false,
   };
 }
@@ -165,13 +165,27 @@ export function formFromBox(
   };
 }
 
-/** The `boxes.update` body: only the fields that changed. */
-export function updateBody(box: Box, form: BoxForm): Record<string, unknown> {
+/**
+ * The `boxes.update` body: only the fields that changed. A model or effort
+ * that the record leaves to the settings files counts as changed only when
+ * the person picked one by hand (`handPicked`); the value the dialog shows
+ * for it is a default, not a choice to pin.
+ */
+export function updateBody(
+  box: Box,
+  form: BoxForm,
+  handPicked: { model: boolean; effort: boolean },
+): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   if (form.name.trim() !== box.conversationName) out.conversationName = form.name.trim();
   if (box.platform === "claude") {
-    if (form.model.trim() !== (box.model ?? "")) out.model = form.model.trim();
-    if (form.effort !== box.effort) out.effort = form.effort;
+    const model = form.model.trim();
+    if (box.model === undefined ? handPicked.model && model !== "" : model !== box.model) {
+      out.model = model;
+    }
+    if (box.effort === undefined ? handPicked.effort : form.effort !== box.effort) {
+      out.effort = form.effort;
+    }
   }
   if (form.skipPermissions !== box.skipPermissions) out.skipPermissions = form.skipPermissions;
   const uuid = form.conversation === "" ? null : form.conversation;
@@ -180,15 +194,4 @@ export function updateBody(box: Box, form: BoxForm): Record<string, unknown> {
   if (JSON.stringify(refs) !== JSON.stringify([...box.sshRemoteRefs].sort()))
     out.sshRemoteRefs = form.sshRemoteRefs;
   return out;
-}
-
-/** The box that holds a session, for the adoption check; running holders first. */
-export function sessionHolders(
-  boxes: readonly BoxView[],
-  uuid: string,
-  except?: string,
-): BoxView[] {
-  return boxes
-    .filter((b) => b.box.sessionUuid === uuid && b.box.id !== except)
-    .sort((a, b) => Number(b.status === "running") - Number(a.status === "running"));
 }

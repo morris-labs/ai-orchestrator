@@ -24,9 +24,76 @@ export interface DialogProps {
   className?: string;
   /** Draws the dialog above message boxes, for a dialog that a message box button opens. */
   stacked?: boolean;
+  /**
+   * True while the dialog's request is in flight: every field and button is
+   * disabled, and Enter submits nothing.
+   */
+  busy?: boolean;
 }
 
-/** A modal dialog. The first field, or the first button, takes focus when it opens. */
+const FOCUSABLE =
+  'a[href], button:not(:disabled), input:not(:disabled):not([type="hidden"]), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])';
+
+/** The open dialogs, innermost last; only the innermost one keeps focus. */
+const openDialogs: HTMLElement[] = [];
+
+function focusables(el: HTMLElement): HTMLElement[] {
+  return [...el.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
+    (x) => !x.hidden && x.getAttribute("aria-hidden") !== "true" && x.tabIndex >= 0,
+  );
+}
+
+/**
+ * Keeps Tab and Shift+Tab inside the innermost dialog, so that focus never
+ * reaches the toolbar or a live terminal behind the backdrop.
+ */
+function trapTab(e: KeyboardEvent) {
+  if (e.key !== "Tab" || e.defaultPrevented) return;
+  const el = openDialogs[openDialogs.length - 1];
+  if (!el) return;
+  const list = focusables(el);
+  const active = document.activeElement as HTMLElement | null;
+  const i = active ? list.indexOf(active) : -1;
+  let next: HTMLElement | undefined;
+  if (list.length === 0) next = el;
+  else if (i < 0) next = e.shiftKey ? list[list.length - 1] : list[0];
+  else if (!e.shiftKey && i === list.length - 1) next = list[0];
+  else if (e.shiftKey && i === 0) next = list[list.length - 1];
+  if (next) {
+    e.preventDefault();
+    next.focus();
+  }
+}
+
+/**
+ * Runs one request at a time: `run(fn)` does nothing while an earlier call
+ * is in flight, even when two Enter presses arrive before React renders.
+ * `busy` is true while one runs; pass it to `Dialog`.
+ */
+export function useInFlight(): {
+  busy: boolean;
+  run: <T>(fn: () => Promise<T>) => Promise<T | undefined>;
+} {
+  const [busy, setBusy] = useState(false);
+  const flying = useRef(false);
+  const run = useCallback(async <T,>(fn: () => Promise<T>): Promise<T | undefined> => {
+    if (flying.current) return undefined;
+    flying.current = true;
+    setBusy(true);
+    try {
+      return await fn();
+    } finally {
+      flying.current = false;
+      setBusy(false);
+    }
+  }, []);
+  return { busy, run };
+}
+
+/**
+ * A modal dialog. The first field, or the first button, takes focus when it
+ * opens; Tab stays inside it; focus returns where it was when it closes.
+ */
 export function Dialog({
   title,
   onClose,
@@ -35,12 +102,17 @@ export function Dialog({
   children,
   width,
   className,
+  stacked = false,
+  busy = false,
 }: DialogProps) {
   const ref = useRef<HTMLDivElement>(null);
   const titleId = useId();
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
+    const previous = document.activeElement as HTMLElement | null;
+    openDialogs.push(el);
+    if (openDialogs.length === 1) document.addEventListener("keydown", trapTab, true);
     const first =
       el.querySelector<HTMLElement>("[data-autofocus]") ??
       el.querySelector<HTMLElement>(
@@ -49,7 +121,27 @@ export function Dialog({
       el.querySelector<HTMLElement>(".ab-dialog-buttons .ab-default") ??
       el.querySelector<HTMLElement>("button");
     first?.focus();
+    return () => {
+      const i = openDialogs.indexOf(el);
+      if (i >= 0) openDialogs.splice(i, 1);
+      if (openDialogs.length === 0) document.removeEventListener("keydown", trapTab, true);
+      if (previous && previous.isConnected && previous !== document.body) previous.focus();
+    };
   }, []);
+  // Disabling the fields drops focus; it goes back to the same field after.
+  const focusedBeforeBusy = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    if (busy) {
+      const active = document.activeElement as HTMLElement | null;
+      focusedBeforeBusy.current = active && el.contains(active) ? active : null;
+      return;
+    }
+    const back = focusedBeforeBusy.current;
+    focusedBeforeBusy.current = null;
+    if (back && back.isConnected && !el.contains(document.activeElement)) back.focus();
+  }, [busy]);
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Escape" && onClose) {
       e.stopPropagation();
@@ -58,7 +150,7 @@ export function Dialog({
   };
   return (
     <div
-      className="ab-dialog-backdrop"
+      className={`ab-dialog-backdrop${stacked ? " ab-stacked" : ""}`}
       onMouseDown={(e) => e.target === e.currentTarget && onClose?.()}
     >
       <div
@@ -66,6 +158,8 @@ export function Dialog({
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
+        aria-busy={busy || undefined}
+        tabIndex={-1}
         className={`ab-dialog${className ? ` ${className}` : ""}`}
         style={width !== undefined ? { width } : undefined}
         onKeyDown={onKeyDown}
@@ -81,13 +175,15 @@ export function Dialog({
             // A dialog opened from another dialog through a portal still
             // bubbles React events to it; keep Enter from submitting both.
             e.stopPropagation();
-            onSubmit?.();
+            if (!busy) onSubmit?.();
           }}
         >
-          <div className="ab-dialog-body">{children}</div>
-          {buttons && <div className="ab-dialog-buttons">{buttons}</div>}
-          {/* Lets Enter in a text field submit the form. */}
-          <button type="submit" hidden aria-hidden="true" tabIndex={-1} />
+          <fieldset className="ab-dialog-fieldset" disabled={busy}>
+            <div className="ab-dialog-body">{children}</div>
+            {buttons && <div className="ab-dialog-buttons">{buttons}</div>}
+            {/* Lets Enter in a text field submit the form. */}
+            <button type="submit" hidden aria-hidden="true" tabIndex={-1} />
+          </fieldset>
         </form>
       </div>
     </div>
@@ -144,6 +240,12 @@ export interface MessageResult {
 type Ask = (options: MessageOptions) => Promise<MessageResult>;
 
 const MessageContext = createContext<Ask | null>(null);
+const MessageOpenContext = createContext(false);
+
+/** True while a message box is open; application chords stay off meanwhile. */
+export function useMessageBoxOpen(): boolean {
+  return useContext(MessageOpenContext);
+}
 
 interface Pending {
   options: MessageOptions;
@@ -160,7 +262,9 @@ export function MessageBoxProvider({ children }: { children: ReactNode }) {
   const current = queue[0];
   return (
     <MessageContext.Provider value={ask}>
-      {children}
+      <MessageOpenContext.Provider value={current !== undefined}>
+        {children}
+      </MessageOpenContext.Provider>
       {current && (
         <MessageBox
           key={queue.length + current.options.title}

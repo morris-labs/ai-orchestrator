@@ -423,6 +423,16 @@ a {
   background: var(--ab-panel-bg);
   border-radius: 8px 8px 0 0;
 }
+.ab-dialog:focus {
+  outline: none;
+}
+.ab-dialog-fieldset {
+  display: contents;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
 .ab-dialog-body {
   padding: 12px 14px;
   overflow: auto;

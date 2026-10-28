@@ -37,7 +37,17 @@ type BodyArg<K extends ServerRouteKey> = RouteOf<K>["body"] extends undefined
     : { body: RouteOf<K>["body"] };
 
 /** What `call()` takes for route `K`: path params, query, and body as needed. */
-export type CallArgs<K extends ServerRouteKey> = ParamsArg<K> & QueryArg<K> & BodyArg<K>;
+export type CallArgs<K extends ServerRouteKey> = ParamsArg<K> &
+  QueryArg<K> &
+  BodyArg<K> & {
+    /** Overrides the client's timeout for this call, in milliseconds. */
+    timeoutMs?: number;
+  };
+
+/** How long a read waits for the server before it fails. */
+export const READ_TIMEOUT_MS = 30_000;
+/** How long a change waits; some, such as starting a box, take minutes. */
+export const WRITE_TIMEOUT_MS = 10 * 60_000;
 
 /**
  * The arguments of `call()` for route `K`: optional when the route needs no
@@ -60,6 +70,8 @@ export interface ApiClientOptions {
   token?: string | null;
   fetch?: typeof fetch;
   WebSocket?: WebSocketCtor;
+  /** Timeouts in milliseconds for `GET` routes and for the others. */
+  timeouts?: { readMs?: number; writeMs?: number };
 }
 
 function queryString(query: Record<string, unknown> | undefined, extra?: Record<string, string>) {
@@ -80,11 +92,16 @@ export class ApiClient {
   private readonly fetchImpl: typeof fetch;
   private readonly wsCtor: WebSocketCtor | undefined;
 
+  private readonly readTimeoutMs: number;
+  private readonly writeTimeoutMs: number;
+
   constructor(options: ApiClientOptions = {}) {
     this.baseUrl = (options.baseUrl ?? "").replace(/\/$/, "");
     this.token = options.token ?? null;
     this.fetchImpl = options.fetch ?? ((...args) => globalThis.fetch(...args));
     this.wsCtor = options.WebSocket ?? (globalThis.WebSocket as WebSocketCtor | undefined);
+    this.readTimeoutMs = options.timeouts?.readMs ?? READ_TIMEOUT_MS;
+    this.writeTimeoutMs = options.timeouts?.writeMs ?? WRITE_TIMEOUT_MS;
   }
 
   /** Builds the URL of an HTTP route with its path params and query. */
@@ -107,7 +124,7 @@ export class ApiClient {
       query?: z.ZodTypeAny;
       response: z.ZodTypeAny;
     };
-    const a = args as { params?: unknown; query?: unknown; body?: unknown };
+    const a = args as { params?: unknown; query?: unknown; body?: unknown; timeoutMs?: number };
     if (route.body && a.body !== undefined) {
       const check = route.body.safeParse(a.body);
       if (!check.success) {
@@ -126,21 +143,49 @@ export class ApiClient {
       headers["Content-Type"] = "application/json";
       body = JSON.stringify(a.body);
     }
+    // A server that accepts the connection and then stalls must not leave a
+    // caller, and the "Starting..." row it shows, waiting forever.
+    const timeoutMs =
+      a.timeoutMs ?? (route.method === "GET" ? this.readTimeoutMs : this.writeTimeoutMs);
+    const abort = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        abort.abort();
+        reject(
+          new ApiRequestError(
+            "unreachable",
+            `The Agent Box server didn't answer ${key} within ${Math.round(timeoutMs / 1000)} seconds.`,
+          ),
+        );
+      }, timeoutMs);
+    });
+    timedOut.catch(() => undefined);
     let res: Response;
+    let text: string;
     try {
-      res = await this.fetchImpl(this.url(key, a), {
-        method: route.method,
-        headers,
-        body,
-        credentials: "same-origin",
-      });
-    } catch (err) {
-      throw new ApiRequestError(
-        "unreachable",
-        `The Agent Box server is not reachable (${err instanceof Error ? err.message : String(err)}).`,
-      );
+      try {
+        res = await Promise.race([
+          this.fetchImpl(this.url(key, a), {
+            method: route.method,
+            headers,
+            body,
+            credentials: "same-origin",
+            signal: abort.signal,
+          }),
+          timedOut,
+        ]);
+      } catch (err) {
+        if (err instanceof ApiRequestError) throw err;
+        throw new ApiRequestError(
+          "unreachable",
+          `The Agent Box server is not reachable (${err instanceof Error ? err.message : String(err)}).`,
+        );
+      }
+      text = await Promise.race([res.text(), timedOut]);
+    } finally {
+      clearTimeout(timer);
     }
-    const text = await res.text();
     let json: unknown = undefined;
     if (text !== "") {
       try {

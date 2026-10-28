@@ -126,3 +126,36 @@ test("types into a running box's terminal and sees the echo", async () => {
   for (let i = 0; i < marker.length; i += 1) await page.keyboard.press("Backspace");
   await page.getByLabel("Filter boxes").fill("");
 });
+
+test("refuses to open a path the server didn't report, or a non-web link", async () => {
+  const results = await page.evaluate(async () => {
+    const b = (
+      window as unknown as {
+        agentbox: {
+          openPath: (p: string) => Promise<{ ok: boolean; error?: string }>;
+          openExternal: (u: string) => Promise<{ ok: boolean; error?: string }>;
+        };
+      }
+    ).agentbox;
+    return {
+      path: await b.openPath("/etc"),
+      file: await b.openExternal("file:///tmp/x.desktop"),
+    };
+  });
+  expect(results.path.ok).toBe(false);
+  expect(results.path.error).toContain("not a project or box directory");
+  expect(results.file.ok).toBe(false);
+});
+
+// Last, because a failure leaves the window on another page.
+test("keeps the window on the app's page when something navigates it away", async () => {
+  const before = page.url();
+  await page.evaluate(() => {
+    window.location.href = "http://127.0.0.1:9/elsewhere";
+  });
+  await page.waitForTimeout(1000);
+  expect(page.url()).toBe(before);
+  expect(await page.evaluate(() => typeof (window as { agentbox?: unknown }).agentbox)).toBe(
+    "object",
+  );
+});

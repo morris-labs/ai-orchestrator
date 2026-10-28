@@ -19,7 +19,9 @@ import {
   useApiClient,
   useChords,
   useContextMenu,
+  useEvent,
   useMessageBox,
+  useMessageBoxOpen,
   useStreamStatus,
   useToast,
   type ChordBinding,
@@ -36,7 +38,7 @@ import { UpdateBars } from "../components/UpdateBars";
 import { UsageView } from "../components/UsageView";
 import { BoxDialog, type BoxDialogResult } from "../dialogs/BoxDialog";
 import { InputDialog } from "../dialogs/InputDialog";
-import { JobDialog, waitForJob } from "../dialogs/JobDialog";
+import { JobDialog, createJobMessage, waitForJob } from "../dialogs/JobDialog";
 import { MountsDialog } from "../dialogs/MountsDialog";
 import { PromptsDialog } from "../dialogs/PromptsDialog";
 import { SetupWizard } from "../dialogs/SetupWizard";
@@ -47,7 +49,7 @@ import { formatBytes } from "../logic/format";
 import { purgePreviewList, resumableBoxes, resumeDetail, runningOnDir } from "../logic/lists";
 import { createBody, normalizeDir, projectForDir, updateBody, type BoxForm } from "../logic/newBox";
 import { PLATFORMS, displayName, platformLabel, statusBarText, updatedText } from "../logic/status";
-import { withTransient } from "../logic/store";
+import { settleTransient, withTransient } from "../logic/store";
 import {
   closeBoxTabs,
   closeOthers,
@@ -57,6 +59,7 @@ import {
   openTab,
   pickTab,
   stepTab,
+  syncTitles,
   type TabsState,
 } from "../logic/tabs";
 import { CHORDS } from "./chords";
@@ -84,6 +87,7 @@ export function App() {
   const client = useApiClient();
   const data = useBoxesData();
   const { ask, confirm, inform } = useMessageBox();
+  const messageOpen = useMessageBoxOpen();
   const toast = useToast();
   const streamStatus = useStreamStatus();
   const tableMenu = useContextMenu();
@@ -96,7 +100,7 @@ export function App() {
   const [page, setPage] = useState<"boxes" | "usage">("boxes");
   const [showDetails, setShowDetails] = useState(() => load("detailsVisible") !== "0");
   const [dialog, setDialog] = useState<DialogState>(null);
-  const [transient, setTransient] = useState<Map<string, BoxView["status"]>>(new Map());
+  const [transient, setTransient] = useState<ReadonlyMap<string, BoxView["status"]>>(new Map());
   const [updates, setUpdates] = useState<Updates | null>(null);
   const [image, setImage] = useState<ImageStatus | null>(null);
   const [dismissed, setDismissed] = useState<string | null>(() => load("dismissedVersion"));
@@ -235,6 +239,14 @@ export function App() {
       }
       return next;
     });
+
+  // Tab titles follow the conversation name, which /rename changes.
+  useEffect(() => {
+    const names = new Map(data.boxes.map((b) => [b.box.id, displayName(b)]));
+    setTabs((t) => syncTitles(t, names, (p) => platformLabel[p]));
+  }, [data.boxes]);
+
+  useEvent("box.changed", (ev) => setTransient((t) => settleTransient(t, ev.boxId, ev.status)));
 
   const openTerminal = (view: BoxView) =>
     setTabs((t) =>
@@ -685,7 +697,13 @@ export function App() {
     project: BoxDialogResult["project"],
   ): Promise<string | null> => {
     if (!project) return null;
-    let p = projectForDir(projects, dir);
+    // A box created just now may have created the project on the server.
+    let p =
+      projectForDir(projects, dir) ??
+      projectForDir(
+        (await client.call("projects.list", {})).projects.map((x) => x.project),
+        dir,
+      );
     if (!p) p = await client.call("projects.create", { body: { root: normalizeDir(dir) } });
     const res = await client.call("projects.update", {
       params: { projectId: p.id },
@@ -744,38 +762,56 @@ export function App() {
     title: string,
     form: BoxForm,
     mode: "new" | "fork",
-    forkFrom?: string,
+    forkFrom: string | undefined,
+    project: BoxDialogResult["project"],
   ): Promise<string | null> => {
+    // Project settings edited in the dialog are saved only once the server
+    // has accepted the box, so a refused create leaves the project as it
+    // was. The box then starts after them, so it gets the new mounts.
+    const deferStart = project !== null;
     let force = false;
     for (;;) {
       try {
         const job = await client.call("boxes.create", {
-          body: createBody(form, mode, { ...(forkFrom ? { forkFrom } : {}), force }),
+          body: createBody(form, mode, {
+            ...(forkFrom ? { forkFrom } : {}),
+            force,
+            start: !deferStart,
+          }),
         });
         setDialog(null);
         toast(`Creating ${form.name || form.targetDir}...`);
         void waitForJob(() => client.call("jobs.get", { params: { jobId: job.id } }), {
           intervalMs: 700,
-        }).then(async (done) => {
-          if (done.status !== "finished") {
-            void inform(
-              title,
-              done.error?.message ??
-                `Creating the box failed (exit ${done.exitCode ?? "unknown"}).`,
-            );
-            return;
-          }
-          await data.reload();
-          const id = (done.result as { box?: { id: string } } | null)?.box?.id ?? done.boxId;
-          const v = id
-            ? await client.call("boxes.get", { params: { boxId: id } }).catch(() => null)
-            : null;
-          if (v) {
-            data.putBox(v);
-            setSelected(new Set([v.box.id]));
-            if (v.status === "running") openTerminal(v);
-          }
-        });
+        })
+          .then(async (done) => {
+            const message = createJobMessage(done);
+            if (message !== null) {
+              void inform(title, message);
+              return;
+            }
+            const id = (done.result as { box?: { id: string } } | null)?.box?.id ?? done.boxId;
+            let v = id
+              ? await client.call("boxes.get", { params: { boxId: id } }).catch(() => null)
+              : null;
+            if (deferStart) {
+              await saveProjectSettings(v?.box.targetDir ?? form.targetDir, project);
+              if (v) {
+                try {
+                  v = await client.call("boxes.start", { params: { boxId: v.box.id } });
+                } catch (err) {
+                  await handleLaunchError(title, err, v);
+                }
+              }
+            }
+            await data.reload();
+            if (v) {
+              data.putBox(v);
+              setSelected(new Set([v.box.id]));
+              if (v.status === "running") openTerminal(v);
+            }
+          })
+          .catch((err: unknown) => void inform(title, errorMessage(err)));
         return null;
       } catch (err) {
         const a = await adoptionAnswer(title, err);
@@ -803,21 +839,15 @@ export function App() {
     }
   };
 
-  const acceptNew = async (r: BoxDialogResult) => {
-    const err = await saveProjectSettings(r.form.targetDir, r.project);
-    if (err) return err;
-    return runCreate("New Box", r.form, "new");
-  };
+  const acceptNew = (r: BoxDialogResult) =>
+    runCreate("New Box", r.form, "new", undefined, r.project);
 
-  const acceptFork = (source: BoxView) => async (r: BoxDialogResult) => {
-    const err = await saveProjectSettings(source.box.targetDir, r.project);
-    if (err) return err;
-    return runCreate("Fork Conversation", r.form, "fork", source.box.id);
-  };
+  const acceptFork = (source: BoxView) => (r: BoxDialogResult) =>
+    runCreate("Fork Conversation", r.form, "fork", source.box.id, r.project);
 
   const acceptEdit = (view: BoxView) => async (r: BoxDialogResult) => {
     await saveProjectSettings(view.box.targetDir, r.project);
-    const body = updateBody(view.box, r.form);
+    const body = updateBody(view.box, r.form, r.handPicked);
     if (Object.keys(body).length === 0) {
       setDialog(null);
       return null;
@@ -1041,7 +1071,7 @@ export function App() {
       },
     })),
   ];
-  useChords(dialog === null ? bindings : []);
+  useChords(dialog === null && !messageOpen ? bindings : []);
 
   const sideMenus = (view: BoxView): MenuEntry[] => {
     const running = view.status === "running";

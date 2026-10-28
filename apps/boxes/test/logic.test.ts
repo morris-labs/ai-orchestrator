@@ -34,6 +34,7 @@ import {
   listenersForBox,
   projectCounts,
   proxyUrl,
+  settleTransient,
   withTransient,
 } from "../src/logic/store";
 import {
@@ -44,7 +45,7 @@ import {
   markEnded,
   openTab,
   pickTab,
-  retitle,
+  syncTitles,
   stepTab,
   tabTitle,
 } from "../src/logic/tabs";
@@ -139,7 +140,10 @@ describe("tabs", () => {
     expect(s.current).toBe(a);
     expect(closeOthers(openTab(s, { boxId: "z", title: "z" }), a as string).tabs).toHaveLength(1);
     expect(closeBoxTabs(s, "a").tabs).toHaveLength(0);
-    expect(retitle(s, "a", "New").tabs[0]?.title).toBe("New");
+    let t = openTab(s, { boxId: "a", kind: "side", platform: "codex", title: "a (Codex)" });
+    t = syncTitles(t, new Map([["a", "New"]]), (p) => (p === "codex" ? "Codex" : p));
+    expect(t.tabs.map((x) => x.title)).toEqual(["New", "New (Codex)"]);
+    expect(syncTitles(t, new Map([["a", "New"]]), () => "Codex")).toBe(t);
   });
 });
 
@@ -163,6 +167,7 @@ describe("new box form", () => {
   it("needs a directory and, for a worktree or workspace, a name", () => {
     expect(validateForm({ ...base, targetDir: "" }, "new")).toEqual(["Choose a target directory."]);
     expect(validateForm({ ...base, targetDir: "rel/dir" }, "new")[0]).toMatch(/absolute/);
+    expect(validateForm({ ...base, targetDir: "~/src/app" }, "new")[0]).toMatch(/absolute/);
     expect(validateForm({ ...base, layout: "worktree", name: "!!" }, "new")[0]).toMatch(
       /worktree is named/,
     );
@@ -241,9 +246,27 @@ describe("new box form", () => {
     expect(fork.conversation).toBe("");
     const edit = formFromBox(box, "edit", { model: "m", effort: "high" });
     expect(edit.layout).toBe("worktree");
-    expect(updateBody(box, edit)).toEqual({ effort: "high" });
+    const untouched = { model: false, effort: false };
+    // The record leaves effort to the settings: the shown default isn't a change.
+    expect(updateBody(box, edit, untouched)).toEqual({});
+    expect(updateBody(box, edit, { model: false, effort: true })).toEqual({ effort: "high" });
+    expect(updateBody(box, { ...edit, model: "claude-opus-5" }, untouched)).toEqual({
+      model: "claude-opus-5",
+    });
+    const unpinned = makeBox({ id: "claude-agent-b", targetDir: "/w/b", conversationName: "B" });
+    const unpinnedForm = formFromBox(unpinned, "edit", { model: "m", effort: "high" });
+    expect(updateBody(unpinned, { ...unpinnedForm, name: "C" }, untouched)).toEqual({
+      conversationName: "C",
+    });
+    expect(updateBody(unpinned, unpinnedForm, { model: true, effort: false })).toEqual({
+      model: "m",
+    });
     expect(
-      updateBody(box, { ...edit, conversation: "", effort: box.effort ?? "high", name: "B" }),
+      updateBody(
+        box,
+        { ...edit, conversation: "", effort: box.effort ?? "high", name: "B" },
+        untouched,
+      ),
     ).toMatchObject({
       sessionUuid: null,
       conversationName: "B",
@@ -261,6 +284,7 @@ describe("mounts and ports", () => {
   });
   it("flags relative paths and repeated box paths", () => {
     expect(mountProblems([{ host: "a", container: "/a" }])[0]).toMatch(/absolute/);
+    expect(mountProblems([{ host: "~/data", container: "/data" }])[0]).toMatch(/absolute/);
     expect(parseMountText("/a:/x\n/b:/x").problems[0]).toMatch(/two mounts/);
   });
   it("checks TCP maps and mirrors an empty box port", () => {
@@ -334,6 +358,25 @@ describe("lists", () => {
       }),
     ).toEqual(["/home/user/.claude/projects/-w-my-site", "the record of claude-agent-a"]);
     expect(runningOnDir([a, b], "/w/my.site")?.box.id).toBe("claude-agent-b");
+    const starting = v("c", "starting", { targetDir: "/w/other/" });
+    expect(runningOnDir([starting], "/w/other")?.box.id).toBe("claude-agent-c");
+    expect(
+      runningOnDir([v("d", "stopped", { targetDir: "/w/other" })], "/w/other"),
+    ).toBeUndefined();
+  });
+});
+
+describe("settleTransient", () => {
+  it("drops an overlay once the server reports progress on it", () => {
+    const t = new Map<string, BoxView["status"]>([
+      ["a", "starting"],
+      ["b", "stopping"],
+    ]);
+    expect(settleTransient(t, "a", "stopped")).toBe(t);
+    expect(settleTransient(t, "a", "running").has("a")).toBe(false);
+    expect(settleTransient(t, "b", "running")).toBe(t);
+    expect(settleTransient(t, "b", "stopped").has("b")).toBe(false);
+    expect(settleTransient(t, "c", "running")).toBe(t);
   });
 });
 

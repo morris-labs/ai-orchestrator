@@ -5,7 +5,7 @@
 import { useState, type KeyboardEvent, type PointerEvent } from "react";
 import { ChartCard, Tooltip } from "./ChartCard.js";
 import { linearScale, nearestIndex, niceTicks } from "./scale.js";
-import { formatPercent, type UsageSeries } from "./selectors.js";
+import { formatPercent, USAGE_SOURCE_LABELS, type UsageSeries } from "./selectors.js";
 import { VENDOR_LABELS, vendorColor } from "./tokens.js";
 
 const W = 360;
@@ -37,12 +37,13 @@ function UsagePanel({ series }: { series: UsageSeries }) {
     Math.min(series.resetAt ?? 0, reach),
   );
   const x = linearScale([first.time, xMax], [M.left, W - M.right]);
-  const yMax = Math.max(1, ...pts.map((p) => p.utilization), series.ceiling) * 1.05;
+  const ceiling = series.ceiling;
+  const yMax = Math.max(1, ...pts.map((p) => p.utilization), ceiling ?? 0) * 1.05;
   const y = linearScale([0, yMax], [H - M.bottom, M.top]);
   const line = pts.map((p, i) => `${i === 0 ? "M" : "L"}${x(p.time)},${y(p.utilization)}`).join("");
   const area = `${line}L${x(last.time)},${y(0)}L${x(first.time)},${y(0)}Z`;
   const color = vendorColor(series.vendor);
-  const over = last.utilization >= series.ceiling;
+  const over = ceiling !== null && last.utilization >= ceiling;
   const xs = pts.map((p) => x(p.time));
 
   const onMove = (e: PointerEvent<SVGSVGElement>) => {
@@ -65,16 +66,20 @@ function UsagePanel({ series }: { series: UsageSeries }) {
         <span className="ab-muted">
           {series.account}, {windowLabel(series)}
         </span>
-        <span className={`ab-status ab-tone-${over ? "critical" : "good"}`}>
-          {over ? "▲ Over ceiling" : "✓ Under ceiling"}
-        </span>
+        {ceiling === null ? (
+          <span className="ab-status ab-muted">No ceiling for this window</span>
+        ) : (
+          <span className={`ab-status ab-tone-${over ? "critical" : "good"}`}>
+            {over ? "▲ Over ceiling" : "✓ Under ceiling"}
+          </span>
+        )}
       </figcaption>
       <div className="ab-chart-box">
         <svg
           viewBox={`0 0 ${W} ${H}`}
           role="img"
           tabIndex={0}
-          aria-label={`${VENDOR_LABELS[series.vendor]} usage ${formatPercent(last.utilization)}, ceiling ${formatPercent(series.ceiling)}`}
+          aria-label={`${VENDOR_LABELS[series.vendor]} usage ${formatPercent(last.utilization)}, ${ceiling === null ? "no ceiling" : `ceiling ${formatPercent(ceiling)}`}`}
           onPointerMove={onMove}
           onPointerLeave={() => setHover(null)}
           onKeyDown={onKey}
@@ -95,16 +100,20 @@ function UsagePanel({ series }: { series: UsageSeries }) {
           <text x={W - M.right} y={H - 6} textAnchor="end" className="ab-tick">
             {formatClock(xMax)}
           </text>
-          <line
-            x1={M.left}
-            x2={W - M.right}
-            y1={y(series.ceiling)}
-            y2={y(series.ceiling)}
-            className="ab-ceiling"
-          />
-          <text x={W - M.right + 4} y={y(series.ceiling) + 3} className="ab-ref-label">
-            Ceiling
-          </text>
+          {ceiling !== null ? (
+            <g>
+              <line
+                x1={M.left}
+                x2={W - M.right}
+                y1={y(ceiling)}
+                y2={y(ceiling)}
+                className="ab-ceiling"
+              />
+              <text x={W - M.right + 4} y={y(ceiling) + 3} className="ab-ref-label">
+                Ceiling
+              </text>
+            </g>
+          ) : null}
           {series.resetAt !== null && series.resetAt <= xMax ? (
             <g>
               <line
@@ -129,11 +138,14 @@ function UsagePanel({ series }: { series: UsageSeries }) {
             d={line}
             fill="none"
             stroke={color}
+            strokeDasharray={series.estimated ? "5 4" : undefined}
+            data-estimated={series.estimated || undefined}
             strokeWidth={2}
             strokeLinejoin="round"
             strokeLinecap="round"
           />
-          {series.forecastAt !== null &&
+          {ceiling !== null &&
+          series.forecastAt !== null &&
           series.forecastAt > last.time &&
           series.forecastAt <= xMax ? (
             <g>
@@ -141,14 +153,14 @@ function UsagePanel({ series }: { series: UsageSeries }) {
                 x1={x(last.time)}
                 y1={y(last.utilization)}
                 x2={x(series.forecastAt)}
-                y2={y(series.ceiling)}
+                y2={y(ceiling)}
                 stroke={color}
                 strokeWidth={2}
                 strokeOpacity={0.4}
               />
               <circle
                 cx={x(series.forecastAt)}
-                cy={y(series.ceiling)}
+                cy={y(ceiling)}
                 r={4}
                 fill={color}
                 stroke="var(--ab-surface)"
@@ -191,16 +203,28 @@ function UsagePanel({ series }: { series: UsageSeries }) {
             title={formatClock(hp.time)}
             rows={[
               { key: "u", color, label: "used", value: formatPercent(hp.utilization) },
-              { key: "c", label: "ceiling", value: formatPercent(series.ceiling) },
+              {
+                key: "s",
+                label: "source",
+                value: USAGE_SOURCE_LABELS[hp.source],
+              },
+              {
+                key: "c",
+                label: "ceiling",
+                value: ceiling === null ? "–" : formatPercent(ceiling),
+              },
             ]}
           />
         ) : null}
       </div>
       <p className="ab-small ab-muted">
-        Now <strong className="ab-text">{formatPercent(last.utilization)}</strong> of the limit.{" "}
-        {series.forecastAt !== null
-          ? `Reaches the ceiling about ${formatClock(series.forecastAt)}${series.serverForecast ? "" : " (local estimate)"}.`
-          : "Stays under the ceiling at this rate."}{" "}
+        Now <strong className="ab-text">{formatPercent(last.utilization)}</strong> of the limit
+        {series.estimated ? `, ${USAGE_SOURCE_LABELS[last.source]}` : ""}.{" "}
+        {ceiling === null
+          ? "The ceiling applies to another window."
+          : series.forecastAt !== null
+            ? `Reaches the ceiling about ${formatClock(series.forecastAt)}${series.serverForecast ? "" : " (local estimate)"}.`
+            : "Stays under the ceiling at this rate."}{" "}
         {series.resetAt !== null ? `Window resets ${formatClock(series.resetAt)}.` : ""}
       </p>
     </figure>
@@ -220,6 +244,7 @@ export function UsageChart({ series }: { series: readonly UsageSeries[] }) {
             <th scope="col">Ceiling</th>
             <th scope="col">Forecast</th>
             <th scope="col">Resets</th>
+            <th scope="col">Source</th>
           </tr>
         </thead>
         <tbody>
@@ -231,11 +256,12 @@ export function UsageChart({ series }: { series: readonly UsageSeries[] }) {
                 <td>{s.account}</td>
                 <td>{s.window}</td>
                 <td className="ab-num">{formatPercent(last.utilization)}</td>
-                <td className="ab-num">{formatPercent(s.ceiling)}</td>
+                <td className="ab-num">{s.ceiling === null ? "–" : formatPercent(s.ceiling)}</td>
                 <td className="ab-num">
                   {s.forecastAt !== null ? formatClock(s.forecastAt) : "–"}
                 </td>
                 <td className="ab-num">{s.resetAt !== null ? formatClock(s.resetAt) : "–"}</td>
+                <td>{USAGE_SOURCE_LABELS[last.source]}</td>
               </tr>
             );
           })}

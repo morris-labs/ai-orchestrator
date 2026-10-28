@@ -36,25 +36,22 @@ export function actionStates(
   all: readonly BoxView[],
   tabCount: number,
 ): ActionStates {
-  const single = selection.length === 1 ? (selection[0] as BoxView) : null;
+  // A Starting or Stopping row counts for nothing (inventory 1.4), so no
+  // single-row action applies to it.
+  const only = selection.length === 1 ? (selection[0] as BoxView) : null;
+  const single = only && only.status !== "starting" && only.status !== "stopping" ? only : null;
   const anyRunning = selection.some((b) => b.status === "running");
   const anyStopped = selection.some((b) => b.status === "stopped");
-  const transitioning =
-    single !== null && (single.status === "starting" || single.status === "stopping");
   const hasWorktree = single?.box.worktree !== undefined;
   const singleRunning = single?.status === "running";
-  const canRelocate = single !== null && !transitioning && !hasWorktree && !singleRunning;
+  const canRelocate = single !== null && !hasWorktree && !singleRunning;
   const underReview = single?.reviewState.state === "under_review";
 
   return {
     edit: single !== null,
     fork: single !== null && single.box.sessionUuid !== null,
     convertToWorktree:
-      single !== null &&
-      single.box.workspace !== undefined &&
-      !hasWorktree &&
-      !singleRunning &&
-      !transitioning,
+      single !== null && single.box.workspace !== undefined && !hasWorktree && !singleRunning,
     purge: single !== null && single.box.targetDir !== "",
     moveWorkDir: canRelocate && single.box.targetDir !== "",
     changeWorkDir: canRelocate,

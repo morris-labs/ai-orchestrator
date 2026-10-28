@@ -438,3 +438,12 @@ legend {
     grid-template-columns: 1fr;
   }
 }
+
+/* Wraps the whole launcher form so that one attribute disables every field. */
+.form-contents {
+  display: contents;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}

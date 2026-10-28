@@ -10,6 +10,8 @@ import {
   addUsageSamples,
   applyEvent,
   emptyDashboard,
+  OPEN_RUN_STATUSES,
+  seedDashboard,
   type DashboardState,
   type VendorUsageInfo,
 } from "@agentbox/ui/dashboard";
@@ -42,8 +44,10 @@ export class AppStore {
   };
   private readonly listeners = new Set<() => void>();
   private connection: EventsConnection | null = null;
-  /** False until the first server hello: the first resync is the initial load. */
+  /** False until the first server hello: the first resync loads without a reset. */
   private synced = false;
+  /** Counts snapshot loads, so that only the latest one applies. */
+  private loads = 0;
 
   constructor(
     readonly api: ApiClient,
@@ -101,16 +105,59 @@ export class AppStore {
     }
   }
 
-  /** Handles a server hello that couldn't replay: start over from REST. */
-  private resync(): void {
-    if (!this.synced) {
-      this.synced = true;
-      return;
+  /**
+   * Loads runs, the open runs' rounds and findings, project containers, and
+   * box states through REST, and merges them under the events applied
+   * meanwhile.
+   */
+  async loadSnapshot(): Promise<void> {
+    const load = ++this.loads;
+    try {
+      const [{ runs }, { projects }, { boxes }] = await Promise.all([
+        this.api.call("runs.list", {}),
+        this.api.call("projects.list", {}),
+        this.api.call("boxes.list", {}),
+      ]);
+      const open = runs.filter((r) => OPEN_RUN_STATUSES.includes(r.status));
+      const details = await Promise.all(
+        open.map(async (r) => {
+          const params = { params: { runId: r.id } };
+          const [rounds, findings] = await Promise.all([
+            this.api.call("runs.rounds", params),
+            this.api.call("findings.list", params),
+          ]);
+          return [r.id, rounds.rounds, findings.findings] as const;
+        }),
+      );
+      if (load !== this.loads) return;
+      this.set({
+        dashboard: seedDashboard(this.state.dashboard, {
+          runs,
+          rounds: Object.fromEntries(details.map(([id, rounds]) => [id, rounds])),
+          findings: Object.fromEntries(details.map(([id, , findings]) => [id, findings])),
+          projects,
+          boxes,
+          time: new Date(this.now()).toISOString(),
+        }),
+      });
+    } catch (err) {
+      if (load === this.loads) this.set({ error: (err as Error).message });
     }
-    this.set({ dashboard: emptyDashboard(), resets: this.state.resets + 1 });
-    this.hub.resync();
-    void this.loadUsageHistory();
-    void this.loadUsage();
+  }
+
+  /**
+   * Handles a server hello that couldn't replay, as the contract asks: load
+   * state through REST. After the first one, the old state is dropped first.
+   */
+  private resync(): void {
+    if (this.synced) {
+      this.set({ dashboard: emptyDashboard(), resets: this.state.resets + 1 });
+      this.hub.resync();
+      void this.loadUsageHistory();
+      void this.loadUsage();
+    }
+    this.synced = true;
+    void this.loadSnapshot();
   }
 
   start(): void {

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { ApiClient, openTerminalSocket, TerminalConnection } from "../src/core";
-import { classifyTerminalKey, endedBanner } from "../src/terminal/keys";
+import { classifyTerminalKey, endedBanner, handleTerminalKey } from "../src/terminal/keys";
 import { FakeServer, FakeSocket } from "../src/testing";
 
 const key = (
@@ -76,6 +76,12 @@ describe("TerminalConnection", () => {
     expect(sock.binaryType).toBe("arraybuffer");
   });
 
+  it("sends binary input one byte per character", () => {
+    const { sock, conn } = setup();
+    conn.writeBinary("\x1b[M\x20\xa0\x21");
+    expect(Array.from(sock.sent[0] as Uint8Array)).toEqual([0x1b, 0x5b, 0x4d, 0x20, 0xa0, 0x21]);
+  });
+
   it("sends resize as JSON and reports ready, error, and exit", () => {
     const { sock, conn, handlers } = setup();
     conn.resize(120, 40);
@@ -114,6 +120,23 @@ describe("terminal keys", () => {
     expect(classifyTerminalKey(key("c", "KeyC", { ctrlKey: true }))).toBe("terminal");
     expect(classifyTerminalKey(key("n", "KeyN", { ctrlKey: true }))).toBe("terminal");
     expect(classifyTerminalKey(key("0", "Digit0", { altKey: true }))).toBe("terminal");
+  });
+  it("cancels the browser's own copy and paste so that a paste arrives once", () => {
+    const run = (k: ReturnType<typeof key>) => {
+      const e = { ...k, type: "keydown", preventDefault: vi.fn() };
+      const actions = { copy: vi.fn(), paste: vi.fn() };
+      return { result: handleTerminalKey(e, actions), e, actions };
+    };
+    const paste = run(key("V", "KeyV", { ctrlKey: true, shiftKey: true }));
+    expect(paste.result).toBe(false);
+    expect(paste.e.preventDefault).toHaveBeenCalled();
+    expect(paste.actions.paste).toHaveBeenCalledTimes(1);
+    const copy = run(key("C", "KeyC", { ctrlKey: true, shiftKey: true }));
+    expect(copy.e.preventDefault).toHaveBeenCalled();
+    expect(copy.actions.copy).toHaveBeenCalledTimes(1);
+    const plain = run(key("c", "KeyC", { ctrlKey: true }));
+    expect(plain.result).toBe(true);
+    expect(plain.e.preventDefault).not.toHaveBeenCalled();
   });
   it("words the ended banner as the Qt widget did", () => {
     expect(endedBanner(2)).toBe("Session ended (exit 2).\nThis box is no longer attached.");
