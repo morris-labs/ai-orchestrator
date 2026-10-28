@@ -85,6 +85,12 @@ describe("records", () => {
     expect(parsed.ceilings.copilot).toEqual({ kind: "spend", period: "month", maxUsd: 50 });
     expect(parsed.ceilings.claude).toEqual({ kind: "utilization", window: "5h", max: 0.6 });
     expect(parsed.notifications.roundSummary).toBe(false);
+    expect(parsed.notifications.readyToPush).toBe(true);
+    expect(parsed.vendorDefaults).toEqual({
+      claude: { effort: "high" },
+      codex: {},
+      copilot: { model: "auto" },
+    });
     expect(parsed.proxyPort).toBeUndefined();
     expect(GlobalSettingsSchema.safeParse({ ...parsed, colour: "blue" }).success).toBe(false);
     expect(GlobalSettingsSchema.safeParse(settingsFile).success).toBe(false);
@@ -107,6 +113,24 @@ describe("records", () => {
     ]) {
       expect(GlobalSettingsPatchSchema.safeParse(owned).success, Object.keys(owned)[0]).toBe(false);
     }
+  });
+
+  it("patches vendor defaults field by field", () => {
+    expect(
+      GlobalSettingsPatchSchema.parse({
+        vendorDefaults: { claude: { model: null }, copilot: { model: "gpt-5" } },
+      }),
+    ).toEqual({ vendorDefaults: { claude: { model: null }, copilot: { model: "gpt-5" } } });
+    expect(
+      GlobalSettingsPatchSchema.safeParse({ vendorDefaults: { copilot: { model: null } } }).success,
+    ).toBe(false);
+    expect(
+      GlobalSettingsPatchSchema.safeParse({ vendorDefaults: { codex: { effort: "high" } } })
+        .success,
+    ).toBe(false);
+    expect(GlobalSettingsPatchSchema.parse({ notifications: { readyToPush: false } })).toEqual({
+      notifications: { readyToPush: false },
+    });
   });
 
   it("accepts only op:// secret references and valid variable names", () => {

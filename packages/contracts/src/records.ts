@@ -370,6 +370,8 @@ export function boxWorkDir(box: Pick<Box, "worktree" | "targetDir">): string {
 export const NotificationTogglesSchema = z.object({
   decisionNeeded: z.boolean(),
   runFinished: z.boolean(),
+  /** A run passed review and its branch is ready to push (`ready_to_push`). */
+  readyToPush: z.boolean(),
   boxEnded: z.boolean(),
   roundSummary: z.boolean(),
 });
@@ -404,13 +406,34 @@ export const NewBoxDefaultsSchema = z.object({
 });
 export type NewBoxDefaults = z.infer<typeof NewBoxDefaultsSchema>;
 
+/**
+ * The model, and for Claude the effort, that review agents of each vendor use
+ * when a run doesn't name one. An absent `model` or `effort` leaves the
+ * choice to the vendor CLI's own settings. Copilot always passes `--model`,
+ * so its model is required; `auto` lets Copilot pick.
+ */
+export const VendorDefaultsSchema = z.object({
+  claude: z.object({
+    model: z.string().min(1).optional(),
+    effort: EffortSchema.optional(),
+  }),
+  codex: z.object({ model: z.string().min(1).optional() }),
+  copilot: z.object({ model: z.string().min(1) }),
+});
+export type VendorDefaults = z.infer<typeof VendorDefaultsSchema>;
+
+/** The Copilot model when the settings name none. */
+export const DEFAULT_COPILOT_MODEL = "auto";
+
 export const DEFAULT_SERVER_PORT = 20400;
 export const DEFAULT_ENGINE_PORT = 20411;
 export const DEFAULT_ENGINE_IMAGE = "claude-code";
 
 /**
- * Global settings, stored at `~/.claude-box/config.json`. Unknown keys are
- * rejected.
+ * Global settings. The server stores them in its database. On the first
+ * start, when the database holds no settings yet, the server seeds them from
+ * `~/.claude-box/config.json` through `GlobalSettingsInputSchema`, and reads
+ * that file never again. Unknown keys are rejected.
  */
 export const GlobalSettingsSchema = z
   .object({
@@ -427,6 +450,7 @@ export const GlobalSettingsSchema = z
     /** The image every project container runs. */
     engineImage: z.string().min(1),
     ceilings: CeilingsSchema,
+    vendorDefaults: VendorDefaultsSchema,
     notifications: NotificationTogglesSchema,
     promptTemplates: PromptTemplatesSchema,
     defaultTargetDir: z.string().min(1).optional(),
@@ -454,10 +478,18 @@ export const GlobalSettingsInputSchema = z
     serverPort: PortSchema.default(DEFAULT_SERVER_PORT),
     engineImage: z.string().min(1).default(DEFAULT_ENGINE_IMAGE),
     ceilings: CeilingsInputSchema.default({}),
+    vendorDefaults: z
+      .object({
+        claude: VendorDefaultsSchema.shape.claude.default({}),
+        codex: VendorDefaultsSchema.shape.codex.default({}),
+        copilot: z.object({ model: z.string().min(1).default(DEFAULT_COPILOT_MODEL) }).default({}),
+      })
+      .default({}),
     notifications: z
       .object({
         decisionNeeded: z.boolean().default(true),
         runFinished: z.boolean().default(true),
+        readyToPush: z.boolean().default(true),
         boxEnded: z.boolean().default(true),
         roundSummary: z.boolean().default(true),
       })
@@ -494,6 +526,27 @@ export const GlobalSettingsPatchSchema = z
     proxyPort: PortSchema.nullable(),
     engineImage: z.string().min(1),
     ceilings: CeilingsOverrideSchema,
+    /** Only the vendors and fields it names change; `null` clears a model or an effort. */
+    vendorDefaults: z
+      .object({
+        claude: z
+          .object({
+            model: z.string().min(1).nullable(),
+            effort: EffortSchema.nullable(),
+          })
+          .partial()
+          .strict(),
+        codex: z
+          .object({ model: z.string().min(1).nullable() })
+          .partial()
+          .strict(),
+        copilot: z
+          .object({ model: z.string().min(1) })
+          .partial()
+          .strict(),
+      })
+      .partial()
+      .strict(),
     notifications: NotificationTogglesSchema.partial(),
     defaultTargetDir: z.string().min(1).nullable(),
     sshIdentity: z.string().min(1).nullable(),

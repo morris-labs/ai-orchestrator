@@ -17,6 +17,7 @@ describe("config", () => {
       notifications: {
         decisionNeeded: true,
         runFinished: true,
+        readyToPush: true,
         boxEnded: true,
         roundSummary: true,
       },
@@ -25,6 +26,7 @@ describe("config", () => {
         codex: { kind: "utilization", window: "5h", max: 0.7 },
         copilot: { kind: "spend", period: "month", maxUsd: 70 },
       },
+      vendorDefaults: { claude: {}, codex: {}, copilot: { model: "auto" } },
     });
     expect(config.proxyPort).toBeUndefined();
     expect(config.defaultTargetDir).toBeUndefined();

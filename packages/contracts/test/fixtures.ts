@@ -257,6 +257,7 @@ export const settingsFile = {
   engineImage: "claude-code",
   ceilings: { copilot: { kind: "spend", period: "month", maxUsd: 50 } },
   notifications: { roundSummary: false },
+  vendorDefaults: { claude: { effort: "high" } },
   promptTemplates: { starter: "" },
   defaultTargetDir: "/home/user/src",
   setupCompleted: true,
