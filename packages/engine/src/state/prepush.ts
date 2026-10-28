@@ -1,13 +1,14 @@
 // The pre-push state machine (design.md, "Pre-push pipeline"). Each stage
 // reads the files the previous stage wrote, so the driver can start at any
 // stage after a crash, a pause, or a decision.
-import type { Role, RoleAssignment, StopReason, Vendor } from "@agentbox/contracts";
+import type { Finding, Role, RoleAssignment, StopReason, Vendor } from "@agentbox/contracts";
 import { runGate } from "../gate/gate.js";
 import { resolveRange } from "../range/resolve.js";
 import { DecisionNeeded, type RunContext } from "./context.js";
 import { assignRoles } from "./profiles.js";
 import {
   GATE_ATTEMPTS,
+  aboveNit,
   buildRoundSummary,
   computeGroups,
   confirmedThisRound,
@@ -200,9 +201,26 @@ export async function endRound(ctx: RunContext): Promise<StopReason | null> {
   await ctx.persist();
   await ctx.emitRun(summary);
 
-  if (ctx.eng.cleanRounds >= 2) return "clean";
+  if (ctx.eng.cleanRounds >= 2 && openFindings(ctx).length === 0) return "clean";
   if (ctx.round >= ctx.state.request.roundCap) return "round_cap";
   return null;
+}
+
+/**
+ * Findings that keep a run from stopping clean: any finding still waiting
+ * for its disprover, and, in a run that fixes, any confirmed finding above
+ * `nit` that the fixer still has to work on, such as one whose fix the
+ * confirmer found incomplete. A finding the fixer declined with a reason is
+ * left to a person.
+ */
+export function openFindings(ctx: RunContext): Finding[] {
+  const declined = new Set(ctx.eng.declined);
+  const fixes = !ctx.state.request.readOnly;
+  return ctx.findings.filter(
+    (f) =>
+      f.verdict === "pending" ||
+      (fixes && f.verdict === "confirmed" && aboveNit(f) && !declined.has(f.id)),
+  );
 }
 
 /** Finishes the run with a stop reason. */
@@ -212,14 +230,28 @@ export async function finish(ctx: RunContext, reason: StopReason): Promise<void>
   await ctx.setStatus("finished", { stopReason: reason, decision: null });
 }
 
-async function closeRound(ctx: RunContext): Promise<boolean> {
+/**
+ * Closes the round and finishes the run when a stop condition holds. A
+ * pending decision, such as an oscillation, wins over the stop: the run
+ * moves to the next round's find stage and waits for a person, who can
+ * still cancel.
+ */
+async function closeRound(ctx: RunContext, decision?: DecisionNeeded): Promise<boolean> {
   const stop = await endRound(ctx);
-  if (stop) {
+  if (stop && !decision) {
     await finish(ctx, stop);
     return true;
   }
   await ctx.setStage("find");
+  if (decision) throw decision;
   return false;
+}
+
+function openOscillations(ctx: RunContext, merge: MergeOutput | null): DecisionNeeded | undefined {
+  const open = (merge?.oscillations ?? []).filter(
+    (o) => !ctx.eng.acceptedOscillations.includes(o.fixedId),
+  );
+  return open.length > 0 ? oscillationDecision(ctx, open) : undefined;
 }
 
 /** Drives the pre-push stages until the run finishes, waits, or fails. */
@@ -268,15 +300,13 @@ export async function drivePrePush(ctx: RunContext): Promise<void> {
         if (sweep && sweep.created.length > 0) {
           await verifyPending(ctx, ctx.store.roundFile(ctx.round, "sweep-verify"));
         }
+        const decision = openOscillations(ctx, sweep);
         if (ctx.state.request.readOnly || fixTargets(ctx).length === 0) {
-          if (await closeRound(ctx)) return;
+          if (await closeRound(ctx, decision)) return;
         } else {
           await ctx.setStage("fix");
+          if (decision) throw decision;
         }
-        const open = (sweep?.oscillations ?? []).filter(
-          (o) => !ctx.eng.acceptedOscillations.includes(o.fixedId),
-        );
-        if (open.length > 0) throw oscillationDecision(ctx, open);
         break;
       }
       case "fix": {
@@ -318,15 +348,8 @@ export async function drivePrePush(ctx: RunContext): Promise<void> {
         try {
           await runConfirm(ctx, groups);
         } catch (error) {
-          if (error instanceof DecisionNeeded) {
-            // The confirm output is saved; close the round before asking.
-            const stop = await endRound(ctx);
-            if (stop) {
-              await finish(ctx, stop);
-              return;
-            }
-            await ctx.setStage("find");
-          }
+          // The confirm output is saved; close the round before asking.
+          if (error instanceof DecisionNeeded) await closeRound(ctx, error);
           throw error;
         }
         if (await closeRound(ctx)) return;
