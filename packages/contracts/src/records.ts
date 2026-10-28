@@ -4,11 +4,18 @@
 // one-time import reads the 3.3.5 key-value files, so every field below maps
 // to a key from `docs/v4/inventory-gui.md` section 3.
 //
+// Each record has two schemas. The read schema (`BoxSchema`, `ProjectSchema`,
+// `SshRemoteSchema`, `GlobalSettingsSchema`) has no defaults: a stored or
+// returned record carries every field. The input schema (`BoxInputSchema` and
+// so on) fills defaults and outputs the read type; use it for the import, for
+// creation, and for the configuration file.
+//
 // Box: `~/.claude-box/known/<container-name>` (inventory 3.1)
 //
 // | 3.3.5 key                | TypeScript field        | Notes                                      |
 // |--------------------------|-------------------------|--------------------------------------------|
 // | (file name)              | `id`                    | `claude-agent-<base>`                      |
+// | (new)                    | `hostKey`               | from `deriveHostKey()`; proxy host names   |
 // | `target_dir`             | `targetDir`             |                                            |
 // | `session_uuid`           | `sessionUuid`           | `null` when empty                          |
 // | `conversation_name`      | `conversationName`      |                                            |
@@ -22,16 +29,16 @@
 // | `worktree`               | `worktree`              |                                            |
 // | `branch`                 | `branch`                |                                            |
 // | `moved_from`             | `movedFrom`             |                                            |
-// | `container`              | `container`             | absent for a classic box before its move   |
-// | `session`                | `session`               |                                            |
+// | `container`              | `container`             | absent (classic box): `projectContainerName(projectId)` |
+// | `session`                | `session`               | absent (classic box): the box id, as `adopt()` set it |
 // | `ssh_remote_ref` (rep.)  | `sshRemoteRefs`         | SSH remote names                           |
-// | `yolo`                   | `skipPermissions`       | `1` means true; default true               |
+// | `yolo`                   | `skipPermissions`       | `1` means true; absent means true          |
 // | `was_running`            | `wasRunning`            |                                            |
-// | `port` (rep.)            | (dropped)               | 4.0.0 has no port pool                     |
-// | `dir` (rep.)             | `Project.mounts`        | merged into the project, as `adopt()` did  |
+// | `port` (rep.)            | `Project.tcpMaps`       | see "Import rules"                         |
+// | `dir` (rep.)             | `Project.mounts`        | see "Import rules"                         |
 // | `ssh_remote`, `ssh_identity`, `ssh_forward`, `ssh_host` | `SshRemote` | legacy inline remote, imported as a named remote |
 // | `rc`                     | (ignored)               |                                            |
-// | (new)                    | `projectId`, `createdAt`, `updatedAt`, `reviewState` |               |
+// | (new)                    | `projectId`, `createdAt`, `updatedAt` |                              |
 //
 // Project: `~/.claude-box/projects/<id>` (inventory 3.2)
 //
@@ -42,9 +49,18 @@
 // | `name`               | `name`           | empty means the folder name                   |
 // | `primary_repo`       | `primaryRepo`    | defaults to `root` when `root/.git` exists    |
 // | `dir` (rep.)         | `mounts`         | `HOST[:CONTAINER]`; container defaults to host |
-// | `port` (rep.)        | (dropped)        | the port pool is replaced by `tcpMaps`        |
+// | `port` (rep.)        | (dropped)        | the 10-port pool; replaced by `tcpMaps`       |
 // | `shared_container`   | (dropped)        | every project runs one shared container       |
-// | (new)                | `tcpMaps`, `secretRefs`, `ceilingsOverride`, `policyPath` |      |
+// | (new)                | `tcpMaps`, `secretRefs`, `ceilingsOverride`, `policyPath`, `createdAt`, `updatedAt` |
+//
+// Import rules:
+//
+// - A box `port=HOST:CONTAINER` that is not in its project's `port=` pool
+//   becomes a `tcpMaps` entry on the project. Ports in the pool are dropped,
+//   because the engine proxies dev servers without them.
+// - A box `dir=` merges into its project's `mounts`. When two mounts name the
+//   same container path, the first one wins (project mounts first, then boxes
+//   in record-file order), and the import reports each mount it skipped.
 //
 // SSH remote: `~/.claude-box/ssh_remotes/<sanitized>` (inventory 3.3)
 //
@@ -81,7 +97,7 @@ import {
 } from "./common.js";
 import { DEFAULT_PROMPT_TEMPLATES } from "./prompts.js";
 
-/** Every box container and shared container name starts with this prefix. */
+/** Every shared container name and box id starts with this prefix. */
 export const CONTAINER_PREFIX = "claude-agent-";
 
 /** Returns the shared container name for a project: `claude-agent-proj-<id>`. */
@@ -151,15 +167,22 @@ export const DEFAULT_CEILINGS = {
   copilot: { kind: "spend", period: "month", maxUsd: 70 },
 } as const satisfies Record<"claude" | "codex" | "copilot", Ceiling>;
 
-/** Ceilings per vendor. Each key falls back to its default on its own. */
+/** Ceilings per vendor. */
 export const CeilingsSchema = z.object({
+  claude: CeilingSchema,
+  codex: CeilingSchema,
+  copilot: CeilingSchema,
+});
+export type Ceilings = z.infer<typeof CeilingsSchema>;
+
+/** Ceilings per vendor; each missing vendor gets its default on its own. */
+export const CeilingsInputSchema = z.object({
   claude: CeilingSchema.default(DEFAULT_CEILINGS.claude),
   codex: CeilingSchema.default(DEFAULT_CEILINGS.codex),
   copilot: CeilingSchema.default(DEFAULT_CEILINGS.copilot),
 });
-export type Ceilings = z.infer<typeof CeilingsSchema>;
 
-/** A project's ceilings override: only the vendors it lists change. */
+/** Only the vendors it lists change: a project override, or a settings patch. */
 export const CeilingsOverrideSchema = z.object({
   claude: CeilingSchema.optional(),
   codex: CeilingSchema.optional(),
@@ -176,24 +199,19 @@ export const DEFAULT_POLICY_PATH = ".claude-box/policy.yaml";
 /** Settings a person edits on a project. */
 export const ProjectSettingsSchema = z.object({
   /** Explicit TCP maps. Dev servers need none: the engine proxies them. */
-  tcpMaps: z.array(TcpMapSchema).default([]),
+  tcpMaps: z.array(TcpMapSchema),
   /** Bind mounts on top of the project root and the global mounts. */
-  mounts: z.array(MountSchema).default([]),
+  mounts: z.array(MountSchema),
   /** Secrets injected into the project's container at launch. */
-  secretRefs: z.array(SecretRefSchema).default([]),
+  secretRefs: z.array(SecretRefSchema),
   /** Per-vendor ceilings that replace the global ones for runs in this project. */
   ceilingsOverride: CeilingsOverrideSchema.optional(),
   /** Policy file path, relative to `root` unless absolute. */
-  policyPath: z.string().min(1).default(DEFAULT_POLICY_PATH),
+  policyPath: z.string().min(1),
 });
 export type ProjectSettings = z.infer<typeof ProjectSettingsSchema>;
 
-/**
- * A project: a directory whose boxes share one container,
- * `projectContainerName(id)`. A project exists as soon as a box's
- * `targetDir` points at its root.
- */
-export const ProjectSchema = ProjectSettingsSchema.extend({
+const projectFields = {
   /** `slug(basename(root))-<first 8 hex digits of sha1(root)>`; ASCII letters and digits, case kept. */
   id: z.string().regex(/^[A-Za-z0-9-]+-[0-9a-f]{8}$/),
   root: z.string().min(1),
@@ -201,8 +219,23 @@ export const ProjectSchema = ProjectSettingsSchema.extend({
   primaryRepo: z.string().min(1).optional(),
   createdAt: IsoDateTimeSchema,
   updatedAt: IsoDateTimeSchema,
-});
+};
+
+/**
+ * A project: a directory whose boxes share one container,
+ * `projectContainerName(id)`. A project exists as soon as a box's
+ * `targetDir` points at its root.
+ */
+export const ProjectSchema = ProjectSettingsSchema.extend(projectFields);
 export type Project = z.infer<typeof ProjectSchema>;
+
+/** A project with its settings defaulted. Outputs a `Project`. */
+export const ProjectInputSchema = ProjectSchema.extend({
+  tcpMaps: z.array(TcpMapSchema).default([]),
+  mounts: z.array(MountSchema).default([]),
+  secretRefs: z.array(SecretRefSchema).default([]),
+  policyPath: z.string().min(1).default(DEFAULT_POLICY_PATH),
+});
 
 // ---------------------------------------------------------------------------
 // SSH remotes
@@ -213,7 +246,7 @@ export type Project = z.infer<typeof ProjectSchema>;
  */
 export const SshForwardSchema = z.object({
   direction: z.enum(["L", "R"]),
-  bindAddress: z.string().default("localhost"),
+  bindAddress: z.string().min(1),
   bindPort: PortSchema,
   destHost: z.string().min(1),
   destPort: PortSchema,
@@ -227,49 +260,72 @@ export const SshRemoteSchema = z.object({
   host: z.string().min(1),
   /** Path to the identity file on the host. */
   identity: z.string().min(1).optional(),
-  forwards: z.array(SshForwardSchema).default([]),
+  forwards: z.array(SshForwardSchema),
 });
 export type SshRemote = z.infer<typeof SshRemoteSchema>;
+
+/** An SSH remote with defaults: no forwards, and `localhost` bind addresses. */
+export const SshRemoteInputSchema = SshRemoteSchema.extend({
+  forwards: z
+    .array(SshForwardSchema.extend({ bindAddress: z.string().min(1).default("localhost") }))
+    .default([]),
+});
 
 // ---------------------------------------------------------------------------
 // Box
 
-/** Whether a review run holds the box's working tree. */
-export const ReviewStateSchema = z.discriminatedUnion("state", [
-  z.object({ state: z.literal("idle") }),
-  z.object({ state: z.literal("under_review"), runId: z.string().min(1) }),
-]);
-export type ReviewState = z.infer<typeof ReviewStateSchema>;
+/**
+ * A short name for a box in proxy host names, `<port>.<hostKey>.localhost`:
+ * lowercase ASCII letters, digits, and inner hyphens, at most 30 characters,
+ * unique within a project.
+ */
+export const HostKeySchema = z.string().regex(/^[a-z0-9](?:[a-z0-9-]{0,28}[a-z0-9])?$/);
+
+/**
+ * Derives a box's `hostKey` from its id: drops the `claude-agent-` prefix,
+ * lowercases, turns every other character into a hyphen, collapses and trims
+ * hyphens, and cuts to 30 characters. When the key is in `taken`, it appends
+ * `-2`, `-3`, and so on, cutting the stem to keep 30 characters.
+ */
+export function deriveHostKey(boxId: string, taken: ReadonlySet<string> = new Set()): string {
+  const base = boxId.startsWith(CONTAINER_PREFIX) ? boxId.slice(CONTAINER_PREFIX.length) : boxId;
+  const clean = (s: string) => s.replace(/-+/g, "-").replace(/^-|-$/g, "");
+  const stem = clean(clean(base.toLowerCase().replace(/[^a-z0-9]/g, "-")).slice(0, 30)) || "box";
+  if (!taken.has(stem)) return stem;
+  for (let n = 2; ; n += 1) {
+    const suffix = `-${n}`;
+    const candidate = `${clean(stem.slice(0, 30 - suffix.length))}${suffix}`;
+    if (!taken.has(candidate)) return candidate;
+  }
+}
 
 /**
  * A box: one conversation, run as a tmux session in its project's container.
  *
- * Derived values, which are not stored:
- *
- * - Working directory: `worktree` when set, else `targetDir`. See `boxWorkDir()`.
- *   Transcript lookups and the container's `-w` use it, never `targetDir`.
- * - Program: `platform`.
- * - Container: `container`, else `id` (a classic box before its move).
- * - tmux session: `session`, else `main` with `.` and `:` replaced by `_`.
- * - Side session for platform `p`: `<tmux session>-<p>`.
+ * A box's working directory is `worktree` when set, else `targetDir` (see
+ * `boxWorkDir()`). Transcript lookups and the session's working directory
+ * use it, never `targetDir`. A side session for platform `p` is the tmux
+ * session `<session>-<p>`. Whether a run holds the box is not stored: the
+ * server derives `BoxView.reviewState` from the active runs.
  */
 export const BoxSchema = z.object({
   /** The box name, `claude-agent-<base>`; the 3.3.5 record's file name. */
   id: z.string().startsWith(CONTAINER_PREFIX),
   projectId: z.string().min(1),
+  hostKey: HostKeySchema,
   targetDir: z.string().min(1),
   /** Claude's session id. `null` starts a new conversation on the next start. */
-  sessionUuid: z.string().uuid().nullable().default(null),
-  conversationName: z.string().default(""),
+  sessionUuid: z.string().uuid().nullable(),
+  conversationName: z.string(),
   /** The transcript title last copied into `conversationName`. */
-  transcriptSyncedName: z.string().default(""),
-  platform: PlatformSchema.default("claude"),
+  transcriptSyncedName: z.string(),
+  platform: PlatformSchema,
   /** `--model`; absent means the settings files decide. */
   model: z.string().min(1).optional(),
   /** `--effort`; absent means the settings files decide. */
   effort: EffortSchema.optional(),
   /** Passes `--allow-dangerously-skip-permissions`. 3.3.5 key `yolo`. */
-  skipPermissions: z.boolean().default(true),
+  skipPermissions: z.boolean(),
   /** Workspace subfolder the opening prompt names. */
   workspace: z.string().min(1).optional(),
   /** Git worktree path. When set, the box runs there. */
@@ -277,19 +333,30 @@ export const BoxSchema = z.object({
   branch: z.string().min(1).optional(),
   /** Old workspace folder after Convert to Worktree, until the next start. */
   movedFrom: z.string().min(1).optional(),
-  /** Shared container name. Absent only for an imported classic box. */
-  container: z.string().startsWith(CONTAINER_PREFIX).optional(),
-  /** tmux session name inside `container`. */
-  session: z.string().min(1).optional(),
+  /** The project's shared container, `projectContainerName(projectId)`. */
+  container: z.string().startsWith(CONTAINER_PREFIX),
+  /** The tmux session inside `container`. */
+  session: z.string().min(1),
   launchedModel: z.string().min(1).optional(),
   launchedEffort: EffortSchema.optional(),
-  wasRunning: z.boolean().default(false),
-  sshRemoteRefs: z.array(z.string().min(1)).default([]),
+  wasRunning: z.boolean(),
+  sshRemoteRefs: z.array(z.string().min(1)),
   createdAt: IsoDateTimeSchema,
   updatedAt: IsoDateTimeSchema,
-  reviewState: ReviewStateSchema.default({ state: "idle" }),
 });
 export type Box = z.infer<typeof BoxSchema>;
+
+/** A box with the 3.3.5 defaults filled. Outputs a `Box`. */
+export const BoxInputSchema = BoxSchema.extend({
+  sessionUuid: z.string().uuid().nullable().default(null),
+  conversationName: z.string().default(""),
+  transcriptSyncedName: z.string().default(""),
+  platform: PlatformSchema.default("claude"),
+  skipPermissions: z.boolean().default(true),
+  wasRunning: z.boolean().default(false),
+  sshRemoteRefs: z.array(z.string().min(1)).default([]),
+});
+export type BoxInput = z.input<typeof BoxInputSchema>;
 
 /** Returns the directory a box's agent works in: the worktree, else the target directory. */
 export function boxWorkDir(box: Pick<Box, "worktree" | "targetDir">): string {
@@ -301,10 +368,10 @@ export function boxWorkDir(box: Pick<Box, "worktree" | "targetDir">): string {
 
 /** Which events raise a desktop notification. */
 export const NotificationTogglesSchema = z.object({
-  decisionNeeded: z.boolean().default(true),
-  runFinished: z.boolean().default(true),
-  boxEnded: z.boolean().default(true),
-  roundSummary: z.boolean().default(true),
+  decisionNeeded: z.boolean(),
+  runFinished: z.boolean(),
+  boxEnded: z.boolean(),
+  roundSummary: z.boolean(),
 });
 export type NotificationToggles = z.infer<typeof NotificationTogglesSchema>;
 
@@ -313,10 +380,10 @@ export type NotificationToggles = z.infer<typeof NotificationTogglesSchema>;
  * turn the Starter off (inventory section 0, item 3).
  */
 export const PromptTemplatesSchema = z.object({
-  workspace: z.string().default(DEFAULT_PROMPT_TEMPLATES.workspace),
-  worktree: z.string().default(DEFAULT_PROMPT_TEMPLATES.worktree),
-  portHint: z.string().default(DEFAULT_PROMPT_TEMPLATES.portHint),
-  starter: z.string().default(DEFAULT_PROMPT_TEMPLATES.starter),
+  workspace: z.string(),
+  worktree: z.string(),
+  portHint: z.string(),
+  starter: z.string(),
 });
 export type PromptTemplates = z.infer<typeof PromptTemplatesSchema>;
 
@@ -328,12 +395,12 @@ export const ModelCacheSchema = z.object({
 });
 export type ModelCache = z.infer<typeof ModelCacheSchema>;
 
-/** Per-directory defaults for the New Box form. */
+/** Per-directory defaults for the New Box form's `layout: "auto"`. */
 export const NewBoxDefaultsSchema = z.object({
   /** Directory to whether a new box gets a workspace subfolder. */
-  workspaceDirs: z.record(z.string(), z.boolean()).default({}),
+  workspaceDirs: z.record(z.string(), z.boolean()),
   /** Directory to whether a new box gets a worktree. */
-  worktreeDirs: z.record(z.string(), z.boolean()).default({}),
+  worktreeDirs: z.record(z.string(), z.boolean()),
 });
 export type NewBoxDefaults = z.infer<typeof NewBoxDefaultsSchema>;
 
@@ -342,33 +409,95 @@ export const DEFAULT_ENGINE_PORT = 20411;
 export const DEFAULT_ENGINE_IMAGE = "claude-code";
 
 /**
- * Global settings, stored at `~/.claude-box/config.json`. Every field has a
- * default, so `{}` parses to a complete configuration.
+ * Global settings, stored at `~/.claude-box/config.json`. Unknown keys are
+ * rejected.
  */
-export const GlobalSettingsSchema = z.object({
-  version: z.literal(1).default(1),
-  /** The REST and WebSocket port on 127.0.0.1. */
-  serverPort: PortSchema.default(DEFAULT_SERVER_PORT),
-  /**
-   * The dev-server proxy port. It defaults to `serverPort`: the server tells
-   * proxy requests apart by their `Host` header,
-   * `<port>.<box>.localhost`. A different value starts a second listener.
-   */
-  proxyPort: PortSchema.default(DEFAULT_SERVER_PORT),
-  /** The image every project container runs. */
-  engineImage: z.string().min(1).default(DEFAULT_ENGINE_IMAGE),
-  ceilings: CeilingsSchema.default({}),
-  notifications: NotificationTogglesSchema.default({}),
-  promptTemplates: PromptTemplatesSchema.default({}),
-  defaultTargetDir: z.string().min(1).optional(),
-  setupCompleted: z.boolean().default(false),
-  /** Identity file the setup wizard checks and generates. */
-  sshIdentity: z.string().min(1).optional(),
-  modelCache: ModelCacheSchema.optional(),
-  newBoxDefaults: NewBoxDefaultsSchema.default({}),
-  /** Mounts every container gets, on top of its project's. */
-  globalMounts: z.array(MountSchema).default([]),
-  /** Secrets every container gets. A project's reference of the same name wins. */
-  secretRefs: z.array(SecretRefSchema).default([]),
-});
+export const GlobalSettingsSchema = z
+  .object({
+    version: z.literal(1),
+    /** The REST and WebSocket port on 127.0.0.1. */
+    serverPort: PortSchema,
+    /**
+     * The dev-server proxy port. Absent means `serverPort`: the server tells
+     * proxy requests apart by their `Host` header,
+     * `<port>.<hostKey>.localhost`. A different value starts a second
+     * listener.
+     */
+    proxyPort: PortSchema.optional(),
+    /** The image every project container runs. */
+    engineImage: z.string().min(1),
+    ceilings: CeilingsSchema,
+    notifications: NotificationTogglesSchema,
+    promptTemplates: PromptTemplatesSchema,
+    defaultTargetDir: z.string().min(1).optional(),
+    setupCompleted: z.boolean(),
+    /** Identity file the setup wizard checks and generates. */
+    sshIdentity: z.string().min(1).optional(),
+    modelCache: ModelCacheSchema.optional(),
+    newBoxDefaults: NewBoxDefaultsSchema,
+    /** Mounts every container gets, on top of its project's. */
+    globalMounts: z.array(MountSchema),
+    /** Secrets every container gets. A project's reference of the same name wins. */
+    secretRefs: z.array(SecretRefSchema),
+  })
+  .strict();
 export type GlobalSettings = z.infer<typeof GlobalSettingsSchema>;
+
+/**
+ * The configuration file's content with every missing field defaulted, so
+ * `{}` parses to a complete `GlobalSettings`. Unknown keys are rejected.
+ */
+export const GlobalSettingsInputSchema = z
+  .object({
+    ...GlobalSettingsSchema.shape,
+    version: z.literal(1).default(1),
+    serverPort: PortSchema.default(DEFAULT_SERVER_PORT),
+    engineImage: z.string().min(1).default(DEFAULT_ENGINE_IMAGE),
+    ceilings: CeilingsInputSchema.default({}),
+    notifications: z
+      .object({
+        decisionNeeded: z.boolean().default(true),
+        runFinished: z.boolean().default(true),
+        boxEnded: z.boolean().default(true),
+        roundSummary: z.boolean().default(true),
+      })
+      .default({}),
+    promptTemplates: z
+      .object({
+        workspace: z.string().default(DEFAULT_PROMPT_TEMPLATES.workspace),
+        worktree: z.string().default(DEFAULT_PROMPT_TEMPLATES.worktree),
+        portHint: z.string().default(DEFAULT_PROMPT_TEMPLATES.portHint),
+        starter: z.string().default(DEFAULT_PROMPT_TEMPLATES.starter),
+      })
+      .default({}),
+    setupCompleted: z.boolean().default(false),
+    newBoxDefaults: z
+      .object({
+        workspaceDirs: z.record(z.string(), z.boolean()).default({}),
+        worktreeDirs: z.record(z.string(), z.boolean()).default({}),
+      })
+      .default({}),
+    globalMounts: z.array(MountSchema).default([]),
+    secretRefs: z.array(SecretRefSchema).default([]),
+  })
+  .strict();
+
+/**
+ * The body of `PATCH /api/v1/settings`: only the fields a person edits there,
+ * with no defaults. The server owns `version`, `serverPort`, `setupCompleted`,
+ * `modelCache`, and `newBoxDefaults`; prompt templates, global mounts, and
+ * secret references have their own routes. A patch that names any of them is
+ * rejected. `null` clears an optional field.
+ */
+export const GlobalSettingsPatchSchema = z
+  .object({
+    proxyPort: PortSchema.nullable(),
+    engineImage: z.string().min(1),
+    ceilings: CeilingsOverrideSchema,
+    notifications: NotificationTogglesSchema.partial(),
+    defaultTargetDir: z.string().min(1).nullable(),
+    sshIdentity: z.string().min(1).nullable(),
+  })
+  .partial()
+  .strict();
+export type GlobalSettingsPatch = z.infer<typeof GlobalSettingsPatchSchema>;

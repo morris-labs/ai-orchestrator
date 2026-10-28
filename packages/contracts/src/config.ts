@@ -1,7 +1,7 @@
 // Server configuration and the environment the server passes to each engine.
 import { z } from "zod";
 import { PortSchema } from "./common.js";
-import { DEFAULT_ENGINE_PORT, GlobalSettingsSchema, type GlobalSettings } from "./records.js";
+import { DEFAULT_ENGINE_PORT, GlobalSettingsInputSchema, type GlobalSettings } from "./records.js";
 
 /**
  * Files under the home directory, relative to it. The `~/.claude-box`
@@ -26,14 +26,18 @@ export const RUNS_DIR = ".claude-box/runs";
 /** The file inside the image that names the engine version it carries. */
 export const ENGINE_VERSION_FILE = "/etc/agentbox-engine-version";
 
-/** The server configuration is the global settings file. */
-export const ServerConfigSchema = GlobalSettingsSchema;
+/**
+ * The configuration file schema: global settings with defaults. Its output is
+ * a complete `GlobalSettings`.
+ */
+export const ServerConfigSchema = GlobalSettingsInputSchema;
 export type ServerConfig = GlobalSettings;
 
 /**
  * Parses `~/.claude-box/config.json` content and fills every missing field
  * with its default. `undefined` and `null` (no file) give the full default
- * configuration. Throws a `ZodError` when a present field is invalid.
+ * configuration. Throws a `ZodError` when a present field is invalid or a key
+ * is unknown.
  */
 export function parseConfig(input: unknown): ServerConfig {
   return ServerConfigSchema.parse(input ?? {});

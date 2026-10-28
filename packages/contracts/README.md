@@ -5,17 +5,29 @@ that every Agent Box 4.0.0 package shares: the server, the engine, the CLI,
 the UI library, and both apps. Each module exports a `...Schema` constant for
 runtime validation and a type of the same name inferred from it.
 
+Records and responses follow two rules:
+
+- A read schema (`BoxSchema`, `ProjectSchema`, `FindingSchema`,
+  `GlobalSettingsSchema`) has no defaults, so a stored or returned document
+  carries every field. Its input schema (`BoxInputSchema`,
+  `ProjectInputSchema`, `FindingInputSchema`, `GlobalSettingsInputSchema`)
+  fills the defaults and outputs the read type. Use input schemas for the
+  import, for creation, and for files that people edit.
+- Stored records leave a missing optional field absent. API responses and
+  event payloads use `null` instead.
+
 | Module | Contents |
 |---|---|
-| `records.ts` | `Project`, `ProjectSettings`, `Box`, `SshRemote`, `SshForward`, and `GlobalSettings`, with the mapping from the 3.3.5 record keys |
+| `records.ts` | `Project`, `ProjectSettings`, `Box`, `SshRemote`, `SshForward`, `GlobalSettings`, and the settings patch, with the mapping from the 3.3.5 record keys and the import rules |
+| `common.ts` | Ports, ISO times, ULID run ids, commit SHAs, vendors, and the `ApiErrorCode` list |
 | `prompts.ts` | The four default prompt templates and `expandTemplate()` |
 | `findings.ts` | `Finding`, the vendor JSON form, and its converter |
 | `runs.ts` | `RunRequest`, `RunState`, `FileGroup`, `RoundSummary`, and decisions |
-| `lease.ts` | `LeaseRequest` and `LeaseResponse` for the server's scheduler |
-| `events.ts` | The event union that the engine and the server stream |
+| `lease.ts` | Lease requests, responses, their stream frames, and settlements, with the lease protocol |
+| `events.ts` | The event union, the sequence-number rules, and the stream frames for both event sockets |
 | `policy.ts` | `PolicyFile` and its default |
 | `config.ts` | `ServerConfig`, `parseConfig()`, home-directory paths, and the engine environment |
-| `api.ts` | The route catalog for the server API and the engine API, and `RouteOf` |
+| `api.ts` | The route catalog for the server API and the engine API, the authentication rules, and `RouteOf` |
 
 ## Use the package
 

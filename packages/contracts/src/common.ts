@@ -38,11 +38,64 @@ export const CommitShaSchema = z.string().regex(/^[0-9a-f]{7,64}$/);
 /** An environment variable name. */
 export const EnvVarNameSchema = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/);
 
+/**
+ * A ULID: 26 Crockford base-32 characters, sortable by creation time. The
+ * server mints run ids as ULIDs, so a run id is unique across every engine.
+ */
+export const UlidSchema = z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/);
+
+/** A review run id. See `RunState.id`. */
+export const RunIdSchema = UlidSchema;
+export type RunId = z.infer<typeof RunIdSchema>;
+
+/**
+ * The stable, machine-readable error codes of both APIs.
+ *
+ * - `adoption_refused`: a running box holds the session (409).
+ * - `session_tracked`: a stopped box holds the session; retry with
+ *   `force: true` (409, `details.holders` lists the box ids).
+ * - `box_running`: the action needs a stopped box (409).
+ * - `stale_mounts`: the project container's mounts, ports, or secrets
+ *   differ from the project's; restart it first (409).
+ * - `secrets_locked`: the 1Password CLI is installed but not signed in (503).
+ * - `secrets_unavailable`: the 1Password CLI is missing, or a reference
+ *   doesn't resolve (503).
+ * - `engine_mismatch`: the image's engine version differs from the
+ *   server's; rebuild the image (409).
+ * - `dirty_tree`: the working tree has uncommitted changes (409).
+ * - `worktree_refused`: the worktree has changes, ignored files, or commits
+ *   found nowhere else (409).
+ * - `not_found`, `run_not_found`: no such resource (404).
+ * - `conflict`: any other conflicting state (409).
+ * - `validation`: the request doesn't match its schema (400).
+ * - `docker_unavailable`: the Docker daemon is unreachable (503).
+ * - `image_missing`: the engine image doesn't exist (409).
+ * - `invalid_state`: the run's status doesn't allow the action (409).
+ */
+export const ApiErrorCodeSchema = z.enum([
+  "adoption_refused",
+  "session_tracked",
+  "box_running",
+  "stale_mounts",
+  "secrets_locked",
+  "secrets_unavailable",
+  "engine_mismatch",
+  "dirty_tree",
+  "worktree_refused",
+  "not_found",
+  "conflict",
+  "validation",
+  "docker_unavailable",
+  "image_missing",
+  "run_not_found",
+  "invalid_state",
+]);
+export type ApiErrorCode = z.infer<typeof ApiErrorCodeSchema>;
+
 /** The JSON body that every failed API call returns, on the server and the engine. */
 export const ApiErrorSchema = z.object({
   error: z.object({
-    /** A stable, machine-readable code, such as `box_running` or `op_locked`. */
-    code: z.string().min(1),
+    code: ApiErrorCodeSchema,
     /** A sentence for a person to read. */
     message: z.string(),
     details: z.unknown().optional(),

@@ -1,7 +1,11 @@
 // Sample documents, one or more per schema, used by the round-trip tests.
+import { RunRequestSchema, parseConfig } from "../src/index.js";
+
 export const T0 = "2026-10-28T09:00:00.000Z";
 export const T1 = "2026-10-28T09:05:00.000Z";
 export const UUID = "0b9f2a7e-4c1d-4e8a-9f3b-2d6c8e1a5b70";
+/** A ULID run id. */
+export const RUN = "01JB8Z5K3W6Q2V9X4T7R0M1N2P";
 
 export const project = {
   id: "example-app-1a2b3c4d",
@@ -17,9 +21,12 @@ export const project = {
   updatedAt: T1,
 };
 
+const CONTAINER = "claude-agent-proj-example-app-1a2b3c4d";
+
 export const box = {
   id: "claude-agent-emails_not_sending",
   projectId: project.id,
+  hostKey: "emails-not-sending",
   targetDir: project.root,
   sessionUuid: UUID,
   conversationName: "Emails_not_sending",
@@ -30,7 +37,7 @@ export const box = {
   skipPermissions: true,
   worktree: "/home/user/src/example-app/.worktrees/Emails_not_sending",
   branch: "claude/Emails_not_sending",
-  container: "claude-agent-proj-example-app-1a2b3c4d",
+  container: CONTAINER,
   session: "claude-agent-emails_not_sending",
   launchedModel: "claude-opus-5-5",
   launchedEffort: "high",
@@ -38,14 +45,16 @@ export const box = {
   sshRemoteRefs: ["staging"],
   createdAt: T0,
   updatedAt: T1,
-  reviewState: { state: "under_review", runId: "R-0001" },
 };
 
-/** A box as a fresh import of a 3.3.5 classic record might produce: most fields absent. */
-export const minimalBox = {
+/** What the import produces for a 3.3.5 record with few keys, before defaults. */
+export const minimalBoxInput = {
   id: "claude-agent-example-app",
   projectId: project.id,
+  hostKey: "example-app",
   targetDir: project.root,
+  container: CONTAINER,
+  session: "claude-agent-example-app",
   createdAt: T0,
   updatedAt: T0,
 };
@@ -87,7 +96,7 @@ export const finding = {
   verdict: "fixed",
   verification: "script",
   evidence: "repro.sh exits 124 after 30 s at the tip, 0 after the fix.",
-  runId: "R-0001",
+  runId: RUN,
   round: 1,
   groupId: "G-01",
   hunkIds: ["H-0003", "H-0004"],
@@ -104,6 +113,27 @@ export const finding = {
     },
     { time: T1, verdict: "fixed", actor: { kind: "engine" }, round: 1 },
   ],
+};
+
+const { fixCommit: _fixCommit, ...unfixedFinding } = finding;
+
+/** An imported pull request comment with no file or lines. */
+export const prCommentFinding = {
+  ...unfixedFinding,
+  id: "F-0002",
+  file: null,
+  lines: null,
+  groupId: null,
+  hunkIds: [],
+  origin: "pr_comment",
+  externalRef: {
+    kind: "pr_comment",
+    id: "IC_kwDOexample",
+    url: "https://github.example.com/org/repo/pull/7#issuecomment-1",
+  },
+  verdict: "pending",
+  verification: null,
+  history: [],
 };
 
 export const runRequest = {
@@ -126,11 +156,27 @@ export const fileGroup = {
 };
 
 export const roundSummary = {
-  runId: "R-0001",
+  runId: RUN,
   round: 1,
   perVendor: {
-    codex: { raised: 9, confirmed: 5, disproved: 4, tokensIn: 120000, tokensOut: 8000, costUsd: 0 },
-    copilot: { raised: 4, confirmed: 2, disproved: 2 },
+    codex: {
+      raised: 9,
+      confirmed: 5,
+      disproved: 4,
+      tokensIn: 120000,
+      tokensOut: 8000,
+      premiumRequests: 0,
+      costUsd: 0,
+    },
+    copilot: {
+      raised: 4,
+      confirmed: 2,
+      disproved: 2,
+      tokensIn: 0,
+      tokensOut: 0,
+      premiumRequests: 3,
+      costUsd: 0.12,
+    },
   },
   fixed: 7,
   overlapRate: 0.25,
@@ -140,11 +186,11 @@ export const roundSummary = {
 };
 
 export const runState = {
-  id: "R-0001",
+  id: RUN,
   projectId: project.id,
   boxId: box.id,
-  container: box.container,
-  request: runRequest,
+  container: CONTAINER,
+  request: RunRequestSchema.parse(runRequest),
   status: "waiting_decision",
   stage: "fix",
   round: 3,
@@ -180,27 +226,34 @@ export const policy = {
 
 export const leaseRequest = {
   leaseId: "L-17",
-  runId: "R-0001",
+  runId: RUN,
   vendor: "claude",
   role: "fixer",
   estimate: { tokens: 40000 },
 };
 
 export const leaseResponses = [
-  { decision: "granted", leaseId: "L-17", vendor: "codex", redirectedFrom: "claude" },
+  {
+    decision: "granted",
+    leaseId: "L-17",
+    vendor: "codex",
+    redirectedFrom: "claude",
+    expiresAt: T1,
+  },
+  { decision: "granted", leaseId: "L-18", vendor: "claude", redirectedFrom: null, expiresAt: T1 },
   {
     decision: "pause",
     leaseId: "L-17",
     resumeAt: T1,
     reason: "Claude is above 60% of its 5-hour window.",
   },
-  { decision: "deny", leaseId: "L-17", reason: "The run was cancelled." },
+  { decision: "deny", leaseId: "L-17", reason: "The run was cancelled.", action: "fail_role" },
 ];
 
-export const settings = {
+/** A configuration file with some fields set; parse it with `parseConfig()`. */
+export const settingsFile = {
   version: 1,
   serverPort: 20400,
-  proxyPort: 20400,
   engineImage: "claude-code",
   ceilings: { copilot: { kind: "spend", period: "month", maxUsd: 50 } },
   notifications: { roundSummary: false },
@@ -216,22 +269,28 @@ export const settings = {
   secretRefs: [{ name: "GH_TOKEN", ref: "op://Dev/GitHub/token" }],
 };
 
-const ev = (seq: number, source = "engine:claude-agent-proj-example-app-1a2b3c4d") => ({
+const STREAM = "01JB8Z0000000000000000STRM";
+const ev = (seq: number, source = `engine:${CONTAINER}`) => ({
   id: `E-${seq}`,
   time: T0,
   source,
+  streamId: STREAM,
   seq,
+  sourceSeq: seq,
 });
 
 const agent = {
-  runId: "R-0001",
+  runId: RUN,
   agentId: "A-1",
+  leaseId: "L-17",
   vendor: "codex",
   model: "gpt-5-codex",
   role: "reviewer",
   groupId: "G-01",
   round: 1,
 };
+
+const claudeCeiling = { kind: "utilization", window: "5h", max: 0.6 };
 
 /** One sample of every event type. */
 export const events = [
@@ -243,35 +302,31 @@ export const events = [
     outcome: "ok",
     elapsedMs: 81234,
     tokens: { in: 120000, out: 8000 },
+    premiumRequests: 0,
     costEstimate: 0,
   },
-  {
-    ...ev(3),
-    type: "stage.changed",
-    runId: "R-0001",
-    round: 1,
-    stage: "merge",
-    previousStage: "find",
-  },
+  { ...ev(3), type: "stage.changed", runId: RUN, round: 1, stage: "merge", previousStage: "find" },
   {
     ...ev(4),
     type: "handoff",
-    runId: "R-0001",
+    runId: RUN,
     round: 1,
     from: { stage: "find", vendor: "codex", role: "reviewer" },
-    to: { stage: "merge" },
+    to: { stage: "merge", vendor: null, role: null },
     artifact: "findings",
     count: 12,
     file: "round-1/find-codex.json",
   },
-  { ...ev(5), type: "finding.changed", runId: "R-0001", finding, previousVerdict: "confirmed" },
+  { ...ev(5), type: "finding.changed", runId: RUN, finding, previousVerdict: "confirmed" },
   {
     ...ev(6),
     type: "usage.sample",
     vendor: "claude",
-    account: "user@example.com",
+    account: "dana@example.com",
     window: "5h",
     utilization: 0.42,
+    spendUsd: null,
+    ceiling: claudeCeiling,
     resetAt: T1,
     source: "rate_limit_event",
   },
@@ -279,42 +334,62 @@ export const events = [
     ...ev(7),
     type: "ceiling.crossed",
     vendor: "claude",
-    account: "user@example.com",
+    account: "dana@example.com",
     window: "5h",
     utilization: 0.61,
-    ceiling: 0.6,
+    ceiling: claudeCeiling,
     direction: "above",
     resetAt: T1,
   },
   {
     ...ev(8),
     type: "role.reassigned",
-    runId: "R-0001",
+    runId: RUN,
     role: "disprover",
-    from: "claude",
-    to: "codex",
+    from: ["claude"],
+    to: ["codex", "copilot"],
     reason: "ceiling",
     effectiveRound: 2,
   },
-  { ...ev(9), type: "run.changed", run: runState, roundSummary },
-  { ...ev(10, "server"), type: "box.changed", boxId: box.id, status: "running", box },
   {
-    ...ev(11, "server"),
+    ...ev(9),
+    type: "lease.settled",
+    leaseId: "L-17",
+    runId: RUN,
+    vendor: "copilot",
+    role: "reviewer",
+    tokens: { in: 50000, out: 3000 },
+    premiumRequests: 1,
+    costEstimate: 0.04,
+  },
+  { ...ev(10), type: "run.changed", run: runState, roundSummary },
+  { ...ev(11, "server"), type: "box.changed", boxId: box.id, status: "running", box },
+  {
+    ...ev(12, "server"),
     type: "container.changed",
-    container: box.container,
+    container: CONTAINER,
     projectId: project.id,
     state: "running",
     engine: { hostPort: 41234, version: "4.0.0", healthy: true, versionMatches: true },
   },
   {
-    ...ev(12),
+    ...ev(13, "server"),
+    type: "container.stats",
+    container: CONTAINER,
+    projectId: project.id,
+    cpuPercent: 12.5,
+    memBytes: 734003200,
+    memLimitBytes: 8589934592,
+    diskBytes: 1073741824,
+  },
+  {
+    ...ev(14),
     type: "ports.changed",
-    container: box.container,
-    boxId: box.id,
+    container: CONTAINER,
     listeners: [{ port: 5173, proto: "tcp", process: "node", boxId: box.id }],
   },
   {
-    ...ev(13, "server"),
+    ...ev(15, "server"),
     type: "terminal.ended",
     terminalId: "T-1",
     boxId: box.id,
@@ -323,14 +398,21 @@ export const events = [
     unexpected: false,
   },
   {
-    ...ev(14, "server"),
+    ...ev(16, "server"),
     type: "notification",
     notificationId: "N-1",
     kind: "decision_needed",
-    title: "Run R-0001 needs you",
+    title: "Run needs you",
     body: "F-0001 came back after its fix.",
-    runId: "R-0001",
+    runId: RUN,
+    boxId: null,
     severity: "warning",
+    read: false,
   },
-  { ...ev(15), type: "lease.requested", ...leaseRequest },
+  {
+    ...ev(17, "server"),
+    type: "settings.changed",
+    settings: parseConfig(settingsFile),
+    changedKeys: ["notifications"],
+  },
 ];

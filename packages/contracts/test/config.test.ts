@@ -9,7 +9,6 @@ describe("config", () => {
     expect(config).toMatchObject({
       version: 1,
       serverPort: 20400,
-      proxyPort: 20400,
       engineImage: "claude-code",
       setupCompleted: false,
       globalMounts: [],
@@ -27,6 +26,7 @@ describe("config", () => {
         copilot: { kind: "spend", period: "month", maxUsd: 70 },
       },
     });
+    expect(config.proxyPort).toBeUndefined();
     expect(config.defaultTargetDir).toBeUndefined();
     expect(config.modelCache).toBeUndefined();
   });
@@ -39,8 +39,9 @@ describe("config", () => {
     expect(config.ceilings.claude.kind).toBe("utilization");
   });
 
-  it("rejects an invalid field instead of dropping it", () => {
+  it("rejects an invalid field or an unknown key instead of dropping it", () => {
     expect(() => parseConfig({ serverPort: 70000 })).toThrow();
+    expect(() => parseConfig({ serverPrt: 20400 })).toThrow();
   });
 
   it("parses the engine environment", () => {
