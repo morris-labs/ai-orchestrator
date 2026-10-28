@@ -864,6 +864,24 @@ export class BoxService {
         "box_running",
         `${running.id} is running against this directory; stop it first.`,
       );
+    // A worktree's record and its git metadata hold absolute paths under the
+    // root, so renaming the root would strand every worktree box there.
+    const root = normalizeRoot(currentDir);
+    const worktreeBox = this.repos.boxes
+      .list()
+      .find((b) => b.worktree && (b.worktree === root || b.worktree.startsWith(`${root}/`)));
+    if (worktreeBox) {
+      throw new ApiError(
+        "conflict",
+        `The worktree box ${worktreeBox.id} lives under ${root}; a directory with worktrees cannot be moved.`,
+      );
+    }
+    if (fs.existsSync(path.join(root, ".worktrees"))) {
+      throw new ApiError(
+        "conflict",
+        `${root} holds git worktrees in .worktrees; a directory with worktrees cannot be moved.`,
+      );
+    }
     const newDir = normalizeRoot(path.resolve(newDirIn));
     if (newDir === normalizeRoot(currentDir)) return { movedBoxes: [] };
     if (fs.existsSync(newDir)) throw new ApiError("conflict", `${newDir} already exists.`);

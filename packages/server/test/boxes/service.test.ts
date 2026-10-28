@@ -626,6 +626,26 @@ describe("move and relink", () => {
     await expect(h.core.boxes.move(a.id, target)).resolves.toEqual({ movedBoxes: [] });
   });
 
+  it("refuses to move a directory that holds a worktree box", async () => {
+    const h = makeHarness();
+    const repo = initRepo(h.dir("repo"));
+    const plain = await h.core.boxes.create({ targetDir: repo, layout: "root", start: false });
+    const wt = await h.core.boxes.create({
+      targetDir: repo,
+      layout: "worktree",
+      conversationName: "feature",
+    });
+    await h.core.boxes.stop(wt.id);
+    const target = path.join(h.home, "moved");
+    await expect(h.core.boxes.move(plain.id, target)).rejects.toMatchObject({ code: "conflict" });
+    expect(fs.existsSync(repo)).toBe(true);
+    expect(fs.existsSync(target)).toBe(false);
+    expect(h.core.boxes.get(wt.id).worktree).toBe(wt.worktree);
+    // The .worktrees folder alone is enough, such as one made by hand.
+    await h.core.boxes.remove(wt.id);
+    await expect(h.core.boxes.move(plain.id, target)).rejects.toMatchObject({ code: "conflict" });
+  });
+
   it("relinks one record to another directory", async () => {
     const h = makeHarness();
     const box = await h.core.boxes.create({
