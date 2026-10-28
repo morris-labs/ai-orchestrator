@@ -37,7 +37,7 @@ export interface LaunchInput {
   tcpMaps: readonly TcpMap[];
   image: string;
   engine: { hostPort: number; token: string; version: string };
-  /** Resolved secrets and any other environment W2 adds. Never logged. */
+  /** Resolved secrets and any other environment the server adds. Never logged. */
   extraEnv: Readonly<Record<string, string>>;
   /** Seconds the keeper lingers with no sessions; 30 unless a test shortens it. */
   graceSec?: number;
@@ -159,6 +159,7 @@ export function buildLaunchSpec(
     `${ENGINE_ENV.projectRoot}=${containerDir}`,
     `${ENGINE_ENV.container}=${input.container}`,
     `${ENGINE_ENV.engineVersion}=${input.engine.version}`,
+    `${ENGINE_ENV.stateDir}=${STATE_MOUNT}`,
   );
   const secretNames = Object.keys(input.extraEnv).sort();
   for (const name of secretNames) envList.push(`${name}=${input.extraEnv[name]}`);
@@ -219,6 +220,7 @@ export function toDockerRunArgs(
     ENGINE_ENV.projectRoot,
     ENGINE_ENV.container,
     ENGINE_ENV.engineVersion,
+    ENGINE_ENV.stateDir,
   ]);
   const args = ["run", "-d", "-i", "-t"];
   if (spec.autoRemove) args.push("--rm");

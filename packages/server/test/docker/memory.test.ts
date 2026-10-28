@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { MemoryDocker } from "../../src/docker/memory.js";
-import { SESSION_START_SCRIPT, sessionStartCmd } from "../../src/docker/scripts.js";
+import { sessionStartCmd } from "../../src/docker/scripts.js";
 import { DockerUnavailableError, type ContainerCreateSpec } from "../../src/docker/types.js";
 
 function spec(stateDir: string): ContainerCreateSpec {
@@ -36,11 +36,7 @@ describe("MemoryDocker", () => {
     expect((await d.exec(c, { cmd: sessionStartCmd("s1", "/w", "claude") })).exitCode).toBe(3);
     d.failingCommands.push("bad-flag");
     expect(
-      (
-        await d.exec(c, {
-          cmd: ["bash", "-c", SESSION_START_SCRIPT, "_", "s2", "/w", "claude bad-flag"],
-        })
-      ).exitCode,
+      (await d.exec(c, { cmd: sessionStartCmd("s2", "/w", "claude bad-flag") })).exitCode,
     ).toBe(2);
     expect((await d.exec(c, { cmd: ["tmux", "list-sessions", "-F", "#S"] })).stdout).toBe("s1\n");
     expect(

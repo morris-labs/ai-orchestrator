@@ -4,7 +4,7 @@
 // commands the core sends through `exec`.
 import fs from "node:fs";
 import path from "node:path";
-import { SESSION_START_SCRIPT, STATE_MOUNT } from "./scripts.js";
+import { START_SESSION_PATH, STATE_MOUNT } from "./scripts.js";
 import {
   DockerUnavailableError,
   type ContainerCreateSpec,
@@ -231,8 +231,8 @@ export class MemoryDocker implements DockerClient {
       };
     }
     const cmd = options.cmd;
-    if (cmd[0] === "bash" && cmd[1] === "-c" && cmd[2] === SESSION_START_SCRIPT) {
-      const [session, workDir, command] = [cmd[4] ?? "", cmd[5] ?? "", cmd[6] ?? ""];
+    if (cmd[0] === START_SESSION_PATH) {
+      const [session, workDir, command] = [cmd[1] ?? "", cmd[2] ?? "", cmd[3] ?? ""];
       if (c.sessions.has(session)) {
         return { exitCode: 3, stdout: "", stderr: `session ${session} is already running\n` };
       }

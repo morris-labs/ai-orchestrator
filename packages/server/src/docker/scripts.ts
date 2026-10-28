@@ -1,11 +1,24 @@
-// The shell scripts a project container runs, verbatim from 3.3.5
-// (`SharedContainer.cpp`, inventory section 4.2).
+// How the server runs a project container's scripts. The image installs
+// them at `AGENTBOX_LIB` (`image/keeper/` in the repository): `keeper.sh` is
+// the container's PID 1, keeps the engine running, and writes the live tmux
+// sessions to the state directory; `start-session.sh` starts one box's tmux
+// session. The 3.3.5 keeper and session scripts (`SharedContainer.cpp`,
+// inventory section 4.2) stay below as the reference those scripts follow.
 
 /** Where the keeper's state directory appears inside the container. */
 export const STATE_MOUNT = "/run/claude-box";
 
 /** Seconds the keeper lingers with no sessions before the container exits. */
 export const STARTUP_GRACE_SEC = 30;
+
+/** Where the image installs the keeper scripts. */
+export const AGENTBOX_LIB = "/usr/local/lib/agentbox";
+
+/** The keeper: `keeper.sh STATE GRACE`. */
+export const KEEPER_PATH = `${AGENTBOX_LIB}/keeper.sh`;
+
+/** The session starter: `start-session.sh SESSION WORK_DIR COMMAND`. */
+export const START_SESSION_PATH = `${AGENTBOX_LIB}/start-session.sh`;
 
 /**
  * Single-quotes one token for a `bash -c` string. Safe for any byte; only a
@@ -16,7 +29,8 @@ export function shellQuote(s: string): string {
 }
 
 /**
- * PID 1 of a project container. `$1` is the state directory and `$2` the
+ * The 3.3.5 keeper, for reference: `keeper.sh` does the same and also keeps
+ * the engine running. `$1` is the state directory and `$2` the
  * seconds to linger with no sessions. Each second it writes the live tmux
  * session names to `$1/sessions` through a temporary file and a rename.
  */
@@ -31,7 +45,8 @@ export const KEEPER_SCRIPT =
   "done\n";
 
 /**
- * Starts one conversation as a tmux session. `$1` is the session name, `$2`
+ * The 3.3.5 session starter, for reference: `start-session.sh` is the same
+ * script. It starts one conversation as a tmux session. `$1` is the session name, `$2`
  * the working directory, and `$3` the whole command as one shell-quoted
  * string, so tmux's re-shelling cannot split a multi-word argument. Exits 3
  * when the session already runs, 1 when tmux fails, and 2 when the program
@@ -45,14 +60,15 @@ export const SESSION_START_SCRIPT =
   'tmux has-session -t "=$S" 2>/dev/null || { echo "$S ended right after starting" >&2; exit 2; }\n';
 
 /**
- * The container command: trust every directory for git, then run the keeper.
- * `bash -c SCRIPT _ STATE_DIR GRACE_SECONDS`.
+ * The container command: trust every directory for git (worktree boxes need
+ * it), then replace the shell with the keeper, which stays PID 1 so that
+ * `docker stop` reaches its SIGTERM trap and stops the engine cleanly.
  */
 export function sharedKeeperCommand(graceSec: number = STARTUP_GRACE_SEC): string[] {
   return [
     "bash",
     "-c",
-    `git config --global --add safe.directory '*' 2>/dev/null; ${KEEPER_SCRIPT}`,
+    `git config --global --add safe.directory '*' 2>/dev/null; exec ${KEEPER_PATH} "$1" "$2"`,
     "_",
     STATE_MOUNT,
     String(graceSec),
@@ -64,7 +80,7 @@ export function buildSessionCommand(program: string, args: readonly string[]): s
   return [program, ...args.map(shellQuote)].join(" ");
 }
 
-/** The `docker exec` argv tail that starts session `session` in `workDir`. */
+/** The `docker exec` argv that starts session `session` in `workDir` with the image's script. */
 export function sessionStartCmd(session: string, workDir: string, command: string): string[] {
-  return ["bash", "-c", SESSION_START_SCRIPT, "_", session, workDir, command];
+  return [START_SESSION_PATH, session, workDir, command];
 }

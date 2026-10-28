@@ -1,13 +1,16 @@
-// The keeper and session start scripts must stay verbatim from inventory
-// section 4.2; this test reads the inventory itself.
+// The 3.3.5 keeper and session start scripts stay verbatim from inventory
+// section 4.2 as the reference for the image's keeper.sh and
+// start-session.sh; this test reads the inventory itself.
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
+  KEEPER_PATH,
   KEEPER_SCRIPT,
   SESSION_START_SCRIPT,
+  START_SESSION_PATH,
   STATE_MOUNT,
   buildSessionCommand,
   sessionStartCmd,
@@ -39,11 +42,13 @@ describe("scripts", () => {
     expect(SESSION_START_SCRIPT).toBe(codeBlockAfter("Session start (via"));
   });
 
-  it("builds the container command as inventory 4.2 describes", () => {
+  // 4.0.0 runs the image's keeper.sh, which does what the 3.3.5 keeper did
+  // and also keeps the engine running, instead of the inline 3.3.5 script.
+  it("runs the image's keeper after trusting every directory for git", () => {
     expect(sharedKeeperCommand()).toEqual([
       "bash",
       "-c",
-      `git config --global --add safe.directory '*' 2>/dev/null; ${KEEPER_SCRIPT}`,
+      `git config --global --add safe.directory '*' 2>/dev/null; exec ${KEEPER_PATH} "$1" "$2"`,
       "_",
       STATE_MOUNT,
       "30",
@@ -60,15 +65,9 @@ describe("scripts", () => {
       expect(out).toBe(s);
     }
     expect(buildSessionCommand("claude", ["--name", "a b"])).toBe("claude '--name' 'a b'");
-    expect(sessionStartCmd("s", "/w", "c")).toEqual([
-      "bash",
-      "-c",
-      SESSION_START_SCRIPT,
-      "_",
-      "s",
-      "/w",
-      "c",
-    ]);
+    expect(sessionStartCmd("s", "/w", "c")).toEqual([START_SESSION_PATH, "s", "/w", "c"]);
+    expect(KEEPER_PATH).toBe("/usr/local/lib/agentbox/keeper.sh");
+    expect(START_SESSION_PATH).toBe("/usr/local/lib/agentbox/start-session.sh");
   });
 
   it("runs the session command through a shell as one argument per token", () => {

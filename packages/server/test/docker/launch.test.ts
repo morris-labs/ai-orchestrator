@@ -12,7 +12,7 @@ import {
   toDockerRunArgs,
   type LaunchInput,
 } from "../../src/docker/launch.js";
-import { KEEPER_SCRIPT } from "../../src/docker/scripts.js";
+import { KEEPER_PATH } from "../../src/docker/scripts.js";
 import type { HostEnv } from "../../src/records/env.js";
 
 const env: HostEnv = { home: "/home/tester", user: "tester", now: () => new Date() };
@@ -37,6 +37,11 @@ const input: LaunchInput = {
 };
 
 describe("buildLaunchSpec", () => {
+  // The golden spec is the 3.3.5 launch minus the port pool, plus the engine.
+  // It differs from 3.3.5 in the command and one variable on purpose: the
+  // container runs the image's keeper.sh (which also keeps the engine
+  // running) in place of the inline 3.3.5 keeper, and gets
+  // AGENTBOX_STATE_DIR, where keeper.sh and the engine share state.
   it("matches the inventoried 3.3.5 launch, minus the pool, plus the engine", () => {
     const spec = buildLaunchSpec(env, input, {
       projectsSymlinkTarget: "/home/tester/.claude-projects-shared",
@@ -50,7 +55,7 @@ describe("buildLaunchSpec", () => {
       cmd: [
         "bash",
         "-c",
-        `git config --global --add safe.directory '*' 2>/dev/null; ${KEEPER_SCRIPT}`,
+        `git config --global --add safe.directory '*' 2>/dev/null; exec ${KEEPER_PATH} "$1" "$2"`,
         "_",
         "/run/claude-box",
         "30",
@@ -64,6 +69,7 @@ describe("buildLaunchSpec", () => {
         "AGENTBOX_PROJECT_ROOT=/home/tester/work/app",
         `AGENTBOX_CONTAINER=${C}`,
         "AGENTBOX_ENGINE_VERSION=4.0.0",
+        "AGENTBOX_STATE_DIR=/run/claude-box",
         "API_KEY=k",
         "GITHUB_TOKEN=ghp_value",
       ],

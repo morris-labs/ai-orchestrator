@@ -24,6 +24,11 @@ node packages/server/test/host/smoke.mjs [--image=BASE_IMAGE] [--claude] [--keep
 
 Replace `BASE_IMAGE` with the image to build on; the default is
 `claude-code`.
+The base image must carry `/usr/local/lib/agentbox/keeper.sh` and
+`start-session.sh`, as the image built from `image/Dockerfile` does: the
+container runs `keeper.sh` as PID 1 and starts sessions with
+`start-session.sh`. The keeper starts `agentbox-engine` when the image has
+it and runs without it otherwise.
 
 The script does the following:
 
@@ -33,7 +38,8 @@ The script does the following:
 1. Creates a project in a temporary directory, prints the `docker run`
    equivalent of its launch spec with secrets masked, and starts the project
    container through `ensureContainer()`.
-1. Checks the binds, the environment, and the engine port binding on
+1. Checks the binds, the environment (including `AGENTBOX_STATE_DIR`), and
+   the engine port binding on
    `127.0.0.1`.
 1. Waits for the keeper's state file, starts a tmux session with the session
    start script, and checks exit codes 0, 3 (already running), and 2 (ended
