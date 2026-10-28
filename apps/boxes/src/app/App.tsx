@@ -817,7 +817,7 @@ export function App() {
 
   const acceptEdit = (view: BoxView) => async (r: BoxDialogResult) => {
     await saveProjectSettings(view.box.targetDir, r.project);
-    const body = updateBody(view.box, r.form);
+    const body = updateBody(view.box, r.form, r.handPicked);
     if (Object.keys(body).length === 0) {
       setDialog(null);
       return null;

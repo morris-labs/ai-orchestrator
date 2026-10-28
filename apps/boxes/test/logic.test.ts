@@ -241,9 +241,27 @@ describe("new box form", () => {
     expect(fork.conversation).toBe("");
     const edit = formFromBox(box, "edit", { model: "m", effort: "high" });
     expect(edit.layout).toBe("worktree");
-    expect(updateBody(box, edit)).toEqual({ effort: "high" });
+    const untouched = { model: false, effort: false };
+    // The record leaves effort to the settings: the shown default isn't a change.
+    expect(updateBody(box, edit, untouched)).toEqual({});
+    expect(updateBody(box, edit, { model: false, effort: true })).toEqual({ effort: "high" });
+    expect(updateBody(box, { ...edit, model: "claude-opus-5" }, untouched)).toEqual({
+      model: "claude-opus-5",
+    });
+    const unpinned = makeBox({ id: "claude-agent-b", targetDir: "/w/b", conversationName: "B" });
+    const unpinnedForm = formFromBox(unpinned, "edit", { model: "m", effort: "high" });
+    expect(updateBody(unpinned, { ...unpinnedForm, name: "C" }, untouched)).toEqual({
+      conversationName: "C",
+    });
+    expect(updateBody(unpinned, unpinnedForm, { model: true, effort: false })).toEqual({
+      model: "m",
+    });
     expect(
-      updateBody(box, { ...edit, conversation: "", effort: box.effort ?? "high", name: "B" }),
+      updateBody(
+        box,
+        { ...edit, conversation: "", effort: box.effort ?? "high", name: "B" },
+        untouched,
+      ),
     ).toMatchObject({
       sessionUuid: null,
       conversationName: "B",

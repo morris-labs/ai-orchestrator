@@ -11,7 +11,7 @@ import {
   type Project,
   type SshRemote,
 } from "@agentbox/contracts";
-import { Button, Collapsible, Dialog, errorMessage, useApiClient } from "@agentbox/ui";
+import { Button, Collapsible, Dialog, errorMessage, useApiClient, useInFlight } from "@agentbox/ui";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { mountProblems, tcpMapProblems, toTcpMaps } from "../logic/mounts";
 import {
@@ -36,6 +36,8 @@ export interface BoxDialogResult {
   form: BoxForm;
   /** The project settings edited in the dialog, or `null` when unchanged. */
   project: { tcpMaps: { host: number; container: number }[]; mounts: Mount[] } | null;
+  /** Whether the person chose the model and the effort by hand. */
+  handPicked: { model: boolean; effort: boolean };
 }
 
 export interface BoxDialogProps {
@@ -92,12 +94,15 @@ export function BoxDialog(props: BoxDialogProps) {
   const [models, setModels] = useState<string[]>([]);
   const [remotes, setRemotes] = useState<SshRemote[]>([]);
   const [errors, setErrors] = useState<string[]>([]);
-  const [busy, setBusy] = useState(false);
+  const { busy, run } = useInFlight();
+  // In edit mode, a model or effort the record leaves to the settings files
+  // follows them, as in New Box, until the person picks one.
   const touched = useRef({
-    model: mode !== "new",
-    effort: mode !== "new",
+    model: mode === "fork" || (mode === "edit" && source?.box.model !== undefined),
+    effort: mode === "fork" || (mode === "edit" && source?.box.effort !== undefined),
     layout: mode === "edit",
   });
+  const handPicked = useRef({ model: false, effort: false });
 
   const dir = normalizeDir(form.targetDir);
   const project =
@@ -199,30 +204,29 @@ export function BoxDialog(props: BoxDialogProps) {
     setForm((f) => ({ ...f, conversation: uuid, name: r.name }));
   };
 
-  const submit = async () => {
-    const problems = validateForm(form, mode);
-    const portRows = ports.filter((r) => r.host.trim() !== "" || r.container.trim() !== "");
-    const mountList: Mount[] = mounts
-      .filter((r) => r.host.trim() !== "")
-      .map((r) => ({ host: r.host.trim(), container: r.container.trim() || r.host.trim() }));
-    if (projectTouched) {
-      problems.push(...tcpMapProblems(portRows), ...mountProblems(mountList));
-    }
-    setErrors(problems);
-    if (problems.length > 0) return;
-    setBusy(true);
-    try {
-      const err = await props.onAccept({
-        form,
-        project: projectTouched ? { tcpMaps: toTcpMaps(portRows), mounts: mountList } : null,
-      });
-      if (err) setErrors([err]);
-    } catch (err) {
-      setErrors([errorMessage(err)]);
-    } finally {
-      setBusy(false);
-    }
-  };
+  const submit = () =>
+    run(async () => {
+      const problems = validateForm(form, mode);
+      const portRows = ports.filter((r) => r.host.trim() !== "" || r.container.trim() !== "");
+      const mountList: Mount[] = mounts
+        .filter((r) => r.host.trim() !== "")
+        .map((r) => ({ host: r.host.trim(), container: r.container.trim() || r.host.trim() }));
+      if (projectTouched) {
+        problems.push(...tcpMapProblems(portRows), ...mountProblems(mountList));
+      }
+      setErrors(problems);
+      if (problems.length > 0) return;
+      try {
+        const err = await props.onAccept({
+          form,
+          project: projectTouched ? { tcpMaps: toTcpMaps(portRows), mounts: mountList } : null,
+          handPicked: { ...handPicked.current },
+        });
+        if (err) setErrors([err]);
+      } catch (err) {
+        setErrors([errorMessage(err)]);
+      }
+    });
 
   const slug = slugify(form.name);
   const layoutHint =
@@ -248,10 +252,11 @@ export function BoxDialog(props: BoxDialogProps) {
       width="min(720px, 94vw)"
       onClose={props.onCancel}
       onSubmit={() => void submit()}
+      busy={busy}
       buttons={
         <>
           <Button onClick={props.onCancel}>Cancel</Button>
-          <Button primary disabled={busy} onClick={() => void submit()}>
+          <Button primary onClick={() => void submit()}>
             {mode === "edit" ? "Save" : mode === "fork" ? "Fork" : "Create"}
           </Button>
         </>
@@ -356,6 +361,7 @@ export function BoxDialog(props: BoxDialogProps) {
           disabled={!claude}
           onChange={(e) => {
             touched.current.model = true;
+            handPicked.current.model = true;
             set("model", e.target.value);
           }}
         />
@@ -374,6 +380,7 @@ export function BoxDialog(props: BoxDialogProps) {
           disabled={!claude}
           onChange={(e) => {
             touched.current.effort = true;
+            handPicked.current.effort = true;
             set("effort", e.target.value as Effort);
           }}
         >

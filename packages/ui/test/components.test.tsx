@@ -4,13 +4,16 @@ import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import {
   applyGesture,
+  Button,
   Collapsible,
   DataTable,
+  Dialog,
   MenuList,
   MessageBoxProvider,
   resizePanes,
   sortRows,
   ToastProvider,
+  useInFlight,
   useMessageBox,
   useToast,
   type Column,
@@ -118,6 +121,96 @@ describe("DataTable", () => {
       />,
     );
     expect(screen.getByText("No boxes yet.")).toBeInTheDocument();
+  });
+});
+
+describe("Dialog", () => {
+  function Harness({ busy = false, onSubmit }: { busy?: boolean; onSubmit?: () => void }) {
+    const [open, setOpen] = useState(false);
+    return (
+      <>
+        <button type="button" onClick={() => setOpen(true)}>
+          Open
+        </button>
+        <textarea aria-label="Terminal" />
+        {open && (
+          <Dialog
+            title="Edit"
+            busy={busy}
+            onSubmit={onSubmit}
+            onClose={() => setOpen(false)}
+            buttons={
+              <>
+                <Button onClick={() => setOpen(false)}>Cancel</Button>
+                <Button primary>OK</Button>
+              </>
+            }
+          >
+            <input aria-label="Name" />
+          </Dialog>
+        )}
+      </>
+    );
+  }
+
+  it("keeps Tab inside the dialog and returns focus when it closes", async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    const opener = screen.getByRole("button", { name: "Open" });
+    await user.click(opener);
+    expect(screen.getByLabelText("Name")).toHaveFocus();
+    await user.tab();
+    expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
+    await user.tab();
+    expect(screen.getByRole("button", { name: "OK" })).toHaveFocus();
+    await user.tab();
+    expect(screen.getByLabelText("Name")).toHaveFocus();
+    await user.tab({ shift: true });
+    expect(screen.getByRole("button", { name: "OK" })).toHaveFocus();
+    expect(screen.getByLabelText("Terminal")).not.toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(opener).toHaveFocus();
+  });
+
+  it("disables its fields and ignores Enter while busy", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    render(<Harness busy onSubmit={onSubmit} />);
+    await user.click(screen.getByRole("button", { name: "Open" }));
+    expect(screen.getByLabelText("Name")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "OK" })).toBeDisabled();
+    fireEvent.submit(screen.getByRole("dialog").querySelector("form")!);
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+});
+
+describe("useInFlight", () => {
+  it("runs one request at a time", async () => {
+    let finish: () => void = () => undefined;
+    const fn = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    let api: ReturnType<typeof useInFlight> | null = null;
+    function Probe() {
+      api = useInFlight();
+      return <span>{api.busy ? "busy" : "idle"}</span>;
+    }
+    render(<Probe />);
+    let first: Promise<unknown> = Promise.resolve();
+    act(() => {
+      first = api!.run(fn);
+      void api!.run(fn);
+    });
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("busy")).toBeInTheDocument();
+    await act(async () => {
+      finish();
+      await first;
+    });
+    expect(screen.getByText("idle")).toBeInTheDocument();
   });
 });
 

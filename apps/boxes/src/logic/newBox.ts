@@ -165,13 +165,27 @@ export function formFromBox(
   };
 }
 
-/** The `boxes.update` body: only the fields that changed. */
-export function updateBody(box: Box, form: BoxForm): Record<string, unknown> {
+/**
+ * The `boxes.update` body: only the fields that changed. A model or effort
+ * that the record leaves to the settings files counts as changed only when
+ * the person picked one by hand (`handPicked`); the value the dialog shows
+ * for it is a default, not a choice to pin.
+ */
+export function updateBody(
+  box: Box,
+  form: BoxForm,
+  handPicked: { model: boolean; effort: boolean },
+): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   if (form.name.trim() !== box.conversationName) out.conversationName = form.name.trim();
   if (box.platform === "claude") {
-    if (form.model.trim() !== (box.model ?? "")) out.model = form.model.trim();
-    if (form.effort !== box.effort) out.effort = form.effort;
+    const model = form.model.trim();
+    if (box.model === undefined ? handPicked.model && model !== "" : model !== box.model) {
+      out.model = model;
+    }
+    if (box.effort === undefined ? handPicked.effort : form.effort !== box.effort) {
+      out.effort = form.effort;
+    }
   }
   if (form.skipPermissions !== box.skipPermissions) out.skipPermissions = form.skipPermissions;
   const uuid = form.conversation === "" ? null : form.conversation;

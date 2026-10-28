@@ -9,6 +9,7 @@ import { MountsDialog } from "../src/dialogs/MountsDialog";
 import { PromptsDialog } from "../src/dialogs/PromptsDialog";
 import { SetupWizard } from "../src/dialogs/SetupWizard";
 import { SshRemoteDialog, remoteProblems } from "../src/dialogs/SshDialogs";
+import { updateBody } from "../src/logic/newBox";
 import { renderWithServer } from "./helpers";
 
 const UUID1 = "11111111-1111-4111-8111-111111111111";
@@ -201,6 +202,29 @@ describe("BoxDialog, new mode", () => {
   });
 });
 
+describe("BoxDialog, double submit", () => {
+  it("submits once when Enter is pressed twice, and disables the form meanwhile", async () => {
+    const user = userEvent.setup();
+    let finish: (v: string | null) => void = () => undefined;
+    const { onAccept } = newDialog(new FakeServer(), { initialDir: "/w/site" });
+    onAccept.mockImplementation(
+      () =>
+        new Promise<string | null>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const name = screen.getByLabelText("Conversation name");
+    await user.type(name, "Fix login{Enter}{Enter}");
+    expect(onAccept).toHaveBeenCalledTimes(1);
+    expect(screen.getByLabelText("Conversation name")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Create" })).toBeDisabled();
+    finish("Try again.");
+    await waitFor(() => expect(screen.getByLabelText("Conversation name")).toBeEnabled());
+    await user.type(screen.getByLabelText("Conversation name"), "{Enter}");
+    expect(onAccept).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe("BoxDialog, edit and fork modes", () => {
   const view = makeBoxView({
     box: {
@@ -241,6 +265,32 @@ describe("BoxDialog, edit and fork modes", () => {
       within(combo).getByRole("option", { name: "Start a new conversation on next restart" }),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save" })).toBeInTheDocument();
+  });
+
+  it("doesn't pin a model or effort the record leaves to the settings", async () => {
+    const user = userEvent.setup();
+    const server = new FakeServer({ boxes: [view] });
+    const onAccept = vi.fn(async (_r: BoxDialogResult) => null as string | null);
+    renderWithServer(
+      <BoxDialog
+        mode="edit"
+        source={view}
+        projects={server.state.projects}
+        settings={server.state.settings}
+        initialDir="/w/site"
+        onAccept={onAccept}
+        onCancel={() => undefined}
+        onManageRemotes={() => undefined}
+      />,
+      server,
+    );
+    await user.clear(screen.getByLabelText("Conversation name"));
+    await user.type(screen.getByLabelText("Conversation name"), "Renamed");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(onAccept).toHaveBeenCalledTimes(1));
+    const r = onAccept.mock.calls[0]![0];
+    expect(r.handPicked).toEqual({ model: false, effort: false });
+    expect(updateBody(view.box, r.form, r.handPicked)).toEqual({ conversationName: "Renamed" });
   });
 
   it("names a fork after its source and disables the conversation", () => {

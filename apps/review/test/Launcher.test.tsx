@@ -76,6 +76,23 @@ describe("Launcher", () => {
     await waitFor(() => expect(window.location.hash).toBe(`#/runs/${lastRun().id}`));
   });
 
+  it("starts one run when the form is submitted twice", async () => {
+    const { server } = renderWithStore(
+      <Launcher prefill={{ project: null, box: BOX }} />,
+      handlers(),
+    );
+    await waitFor(() =>
+      expect(screen.getByLabelText(/^Repository/)).toHaveValue(
+        "/home/user/src/example-app/.worktrees/Emails_not_sending",
+      ),
+    );
+    const form = screen.getByRole("button", { name: "Start" }).closest("form")!;
+    fireEvent.submit(form);
+    fireEvent.submit(form);
+    await waitFor(() => expect(window.location.hash).toBe(`#/runs/${lastRun().id}`));
+    expect(server.callsTo("runs.create")).toHaveLength(1);
+  });
+
   it("uses the server's repositories and refs when it has them", async () => {
     const { server } = renderWithStore(
       <Launcher prefill={{ project: PROJECT, box: null }} />,
