@@ -1,0 +1,146 @@
+import fs from "node:fs";
+import path from "node:path";
+import { describe, expect, it } from "vitest";
+import { looksLikeEngineRestart, type BoxEndedEvent } from "../../src/boxes/monitor.js";
+import { assertContractEvent, makeHarness } from "./harness.js";
+
+describe("looksLikeEngineRestart", () => {
+  it("follows the 3.3.5 rule", () => {
+    expect(looksLikeEngineRestart(true, 1, 1)).toBe(true);
+    expect(looksLikeEngineRestart(false, 1, 1)).toBe(false);
+    expect(looksLikeEngineRestart(false, 2, 1)).toBe(true);
+    expect(looksLikeEngineRestart(false, 4, 1)).toBe(false);
+    expect(looksLikeEngineRestart(false, 4, 2)).toBe(true);
+  });
+});
+
+describe("ContainerMonitor", () => {
+  it("publishes container states and stats from the second sample on", async () => {
+    const h = makeHarness();
+    const box = await h.core.boxes.create({ targetDir: h.dir("app"), layout: "root" });
+    h.events.length = 0;
+    await h.core.monitor.poll({ sampleStats: true });
+    expect(h.events.filter((e) => e.type === "container.stats")).toHaveLength(0);
+    await h.core.monitor.poll({ sampleStats: true });
+    const stats = h.events.filter((e) => e.type === "container.stats");
+    expect(stats).toHaveLength(1);
+    expect(stats[0]).toMatchObject({
+      container: box.container,
+      projectId: box.projectId,
+      cpuPercent: 20,
+      memBytes: 200 * 1024 * 1024,
+      diskBytes: 1024,
+    });
+    for (const e of h.events) assertContractEvent(e);
+    expect(h.core.monitor.statsFor(box.container)).toMatchObject({ cpuPercent: 20 });
+    h.docker.expireIdle(box.container);
+    await h.core.boxes.stop(box.id);
+    h.docker.expireIdle(box.container);
+    await h.core.monitor.poll();
+    expect(h.events.filter((e) => e.type === "container.changed").at(-1)).toMatchObject({
+      state: "removed",
+    });
+    expect(h.core.monitor.statsFor(box.container)).toBeNull();
+  });
+
+  it("clears was_running when a session ends on its own and reports it", async () => {
+    const h = makeHarness();
+    const box = await h.core.boxes.create({ targetDir: h.dir("app"), layout: "root" });
+    const ended: BoxEndedEvent[] = [];
+    h.core.monitor.on("boxEnded", (e: BoxEndedEvent) => ended.push(e));
+    await h.core.monitor.poll();
+    h.docker.endSession(box.container, box.session);
+    await h.core.monitor.poll();
+    expect(ended).toEqual([{ boxId: box.id, unexpected: true }]);
+    expect(h.core.boxes.get(box.id).wasRunning).toBe(false);
+    expect(h.events.filter((e) => e.type === "box.changed").at(-1)).toMatchObject({
+      boxId: box.id,
+      status: "stopped",
+    });
+  });
+
+  it("keeps was_running when most boxes drop at once", async () => {
+    const h = makeHarness();
+    const dir = h.dir("app");
+    const a = await h.core.boxes.create({ targetDir: dir, layout: "root" });
+    const b = await h.core.boxes.create({ targetDir: dir, layout: "root" });
+    await h.core.monitor.poll();
+    h.docker.containers.clear();
+    fs.rmSync(path.join(h.home, ".claude-box/state"), { recursive: true });
+    await h.core.monitor.poll();
+    expect(h.core.boxes.get(a.id).wasRunning).toBe(true);
+    expect(h.core.boxes.get(b.id).wasRunning).toBe(true);
+  });
+
+  it("marks a requested stop as expected", async () => {
+    const h = makeHarness();
+    const box = await h.core.boxes.create({ targetDir: h.dir("app"), layout: "root" });
+    const ended: BoxEndedEvent[] = [];
+    h.core.monitor.on("boxEnded", (e: BoxEndedEvent) => ended.push(e));
+    await h.core.monitor.poll();
+    await h.core.boxes.stop(box.id);
+    await h.core.monitor.poll();
+    expect(ended).toEqual([{ boxId: box.id, unexpected: false }]);
+  });
+
+  it("survives an unreachable daemon and feeds the watcher", async () => {
+    const h = makeHarness();
+    const box = await h.core.boxes.create({ targetDir: h.dir("app"), layout: "root" });
+    const sessions = path.join(h.home, ".claude-box/sessions", box.container);
+    fs.writeFileSync(
+      path.join(sessions, "11.json"),
+      JSON.stringify({
+        pid: 11,
+        sessionId: box.sessionUuid,
+        updatedAt: 1,
+        name: "x",
+        nameSource: "user",
+      }),
+    );
+    await h.core.monitor.poll();
+    fs.writeFileSync(
+      path.join(sessions, "11.json"),
+      JSON.stringify({
+        pid: 11,
+        sessionId: box.sessionUuid,
+        updatedAt: 2,
+        name: "Named live",
+        nameSource: "user",
+      }),
+    );
+    await h.core.monitor.poll();
+    expect(h.core.boxes.get(box.id).conversationName).toBe("Named live");
+    h.docker.available = false;
+    await expect(h.core.monitor.poll()).resolves.toBeUndefined();
+  });
+});
+
+describe("core", () => {
+  it("imports 3.3.5 records once on start and closes cleanly", async () => {
+    const h = makeHarness();
+    const work = h.dir("work", "app");
+    fs.mkdirSync(path.join(h.home, ".claude-box/known"), { recursive: true });
+    fs.writeFileSync(
+      path.join(h.home, ".claude-box/known/claude-agent-app"),
+      `target_dir=${work}\nsession_uuid=\nconversation_name=app\nyolo=1\nwas_running=1\n`,
+    );
+    const first = await h.core.start({ pollMs: 0, watch: false });
+    expect(first.imported?.boxes.imported).toEqual(["claude-agent-app"]);
+    expect(h.core.boxes.get("claude-agent-app")).toMatchObject({
+      targetDir: work,
+      wasRunning: true,
+      session: "claude-agent-app",
+    });
+    expect(h.core.legacyImport.needed()).toBe(false);
+    const second = await h.core.start({ pollMs: 0, watch: false });
+    expect(second.imported).toBeNull();
+    const status = await h.core.image.status();
+    expect(status).toMatchObject({ exists: true, engineMatches: true });
+    expect(h.core.image.plan("claude-code").command).toMatch(
+      /^docker build -t claude-code --build-arg USER_NAME=tester --build-arg CACHEBUST=\d+ /,
+    );
+    const lines: string[] = [];
+    expect(await h.core.image.build("rebuild", (l) => lines.push(l))).toEqual({ ok: true });
+    h.core.close();
+  });
+});
