@@ -3,10 +3,11 @@
 import http from "node:http";
 import os from "node:os";
 import type { AgentBoxEvent, Box, Listener } from "@agentbox/contracts";
-import type { Core, CoreFactory, CoreServices } from "./core-interface.js";
+import type { Core, CoreFactory, CoreServices, EngineEndpoint } from "./core-interface.js";
 import type { ApiDeps } from "./deps.js";
 import { createApiServer, type ApiServer } from "./server.js";
 import { loadOrCreateToken } from "./auth.js";
+import { assertDevEnginesAllowed, withDevEngines } from "../events/dev-engines.js";
 import { EngineSupervisor } from "../events/engines.js";
 import { EventHub } from "../events/hub.js";
 import { LateSink } from "../events/late-sink.js";
@@ -42,8 +43,16 @@ export interface AppOptions {
   /** Overrides the configured port; 0 picks a free one (tests). */
   port?: number;
   engineIntervalMs?: number;
+  /**
+   * Engines of projects without a container, from `AGENTBOX_DEV_ENGINES`.
+   * The server refuses them unless it binds to a loopback host.
+   */
+  devEngines?: EngineEndpoint[];
   log?: (message: string) => void;
 }
+
+/** The address the API server binds to. */
+export const BIND_HOST = "127.0.0.1";
 
 export interface App {
   core: Core & { close?(): Promise<void> };
@@ -56,6 +65,8 @@ export interface App {
 
 export async function startApp(options: AppOptions): Promise<App> {
   const log = options.log ?? ((m: string) => console.error(m));
+  const devEngines = options.devEngines ?? [];
+  assertDevEnginesAllowed(devEngines, BIND_HOST);
   const runner = options.runner ?? new NodeProcessRunner();
   const token = await loadOrCreateToken(options.home);
   const sink = new LateSink();
@@ -150,7 +161,7 @@ export async function startApp(options: AppOptions): Promise<App> {
   });
 
   const engines = new EngineSupervisor({
-    engines: core.engines,
+    engines: withDevEngines(core.engines, devEngines),
     db: core.db,
     expectedVersion: options.expectedEngineVersion,
     relay: (event) => hub.relay(event),
@@ -224,7 +235,10 @@ export async function startApp(options: AppOptions): Promise<App> {
     log,
   });
   const config = settings();
-  const port = await api.listen(options.port ?? config.serverPort);
+  const port = await api.listen(options.port ?? config.serverPort, BIND_HOST);
+  for (const e of devEngines) {
+    log(`Development engine for project ${e.projectId} on port ${e.hostPort}.`);
+  }
 
   // A separate proxy port gets a listener that serves the proxy only.
   let proxyServer: http.Server | null = null;

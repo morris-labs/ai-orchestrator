@@ -9,6 +9,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { startApp } from "./api/app.js";
 import { createCore } from "./core.js";
+import { DEV_ENGINES_ENV, parseDevEngines } from "./events/dev-engines.js";
 import { NodeProcessRunner } from "./jobs/process.js";
 import { installService } from "./systemd/service.js";
 
@@ -60,7 +61,9 @@ export async function main(argv: string[]): Promise<number> {
         "  AGENTBOX_ENGINE_VERSION The engine version to expect. Default: this server's version.\n" +
         "  AGENTBOX_IMAGE_CONTEXT  The image build context. Default: image/ in the repository.\n" +
         "  AGENTBOX_BOXES_DIR      The built Boxes app to serve at /boxes/.\n" +
-        "  AGENTBOX_REVIEW_DIR     The built Review app to serve at /review/.\n",
+        "  AGENTBOX_REVIEW_DIR     The built Review app to serve at /review/.\n" +
+        "  AGENTBOX_DEV_ENGINES    Development only: engines for projects without a container,\n" +
+        "                          as projectId=host:port:token[,...]. The host must be loopback.\n",
     );
     return 0;
   }
@@ -70,6 +73,7 @@ export async function main(argv: string[]): Promise<number> {
   }
 
   const version = serverVersion();
+  const devEngines = parseDevEngines(process.env[DEV_ENGINES_ENV]);
   const repoRoot = path.resolve(here, "..", "..", "..");
   const app = await startApp({
     home,
@@ -77,6 +81,7 @@ export async function main(argv: string[]): Promise<number> {
     version,
     expectedEngineVersion: process.env.AGENTBOX_ENGINE_VERSION ?? version,
     execStart: execStartLine(),
+    devEngines,
     imageContext: process.env.AGENTBOX_IMAGE_CONTEXT ?? path.join(repoRoot, "image"),
     staticDirs: {
       boxes: process.env.AGENTBOX_BOXES_DIR ?? path.join(repoRoot, "apps", "boxes", "dist"),
