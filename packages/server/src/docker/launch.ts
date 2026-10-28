@@ -4,13 +4,14 @@
 // and secret environment.
 import fs from "node:fs";
 import path from "node:path";
+import { DEFAULT_ENGINE_PORT, ENGINE_ENV, type Mount, type TcpMap } from "@agentbox/contracts";
 import {
-  DEFAULT_ENGINE_PORT,
-  ENGINE_ENV,
-  type Mount,
-  type TcpMap,
-} from "@agentbox/contracts";
-import { containerHome, homePaths, hostToContainer, sessionsDirFor, type HostEnv } from "../records/env.js";
+  containerHome,
+  homePaths,
+  hostToContainer,
+  sessionsDirFor,
+  type HostEnv,
+} from "../records/env.js";
 import { STARTUP_GRACE_SEC, STATE_MOUNT, sharedKeeperCommand } from "./scripts.js";
 import { prepareStateDir } from "./state.js";
 import type { ContainerCreateSpec } from "./types.js";
@@ -107,7 +108,10 @@ export function projectsSymlinkTarget(env: HostEnv): string | null {
  * sessions directory, clears a stale keeper state file, and gathers the host
  * facts the launch spec needs.
  */
-export function prepareLaunchHost(env: HostEnv, input: Pick<LaunchInput, "container" | "root">): LaunchHostFacts {
+export function prepareLaunchHost(
+  env: HostEnv,
+  input: Pick<LaunchInput, "container" | "root">,
+): LaunchHostFacts {
   const paths = homePaths(env);
   for (const dir of [paths.claudeSessions, paths.codexDir, paths.copilotDir]) {
     fs.mkdirSync(dir, { recursive: true });
@@ -160,7 +164,9 @@ export function buildLaunchSpec(
   for (const name of secretNames) envList.push(`${name}=${input.extraEnv[name]}`);
 
   const portBindings: ContainerCreateSpec["portBindings"] = {
-    [`${DEFAULT_ENGINE_PORT}/tcp`]: [{ hostIp: "127.0.0.1", hostPort: String(input.engine.hostPort) }],
+    [`${DEFAULT_ENGINE_PORT}/tcp`]: [
+      { hostIp: "127.0.0.1", hostPort: String(input.engine.hostPort) },
+    ],
   };
   for (const t of input.tcpMaps) {
     portBindings[`${t.container}/tcp`] = [{ hostIp: "", hostPort: String(t.host) }];
@@ -200,9 +206,20 @@ export function tcpMapsLabel(maps: readonly TcpMap[]): string {
  * test scripts. Environment values are masked except the fixed ones, so the
  * result is safe to print.
  */
-export function toDockerRunArgs(spec: ContainerCreateSpec, options: { maskEnv?: boolean } = {}): string[] {
+export function toDockerRunArgs(
+  spec: ContainerCreateSpec,
+  options: { maskEnv?: boolean } = {},
+): string[] {
   const mask = options.maskEnv ?? true;
-  const shown = new Set(["IS_SANDBOX", "DISABLE_AUTOUPDATER", "GIT_CONFIG_GLOBAL", ENGINE_ENV.port, ENGINE_ENV.projectRoot, ENGINE_ENV.container, ENGINE_ENV.engineVersion]);
+  const shown = new Set([
+    "IS_SANDBOX",
+    "DISABLE_AUTOUPDATER",
+    "GIT_CONFIG_GLOBAL",
+    ENGINE_ENV.port,
+    ENGINE_ENV.projectRoot,
+    ENGINE_ENV.container,
+    ENGINE_ENV.engineVersion,
+  ]);
   const args = ["run", "-d", "-i", "-t"];
   if (spec.autoRemove) args.push("--rm");
   args.push("--name", spec.name, "--user", spec.user);
@@ -215,7 +232,10 @@ export function toDockerRunArgs(spec: ContainerCreateSpec, options: { maskEnv?: 
   for (const [port, bindings] of Object.entries(spec.portBindings)) {
     for (const b of bindings) {
       const containerPort = port.replace(/\/tcp$/, "");
-      args.push("-p", b.hostIp ? `${b.hostIp}:${b.hostPort}:${containerPort}` : `${b.hostPort}:${containerPort}`);
+      args.push(
+        "-p",
+        b.hostIp ? `${b.hostIp}:${b.hostPort}:${containerPort}` : `${b.hostPort}:${containerPort}`,
+      );
     }
   }
   for (const [k, v] of Object.entries(spec.labels)) args.push("--label", `${k}=${v}`);

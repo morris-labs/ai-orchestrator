@@ -35,7 +35,10 @@ export interface MemoryCall {
   args: unknown[];
 }
 
-export type ExecHandler = (container: MemoryContainer, options: ExecOptions) => ExecResult | undefined;
+export type ExecHandler = (
+  container: MemoryContainer,
+  options: ExecOptions,
+) => ExecResult | undefined;
 
 export class MemoryDocker implements DockerClient {
   readonly containers = new Map<string, MemoryContainer>();
@@ -50,7 +53,10 @@ export class MemoryDocker implements DockerClient {
   /** Handles exec commands the double does not know. */
   execHandler: ExecHandler | undefined;
   /** Output lines a build produces, and whether it succeeds. */
-  buildResult: { lines: string[]; ok: boolean; error?: string } = { lines: ["Step 1/1\n"], ok: true };
+  buildResult: { lines: string[]; ok: boolean; error?: string } = {
+    lines: ["Step 1/1\n"],
+    ok: true,
+  };
   private nextId = 1;
   private cpuTick = 0;
 
@@ -65,7 +71,11 @@ export class MemoryDocker implements DockerClient {
   }
 
   /** Adds an image, with the given labels. */
-  addImage(name: string, labels: Record<string, string> = {}, id = `sha256:${name}-1`): ImageInspect {
+  addImage(
+    name: string,
+    labels: Record<string, string> = {},
+    id = `sha256:${name}-1`,
+  ): ImageInspect {
     const image = { id, created: "2026-10-01T00:00:00.000Z", labels };
     this.images.set(name, image);
     return image;
@@ -146,7 +156,10 @@ export class MemoryDocker implements DockerClient {
       }));
   }
 
-  async inspectContainer(nameOrId: string, options: { size?: boolean } = {}): Promise<ContainerInspect | null> {
+  async inspectContainer(
+    nameOrId: string,
+    options: { size?: boolean } = {},
+  ): Promise<ContainerInspect | null> {
     this.record("inspectContainer", nameOrId);
     const c = this.find(nameOrId);
     if (!c) return null;
@@ -167,7 +180,8 @@ export class MemoryDocker implements DockerClient {
 
   async createContainer(spec: ContainerCreateSpec): Promise<string> {
     this.record("createContainer", spec);
-    if (this.containers.has(spec.name)) throw new Error(`Conflict. The container name "/${spec.name}" is already in use.`);
+    if (this.containers.has(spec.name))
+      throw new Error(`Conflict. The container name "/${spec.name}" is already in use.`);
     const image = this.images.get(spec.image);
     if (!image) throw new Error(`No such image: ${spec.image}`);
     const id = `c${String(this.nextId++).padStart(11, "0")}`;
@@ -210,7 +224,11 @@ export class MemoryDocker implements DockerClient {
     this.record("exec", container, options);
     const c = this.find(container);
     if (!c || !c.running) {
-      return { exitCode: 1, stdout: "", stderr: `Error response from daemon: container ${container} is not running` };
+      return {
+        exitCode: 1,
+        stdout: "",
+        stderr: `Error response from daemon: container ${container} is not running`,
+      };
     }
     const cmd = options.cmd;
     if (cmd[0] === "bash" && cmd[1] === "-c" && cmd[2] === SESSION_START_SCRIPT) {
@@ -234,11 +252,16 @@ export class MemoryDocker implements DockerClient {
       return { exitCode: 0, stdout: "", stderr: "" };
     }
     if (cmd[0] === "tmux" && cmd[1] === "list-sessions") {
-      return { exitCode: 0, stdout: [...c.sessions.keys()].map((s) => `${s}\n`).join(""), stderr: "" };
+      return {
+        exitCode: 0,
+        stdout: [...c.sessions.keys()].map((s) => `${s}\n`).join(""),
+        stderr: "",
+      };
     }
     if (cmd[0] === "tmux" && cmd[1] === "send-keys") {
       const target = (cmd[3] ?? "").replace(/^=/, "");
-      if (!c.sessions.has(target)) return { exitCode: 1, stdout: "", stderr: `can't find session: ${target}\n` };
+      if (!c.sessions.has(target))
+        return { exitCode: 1, stdout: "", stderr: `can't find session: ${target}\n` };
       const list = c.sentKeys.get(target) ?? [];
       list.push(cmd.slice(4).join(" "));
       c.sentKeys.set(target, list);

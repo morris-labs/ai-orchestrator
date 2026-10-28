@@ -8,7 +8,8 @@ import type { EventOf } from "@agentbox/contracts";
 export type StreamFields = "id" | "time" | "source" | "streamId" | "seq" | "sourceSeq";
 
 /** The event types the core emits. */
-export type CoreEventType = "box.changed" | "container.changed" | "container.stats" | "settings.changed";
+export type CoreEventType =
+  "box.changed" | "container.changed" | "container.stats" | "settings.changed";
 
 /** A core event without its stream fields. */
 export type CoreEventPayload = {

@@ -27,6 +27,18 @@ interface DataRow {
   data: string;
 }
 
+/** Builds a `WHERE` clause from the conditions whose value is defined. */
+function whereOf(conditions: [sql: string, value: string | number | undefined][]): {
+  sql: string;
+  args: (string | number)[];
+} {
+  const used = conditions.filter((c): c is [string, string | number] => c[1] !== undefined);
+  return {
+    sql: used.length ? `WHERE ${used.map((c) => c[0]).join(" AND ")}` : "",
+    args: used.map((c) => c[1]),
+  };
+}
+
 function parseRows<T>(rows: unknown[], parse: (v: unknown) => T): T[] {
   return (rows as DataRow[]).map((r) => parse(JSON.parse(r.data)));
 }
@@ -36,15 +48,13 @@ export class ProjectsRepo {
 
   get(id: string): Project | undefined {
     const row = this.db.prepare("SELECT data FROM projects WHERE id = ?").get(id) as
-      | DataRow
-      | undefined;
+      DataRow | undefined;
     return row ? ProjectSchema.parse(JSON.parse(row.data)) : undefined;
   }
 
   byRoot(root: string): Project | undefined {
     const row = this.db.prepare("SELECT data FROM projects WHERE root = ?").get(root) as
-      | DataRow
-      | undefined;
+      DataRow | undefined;
     return row ? ProjectSchema.parse(JSON.parse(row.data)) : undefined;
   }
 
@@ -77,8 +87,7 @@ export class BoxesRepo {
 
   get(id: string): Box | undefined {
     const row = this.db.prepare("SELECT data FROM boxes WHERE id = ?").get(id) as
-      | DataRow
-      | undefined;
+      DataRow | undefined;
     return row ? BoxSchema.parse(JSON.parse(row.data)) : undefined;
   }
 
@@ -144,8 +153,7 @@ export class SshRemotesRepo {
 
   get(name: string): SshRemote | undefined {
     const row = this.db.prepare("SELECT data FROM ssh_remotes WHERE name = ?").get(name) as
-      | DataRow
-      | undefined;
+      DataRow | undefined;
     return row ? SshRemoteSchema.parse(JSON.parse(row.data)) : undefined;
   }
 
@@ -182,8 +190,7 @@ export class SettingsRepo {
   /** The stored settings, or the defaults when none were saved. */
   get(): GlobalSettings {
     const row = this.db.prepare("SELECT data FROM settings WHERE id = 1").get() as
-      | DataRow
-      | undefined;
+      DataRow | undefined;
     return row ? GlobalSettingsSchema.parse(JSON.parse(row.data)) : defaultConfig();
   }
 
@@ -254,13 +261,20 @@ export class EngineEndpointsRepo {
          ON CONFLICT(project_id) DO UPDATE SET container = excluded.container,
            host_port = excluded.host_port, token = excluded.token, updated_at = excluded.updated_at`,
       )
-      .run(endpoint.projectId, endpoint.container, endpoint.hostPort, endpoint.token, now.toISOString());
+      .run(
+        endpoint.projectId,
+        endpoint.container,
+        endpoint.hostPort,
+        endpoint.token,
+        now.toISOString(),
+      );
     return endpoint;
   }
 
   delete(projectId: string): boolean {
     return (
-      this.db.prepare("DELETE FROM engine_endpoints WHERE project_id = ?").run(projectId).changes > 0
+      this.db.prepare("DELETE FROM engine_endpoints WHERE project_id = ?").run(projectId).changes >
+      0
     );
   }
 }
@@ -271,19 +285,20 @@ export class RunsRepo {
 
   get(id: string): RunState | undefined {
     const row = this.db.prepare("SELECT data FROM runs WHERE id = ?").get(id) as
-      | DataRow
-      | undefined;
+      DataRow | undefined;
     return row ? RunStateSchema.parse(JSON.parse(row.data)) : undefined;
   }
 
   list(filter: { projectId?: string; boxId?: string; status?: string } = {}): RunState[] {
-    const where: string[] = [];
-    const args: string[] = [];
-    if (filter.projectId !== undefined) (where.push("project_id = ?"), args.push(filter.projectId));
-    if (filter.boxId !== undefined) (where.push("box_id = ?"), args.push(filter.boxId));
-    if (filter.status !== undefined) (where.push("status = ?"), args.push(filter.status));
-    const sql = `SELECT data FROM runs ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY id`;
-    return parseRows(this.db.prepare(sql).all(...args), (v) => RunStateSchema.parse(v));
+    const w = whereOf([
+      ["project_id = ?", filter.projectId],
+      ["box_id = ?", filter.boxId],
+      ["status = ?", filter.status],
+    ]);
+    return parseRows(
+      this.db.prepare(`SELECT data FROM runs ${w.sql} ORDER BY id`).all(...w.args),
+      (v) => RunStateSchema.parse(v),
+    );
   }
 
   put(run: RunState): RunState {
@@ -296,7 +311,16 @@ export class RunsRepo {
            container = excluded.container, status = excluded.status, data = excluded.data,
            updated_at = excluded.updated_at`,
       )
-      .run(r.id, r.projectId, r.boxId ?? null, r.container, r.status, JSON.stringify(r), r.createdAt, r.updatedAt);
+      .run(
+        r.id,
+        r.projectId,
+        r.boxId ?? null,
+        r.container,
+        r.status,
+        JSON.stringify(r),
+        r.createdAt,
+        r.updatedAt,
+      );
     return r;
   }
 }
@@ -304,16 +328,18 @@ export class RunsRepo {
 export class FindingsRepo {
   constructor(private readonly db: Sqlite) {}
 
-  list(runId: string, filter: { verdict?: string; severity?: string; round?: number } = {}): Finding[] {
-    const where = ["run_id = ?"];
-    const args: (string | number)[] = [runId];
-    if (filter.verdict !== undefined) (where.push("verdict = ?"), args.push(filter.verdict));
-    if (filter.severity !== undefined) (where.push("severity = ?"), args.push(filter.severity));
-    if (filter.round !== undefined) (where.push("round = ?"), args.push(filter.round));
+  list(
+    runId: string,
+    filter: { verdict?: string; severity?: string; round?: number } = {},
+  ): Finding[] {
+    const w = whereOf([
+      ["run_id = ?", runId],
+      ["verdict = ?", filter.verdict],
+      ["severity = ?", filter.severity],
+      ["round = ?", filter.round],
+    ]);
     return parseRows(
-      this.db
-        .prepare(`SELECT data FROM findings WHERE ${where.join(" AND ")} ORDER BY finding_id`)
-        .all(...args),
+      this.db.prepare(`SELECT data FROM findings ${w.sql} ORDER BY finding_id`).all(...w.args),
       (v) => FindingSchema.parse(v),
     );
   }
@@ -354,13 +380,15 @@ export class UsageSamplesRepo {
   }
 
   list(filter: { vendor?: Vendor; since?: string; until?: string } = {}): TimedUsageSample[] {
-    const where: string[] = [];
-    const args: string[] = [];
-    if (filter.vendor !== undefined) (where.push("vendor = ?"), args.push(filter.vendor));
-    if (filter.since !== undefined) (where.push("time >= ?"), args.push(filter.since));
-    if (filter.until !== undefined) (where.push("time <= ?"), args.push(filter.until));
-    const sql = `SELECT data FROM usage_samples ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY time, id`;
-    return parseRows(this.db.prepare(sql).all(...args), (v) => TimedUsageSampleSchema.parse(v));
+    const w = whereOf([
+      ["vendor = ?", filter.vendor],
+      ["time >= ?", filter.since],
+      ["time <= ?", filter.until],
+    ]);
+    return parseRows(
+      this.db.prepare(`SELECT data FROM usage_samples ${w.sql} ORDER BY time, id`).all(...w.args),
+      (v) => TimedUsageSampleSchema.parse(v),
+    );
   }
 }
 
@@ -369,8 +397,7 @@ export class JobsRepo {
 
   get(id: string): Job | undefined {
     const row = this.db.prepare("SELECT data FROM jobs WHERE id = ?").get(id) as
-      | DataRow
-      | undefined;
+      DataRow | undefined;
     return row ? JobSchema.parse(JSON.parse(row.data)) : undefined;
   }
 
@@ -407,9 +434,15 @@ export class ImportsRepo {
   latest(source: string): ImportRow | undefined {
     const row = this.db
       .prepare("SELECT * FROM imports WHERE source = ? ORDER BY id DESC LIMIT 1")
-      .get(source) as { id: number; source: string; finished_at: string; report: string } | undefined;
+      .get(source) as
+      { id: number; source: string; finished_at: string; report: string } | undefined;
     return row
-      ? { id: row.id, source: row.source, finishedAt: row.finished_at, report: JSON.parse(row.report) }
+      ? {
+          id: row.id,
+          source: row.source,
+          finishedAt: row.finished_at,
+          report: JSON.parse(row.report),
+        }
       : undefined;
   }
 

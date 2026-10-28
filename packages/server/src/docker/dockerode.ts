@@ -17,7 +17,14 @@ import {
   type StatsSample,
 } from "./types.js";
 
-const UNREACHABLE = new Set(["ECONNREFUSED", "ENOENT", "EACCES", "ECONNRESET", "EPIPE", "ETIMEDOUT"]);
+const UNREACHABLE = new Set([
+  "ECONNREFUSED",
+  "ENOENT",
+  "EACCES",
+  "ECONNRESET",
+  "EPIPE",
+  "ETIMEDOUT",
+]);
 
 function statusOf(err: unknown): number | undefined {
   return (err as { statusCode?: number }).statusCode;
@@ -90,7 +97,11 @@ export class DockerodeClient implements DockerClient {
     const filters: Record<string, string[]> = { name: [options.nameRegex ?? "^claude-agent-"] };
     if (options.status) filters.status = [options.status];
     const list = await call(() =>
-      this.docker.listContainers({ all: options.all ?? false, size: options.size ?? false, filters }),
+      this.docker.listContainers({
+        all: options.all ?? false,
+        size: options.size ?? false,
+        filters,
+      }),
     );
     return list.map((c) => ({
       id: c.Id,
@@ -104,7 +115,10 @@ export class DockerodeClient implements DockerClient {
     }));
   }
 
-  async inspectContainer(nameOrId: string, options: { size?: boolean } = {}): Promise<ContainerInspect | null> {
+  async inspectContainer(
+    nameOrId: string,
+    options: { size?: boolean } = {},
+  ): Promise<ContainerInspect | null> {
     try {
       const c = await this.docker
         .getContainer(nameOrId)
@@ -239,7 +253,11 @@ export class DockerodeClient implements DockerClient {
       const s = (await this.docker
         .getContainer(nameOrId)
         .stats({ stream: false, "one-shot": true } as { stream: false })) as unknown as {
-        cpu_stats?: { cpu_usage?: { total_usage?: number }; system_cpu_usage?: number; online_cpus?: number };
+        cpu_stats?: {
+          cpu_usage?: { total_usage?: number };
+          system_cpu_usage?: number;
+          online_cpus?: number;
+        };
         memory_stats?: { usage?: number; limit?: number; stats?: { inactive_file?: number } };
       };
       return {
@@ -259,7 +277,11 @@ export class DockerodeClient implements DockerClient {
   async inspectImage(name: string): Promise<ImageInspect | null> {
     try {
       const i = await this.docker.getImage(name).inspect();
-      return { id: i.Id, created: new Date(i.Created).toISOString(), labels: i.Config?.Labels ?? {} };
+      return {
+        id: i.Id,
+        created: new Date(i.Created).toISOString(),
+        labels: i.Config?.Labels ?? {},
+      };
     } catch (err) {
       if (statusOf(err) === 404) return null;
       return rethrow(err);
@@ -273,7 +295,12 @@ export class DockerodeClient implements DockerClient {
     const stream = await call(() =>
       this.docker.buildImage(
         { context: options.context, src: contextFiles(options.context) },
-        { t: options.tag, buildargs: options.buildArgs, nocache: options.noCache, pull: options.pull },
+        {
+          t: options.tag,
+          buildargs: options.buildArgs,
+          nocache: options.noCache,
+          pull: options.pull,
+        },
       ),
     );
     return new Promise((resolve) => {
@@ -284,7 +311,12 @@ export class DockerodeClient implements DockerClient {
           if (err) error = err.message;
           resolve(error ? { ok: false, error } : { ok: true });
         },
-        (event: { stream?: string; status?: string; error?: string; errorDetail?: { message?: string } }) => {
+        (event: {
+          stream?: string;
+          status?: string;
+          error?: string;
+          errorDetail?: { message?: string };
+        }) => {
           if (event.stream) onOutput(event.stream);
           else if (event.status) onOutput(`${event.status}\n`);
           if (event.error) {
@@ -325,7 +357,11 @@ export class DockerodeClient implements DockerClient {
       demuxBuffer(logs, out, err);
       out.end();
       err.end();
-      return { exitCode: result ? result.StatusCode : null, stdout: await outText, stderr: await errText };
+      return {
+        exitCode: result ? result.StatusCode : null,
+        stdout: await outText,
+        stderr: await errText,
+      };
     } finally {
       await c.remove({ force: true }).catch(() => undefined);
     }
@@ -333,7 +369,11 @@ export class DockerodeClient implements DockerClient {
 }
 
 /** Splits a multiplexed log buffer (8-byte frame headers) into stdout and stderr. */
-export function demuxBuffer(buf: Buffer, out: NodeJS.WritableStream, err: NodeJS.WritableStream): void {
+export function demuxBuffer(
+  buf: Buffer,
+  out: NodeJS.WritableStream,
+  err: NodeJS.WritableStream,
+): void {
   let i = 0;
   while (i + 8 <= buf.length) {
     const type = buf[i];

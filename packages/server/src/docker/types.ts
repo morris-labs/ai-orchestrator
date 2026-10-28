@@ -121,7 +121,10 @@ export interface DockerClient {
     nameRegex?: string;
   }): Promise<ContainerSummary[]>;
   /** `null` when no such container exists. */
-  inspectContainer(nameOrId: string, options?: { size?: boolean }): Promise<ContainerInspect | null>;
+  inspectContainer(
+    nameOrId: string,
+    options?: { size?: boolean },
+  ): Promise<ContainerInspect | null>;
   /** Creates a container and returns its id. */
   createContainer(spec: ContainerCreateSpec): Promise<string>;
   startContainer(id: string): Promise<void>;
