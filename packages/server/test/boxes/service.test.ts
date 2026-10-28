@@ -648,6 +648,29 @@ describe("remove and purge", () => {
   });
 });
 
+describe("purge and move during a start", () => {
+  it("refuses while a box of the directory is starting", async () => {
+    const h = makeHarness();
+    const dir = h.dir("app");
+    const a = await h.core.boxes.create({ targetDir: dir, layout: "root" });
+    await h.core.boxes.stop(a.id);
+    const b = await h.core.boxes.create({ targetDir: dir, layout: "root", start: false });
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    h.docker.beforeExec = async (_c, options) => {
+      if (options.cmd[0] === START_SESSION_PATH) await held;
+    };
+    const starting = h.core.boxes.start(b.id);
+    await expect.poll(() => h.core.boxes.status(h.core.boxes.get(b.id))).toBe("starting");
+    await expect(h.core.boxes.purge(a.id)).rejects.toMatchObject({ code: "box_running" });
+    await expect(h.core.boxes.move(a.id, path.join(h.home, "moved"))).rejects.toMatchObject({
+      code: "box_running",
+    });
+    release();
+    await starting;
+  });
+});
+
 describe("move and relink", () => {
   it("moves the directory, its transcripts, every record, and the project settings", async () => {
     const h = makeHarness();

@@ -773,6 +773,19 @@ export class BoxService {
   // -------------------------------------------------------------------------
   // Remove, purge, move, relink
 
+  /**
+   * Refuses while a box of the directory runs, or is starting or stopping:
+   * the keeper lists a starting session only after a second or two.
+   */
+  private requireSiblingsStopped(siblings: readonly Box[]): void {
+    const busy = siblings.find((b) => this.isRunning(b) || this.transitions.has(b.id));
+    if (busy)
+      throw new ApiError(
+        "box_running",
+        `${busy.id} is running against this directory; stop it first.`,
+      );
+  }
+
   private requireStopped(box: Box, action: string): void {
     if (this.isRunning(box) || this.transitions.has(box.id)) {
       throw new ApiError("box_running", `Stop ${box.id} before you ${action}.`);
@@ -829,12 +842,7 @@ export class BoxService {
     const box = this.get(id);
     const dir = box.targetDir;
     const siblings = this.repos.boxes.byTargetDir(dir);
-    const running = siblings.find((b) => this.isRunning(b));
-    if (running)
-      throw new ApiError(
-        "box_running",
-        `${running.id} is running against this directory; stop it first.`,
-      );
+    this.requireSiblingsStopped(siblings);
 
     const paths = homePaths(this.env);
     const allowed = [`${paths.claudeProjects}/`, `${paths.dataDir}/`];
@@ -892,12 +900,7 @@ export class BoxService {
     if (box.worktree) throw new ApiError("conflict", "A worktree box cannot be moved.");
     const currentDir = box.targetDir;
     const siblings = this.repos.boxes.byTargetDir(currentDir);
-    const running = siblings.find((b) => this.isRunning(b));
-    if (running)
-      throw new ApiError(
-        "box_running",
-        `${running.id} is running against this directory; stop it first.`,
-      );
+    this.requireSiblingsStopped(siblings);
     // A worktree's record and its git metadata hold absolute paths under the
     // root, so renaming the root would strand every worktree box there.
     const root = normalizeRoot(currentDir);
