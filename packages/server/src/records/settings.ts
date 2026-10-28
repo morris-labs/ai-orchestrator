@@ -95,6 +95,19 @@ export class SettingsService {
     if (p.engineImage !== undefined) next.engineImage = p.engineImage;
     if (p.ceilings !== undefined)
       next.ceilings = { ...next.ceilings, ...stripUndefined(p.ceilings) };
+    if (p.vendorDefaults !== undefined) {
+      const vd = p.vendorDefaults;
+      for (const vendor of ["claude", "codex", "copilot"] as const) {
+        const fields = vd[vendor];
+        if (fields === undefined) continue;
+        const target = next.vendorDefaults[vendor] as Record<string, unknown>;
+        for (const [key, value] of Object.entries(fields)) {
+          if (value === undefined) continue;
+          if (value === null) delete target[key];
+          else target[key] = value;
+        }
+      }
+    }
     if (p.notifications !== undefined) {
       next.notifications = { ...next.notifications, ...stripUndefined(p.notifications) };
     }

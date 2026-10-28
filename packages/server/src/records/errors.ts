@@ -20,6 +20,8 @@ export const API_ERROR_STATUS: Record<ApiErrorCode, number> = {
   image_missing: 409,
   run_not_found: 404,
   invalid_state: 409,
+  unauthorized: 401,
+  internal: 500,
 };
 
 export class ApiError extends Error {

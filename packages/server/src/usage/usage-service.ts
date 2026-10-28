@@ -95,7 +95,7 @@ export class UsageService {
       spendUsd: event.spendUsd,
       ceiling: event.ceiling,
       resetAt: event.resetAt,
-      source: event.source,
+      sampleSource: event.sampleSource,
       time: event.time,
     };
     const ceiling = this.opts.settings().ceilings[sample.vendor];

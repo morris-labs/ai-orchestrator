@@ -18,6 +18,8 @@ export class FakeEngineServer {
   leaseResponses: LeaseResponse[] = [];
   sockets: WebSocket[] = [];
   healthCalls = 0;
+  /** What the engine itself reports about its version check. */
+  versionMatches = true;
 
   async start(port = 0): Promise<this> {
     this.server = http.createServer((req, res) => {
@@ -32,6 +34,7 @@ export class FakeEngineServer {
             container: "claude-agent-proj-example-app-1a2b3c4d",
             projectRoot: "/work/example-app",
             streamId: this.streamId,
+            versionMatches: this.versionMatches,
           }),
         );
         return;

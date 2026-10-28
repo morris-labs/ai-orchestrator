@@ -159,7 +159,7 @@ describe("repositories", () => {
       spendUsd: null,
       ceiling: { kind: "utilization" as const, window: "5h" as const, max: 0.6 },
       resetAt: null,
-      source: "rate_limit_event" as const,
+      sampleSource: "rate_limit_event" as const,
       time: T,
     };
     r.usage.add(sample);

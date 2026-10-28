@@ -104,8 +104,6 @@ describe("startApp", () => {
 
   it("answers lease requests with the scheduler and records usage samples", async () => {
     await waitFor(() => engine.sockets.length === 1);
-    // The contract's usage.sample spreads the sample after the base fields,
-    // so `source` is the sample source, not `engine:<container>`.
     engine.sendRaw({
       type: "usage.sample",
       id: "u1",
@@ -120,7 +118,8 @@ describe("startApp", () => {
       spendUsd: null,
       ceiling: { kind: "utilization", window: "5h", max: 0.6 },
       resetAt: "2099-01-01T00:00:00.000Z",
-      source: "rate_limit_event",
+      source: `engine:${CONTAINER}`,
+      sampleSource: "rate_limit_event",
     });
     await waitFor(() => app.hub.lastSeq >= 1);
     engine.sendRaw({

@@ -78,6 +78,14 @@ describe("EngineClient", () => {
     expect(engine.hellos).toHaveLength(0);
   });
 
+  it("raises engine_mismatch when the engine reports its own mismatch", async () => {
+    engine.versionMatches = false;
+    const c = build();
+    await c.health();
+    expect(c.info.versionMatches).toBe(false);
+    expect(() => c.assertVersion()).toThrow(expect.objectContaining({ code: "engine_mismatch" }));
+  });
+
   it("calls engine routes with the token and validates responses", async () => {
     const c = build();
     expect(await c.call("engine.runs.get", { params: { runId: RUN } })).toEqual(runState);

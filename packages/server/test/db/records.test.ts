@@ -162,6 +162,7 @@ describe("SettingsService", () => {
     expect(s.notifications).toEqual({
       decisionNeeded: true,
       runFinished: true,
+      readyToPush: true,
       boxEnded: true,
       roundSummary: false,
     });
@@ -177,6 +178,41 @@ describe("SettingsService", () => {
     expect(settings.get().proxyPort).toBeUndefined();
     settings.patch({ proxyPort: null });
     expect(published).toHaveLength(2);
+  });
+
+  it("patches vendor defaults per field and clears with null", () => {
+    const { settings } = setup();
+    expect(settings.get().vendorDefaults).toEqual({
+      claude: {},
+      codex: {},
+      copilot: { model: "auto" },
+    });
+    settings.patch({
+      vendorDefaults: {
+        claude: { model: "claude-opus-5-5", effort: "high" },
+        codex: { model: "gpt-6" },
+        copilot: { model: "claude-sonnet-5" },
+      },
+    });
+    settings.patch({ vendorDefaults: { claude: { effort: null }, codex: { model: null } } });
+    expect(settings.get().vendorDefaults).toEqual({
+      claude: { model: "claude-opus-5-5" },
+      codex: {},
+      copilot: { model: "claude-sonnet-5" },
+    });
+  });
+
+  it("reads a stored settings document that predates vendor defaults", () => {
+    const { repos } = setup();
+    const stored = structuredClone(defaultConfig()) as Record<string, unknown>;
+    delete stored.vendorDefaults;
+    delete (stored.notifications as Record<string, unknown>).readyToPush;
+    repos.sqlite
+      .prepare("INSERT INTO settings (id, data, updated_at) VALUES (1, ?, ?)")
+      .run(JSON.stringify(stored), new Date().toISOString());
+    const s = repos.settings.get();
+    expect(s.vendorDefaults.copilot.model).toBe("auto");
+    expect(s.notifications.readyToPush).toBe(true);
   });
 
   it("rejects server-owned fields in a patch", () => {

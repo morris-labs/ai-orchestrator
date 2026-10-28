@@ -113,7 +113,10 @@ export class EngineClient {
       this.setInfo({
         healthy: true,
         version: health.engineVersion,
-        versionMatches: health.engineVersion === this.options.expectedVersion,
+        // The engine compares itself with the version the server launched it
+        // with; the server also compares with the version it expects now.
+        versionMatches:
+          health.versionMatches && health.engineVersion === this.options.expectedVersion,
       });
       return health;
     } catch (err) {
@@ -175,7 +178,7 @@ export class EngineClient {
         const { code, message, details } = parsed.data.error;
         throw new ApiFailure(code, message, details, res.status);
       }
-      throw new ApiFailure("conflict", `The engine answered ${res.status}.`, undefined, 502);
+      throw new ApiFailure("internal", `The engine answered ${res.status}.`, undefined, 502);
     }
     return json;
   }

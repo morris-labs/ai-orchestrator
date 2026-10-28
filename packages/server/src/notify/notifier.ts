@@ -65,21 +65,24 @@ export class Notifier {
           boxId: run.boxId ?? null,
           severity: "warning",
         });
-      } else if (run.status === "finished" && toggles.runFinished) {
+      } else if (run.status === "finished") {
+        // A clean pre-push run is `ready_to_push`, under its own toggle;
+        // every other finish is `run_finished`.
         const ready =
           run.stopReason === "clean" &&
           run.request.pipeline === "pre-push" &&
           !run.request.readOnly;
-        this.notify({
-          kind: ready ? "ready_to_push" : "run_finished",
-          title: ready ? "Branch is ready to push" : "Run finished",
-          body: ready
-            ? `The review of ${label} found nothing left to fix.`
-            : `The run on ${label} stopped: ${run.stopReason ?? "finished"}.`,
-          runId: run.id,
-          boxId: run.boxId ?? null,
-          severity: "info",
-        });
+        if (ready ? toggles.readyToPush : toggles.runFinished)
+          this.notify({
+            kind: ready ? "ready_to_push" : "run_finished",
+            title: ready ? "Branch is ready to push" : "Run finished",
+            body: ready
+              ? `The review of ${label} found nothing left to fix.`
+              : `The run on ${label} stopped: ${run.stopReason ?? "finished"}.`,
+            runId: run.id,
+            boxId: run.boxId ?? null,
+            severity: "info",
+          });
       } else if (run.status === "failed" && toggles.runFinished) {
         this.notify({
           kind: "run_finished",

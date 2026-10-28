@@ -73,7 +73,7 @@ describe("errors", () => {
 
   it("converts foreign errors", () => {
     expect(toApiFailure(Object.assign(new Error("gone"), { code: "not_found" })).status).toBe(404);
-    expect(toApiFailure(new Error("bug"))).toMatchObject({ code: "conflict", status: 500 });
+    expect(toApiFailure(new Error("bug"))).toMatchObject({ code: "internal", status: 500 });
     expect(toApiFailure(new ZodError([])).code).toBe("validation");
     expect(toApiFailure("text").status).toBe(500);
   });

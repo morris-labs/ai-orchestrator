@@ -40,17 +40,14 @@ export function setup() {
 
   let seq = 0;
   const samples: AgentBoxEvent[] = [];
-  /**
-   * Builds a `usage.sample` event as an engine sends it and feeds it to the
-   * service. The hub can't emit one itself: in the contract the sample's
-   * `source` field replaces the event's `source`.
-   */
+  /** Builds a `usage.sample` event as an engine sends it and feeds it to the service. */
   function sample(vendor: Vendor, fields: Partial<UsageSample> = {}) {
     const ceiling = settings.value.ceilings[vendor];
     seq += 1;
     const event = EventSchema.parse({
       id: randomUUID(),
       time: iso(clock.now),
+      source: "engine:claude-agent-proj-example-app-1a2b3c4d",
       streamId: "engine-stream",
       seq,
       sourceSeq: seq,
@@ -62,7 +59,7 @@ export function setup() {
       spendUsd: null,
       ceiling,
       resetAt: iso(T0 + 300 * MIN),
-      source: "rate_limit_event",
+      sampleSource: "rate_limit_event",
       ...fields,
     });
     usage.ingest(event);

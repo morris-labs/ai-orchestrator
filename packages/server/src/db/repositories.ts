@@ -4,6 +4,7 @@
 import {
   BoxSchema,
   FindingSchema,
+  GlobalSettingsInputSchema,
   GlobalSettingsSchema,
   JobSchema,
   ProjectSchema,
@@ -187,11 +188,14 @@ export class SettingsRepo {
     return this.db.prepare("SELECT 1 FROM settings WHERE id = 1").get() !== undefined;
   }
 
-  /** The stored settings, or the defaults when none were saved. */
+  /**
+   * The stored settings, or the defaults when none were saved. The input
+   * schema fills fields that a later contract added, such as `vendorDefaults`.
+   */
   get(): GlobalSettings {
     const row = this.db.prepare("SELECT data FROM settings WHERE id = 1").get() as
       DataRow | undefined;
-    return row ? GlobalSettingsSchema.parse(JSON.parse(row.data)) : defaultConfig();
+    return row ? GlobalSettingsInputSchema.parse(JSON.parse(row.data)) : defaultConfig();
   }
 
   put(settings: GlobalSettings, now: Date): GlobalSettings {

@@ -3,26 +3,10 @@
 // define.
 import { ApiErrorCodeSchema, type ApiError, type ApiErrorCode } from "@agentbox/contracts";
 import { ZodError } from "zod";
+import { API_ERROR_STATUS } from "../records/errors.js";
 
 /** The HTTP status for each error code, as `common.ts` documents them. */
-export const STATUS_BY_CODE: Record<ApiErrorCode, number> = {
-  adoption_refused: 409,
-  session_tracked: 409,
-  box_running: 409,
-  stale_mounts: 409,
-  secrets_locked: 503,
-  secrets_unavailable: 503,
-  engine_mismatch: 409,
-  dirty_tree: 409,
-  worktree_refused: 409,
-  not_found: 404,
-  conflict: 409,
-  validation: 400,
-  docker_unavailable: 503,
-  image_missing: 409,
-  run_not_found: 404,
-  invalid_state: 409,
-};
+export const STATUS_BY_CODE: Record<ApiErrorCode, number> = API_ERROR_STATUS;
 
 /** An error with a contract error code. Throw it from any service the API calls. */
 export class ApiFailure extends Error {
@@ -31,9 +15,8 @@ export class ApiFailure extends Error {
   readonly status: number;
 
   /**
-   * `status` overrides the code's usual status. The API uses 500 with code
-   * `conflict` for an unexpected error, because the contract list has no
-   * internal-error code.
+   * `status` overrides the code's usual status, such as 502 for an `internal`
+   * failure that an engine caused.
    */
   constructor(code: ApiErrorCode, message: string, details?: unknown, status?: number) {
     super(message);
@@ -72,7 +55,7 @@ export function toApiFailure(err: unknown): ApiFailure {
   if (err instanceof Error) {
     const { code, details } = err as Error & { code?: unknown; details?: unknown };
     if (isApiErrorCode(code)) return new ApiFailure(code, err.message, details);
-    return new ApiFailure("conflict", err.message, undefined, 500);
+    return new ApiFailure("internal", err.message);
   }
-  return new ApiFailure("conflict", String(err), undefined, 500);
+  return new ApiFailure("internal", String(err));
 }

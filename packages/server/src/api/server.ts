@@ -110,7 +110,7 @@ export async function createApiServer(deps: ApiDeps): Promise<ApiServer> {
       return sendFailure(
         reply,
         new ApiFailure(
-          status === 404 ? "not_found" : "validation",
+          status === 404 ? "not_found" : status === 401 ? "unauthorized" : "validation",
           (err as Error).message,
           undefined,
           status,
@@ -134,10 +134,7 @@ export async function createApiServer(deps: ApiDeps): Promise<ApiServer> {
     if (!isAuthorized(authInput(request, config.ws), deps.token)) {
       // A refused upgrade leaves no HTTP connection worth keeping.
       if (config.ws) reply.header("connection", "close");
-      return sendFailure(
-        reply,
-        new ApiFailure("validation", "Missing or wrong bearer token.", undefined, 401),
-      );
+      return sendFailure(reply, new ApiFailure("unauthorized", "Missing or wrong bearer token."));
     }
   });
 
@@ -218,10 +215,9 @@ function registerHttp(
       const checked = def.response.safeParse(result);
       if (!checked.success) {
         throw new ApiFailure(
-          "validation",
+          "internal",
           `The server built an invalid response for ${key}.`,
           checked.error.issues,
-          500,
         );
       }
       if (reply.statusCode === 200 && def.status) reply.code(def.status);

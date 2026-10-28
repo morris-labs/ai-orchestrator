@@ -115,6 +115,30 @@ describe("Notifier", () => {
     expect(readOnly.kinds()).toEqual(["run_finished"]);
   });
 
+  it("gates ready to push and other finishes by their own toggles", () => {
+    const t = make();
+    t.settings.value = {
+      ...t.settings.value,
+      notifications: { ...t.settings.value.notifications, runFinished: false },
+    };
+    t.runChanged(run({ status: "finished", stopReason: "clean" }));
+    t.runChanged(
+      run({ id: "01JB8Z5K3W6Q2V9X4T7R0M1N2Z", status: "finished", stopReason: "round_cap" }),
+    );
+    expect(t.kinds()).toEqual(["ready_to_push"]);
+
+    const u = make();
+    u.settings.value = {
+      ...u.settings.value,
+      notifications: { ...u.settings.value.notifications, readyToPush: false },
+    };
+    u.runChanged(run({ status: "finished", stopReason: "clean" }));
+    u.runChanged(
+      run({ id: "01JB8Z5K3W6Q2V9X4T7R0M1N2Z", status: "finished", stopReason: "round_cap" }),
+    );
+    expect(u.kinds()).toEqual(["run_finished"]);
+  });
+
   it("notifies a failed run as an error", () => {
     const t = make();
     t.runChanged(run({ status: "failed", error: "The gate crashed." }));
@@ -149,6 +173,7 @@ describe("Notifier", () => {
       notifications: {
         decisionNeeded: false,
         runFinished: false,
+        readyToPush: false,
         boxEnded: false,
         roundSummary: false,
       },
