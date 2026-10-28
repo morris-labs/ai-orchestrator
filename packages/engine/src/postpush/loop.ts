@@ -1,0 +1,418 @@
+// The post-push loop (design.md, "Post-push pipeline"): push, open or update
+// the pull request, request a Copilot review, poll the review and the checks,
+// import comments and failing checks as findings, verify, fix, gate, reply,
+// resolve, and push again.
+import { FindingInputSchema, type Finding, type Severity } from "@agentbox/contracts";
+import { createHash } from "node:crypto";
+import { DecisionNeeded, type RunContext } from "../state/context.js";
+import { finish, startRound, stagePreflight } from "../state/prepush.js";
+import {
+  GATE_ATTEMPTS,
+  buildRoundSummary,
+  fixTargets,
+  runFix,
+  runGateStage,
+  verifyPending,
+} from "../state/steps.js";
+import { titleSimilarity } from "../merge/fingerprint.js";
+import { isCopilotLogin, type CheckRun, type GitHubClient, type PrInfo, type ReviewThread } from "./github.js";
+
+/** How often the loop polls the pull request. */
+export const POLL_INTERVAL_MS = 60_000;
+/** How long the loop waits for the review and the checks before it moves on. */
+export const POLL_TIMEOUT_MS = 2 * 60 * 60_000;
+
+/** Log patterns of check failures that code changes can't fix. */
+const NON_CODE_PATTERNS: RegExp[] = [
+  /secret[s]? .*(not set|missing|not found|unavailable)/i,
+  /(missing|undefined) (secret|token|credential)/i,
+  /resource not accessible by integration/i,
+  /no space left on device/i,
+  /the (job|runner) (was|has) (not started|lost communication|received a shutdown signal)/i,
+  /exceeded the maximum execution time/i,
+  /api rate limit exceeded/i,
+  /could not resolve host|network is unreachable|connection (timed out|reset)/i,
+  /(quota|billing|spending limit)/i,
+];
+
+/** True when a failing check's log shows a cause outside the code, such as a missing secret. */
+export function isNonCodeFailure(log: string): boolean {
+  return NON_CODE_PATTERNS.some((re) => re.test(log));
+}
+
+/** Reads a severity from a comment's text, such as `P1` or `[nit]`; `P2` when it names none. */
+export function severityFromText(text: string): Severity {
+  const m = /\b(P[123])\b/.exec(text);
+  if (m) return m[1] as Severity;
+  if (/\bnit\b|nitpick/i.test(text)) return "nit";
+  return "P2";
+}
+
+function firstLine(text: string, max = 120): string {
+  const line = text.trim().split("\n").find((l) => l.trim() !== "") ?? "Review comment";
+  const clean = line.replace(/^[#>*\s-]+/, "").trim();
+  return clean.length > max ? `${clean.slice(0, max - 3)}...` : clean || "Review comment";
+}
+
+function sha1(text: string): string {
+  return createHash("sha1").update(text).digest("hex");
+}
+
+function github(ctx: RunContext): GitHubClient {
+  if (!ctx.deps.github) throw new Error("The post-push loop needs the gh client, which isn't configured.");
+  return ctx.deps.github;
+}
+
+function strippedBase(ref: string): string {
+  return ref.replace(/^refs\/heads\//, "").replace(/^origin\//, "");
+}
+
+/** Pushes the tip branch and opens or updates the pull request, with every guardrail. */
+async function stagePush(ctx: RunContext): Promise<PrInfo> {
+  const gh = github(ctx);
+  const repo = ctx.state.request.repoPath;
+  const branch = ctx.eng.tipRef;
+  const blocked = (message: string) =>
+    new DecisionNeeded({ kind: "push_blocked", findingIds: [], options: ["resume", "cancel"], message });
+  if (!branch) throw blocked("The run has no tip branch to push.");
+  const current = await ctx.git.currentBranch();
+  if (current !== branch) throw blocked(`The loop pushes ${branch}, but ${current ?? "a detached HEAD"} is checked out.`);
+  const defaultBranch = await gh.defaultBranch(repo);
+  if (branch === defaultBranch) throw blocked(`The loop never pushes the default branch (${defaultBranch}).`);
+  let pr = ctx.state.prNumber ? await gh.viewPr(repo, ctx.state.prNumber) : await gh.findOpenPr(repo, branch);
+  if (pr && pr.headRefName !== branch) {
+    throw blocked(`Pull request #${pr.number} is for ${pr.headRefName}, not ${branch}; the loop pushes only the pull request's branch.`);
+  }
+  // Never force: a rejected push means someone else moved the branch.
+  const push = await ctx.deps.runner.run("git", ["push", "origin", `refs/heads/${branch}:refs/heads/${branch}`], {
+    cwd: repo,
+    timeoutMs: 300_000,
+  });
+  if (push.exitCode !== 0) throw blocked(`git push was rejected; the loop never force-pushes:\n${push.stderr.trim()}`);
+  if (!pr) {
+    const base = strippedBase(ctx.state.request.base === "pr" ? defaultBranch : ctx.state.request.base);
+    pr = await gh.createPr(repo, {
+      base: base === branch ? defaultBranch : base,
+      head: branch,
+      title: ctx.eng.push?.title ?? `Review fixes for ${branch}`,
+      body: `Opened by Agent Box run ${ctx.state.id}.`,
+      draft: ctx.eng.push?.draft ?? false,
+    });
+  }
+  ctx.state.prNumber = pr.number;
+  ctx.state.prUrl = pr.url;
+  const head = await ctx.git.head();
+  ctx.state.tipSha = head;
+  if (ctx.eng.reviewRequestedFor !== head) {
+    await gh.requestCopilotReview(repo, pr.number);
+    ctx.eng.reviewRequestedFor = head;
+  }
+  await ctx.persist();
+  await ctx.store.writeJson(ctx.store.roundFile(ctx.round, "push"), { pr, head });
+  await ctx.handoff({ stage: "push" }, { stage: "poll", vendor: "copilot", role: "reviewer" }, "commits", 1, null);
+  return pr;
+}
+
+interface PollResult {
+  reviewed: boolean;
+  checks: CheckRun[];
+  timedOut: boolean;
+}
+
+/** Polls until Copilot reviewed the head and no check is pending, or the poll times out. */
+async function stagePoll(ctx: RunContext): Promise<PollResult> {
+  const file = ctx.store.roundFile(ctx.round, "poll");
+  const saved = await ctx.store.readJson<PollResult>(file);
+  if (saved) return saved;
+  const gh = github(ctx);
+  const repo = ctx.state.request.repoPath;
+  const pr = ctx.state.prNumber as number;
+  const head = ctx.state.tipSha ?? (await ctx.git.head());
+  const started = ctx.clock.now();
+  let result: PollResult;
+  for (;;) {
+    await ctx.checkpoint();
+    const reviews = await gh.listReviews(repo, pr);
+    const reviewed = reviews.some((r) => isCopilotLogin(r.author) && (r.commitId === null || r.commitId === head));
+    const checks = await gh.listChecks(repo, pr);
+    const pending = checks.some((c) => c.bucket === "pending");
+    const timedOut = ctx.clock.now() - started >= POLL_TIMEOUT_MS;
+    if ((reviewed && !pending) || timedOut) {
+      result = { reviewed, checks, timedOut };
+      break;
+    }
+    try {
+      await ctx.clock.sleep(POLL_INTERVAL_MS, ctx.signal);
+    } catch {
+      await ctx.checkpoint();
+    }
+  }
+  await ctx.store.writeJson(file, result);
+  return result;
+}
+
+function threadFinding(ctx: RunContext, thread: ReviewThread): Finding | null {
+  const first = thread.comments[0];
+  if (!first) return null;
+  const located = thread.path !== null && thread.line !== null;
+  const start = located ? (thread.startLine ?? thread.line ?? 1) : null;
+  const end = located ? (thread.line ?? start ?? 1) : null;
+  const text = thread.comments.map((c) => `${c.author}: ${c.body}`).join("\n\n");
+  const title = firstLine(first.body);
+  return FindingInputSchema.parse({
+    id: ctx.nextFindingId(),
+    fingerprint: sha1(`${thread.path ?? ""}\n\n${title.toLowerCase()}`),
+    severity: severityFromText(first.body),
+    title,
+    file: located ? thread.path : null,
+    lines: located ? [Math.min(start as number, end as number), Math.max(start as number, end as number)] : null,
+    failureCase: first.body,
+    category: "review-comment",
+    introduced: true,
+    reportedBy: isCopilotLogin(first.author) ? "copilot-review" : `github-${first.author || "reviewer"}`,
+    verdict: "pending",
+    evidence: text,
+    runId: ctx.state.id,
+    round: ctx.round,
+    groupId: null,
+    origin: "pr_comment",
+    externalRef: { kind: "pr_comment", id: thread.id, ...(first.url ? { url: first.url } : {}) },
+  });
+}
+
+function checkFinding(ctx: RunContext, check: CheckRun, log: string, head: string): Finding {
+  const tail = log.trim().split("\n").slice(-60).join("\n");
+  return FindingInputSchema.parse({
+    id: ctx.nextFindingId(),
+    fingerprint: sha1(`check\n${check.name}`),
+    severity: "P1",
+    title: `Check ${check.name} fails`,
+    file: null,
+    lines: null,
+    failureCase: `The ${check.name} check fails on ${head}.`,
+    category: "check-failure",
+    introduced: true,
+    reportedBy: `check-${check.workflow ?? check.name}`,
+    verdict: "pending",
+    evidence: tail,
+    runId: ctx.state.id,
+    round: ctx.round,
+    groupId: null,
+    origin: "check_run",
+    externalRef: { kind: "check_run", id: `${check.name}@${head}`, ...(check.link ? { url: check.link } : {}) },
+  });
+}
+
+export interface ImportRecord {
+  imported: string[];
+  nonCode: Array<{ check: string; reason: string }>;
+  failingCode: string[];
+  checksPassed: boolean;
+}
+
+/** Imports unresolved review threads and failing checks as findings. */
+async function stageImport(ctx: RunContext, poll: PollResult): Promise<ImportRecord> {
+  const file = ctx.store.roundFile(ctx.round, "import");
+  const saved = await ctx.store.readJson<ImportRecord>(file);
+  if (saved) return saved;
+  const gh = github(ctx);
+  const repo = ctx.state.request.repoPath;
+  const pr = ctx.state.prNumber as number;
+  const head = ctx.state.tipSha ?? (await ctx.git.head());
+  const imported: Finding[] = [];
+  const known = new Set(ctx.eng.importedRefs);
+
+  for (const thread of await gh.listReviewThreads(repo, pr)) {
+    if (thread.isResolved || known.has(thread.id)) continue;
+    const f = threadFinding(ctx, thread);
+    if (!f) continue;
+    known.add(thread.id);
+    imported.push(f);
+  }
+  const nonCode: ImportRecord["nonCode"] = [];
+  const failingCode: string[] = [];
+  for (const check of poll.checks.filter((c) => c.bucket === "fail")) {
+    const log = await gh.failedCheckLog(repo, check);
+    if (isNonCodeFailure(log)) {
+      nonCode.push({ check: check.name, reason: firstLine(log.split("\n").find((l) => isNonCodeFailure(l)) ?? log) });
+      continue;
+    }
+    failingCode.push(check.name);
+    const ref = `${check.name}@${head}`;
+    if (known.has(ref)) continue;
+    known.add(ref);
+    imported.push(checkFinding(ctx, check, log, head));
+  }
+  ctx.eng.importedRefs = [...known];
+
+  // A comment that matches a fixed finding is an oscillation.
+  const oscillations: Array<{ fixedId: string; returnedId: string }> = [];
+  for (const f of imported) {
+    const fixed = ctx.findings.find(
+      (x) =>
+        x.verdict === "fixed" &&
+        x.file !== null &&
+        x.file === f.file &&
+        titleSimilarity(x.title, f.title) >= 0.5 &&
+        !ctx.eng.acceptedOscillations.includes(x.id),
+    );
+    if (fixed) oscillations.push({ fixedId: fixed.id, returnedId: f.id });
+    f.history.push({ time: ctx.nowIso(), verdict: "pending", actor: { kind: "engine", role: "import" }, round: ctx.round });
+    ctx.findings.push(f);
+  }
+  await ctx.persist();
+  for (const f of imported) await ctx.announceFinding(f);
+  const record: ImportRecord = {
+    imported: imported.map((f) => f.id),
+    nonCode,
+    failingCode,
+    checksPassed: poll.checks.every((c) => c.bucket !== "fail" && c.bucket !== "pending"),
+  };
+  await ctx.store.writeJson(file, record);
+  await ctx.handoff({ stage: "import", vendor: "copilot", role: "reviewer" }, { stage: "verify", role: "disprover" }, "findings", imported.length, file);
+  if (oscillations.length > 0) {
+    await ctx.setStage("verify");
+    throw new DecisionNeeded({
+      kind: "oscillation",
+      findingIds: oscillations.flatMap((o) => [o.fixedId, o.returnedId]),
+      options: ["resume", "resume_waive", "cancel"],
+      message: "A pull request comment raises a finding that an earlier fix closed.",
+    });
+  }
+  return record;
+}
+
+/** Replies to and resolves the threads of disproved or fixed comment findings. */
+async function answerThreads(ctx: RunContext, kind: "disproved" | "fixed"): Promise<void> {
+  const gh = github(ctx);
+  const repo = ctx.state.request.repoPath;
+  const answered = new Set(ctx.eng.answeredThreads);
+  for (const f of ctx.findings) {
+    if (f.origin !== "pr_comment" || f.verdict !== kind || !f.externalRef || answered.has(f.externalRef.id)) continue;
+    const last = [...f.history].reverse().find((h) => h.verdict === kind);
+    const body =
+      kind === "disproved"
+        ? `Verified by an independent agent, which found this doesn't reproduce:\n\n${(last?.evidence ?? f.evidence).slice(0, 3000)}`
+        : `Fixed in ${f.fixCommit ?? ctx.state.tipSha ?? "the latest push"}.`;
+    await gh.replyToThread(repo, f.externalRef.id, body);
+    await gh.resolveThread(repo, f.externalRef.id);
+    answered.add(f.externalRef.id);
+  }
+  ctx.eng.answeredThreads = [...answered];
+  await ctx.persist();
+}
+
+async function endPostPushRound(ctx: RunContext): Promise<boolean> {
+  const summary = buildRoundSummary(ctx, {}, 0);
+  await ctx.store.saveRoundSummary(summary);
+  ctx.eng.roundOpen = false;
+  await ctx.persist();
+  await ctx.emitRun(summary);
+  if (ctx.round >= ctx.state.request.roundCap) {
+    await finish(ctx, "round_cap");
+    return true;
+  }
+  return false;
+}
+
+/** Drives the post-push loop until the pull request is clean, the run waits, or it fails. */
+export async function drivePostPush(ctx: RunContext): Promise<void> {
+  for (;;) {
+    await ctx.checkpoint();
+    switch (ctx.state.stage) {
+      case "preflight":
+        await stagePreflight(ctx);
+        await ctx.setStage("push");
+        break;
+      case "push": {
+        await startRound(ctx);
+        await stagePush(ctx);
+        await ctx.setStage("poll");
+        break;
+      }
+      case "poll":
+        await stagePoll(ctx);
+        await ctx.setStage("import");
+        break;
+      case "import": {
+        const poll = (await ctx.store.readJson<PollResult>(ctx.store.roundFile(ctx.round, "poll"))) ?? (await stagePoll(ctx));
+        const record = await stageImport(ctx, poll);
+        const actionable = record.imported.length > 0;
+        if (!actionable) {
+          await endPostPushRound(ctx);
+          if (ctx.state.status === "finished") return;
+          if (record.failingCode.length === 0 && record.checksPassed) {
+            await finish(ctx, "pr_clean");
+            return;
+          }
+          if (record.failingCode.length === 0 && record.nonCode.length > 0) {
+            await finish(ctx, "non_code_failures");
+            return;
+          }
+          if (record.failingCode.length === 0) {
+            throw new DecisionNeeded({
+              kind: "gate_failed",
+              findingIds: [],
+              options: ["resume", "cancel"],
+              message: "The checks didn't finish before the poll timed out. Resume to poll again.",
+            });
+          }
+          // A failing check already imported and not fixable: stop for a person.
+          throw new DecisionNeeded({
+            kind: "gate_failed",
+            findingIds: [],
+            options: ["resume", "cancel"],
+            message: `Checks still fail with no new finding: ${record.failingCode.join(", ")}.`,
+          });
+        }
+        await ctx.setStage("verify");
+        break;
+      }
+      case "verify":
+        await verifyPending(ctx, ctx.store.roundFile(ctx.round, "verify"));
+        await answerThreads(ctx, "disproved");
+        await ctx.setStage("fix");
+        break;
+      case "fix": {
+        const targets = fixTargets(ctx);
+        if (targets.length === 0 && ctx.eng.gateAttempts === 0) {
+          if (await endPostPushRound(ctx)) return;
+          await ctx.setStage("push");
+          break;
+        }
+        await runFix(ctx, targets, ctx.eng.lastGateFailure ?? undefined);
+        await ctx.setStage("gate");
+        break;
+      }
+      case "gate": {
+        const record = await runGateStage(ctx, "push");
+        if (record.regressed) {
+          ctx.eng.gateAttempts += 1;
+          ctx.eng.lastGateFailure = record.report;
+          await ctx.persist();
+          if (ctx.eng.gateAttempts >= GATE_ATTEMPTS) {
+            throw new DecisionNeeded({
+              kind: "gate_failed",
+              findingIds: [],
+              options: ["resume", "cancel"],
+              message: `The fixes still break the test or lint gate after ${GATE_ATTEMPTS} attempts:\n${record.report}`,
+            });
+          }
+          await ctx.setStage("fix");
+          break;
+        }
+        ctx.eng.lastGateFailure = null;
+        // No confirmer after push: the next Copilot review checks the fixes.
+        for (const f of ctx.findings.filter((x) => x.verdict === "confirmed" && x.fixCommit)) {
+          await ctx.setVerdict(f, "fixed", { kind: "engine", role: "gate" }, `Fixed in ${f.fixCommit}; the gate passed.`);
+        }
+        await answerThreads(ctx, "fixed");
+        if (await endPostPushRound(ctx)) return;
+        await ctx.setStage("push");
+        break;
+      }
+      default:
+        return;
+    }
+  }
+}
