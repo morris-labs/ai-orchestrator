@@ -12,7 +12,7 @@ import {
   routes,
   serverRoutes,
 } from "../src/index.js";
-import { RUN, runRequest } from "./fixtures.js";
+import { RUN, box, runRequest } from "./fixtures.js";
 
 describe("route catalog", () => {
   it("has no two routes with one method and path in the same API", () => {
@@ -45,6 +45,8 @@ describe("route catalog", () => {
       "sshRemotes.",
       "globalMounts.",
       "secrets.",
+      "import.",
+      "fs.",
       "runs.",
       "findings.",
       "usage.",
@@ -74,6 +76,7 @@ describe("route catalog", () => {
       "move",
       "relink",
       "convertToWorktree",
+      "convertToWorktree.plan",
       "attachCommand",
       "sideSessions.start",
       "sideSessions.stop",
@@ -95,6 +98,18 @@ describe("route catalog", () => {
     }
     expect(keys).not.toContain("engine.leases.respond");
     expect(keys).toContain("sshRemotes.reconnect");
+    expect(keys).toContain("projects.repos.list");
+    expect(keys).toContain("projects.repos.refs");
+  });
+
+  it("serves the engine's repository bodies unchanged through the server", () => {
+    expect(serverRoutes["projects.repos.list"].response).toBe(
+      engineRoutes["engine.repos.list"].response,
+    );
+    expect(serverRoutes["projects.repos.refs"].response).toBe(
+      engineRoutes["engine.repos.refs"].response,
+    );
+    expect(serverRoutes["projects.repos.refs"].query).toBe(engineRoutes["engine.repos.refs"].query);
   });
 
   it("keeps every server path under /api/v1 and requires auth except for health", () => {
@@ -231,10 +246,79 @@ describe("request schemas", () => {
     expect(routes["boxes.remove"].query.safeParse({ removeWorktree: "yes" }).success).toBe(false);
   });
 
-  it("tests an unsaved SSH remote or the saved one", () => {
-    const body = routes["sshRemotes.test"].body;
-    expect(body.safeParse(undefined).success).toBe(true);
-    expect(body.parse({ name: "n", host: "h" })?.forwards).toEqual([]);
+  it("tests an unsaved SSH remote at the collection, and a saved one by name", () => {
+    expect(routes["sshRemotes.test"].path).toBe("/api/v1/ssh-remotes/test");
+    expect(routes["sshRemotes.test"].body.safeParse(undefined).success).toBe(false);
+    expect(routes["sshRemotes.test"].body.parse({ name: "n", host: "h" }).forwards).toEqual([]);
+    const saved = routes["sshRemotes.testSaved"].body;
+    expect(pathParamNames(routes["sshRemotes.testSaved"].path)).toEqual(["name"]);
+    expect(saved.safeParse(undefined).success).toBe(true);
+    expect(saved.parse({ name: "n", host: "h" })?.forwards).toEqual([]);
+  });
+
+  it("starts a box with or without force", () => {
+    const body = routes["boxes.start"].body;
+    expect(body.parse(undefined)).toEqual({ force: false });
+    expect(body.parse({ force: true })).toEqual({ force: true });
+  });
+
+  it("previews a purge with dryRun and reports which kind it was", () => {
+    expect(routes["boxes.purge"].body.parse(undefined)).toEqual({ dryRun: false });
+    expect(routes["boxes.purge"].body.parse({ dryRun: true })).toEqual({ dryRun: true });
+    const result = { dryRun: true, removedRecords: ["claude-agent-x"], removedTranscriptDirs: [] };
+    expect(routes["boxes.purge"].response.parse(result)).toEqual(result);
+    const { dryRun: _d, ...withoutFlag } = result;
+    expect(routes["boxes.purge"].response.safeParse(withoutFlag).success).toBe(false);
+  });
+
+  it("requires dryRun on an import and returns a report", () => {
+    const route = routes["import.run"];
+    expect(route.method).toBe("POST");
+    expect(route.path).toBe("/api/v1/import");
+    expect(route.body.safeParse({}).success).toBe(false);
+    const report = {
+      dryRun: true,
+      projects: 2,
+      boxes: 5,
+      sshRemotes: 1,
+      settingsApplied: true,
+      warnings: ["Skipped the mount /srv/data on claude-agent-x: /srv/data is already mounted."],
+    };
+    expect(route.response.parse(report)).toEqual(report);
+  });
+
+  it("plans a worktree conversion without a body", () => {
+    const route = routes["boxes.convertToWorktree.plan"];
+    expect(route.path).toBe("/api/v1/boxes/:boxId/convert-to-worktree/plan");
+    expect(
+      route.response.parse({ report: "Would fetch 3 branches.", buildOutputBytes: 0 }),
+    ).toEqual({ report: "Would fetch 3 branches.", buildOutputBytes: 0 });
+    expect(route.response.safeParse({ report: "", buildOutputBytes: -1 }).success).toBe(false);
+  });
+
+  it("tells whether a box's target directory exists", () => {
+    const view = {
+      box,
+      status: "stopped",
+      container: box.container,
+      tmuxSession: box.session,
+      reviewState: { state: "idle" },
+      stats: null,
+      listeners: [],
+      proxyUrls: [],
+      sideSessions: [],
+      targetDirExists: false,
+    };
+    expect(routes["boxes.get"].response.parse(view).targetDirExists).toBe(false);
+    const { targetDirExists: _t, ...withoutFlag } = view;
+    expect(routes["boxes.get"].response.safeParse(withoutFlag).success).toBe(false);
+  });
+
+  it("lists directories, with a null parent at the root", () => {
+    const route = routes["fs.dirs"];
+    expect(route.query.parse({})).toEqual({});
+    const listing = { path: "/", parent: null, entries: [{ name: "home", path: "/home" }] };
+    expect(route.response.parse(listing)).toEqual(listing);
   });
 });
 

@@ -266,6 +266,8 @@ export const BoxViewSchema = z.object({
   proxyUrls: z.array(z.object({ port: PortSchema, url: z.string().url() })),
   /** Platforms running as side sessions next to the main one. */
   sideSessions: z.array(PlatformSchema),
+  /** False when `box.targetDir` is missing on the host, such as after a manual move. */
+  targetDirExists: z.boolean(),
 });
 export type BoxView = z.infer<typeof BoxViewSchema>;
 
@@ -375,11 +377,21 @@ export const BulkResultSchema = z.object({
   failed: z.array(z.object({ boxId: z.string(), error: ApiErrorSchema.shape.error })),
 });
 
+/** The body of `boxes.purge`. `dryRun` reports what a purge would remove and removes nothing. */
+export const PurgeRequestSchema = z.object({ dryRun: z.boolean().default(false) }).default({});
+
+/** What a purge removed, or with `dryRun`, what it would remove. */
 export const PurgeResultSchema = z.object({
+  dryRun: z.boolean(),
+  /** Box ids whose records were, or would be, deleted. */
   removedRecords: z.array(z.string()),
-  /** Transcript directories under `~/.claude/projects/` that were deleted. */
+  /** Transcript directories under `~/.claude/projects/` that were, or would be, deleted. */
   removedTranscriptDirs: z.array(z.string()),
 });
+export type PurgeResult = z.infer<typeof PurgeResultSchema>;
+
+/** The body of `boxes.start`. `force` starts the box although its container's mounts are stale. */
+export const BoxStartSchema = z.object({ force: z.boolean().default(false) }).default({});
 
 /** The `result` of a `convert_to_worktree` job. */
 export const ConvertToWorktreeResultSchema = z.object({
@@ -395,6 +407,15 @@ export const ConvertToWorktreeResultSchema = z.object({
   notCarried: z.array(z.string()),
 });
 export type ConvertToWorktreeResult = z.infer<typeof ConvertToWorktreeResultSchema>;
+
+/** A preview of Convert to Worktree; it changes nothing. */
+export const ConvertToWorktreePlanSchema = z.object({
+  /** What the conversion would do and what it can't carry over, for a person to read. */
+  report: z.string(),
+  /** Size of the clone's build output, which the conversion copies only on request. */
+  buildOutputBytes: z.number().int().nonnegative(),
+});
+export type ConvertToWorktreePlan = z.infer<typeof ConvertToWorktreePlanSchema>;
 
 /** The terminal kinds: a box's main session, a side session, or a shell. */
 export const TerminalKindSchema = z.enum(["session", "side", "shell"]);
@@ -562,6 +583,30 @@ export const SshTestResultSchema = z.object({
   output: z.string(),
 });
 
+/** A directory's subdirectories, for a folder picker. Files are never listed. */
+export const DirListingSchema = z.object({
+  /** The absolute, normalized path that was listed. */
+  path: z.string().min(1),
+  /** The parent directory, or `null` at the file system root. */
+  parent: z.string().min(1).nullable(),
+  /** Subdirectories, sorted by name. */
+  entries: z.array(z.object({ name: z.string().min(1), path: z.string().min(1) })),
+});
+export type DirListing = z.infer<typeof DirListingSchema>;
+
+/** What the one-time import of the 3.3.5 records applied, or with `dryRun`, would apply. */
+export const ImportReportSchema = z.object({
+  dryRun: z.boolean(),
+  projects: z.number().int().nonnegative(),
+  boxes: z.number().int().nonnegative(),
+  sshRemotes: z.number().int().nonnegative(),
+  /** Whether the global settings were, or would be, imported. */
+  settingsApplied: z.boolean(),
+  /** Records and mounts the import skipped or changed, one sentence each. */
+  warnings: z.array(z.string()),
+});
+export type ImportReport = z.infer<typeof ImportReportSchema>;
+
 export const OpStatusSchema = z.object({
   installed: z.boolean(),
   version: z.string().nullable(),
@@ -675,6 +720,10 @@ export const RepoInfoSchema = z.object({
   headSha: CommitShaSchema.nullable(),
   dirty: z.boolean(),
 });
+
+export const RepoListSchema = z.object({ repos: z.array(RepoInfoSchema) });
+
+export const RepoRefsQuerySchema = z.object({ repo: z.string().min(1) });
 
 export const RepoRefsSchema = z.object({
   localBranches: z.array(z.string()),
@@ -930,6 +979,19 @@ export const serverRoutes = {
     body: PolicyFileSchema,
     response: PolicyResultSchema,
   }),
+  "projects.repos.list": http({
+    method: "GET",
+    path: `${projects}/:projectId/repos`,
+    summary: "List git repositories under the project root; proxied to the project's engine.",
+    response: RepoListSchema,
+  }),
+  "projects.repos.refs": http({
+    method: "GET",
+    path: `${projects}/:projectId/repos/refs`,
+    summary: "Branches, tags, recent commits, and open pull requests of a repository; proxied.",
+    query: RepoRefsQuerySchema,
+    response: RepoRefsSchema,
+  }),
 
   // Boxes
   "boxes.list": http({
@@ -973,7 +1035,8 @@ export const serverRoutes = {
   "boxes.start": http({
     method: "POST",
     path: `${boxes}/:boxId/start`,
-    summary: "Start a box's session.",
+    summary: "Start a box's session; `force` starts it despite stale mounts.",
+    body: BoxStartSchema,
     response: BoxViewSchema,
     errors: [
       "box_running",
@@ -1008,7 +1071,9 @@ export const serverRoutes = {
   "boxes.purge": http({
     method: "POST",
     path: `${boxes}/:boxId/purge`,
-    summary: "Delete the transcripts and records for the box's directory.",
+    summary:
+      "Delete the transcripts and records for the box's directory, or list them with `dryRun`.",
+    body: PurgeRequestSchema,
     response: PurgeResultSchema,
     errors: ["box_running"],
   }),
@@ -1035,6 +1100,13 @@ export const serverRoutes = {
     body: z.object({ copyBuildOutput: z.boolean().default(false) }),
     response: JobSchema,
     status: 202,
+    errors: ["box_running", "conflict"],
+  }),
+  "boxes.convertToWorktree.plan": http({
+    method: "POST",
+    path: `${boxes}/:boxId/convert-to-worktree/plan`,
+    summary: "Preview Convert to Worktree without changing anything.",
+    response: ConvertToWorktreePlanSchema,
     errors: ["box_running", "conflict"],
   }),
   "boxes.attachCommand": http({
@@ -1211,6 +1283,20 @@ export const serverRoutes = {
     body: PromptTemplatesSchema,
     response: PromptsResultSchema,
   }),
+  "import.run": http({
+    method: "POST",
+    path: `${V1}/import`,
+    summary: "Import the 3.3.5 records and settings, or report what it would import with `dryRun`.",
+    body: z.object({ dryRun: z.boolean() }),
+    response: ImportReportSchema,
+  }),
+  "fs.dirs": http({
+    method: "GET",
+    path: `${V1}/fs/dirs`,
+    summary: "List a host directory's subdirectories; no `path` lists the home directory.",
+    query: z.object({ path: z.string().min(1).optional() }),
+    response: DirListingSchema,
+  }),
 
   // SSH remotes, global mounts, secrets
   "sshRemotes.list": http({
@@ -1235,6 +1321,13 @@ export const serverRoutes = {
     response: z.object({ unlinkedBoxes: z.array(z.string()) }),
   }),
   "sshRemotes.test": http({
+    method: "POST",
+    path: `${sshRemotes}/test`,
+    summary: "Test the connection to an unsaved remote.",
+    body: SshRemoteInputSchema,
+    response: SshTestResultSchema,
+  }),
+  "sshRemotes.testSaved": http({
     method: "POST",
     path: `${sshRemotes}/:name/test`,
     summary: "Test the connection: the saved remote, or the unsaved one in the body.",
@@ -1339,13 +1432,13 @@ export const engineRoutes = {
     method: "GET",
     path: `${V1}/repos`,
     summary: "List git repositories under the project root.",
-    response: z.object({ repos: z.array(RepoInfoSchema) }),
+    response: RepoListSchema,
   }),
   "engine.repos.refs": http({
     method: "GET",
     path: `${V1}/repos/refs`,
     summary: "Branches, tags, recent commits, and open pull requests of a repository.",
-    query: z.object({ repo: z.string().min(1) }),
+    query: RepoRefsQuerySchema,
     response: RepoRefsSchema,
   }),
   ...prefixKeys(
