@@ -20,6 +20,13 @@ describe("policy", () => {
     });
   });
 
+  it("accepts commentAuthors and rejects a non-list value", () => {
+    expect(PolicyFileSchema.parse({ ...policy, commentAuthors: ["alice"] }).commentAuthors).toEqual(
+      ["alice"],
+    );
+    expect(PolicyFileSchema.safeParse({ version: 1, commentAuthors: "alice" }).success).toBe(false);
+  });
+
   it("rejects an unknown version and an unknown key", () => {
     expect(PolicyFileSchema.safeParse({ version: 2 }).success).toBe(false);
     expect(PolicyFileSchema.safeParse({ version: 1, risk_paths: ["src/**"] }).success).toBe(false);

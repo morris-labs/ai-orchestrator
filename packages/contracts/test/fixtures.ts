@@ -223,6 +223,7 @@ export const policy = {
   lint: [{ command: "pnpm lint", cwd: "." }],
   environmentLimits: ["Code under win/ runs only on Windows."],
   groupSizeLimit: 300,
+  commentAuthors: ["octocat"],
 };
 
 export const leaseRequest = {
@@ -254,7 +255,7 @@ export const leaseResponses = [
 /** A configuration file with some fields set; parse it with `parseConfig()`. */
 export const settingsFile = {
   version: 1,
-  serverPort: 20400,
+  serverPort: 21400,
   engineImage: "claude-code",
   ceilings: { copilot: { kind: "spend", period: "month", maxUsd: 50 } },
   notifications: { roundSummary: false },

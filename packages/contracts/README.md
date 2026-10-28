@@ -90,6 +90,8 @@ Consumers must update for the changes marked **breaking**.
   `notifications.readyToPush`. `GlobalSettingsInputSchema` fills both, so a
   stored settings document or a `config.json` without them still parses
   through it.
+- `PolicyFile.commentAuthors` (optional list of GitHub logins) names extra
+  authors whose pull request comments the post-push loop imports.
 - `ApiErrorCode` adds `unauthorized` (401) and `internal` (500).
 - `ENGINE_ENV.stateDir` (`AGENTBOX_STATE_DIR`, default `/run/claude-box`). On
   a version mismatch the engine starts, logs a warning, and reports

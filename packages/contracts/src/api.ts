@@ -8,7 +8,7 @@
 //
 // Authentication:
 //
-// - Server, REST. The server listens on `127.0.0.1:20400`. Every route with
+// - Server, REST. The server listens on `127.0.0.1:21400`. Every route with
 //   `auth: true` accepts either `Authorization: Bearer <token>`, where the
 //   token is the content of `~/.claude-box/server.token`, or the
 //   `agentbox_session` cookie. `POST /api/v1/auth/session` (`auth.session`)
@@ -262,7 +262,7 @@ export const BoxViewSchema = z.object({
   /** Container stats, shared by every box in the container; `null` until sampled. */
   stats: BoxStatsSchema.nullable(),
   listeners: z.array(ListenerSchema),
-  /** Proxy links for dev servers, `http://<port>.<hostKey>.localhost:20400/`. */
+  /** Proxy links for dev servers, `http://<port>.<hostKey>.localhost:21400/`. */
   proxyUrls: z.array(z.object({ port: PortSchema, url: z.string().url() })),
   /** Platforms running as side sessions next to the main one. */
   sideSessions: z.array(PlatformSchema),

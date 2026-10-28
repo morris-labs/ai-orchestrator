@@ -8,7 +8,7 @@ import {
   type PolicyFile,
 } from "@agentbox/contracts";
 import { parse } from "yaml";
-import { ZodError, z } from "zod";
+import { ZodError } from "zod";
 
 export class PolicyError extends Error {
   constructor(
@@ -26,9 +26,7 @@ export function policyFilePath(projectRoot: string, policyPath = DEFAULT_POLICY_
 }
 
 /**
- * Policy settings only the engine reads, kept beside the contract's fields
- * until `PolicyFileSchema` carries them. The contract schema is strict, so
- * these keys are taken out before it parses the file.
+ * Policy settings the engine reads apart from the rest of the policy.
  */
 export interface PolicyExtras {
   /**
@@ -37,10 +35,6 @@ export interface PolicyExtras {
    */
   commentAuthors: string[] | null;
 }
-
-const ExtrasSchema = z
-  .object({ commentAuthors: z.array(z.string().min(1)).nullable().default(null) })
-  .default({});
 
 export const NO_EXTRAS: PolicyExtras = { commentAuthors: null };
 
@@ -60,21 +54,15 @@ function readYaml(text: string, path: string): Record<string, unknown> | null {
 
 /** Reads the engine-only settings from policy YAML text. Throws `PolicyError` on a bad value. */
 export function parsePolicyExtras(text: string, path = "policy.yaml"): PolicyExtras {
-  const raw = readYaml(text, path);
-  const parsed = ExtrasSchema.safeParse({ commentAuthors: raw?.commentAuthors ?? null });
-  if (!parsed.success) {
-    throw new PolicyError(path, `commentAuthors: ${parsed.error.issues[0]?.message ?? "invalid"}`);
-  }
-  return parsed.data;
+  return { commentAuthors: parsePolicy(text, path).commentAuthors ?? null };
 }
 
 /** Parses policy YAML text, filling defaults. Throws `PolicyError` on bad YAML or schema. */
 export function parsePolicy(text: string, path = "policy.yaml"): PolicyFile {
   const raw = readYaml(text, path);
   if (raw === null) return DEFAULT_POLICY;
-  const { commentAuthors: _extra, ...contract } = raw;
   try {
-    return PolicyFileSchema.parse(contract);
+    return PolicyFileSchema.parse(raw);
   } catch (error) {
     if (error instanceof ZodError) {
       const detail = error.issues

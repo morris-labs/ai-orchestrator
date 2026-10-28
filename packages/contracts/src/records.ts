@@ -425,7 +425,7 @@ export type VendorDefaults = z.infer<typeof VendorDefaultsSchema>;
 /** The Copilot model when the settings name none. */
 export const DEFAULT_COPILOT_MODEL = "auto";
 
-export const DEFAULT_SERVER_PORT = 20400;
+export const DEFAULT_SERVER_PORT = 21400;
 export const DEFAULT_ENGINE_PORT = 20411;
 export const DEFAULT_ENGINE_IMAGE = "claude-code";
 

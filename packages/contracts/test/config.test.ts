@@ -8,7 +8,7 @@ describe("config", () => {
     expect(parseConfig(null)).toEqual(config);
     expect(config).toMatchObject({
       version: 1,
-      serverPort: 20400,
+      serverPort: 21400,
       engineImage: "claude-code",
       setupCompleted: false,
       globalMounts: [],
@@ -43,7 +43,7 @@ describe("config", () => {
 
   it("rejects an invalid field or an unknown key instead of dropping it", () => {
     expect(() => parseConfig({ serverPort: 70000 })).toThrow();
-    expect(() => parseConfig({ serverPrt: 20400 })).toThrow();
+    expect(() => parseConfig({ serverPrt: 21400 })).toThrow();
   });
 
   it("parses the engine environment", () => {

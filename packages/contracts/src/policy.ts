@@ -34,6 +34,11 @@ export const PolicyFileSchema = z
     environmentLimits: z.array(z.string().min(1)).default([]),
     /** A group with more changed lines than this splits into smaller groups. */
     groupSizeLimit: z.number().int().positive().default(DEFAULT_GROUP_SIZE_LIMIT),
+    /**
+     * GitHub logins whose pull request comments the post-push loop imports, in
+     * addition to Copilot and the collaborators. Absent means no extra logins.
+     */
+    commentAuthors: z.array(z.string().min(1)).optional(),
   })
   .strict();
 export type PolicyFile = z.infer<typeof PolicyFileSchema>;
