@@ -1,0 +1,21 @@
+{
+  "name": "@agentbox/ui",
+  "version": "4.0.0-dev",
+  "description": "Shared React components for the Agent Box apps.",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./dashboard": "./src/dashboard/index.ts",
+    "./package.json": "./package.json"
+  },
+  "dependencies": {
+    "@agentbox/contracts": "workspace:*"
+  },
+  "peerDependencies": {
+    "react": "^19.2.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "react": "^19.3.1"
+  }
+}
