@@ -5,3 +5,4 @@ export * from "./stats.js";
 export * from "./launch.js";
 export { DockerodeClient, demuxBuffer } from "./dockerode.js";
 export { MemoryDocker, type MemoryContainer, type MemoryCall, type ExecHandler } from "./memory.js";
+export * from "./image.js";
