@@ -109,10 +109,25 @@ export function pickTab(state: TabsState, n: number): TabsState {
   return t ? { ...state, current: t.key } : state;
 }
 
-/** Updates the titles of a box's tabs after a rename. */
-export function retitle(state: TabsState, boxId: string, title: string): TabsState {
-  return {
-    ...state,
-    tabs: state.tabs.map((t) => (t.boxId === boxId && t.kind === "session" ? { ...t, title } : t)),
-  };
+/**
+ * Keeps tab titles on the conversation name after a rename: a session tab
+ * shows the name, a side tab the name and its platform. `names` maps box ids
+ * to display names; `sideLabel` names a platform. Returns `state` itself when
+ * no title changes.
+ */
+export function syncTitles(
+  state: TabsState,
+  names: ReadonlyMap<string, string>,
+  sideLabel: (p: Platform) => string,
+): TabsState {
+  let changed = false;
+  const tabs = state.tabs.map((t) => {
+    const name = names.get(t.boxId);
+    if (name === undefined) return t;
+    const title = t.kind === "side" && t.platform ? `${name} (${sideLabel(t.platform)})` : name;
+    if (title === t.title) return t;
+    changed = true;
+    return { ...t, title };
+  });
+  return changed ? { ...state, tabs } : state;
 }

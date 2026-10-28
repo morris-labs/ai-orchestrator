@@ -45,7 +45,7 @@ import {
   markEnded,
   openTab,
   pickTab,
-  retitle,
+  syncTitles,
   stepTab,
   tabTitle,
 } from "../src/logic/tabs";
@@ -140,7 +140,10 @@ describe("tabs", () => {
     expect(s.current).toBe(a);
     expect(closeOthers(openTab(s, { boxId: "z", title: "z" }), a as string).tabs).toHaveLength(1);
     expect(closeBoxTabs(s, "a").tabs).toHaveLength(0);
-    expect(retitle(s, "a", "New").tabs[0]?.title).toBe("New");
+    let t = openTab(s, { boxId: "a", kind: "side", platform: "codex", title: "a (Codex)" });
+    t = syncTitles(t, new Map([["a", "New"]]), (p) => (p === "codex" ? "Codex" : p));
+    expect(t.tabs.map((x) => x.title)).toEqual(["New", "New (Codex)"]);
+    expect(syncTitles(t, new Map([["a", "New"]]), () => "Codex")).toBe(t);
   });
 });
 

@@ -58,6 +58,7 @@ import {
   openTab,
   pickTab,
   stepTab,
+  syncTitles,
   type TabsState,
 } from "../logic/tabs";
 import { CHORDS } from "./chords";
@@ -236,6 +237,12 @@ export function App() {
       }
       return next;
     });
+
+  // Tab titles follow the conversation name, which /rename changes.
+  useEffect(() => {
+    const names = new Map(data.boxes.map((b) => [b.box.id, displayName(b)]));
+    setTabs((t) => syncTitles(t, names, (p) => platformLabel[p]));
+  }, [data.boxes]);
 
   useEvent("box.changed", (ev) => setTransient((t) => settleTransient(t, ev.boxId, ev.status)));
 
