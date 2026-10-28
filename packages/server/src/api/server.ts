@@ -375,21 +375,15 @@ async function serveTerminalRoute(deps: ApiDeps, socket: WebSocket, request: Fas
     return;
   }
   const end = await serveTerminal(socket, deps.exec, target);
-  let unexpected = false;
-  if (kind === "session" && !end.closedByClient && target.boxId) {
-    try {
-      unexpected = (await deps.core.boxes.get(target.boxId)).status === "stopped";
-    } catch {
-      unexpected = false;
-    }
-  }
+  // Only the container monitor reports a session that ended unexpectedly,
+  // once per session end; a closing tab never does.
   deps.hub.emit({
     type: "terminal.ended",
     terminalId: end.terminalId,
     boxId: target.boxId,
     kind,
     exitCode: end.exitCode,
-    unexpected,
+    unexpected: false,
   });
 }
 

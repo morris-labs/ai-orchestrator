@@ -82,7 +82,7 @@ describe("terminals.open", () => {
     s.ws.close();
   });
 
-  it("sends exit and emits terminal.ended when the session ends", async () => {
+  it("sends exit and emits terminal.ended, never unexpected, when the session ends", async () => {
     h.core.views.set(box.id, { ...h.core.views.get(box.id)!, status: "running" });
     const s = await connect(`${base}/terminals?kind=session&boxId=${box.id}&token=${TOKEN}`);
     await s.until((x) => x.texts.length === 1);
@@ -97,7 +97,8 @@ describe("terminals.open", () => {
       boxId: box.id,
       kind: "session",
       exitCode: 0,
-      unexpected: true,
+      // The monitor reports the session end; a second report would notify twice.
+      unexpected: false,
     });
   });
 
