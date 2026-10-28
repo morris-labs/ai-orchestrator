@@ -7,7 +7,8 @@ import { defineConfig } from "vite";
 export default defineConfig({
   base: "./",
   plugins: [react()],
-  build: { outDir: "dist/renderer", emptyOutDir: true },
+  // The app loads from loopback, so one bundle is fine.
+  build: { outDir: "dist/renderer", emptyOutDir: true, chunkSizeWarningLimit: 900 },
   server: {
     proxy: {
       "/api": { target: "http://127.0.0.1:20400", ws: true, changeOrigin: false },
