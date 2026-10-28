@@ -4,13 +4,7 @@
 import type { BoxView, GlobalSettings, ProjectSummary } from "@agentbox/contracts";
 import { isApiError, useApiClient, useEvent, useResync, useStreamStatus } from "@agentbox/ui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  applyBoxChanged,
-  applyPorts,
-  applyStats,
-  projectCounts,
-  type ContainerStats,
-} from "../logic/store";
+import { applyBoxChanged, applyPorts, applyStats, projectCounts } from "../logic/store";
 
 export interface BoxesData {
   projects: ProjectSummary[];
@@ -25,7 +19,6 @@ export interface BoxesData {
   reload: () => Promise<void>;
   /** Replaces one box view after an action returns it. */
   putBox: (view: BoxView) => void;
-  setSettings: (s: GlobalSettings) => void;
 }
 
 export function useBoxesData(): BoxesData {
@@ -157,8 +150,5 @@ export function useBoxesData(): BoxesData {
     error,
     reload,
     putBox,
-    setSettings,
   };
 }
-
-export type { ContainerStats };

@@ -148,11 +148,6 @@ export function isBoxNotification(n: Pick<Notification, "kind" | "runId" | "boxI
   return BOX_NOTIFICATION_KINDS.includes(n.kind) || (n.runId === null && n.boxId !== null);
 }
 
-/** The `?project=&box=` query the review app's page reads to prefill its launcher. */
-export function reviewQuery(projectId: string, boxId: string): string {
-  return `?${new URLSearchParams({ project: projectId, box: boxId }).toString()}`;
-}
-
 /**
  * The argv that launches the review app with the launcher prefilled. The
  * review app also takes an `agentbox-review://launch?project=&box=` URL or a

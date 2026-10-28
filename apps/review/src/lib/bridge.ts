@@ -7,7 +7,6 @@ export interface AgentboxBridge {
   token: string | null;
   serverUrl: string | null;
   onNavigate?(listener: (hash: string) => void): () => void;
-  setActiveRuns?(count: number): void;
 }
 
 /** The bridge, or `undefined` in a plain browser. */

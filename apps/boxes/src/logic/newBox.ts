@@ -3,7 +3,6 @@
 import type {
   Box,
   BoxCreate,
-  BoxView,
   ConversationSummary,
   Effort,
   GlobalSettings,
@@ -195,15 +194,4 @@ export function updateBody(
   if (JSON.stringify(refs) !== JSON.stringify([...box.sshRemoteRefs].sort()))
     out.sshRemoteRefs = form.sshRemoteRefs;
   return out;
-}
-
-/** The box that holds a session, for the adoption check; running holders first. */
-export function sessionHolders(
-  boxes: readonly BoxView[],
-  uuid: string,
-  except?: string,
-): BoxView[] {
-  return boxes
-    .filter((b) => b.box.sessionUuid === uuid && b.box.id !== except)
-    .sort((a, b) => Number(b.status === "running") - Number(a.status === "running"));
 }

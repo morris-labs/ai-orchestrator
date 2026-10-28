@@ -23,9 +23,8 @@ const events = buildDemoEvents();
 const state = replay(events);
 
 describe("applyEvent over the demo stream", () => {
-  it("tracks the cursor and the event count", () => {
+  it("counts the events", () => {
     expect(state.eventCount).toBe(events.length);
-    expect(state.cursor).toEqual({ streamId: "server-demo-1", seq: events.length });
   });
 
   it("builds the container from changed, stats, and ports events", () => {

@@ -3,7 +3,6 @@ import {
   findTerminal,
   isBoxNotification,
   reviewCommand,
-  reviewQuery,
   serverUrl,
   terminalCandidates,
   terminalCommand,
@@ -96,7 +95,6 @@ describe("notifications and review", () => {
     ).toBe(false);
   });
   it("prefills the review launcher", () => {
-    expect(reviewQuery("p-1", "claude-agent-x")).toBe("?project=p-1&box=claude-agent-x");
     expect(reviewCommand("p", "b")).toEqual({
       file: "agentbox-review",
       args: ["--project=p", "--box=b"],

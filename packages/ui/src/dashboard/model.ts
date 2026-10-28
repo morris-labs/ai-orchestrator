@@ -108,8 +108,6 @@ export interface DashboardState {
   /** Terminals that ended without a person asking, newest last. */
   unexpectedEnds: number;
   settingsChangedAt: string | null;
-  /** Where the client is in the stream, for the resume `hello`. */
-  cursor: { streamId: string; seq: number } | null;
   eventCount: number;
 }
 
@@ -125,7 +123,6 @@ export function emptyDashboard(): DashboardState {
     notifications: [],
     unexpectedEnds: 0,
     settingsChangedAt: null,
-    cursor: null,
     eventCount: 0,
   };
 }
@@ -253,7 +250,6 @@ function addCost(r: RunView, round: number, cost: number): RunView {
 export function applyEvent(prev: DashboardState, event: AgentBoxEvent): DashboardState {
   const state: DashboardState = {
     ...prev,
-    cursor: { streamId: event.streamId, seq: event.seq },
     eventCount: prev.eventCount + 1,
   };
   switch (event.type) {

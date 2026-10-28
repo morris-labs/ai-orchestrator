@@ -3,13 +3,6 @@
 // container, so they update every box that runs in that container.
 import type { BoxView, EventOf, Listener, ProjectSummary } from "@agentbox/contracts";
 
-export interface ContainerStats {
-  cpuPercent: number;
-  memBytes: number;
-  memLimitBytes: number;
-  diskBytes: number;
-}
-
 /**
  * Applies `box.changed`. Returns the new list and whether the box is unknown
  * here, in which case the caller fetches its full view.
