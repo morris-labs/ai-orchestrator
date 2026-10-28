@@ -404,3 +404,127 @@ describe("GhCliClient", () => {
     expect(calls.every((c) => !c.includes("--force"))).toBe(true);
   });
 });
+
+describe("post-push ordering", () => {
+  function b3Thread(repo: string, scenario: Scenario): ReviewThread {
+    const b3 = scenario.bugs.find((b) => b.id === "B3")!;
+    const line = lineOf(repo, "shop/pricing.py", "if quantity > 100");
+    return {
+      id: "T1",
+      isResolved: false,
+      path: "shop/pricing.py",
+      line: line + 1,
+      startLine: line,
+      comments: [{ id: "c1", author: "Copilot", body: b3.title, url: null }],
+    };
+  }
+
+  it("pushes the fix before it answers the thread, even when the round cap stops the run", async () => {
+    const repo = buildSampleRepo();
+    const origin = join(dirname(repo), "origin.git");
+    const gh = new FakeGitHub(origin);
+    gh.checks = [{ name: "tests", bucket: "pass", link: null, workflow: "ci" }];
+    const scenario = new Scenario();
+    gh.threads = [b3Thread(repo, scenario)];
+    const pushedAtReply: boolean[] = [];
+    const reply = gh.replyToThread.bind(gh);
+    gh.replyToThread = async (r, thread, body) => {
+      const sha = /Fixed in ([0-9a-f]{40})/.exec(body)?.[1];
+      if (sha) {
+        let present = true;
+        try {
+          git(origin, "merge-base", "--is-ancestor", sha, "refs/heads/feature");
+        } catch {
+          present = false;
+        }
+        pushedAtReply.push(present);
+      }
+      return reply(r, thread, body);
+    };
+    const run = await RunController.create(
+      {
+        runId: nextRunId(),
+        projectId: "sample",
+        repoPath: repo,
+        pipeline: "post-push",
+        roundCap: 1,
+      },
+      { projectRoot: repo },
+      deps(scenario, gh),
+    );
+    await run.start();
+    const state = await run.settled();
+    expect(state).toMatchObject({ status: "finished", stopReason: "round_cap" });
+    expect(scenario.count("fix")).toBe(1);
+    expect(git(origin, "rev-parse", "refs/heads/feature")).toBe(git(repo, "rev-parse", "HEAD"));
+    expect(pushedAtReply).toEqual([true]);
+    expect(gh.resolved.has("T1")).toBe(true);
+  });
+
+  it("gives the post-push loop its own round count after a pre-push run hit its cap", async () => {
+    const repo = buildSampleRepo();
+    const gh = new FakeGitHub(join(dirname(repo), "origin.git"));
+    gh.checks = [{ name: "tests", bucket: "pass", link: null, workflow: "ci" }];
+    const scenario = new Scenario();
+    const run = await RunController.create(
+      { runId: nextRunId(), projectId: "sample", repoPath: repo, roundCap: 2 },
+      { projectRoot: repo },
+      deps(scenario, gh),
+    );
+    await run.start();
+    expect(await run.settled()).toMatchObject({ status: "finished", stopReason: "round_cap" });
+    const fp = scenario.bugs.find((b) => b.id === "FP1")!;
+    gh.threads = [
+      {
+        id: "T2",
+        isResolved: false,
+        path: "shop/pricing.py",
+        line: 11,
+        startLine: null,
+        comments: [{ id: "c2", author: "Copilot", body: fp.title, url: null }],
+      },
+    ];
+    await run.push({});
+    const state = await run.settled();
+    expect(state.error).toBeUndefined();
+    // The disproved comment takes one post-push round; the next finds the pull request clean.
+    expect(state).toMatchObject({ status: "finished", stopReason: "pr_clean" });
+  });
+
+  it("records each reply as it goes, so a retry doesn't reply twice", async () => {
+    const repo = buildSampleRepo();
+    const gh = new FakeGitHub(join(dirname(repo), "origin.git"));
+    gh.checks = [{ name: "tests", bucket: "pass", link: null, workflow: "ci" }];
+    const scenario = new Scenario();
+    const fp = scenario.bugs.find((b) => b.id === "FP1")!;
+    gh.threads = ["T2", "T3"].map((id) => ({
+      id,
+      isResolved: false,
+      path: "shop/pricing.py",
+      line: 11,
+      startLine: null,
+      comments: [{ id: `c-${id}`, author: "Copilot", body: `${fp.title} (${id})`, url: null }],
+    }));
+    let failures = 0;
+    const resolve = gh.resolveThread.bind(gh);
+    gh.resolveThread = async (r, thread) => {
+      if (thread === "T3" && failures === 0) {
+        failures += 1;
+        throw new Error("GraphQL error");
+      }
+      return resolve(r, thread);
+    };
+    const run = await RunController.create(
+      { runId: nextRunId(), projectId: "sample", repoPath: repo, pipeline: "post-push" },
+      { projectRoot: repo },
+      deps(scenario, gh),
+    );
+    await run.start();
+    expect((await run.settled()).status).toBe("failed");
+    await run.start();
+    await run.settled();
+    expect(gh.replies.filter((r) => r.thread === "T2")).toHaveLength(1);
+    expect(gh.replies.filter((r) => r.thread === "T3")).toHaveLength(1);
+    expect([...gh.resolved].sort()).toEqual(["T2", "T3"]);
+  });
+});

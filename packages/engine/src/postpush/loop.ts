@@ -78,8 +78,12 @@ function strippedBase(ref: string): string {
   return ref.replace(/^refs\/heads\//, "").replace(/^origin\//, "");
 }
 
-/** Pushes the tip branch and opens or updates the pull request, with every guardrail. */
-async function stagePush(ctx: RunContext): Promise<PrInfo> {
+/**
+ * Pushes the tip branch and opens or updates the pull request, with every
+ * guardrail. With `requestReview` false (the final push before the run
+ * stops), it doesn't ask Copilot for another review.
+ */
+async function stagePush(ctx: RunContext, requestReview = true): Promise<PrInfo> {
   const gh = github(ctx);
   const repo = ctx.state.request.repoPath;
   const branch = ctx.eng.tipRef;
@@ -132,7 +136,8 @@ async function stagePush(ctx: RunContext): Promise<PrInfo> {
   ctx.state.prUrl = pr.url;
   const head = await ctx.git.head();
   ctx.state.tipSha = head;
-  if (ctx.eng.reviewRequestedFor !== head) {
+  ctx.eng.pushedHead = head;
+  if (requestReview && ctx.eng.reviewRequestedFor !== head) {
     await gh.requestCopilotReview(repo, pr.number);
     ctx.eng.reviewRequestedFor = head;
   }
@@ -341,40 +346,78 @@ async function stageImport(ctx: RunContext, poll: PollResult): Promise<ImportRec
   return record;
 }
 
-/** Replies to and resolves the threads of disproved or fixed comment findings. */
+/**
+ * Replies to and resolves the threads of disproved or fixed comment
+ * findings. Each reply and each resolve is recorded as soon as it succeeds,
+ * so a retry after a failure never replies twice. A "fixed" answer goes only
+ * to a finding whose fix is pushed.
+ */
 async function answerThreads(ctx: RunContext, kind: "disproved" | "fixed"): Promise<void> {
   const gh = github(ctx);
   const repo = ctx.state.request.repoPath;
-  const answered = new Set(ctx.eng.answeredThreads);
   for (const f of ctx.findings) {
-    if (
-      f.origin !== "pr_comment" ||
-      f.verdict !== kind ||
-      !f.externalRef ||
-      answered.has(f.externalRef.id)
-    )
-      continue;
-    const last = [...f.history].reverse().find((h) => h.verdict === kind);
-    const body =
-      kind === "disproved"
-        ? `Verified by an independent agent, which found this doesn't reproduce:\n\n${(last?.evidence ?? f.evidence).slice(0, 3000)}`
-        : `Fixed in ${f.fixCommit ?? ctx.state.tipSha ?? "the latest push"}.`;
-    await gh.replyToThread(repo, f.externalRef.id, body);
-    await gh.resolveThread(repo, f.externalRef.id);
-    answered.add(f.externalRef.id);
+    if (f.origin !== "pr_comment" || f.verdict !== kind || !f.externalRef) continue;
+    const thread = f.externalRef.id;
+    if (ctx.eng.resolvedThreads.includes(thread)) continue;
+    if (kind === "fixed" && !(await fixIsPushed(ctx, f))) continue;
+    if (!ctx.eng.answeredThreads.includes(thread)) {
+      const last = [...f.history].reverse().find((h) => h.verdict === kind);
+      const body =
+        kind === "disproved"
+          ? `Verified by an independent agent, which found this doesn't reproduce:\n\n${(last?.evidence ?? f.evidence).slice(0, 3000)}`
+          : `Fixed in ${f.fixCommit ?? ctx.eng.pushedHead ?? "the latest push"}.`;
+      await gh.replyToThread(repo, thread, body);
+      ctx.eng.answeredThreads = [...ctx.eng.answeredThreads, thread];
+      await ctx.persist();
+    }
+    await gh.resolveThread(repo, thread);
+    ctx.eng.resolvedThreads = [...ctx.eng.resolvedThreads, thread];
+    await ctx.persist();
   }
-  ctx.eng.answeredThreads = [...answered];
-  await ctx.persist();
 }
 
-async function endPostPushRound(ctx: RunContext): Promise<boolean> {
+/** True when the finding's fix commit is in the last push. */
+async function fixIsPushed(ctx: RunContext, f: Finding): Promise<boolean> {
+  const pushed = ctx.eng.pushedHead;
+  if (!pushed) return false;
+  if (!f.fixCommit || f.fixCommit === pushed) return true;
+  return ctx.git.ok(["merge-base", "--is-ancestor", f.fixCommit, pushed]);
+}
+
+/** Rounds since the post-push loop started; it has its own round cap. */
+function postPushRounds(ctx: RunContext): number {
+  return ctx.round - (ctx.eng.postPushStartRound ?? 0);
+}
+
+/**
+ * Finishes the run. Fixes committed since the last push are pushed first,
+ * and their threads answered, so no stop leaves a fix behind on the local
+ * branch. A rejected push raises `push_blocked` instead of finishing.
+ */
+async function finishPostPush(
+  ctx: RunContext,
+  reason: Parameters<typeof finish>[1],
+): Promise<void> {
+  if (ctx.eng.pushedHead !== null && (await ctx.git.head()) !== ctx.eng.pushedHead) {
+    await stagePush(ctx, false);
+    await answerThreads(ctx, "fixed");
+  }
+  await finish(ctx, reason);
+}
+
+async function closePostPushRound(ctx: RunContext): Promise<void> {
   const summary = buildRoundSummary(ctx, {}, 0);
   await ctx.store.saveRoundSummary(summary);
   ctx.eng.roundOpen = false;
   await ctx.persist();
   await ctx.emitRun(summary);
-  if (ctx.round >= ctx.state.request.roundCap) {
-    await finish(ctx, "round_cap");
+}
+
+/** Closes the round and finishes the run at the post-push round cap. Returns true when it finished. */
+async function endPostPushRound(ctx: RunContext): Promise<boolean> {
+  await closePostPushRound(ctx);
+  if (postPushRounds(ctx) >= ctx.state.request.roundCap) {
+    await finishPostPush(ctx, "round_cap");
     return true;
   }
   return false;
@@ -392,6 +435,8 @@ export async function drivePostPush(ctx: RunContext): Promise<void> {
       case "push": {
         await startRound(ctx);
         await stagePush(ctx);
+        // The fixes are on GitHub now, so their threads can say so.
+        await answerThreads(ctx, "fixed");
         await ctx.setStage("poll");
         break;
       }
@@ -406,14 +451,17 @@ export async function drivePostPush(ctx: RunContext): Promise<void> {
         const record = await stageImport(ctx, poll);
         const actionable = record.imported.length > 0;
         if (!actionable) {
-          await endPostPushRound(ctx);
-          if (ctx.state.status === "finished") return;
+          await closePostPushRound(ctx);
           if (record.failingCode.length === 0 && record.checksPassed) {
-            await finish(ctx, "pr_clean");
+            await finishPostPush(ctx, "pr_clean");
             return;
           }
           if (record.failingCode.length === 0 && record.nonCode.length > 0) {
-            await finish(ctx, "non_code_failures");
+            await finishPostPush(ctx, "non_code_failures");
+            return;
+          }
+          if (postPushRounds(ctx) >= ctx.state.request.roundCap) {
+            await finishPostPush(ctx, "round_cap");
             return;
           }
           if (record.failingCode.length === 0) {
@@ -478,7 +526,7 @@ export async function drivePostPush(ctx: RunContext): Promise<void> {
             `Fixed in ${f.fixCommit}; the gate passed.`,
           );
         }
-        await answerThreads(ctx, "fixed");
+        // The threads are answered after the next push, which carries the fixes.
         if (await endPostPushRound(ctx)) return;
         await ctx.setStage("push");
         break;

@@ -69,8 +69,14 @@ export const EngineStateSchema = z.object({
   roundUsage: z.record(VendorSchema, VendorStatsSchema).default({}),
   /** Post-push: external references already imported as findings. */
   importedRefs: z.array(z.string()).default([]),
-  /** Post-push: review threads the loop already replied to and resolved. */
+  /** Post-push: review threads the loop already replied to. */
   answeredThreads: z.array(z.string()).default([]),
+  /** Post-push: review threads the loop already resolved. */
+  resolvedThreads: z.array(z.string()).default([]),
+  /** Post-push: the round the post-push loop started after; its rounds count from there. */
+  postPushStartRound: z.number().int().nonnegative().nullable().default(null),
+  /** Post-push: the commit the loop last pushed. */
+  pushedHead: z.string().nullable().default(null),
   /** Post-push: the head SHA whose Copilot review the loop last requested. */
   reviewRequestedFor: z.string().nullable().default(null),
 });

@@ -373,6 +373,7 @@ export class RunController {
       );
     }
     ctx.eng.phase = "post-push";
+    ctx.eng.postPushStartRound = ctx.state.round;
     ctx.eng.push = { title: options.title ?? null, draft: options.draft ?? false };
     ctx.eng.roundOpen = false;
     ctx.state.decision = null;
