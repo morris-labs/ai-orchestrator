@@ -1,6 +1,6 @@
 // An in-memory `Core` for the API tests. It keeps projects, boxes, settings,
 // and SSH remotes in maps and records every call.
-import Database from "better-sqlite3";
+import { openDatabase } from "../../src/db/index.js";
 import {
   parseConfig,
   type Box,
@@ -51,7 +51,7 @@ export function createFakeCore(): FakeCore {
     get settingsValue() {
       return state.settings;
     },
-    db: new Database(":memory:"),
+    db: openDatabase(":memory:"),
     docker: {
       api: {} as Core["docker"]["api"],
       ping: async () => true,

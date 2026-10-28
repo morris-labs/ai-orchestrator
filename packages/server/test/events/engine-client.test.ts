@@ -1,10 +1,10 @@
+import { openDatabase } from "../../src/db/index.js";
 import {
   FindingSchema,
   type AgentBoxEvent,
   type Finding,
   type LeaseRequest,
 } from "@agentbox/contracts";
-import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { EngineClient, type StreamCursor } from "../../src/events/engine-client.js";
 import { EngineSupervisor, sqliteCursor } from "../../src/events/engines.js";
@@ -49,10 +49,7 @@ beforeEach(async () => {
   engine = await new FakeEngineServer().start();
   received = [];
   resyncs = 0;
-  const db = new Database(":memory:");
-  db.exec(
-    "CREATE TABLE svc_engine_cursors (container TEXT PRIMARY KEY, stream_id TEXT NOT NULL, last_seq INTEGER NOT NULL)",
-  );
+  const db = openDatabase(":memory:");
   cursor = sqliteCursor(db, CONTAINER);
 });
 
@@ -206,7 +203,7 @@ describe("EngineClient", () => {
 
 describe("EngineSupervisor", () => {
   it("starts a client per endpoint, relays, decides leases, and drops removed containers", async () => {
-    const db = new Database(":memory:");
+    const db = openDatabase(":memory:");
     const relayed: AgentBoxEvent[] = [];
     const runs: unknown[] = [];
     let endpoints = [
@@ -256,7 +253,7 @@ describe("EngineSupervisor", () => {
   });
 
   it("reloads runs and their findings and drops cached leases when the stream starts over", async () => {
-    const db = new Database(":memory:");
+    const db = openDatabase(":memory:");
     const mirror = new RunMirror(db);
     const finding = (id: string, verdict: Finding["verdict"]) =>
       FindingSchema.parse({

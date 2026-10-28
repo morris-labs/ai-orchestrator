@@ -9,32 +9,6 @@ import {
 } from "@agentbox/contracts";
 import type { SqlDatabase } from "../api/core-interface.js";
 
-const SCHEMA = `
-CREATE TABLE IF NOT EXISTS svc_usage_samples (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  time TEXT NOT NULL,
-  time_ms INTEGER NOT NULL,
-  vendor TEXT NOT NULL,
-  account TEXT NOT NULL,
-  window TEXT NOT NULL,
-  project_id TEXT,
-  json TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS svc_usage_samples_vendor ON svc_usage_samples (vendor, window, time_ms);
-CREATE TABLE IF NOT EXISTS svc_lease_settlements (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  time TEXT NOT NULL,
-  lease_id TEXT NOT NULL,
-  run_id TEXT NOT NULL,
-  vendor TEXT NOT NULL,
-  role TEXT NOT NULL,
-  tokens_in INTEGER NOT NULL,
-  tokens_out INTEGER NOT NULL,
-  premium_requests REAL NOT NULL,
-  cost_estimate REAL NOT NULL
-);
-`;
-
 type Row = { json: string };
 
 function parseRows(rows: unknown[]): TimedUsageSample[] {
@@ -42,9 +16,8 @@ function parseRows(rows: unknown[]): TimedUsageSample[] {
 }
 
 export class UsageStore {
-  constructor(private readonly db: SqlDatabase) {
-    db.exec(SCHEMA);
-  }
+  /** `db` comes from `openDatabase()`, whose migrations create its tables. */
+  constructor(private readonly db: SqlDatabase) {}
 
   /** Stores one sample. */
   record(sample: TimedUsageSample, projectId: string | null = null): void {

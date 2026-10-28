@@ -3,41 +3,20 @@
 // with the columns that queries need copied beside it.
 import {
   BoxSchema,
-  FindingSchema,
   GlobalSettingsInputSchema,
   GlobalSettingsSchema,
-  JobSchema,
   ProjectSchema,
-  RunStateSchema,
   SshRemoteSchema,
-  TimedUsageSampleSchema,
   defaultConfig,
   type Box,
-  type Finding,
   type GlobalSettings,
-  type Job,
   type Project,
-  type RunState,
   type SshRemote,
-  type TimedUsageSample,
-  type Vendor,
 } from "@agentbox/contracts";
 import type { Sqlite } from "./database.js";
 
 interface DataRow {
   data: string;
-}
-
-/** Builds a `WHERE` clause from the conditions whose value is defined. */
-function whereOf(conditions: [sql: string, value: string | number | undefined][]): {
-  sql: string;
-  args: (string | number)[];
-} {
-  const used = conditions.filter((c): c is [string, string | number] => c[1] !== undefined);
-  return {
-    sql: used.length ? `WHERE ${used.map((c) => c[0]).join(" AND ")}` : "",
-    args: used.map((c) => c[1]),
-  };
 }
 
 function parseRows<T>(rows: unknown[], parse: (v: unknown) => T): T[] {
@@ -283,148 +262,6 @@ export class EngineEndpointsRepo {
   }
 }
 
-/** The server's mirror of engine runs. W2 writes it; the core creates it. */
-export class RunsRepo {
-  constructor(private readonly db: Sqlite) {}
-
-  get(id: string): RunState | undefined {
-    const row = this.db.prepare("SELECT data FROM runs WHERE id = ?").get(id) as
-      DataRow | undefined;
-    return row ? RunStateSchema.parse(JSON.parse(row.data)) : undefined;
-  }
-
-  list(filter: { projectId?: string; boxId?: string; status?: string } = {}): RunState[] {
-    const w = whereOf([
-      ["project_id = ?", filter.projectId],
-      ["box_id = ?", filter.boxId],
-      ["status = ?", filter.status],
-    ]);
-    return parseRows(
-      this.db.prepare(`SELECT data FROM runs ${w.sql} ORDER BY id`).all(...w.args),
-      (v) => RunStateSchema.parse(v),
-    );
-  }
-
-  put(run: RunState): RunState {
-    const r = RunStateSchema.parse(run);
-    this.db
-      .prepare(
-        `INSERT INTO runs (id, project_id, box_id, container, status, data, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(id) DO UPDATE SET project_id = excluded.project_id, box_id = excluded.box_id,
-           container = excluded.container, status = excluded.status, data = excluded.data,
-           updated_at = excluded.updated_at`,
-      )
-      .run(
-        r.id,
-        r.projectId,
-        r.boxId ?? null,
-        r.container,
-        r.status,
-        JSON.stringify(r),
-        r.createdAt,
-        r.updatedAt,
-      );
-    return r;
-  }
-}
-
-export class FindingsRepo {
-  constructor(private readonly db: Sqlite) {}
-
-  list(
-    runId: string,
-    filter: { verdict?: string; severity?: string; round?: number } = {},
-  ): Finding[] {
-    const w = whereOf([
-      ["run_id = ?", runId],
-      ["verdict = ?", filter.verdict],
-      ["severity = ?", filter.severity],
-      ["round = ?", filter.round],
-    ]);
-    return parseRows(
-      this.db.prepare(`SELECT data FROM findings ${w.sql} ORDER BY finding_id`).all(...w.args),
-      (v) => FindingSchema.parse(v),
-    );
-  }
-
-  get(runId: string, findingId: string): Finding | undefined {
-    const row = this.db
-      .prepare("SELECT data FROM findings WHERE run_id = ? AND finding_id = ?")
-      .get(runId, findingId) as DataRow | undefined;
-    return row ? FindingSchema.parse(JSON.parse(row.data)) : undefined;
-  }
-
-  put(finding: Finding, now: Date): Finding {
-    const f = FindingSchema.parse(finding);
-    this.db
-      .prepare(
-        `INSERT INTO findings (run_id, finding_id, round, verdict, severity, data, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(run_id, finding_id) DO UPDATE SET round = excluded.round,
-           verdict = excluded.verdict, severity = excluded.severity, data = excluded.data,
-           updated_at = excluded.updated_at`,
-      )
-      .run(f.runId, f.id, f.round, f.verdict, f.severity, JSON.stringify(f), now.toISOString());
-    return f;
-  }
-}
-
-export class UsageSamplesRepo {
-  constructor(private readonly db: Sqlite) {}
-
-  add(sample: TimedUsageSample): TimedUsageSample {
-    const s = TimedUsageSampleSchema.parse(sample);
-    this.db
-      .prepare(
-        "INSERT INTO usage_samples (vendor, account, window, time, data) VALUES (?, ?, ?, ?, ?)",
-      )
-      .run(s.vendor, s.account, s.window, s.time, JSON.stringify(s));
-    return s;
-  }
-
-  list(filter: { vendor?: Vendor; since?: string; until?: string } = {}): TimedUsageSample[] {
-    const w = whereOf([
-      ["vendor = ?", filter.vendor],
-      ["time >= ?", filter.since],
-      ["time <= ?", filter.until],
-    ]);
-    return parseRows(
-      this.db.prepare(`SELECT data FROM usage_samples ${w.sql} ORDER BY time, id`).all(...w.args),
-      (v) => TimedUsageSampleSchema.parse(v),
-    );
-  }
-}
-
-export class JobsRepo {
-  constructor(private readonly db: Sqlite) {}
-
-  get(id: string): Job | undefined {
-    const row = this.db.prepare("SELECT data FROM jobs WHERE id = ?").get(id) as
-      DataRow | undefined;
-    return row ? JobSchema.parse(JSON.parse(row.data)) : undefined;
-  }
-
-  list(): Job[] {
-    return parseRows(this.db.prepare("SELECT data FROM jobs ORDER BY started_at, id").all(), (v) =>
-      JobSchema.parse(v),
-    );
-  }
-
-  put(job: Job): Job {
-    const j = JobSchema.parse(job);
-    this.db
-      .prepare(
-        `INSERT INTO jobs (id, kind, box_id, status, data, started_at, finished_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(id) DO UPDATE SET status = excluded.status, data = excluded.data,
-           finished_at = excluded.finished_at`,
-      )
-      .run(j.id, j.kind, j.boxId, j.status, JSON.stringify(j), j.startedAt, j.finishedAt);
-    return j;
-  }
-}
-
 export interface ImportRow {
   id: number;
   source: string;
@@ -465,10 +302,6 @@ export interface Repositories {
   sshRemotes: SshRemotesRepo;
   settings: SettingsRepo;
   engines: EngineEndpointsRepo;
-  runs: RunsRepo;
-  findings: FindingsRepo;
-  usage: UsageSamplesRepo;
-  jobs: JobsRepo;
   imports: ImportsRepo;
   /** Runs `fn` in one transaction. */
   transaction<T>(fn: () => T): T;
@@ -483,10 +316,6 @@ export function repositories(sqlite: Sqlite): Repositories {
     sshRemotes: new SshRemotesRepo(sqlite),
     settings: new SettingsRepo(sqlite),
     engines: new EngineEndpointsRepo(sqlite),
-    runs: new RunsRepo(sqlite),
-    findings: new FindingsRepo(sqlite),
-    usage: new UsageSamplesRepo(sqlite),
-    jobs: new JobsRepo(sqlite),
     imports: new ImportsRepo(sqlite),
     transaction: <T>(fn: () => T) => sqlite.transaction(fn)(),
     close: () => sqlite.close(),

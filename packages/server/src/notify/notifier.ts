@@ -12,15 +12,6 @@ import {
 } from "@agentbox/contracts";
 import type { EventInput, SqlDatabase } from "../api/core-interface.js";
 
-const SCHEMA = `
-CREATE TABLE IF NOT EXISTS svc_notifications (
-  seq INTEGER PRIMARY KEY AUTOINCREMENT,
-  id TEXT NOT NULL UNIQUE,
-  read INTEGER NOT NULL DEFAULT 0,
-  json TEXT NOT NULL
-);
-`;
-
 export interface NotifierOptions {
   db: SqlDatabase;
   settings: () => GlobalSettings;
@@ -34,9 +25,8 @@ export class Notifier {
   private readonly runStatus = new Map<string, RunStatus>();
   private readonly roundsSeen = new Set<string>();
 
-  constructor(private readonly opts: NotifierOptions) {
-    opts.db.exec(SCHEMA);
-  }
+  /** `opts.db` comes from `openDatabase()`, whose migrations create its tables. */
+  constructor(private readonly opts: NotifierOptions) {}
 
   private toggles(): NotificationToggles {
     return this.opts.settings().notifications;

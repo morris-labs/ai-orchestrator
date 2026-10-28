@@ -81,6 +81,33 @@ describe("database file modes", () => {
   });
 });
 
+describe("migration 3", () => {
+  it("drops the unused first-draft tables and creates the service tables", () => {
+    const db = new Database(":memory:");
+    db.exec(MIGRATIONS[0] as string);
+    db.pragma("user_version = 2");
+    migrate(db);
+    const tables = (
+      db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[]
+    ).map((t) => t.name);
+    for (const gone of ["runs", "findings", "usage_samples", "jobs"]) {
+      expect(tables).not.toContain(gone);
+    }
+    for (const svc of [
+      "svc_events",
+      "svc_event_meta",
+      "svc_engine_cursors",
+      "svc_runs",
+      "svc_findings",
+      "svc_notifications",
+      "svc_usage_samples",
+      "svc_lease_settlements",
+    ]) {
+      expect(tables).toContain(svc);
+    }
+  });
+});
+
 describe("migration 2", () => {
   it("re-keys host keys that two projects share and then refuses a duplicate", () => {
     const db = new Database(":memory:");
@@ -194,41 +221,12 @@ describe("repositories", () => {
     expect(r.engines.list()).toHaveLength(1);
   });
 
-  it("stores ssh remotes, jobs, imports, and usage samples", () => {
+  it("stores ssh remotes and imports", () => {
     const r = repositories(openDatabase(":memory:"));
     r.sshRemotes.put({ name: "lab", host: "dev@203.0.113.5", forwards: [] });
     expect(r.sshRemotes.list().map((x) => x.name)).toEqual(["lab"]);
-    r.jobs.put({
-      id: "job-1",
-      kind: "image_build",
-      boxId: null,
-      command: "docker build",
-      status: "running",
-      exitCode: null,
-      error: null,
-      result: null,
-      startedAt: T,
-      finishedAt: null,
-    });
-    r.jobs.put({ ...r.jobs.get("job-1")!, status: "finished", exitCode: 0, finishedAt: T });
-    expect(r.jobs.get("job-1")?.status).toBe("finished");
     r.imports.add("claude-box-3", { ok: true }, new Date(T));
     expect(r.imports.latest("claude-box-3")?.report).toEqual({ ok: true });
-    const sample = {
-      vendor: "claude" as const,
-      account: "dev@example.com",
-      window: "5h" as const,
-      utilization: 0.2,
-      spendUsd: null,
-      ceiling: { kind: "utilization" as const, window: "5h" as const, max: 0.6 },
-      resetAt: null,
-      sampleSource: "rate_limit_event" as const,
-      time: T,
-    };
-    r.usage.add(sample);
-    expect(r.usage.list({ vendor: "claude" })).toEqual([sample]);
-    expect(r.usage.list({ vendor: "codex" })).toEqual([]);
-    expect(r.usage.list({ since: "2026-10-29T00:00:00Z" })).toEqual([]);
   });
 
   it("runs work in one transaction", () => {

@@ -133,4 +133,71 @@ export const MIGRATIONS: readonly Migration[] = [
     rekeyDuplicateHostKeys(db);
     db.exec("CREATE UNIQUE INDEX boxes_host_key_unique ON boxes(host_key)");
   },
+  // 3: the service tables (event log, engine cursors, run and finding
+  // mirror, notifications, usage), which their modules created on their own
+  // before; and the first draft's run, finding, usage, and job tables, which
+  // nothing used. IF NOT EXISTS keeps service tables that a database
+  // already has.
+  `
+  DROP TABLE IF EXISTS runs;
+  DROP TABLE IF EXISTS findings;
+  DROP TABLE IF EXISTS usage_samples;
+  DROP TABLE IF EXISTS jobs;
+  CREATE TABLE IF NOT EXISTS svc_event_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+  CREATE TABLE IF NOT EXISTS svc_events (seq INTEGER PRIMARY KEY, type TEXT NOT NULL, json TEXT NOT NULL);
+  CREATE TABLE IF NOT EXISTS svc_engine_cursors (
+    container TEXT PRIMARY KEY,
+    stream_id TEXT NOT NULL,
+    last_seq INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS svc_runs (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    box_id TEXT,
+    container TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    json TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS svc_runs_box ON svc_runs (box_id, status);
+  CREATE TABLE IF NOT EXISTS svc_findings (
+    run_id TEXT NOT NULL,
+    finding_id TEXT NOT NULL,
+    round INTEGER NOT NULL,
+    verdict TEXT NOT NULL,
+    severity TEXT NOT NULL,
+    json TEXT NOT NULL,
+    PRIMARY KEY (run_id, finding_id)
+  );
+  CREATE TABLE IF NOT EXISTS svc_notifications (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    id TEXT NOT NULL UNIQUE,
+    read INTEGER NOT NULL DEFAULT 0,
+    json TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS svc_usage_samples (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    time TEXT NOT NULL,
+    time_ms INTEGER NOT NULL,
+    vendor TEXT NOT NULL,
+    account TEXT NOT NULL,
+    window TEXT NOT NULL,
+    project_id TEXT,
+    json TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS svc_usage_samples_vendor ON svc_usage_samples (vendor, window, time_ms);
+  CREATE TABLE IF NOT EXISTS svc_lease_settlements (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    time TEXT NOT NULL,
+    lease_id TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    vendor TEXT NOT NULL,
+    role TEXT NOT NULL,
+    tokens_in INTEGER NOT NULL,
+    tokens_out INTEGER NOT NULL,
+    premium_requests REAL NOT NULL,
+    cost_estimate REAL NOT NULL
+  );
+`,
 ];

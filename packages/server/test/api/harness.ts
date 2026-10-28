@@ -1,10 +1,10 @@
 // Builds an API server over the fake core and fake services.
+import { openDatabase } from "../../src/db/index.js";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { PassThrough, Duplex } from "node:stream";
 import type { EngineRouteKey, Job, RunState } from "@agentbox/contracts";
-import Database from "better-sqlite3";
 import type { ApiDeps, ApiEngine, ApiEngines } from "../../src/api/deps.js";
 import { ApiFailure } from "../../src/api/errors.js";
 import { createApiServer, type ApiServer } from "../../src/api/server.js";
@@ -187,7 +187,7 @@ export interface Harness {
 
 export async function createHarness(overrides: { proxy?: DevServerProxy } = {}): Promise<Harness> {
   const core = createFakeCore();
-  const db = new Database(":memory:");
+  const db = openDatabase(":memory:");
   const hub = new EventHub({ db });
   const jobs = new JobManager();
   const engine = defaultEngine();

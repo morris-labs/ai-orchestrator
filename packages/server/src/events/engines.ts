@@ -39,14 +39,6 @@ export interface EngineSupervisorOptions {
   createClient?(options: EngineClientOptions): EngineClient;
 }
 
-const SCHEMA = `
-CREATE TABLE IF NOT EXISTS svc_engine_cursors (
-  container TEXT PRIMARY KEY,
-  stream_id TEXT NOT NULL,
-  last_seq INTEGER NOT NULL
-);
-`;
-
 /** A `StreamCursor` stored in SQLite, one row per container. */
 export function sqliteCursor(db: SqlDatabase, container: string): StreamCursor {
   return {
@@ -74,9 +66,8 @@ export class EngineSupervisor {
   private timer: NodeJS.Timeout | null = null;
   private refreshing: Promise<void> | null = null;
 
-  constructor(private readonly options: EngineSupervisorOptions) {
-    options.db.exec(SCHEMA);
-  }
+  /** `options.db` comes from `openDatabase()`, whose migrations create its tables. */
+  constructor(private readonly options: EngineSupervisorOptions) {}
 
   /** Starts watching; the first refresh runs at once. */
   start(): void {
