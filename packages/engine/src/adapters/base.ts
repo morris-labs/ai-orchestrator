@@ -221,7 +221,7 @@ export function parseResetTime(text: string, now: Date): string | null {
   }
 
   // Codex: "Try again at 3:15 PM." The time is the machine's local time.
-  const clock = /try again at\s+(\d{1,2}):(\d{2})\s*([AaPp][Mm])?/.exec(text);
+  const clock = /try again at\s+(\d{1,2}):(\d{2})\s*([ap]m)?/i.exec(text);
   if (clock?.[1] && clock[2]) {
     let hours = Number(clock[1]) % 12;
     if (!clock[3]) hours = Number(clock[1]);

@@ -1,0 +1,2 @@
+{"type":"session.start","data":{"sessionId":"5f0c3a52-8d7e-4c1b-9a51-3a0b6f2e9d12","selectedModel":"gpt-5.1","copilotVersion":"1.0.105"},"id":"e1","timestamp":"2026-10-28T09:00:00.000Z","parentId":null}
+{"type":"session.error","data":{"errorType":"quota","errorCode":"quota_exceeded","message":"You have exceeded your Copilot AI credit budget for this month.","statusCode":402,"eligibleForAutoSwitch":false},"id":"e2","timestamp":"2026-10-28T09:00:01.000Z","parentId":"e1"}

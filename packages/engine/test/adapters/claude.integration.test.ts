@@ -2,7 +2,7 @@
 // cents, so it runs only with AGENTBOX_REAL_CLAUDE=1. Each run saves the raw
 // stream under fixtures/ for the fixture tests.
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { UsageSampleSchema } from "@agentbox/contracts";
 import { describe, expect, it } from "vitest";
@@ -12,6 +12,11 @@ import { VendorFindingsOutputSchema } from "../../src/adapters/output.js";
 
 const enabled = process.env.AGENTBOX_REAL_CLAUDE === "1";
 const fixtures = join(import.meta.dirname, "fixtures");
+
+/** Saves a raw stream as a fixture, with the home directory replaced. */
+function save(name: string, raw: string): void {
+  writeFileSync(join(fixtures, name), raw.split(homedir()).join("/home/user"));
+}
 
 describe.skipIf(!enabled)("Claude adapter against the real CLI", () => {
   const adapter = new ClaudeAdapter();
@@ -43,7 +48,7 @@ describe.skipIf(!enabled)("Claude adapter against the real CLI", () => {
       outputSchema: VendorFindingsOutputSchema,
       onUsage: (sample) => seen.push(sample),
     });
-    writeFileSync(join(fixtures, "claude-real-review.jsonl"), result.raw);
+    save("claude-real-review.jsonl", result.raw);
 
     expect(result.output.findings.length).toBeGreaterThanOrEqual(1);
     expect(result.output.findings[0]?.file).toBe("a.ts");
@@ -59,7 +64,8 @@ describe.skipIf(!enabled)("Claude adapter against the real CLI", () => {
   it("writes a file with tools set to write", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "agentbox-claude-fix-"));
     const result = await adapter.fix({
-      prompt: "Create a file named done.txt in the current directory containing the word fixed, then report done true.",
+      prompt:
+        "Create a file named done.txt in the current directory containing the word fixed, then report done true.",
       cwd,
       tools: "write",
       model,
@@ -69,7 +75,7 @@ describe.skipIf(!enabled)("Claude adapter against the real CLI", () => {
       timeoutMs: 120_000,
       outputSchema: z.object({ done: z.boolean() }),
     });
-    writeFileSync(join(fixtures, "claude-real-fix.jsonl"), result.raw);
+    save("claude-real-fix.jsonl", result.raw);
     expect(result.output.done).toBe(true);
     expect(readFileSync(join(cwd, "done.txt"), "utf8")).toContain("fixed");
   }, 150_000);

@@ -1,0 +1,109 @@
+#!/usr/bin/env node
+// A stand-in for `claude -p --output-format stream-json --verbose`, driven by
+// MOCK_CLI_SCENARIO. Its lines copy the shapes the real CLI printed (Claude
+// Code 2.1.310). See README.md.
+import { answerText, loadScenario, logCall, newId, pickResponse, readStdin, sleep, writeFiles } from "../lib/scenario.mjs";
+
+const VALUE_FLAGS = new Set(["--output-format", "--model", "--effort", "--max-turns", "--max-budget-usd", "--resume", "-r", "--session-id", "--append-system-prompt", "--system-prompt", "--json-schema", "--tools", "--allowedTools", "--allowed-tools", "--disallowedTools", "--disallowed-tools", "--permission-mode", "--permission-prompts", "--fallback-model", "--add-dir"]);
+const BOOL_FLAGS = new Set(["-p", "--print", "--verbose", "--bare", "--no-session-persistence", "--strict-mcp-config"]);
+
+const argv = process.argv.slice(2);
+if (argv.includes("--version") || argv.includes("-v")) {
+  console.log("2.1.310 (Claude Code mock)");
+  process.exit(0);
+}
+const flags = {};
+const positionals = [];
+for (let i = 0; i < argv.length; i += 1) {
+  const arg = argv[i];
+  if (VALUE_FLAGS.has(arg)) flags[arg] = argv[(i += 1)];
+  else if (BOOL_FLAGS.has(arg)) flags[arg] = true;
+  else if (arg.startsWith("-")) {
+    console.error(`error: unknown option '${arg}'`);
+    process.exit(1);
+  } else positionals.push(arg);
+}
+if (!flags["-p"] && !flags["--print"]) {
+  console.error("mock claude: only print mode (-p) is supported");
+  process.exit(1);
+}
+const prompt = positionals[0] ?? readStdin();
+const model = flags["--model"] ?? "claude-opus-5-5";
+const sessionId = flags["--resume"] ?? flags["-r"] ?? flags["--session-id"] ?? newId();
+const stream = flags["--output-format"] === "stream-json";
+const readOnly = flags["--permission-mode"] === "dontAsk" || flags["--permission-mode"] === "plan";
+
+const scenario = loadScenario("claude");
+const picked = pickResponse("claude", scenario, prompt);
+logCall("claude", { argv, prompt, responseIndex: picked?.index ?? -1, model, sessionId, readOnly });
+
+const emit = (obj) => stream && process.stdout.write(`${JSON.stringify(obj)}\n`);
+emit({ type: "system", subtype: "init", cwd: process.cwd(), session_id: sessionId, tools: [], model, permissionMode: flags["--permission-mode"] ?? "default", uuid: newId() });
+
+const response = picked?.response ?? { error: "crash", errorMessage: "mock claude: the scenario has no response for this prompt" };
+if (response.delayMs) await sleep(response.delayMs);
+if (response.stderr) process.stderr.write(response.stderr);
+
+const now = Math.floor(Date.now() / 1000);
+const fiveHour = response.rateLimits?.primary ?? 21;
+const sevenDay = response.rateLimits?.secondary ?? 53;
+const rejected = response.error === "usage_limit";
+const rateLimitEvent = {
+  type: "rate_limit_event",
+  rate_limit_info: {
+    status: rejected ? "rejected" : "allowed",
+    resetsAt: now + 3600,
+    rateLimitType: "five_hour",
+    isUsingOverage: false,
+    unifiedWindows: {
+      five_hour: { utilization: rejected ? 1 : fiveHour / 100, resetsAt: now + 3600, status: rejected ? "rejected" : "allowed" },
+      seven_day: { utilization: sevenDay / 100, resetsAt: now + 86400 * 3, status: "allowed" },
+    },
+  },
+  uuid: newId(),
+  session_id: sessionId,
+};
+
+const tokens = response.tokens ?? { input: 1500, output: 90 };
+const cost = response.costUsd ?? 0.0123;
+const usageBlock = { input_tokens: tokens.input, output_tokens: tokens.output, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
+const modelUsage = { [model]: { inputTokens: tokens.input, outputTokens: tokens.output, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, costUSD: cost } };
+
+if (response.error) {
+  const texts = {
+    usage_limit: "You've hit your limit · resets 3pm (UTC)",
+    rate_limit: "API Error: 429 rate_limit_error",
+    auth: "Not logged in · Please run /login",
+    crash: response.errorMessage ?? "API Error: 500 Internal server error",
+  };
+  const text = response.errorMessage ?? texts[response.error] ?? response.error;
+  const errorCode = { usage_limit: "rate_limit", rate_limit: "rate_limit", auth: "authentication_failed" }[response.error] ?? "unknown";
+  emit({ type: "assistant", message: { model: "<synthetic>", role: "assistant", content: [{ type: "text", text }], usage: usageBlock }, session_id: sessionId, error: errorCode, is_api_error_message: true });
+  if (response.error !== "auth") emit(rateLimitEvent);
+  emit({ type: "result", subtype: "success", is_error: true, terminal_reason: "api_error", result: text, session_id: sessionId, total_cost_usd: 0, usage: usageBlock, modelUsage: {}, num_turns: 1 });
+  if (!stream) console.error(text);
+  process.exit(response.exitCode ?? 1);
+}
+
+if (!readOnly && response.writeFiles) writeFiles(response);
+const text = answerText(response);
+let structured;
+if (flags["--json-schema"] && typeof response.text !== "string") structured = response.output ?? { findings: [] };
+emit({ type: "assistant", message: { model, role: "assistant", content: [{ type: "text", text }], usage: usageBlock }, session_id: sessionId });
+emit(rateLimitEvent);
+emit({
+  type: "result",
+  subtype: "success",
+  is_error: false,
+  terminal_reason: "completed",
+  result: text,
+  ...(structured === undefined ? {} : { structured_output: structured }),
+  session_id: sessionId,
+  total_cost_usd: cost,
+  usage: usageBlock,
+  modelUsage,
+  num_turns: 2,
+  uuid: newId(),
+});
+if (!stream) process.stdout.write(`${text}\n`);
+process.exit(response.exitCode ?? 0);
