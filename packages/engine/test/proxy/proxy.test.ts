@@ -20,6 +20,11 @@ describe("parseProxyUrl", () => {
     expect(parseProxyUrl("/proxy/80/a?token=app", "t")).toEqual({ port: 80, path: "/a?token=app" });
   });
 
+  it("drops an encoded token key too", () => {
+    expect(parseProxyUrl("/proxy/80/a?%74oken=t&x=1", "t")).toEqual({ port: 80, path: "/a?x=1" });
+    expect(parseProxyUrl("/proxy/80/a?token=%74", "t")).toEqual({ port: 80, path: "/a" });
+  });
+
   it("rejects other URLs and bad ports", () => {
     expect(parseProxyUrl("/proxy/abc/")).toBeNull();
     expect(parseProxyUrl("/proxy/0/")).toBeNull();
@@ -35,6 +40,7 @@ describe("proxy", () => {
   const seen: { method?: string; url?: string; headers: http.IncomingHttpHeaders; body: string }[] =
     [];
   let engine: Awaited<ReturnType<typeof listenEngine>>;
+  const wsHeaders: http.IncomingHttpHeaders[] = [];
 
   beforeAll(async () => {
     upstream = http.createServer((req, res) => {
@@ -48,6 +54,7 @@ describe("proxy", () => {
     });
     wss = new WebSocketServer({ server: upstream });
     wss.on("connection", (socket, req) => {
+      wsHeaders.push(req.headers);
       socket.send(`hello ${req.url}`);
       socket.on("message", (m) => socket.send(`echo ${m.toString()}`));
     });
@@ -78,6 +85,45 @@ describe("proxy", () => {
     expect(seen[0]?.headers["x-custom"]).toBe("kept");
     expect(seen[0]?.headers.host).toBe(`127.0.0.1:${engine.port}`);
     expect(seen[0]?.headers.authorization).toBeUndefined();
+  });
+
+  it("accepts the engine-token header and passes the browser's Authorization through", async () => {
+    const res = await fetch(`${engine.base}/proxy/${upstreamPort}/app`, {
+      headers: { "x-agentbox-engine-token": TOKEN, authorization: "Basic YXBwOmFwcA==" },
+    });
+    expect(res.status).toBe(201);
+    expect(seen[0]?.headers.authorization).toBe("Basic YXBwOmFwcA==");
+    expect(seen[0]?.headers["x-agentbox-engine-token"]).toBeUndefined();
+  });
+
+  it("refuses a wrong engine-token header", async () => {
+    const res = await fetch(`${engine.base}/proxy/${upstreamPort}/`, {
+      headers: { "x-agentbox-engine-token": "wrong-token-0123456789" },
+    });
+    expect(res.status).toBe(401);
+    expect(seen).toHaveLength(0);
+  });
+
+  it("strips the engine token in every bearer spelling it accepts", async () => {
+    const res = await fetch(`${engine.base}/proxy/${upstreamPort}/`, {
+      headers: { authorization: `bearer   ${TOKEN}` },
+    });
+    expect(res.status).toBe(201);
+    expect(seen[0]?.headers.authorization).toBeUndefined();
+  });
+
+  it("strips the engine-token header from a WebSocket upgrade", async () => {
+    const socket = new WebSocket(`${engine.ws}/proxy/${upstreamPort}/`, {
+      headers: { "x-agentbox-engine-token": TOKEN, authorization: "Basic YXBwOmFwcA==" },
+    });
+    await new Promise<void>((resolve, reject) => {
+      socket.once("message", () => resolve());
+      socket.on("error", reject);
+    });
+    socket.close();
+    const headers = wsHeaders.at(-1);
+    expect(headers?.["x-agentbox-engine-token"]).toBeUndefined();
+    expect(headers?.authorization).toBe("Basic YXBwOmFwcA==");
   });
 
   it("refuses a request whose Authorization header isn't the engine token", async () => {

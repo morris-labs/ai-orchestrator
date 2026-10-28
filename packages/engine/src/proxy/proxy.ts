@@ -5,6 +5,7 @@ import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import net from "node:net";
 import type { Duplex } from "node:stream";
 import type { ApiError } from "@agentbox/contracts";
+import { ENGINE_TOKEN_HEADER, isEngineBearer, tokensEqual } from "../api/auth.js";
 import type { Logger } from "../api/core-interface.js";
 
 export const PROXY_PREFIX = "/proxy/";
@@ -28,30 +29,45 @@ export function parseProxyUrl(url: string, engineToken?: string): ProxyTarget | 
   if (port < 1 || port > 65535) return null;
   let query = m[3] ?? "";
   if (engineToken !== undefined && query !== "") {
+    // Each pair is decoded the way `isAuthorized` reads the query, so an
+    // encoded key such as `%74oken` is stripped too. Other pairs pass as sent.
     const kept = query
       .slice(1)
       .split("&")
       .filter((pair) => {
-        const [k, v = ""] = pair.split("=");
-        if (k !== "token") return true;
-        try {
-          return decodeURIComponent(v) !== engineToken;
-        } catch {
-          return true;
+        for (const [k, v] of new URLSearchParams(pair)) {
+          if (k === "token" && tokensEqual(v, engineToken)) return false;
         }
+        return true;
       });
     query = kept.length > 0 ? `?${kept.join("&")}` : "";
   }
   return { port, path: `${m[2] ?? "/"}${query}` };
 }
 
-/** Copies the headers, minus an `Authorization` header that carries the engine token. */
+/** True when a header carries the engine's credential and must not go upstream. */
+export function isEngineCredential(name: string, value: string, engineToken: string): boolean {
+  const n = name.toLowerCase();
+  if (n === ENGINE_TOKEN_HEADER) return true;
+  return n === "authorization" && isEngineBearer(value, engineToken);
+}
+
+/**
+ * Copies the headers, minus the engine's credential: the
+ * `x-agentbox-engine-token` header, and an `Authorization` header that
+ * carries the engine token in any spelling the engine accepts. The browser's
+ * own `Authorization` header passes through.
+ */
 export function forwardHeaders(
   req: IncomingMessage,
   engineToken: string,
 ): http.OutgoingHttpHeaders {
   const headers: http.OutgoingHttpHeaders = { ...req.headers };
-  if (headers.authorization === `Bearer ${engineToken}`) delete headers.authorization;
+  delete headers[ENGINE_TOKEN_HEADER];
+  const auth = headers.authorization;
+  if (typeof auth === "string" && isEngineCredential("authorization", auth, engineToken)) {
+    delete headers.authorization;
+  }
   return headers;
 }
 
@@ -131,9 +147,7 @@ export function proxyUpgrade(
     for (let i = 0; i < req.rawHeaders.length; i += 2) {
       const name = req.rawHeaders[i] as string;
       const value = req.rawHeaders[i + 1] as string;
-      if (name.toLowerCase() === "authorization" && value === `Bearer ${options.engineToken}`) {
-        continue;
-      }
+      if (isEngineCredential(name, value, options.engineToken)) continue;
       lines.push(`${name}: ${value}`);
     }
     upstream.write(`${lines.join("\r\n")}\r\n\r\n`);
