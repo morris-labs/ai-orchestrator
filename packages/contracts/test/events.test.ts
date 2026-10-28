@@ -64,6 +64,20 @@ describe("events", () => {
     expect(EventSchema.safeParse({ ...events[5], utilization: -0.1 }).success).toBe(false);
   });
 
+  it("keeps the stream source on a usage sample apart from the sample source", () => {
+    const parsed = EventSchema.parse(events[5]);
+    expect(parsed).toMatchObject({ source: events[5]!.source, sampleSource: "rate_limit_event" });
+    expect(EventSchema.safeParse({ ...events[5], source: "rate_limit_event" }).success).toBe(false);
+    const { sampleSource: _s, ...withoutSampleSource } = events[5] as Record<string, unknown>;
+    expect(EventSchema.safeParse(withoutSampleSource).success).toBe(false);
+  });
+
+  it("accepts optional AI credits on a finished agent", () => {
+    expect(EventSchema.parse({ ...events[1], aiCredits: 2 })).toMatchObject({ aiCredits: 2 });
+    expect(EventSchema.parse(events[1])).not.toHaveProperty("aiCredits");
+    expect(EventSchema.safeParse({ ...events[1], aiCredits: -1 }).success).toBe(false);
+  });
+
   it("requires the ceiling on every usage sample", () => {
     const { ceiling: _c, ...withoutCeiling } = events[5] as Record<string, unknown>;
     expect(EventSchema.safeParse(withoutCeiling).success).toBe(false);

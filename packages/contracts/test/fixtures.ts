@@ -330,7 +330,7 @@ export const events = [
     spendUsd: null,
     ceiling: claudeCeiling,
     resetAt: T1,
-    source: "rate_limit_event",
+    sampleSource: "rate_limit_event",
   },
   {
     ...ev(7),

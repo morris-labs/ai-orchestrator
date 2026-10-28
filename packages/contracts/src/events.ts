@@ -82,7 +82,12 @@ export const UsageSampleSchema = z.object({
   /** The ceiling in force for this vendor when the sample was taken. */
   ceiling: CeilingSchema,
   resetAt: IsoDateTimeSchema.nullable(),
-  source: UsageSourceSchema,
+  /**
+   * Where the reading came from. Named `sampleSource` so that the
+   * `usage.sample` event, which spreads these fields, keeps `source` for the
+   * stream source.
+   */
+  sampleSource: UsageSourceSchema,
 });
 export type UsageSample = z.infer<typeof UsageSampleSchema>;
 
