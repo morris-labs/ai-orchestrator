@@ -133,7 +133,7 @@ function updateTray() {
       {
         label: "Review",
         click: () => {
-          void detached(process.env.AGENTBOX_REVIEW_BIN ?? "agentbox-review", []);
+          void detached(process.env.AGENTBOX_REVIEW_BIN || "agentbox-review", []);
         },
       },
       { type: "separator" },

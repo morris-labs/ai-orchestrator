@@ -91,8 +91,13 @@ describe("notifications and review", () => {
     expect(reviewQuery("p-1", "claude-agent-x")).toBe("?project=p-1&box=claude-agent-x");
     expect(reviewCommand("p", "b")).toEqual({
       file: "agentbox-review",
-      args: ["--query=?project=p&box=b"],
+      args: ["--project=p", "--box=b"],
     });
+    expect(reviewCommand("p", "b", "/opt/agentbox/review")).toEqual({
+      file: "/opt/agentbox/review",
+      args: ["--project=p", "--box=b"],
+    });
+    expect(reviewCommand("p", "b", "").file).toBe("agentbox-review");
   });
   it("reads the server URL from the environment", () => {
     expect(serverUrl({})).toBe("http://127.0.0.1:20400");

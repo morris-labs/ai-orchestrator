@@ -16,6 +16,11 @@ describe("parseDeepLink", () => {
     [["app", "agentbox-review://launch?project=p1&box=b1"], { project: "p1", box: "b1" }],
     [["app", "?project=p1"], { project: "p1", box: null }],
     [["app", "--box=claude-agent-x"], { project: null, box: "claude-agent-x" }],
+    // What the boxes app passes for Start Review.
+    [
+      ["agentbox-review", "--project=example-app-1a2b3c4d", "--box=claude-agent-x"],
+      { project: "example-app-1a2b3c4d", box: "claude-agent-x" },
+    ],
     [["app", "--project=", "--box="], null],
     [["app", "agentbox-review://launch"], null],
   ])("%j", (argv, want) => {

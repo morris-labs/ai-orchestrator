@@ -141,18 +141,26 @@ export function isBoxNotification(n: Pick<Notification, "kind" | "runId" | "boxI
   return BOX_NOTIFICATION_KINDS.includes(n.kind) || (n.runId === null && n.boxId !== null);
 }
 
-/** The `?project=&box=` query the review app reads to prefill its launcher. */
+/** The `?project=&box=` query the review app's page reads to prefill its launcher. */
 export function reviewQuery(projectId: string, boxId: string): string {
   return `?${new URLSearchParams({ project: projectId, box: boxId }).toString()}`;
 }
 
-/** The argv that launches the review app with the launcher prefilled. */
+/**
+ * The argv that launches the review app with the launcher prefilled. The
+ * review app also takes an `agentbox-review://launch?project=&box=` URL or a
+ * bare `?project=&box=` query; the flags are the form this app uses.
+ * `binary` comes from `AGENTBOX_REVIEW_BIN` when it is set.
+ */
 export function reviewCommand(
   projectId: string,
   boxId: string,
-  binary = "agentbox-review",
+  binary: string | undefined = undefined,
 ): { file: string; args: string[] } {
-  return { file: binary, args: [`--query=${reviewQuery(projectId, boxId)}`] };
+  return {
+    file: binary || "agentbox-review",
+    args: [`--project=${projectId}`, `--box=${boxId}`],
+  };
 }
 
 /** The server origin from the environment: `AGENTBOX_SERVER_URL`, else the default port. */
