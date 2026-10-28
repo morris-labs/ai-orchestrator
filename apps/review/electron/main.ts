@@ -13,7 +13,16 @@ import {
   GlobalSettingsSchema,
   type NotificationToggles,
 } from "@agentbox/contracts";
-import { BrowserWindow, Menu, Notification, Tray, app, ipcMain, nativeImage, shell } from "electron";
+import {
+  BrowserWindow,
+  Menu,
+  Notification,
+  Tray,
+  app,
+  ipcMain,
+  nativeImage,
+  shell,
+} from "electron";
 import { z } from "zod";
 import {
   ActiveRuns,
@@ -32,7 +41,9 @@ function readServerConfig(): { serverUrl: string; token: string | null } {
   const home = homedir();
   let port = DEFAULT_SERVER_PORT;
   try {
-    const cfg = JSON.parse(readFileSync(join(home, HOME_PATHS.config), "utf8")) as { serverPort?: number };
+    const cfg = JSON.parse(readFileSync(join(home, HOME_PATHS.config), "utf8")) as {
+      serverPort?: number;
+    };
     if (typeof cfg.serverPort === "number") port = cfg.serverPort;
   } catch {
     // No config file: the default port applies.
@@ -53,12 +64,20 @@ const config = readServerConfig();
 let win: BrowserWindow | null = null;
 let tray: Tray | null = null;
 const active = new ActiveRuns();
-let toggles: NotificationToggles = { decisionNeeded: true, runFinished: true, boxEnded: true, roundSummary: true };
+let toggles: NotificationToggles = {
+  decisionNeeded: true,
+  runFinished: true,
+  boxEnded: true,
+  roundSummary: true,
+};
 
 async function api(path: string, init: RequestInit = {}): Promise<unknown> {
   const res = await fetch(`${config.serverUrl}${path}`, {
     ...init,
-    headers: { ...(config.token ? { authorization: `Bearer ${config.token}` } : {}), ...init.headers },
+    headers: {
+      ...(config.token ? { authorization: `Bearer ${config.token}` } : {}),
+      ...init.headers,
+    },
   });
   if (!res.ok) throw new Error(`${init.method ?? "GET"} ${path} answered ${res.status}.`);
   return res.status === 204 ? null : res.json();
@@ -156,12 +175,16 @@ function connectEvents(attempt = 0) {
     if (active.apply(event)) updateTray();
     const notice = noticeFor(event, toggles);
     if (notice && Notification.isSupported()) {
-      const n = new Notification({ title: notice.title, body: notice.body, urgency: notice.urgent ? "critical" : "normal" });
+      const n = new Notification({
+        title: notice.title,
+        body: notice.body,
+        urgency: notice.urgent ? "critical" : "normal",
+      });
       n.on("click", () => {
         show(notice.hash);
-        void api(`/api/v1/notifications/${encodeURIComponent(notice.notificationId)}/read`, { method: "POST" }).catch(
-          () => undefined,
-        );
+        void api(`/api/v1/notifications/${encodeURIComponent(notice.notificationId)}/read`, {
+          method: "POST",
+        }).catch(() => undefined);
       });
       n.show();
     }

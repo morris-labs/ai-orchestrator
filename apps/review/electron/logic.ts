@@ -1,10 +1,7 @@
 // The Electron main process's decisions, kept free of Electron so the tests
 // run in Node: deep links, the renderer URL, the active-run count, which
 // notifications to show, and the tray bitmap.
-import {
-  ACTIVE_STATUSES_FOR_TRAY,
-  type DeepLink,
-} from "./types.js";
+import { ACTIVE_STATUSES_FOR_TRAY, type DeepLink } from "./types.js";
 import type { AgentBoxEvent, NotificationToggles, RunState } from "@agentbox/contracts";
 
 export { ACTIVE_STATUSES_FOR_TRAY, type DeepLink };
@@ -96,7 +93,10 @@ export interface DesktopNotice {
  * this app doesn't show its kind or the person turned the kind off. Box
  * notifications belong to the boxes app.
  */
-export function noticeFor(event: AgentBoxEvent, toggles: NotificationToggles): DesktopNotice | null {
+export function noticeFor(
+  event: AgentBoxEvent,
+  toggles: NotificationToggles,
+): DesktopNotice | null {
   if (event.type !== "notification" || event.read) return null;
   const toggle: Record<string, keyof NotificationToggles> = {
     decision_needed: "decisionNeeded",

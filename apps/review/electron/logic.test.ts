@@ -34,7 +34,8 @@ describe("renderer URLs", () => {
 });
 
 const run = (id: string, status: RunState["status"]) => ({ id, status }) as RunState;
-const changed = (r: RunState) => ({ type: "run.changed", run: r, roundSummary: null }) as unknown as AgentBoxEvent;
+const changed = (r: RunState) =>
+  ({ type: "run.changed", run: r, roundSummary: null }) as unknown as AgentBoxEvent;
 
 describe("ActiveRuns", () => {
   it("counts active runs from the list and the events", () => {
@@ -90,13 +91,17 @@ describe("tray", () => {
   });
 
   it("draws a ring when idle and a filled badge with digits when busy", () => {
-    const px = (buf: Buffer, x: number, y: number) => [...buf.subarray((y * 32 + x) * 4, (y * 32 + x) * 4 + 4)];
+    const px = (buf: Buffer, x: number, y: number) => [
+      ...buf.subarray((y * 32 + x) * 4, (y * 32 + x) * 4 + 4),
+    ];
     const idle = trayBitmap(0);
     const busy = trayBitmap(12);
     expect(idle).toHaveLength(32 * 32 * 4);
     expect(px(idle, 16, 16)[3]).toBe(0);
     expect(px(idle, 16, 1)[3]).toBe(255);
-    const white = [...Array(32 * 32).keys()].filter((i) => busy[i * 4] === 255 && busy[i * 4 + 1] === 255);
+    const white = [...Array(32 * 32).keys()].filter(
+      (i) => busy[i * 4] === 255 && busy[i * 4 + 1] === 255,
+    );
     expect(white.length).toBeGreaterThan(10);
   });
 });

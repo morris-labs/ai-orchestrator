@@ -61,7 +61,11 @@ describe("App with the scripted event stream", () => {
     expect(screen.getByText(`${events.length} events`)).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Fleet" })).toHaveTextContent("Connected");
 
-    fireEvent.click(within(screen.getByRole("region", { name: "Fleet" })).getByRole("button", { name: lastRun().id.slice(-6) }));
+    fireEvent.click(
+      within(screen.getByRole("region", { name: "Fleet" })).getByRole("button", {
+        name: lastRun().id.slice(-6),
+      }),
+    );
     await waitFor(() => expect(window.location.hash).toBe(`#/runs/${lastRun().id}`));
     store.stop();
   });

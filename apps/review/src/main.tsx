@@ -8,7 +8,9 @@ import { AppStore, StoreContext } from "./state/store.js";
 import "./styles.css";
 
 const b = bridge();
-const store = new AppStore(createApiClient({ baseUrl: b?.serverUrl ?? "", token: b?.token ?? null }));
+const store = new AppStore(
+  createApiClient({ baseUrl: b?.serverUrl ?? "", token: b?.token ?? null }),
+);
 store.start();
 
 createRoot(document.getElementById("root")!).render(

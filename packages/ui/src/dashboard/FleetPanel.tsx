@@ -50,7 +50,9 @@ export function FleetPanel({
         <p className="ab-sub">{rows.length} containers</p>
       </header>
       {rows.length === 0 ? (
-        <p className="ab-empty">No container has reported yet. Containers appear with their first stats sample.</p>
+        <p className="ab-empty">
+          No container has reported yet. Containers appear with their first stats sample.
+        </p>
       ) : (
         <div className="ab-table-wrap">
           <table className="ab-table">
@@ -107,8 +109,14 @@ export function FleetPanel({
                     </td>
                     <td>
                       <Meter
-                        value={r.container.cpuPercent === null ? null : r.container.cpuPercent / 100}
-                        label={r.container.cpuPercent === null ? "–" : `${r.container.cpuPercent.toFixed(1)}%`}
+                        value={
+                          r.container.cpuPercent === null ? null : r.container.cpuPercent / 100
+                        }
+                        label={
+                          r.container.cpuPercent === null
+                            ? "–"
+                            : `${r.container.cpuPercent.toFixed(1)}%`
+                        }
                       />
                     </td>
                     <td>

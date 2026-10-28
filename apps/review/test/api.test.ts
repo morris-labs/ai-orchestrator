@@ -28,7 +28,10 @@ describe("createApiClient", () => {
     const server = createMockServer({ "findings.waive": (c) => ({ ...lastRun(), body: c.body }) });
     const api = createApiClient({ fetch: server.fetch });
     await expect(
-      api.call("findings.waive", { params: { runId: RUN_ID, findingId: "F-0001" }, body: { reason: "" } }),
+      api.call("findings.waive", {
+        params: { runId: RUN_ID, findingId: "F-0001" },
+        body: { reason: "" },
+      }),
     ).rejects.toThrow();
     expect(server.calls).toHaveLength(0);
   });
@@ -51,7 +54,9 @@ describe("createApiClient", () => {
   it("rejects a response that breaks the contract", async () => {
     const server = createMockServer({ "runs.get": () => ({ id: "nope" }) });
     const api = createApiClient({ fetch: server.fetch });
-    await expect(api.call("runs.get", { params: { runId: RUN_ID } })).rejects.toMatchObject({ code: "bad_response" });
+    await expect(api.call("runs.get", { params: { runId: RUN_ID } })).rejects.toMatchObject({
+      code: "bad_response",
+    });
   });
 
   it("reports a network failure", async () => {

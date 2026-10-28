@@ -46,8 +46,7 @@ export function fleetRows(state: DashboardState): FleetRow[] {
             round: r.round,
             status: r.run!.status,
           })),
-        memFraction:
-          c.memBytes !== null && c.memLimitBytes ? c.memBytes / c.memLimitBytes : null,
+        memFraction: c.memBytes !== null && c.memLimitBytes ? c.memBytes / c.memLimitBytes : null,
       };
     });
 }

@@ -49,7 +49,9 @@ export function eventStreamUrl(
 ): string {
   const origin =
     baseUrl ||
-    (typeof location !== "undefined" ? `${location.protocol}//${location.host}` : "http://127.0.0.1:20400");
+    (typeof location !== "undefined"
+      ? `${location.protocol}//${location.host}`
+      : "http://127.0.0.1:20400");
   const wsOrigin = origin.replace(/^http/, "ws").replace(/\/$/, "");
   return `${wsOrigin}${serverRoutes["events.stream"].path}${toSearch({
     types: types && types.length > 0 ? types.join(",") : undefined,

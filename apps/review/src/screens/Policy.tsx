@@ -26,14 +26,18 @@ function CommandList({
             aria-label={`${label} ${i + 1} command`}
             value={c.command}
             placeholder="npm test"
-            onChange={(e) => onChange(items.map((x, j) => (j === i ? { ...x, command: e.target.value } : x)))}
+            onChange={(e) =>
+              onChange(items.map((x, j) => (j === i ? { ...x, command: e.target.value } : x)))
+            }
           />
           <input
             aria-label={`${label} ${i + 1} directory`}
             value={c.cwd ?? ""}
             placeholder="Repository root"
             onChange={(e) =>
-              onChange(items.map((x, j) => (j === i ? { ...x, cwd: e.target.value || undefined } : x)))
+              onChange(
+                items.map((x, j) => (j === i ? { ...x, cwd: e.target.value || undefined } : x)),
+              )
             }
           />
           <button type="button" onClick={() => onChange(items.filter((_, j) => j !== i))}>
@@ -48,7 +52,13 @@ function CommandList({
   );
 }
 
-function RuleList({ rules, onChange }: { rules: PolicyRule[]; onChange: (r: PolicyRule[]) => void }) {
+function RuleList({
+  rules,
+  onChange,
+}: {
+  rules: PolicyRule[];
+  onChange: (r: PolicyRule[]) => void;
+}) {
   return (
     <fieldset>
       <legend>Rules</legend>
@@ -59,13 +69,21 @@ function RuleList({ rules, onChange }: { rules: PolicyRule[]; onChange: (r: Poli
               aria-label={`Rule ${i + 1} id`}
               value={r.id}
               placeholder="no-phi-in-logs"
-              onChange={(e) => onChange(rules.map((x, j) => (j === i ? { ...x, id: e.target.value } : x)))}
+              onChange={(e) =>
+                onChange(rules.map((x, j) => (j === i ? { ...x, id: e.target.value } : x)))
+              }
             />
             <input
               aria-label={`Rule ${i + 1} applies to`}
               value={r.appliesTo?.join(", ") ?? ""}
               placeholder="Every file, or globs separated by commas"
-              onChange={(e) => onChange(rules.map((x, j) => (j === i ? { ...x, appliesTo: commaList(e.target.value) } : x)))}
+              onChange={(e) =>
+                onChange(
+                  rules.map((x, j) =>
+                    j === i ? { ...x, appliesTo: commaList(e.target.value) } : x,
+                  ),
+                )
+              }
             />
             <button type="button" onClick={() => onChange(rules.filter((_, j) => j !== i))}>
               Remove
@@ -75,7 +93,9 @@ function RuleList({ rules, onChange }: { rules: PolicyRule[]; onChange: (r: Poli
             aria-label={`Rule ${i + 1} text`}
             value={r.text}
             rows={2}
-            onChange={(e) => onChange(rules.map((x, j) => (j === i ? { ...x, text: e.target.value } : x)))}
+            onChange={(e) =>
+              onChange(rules.map((x, j) => (j === i ? { ...x, text: e.target.value } : x)))
+            }
           />
         </div>
       ))}
@@ -124,7 +144,11 @@ export function Policy({ projectId }: { projectId: string | null }) {
   /** The policy as the active tab holds it. */
   function current(): ReturnType<typeof validatePolicy> {
     if (tab === "yaml") return parsePolicyYaml(yamlText);
-    return validatePolicy({ ...policy, riskPaths: lines(riskText), environmentLimits: lines(limitsText) });
+    return validatePolicy({
+      ...policy,
+      riskPaths: lines(riskText),
+      environmentLimits: lines(limitsText),
+    });
   }
 
   function switchTab(next: "form" | "yaml") {
@@ -145,7 +169,10 @@ export function Policy({ projectId }: { projectId: string | null }) {
       return;
     }
     try {
-      const res = await api.call("projects.policy.put", { params: { projectId: selected }, body: r.policy });
+      const res = await api.call("projects.policy.put", {
+        params: { projectId: selected },
+        body: r.policy,
+      });
       setMeta({ path: res.path, exists: res.exists });
       load(res.policy);
       setSaved(true);
@@ -160,7 +187,10 @@ export function Policy({ projectId }: { projectId: string | null }) {
       <h2>Policy</h2>
       <ErrorBanner error={error} />
       <Field label="Project">
-        <select value={selected ?? ""} onChange={(e) => navigate(href("/policy", { project: e.target.value }))}>
+        <select
+          value={selected ?? ""}
+          onChange={(e) => navigate(href("/policy", { project: e.target.value }))}
+        >
           {projects.map((p) => (
             <option key={p.project.id} value={p.project.id}>
               {p.project.name}
@@ -175,10 +205,20 @@ export function Policy({ projectId }: { projectId: string | null }) {
         </p>
       ) : null}
       <div role="tablist" className="tabs">
-        <button type="button" role="tab" aria-selected={tab === "form"} onClick={() => switchTab("form")}>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === "form"}
+          onClick={() => switchTab("form")}
+        >
           Form
         </button>
-        <button type="button" role="tab" aria-selected={tab === "yaml"} onClick={() => switchTab("yaml")}>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === "yaml"}
+          onClick={() => switchTab("yaml")}
+        >
           YAML
         </button>
       </div>
@@ -189,16 +229,26 @@ export function Policy({ projectId }: { projectId: string | null }) {
           ))}
         </ul>
       ) : null}
-      {saved ? <p role="status" className="banner banner-good">✓ Saved.</p> : null}
+      {saved ? (
+        <p role="status" className="banner banner-good">
+          ✓ Saved.
+        </p>
+      ) : null}
       {tab === "form" ? (
         <div className="form-grid" role="tabpanel">
           <Field label="Risk paths" hint="One glob per line. Matching files always count as major.">
             <textarea rows={4} value={riskText} onChange={(e) => setRiskText(e.target.value)} />
           </Field>
-          <Field label="Environment limits" hint="One fact per line, such as Windows-only code paths under win/.">
+          <Field
+            label="Environment limits"
+            hint="One fact per line, such as Windows-only code paths under win/."
+          >
             <textarea rows={3} value={limitsText} onChange={(e) => setLimitsText(e.target.value)} />
           </Field>
-          <Field label="Group size limit" hint="A group with more changed lines splits into smaller groups.">
+          <Field
+            label="Group size limit"
+            hint="A group with more changed lines splits into smaller groups."
+          >
             <input
               type="number"
               min={1}
@@ -207,8 +257,16 @@ export function Policy({ projectId }: { projectId: string | null }) {
             />
           </Field>
           <RuleList rules={policy.rules} onChange={(rules) => setPolicy({ ...policy, rules })} />
-          <CommandList label="Tests" items={policy.tests} onChange={(tests) => setPolicy({ ...policy, tests })} />
-          <CommandList label="Lint" items={policy.lint} onChange={(lint) => setPolicy({ ...policy, lint })} />
+          <CommandList
+            label="Tests"
+            items={policy.tests}
+            onChange={(tests) => setPolicy({ ...policy, tests })}
+          />
+          <CommandList
+            label="Lint"
+            items={policy.lint}
+            onChange={(lint) => setPolicy({ ...policy, lint })}
+          />
         </div>
       ) : (
         <div role="tabpanel">

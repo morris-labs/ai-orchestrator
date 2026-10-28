@@ -76,7 +76,9 @@ export function edgeLabelPoint(edge: Pick<FlowEdge, "from" | "to">): { x: number
 }
 
 /** The nodes an edge set touches, deduplicated, as `stage:lane` keys. */
-export function usedNodes(edges: readonly Pick<FlowEdge, "from" | "to">[]): Array<{ stage: Stage; lane: Lane }> {
+export function usedNodes(
+  edges: readonly Pick<FlowEdge, "from" | "to">[],
+): Array<{ stage: Stage; lane: Lane }> {
   const seen = new Map<string, { stage: Stage; lane: Lane }>();
   for (const e of edges) {
     for (const end of [e.from, e.to]) {

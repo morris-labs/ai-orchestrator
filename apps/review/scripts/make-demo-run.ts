@@ -25,7 +25,12 @@ export const STREAM = "server-demo-1";
 const ENGINE = `engine:${CONTAINER}`;
 const T0 = Date.parse("2026-10-28T09:00:00.000Z");
 
-type Draft = { [K in AgentBoxEvent["type"]]: Omit<Extract<AgentBoxEvent, { type: K }>, "id" | "time" | "source" | "streamId" | "seq" | "sourceSeq"> & { source?: string } }[AgentBoxEvent["type"]];
+type Draft = {
+  [K in AgentBoxEvent["type"]]: Omit<
+    Extract<AgentBoxEvent, { type: K }>,
+    "id" | "time" | "source" | "streamId" | "seq" | "sourceSeq"
+  > & { source?: string };
+}[AgentBoxEvent["type"]];
 
 const events: AgentBoxEvent[] = [];
 let clock = 0;
@@ -83,7 +88,12 @@ function run(patch: Partial<RunState>): RunState {
     baseSha: "4e1c2a9b7d3f",
     tipSha: "a1b2c3d4e5f6",
     profile: "offload",
-    roles: { reviewer: ["codex", "copilot"], disprover: "codex", confirmer: "codex", fixer: "claude" },
+    roles: {
+      reviewer: ["codex", "copilot"],
+      disprover: "codex",
+      confirmer: "codex",
+      fixer: "claude",
+    },
     stopReason: null,
     decision: null,
     createdAt: iso(0),
@@ -115,7 +125,11 @@ function handoff(
   });
 }
 
-const MODELS: Record<Vendor, string> = { claude: "claude-opus-5-5", codex: "gpt-5.5-codex", copilot: "auto" };
+const MODELS: Record<Vendor, string> = {
+  claude: "claude-opus-5-5",
+  codex: "gpt-5.5-codex",
+  copilot: "auto",
+};
 let agentN = 0;
 
 function agent(
@@ -173,7 +187,12 @@ function usage(vendor: Vendor, utilization: number, resetAt: number | null) {
     spendUsd: vendor === "copilot" ? utilization * 70 : null,
     ceiling,
     resetAt: resetAt === null ? null : iso(resetAt),
-    source: vendor === "claude" ? "rate_limit_event" : vendor === "codex" ? "codex_session" : "billing_api",
+    source:
+      vendor === "claude"
+        ? "rate_limit_event"
+        : vendor === "codex"
+          ? "codex_session"
+          : "billing_api",
   });
 }
 
@@ -258,12 +277,19 @@ emit({
   container: CONTAINER,
   listeners: [{ port: 5173, proto: "tcp", process: "node", boxId: BOX }],
 });
-emit({ type: "settings.changed", settings: defaultConfig(), changedKeys: ["notifications"] }, "server");
+emit(
+  { type: "settings.changed", settings: defaultConfig(), changedKeys: ["notifications"] },
+  "server",
+);
 usage("claude", 0.22, 4 * 3600);
 usage("codex", 0.41, 3 * 3600);
 usage("copilot", 0.3, null);
 
-emit({ type: "run.changed", run: run({ status: "running", stage: "preflight", round: 0 }), roundSummary: null });
+emit({
+  type: "run.changed",
+  run: run({ status: "running", stage: "preflight", round: 0 }),
+  roundSummary: null,
+});
 stage("group", "preflight", 0);
 handoff(0, ["preflight", null, null], ["group", null, null], "hunks", 14);
 
@@ -285,8 +311,16 @@ const f1 = finding("F-0001", {
   alsoReportedBy: ["copilot-auto"],
   fingerprint: "fp-retry-loop",
 });
-const f2 = finding("F-0002", { title: "Template cache ignores locale", lines: [40, 52], reportedBy: "copilot-auto" });
-const f3 = finding("F-0003", { severity: "P3", title: "Log line prints the recipient list", category: "data exposure" });
+const f2 = finding("F-0002", {
+  title: "Template cache ignores locale",
+  lines: [40, 52],
+  reportedBy: "copilot-auto",
+});
+const f3 = finding("F-0003", {
+  severity: "P3",
+  title: "Log line prints the recipient list",
+  category: "data exposure",
+});
 const f4 = finding("F-0004", { severity: "nit", title: "Unused import", lines: [1, 1] });
 for (const f of [f1, f2, f3, f4]) findingChanged(f, null);
 handoff(1, ["merge", null, null], ["verify", "claude", "disprover"], "findings", 2);
@@ -301,7 +335,14 @@ const f1c: Finding = {
   verdict: "confirmed",
   verification: "script",
   evidence: "repro.sh exits 124 after 30s: send() never returns.",
-  history: [{ time: confirmedAt, verdict: "confirmed", actor: { kind: "agent", vendor: "claude", role: "disprover" }, round: 1 }],
+  history: [
+    {
+      time: confirmedAt,
+      verdict: "confirmed",
+      actor: { kind: "agent", vendor: "claude", role: "disprover" },
+      round: 1,
+    },
+  ],
 };
 findingChanged(f1c, "pending");
 const f2d: Finding = {
@@ -309,14 +350,28 @@ const f2d: Finding = {
   verdict: "disproved",
   verification: "code-reading",
   evidence: "The cache key includes the locale on line 44.",
-  history: [{ time: confirmedAt, verdict: "disproved", actor: { kind: "agent", vendor: "codex", role: "disprover" }, round: 1 }],
+  history: [
+    {
+      time: confirmedAt,
+      verdict: "disproved",
+      actor: { kind: "agent", vendor: "codex", role: "disprover" },
+      round: 1,
+    },
+  ],
 };
 findingChanged(f2d, "pending");
 const f3c: Finding = {
   ...f3,
   verdict: "confirmed",
   verification: "code-reading",
-  history: [{ time: confirmedAt, verdict: "confirmed", actor: { kind: "agent", vendor: "codex", role: "disprover" }, round: 1 }],
+  history: [
+    {
+      time: confirmedAt,
+      verdict: "confirmed",
+      actor: { kind: "agent", vendor: "codex", role: "disprover" },
+      round: 1,
+    },
+  ],
 };
 findingChanged(f3c, "pending");
 handoff(1, ["verify", "claude", "disprover"], ["sweep", null, "sweeper"], "patterns", 2);
@@ -336,14 +391,30 @@ const f1f: Finding = {
   ...f1c,
   verdict: "fixed",
   fixCommit: "b7c8d9e0f1a2",
-  history: [...f1c.history, { time: fixedAt, verdict: "fixed", actor: { kind: "agent", vendor: "codex", role: "confirmer" }, round: 1 }],
+  history: [
+    ...f1c.history,
+    {
+      time: fixedAt,
+      verdict: "fixed",
+      actor: { kind: "agent", vendor: "codex", role: "confirmer" },
+      round: 1,
+    },
+  ],
 };
 findingChanged(f1f, "confirmed");
 const f3f: Finding = {
   ...f3c,
   verdict: "fixed",
   fixCommit: "c8d9e0f1a2b3",
-  history: [...f3c.history, { time: fixedAt, verdict: "fixed", actor: { kind: "agent", vendor: "codex", role: "confirmer" }, round: 1 }],
+  history: [
+    ...f3c.history,
+    {
+      time: fixedAt,
+      verdict: "fixed",
+      actor: { kind: "agent", vendor: "codex", role: "confirmer" },
+      round: 1,
+    },
+  ],
 };
 findingChanged(f3f, "confirmed");
 
@@ -351,9 +422,33 @@ const round1: RoundSummary = {
   runId: RUN_ID,
   round: 1,
   perVendor: {
-    codex: { raised: 5, confirmed: 2, disproved: 1, tokensIn: 134_000, tokensOut: 9_400, premiumRequests: 0, costUsd: 0.81 },
-    copilot: { raised: 3, confirmed: 1, disproved: 0, tokensIn: 61_000, tokensOut: 3_200, premiumRequests: 1, costUsd: 0.04 },
-    claude: { raised: 0, confirmed: 0, disproved: 0, tokensIn: 110_000, tokensOut: 11_500, premiumRequests: 0, costUsd: 1.26 },
+    codex: {
+      raised: 5,
+      confirmed: 2,
+      disproved: 1,
+      tokensIn: 134_000,
+      tokensOut: 9_400,
+      premiumRequests: 0,
+      costUsd: 0.81,
+    },
+    copilot: {
+      raised: 3,
+      confirmed: 1,
+      disproved: 0,
+      tokensIn: 61_000,
+      tokensOut: 3_200,
+      premiumRequests: 1,
+      costUsd: 0.04,
+    },
+    claude: {
+      raised: 0,
+      confirmed: 0,
+      disproved: 0,
+      tokensIn: 110_000,
+      tokensOut: 11_500,
+      premiumRequests: 0,
+      costUsd: 1.26,
+    },
   },
   fixed: 2,
   overlapRate: 0.25,
@@ -422,7 +517,15 @@ const f7 = finding("F-0007", {
   fingerprint: "fp-retry-loop",
 });
 findingChanged(f7, null);
-const f8 = finding("F-0008", { round: 2, severity: "P3", title: "Missing test for locale fallback", reportedBy: "copilot-auto", groupId: null, file: "src/mail/templates.ts", lines: [5, 9] });
+const f8 = finding("F-0008", {
+  round: 2,
+  severity: "P3",
+  title: "Missing test for locale fallback",
+  reportedBy: "copilot-auto",
+  groupId: null,
+  file: "src/mail/templates.ts",
+  lines: [5, 9],
+});
 findingChanged(f8, null);
 emit({
   type: "run.changed",
@@ -430,7 +533,12 @@ emit({
     status: "waiting_decision",
     stage: "merge",
     round: 2,
-    roles: { reviewer: ["copilot", "claude"], disprover: "codex", confirmer: "codex", fixer: "claude" },
+    roles: {
+      reviewer: ["copilot", "claude"],
+      disprover: "codex",
+      confirmer: "codex",
+      fixer: "claude",
+    },
     decision: {
       kind: "oscillation",
       findingIds: ["F-0007"],

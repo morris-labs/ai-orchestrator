@@ -9,7 +9,12 @@ export interface FindingFilter {
   verdict: Verdict | null;
 }
 
-export const NO_FILTER: FindingFilter = { round: null, vendor: null, severity: null, verdict: null };
+export const NO_FILTER: FindingFilter = {
+  round: null,
+  vendor: null,
+  severity: null,
+  verdict: null,
+};
 
 /** The vendors that raised a finding, including those merged into it. */
 export function findingVendors(f: Finding): Vendor[] {
@@ -32,7 +37,9 @@ export function filterFindings(findings: readonly Finding[], filter: FindingFilt
         (filter.verdict === null || f.verdict === filter.verdict) &&
         (filter.vendor === null || findingVendors(f).includes(filter.vendor)),
     )
-    .sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity] || a.id.localeCompare(b.id));
+    .sort(
+      (a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity] || a.id.localeCompare(b.id),
+    );
 }
 
 /** A finding can be waived until it is fixed, disproved, or already waived. */

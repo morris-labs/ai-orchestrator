@@ -12,7 +12,14 @@ const preview = {
   changedLines: 312,
   dirty: true,
   groups: [
-    { id: "g1", files: ["src/mail/send.ts"], kind: "major", changedLines: 250, riskPath: true, hunks: [] },
+    {
+      id: "g1",
+      files: ["src/mail/send.ts"],
+      kind: "major",
+      changedLines: 250,
+      riskPath: true,
+      hunks: [],
+    },
     { id: "g2", files: ["README.md"], kind: "minor", changedLines: 62, riskPath: false, hunks: [] },
   ],
 };
@@ -28,11 +35,18 @@ function handlers() {
 
 describe("Launcher", () => {
   it("prefills from the deep link box and starts a run", async () => {
-    const { server } = renderWithStore(<Launcher prefill={{ project: null, box: BOX }} />, handlers());
-    await waitFor(() => expect(screen.getByLabelText("Tip branch")).toHaveValue("claude/Emails_not_sending"));
+    const { server } = renderWithStore(
+      <Launcher prefill={{ project: null, box: BOX }} />,
+      handlers(),
+    );
+    await waitFor(() =>
+      expect(screen.getByLabelText("Tip branch")).toHaveValue("claude/Emails_not_sending"),
+    );
     expect(screen.getByLabelText("Container")).toHaveValue(PROJECT);
     await waitFor(() =>
-      expect(screen.getByLabelText(/^Repository/)).toHaveValue("/home/user/src/example-app/.worktrees/Emails_not_sending"),
+      expect(screen.getByLabelText(/^Repository/)).toHaveValue(
+        "/home/user/src/example-app/.worktrees/Emails_not_sending",
+      ),
     );
     expect(screen.getByText(/showing the project's primary repository/)).toBeInTheDocument();
 
@@ -59,16 +73,37 @@ describe("Launcher", () => {
   });
 
   it("uses the server's repositories and refs when it has them", async () => {
-    const { server } = renderWithStore(<Launcher prefill={{ project: PROJECT, box: null }} />, handlers());
+    const { server } = renderWithStore(
+      <Launcher prefill={{ project: PROJECT, box: null }} />,
+      handlers(),
+    );
     server.raw[`GET /api/v1/projects/${PROJECT}/repos`] = () => ({
-      repos: [{ path: "/home/user/src/example-app", name: "example-app", currentBranch: "feature/x", headSha: "abcdef1", dirty: false }],
+      repos: [
+        {
+          path: "/home/user/src/example-app",
+          name: "example-app",
+          currentBranch: "feature/x",
+          headSha: "abcdef1",
+          dirty: false,
+        },
+      ],
     });
     server.raw[`GET /api/v1/projects/${PROJECT}/repos/refs`] = () => ({
       localBranches: ["feature/x", "main"],
       remoteBranches: ["origin/main", "origin/feature/shared"],
       tags: ["v1.0.0"],
-      recentCommits: [{ sha: "abcdef1", subject: "Fix it", author: "dev", time: "2026-10-28T09:00:00.000Z" }],
-      pullRequests: [{ number: 7, title: "Feature X", headRef: "feature/x", baseRef: "feature/shared", url: "https://github.com/o/r/pull/7" }],
+      recentCommits: [
+        { sha: "abcdef1", subject: "Fix it", author: "dev", time: "2026-10-28T09:00:00.000Z" },
+      ],
+      pullRequests: [
+        {
+          number: 7,
+          title: "Feature X",
+          headRef: "feature/x",
+          baseRef: "feature/shared",
+          url: "https://github.com/o/r/pull/7",
+        },
+      ],
     });
     await waitFor(() => expect(screen.getByLabelText("Tip branch")).toHaveValue("feature/x"));
     await screen.findByRole("option", { name: "v1.0.0" });
@@ -77,7 +112,11 @@ describe("Launcher", () => {
     fireEvent.change(screen.getByLabelText(/^Pull request number/), { target: { value: "7" } });
     fireEvent.click(screen.getByRole("button", { name: "Start" }));
     await waitFor(() => expect(server.callsTo("runs.create")).toHaveLength(1));
-    expect(server.callsTo("runs.create")[0]!.body).toMatchObject({ base: "origin/feature/shared", pipeline: "post-push", prNumber: 7 });
+    expect(server.callsTo("runs.create")[0]!.body).toMatchObject({
+      base: "origin/feature/shared",
+      pipeline: "post-push",
+      prNumber: 7,
+    });
   });
 
   it("lists form problems and server refusals", async () => {

@@ -2,7 +2,8 @@
 // dev server, and in Electron without server-side rewrites.
 import { useEffect, useState } from "react";
 
-export type RouteName = "launch" | "runs" | "run" | "findings" | "dashboard" | "policy" | "settings";
+export type RouteName =
+  "launch" | "runs" | "run" | "findings" | "dashboard" | "policy" | "settings";
 
 export interface Route {
   name: RouteName;
@@ -19,7 +20,9 @@ export function parseHash(hash: string): Route {
   const [head, id] = parts;
   switch (head) {
     case "runs":
-      return id ? { name: "run", params: { runId: id }, query } : { name: "runs", params: {}, query };
+      return id
+        ? { name: "run", params: { runId: id }, query }
+        : { name: "runs", params: {}, query };
     case "findings":
     case "dashboard":
     case "policy":

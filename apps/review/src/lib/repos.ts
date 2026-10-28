@@ -7,11 +7,7 @@
 // `GET /api/v1/projects/:projectId/repos/refs?repo=`, validates the answers
 // with the engine's schemas, and falls back to the project's primary
 // repository with free-text refs when the server doesn't have them.
-import {
-  RepoInfoSchema,
-  RepoRefsSchema,
-  type ProjectSummary,
-} from "@agentbox/contracts";
+import { RepoInfoSchema, RepoRefsSchema, type ProjectSummary } from "@agentbox/contracts";
 import { z } from "zod";
 import { ApiCallError, type ApiClient } from "./api.js";
 
@@ -64,7 +60,9 @@ export async function listRefs(
   repo: string,
 ): Promise<{ refs: RepoRefs; fromServer: boolean }> {
   try {
-    const json = await api.raw("GET", `${PROPOSED_REPOS_PATH(projectId)}/refs`, { query: { repo } });
+    const json = await api.raw("GET", `${PROPOSED_REPOS_PATH(projectId)}/refs`, {
+      query: { repo },
+    });
     return { refs: RepoRefsSchema.parse(json), fromServer: true };
   } catch (err) {
     if (missingRoute(err)) return { refs: EMPTY_REFS, fromServer: false };

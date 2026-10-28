@@ -36,12 +36,17 @@ function DashboardScreen() {
   );
 }
 
-export function App({ search = typeof location !== "undefined" ? location.search : "" }: { search?: string }) {
+export function App({
+  search = typeof location !== "undefined" ? location.search : "",
+}: {
+  search?: string;
+}) {
   const route = useRoute();
   const connection = useStore((s) => s.connection);
   const storeError = useStore((s) => s.error);
-  const waiting = useStore((s) =>
-    Object.values(s.dashboard.runs).filter((r) => r.run?.status === "waiting_decision").length,
+  const waiting = useStore(
+    (s) =>
+      Object.values(s.dashboard.runs).filter((r) => r.run?.status === "waiting_decision").length,
   );
   const prefill = deepLink(search);
 
@@ -91,16 +96,30 @@ export function App({ search = typeof location !== "undefined" ? location.search
               <li key={n.name}>
                 <a href={href(n.path)} aria-current={active === n.name ? "page" : undefined}>
                   {n.label}
-                  {n.name === "runs" && waiting > 0 ? <span className="badge" aria-label={`${waiting} need a decision`}>{waiting}</span> : null}
+                  {n.name === "runs" && waiting > 0 ? (
+                    <span className="badge" aria-label={`${waiting} need a decision`}>
+                      {waiting}
+                    </span>
+                  ) : null}
                 </a>
               </li>
             ))}
           </ul>
           <div className="nav-foot">
-            <span className={`ab-status ab-tone-${connection === "open" ? "good" : connection === "connecting" ? "warning" : "critical"}`}>
-              {connection === "open" ? "● Live" : connection === "connecting" ? "◐ Connecting" : "✕ Offline"}
+            <span
+              className={`ab-status ab-tone-${connection === "open" ? "good" : connection === "connecting" ? "warning" : "critical"}`}
+            >
+              {connection === "open"
+                ? "● Live"
+                : connection === "connecting"
+                  ? "◐ Connecting"
+                  : "✕ Offline"}
             </span>
-            {storeError ? <p className="muted small" title={storeError}>{storeError}</p> : null}
+            {storeError ? (
+              <p className="muted small" title={storeError}>
+                {storeError}
+              </p>
+            ) : null}
           </div>
         </nav>
         <main className="main">{screen}</main>

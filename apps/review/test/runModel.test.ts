@@ -35,14 +35,23 @@ describe("stepStates", () => {
 });
 
 describe("decisionView", () => {
-  const decision = (kind: Decision["kind"], options: Decision["options"], findingIds = ["F-0001"]): Decision => ({
+  const decision = (
+    kind: Decision["kind"],
+    options: Decision["options"],
+    findingIds = ["F-0001"],
+  ): Decision => ({
     kind,
     options,
     findingIds,
     message: "",
   });
   it.each([
-    [decision("oscillation", ["resume", "resume_waive", "cancel"]), ["resume", "resume_waive", "cancel"], true, /came back/],
+    [
+      decision("oscillation", ["resume", "resume_waive", "cancel"]),
+      ["resume", "resume_waive", "cancel"],
+      true,
+      /came back/,
+    ],
     [decision("round_cap", ["cancel", "resume"]), ["resume", "cancel"], false, /round cap/],
     [decision("ceiling", ["resume", "cancel"], []), ["resume", "cancel"], false, /ceiling/],
     [decision("gate_failed", ["resume_waive", "cancel"], []), ["cancel"], false, /regressed/],
@@ -77,17 +86,33 @@ describe("runControls", () => {
   it.each([
     [{ status: "running" }, { pause: true, resume: false, cancel: true, push: false, steer: true }],
     [{ status: "paused" }, { pause: false, resume: true, cancel: true, push: false, steer: true }],
-    [{ status: "waiting_decision" }, { pause: false, resume: false, cancel: true, push: false, steer: true }],
-    [{ status: "finished", stopReason: "clean" }, { pause: false, resume: false, cancel: false, push: true, steer: false }],
+    [
+      { status: "waiting_decision" },
+      { pause: false, resume: false, cancel: true, push: false, steer: true },
+    ],
+    [
+      { status: "finished", stopReason: "clean" },
+      { pause: false, resume: false, cancel: false, push: true, steer: false },
+    ],
     [{ status: "finished", stopReason: "round_cap" }, { push: false }],
-    [{ status: "finished", stopReason: "clean", prUrl: "https://github.com/o/r/pull/3" }, { push: false }],
+    [
+      { status: "finished", stopReason: "clean", prUrl: "https://github.com/o/r/pull/3" },
+      { push: false },
+    ],
     [{ status: "failed" }, { cancel: false, steer: false }],
   ] as const)("%o", (patch, want) => {
     expect(with_(patch as Partial<RunState>)).toMatchObject(want);
   });
 
   it("never offers push for a read-only run", () => {
-    expect(runControls({ ...base, status: "finished", stopReason: "clean", request: { ...base.request, readOnly: true } }).push).toBe(false);
+    expect(
+      runControls({
+        ...base,
+        status: "finished",
+        stopReason: "clean",
+        request: { ...base.request, readOnly: true },
+      }).push,
+    ).toBe(false);
   });
 });
 

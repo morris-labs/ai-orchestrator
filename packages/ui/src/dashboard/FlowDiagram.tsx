@@ -134,7 +134,14 @@ export function FlowDiagram({
                   y2={y + FLOW_GEOMETRY.laneHeight}
                   className="ab-grid"
                 />
-                <rect x={6} y={y + FLOW_GEOMETRY.laneHeight / 2 - 5} width={10} height={10} rx={2} fill={laneColor(lane)} />
+                <rect
+                  x={6}
+                  y={y + FLOW_GEOMETRY.laneHeight / 2 - 5}
+                  width={10}
+                  height={10}
+                  rx={2}
+                  fill={laneColor(lane)}
+                />
                 <text x={22} y={y + FLOW_GEOMETRY.laneHeight / 2 + 4} className="ab-flow-lane">
                   {laneLabel(lane)}
                 </text>

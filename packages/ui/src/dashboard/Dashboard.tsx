@@ -62,7 +62,11 @@ export function Dashboard({ state, usageInfo = [], onOpenRun, connection, now }:
           <span
             className={`ab-status ab-tone-${connection === "open" ? "good" : connection === "connecting" ? "warning" : "critical"}`}
           >
-            {connection === "open" ? "● Live" : connection === "connecting" ? "◐ Connecting" : "✕ Disconnected"}
+            {connection === "open"
+              ? "● Live"
+              : connection === "connecting"
+                ? "◐ Connecting"
+                : "✕ Disconnected"}
           </span>
         ) : null}
         <span className="ab-muted ab-small">{state.eventCount} events</span>

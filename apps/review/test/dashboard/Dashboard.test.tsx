@@ -36,12 +36,11 @@ describe("Dashboard", () => {
 
     const health = screen.getByRole("region", { name: "Run health" });
     const funnel = within(health).getByRole("list", { name: "Finding funnel" });
-    expect(within(funnel).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
-      "Raised8",
-      "Merged6",
-      "Confirmed2",
-      "Fixed2",
-    ]);
+    expect(
+      within(funnel)
+        .getAllByRole("listitem")
+        .map((li) => li.textContent),
+    ).toEqual(["Raised8", "Merged6", "Confirmed2", "Fixed2"]);
     expect(screen.getByText("● Live")).toBeInTheDocument();
   });
 
@@ -49,7 +48,9 @@ describe("Dashboard", () => {
     render(<Dashboard state={replay(events)} now={NOW} />);
     const health = screen.getByRole("region", { name: "Run health" });
     fireEvent.click(within(health).getByRole("button", { name: "Table" }));
-    expect(within(health).getByRole("columnheader", { name: "Codex confirmed" })).toBeInTheDocument();
+    expect(
+      within(health).getByRole("columnheader", { name: "Codex confirmed" }),
+    ).toBeInTheDocument();
     expect(within(health).getByText(/2 \(in progress\)/)).toBeInTheDocument();
   });
 

@@ -1,6 +1,11 @@
 import { DEFAULT_POLICY, defaultConfig } from "@agentbox/contracts";
 import { describe, expect, it } from "vitest";
-import { canWaive, filterFindings, findingVendors, NO_FILTER } from "../src/screens/findingsModel.js";
+import {
+  canWaive,
+  filterFindings,
+  findingVendors,
+  NO_FILTER,
+} from "../src/screens/findingsModel.js";
 import { DEFAULT_FORM, buildRunRequest, formFromBox } from "../src/screens/launcherModel.js";
 import { commaList, lines, parsePolicyYaml, policyToYaml } from "../src/screens/policyModel.js";
 import { draftFrom, settingsPatch, switchCeilingKind } from "../src/screens/settingsModel.js";
@@ -11,7 +16,17 @@ describe("buildRunRequest", () => {
   const ok = { ...DEFAULT_FORM, projectId: "p", repoPath: "/r" };
   it("applies the design defaults", () => {
     const r = buildRunRequest(ok);
-    expect(r).toMatchObject({ ok: true, request: { base: "origin/main", mergeBase: true, exactBase: false, profile: "offload", roundCap: 25, crossVendor: true } });
+    expect(r).toMatchObject({
+      ok: true,
+      request: {
+        base: "origin/main",
+        mergeBase: true,
+        exactBase: false,
+        profile: "offload",
+        roundCap: 25,
+        crossVendor: true,
+      },
+    });
   });
 
   it.each([
@@ -28,8 +43,17 @@ describe("buildRunRequest", () => {
   });
 
   it("folds the exact base into mergeBase false and keeps the PR number", () => {
-    const r = buildRunRequest({ ...ok, baseMode: "exact", pipeline: "post-push", prNumber: "42", tip: "x" });
-    expect(r).toMatchObject({ ok: true, request: { mergeBase: false, exactBase: true, prNumber: 42, tip: "x" } });
+    const r = buildRunRequest({
+      ...ok,
+      baseMode: "exact",
+      pipeline: "post-push",
+      prNumber: "42",
+      tip: "x",
+    });
+    expect(r).toMatchObject({
+      ok: true,
+      request: { mergeBase: false, exactBase: true, prNumber: 42, tip: "x" },
+    });
   });
 
   it("prefills from a box", () => {
@@ -113,7 +137,11 @@ describe("settingsPatch", () => {
   });
 
   it("switches a ceiling kind with defaults", () => {
-    expect(switchCeilingKind(s.ceilings.claude, "spend")).toEqual({ kind: "spend", period: "month", maxUsd: 70 });
+    expect(switchCeilingKind(s.ceilings.claude, "spend")).toEqual({
+      kind: "spend",
+      period: "month",
+      maxUsd: 70,
+    });
     expect(switchCeilingKind(s.ceilings.claude, "utilization")).toBe(s.ceilings.claude);
   });
 });

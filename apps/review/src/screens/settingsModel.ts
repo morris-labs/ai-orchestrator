@@ -22,7 +22,10 @@ function sameCeiling(a: Ceiling, b: Ceiling): boolean {
 }
 
 /** The patch that turns `settings` into `draft`, or `null` when nothing changed. */
-export function settingsPatch(settings: GlobalSettings, draft: SettingsDraft): GlobalSettingsPatch | null {
+export function settingsPatch(
+  settings: GlobalSettings,
+  draft: SettingsDraft,
+): GlobalSettingsPatch | null {
   const patch: GlobalSettingsPatch = {};
   const ceilings: NonNullable<GlobalSettingsPatch["ceilings"]> = {};
   for (const v of ["claude", "codex", "copilot"] as const) {
@@ -31,7 +34,8 @@ export function settingsPatch(settings: GlobalSettings, draft: SettingsDraft): G
   if (Object.keys(ceilings).length > 0) patch.ceilings = ceilings;
   const notifications: Partial<NotificationToggles> = {};
   for (const k of Object.keys(draft.notifications) as Array<keyof NotificationToggles>) {
-    if (settings.notifications[k] !== draft.notifications[k]) notifications[k] = draft.notifications[k];
+    if (settings.notifications[k] !== draft.notifications[k])
+      notifications[k] = draft.notifications[k];
   }
   if (Object.keys(notifications).length > 0) patch.notifications = notifications;
   if (Object.keys(patch).length === 0) return null;

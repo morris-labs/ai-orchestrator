@@ -13,12 +13,24 @@ function handlers(run: RunState = lastRun()) {
   return {
     "runs.get": () => run,
     "runs.rounds": () => ({ rounds: demoRounds() }),
-    "findings.get": (c: { params: Record<string, string> }) => ({ finding: byId(c.params.findingId!), diff: "@@ -1 +1 @@\n-a\n+b", fixDiff: null }),
+    "findings.get": (c: { params: Record<string, string> }) => ({
+      finding: byId(c.params.findingId!),
+      diff: "@@ -1 +1 @@\n-a\n+b",
+      fixDiff: null,
+    }),
     "findings.list": () => ({ findings }),
-    "runs.decide": (c: { body: unknown }) => ({ ...run, status: "running", decision: null, body: c.body }),
+    "runs.decide": (c: { body: unknown }) => ({
+      ...run,
+      status: "running",
+      decision: null,
+      body: c.body,
+    }),
     "runs.pause": () => ({ ...run, status: "paused" }),
     "runs.assign": () => run,
-    "runs.profile": (c: { body: unknown }) => ({ ...run, profile: (c.body as { profile: RunState["profile"] }).profile }),
+    "runs.profile": (c: { body: unknown }) => ({
+      ...run,
+      profile: (c.body as { profile: RunState["profile"] }).profile,
+    }),
   };
 }
 
@@ -37,10 +49,18 @@ describe("StageStepper", () => {
 
 describe("DecisionPanel", () => {
   const kinds: Array<[Decision["kind"], Decision["options"], string[]]> = [
-    ["oscillation", ["resume", "resume_waive", "cancel"], ["Resume", "Resume and waive these findings", "Cancel the run"]],
+    [
+      "oscillation",
+      ["resume", "resume_waive", "cancel"],
+      ["Resume", "Resume and waive these findings", "Cancel the run"],
+    ],
     ["round_cap", ["resume", "cancel"], ["Resume", "Cancel the run"]],
     ["ceiling", ["resume", "cancel"], ["Resume", "Cancel the run"]],
-    ["gate_failed", ["resume_waive", "cancel"], ["Resume and waive these findings", "Cancel the run"]],
+    [
+      "gate_failed",
+      ["resume_waive", "cancel"],
+      ["Resume and waive these findings", "Cancel the run"],
+    ],
     ["push_blocked", ["cancel"], ["Cancel the run"]],
   ];
   it.each(kinds)("%s shows its buttons", (kind, options, labels) => {
@@ -52,7 +72,11 @@ describe("DecisionPanel", () => {
       />,
     );
     const region = screen.getByRole("region", { name: "Decision needed" });
-    expect(within(region).getAllByRole("button").map((b) => b.textContent)).toEqual(labels);
+    expect(
+      within(region)
+        .getAllByRole("button")
+        .map((b) => b.textContent),
+    ).toEqual(labels);
     expect(within(region).getByText("Why it stopped.")).toBeInTheDocument();
   });
 
@@ -60,7 +84,12 @@ describe("DecisionPanel", () => {
     const onDecide = vi.fn();
     render(
       <DecisionPanel
-        decision={{ kind: "oscillation", options: ["resume", "resume_waive", "cancel"], findingIds: ["F-0007"], message: "" }}
+        decision={{
+          kind: "oscillation",
+          options: ["resume", "resume_waive", "cancel"],
+          findingIds: ["F-0007"],
+          message: "",
+        }}
         findings={[byId("F-0001"), byId("F-0007")] as Finding[]}
         onDecide={onDecide}
       />,
@@ -69,7 +98,9 @@ describe("DecisionPanel", () => {
     expect(screen.getByText("Now: raised again")).toBeInTheDocument();
     const waive = screen.getByRole("button", { name: "Resume and waive these findings" });
     expect(waive).toBeDisabled();
-    fireEvent.change(screen.getByLabelText("Reason for waiving"), { target: { value: "Accepted for now" } });
+    fireEvent.change(screen.getByLabelText("Reason for waiving"), {
+      target: { value: "Accepted for now" },
+    });
     fireEvent.click(waive);
     expect(onDecide).toHaveBeenCalledWith("resume_waive", "Accepted for now");
   });
@@ -84,7 +115,11 @@ describe("RunView", () => {
     expect(screen.getAllByText(/Retry loop never gives up/)).toHaveLength(2);
     fireEvent.click(screen.getByRole("button", { name: "Resume" }));
     await waitFor(() => expect(server.callsTo("runs.decide")).toHaveLength(1));
-    expect(server.callsTo("runs.decide")[0]!.body).toEqual({ option: "resume", waiveFindingIds: [], reason: undefined });
+    expect(server.callsTo("runs.decide")[0]!.body).toEqual({
+      option: "resume",
+      waiveFindingIds: [],
+      reason: undefined,
+    });
     await screen.findByText(/Running/);
   });
 
@@ -108,9 +143,16 @@ describe("RunView", () => {
     fireEvent.click(within(table).getByRole("radio", { name: "disprover: Claude" }));
     const row = within(table).getByRole("radio", { name: "disprover: Claude" }).closest("tr")!;
     fireEvent.click(within(row).getByRole("button", { name: "Assign" }));
-    await waitFor(() => expect(server.callsTo("runs.assign")[0]?.body).toEqual({ role: "disprover", vendors: ["claude"] }));
+    await waitFor(() =>
+      expect(server.callsTo("runs.assign")[0]?.body).toEqual({
+        role: "disprover",
+        vendors: ["claude"],
+      }),
+    );
     fireEvent.change(screen.getByLabelText("Profile"), { target: { value: "fast" } });
-    await waitFor(() => expect(server.callsTo("runs.profile")[0]?.body).toEqual({ profile: "fast" }));
+    await waitFor(() =>
+      expect(server.callsTo("runs.profile")[0]?.body).toEqual({ profile: "fast" }),
+    );
   });
 
   it("follows run.changed events for this run", async () => {

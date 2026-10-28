@@ -12,7 +12,18 @@ import type {
 
 /** The steps each pipeline shows, in order. `sweep` follows verify, as in the design. */
 export const PIPELINE_STEPS: Record<Pipeline, readonly Stage[]> = {
-  "pre-push": ["preflight", "group", "find", "merge", "verify", "sweep", "fix", "gate", "confirm", "done"],
+  "pre-push": [
+    "preflight",
+    "group",
+    "find",
+    "merge",
+    "verify",
+    "sweep",
+    "fix",
+    "gate",
+    "confirm",
+    "done",
+  ],
   "post-push": ["preflight", "push", "poll", "import", "verify", "fix", "gate", "done"],
 };
 
@@ -63,7 +74,8 @@ export interface DecisionViewModel {
 const DECISION_TEXT: Record<Decision["kind"], { title: string; explanation: string }> = {
   oscillation: {
     title: "A fixed finding came back",
-    explanation: "A finding that an earlier fix closed was raised again. Compare both versions before you go on.",
+    explanation:
+      "A finding that an earlier fix closed was raised again. Compare both versions before you go on.",
   },
   round_cap: {
     title: "The run reached its round cap",
@@ -109,7 +121,9 @@ export function decisionView(decision: Decision): DecisionViewModel {
  * back (the latest). A fingerprint with one finding pairs it with itself,
  * using its history as the earlier version.
  */
-export function oscillationPairs(findings: readonly Finding[]): Array<{ before: Finding; after: Finding }> {
+export function oscillationPairs(
+  findings: readonly Finding[],
+): Array<{ before: Finding; after: Finding }> {
   const byPrint = new Map<string, Finding[]>();
   for (const f of findings) byPrint.set(f.fingerprint, [...(byPrint.get(f.fingerprint) ?? []), f]);
   const pairs: Array<{ before: Finding; after: Finding }> = [];
@@ -134,7 +148,11 @@ export interface Controls {
 
 /** Which controls a run allows in its current state. */
 export function runControls(run: RunState): Controls {
-  const active = run.status === "running" || run.status === "pending" || run.status === "paused" || run.status === "waiting_decision";
+  const active =
+    run.status === "running" ||
+    run.status === "pending" ||
+    run.status === "paused" ||
+    run.status === "waiting_decision";
   return {
     pause: run.status === "running" || run.status === "pending",
     resume: run.status === "paused",

@@ -71,12 +71,29 @@ function ConfirmedChart({ points }: { points: readonly RoundVendorPoint[] }) {
             {p.round}
           </text>
         ))}
-        {hp ? <line x1={x(hp.round)} x2={x(hp.round)} y1={M.top} y2={H - M.bottom} className="ab-crosshair" /> : null}
+        {hp ? (
+          <line
+            x1={x(hp.round)}
+            x2={x(hp.round)}
+            y1={M.top}
+            y2={H - M.bottom}
+            className="ab-crosshair"
+          />
+        ) : null}
         {VENDORS.map((v) => {
-          const d = points.map((p, i) => `${i === 0 ? "M" : "L"}${x(p.round)},${y(p.confirmed[v])}`).join("");
+          const d = points
+            .map((p, i) => `${i === 0 ? "M" : "L"}${x(p.round)},${y(p.confirmed[v])}`)
+            .join("");
           return (
             <g key={v}>
-              <path d={d} fill="none" stroke={vendorColor(v)} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+              <path
+                d={d}
+                fill="none"
+                stroke={vendorColor(v)}
+                strokeWidth={2}
+                strokeLinejoin="round"
+                strokeLinecap="round"
+              />
               <circle
                 cx={x(lastPoint.round)}
                 cy={y(lastPoint.confirmed[v])}
@@ -86,7 +103,14 @@ function ConfirmedChart({ points }: { points: readonly RoundVendorPoint[] }) {
                 strokeWidth={2}
               />
               {hp ? (
-                <circle cx={x(hp.round)} cy={y(hp.confirmed[v])} r={4} fill={vendorColor(v)} stroke="var(--ab-surface)" strokeWidth={2} />
+                <circle
+                  cx={x(hp.round)}
+                  cy={y(hp.confirmed[v])}
+                  r={4}
+                  fill={vendorColor(v)}
+                  stroke="var(--ab-surface)"
+                  strokeWidth={2}
+                />
               ) : null}
             </g>
           );
@@ -146,8 +170,18 @@ function CostChart({ points }: { points: readonly RoundVendorPoint[] }) {
           const d = `M${x0},${y(0)}V${top + r}Q${x0},${top} ${x0 + r},${top}H${x0 + barW - r}Q${x0 + barW},${top} ${x0 + barW},${top + r}V${y(0)}Z`;
           return (
             <g key={p.round} onPointerEnter={() => setHover(i)}>
-              <rect x={cx(i) - band / 2} y={M.top} width={band} height={y(0) - M.top} fill="transparent" />
-              <path d={d} fill="var(--ab-accent)" fillOpacity={hover === i ? 0.8 : p.live ? 0.5 : 1} />
+              <rect
+                x={cx(i) - band / 2}
+                y={M.top}
+                width={band}
+                height={y(0) - M.top}
+                fill="transparent"
+              />
+              <path
+                d={d}
+                fill="var(--ab-accent)"
+                fillOpacity={hover === i ? 0.8 : p.live ? 0.5 : 1}
+              />
               <text x={cx(i)} y={H - 8} textAnchor="middle" className="ab-tick">
                 {p.round}
               </text>
@@ -260,7 +294,11 @@ export function RunHealth({ run }: { run: RunView | null }) {
             mark="line"
             items={VENDORS.map((v) => ({ key: v, label: VENDOR_LABELS[v], color: vendorColor(v) }))}
           />
-          {points.length > 0 ? <ConfirmedChart points={points} /> : <p className="ab-empty">No round has finished.</p>}
+          {points.length > 0 ? (
+            <ConfirmedChart points={points} />
+          ) : (
+            <p className="ab-empty">No round has finished.</p>
+          )}
         </div>
         <div>
           <h4>Funnel</h4>
@@ -268,7 +306,9 @@ export function RunHealth({ run }: { run: RunView | null }) {
           <div className="ab-tiles">
             <div className="ab-tile">
               <span className="ab-tile-label">Overlap rate, whole run</span>
-              <span className="ab-tile-value">{overlap === null ? "–" : formatPercent(overlap)}</span>
+              <span className="ab-tile-value">
+                {overlap === null ? "–" : formatPercent(overlap)}
+              </span>
             </div>
             <div className="ab-tile">
               <span className="ab-tile-label">Overlap rate, last round</span>
@@ -280,7 +320,11 @@ export function RunHealth({ run }: { run: RunView | null }) {
         </div>
         <div>
           <h4>Cost per round</h4>
-          {points.length > 0 ? <CostChart points={points} /> : <p className="ab-empty">No cost recorded.</p>}
+          {points.length > 0 ? (
+            <CostChart points={points} />
+          ) : (
+            <p className="ab-empty">No cost recorded.</p>
+          )}
         </div>
       </div>
     </ChartCard>

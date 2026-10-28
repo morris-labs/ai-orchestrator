@@ -61,7 +61,9 @@ describe("fleet and agents", () => {
     const [row] = fleetRows(state);
     expect(row!.connection).toBe("connected");
     expect(row!.versionMatches).toBe(true);
-    expect(row!.activeRuns).toEqual([{ runId: RUN_ID, stage: "merge", round: 2, status: "waiting_decision" }]);
+    expect(row!.activeRuns).toEqual([
+      { runId: RUN_ID, stage: "merge", round: 2, status: "waiting_decision" },
+    ]);
     expect(row!.memFraction).toBeCloseTo(3.1 / 8);
   });
 
@@ -83,7 +85,9 @@ describe("fleet and agents", () => {
   });
 
   it("counts running agents per vendor", () => {
-    expect(runningPerVendor([agent({}), agent({ vendor: "codex" }), agent({ finishedAt: "x" })])).toEqual({
+    expect(
+      runningPerVendor([agent({}), agent({ vendor: "codex" }), agent({ finishedAt: "x" })]),
+    ).toEqual({
       claude: 1,
       codex: 1,
       copilot: 0,
@@ -105,11 +109,57 @@ describe("fleet and agents", () => {
 describe("linearForecast", () => {
   const h = 3600_000;
   it.each([
-    { name: "rising line", pts: [[0, 0.1], [h, 0.3]], ceiling: 0.6, reset: null, want: 2.5 * h },
-    { name: "flat line", pts: [[0, 0.3], [h, 0.3]], ceiling: 0.6, reset: null, want: null },
-    { name: "crosses after the reset", pts: [[0, 0.1], [h, 0.2]], ceiling: 0.6, reset: 2 * h, want: null },
-    { name: "already over", pts: [[0, 0.5], [h, 0.7]], ceiling: 0.6, reset: null, want: h },
-    { name: "restarts after a window reset", pts: [[0, 0.5], [h, 0.1], [2 * h, 0.2]], ceiling: 0.6, reset: null, want: 6 * h },
+    {
+      name: "rising line",
+      pts: [
+        [0, 0.1],
+        [h, 0.3],
+      ],
+      ceiling: 0.6,
+      reset: null,
+      want: 2.5 * h,
+    },
+    {
+      name: "flat line",
+      pts: [
+        [0, 0.3],
+        [h, 0.3],
+      ],
+      ceiling: 0.6,
+      reset: null,
+      want: null,
+    },
+    {
+      name: "crosses after the reset",
+      pts: [
+        [0, 0.1],
+        [h, 0.2],
+      ],
+      ceiling: 0.6,
+      reset: 2 * h,
+      want: null,
+    },
+    {
+      name: "already over",
+      pts: [
+        [0, 0.5],
+        [h, 0.7],
+      ],
+      ceiling: 0.6,
+      reset: null,
+      want: h,
+    },
+    {
+      name: "restarts after a window reset",
+      pts: [
+        [0, 0.5],
+        [h, 0.1],
+        [2 * h, 0.2],
+      ],
+      ceiling: 0.6,
+      reset: null,
+      want: 6 * h,
+    },
     { name: "one point", pts: [[0, 0.1]], ceiling: 0.6, reset: null, want: null },
   ])("$name", ({ pts, ceiling, reset, want }) => {
     const points = pts.map(([time, utilization]) => ({ time: time!, utilization: utilization! }));
@@ -120,7 +170,13 @@ describe("linearForecast", () => {
 describe("usageSeries", () => {
   it("orders by vendor and prefers the server forecast", () => {
     const series = usageSeries(state, [
-      { vendor: "claude", account: "user@example.com", window: "5h", forecastAt: "2026-10-28T11:00:00.000Z", resetAt: null },
+      {
+        vendor: "claude",
+        account: "user@example.com",
+        window: "5h",
+        forecastAt: "2026-10-28T11:00:00.000Z",
+        resetAt: null,
+      },
     ]);
     expect(series.map((s) => s.vendor)).toEqual(["claude", "codex", "copilot"]);
     expect(series[0]!.forecastAt).toBe(Date.parse("2026-10-28T11:00:00.000Z"));
@@ -140,13 +196,24 @@ describe("flow layout", () => {
   });
 
   it("draws an S-curve between columns and an arc within one", () => {
-    expect(edgePath({ from: { stage: "find", vendor: "codex", role: null }, to: { stage: "merge", vendor: null, role: null } })).toMatch(/^M[\d.]+,[\d.]+ C/);
-    const same = edgePath({ from: { stage: "find", vendor: "codex", role: null }, to: { stage: "find", vendor: "claude", role: null } });
+    expect(
+      edgePath({
+        from: { stage: "find", vendor: "codex", role: null },
+        to: { stage: "merge", vendor: null, role: null },
+      }),
+    ).toMatch(/^M[\d.]+,[\d.]+ C/);
+    const same = edgePath({
+      from: { stage: "find", vendor: "codex", role: null },
+      to: { stage: "find", vendor: "claude", role: null },
+    });
     expect(same).toContain("C");
   });
 
   it("deduplicates nodes", () => {
-    const e = { from: { stage: "find" as const, vendor: null, role: null }, to: { stage: "merge" as const, vendor: null, role: null } };
+    const e = {
+      from: { stage: "find" as const, vendor: null, role: null },
+      to: { stage: "merge" as const, vendor: null, role: null },
+    };
     expect(usedNodes([e, e])).toHaveLength(2);
   });
 });

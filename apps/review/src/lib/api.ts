@@ -108,7 +108,11 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
       try {
         json = JSON.parse(text);
       } catch {
-        throw new ApiCallError(`The server sent a response that isn't JSON (${res.status}).`, res.status, "bad_response");
+        throw new ApiCallError(
+          `The server sent a response that isn't JSON (${res.status}).`,
+          res.status,
+          "bad_response",
+        );
       }
     }
     if (!res.ok) {
@@ -117,7 +121,11 @@ export function createApiClient(options: ApiClientOptions = {}): ApiClient {
         const e = parsed.data.error;
         throw new ApiCallError(e.message, res.status, e.code, e.details);
       }
-      throw new ApiCallError(`The request failed with status ${res.status}.`, res.status, "bad_response");
+      throw new ApiCallError(
+        `The request failed with status ${res.status}.`,
+        res.status,
+        "bad_response",
+      );
     }
     return json;
   }

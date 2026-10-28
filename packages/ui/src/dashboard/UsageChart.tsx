@@ -106,13 +106,25 @@ function UsagePanel({ series }: { series: UsageSeries }) {
                 y2={H - M.bottom}
                 className="ab-ref"
               />
-              <text x={x(series.resetAt) - 3} y={M.top + 8} textAnchor="end" className="ab-ref-label">
+              <text
+                x={x(series.resetAt) - 3}
+                y={M.top + 8}
+                textAnchor="end"
+                className="ab-ref-label"
+              >
                 Resets {formatClock(series.resetAt)}
               </text>
             </g>
           ) : null}
           <path d={area} fill={color} fillOpacity={0.1} />
-          <path d={line} fill="none" stroke={color} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+          <path
+            d={line}
+            fill="none"
+            stroke={color}
+            strokeWidth={2}
+            strokeLinejoin="round"
+            strokeLinecap="round"
+          />
           {series.forecastAt !== null && series.forecastAt > last.time ? (
             <g>
               <line
@@ -124,14 +136,41 @@ function UsagePanel({ series }: { series: UsageSeries }) {
                 strokeWidth={2}
                 strokeOpacity={0.4}
               />
-              <circle cx={x(series.forecastAt)} cy={y(series.ceiling)} r={4} fill={color} stroke="var(--ab-surface)" strokeWidth={2} />
+              <circle
+                cx={x(series.forecastAt)}
+                cy={y(series.ceiling)}
+                r={4}
+                fill={color}
+                stroke="var(--ab-surface)"
+                strokeWidth={2}
+              />
             </g>
           ) : null}
-          <circle cx={x(last.time)} cy={y(last.utilization)} r={4} fill={color} stroke="var(--ab-surface)" strokeWidth={2} />
+          <circle
+            cx={x(last.time)}
+            cy={y(last.utilization)}
+            r={4}
+            fill={color}
+            stroke="var(--ab-surface)"
+            strokeWidth={2}
+          />
           {hp ? (
             <g>
-              <line x1={x(hp.time)} x2={x(hp.time)} y1={M.top} y2={H - M.bottom} className="ab-crosshair" />
-              <circle cx={x(hp.time)} cy={y(hp.utilization)} r={4} fill={color} stroke="var(--ab-surface)" strokeWidth={2} />
+              <line
+                x1={x(hp.time)}
+                x2={x(hp.time)}
+                y1={M.top}
+                y2={H - M.bottom}
+                className="ab-crosshair"
+              />
+              <circle
+                cx={x(hp.time)}
+                cy={y(hp.utilization)}
+                r={4}
+                fill={color}
+                stroke="var(--ab-surface)"
+                strokeWidth={2}
+              />
             </g>
           ) : null}
         </svg>
@@ -183,7 +222,9 @@ export function UsageChart({ series }: { series: readonly UsageSeries[] }) {
                 <td>{s.window}</td>
                 <td className="ab-num">{formatPercent(last.utilization)}</td>
                 <td className="ab-num">{formatPercent(s.ceiling)}</td>
-                <td className="ab-num">{s.forecastAt !== null ? formatClock(s.forecastAt) : "–"}</td>
+                <td className="ab-num">
+                  {s.forecastAt !== null ? formatClock(s.forecastAt) : "–"}
+                </td>
                 <td className="ab-num">{s.resetAt !== null ? formatClock(s.resetAt) : "–"}</td>
               </tr>
             );

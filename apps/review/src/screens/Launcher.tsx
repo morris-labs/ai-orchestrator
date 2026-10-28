@@ -6,18 +6,16 @@ import { ErrorBanner, Field } from "../components/common.js";
 import { listRefs, listRepos, EMPTY_REFS, type RepoInfo, type RepoRefs } from "../lib/repos.js";
 import { href, navigate } from "../state/router.js";
 import { useAppStore } from "../state/store.js";
-import {
-  DEFAULT_FORM,
-  buildRunRequest,
-  formFromBox,
-  type LauncherForm,
-} from "./launcherModel.js";
+import { DEFAULT_FORM, buildRunRequest, formFromBox, type LauncherForm } from "./launcherModel.js";
 
 type Preview = RouteOf<"runs.preview">["response"];
 
 export function Launcher({ prefill }: { prefill: { project: string | null; box: string | null } }) {
   const { api } = useAppStore();
-  const [form, setForm] = useState<LauncherForm>({ ...DEFAULT_FORM, projectId: prefill.project ?? "" });
+  const [form, setForm] = useState<LauncherForm>({
+    ...DEFAULT_FORM,
+    projectId: prefill.project ?? "",
+  });
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [repos, setRepos] = useState<RepoInfo[]>([]);
   const [reposFromServer, setReposFromServer] = useState(true);
@@ -79,14 +77,27 @@ export function Launcher({ prefill }: { prefill: { project: string | null; box: 
   const repoOptions = useMemo(() => {
     const list = [...repos];
     if (form.repoPath && !list.some((r) => r.path === form.repoPath)) {
-      list.unshift({ path: form.repoPath, name: `${form.repoPath} (box worktree)`, currentBranch: null, headSha: null, dirty: false });
+      list.unshift({
+        path: form.repoPath,
+        name: `${form.repoPath} (box worktree)`,
+        currentBranch: null,
+        headSha: null,
+        dirty: false,
+      });
     }
     return list;
   }, [repos, form.repoPath]);
   const repo = repoOptions.find((r) => r.path === form.repoPath) ?? null;
 
   const knownBases = useMemo(
-    () => new Set(["pr", ...refs.remoteBranches, ...refs.localBranches, ...refs.tags, ...refs.recentCommits.map((c) => c.sha)]),
+    () =>
+      new Set([
+        "pr",
+        ...refs.remoteBranches,
+        ...refs.localBranches,
+        ...refs.tags,
+        ...refs.recentCommits.map((c) => c.sha),
+      ]),
     [refs],
   );
   const baseIsCustom = customBase || (!knownBases.has(form.base) && form.base !== "origin/main");
@@ -158,7 +169,11 @@ export function Launcher({ prefill }: { prefill: { project: string | null; box: 
           </Field>
           <Field
             label="Repository"
-            hint={reposFromServer ? undefined : "The server can't list repositories yet; showing the project's primary repository."}
+            hint={
+              reposFromServer
+                ? undefined
+                : "The server can't list repositories yet; showing the project's primary repository."
+            }
           >
             <select value={form.repoPath} onChange={(e) => update({ repoPath: e.target.value })}>
               <option value="">Select a repository</option>
@@ -191,11 +206,13 @@ export function Launcher({ prefill }: { prefill: { project: string | null; box: 
               <option value="pr">Base of the open pull request</option>
               {refs.remoteBranches.length > 0 ? (
                 <optgroup label="Remote branches">
-                  {refs.remoteBranches.filter((b) => b !== "origin/main").map((b) => (
-                    <option key={`r-${b}`} value={b}>
-                      {b}
-                    </option>
-                  ))}
+                  {refs.remoteBranches
+                    .filter((b) => b !== "origin/main")
+                    .map((b) => (
+                      <option key={`r-${b}`} value={b}>
+                        {b}
+                      </option>
+                    ))}
                 </optgroup>
               ) : null}
               {refs.localBranches.length > 0 ? (
@@ -239,7 +256,11 @@ export function Launcher({ prefill }: { prefill: { project: string | null; box: 
           </Field>
           {baseIsCustom ? (
             <Field label="Base ref">
-              <input value={form.base} onChange={(e) => update({ base: e.target.value })} placeholder="feature/shared-modules" />
+              <input
+                value={form.base}
+                onChange={(e) => update({ base: e.target.value })}
+                placeholder="feature/shared-modules"
+              />
             </Field>
           ) : null}
           <div role="radiogroup" aria-label="Diff start" className="radio-row">
@@ -262,7 +283,10 @@ export function Launcher({ prefill }: { prefill: { project: string | null; box: 
               Exact base
             </label>
           </div>
-          <Field label="Tip branch" hint={form.readOnly ? "With read-only, the tip can be a commit." : undefined}>
+          <Field
+            label="Tip branch"
+            hint={form.readOnly ? "With read-only, the tip can be a commit." : undefined}
+          >
             <input
               list="tip-branches"
               value={form.tip}
@@ -281,11 +305,21 @@ export function Launcher({ prefill }: { prefill: { project: string | null; box: 
           <legend>Pipeline</legend>
           <div role="radiogroup" aria-label="Pipeline" className="radio-row">
             <label>
-              <input type="radio" name="pipeline" checked={form.pipeline === "pre-push"} onChange={() => update({ pipeline: "pre-push" })} />{" "}
+              <input
+                type="radio"
+                name="pipeline"
+                checked={form.pipeline === "pre-push"}
+                onChange={() => update({ pipeline: "pre-push" })}
+              />{" "}
               Pre-push
             </label>
             <label>
-              <input type="radio" name="pipeline" checked={form.pipeline === "post-push"} onChange={() => update({ pipeline: "post-push" })} />{" "}
+              <input
+                type="radio"
+                name="pipeline"
+                checked={form.pipeline === "post-push"}
+                onChange={() => update({ pipeline: "post-push" })}
+              />{" "}
               Post-push
             </label>
           </div>
@@ -307,7 +341,10 @@ export function Launcher({ prefill }: { prefill: { project: string | null; box: 
             </Field>
           ) : null}
           <Field label="Profile">
-            <select value={form.profile} onChange={(e) => update({ profile: e.target.value as LauncherForm["profile"] })}>
+            <select
+              value={form.profile}
+              onChange={(e) => update({ profile: e.target.value as LauncherForm["profile"] })}
+            >
               <option value="offload">offload: Claude fixes only</option>
               <option value="balanced">balanced: Claude reviews rounds 1 and 2</option>
               <option value="fast">fast: Claude reviews every round</option>
@@ -318,8 +355,12 @@ export function Launcher({ prefill }: { prefill: { project: string | null; box: 
         <fieldset>
           <legend>Options</legend>
           <label className="check">
-            <input type="checkbox" checked={form.readOnly} onChange={(e) => update({ readOnly: e.target.checked })} /> Read-only (review
-            without fixing)
+            <input
+              type="checkbox"
+              checked={form.readOnly}
+              onChange={(e) => update({ readOnly: e.target.checked })}
+            />{" "}
+            Read-only (review without fixing)
           </label>
           <label className="check">
             <input
@@ -330,7 +371,12 @@ export function Launcher({ prefill }: { prefill: { project: string | null; box: 
             Include uncommitted changes
           </label>
           <Field label="Round cap">
-            <input type="number" min={1} value={form.roundCap} onChange={(e) => update({ roundCap: e.target.value })} />
+            <input
+              type="number"
+              min={1}
+              value={form.roundCap}
+              onChange={(e) => update({ roundCap: e.target.value })}
+            />
           </Field>
         </fieldset>
 
@@ -349,11 +395,13 @@ export function Launcher({ prefill }: { prefill: { project: string | null; box: 
           <h3>Preview</h3>
           <p>
             {preview.groups.length} groups, {preview.changedLines} changed lines, from{" "}
-            <code>{preview.diffBaseSha.slice(0, 8)}</code> to <code>{preview.tipSha.slice(0, 8)}</code>.
+            <code>{preview.diffBaseSha.slice(0, 8)}</code> to{" "}
+            <code>{preview.tipSha.slice(0, 8)}</code>.
           </p>
           {preview.dirty && !form.includeWorktree ? (
             <p role="alert" className="banner banner-warning">
-              ▲ The working tree has uncommitted changes. Commit them, or select Include uncommitted changes.
+              ▲ The working tree has uncommitted changes. Commit them, or select Include uncommitted
+              changes.
             </p>
           ) : null}
           <table className="ab-table">

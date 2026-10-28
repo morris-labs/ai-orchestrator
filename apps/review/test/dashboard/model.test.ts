@@ -40,7 +40,14 @@ describe("applyEvent over the demo stream", () => {
 
   it("keeps the latest version of each finding", () => {
     const f = state.runs[RUN_ID]!.findings;
-    expect(Object.keys(f).sort()).toEqual(["F-0001", "F-0002", "F-0003", "F-0004", "F-0007", "F-0008"]);
+    expect(Object.keys(f).sort()).toEqual([
+      "F-0001",
+      "F-0002",
+      "F-0003",
+      "F-0004",
+      "F-0007",
+      "F-0008",
+    ]);
     expect(f["F-0001"]!.verdict).toBe("fixed");
   });
 
@@ -61,9 +68,9 @@ describe("applyEvent over the demo stream", () => {
   });
 
   it("collects usage per account and window, and records the ceiling crossing", () => {
-    expect(state.usage[seriesKey("codex", "user@example.com", "5h")]!.map((s) => s.utilization)).toEqual([
-      0.41, 0.55, 0.72,
-    ]);
+    expect(
+      state.usage[seriesKey("codex", "user@example.com", "5h")]!.map((s) => s.utilization),
+    ).toEqual([0.41, 0.55, 0.72]);
     expect(state.ceilings[seriesKey("codex", "user@example.com", "5h")]!.above).toBe(true);
   });
 
@@ -81,7 +88,14 @@ describe("applyEvent over the demo stream", () => {
 });
 
 describe("applyEvent edge cases", () => {
-  const base = { id: "x", time: "2026-10-28T10:00:00.000Z", source: "server", streamId: "s", seq: 1, sourceSeq: 1 };
+  const base = {
+    id: "x",
+    time: "2026-10-28T10:00:00.000Z",
+    source: "server",
+    streamId: "s",
+    seq: 1,
+    sourceSeq: 1,
+  };
 
   it("drops a removed container and a removed box", () => {
     let s = replay(events);
@@ -94,12 +108,23 @@ describe("applyEvent edge cases", () => {
       engine: null,
     } as AgentBoxEvent);
     expect(s.containers[CONTAINER]).toBeUndefined();
-    s = applyEvent(s, { ...base, type: "box.changed", boxId: "claude-agent-emails_not_sending", status: "stopped", box: null } as AgentBoxEvent);
+    s = applyEvent(s, {
+      ...base,
+      type: "box.changed",
+      boxId: "claude-agent-emails_not_sending",
+      status: "stopped",
+      box: null,
+    } as AgentBoxEvent);
     expect(Object.keys(s.boxes)).toEqual([]);
   });
 
   it("ignores ports for an unknown container", () => {
-    const s = applyEvent(emptyDashboard(), { ...base, type: "ports.changed", container: "c", listeners: [] } as AgentBoxEvent);
+    const s = applyEvent(emptyDashboard(), {
+      ...base,
+      type: "ports.changed",
+      container: "c",
+      listeners: [],
+    } as AgentBoxEvent);
     expect(s.containers).toEqual({});
   });
 

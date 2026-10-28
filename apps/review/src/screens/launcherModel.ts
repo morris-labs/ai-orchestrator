@@ -60,11 +60,13 @@ export function buildRunRequest(form: LauncherForm): BuildResult {
   if (!form.repoPath) errors.push("Select a repository.");
   if (!form.base.trim()) errors.push("Select a base.");
   const roundCap = Number(form.roundCap);
-  if (!Number.isInteger(roundCap) || roundCap < 1) errors.push("The round cap must be a whole number of 1 or more.");
+  if (!Number.isInteger(roundCap) || roundCap < 1)
+    errors.push("The round cap must be a whole number of 1 or more.");
   let prNumber: number | undefined;
   if (form.pipeline === "post-push") {
     prNumber = Number(form.prNumber);
-    if (!Number.isInteger(prNumber) || prNumber < 1) errors.push("A post-push run needs a pull request number.");
+    if (!Number.isInteger(prNumber) || prNumber < 1)
+      errors.push("A post-push run needs a pull request number.");
   }
   if (form.base.trim() === "pr" && form.pipeline === "pre-push" && !form.tip.trim()) {
     errors.push("The pull request base needs a tip branch with an open pull request.");
@@ -85,6 +87,10 @@ export function buildRunRequest(form: LauncherForm): BuildResult {
     includeWorktree: form.includeWorktree,
     roundCap,
   });
-  if (!parsed.success) return { ok: false, errors: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`) };
+  if (!parsed.success)
+    return {
+      ok: false,
+      errors: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`),
+    };
   return { ok: true, request: parsed.data };
 }

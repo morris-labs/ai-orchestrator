@@ -13,7 +13,15 @@ export function ErrorBanner({ error }: { error: unknown }) {
   );
 }
 
-export function Field({ label, children, hint }: { label: string; children: ReactNode; hint?: string }) {
+export function Field({
+  label,
+  children,
+  hint,
+}: {
+  label: string;
+  children: ReactNode;
+  hint?: string;
+}) {
   return (
     <label className="field">
       <span className="field-label">{label}</span>
@@ -52,15 +60,16 @@ export function DiffView({ diff, label }: { diff: string | null; label: string }
   return (
     <pre className="diff" aria-label={label}>
       {diff.split("\n").map((line, i) => {
-        const cls = line.startsWith("+++") || line.startsWith("---")
-          ? "diff-file"
-          : line.startsWith("@@")
-            ? "diff-hunk"
-            : line.startsWith("+")
-              ? "diff-add"
-              : line.startsWith("-")
-                ? "diff-del"
-                : "";
+        const cls =
+          line.startsWith("+++") || line.startsWith("---")
+            ? "diff-file"
+            : line.startsWith("@@")
+              ? "diff-hunk"
+              : line.startsWith("+")
+                ? "diff-add"
+                : line.startsWith("-")
+                  ? "diff-del"
+                  : "";
         return (
           <span key={i} className={cls}>
             {line}

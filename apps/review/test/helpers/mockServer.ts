@@ -54,7 +54,9 @@ export function createMockServer(handlers: Record<string, Handler> = {}): MockSe
       const url = new URL(String(input), "http://127.0.0.1:20400");
       const method = (init?.method ?? "GET").toUpperCase();
       const body = init?.body ? JSON.parse(String(init.body)) : undefined;
-      const headers = Object.fromEntries(Object.entries((init?.headers ?? {}) as Record<string, string>));
+      const headers = Object.fromEntries(
+        Object.entries((init?.headers ?? {}) as Record<string, string>),
+      );
       const query = Object.fromEntries(url.searchParams.entries());
       const json = (status: number, data: unknown) =>
         new Response(data === undefined ? "" : JSON.stringify(data), {
@@ -64,12 +66,14 @@ export function createMockServer(handlers: Record<string, Handler> = {}): MockSe
       const run = (key: string, handler: Handler | undefined, params: Record<string, string>) => {
         const call: MockCall = { key, method, path: url.pathname, params, query, body, headers };
         server.calls.push(call);
-        if (!handler) return json(404, { error: { code: "not_found", message: `No mock for ${key}.` } });
+        if (!handler)
+          return json(404, { error: { code: "not_found", message: `No mock for ${key}.` } });
         try {
           const result = handler(call);
           return json(200, result);
         } catch (err) {
-          if (err instanceof MockError) return json(err.status, { error: { code: err.code, message: err.message } });
+          if (err instanceof MockError)
+            return json(err.status, { error: { code: err.code, message: err.message } });
           throw err;
         }
       };
@@ -79,11 +83,15 @@ export function createMockServer(handlers: Record<string, Handler> = {}): MockSe
         if (c.route.method !== method) continue;
         const m = c.re.exec(url.pathname);
         if (!m) continue;
-        const params = Object.fromEntries(c.names.map((n, i) => [n, decodeURIComponent(m[i + 1]!)]));
+        const params = Object.fromEntries(
+          c.names.map((n, i) => [n, decodeURIComponent(m[i + 1]!)]),
+        );
         if (c.route.body && body !== undefined) {
           const parsed = c.route.body.safeParse(body);
           if (!parsed.success) {
-            return json(400, { error: { code: "validation", message: parsed.error.issues[0]?.message ?? "invalid" } });
+            return json(400, {
+              error: { code: "validation", message: parsed.error.issues[0]?.message ?? "invalid" },
+            });
           }
         }
         return run(c.key, server.handlers[c.key], params);

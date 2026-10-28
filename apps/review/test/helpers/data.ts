@@ -21,7 +21,9 @@ export function demoFindings(): Finding[] {
 }
 
 export function demoRounds(): RoundSummary[] {
-  return events.flatMap((e) => (e.type === "run.changed" && e.roundSummary ? [e.roundSummary] : []));
+  return events.flatMap((e) =>
+    e.type === "run.changed" && e.roundSummary ? [e.roundSummary] : [],
+  );
 }
 
 export function demoBox() {

@@ -24,7 +24,9 @@ export function validatePolicy(doc: unknown): ParseResult {
   if (parsed.success) return { ok: true, policy: parsed.data };
   return {
     ok: false,
-    errors: parsed.error.issues.map((i) => `${i.path.length ? i.path.join(".") : "policy"}: ${i.message}`),
+    errors: parsed.error.issues.map(
+      (i) => `${i.path.length ? i.path.join(".") : "policy"}: ${i.message}`,
+    ),
   };
 }
 

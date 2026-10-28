@@ -13,7 +13,14 @@ import {
   type RunState,
   type Vendor,
 } from "@agentbox/contracts";
-import { AgentsTable, VENDOR_LABELS, VENDORS, agentRows, formatUsd, vendorColor } from "@agentbox/ui/dashboard";
+import {
+  AgentsTable,
+  VENDOR_LABELS,
+  VENDORS,
+  agentRows,
+  formatUsd,
+  vendorColor,
+} from "@agentbox/ui/dashboard";
 import { useCallback, useEffect, useState } from "react";
 import { ErrorBanner, RunStatusBadge, shortId } from "../components/common.js";
 import { href } from "../state/router.js";
@@ -25,9 +32,18 @@ export function StageStepper({ run }: { run: Pick<RunState, "stage" | "status" |
   return (
     <ol className="stepper" aria-label="Stages">
       {steps.map((s) => (
-        <li key={s.stage} className={`step step-${s.state}`} data-state={s.state} aria-current={s.state !== "done" && s.state !== "todo" ? "step" : undefined}>
+        <li
+          key={s.stage}
+          className={`step step-${s.state}`}
+          data-state={s.state}
+          aria-current={s.state !== "done" && s.state !== "todo" ? "step" : undefined}
+        >
           <span className="step-icon" aria-hidden="true">
-            {{ done: "✓", current: "◐", todo: "○", paused: "‖", blocked: "▲", failed: "✕" }[s.state]}
+            {
+              { done: "✓", current: "◐", todo: "○", paused: "‖", blocked: "▲", failed: "✕" }[
+                s.state
+              ]
+            }
           </span>
           {s.stage}
         </li>
@@ -41,11 +57,13 @@ function FindingCard({ finding, label }: { finding: Finding; label?: string }) {
     <article className="finding-card">
       {label ? <div className="muted small">{label}</div> : null}
       <h4>
-        {finding.id} <span className={`sev sev-${finding.severity}`}>{finding.severity}</span> {finding.title}
+        {finding.id} <span className={`sev sev-${finding.severity}`}>{finding.severity}</span>{" "}
+        {finding.title}
       </h4>
       <p className="mono small">
         {finding.file ?? "No location"}
-        {finding.lines ? `:${finding.lines[0]}-${finding.lines[1]}` : ""} · round {finding.round} · {finding.verdict}
+        {finding.lines ? `:${finding.lines[0]}-${finding.lines[1]}` : ""} · round {finding.round} ·{" "}
+        {finding.verdict}
       </p>
       <p>{finding.failureCase}</p>
       {finding.evidence ? <pre className="evidence">{finding.evidence}</pre> : null}
@@ -71,20 +89,22 @@ export function DecisionPanel({
       <h3>▲ {view.title}</h3>
       <p>{view.explanation}</p>
       {decision.message ? <p className="decision-message">{decision.message}</p> : null}
-      {view.compareVersions ? (
-        oscillationPairs(findings).map(({ before, after }) => (
-          <div key={before.fingerprint} className="compare">
-            <FindingCard finding={before} label="Before: closed by a fix" />
-            <FindingCard finding={after} label="Now: raised again" />
-          </div>
-        ))
-      ) : (
-        findings.map((f) => <FindingCard key={f.id} finding={f} />)
-      )}
+      {view.compareVersions
+        ? oscillationPairs(findings).map(({ before, after }) => (
+            <div key={before.fingerprint} className="compare">
+              <FindingCard finding={before} label="Before: closed by a fix" />
+              <FindingCard finding={after} label="Now: raised again" />
+            </div>
+          ))
+        : findings.map((f) => <FindingCard key={f.id} finding={f} />)}
       {view.buttons.some((b) => b.needsReason) ? (
         <label className="field">
           <span className="field-label">Reason for waiving</span>
-          <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Accepted risk: …" />
+          <input
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="Accepted risk: …"
+          />
         </label>
       ) : null}
       <div className="actions">
@@ -92,7 +112,9 @@ export function DecisionPanel({
           <button
             key={b.option}
             type="button"
-            className={b.option === "cancel" ? "danger" : b.option === "resume" ? "primary" : undefined}
+            className={
+              b.option === "cancel" ? "danger" : b.option === "resume" ? "primary" : undefined
+            }
             disabled={busy || (b.needsReason && reason.trim() === "")}
             onClick={() => onDecide(b.option, reason.trim())}
           >
@@ -167,11 +189,14 @@ function RoleEditor({
     const v = run.roles[role];
     return Array.isArray(v) ? v : [v];
   };
-  const [draft, setDraft] = useState<Record<Role, Vendor[]>>(() =>
-    Object.fromEntries(RoleSchema.options.map((r) => [r, current(r)])) as Record<Role, Vendor[]>,
+  const [draft, setDraft] = useState<Record<Role, Vendor[]>>(
+    () =>
+      Object.fromEntries(RoleSchema.options.map((r) => [r, current(r)])) as Record<Role, Vendor[]>,
   );
   useEffect(() => {
-    setDraft(Object.fromEntries(RoleSchema.options.map((r) => [r, current(r)])) as Record<Role, Vendor[]>);
+    setDraft(
+      Object.fromEntries(RoleSchema.options.map((r) => [r, current(r)])) as Record<Role, Vendor[]>,
+    );
   }, [run.roles]);
   return (
     <table className="ab-table" aria-label="Roles">
@@ -268,7 +293,12 @@ export function RunView({ runId }: { runId: string }) {
     if (e.type === "run.changed" && e.run.id === runId) {
       setRun(e.run);
       const summary = e.roundSummary;
-      if (summary) setRounds((rs) => [...rs.filter((r) => r.round !== summary.round), summary].sort((a, b) => a.round - b.round));
+      if (summary)
+        setRounds((rs) =>
+          [...rs.filter((r) => r.round !== summary.round), summary].sort(
+            (a, b) => a.round - b.round,
+          ),
+        );
     } else if (e.type === "stage.changed" && e.runId === runId) {
       setRun((r) => (r ? { ...r, stage: e.stage, round: e.round } : r));
     }
@@ -284,13 +314,16 @@ export function RunView({ runId }: { runId: string }) {
     let live = true;
     (async () => {
       const found = await Promise.all(
-        ids.map((findingId) => api.call("findings.get", { params: { runId, findingId } }).then((d) => d.finding)),
+        ids.map((findingId) =>
+          api.call("findings.get", { params: { runId, findingId } }).then((d) => d.finding),
+        ),
       );
       // For an oscillation, also load earlier findings with the same fingerprint.
       if (run.decision?.kind === "oscillation") {
         const { findings } = await api.call("findings.list", { params: { runId } });
         const prints = new Set(found.map((f) => f.fingerprint));
-        for (const f of findings) if (prints.has(f.fingerprint) && !found.some((x) => x.id === f.id)) found.push(f);
+        for (const f of findings)
+          if (prints.has(f.fingerprint) && !found.some((x) => x.id === f.id)) found.push(f);
       }
       if (live) setDecisionFindings(found);
     })().catch(setError);
@@ -331,11 +364,13 @@ export function RunView({ runId }: { runId: string }) {
       <header className="run-head">
         <div>
           <h2>
-            Run <span className="mono">{shortId(run.id)}</span> <RunStatusBadge status={run.status} />
+            Run <span className="mono">{shortId(run.id)}</span>{" "}
+            <RunStatusBadge status={run.status} />
           </h2>
           <p className="muted small">
             {run.request.pipeline} · {run.request.repoPath} · base {run.request.base}
-            {run.baseSha ? ` (${run.baseSha.slice(0, 8)})` : ""} · tip {run.request.tip ?? "checked-out branch"}
+            {run.baseSha ? ` (${run.baseSha.slice(0, 8)})` : ""} · tip{" "}
+            {run.request.tip ?? "checked-out branch"}
             {run.request.readOnly ? " · read-only" : ""}
           </p>
         </div>
@@ -351,9 +386,15 @@ export function RunView({ runId }: { runId: string }) {
       </header>
       <ErrorBanner error={error} />
       <StageStepper run={run} />
-      {run.stopReason ? <p className="muted">Stopped: {run.stopReason.replace(/_/g, " ")}.</p> : null}
+      {run.stopReason ? (
+        <p className="muted">Stopped: {run.stopReason.replace(/_/g, " ")}.</p>
+      ) : null}
       {run.error ? <p className="banner banner-error">✕ {run.error}</p> : null}
-      {run.pausedUntil ? <p className="banner banner-warning">‖ Paused until {new Date(run.pausedUntil).toLocaleString()}.</p> : null}
+      {run.pausedUntil ? (
+        <p className="banner banner-warning">
+          ‖ Paused until {new Date(run.pausedUntil).toLocaleString()}.
+        </p>
+      ) : null}
 
       {run.status === "waiting_decision" && run.decision ? (
         <DecisionPanel
@@ -377,22 +418,40 @@ export function RunView({ runId }: { runId: string }) {
 
       <div className="actions">
         {controls.pause ? (
-          <button type="button" disabled={busy} onClick={() => void act(() => api.call("runs.pause", { params }))}>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void act(() => api.call("runs.pause", { params }))}
+          >
             Pause
           </button>
         ) : null}
         {controls.resume ? (
-          <button type="button" className="primary" disabled={busy} onClick={() => void act(() => api.call("runs.resume", { params }))}>
+          <button
+            type="button"
+            className="primary"
+            disabled={busy}
+            onClick={() => void act(() => api.call("runs.resume", { params }))}
+          >
             Resume
           </button>
         ) : null}
         {controls.rebaseBase ? (
-          <button type="button" disabled={busy} onClick={() => void act(() => api.call("runs.rebaseBase", { params }))}>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void act(() => api.call("runs.rebaseBase", { params }))}
+          >
             Re-resolve base
           </button>
         ) : null}
         {controls.cancel ? (
-          <button type="button" className="danger" disabled={busy} onClick={() => void act(() => api.call("runs.cancel", { params }))}>
+          <button
+            type="button"
+            className="danger"
+            disabled={busy}
+            onClick={() => void act(() => api.call("runs.cancel", { params }))}
+          >
             Cancel run
           </button>
         ) : null}
@@ -401,7 +460,9 @@ export function RunView({ runId }: { runId: string }) {
             type="button"
             className="primary"
             disabled={busy}
-            onClick={() => void act(() => api.call("runs.push", { params, body: { draft: false } }))}
+            onClick={() =>
+              void act(() => api.call("runs.push", { params, body: { draft: false } }))
+            }
           >
             Push and open the pull request
           </button>
@@ -422,7 +483,9 @@ export function RunView({ runId }: { runId: string }) {
             value={run.profile}
             disabled={!controls.steer || busy}
             onChange={(e) =>
-              void act(() => api.call("runs.profile", { params, body: { profile: e.target.value as Profile } }))
+              void act(() =>
+                api.call("runs.profile", { params, body: { profile: e.target.value as Profile } }),
+              )
             }
           >
             {ProfileSchema.options.map((p) => (
@@ -436,7 +499,9 @@ export function RunView({ runId }: { runId: string }) {
         <RoleEditor
           run={run}
           disabled={!controls.steer || busy}
-          onAssign={(role, vendors) => void act(() => api.call("runs.assign", { params, body: { role, vendors } }))}
+          onAssign={(role, vendors) =>
+            void act(() => api.call("runs.assign", { params, body: { role, vendors } }))
+          }
         />
       </section>
 
@@ -467,7 +532,9 @@ export function RunList() {
       <h2>Runs</h2>
       <ErrorBanner error={error} />
       {sorted.length === 0 ? (
-        <p className="muted">No runs yet. <a href={href("/launch")}>Start one.</a></p>
+        <p className="muted">
+          No runs yet. <a href={href("/launch")}>Start one.</a>
+        </p>
       ) : (
         <table className="ab-table">
           <thead>

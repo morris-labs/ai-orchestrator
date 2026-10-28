@@ -58,9 +58,13 @@ describe("Findings", () => {
   it("waives a pending finding with a reason", async () => {
     const { server } = renderWithStore(<Findings runId={RUN_ID} findingId="F-0007" />, handlers());
     const detail = await screen.findByRole("article", { name: "Finding F-0007" });
-    fireEvent.change(within(detail).getByLabelText("Reason for waiving"), { target: { value: "Tracked in a ticket" } });
+    fireEvent.change(within(detail).getByLabelText("Reason for waiving"), {
+      target: { value: "Tracked in a ticket" },
+    });
     fireEvent.click(within(detail).getByRole("button", { name: "Waive" }));
-    await waitFor(() => expect(server.callsTo("findings.waive")[0]?.body).toEqual({ reason: "Tracked in a ticket" }));
+    await waitFor(() =>
+      expect(server.callsTo("findings.waive")[0]?.body).toEqual({ reason: "Tracked in a ticket" }),
+    );
     await waitFor(() => expect(within(detail).queryByRole("button", { name: "Waive" })).toBeNull());
   });
 

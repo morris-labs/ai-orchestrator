@@ -1,10 +1,16 @@
 // Exposes the server URL and token to the renderer, and forwards navigation
 // requests from the tray and notifications. The token stays out of the
 // command line and the page's URL.
-// A sandboxed preload is CommonJS, so it loads Electron with `require`.
-const { contextBridge, ipcRenderer } = require("electron") as typeof import("electron");
+import type * as Electron from "electron";
 
-const config = ipcRenderer.sendSync("agentbox:config") as { token: string | null; serverUrl: string | null };
+// A sandboxed preload is CommonJS, so it loads Electron with `require`.
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { contextBridge, ipcRenderer } = require("electron") as typeof Electron;
+
+const config = ipcRenderer.sendSync("agentbox:config") as {
+  token: string | null;
+  serverUrl: string | null;
+};
 
 contextBridge.exposeInMainWorld("agentbox", {
   token: config.token,

@@ -16,7 +16,13 @@ import { useEffect, useMemo, useState } from "react";
 import { DiffView, ErrorBanner, Field, shortId } from "../components/common.js";
 import { href, navigate } from "../state/router.js";
 import { useAppStore, useEvents, useStore } from "../state/store.js";
-import { NO_FILTER, canWaive, filterFindings, findingVendors, type FindingFilter } from "./findingsModel.js";
+import {
+  NO_FILTER,
+  canWaive,
+  filterFindings,
+  findingVendors,
+  type FindingFilter,
+} from "./findingsModel.js";
 import { commitUrl } from "./runModel.js";
 
 type Detail = RouteOf<"findings.get">["response"];
@@ -47,7 +53,10 @@ function FindingDetail({
   async function waive() {
     setBusy(true);
     try {
-      const updated = await api.call("findings.waive", { params: { runId, findingId }, body: { reason: reason.trim() } });
+      const updated = await api.call("findings.waive", {
+        params: { runId, findingId },
+        body: { reason: reason.trim() },
+      });
       setDetail((d) => (d ? { ...d, finding: updated } : d));
       onChanged(updated);
       setReason("");
@@ -65,7 +74,8 @@ function FindingDetail({
       </h3>
       <p className="mono small">
         {f.file ?? "No location"}
-        {f.lines ? `:${f.lines[0]}-${f.lines[1]}` : ""} · {f.category} · round {f.round} · group {f.groupId ?? "none"}
+        {f.lines ? `:${f.lines[0]}-${f.lines[1]}` : ""} · {f.category} · round {f.round} · group{" "}
+        {f.groupId ?? "none"}
       </p>
       <dl className="facts">
         <dt>Verdict</dt>
@@ -107,7 +117,11 @@ function FindingDetail({
       <h4>Failure case</h4>
       <p>{f.failureCase}</p>
       <h4>Evidence</h4>
-      {f.evidence ? <pre className="evidence">{f.evidence}</pre> : <p className="muted">None recorded.</p>}
+      {f.evidence ? (
+        <pre className="evidence">{f.evidence}</pre>
+      ) : (
+        <p className="muted">None recorded.</p>
+      )}
       <h4>Diff</h4>
       <DiffView diff={detail.diff} label="Finding diff" />
       {detail.fixDiff ? (
@@ -126,7 +140,8 @@ function FindingDetail({
               <strong>{h.verdict}</strong> by {h.actor.kind}
               {h.actor.vendor ? ` ${h.actor.vendor}` : ""}
               {h.actor.role ? ` (${h.actor.role})` : ""}
-              {h.round ? `, round ${h.round}` : ""} · <time dateTime={h.time}>{new Date(h.time).toLocaleString()}</time>
+              {h.round ? `, round ${h.round}` : ""} ·{" "}
+              <time dateTime={h.time}>{new Date(h.time).toLocaleString()}</time>
               {h.evidence ? <div className="muted small">{h.evidence}</div> : null}
             </li>
           ))}
@@ -137,7 +152,11 @@ function FindingDetail({
           <Field label="Reason for waiving">
             <input value={reason} onChange={(e) => setReason(e.target.value)} />
           </Field>
-          <button type="button" disabled={busy || reason.trim() === ""} onClick={() => void waive()}>
+          <button
+            type="button"
+            disabled={busy || reason.trim() === ""}
+            onClick={() => void waive()}
+          >
             Waive
           </button>
         </div>
@@ -155,13 +174,20 @@ export function Findings({ runId, findingId }: { runId: string | null; findingId
   const resets = useStore((s) => s.resets);
 
   useEffect(() => {
-    api.call("runs.list").then((r) => setRuns([...r.runs].sort((a, b) => b.createdAt.localeCompare(a.createdAt))), setError);
+    api
+      .call("runs.list")
+      .then(
+        (r) => setRuns([...r.runs].sort((a, b) => b.createdAt.localeCompare(a.createdAt))),
+        setError,
+      );
   }, [api, resets]);
 
   const selectedRun = runId ?? runs[0]?.id ?? null;
   useEffect(() => {
     if (!selectedRun) return;
-    api.call("findings.list", { params: { runId: selectedRun } }).then((r) => setFindings(r.findings), setError);
+    api
+      .call("findings.list", { params: { runId: selectedRun } })
+      .then((r) => setFindings(r.findings), setError);
   }, [api, selectedRun, resets]);
 
   useEvents((e) => {
@@ -170,10 +196,14 @@ export function Findings({ runId, findingId }: { runId: string | null; findingId
     }
   });
 
-  const rounds = useMemo(() => [...new Set(findings.map((f) => f.round))].sort((a, b) => a - b), [findings]);
+  const rounds = useMemo(
+    () => [...new Set(findings.map((f) => f.round))].sort((a, b) => a - b),
+    [findings],
+  );
   const shown = filterFindings(findings, filter);
   const run = runs.find((r) => r.id === selectedRun) ?? null;
-  const go = (q: Record<string, string | undefined>) => navigate(href("/findings", { run: selectedRun ?? undefined, ...q }));
+  const go = (q: Record<string, string | undefined>) =>
+    navigate(href("/findings", { run: selectedRun ?? undefined, ...q }));
 
   return (
     <div className="screen">
@@ -181,7 +211,10 @@ export function Findings({ runId, findingId }: { runId: string | null; findingId
       <ErrorBanner error={error} />
       <div className="filter-row">
         <Field label="Run">
-          <select value={selectedRun ?? ""} onChange={(e) => navigate(href("/findings", { run: e.target.value }))}>
+          <select
+            value={selectedRun ?? ""}
+            onChange={(e) => navigate(href("/findings", { run: e.target.value }))}
+          >
             {runs.map((r) => (
               <option key={r.id} value={r.id}>
                 {shortId(r.id)} {r.request.repoPath} ({r.status})
@@ -192,7 +225,9 @@ export function Findings({ runId, findingId }: { runId: string | null; findingId
         <Field label="Round">
           <select
             value={filter.round ?? ""}
-            onChange={(e) => setFilter({ ...filter, round: e.target.value ? Number(e.target.value) : null })}
+            onChange={(e) =>
+              setFilter({ ...filter, round: e.target.value ? Number(e.target.value) : null })
+            }
           >
             <option value="">All</option>
             {rounds.map((r) => (
@@ -203,7 +238,12 @@ export function Findings({ runId, findingId }: { runId: string | null; findingId
           </select>
         </Field>
         <Field label="Vendor">
-          <select value={filter.vendor ?? ""} onChange={(e) => setFilter({ ...filter, vendor: (e.target.value || null) as Vendor | null })}>
+          <select
+            value={filter.vendor ?? ""}
+            onChange={(e) =>
+              setFilter({ ...filter, vendor: (e.target.value || null) as Vendor | null })
+            }
+          >
             <option value="">All</option>
             {VENDORS.map((v) => (
               <option key={v} value={v}>
@@ -215,7 +255,9 @@ export function Findings({ runId, findingId }: { runId: string | null; findingId
         <Field label="Severity">
           <select
             value={filter.severity ?? ""}
-            onChange={(e) => setFilter({ ...filter, severity: (e.target.value || null) as Severity | null })}
+            onChange={(e) =>
+              setFilter({ ...filter, severity: (e.target.value || null) as Severity | null })
+            }
           >
             <option value="">All</option>
             {SeveritySchema.options.map((s) => (
@@ -228,7 +270,9 @@ export function Findings({ runId, findingId }: { runId: string | null; findingId
         <Field label="Verdict">
           <select
             value={filter.verdict ?? ""}
-            onChange={(e) => setFilter({ ...filter, verdict: (e.target.value || null) as Verdict | null })}
+            onChange={(e) =>
+              setFilter({ ...filter, verdict: (e.target.value || null) as Verdict | null })
+            }
           >
             <option value="">All</option>
             {VerdictSchema.options.map((v) => (
@@ -256,7 +300,10 @@ export function Findings({ runId, findingId }: { runId: string | null; findingId
                   <span className={`sev sev-${f.severity}`}>{f.severity}</span>
                   <span className="finding-title">{f.title}</span>
                   <span className="muted small">
-                    {f.id} · round {f.round} · {f.verdict} · {findingVendors(f).map((v) => VENDOR_LABELS[v]).join(", ")}
+                    {f.id} · round {f.round} · {f.verdict} ·{" "}
+                    {findingVendors(f)
+                      .map((v) => VENDOR_LABELS[v])
+                      .join(", ")}
                   </span>
                 </button>
               </li>

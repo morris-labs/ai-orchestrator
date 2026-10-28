@@ -255,7 +255,8 @@ export function applyEvent(prev: DashboardState, event: AgentBoxEvent): Dashboar
         role: event.role,
         groupId: event.groupId,
         round: event.round,
-        startedAt: started?.startedAt ?? new Date(Date.parse(event.time) - event.elapsedMs).toISOString(),
+        startedAt:
+          started?.startedAt ?? new Date(Date.parse(event.time) - event.elapsedMs).toISOString(),
         finishedAt: event.time,
         outcome: event.outcome,
         elapsedMs: event.elapsedMs,
@@ -356,7 +357,12 @@ export function applyEvent(prev: DashboardState, event: AgentBoxEvent): Dashboar
         ...state,
         containers: {
           ...state.containers,
-          [event.container]: { ...c, state: event.state, engine: event.engine, updatedAt: event.time },
+          [event.container]: {
+            ...c,
+            state: event.state,
+            engine: event.engine,
+            updatedAt: event.time,
+          },
         },
       };
     }
@@ -382,14 +388,25 @@ export function applyEvent(prev: DashboardState, event: AgentBoxEvent): Dashboar
       if (!c) return state;
       return {
         ...state,
-        containers: { ...state.containers, [event.container]: { ...c, listeners: event.listeners } },
+        containers: {
+          ...state.containers,
+          [event.container]: { ...c, listeners: event.listeners },
+        },
       };
     }
     case "terminal.ended":
       return event.unexpected ? { ...state, unexpectedEnds: state.unexpectedEnds + 1 } : state;
     case "notification": {
-      const { id: _id, type: _t, time: _time, source: _s, streamId: _sid, seq: _q, sourceSeq: _ss, ...n } =
-        event;
+      const {
+        id: _id,
+        type: _t,
+        time: _time,
+        source: _s,
+        streamId: _sid,
+        seq: _q,
+        sourceSeq: _ss,
+        ...n
+      } = event;
       const rest = state.notifications.filter((x) => x.notificationId !== n.notificationId);
       return { ...state, notifications: [...rest, n].slice(-NOTIFICATION_LIMIT) };
     }

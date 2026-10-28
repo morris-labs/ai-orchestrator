@@ -9,7 +9,11 @@ describe("Settings", () => {
     const settings = defaultConfig();
     const { server } = renderWithStore(<Settings />, {
       "settings.get": () => settings,
-      "settings.patch": (c) => ({ ...settings, ...(c.body as object), ceilings: { ...settings.ceilings, codex: { kind: "utilization", window: "5h", max: 0.5 } } }),
+      "settings.patch": (c) => ({
+        ...settings,
+        ...(c.body as object),
+        ceilings: { ...settings.ceilings, codex: { kind: "utilization", window: "5h", max: 0.5 } },
+      }),
     });
     const codex = await screen.findByRole("group", { name: "Codex" });
     expect(within(codex).getByLabelText("Ceiling (%)")).toHaveValue(70);
@@ -39,10 +43,20 @@ describe("Settings", () => {
         seq: 1,
         sourceSeq: 1,
         type: "settings.changed",
-        settings: { ...settings, ceilings: { ...settings.ceilings, copilot: { kind: "spend", period: "month", maxUsd: 90 } } },
+        settings: {
+          ...settings,
+          ceilings: {
+            ...settings.ceilings,
+            copilot: { kind: "spend", period: "month", maxUsd: 90 },
+          },
+        },
         changedKeys: ["ceilings"],
       }),
     );
-    expect(within(screen.getByRole("group", { name: "Copilot" })).getByLabelText("Ceiling (US dollars per month)")).toHaveValue(90);
+    expect(
+      within(screen.getByRole("group", { name: "Copilot" })).getByLabelText(
+        "Ceiling (US dollars per month)",
+      ),
+    ).toHaveValue(90);
   });
 });
