@@ -1,9 +1,12 @@
 // The SQLite mirror of review runs. The engines own the run files; the server
 // keeps the latest `RunState` of every run it has seen, from `run.changed`
 // events and from the run routes it proxies, so it knows which engine holds a
-// run and which box a run holds.
+// run and which box a run holds. It also keeps the latest state of every
+// finding, from `finding.changed` events.
 import {
+  FindingSchema,
   RunStateSchema,
+  type Finding,
   type AgentBoxEvent,
   type RunState,
   type RunStatus,
@@ -30,6 +33,15 @@ CREATE TABLE IF NOT EXISTS svc_runs (
   json TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS svc_runs_box ON svc_runs (box_id, status);
+CREATE TABLE IF NOT EXISTS svc_findings (
+  run_id TEXT NOT NULL,
+  finding_id TEXT NOT NULL,
+  round INTEGER NOT NULL,
+  verdict TEXT NOT NULL,
+  severity TEXT NOT NULL,
+  json TEXT NOT NULL,
+  PRIMARY KEY (run_id, finding_id)
+);
 `;
 
 export class RunMirror {
@@ -61,9 +73,38 @@ export class RunMirror {
       );
   }
 
-  /** Mirrors `run.changed` events; ignores every other event. */
+  /** Mirrors `run.changed` and `finding.changed` events; ignores every other event. */
   ingest(event: AgentBoxEvent): void {
     if (event.type === "run.changed") this.upsert(event.run);
+    if (event.type === "finding.changed") this.upsertFinding(event.finding);
+  }
+
+  /** Stores a finding's latest state; events arrive in order, so the last one wins. */
+  upsertFinding(finding: Finding): void {
+    this.db
+      .prepare(
+        `INSERT INTO svc_findings (run_id, finding_id, round, verdict, severity, json)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT (run_id, finding_id) DO UPDATE SET round = excluded.round,
+           verdict = excluded.verdict, severity = excluded.severity, json = excluded.json`,
+      )
+      .run(
+        finding.runId,
+        finding.id,
+        finding.round,
+        finding.verdict,
+        finding.severity,
+        JSON.stringify(finding),
+      );
+  }
+
+  /** The mirrored findings of a run, by id. */
+  findings(runId: string): Finding[] {
+    return (
+      this.db
+        .prepare("SELECT json FROM svc_findings WHERE run_id = ? ORDER BY finding_id")
+        .all(runId) as { json: string }[]
+    ).map((r) => FindingSchema.parse(JSON.parse(r.json)));
   }
 
   get(runId: string): RunState | undefined {
