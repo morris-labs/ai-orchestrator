@@ -178,6 +178,21 @@ describe("EngineClient", () => {
     expect(engine.leaseResponses[0]).toMatchObject({ decision: "pause", leaseId: "L-1" });
   });
 
+  it("logs an event that fails to relay and leaves the cursor before it", async () => {
+    const logs: string[] = [];
+    const c = build({
+      onEvent: () => {
+        throw new Error("SQLITE_BUSY");
+      },
+      log: (m) => logs.push(m),
+    });
+    c.start();
+    await waitFor(() => engine.sockets.length === 1 && cursor.get() !== null);
+    engine.emit(runEvent);
+    await waitFor(() => logs.some((l) => l.includes("failed to relay")));
+    expect(cursor.get()?.lastSeq).toBe(0);
+  });
+
   it("ignores an invalid frame", async () => {
     const logs: string[] = [];
     const c = build({ log: (m) => logs.push(m) });

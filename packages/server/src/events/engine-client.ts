@@ -253,7 +253,11 @@ export class EngineClient {
     });
     ws.on("message", (data, isBinary) => {
       if (isBinary) return;
-      void this.onFrame(ws, data.toString());
+      this.onFrame(ws, data.toString()).catch((err: unknown) => {
+        this.options.log?.(
+          `Engine ${this.options.endpoint.container} frame failed: ${(err as Error).message}`,
+        );
+      });
     });
     ws.on("error", (err) => {
       this.options.log?.(`Engine ${this.options.endpoint.container} socket error: ${err.message}`);
@@ -299,7 +303,16 @@ export class EngineClient {
       }
       return;
     }
+    // Relay first: the cursor moves past an event only once the hub has it,
+    // so a reconnect replays an event whose relay failed.
+    try {
+      this.options.onEvent(frame);
+    } catch (err) {
+      this.options.log?.(
+        `Engine ${this.options.endpoint.container} event ${frame.seq} failed to relay: ${(err as Error).message}`,
+      );
+      return;
+    }
     this.options.cursor.set(frame.streamId, frame.seq);
-    this.options.onEvent(frame);
   }
 }
