@@ -1,0 +1,349 @@
+// The GitHub operations the engine needs, behind an interface so tests can
+// script them. `GhCliClient` implements them with the `gh` CLI.
+import type { CommandRunner } from "../core.js";
+
+export interface PrInfo {
+  number: number;
+  url: string;
+  headRefName: string;
+  baseRefName: string;
+  headSha: string;
+  state: "OPEN" | "CLOSED" | "MERGED";
+}
+
+export interface PrReview {
+  id: string;
+  author: string;
+  state: string;
+  /** The head commit the review looked at. */
+  commitId: string | null;
+  submittedAt: string | null;
+}
+
+export interface ThreadComment {
+  id: string;
+  author: string;
+  body: string;
+  url: string | null;
+}
+
+export interface ReviewThread {
+  id: string;
+  isResolved: boolean;
+  path: string | null;
+  line: number | null;
+  startLine: number | null;
+  comments: ThreadComment[];
+}
+
+export type CheckBucket = "pass" | "fail" | "pending" | "skipping" | "cancel";
+
+export interface CheckRun {
+  name: string;
+  bucket: CheckBucket;
+  link: string | null;
+  workflow: string | null;
+}
+
+export interface CreatePrInput {
+  base: string;
+  head: string;
+  title: string;
+  body: string;
+  draft: boolean;
+}
+
+export interface GitHubClient {
+  /** The pull request for a number or a branch, or `null` when there is none. */
+  viewPr(repoPath: string, selector: number | string): Promise<PrInfo | null>;
+  /** The open pull request whose head is `branch`, or `null`. */
+  findOpenPr(repoPath: string, branch: string): Promise<PrInfo | null>;
+  createPr(repoPath: string, input: CreatePrInput): Promise<PrInfo>;
+  defaultBranch(repoPath: string): Promise<string>;
+  requestCopilotReview(repoPath: string, pr: number): Promise<void>;
+  listReviews(repoPath: string, pr: number): Promise<PrReview[]>;
+  listReviewThreads(repoPath: string, pr: number): Promise<ReviewThread[]>;
+  listChecks(repoPath: string, pr: number): Promise<CheckRun[]>;
+  /** The log of the failed steps of a check, or an empty string. */
+  failedCheckLog(repoPath: string, check: CheckRun): Promise<string>;
+  replyToThread(repoPath: string, threadId: string, body: string): Promise<void>;
+  resolveThread(repoPath: string, threadId: string): Promise<void>;
+}
+
+/** The login GitHub uses for Copilot's pull request reviews. */
+export const COPILOT_REVIEWER = "copilot-pull-request-reviewer[bot]";
+
+/** True when `login` is Copilot's reviewer, in any of the forms GitHub returns. */
+export function isCopilotLogin(login: string): boolean {
+  const l = login.toLowerCase();
+  return l === "copilot" || l.startsWith("copilot-pull-request-reviewer");
+}
+
+const PR_FIELDS = "number,url,headRefName,baseRefName,headRefOid,state";
+
+interface RawPr {
+  number: number;
+  url: string;
+  headRefName: string;
+  baseRefName: string;
+  headRefOid: string;
+  state: PrInfo["state"];
+}
+
+function toPr(raw: RawPr): PrInfo {
+  return {
+    number: raw.number,
+    url: raw.url,
+    headRefName: raw.headRefName,
+    baseRefName: raw.baseRefName,
+    headSha: raw.headRefOid,
+    state: raw.state,
+  };
+}
+
+export class GhError extends Error {
+  constructor(
+    readonly args: readonly string[],
+    readonly exitCode: number,
+    readonly stderr: string,
+  ) {
+    super(
+      `gh ${args[0] ?? ""} ${args[1] ?? ""} failed with exit code ${exitCode}: ${stderr.trim()}`,
+    );
+    this.name = "GhError";
+  }
+}
+
+const THREADS_QUERY = `query($owner: String!, $repo: String!, $number: Int!) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 100) {
+        nodes {
+          id isResolved path line startLine
+          comments(first: 50) { nodes { id body url author { login } } }
+        }
+      }
+    }
+  }
+}`;
+
+const REPLY_MUTATION = `mutation($thread: ID!, $body: String!) {
+  addPullRequestReviewThreadReply(input: {pullRequestReviewThreadId: $thread, body: $body}) { comment { id } }
+}`;
+
+const RESOLVE_MUTATION = `mutation($thread: ID!) {
+  resolveReviewThread(input: {threadId: $thread}) { thread { id } }
+}`;
+
+/** `GitHubClient` over the `gh` CLI, run in the repository directory. */
+export class GhCliClient implements GitHubClient {
+  constructor(private readonly runner: CommandRunner) {}
+
+  private async gh(repoPath: string, args: string[], allowFail = false): Promise<string> {
+    const result = await this.runner.run("gh", args, { cwd: repoPath, timeoutMs: 120_000 });
+    if (result.exitCode !== 0) {
+      if (allowFail) return "";
+      throw new GhError(args, result.exitCode, result.stderr);
+    }
+    return result.stdout;
+  }
+
+  async viewPr(repoPath: string, selector: number | string): Promise<PrInfo | null> {
+    const out = await this.gh(
+      repoPath,
+      ["pr", "view", String(selector), "--json", PR_FIELDS],
+      true,
+    );
+    return out.trim() === "" ? null : toPr(JSON.parse(out) as RawPr);
+  }
+
+  async findOpenPr(repoPath: string, branch: string): Promise<PrInfo | null> {
+    const out = await this.gh(repoPath, [
+      "pr",
+      "list",
+      "--head",
+      branch,
+      "--state",
+      "open",
+      "--json",
+      PR_FIELDS,
+    ]);
+    const list = JSON.parse(out || "[]") as RawPr[];
+    return list[0] ? toPr(list[0]) : null;
+  }
+
+  async createPr(repoPath: string, input: CreatePrInput): Promise<PrInfo> {
+    const args = [
+      "pr",
+      "create",
+      "--base",
+      input.base,
+      "--head",
+      input.head,
+      "--title",
+      input.title,
+      "--body",
+      input.body,
+    ];
+    if (input.draft) args.push("--draft");
+    const url = (await this.gh(repoPath, args)).trim().split("\n").pop() ?? "";
+    const pr = await this.viewPr(repoPath, url || input.head);
+    if (!pr)
+      throw new Error(
+        `gh pr create succeeded, but the pull request for ${input.head} isn't visible.`,
+      );
+    return pr;
+  }
+
+  async defaultBranch(repoPath: string): Promise<string> {
+    const out = await this.gh(repoPath, [
+      "repo",
+      "view",
+      "--json",
+      "defaultBranchRef",
+      "-q",
+      ".defaultBranchRef.name",
+    ]);
+    return out.trim();
+  }
+
+  async requestCopilotReview(repoPath: string, pr: number): Promise<void> {
+    await this.gh(repoPath, [
+      "api",
+      "--method",
+      "POST",
+      `repos/{owner}/{repo}/pulls/${pr}/requested_reviewers`,
+      "-f",
+      `reviewers[]=${COPILOT_REVIEWER}`,
+    ]);
+  }
+
+  async listReviews(repoPath: string, pr: number): Promise<PrReview[]> {
+    const out = await this.gh(repoPath, [
+      "api",
+      "--paginate",
+      `repos/{owner}/{repo}/pulls/${pr}/reviews`,
+    ]);
+    const list = JSON.parse(out || "[]") as Array<{
+      id: number;
+      user?: { login?: string } | null;
+      state: string;
+      commit_id?: string | null;
+      submitted_at?: string | null;
+    }>;
+    return list.map((r) => ({
+      id: String(r.id),
+      author: r.user?.login ?? "",
+      state: r.state,
+      commitId: r.commit_id ?? null,
+      submittedAt: r.submitted_at ?? null,
+    }));
+  }
+
+  async listReviewThreads(repoPath: string, pr: number): Promise<ReviewThread[]> {
+    const out = await this.gh(repoPath, [
+      "api",
+      "graphql",
+      "-f",
+      `query=${THREADS_QUERY}`,
+      "-F",
+      "owner={owner}",
+      "-F",
+      "repo={repo}",
+      "-F",
+      `number=${pr}`,
+    ]);
+    type RawThread = {
+      id: string;
+      isResolved: boolean;
+      path: string | null;
+      line: number | null;
+      startLine: number | null;
+      comments: {
+        nodes: Array<{
+          id: string;
+          body: string;
+          url: string | null;
+          author: { login: string } | null;
+        }>;
+      };
+    };
+    const data = JSON.parse(out) as {
+      data: { repository: { pullRequest: { reviewThreads: { nodes: RawThread[] } } } };
+    };
+    return data.data.repository.pullRequest.reviewThreads.nodes.map((t) => ({
+      id: t.id,
+      isResolved: t.isResolved,
+      path: t.path,
+      line: t.line,
+      startLine: t.startLine,
+      comments: t.comments.nodes.map((c) => ({
+        id: c.id,
+        author: c.author?.login ?? "",
+        body: c.body,
+        url: c.url,
+      })),
+    }));
+  }
+
+  async listChecks(repoPath: string, pr: number): Promise<CheckRun[]> {
+    // `gh pr checks` exits 8 while checks are pending and 1 when one fails, but
+    // still prints the JSON, so the exit code is not an error here.
+    const result = await this.runner.run(
+      "gh",
+      ["pr", "checks", String(pr), "--json", "name,bucket,link,workflow"],
+      { cwd: repoPath, timeoutMs: 120_000 },
+    );
+    const text = result.stdout.trim();
+    if (text === "") {
+      if (/no checks reported/i.test(result.stderr)) return [];
+      if (result.exitCode !== 0)
+        throw new GhError(["pr", "checks"], result.exitCode, result.stderr);
+      return [];
+    }
+    const list = JSON.parse(text) as Array<{
+      name: string;
+      bucket: CheckBucket;
+      link?: string;
+      workflow?: string;
+    }>;
+    return list.map((c) => ({
+      name: c.name,
+      bucket: c.bucket,
+      link: c.link || null,
+      workflow: c.workflow || null,
+    }));
+  }
+
+  async failedCheckLog(repoPath: string, check: CheckRun): Promise<string> {
+    const match = /\/actions\/runs\/(\d+)(?:\/job\/(\d+))?/.exec(check.link ?? "");
+    if (!match?.[1]) return "";
+    const args = ["run", "view", match[1], "--log-failed"];
+    if (match[2]) args.push("--job", match[2]);
+    return this.gh(repoPath, args, true);
+  }
+
+  async replyToThread(repoPath: string, threadId: string, body: string): Promise<void> {
+    await this.gh(repoPath, [
+      "api",
+      "graphql",
+      "-f",
+      `query=${REPLY_MUTATION}`,
+      "-f",
+      `thread=${threadId}`,
+      "-f",
+      `body=${body}`,
+    ]);
+  }
+
+  async resolveThread(repoPath: string, threadId: string): Promise<void> {
+    await this.gh(repoPath, [
+      "api",
+      "graphql",
+      "-f",
+      `query=${RESOLVE_MUTATION}`,
+      "-f",
+      `thread=${threadId}`,
+    ]);
+  }
+}
