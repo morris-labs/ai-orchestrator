@@ -12,7 +12,7 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 import type { z } from "zod";
 import { hasBearer, sessionCookieHeader } from "./auth.js";
 import type { ApiDeps, ApiEngine } from "./deps.js";
-import { ApiFailure } from "./errors.js";
+import { ApiError } from "./errors.js";
 import { listDirs } from "./fs-dirs.js";
 import { ulid } from "./ulid.js";
 import { commandLine } from "../jobs/process.js";
@@ -80,7 +80,7 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
     if (known) {
       const engine = deps.engines.get(known.container);
       if (!engine) {
-        throw new ApiFailure(
+        throw new ApiError(
           "conflict",
           `The container ${known.container} that holds run ${runId} is not running.`,
         );
@@ -95,10 +95,10 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
         engine.assertVersion();
         return engine;
       } catch (err) {
-        if ((err as ApiFailure).code !== "run_not_found") throw err;
+        if ((err as ApiError).code !== "run_not_found") throw err;
       }
     }
-    throw new ApiFailure("run_not_found", `No run has the id ${runId}.`);
+    throw new ApiError("run_not_found", `No run has the id ${runId}.`);
   }
 
   function proxyRun<K extends RunProxyKey>(key: K): HttpHandlers[K] {
@@ -126,7 +126,7 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
     }),
     "auth.session": async ({ request, reply }) => {
       if (!hasBearer({ authorization: request.headers.authorization }, deps.token)) {
-        throw new ApiFailure("unauthorized", "Setting the session cookie needs the bearer header.");
+        throw new ApiError("unauthorized", "Setting the session cookie needs the bearer header.");
       }
       reply.header("set-cookie", sessionCookieHeader(deps.token));
       return { ok: true };
@@ -215,7 +215,7 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
     "boxes.sideSessions.stop": async ({ params }) => {
       const platform = params.platform;
       if (platform !== "claude" && platform !== "codex" && platform !== "copilot") {
-        throw new ApiFailure("validation", `${platform} is not a platform.`);
+        throw new ApiError("validation", `${platform} is not a platform.`);
       }
       await core.boxes.stopSideSession(params.boxId, platform);
       return { ok: true };
@@ -237,7 +237,7 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
     // Jobs
     "jobs.get": async ({ params }) => {
       const job = deps.jobs.get(params.jobId);
-      if (!job) throw new ApiFailure("not_found", `No job has the id ${params.jobId}.`);
+      if (!job) throw new ApiError("not_found", `No job has the id ${params.jobId}.`);
       return job;
     },
 
@@ -376,7 +376,7 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
     }),
     "notifications.read": async ({ params }) => {
       if (!deps.notifications.markRead(params.notificationId)) {
-        throw new ApiFailure("not_found", `No notification has the id ${params.notificationId}.`);
+        throw new ApiError("not_found", `No notification has the id ${params.notificationId}.`);
       }
       return { ok: true };
     },

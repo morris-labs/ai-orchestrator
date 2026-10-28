@@ -11,7 +11,7 @@ import {
   sessionCookieHeader,
   sessionValue,
 } from "../../src/api/auth.js";
-import { ApiFailure, toApiFailure } from "../../src/api/errors.js";
+import { ApiError, toApiError } from "../../src/api/errors.js";
 import { ulid } from "../../src/api/ulid.js";
 import { JobManager, processJob } from "../../src/jobs/jobs.js";
 import { NodeProcessRunner, commandLine, shellQuote } from "../../src/jobs/process.js";
@@ -62,20 +62,20 @@ describe("auth checks", () => {
 
 describe("errors", () => {
   it("maps codes to statuses and keeps details", () => {
-    const f = new ApiFailure("session_tracked", "Held.", { holders: ["b"] });
+    const f = new ApiError("session_tracked", "Held.", { holders: ["b"] });
     expect(f.status).toBe(409);
     expect(f.toBody()).toEqual({
       error: { code: "session_tracked", message: "Held.", details: { holders: ["b"] } },
     });
-    expect(new ApiFailure("secrets_locked", "x").status).toBe(503);
-    expect(new ApiFailure("run_not_found", "x").status).toBe(404);
+    expect(new ApiError("secrets_locked", "x").status).toBe(503);
+    expect(new ApiError("run_not_found", "x").status).toBe(404);
   });
 
   it("converts foreign errors", () => {
-    expect(toApiFailure(Object.assign(new Error("gone"), { code: "not_found" })).status).toBe(404);
-    expect(toApiFailure(new Error("bug"))).toMatchObject({ code: "internal", status: 500 });
-    expect(toApiFailure(new ZodError([])).code).toBe("validation");
-    expect(toApiFailure("text").status).toBe(500);
+    expect(toApiError(Object.assign(new Error("gone"), { code: "not_found" })).status).toBe(404);
+    expect(toApiError(new Error("bug"))).toMatchObject({ code: "internal", status: 500 });
+    expect(toApiError(new ZodError([])).code).toBe("validation");
+    expect(toApiError("text").status).toBe(500);
   });
 });
 
@@ -169,7 +169,7 @@ describe("JobManager", () => {
   it("fails a job that throws, with the error code", async () => {
     const jobs = new JobManager();
     const job = jobs.start({ kind: "box_create", command: "create" }, async () => {
-      throw new ApiFailure("secrets_locked", "Sign in to 1Password.");
+      throw new ApiError("secrets_locked", "Sign in to 1Password.");
     });
     await new Promise((r) => setTimeout(r, 10));
     expect(jobs.get(job.id)).toMatchObject({ status: "failed", error: { code: "secrets_locked" } });

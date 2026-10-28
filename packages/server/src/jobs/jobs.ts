@@ -4,7 +4,7 @@
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import type { Job } from "@agentbox/contracts";
-import { toApiFailure } from "../api/errors.js";
+import { toApiError } from "../api/errors.js";
 import type { SpawnedProcess } from "./process.js";
 
 /** The most output a job keeps; older bytes are dropped from the front. */
@@ -131,7 +131,7 @@ export class JobManager {
           });
         },
         (err: unknown) => {
-          const failure = toApiFailure(err);
+          const failure = toApiError(err);
           this.append(entry, Buffer.from(`\r\n${failure.message}\r\n`));
           this.finish(entry, {
             status: "failed",

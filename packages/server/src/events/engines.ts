@@ -10,7 +10,7 @@ import type {
   RunState,
 } from "@agentbox/contracts";
 import type { CoreEngines, EngineEndpoint, SqlDatabase } from "../api/core-interface.js";
-import { ApiFailure } from "../api/errors.js";
+import { ApiError } from "../api/errors.js";
 import { EngineClient, type EngineClientOptions, type StreamCursor } from "./engine-client.js";
 
 export interface EngineSupervisorOptions {
@@ -172,7 +172,7 @@ export class EngineSupervisor {
   requireProject(projectId: string): EngineClient {
     const client = this.forProject(projectId);
     if (!client) {
-      throw new ApiFailure(
+      throw new ApiError(
         "conflict",
         `The container of project ${projectId} is not running. Start a box in the project first.`,
       );

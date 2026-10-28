@@ -5,7 +5,7 @@
 //
 // Every input and output is a contract type. A method that fails throws an
 // error whose `code` property names a contract `ApiErrorCode` (for example an
-// `ApiFailure` from `./errors.ts`); the API maps it to a status code.
+// `ApiError` from `./errors.ts`); the API maps it to a status code.
 import type {
   AgentBoxEvent,
   Box,

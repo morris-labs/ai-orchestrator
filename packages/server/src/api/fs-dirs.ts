@@ -4,7 +4,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { DirListing } from "@agentbox/contracts";
-import { ApiFailure } from "./errors.js";
+import { ApiError } from "./errors.js";
 
 /**
  * Resolves the `path` query: absent means `home`, `~` and `~/...` resolve
@@ -15,7 +15,7 @@ export function resolveDirQuery(home: string, requested: string | undefined): st
   if (requested === undefined || requested === "~") return path.resolve(home);
   if (requested.startsWith("~/")) return path.resolve(home, requested.slice(2));
   if (!path.isAbsolute(requested)) {
-    throw new ApiFailure("validation", `${requested} is not an absolute path.`);
+    throw new ApiError("validation", `${requested} is not an absolute path.`);
   }
   return path.resolve(requested);
 }
@@ -27,14 +27,14 @@ export async function listDirs(home: string, requested: string | undefined): Pro
   try {
     stat = await fs.stat(dir);
   } catch {
-    throw new ApiFailure("not_found", `${dir} does not exist.`);
+    throw new ApiError("not_found", `${dir} does not exist.`);
   }
-  if (!stat.isDirectory()) throw new ApiFailure("validation", `${dir} is not a directory.`);
+  if (!stat.isDirectory()) throw new ApiError("validation", `${dir} is not a directory.`);
   let entries;
   try {
     entries = await fs.readdir(dir, { withFileTypes: true });
   } catch (err) {
-    throw new ApiFailure("validation", `${dir} can't be read: ${(err as Error).message}`);
+    throw new ApiError("validation", `${dir} can't be read: ${(err as Error).message}`);
   }
   const dirs: { name: string; path: string }[] = [];
   for (const entry of entries) {
