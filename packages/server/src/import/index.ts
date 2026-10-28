@@ -1,4 +1,10 @@
-export { runImport, needsImport, parseForward, IMPORT_SOURCE } from "./importer.js";
+export {
+  runImport,
+  needsImport,
+  parseForward,
+  summarizeImport,
+  IMPORT_SOURCE,
+} from "./importer.js";
 export type { ImportReport, ImportOptions } from "./importer.js";
 export { parseKv, readKvFile, kvLast, kvAll } from "./kv.js";
 export {

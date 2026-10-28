@@ -32,7 +32,7 @@ import { boxTmuxSession } from "../records/box.js";
 import type { HostEnv } from "../records/env.js";
 import { ApiError, notFound } from "../records/errors.js";
 import type { CoreEvents } from "../records/events.js";
-import type { CoreHooks } from "../records/hooks.js";
+import type { CoreHooks, EngineHealth } from "../records/hooks.js";
 import type { KeyedMutex } from "../records/mutex.js";
 import { assertUniqueNames, type SettingsService } from "../records/settings.js";
 import { defaultProjectName, detectPrimaryRepo, normalizeRoot, projectIdForRoot } from "./ids.js";
@@ -191,11 +191,15 @@ export class ProjectService {
               hostPort: endpoint?.hostPort ?? null,
               version: health.version,
               healthy: health.healthy,
-              versionMatches:
-                health.version === null ? null : health.version === this.deps.engineVersion,
+              versionMatches: this.versionMatches(health),
             }
           : null,
     };
+  }
+
+  private versionMatches(health: EngineHealth): boolean | null {
+    if (health.versionMatches !== undefined) return health.versionMatches;
+    return health.version === null ? null : health.version === this.deps.engineVersion;
   }
 
   /** A project with its box counts and container, as `projects.list` returns it. */
@@ -391,8 +395,7 @@ export class ProjectService {
               hostPort: endpoint?.hostPort ?? null,
               version: health.version,
               healthy: health.healthy,
-              versionMatches:
-                health.version === null ? null : health.version === this.deps.engineVersion,
+              versionMatches: this.versionMatches(health),
             },
     });
   }

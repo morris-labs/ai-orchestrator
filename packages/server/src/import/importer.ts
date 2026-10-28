@@ -19,6 +19,7 @@ import {
   type SshForward,
   type SshRemote,
   type TcpMap,
+  type ImportReport as ContractImportReport,
 } from "@agentbox/contracts";
 import type { Repositories } from "../db/repositories.js";
 import { allocateHostKey } from "../records/box.js";
@@ -77,7 +78,15 @@ export interface ImportOptions {
   confPath?: string;
   /** Applies the settings again even when an earlier import did. */
   force?: boolean;
+  /**
+   * Reports what the import would apply and changes nothing: the database
+   * transaction rolls back, and no report file is written.
+   */
+  dryRun?: boolean;
 }
+
+/** Thrown inside the import transaction to roll a dry run back. */
+class DryRunRollback extends Error {}
 
 interface ProjectDraft {
   id: string;
@@ -204,7 +213,22 @@ export function runImport(options: ImportOptions): ImportReport {
   };
   const firstImport = repos.imports.latest(IMPORT_SOURCE) === undefined;
 
-  repos.transaction(() => {
+  try {
+    repos.transaction(() => {
+      applyImport();
+      if (options.dryRun) throw new DryRunRollback();
+    });
+  } catch (err) {
+    if (!(err instanceof DryRunRollback)) throw err;
+    return report;
+  }
+
+  const reportFile = homePaths(env).importReport;
+  fs.mkdirSync(path.dirname(reportFile), { recursive: true });
+  fs.writeFileSync(reportFile, `${JSON.stringify(report, null, 2)}\n`);
+  return report;
+
+  function applyImport(): void {
     // Projects that have a file.
     const drafts = new Map<string, ProjectDraft>();
     const addMount = (draft: ProjectDraft, mount: Mount, from: string, spec: string) => {
@@ -529,12 +553,33 @@ export function runImport(options: ImportOptions): ImportReport {
     }
     report.finishedAt = env.now().toISOString();
     repos.imports.add(IMPORT_SOURCE, report, env.now());
-  });
+  }
+}
 
-  const reportFile = homePaths(env).importReport;
-  fs.mkdirSync(path.dirname(reportFile), { recursive: true });
-  fs.writeFileSync(reportFile, `${JSON.stringify(report, null, 2)}\n`);
-  return report;
+/**
+ * The contract's `ImportReport` for `import.run`: counts of what was, or with
+ * `dryRun` would be, imported, and one sentence per skipped or changed item.
+ */
+export function summarizeImport(report: ImportReport, dryRun: boolean): ContractImportReport {
+  const warnings = [
+    ...report.warnings,
+    ...report.boxes.skipped.map((s) => `Skipped box ${s.file}: ${s.reason}.`),
+    ...report.mountsSkipped.map(
+      (m) => `Skipped mount ${m.mount} of project ${m.projectId} from ${m.from}: ${m.reason}.`,
+    ),
+    ...report.poolPortsDropped.map(
+      (p) =>
+        `Dropped pool port ${p.port} of project ${p.projectId}${p.boxId ? ` (box ${p.boxId})` : ""}.`,
+    ),
+  ];
+  return {
+    dryRun,
+    projects: report.projects.imported.length,
+    boxes: report.boxes.imported.length,
+    sshRemotes: report.sshRemotes.imported.length,
+    settingsApplied: report.settingsApplied.length > 0,
+    warnings,
+  };
 }
 
 function importSettings(

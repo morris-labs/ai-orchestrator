@@ -8,7 +8,7 @@ import {
   expandTemplate,
   type Box,
 } from "@agentbox/contracts";
-import { SESSION_START_SCRIPT } from "../../src/docker/scripts.js";
+import { START_SESSION_PATH } from "../../src/docker/scripts.js";
 import { ApiError } from "../../src/records/errors.js";
 import { commitAll, initRepo, originAndProject, write } from "../worktrees/helpers.js";
 import { assertContractEvent, makeHarness, type Harness } from "./harness.js";
@@ -20,8 +20,8 @@ function starts(h: Harness): string[][] {
   return h.docker
     .callsOf("exec")
     .map((c) => (c.args[1] as { cmd: string[] }).cmd)
-    .filter((cmd) => cmd[2] === SESSION_START_SCRIPT)
-    .map((cmd) => cmd.slice(4));
+    .filter((cmd) => cmd[0] === START_SESSION_PATH)
+    .map((cmd) => cmd.slice(1));
 }
 
 function lastCommand(h: Harness): string {
@@ -66,7 +66,11 @@ describe("create", () => {
       status: "running",
       tmuxSession: "claude-agent-app",
       sideSessions: [],
+      targetDirExists: true,
     });
+    fs.rmSync(dir, { recursive: true });
+    expect(h.core.boxes.view(box).targetDirExists).toBe(false);
+    fs.mkdirSync(dir);
     const types = h.events.map((e) => e.type);
     expect(types).toContain("box.changed");
     for (const e of h.events) assertContractEvent(e);
@@ -164,6 +168,39 @@ describe("create", () => {
     expect(h.core.boxes.resolveLayout(dir, h.core.projects.ensureForRoot(dir))).toBe("workspace");
     h.core.settings.rememberLayout(dir, { workspace: false });
     expect(h.core.boxes.resolveLayout(dir, h.core.projects.ensureForRoot(dir))).toBe("root");
+  });
+
+  it("validates a create request before the job starts", async () => {
+    const h = makeHarness();
+    const dir = h.dir("app");
+    const uuid = "6f1c3a52-6d8b-4f43-9a51-2d5b7cbd3f10";
+    await expect(
+      h.core.boxes.validateCreate({ targetDir: path.join(dir, "missing"), layout: "root" }),
+    ).rejects.toMatchObject({ code: "validation" });
+    await h.core.boxes.create({
+      targetDir: dir,
+      layout: "root",
+      conversation: { mode: "adopt", sessionUuid: uuid },
+    });
+    await expect(
+      h.core.boxes.validateCreate({
+        targetDir: dir,
+        layout: "root",
+        conversation: { mode: "adopt", sessionUuid: uuid },
+      }),
+    ).rejects.toMatchObject({ code: "adoption_refused" });
+    await expect(
+      h.core.boxes.validateCreate({ targetDir: dir, layout: "root" }),
+    ).resolves.toBeUndefined();
+    h.docker.images.clear();
+    await expect(
+      h.core.boxes.validateCreate({ targetDir: dir, layout: "root" }),
+    ).rejects.toMatchObject({
+      code: "image_missing",
+    });
+    await expect(
+      h.core.boxes.validateCreate({ targetDir: dir, layout: "root", start: false }),
+    ).resolves.toBeUndefined();
   });
 
   it("adopts a conversation, refusing held ones unless forced", async () => {
@@ -439,6 +476,20 @@ describe("start, stop, restart", () => {
     expect(restarted.done).toEqual([a.id]);
     await expect(h.core.boxes.start(b.id)).resolves.toMatchObject({ wasRunning: true });
   });
+
+  it("starts despite stale mounts with force", async () => {
+    const h = makeHarness();
+    const dir = h.dir("app");
+    await h.core.boxes.create({ targetDir: dir, layout: "root" });
+    const b = await h.core.boxes.create({ targetDir: dir, layout: "root", start: false });
+    await h.core.projects.update(b.projectId, {
+      mounts: [{ host: h.dir("extra"), container: "/extra" }],
+    });
+    await expect(h.core.boxes.start(b.id, { force: true })).resolves.toMatchObject({
+      wasRunning: true,
+    });
+    expect(h.core.boxes.status(h.core.boxes.get(b.id))).toBe("running");
+  });
 });
 
 describe("remove and purge", () => {
@@ -503,7 +554,14 @@ describe("remove and purge", () => {
     await expect(h.core.boxes.purge(a.id)).rejects.toMatchObject({ code: "box_running" });
     await h.core.boxes.stop(a.id);
     await h.core.boxes.stop(b.id);
+    const preview = await h.core.boxes.purge(a.id, { dryRun: true });
+    expect(preview.dryRun).toBe(true);
+    expect(preview.removedRecords.sort()).toEqual([a.id, b.id].sort());
+    expect(preview.removedTranscriptDirs).toHaveLength(2);
+    expect(fs.existsSync(h.core.catalog.projectDirFor(repo))).toBe(true);
+    expect(h.core.db.boxes.list()).toHaveLength(3);
     const r = await h.core.boxes.purge(a.id);
+    expect(r.dryRun).toBe(false);
     expect(r.removedRecords.sort()).toEqual([a.id, b.id].sort());
     expect(r.removedTranscriptDirs).toEqual([
       h.core.catalog.projectDirFor(repo),
@@ -724,14 +782,35 @@ describe("convert to worktree", () => {
     await expect(h.core.boxes.convertToWorktree(box.id)).rejects.toMatchObject({
       code: "box_running",
     });
+    await expect(h.core.boxes.planConvertToWorktree(box.id)).rejects.toMatchObject({
+      code: "box_running",
+    });
     await h.core.boxes.stop(box.id);
-    const r = await h.core.boxes.convertToWorktree(box.id);
+    const plan = await h.core.boxes.planConvertToWorktree(box.id);
+    expect(plan.report).toContain(`Worktree:    ${path.join(project, ".worktrees/Feature")}`);
+    expect(plan.buildOutputBytes).toBe(0);
+    expect(h.core.boxes.get(box.id).worktree).toBeUndefined();
+    const logged: string[] = [];
+    const r = await h.core.boxes.convertToWorktree(box.id, {}, (t) => logged.push(t));
+    expect(logged.join("")).toContain("Converted");
     expect(r).toMatchObject({
       worktree: path.join(project, ".worktrees/Feature"),
       branch: "claude/Feature",
     });
     expect(h.core.boxes.get(box.id)).toMatchObject({ worktree: r.worktree, movedFrom: clone });
     expect(h.core.boxes.get(box.id).workspace).toBeUndefined();
+  });
+
+  it("refuses a plan for a box without a workspace clone", async () => {
+    const h = makeHarness();
+    const box = await h.core.boxes.create({
+      targetDir: h.dir("app"),
+      layout: "root",
+      start: false,
+    });
+    await expect(h.core.boxes.planConvertToWorktree(box.id)).rejects.toMatchObject({
+      code: "conflict",
+    });
   });
 });
 

@@ -1,11 +1,18 @@
-// What the core asks W2's services for. W2 replaces the defaults with
-// `core.setHooks()`; the defaults keep the core usable on its own.
+// What the core asks the server's services for. `createCore()` in
+// `src/core.ts` replaces the defaults with `setHooks()`; the defaults keep the
+// core usable on its own, as in the core tests.
 import type { Listener, ReviewState } from "@agentbox/contracts";
 
 export interface EngineHealth {
   /** From the engine's health route; `null` until it answers. */
   version: string | null;
   healthy: boolean;
+  /**
+   * Whether the engine matches the version this server expects, as the
+   * engine client decided it; `null` until known. When absent, the core
+   * compares `version` with its own expected version.
+   */
+  versionMatches?: boolean | null;
 }
 
 export interface CoreHooks {
@@ -13,7 +20,7 @@ export interface CoreHooks {
   reviewState(boxId: string): ReviewState;
   /** The listeners the engine of `container` reported. Default: none. */
   listeners(container: string): Listener[];
-  /** The engine's health as W2 last saw it. Default: unknown. */
+  /** The engine's health as the engine client last saw it. Default: unknown. */
   engineHealth(container: string): EngineHealth;
   /**
    * The environment to inject into a project container at creation: the

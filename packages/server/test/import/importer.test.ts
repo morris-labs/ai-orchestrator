@@ -2,9 +2,19 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
-import { DEFAULT_PROMPT_TEMPLATES, projectContainerName } from "@agentbox/contracts";
+import {
+  DEFAULT_PROMPT_TEMPLATES,
+  ImportReportSchema,
+  projectContainerName,
+} from "@agentbox/contracts";
 import { openDatabase, repositories, type Repositories } from "../../src/db/index.js";
-import { IMPORT_SOURCE, needsImport, parseForward, runImport } from "../../src/import/index.js";
+import {
+  IMPORT_SOURCE,
+  needsImport,
+  parseForward,
+  runImport,
+  summarizeImport,
+} from "../../src/import/index.js";
 import { projectIdForRoot } from "../../src/projects/ids.js";
 import type { HostEnv } from "../../src/records/env.js";
 
@@ -473,6 +483,26 @@ describe("runImport", () => {
     expect(written).toEqual(JSON.parse(JSON.stringify(report)));
     expect(repos.imports.latest(IMPORT_SOURCE)?.report).toEqual(JSON.parse(JSON.stringify(report)));
     expect(report.filesRead).toContain(fx.conf);
+  });
+
+  it("reports a dry run and changes nothing", () => {
+    const report = runImport({ env: fx.env, repos, dryRun: true });
+    expect(report.boxes.imported).toHaveLength(7);
+    expect(repos.boxes.list()).toEqual([]);
+    expect(repos.projects.list()).toEqual([]);
+    expect(repos.imports.latest(IMPORT_SOURCE)).toBeUndefined();
+    expect(fs.existsSync(path.join(fx.home, ".claude-box/import-report.json"))).toBe(false);
+    expect(needsImport(fx.env, repos)).toBe(true);
+
+    const summary = ImportReportSchema.parse(summarizeImport(report, true));
+    expect(summary).toMatchObject({
+      dryRun: true,
+      projects: report.projects.imported.length,
+      boxes: 7,
+      sshRemotes: report.sshRemotes.imported.length,
+      settingsApplied: true,
+    });
+    expect(summary.warnings.length).toBeGreaterThanOrEqual(report.warnings.length);
   });
 
   it("changes nothing on a second run", () => {

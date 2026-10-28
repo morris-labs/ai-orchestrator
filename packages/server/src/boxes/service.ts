@@ -48,7 +48,12 @@ import { ApiError, messageOf, notFound } from "../records/errors.js";
 import type { CoreEvents } from "../records/events.js";
 import type { CoreHooks } from "../records/hooks.js";
 import type { SettingsService } from "../records/settings.js";
-import { executeMigration, planMigration } from "../worktrees/migration.js";
+import {
+  executeMigration,
+  planMigration,
+  planReport,
+  type MigrationPlan,
+} from "../worktrees/migration.js";
 import {
   addWorktree,
   branchFor,
@@ -219,6 +224,7 @@ export class BoxService {
       sideSessions: PLATFORMS.filter(
         (p) => p !== box.platform && live.has(sideSessionName(box, p)),
       ),
+      targetDirExists: isDirectory(box.targetDir),
     };
   }
 
@@ -241,13 +247,14 @@ export class BoxService {
     program: string,
     args: string[],
     session = boxTmuxSession(box),
+    options: { force?: boolean } = {},
   ): Promise<void> {
     const command = buildSessionCommand(program, args);
     const workDir = hostToContainer(boxWorkDir(box));
     let lastError = "";
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const ensured = await this.deps.projects.ensureContainer(box.projectId);
-      if (ensured.stale.length > 0) {
+      if (ensured.stale.length > 0 && !options.force) {
         throw new ApiError(
           "stale_mounts",
           `The container ${ensured.container} runs with old settings (${ensured.stale.join(", ")}). Restart it first.`,
@@ -345,6 +352,26 @@ export class BoxService {
       ...this.repos.boxes.list().map((b) => b.id),
       ...allLiveSessions(this.env),
     ]);
+  }
+
+  /**
+   * Checks a `boxes.create` body before the create job starts, so the
+   * request itself fails with `validation`, `adoption_refused`,
+   * `session_tracked`, `image_missing`, or `engine_mismatch`. `create()`
+   * repeats the checks, since the state can change in between.
+   */
+  async validateCreate(input: BoxCreateInput): Promise<void> {
+    const req: BoxCreate = parseInput(BoxCreateSchema, input);
+    if (!isDirectory(normalizeRoot(path.resolve(req.targetDir))))
+      throw new ApiError("validation", `${req.targetDir} is not a directory.`);
+    if (req.conversation.mode === "adopt") {
+      this.checkAdoption(req.conversation.sessionUuid, null, req.force);
+    } else if (req.conversation.mode === "fork") {
+      const source = this.get(req.conversation.fromBoxId);
+      if (!source.sessionUuid)
+        throw new ApiError("conflict", `The box ${source.id} has no conversation to fork.`);
+    }
+    if (req.start) await this.deps.projects.checkImage();
   }
 
   /**
@@ -554,9 +581,11 @@ export class BoxService {
    * `boxes.start` (3.3.5 `reopen`): resumes the transcript when it exists,
    * else starts a fresh session; tells a converted box once where it moved;
    * and syncs the name from the transcript title when the record still
-   * matches what was last written there.
+   * matches what was last written there. With `force`, starts the session
+   * although the project container runs with stale mounts (3.3.5 "start
+   * anyway").
    */
-  async start(id: string, options: { syncTitle?: boolean } = {}): Promise<Box> {
+  async start(id: string, options: { syncTitle?: boolean; force?: boolean } = {}): Promise<Box> {
     let box = this.get(id);
     if (this.converting.has(id)) {
       throw new ApiError(
@@ -595,7 +624,9 @@ export class BoxService {
 
     this.mark(box, "starting");
     try {
-      await this.startSession(box, box.platform, args);
+      await this.startSession(box, box.platform, args, boxTmuxSession(box), {
+        force: options.force ?? false,
+      });
     } catch (err) {
       this.transitions.delete(box.id);
       this.publish(box, "stopped");
@@ -737,9 +768,14 @@ export class BoxService {
   /**
    * `boxes.purge`: deletes the transcripts of the box's directory (and of
    * each worktree of a box there) and every record for that directory.
-   * Never the directory itself, its worktrees, or `~/.claude.json`.
+   * Never the directory itself, its worktrees, or `~/.claude.json`. With
+   * `dryRun`, lists what it would delete and deletes nothing.
    */
-  async purge(id: string): Promise<{ removedRecords: string[]; removedTranscriptDirs: string[] }> {
+  async purge(
+    id: string,
+    options: { dryRun?: boolean } = {},
+  ): Promise<{ dryRun: boolean; removedRecords: string[]; removedTranscriptDirs: string[] }> {
+    const dryRun = options.dryRun ?? false;
     const box = this.get(id);
     const dir = box.targetDir;
     const siblings = this.repos.boxes.byTargetDir(dir);
@@ -765,10 +801,11 @@ export class BoxService {
     const removedTranscriptDirs: string[] = [];
     for (const d of transcriptDirs) {
       if (!safe(d)) continue;
-      fs.rmSync(d, { recursive: true, force: true });
+      if (!dryRun) fs.rmSync(d, { recursive: true, force: true });
       removedTranscriptDirs.push(d);
     }
     const removedRecords: string[] = [];
+    if (dryRun) return { dryRun, removedRecords: siblings.map((b) => b.id), removedTranscriptDirs };
     for (const b of siblings) {
       this.repos.boxes.delete(b.id);
       const sessions = sessionsDirFor(this.env, b.id);
@@ -776,7 +813,7 @@ export class BoxService {
       removedRecords.push(b.id);
       this.publish(null, "stopped", b.id);
     }
-    return { removedRecords, removedTranscriptDirs };
+    return { dryRun, removedRecords, removedTranscriptDirs };
   }
 
   /** Points `box` at `dir`'s project: its container, and a host key unique there. */
@@ -935,25 +972,51 @@ export class BoxService {
     return saved;
   }
 
-  /** `boxes.convertToWorktree`: turns a workspace clone into a worktree. */
+  /**
+   * `boxes.convertToWorktree.plan`: what Convert to Worktree would do, as a
+   * report for a person to read. Changes nothing. Throws `box_running` for a
+   * running box and `conflict` when the box cannot be converted.
+   */
+  async planConvertToWorktree(id: string): Promise<{ report: string; buildOutputBytes: number }> {
+    const box = this.get(id);
+    this.requireNotConverting(box);
+    const plan = await this.migrationPlan(box, false);
+    return { report: planReport(plan).join("\n"), buildOutputBytes: plan.skippedBytes };
+  }
+
+  private requireNotConverting(box: Box): void {
+    this.requireStopped(box, "convert it");
+    if (this.converting.has(box.id))
+      throw new ApiError("conflict", `${box.id} is already being converted.`);
+  }
+
+  private async migrationPlan(box: Box, includeBuildOutput: boolean): Promise<MigrationPlan> {
+    const plan = await planMigration({
+      env: this.env,
+      box,
+      primaryRepo: this.project(box).primaryRepo,
+      includeBuildOutput,
+    });
+    if (!plan.ok) throw new ApiError("conflict", `Cannot convert ${box.id}: ${plan.problem}.`);
+    return plan;
+  }
+
+  /**
+   * `boxes.convertToWorktree`: turns a workspace clone into a worktree. `log`
+   * receives the plan's report before the conversion starts.
+   */
   async convertToWorktree(
     id: string,
     options: { copyBuildOutput?: boolean } = {},
+    log: (text: string) => void = () => undefined,
   ): Promise<ConvertToWorktreeResult> {
     const box = this.get(id);
-    this.requireStopped(box, "convert it");
-    if (this.converting.has(id))
-      throw new ApiError("conflict", `${id} is already being converted.`);
+    const includeBuildOutput = options.copyBuildOutput ?? false;
+    this.requireNotConverting(box);
     this.converting.add(id);
     try {
-      const project = this.project(box);
-      const includeBuildOutput = options.copyBuildOutput ?? false;
-      const plan = await planMigration({
-        env: this.env,
-        box,
-        primaryRepo: project.primaryRepo,
-        includeBuildOutput,
-      });
+      const plan = await this.migrationPlan(box, includeBuildOutput);
+      for (const line of planReport(plan)) log(`${line}\r\n`);
       const result = await executeMigration({
         env: this.env,
         box,
@@ -963,6 +1026,8 @@ export class BoxService {
           this.repos.boxes.put(b);
         },
       });
+      if (result.warning) log(`Warning: ${result.warning}\r\n`);
+      log(`Converted ${id} to the worktree ${result.worktree}.\r\n`);
       this.publish(result.box, "stopped");
       return result;
     } finally {
