@@ -20,6 +20,7 @@ import {
   roundPoints,
   runningPerVendor,
   usageSeries,
+  ceilingShare,
   usedNodes,
   agentRows,
   type AgentView,
@@ -163,6 +164,26 @@ describe("linearForecast", () => {
   ])("$name", ({ pts, ceiling, reset, want }) => {
     const points = pts.map(([time, utilization]) => ({ time: time!, utilization: utilization! }));
     expect(linearForecast(points, ceiling, reset)).toBe(want);
+  });
+});
+
+describe("ceilingShare", () => {
+  const base = {
+    vendor: "claude" as const,
+    account: "a",
+    utilization: 0.5,
+    spendUsd: null,
+    resetAt: null,
+    sampleSource: "rate_limit_event" as const,
+    time: "2026-10-28T09:00:00.000Z",
+  };
+  it("applies a ceiling only to its own window", () => {
+    const ceiling = { kind: "utilization" as const, window: "5h" as const, max: 0.6 };
+    expect(ceilingShare({ ...base, window: "5h", ceiling })).toBe(0.6);
+    expect(ceilingShare({ ...base, window: "7d", ceiling })).toBeNull();
+    const spend = { kind: "spend" as const, period: "month" as const, maxUsd: 100 };
+    expect(ceilingShare({ ...base, window: "month", ceiling: spend })).toBe(1);
+    expect(ceilingShare({ ...base, window: "5h", ceiling: spend })).toBeNull();
   });
 });
 

@@ -1,6 +1,6 @@
 // Derived views of the dashboard state. Every function here is pure, so the
 // components stay thin and the numbers are testable without rendering.
-import type { RunStatus, Stage, TimedUsageSample, Vendor } from "@agentbox/contracts";
+import type { RunStatus, Stage, TimedUsageSample, UsageSource, Vendor } from "@agentbox/contracts";
 import type { AgentView, ContainerView, DashboardState, RunView } from "./model.js";
 import { VENDORS } from "./tokens.js";
 
@@ -170,9 +170,14 @@ export interface UsageSeries {
   vendor: Vendor;
   account: string;
   window: TimedUsageSample["window"];
-  points: Array<{ time: number; utilization: number }>;
-  /** The ceiling as a utilization share: `max`, or 1 for a spend ceiling. */
-  ceiling: number;
+  points: Array<{ time: number; utilization: number; source: UsageSource }>;
+  /** True when the latest reading is an estimate rather than the vendor's own figure. */
+  estimated: boolean;
+  /**
+   * The ceiling as a utilization share: `max`, or 1 for a spend ceiling.
+   * `null` when the vendor's ceiling applies to another window.
+   */
+  ceiling: number | null;
   resetAt: number | null;
   /** When the series reaches its ceiling; `null` when it won't before the reset. */
   forecastAt: number | null;
@@ -188,9 +193,30 @@ export interface VendorUsageInfo {
   resetAt: string | null;
 }
 
-/** The ceiling of a sample as a share of the vendor's limit. */
-export function ceilingShare(sample: TimedUsageSample): number {
-  return sample.ceiling.kind === "utilization" ? sample.ceiling.max : 1;
+/** How the dashboard names where a usage reading came from. */
+export const USAGE_SOURCE_LABELS: Record<UsageSource, string> = {
+  rate_limit_event: "reported by Claude",
+  codex_session: "reported by Codex",
+  codex_tokens: "estimated from Codex tokens",
+  billing_api: "billing API",
+  estimate: "estimate",
+};
+
+/** True for a reading the server estimated instead of reading from the vendor. */
+export function isEstimatedSource(source: UsageSource): boolean {
+  return source === "codex_tokens" || source === "estimate";
+}
+
+/**
+ * The ceiling of a sample as a share of the vendor's limit, or `null` when
+ * the ceiling governs another window: a 5-hour ceiling says nothing about
+ * the 7-day window, and a monthly spend ceiling nothing about either.
+ */
+export function ceilingShare(sample: TimedUsageSample): number | null {
+  if (sample.ceiling.kind === "utilization") {
+    return sample.ceiling.window === sample.window ? sample.ceiling.max : null;
+  }
+  return sample.window === "month" ? 1 : null;
 }
 
 /**
@@ -231,24 +257,32 @@ export function usageSeries(
   for (const [key, samples] of Object.entries(state.usage)) {
     const last = samples[samples.length - 1];
     if (!last) continue;
-    const points = samples.map((s) => ({ time: Date.parse(s.time), utilization: s.utilization }));
+    const points = samples.map((s) => ({
+      time: Date.parse(s.time),
+      utilization: s.utilization,
+      source: s.sampleSource,
+    }));
     const ceiling = ceilingShare(last);
     const server = info.find(
       (i) => i.vendor === last.vendor && i.account === last.account && i.window === last.window,
     );
     const resetIso = server?.resetAt ?? last.resetAt;
     const resetAt = resetIso ? Date.parse(resetIso) : null;
-    const forecast = server
-      ? server.forecastAt
-        ? Date.parse(server.forecastAt)
-        : null
-      : linearForecast(points, ceiling, resetAt);
+    const forecast =
+      ceiling === null
+        ? null
+        : server
+          ? server.forecastAt
+            ? Date.parse(server.forecastAt)
+            : null
+          : linearForecast(points, ceiling, resetAt);
     series.push({
       key,
       vendor: last.vendor,
       account: last.account,
       window: last.window,
       points,
+      estimated: isEstimatedSource(last.sampleSource),
       ceiling,
       resetAt,
       forecastAt: forecast,
