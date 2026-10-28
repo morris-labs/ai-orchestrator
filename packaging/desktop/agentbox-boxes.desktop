@@ -1,0 +1,18 @@
+[Desktop Entry]
+Type=Application
+Version=1.5
+Name=Agent Box
+GenericName=Agent Sandbox Manager
+Comment=Manage sandboxed coding agents, their containers, and their terminals
+Exec=/usr/bin/agentbox-boxes %U
+Icon=agentbox-boxes
+Terminal=false
+Categories=Development;
+Keywords=claude;codex;copilot;agent;docker;container;sandbox;terminal;
+# The app keeps one instance and hands a second launch to the first, so the
+# shell has no new window to wait for. StartupNotify stays off to avoid a
+# busy cursor that never clears.
+StartupNotify=false
+# Must match the Electron app's WM_CLASS and its desktopName, so GNOME on
+# Wayland ties the window to this entry and shows the right icon.
+StartupWMClass=agentbox-boxes

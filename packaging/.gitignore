@@ -1,0 +1,2 @@
+# Staging tree that scripts/build-deb.sh assembles.
+deb/build/

@@ -1,0 +1,53 @@
+#!/bin/sh
+# postinst for the agentbox package.
+set -e
+
+case "$1" in
+  configure)
+    # Load the AppArmor profiles that let the Electron apps use their
+    # sandbox on Ubuntu 24.04 and later. A host without AppArmor skips this.
+    if command -v apparmor_parser > /dev/null 2>&1 && [ -d /sys/kernel/security/apparmor ]; then
+      for app in boxes review; do
+        apparmor_parser -r -T -W "/etc/apparmor.d/agentbox-$app" || true
+      done
+    fi
+
+    # Without AppArmor, Chromium falls back to its setuid sandbox helper,
+    # which must be owned by root with mode 4755.
+    for app in boxes review; do
+      helper="/usr/lib/agentbox/$app/chrome-sandbox"
+      if [ -f "$helper" ]; then
+        chown root:root "$helper"
+        chmod 4755 "$helper"
+      fi
+    done
+
+    if command -v update-desktop-database > /dev/null 2>&1; then
+      update-desktop-database -q /usr/share/applications || true
+    fi
+    if command -v gtk-update-icon-cache > /dev/null 2>&1; then
+      gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor || true
+    fi
+
+    cat <<'MSG'
+
+Agent Box is installed. The server runs as your user, not as root, under
+your systemd user manager. As the user who runs your boxes, enable and
+start it:
+
+  systemctl --user enable --now agentbox-server
+
+To keep it running while you're logged out, also run:
+
+  sudo loginctl enable-linger "$USER"
+
+Your user must be in the docker group. Then open Agent Box from your
+applications menu; its setup wizard builds the container image from
+/usr/share/agentbox/image. For more information, see
+https://github.com/morris-labs/Claude-Box/blob/main/docs/install.md
+
+MSG
+    ;;
+esac
+
+exit 0

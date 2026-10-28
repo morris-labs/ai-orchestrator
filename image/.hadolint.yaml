@@ -1,0 +1,7 @@
+# hadolint settings for image/Dockerfile.
+ignored:
+  # Ubuntu's archive keeps only the newest build of each package, so an
+  # exact apt pin breaks the build as soon as a security update lands. The
+  # base image digest and the CLI pins in versions.env give reproducibility
+  # where it matters.
+  - DL3008
