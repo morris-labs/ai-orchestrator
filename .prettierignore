@@ -8,3 +8,4 @@ pnpm-lock.yaml
 .worktrees/
 TestBox/
 .github/
+test-results/

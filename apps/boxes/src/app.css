@@ -1,0 +1,231 @@
+/* Layout of the boxes app. Colors come from the theme tokens in @agentbox/ui. */
+.bx-app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+.bx-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.bx-grow {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.bx-pages {
+  padding-left: 8px;
+  border-bottom: 1px solid var(--ab-border);
+}
+.bx-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.bx-indent {
+  margin-left: 178px;
+}
+.bx-dim {
+  color: var(--ab-dim-text);
+}
+.bx-small {
+  font-size: 11px;
+}
+.bx-wrap {
+  overflow-wrap: anywhere;
+}
+.bx-badge {
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: 8px;
+  font-size: 11px;
+  background: var(--ab-update-bar-bg);
+  border: 1px solid var(--ab-update-bar-border);
+}
+.bx-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.bx-projects {
+  overflow: auto;
+  padding: 6px;
+  background: var(--ab-base-bg);
+  height: 100%;
+}
+.bx-project {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.bx-project-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bx-project:hover {
+  background: var(--ab-hover-bg);
+}
+.bx-project.bx-active {
+  background: var(--ab-accent);
+  color: var(--ab-window-bg);
+}
+.bx-project.bx-active .bx-dim {
+  color: var(--ab-window-bg);
+}
+.bx-listbox {
+  min-height: 180px;
+  background: var(--ab-base-bg);
+  border: 1px solid var(--ab-border);
+  border-radius: 5px;
+  padding: 4px;
+}
+
+.bx-table-area {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px;
+  height: 100%;
+  min-height: 0;
+}
+.bx-table-area .ab-table-wrap {
+  flex: 1;
+}
+
+.bx-details {
+  overflow: auto;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  height: 100%;
+  min-width: 260px;
+}
+.bx-detail-label {
+  color: var(--ab-dim-text);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.bx-detail-value {
+  overflow-wrap: anywhere;
+}
+.bx-list {
+  margin: 0;
+  padding-left: 16px;
+}
+
+.bx-terminals {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.bx-terminal-pane {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  border-top: 1px solid var(--ab-border);
+}
+.bx-terminal-pane[hidden] {
+  display: none;
+}
+.bx-terminal-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--ab-dim-text);
+  background: var(--ab-terminal-bg);
+  padding: 20px;
+  text-align: center;
+}
+.bx-job-terminal {
+  height: 360px;
+  display: flex;
+  border: 1px solid var(--ab-border);
+  border-radius: 6px;
+}
+
+.bx-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+}
+.bx-check {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--ab-border);
+}
+
+.bx-usage {
+  overflow: auto;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+}
+.bx-usage h3 {
+  margin: 0 0 6px;
+  font-size: 13px;
+}
+.bx-usage-row {
+  display: grid;
+  grid-template-columns: 160px 1fr 200px;
+  gap: 8px;
+  align-items: center;
+  margin: 4px 0;
+}
+.bx-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 10px;
+}
+.bx-card h3 {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bx-bars {
+  flex-shrink: 0;
+}
+
+/* The fs.dirs directory picker. */
+.bx-dir-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid var(--ab-border);
+  background: var(--ab-base-bg);
+}
+.bx-dir-entry {
+  display: block;
+  width: 100%;
+  padding: 3px 8px;
+  border: none;
+  background: none;
+  color: var(--ab-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.bx-dir-entry:hover,
+.bx-dir-entry:focus-visible {
+  background: var(--ab-hover-bg);
+}
+.bx-missing {
+  color: var(--ab-stopped);
+  margin-left: 6px;
+}

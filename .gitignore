@@ -32,4 +32,5 @@ node_modules/
 dist/
 *.tsbuildinfo
 coverage/
+test-results/
 .pnpm-store/

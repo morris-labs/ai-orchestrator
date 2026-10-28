@@ -1,0 +1,4 @@
+# Build output of the renderer and the Electron bundles, and Playwright results.
+dist/
+test-results/
+playwright-report/
