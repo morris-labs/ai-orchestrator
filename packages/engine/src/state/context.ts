@@ -374,6 +374,9 @@ export class RunContext {
       after = [to];
       roles[contractRole] = to;
     }
+    // A later call of the same round can be redirected after the role
+    // already moved; that changes nothing and gets no event.
+    if (before.length === after.length && before.every((v, i) => v === after[i])) return;
     await this.persist();
     await this.emit({
       type: "role.reassigned",
