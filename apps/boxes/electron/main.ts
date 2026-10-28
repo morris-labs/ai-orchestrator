@@ -2,17 +2,27 @@
 // boxes page from agentbox-server, a tray icon with box counts, desktop
 // notifications for box events, a single-instance lock, and the bridge
 // calls that need the host (external terminals, the review app, pickers).
-import { HOME_PATHS, type BoxView } from "@agentbox/contracts";
-import { ApiClient, EventsConnection, errorMessage } from "@agentbox/ui/core";
+import { HOME_PATHS, boxWorkDir, type BoxView } from "@agentbox/contracts";
+import {
+  ApiClient,
+  EventsConnection,
+  errorMessage,
+  isAllowedOpenPath,
+  isAppPage,
+  isWebUrl,
+} from "@agentbox/ui/core";
 import { spawn } from "node:child_process";
-import { accessSync, constants, readFileSync } from "node:fs";
+import { accessSync, constants, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import {
   app,
   BrowserWindow,
   dialog,
   ipcMain,
+  type IpcMainEvent,
+  type IpcMainInvokeEvent,
   Menu,
   nativeImage,
   Notification,
@@ -34,6 +44,21 @@ import {
 
 const SERVER_URL = serverUrlFrom(process.env);
 const BOXES_URL = process.env.AGENTBOX_BOXES_URL ?? `${SERVER_URL}/boxes/`;
+/** The copy of the page built into the app, shown when the server doesn't answer. */
+const LOCAL_PAGE = join(__dirname, "../renderer/index.html");
+/** The pages that get the token and the bridge; anything else is foreign. */
+const APP_PAGES = [BOXES_URL, pathToFileURL(LOCAL_PAGE).href];
+
+/** True when an IPC message comes from one of the app's own pages. */
+function fromApp(e: IpcMainEvent | IpcMainInvokeEvent): boolean {
+  const url = e.senderFrame?.url;
+  return typeof url === "string" && isAppPage(url, APP_PAGES);
+}
+
+const REFUSED: BridgeResult = {
+  ok: false,
+  error: "The request didn't come from the Agent Box page.",
+};
 
 let win: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -96,17 +121,28 @@ function createWindow() {
       preload: join(__dirname, "preload.cjs"),
       contextIsolation: true,
       sandbox: true,
+      nodeIntegration: false,
+      webviewTag: false,
     },
   });
   win.once("ready-to-show", () => win?.show());
   win.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:\/\//.test(url)) void shell.openExternal(url);
+    if (isWebUrl(url)) void shell.openExternal(url);
     return { action: "deny" };
   });
+  // A dropped link, a script, or a redirect must not take the window, its
+  // token, and its bridge to another page.
+  win.webContents.on("will-navigate", (e) => {
+    if (!isAppPage(e.url, APP_PAGES)) e.preventDefault();
+  });
+  win.webContents.on("will-redirect", (e) => {
+    if (!isAppPage(e.url, APP_PAGES)) e.preventDefault();
+  });
+  win.webContents.on("will-attach-webview", (e) => e.preventDefault());
   // The server serves the page; when it doesn't answer, the copy built into
   // the app loads instead and shows its "server not reachable" state.
   win.webContents.on("did-fail-load", (_e, _code, _desc, url) => {
-    if (url.startsWith(SERVER_URL)) void win?.loadFile(join(__dirname, "../renderer/index.html"));
+    if (url.startsWith(SERVER_URL)) void win?.loadFile(LOCAL_PAGE);
   });
   win.on("close", (e) => {
     if (!quitting && tray) {
@@ -199,13 +235,32 @@ function watchEvents() {
   conn.start();
 }
 
+function isDirectory(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/** Project roots and box directories, as the server reports them. */
+async function reportedDirectories(): Promise<string[]> {
+  const api = client();
+  const [p, b] = await Promise.all([api.call("projects.list", {}), api.call("boxes.list", {})]);
+  return [
+    ...p.projects.map((x) => x.project.root),
+    ...b.boxes.flatMap((x) => [x.box.targetDir, boxWorkDir(x.box)]),
+  ];
+}
+
 function registerIpc() {
   ipcMain.on("agentbox:init", (e) => {
-    e.returnValue = { token: readToken(), serverUrl: SERVER_URL };
+    e.returnValue = { token: fromApp(e) ? readToken() : null, serverUrl: SERVER_URL };
   });
   ipcMain.handle(
     "agentbox:open-external-terminal",
-    async (_e, req: ExternalTerminalRequest): Promise<BridgeResult> => {
+    async (e, req: ExternalTerminalRequest): Promise<BridgeResult> => {
+      if (!fromApp(e)) return REFUSED;
       try {
         const { argv } = await client().call("boxes.attachCommand", {
           params: { boxId: req.boxId },
@@ -228,12 +283,14 @@ function registerIpc() {
   );
   ipcMain.handle(
     "agentbox:launch-review",
-    async (_e, req: { projectId: string; boxId: string }) => {
+    async (e, req: { projectId: string; boxId: string }): Promise<BridgeResult> => {
+      if (!fromApp(e)) return REFUSED;
       const cmd = reviewCommand(req.projectId, req.boxId, process.env.AGENTBOX_REVIEW_BIN);
       return detached(cmd.file, cmd.args);
     },
   );
-  ipcMain.handle("agentbox:pick-directory", async (_e, defaultPath?: string) => {
+  ipcMain.handle("agentbox:pick-directory", async (e, defaultPath?: string) => {
+    if (!fromApp(e)) return null;
     const opts = {
       properties: ["openDirectory", "createDirectory"] as ("openDirectory" | "createDirectory")[],
       defaultPath,
@@ -241,17 +298,30 @@ function registerIpc() {
     const res = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts);
     return res.canceled ? null : (res.filePaths[0] ?? null);
   });
-  ipcMain.handle("agentbox:open-path", async (_e, path: string): Promise<BridgeResult> => {
+  ipcMain.handle("agentbox:open-path", async (e, path: string): Promise<BridgeResult> => {
+    if (!fromApp(e)) return REFUSED;
+    // Only directories the server reports open; a file would run with its
+    // default handler.
+    let allowed: string[];
+    try {
+      allowed = await reportedDirectories();
+    } catch (err) {
+      return { ok: false, error: errorMessage(err) };
+    }
+    if (!isAllowedOpenPath(path, allowed) || !isDirectory(path)) {
+      return { ok: false, error: `${String(path)} is not a project or box directory.` };
+    }
     const error = await shell.openPath(path);
     return error ? { ok: false, error } : { ok: true };
   });
-  ipcMain.handle("agentbox:open-external", async (_e, url: string): Promise<BridgeResult> => {
-    if (!/^https?:\/\//.test(url))
-      return { ok: false, error: "Only http and https links open externally." };
+  ipcMain.handle("agentbox:open-external", async (e, url: string): Promise<BridgeResult> => {
+    if (!fromApp(e)) return REFUSED;
+    if (!isWebUrl(url)) return { ok: false, error: "Only http and https links open externally." };
     await shell.openExternal(url);
     return { ok: true };
   });
-  ipcMain.on("agentbox:quit", () => {
+  ipcMain.on("agentbox:quit", (e) => {
+    if (!fromApp(e)) return;
     quitting = true;
     app.quit();
   });
