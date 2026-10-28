@@ -5,17 +5,17 @@ import { randomUUID } from "node:crypto";
 import {
   LeaseRequestFrameSchema,
   LeaseResponseSchema,
+  type LeaseRequest,
   type LeaseRequestFrame,
   type LeaseResponse,
-  type LeaseSettlement,
 } from "@agentbox/contracts";
-import type {
-  EventSink,
-  LeaseAsk,
-  LeaseBroker,
-  LeaseGrant,
-  Logger,
-} from "../api/core-interface.js";
+import type { Logger } from "../api/core-interface.js";
+import type { LeaseActual, LeaseBroker } from "../core.js";
+
+/** What a caller asks for; the broker assigns `leaseId` when it's absent. */
+export type LeaseAsk = Omit<LeaseRequest, "leaseId"> & { leaseId?: string };
+
+export type LeaseGrant = Extract<LeaseResponse, { decision: "granted" }>;
 
 /** A server socket that can carry lease frames. */
 export interface LeaseTransport {
@@ -23,7 +23,6 @@ export interface LeaseTransport {
 }
 
 export interface LeaseBrokerOptions {
-  events: EventSink;
   log: Logger;
   now?: () => Date;
   newLeaseId?: () => string;
@@ -52,6 +51,11 @@ export class LeaseBrokerClosedError extends Error {
   }
 }
 
+/**
+ * The core's `LeaseBroker` over the event socket. A request waits while no
+ * server is subscribed, and a grant that expired on the way is asked for
+ * again under a new lease id.
+ */
 export class EngineLeaseBroker implements LeaseBroker {
   private readonly pending = new Map<string, Pending>();
   private readonly transports = new Set<LeaseTransport>();
@@ -74,6 +78,15 @@ export class EngineLeaseBroker implements LeaseBroker {
     return [...this.pending.keys()];
   }
 
+  /** The core's entry point: asks the server under the core's own lease id. */
+  acquire(request: LeaseRequest): Promise<LeaseResponse> {
+    return this.request(request);
+  }
+
+  /**
+   * Sends a `lease.request` frame and resolves with the server's answer.
+   * Rejects when `signal` aborts or the broker closes.
+   */
   request(ask: LeaseAsk, options: { signal?: AbortSignal } = {}): Promise<LeaseResponse> {
     if (this.closed) return Promise.reject(new LeaseBrokerClosedError());
     const { signal } = options;
@@ -83,12 +96,21 @@ export class EngineLeaseBroker implements LeaseBroker {
     });
   }
 
+  /** True while a grant can still start a call: before its `expiresAt`. */
   isUsable(grant: LeaseGrant): boolean {
     return Date.parse(grant.expiresAt) > this.now().getTime();
   }
 
-  settle(settlement: LeaseSettlement): void {
-    this.options.events.emit({ type: "lease.settled", ...settlement });
+  /**
+   * Notes that a lease finished. The core emits the `lease.settled` event,
+   * which carries the actual use to the server, so the broker sends nothing.
+   */
+  settle(leaseId: string, actual: LeaseActual): void {
+    this.options.log.debug("Lease settled", {
+      leaseId,
+      tokensIn: actual.tokens.in,
+      tokensOut: actual.tokens.out,
+    });
   }
 
   /**

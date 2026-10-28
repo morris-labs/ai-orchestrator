@@ -4,15 +4,15 @@
   "description": "The Agent Box engine: the review pipeline service inside each project container.",
   "private": true,
   "type": "module",
-  "main": "./dist/core.js",
-  "types": "./dist/core.d.ts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "bin": {
     "agentbox-engine": "./dist/main.js"
   },
   "exports": {
     ".": {
-      "types": "./dist/core.d.ts",
-      "import": "./dist/core.js"
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
     },
     "./adapters": {
       "types": "./dist/adapters/index.d.ts",

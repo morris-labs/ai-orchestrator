@@ -19,6 +19,8 @@ const STATUS: Record<ApiErrorCode, number> = {
   image_missing: 409,
   run_not_found: 404,
   invalid_state: 409,
+  unauthorized: 401,
+  internal: 500,
 };
 
 /** The HTTP status for an error code. */
@@ -36,9 +38,8 @@ export interface MappedError {
  *
  * - An error with a `code` from `ApiErrorCode` keeps its code and message.
  * - A `ZodError` becomes `validation` (400) with the issues in `details`.
- * - Anything else becomes a 500. The contract has no internal-error code,
- *   so the body uses `conflict` and a generic message; the cause goes to the
- *   log, not to the client.
+ * - Anything else becomes `internal` (500) with a generic message; the
+ *   cause goes to the log, not to the client.
  */
 export function mapError(err: unknown): MappedError {
   if (err instanceof ZodError) {
@@ -65,6 +66,6 @@ export function mapError(err: unknown): MappedError {
   }
   return {
     status: 500,
-    body: { error: { code: "conflict", message: "The engine failed to handle the request." } },
+    body: { error: { code: "internal", message: "The engine failed to handle the request." } },
   };
 }

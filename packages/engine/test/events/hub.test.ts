@@ -71,7 +71,6 @@ describe("EngineLeaseBroker", () => {
     const hub = new EventHub({ source: "engine:c" });
     let n = 0;
     const broker = new EngineLeaseBroker({
-      events: hub,
       log: silentLogger,
       now,
       newLeaseId: () => `L-${++n}`,
@@ -178,22 +177,22 @@ describe("EngineLeaseBroker", () => {
     await expect(broker.request(ask)).rejects.toBeInstanceOf(LeaseBrokerClosedError);
   });
 
-  it("settles a lease as a lease.settled event", () => {
+  it("settles a lease without an event, since the core emits lease.settled", () => {
     const { hub, broker } = make();
     const seen = vi.fn();
     hub.subscribe(seen);
-    broker.settle({
-      leaseId: "L-1",
-      runId: RUN,
-      vendor: "claude",
-      role: "fixer",
-      tokens: { in: 5, out: 6 },
-      premiumRequests: 0,
-      costEstimate: 0.01,
-    });
-    expect(seen).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "lease.settled", leaseId: "L-1" }),
-    );
+    broker.settle("L-1", { tokens: { in: 5, out: 6 }, premiumRequests: 0, costEstimate: 0.01 });
+    expect(seen).not.toHaveBeenCalled();
+  });
+
+  it("acquires a lease under the core's own lease id", async () => {
+    const { broker } = make();
+    const sent: unknown[] = [];
+    broker.attach({ send: (frame) => sent.push(frame) });
+    const p = broker.acquire({ ...ask, leaseId: "R-L1" });
+    expect(sent).toEqual([expect.objectContaining({ type: "lease.request", leaseId: "R-L1" })]);
+    broker.handleResponse(grant("R-L1"));
+    await expect(p).resolves.toMatchObject({ decision: "granted", leaseId: "R-L1" });
   });
 
   it("survives a transport that throws", async () => {

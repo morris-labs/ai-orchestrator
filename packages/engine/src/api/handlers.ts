@@ -38,6 +38,8 @@ export interface HealthInfo {
   container: string;
   projectRoot: string;
   streamId: string;
+  /** Whether `engineVersion` equals the version the server expects. */
+  versionMatches: boolean;
 }
 
 export interface HandlerDeps {

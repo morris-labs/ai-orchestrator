@@ -1,7 +1,12 @@
 // Starts the engine: environment, logging, event stream, leases, core,
 // repositories, port discovery, API, and the active-runs file, in that
 // order, and stops them in reverse on a signal.
-import { ENGINE_ENV, EngineEnvSchema, type EngineEnv } from "@agentbox/contracts";
+import {
+  DEFAULT_ENGINE_STATE_DIR,
+  ENGINE_ENV,
+  EngineEnvSchema,
+  type EngineEnv,
+} from "@agentbox/contracts";
 import type { FastifyInstance } from "fastify";
 import { type LogLevel, type Logger, type RunManager } from "../api/core-interface.js";
 import { RepoService } from "../api/repos.js";
@@ -11,14 +16,13 @@ import { EventHub } from "../events/hub.js";
 import { EngineLeaseBroker } from "../events/leases.js";
 import { scanListeners } from "../ports/scan.js";
 import { PortWatcher } from "../ports/watcher.js";
+import type { AdapterSet } from "../core.js";
+import { createRunManager } from "../state/manager.js";
 import { startActiveRunsWriter } from "./active-runs.js";
-import { loadCore } from "./core-loader.js";
+import { MOCK_SCRIPT_ENV, MOCK_VENDORS_ENV, selectAdapters } from "./adapters.js";
 import { LOG_LEVELS, createLogger, isLogLevel } from "./logger.js";
 import { readPackageVersion } from "./version.js";
 
-/** The state directory the keeper mounts; `$STATE` in `keeper.sh`. */
-export const STATE_DIR_ENV = "AGENTBOX_STATE_DIR";
-export const DEFAULT_STATE_DIR = "/run/claude-box";
 export const LOG_LEVEL_ENV = "AGENTBOX_LOG_LEVEL";
 
 export const USAGE = `Usage: agentbox-engine [--log-level LEVEL]
@@ -36,7 +40,9 @@ Environment:
   ${ENGINE_ENV.projectRoot}   The project root as the container sees it. Required.
   ${ENGINE_ENV.container}      The container's name. Required.
   ${ENGINE_ENV.engineVersion}  The engine version the server expects. Required.
-  ${STATE_DIR_ENV}       Where to write active-runs. Default: ${DEFAULT_STATE_DIR}.
+  ${ENGINE_ENV.stateDir}       Where to write active-runs. Default: ${DEFAULT_ENGINE_STATE_DIR}.
+  ${MOCK_VENDORS_ENV}    Set to 1 to answer vendor calls from mock scripts.
+  ${MOCK_SCRIPT_ENV}     With ${MOCK_VENDORS_ENV}=1: a JSON file of responses per vendor.
 `;
 
 export interface CliArgs {
@@ -95,9 +101,12 @@ export interface EngineHandle {
 export interface StartOptions {
   env: EngineEnv;
   log: Logger;
-  stateDir: string;
+  /** Where to write `active-runs`. Defaults to `AGENTBOX_STATE_DIR`. */
+  stateDir?: string;
   host?: string;
   runner?: CommandRunner;
+  /** The vendor adapters for the core. Defaults to an empty set. */
+  adapters?: AdapterSet;
   /** Replaces the core, for tests. */
   runs?: RunManager;
   portIntervalMs?: number;
@@ -120,9 +129,23 @@ export async function startEngine(options: StartOptions): Promise<EngineHandle> 
   }
 
   const hub = new EventHub({ source: `engine:${container}` });
-  const leases = new EngineLeaseBroker({ events: hub, log });
-  const runs =
-    options.runs ?? (await loadCore({ projectRoot, container, events: hub, leases, log })).runs;
+  const leases = new EngineLeaseBroker({ log });
+  let runs: RunManager;
+  try {
+    runs =
+      options.runs ??
+      (await createRunManager({
+        projectRoot,
+        container,
+        events: hub,
+        leases,
+        adapters: options.adapters ?? {},
+        log,
+      }));
+  } catch (err) {
+    leases.close();
+    throw err;
+  }
   const repos = new RepoService({ projectRoot, runner, log });
   const ports = new PortWatcher({
     container,
@@ -158,7 +181,8 @@ export async function startEngine(options: StartOptions): Promise<EngineHandle> 
   const boundPort = typeof bound === "object" && bound ? bound.port : port;
   log.info("The engine is listening", { host, port: boundPort, engineVersion, container });
 
-  const activeRuns = startActiveRunsWriter(options.stateDir, () => runs.activeRunCount(), log);
+  const stateDir = options.stateDir ?? env[ENGINE_ENV.stateDir];
+  const activeRuns = startActiveRunsWriter(stateDir, () => runs.activeRunCount(), log);
 
   let closing: Promise<void> | null = null;
   const close = () => {
@@ -211,11 +235,8 @@ export async function main(
 
   let handle: EngineHandle;
   try {
-    handle = await startEngine({
-      env: checked.env,
-      log,
-      stateDir: env[STATE_DIR_ENV] || DEFAULT_STATE_DIR,
-    });
+    const { adapters } = await selectAdapters(env, log);
+    handle = await startEngine({ env: checked.env, log, adapters });
   } catch (err) {
     log.error("The engine failed to start", { error: String(err) });
     return 1;

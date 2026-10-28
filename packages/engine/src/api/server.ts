@@ -41,7 +41,7 @@ export interface EngineAppOptions extends Omit<HandlerDeps, "health"> {
 }
 
 const UNAUTHORIZED: ApiError = {
-  error: { code: "validation", message: "The engine needs a valid bearer token." },
+  error: { code: "unauthorized", message: "The engine needs a valid bearer token." },
 };
 
 function sendRawError(res: ServerResponse, status: number, body: ApiError): void {
@@ -68,6 +68,7 @@ export async function buildEngineApp(options: EngineAppOptions): Promise<Fastify
         container: options.container,
         projectRoot: options.projectRoot,
         streamId: options.hub.streamId,
+        versionMatches,
       }),
     }),
     ...options.handlers,
@@ -145,9 +146,7 @@ export async function buildEngineApp(options: EngineAppOptions): Promise<Fastify
           });
           throw new Error(`Invalid response from ${key}.`);
         }
-        const output: unknown = result.data;
-        const body = key === "engine.health" ? { ...(output as object), versionMatches } : output;
-        return reply.code(route.status ?? 200).send(body);
+        return reply.code(route.status ?? 200).send(result.data);
       },
     });
   }

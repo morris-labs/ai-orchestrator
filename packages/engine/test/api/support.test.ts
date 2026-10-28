@@ -27,6 +27,7 @@ describe("mapError", () => {
   it("turns anything else into a 500 without leaking the message", () => {
     const mapped = mapError(new Error("secret path /x"));
     expect(mapped.status).toBe(500);
+    expect(mapped.body.error.code).toBe("internal");
     expect(JSON.stringify(mapped.body)).not.toContain("secret path");
     expect(mapError({ code: "ENOENT" }).status).toBe(500);
   });
@@ -34,6 +35,8 @@ describe("mapError", () => {
   it("gives every code a status", () => {
     expect(statusFor("secrets_locked")).toBe(503);
     expect(statusFor("not_found")).toBe(404);
+    expect(statusFor("unauthorized")).toBe(401);
+    expect(statusFor("internal")).toBe(500);
   });
 });
 

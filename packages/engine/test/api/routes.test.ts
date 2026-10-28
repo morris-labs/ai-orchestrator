@@ -234,7 +234,7 @@ describe("engine HTTP routes", () => {
         const c = cases[key] as Case;
         const res = await app.inject({ method: c.method as "GET", url: c.url });
         expect(res.statusCode).toBe(401);
-        expect(res.json()).toMatchObject({ error: { code: "validation" } });
+        expect(res.json()).toMatchObject({ error: { code: "unauthorized" } });
       });
     }
   }

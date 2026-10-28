@@ -1,19 +1,15 @@
-// The interfaces between the engine service (W5) and the engine core (W3).
+// The interface between the engine API and the engine core.
 //
-// The core (`src/core.ts`) exposes a `RunManager`. The service hands the core
-// an `EventSink` to publish events on the engine's stream and a
-// `LeaseBroker` to ask the server for usage leases. Both sides code against
-// these types only, so each can be tested with fakes of the other.
+// The API serves a `RunManager`; `src/state/manager.ts` builds one over the
+// core's `RunController`s. The event sink and the lease broker the core
+// uses are the ones `src/core.ts` defines; the engine's `EventHub` and
+// `EngineLeaseBroker` implement them.
 import type {
-  AgentBoxEvent,
   ApiErrorCode,
   DecisionAnswer,
   EngineRunCreate,
   FileGroup,
   Finding,
-  LeaseRequest,
-  LeaseResponse,
-  LeaseSettlement,
   Profile,
   Role,
   RoundSummary,
@@ -25,6 +21,10 @@ import type {
   Vendor,
   Verdict,
 } from "@agentbox/contracts";
+import type { AdapterSet, Clock, CommandRunner, EventSink, LeaseBroker } from "../core.js";
+import type { GitHubClient } from "../postpush/github.js";
+
+export type { EventDraft, EventEnvelopeKey, EventSink, LeaseBroker } from "../core.js";
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -42,49 +42,6 @@ export class EngineError extends Error {
     super(message);
     this.name = "EngineError";
   }
-}
-
-// ---------------------------------------------------------------------------
-// Events
-
-/** The fields the event stream fills in; the core never sets them. */
-export type EventEnvelopeKey = "id" | "time" | "source" | "streamId" | "seq" | "sourceSeq";
-
-type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
-
-/** An event as the core emits it, before the stream numbers it. */
-export type EventDraft = DistributiveOmit<AgentBoxEvent, EventEnvelopeKey>;
-
-/** Where the core publishes events. */
-export interface EventSink {
-  /** Validates, numbers, stores, and broadcasts an event. Returns the full event. */
-  emit(draft: EventDraft): AgentBoxEvent;
-}
-
-// ---------------------------------------------------------------------------
-// Leases
-
-/** What the core asks for; the broker assigns `leaseId` when it's absent. */
-export type LeaseAsk = Omit<LeaseRequest, "leaseId"> & { leaseId?: string };
-
-export type LeaseGrant = Extract<LeaseResponse, { decision: "granted" }>;
-
-/**
- * The engine side of the lease protocol in `lease.ts`. The core calls
- * `request()` before each model call and `settle()` after it.
- */
-export interface LeaseBroker {
-  /**
-   * Sends a `lease.request` frame and resolves with the server's answer. The
-   * request waits while no server is subscribed. A grant that has already
-   * expired when it arrives is asked for again under a new lease id. Rejects
-   * when `signal` aborts or the broker closes.
-   */
-  request(ask: LeaseAsk, options?: { signal?: AbortSignal }): Promise<LeaseResponse>;
-  /** True while a grant can still start a call: before its `expiresAt`. */
-  isUsable(grant: LeaseGrant): boolean;
-  /** Emits a `lease.settled` event with the call's actual usage. */
-  settle(settlement: LeaseSettlement): void;
 }
 
 // ---------------------------------------------------------------------------
@@ -159,13 +116,24 @@ export interface RunManager {
   close?(): Promise<void>;
 }
 
-/** What `src/core.ts` receives to build a `RunManager`. */
+/** What `createRunManager()` receives. */
 export interface CoreDeps {
   projectRoot: string;
   container: string;
   events: EventSink;
   leases: LeaseBroker;
+  /** One adapter per vendor the engine can call. */
+  adapters: AdapterSet;
   log: Logger;
+  /** Runs `git`, `gh`, and reproduction scripts. Defaults to `ExecaRunner`. */
+  runner?: CommandRunner;
+  /** The `gh` client for `base: pr` and pushes. Defaults to `GhCliClient` over `runner`. */
+  github?: GitHubClient;
+  clock?: Clock;
+  /** Model per vendor; absent leaves each CLI's default. */
+  models?: Partial<Record<Vendor, string>>;
+  /** The policy file, relative to the project root or absolute. */
+  policyPath?: string;
 }
 
 /** Statuses that count as active for the keeper. */

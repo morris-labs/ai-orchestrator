@@ -93,7 +93,7 @@ export const usageSample = {
   spendUsd: null,
   ceiling: { kind: "utilization" as const, window: "5h" as const, max: 0.6 },
   resetAt: T1,
-  source: "rate_limit_event" as const,
+  sampleSource: "rate_limit_event" as const,
   time: T0,
 };
 
@@ -139,7 +139,7 @@ export function newHub(): EventHub {
 }
 
 export function newBroker(hub: EventHub, now?: () => Date): EngineLeaseBroker {
-  return new EngineLeaseBroker({ events: hub, log: silentLogger, now, tickMs: 60_000 });
+  return new EngineLeaseBroker({ log: silentLogger, now, tickMs: 60_000 });
 }
 
 /** Builds the engine app on a fake core and listens on a free loopback port. */

@@ -1,13 +1,14 @@
-// The entry point's pieces: arguments, environment, core loading, the
+// The entry point's pieces: arguments, environment, adapter selection, the
 // active-runs file, and a full start and stop.
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
-import type { EngineEnv } from "@agentbox/contracts";
+import type { EngineEnv, Vendor } from "@agentbox/contracts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { startActiveRunsWriter, writeActiveRuns } from "../../src/main/active-runs.js";
-import { loadCore, unavailableRunManager } from "../../src/main/core-loader.js";
+import { MockAdapter } from "../../src/adapters/mock.js";
+import { FixOutputSchema, ReviewOutputSchema } from "../../src/core.js";
+import { createMockAdapters, selectAdapters } from "../../src/main/adapters.js";
 import { silentLogger } from "../../src/main/logger.js";
 import { checkEnv, parseArgs, startEngine } from "../../src/main/run.js";
 import { readPackageVersion } from "../../src/main/version.js";
@@ -18,8 +19,6 @@ beforeEach(() => {
   dir = mkdtempSync(path.join(tmpdir(), "engine-main-"));
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
-
-const deps = { projectRoot: PROJECT_ROOT, container: CONTAINER, log: silentLogger } as never;
 
 describe("parseArgs", () => {
   it("reads the log level in both forms", () => {
@@ -56,44 +55,72 @@ describe("checkEnv", () => {
     expect(JSON.stringify(short)).not.toContain("short-secret");
   });
 
+  it("defaults the state directory to /run/claude-box", () => {
+    const r = checkEnv(good);
+    expect(r.ok && r.env.AGENTBOX_STATE_DIR).toBe("/run/claude-box");
+    const set = checkEnv({ ...good, AGENTBOX_STATE_DIR: "/tmp/state" });
+    expect(set.ok && set.env.AGENTBOX_STATE_DIR).toBe("/tmp/state");
+  });
+
   it("reports a bad port", () => {
     const r = checkEnv({ ...good, AGENTBOX_ENGINE_PORT: "99999" });
     expect(r.ok).toBe(false);
   });
 });
 
-describe("loadCore", () => {
-  it("falls back to an unavailable core when core.js is missing", async () => {
-    const r = await loadCore(deps, pathToFileURL(path.join(dir, "core.js")));
-    expect(r.available).toBe(false);
-    expect(await r.runs.list({})).toEqual([]);
-    await expect(r.runs.pause("x")).rejects.toMatchObject({ code: "conflict" });
+describe("selectAdapters", () => {
+  it("uses mock adapters for every vendor with AGENTBOX_MOCK_VENDORS=1", async () => {
+    const r = await selectAdapters({ AGENTBOX_MOCK_VENDORS: "1" }, silentLogger);
+    expect(r.mock).toBe(true);
+    expect(Object.keys(r.adapters).sort()).toEqual(["claude", "codex", "copilot"]);
+    const review = await r.adapters.codex?.review({
+      prompt: "Review group G-1",
+      repoPath: dir,
+      toolPolicy: "read-only",
+      timeoutMs: 1_000,
+    });
+    expect(review).toMatchObject({ output: { findings: [], ledger: [] }, model: "mock-codex" });
   });
 
-  it("builds the run manager a core module exports", async () => {
-    const file = path.join(dir, "core.mjs");
+  it("puts a script's responses before the defaults", async () => {
+    const file = path.join(dir, "mock.json");
+    const finding = {
+      severity: "P2",
+      title: "Off by one",
+      file: "a.py",
+      lines: [1, 2],
+      failure_case: "x",
+      category: "correctness",
+      introduced: true,
+    };
     writeFileSync(
       file,
-      "export function createRunManager(d) { return { marker: d.container }; }\n",
+      JSON.stringify({
+        claude: { responses: [{ method: "review", output: { findings: [finding] } }] },
+      }),
     );
-    const r = await loadCore(deps, pathToFileURL(file));
-    expect(r).toEqual({ runs: { marker: CONTAINER }, available: true });
+    const adapters = createMockAdapters(file);
+    const base = { prompt: "p", cwd: dir, tools: "read-only" as const, timeoutMs: 1_000 };
+    const out = await adapters.claude.review({ ...base, outputSchema: ReviewOutputSchema });
+    expect(out.output.findings).toHaveLength(1);
+    const fix = await adapters.claude.fix({ ...base, outputSchema: FixOutputSchema });
+    expect(fix.output).toEqual({ fixed: [], notFixed: [], summary: "" });
   });
 
-  it("throws when the module has no createRunManager", async () => {
-    const file = path.join(dir, "core.mjs");
-    writeFileSync(file, "export const x = 1;\n");
-    await expect(loadCore(deps, pathToFileURL(file))).rejects.toThrow(/createRunManager/);
-  });
-
-  it("propagates an error inside the core module", async () => {
-    const file = path.join(dir, "core.mjs");
-    writeFileSync(file, "import './missing-dep.mjs';\n");
-    await expect(loadCore(deps, pathToFileURL(file))).rejects.toThrow(/missing-dep/);
-  });
-
-  it("gives the unavailable core no active runs", () => {
-    expect(unavailableRunManager().activeRunCount()).toBe(0);
+  it("leaves out a vendor whose CLI doesn't answer", async () => {
+    const cli = (vendor: Vendor, available: boolean) =>
+      new MockAdapter({
+        vendor,
+        health: { available, version: available ? "1.0" : null },
+        responses: [],
+      });
+    const r = await selectAdapters({}, silentLogger, () => ({
+      claude: cli("claude", true),
+      codex: cli("codex", false),
+      copilot: cli("copilot", false),
+    }));
+    expect(Object.keys(r.adapters)).toEqual(["claude"]);
+    expect(r.missing.map((m) => m.vendor)).toEqual(["codex", "copilot"]);
   });
 });
 
@@ -141,5 +168,36 @@ describe("startEngine", () => {
     }
     expect(readFileSync(path.join(dir, "active-runs"), "utf8")).toBe("0\n");
     expect(runs.close).toHaveBeenCalledOnce();
+  });
+});
+
+describe("startEngine with the real core", () => {
+  it("serves an empty run list and writes active-runs to AGENTBOX_STATE_DIR", async () => {
+    const stateDir = path.join(dir, "state");
+    mkdirSync(stateDir);
+    const env = {
+      AGENTBOX_ENGINE_TOKEN: TOKEN,
+      AGENTBOX_ENGINE_PORT: 0,
+      AGENTBOX_PROJECT_ROOT: dir,
+      AGENTBOX_CONTAINER: CONTAINER,
+      AGENTBOX_ENGINE_VERSION: "0.0.0-other",
+      AGENTBOX_STATE_DIR: stateDir,
+    } as unknown as EngineEnv;
+    const handle = await startEngine({
+      env,
+      log: silentLogger,
+      host: "127.0.0.1",
+      runner: { run: async () => ({ code: 1, stdout: "", stderr: "" }) },
+    });
+    try {
+      const base = `http://127.0.0.1:${handle.address.port}/api/v1`;
+      const health = await fetch(`${base}/health`);
+      expect(await health.json()).toMatchObject({ versionMatches: false });
+      const runs = await fetch(`${base}/runs`, { headers: { authorization: `Bearer ${TOKEN}` } });
+      expect(await runs.json()).toEqual({ runs: [] });
+      expect(readFileSync(path.join(stateDir, "active-runs"), "utf8")).toBe("0\n");
+    } finally {
+      await handle.close();
+    }
   });
 });
