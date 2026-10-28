@@ -26,3 +26,9 @@ gui/build/
 /claude-box-resume.service
 /docker-compose.yml
 /gitcontrol.sh
+
+# Node workspace (Agent Box 4.0.0)
+node_modules/
+dist/
+*.tsbuildinfo
+coverage/

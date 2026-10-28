@@ -1,0 +1,6 @@
+gui/
+docs/
+dist/
+node_modules/
+pnpm-lock.yaml
+*.md
