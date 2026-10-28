@@ -20,7 +20,8 @@ describe("policy", () => {
     });
   });
 
-  it("rejects an unknown version", () => {
+  it("rejects an unknown version and an unknown key", () => {
     expect(PolicyFileSchema.safeParse({ version: 2 }).success).toBe(false);
+    expect(PolicyFileSchema.safeParse({ version: 1, risk_paths: ["src/**"] }).success).toBe(false);
   });
 });

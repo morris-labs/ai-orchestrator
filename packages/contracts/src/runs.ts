@@ -7,6 +7,7 @@ import {
   CountSchema,
   FractionSchema,
   IsoDateTimeSchema,
+  RunIdSchema,
   VendorSchema,
 } from "./common.js";
 
@@ -52,43 +53,69 @@ export const StageSchema = z.enum([
 ]);
 export type Stage = z.infer<typeof StageSchema>;
 
-/** The fields of a run request, before `exactBase` is folded into `mergeBase`. */
-export const RunRequestFieldsSchema = z.object({
+/** A run request with every default resolved, as `RunState.request` stores it. */
+export const ResolvedRunRequestSchema = z.object({
   projectId: z.string().min(1),
   boxId: z.string().min(1).optional(),
   /** Repository path as the container sees it. */
   repoPath: z.string().min(1),
   /** A branch, tag, or commit, or `pr` for the open pull request's base. */
-  base: z.string().min(1).default("origin/main"),
+  base: z.string().min(1),
   /** The branch to review and fix, or a commit with `readOnly`. Absent means the checked-out branch. */
   tip: z.string().min(1).optional(),
   /** Diff from the merge base of base and tip (`git diff BASE...TIP`). */
-  mergeBase: z.boolean().default(true),
+  mergeBase: z.boolean(),
   /** The CLI's `--exact-base`. True forces `mergeBase` to false. */
-  exactBase: z.boolean().default(false),
-  pipeline: PipelineSchema.default("pre-push"),
+  exactBase: z.boolean(),
+  pipeline: PipelineSchema,
   prNumber: z.number().int().positive().optional(),
-  profile: ProfileSchema.default("offload"),
+  profile: ProfileSchema,
   /** Review without fixing. */
-  readOnly: z.boolean().default(false),
+  readOnly: z.boolean(),
   /** Review uncommitted changes instead of refusing a dirty tree. */
-  includeWorktree: z.boolean().default(false),
+  includeWorktree: z.boolean(),
   /**
    * Disprover and confirmer come from a vendor other than the one that did
    * the work. False uses a fresh agent on the same vendor.
    */
+  crossVendor: z.boolean(),
+  roundCap: z.number().int().positive(),
+  overlapThreshold: FractionSchema,
+  continuationCap: z.number().int().nonnegative(),
+});
+export type ResolvedRunRequest = z.infer<typeof ResolvedRunRequestSchema>;
+
+/** The fields of a run request with the design.md defaults, before `exactBase` is folded in. */
+export const RunRequestFieldsSchema = ResolvedRunRequestSchema.extend({
+  base: z.string().min(1).default("origin/main"),
+  mergeBase: z.boolean().default(true),
+  exactBase: z.boolean().default(false),
+  pipeline: PipelineSchema.default("pre-push"),
+  profile: ProfileSchema.default("offload"),
+  readOnly: z.boolean().default(false),
+  includeWorktree: z.boolean().default(false),
   crossVendor: z.boolean().default(true),
   roundCap: z.number().int().positive().default(25),
   overlapThreshold: FractionSchema.default(0.5),
   continuationCap: z.number().int().nonnegative().default(3),
 });
 
-/** What starts a run. Defaults follow design.md. */
-export const RunRequestSchema = RunRequestFieldsSchema.transform((r) =>
-  r.exactBase ? { ...r, mergeBase: false } : r,
-);
+const foldExactBase = <T extends { exactBase: boolean; mergeBase: boolean }>(r: T): T =>
+  r.exactBase ? { ...r, mergeBase: false } : r;
+
+/** What starts a run: the body of the server's `runs.create`. Defaults follow design.md. */
+export const RunRequestSchema = RunRequestFieldsSchema.transform(foldExactBase);
 export type RunRequest = z.infer<typeof RunRequestSchema>;
 export type RunRequestInput = z.input<typeof RunRequestSchema>;
+
+/**
+ * The body of the engine's `engine.runs.create`: the request plus the run id
+ * the server minted. The engine stores the run under that id.
+ */
+export const EngineRunCreateSchema = RunRequestFieldsSchema.extend({
+  runId: RunIdSchema,
+}).transform(foldExactBase);
+export type EngineRunCreate = z.infer<typeof EngineRunCreateSchema>;
 
 /** The vendor for each role. Several reviewers can run in one round. */
 export const RoleAssignmentSchema = z.object({
@@ -119,9 +146,9 @@ export type DecisionOption = z.infer<typeof DecisionOptionSchema>;
 /** Why a run waits for a person, and what the person can choose. */
 export const DecisionSchema = z.object({
   kind: z.enum(["oscillation", "round_cap", "ceiling", "gate_failed", "push_blocked"]),
-  findingIds: z.array(z.string().min(1)).default([]),
+  findingIds: z.array(z.string().min(1)),
   options: z.array(DecisionOptionSchema).min(1),
-  message: z.string().default(""),
+  message: z.string(),
 });
 export type Decision = z.infer<typeof DecisionSchema>;
 
@@ -135,12 +162,15 @@ export const DecisionAnswerSchema = z.object({
 export type DecisionAnswer = z.infer<typeof DecisionAnswerSchema>;
 
 export const RunStateSchema = z.object({
-  /** Unique per engine; also the run directory's name. */
-  id: z.string().min(1),
+  /**
+   * A ULID the server mints and passes to the engine in `engine.runs.create`.
+   * Unique across every engine; also the run directory's name.
+   */
+  id: RunIdSchema,
   projectId: z.string().min(1),
   boxId: z.string().min(1).optional(),
   container: z.string().min(1),
-  request: RunRequestSchema,
+  request: ResolvedRunRequestSchema,
   status: RunStatusSchema,
   stage: StageSchema,
   /** 0 until the first find stage starts. */
@@ -151,8 +181,8 @@ export const RunStateSchema = z.object({
   tipSha: CommitShaSchema.optional(),
   profile: ProfileSchema,
   roles: RoleAssignmentSchema,
-  stopReason: StopReasonSchema.nullable().default(null),
-  decision: DecisionSchema.nullable().default(null),
+  stopReason: StopReasonSchema.nullable(),
+  decision: DecisionSchema.nullable(),
   /** When a ceiling paused the run: when it resumes. */
   pausedUntil: IsoDateTimeSchema.optional(),
   prNumber: z.number().int().positive().optional(),
@@ -180,7 +210,7 @@ export const FileGroupSchema = z.object({
   changedLines: CountSchema,
   /** True when any file matches a policy risk path; such a group is always major. */
   riskPath: z.boolean(),
-  hunks: z.array(HunkSchema).default([]),
+  hunks: z.array(HunkSchema),
 });
 export type FileGroup = z.infer<typeof FileGroupSchema>;
 
@@ -188,14 +218,16 @@ export const VendorRoundStatsSchema = z.object({
   raised: CountSchema,
   confirmed: CountSchema,
   disproved: CountSchema,
-  tokensIn: CountSchema.default(0),
-  tokensOut: CountSchema.default(0),
-  costUsd: z.number().nonnegative().default(0),
+  tokensIn: CountSchema,
+  tokensOut: CountSchema,
+  /** Copilot premium requests; 0 for other vendors. */
+  premiumRequests: z.number().nonnegative(),
+  costUsd: z.number().nonnegative(),
 });
 export type VendorRoundStats = z.infer<typeof VendorRoundStatsSchema>;
 
 export const RoundSummarySchema = z.object({
-  runId: z.string().min(1),
+  runId: RunIdSchema,
   round: z.number().int().positive(),
   perVendor: z.record(VendorSchema, VendorRoundStatsSchema),
   fixed: CountSchema,

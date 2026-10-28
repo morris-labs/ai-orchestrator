@@ -6,7 +6,7 @@
 // (`VendorFindingSchema`). The engine converts each one with
 // `fromVendorFinding()`, and everything after that point uses `Finding`.
 import { z } from "zod";
-import { IsoDateTimeSchema, VendorSchema } from "./common.js";
+import { CommitShaSchema, IsoDateTimeSchema, RunIdSchema, VendorSchema } from "./common.js";
 
 export const SeveritySchema = z.enum(["P1", "P2", "P3", "nit"]);
 export type Severity = z.infer<typeof SeveritySchema>;
@@ -69,16 +69,20 @@ const LinesSchema = z
   .tuple([z.number().int().positive(), z.number().int().positive()])
   .refine(([start, end]) => end >= start, { message: "end line must not precede start line" });
 
-export const FindingSchema = z.object({
+/** Origins whose findings can lack a file and lines, such as a general PR comment. */
+const UNLOCATED_ORIGINS: readonly FindingOrigin[] = ["pr_comment", "check_run"];
+
+const findingFields = {
   /** `F-0001` and up, unique within a run. */
   id: z.string().regex(/^F-\d{4,}$/),
   /** SHA-1 of the file, the symbol, and the normalized title. */
   fingerprint: z.string().min(1),
   severity: SeveritySchema,
   title: z.string().min(1),
-  file: z.string().min(1),
-  /** First and last line, inclusive, in the tip version of `file`. */
-  lines: LinesSchema,
+  /** `null` only for a `pr_comment` or `check_run` finding with no location. */
+  file: z.string().min(1).nullable(),
+  /** First and last line, inclusive, in the tip version of `file`; `null` with `file`. */
+  lines: LinesSchema.nullable(),
   failureCase: z.string(),
   category: z.string().min(1),
   /** False when the flaw already exists at the pinned base. */
@@ -86,25 +90,59 @@ export const FindingSchema = z.object({
   /** Reviewer label, such as `claude-opus` or `codex-gpt-5`. */
   reportedBy: z.string().min(1),
   /** Other reviewers whose findings merged into this one; drives the overlap rate. */
-  alsoReportedBy: z.array(z.string().min(1)).default([]),
+  alsoReportedBy: z.array(z.string().min(1)),
   verdict: VerdictSchema,
   /** How the verdict was reached. `null` while the verdict is `pending`. */
-  verification: VerificationSchema.nullable().default(null),
-  evidence: z.string().default(""),
-  runId: z.string().min(1),
+  verification: VerificationSchema.nullable(),
+  evidence: z.string(),
+  runId: RunIdSchema,
   round: z.number().int().positive(),
-  groupId: z.string().min(1),
-  hunkIds: z.array(z.string().min(1)).default([]),
-  origin: FindingOriginSchema.default("reviewer"),
+  /** `null` for findings that span groups, such as an imported PR comment. */
+  groupId: z.string().min(1).nullable(),
+  hunkIds: z.array(z.string().min(1)),
+  origin: FindingOriginSchema,
   externalRef: ExternalRefSchema.optional(),
   /** The commit that fixed it, once the verdict is `fixed`. */
-  fixCommit: z
-    .string()
-    .regex(/^[0-9a-f]{7,64}$/)
-    .optional(),
-  history: z.array(FindingHistoryEntrySchema).default([]),
-});
+  fixCommit: CommitShaSchema.optional(),
+  history: z.array(FindingHistoryEntrySchema),
+};
+
+function checkLocation(
+  f: { origin: FindingOrigin; file: string | null; lines: unknown },
+  ctx: z.RefinementCtx,
+) {
+  if ((f.file === null) !== (f.lines === null)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["lines"],
+      message: "file and lines must both be set or both be null",
+    });
+  }
+  if (f.file === null && !UNLOCATED_ORIGINS.includes(f.origin)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["file"],
+      message: `a ${f.origin} finding needs a file and lines`,
+    });
+  }
+}
+
+/** A finding as stored and returned: every field present. */
+export const FindingSchema = z.object(findingFields).superRefine(checkLocation);
 export type Finding = z.infer<typeof FindingSchema>;
+
+/** A finding with defaults for the lists, `verification`, `evidence`, and `origin`. Outputs a `Finding`. */
+export const FindingInputSchema = z
+  .object({
+    ...findingFields,
+    alsoReportedBy: z.array(z.string().min(1)).default([]),
+    verification: VerificationSchema.nullable().default(null),
+    evidence: z.string().default(""),
+    hunkIds: z.array(z.string().min(1)).default([]),
+    origin: FindingOriginSchema.default("reviewer"),
+    history: z.array(FindingHistoryEntrySchema).default([]),
+  })
+  .superRefine(checkLocation);
 
 /** The JSON a reviewer returns, exactly as in design.md. */
 export const VendorFindingSchema = z.object({
@@ -116,7 +154,7 @@ export const VendorFindingSchema = z.object({
   lines: LinesSchema,
   failure_case: z.string(),
   category: z.string().min(1),
-  introduced: z.boolean().default(true),
+  introduced: z.boolean(),
   reported_by: z.string().min(1).optional(),
   verdict: VerdictSchema.default("pending"),
   verification: VerificationSchema.optional(),
@@ -131,14 +169,14 @@ export interface FindingContext {
   reportedBy: string;
   runId: string;
   round: number;
-  groupId: string;
+  groupId: string | null;
   hunkIds?: string[];
   origin?: FindingOrigin;
 }
 
 /** Converts a vendor's snake_case finding into a `Finding`. */
 export function fromVendorFinding(raw: VendorFinding, ctx: FindingContext): Finding {
-  return FindingSchema.parse({
+  return FindingInputSchema.parse({
     id: ctx.id,
     fingerprint: ctx.fingerprint,
     severity: raw.severity,
