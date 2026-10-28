@@ -509,9 +509,7 @@ export class BoxService {
         ]);
       }
 
-      const containers = (await this.deps.docker.listContainers({ all: true })).map(
-        (c) => c.name,
-      );
+      const containers = (await this.deps.docker.listContainers({ all: true })).map((c) => c.name);
       const id = uniqueBoxName(slug || path.posix.basename(targetDir), this.takenNames(containers));
       const sessionUuid = adoptUuid ?? crypto.randomUUID();
       if (conversationName === "") conversationName = id;

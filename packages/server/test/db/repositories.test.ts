@@ -79,9 +79,11 @@ describe("migration 2", () => {
     expect(r.boxes.get("claude-agent-api.v2")?.hostKey).toBe("api-v2");
     expect(r.boxes.get("claude-agent-api-v2")?.hostKey).toBe("api-v2-2");
     expect(
-      (db.prepare("SELECT host_key FROM boxes WHERE id = ?").get("claude-agent-api-v2") as {
-        host_key: string;
-      }).host_key,
+      (
+        db.prepare("SELECT host_key FROM boxes WHERE id = ?").get("claude-agent-api-v2") as {
+          host_key: string;
+        }
+      ).host_key,
     ).toBe("api-v2-2");
     expect(() =>
       r.boxes.put(

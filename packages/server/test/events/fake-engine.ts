@@ -18,6 +18,8 @@ export class FakeEngineServer {
   leaseResponses: LeaseResponse[] = [];
   sockets: WebSocket[] = [];
   healthCalls = 0;
+  /** What `findings.list` answers for the run. */
+  findings: unknown[] = [];
   /** What the engine itself reports about its version check. */
   versionMatches = true;
 
@@ -46,6 +48,11 @@ export class FakeEngineServer {
       if (req.url === "/api/v1/runs") {
         res.writeHead(200, { "content-type": "application/json" });
         res.end(JSON.stringify({ runs: [runState] }));
+        return;
+      }
+      if (req.url === `/api/v1/runs/${RUN}/findings`) {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ findings: this.findings }));
         return;
       }
       if (req.url === `/api/v1/runs/${RUN}`) {

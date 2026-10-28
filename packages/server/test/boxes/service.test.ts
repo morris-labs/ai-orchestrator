@@ -159,14 +159,16 @@ describe("create", () => {
     const h = makeHarness();
     const repo = initRepo(h.dir("repo"));
     const req = { targetDir: repo, layout: "worktree" as const, conversationName: "Fix login" };
-    const results = await Promise.allSettled([
-      h.core.boxes.create(req),
-      h.core.boxes.create(req),
-    ]);
+    const results = await Promise.allSettled([h.core.boxes.create(req), h.core.boxes.create(req)]);
     expect(results.map((r) => r.status)).toEqual(["fulfilled", "fulfilled"]);
     const [a, b] = results.map((r) => (r as PromiseFulfilledResult<Box>).value) as [Box, Box];
     expect(new Set([a.id, b.id]).size).toBe(2);
-    expect(h.core.db.boxes.list().map((x) => x.id).sort()).toEqual([a.id, b.id].sort());
+    expect(
+      h.core.db.boxes
+        .list()
+        .map((x) => x.id)
+        .sort(),
+    ).toEqual([a.id, b.id].sort());
     expect(a.worktree).toBe(b.worktree);
     expect(fs.existsSync(a.worktree!)).toBe(true);
   });

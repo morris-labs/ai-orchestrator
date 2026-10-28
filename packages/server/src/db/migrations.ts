@@ -13,9 +13,11 @@ export type Migration = string | ((db: Sqlite) => void);
  * keeps a shared key; the others get a new one.
  */
 export function rekeyDuplicateHostKeys(db: Sqlite): void {
-  const rows = db
-    .prepare("SELECT id, host_key, data FROM boxes ORDER BY created_at, id")
-    .all() as { id: string; host_key: string; data: string }[];
+  const rows = db.prepare("SELECT id, host_key, data FROM boxes ORDER BY created_at, id").all() as {
+    id: string;
+    host_key: string;
+    data: string;
+  }[];
   const taken = new Set<string>();
   const update = db.prepare("UPDATE boxes SET host_key = ?, data = ? WHERE id = ?");
   for (const row of rows) {

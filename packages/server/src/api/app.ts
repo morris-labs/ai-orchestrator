@@ -156,6 +156,8 @@ export async function startApp(options: AppOptions): Promise<App> {
     relay: (event) => hub.relay(event),
     decideLease: (engineKey, projectId, request) => scheduler.decide(engineKey, projectId, request),
     onRuns: (list) => list.forEach((run) => runMirror.upsert(run)),
+    onFindings: (runId, findings) => runMirror.replaceFindings(runId, findings),
+    onStreamReset: (engineKey) => scheduler.forget(engineKey),
     log,
     intervalMs: options.engineIntervalMs,
   });

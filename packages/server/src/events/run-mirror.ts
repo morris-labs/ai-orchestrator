@@ -98,6 +98,17 @@ export class RunMirror {
       );
   }
 
+  /** Replaces every mirrored finding of a run, as after an engine resync. */
+  replaceFindings(runId: string, findings: readonly Finding[]): void {
+    const run = () => {
+      this.db.prepare("DELETE FROM svc_findings WHERE run_id = ?").run(runId);
+      for (const f of findings) this.upsertFinding(f);
+    };
+    const db = this.db as unknown as { transaction?: (fn: () => void) => () => void };
+    if (typeof db.transaction === "function") db.transaction(run)();
+    else run();
+  }
+
   /** The mirrored findings of a run, by id. */
   findings(runId: string): Finding[] {
     return (

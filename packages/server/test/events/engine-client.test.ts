@@ -1,8 +1,14 @@
-import type { AgentBoxEvent, LeaseRequest } from "@agentbox/contracts";
+import {
+  FindingSchema,
+  type AgentBoxEvent,
+  type Finding,
+  type LeaseRequest,
+} from "@agentbox/contracts";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { EngineClient, type StreamCursor } from "../../src/events/engine-client.js";
 import { EngineSupervisor, sqliteCursor } from "../../src/events/engines.js";
+import { RunMirror } from "../../src/events/run-mirror.js";
 import { CONTAINER, PROJECT_ID, RUN, runState } from "../api/fixtures.js";
 import { ENGINE_TOKEN, FakeEngineServer, waitFor } from "./fake-engine.js";
 
@@ -231,6 +237,67 @@ describe("EngineSupervisor", () => {
     expect(() => sup.requireProject(PROJECT_ID)).toThrow(
       expect.objectContaining({ code: "conflict" }),
     );
+    await sup.stop();
+  });
+
+  it("reloads runs and their findings and drops cached leases when the stream starts over", async () => {
+    const db = new Database(":memory:");
+    const mirror = new RunMirror(db);
+    const finding = (id: string, verdict: Finding["verdict"]) =>
+      FindingSchema.parse({
+        id,
+        fingerprint: "3f786850e387550fdab836ed7e6dc881de23001b",
+        severity: "P1",
+        title: "Retry loop never gives up",
+        file: "src/mailer.ts",
+        lines: [1, 2],
+        failureCase: "A closed socket retries forever.",
+        category: "correctness",
+        introduced: true,
+        reportedBy: "codex-gpt-5",
+        alsoReportedBy: [],
+        verdict,
+        verification: "code-reading",
+        evidence: "",
+        runId: RUN,
+        round: 1,
+        groupId: "G-01",
+        hunkIds: ["H-0001"],
+        origin: "reviewer",
+        history: [],
+      });
+    // The mirror holds a stale state from before the engine restarted.
+    mirror.upsertFinding(finding("F-0001", "pending"));
+    mirror.upsertFinding(finding("F-0009", "pending"));
+    engine.findings = [finding("F-0001", "confirmed")];
+    const resets: string[] = [];
+    const sup = new EngineSupervisor({
+      engines: {
+        list: async () => [
+          {
+            container: CONTAINER,
+            projectId: PROJECT_ID,
+            hostPort: engine.port,
+            token: ENGINE_TOKEN,
+          },
+        ],
+      },
+      db,
+      expectedVersion: "4.0.0-dev",
+      relay: () => undefined,
+      decideLease: async () => {
+        throw new Error("unused");
+      },
+      onRuns: (list) => list.forEach((r) => mirror.upsert(r)),
+      onFindings: (runId, list) => mirror.replaceFindings(runId, list),
+      onStreamReset: (key) => resets.push(key),
+      intervalMs: 50,
+    });
+    sup.start();
+    await waitFor(() => mirror.findings(RUN).length === 1);
+    expect(resets).toEqual([CONTAINER]);
+    expect(mirror.get(RUN)?.id).toBe(RUN);
+    expect(mirror.findings(RUN).map((f) => [f.id, f.verdict])).toEqual([["F-0001", "confirmed"]]);
     await sup.stop();
   });
 });

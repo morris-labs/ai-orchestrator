@@ -4,6 +4,7 @@
 import type {
   AgentBoxEvent,
   EngineInfo,
+  Finding,
   LeaseRequest,
   LeaseResponse,
   RunState,
@@ -22,6 +23,14 @@ export interface EngineSupervisorOptions {
   decideLease(engineKey: string, projectId: string, request: LeaseRequest): Promise<LeaseResponse>;
   /** Receives the runs an engine lists after a resync. */
   onRuns?(runs: RunState[]): void;
+  /** Receives every finding of one run after a resync; the list replaces the mirrored one. */
+  onFindings?(runId: string, findings: Finding[]): void;
+  /**
+   * Called when an engine's stream starts over (a new engine process, or a
+   * first connection), before its state is reloaded. Lease answers cached
+   * for `engineKey` belong to the old process.
+   */
+  onStreamReset?(engineKey: string): void;
   onInfo?(container: string, info: EngineInfo): void;
   log?(message: string): void;
   /** How often to look for added or removed containers. */
@@ -127,14 +136,31 @@ export class EngineSupervisor {
     return this.options.createClient?.(options) ?? new EngineClient(options);
   }
 
+  /** Reloads an engine's runs and their findings after its stream starts over. */
   private async resync(container: string): Promise<void> {
     const client = this.clients.get(container);
     if (!client) return;
+    this.options.onStreamReset?.(container);
+    let runs: RunState[];
     try {
-      const { runs } = (await client.call("engine.runs.list")) as { runs: RunState[] };
+      runs = ((await client.call("engine.runs.list")) as { runs: RunState[] }).runs;
       this.options.onRuns?.(runs);
     } catch (err) {
       this.options.log?.(`Resync of ${container} failed: ${(err as Error).message}`);
+      return;
+    }
+    if (!this.options.onFindings) return;
+    for (const run of runs) {
+      try {
+        const { findings } = (await client.call("engine.findings.list", {
+          params: { runId: run.id },
+        })) as { findings: Finding[] };
+        this.options.onFindings(run.id, findings);
+      } catch (err) {
+        this.options.log?.(
+          `Resync of the findings of run ${run.id} in ${container} failed: ${(err as Error).message}`,
+        );
+      }
     }
   }
 

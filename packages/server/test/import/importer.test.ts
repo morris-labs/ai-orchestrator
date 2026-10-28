@@ -515,9 +515,9 @@ describe("runImport", () => {
     const report = runImport({ env: fx.env, repos });
     expect(repos.projects.get(fx.looseId)?.tcpMaps).toEqual([{ host: 9000, container: 9000 }]);
     expect(report.tcpMapsAdded.filter((t) => t.boxId === "claude-agent-twin")).toEqual([]);
-    expect(report.warnings.some((w) => w.includes("9100:9000") && w.includes("same container"))).toBe(
-      true,
-    );
+    expect(
+      report.warnings.some((w) => w.includes("9100:9000") && w.includes("same container")),
+    ).toBe(true);
     expect(report.warnings.some((w) => w.includes("9200:20411") && w.includes("engine"))).toBe(
       true,
     );
