@@ -86,9 +86,14 @@ export function splitSlice(slice: Slice, limit: number): Slice[] {
  * group as major or minor, splits groups above the policy's size limit, and
  * gives every hunk an id. The same diff always gives the same groups.
  */
-export async function groupFiles(files: readonly DiffFile[], options: GroupOptions): Promise<FileGroup[]> {
+export async function groupFiles(
+  files: readonly DiffFile[],
+  options: GroupOptions,
+): Promise<FileGroup[]> {
   const majorLines = options.majorLines ?? DEFAULT_MAJOR_LINES;
-  const byPath = new Map(files.filter((f) => !f.binary || f.hunks.length > 0).map((f) => [f.path, f]));
+  const byPath = new Map(
+    files.filter((f) => !f.binary || f.hunks.length > 0).map((f) => [f.path, f]),
+  );
   const paths = [...byPath.keys()].sort();
   const sources = paths.filter((p) => fileKind(p) === "source");
   const tests = paths.filter((p) => fileKind(p) === "test");
@@ -129,7 +134,10 @@ export async function groupFiles(files: readonly DiffFile[], options: GroupOptio
     const lower = content.toLowerCase();
     const match =
       sources.find((s) => stem(s) === stem(d)) ??
-      sources.find((s) => stem(s).length >= 4 && (lower.includes(s.toLowerCase()) || lower.includes(`${stem(s)}.`)));
+      sources.find(
+        (s) =>
+          stem(s).length >= 4 && (lower.includes(s.toLowerCase()) || lower.includes(`${stem(s)}.`)),
+      );
     if (match) uf.union(match, d);
     else if (docsRoot) uf.union(docsRoot, d);
     else docsRoot = d;

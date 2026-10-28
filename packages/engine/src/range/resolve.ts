@@ -32,7 +32,8 @@ export interface ResolvedRange {
   includeWorktree: boolean;
 }
 
-export type RangeErrorCode = "dirty_tree" | "bad_ref" | "tip_not_checked_out" | "sha_tip_needs_read_only" | "no_pr";
+export type RangeErrorCode =
+  "dirty_tree" | "bad_ref" | "tip_not_checked_out" | "sha_tip_needs_read_only" | "no_pr";
 
 export class RangeError extends Error {
   constructor(
@@ -53,7 +54,8 @@ export async function resolveBaseRef(
   github?: GitHubClient,
 ): Promise<string> {
   if (input.base !== "pr") return input.base;
-  if (!github) throw new RangeError("no_pr", "The base `pr` needs the gh CLI, which isn't configured.");
+  if (!github)
+    throw new RangeError("no_pr", "The base `pr` needs the gh CLI, which isn't configured.");
   const selector = input.prNumber ?? input.tip ?? (await git.currentBranch());
   if (selector === null || selector === undefined) {
     throw new RangeError("no_pr", "The base `pr` needs a pull request number or a tip branch.");
@@ -95,7 +97,8 @@ export async function resolveRange(
     tipSha = await git.revParse(`refs/heads/${input.tip}`);
   } else {
     const sha = await git.tryRevParse(input.tip);
-    if (!sha) throw new RangeError("bad_ref", `The tip ${input.tip} doesn't name a branch or commit.`);
+    if (!sha)
+      throw new RangeError("bad_ref", `The tip ${input.tip} doesn't name a branch or commit.`);
     if (!input.readOnly) {
       throw new RangeError(
         "sha_tip_needs_read_only",
@@ -124,6 +127,7 @@ export async function resolveRange(
   const useMergeBase = input.mergeBase && !input.exactBase;
   const diffBaseSha = useMergeBase ? await git.mergeBase(baseSha, tipSha) : baseSha;
   // Uncommitted changes only make sense on the checked-out tip.
-  const includeWorktree = input.includeWorktree && dirty && (tipRef === null ? false : current === tipRef);
+  const includeWorktree =
+    input.includeWorktree && dirty && (tipRef === null ? false : current === tipRef);
   return { baseRef, baseSha, tipRef, tipSha, diffBaseSha, dirty, includeWorktree };
 }

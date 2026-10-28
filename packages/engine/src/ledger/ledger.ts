@@ -20,7 +20,10 @@ export interface GroupLedger {
 }
 
 /** True when a finding's lines touch the hunk. A deletion hunk covers the line before and after. */
-export function findingTouchesHunk(finding: Pick<VendorFinding, "file" | "lines">, hunk: Hunk): boolean {
+export function findingTouchesHunk(
+  finding: Pick<VendorFinding, "file" | "lines">,
+  hunk: Hunk,
+): boolean {
   if (finding.file !== hunk.file) return false;
   const [start, end] = finding.lines;
   const hStart = hunk.start === hunk.end ? Math.max(1, hunk.start) : hunk.start;
@@ -29,7 +32,10 @@ export function findingTouchesHunk(finding: Pick<VendorFinding, "file" | "lines"
 }
 
 /** The ids of the hunks a finding touches. */
-export function hunksForFinding(finding: Pick<VendorFinding, "file" | "lines">, hunks: readonly Hunk[]): string[] {
+export function hunksForFinding(
+  finding: Pick<VendorFinding, "file" | "lines">,
+  hunks: readonly Hunk[],
+): string[] {
   return hunks.filter((h) => findingTouchesHunk(finding, h)).map((h) => h.id);
 }
 
@@ -37,7 +43,13 @@ export function hunksForFinding(finding: Pick<VendorFinding, "file" | "lines">, 
 export function newLedger(groupId: string | null, hunks: readonly Hunk[]): GroupLedger {
   return {
     groupId,
-    entries: hunks.map((h) => ({ hunkId: h.id, file: h.file, verdict: "missing", reason: "", reviewers: [] })),
+    entries: hunks.map((h) => ({
+      hunkId: h.id,
+      file: h.file,
+      verdict: "missing",
+      reason: "",
+      reviewers: [],
+    })),
   };
 }
 
@@ -78,6 +90,8 @@ export function recordVerdicts(
 
 /** The hunks that still have no verdict. */
 export function missingHunks(ledger: GroupLedger, hunks: readonly Hunk[]): Hunk[] {
-  const missing = new Set(ledger.entries.filter((e) => e.verdict === "missing").map((e) => e.hunkId));
+  const missing = new Set(
+    ledger.entries.filter((e) => e.verdict === "missing").map((e) => e.hunkId),
+  );
   return hunks.filter((h) => missing.has(h.id));
 }

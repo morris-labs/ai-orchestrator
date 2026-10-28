@@ -40,7 +40,10 @@ export function globToRegExp(glob: string): RegExp {
       const close = glob.indexOf("]", i + 1);
       if (close === -1) re += "\\[";
       else {
-        re += `[${glob.slice(i + 1, close).replace(/^!/, "^").replace(/\\/g, "\\\\")}]`;
+        re += `[${glob
+          .slice(i + 1, close)
+          .replace(/^!/, "^")
+          .replace(/\\/g, "\\\\")}]`;
         i = close;
       }
     } else re += c.replace(/[.+^$()|\\]/g, "\\$&");

@@ -17,7 +17,13 @@ import type {
 import type { ConfirmOutput, FixOutput, ReviewOutput, SweepOutput, VerifyOutput } from "../core.js";
 import { compareGate, formatRegressions, runGate, type GateRun } from "../gate/gate.js";
 import { groupFiles } from "../group/group.js";
-import { hunksForFinding, missingHunks, newLedger, recordVerdicts, type GroupLedger } from "../ledger/ledger.js";
+import {
+  hunksForFinding,
+  missingHunks,
+  newLedger,
+  recordVerdicts,
+  type GroupLedger,
+} from "../ledger/ledger.js";
 import { enclosingSymbol, fingerprint } from "../merge/fingerprint.js";
 import { findingsLog, mergeCandidates, type Candidate, type MergeResult } from "../merge/merge.js";
 import { policyPromptSection } from "../policy/rules.js";
@@ -30,7 +36,12 @@ import {
   sweepPrompt,
 } from "../prompts/templates.js";
 import { parseDiff } from "../range/diff.js";
-import { BaseWorktree, chooseDisprover, verifyFinding, type VerifyResult } from "../verify/verify.js";
+import {
+  BaseWorktree,
+  chooseDisprover,
+  verifyFinding,
+  type VerifyResult,
+} from "../verify/verify.js";
 import { DecisionNeeded, type RunContext } from "./context.js";
 import { planReviews, type ReviewTask } from "./profiles.js";
 
@@ -47,7 +58,11 @@ export function aboveNit(f: Pick<Finding, "severity">): boolean {
   return SEVERITY_ABOVE_NIT.has(f.severity);
 }
 
-async function mapLimit<T, R>(items: readonly T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+async function mapLimit<T, R>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
   const results: R[] = new Array<R>(items.length);
   let next = 0;
   const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
@@ -135,7 +150,11 @@ function dedupeKey(f: VendorFinding): string {
 }
 
 /** Runs one reviewer: the review, ledger follow-ups, and continuations until dry. */
-async function runReviewTask(ctx: RunContext, task: ReviewTask, groups: readonly FileGroup[]): Promise<ReviewTaskResult> {
+async function runReviewTask(
+  ctx: RunContext,
+  task: ReviewTask,
+  groups: readonly FileGroup[],
+): Promise<ReviewTaskResult> {
   const group = task.groupId ? groups.find((g) => g.id === task.groupId) : undefined;
   const files = group ? group.files : [...new Set(groups.flatMap((g) => g.files))];
   const hunks: Hunk[] = group ? group.hunks : groups.flatMap((g) => g.hunks);
@@ -169,7 +188,13 @@ async function runReviewTask(ctx: RunContext, task: ReviewTask, groups: readonly
   const label = reviewerLabel(vendor, first.model);
   const collected: VendorFinding[] = [...first.output.findings];
   const seen = new Set(collected.map(dedupeKey));
-  let ledger = recordVerdicts(newLedger(task.groupId, hunks), hunks, label, first.output.ledger, collected);
+  let ledger = recordVerdicts(
+    newLedger(task.groupId, hunks),
+    hunks,
+    label,
+    first.output.ledger,
+    collected,
+  );
   let calls = 1;
   const sessionId = first.sessionId;
 
@@ -193,7 +218,12 @@ async function runReviewTask(ctx: RunContext, task: ReviewTask, groups: readonly
         key: `find-${task.key}-ledger${i + 1}`,
         vendor,
         method: "continueReview",
-        request: { prompt: followUp, repoPath: ctx.state.request.repoPath, toolPolicy: "read-only", sessionId },
+        request: {
+          prompt: followUp,
+          repoPath: ctx.state.request.repoPath,
+          toolPolicy: "read-only",
+          sessionId,
+        },
         estimateTokens: estimateTokens(followUp) + 2000,
         allowFallback: false,
       });
@@ -207,7 +237,12 @@ async function runReviewTask(ctx: RunContext, task: ReviewTask, groups: readonly
         key: `find-${task.key}-more${i + 1}`,
         vendor,
         method: "continueReview",
-        request: { prompt: more, repoPath: ctx.state.request.repoPath, toolPolicy: "read-only", sessionId },
+        request: {
+          prompt: more,
+          repoPath: ctx.state.request.repoPath,
+          toolPolicy: "read-only",
+          sessionId,
+        },
         estimateTokens: estimateTokens(more) + 2000,
         allowFallback: false,
       });
@@ -242,9 +277,16 @@ export async function runFind(ctx: RunContext, groups: readonly FileGroup[]): Pr
     results.map((r) => ({ key: r.key, vendor: r.vendor, ...r.ledger })),
   );
   const perVendor = new Map<Vendor, number>();
-  for (const r of results) perVendor.set(r.vendor, (perVendor.get(r.vendor) ?? 0) + r.findings.length);
+  for (const r of results)
+    perVendor.set(r.vendor, (perVendor.get(r.vendor) ?? 0) + r.findings.length);
   for (const [vendor, count] of perVendor) {
-    await ctx.handoff({ stage: "find", vendor, role: "reviewer" }, { stage: "merge" }, "findings", count, file);
+    await ctx.handoff(
+      { stage: "find", vendor, role: "reviewer" },
+      { stage: "merge" },
+      "findings",
+      count,
+      file,
+    );
   }
   return output;
 }
@@ -265,7 +307,12 @@ export interface MergeOutput {
 /** Turns raw findings into merge candidates with fingerprints and hunk ids. */
 export async function toCandidates(
   ctx: RunContext,
-  raw: ReadonlyArray<{ finding: VendorFinding; vendor: Vendor; model: string; groupId: string | null }>,
+  raw: ReadonlyArray<{
+    finding: VendorFinding;
+    vendor: Vendor;
+    model: string;
+    groupId: string | null;
+  }>,
   origin: FindingOrigin,
   groups: readonly FileGroup[],
 ): Promise<Candidate[]> {
@@ -274,10 +321,15 @@ export async function toCandidates(
   for (const r of raw) {
     const content = await read(r.finding.file);
     const symbol = enclosingSymbol(content, r.finding.lines[0]);
-    const hunks = r.groupId ? (groups.find((g) => g.id === r.groupId)?.hunks ?? []) : groups.flatMap((g) => g.hunks);
+    const hunks = r.groupId
+      ? (groups.find((g) => g.id === r.groupId)?.hunks ?? [])
+      : groups.flatMap((g) => g.hunks);
     const hunkIds = hunksForFinding(r.finding, hunks);
     const groupId =
-      r.groupId ?? groups.find((g) => g.hunks.some((h) => hunkIds.includes(h.id)))?.id ?? groups.find((g) => g.files.includes(r.finding.file))?.id ?? null;
+      r.groupId ??
+      groups.find((g) => g.hunks.some((h) => hunkIds.includes(h.id)))?.id ??
+      groups.find((g) => g.files.includes(r.finding.file))?.id ??
+      null;
     out.push({
       raw: r.finding,
       reportedBy: reviewerLabel(r.vendor, r.model),
@@ -303,7 +355,10 @@ async function symbolsOfFixed(ctx: RunContext): Promise<Map<string, string>> {
 }
 
 /** Merges candidates into the run's findings and announces the new ones. */
-export async function mergeInto(ctx: RunContext, candidates: readonly Candidate[]): Promise<MergeResult> {
+export async function mergeInto(
+  ctx: RunContext,
+  candidates: readonly Candidate[],
+): Promise<MergeResult> {
   const result = mergeCandidates(
     ctx.findings,
     candidates,
@@ -326,7 +381,10 @@ export async function mergeInto(ctx: RunContext, candidates: readonly Candidate[
 }
 
 /** The decision for findings that came back after their fix. */
-export function oscillationDecision(ctx: RunContext, oscillations: MergeResult["oscillations"]): DecisionNeeded {
+export function oscillationDecision(
+  ctx: RunContext,
+  oscillations: MergeResult["oscillations"],
+): DecisionNeeded {
   const ids = oscillations.flatMap((o) => [o.fixedId, o.returnedId]);
   const pairs = oscillations
     .map((o) => {
@@ -344,12 +402,21 @@ export function oscillationDecision(ctx: RunContext, oscillations: MergeResult["
 }
 
 /** The merge stage of a pre-push round. Raises a decision for an oscillation. */
-export async function runMerge(ctx: RunContext, find: FindOutput, groups: readonly FileGroup[]): Promise<MergeOutput> {
+export async function runMerge(
+  ctx: RunContext,
+  find: FindOutput,
+  groups: readonly FileGroup[],
+): Promise<MergeOutput> {
   const file = ctx.store.roundFile(ctx.round, "merge");
   const saved = await ctx.store.readJson<MergeOutput>(file);
   if (saved) return saved;
   const raw = find.tasks.flatMap((t) =>
-    t.findings.map((finding) => ({ finding, vendor: t.vendor, model: t.model, groupId: t.groupId })),
+    t.findings.map((finding) => ({
+      finding,
+      vendor: t.vendor,
+      model: t.model,
+      groupId: t.groupId,
+    })),
   );
   const raisedByVendor: Partial<Record<Vendor, number>> = {};
   for (const r of raw) raisedByVendor[r.vendor] = (raisedByVendor[r.vendor] ?? 0) + 1;
@@ -366,7 +433,13 @@ export async function runMerge(ctx: RunContext, find: FindOutput, groups: readon
   };
   await ctx.store.writeJson(file, output);
   const pending = ctx.findings.filter((f) => f.verdict === "pending").length;
-  await ctx.handoff({ stage: "merge" }, { stage: "verify", role: "disprover" }, "findings", pending, "findings.json");
+  await ctx.handoff(
+    { stage: "merge" },
+    { stage: "verify", role: "disprover" },
+    "findings",
+    pending,
+    "findings.json",
+  );
   return output;
 }
 
@@ -445,7 +518,13 @@ export async function verifyPending(ctx: RunContext, stageFile: string): Promise
   const done = results.filter((r): r is VerifyResult => r !== null);
   await ctx.store.writeJson(stageFile, done);
   const confirmed = done.filter((r) => r.decision.verdict === "confirmed").length;
-  await ctx.handoff({ stage: "verify", role: "disprover" }, { stage: "fix", vendor: ctx.state.roles.fixer, role: "fixer" }, "findings", confirmed, stageFile);
+  await ctx.handoff(
+    { stage: "verify", role: "disprover" },
+    { stage: "fix", vendor: ctx.state.roles.fixer, role: "fixer" },
+    "findings",
+    confirmed,
+    stageFile,
+  );
   return done;
 }
 
@@ -453,21 +532,32 @@ export async function verifyPending(ctx: RunContext, stageFile: string): Promise
 // Sweep
 
 /** The pattern sweep: confirmed findings of this round become patterns. Returns created finding ids. */
-export async function runSweep(ctx: RunContext, groups: readonly FileGroup[]): Promise<MergeOutput | null> {
+export async function runSweep(
+  ctx: RunContext,
+  groups: readonly FileGroup[],
+): Promise<MergeOutput | null> {
   const file = ctx.store.roundFile(ctx.round, "sweep");
   const saved = await ctx.store.readJson<MergeOutput>(file);
   if (saved) return saved;
   const patterns = ctx.findings.filter(
-    (f) => f.verdict === "confirmed" && f.history.some((h) => h.verdict === "confirmed" && h.round === ctx.round),
+    (f) =>
+      f.verdict === "confirmed" &&
+      f.history.some((h) => h.verdict === "confirmed" && h.round === ctx.round),
   );
   if (patterns.length === 0) {
     await ctx.store.writeJson(file, null);
     return null;
   }
-  const vendor = ctx.state.roles.reviewer.find((v) => v !== "claude") ?? ctx.state.roles.reviewer[0] ?? "codex";
+  const vendor =
+    ctx.state.roles.reviewer.find((v) => v !== "claude") ?? ctx.state.roles.reviewer[0] ?? "codex";
   const diffBase = ctx.eng.diffBaseSha ?? ctx.state.baseSha ?? "";
   const diff = await ctx.git.diffForPrompt(diffBase, diffTip(ctx));
-  const prompt = sweepPrompt({ range: ctx.range(), patterns, diff, policySection: policyPromptSection(ctx.policy) });
+  const prompt = sweepPrompt({
+    range: ctx.range(),
+    patterns,
+    diff,
+    policySection: policyPromptSection(ctx.policy),
+  });
   const out = await ctx.callAgent<SweepOutput>({
     key: "sweep",
     role: "sweeper",
@@ -478,7 +568,12 @@ export async function runSweep(ctx: RunContext, groups: readonly FileGroup[]): P
     estimateTokens: estimateTokens(prompt) + 3000,
     allowFallback: true,
   });
-  const raw = out.output.findings.map((finding) => ({ finding, vendor: out.vendor, model: out.model, groupId: null }));
+  const raw = out.output.findings.map((finding) => ({
+    finding,
+    vendor: out.vendor,
+    model: out.model,
+    groupId: null,
+  }));
   const candidates = await toCandidates(ctx, raw, "sweep", groups);
   const result = await mergeInto(ctx, candidates);
   const output: MergeOutput = {
@@ -491,7 +586,13 @@ export async function runSweep(ctx: RunContext, groups: readonly FileGroup[]): P
     raisedByVendor: { [out.vendor]: raw.length },
   };
   await ctx.store.writeJson(file, output);
-  await ctx.handoff({ stage: "sweep", vendor: out.vendor, role: "sweeper" }, { stage: "verify", role: "disprover" }, "findings", result.created.length, file);
+  await ctx.handoff(
+    { stage: "sweep", vendor: out.vendor, role: "sweeper" },
+    { stage: "verify", role: "disprover" },
+    "findings",
+    result.created.length,
+    file,
+  );
   return output;
 }
 
@@ -501,17 +602,29 @@ export async function runSweep(ctx: RunContext, groups: readonly FileGroup[]): P
 export interface FixRecord {
   attempt: number;
   preFixSha: string;
-  batches: Array<{ findingIds: string[]; before: string; after: string; commits: string[]; output: FixOutput }>;
+  batches: Array<{
+    findingIds: string[];
+    before: string;
+    after: string;
+    commits: string[];
+    output: FixOutput;
+  }>;
 }
 
 /** Findings the fixer should work on: confirmed, above `nit`, and not declined twice. */
 export function fixTargets(ctx: RunContext): Finding[] {
   const declined = new Set(ctx.eng.declined);
-  return ctx.findings.filter((f) => f.verdict === "confirmed" && aboveNit(f) && !declined.has(f.id));
+  return ctx.findings.filter(
+    (f) => f.verdict === "confirmed" && aboveNit(f) && !declined.has(f.id),
+  );
 }
 
 /** The fix stage: the fixer fixes confirmed findings in batches per group and commits. */
-export async function runFix(ctx: RunContext, targets: readonly Finding[], gateFailure?: string): Promise<FixRecord> {
+export async function runFix(
+  ctx: RunContext,
+  targets: readonly Finding[],
+  gateFailure?: string,
+): Promise<FixRecord> {
   const attempt = ctx.eng.gateAttempts + 1;
   const file = ctx.store.roundFile(ctx.round, `fix-${attempt}`);
   const saved = await ctx.store.readJson<FixRecord>(file);
@@ -519,7 +632,10 @@ export async function runFix(ctx: RunContext, targets: readonly Finding[], gateF
   const branch = ctx.eng.tipRef;
   if (!branch) throw new Error("The run has no tip branch to fix on.");
   const current = await ctx.git.currentBranch();
-  if (current !== branch) throw new Error(`The fixer commits to ${branch}, but ${current ?? "a detached HEAD"} is checked out.`);
+  if (current !== branch)
+    throw new Error(
+      `The fixer commits to ${branch}, but ${current ?? "a detached HEAD"} is checked out.`,
+    );
   const preFixSha = ctx.eng.preFixSha ?? (await ctx.git.head());
   ctx.eng.preFixSha = preFixSha;
   await ctx.persist();
@@ -543,7 +659,10 @@ export async function runFix(ctx: RunContext, targets: readonly Finding[], gateF
       range: ctx.range(),
       findings: batch,
       gateFailure,
-      policySection: policyPromptSection(ctx.policy, batch.flatMap((f) => (f.file ? [f.file] : []))),
+      policySection: policyPromptSection(
+        ctx.policy,
+        batch.flatMap((f) => (f.file ? [f.file] : [])),
+      ),
     });
     const out = await ctx.callAgent<FixOutput>({
       key: `fix-${attempt}-${index + 1}`,
@@ -557,10 +676,18 @@ export async function runFix(ctx: RunContext, targets: readonly Finding[], gateF
     });
     const after = await ctx.git.head();
     if (!(await ctx.git.ok(["merge-base", "--is-ancestor", before, after]))) {
-      throw new Error(`The fixer rewrote history on ${branch}: ${before} is no longer an ancestor of ${after}.`);
+      throw new Error(
+        `The fixer rewrote history on ${branch}: ${before} is no longer an ancestor of ${after}.`,
+      );
     }
     const commits = after === before ? [] : await ctx.git.commitsBetween(before, after);
-    record.batches.push({ findingIds: batch.map((f) => f.id), before, after, commits, output: out.output });
+    record.batches.push({
+      findingIds: batch.map((f) => f.id),
+      before,
+      after,
+      commits,
+      output: out.output,
+    });
     const fixedIds = new Set(out.output.fixed);
     for (const f of batch) {
       const finding = ctx.findingById(f.id);
@@ -568,14 +695,20 @@ export async function runFix(ctx: RunContext, targets: readonly Finding[], gateF
       if (fixedIds.has(f.id) && commits.length > 0) finding.fixCommit = after;
     }
     for (const nf of out.output.notFixed) {
-      ctx.eng.declined = [...new Set([...(ctx.eng.declined), nf.id])];
+      ctx.eng.declined = [...new Set([...ctx.eng.declined, nf.id])];
     }
     ctx.state.tipSha = after;
     await ctx.persist();
   }
   await ctx.store.writeJson(file, record);
   const fixed = targets.filter((f) => ctx.findingById(f.id)?.fixCommit).length;
-  await ctx.handoff({ stage: "fix", vendor: ctx.state.roles.fixer, role: "fixer" }, { stage: "gate" }, "fixes", fixed, file);
+  await ctx.handoff(
+    { stage: "fix", vendor: ctx.state.roles.fixer, role: "fixer" },
+    { stage: "gate" },
+    "fixes",
+    fixed,
+    file,
+  );
   return record;
 }
 
@@ -595,12 +728,28 @@ export async function runGateStage(ctx: RunContext, nextStage: Stage): Promise<G
   const file = ctx.store.roundFile(ctx.round, `gate-${attempt}`);
   const saved = await ctx.store.readJson<GateRecord>(file);
   if (saved) return saved;
-  const baseline = (await ctx.store.readJson<{ baseline: GateRun }>("preflight.json"))?.baseline ?? { passed: true, commands: [] };
-  const run = await runGate(ctx.policy, { repoPath: ctx.state.request.repoPath, shell: ctx.shell, signal: ctx.signal });
+  const baseline = (await ctx.store.readJson<{ baseline: GateRun }>("preflight.json"))
+    ?.baseline ?? { passed: true, commands: [] };
+  const run = await runGate(ctx.policy, {
+    repoPath: ctx.state.request.repoPath,
+    shell: ctx.shell,
+    signal: ctx.signal,
+  });
   const comparison = compareGate(baseline, run);
-  const record: GateRecord = { attempt, run, regressed: comparison.regressed, report: formatRegressions(comparison) };
+  const record: GateRecord = {
+    attempt,
+    run,
+    regressed: comparison.regressed,
+    report: formatRegressions(comparison),
+  };
   await ctx.store.writeJson(file, record);
-  await ctx.handoff({ stage: "gate" }, { stage: comparison.regressed ? "fix" : nextStage }, "gate_results", run.commands.length, file);
+  await ctx.handoff(
+    { stage: "gate" },
+    { stage: comparison.regressed ? "fix" : nextStage },
+    "gate_results",
+    run.commands.length,
+    file,
+  );
   return record;
 }
 
@@ -612,7 +761,10 @@ export interface ConfirmRecord {
 }
 
 /** The confirm stage: a reviewer from another vendor checks the fix diff. */
-export async function runConfirm(ctx: RunContext, groups: readonly FileGroup[]): Promise<ConfirmRecord> {
+export async function runConfirm(
+  ctx: RunContext,
+  groups: readonly FileGroup[],
+): Promise<ConfirmRecord> {
   const file = ctx.store.roundFile(ctx.round, "confirm");
   const saved = await ctx.store.readJson<ConfirmRecord>(file);
   if (saved) return saved;
@@ -625,7 +777,12 @@ export async function runConfirm(ctx: RunContext, groups: readonly FileGroup[]):
   }
   const head = await ctx.git.head();
   const fixDiff = await ctx.git.diffForPrompt(preFixSha, head);
-  const prompt = confirmerPrompt({ range: ctx.range(), findings: fixed, fixDiff, policySection: policyPromptSection(ctx.policy) });
+  const prompt = confirmerPrompt({
+    range: ctx.range(),
+    findings: fixed,
+    fixDiff,
+    policySection: policyPromptSection(ctx.policy),
+  });
   const vendor = ctx.state.request.crossVendor ? ctx.state.roles.confirmer : ctx.state.roles.fixer;
   const out = await ctx.callAgent<ConfirmOutput>({
     key: "confirm",
@@ -643,13 +800,29 @@ export async function runConfirm(ctx: RunContext, groups: readonly FileGroup[]):
   for (const f of fixed) {
     const reason = incomplete.get(f.id);
     if (reason !== undefined) {
-      await ctx.setVerdict(f, "confirmed", actor, `The fix in ${f.fixCommit ?? "?"} is incomplete: ${reason}`, { fixCommit: undefined });
+      await ctx.setVerdict(
+        f,
+        "confirmed",
+        actor,
+        `The fix in ${f.fixCommit ?? "?"} is incomplete: ${reason}`,
+        { fixCommit: undefined },
+      );
     } else {
-      await ctx.setVerdict(f, "fixed", actor, `Fixed in ${f.fixCommit ?? head}; the confirmer found the fix complete.`);
+      await ctx.setVerdict(
+        f,
+        "fixed",
+        actor,
+        `Fixed in ${f.fixCommit ?? head}; the confirmer found the fix complete.`,
+      );
       fixedIds.push(f.id);
     }
   }
-  const raw = out.output.findings.map((finding) => ({ finding, vendor: out.vendor, model: out.model, groupId: null }));
+  const raw = out.output.findings.map((finding) => ({
+    finding,
+    vendor: out.vendor,
+    model: out.model,
+    groupId: null,
+  }));
   const candidates = await toCandidates(ctx, raw, "confirmer", groups);
   const merged = await mergeInto(ctx, candidates);
   const record: ConfirmRecord = {
@@ -659,7 +832,13 @@ export async function runConfirm(ctx: RunContext, groups: readonly FileGroup[]):
     created: merged.created,
   };
   await ctx.store.writeJson(file, record);
-  await ctx.handoff({ stage: "confirm", vendor: out.vendor, role: "confirmer" }, { stage: "find" }, "findings", merged.created.length, file);
+  await ctx.handoff(
+    { stage: "confirm", vendor: out.vendor, role: "confirmer" },
+    { stage: "find" },
+    "findings",
+    merged.created.length,
+    file,
+  );
   if (merged.oscillations.length > 0) throw oscillationDecision(ctx, merged.oscillations);
   return record;
 }
@@ -699,7 +878,8 @@ export function buildRoundSummary(
     const reporter = reporterVendor(f);
     for (const h of f.history) {
       if (h.round !== round) continue;
-      if (reporter && h.verdict === "confirmed" && h.actor.role === "disprover") stats(reporter).confirmed += 1;
+      if (reporter && h.verdict === "confirmed" && h.actor.role === "disprover")
+        stats(reporter).confirmed += 1;
       if (reporter && h.verdict === "disproved") stats(reporter).disproved += 1;
       if (h.verdict === "fixed") fixed += 1;
     }
@@ -722,7 +902,9 @@ export function confirmedThisRound(ctx: RunContext): Finding[] {
   return ctx.findings.filter(
     (f) =>
       aboveNit(f) &&
-      f.history.some((h) => h.round === ctx.round && h.verdict === "confirmed" && h.actor.role === "disprover"),
+      f.history.some(
+        (h) => h.round === ctx.round && h.verdict === "confirmed" && h.actor.role === "disprover",
+      ),
   );
 }
 

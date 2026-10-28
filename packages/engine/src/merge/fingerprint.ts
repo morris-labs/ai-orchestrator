@@ -3,8 +3,35 @@
 import { createHash } from "node:crypto";
 
 const STOPWORDS = new Set([
-  "a", "an", "the", "in", "on", "of", "to", "for", "when", "is", "are", "be", "with", "and", "or",
-  "can", "may", "might", "could", "its", "it", "this", "that", "from", "by", "at", "as", "not", "no",
+  "a",
+  "an",
+  "the",
+  "in",
+  "on",
+  "of",
+  "to",
+  "for",
+  "when",
+  "is",
+  "are",
+  "be",
+  "with",
+  "and",
+  "or",
+  "can",
+  "may",
+  "might",
+  "could",
+  "its",
+  "it",
+  "this",
+  "that",
+  "from",
+  "by",
+  "at",
+  "as",
+  "not",
+  "no",
 ]);
 
 /** Lowercase words of the title, without punctuation, digits, or stopwords. */
@@ -41,7 +68,16 @@ const SYMBOL_PATTERNS: RegExp[] = [
   /^\s*(?:public|private|protected|static|async|override|readonly|\s)*([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*(?::\s*[^{]+)?\{\s*$/, // method
 ];
 
-const NOT_SYMBOLS = new Set(["if", "for", "while", "switch", "catch", "return", "function", "else"]);
+const NOT_SYMBOLS = new Set([
+  "if",
+  "for",
+  "while",
+  "switch",
+  "catch",
+  "return",
+  "function",
+  "else",
+]);
 
 /**
  * The name of the function or class that encloses `line` (1-based) in

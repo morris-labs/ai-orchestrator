@@ -15,12 +15,19 @@ const FINDING_SCHEMA = {
       maxItems: 2,
       description: "First and last line, inclusive, in the tip version of the file.",
     },
-    failure_case: { type: "string", description: "Input X or state Y leads to incorrect behavior Z." },
+    failure_case: {
+      type: "string",
+      description: "Input X or state Y leads to incorrect behavior Z.",
+    },
     category: {
       type: "string",
-      description: "correctness, error-handling, security, data-exposure, resource, performance, concurrency, or maintainability.",
+      description:
+        "correctness, error-handling, security, data-exposure, resource, performance, concurrency, or maintainability.",
     },
-    introduced: { type: "boolean", description: "True when the change under review introduced the flaw." },
+    introduced: {
+      type: "boolean",
+      description: "True when the change under review introduced the flaw.",
+    },
   },
 } as const;
 
@@ -57,7 +64,10 @@ export const VERIFY_OUTPUT_JSON_SCHEMA = {
     verdict: { enum: ["confirmed", "disproved"] },
     verification: { enum: ["script", "code-reading"] },
     evidence: { type: "string", description: "What you ran or read, and what it showed." },
-    presentAtBase: { type: "boolean", description: "True when the same flaw exists in the base worktree." },
+    presentAtBase: {
+      type: "boolean",
+      description: "True when the same flaw exists in the base worktree.",
+    },
     script: {
       oneOf: [
         { type: "null" },
@@ -81,7 +91,11 @@ export const FIX_OUTPUT_JSON_SCHEMA = {
     fixed: { type: "array", items: { type: "string", description: "Finding id." } },
     notFixed: {
       type: "array",
-      items: { type: "object", required: ["id", "reason"], properties: { id: { type: "string" }, reason: { type: "string" } } },
+      items: {
+        type: "object",
+        required: ["id", "reason"],
+        properties: { id: { type: "string" }, reason: { type: "string" } },
+      },
     },
     summary: { type: "string" },
   },
@@ -93,7 +107,11 @@ export const CONFIRM_OUTPUT_JSON_SCHEMA = {
   properties: {
     incomplete: {
       type: "array",
-      items: { type: "object", required: ["id", "reason"], properties: { id: { type: "string" }, reason: { type: "string" } } },
+      items: {
+        type: "object",
+        required: ["id", "reason"],
+        properties: { id: { type: "string" }, reason: { type: "string" } },
+      },
     },
     findings: { type: "array", items: FINDING_SCHEMA },
   },

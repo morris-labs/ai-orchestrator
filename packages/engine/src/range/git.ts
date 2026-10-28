@@ -19,7 +19,10 @@ export class Git {
   ) {}
 
   /** Runs git and returns its standard output; throws `GitError` on a non-zero exit. */
-  async run(args: readonly string[], options: { input?: string; cwd?: string } = {}): Promise<string> {
+  async run(
+    args: readonly string[],
+    options: { input?: string; cwd?: string } = {},
+  ): Promise<string> {
     const result = await this.runner.run("git", args, {
       cwd: options.cwd ?? this.cwd,
       input: options.input,
@@ -40,10 +43,14 @@ export class Git {
   }
 
   async tryRevParse(ref: string): Promise<string | null> {
-    const result = await this.runner.run("git", ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`], {
-      cwd: this.cwd,
-      timeoutMs: 60_000,
-    });
+    const result = await this.runner.run(
+      "git",
+      ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`],
+      {
+        cwd: this.cwd,
+        timeoutMs: 60_000,
+      },
+    );
     return result.exitCode === 0 ? result.stdout.trim() : null;
   }
 
@@ -81,7 +88,11 @@ export class Git {
   }
 
   /** The full diff with context, for prompts. */
-  async diffForPrompt(from: string, to: string | null, paths: readonly string[] = []): Promise<string> {
+  async diffForPrompt(
+    from: string,
+    to: string | null,
+    paths: readonly string[] = [],
+  ): Promise<string> {
     const args = ["diff", "--no-color", "--no-ext-diff", "--find-renames", "-U3", from];
     if (to !== null) args.push(to);
     if (paths.length > 0) args.push("--", ...paths);

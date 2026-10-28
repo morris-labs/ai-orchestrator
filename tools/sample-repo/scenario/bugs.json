@@ -46,7 +46,7 @@
     {
       "id": "B3",
       "file": "shop/pricing.py",
-      "anchor": "if quantity > 100:",
+      "anchor": "if quantity >",
       "span": 2,
       "title": "bulk_discount misses the 10 percent tier at exactly 100 items",
       "severity": "P2",
@@ -140,7 +140,7 @@
       "severity": "P2",
       "category": "correctness",
       "failure_case": "apply_discount(10, 150) returns a negative price.",
-      "repro": "FP1.py",
+      "repro": null,
       "falsePositive": true,
       "foundBy": [{ "vendor": "copilot", "round": 1, "via": "review" }],
       "fix": []

@@ -1,7 +1,12 @@
 // Loads the repository policy, `<project>/.claude-box/policy.yaml` by default.
 import { readFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
-import { DEFAULT_POLICY, DEFAULT_POLICY_PATH, PolicyFileSchema, type PolicyFile } from "@agentbox/contracts";
+import {
+  DEFAULT_POLICY,
+  DEFAULT_POLICY_PATH,
+  PolicyFileSchema,
+  type PolicyFile,
+} from "@agentbox/contracts";
 import { parse } from "yaml";
 import { ZodError } from "zod";
 
@@ -33,7 +38,9 @@ export function parsePolicy(text: string, path = "policy.yaml"): PolicyFile {
     return PolicyFileSchema.parse(raw);
   } catch (error) {
     if (error instanceof ZodError) {
-      const detail = error.issues.map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`).join("; ");
+      const detail = error.issues
+        .map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`)
+        .join("; ");
       throw new PolicyError(path, detail);
     }
     throw error;

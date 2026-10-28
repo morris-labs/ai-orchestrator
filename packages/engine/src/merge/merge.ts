@@ -60,7 +60,10 @@ export function moreSevere(a: Severity, b: Severity): Severity {
   return SEVERITY_RANK[a] <= SEVERITY_RANK[b] ? a : b;
 }
 
-export function linesOverlap(a: readonly [number, number] | null, b: readonly [number, number] | null): boolean {
+export function linesOverlap(
+  a: readonly [number, number] | null,
+  b: readonly [number, number] | null,
+): boolean {
   if (!a || !b) return false;
   return a[0] <= b[1] && b[0] <= a[1];
 }
@@ -77,7 +80,10 @@ interface Comparable {
 export function sameIssue(a: Comparable, b: Comparable): boolean {
   if (a.fingerprint === b.fingerprint) return true;
   if (a.file === null || a.file !== b.file || !linesOverlap(a.lines, b.lines)) return false;
-  return a.category.toLowerCase() === b.category.toLowerCase() || titleSimilarity(a.title, b.title) >= 0.3;
+  return (
+    a.category.toLowerCase() === b.category.toLowerCase() ||
+    titleSimilarity(a.title, b.title) >= 0.3
+  );
 }
 
 /**
@@ -85,7 +91,11 @@ export function sameIssue(a: Comparable, b: Comparable): boolean {
  * matches on the fingerprint, or on the same file and symbol with a close
  * title.
  */
-export function returnsAfterFix(candidate: Candidate, fixed: Finding, fixedSymbol: string): boolean {
+export function returnsAfterFix(
+  candidate: Candidate,
+  fixed: Finding,
+  fixedSymbol: string,
+): boolean {
   if (candidate.fingerprint === fixed.fingerprint) return true;
   return (
     candidate.raw.file === fixed.file &&
@@ -96,7 +106,13 @@ export function returnsAfterFix(candidate: Candidate, fixed: Finding, fixedSymbo
 }
 
 function toComparable(c: Candidate): Comparable {
-  return { fingerprint: c.fingerprint, file: c.raw.file, lines: c.raw.lines, category: c.raw.category, title: c.raw.title };
+  return {
+    fingerprint: c.fingerprint,
+    file: c.raw.file,
+    lines: c.raw.lines,
+    category: c.raw.category,
+    title: c.raw.title,
+  };
 }
 
 /**
@@ -125,19 +141,32 @@ export function mergeCandidates(
       (f) => (f.verdict === "pending" || f.verdict === "confirmed") && sameIssue(f, cmp),
     );
     if (open) {
-      if (open.reportedBy !== candidate.reportedBy && !open.alsoReportedBy.includes(candidate.reportedBy)) {
+      if (
+        open.reportedBy !== candidate.reportedBy &&
+        !open.alsoReportedBy.includes(candidate.reportedBy)
+      ) {
         open.alsoReportedBy.push(candidate.reportedBy);
       }
       open.severity = moreSevere(open.severity, candidate.raw.severity);
       for (const h of candidate.hunkIds) if (!open.hunkIds.includes(h)) open.hunkIds.push(h);
-      duplicates.push({ reportedBy: candidate.reportedBy, title: candidate.raw.title, into: open.id });
+      duplicates.push({
+        reportedBy: candidate.reportedBy,
+        title: candidate.raw.title,
+        into: open.id,
+      });
       continue;
     }
     const closed = findings.find(
-      (f) => (f.verdict === "disproved" || f.verdict === "pre-existing" || f.verdict === "waived") && sameIssue(f, cmp),
+      (f) =>
+        (f.verdict === "disproved" || f.verdict === "pre-existing" || f.verdict === "waived") &&
+        sameIssue(f, cmp),
     );
     if (closed) {
-      known.push({ reportedBy: candidate.reportedBy, title: candidate.raw.title, matches: closed.id });
+      known.push({
+        reportedBy: candidate.reportedBy,
+        title: candidate.raw.title,
+        matches: closed.id,
+      });
       continue;
     }
     const fixed = findings.find(
@@ -189,12 +218,25 @@ export interface FindingsLogEntry {
 export function findingsLog(findings: readonly Finding[]): FindingsLogEntry[] {
   const out: FindingsLogEntry[] = [];
   for (const f of findings) {
-    if (f.verdict !== "fixed" && f.verdict !== "disproved" && f.verdict !== "pre-existing" && f.verdict !== "waived") {
+    if (
+      f.verdict !== "fixed" &&
+      f.verdict !== "disproved" &&
+      f.verdict !== "pre-existing" &&
+      f.verdict !== "waived"
+    ) {
       continue;
     }
     const last = [...f.history].reverse().find((h) => h.verdict === f.verdict);
     const reason = (last?.evidence ?? f.evidence ?? "").replace(/\s+/g, " ").trim().slice(0, 300);
-    out.push({ id: f.id, verdict: f.verdict, severity: f.severity, title: f.title, file: f.file, lines: f.lines, reason });
+    out.push({
+      id: f.id,
+      verdict: f.verdict,
+      severity: f.severity,
+      title: f.title,
+      file: f.file,
+      lines: f.lines,
+      reason,
+    });
   }
   return out;
 }

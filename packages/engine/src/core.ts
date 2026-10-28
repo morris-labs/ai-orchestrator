@@ -236,8 +236,19 @@ export class GrantingBroker implements LeaseBroker {
 type BaseKeys = "id" | "time" | "source" | "streamId" | "seq" | "sourceSeq";
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 
-/** An event before the stream stamps its id, time, source, and sequence numbers. */
-export type EventDraft = DistributiveOmit<AgentBoxEvent, BaseKeys>;
+type UsageSampleEvent = Extract<AgentBoxEvent, { type: "usage.sample" }>;
+
+/**
+ * An event before the stream stamps its id, time, source, and sequence numbers.
+ *
+ * `usage.sample` is the exception: its `source` field is the usage source
+ * (`rate_limit_event` and so on), because the contract spreads
+ * `UsageSampleSchema` over the event's base fields. The stream must keep a
+ * `usage.sample` draft's `source` as it is.
+ */
+export type EventDraft =
+  | DistributiveOmit<Exclude<AgentBoxEvent, UsageSampleEvent>, BaseKeys>
+  | Omit<UsageSampleEvent, Exclude<BaseKeys, "source">>;
 
 /**
  * Where the core sends events. W5's event stream implements it: it stamps
@@ -266,10 +277,10 @@ export class MemoryEventSink implements EventSink {
   emit(draft: EventDraft): AgentBoxEvent {
     this.seq += 1;
     const event = EventSchema.parse({
-      ...draft,
       id: `${this.streamId}-${this.seq}`,
       time: new Date(this.clock.now()).toISOString(),
       source: this.source,
+      ...draft,
       streamId: this.streamId,
       seq: this.seq,
       sourceSeq: this.seq,

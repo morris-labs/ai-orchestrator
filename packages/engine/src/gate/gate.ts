@@ -65,7 +65,11 @@ export interface GateOptions {
   signal?: AbortSignal;
 }
 
-async function runOne(kind: "test" | "lint", cmd: PolicyCommand, options: GateOptions): Promise<GateCommandResult> {
+async function runOne(
+  kind: "test" | "lint",
+  cmd: PolicyCommand,
+  options: GateOptions,
+): Promise<GateCommandResult> {
   const result = await options.shell.run(cmd.command, [], {
     cwd: cmd.cwd ? join(options.repoPath, cmd.cwd) : options.repoPath,
     timeoutMs: options.timeoutMs ?? 30 * 60_000,
@@ -136,7 +140,9 @@ export function formatRegressions(comparison: GateComparison): string {
     .map((r) =>
       [
         `Command: ${r.command} (${r.reason})`,
-        r.newFailures.length > 0 ? `New failures:\n${r.newFailures.map((f) => `  ${f}`).join("\n")}` : "",
+        r.newFailures.length > 0
+          ? `New failures:\n${r.newFailures.map((f) => `  ${f}`).join("\n")}`
+          : "",
         `Output tail:\n${r.outputTail}`,
       ]
         .filter(Boolean)

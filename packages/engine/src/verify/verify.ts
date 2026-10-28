@@ -24,8 +24,10 @@ export function chooseDisprover(
   roles: RoleAssignment,
   options: { crossVendor: boolean; available: readonly Vendor[]; profile: Profile },
 ): Vendor {
-  if (!options.crossVendor) return reporter && options.available.includes(reporter) ? reporter : roles.disprover;
-  if (roles.disprover !== reporter && options.available.includes(roles.disprover)) return roles.disprover;
+  if (!options.crossVendor)
+    return reporter && options.available.includes(reporter) ? reporter : roles.disprover;
+  if (roles.disprover !== reporter && options.available.includes(roles.disprover))
+    return roles.disprover;
   const others = FALLBACK_ORDER.filter((v) => v !== reporter && options.available.includes(v));
   const preferred = options.profile === "offload" ? others.filter((v) => v !== "claude") : others;
   return preferred[0] ?? others[0] ?? roles.disprover;
@@ -33,7 +35,7 @@ export function chooseDisprover(
 
 /** A detached checkout of the pinned base in a temporary directory. */
 export class BaseWorktree {
-  private path: string | null = null;
+  private path: Promise<string> | null = null;
 
   constructor(
     private readonly git: Git,
@@ -41,18 +43,22 @@ export class BaseWorktree {
   ) {}
 
   /** Creates the checkout on first use and returns its path. */
-  async ensure(): Promise<string> {
-    if (this.path) return this.path;
-    const dir = await mkdtemp(join(tmpdir(), "agentbox-base-"));
-    await this.git.addDetachedWorktree(dir, this.baseSha);
-    this.path = dir;
-    return dir;
+  ensure(): Promise<string> {
+    // Parallel disprovers share one checkout, so the promise is the cache.
+    this.path ??= (async () => {
+      const dir = await mkdtemp(join(tmpdir(), "agentbox-base-"));
+      await this.git.addDetachedWorktree(dir, this.baseSha);
+      return dir;
+    })();
+    return this.path;
   }
 
   async dispose(): Promise<void> {
     if (!this.path) return;
-    const path = this.path;
+    const pending = this.path;
     this.path = null;
+    const path = await pending.catch(() => null);
+    if (!path) return;
     await this.git.removeWorktree(path);
     await rm(path, { recursive: true, force: true });
   }
@@ -77,7 +83,9 @@ export async function runReproScript(
   if (rel.startsWith("..") || isAbsolute(rel)) {
     throw new Error(`The reproduction script ${script.path} is outside the scratch directory.`);
   }
-  const [program, args] = script.interpreter ? [script.interpreter, [full, repoDir]] : [full, [repoDir]];
+  const [program, args] = script.interpreter
+    ? [script.interpreter, [full, repoDir]]
+    : [full, [repoDir]];
   const result = await runner.run(program, args, { cwd: repoDir, timeoutMs });
   const output = `${result.stdout}${result.stderr}`.trim().split("\n").slice(-20).join("\n");
   return { exitCode: result.exitCode, timedOut: result.timedOut, output };
@@ -95,26 +103,41 @@ export interface VerdictDecision {
  * script that reproduces at the tip confirms by script; one that also
  * reproduces at the base makes the finding pre-existing.
  */
-export function decideVerdict(output: VerifyOutput, tip: ScriptRun | null, base: ScriptRun | null): VerdictDecision {
+export function decideVerdict(
+  output: VerifyOutput,
+  tip: ScriptRun | null,
+  base: ScriptRun | null,
+): VerdictDecision {
   const parts = [output.evidence.trim()];
   if (output.verdict === "disproved") {
-    return { verdict: "disproved", verification: output.verification, introduced: true, evidence: parts.join("\n") };
+    return {
+      verdict: "disproved",
+      verification: output.verification,
+      introduced: true,
+      evidence: parts.join("\n"),
+    };
   }
   let verification: "script" | "code-reading" = output.verification;
   let presentAtBase = output.presentAtBase;
   if (tip) {
     const reproduced = tip.exitCode !== 0 && !tip.timedOut;
-    parts.push(`Engine rerun at tip: exit ${tip.exitCode}${tip.timedOut ? " (timed out)" : ""}.${tip.output ? ` ${tip.output}` : ""}`);
+    parts.push(
+      `Engine rerun at tip: exit ${tip.exitCode}${tip.timedOut ? " (timed out)" : ""}.${tip.output ? ` ${tip.output}` : ""}`,
+    );
     if (reproduced) {
       verification = "script";
       if (base) {
         const atBase = base.exitCode !== 0 && !base.timedOut;
-        parts.push(`Engine rerun at base: exit ${base.exitCode}${base.timedOut ? " (timed out)" : ""}.`);
+        parts.push(
+          `Engine rerun at base: exit ${base.exitCode}${base.timedOut ? " (timed out)" : ""}.`,
+        );
         presentAtBase = atBase;
       }
     } else {
       verification = "code-reading";
-      parts.push("The script didn't reproduce the flaw when the engine reran it, so the verdict rests on code reading.");
+      parts.push(
+        "The script didn't reproduce the flaw when the engine reran it, so the verdict rests on code reading.",
+      );
     }
   }
   if (presentAtBase) {
@@ -151,7 +174,11 @@ export interface VerifyResult {
 }
 
 /** Verifies one finding. Returns `null` when no disprover answered. */
-export async function verifyFinding(finding: Finding, vendor: Vendor, deps: VerifyDeps): Promise<VerifyResult | null> {
+export async function verifyFinding(
+  finding: Finding,
+  vendor: Vendor,
+  deps: VerifyDeps,
+): Promise<VerifyResult | null> {
   const scratchDir = deps.scratchDirFor(finding.id);
   await mkdir(scratchDir, { recursive: true });
   const baseDir = await deps.baseWorktree.ensure();
@@ -175,12 +202,21 @@ export async function verifyFinding(finding: Finding, vendor: Vendor, deps: Veri
   let baseRun: ScriptRun | null = null;
   if (answer.output.script && answer.output.verdict === "confirmed") {
     try {
-      tipRun = await runReproScript(deps.runner, scratchDir, answer.output.script, deps.range.repoPath);
+      tipRun = await runReproScript(
+        deps.runner,
+        scratchDir,
+        answer.output.script,
+        deps.range.repoPath,
+      );
       if (tipRun.exitCode !== 0) {
         baseRun = await runReproScript(deps.runner, scratchDir, answer.output.script, baseDir);
       }
     } catch (error) {
-      tipRun = { exitCode: 0, timedOut: false, output: `The engine couldn't run the script: ${(error as Error).message}` };
+      tipRun = {
+        exitCode: 0,
+        timedOut: false,
+        output: `The engine couldn't run the script: ${(error as Error).message}`,
+      };
     }
   }
   return {

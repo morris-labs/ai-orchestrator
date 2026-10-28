@@ -107,7 +107,9 @@ export class GhError extends Error {
     readonly exitCode: number,
     readonly stderr: string,
   ) {
-    super(`gh ${args[0] ?? ""} ${args[1] ?? ""} failed with exit code ${exitCode}: ${stderr.trim()}`);
+    super(
+      `gh ${args[0] ?? ""} ${args[1] ?? ""} failed with exit code ${exitCode}: ${stderr.trim()}`,
+    );
     this.name = "GhError";
   }
 }
@@ -147,7 +149,11 @@ export class GhCliClient implements GitHubClient {
   }
 
   async viewPr(repoPath: string, selector: number | string): Promise<PrInfo | null> {
-    const out = await this.gh(repoPath, ["pr", "view", String(selector), "--json", PR_FIELDS], true);
+    const out = await this.gh(
+      repoPath,
+      ["pr", "view", String(selector), "--json", PR_FIELDS],
+      true,
+    );
     return out.trim() === "" ? null : toPr(JSON.parse(out) as RawPr);
   }
 
@@ -167,16 +173,37 @@ export class GhCliClient implements GitHubClient {
   }
 
   async createPr(repoPath: string, input: CreatePrInput): Promise<PrInfo> {
-    const args = ["pr", "create", "--base", input.base, "--head", input.head, "--title", input.title, "--body", input.body];
+    const args = [
+      "pr",
+      "create",
+      "--base",
+      input.base,
+      "--head",
+      input.head,
+      "--title",
+      input.title,
+      "--body",
+      input.body,
+    ];
     if (input.draft) args.push("--draft");
     const url = (await this.gh(repoPath, args)).trim().split("\n").pop() ?? "";
     const pr = await this.viewPr(repoPath, url || input.head);
-    if (!pr) throw new Error(`gh pr create succeeded, but the pull request for ${input.head} isn't visible.`);
+    if (!pr)
+      throw new Error(
+        `gh pr create succeeded, but the pull request for ${input.head} isn't visible.`,
+      );
     return pr;
   }
 
   async defaultBranch(repoPath: string): Promise<string> {
-    const out = await this.gh(repoPath, ["repo", "view", "--json", "defaultBranchRef", "-q", ".defaultBranchRef.name"]);
+    const out = await this.gh(repoPath, [
+      "repo",
+      "view",
+      "--json",
+      "defaultBranchRef",
+      "-q",
+      ".defaultBranchRef.name",
+    ]);
     return out.trim();
   }
 
@@ -192,7 +219,11 @@ export class GhCliClient implements GitHubClient {
   }
 
   async listReviews(repoPath: string, pr: number): Promise<PrReview[]> {
-    const out = await this.gh(repoPath, ["api", "--paginate", `repos/{owner}/{repo}/pulls/${pr}/reviews`]);
+    const out = await this.gh(repoPath, [
+      "api",
+      "--paginate",
+      `repos/{owner}/{repo}/pulls/${pr}/reviews`,
+    ]);
     const list = JSON.parse(out || "[]") as Array<{
       id: number;
       user?: { login?: string } | null;
@@ -228,7 +259,14 @@ export class GhCliClient implements GitHubClient {
       path: string | null;
       line: number | null;
       startLine: number | null;
-      comments: { nodes: Array<{ id: string; body: string; url: string | null; author: { login: string } | null }> };
+      comments: {
+        nodes: Array<{
+          id: string;
+          body: string;
+          url: string | null;
+          author: { login: string } | null;
+        }>;
+      };
     };
     const data = JSON.parse(out) as {
       data: { repository: { pullRequest: { reviewThreads: { nodes: RawThread[] } } } };
@@ -259,10 +297,16 @@ export class GhCliClient implements GitHubClient {
     const text = result.stdout.trim();
     if (text === "") {
       if (/no checks reported/i.test(result.stderr)) return [];
-      if (result.exitCode !== 0) throw new GhError(["pr", "checks"], result.exitCode, result.stderr);
+      if (result.exitCode !== 0)
+        throw new GhError(["pr", "checks"], result.exitCode, result.stderr);
       return [];
     }
-    const list = JSON.parse(text) as Array<{ name: string; bucket: CheckBucket; link?: string; workflow?: string }>;
+    const list = JSON.parse(text) as Array<{
+      name: string;
+      bucket: CheckBucket;
+      link?: string;
+      workflow?: string;
+    }>;
     return list.map((c) => ({
       name: c.name,
       bucket: c.bucket,
@@ -280,10 +324,26 @@ export class GhCliClient implements GitHubClient {
   }
 
   async replyToThread(repoPath: string, threadId: string, body: string): Promise<void> {
-    await this.gh(repoPath, ["api", "graphql", "-f", `query=${REPLY_MUTATION}`, "-f", `thread=${threadId}`, "-f", `body=${body}`]);
+    await this.gh(repoPath, [
+      "api",
+      "graphql",
+      "-f",
+      `query=${REPLY_MUTATION}`,
+      "-f",
+      `thread=${threadId}`,
+      "-f",
+      `body=${body}`,
+    ]);
   }
 
   async resolveThread(repoPath: string, threadId: string): Promise<void> {
-    await this.gh(repoPath, ["api", "graphql", "-f", `query=${RESOLVE_MUTATION}`, "-f", `thread=${threadId}`]);
+    await this.gh(repoPath, [
+      "api",
+      "graphql",
+      "-f",
+      `query=${RESOLVE_MUTATION}`,
+      "-f",
+      `thread=${threadId}`,
+    ]);
   }
 }

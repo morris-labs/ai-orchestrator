@@ -22,7 +22,14 @@ import { drivePostPush } from "../postpush/loop.js";
 import { resolveRange } from "../range/resolve.js";
 import { newEngineState } from "../run/engine-state.js";
 import { RunStore } from "../run/store.js";
-import { AgentFailed, DecisionNeeded, RoleDenied, RunCancelled, RunContext, isTerminal } from "./context.js";
+import {
+  AgentFailed,
+  DecisionNeeded,
+  RoleDenied,
+  RunCancelled,
+  RunContext,
+  isTerminal,
+} from "./context.js";
 import { drivePrePush } from "./prepush.js";
 import { assignRoles } from "./profiles.js";
 
@@ -89,7 +96,12 @@ export class RunController {
       baseSha: range.baseSha,
       tipSha: range.tipSha,
       profile: request.profile,
-      roles: assignRoles({ profile: request.profile, round: 1, available, crossVendor: request.crossVendor }),
+      roles: assignRoles({
+        profile: request.profile,
+        round: 1,
+        available,
+        crossVendor: request.crossVendor,
+      }),
       stopReason: null,
       decision: null,
       ...(request.prNumber ? { prNumber: request.prNumber } : {}),
@@ -108,7 +120,11 @@ export class RunController {
   }
 
   /** Loads a run from its directory, at the stage and status it was left in. */
-  static async load(runId: string, location: RunLocation, deps: EngineDeps): Promise<RunController> {
+  static async load(
+    runId: string,
+    location: RunLocation,
+    deps: EngineDeps,
+  ): Promise<RunController> {
     const store = new RunStore(location.projectRoot, runId);
     const state = await store.loadState();
     const eng = await store.loadEngineState();
@@ -161,7 +177,8 @@ export class RunController {
   start(): Promise<RunState> {
     const status = this.ctx.state.status;
     if (status === "waiting_decision") throw new InvalidStateError("The run waits for a decision.");
-    if (status === "finished" || status === "cancelled") throw new InvalidStateError(`The run is ${status}.`);
+    if (status === "finished" || status === "cancelled")
+      throw new InvalidStateError(`The run is ${status}.`);
     if (status === "paused" && !this.active) this.ctx.requestResume();
     this.drive();
     return Promise.resolve(this.state);
@@ -173,10 +190,16 @@ export class RunController {
     this.active = (async () => {
       try {
         if (ctx.state.status !== "running") {
-          await ctx.setStatus("running", { error: undefined, stopReason: null, decision: null, finishedAt: undefined });
+          await ctx.setStatus("running", {
+            error: undefined,
+            stopReason: null,
+            decision: null,
+            finishedAt: undefined,
+          });
         }
         if (ctx.eng.phase === "pre-push") await drivePrePush(ctx);
-        if (ctx.eng.phase === "post-push" && ctx.state.status === "running") await drivePostPush(ctx);
+        if (ctx.eng.phase === "post-push" && ctx.state.status === "running")
+          await drivePostPush(ctx);
       } catch (error) {
         await this.stopOn(error);
       } finally {
@@ -209,7 +232,8 @@ export class RunController {
   /** Pauses after the current agent call. */
   async pause(): Promise<RunState> {
     const status = this.ctx.state.status;
-    if (status !== "running" && status !== "pending") throw new InvalidStateError(`Can't pause a ${status} run.`);
+    if (status !== "running" && status !== "pending")
+      throw new InvalidStateError(`Can't pause a ${status} run.`);
     this.ctx.requestPause();
     if (!this.active) await this.ctx.setStatus("paused");
     return this.state;
@@ -217,9 +241,12 @@ export class RunController {
 
   /** Resumes a paused run. */
   async resume(): Promise<RunState> {
-    if (this.ctx.state.status !== "paused") throw new InvalidStateError(`Can't resume a ${this.ctx.state.status} run.`);
+    if (this.ctx.state.status !== "paused")
+      throw new InvalidStateError(`Can't resume a ${this.ctx.state.status} run.`);
     if (this.ctx.state.pausedUntil && this.active) {
-      throw new InvalidStateError(`The run waits for a usage limit until ${this.ctx.state.pausedUntil}.`);
+      throw new InvalidStateError(
+        `The run waits for a usage limit until ${this.ctx.state.pausedUntil}.`,
+      );
     }
     this.ctx.requestResume();
     if (!this.active) this.drive();
@@ -247,9 +274,11 @@ export class RunController {
   async assign(role: Role, vendors: Vendor[]): Promise<RunState> {
     this.requireLive("assign a role");
     if (vendors.length === 0) throw new InvalidStateError("Name at least one vendor.");
-    if (role !== "reviewer" && vendors.length > 1) throw new InvalidStateError(`The ${role} role takes one vendor.`);
+    if (role !== "reviewer" && vendors.length > 1)
+      throw new InvalidStateError(`The ${role} role takes one vendor.`);
     const missing = vendors.filter((v) => !this.ctx.deps.adapters[v]);
-    if (missing.length > 0) throw new InvalidStateError(`No adapter is configured for ${missing.join(", ")}.`);
+    if (missing.length > 0)
+      throw new InvalidStateError(`No adapter is configured for ${missing.join(", ")}.`);
     this.ctx.eng.pendingAssign.push({ role, vendors });
     await this.ctx.persist();
     return this.state;
@@ -294,7 +323,12 @@ export class RunController {
       for (const id of ids) {
         const f = ctx.findingById(id);
         if (!f) throw new InvalidStateError(`The run has no finding ${id}.`);
-        await ctx.setVerdict(f, "waived", { kind: "human" }, answer.reason ?? "Waived in a decision.");
+        await ctx.setVerdict(
+          f,
+          "waived",
+          { kind: "human" },
+          answer.reason ?? "Waived in a decision.",
+        );
       }
     }
     ctx.state.decision = null;
@@ -319,8 +353,14 @@ export class RunController {
     if (this.active || ctx.state.status !== "finished") {
       throw new InvalidStateError(`Can't push a ${ctx.state.status} run.`);
     }
-    if (ctx.state.status === "finished" && ctx.state.stopReason !== "clean" && ctx.state.stopReason !== "round_cap") {
-      throw new InvalidStateError(`Can't push a run that stopped with ${ctx.state.stopReason ?? "no reason"}.`);
+    if (
+      ctx.state.status === "finished" &&
+      ctx.state.stopReason !== "clean" &&
+      ctx.state.stopReason !== "round_cap"
+    ) {
+      throw new InvalidStateError(
+        `Can't push a run that stopped with ${ctx.state.stopReason ?? "no reason"}.`,
+      );
     }
     ctx.eng.phase = "post-push";
     ctx.eng.push = { title: options.title ?? null, draft: options.draft ?? false };

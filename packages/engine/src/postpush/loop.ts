@@ -15,7 +15,13 @@ import {
   verifyPending,
 } from "../state/steps.js";
 import { titleSimilarity } from "../merge/fingerprint.js";
-import { isCopilotLogin, type CheckRun, type GitHubClient, type PrInfo, type ReviewThread } from "./github.js";
+import {
+  isCopilotLogin,
+  type CheckRun,
+  type GitHubClient,
+  type PrInfo,
+  type ReviewThread,
+} from "./github.js";
 
 /** How often the loop polls the pull request. */
 export const POLL_INTERVAL_MS = 60_000;
@@ -49,7 +55,11 @@ export function severityFromText(text: string): Severity {
 }
 
 function firstLine(text: string, max = 120): string {
-  const line = text.trim().split("\n").find((l) => l.trim() !== "") ?? "Review comment";
+  const line =
+    text
+      .trim()
+      .split("\n")
+      .find((l) => l.trim() !== "") ?? "Review comment";
   const clean = line.replace(/^[#>*\s-]+/, "").trim();
   return clean.length > max ? `${clean.slice(0, max - 3)}...` : clean || "Review comment";
 }
@@ -59,7 +69,8 @@ function sha1(text: string): string {
 }
 
 function github(ctx: RunContext): GitHubClient {
-  if (!ctx.deps.github) throw new Error("The post-push loop needs the gh client, which isn't configured.");
+  if (!ctx.deps.github)
+    throw new Error("The post-push loop needs the gh client, which isn't configured.");
   return ctx.deps.github;
 }
 
@@ -73,24 +84,42 @@ async function stagePush(ctx: RunContext): Promise<PrInfo> {
   const repo = ctx.state.request.repoPath;
   const branch = ctx.eng.tipRef;
   const blocked = (message: string) =>
-    new DecisionNeeded({ kind: "push_blocked", findingIds: [], options: ["resume", "cancel"], message });
+    new DecisionNeeded({
+      kind: "push_blocked",
+      findingIds: [],
+      options: ["resume", "cancel"],
+      message,
+    });
   if (!branch) throw blocked("The run has no tip branch to push.");
   const current = await ctx.git.currentBranch();
-  if (current !== branch) throw blocked(`The loop pushes ${branch}, but ${current ?? "a detached HEAD"} is checked out.`);
+  if (current !== branch)
+    throw blocked(`The loop pushes ${branch}, but ${current ?? "a detached HEAD"} is checked out.`);
   const defaultBranch = await gh.defaultBranch(repo);
-  if (branch === defaultBranch) throw blocked(`The loop never pushes the default branch (${defaultBranch}).`);
-  let pr = ctx.state.prNumber ? await gh.viewPr(repo, ctx.state.prNumber) : await gh.findOpenPr(repo, branch);
+  if (branch === defaultBranch)
+    throw blocked(`The loop never pushes the default branch (${defaultBranch}).`);
+  let pr = ctx.state.prNumber
+    ? await gh.viewPr(repo, ctx.state.prNumber)
+    : await gh.findOpenPr(repo, branch);
   if (pr && pr.headRefName !== branch) {
-    throw blocked(`Pull request #${pr.number} is for ${pr.headRefName}, not ${branch}; the loop pushes only the pull request's branch.`);
+    throw blocked(
+      `Pull request #${pr.number} is for ${pr.headRefName}, not ${branch}; the loop pushes only the pull request's branch.`,
+    );
   }
   // Never force: a rejected push means someone else moved the branch.
-  const push = await ctx.deps.runner.run("git", ["push", "origin", `refs/heads/${branch}:refs/heads/${branch}`], {
-    cwd: repo,
-    timeoutMs: 300_000,
-  });
-  if (push.exitCode !== 0) throw blocked(`git push was rejected; the loop never force-pushes:\n${push.stderr.trim()}`);
+  const push = await ctx.deps.runner.run(
+    "git",
+    ["push", "origin", `refs/heads/${branch}:refs/heads/${branch}`],
+    {
+      cwd: repo,
+      timeoutMs: 300_000,
+    },
+  );
+  if (push.exitCode !== 0)
+    throw blocked(`git push was rejected; the loop never force-pushes:\n${push.stderr.trim()}`);
   if (!pr) {
-    const base = strippedBase(ctx.state.request.base === "pr" ? defaultBranch : ctx.state.request.base);
+    const base = strippedBase(
+      ctx.state.request.base === "pr" ? defaultBranch : ctx.state.request.base,
+    );
     pr = await gh.createPr(repo, {
       base: base === branch ? defaultBranch : base,
       head: branch,
@@ -109,7 +138,13 @@ async function stagePush(ctx: RunContext): Promise<PrInfo> {
   }
   await ctx.persist();
   await ctx.store.writeJson(ctx.store.roundFile(ctx.round, "push"), { pr, head });
-  await ctx.handoff({ stage: "push" }, { stage: "poll", vendor: "copilot", role: "reviewer" }, "commits", 1, null);
+  await ctx.handoff(
+    { stage: "push" },
+    { stage: "poll", vendor: "copilot", role: "reviewer" },
+    "commits",
+    1,
+    null,
+  );
   return pr;
 }
 
@@ -133,7 +168,9 @@ async function stagePoll(ctx: RunContext): Promise<PollResult> {
   for (;;) {
     await ctx.checkpoint();
     const reviews = await gh.listReviews(repo, pr);
-    const reviewed = reviews.some((r) => isCopilotLogin(r.author) && (r.commitId === null || r.commitId === head));
+    const reviewed = reviews.some(
+      (r) => isCopilotLogin(r.author) && (r.commitId === null || r.commitId === head),
+    );
     const checks = await gh.listChecks(repo, pr);
     const pending = checks.some((c) => c.bucket === "pending");
     const timedOut = ctx.clock.now() - started >= POLL_TIMEOUT_MS;
@@ -165,11 +202,15 @@ function threadFinding(ctx: RunContext, thread: ReviewThread): Finding | null {
     severity: severityFromText(first.body),
     title,
     file: located ? thread.path : null,
-    lines: located ? [Math.min(start as number, end as number), Math.max(start as number, end as number)] : null,
+    lines: located
+      ? [Math.min(start as number, end as number), Math.max(start as number, end as number)]
+      : null,
     failureCase: first.body,
     category: "review-comment",
     introduced: true,
-    reportedBy: isCopilotLogin(first.author) ? "copilot-review" : `github-${first.author || "reviewer"}`,
+    reportedBy: isCopilotLogin(first.author)
+      ? "copilot-review"
+      : `github-${first.author || "reviewer"}`,
     verdict: "pending",
     evidence: text,
     runId: ctx.state.id,
@@ -199,7 +240,11 @@ function checkFinding(ctx: RunContext, check: CheckRun, log: string, head: strin
     round: ctx.round,
     groupId: null,
     origin: "check_run",
-    externalRef: { kind: "check_run", id: `${check.name}@${head}`, ...(check.link ? { url: check.link } : {}) },
+    externalRef: {
+      kind: "check_run",
+      id: `${check.name}@${head}`,
+      ...(check.link ? { url: check.link } : {}),
+    },
   });
 }
 
@@ -234,7 +279,10 @@ async function stageImport(ctx: RunContext, poll: PollResult): Promise<ImportRec
   for (const check of poll.checks.filter((c) => c.bucket === "fail")) {
     const log = await gh.failedCheckLog(repo, check);
     if (isNonCodeFailure(log)) {
-      nonCode.push({ check: check.name, reason: firstLine(log.split("\n").find((l) => isNonCodeFailure(l)) ?? log) });
+      nonCode.push({
+        check: check.name,
+        reason: firstLine(log.split("\n").find((l) => isNonCodeFailure(l)) ?? log),
+      });
       continue;
     }
     failingCode.push(check.name);
@@ -257,7 +305,12 @@ async function stageImport(ctx: RunContext, poll: PollResult): Promise<ImportRec
         !ctx.eng.acceptedOscillations.includes(x.id),
     );
     if (fixed) oscillations.push({ fixedId: fixed.id, returnedId: f.id });
-    f.history.push({ time: ctx.nowIso(), verdict: "pending", actor: { kind: "engine", role: "import" }, round: ctx.round });
+    f.history.push({
+      time: ctx.nowIso(),
+      verdict: "pending",
+      actor: { kind: "engine", role: "import" },
+      round: ctx.round,
+    });
     ctx.findings.push(f);
   }
   await ctx.persist();
@@ -269,7 +322,13 @@ async function stageImport(ctx: RunContext, poll: PollResult): Promise<ImportRec
     checksPassed: poll.checks.every((c) => c.bucket !== "fail" && c.bucket !== "pending"),
   };
   await ctx.store.writeJson(file, record);
-  await ctx.handoff({ stage: "import", vendor: "copilot", role: "reviewer" }, { stage: "verify", role: "disprover" }, "findings", imported.length, file);
+  await ctx.handoff(
+    { stage: "import", vendor: "copilot", role: "reviewer" },
+    { stage: "verify", role: "disprover" },
+    "findings",
+    imported.length,
+    file,
+  );
   if (oscillations.length > 0) {
     await ctx.setStage("verify");
     throw new DecisionNeeded({
@@ -288,7 +347,13 @@ async function answerThreads(ctx: RunContext, kind: "disproved" | "fixed"): Prom
   const repo = ctx.state.request.repoPath;
   const answered = new Set(ctx.eng.answeredThreads);
   for (const f of ctx.findings) {
-    if (f.origin !== "pr_comment" || f.verdict !== kind || !f.externalRef || answered.has(f.externalRef.id)) continue;
+    if (
+      f.origin !== "pr_comment" ||
+      f.verdict !== kind ||
+      !f.externalRef ||
+      answered.has(f.externalRef.id)
+    )
+      continue;
     const last = [...f.history].reverse().find((h) => h.verdict === kind);
     const body =
       kind === "disproved"
@@ -335,7 +400,9 @@ export async function drivePostPush(ctx: RunContext): Promise<void> {
         await ctx.setStage("import");
         break;
       case "import": {
-        const poll = (await ctx.store.readJson<PollResult>(ctx.store.roundFile(ctx.round, "poll"))) ?? (await stagePoll(ctx));
+        const poll =
+          (await ctx.store.readJson<PollResult>(ctx.store.roundFile(ctx.round, "poll"))) ??
+          (await stagePoll(ctx));
         const record = await stageImport(ctx, poll);
         const actionable = record.imported.length > 0;
         if (!actionable) {
@@ -404,7 +471,12 @@ export async function drivePostPush(ctx: RunContext): Promise<void> {
         ctx.eng.lastGateFailure = null;
         // No confirmer after push: the next Copilot review checks the fixes.
         for (const f of ctx.findings.filter((x) => x.verdict === "confirmed" && x.fixCommit)) {
-          await ctx.setVerdict(f, "fixed", { kind: "engine", role: "gate" }, `Fixed in ${f.fixCommit}; the gate passed.`);
+          await ctx.setVerdict(
+            f,
+            "fixed",
+            { kind: "engine", role: "gate" },
+            `Fixed in ${f.fixCommit}; the gate passed.`,
+          );
         }
         await answerThreads(ctx, "fixed");
         if (await endPostPushRound(ctx)) return;

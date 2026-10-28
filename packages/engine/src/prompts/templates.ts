@@ -61,7 +61,9 @@ export function formatFindingsLog(log: readonly FindingsLogEntry[]): string {
   if (log.length === 0) return "No findings are closed yet.";
   return log
     .map((e) => {
-      const where = e.file ? `${e.file}${e.lines ? `:${e.lines[0]}-${e.lines[1]}` : ""}` : "(no location)";
+      const where = e.file
+        ? `${e.file}${e.lines ? `:${e.lines[0]}-${e.lines[1]}` : ""}`
+        : "(no location)";
       return `- ${e.id} [${e.verdict}] ${e.severity} ${e.title} (${where})${e.reason ? `: ${e.reason}` : ""}`;
     })
     .join("\n");
@@ -163,7 +165,10 @@ export interface SweepPromptInput {
 /** The pattern sweep: other instances of each confirmed pattern across the whole diff. */
 export function sweepPrompt(input: SweepPromptInput): string {
   const patterns = input.patterns
-    .map((f) => `- ${f.id} ${f.title} (${f.file ?? "no file"}${f.lines ? `:${f.lines[0]}-${f.lines[1]}` : ""}): ${f.failureCase}`)
+    .map(
+      (f) =>
+        `- ${f.id} ${f.title} (${f.file ?? "no file"}${f.lines ? `:${f.lines[0]}-${f.lines[1]}` : ""}): ${f.failureCase}`,
+    )
     .join("\n");
   return join([
     `Each confirmed finding below is a pattern. Search the whole change from ${input.range.baseSha} to ${input.range.tipSha} in ${input.range.repoPath} for other instances of each pattern: the same mistake in another function, file, or call site.`,
@@ -201,13 +206,12 @@ export function disproverPrompt(input: DisproverPromptInput): string {
         `Location: ${f.file ?? "(none)"}${f.lines ? ` lines ${f.lines[0]}-${f.lines[1]}` : ""}`,
         `Category: ${f.category}`,
         `Failure case: ${f.failureCase}`,
-        f.origin === "pr_comment" || f.origin === "check_run" ? `Source: ${f.origin}\n${f.evidence}` : "",
+        f.origin === "pr_comment" || f.origin === "check_run"
+          ? `Source: ${f.origin}\n${f.evidence}`
+          : "",
       ].join("\n"),
     ),
-    section(
-      "Rules",
-      PRECISION_RULES.map((r) => `- ${r}`).join("\n"),
-    ),
+    section("Rules", PRECISION_RULES.map((r) => `- ${r}`).join("\n")),
     section(
       "How to verify",
       [

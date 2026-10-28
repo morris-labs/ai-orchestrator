@@ -24,12 +24,18 @@ export function stem(path: string): string {
   let name = posix.basename(path);
   name = name.replace(/\.(test|spec)(?=\.[^.]+$)/, "");
   name = name.replace(/\.[^.]+$/, "");
-  name = name.replace(/^test_/, "").replace(/_test$/, "").replace(/Tests?$/, "");
+  name = name
+    .replace(/^test_/, "")
+    .replace(/_test$/, "")
+    .replace(/Tests?$/, "");
   return name.toLowerCase();
 }
 
 function withoutExtension(path: string): string {
-  return path.replace(/\.[cm]?[jt]sx?$|\.py$/, "").replace(/\/index$/, "").replace(/\/__init__$/, "");
+  return path
+    .replace(/\.[cm]?[jt]sx?$|\.py$/, "")
+    .replace(/\/index$/, "")
+    .replace(/\/__init__$/, "");
 }
 
 /**
@@ -47,7 +53,10 @@ export function importedModules(path: string, content: string): string[] {
   for (const m of content.matchAll(pyFrom)) {
     const dots = (m[1] as string).length;
     const mod = (m[2] as string).replace(/\./g, "/");
-    const names = (m[3] as string).split(",").map((n) => n.trim()).filter(Boolean);
+    const names = (m[3] as string)
+      .split(",")
+      .map((n) => n.trim())
+      .filter(Boolean);
     let baseDir = "";
     if (dots > 0) {
       baseDir = dir;

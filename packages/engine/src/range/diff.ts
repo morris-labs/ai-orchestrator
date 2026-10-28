@@ -66,7 +66,8 @@ export function parseDiff(text: string): DiffFile[] {
     else if (line.startsWith("rename to ")) {
       file.status = "renamed";
       file.path = unquote(line.slice("rename to ".length));
-    } else if (line.startsWith("rename from ")) file.oldPath = unquote(line.slice("rename from ".length));
+    } else if (line.startsWith("rename from "))
+      file.oldPath = unquote(line.slice("rename from ".length));
     else if (line.startsWith("Binary files ")) file.binary = true;
     else if (line.startsWith("--- ")) {
       const p = stripPrefix(line.slice(4));
@@ -104,7 +105,8 @@ export function parseDiff(text: string): DiffFile[] {
   }
   for (const f of files) {
     if (f.status === "deleted" && f.oldPath) f.path = f.oldPath;
-    if (f.status !== "renamed" && f.oldPath === f.path) f.oldPath = f.status === "added" ? null : f.oldPath;
+    if (f.status !== "renamed" && f.oldPath === f.path)
+      f.oldPath = f.status === "added" ? null : f.oldPath;
   }
   return files.filter((f) => f.path !== "");
 }

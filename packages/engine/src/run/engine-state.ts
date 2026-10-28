@@ -40,7 +40,9 @@ export const EngineStateSchema = z.object({
   gateAttempts: z.number().int().nonnegative().default(0),
   /** Changes a person asked for, applied at the start of the next round. */
   pendingProfile: ProfileSchema.nullable().default(null),
-  pendingAssign: z.array(z.object({ role: RoleSchema, vendors: z.array(VendorSchema).min(1) })).default([]),
+  pendingAssign: z
+    .array(z.object({ role: RoleSchema, vendors: z.array(VendorSchema).min(1) }))
+    .default([]),
   /** Roles a person assigned by hand; they hold until a profile switch. */
   manualRoles: RoleAssignmentSchema.partial().default({}),
   /** Re-resolve the base before the next round. */

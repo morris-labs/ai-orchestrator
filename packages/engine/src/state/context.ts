@@ -89,7 +89,10 @@ export interface AgentCallSpec {
   role: AgentRole;
   vendor: Vendor;
   method: AdapterMethod;
-  request: Omit<AdapterRequest, "signal" | "model" | "timeoutMs"> & { sessionId?: string; timeoutMs?: number };
+  request: Omit<AdapterRequest, "signal" | "model" | "timeoutMs"> & {
+    sessionId?: string;
+    timeoutMs?: number;
+  };
   groupId: string | null;
   /** Rough size of the call for the lease, in tokens. */
   estimateTokens: number;
@@ -154,7 +157,9 @@ export class RunContext {
   }
 
   get availableVendors(): Vendor[] {
-    return (["claude", "codex", "copilot"] as const).filter((v) => this.deps.adapters[v] !== undefined);
+    return (["claude", "codex", "copilot"] as const).filter(
+      (v) => this.deps.adapters[v] !== undefined,
+    );
   }
 
   range(): RangeInfo {
@@ -202,7 +207,13 @@ export class RunContext {
     if (previous === stage) return;
     this.state.stage = stage;
     await this.persist();
-    await this.emit({ type: "stage.changed", runId: this.state.id, round: this.round, stage, previousStage: previous });
+    await this.emit({
+      type: "stage.changed",
+      runId: this.state.id,
+      round: this.round,
+      stage,
+      previousStage: previous,
+    });
   }
 
   async setStatus(status: RunStatus, patch: Partial<RunState> = {}): Promise<void> {
@@ -251,14 +262,30 @@ export class RunContext {
     const previous = finding.verdict;
     Object.assign(finding, patch, { verdict });
     if (evidence) finding.evidence = evidence;
-    finding.history.push({ time: this.nowIso(), verdict, actor, evidence: evidence || undefined, round: Math.max(1, this.round) });
+    finding.history.push({
+      time: this.nowIso(),
+      verdict,
+      actor,
+      evidence: evidence || undefined,
+      round: Math.max(1, this.round),
+    });
     await this.persist();
-    await this.emit({ type: "finding.changed", runId: this.state.id, finding: structuredClone(finding), previousVerdict: previous });
+    await this.emit({
+      type: "finding.changed",
+      runId: this.state.id,
+      finding: structuredClone(finding),
+      previousVerdict: previous,
+    });
   }
 
   /** Emits `finding.changed` for a finding that the merge just created. */
   async announceFinding(finding: Finding): Promise<void> {
-    await this.emit({ type: "finding.changed", runId: this.state.id, finding: structuredClone(finding), previousVerdict: null });
+    await this.emit({
+      type: "finding.changed",
+      runId: this.state.id,
+      finding: structuredClone(finding),
+      previousVerdict: null,
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -318,7 +345,12 @@ export class RunContext {
     return this.store.roundFile(this.round, `calls/${key.replace(/[^\w.-]+/g, "_")}`);
   }
 
-  private async reassign(role: AgentRole, from: Vendor, to: Vendor, reason: "ceiling" | "limit"): Promise<void> {
+  private async reassign(
+    role: AgentRole,
+    from: Vendor,
+    to: Vendor,
+    reason: "ceiling" | "limit",
+  ): Promise<void> {
     const contractRole = ROLE_FOR_AGENT[role];
     const roles = this.state.roles;
     let before: Vendor[];
@@ -346,7 +378,11 @@ export class RunContext {
   }
 
   /** Requests a lease, waiting through `pause` answers. Returns the vendor to call. */
-  async acquireLease(vendor: Vendor, role: AgentRole, estimateTokens: number): Promise<{ vendor: Vendor; leaseId: string }> {
+  async acquireLease(
+    vendor: Vendor,
+    role: AgentRole,
+    estimateTokens: number,
+  ): Promise<{ vendor: Vendor; leaseId: string }> {
     for (;;) {
       await this.checkpoint();
       this.eng.counters.lease += 1;
@@ -381,7 +417,9 @@ export class RunContext {
 
   private fallbackVendor(role: AgentRole, tried: readonly Vendor[]): Vendor | null {
     if (role === "fixer") return null;
-    return FALLBACK_ORDER.find((v) => !tried.includes(v) && this.deps.adapters[v] !== undefined) ?? null;
+    return (
+      FALLBACK_ORDER.find((v) => !tried.includes(v) && this.deps.adapters[v] !== undefined) ?? null
+    );
   }
 
   /**
@@ -401,7 +439,8 @@ export class RunContext {
       const lease = await this.acquireLease(vendor, spec.role, spec.estimateTokens);
       vendor = lease.vendor;
       const adapter: VendorAdapter | undefined = this.deps.adapters[vendor];
-      if (!adapter) throw new AgentFailed(spec.role, vendor, `No adapter is configured for ${vendor}.`);
+      if (!adapter)
+        throw new AgentFailed(spec.role, vendor, `No adapter is configured for ${vendor}.`);
       this.eng.counters.agent += 1;
       const agentId = `${this.state.id}-A${this.eng.counters.agent}`;
       const model = this.deps.models?.[vendor] ?? vendor;
@@ -419,38 +458,9 @@ export class RunContext {
       await this.emit({ type: "agent.started", ...common });
       const started = this.clock.now();
       const timeoutMs = spec.request.timeoutMs ?? this.timeouts[spec.role];
+      let result: AdapterResult<T>;
       try {
-        const result = await this.invoke<T>(adapter, spec, timeoutMs);
-        const elapsedMs = Math.max(0, this.clock.now() - started);
-        const actual = {
-          tokens: { in: result.tokens.in, out: result.tokens.out },
-          premiumRequests: result.premiumRequests,
-          costEstimate: result.costEstimate,
-        };
-        await this.emit({
-          type: "agent.finished",
-          ...common,
-          model: result.model || model,
-          outcome: "ok",
-          elapsedMs,
-          tokens: actual.tokens,
-          premiumRequests: actual.premiumRequests,
-          costEstimate: actual.costEstimate,
-        });
-        await this.settle(lease.leaseId, vendor, spec.role, actual);
-        for (const sample of result.usage) {
-          const ceiling = (this.deps.ceilings ?? DEFAULT_CEILINGS)[sample.vendor];
-          await this.emit({ type: "usage.sample", ...sample, ceiling });
-        }
-        const outcome: AgentOutcome<T> = {
-          vendor,
-          model: result.model || model,
-          sessionId: result.sessionId,
-          output: result.output,
-          tokens: actual.tokens,
-        };
-        await this.store.writeJson(this.callFile(spec.key), outcome);
-        return outcome;
+        result = await this.invoke<T>(adapter, spec, timeoutMs);
       } catch (error) {
         const elapsedMs = Math.max(0, this.clock.now() - started);
         const limit = this.signal.aborted ? null : adapter.detectLimit(error);
@@ -470,18 +480,29 @@ export class RunContext {
           premiumRequests: 0,
           costEstimate: 0,
         });
-        await this.settle(lease.leaseId, vendor, spec.role, { tokens: { in: 0, out: 0 }, premiumRequests: 0, costEstimate: 0 });
+        await this.settle(lease.leaseId, vendor, spec.role, {
+          tokens: { in: 0, out: 0 },
+          premiumRequests: 0,
+          costEstimate: 0,
+        });
         if (outcome === "cancelled") throw new RunCancelled();
         if (limit) {
           limitHits += 1;
-          if (limitHits > 4) throw new AgentFailed(spec.role, vendor, `${vendor} kept hitting its limit: ${limit.message}`);
+          if (limitHits > 4)
+            throw new AgentFailed(
+              spec.role,
+              vendor,
+              `${vendor} kept hitting its limit: ${limit.message}`,
+            );
           tried.push(vendor);
           const next = spec.allowFallback === false ? null : this.fallbackVendor(spec.role, tried);
           if (next) {
             await this.reassign(spec.role, vendor, next, "limit");
             vendor = next;
           } else {
-            await this.pauseUntil(limit.resetAt ?? new Date(this.clock.now() + 15 * 60_000).toISOString());
+            await this.pauseUntil(
+              limit.resetAt ?? new Date(this.clock.now() + 15 * 60_000).toISOString(),
+            );
           }
           continue;
         }
@@ -493,11 +514,46 @@ export class RunContext {
             `The ${spec.role} call on ${vendor} failed twice: ${(error as Error).message ?? String(error)}`,
           );
         }
+        continue;
       }
+      const elapsedMs = Math.max(0, this.clock.now() - started);
+      const actual = {
+        tokens: { in: result.tokens.in, out: result.tokens.out },
+        premiumRequests: result.premiumRequests,
+        costEstimate: result.costEstimate,
+      };
+      await this.emit({
+        type: "agent.finished",
+        ...common,
+        model: result.model || model,
+        outcome: "ok",
+        elapsedMs,
+        tokens: actual.tokens,
+        premiumRequests: actual.premiumRequests,
+        costEstimate: actual.costEstimate,
+      });
+      await this.settle(lease.leaseId, vendor, spec.role, actual);
+      for (const sample of result.usage) {
+        const ceiling = (this.deps.ceilings ?? DEFAULT_CEILINGS)[sample.vendor];
+        await this.emit({ type: "usage.sample", ...sample, ceiling });
+      }
+      const outcome: AgentOutcome<T> = {
+        vendor,
+        model: result.model || model,
+        sessionId: result.sessionId,
+        output: result.output,
+        tokens: actual.tokens,
+      };
+      await this.store.writeJson(this.callFile(spec.key), outcome);
+      return outcome;
     }
   }
 
-  private async invoke<T>(adapter: VendorAdapter, spec: AgentCallSpec, timeoutMs: number): Promise<AdapterResult<T>> {
+  private async invoke<T>(
+    adapter: VendorAdapter,
+    spec: AgentCallSpec,
+    timeoutMs: number,
+  ): Promise<AdapterResult<T>> {
     const controller = new AbortController();
     const onAbort = () => controller.abort(this.signal.reason);
     this.signal.addEventListener("abort", onAbort, { once: true });
@@ -542,12 +598,24 @@ export class RunContext {
     actual: { tokens: { in: number; out: number }; premiumRequests: number; costEstimate: number },
   ): Promise<void> {
     this.deps.broker.settle(leaseId, actual);
-    const totals = this.eng.roundUsage[vendor] ?? { tokensIn: 0, tokensOut: 0, premiumRequests: 0, costUsd: 0 };
+    const totals = this.eng.roundUsage[vendor] ?? {
+      tokensIn: 0,
+      tokensOut: 0,
+      premiumRequests: 0,
+      costUsd: 0,
+    };
     totals.tokensIn += actual.tokens.in;
     totals.tokensOut += actual.tokens.out;
     totals.premiumRequests += actual.premiumRequests;
     totals.costUsd += actual.costEstimate;
     this.eng.roundUsage[vendor] = totals;
-    await this.emit({ type: "lease.settled", leaseId, runId: this.state.id, vendor, role, ...actual });
+    await this.emit({
+      type: "lease.settled",
+      leaseId,
+      runId: this.state.id,
+      vendor,
+      role,
+      ...actual,
+    });
   }
 }

@@ -5,7 +5,10 @@ import { matchesAny } from "./glob.js";
 /** The rules that apply to at least one of `files`; every rule when `files` is absent. */
 export function rulesFor(policy: PolicyFile, files?: readonly string[]): PolicyRule[] {
   return policy.rules.filter(
-    (rule) => !rule.appliesTo || files === undefined || files.some((f) => matchesAny(f, rule.appliesTo ?? [])),
+    (rule) =>
+      !rule.appliesTo ||
+      files === undefined ||
+      files.some((f) => matchesAny(f, rule.appliesTo ?? [])),
   );
 }
 
@@ -24,12 +27,18 @@ export function policyPromptSection(policy: PolicyFile, files?: readonly string[
   if (rules.length > 0) {
     parts.push(
       "Repository rules. Treat a breach of any of these as a finding:",
-      ...rules.map((r) => `- [${r.id}] ${r.text}${r.appliesTo ? ` (applies to ${r.appliesTo.join(", ")})` : ""}`),
+      ...rules.map(
+        (r) =>
+          `- [${r.id}] ${r.text}${r.appliesTo ? ` (applies to ${r.appliesTo.join(", ")})` : ""}`,
+      ),
     );
   }
   if (policy.environmentLimits.length > 0) {
     if (parts.length > 0) parts.push("");
-    parts.push("Environment limits. Take these into account:", ...policy.environmentLimits.map((l) => `- ${l}`));
+    parts.push(
+      "Environment limits. Take these into account:",
+      ...policy.environmentLimits.map((l) => `- ${l}`),
+    );
   }
   return parts.join("\n");
 }

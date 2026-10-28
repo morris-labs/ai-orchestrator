@@ -84,7 +84,10 @@ export class RunStore {
     await writeJsonAtomic(this.path(relative), value);
   }
 
-  async readJson<T>(relative: string, schema?: z.ZodType<T, z.ZodTypeDef, unknown>): Promise<T | undefined> {
+  async readJson<T>(
+    relative: string,
+    schema?: z.ZodType<T, z.ZodTypeDef, unknown>,
+  ): Promise<T | undefined> {
     return readJson(this.path(relative), schema);
   }
 

@@ -28,7 +28,11 @@ import {
 export async function stagePreflight(ctx: RunContext): Promise<void> {
   let preflight = await ctx.store.readJson<{ baseline: unknown }>("preflight.json");
   if (!preflight) {
-    const baseline = await runGate(ctx.policy, { repoPath: ctx.state.request.repoPath, shell: ctx.shell, signal: ctx.signal });
+    const baseline = await runGate(ctx.policy, {
+      repoPath: ctx.state.request.repoPath,
+      shell: ctx.shell,
+      signal: ctx.signal,
+    });
     preflight = {
       range: {
         baseRef: ctx.state.request.base,
@@ -40,7 +44,13 @@ export async function stagePreflight(ctx: RunContext): Promise<void> {
       baseline,
     } as { baseline: unknown };
     await ctx.store.writeJson("preflight.json", preflight);
-    await ctx.handoff({ stage: "preflight" }, { stage: "group" }, "baseline", baseline.commands.length, "preflight.json");
+    await ctx.handoff(
+      { stage: "preflight" },
+      { stage: "group" },
+      "baseline",
+      baseline.commands.length,
+      "preflight.json",
+    );
   }
 }
 
@@ -146,7 +156,9 @@ export async function startRound(ctx: RunContext): Promise<void> {
 /** Closes the round: writes the summary and decides whether to stop. Returns the stop reason, if any. */
 export async function endRound(ctx: RunContext): Promise<StopReason | null> {
   const merge = await ctx.store.readJson<MergeOutput>(ctx.store.roundFile(ctx.round, "merge"));
-  const sweep = await ctx.store.readJson<MergeOutput | null>(ctx.store.roundFile(ctx.round, "sweep"));
+  const sweep = await ctx.store.readJson<MergeOutput | null>(
+    ctx.store.roundFile(ctx.round, "sweep"),
+  );
   const raised: Partial<Record<Vendor, number>> = { ...(merge?.raisedByVendor ?? {}) };
   for (const [v, n] of Object.entries(sweep?.raisedByVendor ?? {})) {
     raised[v as Vendor] = (raised[v as Vendor] ?? 0) + (n ?? 0);
@@ -160,7 +172,9 @@ export async function endRound(ctx: RunContext): Promise<StopReason | null> {
 
   const reviewersSideBySide = ctx.state.roles.reviewer.length > 1;
   ctx.eng.highOverlapRounds =
-    reviewersSideBySide && overlapRate > ctx.state.request.overlapThreshold ? ctx.eng.highOverlapRounds + 1 : 0;
+    reviewersSideBySide && overlapRate > ctx.state.request.overlapThreshold
+      ? ctx.eng.highOverlapRounds + 1
+      : 0;
   if (ctx.eng.highOverlapRounds >= 2 && !ctx.eng.alternating) {
     ctx.eng.alternating = true;
     const next = assignRoles({
@@ -238,7 +252,9 @@ export async function drivePrePush(ctx: RunContext): Promise<void> {
         const find = await runFind(ctx, groups);
         const merge = await runMerge(ctx, find, groups);
         await ctx.setStage("verify");
-        const open = merge.oscillations.filter((o) => !ctx.eng.acceptedOscillations.includes(o.fixedId));
+        const open = merge.oscillations.filter(
+          (o) => !ctx.eng.acceptedOscillations.includes(o.fixedId),
+        );
         if (open.length > 0) throw oscillationDecision(ctx, open);
         break;
       }
@@ -257,7 +273,9 @@ export async function drivePrePush(ctx: RunContext): Promise<void> {
         } else {
           await ctx.setStage("fix");
         }
-        const open = (sweep?.oscillations ?? []).filter((o) => !ctx.eng.acceptedOscillations.includes(o.fixedId));
+        const open = (sweep?.oscillations ?? []).filter(
+          (o) => !ctx.eng.acceptedOscillations.includes(o.fixedId),
+        );
         if (open.length > 0) throw oscillationDecision(ctx, open);
         break;
       }
@@ -280,7 +298,9 @@ export async function drivePrePush(ctx: RunContext): Promise<void> {
           if (ctx.eng.gateAttempts >= GATE_ATTEMPTS) {
             throw new DecisionNeeded({
               kind: "gate_failed",
-              findingIds: ctx.findings.filter((f) => f.verdict === "confirmed" && f.fixCommit).map((f) => f.id),
+              findingIds: ctx.findings
+                .filter((f) => f.verdict === "confirmed" && f.fixCommit)
+                .map((f) => f.id),
               options: ["resume", "cancel"],
               message: `The fixes still break the test or lint gate after ${GATE_ATTEMPTS} attempts:\n${record.report}`,
             });

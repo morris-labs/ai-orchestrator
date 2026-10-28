@@ -9,13 +9,33 @@ export const BALANCED_CLAUDE_ROUNDS = 2;
 export function profileRoles(profile: Profile, round: number): RoleAssignment {
   switch (profile) {
     case "offload":
-      return { reviewer: ["codex", "copilot"], disprover: "codex", confirmer: "codex", fixer: "claude" };
+      return {
+        reviewer: ["codex", "copilot"],
+        disprover: "codex",
+        confirmer: "codex",
+        fixer: "claude",
+      };
     case "balanced":
       return round <= BALANCED_CLAUDE_ROUNDS
-        ? { reviewer: ["claude", "codex", "copilot"], disprover: "codex", confirmer: "codex", fixer: "claude" }
-        : { reviewer: ["codex", "copilot"], disprover: "codex", confirmer: "codex", fixer: "claude" };
+        ? {
+            reviewer: ["claude", "codex", "copilot"],
+            disprover: "codex",
+            confirmer: "codex",
+            fixer: "claude",
+          }
+        : {
+            reviewer: ["codex", "copilot"],
+            disprover: "codex",
+            confirmer: "codex",
+            fixer: "claude",
+          };
     case "fast":
-      return { reviewer: ["claude", "codex"], disprover: "claude", confirmer: "codex", fixer: "claude" };
+      return {
+        reviewer: ["claude", "codex"],
+        disprover: "claude",
+        confirmer: "codex",
+        fixer: "claude",
+      };
   }
 }
 
@@ -35,7 +55,11 @@ export interface RoleOptions {
 function firstAvailable(preferred: Vendor, available: readonly Vendor[], avoid?: Vendor): Vendor {
   if (available.includes(preferred) && preferred !== avoid) return preferred;
   const order: Vendor[] = ["codex", "copilot", "claude"];
-  return order.find((v) => available.includes(v) && v !== avoid) ?? order.find((v) => available.includes(v)) ?? preferred;
+  return (
+    order.find((v) => available.includes(v) && v !== avoid) ??
+    order.find((v) => available.includes(v)) ??
+    preferred
+  );
 }
 
 /** The role assignment for a round, after manual changes, availability, and alternation. */
@@ -43,7 +67,8 @@ export function assignRoles(options: RoleOptions): RoleAssignment {
   const base = profileRoles(options.profile, options.round);
   const manual = options.manual ?? {};
   let reviewer = (manual.reviewer ?? base.reviewer).filter((v) => options.available.includes(v));
-  if (reviewer.length === 0) reviewer = [firstAvailable(base.reviewer[0] as Vendor, options.available)];
+  if (reviewer.length === 0)
+    reviewer = [firstAvailable(base.reviewer[0] as Vendor, options.available)];
   if (options.alternating && reviewer.length > 1) {
     reviewer = [reviewer[(options.round - 1) % reviewer.length] as Vendor];
   }
@@ -72,7 +97,11 @@ export interface ReviewTask {
  * areas, and a minor group gets one, in turn. In the `fast` profile every
  * group gets two.
  */
-export function planReviews(reviewers: readonly Vendor[], groups: readonly FileGroup[], profile: Profile): ReviewTask[] {
+export function planReviews(
+  reviewers: readonly Vendor[],
+  groups: readonly FileGroup[],
+  profile: Profile,
+): ReviewTask[] {
   const tasks: ReviewTask[] = [];
   const perGroup = reviewers.filter((v) => v !== "copilot");
   if (reviewers.includes("copilot")) {
@@ -84,7 +113,12 @@ export function planReviews(reviewers: readonly Vendor[], groups: readonly FileG
     if (two) {
       for (let i = 0; i < 2; i++) {
         const vendor = perGroup[i] as Vendor;
-        tasks.push({ key: `${group.id}-${vendor}`, vendor, groupId: group.id, focusAreas: FOCUS_AREAS[i] ?? null });
+        tasks.push({
+          key: `${group.id}-${vendor}`,
+          vendor,
+          groupId: group.id,
+          focusAreas: FOCUS_AREAS[i] ?? null,
+        });
       }
     } else {
       const vendor = perGroup[index % perGroup.length] as Vendor;
