@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { EVENT_TYPES, EventSchema } from "../src/index.js";
-import { events } from "./fixtures.js";
+import {
+  ClientHelloSchema,
+  EVENT_TYPES,
+  EngineStreamClientFrameSchema,
+  EngineStreamFrameSchema,
+  EventSchema,
+  ServerStreamFrameSchema,
+} from "../src/index.js";
+import { events, leaseRequest, leaseResponses } from "./fixtures.js";
 import { roundTrip } from "./helpers.js";
 
 describe("events", () => {
@@ -12,7 +19,7 @@ describe("events", () => {
     expect(new Set(events.map((e) => e.type))).toEqual(new Set(EVENT_TYPES));
   });
 
-  it("lists the event types the plan names", () => {
+  it("lists the agreed event types", () => {
     expect([...EVENT_TYPES].sort()).toEqual(
       [
         "agent.finished",
@@ -20,13 +27,15 @@ describe("events", () => {
         "box.changed",
         "ceiling.crossed",
         "container.changed",
+        "container.stats",
         "finding.changed",
         "handoff",
-        "lease.requested",
+        "lease.settled",
         "notification",
         "ports.changed",
         "role.reassigned",
         "run.changed",
+        "settings.changed",
         "stage.changed",
         "terminal.ended",
         "usage.sample",
@@ -34,18 +43,60 @@ describe("events", () => {
     );
   });
 
-  it("rejects an unknown type", () => {
-    const result = EventSchema.safeParse({ ...events[0], type: "agent.exploded" });
-    expect(result.success).toBe(false);
+  it("rejects an unknown type, including the retired lease.requested", () => {
+    expect(EventSchema.safeParse({ ...events[0], type: "agent.exploded" }).success).toBe(false);
+    expect(
+      EventSchema.safeParse({ ...events[0], type: "lease.requested", ...leaseRequest }).success,
+    ).toBe(false);
   });
 
   it("rejects an event without the common fields", () => {
-    const { seq: _seq, ...withoutSeq } = events[2]!;
-    expect(EventSchema.safeParse(withoutSeq).success).toBe(false);
+    for (const key of ["seq", "sourceSeq", "streamId"] as const) {
+      const { [key]: _omitted, ...rest } = events[2]!;
+      expect(EventSchema.safeParse(rest).success, key).toBe(false);
+    }
     expect(EventSchema.safeParse({ ...events[2], source: "elsewhere" }).success).toBe(false);
+    expect(EventSchema.safeParse({ ...events[2], seq: 0 }).success).toBe(false);
   });
 
-  it("rejects a utilization above 1", () => {
-    expect(EventSchema.safeParse({ ...events[5], utilization: 1.2 }).success).toBe(false);
+  it("allows a utilization above 1 but not below 0", () => {
+    expect(EventSchema.safeParse({ ...events[5], utilization: 1.2 }).success).toBe(true);
+    expect(EventSchema.safeParse({ ...events[5], utilization: -0.1 }).success).toBe(false);
+  });
+
+  it("requires the ceiling on every usage sample", () => {
+    const { ceiling: _c, ...withoutCeiling } = events[5] as Record<string, unknown>;
+    expect(EventSchema.safeParse(withoutCeiling).success).toBe(false);
+  });
+});
+
+describe("stream frames", () => {
+  const hello = { type: "hello", streamId: "S1", lastSeq: 17, replaying: false };
+
+  it("lets the server stream carry hello frames and events but not lease requests", () => {
+    expect(ServerStreamFrameSchema.parse(hello).type).toBe("hello");
+    expect(ServerStreamFrameSchema.parse(events[0]).type).toBe("agent.started");
+    expect(
+      ServerStreamFrameSchema.safeParse({ type: "lease.request", ...leaseRequest }).success,
+    ).toBe(false);
+  });
+
+  it("lets the engine stream carry lease requests", () => {
+    expect(EngineStreamFrameSchema.parse({ type: "lease.request", ...leaseRequest }).type).toBe(
+      "lease.request",
+    );
+    expect(EngineStreamFrameSchema.parse(hello).type).toBe("hello");
+  });
+
+  it("accepts the server's hello and lease responses on the engine stream", () => {
+    expect(ClientHelloSchema.parse({ type: "hello", streamId: null, lastSeq: null })).toBeTruthy();
+    expect(
+      EngineStreamClientFrameSchema.parse({ type: "hello", streamId: "S1", lastSeq: 4 }).type,
+    ).toBe("hello");
+    expect(
+      EngineStreamClientFrameSchema.parse({ type: "lease.response", response: leaseResponses[2] })
+        .type,
+    ).toBe("lease.response");
+    expect(EngineStreamClientFrameSchema.safeParse(events[0]).success).toBe(false);
   });
 });
