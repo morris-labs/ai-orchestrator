@@ -25,7 +25,7 @@ If the service isn't enabled, enable and start it:
 systemctl --user enable --now agentbox-server
 ```
 
-If the log says the port is in use, another process holds `127.0.0.1:20400`.
+If the log says the port is in use, another process holds `127.0.0.1:21400`.
 Stop that process, or change `serverPort` in `~/.claude-box/config.json`
 and restart the service.
 
@@ -81,7 +81,7 @@ image.
 
 ## A dev server link doesn't open
 
-Dev server links have the form `http://PORT.BOX.localhost:20400/`. Check the
+Dev server links have the form `http://PORT.BOX.localhost:21400/`. Check the
 following:
 
 - The dev server listens inside the container. The details panel lists only
@@ -90,7 +90,7 @@ following:
   The engine proxies both.
 - Your browser resolves `*.localhost` names to the loopback address. Most
   browsers do; for a command-line client, pass
-  `--resolve PORT.BOX.localhost:20400:127.0.0.1` to `curl`.
+  `--resolve PORT.BOX.localhost:21400:127.0.0.1` to `curl`.
 
 ## Resume says "No conversation found"
 

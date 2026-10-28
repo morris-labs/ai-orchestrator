@@ -17,7 +17,7 @@ export interface BridgeResult {
 export interface AgentBoxBridge {
   /** The server's bearer token, read by the main process from `~/.claude-box/server.token`. */
   token: string | null;
-  /** The server origin, such as `http://127.0.0.1:20400`. */
+  /** The server origin, such as `http://127.0.0.1:21400`. */
   serverUrl: string;
   /** Opens a host terminal attached to a box, through the attach-command route. */
   openExternalTerminal: (req: ExternalTerminalRequest) => Promise<BridgeResult>;

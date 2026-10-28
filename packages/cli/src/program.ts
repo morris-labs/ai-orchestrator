@@ -190,7 +190,7 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
     .option("--json", "Print the server's JSON instead of a table.")
     .option(
       "--server <url>",
-      "The server URL. Default: $AGENTBOX_SERVER or http://127.0.0.1:20400.",
+      "The server URL. Default: $AGENTBOX_SERVER or http://127.0.0.1:21400.",
     )
     .option(
       "--insecure",

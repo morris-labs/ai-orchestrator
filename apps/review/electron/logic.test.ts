@@ -30,10 +30,10 @@ describe("parseDeepLink", () => {
 
 describe("renderer URLs", () => {
   it("opens the launcher with the deep link", () => {
-    expect(rendererUrl("http://127.0.0.1:20400/", { project: "p", box: null })).toBe(
-      "http://127.0.0.1:20400/review/?project=p#/launch",
+    expect(rendererUrl("http://127.0.0.1:21400/", { project: "p", box: null })).toBe(
+      "http://127.0.0.1:21400/review/?project=p#/launch",
     );
-    expect(rendererUrl("http://127.0.0.1:20400", null)).toBe("http://127.0.0.1:20400/review/");
+    expect(rendererUrl("http://127.0.0.1:21400", null)).toBe("http://127.0.0.1:21400/review/");
     expect(launcherHash({ project: "p", box: "b" })).toBe("#/launch?project=p&box=b");
   });
 });

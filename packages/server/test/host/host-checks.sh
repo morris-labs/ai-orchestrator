@@ -11,7 +11,7 @@
 #   DEV_PORT: a port a dev server listens on inside the box's container
 set -euo pipefail
 
-SERVER="${SERVER:-http://127.0.0.1:20400}"
+SERVER="${SERVER:-http://127.0.0.1:21400}"
 TOKEN="$(cat ~/.claude-box/server.token)"
 H=(-H "Authorization: Bearer ${TOKEN}")
 BOX_ID="${BOX_ID:?set BOX_ID}"
@@ -41,21 +41,21 @@ case "$step" in
   terminal)
     # Attach to the box's tmux session; type, resize the window, then detach.
     [ -n "$WS" ] || { echo "Install websocat first." >&2; exit 1; }
-    "$WS" -b "ws://127.0.0.1:20400/api/v1/terminals?kind=session&boxId=$BOX_ID&cols=120&rows=40&token=$TOKEN"
+    "$WS" -b "ws://127.0.0.1:21400/api/v1/terminals?kind=session&boxId=$BOX_ID&cols=120&rows=40&token=$TOKEN"
     ;;
   shell)
     [ -n "$WS" ] || { echo "Install websocat first." >&2; exit 1; }
-    "$WS" -b "ws://127.0.0.1:20400/api/v1/terminals?kind=shell&projectId=$PROJECT&token=$TOKEN"
+    "$WS" -b "ws://127.0.0.1:21400/api/v1/terminals?kind=shell&projectId=$PROJECT&token=$TOKEN"
     ;;
   events)
     # Send {"type":"hello","streamId":null,"lastSeq":null}; then start and stop a box.
     [ -n "$WS" ] || { echo "Install websocat first." >&2; exit 1; }
-    "$WS" "ws://127.0.0.1:20400/api/v1/events?token=$TOKEN"
+    "$WS" "ws://127.0.0.1:21400/api/v1/events?token=$TOKEN"
     ;;
   proxy)
     # Expect the dev server's page, through the engine's /proxy route.
     KEY="$(curl -fsS "${H[@]}" "$SERVER/api/v1/boxes/$BOX_ID" | python3 -c 'import json,sys; print(json.load(sys.stdin)["box"]["hostKey"])')"
-    curl -sS -o /dev/null -w '%{http_code}\n' "http://$DEV_PORT.$KEY.localhost:20400/"
+    curl -sS -o /dev/null -w '%{http_code}\n' "http://$DEV_PORT.$KEY.localhost:21400/"
     ;;
   engine)
     # Expect versionMatches true for the running project container.
@@ -70,7 +70,7 @@ case "$step" in
     curl -fsS "${H[@]}" "$SERVER/api/v1/ssh-remotes"   # tunnelUp true while a box using it runs
     ;;
   image-build)
-    # Starts a job; stream it with: websocat -b ws://127.0.0.1:20400/api/v1/jobs/JOB_ID/stream?token=...
+    # Starts a job; stream it with: websocat -b ws://127.0.0.1:21400/api/v1/jobs/JOB_ID/stream?token=...
     curl -fsS "${H[@]}" -H 'content-type: application/json' -d '{"kind":"packages"}' "$SERVER/api/v1/image/build"
     ;;
   setup)

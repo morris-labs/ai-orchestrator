@@ -106,7 +106,7 @@ describe("notifications and review", () => {
     expect(reviewCommand("p", "b", "").file).toBe("agentbox-review");
   });
   it("reads the server URL from the environment", () => {
-    expect(serverUrl({})).toBe("http://127.0.0.1:20400");
+    expect(serverUrl({})).toBe("http://127.0.0.1:21400");
     expect(serverUrl({ AGENTBOX_SERVER_URL: "http://127.0.0.1:9/" })).toBe("http://127.0.0.1:9");
   });
 });

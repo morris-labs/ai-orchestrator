@@ -533,18 +533,18 @@ describe("help", () => {
 
 describe("trust in the server", () => {
   it("refuses to send the token over plain HTTP to another host", async () => {
-    const code = await cli(["box", "list"], { AGENTBOX_SERVER: "http://203.0.113.5:20400" });
+    const code = await cli(["box", "list"], { AGENTBOX_SERVER: "http://203.0.113.5:21400" });
     expect(code).not.toBe(0);
-    expect(err).toMatch(/won't send its token over plain HTTP to 203\.0\.113\.5:20400/);
+    expect(err).toMatch(/won't send its token over plain HTTP to 203\.0\.113\.5:21400/);
     expect(server.requests).toHaveLength(0);
   });
 
   it("allows a remote plain HTTP server with --insecure, and https anywhere", async () => {
     const { checkServerUrl } = await import("../src/settings.js");
-    expect(checkServerUrl("http://203.0.113.5:20400", true)).toBeNull();
+    expect(checkServerUrl("http://203.0.113.5:21400", true)).toBeNull();
     expect(checkServerUrl("https://agentbox.example.com", false)).toBeNull();
-    expect(checkServerUrl("http://localhost:20400", false)).toBeNull();
-    expect(checkServerUrl("http://[::1]:20400", false)).toBeNull();
+    expect(checkServerUrl("http://localhost:21400", false)).toBeNull();
+    expect(checkServerUrl("http://[::1]:21400", false)).toBeNull();
     expect(checkServerUrl("ftp://127.0.0.1", false)).toMatch(/http or https/);
   });
 

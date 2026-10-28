@@ -17,7 +17,7 @@ host                                     container (one per project)
 |  worktrees, catalog, watcher,|         |  agentbox-engine :20411      |
 |  SQLite, secrets, scheduler, |<--------|   pipeline, adapters, run    |
 |  usage, events, terminals,   | :2041x  |   files, port discovery,     |
-|  REST+WS on 127.0.0.1:20400  | mapped  |   dev-server proxy           |
+|  REST+WS on 127.0.0.1:21400  | mapped  |   dev-server proxy           |
 +-------^----------^-----------+         +------------------------------+
         |          |
   agentbox (boxes) agentbox-review        agentbox CLI
@@ -33,7 +33,7 @@ user. It owns everything that touches Docker or host files: projects, boxes,
 worktrees, the conversation catalog, the session watcher, secrets, the
 usage scheduler, and terminals.
 
-- It listens on `127.0.0.1:20400` and serves a REST and WebSocket API under
+- It listens on `127.0.0.1:21400` and serves a REST and WebSocket API under
   `/api/v1/`, the two apps' pages at `/boxes/` and `/review/`, and the
   dev-server proxy for `PORT.BOX.localhost` host names.
 - Every API call needs the bearer token in `~/.claude-box/server.token`

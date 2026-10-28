@@ -6,6 +6,12 @@
 # image/ directory with every pin from image/versions.env as a build
 # argument. In an installed package (/usr/share/agentbox), the engine
 # tarballs ship in image/dist/ already, so the script skips packing.
+#
+# Environment:
+#   IMAGE_TAG   The image tag. Default: claude-code. The --tag option
+#               overrides it. Set it to build a test image, such as
+#               claude-code:v4test, without retagging the image that
+#               running boxes launch from.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -14,7 +20,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 IMAGE_DIR="$ROOT/image"
-TAG="claude-code"
+TAG="${IMAGE_TAG:-claude-code}"
 PACK=auto
 PRINT=0
 PACK_ONLY=0
@@ -27,7 +33,7 @@ Usage: $(basename "$0") [OPTIONS]
 Builds the Agent Box image from $IMAGE_DIR.
 
 Options:
-  --tag TAG              Tag the image TAG. Default: claude-code.
+  --tag TAG              Tag the image TAG. Default: the IMAGE_TAG variable, else claude-code.
   --update-cli           Rebuild the agent CLI and engine layers
                          (--build-arg CACHEBUST=<now>).
   --update-packages      Rebuild every layer after the base image

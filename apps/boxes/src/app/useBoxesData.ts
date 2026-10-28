@@ -115,7 +115,7 @@ export function useBoxesData(): BoxesData {
     setUpdatedAt(new Date());
   });
   useEvent("ports.changed", (ev) => {
-    const proxyPort = settings?.proxyPort ?? settings?.serverPort ?? 20400;
+    const proxyPort = settings?.proxyPort ?? settings?.serverPort ?? 21400;
     changeBoxes((all) => applyPorts(all, ev, proxyPort));
   });
   useEvent("settings.changed", (ev) => setSettings(ev.settings));

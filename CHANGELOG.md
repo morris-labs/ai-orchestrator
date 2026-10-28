@@ -14,7 +14,7 @@ the upgrade steps, see `docs/migration-3x.md`.
 
 - `agentbox-server`, a systemd user service that owns Docker, boxes,
   projects, worktrees, secrets, usage, and terminals, with a REST and
-  WebSocket API on `127.0.0.1:20400`.
+  WebSocket API on `127.0.0.1:21400`.
 - The Agent Box engine, baked into the image, which runs the review pipeline
   inside each project container.
 - A multi-vendor review pipeline with the `offload`, `balanced`, and `fast`
@@ -26,7 +26,7 @@ the upgrade steps, see `docs/migration-3x.md`.
   policy editor, and a live infrastructure dashboard.
 - The `agentbox` CLI with `box` and `review` commands, plus `migrate`,
   `setup`, and `doctor`.
-- Dev servers proxied at `http://PORT.BOX.localhost:20400/`, found
+- Dev servers proxied at `http://PORT.BOX.localhost:21400/`, found
   automatically, with optional explicit TCP maps per project.
 - Secrets from 1Password references, resolved at launch.
 - A repository policy file, `.claude-box/policy.yaml`.

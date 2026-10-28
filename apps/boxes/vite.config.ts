@@ -16,7 +16,7 @@ export default defineConfig({
   server: {
     // `pnpm dev` forwards API calls to a running agentbox-server.
     proxy: {
-      "/api": { target: "http://127.0.0.1:20400", ws: true },
+      "/api": { target: "http://127.0.0.1:21400", ws: true },
     },
   },
 });

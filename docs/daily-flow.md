@@ -26,7 +26,7 @@ While the agent works, the following happens without any setup:
 
 - **Dev servers**: When a process in the container listens on a port, the
   box's details panel shows a link to it, in the form
-  `http://PORT.BOX.localhost:20400/`. The engine finds listening ports and
+  `http://PORT.BOX.localhost:21400/`. The engine finds listening ports and
   the server proxies them.
 - **Secrets**: The project's 1Password references arrive in the container as
   environment variables. For more information, see [Secrets](secrets.md).

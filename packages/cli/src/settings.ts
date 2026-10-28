@@ -23,7 +23,7 @@ function readText(file: string): string | null {
  * Resolves the server URL and token.
  *
  * - URL: `--server`, then `AGENTBOX_SERVER`, then `http://127.0.0.1:<serverPort>`
- *   with the port from `~/.claude-box/config.json` (20400 by default).
+ *   with the port from `~/.claude-box/config.json` (21400 by default).
  * - Token: `AGENTBOX_TOKEN`, then `~/.claude-box/server.token`.
  */
 export function resolveSettings(options: {

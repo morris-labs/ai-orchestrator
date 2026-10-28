@@ -9,7 +9,7 @@ function setup() {
     ],
   });
   const client = new ApiClient({
-    baseUrl: "http://127.0.0.1:20400",
+    baseUrl: "http://127.0.0.1:21400",
     token: "tok",
     fetch: server.fetch,
     WebSocket: server.WebSocket,
@@ -21,10 +21,10 @@ describe("ApiClient", () => {
   it("builds URLs with params and query", () => {
     const { client } = setup();
     expect(client.url("boxes.get", { params: { boxId: "a b" } })).toBe(
-      "http://127.0.0.1:20400/api/v1/boxes/a%20b",
+      "http://127.0.0.1:21400/api/v1/boxes/a%20b",
     );
     expect(client.url("conversations.list", { query: { dir: "/x y" } })).toBe(
-      "http://127.0.0.1:20400/api/v1/conversations?dir=%2Fx+y",
+      "http://127.0.0.1:21400/api/v1/conversations?dir=%2Fx+y",
     );
   });
 
@@ -87,7 +87,7 @@ describe("ApiClient", () => {
   it("builds WebSocket URLs with the token", () => {
     const { client } = setup();
     expect(client.wsUrl("events.stream", { query: { types: "box.changed" } })).toBe(
-      "ws://127.0.0.1:20400/api/v1/events?types=box.changed&token=tok",
+      "ws://127.0.0.1:21400/api/v1/events?types=box.changed&token=tok",
     );
   });
 

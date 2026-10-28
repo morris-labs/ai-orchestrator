@@ -7,7 +7,7 @@ import { Root } from "../src/app/Root";
 
 export function renderWithServer(ui: ReactNode, server: FakeServer) {
   const client = new ApiClient({
-    baseUrl: "http://127.0.0.1:20400",
+    baseUrl: "http://127.0.0.1:21400",
     token: "t",
     fetch: server.fetch,
     WebSocket: server.WebSocket,

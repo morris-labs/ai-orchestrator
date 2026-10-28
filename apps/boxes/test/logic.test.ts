@@ -423,13 +423,13 @@ describe("store", () => {
           { port: 9000, proto: "tcp", process: null, boxId: null },
         ],
       }),
-      20400,
+      21400,
     );
     expect(ports[0]?.proxyUrls).toEqual([
-      { port: 5173, url: proxyUrl(5173, a.box.hostKey, 20400) },
+      { port: 5173, url: proxyUrl(5173, a.box.hostKey, 21400) },
     ]);
     expect(ports[1]?.proxyUrls).toEqual([]);
-    expect(proxyUrl(5173, "site", 20400)).toBe("http://5173.site.localhost:20400/");
+    expect(proxyUrl(5173, "site", 21400)).toBe("http://5173.site.localhost:21400/");
     expect(
       listenersForBox(a, [{ port: 1, proto: "tcp", process: null, boxId: null }], 1),
     ).toHaveLength(1);

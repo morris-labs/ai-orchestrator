@@ -90,12 +90,12 @@ function request(
 
 describe("parseProxyHost", () => {
   it("reads the port and host key", () => {
-    expect(parseProxyHost("3000.emails.localhost:20400")).toEqual({
+    expect(parseProxyHost("3000.emails.localhost:21400")).toEqual({
       port: 3000,
       hostKey: "emails",
     });
     expect(parseProxyHost("8080.my-box.localhost")).toEqual({ port: 8080, hostKey: "my-box" });
-    expect(parseProxyHost("127.0.0.1:20400")).toBeNull();
+    expect(parseProxyHost("127.0.0.1:21400")).toBeNull();
     expect(parseProxyHost("99999.emails.localhost")).toBeNull();
     expect(parseProxyHost("3000.-bad.localhost")).toBeNull();
     expect(parseProxyHost(undefined)).toBeNull();

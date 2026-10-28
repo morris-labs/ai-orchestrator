@@ -64,7 +64,7 @@ export type ResponseOf<K extends ServerRouteKey> = RouteOf<K>["response"];
 export type WebSocketCtor = new (url: string) => WebSocket;
 
 export interface ApiClientOptions {
-  /** Origin of the server, such as `http://127.0.0.1:20400`. Empty means the page's own origin. */
+  /** Origin of the server, such as `http://127.0.0.1:21400`. Empty means the page's own origin. */
   baseUrl?: string;
   /** The bearer token. Absent means the `agentbox_session` cookie authenticates. */
   token?: string | null;
@@ -226,7 +226,7 @@ export class ApiClient {
         ? this.baseUrl
         : typeof location !== "undefined"
           ? location.origin
-          : "http://127.0.0.1:20400";
+          : "http://127.0.0.1:21400";
     const wsOrigin = origin.replace(/^http/, "ws");
     const extra: Record<string, string> = this.token ? { token: this.token } : {};
     return `${wsOrigin}${path}${queryString(args.query, extra)}`;

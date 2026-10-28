@@ -82,7 +82,7 @@ a package installs for every user and the server belongs to one.
    agentbox doctor
    ```
 
-The server listens on `127.0.0.1:20400` only. On its first start it writes a
+The server listens on `127.0.0.1:21400` only. On its first start it writes a
 bearer token to `~/.claude-box/server.token` with mode `0600`. The apps and
 the CLI read that file; anything else that calls the API must send the token.
 
@@ -105,6 +105,14 @@ the package:
 
 The script builds the image with your user name, so file ownership in the
 bind mounts matches your host user. The first build takes several minutes.
+
+To build a test image without retagging the image that running boxes launch
+from, set the `IMAGE_TAG` environment variable. The `--tag` option overrides
+it.
+
+```sh
+IMAGE_TAG=claude-code:v4test /usr/share/agentbox/scripts/build-image.sh
+```
 
 The server refuses to start a container whose engine version differs from
 its own, and offers a rebuild. After you upgrade the package, rebuild the
