@@ -531,6 +531,28 @@ describe("start, stop, restart", () => {
     expect(h.core.boxes.status(h.core.boxes.get(b.id))).toBe("stopped");
   });
 
+  it("keeps an edit made while the box starts", async () => {
+    const h = makeHarness();
+    const box = await stopped(h, { model: "claude-opus-5-5" });
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    h.docker.beforeExec = async (_c, options) => {
+      if (options.cmd[0] === START_SESSION_PATH) await held;
+    };
+    const starting = h.core.boxes.start(box.id);
+    await expect.poll(() => h.core.boxes.status(h.core.boxes.get(box.id))).toBe("starting");
+    await h.core.boxes.update(box.id, { model: "claude-sonnet-5-5", conversationName: "Edited" });
+    release();
+    const started = await starting;
+    expect(started).toMatchObject({
+      model: "claude-sonnet-5-5",
+      conversationName: "Edited",
+      launchedModel: "claude-opus-5-5",
+      wasRunning: true,
+    });
+    expect(h.core.boxes.get(box.id).model).toBe("claude-sonnet-5-5");
+  });
+
   it("makes a new container when the reused one leaves before the exec", async () => {
     const h = makeHarness();
     const box = await stopped(h);

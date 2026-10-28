@@ -682,8 +682,11 @@ export class BoxService {
       this.publish(box, "stopped");
       throw err;
     }
+    // Re-read: Edit Box and the session watcher write this record while the
+    // session starts. Only the fields a start owns change here.
+    const current = this.repos.boxes.get(id) ?? box;
     const next: Box = {
-      ...box,
+      ...current,
       sessionUuid,
       wasRunning: true,
       launchedModel: box.model,
