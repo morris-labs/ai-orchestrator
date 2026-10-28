@@ -1,6 +1,7 @@
-// The part of the server core (workstream W1) that the services and the API
-// use. W1's `src/core.ts` builds an object that satisfies `Core`; tests use
-// the in-memory fake in `test/fakes/core.ts`.
+// The part of the server core that the services and the API use.
+// `createCore()` in `src/core.ts` builds an object that satisfies `Core` over
+// the core modules; the API tests use the in-memory fake in
+// `test/api/fake-core.ts`.
 //
 // Every input and output is a contract type. A method that fails throws an
 // error whose `code` property names a contract `ApiErrorCode` (for example an
@@ -11,9 +12,13 @@ import type {
   BoxCreate,
   BoxView,
   ConvertToWorktreeResult,
+  ConvertToWorktreePlan,
+  EngineInfo,
   GlobalSettings,
   GlobalSettingsPatch,
+  ImportReport,
   ImageStatus,
+  Listener,
   Mount,
   Platform,
   PolicyFile,
@@ -114,15 +119,19 @@ export interface CoreBoxes {
   /** Creates (and with `start`, starts) the box; runs inside a `box_create` job. */
   create(input: BoxCreate, log: JobLog): Promise<Box>;
   update(boxId: string, patch: BoxUpdate): Promise<BoxUpdateResult>;
-  start(boxId: string): Promise<BoxView>;
+  /** With `force`, starts the box although its container's mounts are stale. */
+  start(boxId: string, options?: { force?: boolean }): Promise<BoxView>;
   stop(boxId: string): Promise<BoxView>;
   restart(boxId: string): Promise<BoxView>;
   remove(boxId: string, options: { removeWorktree: boolean }): Promise<BoxRemoveResult>;
-  purge(boxId: string): Promise<PurgeResult>;
+  /** With `dryRun`, reports what a purge would delete and deletes nothing. */
+  purge(boxId: string, options?: { dryRun?: boolean }): Promise<PurgeResult>;
   move(boxId: string, newDir: string): Promise<{ movedBoxes: string[] }>;
   relink(boxId: string, targetDir: string): Promise<BoxView>;
   /** Checks a Convert to Worktree request before the job starts (`box_running`, `conflict`). */
   validateConvertToWorktree(boxId: string): Promise<void>;
+  /** Previews Convert to Worktree without changing anything (`box_running`, `conflict`). */
+  planConvertToWorktree(boxId: string): Promise<ConvertToWorktreePlan>;
   convertToWorktree(
     boxId: string,
     options: { copyBuildOutput: boolean },
@@ -206,6 +215,12 @@ export interface CoreEngines {
   list(): Promise<EngineEndpoint[]>;
 }
 
+/** The one-time import of the 3.3.5 records and settings. */
+export interface CoreLegacyImport {
+  /** Imports, or with `dryRun`, reports what it would import and changes nothing. */
+  run(options: { dryRun: boolean }): Promise<ImportReport>;
+}
+
 export interface Core {
   db: SqlDatabase;
   docker: CoreDocker;
@@ -217,12 +232,14 @@ export interface Core {
   settings: CoreSettings;
   sshRemotes: CoreSshRemotes;
   engines: CoreEngines;
+  legacyImport: CoreLegacyImport;
 }
 
 /**
  * Services the server builds before the core and hands to it: the event
- * sink, the secret resolver for launches, and the active runs that make a
- * box `under_review`.
+ * sink, the secret resolver for launches, the active runs that make a box
+ * `under_review`, and what the engines report. The core calls them lazily,
+ * so they may depend on objects built after the core.
  */
 export interface CoreServices {
   events: EventSink;
@@ -230,10 +247,24 @@ export interface CoreServices {
   resolveSecrets(projectId: string): Promise<Record<string, string>>;
   /** The active run that holds a box's working tree, or `null`. */
   activeRunForBox(boxId: string): string | null;
+  /** The listeners the engine in `container` last reported. Default: none. */
+  listeners?(container: string): Listener[];
+  /** The engine in `container` as the server last saw it, or `null`. */
+  engineInfo?(container: string): EngineInfo | null;
 }
 
-/** The signature W1's `src/core.ts` exports as `createCore`. */
-export type CoreFactory = (options: {
+export interface CoreFactoryOptions {
+  /** The host user's home directory; every `~` path resolves against it. */
   home: string;
   services: CoreServices;
-}) => Promise<Core & { close?(): Promise<void> }>;
+  /** The engine version this server expects in the image and in each container. */
+  engineVersion: string;
+  /** The image build context, the repository's `image/` directory. */
+  imageContext: string;
+  log?(message: string): void;
+}
+
+/** The signature of `createCore` in `src/core.ts`. */
+export type CoreFactory = (
+  options: CoreFactoryOptions,
+) => Promise<Core & { close?(): Promise<void> }>;

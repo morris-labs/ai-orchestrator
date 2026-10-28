@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { EventSchema } from "@agentbox/contracts";
-import { createCore, type Core } from "../../src/core.js";
+import { createServerCore, type ServerCore } from "../../src/core.js";
 import type { CoreEventPayload } from "../../src/records/events.js";
 import type { HostEnv } from "../../src/records/env.js";
 import { MemoryDocker } from "../../src/docker/memory.js";
@@ -15,7 +15,7 @@ export interface Harness {
   home: string;
   env: HostEnv;
   docker: MemoryDocker;
-  core: Core;
+  core: ServerCore;
   events: CoreEventPayload[];
   /** A fresh directory under the temporary home. */
   dir(...parts: string[]): string;
@@ -46,7 +46,7 @@ export function makeHarness(options: { image?: boolean; engineLabel?: string } =
     });
   }
   let nextPort = 41000;
-  const core = createCore({
+  const core = createServerCore({
     engineVersion: ENGINE_VERSION,
     env,
     dbPath: ":memory:",

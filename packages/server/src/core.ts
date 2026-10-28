@@ -1,9 +1,13 @@
-// The composition root of the server core. W2 builds one `Core` with
-// `createCore()` and serves the API on top of it; the core never listens on a
-// port itself.
+// The composition root of the server core. `createServerCore()` builds the
+// core modules over one database and Docker client. `createCore()` wraps that
+// in the `Core` interface the API serves (`src/api/core-interface.ts`), wires
+// the server's services in as hooks, and starts polling. The core never
+// listens on a port itself.
 import fs from "node:fs";
 import path from "node:path";
 import type { ImageStatus, Platform } from "@agentbox/contracts";
+import { apiCoreOf, relayEvents, wireHooks } from "./api/core-adapter.js";
+import type { Core as ApiCore, CoreFactoryOptions } from "./api/core-interface.js";
 import { BoxService } from "./boxes/service.js";
 import { ContainerMonitor } from "./boxes/monitor.js";
 import * as conversations from "./catalog/conversations.js";
@@ -64,7 +68,7 @@ export interface CoreStartOptions {
 /** The image routes: status, build, and the command line a build job shows. */
 export interface ImageApi {
   status(): Promise<ImageStatus>;
-  /** The build options and command line for a kind, for W2's job label. */
+  /** The build options and command line for a kind, for a job label. */
   plan(kind: ImageBuildKind): { options: ReturnType<typeof imageBuildOptions>; command: string };
   /** Builds the image, streaming output to `onOutput`. */
   build(
@@ -73,7 +77,7 @@ export interface ImageApi {
   ): Promise<{ ok: boolean; error?: string }>;
 }
 
-export interface Core {
+export interface ServerCore {
   readonly env: HostEnv;
   readonly db: Repositories;
   readonly docker: DockerClient;
@@ -93,11 +97,14 @@ export interface Core {
   readonly models: ModelCatalog;
   readonly monitor: ContainerMonitor;
   readonly image: ImageApi;
-  readonly legacyImport: { needed(): boolean; run(force?: boolean): ImportReport };
+  readonly legacyImport: {
+    needed(): boolean;
+    run(force?: boolean, dryRun?: boolean): ImportReport;
+  };
   /** The engine version this server expects. */
   readonly engineVersion: string;
   hooks(): CoreHooks;
-  /** Replaces some or all of the hooks W2 provides. */
+  /** Replaces some or all of the hooks; `createCore()` wires the server's services in. */
   setHooks(hooks: Partial<CoreHooks>): void;
   /** Seeds settings, runs the one-time import, and starts polling and watching. */
   start(options?: CoreStartOptions): Promise<{ imported: ImportReport | null }>;
@@ -105,7 +112,7 @@ export interface Core {
   close(): void;
 }
 
-export function createCore(options: CoreOptions): Core {
+export function createServerCore(options: CoreOptions): ServerCore {
   const env = options.env ?? defaultHostEnv();
   const dbPath = options.dbPath ?? homePaths(env).database;
   const db = repositories(openDatabase(dbPath));
@@ -176,7 +183,7 @@ export function createCore(options: CoreOptions): Core {
     },
   };
 
-  const core: Core = {
+  const core: ServerCore = {
     env,
     db,
     docker,
@@ -198,7 +205,7 @@ export function createCore(options: CoreOptions): Core {
     image,
     legacyImport: {
       needed: () => needsImport(env, db),
-      run: (force = false) => runImport({ env, repos: db, force }),
+      run: (force = false, dryRun = false) => runImport({ env, repos: db, force, dryRun }),
     },
     engineVersion: options.engineVersion,
     hooks: getHooks,
@@ -225,6 +232,56 @@ export function createCore(options: CoreOptions): Core {
     },
   };
   return core;
+}
+
+/**
+ * Builds the API's `Core` over the core modules: opens the database under
+ * `home`, connects to Docker on its local socket, installs the server's
+ * services as hooks, relays the core's events, and starts the import,
+ * polling, and the session watcher. A Docker daemon that does not answer is
+ * logged and polled again; the server starts anyway.
+ */
+export async function createCore(
+  options: CoreFactoryOptions & {
+    /** Replaces the Docker client; tests pass the in-memory double. */
+    docker?: DockerClient;
+    start?: CoreStartOptions;
+  },
+): Promise<ApiCore & { server: ServerCore; close(): Promise<void> }> {
+  const log = options.log ?? ((m: string) => console.error(m));
+  const dockerode = new DockerodeClient();
+  const env: HostEnv = { ...defaultHostEnv(), home: options.home };
+  const server = createServerCore({
+    engineVersion: options.engineVersion,
+    env,
+    docker: options.docker ?? dockerode,
+    imageContext: options.imageContext,
+  });
+  wireHooks(server, options.services);
+  const stopRelay = relayEvents(server, options.services);
+  try {
+    if (!(await server.docker.ping())) {
+      log("Docker is unreachable. Box actions fail until the daemon answers; polling continues.");
+    }
+    const { imported } = await server.start(options.start);
+    if (imported) {
+      log(
+        `Imported ${imported.projects.imported.length} project(s) and ${imported.boxes.imported.length} box(es) from ${imported.source}.`,
+      );
+    }
+  } catch (err) {
+    stopRelay();
+    server.close();
+    throw err;
+  }
+  return {
+    ...apiCoreOf(server, dockerode.docker),
+    server,
+    async close() {
+      stopRelay();
+      server.close();
+    },
+  };
 }
 
 export type { Platform };

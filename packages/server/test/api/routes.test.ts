@@ -39,6 +39,13 @@ const cases: Case[] = [
   { key: "projects.restartContainer", method: "POST", url: `${P}/container/restart`, status: 200 },
   { key: "projects.policy.get", method: "GET", url: `${P}/policy`, status: 200 },
   { key: "projects.policy.put", method: "PUT", url: `${P}/policy`, body: policy, status: 200 },
+  { key: "projects.repos.list", method: "GET", url: `${P}/repos`, status: 200 },
+  {
+    key: "projects.repos.refs",
+    method: "GET",
+    url: `${P}/repos/refs?repo=/work/example-app`,
+    status: 200,
+  },
   {
     key: "boxes.list",
     method: "GET",
@@ -70,7 +77,7 @@ const cases: Case[] = [
     status: 200,
     setup: (h) => h.core.views.set(box.id, { ...h.core.views.get(box.id)!, status: "stopped" }),
   },
-  { key: "boxes.purge", method: "POST", url: `${B}/purge`, status: 200 },
+  { key: "boxes.purge", method: "POST", url: `${B}/purge`, body: { dryRun: true }, status: 200 },
   { key: "boxes.move", method: "POST", url: `${B}/move`, body: { newDir: "/work/b" }, status: 200 },
   {
     key: "boxes.relink",
@@ -85,6 +92,12 @@ const cases: Case[] = [
     url: `${B}/convert-to-worktree`,
     body: {},
     status: 202,
+  },
+  {
+    key: "boxes.convertToWorktree.plan",
+    method: "POST",
+    url: `${B}/convert-to-worktree/plan`,
+    status: 200,
   },
   {
     key: "boxes.attachCommand",
@@ -138,6 +151,8 @@ const cases: Case[] = [
   { key: "models.list", method: "GET", url: `${V1}/models`, status: 200 },
   { key: "models.rescan", method: "POST", url: `${V1}/models/rescan`, status: 409 },
   { key: "image.status", method: "GET", url: `${V1}/image`, status: 200 },
+  { key: "import.run", method: "POST", url: `${V1}/import`, body: { dryRun: true }, status: 200 },
+  { key: "fs.dirs", method: "GET", url: `${V1}/fs/dirs`, status: 200 },
   {
     key: "image.build",
     method: "POST",
@@ -180,7 +195,19 @@ const cases: Case[] = [
     status: 200,
   },
   { key: "sshRemotes.delete", method: "DELETE", url: `${V1}/ssh-remotes/staging`, status: 200 },
-  { key: "sshRemotes.test", method: "POST", url: `${V1}/ssh-remotes/staging/test`, status: 200 },
+  {
+    key: "sshRemotes.test",
+    method: "POST",
+    url: `${V1}/ssh-remotes/test`,
+    body: sshRemote,
+    status: 200,
+  },
+  {
+    key: "sshRemotes.testSaved",
+    method: "POST",
+    url: `${V1}/ssh-remotes/staging/test`,
+    status: 200,
+  },
   {
     key: "sshRemotes.reconnect",
     method: "POST",
@@ -320,7 +347,7 @@ describe("authentication", () => {
   it("refuses a request without the token", async () => {
     const res = await h.server.app.inject({ method: "GET", url: `${V1}/projects` });
     expect(res.statusCode).toBe(401);
-    expect(res.json().error.code).toBe("validation");
+    expect(res.json().error.code).toBe("unauthorized");
   });
 
   it("refuses a wrong token and a query token on an HTTP route", async () => {
@@ -526,6 +553,70 @@ describe("ssh remotes", () => {
       remote: { name: sshRemote.name },
       referencedBy: [box.id],
       tunnelUp: true,
+    });
+  });
+});
+
+describe("C2 routes", () => {
+  const post = (url: string, payload?: object) =>
+    h.server.app.inject({ method: "POST", url, headers: AUTH, ...(payload ? { payload } : {}) });
+
+  it("passes force and dryRun through, with both bodies optional", async () => {
+    h.core.views.set(box.id, { ...h.core.views.get(box.id)!, status: "stopped" });
+    expect((await post(`${B}/start`, { force: true })).statusCode).toBe(200);
+    expect(h.core.calls).toContain(`start:force:${box.id}`);
+    expect((await post(`${B}/purge`)).json()).toMatchObject({ dryRun: false });
+    expect((await post(`${B}/purge`, { dryRun: true })).json()).toMatchObject({ dryRun: true });
+  });
+
+  it("proxies repository routes to the project's engine", async () => {
+    const res = await h.server.app.inject({
+      method: "GET",
+      url: `${P}/repos/refs?repo=/work/example-app`,
+      headers: AUTH,
+    });
+    expect(res.json().localBranches).toEqual(["/work/example-app"]);
+    expect(h.engine.calls.at(-1)).toMatchObject({
+      key: "engine.repos.refs",
+      input: { query: { repo: "/work/example-app" } },
+    });
+    const missing = await h.server.app.inject({
+      method: "GET",
+      url: `${V1}/projects/nope/repos`,
+      headers: AUTH,
+    });
+    expect(missing.statusCode).toBe(404);
+  });
+
+  it("lists home's subdirectories and refuses relative paths", async () => {
+    const res = await h.server.app.inject({
+      method: "GET",
+      url: `${V1}/fs/dirs`,
+      headers: AUTH,
+    });
+    expect(res.json()).toMatchObject({ path: h.deps.home, entries: [] });
+    const relative = await h.server.app.inject({
+      method: "GET",
+      url: `${V1}/fs/dirs?path=work`,
+      headers: AUTH,
+    });
+    expect(relative.statusCode).toBe(400);
+  });
+
+  it("tests an unsaved remote from the body", async () => {
+    const res = await post(`${V1}/ssh-remotes/test`, { ...sshRemote, name: "unsaved" });
+    expect(res.statusCode).toBe(200);
+    expect((await post(`${V1}/ssh-remotes/test`)).statusCode).toBe(400);
+  });
+
+  it("runs the import and previews conversion", async () => {
+    expect((await post(`${V1}/import`, { dryRun: false })).json()).toMatchObject({
+      dryRun: false,
+      boxes: 2,
+    });
+    expect(h.core.calls).toContain("import:false");
+    expect((await post(`${B}/convert-to-worktree/plan`)).json()).toMatchObject({
+      buildOutputBytes: 0,
     });
   });
 });

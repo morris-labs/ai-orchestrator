@@ -116,7 +116,8 @@ export function createFakeCore(): FakeCore {
         },
         restartRequired: patch.sessionUuid !== undefined,
       }),
-      start: async (id) => {
+      start: async (id, options) => {
+        if (options?.force) record(`start:force:${id}`);
         if (view(id).status === "running") throw new ApiFailure("box_running", "Already running.");
         return { ...view(id), status: "starting" };
       },
@@ -127,10 +128,18 @@ export function createFakeCore(): FakeCore {
         views.delete(id);
         return { removed: true, worktree: "none", reason: null };
       },
-      purge: async (id) => ({ removedRecords: [id], removedTranscriptDirs: [] }),
+      purge: async (id, options) => ({
+        dryRun: options?.dryRun ?? false,
+        removedRecords: [id],
+        removedTranscriptDirs: [],
+      }),
       move: async (id) => ({ movedBoxes: [id] }),
       relink: async (id, targetDir) => ({ ...view(id), box: { ...view(id).box, targetDir } }),
       validateConvertToWorktree: async (id) => void view(id),
+      planConvertToWorktree: async (id) => {
+        record(`plan:${view(id).box.id}`);
+        return { report: "Worktree:    /work/example-app/.worktrees/emails", buildOutputBytes: 0 };
+      },
       convertToWorktree: async (id) => ({
         box: view(id).box,
         worktree: "/work/example-app/.worktrees/emails",
@@ -217,6 +226,19 @@ export function createFakeCore(): FakeCore {
       },
     },
     engines: { list: async () => core.endpoints },
+    legacyImport: {
+      run: async ({ dryRun }) => {
+        record(`import:${dryRun}`);
+        return {
+          dryRun,
+          projects: 1,
+          boxes: 2,
+          sshRemotes: 0,
+          settingsApplied: true,
+          warnings: [],
+        };
+      },
+    },
   };
   return core;
 }

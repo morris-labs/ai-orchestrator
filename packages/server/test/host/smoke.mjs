@@ -12,7 +12,7 @@ import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import {
   buildLaunchSpec,
-  createCore,
+  createServerCore,
   defaultHostEnv,
   liveSessions,
   projectsSymlinkTarget,
@@ -31,7 +31,12 @@ const root = path.join(tmp, "project");
 fs.mkdirSync(root);
 const engineVersion = `hosttest-${Date.now()}`;
 const testImage = "agentbox-hosttest";
-const core = createCore({ engineVersion, env, dbPath: path.join(tmp, "agentbox.db"), graceSec: 5 });
+const core = createServerCore({
+  engineVersion,
+  env,
+  dbPath: path.join(tmp, "agentbox.db"),
+  graceSec: 5,
+});
 
 function step(name) {
   console.log(`\n== ${name}`);
@@ -102,6 +107,7 @@ try {
     { hostIp: "127.0.0.1", hostPort: String(endpoint.hostPort) },
   ]);
   assert.ok(inspect.env.includes("IS_SANDBOX=1"));
+  assert.ok(inspect.env.includes("AGENTBOX_STATE_DIR=/run/claude-box"));
   assert.ok(inspect.env.includes("AGENTBOX_HOSTTEST=1"));
   assert.ok(inspect.binds.includes(`${root}:${root}`));
 

@@ -55,6 +55,8 @@ export interface ApiRuns {
 
 export interface ApiDeps {
   core: Core;
+  /** The host user's home directory; `fs.dirs` lists it when no path is given. */
+  home: string;
   token: string;
   version: string;
   startedAt: Date;

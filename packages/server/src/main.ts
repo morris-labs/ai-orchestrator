@@ -7,8 +7,8 @@ import { readFileSync, realpathSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import type { CoreFactory } from "./api/core-interface.js";
 import { startApp } from "./api/app.js";
+import { createCore } from "./core.js";
 import { NodeProcessRunner } from "./jobs/process.js";
 import { installService } from "./systemd/service.js";
 
@@ -27,17 +27,18 @@ export function execStartLine(): string {
   return `${process.execPath} ${fileURLToPath(import.meta.url)}`;
 }
 
-async function loadCoreFactory(): Promise<CoreFactory> {
-  // W1's `src/core.ts`; the specifier is a variable so this file builds
-  // before that module exists.
-  const specifier = "./core.js";
-  const mod = (await import(specifier)) as { createCore?: CoreFactory };
-  if (typeof mod.createCore !== "function") throw new Error("core.js does not export createCore.");
-  return mod.createCore;
+/**
+ * The home directory the server works in: `AGENTBOX_HOME` when set, so a
+ * test or a second instance can run against a scratch directory, else the
+ * user's home directory.
+ */
+export function serverHome(env: NodeJS.ProcessEnv = process.env): string {
+  const override = env.AGENTBOX_HOME;
+  return override ? path.resolve(override) : os.homedir();
 }
 
 export async function main(argv: string[]): Promise<number> {
-  const home = os.homedir();
+  const home = serverHome();
   const [command] = argv;
   if (command === "install-service") {
     const { path: unit } = await installService({
@@ -53,7 +54,13 @@ export async function main(argv: string[]): Promise<number> {
     process.stdout.write(
       "Usage: agentbox-server [install-service]\n\n" +
         "Without a command, starts the Agent Box server on 127.0.0.1.\n" +
-        "install-service writes ~/.config/systemd/user/agentbox-server.service and enables it.\n",
+        "install-service writes ~/.config/systemd/user/agentbox-server.service and enables it.\n\n" +
+        "Environment:\n" +
+        "  AGENTBOX_HOME           The home directory to use in place of yours.\n" +
+        "  AGENTBOX_ENGINE_VERSION The engine version to expect. Default: this server's version.\n" +
+        "  AGENTBOX_IMAGE_CONTEXT  The image build context. Default: image/ in the repository.\n" +
+        "  AGENTBOX_BOXES_DIR      The built Boxes app to serve at /boxes/.\n" +
+        "  AGENTBOX_REVIEW_DIR     The built Review app to serve at /review/.\n",
     );
     return 0;
   }
@@ -66,7 +73,7 @@ export async function main(argv: string[]): Promise<number> {
   const repoRoot = path.resolve(here, "..", "..", "..");
   const app = await startApp({
     home,
-    createCore: await loadCoreFactory(),
+    createCore,
     version,
     expectedEngineVersion: process.env.AGENTBOX_ENGINE_VERSION ?? version,
     execStart: execStartLine(),

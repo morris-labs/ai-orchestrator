@@ -13,6 +13,7 @@ import type { z } from "zod";
 import { hasBearer, sessionCookieHeader } from "./auth.js";
 import type { ApiDeps, ApiEngine } from "./deps.js";
 import { ApiFailure } from "./errors.js";
+import { listDirs } from "./fs-dirs.js";
 import { ulid } from "./ulid.js";
 import { commandLine } from "../jobs/process.js";
 import { externalAttachArgv } from "../terminals/attach.js";
@@ -125,12 +126,7 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
     }),
     "auth.session": async ({ request, reply }) => {
       if (!hasBearer({ authorization: request.headers.authorization }, deps.token)) {
-        throw new ApiFailure(
-          "validation",
-          "Setting the session cookie needs the bearer header.",
-          undefined,
-          401,
-        );
+        throw new ApiFailure("unauthorized", "Setting the session cookie needs the bearer header.");
       }
       reply.header("set-cookie", sessionCookieHeader(deps.token));
       return { ok: true };
@@ -146,6 +142,16 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
     "projects.policy.get": async ({ params }) => core.projects.getPolicy(params.projectId),
     "projects.policy.put": async ({ params, body }) =>
       core.projects.putPolicy(params.projectId, body),
+    "projects.repos.list": async ({ params }) => {
+      await core.projects.get(params.projectId);
+      return deps.engines.requireProject(params.projectId).call("engine.repos.list") as never;
+    },
+    "projects.repos.refs": async ({ params, query }) => {
+      await core.projects.get(params.projectId);
+      return deps.engines
+        .requireProject(params.projectId)
+        .call("engine.repos.refs", { query }) as never;
+    },
 
     // Boxes
     "boxes.list": async ({ query }) => ({ boxes: await core.boxes.list(query) }),
@@ -162,12 +168,14 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
     },
     "boxes.get": async ({ params }) => core.boxes.get(params.boxId),
     "boxes.update": async ({ params, body }) => core.boxes.update(params.boxId, body),
-    "boxes.start": async ({ params }) => core.boxes.start(params.boxId),
+    "boxes.start": async ({ params, body }) =>
+      core.boxes.start(params.boxId, { force: body.force }),
     "boxes.stop": async ({ params }) => core.boxes.stop(params.boxId),
     "boxes.restart": async ({ params }) => core.boxes.restart(params.boxId),
     "boxes.remove": async ({ params, query }) =>
       core.boxes.remove(params.boxId, { removeWorktree: query.removeWorktree }),
-    "boxes.purge": async ({ params }) => core.boxes.purge(params.boxId),
+    "boxes.purge": async ({ params, body }) =>
+      core.boxes.purge(params.boxId, { dryRun: body.dryRun }),
     "boxes.move": async ({ params, body }) => core.boxes.move(params.boxId, body.newDir),
     "boxes.relink": async ({ params, body }) => core.boxes.relink(params.boxId, body.targetDir),
     "boxes.convertToWorktree": async ({ params, body }) => {
@@ -188,6 +196,8 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
         },
       );
     },
+    "boxes.convertToWorktree.plan": async ({ params }) =>
+      core.boxes.planConvertToWorktree(params.boxId),
     "boxes.attachCommand": async ({ params, query }) => {
       const view = await core.boxes.get(params.boxId);
       return {
@@ -244,6 +254,8 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
       await core.settings.completeSetup(body);
       return { ok: true };
     },
+    "import.run": async ({ body }) => core.legacyImport.run({ dryRun: body.dryRun }),
+    "fs.dirs": async ({ query }) => listDirs(deps.home, query.path),
     "settings.get": async () => core.settings.get(),
     "settings.patch": async ({ body }) => core.settings.patch(body),
     "prompts.get": async () => ({
@@ -280,7 +292,8 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
       };
     },
     "sshRemotes.delete": async ({ params }) => core.sshRemotes.delete(params.name),
-    "sshRemotes.test": async ({ params, body }) =>
+    "sshRemotes.test": async ({ body }) => deps.ssh.test(body),
+    "sshRemotes.testSaved": async ({ params, body }) =>
       deps.ssh.test(body ?? (await core.sshRemotes.get(params.name))),
     "sshRemotes.reconnect": async ({ params }) => {
       const remote = await core.sshRemotes.get(params.name);

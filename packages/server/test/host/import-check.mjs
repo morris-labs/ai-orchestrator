@@ -8,7 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { boxWorkDir, projectContainerName } from "@agentbox/contracts";
 import {
-  createCore,
+  createServerCore,
   defaultHostEnv,
   projectIdForRoot,
   readKvFile,
@@ -29,7 +29,7 @@ for (const entry of ["known", "projects", "global", "ssh_remotes"]) {
 }
 
 const env = { ...real, home: tmp };
-const core = createCore({
+const core = createServerCore({
   engineVersion: "import-check",
   env,
   dbPath: path.join(tmp, "agentbox.db"),

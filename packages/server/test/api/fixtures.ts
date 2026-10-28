@@ -69,6 +69,7 @@ export function viewOf(b: Box, status: BoxView["status"] = "running"): BoxView {
     listeners: [],
     proxyUrls: [],
     sideSessions: [],
+    targetDirExists: true,
   };
 }
 

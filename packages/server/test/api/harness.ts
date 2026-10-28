@@ -1,4 +1,7 @@
 // Builds an API server over the fake core and fake services.
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { PassThrough, Duplex } from "node:stream";
 import type { EngineRouteKey, Job, RunState } from "@agentbox/contracts";
 import Database from "better-sqlite3";
@@ -89,6 +92,24 @@ export function defaultEngine(): FakeEngine {
     { container: CONTAINER, projectId: PROJECT_ID },
     {
       "engine.runs.list": () => ({ runs: [runState] }),
+      "engine.repos.list": () => ({
+        repos: [
+          {
+            path: "/work/example-app",
+            name: "example-app",
+            currentBranch: "main",
+            headSha: "0123456789abcdef0123456789abcdef01234567",
+            dirty: false,
+          },
+        ],
+      }),
+      "engine.repos.refs": (input) => ({
+        localBranches: [String((input.query as { repo: string }).repo)],
+        remoteBranches: [],
+        tags: [],
+        recentCommits: [],
+        pullRequests: [],
+      }),
       "engine.runs.preview": () => ({
         baseSha: "0123456789abcdef",
         tipSha: "89abcdef",
@@ -191,6 +212,7 @@ export async function createHarness(overrides: { proxy?: DevServerProxy } = {}):
     });
   const deps: ApiDeps = {
     core,
+    home: fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "api-home-"))),
     token: TOKEN,
     version: "4.0.0-dev",
     startedAt: new Date(),
@@ -220,7 +242,7 @@ export async function createHarness(overrides: { proxy?: DevServerProxy } = {}):
           spendUsd: null,
           ceiling: { kind: "utilization", window: "5h", max: 0.6 },
           resetAt: null,
-          source: "rate_limit_event",
+          sampleSource: "rate_limit_event",
           time: T1,
         },
       ],

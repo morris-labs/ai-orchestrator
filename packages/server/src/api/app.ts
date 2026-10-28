@@ -2,7 +2,7 @@
 // engine supervisor, the scheduler, and the HTTP server with the proxy.
 import http from "node:http";
 import os from "node:os";
-import type { AgentBoxEvent, Box } from "@agentbox/contracts";
+import type { AgentBoxEvent, Box, Listener } from "@agentbox/contracts";
 import type { Core, CoreFactory, CoreServices } from "./core-interface.js";
 import type { ApiDeps } from "./deps.js";
 import { createApiServer, type ApiServer } from "./server.js";
@@ -70,7 +70,17 @@ export async function startApp(options: AppOptions): Promise<App> {
     },
     activeRunForBox: (boxId) => runs?.activeRunForBox(boxId) ?? null,
   };
-  const core = await options.createCore({ home: options.home, services });
+  const ports = new Map<string, Listener[]>();
+  let engineSupervisor: EngineSupervisor | null = null;
+  services.listeners = (container) => ports.get(container) ?? [];
+  services.engineInfo = (container) => engineSupervisor?.info(container) ?? null;
+  const core = await options.createCore({
+    home: options.home,
+    services,
+    engineVersion: options.expectedEngineVersion,
+    imageContext: options.imageContext,
+    log,
+  });
   const settings = () => core.settings.get();
 
   const hub = new EventHub({
@@ -149,6 +159,7 @@ export async function startApp(options: AppOptions): Promise<App> {
     log,
     intervalMs: options.engineIntervalMs,
   });
+  engineSupervisor = engines;
 
   let tunnelSync: NodeJS.Timeout | null = null;
   const syncTunnels = () => {
@@ -171,7 +182,11 @@ export async function startApp(options: AppOptions): Promise<App> {
     usage.ingest(event);
     notifier.ingest(event);
     if (event.type === "box.changed") syncTunnels();
-    if (event.type === "container.changed") void engines.refresh();
+    if (event.type === "container.changed") {
+      if (event.state !== "running") ports.delete(event.container);
+      void engines.refresh();
+    }
+    if (event.type === "ports.changed") ports.set(event.container, event.listeners);
   });
 
   const proxy = new DevServerProxy(
@@ -184,6 +199,7 @@ export async function startApp(options: AppOptions): Promise<App> {
 
   const api = await createApiServer({
     core,
+    home: options.home,
     token,
     version: options.version,
     startedAt: new Date(),
