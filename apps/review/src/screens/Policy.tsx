@@ -5,7 +5,7 @@ import { DEFAULT_POLICY } from "@agentbox/contracts";
 import { useEffect, useState } from "react";
 import { ErrorBanner, Field } from "../components/common.js";
 import { href, navigate } from "../state/router.js";
-import { useAppStore } from "../state/store.js";
+import { useApiClient } from "@agentbox/ui/hooks";
 import { commaList, lines, parsePolicyYaml, policyToYaml, validatePolicy } from "./policyModel.js";
 
 function CommandList({
@@ -107,7 +107,7 @@ function RuleList({
 }
 
 export function Policy({ projectId }: { projectId: string | null }) {
-  const { api } = useAppStore();
+  const api = useApiClient();
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [policy, setPolicy] = useState<PolicyFile>(DEFAULT_POLICY);
   const [meta, setMeta] = useState<{ path: string; exists: boolean } | null>(null);

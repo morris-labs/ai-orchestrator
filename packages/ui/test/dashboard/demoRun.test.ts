@@ -1,9 +1,9 @@
 import { EVENT_TYPES } from "@agentbox/contracts";
 import { describe, expect, it } from "vitest";
-import { loadDemoEvents } from "./helpers/stream.js";
+import { buildDemoEvents } from "../../src/testing/demoRun";
 
-describe("fixtures/demo-run.jsonl", () => {
-  const events = loadDemoEvents();
+describe("the demo stream", () => {
+  const events = buildDemoEvents();
 
   it("validates every line against the event schema", () => {
     expect(events.length).toBeGreaterThan(50);

@@ -11,7 +11,6 @@
     "build": "vite build && tsc -p tsconfig.electron.json",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.electron.json --noEmit",
     "test": "vitest run",
-    "fixtures": "node scripts/make-demo-run.ts",
     "electron": "electron .",
     "e2e": "playwright test -c e2e/playwright.config.ts",
     "e2e:setup": "node node_modules/electron/install.js"

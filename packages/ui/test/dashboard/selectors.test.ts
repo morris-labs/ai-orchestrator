@@ -23,12 +23,11 @@ import {
   usedNodes,
   agentRows,
   type AgentView,
-} from "@agentbox/ui/dashboard";
+} from "../../src/dashboard";
 import { describe, expect, it } from "vitest";
-import { RUN_ID } from "../../scripts/demoIds.js";
-import { loadDemoEvents } from "../helpers/stream.js";
+import { buildDemoEvents, DEMO_RUN_ID as RUN_ID } from "../../src/testing/demoRun";
 
-const state = replay(loadDemoEvents());
+const state = replay(buildDemoEvents());
 const run = state.runs[RUN_ID]!;
 
 describe("run health", () => {

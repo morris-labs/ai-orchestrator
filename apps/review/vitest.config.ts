@@ -10,11 +10,7 @@ export default defineConfig({
   test: {
     name: "review",
     environment: "jsdom",
-    include: [
-      "test/**/*.test.{ts,tsx}",
-      "electron/**/*.test.ts",
-      "../../packages/ui/src/dashboard/**/*.test.{ts,tsx}",
-    ],
+    include: ["test/**/*.test.{ts,tsx}", "electron/**/*.test.ts"],
     setupFiles: ["test/setup.ts"],
   },
 });

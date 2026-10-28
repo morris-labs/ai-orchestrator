@@ -15,7 +15,8 @@ import { VENDOR_LABELS, VENDORS } from "@agentbox/ui/dashboard";
 import { useEffect, useMemo, useState } from "react";
 import { DiffView, ErrorBanner, Field, shortId } from "../components/common.js";
 import { href, navigate } from "../state/router.js";
-import { useAppStore, useEvents, useStore } from "../state/store.js";
+import { useApiClient, useAnyEvent } from "@agentbox/ui/hooks";
+import { useStore } from "../state/store.js";
 import {
   NO_FILTER,
   canWaive,
@@ -38,7 +39,7 @@ function FindingDetail({
   run: RunState | null;
   onChanged: (f: Finding) => void;
 }) {
-  const { api } = useAppStore();
+  const api = useApiClient();
   const [detail, setDetail] = useState<Detail | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [reason, setReason] = useState("");
@@ -78,6 +79,12 @@ function FindingDetail({
         {f.groupId ?? "none"}
       </p>
       <dl className="facts">
+        {f.symbol ? (
+          <>
+            <dt>Symbol</dt>
+            <dd className="mono">{f.symbol}</dd>
+          </>
+        ) : null}
         <dt>Verdict</dt>
         <dd>
           {f.verdict}
@@ -166,7 +173,7 @@ function FindingDetail({
 }
 
 export function Findings({ runId, findingId }: { runId: string | null; findingId: string | null }) {
-  const { api } = useAppStore();
+  const api = useApiClient();
   const [runs, setRuns] = useState<RunState[]>([]);
   const [findings, setFindings] = useState<Finding[]>([]);
   const [filter, setFilter] = useState<FindingFilter>(NO_FILTER);
@@ -190,7 +197,7 @@ export function Findings({ runId, findingId }: { runId: string | null; findingId
       .then((r) => setFindings(r.findings), setError);
   }, [api, selectedRun, resets]);
 
-  useEvents((e) => {
+  useAnyEvent((e) => {
     if (e.type === "finding.changed" && e.runId === selectedRun) {
       setFindings((fs) => [...fs.filter((f) => f.id !== e.finding.id), e.finding]);
     }

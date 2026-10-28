@@ -1,21 +1,14 @@
-// Repository and ref lookups for the run launcher.
-//
-// The engine has `engine.repos.list` and `engine.repos.refs`, but the server
-// route table has no proxy for them yet (requested in the W7 report). This
-// adapter calls the proposed server routes,
-// `GET /api/v1/projects/:projectId/repos` and
-// `GET /api/v1/projects/:projectId/repos/refs?repo=`, validates the answers
-// with the engine's schemas, and falls back to the project's primary
-// repository with free-text refs when the server doesn't have them.
-import { RepoInfoSchema, RepoRefsSchema, type ProjectSummary } from "@agentbox/contracts";
-import { z } from "zod";
-import { ApiCallError, type ApiClient } from "./api.js";
+// Repository and ref lookups for the run launcher, through the server's
+// `projects.repos.list` and `projects.repos.refs` routes, which proxy the
+// project's engine. When the engine can't answer (its container isn't
+// running, or an older server lacks the routes), the launcher falls back to
+// the project's primary repository with free-text refs.
+import type { ProjectSummary, RepoInfoSchema, RepoRefsSchema } from "@agentbox/contracts";
+import { ApiRequestError, type ApiClient } from "@agentbox/ui/core";
+import type { z } from "zod";
 
 export type RepoInfo = z.infer<typeof RepoInfoSchema>;
 export type RepoRefs = z.infer<typeof RepoRefsSchema>;
-
-export const PROPOSED_REPOS_PATH = (projectId: string) =>
-  `/api/v1/projects/${encodeURIComponent(projectId)}/repos`;
 
 export const EMPTY_REFS: RepoRefs = {
   localBranches: [],
@@ -36,8 +29,10 @@ export function fallbackRepos(summary: ProjectSummary): RepoInfo[] {
   return [{ path, name: basename(path), currentBranch: null, headSha: null, dirty: false }];
 }
 
-function missingRoute(err: unknown): boolean {
-  return err instanceof ApiCallError && (err.status === 404 || err.status === 405);
+/** True for the failures the fallback covers: a missing route or an engine that isn't up. */
+export function engineUnavailable(err: unknown): boolean {
+  if (!(err instanceof ApiRequestError)) return false;
+  return [404, 405, 502, 503].includes(err.status) || err.code === "unreachable";
 }
 
 export async function listRepos(
@@ -45,11 +40,12 @@ export async function listRepos(
   summary: ProjectSummary,
 ): Promise<{ repos: RepoInfo[]; fromServer: boolean }> {
   try {
-    const json = await api.raw("GET", PROPOSED_REPOS_PATH(summary.project.id));
-    const parsed = z.object({ repos: z.array(RepoInfoSchema) }).parse(json);
-    return { repos: parsed.repos, fromServer: true };
+    const { repos } = await api.call("projects.repos.list", {
+      params: { projectId: summary.project.id },
+    });
+    return { repos, fromServer: true };
   } catch (err) {
-    if (missingRoute(err)) return { repos: fallbackRepos(summary), fromServer: false };
+    if (engineUnavailable(err)) return { repos: fallbackRepos(summary), fromServer: false };
     throw err;
   }
 }
@@ -60,12 +56,10 @@ export async function listRefs(
   repo: string,
 ): Promise<{ refs: RepoRefs; fromServer: boolean }> {
   try {
-    const json = await api.raw("GET", `${PROPOSED_REPOS_PATH(projectId)}/refs`, {
-      query: { repo },
-    });
-    return { refs: RepoRefsSchema.parse(json), fromServer: true };
+    const refs = await api.call("projects.repos.refs", { params: { projectId }, query: { repo } });
+    return { refs, fromServer: true };
   } catch (err) {
-    if (missingRoute(err)) return { refs: EMPTY_REFS, fromServer: false };
+    if (engineUnavailable(err)) return { refs: EMPTY_REFS, fromServer: false };
     throw err;
   }
 }

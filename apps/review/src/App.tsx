@@ -1,7 +1,7 @@
 // The app shell: navigation, the status line, and the routed screens.
 import { Dashboard, dashboardCss, themeCss } from "@agentbox/ui/dashboard";
 import { useEffect } from "react";
-import { bridge } from "./lib/api.js";
+import { bridge } from "./lib/bridge.js";
 import { Findings } from "./screens/Findings.js";
 import { Launcher } from "./screens/Launcher.js";
 import { Policy } from "./screens/Policy.js";

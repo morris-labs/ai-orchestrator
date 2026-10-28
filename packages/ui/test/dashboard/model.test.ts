@@ -7,12 +7,15 @@ import {
   replay,
   seriesKey,
   upsertRound,
-} from "@agentbox/ui/dashboard";
+} from "../../src/dashboard";
 import { describe, expect, it } from "vitest";
-import { CONTAINER, RUN_ID } from "../../scripts/demoIds.js";
-import { loadDemoEvents } from "../helpers/stream.js";
+import {
+  buildDemoEvents,
+  DEMO_CONTAINER as CONTAINER,
+  DEMO_RUN_ID as RUN_ID,
+} from "../../src/testing/demoRun";
 
-const events = loadDemoEvents();
+const events = buildDemoEvents();
 const state = replay(events);
 
 describe("applyEvent over the demo stream", () => {
@@ -142,6 +145,33 @@ describe("applyEvent edge cases", () => {
   });
 });
 
+describe("usage.sample events", () => {
+  it("keeps the stream source out of the series and the sample source in it", () => {
+    const event = {
+      id: "e-1",
+      time: "2026-10-28T10:00:00.000Z",
+      source: "engine:claude-agent-proj-x",
+      streamId: "s",
+      seq: 1,
+      sourceSeq: 1,
+      type: "usage.sample",
+      vendor: "codex",
+      account: "a",
+      window: "5h",
+      utilization: 0.3,
+      spendUsd: null,
+      ceiling: { kind: "utilization", window: "5h", max: 0.7 },
+      resetAt: null,
+      sampleSource: "codex_session",
+    } as AgentBoxEvent;
+    const s = applyEvent(emptyDashboard(), event);
+    const [point] = s.usage[seriesKey("codex", "a", "5h")]!;
+    expect(point).toMatchObject({ sampleSource: "codex_session", time: event.time });
+    expect(point).not.toHaveProperty("source");
+    expect(point).not.toHaveProperty("streamId");
+  });
+});
+
 describe("addUsageSamples", () => {
   const sample = (time: string, utilization: number): TimedUsageSample => ({
     vendor: "claude",
@@ -151,7 +181,7 @@ describe("addUsageSamples", () => {
     spendUsd: null,
     ceiling: { kind: "utilization", window: "5h", max: 0.6 },
     resetAt: null,
-    source: "rate_limit_event",
+    sampleSource: "rate_limit_event",
     time,
   });
 

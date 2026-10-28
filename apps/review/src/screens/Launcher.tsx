@@ -5,13 +5,13 @@ import { useEffect, useMemo, useState } from "react";
 import { ErrorBanner, Field } from "../components/common.js";
 import { listRefs, listRepos, EMPTY_REFS, type RepoInfo, type RepoRefs } from "../lib/repos.js";
 import { href, navigate } from "../state/router.js";
-import { useAppStore } from "../state/store.js";
+import { useApiClient } from "@agentbox/ui/hooks";
 import { DEFAULT_FORM, buildRunRequest, formFromBox, type LauncherForm } from "./launcherModel.js";
 
 type Preview = RouteOf<"runs.preview">["response"];
 
 export function Launcher({ prefill }: { prefill: { project: string | null; box: string | null } }) {
-  const { api } = useAppStore();
+  const api = useApiClient();
   const [form, setForm] = useState<LauncherForm>({
     ...DEFAULT_FORM,
     projectId: prefill.project ?? "",

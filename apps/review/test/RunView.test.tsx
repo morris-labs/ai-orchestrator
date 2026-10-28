@@ -2,9 +2,8 @@ import type { Decision, Finding, RunState } from "@agentbox/contracts";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { DecisionPanel, RunView, StageStepper } from "../src/screens/RunView.js";
-import { RUN_ID, demoFindings, demoRounds, lastRun } from "./helpers/data.js";
+import { RUN_ID, demoFindings, demoRounds, lastRun, loadDemoEvents } from "./helpers/data.js";
 import { renderWithStore } from "./helpers/render.js";
-import { loadDemoEvents } from "./helpers/stream.js";
 
 const findings = demoFindings();
 const byId = (id: string) => findings.find((f) => f.id === id)!;

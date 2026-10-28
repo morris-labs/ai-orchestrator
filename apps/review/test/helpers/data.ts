@@ -2,12 +2,20 @@
 // the two stay consistent.
 import type { Finding, ProjectSummary, RoundSummary, RunState } from "@agentbox/contracts";
 import { defaultConfig } from "@agentbox/contracts";
-import { BOX, CONTAINER, PROJECT, RUN_ID } from "../../scripts/demoIds.js";
-import { loadDemoEvents } from "./stream.js";
+import {
+  DEMO_BOX as BOX,
+  DEMO_CONTAINER as CONTAINER,
+  DEMO_PROJECT as PROJECT,
+  DEMO_RUN_ID as RUN_ID,
+  buildDemoEvents,
+} from "@agentbox/ui/testing";
 
 export { BOX, CONTAINER, PROJECT, RUN_ID };
 
-const events = loadDemoEvents();
+/** The scripted demo stream from `@agentbox/ui/testing`. */
+export const loadDemoEvents = buildDemoEvents;
+
+const events = buildDemoEvents();
 
 export function lastRun(): RunState {
   const runs = events.filter((e) => e.type === "run.changed");
@@ -67,5 +75,6 @@ export function boxView() {
     listeners: [],
     proxyUrls: [],
     sideSessions: [],
+    targetDirExists: true,
   };
 }

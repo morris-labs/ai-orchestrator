@@ -301,10 +301,24 @@ export function applyEvent(prev: DashboardState, event: AgentBoxEvent): Dashboar
         findings: { ...r.findings, [event.finding.id]: event.finding },
       }));
     case "usage.sample": {
-      // The usage sample's own `source` (where the reading came from) replaces
-      // the event's `source` field in this event type, so it passes through.
-      const { id: _id, type: _t, streamId: _sid, seq: _seq, sourceSeq: _ss, ...rest } = event;
-      return addUsageSamples(state, [rest]);
+      // The event's `source` is the stream source; the reading's own origin
+      // is `sampleSource`. Copy the sample fields by name so that no
+      // envelope field reaches the series.
+      const { vendor, account, window, utilization, spendUsd, ceiling, resetAt, sampleSource } =
+        event;
+      return addUsageSamples(state, [
+        {
+          vendor,
+          account,
+          window,
+          utilization,
+          spendUsd,
+          ceiling,
+          resetAt,
+          sampleSource,
+          time: event.time,
+        },
+      ]);
     }
     case "ceiling.crossed": {
       const key = seriesKey(event.vendor, event.account, event.window);

@@ -2,7 +2,7 @@ import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { Launcher } from "../src/screens/Launcher.js";
 import { BOX, PROJECT, boxView, lastRun, project } from "./helpers/data.js";
-import { MockError } from "./helpers/mockServer.js";
+import { FakeApiError } from "@agentbox/ui/testing";
 import { renderWithStore } from "./helpers/render.js";
 
 const preview = {
@@ -27,6 +27,10 @@ const preview = {
 function handlers() {
   return {
     "projects.list": () => ({ projects: [project] }),
+    // The engine isn't up: the launcher falls back to the primary repository.
+    "projects.repos.list": () => {
+      throw new FakeApiError("not_found", "The project's engine isn't running.", 404);
+    },
     "boxes.get": () => boxView(),
     "runs.preview": () => preview,
     "runs.create": () => lastRun(),
@@ -77,7 +81,7 @@ describe("Launcher", () => {
       <Launcher prefill={{ project: PROJECT, box: null }} />,
       handlers(),
     );
-    server.raw[`GET /api/v1/projects/${PROJECT}/repos`] = () => ({
+    server.on("projects.repos.list", () => ({
       repos: [
         {
           path: "/home/user/src/example-app",
@@ -87,8 +91,8 @@ describe("Launcher", () => {
           dirty: false,
         },
       ],
-    });
-    server.raw[`GET /api/v1/projects/${PROJECT}/repos/refs`] = () => ({
+    }));
+    server.on("projects.repos.refs", () => ({
       localBranches: ["feature/x", "main"],
       remoteBranches: ["origin/main", "origin/feature/shared"],
       tags: ["v1.0.0"],
@@ -104,7 +108,7 @@ describe("Launcher", () => {
           url: "https://github.com/o/r/pull/7",
         },
       ],
-    });
+    }));
     await waitFor(() => expect(screen.getByLabelText("Tip branch")).toHaveValue("feature/x"));
     await screen.findByRole("option", { name: "v1.0.0" });
     fireEvent.change(screen.getByLabelText("Base"), { target: { value: "origin/feature/shared" } });
@@ -123,7 +127,7 @@ describe("Launcher", () => {
     const h = {
       ...handlers(),
       "runs.create": () => {
-        throw new MockError(409, "dirty_tree", "The working tree has uncommitted changes.");
+        throw new FakeApiError("dirty_tree", "The working tree has uncommitted changes.", 409);
       },
     };
     renderWithStore(<Launcher prefill={{ project: null, box: null }} />, h);

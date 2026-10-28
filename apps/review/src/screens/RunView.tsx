@@ -24,7 +24,8 @@ import {
 import { useCallback, useEffect, useState } from "react";
 import { ErrorBanner, RunStatusBadge, shortId } from "../components/common.js";
 import { href } from "../state/router.js";
-import { useAppStore, useEvents, useStore } from "../state/store.js";
+import { useApiClient, useAnyEvent } from "@agentbox/ui/hooks";
+import { useStore } from "../state/store.js";
 import { decisionView, oscillationPairs, runControls, stepStates } from "./runModel.js";
 
 export function StageStepper({ run }: { run: Pick<RunState, "stage" | "status" | "request"> }) {
@@ -261,7 +262,7 @@ function RoleEditor({
 }
 
 export function RunView({ runId }: { runId: string }) {
-  const { api } = useAppStore();
+  const api = useApiClient();
   const [run, setRun] = useState<RunState | null>(null);
   const [rounds, setRounds] = useState<RoundSummary[]>([]);
   const [decisionFindings, setDecisionFindings] = useState<Finding[]>([]);
@@ -289,7 +290,7 @@ export function RunView({ runId }: { runId: string }) {
     void load();
   }, [load, resets]);
 
-  useEvents((e) => {
+  useAnyEvent((e) => {
     if (e.type === "run.changed" && e.run.id === runId) {
       setRun(e.run);
       const summary = e.roundSummary;
@@ -516,14 +517,14 @@ export function RunView({ runId }: { runId: string }) {
 }
 
 export function RunList() {
-  const { api } = useAppStore();
+  const api = useApiClient();
   const [runs, setRuns] = useState<RunState[]>([]);
   const [error, setError] = useState<unknown>(null);
   const resets = useStore((s) => s.resets);
   useEffect(() => {
     api.call("runs.list").then((r) => setRuns(r.runs), setError);
   }, [api, resets]);
-  useEvents((e) => {
+  useAnyEvent((e) => {
     if (e.type === "run.changed") setRuns((rs) => [e.run, ...rs.filter((r) => r.id !== e.run.id)]);
   });
   const sorted = [...runs].sort((a, b) => b.createdAt.localeCompare(a.createdAt));

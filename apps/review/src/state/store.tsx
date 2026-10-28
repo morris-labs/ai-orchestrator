@@ -1,7 +1,11 @@
 // The app's live state: the dashboard model fed by the event stream, the
-// usage route's forecasts, and the stream's connection state. Screens read it
-// with `useStore()` and listen to raw events with `useEvents()`.
+// usage route's forecasts, and the stream's connection state. The API client
+// and the event stream come from `@agentbox/ui`: screens call the server
+// with `useApiClient()`, listen to events with `useAnyEvent()`, and read this
+// store with `useStore()`.
 import type { AgentBoxEvent } from "@agentbox/contracts";
+import { ApiClientProvider, EventHubProvider } from "@agentbox/ui/hooks";
+import { EventHub, EventsConnection, type ApiClient, type StreamStatus } from "@agentbox/ui/core";
 import {
   addUsageSamples,
   applyEvent,
@@ -9,9 +13,9 @@ import {
   type DashboardState,
   type VendorUsageInfo,
 } from "@agentbox/ui/dashboard";
-import { createContext, useContext, useEffect, useRef, useSyncExternalStore } from "react";
-import type { ApiClient } from "../lib/api.js";
-import { EventClient, type ConnectionState, type EventClientOptions } from "../lib/events.js";
+import { createContext, useContext, useSyncExternalStore, type ReactNode } from "react";
+
+export type ConnectionState = StreamStatus;
 
 export interface AppState {
   dashboard: DashboardState;
@@ -27,6 +31,8 @@ export interface AppState {
 export const USAGE_LOOKBACK_MS = 6 * 60 * 60 * 1000;
 
 export class AppStore {
+  /** Fans the stream's events out to screens; `EventHubProvider` shares it. */
+  readonly hub = new EventHub();
   private state: AppState = {
     dashboard: emptyDashboard(),
     connection: "closed",
@@ -35,12 +41,12 @@ export class AppStore {
     error: null,
   };
   private readonly listeners = new Set<() => void>();
-  private readonly eventListeners = new Set<(e: AgentBoxEvent) => void>();
-  private client: EventClient | null = null;
+  private connection: EventsConnection | null = null;
+  /** False until the first server hello: the first resync is the initial load. */
+  private synced = false;
 
   constructor(
     readonly api: ApiClient,
-    private readonly socket?: EventClientOptions["socket"],
     private readonly now: () => number = Date.now,
   ) {}
 
@@ -51,9 +57,9 @@ export class AppStore {
     return () => this.listeners.delete(listener);
   };
 
+  /** Calls `listener` for every event the store applies. */
   onEvent(listener: (e: AgentBoxEvent) => void): () => void {
-    this.eventListeners.add(listener);
-    return () => this.eventListeners.delete(listener);
+    return this.hub.on("*", listener);
   }
 
   private set(patch: Partial<AppState>) {
@@ -61,10 +67,10 @@ export class AppStore {
     for (const l of this.listeners) l();
   }
 
-  /** Applies one event; the stream client and the tests call it. */
+  /** Applies one event; the stream connection and the tests call it. */
   ingest(event: AgentBoxEvent): void {
     this.set({ dashboard: applyEvent(this.state.dashboard, event) });
-    for (const l of this.eventListeners) l(event);
+    this.hub.emit(event);
     if (event.type === "usage.sample" || event.type === "ceiling.crossed") void this.loadUsage();
   }
 
@@ -95,53 +101,64 @@ export class AppStore {
     }
   }
 
-  start(): void {
-    if (this.client) return;
+  /** Handles a server hello that couldn't replay: start over from REST. */
+  private resync(): void {
+    if (!this.synced) {
+      this.synced = true;
+      return;
+    }
+    this.set({ dashboard: emptyDashboard(), resets: this.state.resets + 1 });
+    this.hub.resync();
     void this.loadUsageHistory();
     void this.loadUsage();
-    this.client = new EventClient({
-      baseUrl: this.api.baseUrl,
-      token: this.api.token,
-      socket: this.socket,
+  }
+
+  start(): void {
+    if (this.connection) return;
+    void this.loadUsageHistory();
+    void this.loadUsage();
+    this.connection = new EventsConnection({
+      client: this.api,
       onEvent: (e) => this.ingest(e),
-      onState: (connection) => {
+      onStatus: (connection) => {
+        this.hub.setStatus(connection);
         this.set({ connection });
         // Ask for a stats sample so the fleet fills without waiting for the timer.
         if (connection === "open") void this.api.call("stats.refresh").catch(() => undefined);
       },
-      onReset: () => {
-        this.set({ dashboard: emptyDashboard(), resets: this.state.resets + 1 });
-        void this.loadUsageHistory();
-        void this.loadUsage();
-      },
-      onInvalid: (_raw, message) => this.set({ error: `Dropped an invalid event: ${message}` }),
+      onResync: () => this.resync(),
+      onInvalidFrame: (_raw, message) =>
+        this.set({ error: `Dropped an invalid event: ${message}` }),
     });
-    this.client.start();
+    this.connection.start();
   }
 
   stop(): void {
-    this.client?.stop();
-    this.client = null;
+    this.connection?.stop();
+    this.connection = null;
   }
 }
 
 export const StoreContext = createContext<AppStore | null>(null);
 
+/** Provides the store, its API client, and its event hub to the tree. */
+export function StoreProvider({ store, children }: { store: AppStore; children: ReactNode }) {
+  return (
+    <StoreContext.Provider value={store}>
+      <ApiClientProvider client={store.api}>
+        <EventHubProvider hub={store.hub}>{children}</EventHubProvider>
+      </ApiClientProvider>
+    </StoreContext.Provider>
+  );
+}
+
 export function useAppStore(): AppStore {
   const store = useContext(StoreContext);
-  if (!store) throw new Error("useAppStore needs a StoreContext provider.");
+  if (!store) throw new Error("useAppStore needs a StoreProvider.");
   return store;
 }
 
 export function useStore<T>(select: (s: AppState) => T): T {
   const store = useAppStore();
   return useSyncExternalStore(store.subscribe, () => select(store.getState()));
-}
-
-/** Calls `listener` for every event while the component is mounted. */
-export function useEvents(listener: (e: AgentBoxEvent) => void): void {
-  const store = useAppStore();
-  const ref = useRef(listener);
-  ref.current = listener;
-  useEffect(() => store.onEvent((e) => ref.current(e)), [store]);
 }

@@ -1,10 +1,9 @@
-import { Dashboard, replay, emptyDashboard } from "@agentbox/ui/dashboard";
+import { Dashboard, replay, emptyDashboard } from "../../src/dashboard";
 import { render, screen, within, fireEvent } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { CONTAINER } from "../../scripts/demoIds.js";
-import { loadDemoEvents } from "../helpers/stream.js";
+import { buildDemoEvents, DEMO_CONTAINER as CONTAINER } from "../../src/testing/demoRun";
 
-const events = loadDemoEvents();
+const events = buildDemoEvents();
 const NOW = Date.parse("2026-10-28T10:00:00.000Z");
 
 describe("Dashboard", () => {

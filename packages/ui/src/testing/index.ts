@@ -3,3 +3,4 @@
 export * from "./FakeServer";
 export * from "./FakeSocket";
 export * from "./fixtures";
+export * from "./demoRun";

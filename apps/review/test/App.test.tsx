@@ -1,9 +1,8 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { App } from "../src/App.js";
-import { demoRounds, lastRun, project, settings } from "./helpers/data.js";
+import { demoRounds, lastRun, loadDemoEvents, project, settings } from "./helpers/data.js";
 import { renderWithStore } from "./helpers/render.js";
-import { MockSocket, loadDemoEvents } from "./helpers/stream.js";
 
 const events = loadDemoEvents();
 
@@ -38,17 +37,16 @@ function handlers() {
 }
 
 describe("App with the scripted event stream", () => {
-  beforeEach(() => MockSocket.reset());
-
   it("replays the demo into the dashboard and the navigation", async () => {
     const { store, server } = renderWithStore(<App search="" />, handlers());
     store.start();
-    const ws = MockSocket.instances[0]!;
-    expect(ws.url).toBe("ws://localhost:3000/api/v1/events?token=t");
-    act(() => ws.open());
-    expect(screen.getByText("● Live")).toBeInTheDocument();
+    const [ws] = server.socketsFor("/api/v1/events");
+    expect(ws!.url).toBe("ws://localhost:3000/api/v1/events?token=t");
+    expect(await screen.findByText("● Live")).toBeInTheDocument();
     await waitFor(() => expect(server.callsTo("stats.refresh")).toHaveLength(1));
-    act(() => ws.replay(events));
+    act(() => {
+      for (const e of events) server.emit(e);
+    });
 
     const nav = screen.getByRole("navigation", { name: "Main" });
     expect(within(nav).getByLabelText("1 need a decision")).toBeInTheDocument();

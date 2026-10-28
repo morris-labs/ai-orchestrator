@@ -1,9 +1,8 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { Findings } from "../src/screens/Findings.js";
-import { RUN_ID, demoFindings, lastRun } from "./helpers/data.js";
+import { RUN_ID, demoFindings, lastRun, loadDemoEvents } from "./helpers/data.js";
 import { renderWithStore } from "./helpers/render.js";
-import { loadDemoEvents } from "./helpers/stream.js";
 
 const findings = demoFindings();
 const run = { ...lastRun(), prUrl: "https://github.com/octo/app/pull/12", prNumber: 12 };
@@ -53,11 +52,13 @@ describe("Findings", () => {
     const trail = detail.querySelector("ol.trail")!;
     expect(within(trail as HTMLElement).getAllByRole("listitem")).toHaveLength(2);
     expect(within(detail).queryByRole("button", { name: "Waive" })).toBeNull();
+    expect(within(detail).getByText("Symbol").nextSibling).toHaveTextContent("sendWithRetry");
   });
 
   it("waives a pending finding with a reason", async () => {
     const { server } = renderWithStore(<Findings runId={RUN_ID} findingId="F-0007" />, handlers());
     const detail = await screen.findByRole("article", { name: "Finding F-0007" });
+    expect(within(detail).queryByText("Symbol")).toBeNull();
     fireEvent.change(within(detail).getByLabelText("Reason for waiving"), {
       target: { value: "Tracked in a ticket" },
     });
