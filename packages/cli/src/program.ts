@@ -63,6 +63,13 @@ function positiveInt(value: string): number {
   return n;
 }
 
+function nonNegativeInt(value: string): number {
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 0)
+    throw new InvalidArgumentError("Use a whole number, 0 or more.");
+  return n;
+}
+
 function collect(value: string, previous: string[] = []): string[] {
   return [...previous, value];
 }
@@ -493,6 +500,11 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
     .option("--pr <number>", "The pull request, for post-push.", positiveInt)
     .option("--no-cross-vendor", "Let the same vendor disprove and confirm its own work.")
     .option("--round-cap <n>", "Stop after this many rounds.", positiveInt)
+    .option(
+      "--continuation-cap <n>",
+      "Ask each reviewer to continue at most this many times per round.",
+      nonNegativeInt,
+    )
     .action(async (o) => {
       const c = client();
       let projectId: string | undefined = o.project;
@@ -522,6 +534,7 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
           prNumber: o.pr,
           crossVendor: o.crossVendor,
           roundCap: o.roundCap,
+          continuationCap: o.continuationCap,
         },
       });
       print(run, () => `Started run ${run.id}.\n`);

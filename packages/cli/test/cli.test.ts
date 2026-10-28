@@ -326,6 +326,14 @@ describe("review", () => {
     expect(out).toBe(`Started run ${RUN}.\n`);
   });
 
+  it("passes the round and continuation caps", async () => {
+    server.on("POST /api/v1/runs", { status: 201, body: runState });
+    const args = ["review", "start", "--project", PROJECT_ID, "--repo", "/r", "--read-only"];
+    expect(await cli([...args, "--round-cap", "2", "--continuation-cap", "0"])).toBe(0);
+    expect(last()?.body).toMatchObject({ readOnly: true, roundCap: 2, continuationCap: 0 });
+    expect(await cli([...args, "--continuation-cap", "-1"])).not.toBe(0);
+  });
+
   it("needs a box or a project and repository", async () => {
     expect(await cli(["review", "start"])).toBe(2);
   });

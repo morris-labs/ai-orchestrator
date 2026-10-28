@@ -1,5 +1,5 @@
 // Picks the vendor adapters the engine runs with: the real CLIs that answer
-// `--version`, or scripted mocks when `AGENTBOX_MOCK_VENDORS=1`.
+// `--version`, or scripted mocks for the vendors `AGENTBOX_MOCK_VENDORS` names.
 import { readFileSync } from "node:fs";
 import { VendorSchema, type Vendor } from "@agentbox/contracts";
 import { z } from "zod";
@@ -10,9 +10,12 @@ import { MockAdapter, MockResponseSchema, type MockResponse } from "../adapters/
 import type { CliVendorAdapter } from "../adapters/types.js";
 import type { AdapterSet } from "../core.js";
 
-/** Set to `1` to answer every vendor call from a script instead of a CLI. */
+/**
+ * The vendors whose calls a script answers instead of a CLI: `1` for every
+ * vendor, or a comma-separated list such as `codex,copilot`.
+ */
 export const MOCK_VENDORS_ENV = "AGENTBOX_MOCK_VENDORS";
-/** A JSON file with a `responses` list per vendor, for `AGENTBOX_MOCK_VENDORS=1`. */
+/** A JSON file with a `responses` list per vendor, for the vendors `AGENTBOX_MOCK_VENDORS` mocks. */
 export const MOCK_SCRIPT_ENV = "AGENTBOX_MOCK_SCRIPT";
 
 const VENDORS: readonly Vendor[] = ["claude", "codex", "copilot"];
@@ -66,9 +69,35 @@ export function createMockAdapters(scriptPath?: string): Record<Vendor, MockAdap
   return out;
 }
 
+/**
+ * Reads `AGENTBOX_MOCK_VENDORS`: `1` mocks every vendor, a comma-separated
+ * list mocks those vendors, and an absent, empty, or `0` value mocks none.
+ * Throws for a name that isn't a vendor.
+ */
+export function parseMockVendors(value: string | undefined): Vendor[] {
+  const text = (value ?? "").trim();
+  if (text === "" || text === "0") return [];
+  if (text === "1") return [...VENDORS];
+  const out: Vendor[] = [];
+  for (const name of text.split(",").map((n) => n.trim().toLowerCase())) {
+    if (name === "") continue;
+    const parsed = VendorSchema.safeParse(name);
+    if (!parsed.success) {
+      throw new Error(
+        `${MOCK_VENDORS_ENV} names an unknown vendor "${name}". Use 1 or a list of ${VENDORS.join(", ")}.`,
+      );
+    }
+    if (!out.includes(parsed.data)) out.push(parsed.data);
+  }
+  return out;
+}
+
 export interface SelectedAdapters {
   adapters: AdapterSet;
+  /** True when every vendor answers from a mock script. */
   mock: boolean;
+  /** The vendors that answer from a mock script. */
+  mocked: Vendor[];
   /** Vendors left out because their CLI didn't answer. */
   missing: Array<{ vendor: Vendor; error: string | null }>;
 }
@@ -79,16 +108,23 @@ export async function selectAdapters(
   log: Logger,
   candidates: () => Record<Vendor, CliVendorAdapter> = () => createAdapters(),
 ): Promise<SelectedAdapters> {
-  if (env[MOCK_VENDORS_ENV] === "1") {
-    const script = env[MOCK_SCRIPT_ENV] || undefined;
-    log.warn("Vendor calls answer from mock scripts", { script: script ?? "built-in" });
-    return { adapters: bridgeAdapters(createMockAdapters(script)), mock: true, missing: [] };
+  const mocked = parseMockVendors(env[MOCK_VENDORS_ENV]);
+  const script = env[MOCK_SCRIPT_ENV] || undefined;
+  const mocks = mocked.length > 0 ? createMockAdapters(script) : null;
+  if (mocks) {
+    log.warn("Vendor calls answer from mock scripts", {
+      vendors: mocked.join(","),
+      script: script ?? "built-in",
+    });
   }
+  if (mocked.length === VENDORS.length && mocks) {
+    return { adapters: bridgeAdapters(mocks), mock: true, mocked, missing: [] };
+  }
+  const real = VENDORS.filter((v) => !mocked.includes(v));
   const all = candidates();
-  const checks = await Promise.all(
-    VENDORS.map(async (v) => ({ v, health: await all[v].health() })),
-  );
+  const checks = await Promise.all(real.map(async (v) => ({ v, health: await all[v].health() })));
   const available: Partial<Record<Vendor, CliVendorAdapter>> = {};
+  for (const v of mocked) if (mocks) available[v] = mocks[v];
   const missing: SelectedAdapters["missing"] = [];
   for (const { v, health } of checks) {
     if (health.available) {
@@ -102,5 +138,5 @@ export async function selectAdapters(
       });
     }
   }
-  return { adapters: bridgeAdapters(available), mock: false, missing };
+  return { adapters: bridgeAdapters(available), mock: false, mocked, missing };
 }

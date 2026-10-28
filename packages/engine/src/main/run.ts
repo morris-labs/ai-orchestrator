@@ -41,8 +41,9 @@ Environment:
   ${ENGINE_ENV.container}      The container's name. Required.
   ${ENGINE_ENV.engineVersion}  The engine version the server expects. Required.
   ${ENGINE_ENV.stateDir}       Where to write active-runs. Default: ${DEFAULT_ENGINE_STATE_DIR}.
-  ${MOCK_VENDORS_ENV}    Set to 1 to answer vendor calls from mock scripts.
-  ${MOCK_SCRIPT_ENV}     With ${MOCK_VENDORS_ENV}=1: a JSON file of responses per vendor.
+  ${MOCK_VENDORS_ENV}    Vendors whose calls mock scripts answer: 1 for all, or a list
+                         such as codex,copilot.
+  ${MOCK_SCRIPT_ENV}     With ${MOCK_VENDORS_ENV}: a JSON file of responses per vendor.
 `;
 
 export interface CliArgs {

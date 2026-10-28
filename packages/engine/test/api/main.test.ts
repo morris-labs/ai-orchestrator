@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { startActiveRunsWriter, writeActiveRuns } from "../../src/main/active-runs.js";
 import { MockAdapter } from "../../src/adapters/mock.js";
 import { FixOutputSchema, ReviewOutputSchema } from "../../src/core.js";
-import { createMockAdapters, selectAdapters } from "../../src/main/adapters.js";
+import { createMockAdapters, parseMockVendors, selectAdapters } from "../../src/main/adapters.js";
 import { silentLogger } from "../../src/main/logger.js";
 import { checkEnv, parseArgs, startEngine } from "../../src/main/run.js";
 import { readPackageVersion } from "../../src/main/version.js";
@@ -68,6 +68,24 @@ describe("checkEnv", () => {
   });
 });
 
+describe("parseMockVendors", () => {
+  it("reads 1 as every vendor and a list as those vendors", () => {
+    expect(parseMockVendors("1")).toEqual(["claude", "codex", "copilot"]);
+    expect(parseMockVendors("codex,copilot")).toEqual(["codex", "copilot"]);
+    expect(parseMockVendors(" Codex , codex,")).toEqual(["codex"]);
+  });
+
+  it("reads an absent, empty, or 0 value as no vendor", () => {
+    expect(parseMockVendors(undefined)).toEqual([]);
+    expect(parseMockVendors("")).toEqual([]);
+    expect(parseMockVendors("0")).toEqual([]);
+  });
+
+  it("rejects an unknown vendor", () => {
+    expect(() => parseMockVendors("codex,gemini")).toThrow(/unknown vendor "gemini"/);
+  });
+});
+
 describe("selectAdapters", () => {
   it("uses mock adapters for every vendor with AGENTBOX_MOCK_VENDORS=1", async () => {
     const r = await selectAdapters({ AGENTBOX_MOCK_VENDORS: "1" }, silentLogger);
@@ -121,6 +139,42 @@ describe("selectAdapters", () => {
     }));
     expect(Object.keys(r.adapters)).toEqual(["claude"]);
     expect(r.missing.map((m) => m.vendor)).toEqual(["codex", "copilot"]);
+  });
+
+  it("mocks only the vendors a list names and checks the others' CLIs", async () => {
+    const health: Vendor[] = [];
+    const cli = (vendor: Vendor) =>
+      new MockAdapter({
+        vendor,
+        health: { available: true, version: "9.9" },
+        responses: [],
+      });
+    const r = await selectAdapters(
+      { AGENTBOX_MOCK_VENDORS: "codex, copilot" },
+      silentLogger,
+      () => {
+        const all = { claude: cli("claude"), codex: cli("codex"), copilot: cli("copilot") };
+        for (const [v, a] of Object.entries(all) as [Vendor, MockAdapter][]) {
+          const real = a.health.bind(a);
+          a.health = async () => {
+            health.push(v);
+            return real();
+          };
+        }
+        return all;
+      },
+    );
+    expect(r.mock).toBe(false);
+    expect(r.mocked).toEqual(["codex", "copilot"]);
+    expect(Object.keys(r.adapters).sort()).toEqual(["claude", "codex", "copilot"]);
+    expect(health).toEqual(["claude"]);
+    const review = await r.adapters.copilot?.review({
+      prompt: "Review group G-1",
+      repoPath: dir,
+      toolPolicy: "read-only",
+      timeoutMs: 1_000,
+    });
+    expect(review).toMatchObject({ model: "mock-copilot" });
   });
 });
 
