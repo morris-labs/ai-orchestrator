@@ -1,0 +1,13 @@
+[Unit]
+Description=Agent Box server
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/agentbox-server
+Restart=on-failure
+RestartSec=2
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=default.target
