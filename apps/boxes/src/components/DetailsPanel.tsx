@@ -73,7 +73,14 @@ export function DetailsPanel(props: DetailsPanelProps) {
       </Field>
       <Field label="Directory">
         <div className="bx-row">
-          <span className="bx-wrap">{box.targetDir}</span>
+          <span className="bx-wrap">
+            {box.targetDir}
+            {!view.targetDirExists && (
+              <span className="bx-missing" title="The directory doesn't exist on the host.">
+                [missing]
+              </span>
+            )}
+          </span>
           <Button
             disabled={running}
             title={running ? "Stop the box before relinking its directory." : undefined}

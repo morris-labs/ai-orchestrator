@@ -170,7 +170,12 @@ export class FakeServer {
       },
       notifications: [],
       staleProjects: [],
-      dirs: { "/home/user": ["src", "work"], "/home/user/src": ["example-app"] },
+      dirs: {
+        "/home/user": ["src", "work"],
+        "/home/user/src": ["example-app"],
+        "/home/user/src/example-app": [],
+        "/home/user/work": [],
+      },
     };
   }
 

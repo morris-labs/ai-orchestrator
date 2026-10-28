@@ -180,10 +180,8 @@ export function SshRemoteDialog({ remote, taken, onClose }: SshRemoteDialogProps
     if (!r) return;
     setTest("Testing...");
     try {
-      const res = await client.call("sshRemotes.test", {
-        params: { name: remote?.name ?? r.name },
-        body: r,
-      });
+      // Test what the form holds, saved or not; the remote's saved copy may differ.
+      const res = await client.call("sshRemotes.test", { body: r });
       setTest(res.ok ? "Connected." : res.output || "The connection failed.");
       if (!res.ok && res.authFailed) {
         const answer = await ask({

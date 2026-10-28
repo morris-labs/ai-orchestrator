@@ -43,7 +43,8 @@ import { SetupWizard } from "../dialogs/SetupWizard";
 import { SshRemotesDialog } from "../dialogs/SshDialogs";
 import { actionStates } from "../logic/enablement";
 import { visibleBoxes } from "../logic/filter";
-import { purgeList, resumableBoxes, resumeDetail, runningOnDir } from "../logic/lists";
+import { formatBytes } from "../logic/format";
+import { purgePreviewList, resumableBoxes, resumeDetail, runningOnDir } from "../logic/lists";
 import { createBody, normalizeDir, projectForDir, updateBody, type BoxForm } from "../logic/newBox";
 import { PLATFORMS, displayName, platformLabel, statusBarText, updatedText } from "../logic/status";
 import { withTransient } from "../logic/store";
@@ -259,23 +260,31 @@ export function App() {
     }
   };
 
-  /** Shows a launch error, with the follow-up each code needs. Returns true to retry. */
+  /**
+   * Shows a launch error, with the follow-up each code needs. Returns true to
+   * retry, "force" to retry a start despite stale mounts (only when
+   * `canForce`), and false to give up.
+   */
   const handleLaunchError = async (
     title: string,
     err: unknown,
     view?: BoxView,
-  ): Promise<boolean> => {
+    canForce = false,
+  ): Promise<boolean | "force"> => {
     if (isApiError(err, "stale_mounts") && view) {
       const answer = await ask({
         title,
         text: `The mounts, ports, or secrets of the project container for ${view.box.id} changed.`,
-        detail:
-          "The container keeps its old settings until it restarts. Restart it now? Running boxes in it restart and resume their conversations.",
+        detail: canForce
+          ? "The container keeps its old settings until it restarts. Restart it now? Running boxes in it restart and resume their conversations. Start Anyway starts this box in the container as it is, without the changes."
+          : "The container keeps its old settings until it restarts. Restart it now? Running boxes in it restart and resume their conversations.",
         buttons: [
           { id: "yes", label: "Restart Container", primary: true },
+          ...(canForce ? [{ id: "force", label: "Start Anyway" }] : []),
           { id: "no", label: "Cancel", cancel: true },
         ],
       });
+      if (answer.button === "force") return "force";
       if (answer.button !== "yes") return false;
       try {
         reportBulk(
@@ -312,14 +321,20 @@ export function App() {
   const startBox = async (view: BoxView, openTab = true) => {
     mark([view.box.id], "starting");
     try {
+      let force = false;
       for (;;) {
         try {
-          const v = await client.call("boxes.start", { params: { boxId: view.box.id } });
+          const v = await client.call("boxes.start", {
+            params: { boxId: view.box.id },
+            ...(force ? { body: { force: true } } : {}),
+          });
           data.putBox(v);
           if (openTab) openTerminal(v);
           return;
         } catch (err) {
-          if (!(await handleLaunchError("Start", err, view))) return;
+          const next = await handleLaunchError("Start", err, view, true);
+          if (!next) return;
+          force = next === "force";
         }
       }
     } finally {
@@ -512,14 +527,31 @@ export function App() {
       void inform("Purge", `${running.box.id} is running against this directory. Stop it first.`);
       return;
     }
-    const list = purgeList(all, dir);
+    let preview;
+    try {
+      preview = await client.call("boxes.purge", {
+        params: { boxId: single.box.id },
+        body: { dryRun: true },
+      });
+    } catch (err) {
+      void inform("Purge", errorMessage(err));
+      return;
+    }
+    const list = purgePreviewList(preview);
+    if (list.length === 0) {
+      void inform("Purge", `There is nothing to purge for ${dir}.`);
+      return;
+    }
     const ok = await confirm(
       "Purge",
       `This will remove:\n\n${list.join("\n")}\n\nThe directory's own contents (${dir}), including any worktrees, are not touched.\n\nProceed?`,
     );
     if (!ok) return;
     try {
-      const res = await client.call("boxes.purge", { params: { boxId: single.box.id } });
+      const res = await client.call("boxes.purge", {
+        params: { boxId: single.box.id },
+        body: { dryRun: false },
+      });
       for (const id of res.removedRecords) setTabs((t) => closeBoxTabs(t, id));
       toast(
         `Purged ${res.removedRecords.length} record(s) and ${res.removedTranscriptDirs.length} transcript folder(s).`,
@@ -533,11 +565,23 @@ export function App() {
 
   const onConvert = async () => {
     if (!single) return;
+    let plan;
+    try {
+      plan = await client.call("boxes.convertToWorktree.plan", {
+        params: { boxId: single.box.id },
+      });
+    } catch (err) {
+      void inform("Convert to Worktree", errorMessage(err));
+      return;
+    }
     const answer = await ask({
       title: "Convert to Worktree",
       text: `Convert "${single.box.conversationName}" to a git worktree?`,
-      detail: `The workspace folder ${single.box.workspace ?? ""} becomes a worktree of the project's repository on branch claude/<slug>. Uncommitted, untracked, and ignored files, other branches, tags, stashes, notes, and transcripts are carried over; the old folder is renamed to <slug>.pre-worktree. The job lists what it could not carry.`,
-      checkbox: { label: "Also copy build output", checked: false },
+      detail: plan.report,
+      checkbox: {
+        label: `Also copy build output (${formatBytes(plan.buildOutputBytes)})`,
+        checked: false,
+      },
       buttons: [
         { id: "yes", label: "Convert", primary: true },
         { id: "cancel", label: "Cancel", cancel: true },

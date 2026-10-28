@@ -25,7 +25,12 @@ export const boxColumns: Column<BoxView>[] = [
     id: "dir",
     header: "Directory",
     sortValue: (b) => boxWorkDir(b.box),
-    render: (b) => boxWorkDir(b.box),
+    render: (b) => (
+      <>
+        {boxWorkDir(b.box)}
+        {!b.targetDirExists && <span className="bx-missing">[missing]</span>}
+      </>
+    ),
   },
   {
     id: "conversation",
@@ -53,7 +58,9 @@ export interface BoxTableProps {
 
 const rowKey = (b: BoxView) => b.box.id;
 const rowTitle = (b: BoxView) =>
-  `${b.box.id}\n${b.box.targetDir}${b.box.branch ? `\nbranch ${b.box.branch}` : ""}`;
+  `${b.box.id}\n${b.box.targetDir}${b.targetDirExists ? "" : " (missing)"}${
+    b.box.branch ? `\nbranch ${b.box.branch}` : ""
+  }`;
 
 export function BoxTable(props: BoxTableProps) {
   return (

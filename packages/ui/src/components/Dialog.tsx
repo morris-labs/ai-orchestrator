@@ -78,6 +78,9 @@ export function Dialog({
           style={{ display: "contents" }}
           onSubmit={(e) => {
             e.preventDefault();
+            // A dialog opened from another dialog through a portal still
+            // bubbles React events to it; keep Enter from submitting both.
+            e.stopPropagation();
             onSubmit?.();
           }}
         >

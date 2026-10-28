@@ -2,7 +2,7 @@
 // relink a box.
 import { Button, Dialog, errorMessage } from "@agentbox/ui";
 import { useState } from "react";
-import { bridge } from "../bridge";
+import { useDirectoryPicker } from "./DirectoryPicker";
 
 export interface InputDialogProps {
   title: string;
@@ -10,7 +10,7 @@ export interface InputDialogProps {
   intro?: string;
   initial: string;
   placeholder?: string;
-  /** Shows a Browse button that picks a directory, when the Electron bridge is there. */
+  /** Shows a Browse button that picks a directory: the native dialog in Electron, else `fs.dirs`. */
   browse?: boolean;
   /** Allows an empty value, as Rename does (empty means the folder name). */
   allowEmpty?: boolean;
@@ -23,6 +23,7 @@ export function InputDialog(props: InputDialogProps) {
   const [value, setValue] = useState(props.initial);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const picker = useDirectoryPicker();
   const accept = async () => {
     if (!props.allowEmpty && value.trim() === "") {
       setError(`Type a value for ${props.label.toLowerCase()}.`);
@@ -63,16 +64,17 @@ export function InputDialog(props: InputDialogProps) {
             placeholder={props.placeholder}
             onChange={(e) => setValue(e.target.value)}
           />
-          {props.browse && bridge() && (
+          {props.browse && (
             <Button
               onClick={async () => {
-                const p = await bridge()?.pickDirectory(value || undefined);
+                const p = await picker.pick(value || undefined);
                 if (p) setValue(p);
               }}
             >
               Browse...
             </Button>
           )}
+          {picker.element}
         </div>
       </div>
       {error && (

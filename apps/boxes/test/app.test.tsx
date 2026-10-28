@@ -104,10 +104,54 @@ describe("main window", () => {
     fireEvent.mouseDown(rowOf("Api"), { button: 0 });
     await user.click(screen.getByRole("button", { name: "Purge" }));
     const dialog = await screen.findByRole("dialog", { name: "Purge" });
-    expect(dialog).toHaveTextContent("~/.claude/projects/-w-api");
+    expect(dialog).toHaveTextContent("/home/user/.claude/projects/-w-api");
     expect(dialog).toHaveTextContent("the record of claude-agent-api");
+    expect(server.callsTo("boxes.purge").map((c) => c.body)).toEqual([{ dryRun: true }]);
+    expect(server.state.boxes).toHaveLength(2);
     await user.click(within(dialog).getByRole("button", { name: "Yes" }));
-    await waitFor(() => expect(server.callsTo("boxes.purge")).toHaveLength(1));
+    await waitFor(() => expect(server.callsTo("boxes.purge")).toHaveLength(2));
+    expect(server.callsTo("boxes.purge")[1]?.body).toEqual({ dryRun: false });
+    await waitFor(() => expect(server.state.boxes).toHaveLength(1));
+  });
+
+  it("previews Convert to Worktree with the server's plan", async () => {
+    const user = userEvent.setup();
+    const server = new FakeServer({
+      boxes: [
+        makeBoxView({
+          box: {
+            id: "claude-agent-mail",
+            targetDir: "/w/app",
+            conversationName: "Mail",
+            workspace: "Mail",
+          },
+          status: "stopped",
+        }),
+      ],
+    });
+    server.on("boxes.convertToWorktree.plan", () => ({
+      report: "Mail/ becomes /w/app/.worktrees/Mail; 2 stashes carry over.",
+      buildOutputBytes: 3 * 1024 * 1024,
+    }));
+    renderWithServer(<App />, server);
+    await screen.findByRole("cell", { name: "Mail" });
+    fireEvent.mouseDown(rowOf("Mail"), { button: 0 });
+    fireEvent.contextMenu(rowOf("Mail"));
+    await user.click(await screen.findByRole("menuitem", { name: "Convert to Worktree..." }));
+    const dialog = await screen.findByRole("dialog", { name: "Convert to Worktree" });
+    expect(dialog).toHaveTextContent("2 stashes carry over.");
+    await user.click(within(dialog).getByLabelText("Also copy build output (3.0 MiB)"));
+    await user.click(within(dialog).getByRole("button", { name: "Convert" }));
+    await waitFor(() => expect(server.callsTo("boxes.convertToWorktree")).toHaveLength(1));
+    expect(server.callsTo("boxes.convertToWorktree")[0]?.body).toEqual({ copyBuildOutput: true });
+  });
+
+  it("marks a box whose directory is missing", async () => {
+    const list = boxes();
+    list[1]!.targetDirExists = false;
+    await renderApp(new FakeServer({ boxes: list }));
+    expect(within(rowOf("Api")).getByText("[missing]")).toBeInTheDocument();
+    expect(within(rowOf("Site work")).queryByText("[missing]")).toBeNull();
   });
 
   it("removes a stopped worktree box and asks about the worktree, defaulting to keep", async () => {
@@ -193,6 +237,22 @@ describe("main window", () => {
     await user.click(within(dialog).getByRole("button", { name: "Restart Container" }));
     await waitFor(() => expect(server.callsTo("boxes.start")).toHaveLength(2));
     expect(server.callsTo("projects.restartContainer")).toHaveLength(1);
+    expect(server.callsTo("boxes.start")[1]?.body).toEqual({ force: false });
+  });
+
+  it("starts anyway with force when the mounts are stale", async () => {
+    const user = userEvent.setup();
+    const list = boxes();
+    const server = new FakeServer({ boxes: list });
+    server.state.staleProjects.push(list[1]!.box.projectId);
+    await renderApp(server);
+    fireEvent.doubleClick(rowOf("Api"));
+    const dialog = await screen.findByRole("dialog", { name: "Start" });
+    await user.click(within(dialog).getByRole("button", { name: "Start Anyway" }));
+    await waitFor(() => expect(server.callsTo("boxes.start")).toHaveLength(2));
+    expect(server.callsTo("boxes.start")[1]?.body).toEqual({ force: true });
+    expect(server.callsTo("projects.restartContainer")).toHaveLength(0);
+    expect(await screen.findByRole("tab", { name: /Api/ })).toBeInTheDocument();
   });
 
   it("asks to resume boxes that were running when nothing runs", async () => {

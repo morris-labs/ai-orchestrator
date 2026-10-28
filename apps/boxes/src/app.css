@@ -199,3 +199,33 @@
 .bx-bars {
   flex-shrink: 0;
 }
+
+/* The fs.dirs directory picker. */
+.bx-dir-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid var(--ab-border);
+  background: var(--ab-base-bg);
+}
+.bx-dir-entry {
+  display: block;
+  width: 100%;
+  padding: 3px 8px;
+  border: none;
+  background: none;
+  color: var(--ab-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.bx-dir-entry:hover,
+.bx-dir-entry:focus-visible {
+  background: var(--ab-hover-bg);
+}
+.bx-missing {
+  color: var(--ab-stopped);
+  margin-left: 6px;
+}

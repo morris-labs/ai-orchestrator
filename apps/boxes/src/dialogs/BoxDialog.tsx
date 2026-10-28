@@ -13,7 +13,6 @@ import {
 } from "@agentbox/contracts";
 import { Button, Collapsible, Dialog, errorMessage, useApiClient } from "@agentbox/ui";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { bridge } from "../bridge";
 import { mountProblems, tcpMapProblems, toTcpMaps } from "../logic/mounts";
 import {
   autoFillName,
@@ -31,6 +30,7 @@ import {
   type Layout,
 } from "../logic/newBox";
 import { PLATFORMS, platformLabel } from "../logic/status";
+import { useDirectoryPicker } from "./DirectoryPicker";
 
 export interface BoxDialogResult {
   form: BoxForm;
@@ -236,8 +236,9 @@ export function BoxDialog(props: BoxDialogProps) {
           : "Type a conversation name to name the folder."
         : "The agent works in the directory itself.";
 
+  const picker = useDirectoryPicker();
   const browse = async (current: string, apply: (p: string) => void) => {
-    const picked = await bridge()?.pickDirectory(current || undefined);
+    const picked = await picker.pick(current || undefined);
     if (picked) apply(picked);
   };
 
@@ -290,7 +291,7 @@ export function BoxDialog(props: BoxDialogProps) {
             placeholder="/home/you/project"
             onChange={(e) => set("targetDir", e.target.value)}
           />
-          {bridge() && mode === "new" && (
+          {mode === "new" && (
             <Button onClick={() => void browse(form.targetDir, (p) => set("targetDir", p))}>
               Browse...
             </Button>
@@ -515,18 +516,16 @@ export function BoxDialog(props: BoxDialogProps) {
                 );
               }}
             />
-            {bridge() && (
-              <Button
-                onClick={() =>
-                  void browse(r.host, (p) => {
-                    setProjectTouched(true);
-                    setMounts((all) => all.map((x, j) => (j === i ? { ...x, host: p } : x)));
-                  })
-                }
-              >
-                Browse...
-              </Button>
-            )}
+            <Button
+              onClick={() =>
+                void browse(r.host, (p) => {
+                  setProjectTouched(true);
+                  setMounts((all) => all.map((x, j) => (j === i ? { ...x, host: p } : x)));
+                })
+              }
+            >
+              Browse...
+            </Button>
             <input
               className="ab-input bx-grow"
               aria-label={`Box folder ${i + 1}`}
@@ -563,6 +562,7 @@ export function BoxDialog(props: BoxDialogProps) {
           ))}
         </div>
       )}
+      {picker.element}
     </Dialog>
   );
 }

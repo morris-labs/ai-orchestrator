@@ -48,6 +48,31 @@ function newDialog(server: FakeServer, overrides: Partial<Parameters<typeof BoxD
 }
 
 describe("BoxDialog, new mode", () => {
+  it("browses the host's directories through fs.dirs without Electron", async () => {
+    const user = userEvent.setup();
+    const server = new FakeServer();
+    newDialog(server);
+    await user.click(screen.getAllByRole("button", { name: "Browse..." })[0]!);
+    const picker = await screen.findByRole("dialog", { name: "Choose a Directory" });
+    expect(within(picker).getByLabelText("Path")).toHaveValue("/home/user");
+    await user.click(within(picker).getByRole("button", { name: "src/" }));
+    await waitFor(() =>
+      expect(within(picker).getByLabelText("Path")).toHaveValue("/home/user/src"),
+    );
+    await user.click(within(picker).getByRole("button", { name: "example-app/" }));
+    await waitFor(() =>
+      expect(within(picker).getByRole("button", { name: ".." })).toBeInTheDocument(),
+    );
+    await user.click(within(picker).getByRole("button", { name: "Choose" }));
+    expect(screen.queryByRole("dialog", { name: "Choose a Directory" })).toBeNull();
+    expect(screen.getByLabelText("Target directory")).toHaveValue("/home/user/src/example-app");
+    expect(server.callsTo("fs.dirs").map((c) => c.query.path)).toEqual([
+      undefined,
+      "/home/user/src",
+      "/home/user/src/example-app",
+    ]);
+  });
+
   it("refuses a missing or relative directory", async () => {
     const user = userEvent.setup();
     const server = new FakeServer();
@@ -330,6 +355,11 @@ describe("SSH remote dialog", () => {
     await user.click(await screen.findByRole("button", { name: "Copy Key" }));
     expect(await screen.findByText("Running: ssh-copy-id db")).toBeInTheDocument();
     expect(server.callsTo("sshRemotes.put")).toHaveLength(1);
+    expect(server.callsTo("sshRemotes.test")[0]?.body).toEqual({
+      name: "db",
+      host: "user@db",
+      forwards: [],
+    });
   });
 });
 

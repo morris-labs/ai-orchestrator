@@ -3,13 +3,7 @@ import { makeBox, makeBoxView, makeEvent, makeProject, makeSettings } from "@age
 import { describe, expect, it } from "vitest";
 import { matchesFilter, visibleBoxes } from "../src/logic/filter";
 import { formatBytes, relativeTime } from "../src/logic/format";
-import {
-  encodeProjectDir,
-  purgeList,
-  resumableBoxes,
-  resumeDetail,
-  runningOnDir,
-} from "../src/logic/lists";
+import { purgePreviewList, resumableBoxes, resumeDetail, runningOnDir } from "../src/logic/lists";
 import {
   formatMount,
   mountProblems,
@@ -332,12 +326,13 @@ describe("lists", () => {
   it("lists what Purge removes and refuses on a running box", () => {
     const a = v("a", "stopped", { targetDir: "/w/my.site", worktree: "/w/my.site/.worktrees/x" });
     const b = v("b", "running", { targetDir: "/w/my.site" });
-    expect(encodeProjectDir("/w/my.site")).toBe("-w-my-site");
-    expect(purgeList([a], "/w/my.site")).toEqual([
-      "~/.claude/projects/-w-my-site",
-      "the record of claude-agent-a",
-      "~/.claude/projects/-w-my-site--worktrees-x",
-    ]);
+    expect(
+      purgePreviewList({
+        dryRun: true,
+        removedRecords: ["claude-agent-a"],
+        removedTranscriptDirs: ["/home/user/.claude/projects/-w-my-site"],
+      }),
+    ).toEqual(["/home/user/.claude/projects/-w-my-site", "the record of claude-agent-a"]);
     expect(runningOnDir([a, b], "/w/my.site")?.box.id).toBe("claude-agent-b");
   });
 });
