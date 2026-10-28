@@ -1,0 +1,7 @@
+# The build context is image/. Only the Dockerfile, the keeper scripts, and
+# the packed engine tarballs belong in it.
+*
+!Dockerfile
+!keeper/keeper.sh
+!keeper/start-session.sh
+!dist/*.tgz

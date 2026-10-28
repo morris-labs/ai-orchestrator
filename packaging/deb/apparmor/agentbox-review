@@ -1,0 +1,14 @@
+# AppArmor profile for the Agent Box review app.
+#
+# Ubuntu 24.04 and later restrict unprivileged user namespaces, which
+# Chromium's sandbox inside Electron needs. This profile grants the app
+# that permission and confines nothing else, the same approach Ubuntu takes
+# for other Electron apps.
+abi <abi/4.0>,
+include <tunables/global>
+
+profile agentbox-review /usr/lib/agentbox/review/agentbox-review flags=(unconfined) {
+  userns,
+
+  include if exists <local/agentbox-review>
+}

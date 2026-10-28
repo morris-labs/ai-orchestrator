@@ -1,0 +1,14 @@
+# AppArmor profile for the Agent Box boxes app.
+#
+# Ubuntu 24.04 and later restrict unprivileged user namespaces, which
+# Chromium's sandbox inside Electron needs. This profile grants the app
+# that permission and confines nothing else, the same approach Ubuntu takes
+# for other Electron apps.
+abi <abi/4.0>,
+include <tunables/global>
+
+profile agentbox-boxes /usr/lib/agentbox/boxes/agentbox-boxes flags=(unconfined) {
+  userns,
+
+  include if exists <local/agentbox-boxes>
+}

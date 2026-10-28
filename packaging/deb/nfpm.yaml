@@ -1,0 +1,122 @@
+# nfpm configuration for the agentbox .deb.
+#
+# scripts/build-deb.sh assembles a staging directory and runs nfpm from it,
+# so every `src` here is relative to that directory: `root/` mirrors the
+# installed file system, and `maint/` holds the maintainer scripts. Don't
+# run nfpm on this file by hand; run scripts/build-deb.sh.
+#
+# The server runs as the logged-in user through a systemd user unit, never
+# as root. The package installs files only; postinst prints how to enable
+# the service.
+name: agentbox
+arch: amd64
+platform: linux
+version: ${AGENTBOX_VERSION}
+version_schema: semver
+section: devel
+priority: optional
+maintainer: Agent Box maintainers <agentbox@example.com>
+description: |-
+  Sandboxed coding agents in Docker, with a multi-vendor review pipeline.
+  Agent Box runs Claude Code, Codex, and GitHub Copilot sessions in one
+  container per project. The package holds the agentbox-server user
+  service, the agentbox CLI, the Agent Box and Agent Box Review desktop
+  apps, and the Dockerfile the setup wizard builds the container image from.
+vendor: Agent Box
+homepage: https://github.com/morris-labs/Claude-Box
+license: Proprietary
+
+depends:
+  # The server and CLI ship node_modules built against Node.js 22. The
+  # server's better-sqlite3 module is a native addon for Node.js 22's ABI,
+  # so a different major version can't load it.
+  - nodejs (>= 22)
+  - nodejs (<< 23)
+  - docker.io | docker-ce
+  - tmux
+  - git
+  - openssh-client
+recommends:
+  - apparmor
+  - xdg-utils
+
+contents:
+  # The server and the CLI: production node_modules from `pnpm deploy`.
+  - src: root/usr/lib/agentbox/server
+    dst: /usr/lib/agentbox/server
+    type: tree
+  - src: root/usr/lib/agentbox/cli
+    dst: /usr/lib/agentbox/cli
+    type: tree
+
+  # The two Electron apps, from `electron-builder --dir`.
+  - src: root/usr/lib/agentbox/boxes
+    dst: /usr/lib/agentbox/boxes
+    type: tree
+  - src: root/usr/lib/agentbox/review
+    dst: /usr/lib/agentbox/review
+    type: tree
+
+  # Launchers.
+  - src: root/usr/bin/agentbox
+    dst: /usr/bin/agentbox
+    file_info:
+      mode: 0755
+  - src: root/usr/bin/agentbox-server
+    dst: /usr/bin/agentbox-server
+    file_info:
+      mode: 0755
+  - src: /usr/lib/agentbox/boxes/agentbox-boxes
+    dst: /usr/bin/agentbox-boxes
+    type: symlink
+  - src: /usr/lib/agentbox/review/agentbox-review
+    dst: /usr/bin/agentbox-review
+    type: symlink
+
+  # Desktop entries and icons.
+  - src: root/usr/share/applications/agentbox-boxes.desktop
+    dst: /usr/share/applications/agentbox-boxes.desktop
+    file_info:
+      mode: 0644
+  - src: root/usr/share/applications/agentbox-review.desktop
+    dst: /usr/share/applications/agentbox-review.desktop
+    file_info:
+      mode: 0644
+  - src: root/usr/share/icons/hicolor/scalable/apps/agentbox-boxes.svg
+    dst: /usr/share/icons/hicolor/scalable/apps/agentbox-boxes.svg
+    file_info:
+      mode: 0644
+  - src: root/usr/share/icons/hicolor/scalable/apps/agentbox-review.svg
+    dst: /usr/share/icons/hicolor/scalable/apps/agentbox-review.svg
+    file_info:
+      mode: 0644
+
+  # The systemd user unit (packaging/systemd/agentbox-server.service).
+  - src: root/usr/lib/systemd/user/agentbox-server.service
+    dst: /usr/lib/systemd/user/agentbox-server.service
+    file_info:
+      mode: 0644
+
+  # The image build context and its build script, for the setup wizard.
+  - src: root/usr/share/agentbox/image
+    dst: /usr/share/agentbox/image
+    type: tree
+  - src: root/usr/share/agentbox/scripts
+    dst: /usr/share/agentbox/scripts
+    type: tree
+
+  # AppArmor profiles that let the Electron sandbox create user namespaces.
+  - src: root/etc/apparmor.d/agentbox-boxes
+    dst: /etc/apparmor.d/agentbox-boxes
+    type: config
+    file_info:
+      mode: 0644
+  - src: root/etc/apparmor.d/agentbox-review
+    dst: /etc/apparmor.d/agentbox-review
+    type: config
+    file_info:
+      mode: 0644
+
+scripts:
+  postinstall: maint/postinst
+  preremove: maint/prerm

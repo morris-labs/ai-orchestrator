@@ -1,152 +1,107 @@
-# Claude Box
+# Agent Box
 
-Claude Box runs [Claude Code](https://docs.claude.com/claude-code) in a
-sandboxed Docker container, and gives you a native desktop GUI for managing
-those sandboxes: seeing what's running, creating and reopening conversations,
-and interacting with them in an embedded terminal.
+Agent Box runs coding agents (Claude Code, Codex, and GitHub Copilot) in
+sandboxed Docker containers, one container per project, and reviews their
+work with a multi-vendor code review pipeline before you push.
 
-Each sandbox is a disposable container built from a single `Dockerfile`. The
-GUI mounts your project directory into the container at the identical path,
-runs Claude Code with `--dangerously-skip-permissions` (a per-box toggle,
-on by default), and keeps the container alive with `docker run --rm` until
-you close it, so nothing lingers on disk beyond the container's `--rm`
-lifecycle and your project files.
+You create a box for a piece of work, and Agent Box gives it its own git
+worktree and branch, starts its agent in a tmux session in the project's
+container, and opens a terminal on it. When the work is ready, you start a
+review: Codex and Copilot review the branch, another vendor disproves what
+it can, Claude fixes what's left, and the run repeats until the branch is
+clean. You decide when to push and when to merge.
 
 ## Features
 
-### Dashboard and terminal
+- **Boxes**: one conversation per box, in its own worktree, with the same
+  transcript across restarts. Create, adopt an existing conversation, fork,
+  restart, move, and purge from the **Agent Box** app or the `agentbox` CLI.
+- **Terminals**: xterm.js tabs attached to each box's tmux session, with
+  scrollback and selection, plus an external terminal on request.
+- **Dev servers without port juggling**: the engine finds listening ports in
+  the container and the server proxies them at
+  `http://PORT.BOX.localhost:20400/`.
+- **Review pipeline**: profiles that decide how much Claude reviews, a
+  coverage ledger per diff hunk, cross-vendor verification, a test and lint
+  gate, oscillation detection, and a post-push loop on the pull request.
+- **Usage ceilings**: one scheduler for every container keeps each vendor
+  under its ceiling and moves work between vendors.
+- **Dashboard**: **Agent Box Review** shows the fleet, the data flow between
+  stages, every agent call, usage against ceilings, and run health, live.
+- **Secrets from 1Password**: `op://` references resolved at launch and
+  passed as environment variables. Values never reach a log or the apps.
+- **Desktop integration**: tray icons and notifications for decisions,
+  finished runs, and boxes that end unexpectedly.
 
-- **Dashboard**: a filterable table of every `claude-agent-*` container, with
-  live status, a CPU and memory usage bar per box, and a details panel for the
-  selected box. A separate Usage tab shows a live summary across every running
-  box.
-- **Embedded terminal**: attach to a running box in a tab and interact with
-  Claude Code directly, backed by a real VT100/xterm terminal emulator
-  ([libvterm](https://www.leonerd.org.uk/code/libvterm/)), with text selection
-  and copy and paste (Ctrl+Shift+C and Ctrl+Shift+V).
-- **Multi-select actions**: select several boxes at once to open, stop, or
-  remove them together.
-- **Open in an external terminal**: attach to a running box's `tmux` session
-  in your system terminal instead of an in-app tab for either the Claude Code
-  session or the docker shell session.
-- **Single instance**: launching the app while it's already running raises
-  the existing window instead of opening a second one.
+## Requirements
 
-### Conversations and boxes
+- Ubuntu 24.04 or later on x86-64, with systemd.
+- Node.js 22 and Docker Engine.
+- Claude Code signed in on the host. Codex, Copilot, and the 1Password CLI
+  are optional.
 
-- **Conversation management**: start a new conversation, resume a known one,
-  adopt a conversation that Claude Code already created outside the app, or
-  fork an existing conversation into a new box.
-- **Per-box configuration**: model, reasoning effort, permission bypass, port
-  forwards, extra mounts, and SSH remotes - all editable per box.
-- **Workspace sub-folders**: point a box at your project directory or repo root,
-  then create a working sub-folder from the conversation name so multiple Issues or
-  PRs can be worked on side by side without colliding.
-- **Working directory management**: move or change a box's project directory
-  from within the app, and relink a box whose directory has gone missing due to
-  external moves or renames.
-- **Automatic port allocation**: each new box gets a block of 5 host ports
-  from a shared range, so simultaneous boxes never collide.
-- **Resume after reboot**: the app remembers which boxes were running and
-  offers to resume them after your app or host restarts.
+macOS and Windows packages are deferred.
 
-### SSH remotes
+## Install
 
-- **Shared remote catalog**: define an SSH remote once and attach any number
-  of boxes to it; boxes that share a remote share one tunnel instead of each
-  opening a redundant connection.
-- **Port forwarding**: editable `-L`/`-R` forwards per remote, with a
-  per-remote tunnel status indicator and manual reconnect.
-- **Connection testing**: test an SSH connection from within the app, with an
-  interactive login prompt when a key needs a passphrase or hasn't been
-  authorized yet.
+Download the `.deb` from the
+[releases page](https://github.com/morris-labs/Claude-Box/releases), install
+it, and start the server as your user:
 
-### Setup
-
-- **First-run setup wizard**: checks that Docker and an SSH client are
-  reachable, builds the sandbox image from this repository's `Dockerfile`,
-  and generates an SSH keypair if you don't already have one.
-
-### Cross-platform
-
-A native build for Linux, Windows, and Mac have been released, as well as
-build scripts for building it yourself.
-
-## How it works
-
-A box is a container started with `docker run -d -i -t --rm --name
-claude-agent-<name> ...`. The container's entrypoint starts a `tmux` session
-running Claude Code, then waits in a keeper loop while that session is alive.
-The GUI opens a tab with `docker exec -it ... tmux attach -t main`, wires that
-process to a PTY, and renders it in a terminal tab. Closing a tab detaches the
-`tmux` client — `bash` is PID 1 in the container, not the client, so the
-container keeps running until Claude Code exits and `tmux` ends the session.
-Because of `--rm`, `docker ps` is always the source of truth for whether a box
-is running: nothing else needs to track container state across a restart or a
-crash.
-
-The container mounts your project directory at the same path inside the
-container as it has on the host, plus your `~/.claude` and `~/.claude.json`
-files, so Claude Code's own session and settings data works the same way it
-does outside the sandbox.
-
-## Prerequisites
-
-- Docker, with the daemon reachable from your user account.
-
-## Build and run
-
-The build scripts in `scripts/` install all missing prerequisites automatically.
-
-**Linux** (Ubuntu 22.04+, Fedora 36+, Arch):
-
-```bash
-./scripts/build-linux.sh
+```sh
+sudo apt install ./agentbox_VERSION_amd64.deb
+systemctl --user enable --now agentbox-server
 ```
 
-Produces an AppImage, `.deb`, and `.rpm` under `installer/`.
+Replace `VERSION` with the release you downloaded. Then open **Agent Box**
+from your applications menu; the setup wizard builds the container image.
+For the details, see [Install Agent Box](docs/install.md).
 
-**macOS**:
+## Documentation
 
-```bash
-./scripts/build-mac.sh
-```
+- [Install Agent Box](docs/install.md)
+- [Daily flow](docs/daily-flow.md)
+- [Review pipeline](docs/review-pipeline.md)
+- [Policy file](docs/policy.md)
+- [Secrets](docs/secrets.md)
+- [Troubleshooting](docs/troubleshooting.md)
+- [Migrate from Claude Box 3.x](docs/migration-3x.md)
+- [Architecture](docs/architecture.md)
+- [Changelog](CHANGELOG.md)
 
-Requires Homebrew. Produces a `.dmg` under `installer/`.
+## Migrating from 3.x
 
-**Windows** (Windows 10 1809+ or Windows 11):
+Agent Box 4.0.0 replaces the Qt app, Claude Box 3.x. Your boxes, their
+transcripts, and their worktrees carry over:
 
-```powershell
-.\scripts\build-windows.ps1
-```
+1. Stop every box in the 3.x app and close it.
+1. Back up `~/.claude-box`.
+1. Install Agent Box 4 and start the server.
+1. Run the one-time import from the setup wizard, or with `agentbox migrate`.
 
-Run in an elevated PowerShell session for the initial prerequisite install.
-Produces an `.exe` installer under `installer/`.
+Container names keep the `claude-agent-` prefix and your data stays in
+`~/.claude-box`. Classic boxes, which had their own containers, move into
+their project's shared container the first time you start them. The port
+pool and `agent.env` files are gone: dev servers are proxied, and secrets
+come from 1Password. For the full list of what changes, see
+[Migrate from Claude Box 3.x](docs/migration-3x.md).
 
-The first run of the app walks you through a setup wizard that builds the
-sandbox image from the repository's `Dockerfile`.
-
-### Install a desktop entry (Linux)
-
-To add Claude Box to your application launcher:
-
-```bash
-cmake --build gui/build --target desktop-install
-```
-
-This installs a `.desktop` file and icon under
-`~/.local/share/{applications,icons}`. Launch the app by name from your
-desktop environment, rather than by double-clicking the built binary or the
-`.desktop` file directly.
-
-## Repository layout
-
-- `Dockerfile`: builds the `claude-code` sandbox image.
-- `gui/`: the C++/Qt6 desktop application.
-- `scripts/`: platform build scripts (`build-linux.sh`, `build-mac.sh`, `build-windows.ps1`).
-- `CLAUDE.md`: detailed architecture and development notes for contributors.
+The Qt app and the bash launcher scripts stay available at the tag
+`v3.3.5`.
 
 ## Development
 
-For architecture details, platform-specific implementation notes, and
-conventions for this codebase, see `CLAUDE.md`.
+The repository is a pnpm workspace on Node.js 22 and TypeScript:
+
+```sh
+corepack enable
+pnpm install
+pnpm build
+pnpm lint
+pnpm typecheck
+pnpm test
+```
+
+To build the image from a checkout, run `scripts/build-image.sh`. To build
+the `.deb`, run `scripts/build-deb.sh`. For the layout of the repository,
+see [Architecture](docs/architecture.md#repository-layout).

@@ -1,0 +1,23 @@
+#!/bin/sh
+# prerm for the agentbox package.
+set -e
+
+case "$1" in
+  remove | purge)
+    # Unload the AppArmor profiles before dpkg removes their files.
+    if command -v apparmor_parser > /dev/null 2>&1 && [ -d /sys/kernel/security/apparmor ]; then
+      for app in boxes review; do
+        if [ -f "/etc/apparmor.d/agentbox-$app" ]; then
+          apparmor_parser -R "/etc/apparmor.d/agentbox-$app" > /dev/null 2>&1 || true
+        fi
+      done
+    fi
+    cat <<'MSG'
+Agent Box doesn't stop your user service. As each user who enabled it, run:
+  systemctl --user disable --now agentbox-server
+Your data in ~/.claude-box stays in place.
+MSG
+    ;;
+esac
+
+exit 0
