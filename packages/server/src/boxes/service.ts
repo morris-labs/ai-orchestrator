@@ -1167,18 +1167,6 @@ export class BoxService {
     }
   }
 
-  /**
-   * `boxes.attachCommand`: the argv for an external terminal. A session
-   * attaches without detaching other clients; a shell opens bash.
-   */
-  attachArgv(id: string, kind: "session" | "side" | "shell", platform?: Platform): string[] {
-    const box = this.get(id);
-    if (kind === "shell") return ["docker", "exec", "-it", box.container, "bash"];
-    const session =
-      kind === "side" ? sideSessionName(box, platform as Platform) : boxTmuxSession(box);
-    return ["docker", "exec", "-it", box.container, "tmux", "attach", "-t", `=${session}`];
-  }
-
   // -------------------------------------------------------------------------
   // Catalog
 

@@ -821,31 +821,13 @@ describe("edit, platform, side sessions, messages", () => {
     });
   });
 
-  it("sends a message and builds attach commands", async () => {
+  it("sends a message", async () => {
     const h = makeHarness();
     const box = await h.core.boxes.create({ targetDir: h.dir("app"), layout: "root" });
     await h.core.boxes.sendMessage(box.id, "Hold edits, please.");
     expect(h.docker.containers.get(box.container)?.sentKeys.get(box.session)).toEqual([
       "-l Hold edits, please.",
       "Enter",
-    ]);
-    expect(h.core.boxes.attachArgv(box.id, "session")).toEqual([
-      "docker",
-      "exec",
-      "-it",
-      box.container,
-      "tmux",
-      "attach",
-      "-t",
-      `=${box.session}`,
-    ]);
-    expect(h.core.boxes.attachArgv(box.id, "side", "codex").at(-1)).toBe(`=${box.session}-codex`);
-    expect(h.core.boxes.attachArgv(box.id, "shell")).toEqual([
-      "docker",
-      "exec",
-      "-it",
-      box.container,
-      "bash",
     ]);
   });
 
