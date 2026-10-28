@@ -111,7 +111,8 @@ if wait_exit "$pid" 6; then pass "an unreadable count is zero"; else fail "an un
 # 5. A dying engine is restarted.
 new_case restart
 printf 'claude-agent-a\n' > "$FAKE_SESSIONS"
-FAKE_ENGINE_LIFETIME=1 "$HERE/keeper.sh" "$CASE/state" 1 &
+# A 2-second delay keeps restarts apart from the keeper's 1-second loop.
+AGENTBOX_ENGINE_RESTART_DELAY=2 FAKE_ENGINE_LIFETIME=1 "$HERE/keeper.sh" "$CASE/state" 1 &
 pid=$!
 sleep 5
 check "the keeper restarts an engine that exits" [ "$(count start)" -ge 2 ]
