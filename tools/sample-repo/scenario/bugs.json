@@ -54,7 +54,13 @@
       "failure_case": "bulk_discount(100) returns 5, but the docstring promises 10 for 100 items or more.",
       "repro": "B3.py",
       "foundBy": [{ "vendor": "copilot", "round": 1, "via": "review" }],
-      "fix": [{ "file": "shop/pricing.py", "find": "    if quantity > 100:", "replace": "    if quantity >= 100:" }]
+      "fix": [
+        {
+          "file": "shop/pricing.py",
+          "find": "    if quantity > 100:",
+          "replace": "    if quantity >= 100:"
+        }
+      ]
     },
     {
       "id": "B4",
@@ -68,10 +74,18 @@
       "repro": "B4.py",
       "foundBy": [{ "vendor": "codex", "round": 1, "via": "review" }],
       "badFix": [
-        { "file": "shop/inventory.py", "find": "    start = number * size", "replace": "    start = (number - 1) * size" }
+        {
+          "file": "shop/inventory.py",
+          "find": "    start = number * size",
+          "replace": "    start = (number - 1) * size"
+        }
       ],
       "fix": [
-        { "file": "shop/inventory.py", "find": "    start = number * size", "replace": "    start = (number - 1) * size" },
+        {
+          "file": "shop/inventory.py",
+          "find": "    start = number * size",
+          "replace": "    start = (number - 1) * size"
+        },
         {
           "file": "tests/test_inventory.py",
           "find": "page(list(range(10)), 0, 3)",
