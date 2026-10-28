@@ -5,7 +5,13 @@ import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CliAdapter, detectLimitInText, parseResetTime, type CallContext, type CliAdapterOptions } from "./base.js";
+import {
+  CliAdapter,
+  detectLimitInText,
+  parseResetTime,
+  type CallContext,
+  type CliAdapterOptions,
+} from "./base.js";
 import { parseStructuredText } from "./output.js";
 import { runProcess } from "./process.js";
 import { AdapterError, type AdapterRequest, type AdapterResult, type LimitInfo } from "./types.js";

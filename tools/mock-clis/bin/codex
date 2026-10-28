@@ -3,10 +3,47 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { answerText, loadScenario, logCall, newId, pickResponse, readStdin, sleep, writeFiles } from "../lib/scenario.mjs";
+import {
+  answerText,
+  loadScenario,
+  logCall,
+  newId,
+  pickResponse,
+  readStdin,
+  sleep,
+  writeFiles,
+} from "../lib/scenario.mjs";
 
-const VALUE_FLAGS = new Set(["-m", "--model", "-s", "--sandbox", "-C", "--cd", "--output-schema", "-o", "--output-last-message", "-c", "--config", "-p", "--profile", "-i", "--image", "--add-dir", "--color"]);
-const BOOL_FLAGS = new Set(["--json", "--experimental-json", "--skip-git-repo-check", "--ephemeral", "--dangerously-bypass-approvals-and-sandbox", "--yolo", "--last", "--all", "--oss"]);
+const VALUE_FLAGS = new Set([
+  "-m",
+  "--model",
+  "-s",
+  "--sandbox",
+  "-C",
+  "--cd",
+  "--output-schema",
+  "-o",
+  "--output-last-message",
+  "-c",
+  "--config",
+  "-p",
+  "--profile",
+  "-i",
+  "--image",
+  "--add-dir",
+  "--color",
+]);
+const BOOL_FLAGS = new Set([
+  "--json",
+  "--experimental-json",
+  "--skip-git-repo-check",
+  "--ephemeral",
+  "--dangerously-bypass-approvals-and-sandbox",
+  "--yolo",
+  "--last",
+  "--all",
+  "--oss",
+]);
 
 const argv = process.argv.slice(2);
 if (argv.includes("--version") || argv.includes("-V")) {
@@ -55,14 +92,24 @@ const schemaFile = flags["--output-schema"]?.at(-1);
 if (schemaFile) {
   const schema = JSON.parse(readFileSync(schemaFile, "utf8"));
   if (schema.type === "object" && schema.additionalProperties !== false) {
-    console.error("mock codex: --output-schema must set additionalProperties to false (strict mode)");
+    console.error(
+      "mock codex: --output-schema must set additionalProperties to false (strict mode)",
+    );
     process.exit(1);
   }
 }
 
 const scenario = loadScenario("codex");
 const picked = pickResponse("codex", scenario, prompt);
-logCall("codex", { argv, prompt, responseIndex: picked?.index ?? -1, resumeId, sandbox, bypass, model });
+logCall("codex", {
+  argv,
+  prompt,
+  responseIndex: picked?.index ?? -1,
+  resumeId,
+  sandbox,
+  bypass,
+  model,
+});
 
 const threadId = resumeId ?? picked?.response.sessionId ?? newId();
 const emit = (event) => json && process.stdout.write(`${JSON.stringify(event)}\n`);
@@ -78,7 +125,8 @@ const response = picked.response;
 if (response.delayMs) await sleep(response.delayMs);
 if (response.stderr) process.stderr.write(response.stderr);
 
-if (response.rateLimits && process.env.CODEX_HOME) writeRollout(process.env.CODEX_HOME, threadId, response);
+if (response.rateLimits && process.env.CODEX_HOME)
+  writeRollout(process.env.CODEX_HOME, threadId, response);
 
 const failures = {
   usage_limit: "You’ve hit your usage limit. Try again at 3:15 PM.",
@@ -97,17 +145,30 @@ if ((sandbox !== "read-only" || bypass) && response.writeFiles) {
   writeFiles(response);
   emit({
     type: "item.completed",
-    item: { id: "item_0", type: "file_change", changes: Object.keys(response.writeFiles).map((path) => ({ path, kind: "update" })), status: "completed" },
+    item: {
+      id: "item_0",
+      type: "file_change",
+      changes: Object.keys(response.writeFiles).map((path) => ({ path, kind: "update" })),
+      status: "completed",
+    },
   });
 }
 
 const text = answerText(response);
-emit({ type: "item.completed", item: { id: "item_1", type: "reasoning", text: "Reviewing the change." } });
+emit({
+  type: "item.completed",
+  item: { id: "item_1", type: "reasoning", text: "Reviewing the change." },
+});
 emit({ type: "item.completed", item: { id: "item_2", type: "agent_message", text } });
 const tokens = response.tokens ?? { input: 1200, output: 80 };
 emit({
   type: "turn.completed",
-  usage: { input_tokens: tokens.input, cached_input_tokens: 0, output_tokens: tokens.output, reasoning_output_tokens: 0 },
+  usage: {
+    input_tokens: tokens.input,
+    cached_input_tokens: 0,
+    output_tokens: tokens.output,
+    reasoning_output_tokens: 0,
+  },
 });
 const outFile = (flags["-o"] ?? flags["--output-last-message"])?.at(-1);
 if (outFile) writeFileSync(outFile, text);
@@ -117,21 +178,39 @@ process.exit(response.exitCode ?? 0);
 function writeRollout(home, thread, r) {
   const now = new Date();
   const pad = (n) => String(n).padStart(2, "0");
-  const dir = join(home, "sessions", String(now.getFullYear()), pad(now.getMonth() + 1), pad(now.getDate()));
+  const dir = join(
+    home,
+    "sessions",
+    String(now.getFullYear()),
+    pad(now.getMonth() + 1),
+    pad(now.getDate()),
+  );
   mkdirSync(dir, { recursive: true });
   const stamp = now.toISOString().slice(0, 19).replace(/:/g, "-");
   const window = (w, minutes) =>
     w === undefined
       ? null
-      : { used_percent: w.usedPercent ?? w, window_minutes: w.windowMinutes ?? minutes, resets_at: w.resetsAt ?? Math.floor(now.getTime() / 1000) + minutes * 60 };
+      : {
+          used_percent: w.usedPercent ?? w,
+          window_minutes: w.windowMinutes ?? minutes,
+          resets_at: w.resetsAt ?? Math.floor(now.getTime() / 1000) + minutes * 60,
+        };
   const line = {
     timestamp: now.toISOString(),
     type: "event_msg",
     payload: {
       type: "token_count",
       info: null,
-      rate_limits: { limit_id: "codex", primary: window(r.rateLimits.primary, 300), secondary: window(r.rateLimits.secondary, 10080), credits: null, plan_type: "pro" },
+      rate_limits: {
+        limit_id: "codex",
+        primary: window(r.rateLimits.primary, 300),
+        secondary: window(r.rateLimits.secondary, 10080),
+        credits: null,
+        plan_type: "pro",
+      },
     },
   };
-  writeFileSync(join(dir, `rollout-${stamp}-${thread}.jsonl`), `${JSON.stringify(line)}\n`, { flag: "a" });
+  writeFileSync(join(dir, `rollout-${stamp}-${thread}.jsonl`), `${JSON.stringify(line)}\n`, {
+    flag: "a",
+  });
 }

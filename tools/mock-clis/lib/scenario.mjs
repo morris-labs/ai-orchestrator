@@ -3,7 +3,15 @@
 // whose `times` isn't used up. Use counts persist in a state file, so a
 // sequence of separate CLI invocations walks through the script.
 import { randomUUID } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmdirSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmdirSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 
 /** Reads all of stdin as text. */
@@ -31,7 +39,8 @@ export function loadScenario(cli) {
 export function pickResponse(cli, scenario, prompt) {
   return withLock(scenario.path, () => {
     const statePath = statePathFor(scenario.path);
-    const state = statePath && existsSync(statePath) ? JSON.parse(readFileSync(statePath, "utf8")) : {};
+    const state =
+      statePath && existsSync(statePath) ? JSON.parse(readFileSync(statePath, "utf8")) : {};
     const used = state[cli] ?? {};
     const index = scenario.responses.findIndex(
       (r, i) =>

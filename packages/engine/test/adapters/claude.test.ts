@@ -11,7 +11,8 @@ import {
   claudeTokens,
 } from "../../src/adapters/claude.js";
 import { VendorFindingsOutputSchema } from "../../src/adapters/output.js";
-import { AdapterError, type AdapterRequest } from "../../src/adapters/types.js";
+import type { AdapterError } from "../../src/adapters/types.js";
+import { type AdapterRequest } from "../../src/adapters/types.js";
 import { fixture, lines } from "./helpers.js";
 
 const ceiling = DEFAULT_CEILINGS.claude;
