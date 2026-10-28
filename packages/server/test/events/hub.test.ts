@@ -1,5 +1,6 @@
 import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
+import { FindingSchema } from "@agentbox/contracts";
 import { EventHub } from "../../src/events/hub.js";
 import { LateSink } from "../../src/events/late-sink.js";
 import { RunMirror } from "../../src/events/run-mirror.js";
@@ -149,5 +150,52 @@ describe("RunMirror", () => {
     expect(mirror.list({ boxId: "claude-agent-none" })).toHaveLength(0);
     expect(mirror.round(RUN)).toBe(1);
     expect(mirror.round("01JB8Z5K3W6Q2V9X4T7R0M1N2Q")).toBe(0);
+  });
+
+  it("keeps the latest state of each finding from finding.changed events", () => {
+    const mirror = new RunMirror(new Database(":memory:"));
+    const finding = FindingSchema.parse({
+      id: "F-0001",
+      fingerprint: "3f786850e387550fdab836ed7e6dc881de23001b",
+      severity: "P1",
+      title: "Retry loop never gives up on a closed socket",
+      file: "src/mailer.ts",
+      lines: [120, 134],
+      failureCase: "A closed SMTP socket makes send() retry forever.",
+      category: "correctness",
+      introduced: true,
+      reportedBy: "codex-gpt-5",
+      alsoReportedBy: [],
+      verdict: "pending",
+      verification: "code-reading",
+      evidence: "",
+      runId: RUN,
+      round: 1,
+      groupId: "G-01",
+      hunkIds: ["H-0003"],
+      origin: "reviewer",
+      history: [],
+    });
+    const event = (f: typeof finding, seq: number) =>
+      ({
+        type: "finding.changed",
+        runId: RUN,
+        finding: f,
+        previousVerdict: null,
+        id: `e${seq}`,
+        time: "2026-10-28T10:00:00.000Z",
+        source: "engine:claude-agent-proj-x",
+        streamId: "s",
+        seq,
+        sourceSeq: seq,
+      }) as const;
+    mirror.ingest(event(finding, 1));
+    mirror.ingest(event({ ...finding, verdict: "confirmed" }, 2));
+    mirror.ingest(event({ ...finding, id: "F-0002", verdict: "disproved" }, 3));
+    expect(mirror.findings(RUN).map((f) => [f.id, f.verdict])).toEqual([
+      ["F-0001", "confirmed"],
+      ["F-0002", "disproved"],
+    ]);
+    expect(mirror.findings("01JB8Z5K3W6Q2V9X4T7R0M1N2Q")).toEqual([]);
   });
 });
