@@ -1,0 +1,16 @@
+{
+  "name": "@agentbox/mock-clis",
+  "version": "4.0.0-dev",
+  "description": "Stand-ins for the codex, copilot, and claude CLIs that replay scripted scenarios.",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "codex": "./bin/codex",
+    "copilot": "./bin/copilot",
+    "claude": "./bin/claude"
+  },
+  "files": [
+    "bin",
+    "lib"
+  ]
+}
