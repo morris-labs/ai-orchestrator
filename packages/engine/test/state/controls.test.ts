@@ -168,29 +168,32 @@ describe("run controls", () => {
     expect(events.ofType("agent.finished").some((e) => e.outcome === "limited")).toBe(true);
   });
 
-  it("announces a ceiling redirect once per change, not once per redirected call", async () => {
+  it("leaves every ceiling redirect in a lease response to the server", async () => {
     const repo = buildSampleRepo();
     const scenario = new Scenario();
     const { deps, events } = setup(scenario);
     const granting = deps.broker;
+    let redirects = 0;
     deps.broker = {
       settle: granting.settle.bind(granting),
       acquire: async (req: LeaseRequest): Promise<LeaseResponse> => {
         const res = await granting.acquire(req);
         if (res.decision !== "granted" || req.vendor !== "codex" || req.role !== "reviewer")
           return res;
+        redirects += 1;
         return { ...res, vendor: "copilot", redirectedFrom: "codex" };
       },
     };
     const run = await create(repo, deps, { readOnly: true });
     await run.start();
     expect((await run.settled()).status).toBe("finished");
-    const moves = events.ofType("role.reassigned").filter((e) => e.reason === "ceiling");
-    expect(moves.length).toBeGreaterThan(0);
-    for (const e of moves) {
-      expect(e).toMatchObject({ role: "reviewer", from: ["codex", "copilot"], to: ["copilot"] });
-    }
-    expect(new Set(moves.map((e) => e.effectiveRound)).size).toBe(moves.length);
+    expect(redirects).toBeGreaterThan(0);
+    // The server emits role.reassigned for its own redirects; the engine
+    // only follows them.
+    expect(events.ofType("role.reassigned").filter((e) => e.reason === "ceiling")).toEqual([]);
+    expect(
+      events.ofType("agent.started").some((e) => e.role === "reviewer" && e.vendor === "copilot"),
+    ).toBe(true);
   });
 
   it("fails after a call fails twice, and retries the stage on start", async () => {

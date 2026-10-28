@@ -182,10 +182,13 @@ describe("role.reassigned", () => {
     expect(events.ofType("role.reassigned")).toHaveLength(0);
   });
 
-  it("announces a move the engine made on its own after a limit, once", async () => {
+  it("announces a move the engine made on its own after a limit, once per change", async () => {
     const { ctx, events } = await makeRun({
       adapters: { codex: limited("codex"), copilot: answering("copilot") },
     });
+    await ctx.callAgent(review(ctx.state.request.repoPath));
+    // A second call that hits the same limit makes the same move again,
+    // which changes nothing and gets no event.
     await ctx.callAgent(review(ctx.state.request.repoPath));
     const moves = events.ofType("role.reassigned");
     expect(moves).toHaveLength(1);

@@ -318,10 +318,11 @@ describe("C2: server and engine talk", () => {
       to: ["copilot"],
       reason: "ceiling",
     });
+    // The redirect came in a lease response, so the server owns the event:
+    // the engine follows it without a role.reassigned of its own.
     const events = runEvents(id);
     const moves = events.filter((e) => e.type === "role.reassigned" && e.reason === "ceiling");
-    expect(moves.length).toBeGreaterThan(0);
-    for (const e of moves) expect(e).toMatchObject({ from: ["codex", "copilot"], to: ["copilot"] });
+    expect(moves).toEqual([]);
     const vendors = new Set(events.filter((e) => e.type === "lease.settled").map((e) => e.vendor));
     expect(vendors.has("codex")).toBe(false);
   });

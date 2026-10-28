@@ -2,14 +2,28 @@
 # Runs the engine smoke test: a read-only review of the sample repository with
 # mock vendors, driven through the engine API with curl. See README.md.
 #
-# Usage: smoke.sh DIR
+# Usage: smoke.sh [DIR]
 # DIR must not exist yet or must be empty; it receives the sample repository,
-# the state directory, and the logs. Needs node, curl, jq, and a built engine
-# (`corepack pnpm -r build`).
+# the state directory, and the logs. Without DIR, the script makes a new
+# temporary directory and prints its path. Needs node, curl, jq, and a built
+# engine (`corepack pnpm -r build`).
 # The echo lines print each command as written, so their single quotes are deliberate.
 # shellcheck disable=SC2016
 set -euo pipefail
-S="$(mkdir -p "$1" && cd "$1" && pwd)"
+case "${1:-}" in
+  -h | --help)
+    echo "Usage: $0 [DIR]"
+    echo "Runs the engine smoke test in DIR, or in a new temporary directory."
+    exit 0
+    ;;
+esac
+if [[ $# -gt 1 ]]; then
+  echo "Usage: $0 [DIR]" >&2
+  exit 2
+fi
+DIR="${1:-$(mktemp -d "${TMPDIR:-/tmp}/agentbox-smoke-XXXXXX")}"
+echo "Smoke directory: $DIR"
+S="$(mkdir -p "$DIR" && cd "$DIR" && pwd)"
 mkdir -p "$S/state"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 cd "$ROOT"

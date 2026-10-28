@@ -31,7 +31,9 @@ packages/engine/test/smoke/smoke.sh SMOKE_DIR
 ```
 
 Replace `SMOKE_DIR` with an empty or missing directory for the sample
-repository, the state directory, and the logs.
+repository, the state directory, and the logs. `SMOKE_DIR` is optional:
+without it, the script makes a new temporary directory and prints its path
+first. Run `smoke.sh --help` for the usage line.
 
 The script generates a random engine token and never prints it. The engine
 runs with the following environment:
