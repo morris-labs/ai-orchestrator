@@ -50,7 +50,9 @@ export const CLAUDE_WRITE_DENIED_FOR_READ_ONLY = [
 /**
  * The tool lists for a read-only call. With a scratch directory, `Write` is
  * available but allowed only under that directory: `dontAsk` denies every
- * call no allow rule covers. A path rule starting with `//` is absolute.
+ * call no allow rule covers. File-writing tools take their permission from
+ * `Edit(...)` path rules (a `Write(...)` rule matches nothing), and a path
+ * that starts with `//` is absolute. Checked against Claude Code 2.1.310.
  */
 export function claudeReadOnlyPolicy(scratchDir?: string): {
   tools: string[];
@@ -67,7 +69,7 @@ export function claudeReadOnlyPolicy(scratchDir?: string): {
   const dir = scratchDir.replace(/\/+$/, "");
   return {
     tools: [...CLAUDE_READ_ONLY_TOOLS, "Write"],
-    allowed: [...CLAUDE_READ_ONLY_ALLOWED, `Write(/${dir}/**)`],
+    allowed: [...CLAUDE_READ_ONLY_ALLOWED, `Edit(/${dir}/**)`],
     disallowed: CLAUDE_WRITE_DENIED_FOR_READ_ONLY.filter((t) => t !== "Write"),
   };
 }

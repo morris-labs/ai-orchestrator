@@ -217,7 +217,7 @@ describe("ClaudeAdapter.buildArgs", () => {
   it("lets a read-only call write only to its scratch directory", () => {
     const args = adapter.buildArgs(req(z.object({}), { scratchDir: "/runs/r1/scratch/F-1/" }));
     expect(args[args.indexOf("--tools") + 1]).toBe("Read,Grep,Glob,Bash,Write");
-    expect(args[args.indexOf("--allowedTools") + 1]).toContain("Write(//runs/r1/scratch/F-1/**)");
+    expect(args[args.indexOf("--allowedTools") + 1]).toContain("Edit(//runs/r1/scratch/F-1/**)");
     expect(args[args.indexOf("--disallowedTools") + 1]).toBe(
       "Edit,NotebookEdit,Bash(*--output*),Bash(*--ext-diff*),Bash(*--textconv*)",
     );
