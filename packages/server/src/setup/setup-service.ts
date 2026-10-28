@@ -1,5 +1,6 @@
 // The setup checks behind the setup wizard, their fixes, and the image build
 // jobs (inventory section 2.6).
+import { existsSync } from "node:fs";
 import { chmod, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { Job, SetupCheck, SetupStatusSchema } from "@agentbox/contracts";
@@ -353,6 +354,12 @@ export class SetupService {
 
   /** Builds or updates the image as an `image_build` job. */
   buildImage(kind: ImageBuildKind): Job {
+    if (!existsSync(join(this.opts.imageContext, "Dockerfile"))) {
+      throw new ApiFailure(
+        "image_missing",
+        `The image build context ${this.opts.imageContext} has no Dockerfile. Set AGENTBOX_IMAGE_CONTEXT to the directory that holds the image's Dockerfile.`,
+      );
+    }
     const argv = this.buildArgv(kind);
     return this.opts.jobs.start({ kind: "image_build", command: commandLine(argv) }, (io) =>
       processJob(io, this.opts.runner.spawn(argv[0] as string, argv.slice(1), { pty: true })),

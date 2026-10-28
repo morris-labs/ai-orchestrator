@@ -39,6 +39,7 @@ function make(overrides: {
   installed?: boolean;
   runner?: FakeRunner;
   settings?: Partial<GlobalSettings>;
+  imageContext?: string;
 }) {
   const settings: GlobalSettings = { ...defaultConfig(), ...overrides.settings };
   const runner =
@@ -68,7 +69,7 @@ function make(overrides: {
     op,
     home,
     user: "me",
-    imageContext: "/opt/agentbox/image",
+    imageContext: overrides.imageContext ?? "/opt/agentbox/image",
     serviceInstalled: async () => overrides.installed ?? false,
     installService: async (io) => {
       installs.push("install");
@@ -167,8 +168,25 @@ describe("SetupService image builds and fixes", () => {
     ]);
   });
 
+  /** A build context that holds a Dockerfile. */
+  async function context(): Promise<string> {
+    const dir = join(home, "image");
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, "Dockerfile"), "FROM ubuntu\n");
+    return dir;
+  }
+
+  it("refuses an image build whose context has no Dockerfile", async () => {
+    const { svc, runner } = make({ imageContext: join(home, "empty") });
+    expect(() => svc.buildImage("rebuild")).toThrow(/no Dockerfile/);
+    expect(runner.spawned).toHaveLength(0);
+  });
+
   it("runs an image build as a job under a pty", async () => {
-    const { svc, runner, jobs } = make({ settings: { engineImage: "my-image" } });
+    const { svc, runner, jobs } = make({
+      settings: { engineImage: "my-image" },
+      imageContext: await context(),
+    });
     const job = svc.buildImage("rebuild");
     expect(job.kind).toBe("image_build");
     expect(job.command).toContain("docker build -t my-image --no-cache --pull");
@@ -179,7 +197,7 @@ describe("SetupService image builds and fixes", () => {
   });
 
   it("routes fixes", async () => {
-    const { svc, runner, jobs, installs } = make({});
+    const { svc, runner, jobs, installs } = make({ imageContext: await context() });
     expect(svc.fix("engine").kind).toBe("image_build");
     const keygen = svc.fix("ssh_key");
     expect(keygen.kind).toBe("setup_fix");
