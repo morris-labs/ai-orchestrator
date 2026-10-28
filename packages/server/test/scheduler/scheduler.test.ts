@@ -1,0 +1,135 @@
+import type { CeilingsOverride, LeaseRequest } from "@agentbox/contracts";
+import { describe, expect, it } from "vitest";
+import { Scheduler, mergeCeilings } from "../../src/scheduler/scheduler.js";
+import { MIN, T0, iso, setup } from "../usage/helpers.js";
+
+const RUN = "01JB8Z5K3W6Q2V9X4T7R0M1N2P";
+
+function make(override?: CeilingsOverride) {
+  const t = setup();
+  const scheduler = new Scheduler({
+    usage: t.usage,
+    settings: () => t.settings.value,
+    projectCeilings: async () => override,
+    runRound: () => 2,
+    emit: (e) => t.hub.emit(e),
+    now: t.now,
+  });
+  let n = 0;
+  const req = (fields: Partial<LeaseRequest> = {}): LeaseRequest => ({
+    leaseId: `L-${(n += 1)}`,
+    runId: RUN,
+    vendor: "codex",
+    role: "reviewer",
+    estimate: { tokens: 1000 },
+    ...fields,
+  });
+  return { ...t, scheduler, req };
+}
+
+describe("Scheduler", () => {
+  it("grants a vendor under its ceiling", async () => {
+    const t = make();
+    t.sample("codex", { utilization: 0.3 });
+    const res = await t.scheduler.decide("engine:a", "p", t.req());
+    expect(res).toEqual({
+      decision: "granted",
+      leaseId: "L-1",
+      vendor: "codex",
+      redirectedFrom: null,
+      expiresAt: iso(T0 + 10 * MIN),
+    });
+  });
+
+  it("redirects a role to the next vendor and announces it once", async () => {
+    const t = make();
+    t.sample("codex", { utilization: 0.8 });
+    const first = await t.scheduler.decide("engine:a", "p", t.req({ role: "disprover" }));
+    // codex -> copilot can't disprove -> claude.
+    expect(first).toMatchObject({ decision: "granted", vendor: "claude", redirectedFrom: "codex" });
+    await t.scheduler.decide("engine:a", "p", t.req({ role: "disprover" }));
+    const moved = t.ofType("role.reassigned");
+    expect(moved).toHaveLength(1);
+    expect(moved[0]).toMatchObject({
+      runId: RUN,
+      role: "disprover",
+      from: ["codex"],
+      to: ["claude"],
+      reason: "ceiling",
+      effectiveRound: 2,
+    });
+  });
+
+  it("redirects a reviewer to copilot first after codex", async () => {
+    const t = make();
+    t.sample("codex", { utilization: 0.8 });
+    expect(await t.scheduler.decide("e", "p", t.req())).toMatchObject({ vendor: "copilot" });
+  });
+
+  it("emits no role.reassigned for a sweeper", async () => {
+    const t = make();
+    t.sample("codex", { utilization: 0.8 });
+    const res = await t.scheduler.decide("e", "p", t.req({ role: "sweeper" }));
+    expect(res).toMatchObject({ decision: "granted", vendor: "copilot" });
+    expect(t.ofType("role.reassigned")).toHaveLength(0);
+  });
+
+  it("pauses the fixer until Claude's window resets", async () => {
+    const t = make();
+    const resetAt = iso(T0 + 42 * MIN);
+    t.sample("claude", { utilization: 0.61, resetAt });
+    const res = await t.scheduler.decide("e", "p", t.req({ vendor: "claude", role: "fixer" }));
+    expect(res).toMatchObject({ decision: "pause", resumeAt: resetAt });
+  });
+
+  it("pauses the fixer for 15 minutes when the reset time is unknown", async () => {
+    const t = make();
+    t.sample("claude", { utilization: 0.61, resetAt: null });
+    const res = await t.scheduler.decide("e", "p", t.req({ vendor: "claude", role: "fixer" }));
+    expect(res).toMatchObject({ decision: "pause", resumeAt: iso(T0 + 15 * MIN) });
+  });
+
+  it("pauses until the earliest reset when no vendor can take the role", async () => {
+    const t = make();
+    t.sample("codex", { utilization: 0.9, resetAt: iso(T0 + 60 * MIN) });
+    t.sample("claude", { utilization: 0.9, resetAt: iso(T0 + 20 * MIN) });
+    const res = await t.scheduler.decide("e", "p", t.req({ role: "disprover" }));
+    expect(res).toMatchObject({ decision: "pause", resumeAt: iso(T0 + 20 * MIN) });
+  });
+
+  it("denies when no vendor can take the role and no reset is known", async () => {
+    const t = make();
+    t.sample("codex", { utilization: 0.9, resetAt: null });
+    const res = await t.scheduler.decide("e", "p", t.req({ role: "confirmer" }));
+    expect(res).toMatchObject({ decision: "deny", action: "pause" });
+  });
+
+  it("answers a repeated leaseId with the same response", async () => {
+    const t = make();
+    t.sample("codex", { utilization: 0.1 });
+    const req = t.req();
+    const first = await t.scheduler.decide("e", "p", req);
+    t.sample("codex", { utilization: 0.9 });
+    t.clock.now += MIN;
+    expect(await t.scheduler.decide("e", "p", req)).toEqual(first);
+    // Another engine with the same lease id gets its own answer.
+    expect(await t.scheduler.decide("f", "p", req)).toMatchObject({ vendor: "copilot" });
+    t.scheduler.forget("e");
+    expect(await t.scheduler.decide("e", "p", req)).toMatchObject({ vendor: "copilot" });
+  });
+
+  it("applies the project's ceiling override", async () => {
+    const t = make({ codex: { kind: "utilization", window: "5h", max: 0.2 } });
+    t.sample("codex", { utilization: 0.3 });
+    expect(await t.scheduler.decide("e", "p", t.req())).toMatchObject({ vendor: "copilot" });
+  });
+
+  it("merges an override per vendor", () => {
+    const t = setup();
+    const merged = mergeCeilings(t.settings.value.ceilings, {
+      copilot: { kind: "spend", period: "month", maxUsd: 5 },
+    });
+    expect(merged.copilot).toEqual({ kind: "spend", period: "month", maxUsd: 5 });
+    expect(merged.claude).toEqual(t.settings.value.ceilings.claude);
+  });
+});
