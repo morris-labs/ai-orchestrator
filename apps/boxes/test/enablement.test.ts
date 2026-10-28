@@ -106,14 +106,14 @@ const cases: Case[] = [
     enabled: ["edit", "purge", "moveWorkDir", "changeWorkDir", "start", "remove", "startReview"],
   },
   {
-    name: "a starting box allows only the record actions",
+    name: "a starting box counts for nothing",
     selection: [starting],
-    enabled: ["edit", "fork", "purge", "startReview"],
+    enabled: [],
   },
   {
-    name: "a stopping box allows only the record actions",
+    name: "a stopping box counts for nothing",
     selection: [stopping],
-    enabled: ["edit", "fork", "purge", "startReview"],
+    enabled: [],
   },
   {
     name: "convert needs a stopped workspace box without a worktree",

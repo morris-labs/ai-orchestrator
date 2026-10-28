@@ -353,6 +353,11 @@ describe("lists", () => {
       }),
     ).toEqual(["/home/user/.claude/projects/-w-my-site", "the record of claude-agent-a"]);
     expect(runningOnDir([a, b], "/w/my.site")?.box.id).toBe("claude-agent-b");
+    const starting = v("c", "starting", { targetDir: "/w/other/" });
+    expect(runningOnDir([starting], "/w/other")?.box.id).toBe("claude-agent-c");
+    expect(
+      runningOnDir([v("d", "stopped", { targetDir: "/w/other" })], "/w/other"),
+    ).toBeUndefined();
   });
 });
 
