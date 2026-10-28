@@ -4,3 +4,7 @@ dist/
 node_modules/
 pnpm-lock.yaml
 *.md
+.pnpm-store/
+.worktrees/
+TestBox/
+.github/

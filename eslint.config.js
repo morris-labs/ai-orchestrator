@@ -12,6 +12,7 @@ export default tseslint.config(
       "gui/**",
       "TestBox/**",
       ".worktrees/**",
+      ".pnpm-store/**",
       "scripts/**",
     ],
   },

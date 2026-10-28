@@ -1,0 +1,1172 @@
+// The route catalog for the server API and the engine API.
+//
+// Each route is a plain data entry: method, path, and the zod schemas for its
+// query, body, and response (or, for a WebSocket route, its client and server
+// messages). The server and the engine register their Fastify handlers by
+// iterating the tables, and thin clients (the apps, the CLI) build requests
+// from the same entries, so both sides stay in step.
+//
+// Conventions:
+//
+// - The server listens on `127.0.0.1:20400`; every route except `health`
+//   needs `Authorization: Bearer <~/.claude-box/server.token>`.
+// - The engine listens on `0.0.0.0:20411` inside its container; every route
+//   except `engine.health` needs `Authorization: Bearer $AGENTBOX_ENGINE_TOKEN`.
+// - Path parameters are written `:name` and are always strings; use
+//   `buildPath()` to fill them and `pathParamNames()` to list them.
+// - Query values arrive as strings, so query schemas coerce them.
+// - A failed call returns a 4xx or 5xx status with an `ApiError` body.
+// - Run, finding, and usage routes on the server proxy to the engine of the
+//   run's project container and return the engine's bodies unchanged.
+// - Terminal and job streams (`kind: "ws"`) carry terminal output as binary
+//   frames in both directions (output from the server, keystrokes from the
+//   client) and control messages as JSON text frames, which the
+//   `clientMessage` and `serverMessage` schemas describe.
+import { z } from "zod";
+import {
+  ApiErrorSchema,
+  EffortSchema,
+  IsoDateTimeSchema,
+  OkSchema,
+  PlatformSchema,
+  PortSchema,
+  VendorSchema,
+} from "./common.js";
+import {
+  BoxStatusSchema,
+  ContainerStateSchema,
+  EventSchema,
+  ListenerSchema,
+  NotificationSchema,
+  UsageSampleSchema,
+  UsageWindowSchema,
+} from "./events.js";
+import { FindingSchema, SeveritySchema, VerdictSchema } from "./findings.js";
+import { LeaseResponseSchema } from "./lease.js";
+import { PolicyFileSchema } from "./policy.js";
+import {
+  BoxSchema,
+  CeilingSchema,
+  CeilingsOverrideSchema,
+  GlobalSettingsSchema,
+  MountSchema,
+  ProjectSchema,
+  SecretRefSchema,
+  SshRemoteSchema,
+  TcpMapSchema,
+} from "./records.js";
+import {
+  DecisionAnswerSchema,
+  FileGroupSchema,
+  ProfileSchema,
+  RoleSchema,
+  RoundSummarySchema,
+  RunRequestSchema,
+  RunStateSchema,
+  RunStatusSchema,
+} from "./runs.js";
+
+// ---------------------------------------------------------------------------
+// Route definition types
+
+export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+
+export interface HttpRouteDef {
+  kind: "http";
+  method: HttpMethod;
+  path: string;
+  summary: string;
+  /** False only for health checks. */
+  auth: boolean;
+  query?: z.ZodTypeAny;
+  body?: z.ZodTypeAny;
+  response: z.ZodTypeAny;
+  /** The success status; 200 when absent. */
+  status?: number;
+}
+
+export interface WsRouteDef {
+  kind: "ws";
+  method: "GET";
+  path: string;
+  summary: string;
+  auth: boolean;
+  query?: z.ZodTypeAny;
+  /** JSON text frames the client sends. */
+  clientMessage: z.ZodTypeAny;
+  /** JSON text frames the server sends. */
+  serverMessage: z.ZodTypeAny;
+}
+
+/** A pass-through route: any method, no body schema. */
+export interface ProxyRouteDef {
+  kind: "proxy";
+  method: "ALL";
+  path: string;
+  summary: string;
+  auth: boolean;
+}
+
+export type RouteDef = HttpRouteDef | WsRouteDef | ProxyRouteDef;
+
+function http<const R extends Omit<HttpRouteDef, "kind" | "auth"> & { auth?: boolean }>(
+  route: R,
+): R & { kind: "http"; auth: boolean } {
+  return { ...route, kind: "http", auth: route.auth ?? true };
+}
+
+function ws<const R extends Omit<WsRouteDef, "kind" | "auth" | "method"> & { auth?: boolean }>(
+  route: R,
+): R & { kind: "ws"; method: "GET"; auth: boolean } {
+  return { ...route, kind: "ws", method: "GET", auth: route.auth ?? true };
+}
+
+// ---------------------------------------------------------------------------
+// Query helpers
+
+/** A query-string boolean: `true` or `false`. (`z.coerce.boolean` reads "false" as true.) */
+export const QueryBooleanSchema = z.enum(["true", "false"]).transform((v) => v === "true");
+const queryInt = z.coerce.number().int().nonnegative();
+
+// ---------------------------------------------------------------------------
+// Shared payloads
+
+const V1 = "/api/v1";
+
+/** A long-running host command, such as an image build. `jobs.stream` streams its output. */
+export const JobSchema = z.object({
+  id: z.string().min(1),
+  kind: z.enum(["image_build", "setup_fix", "ssh_copy_id"]),
+  /** The command as a person would type it, for the "Running: ..." label. */
+  command: z.string(),
+  status: z.enum(["running", "finished", "failed"]),
+  exitCode: z.number().int().nullable(),
+  startedAt: IsoDateTimeSchema,
+  finishedAt: IsoDateTimeSchema.nullable(),
+});
+export type Job = z.infer<typeof JobSchema>;
+
+export const ContainerInfoSchema = z.object({
+  name: z.string().min(1),
+  state: ContainerStateSchema,
+  engine: z
+    .object({
+      hostPort: PortSchema.optional(),
+      version: z.string().optional(),
+      healthy: z.boolean(),
+      versionMatches: z.boolean(),
+    })
+    .nullable(),
+});
+export type ContainerInfo = z.infer<typeof ContainerInfoSchema>;
+
+export const ProjectSummarySchema = z.object({
+  project: ProjectSchema,
+  running: z.number().int().nonnegative(),
+  total: z.number().int().nonnegative(),
+  container: ContainerInfoSchema.nullable(),
+});
+export type ProjectSummary = z.infer<typeof ProjectSummarySchema>;
+
+export const ProjectCreateSchema = z.object({
+  root: z.string().min(1),
+  name: z.string().min(1).optional(),
+});
+
+/** Fields to change. `ceilingsOverride: null` removes the override. */
+export const ProjectUpdateSchema = z.object({
+  name: z.string().optional(),
+  primaryRepo: z.string().min(1).nullable().optional(),
+  tcpMaps: z.array(TcpMapSchema).optional(),
+  mounts: z.array(MountSchema).optional(),
+  secretRefs: z.array(SecretRefSchema).optional(),
+  ceilingsOverride: CeilingsOverrideSchema.nullable().optional(),
+  policyPath: z.string().min(1).optional(),
+});
+
+export const ProjectUpdateResultSchema = z.object({
+  project: ProjectSchema,
+  /** Running boxes that keep the old mounts, ports, or secrets until their container restarts. */
+  staleBoxes: z.array(z.string()),
+});
+
+export const PolicyResultSchema = z.object({
+  /** Absolute host path of the policy file. */
+  path: z.string().min(1),
+  exists: z.boolean(),
+  policy: PolicyFileSchema,
+});
+
+export const BoxStatsSchema = z.object({
+  cpuPercent: z.number().nonnegative(),
+  memBytes: z.number().int().nonnegative(),
+  memLimitBytes: z.number().int().nonnegative(),
+});
+
+/** A box as the apps show it: the record plus live state. */
+export const BoxViewSchema = z.object({
+  box: BoxSchema,
+  status: BoxStatusSchema,
+  /** Container stats; shared by every box in the container. */
+  stats: BoxStatsSchema.nullable(),
+  listeners: z.array(ListenerSchema),
+  /** Proxy links for dev servers, `http://<port>.<box>.localhost:20400/`. */
+  proxyUrls: z.array(z.object({ port: PortSchema, url: z.string().url() })),
+  /** Platforms running as side sessions next to the main one. */
+  sideSessions: z.array(PlatformSchema),
+});
+export type BoxView = z.infer<typeof BoxViewSchema>;
+
+/** How a new box gets its conversation. */
+export const ConversationModeSchema = z.discriminatedUnion("mode", [
+  /** Mint a session id and start an empty conversation. */
+  z.object({ mode: z.literal("new") }),
+  /** Resume an existing transcript; skips provisioning. */
+  z.object({ mode: z.literal("adopt"), sessionUuid: z.string().uuid() }),
+  /** Copy another box's conversation into a new session (`--fork-session`). */
+  z.object({ mode: z.literal("fork"), fromBoxId: z.string().min(1) }),
+]);
+export type ConversationMode = z.infer<typeof ConversationModeSchema>;
+
+export const BoxCreateSchema = z.object({
+  targetDir: z.string().min(1),
+  platform: PlatformSchema.default("claude"),
+  conversationName: z.string().default(""),
+  conversation: ConversationModeSchema.default({ mode: "new" }),
+  /** Absent leaves the choice to the settings files. */
+  model: z.string().min(1).optional(),
+  effort: EffortSchema.optional(),
+  skipPermissions: z.boolean().default(true),
+  /** Worktree and branch, workspace subfolder, or the tree root. */
+  layout: z.enum(["worktree", "workspace", "root"]).default("root"),
+  sshRemoteRefs: z.array(z.string().min(1)).default([]),
+  /** False saves the record without starting it. */
+  start: z.boolean().default(true),
+});
+export type BoxCreate = z.infer<typeof BoxCreateSchema>;
+
+/**
+ * Fields to change. `null` for `model` or `effort` leaves it to the settings
+ * files; `null` for `sessionUuid` starts a new conversation on the next start.
+ * Changing `sessionUuid` to a session a running box holds fails with 409.
+ */
+export const BoxUpdateSchema = z.object({
+  conversationName: z.string().optional(),
+  model: z.string().min(1).nullable().optional(),
+  effort: EffortSchema.nullable().optional(),
+  skipPermissions: z.boolean().optional(),
+  sessionUuid: z.string().uuid().nullable().optional(),
+  sshRemoteRefs: z.array(z.string().min(1)).optional(),
+});
+
+export const BoxUpdateResultSchema = z.object({
+  box: BoxViewSchema,
+  /** True when a running box keeps the old settings until it restarts. */
+  restartRequired: z.boolean(),
+});
+
+export const BulkResultSchema = z.object({
+  done: z.array(z.string()),
+  failed: z.array(z.object({ boxId: z.string(), error: ApiErrorSchema.shape.error })),
+});
+
+export const PurgeResultSchema = z.object({
+  removedRecords: z.array(z.string()),
+  /** Transcript directories under `~/.claude/projects/` that were deleted. */
+  removedTranscriptDirs: z.array(z.string()),
+});
+
+export const ConvertToWorktreeResultSchema = z.object({
+  box: BoxViewSchema,
+  worktree: z.string().min(1),
+  branch: z.string().min(1),
+  /** The old folder, renamed to `<slug>.pre-worktree`. */
+  oldFolder: z.string().min(1),
+  recordBackup: z.string().min(1),
+  /** `claude-keep/<slug>/...` branches and tags made for the clone's other refs. */
+  keptRefs: z.array(z.string()),
+  /** What the migration could not carry over, such as the clone's hooks. */
+  notCarried: z.array(z.string()),
+});
+
+export const TerminalQuerySchema = z.object({
+  kind: z.enum(["session", "side", "shell"]),
+  /** Required for `session` and `side`. */
+  boxId: z.string().min(1).optional(),
+  /** Required for `shell` when `boxId` is absent. */
+  projectId: z.string().min(1).optional(),
+  /** Required for `side`. */
+  platform: PlatformSchema.optional(),
+  cols: z.coerce.number().int().positive().default(80),
+  rows: z.coerce.number().int().positive().default(24),
+});
+
+export const TerminalClientMessageSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("resize"),
+    cols: z.number().int().positive(),
+    rows: z.number().int().positive(),
+  }),
+  /** Text input, as an alternative to a binary frame. */
+  z.object({ type: z.literal("input"), data: z.string() }),
+]);
+export type TerminalClientMessage = z.infer<typeof TerminalClientMessageSchema>;
+
+export const TerminalServerMessageSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("ready"), terminalId: z.string().min(1) }),
+  z.object({ type: z.literal("exit"), exitCode: z.number().int().nullable() }),
+  z.object({ type: z.literal("error"), error: ApiErrorSchema.shape.error }),
+]);
+export type TerminalServerMessage = z.infer<typeof TerminalServerMessageSchema>;
+
+export const ConversationSummarySchema = z.object({
+  sessionUuid: z.string().uuid(),
+  title: z.string(),
+  titleSource: z.enum(["custom-title", "ai-title", "prompt", "none"]),
+  turns: z.number().int().nonnegative(),
+  modifiedAt: IsoDateTimeSchema,
+  sizeBytes: z.number().int().nonnegative(),
+  lastPrompt: z.string(),
+  /** Boxes whose record points at this session. */
+  trackedBy: z.array(z.string()),
+});
+export type ConversationSummary = z.infer<typeof ConversationSummarySchema>;
+
+export const ModelsResultSchema = z.object({
+  models: z.array(z.string().min(1)),
+  efforts: z.array(EffortSchema),
+  /** What claude would use in the directory, from its settings files. */
+  defaults: z.object({ model: z.string().min(1), effort: EffortSchema }),
+  source: z.enum(["scan", "cache", "baseline"]),
+});
+
+export const ImageStatusSchema = z.object({
+  name: z.string().min(1),
+  exists: z.boolean(),
+  imageId: z.string().optional(),
+  createdAt: IsoDateTimeSchema.optional(),
+  /** From `/etc/agentbox-engine-version` in the image. */
+  engineVersion: z.string().optional(),
+  expectedEngineVersion: z.string().min(1),
+  engineMatches: z.boolean(),
+  cliVersions: z.object({
+    claude: z.string().optional(),
+    codex: z.string().optional(),
+    copilot: z.string().optional(),
+  }),
+  latestClaudeCode: z.string().optional(),
+  updateAvailable: z.boolean(),
+});
+export type ImageStatus = z.infer<typeof ImageStatusSchema>;
+
+export const ImageBuildSchema = z.object({
+  /** `rebuild`: `--no-cache --pull`; `packages` and `claude-code` bust one cache layer. */
+  kind: z.enum(["rebuild", "packages", "claude-code"]),
+});
+
+export const SetupCheckSchema = z.object({
+  id: z.enum([
+    "docker",
+    "image",
+    "engine",
+    "ssh_client",
+    "ssh_key",
+    "ssh_permissions",
+    "op",
+    "service",
+  ]),
+  status: z.enum(["ok", "warn", "fail"]),
+  message: z.string(),
+  /** True when `POST /api/v1/setup/checks/:checkId/fix` can fix it. */
+  fixable: z.boolean(),
+});
+export type SetupCheck = z.infer<typeof SetupCheckSchema>;
+
+export const SetupStatusSchema = z.object({
+  completed: z.boolean(),
+  defaultTargetDir: z.string().nullable(),
+  checks: z.array(SetupCheckSchema),
+});
+
+export const SshRemoteViewSchema = z.object({
+  remote: SshRemoteSchema,
+  /** Boxes whose `sshRemoteRefs` name this remote. */
+  referencedBy: z.array(z.string()),
+  /** Whether the server runs a tunnel for it. */
+  tunnelUp: z.boolean(),
+});
+
+export const SshTestResultSchema = z.object({
+  ok: z.boolean(),
+  /** True when the remote refused the key; `copy-id` can fix that. */
+  authFailed: z.boolean(),
+  output: z.string(),
+});
+
+export const OpStatusSchema = z.object({
+  installed: z.boolean(),
+  version: z.string().optional(),
+  signedIn: z.boolean(),
+  mode: z.enum(["service_account", "desktop", "none"]),
+});
+export type OpStatus = z.infer<typeof OpStatusSchema>;
+
+export const SecretsViewSchema = z.object({
+  global: z.array(SecretRefSchema),
+  projects: z.array(z.object({ projectId: z.string(), refs: z.array(SecretRefSchema) })),
+  op: OpStatusSchema,
+});
+
+/** The result of resolving references. Values never leave the server. */
+export const SecretsCheckResultSchema = z.object({
+  op: OpStatusSchema,
+  results: z.array(
+    z.object({
+      name: z.string(),
+      ref: z.string(),
+      scope: z.enum(["global", "project"]),
+      ok: z.boolean(),
+      error: z.string().optional(),
+    }),
+  ),
+});
+
+export const RunListQuerySchema = z.object({
+  projectId: z.string().optional(),
+  boxId: z.string().optional(),
+  status: RunStatusSchema.optional(),
+});
+
+export const RunPreviewSchema = z.object({
+  baseSha: z.string(),
+  tipSha: z.string(),
+  /** The commit the diff starts from: the merge base, or `baseSha` with `exactBase`. */
+  diffBaseSha: z.string(),
+  groups: z.array(FileGroupSchema),
+  changedLines: z.number().int().nonnegative(),
+  dirty: z.boolean(),
+});
+
+export const FindingListQuerySchema = z.object({
+  verdict: VerdictSchema.optional(),
+  severity: SeveritySchema.optional(),
+  round: queryInt.optional(),
+});
+
+export const FindingDetailSchema = z.object({
+  finding: FindingSchema,
+  /** The diff hunks the finding points at. */
+  diff: z.string().nullable(),
+  /** The fix commit's diff, once fixed. */
+  fixDiff: z.string().nullable(),
+});
+
+export const UsageSamplesQuerySchema = z.object({
+  vendor: VendorSchema.optional(),
+  since: IsoDateTimeSchema.optional(),
+  until: IsoDateTimeSchema.optional(),
+});
+
+export const TimedUsageSampleSchema = UsageSampleSchema.extend({ time: IsoDateTimeSchema });
+export type TimedUsageSample = z.infer<typeof TimedUsageSampleSchema>;
+
+export const VendorUsageSchema = z.object({
+  vendor: VendorSchema,
+  account: z.string(),
+  ceiling: CeilingSchema,
+  /** The latest sample per window. */
+  latest: z.array(TimedUsageSampleSchema),
+  overCeiling: z.boolean(),
+  /** When the ceiling window will be reached at the current rate; `null` when it will not. */
+  forecastAt: IsoDateTimeSchema.nullable(),
+  resetAt: IsoDateTimeSchema.nullable(),
+  window: UsageWindowSchema,
+});
+
+export const EventsQuerySchema = z.object({
+  /** Replay events with a `seq` above this one first. */
+  since: queryInt.optional(),
+  /** Comma-separated event types to receive; absent means all. */
+  types: z.string().optional(),
+});
+
+export const HealthSchema = z.object({
+  version: z.string().min(1),
+  uptimeS: z.number().nonnegative(),
+});
+
+export const EngineHealthSchema = HealthSchema.extend({
+  engineVersion: z.string().min(1),
+  container: z.string().min(1),
+  projectRoot: z.string().min(1),
+});
+
+export const RepoInfoSchema = z.object({
+  /** Path as the container sees it. */
+  path: z.string().min(1),
+  name: z.string().min(1),
+  currentBranch: z.string().nullable(),
+  headSha: z.string(),
+  dirty: z.boolean(),
+});
+
+export const RepoRefsSchema = z.object({
+  localBranches: z.array(z.string()),
+  remoteBranches: z.array(z.string()),
+  tags: z.array(z.string()),
+  recentCommits: z.array(
+    z.object({ sha: z.string(), subject: z.string(), author: z.string(), time: IsoDateTimeSchema }),
+  ),
+  pullRequests: z.array(
+    z.object({
+      number: z.number().int().positive(),
+      title: z.string(),
+      headRef: z.string(),
+      baseRef: z.string(),
+      url: z.string().url(),
+    }),
+  ),
+});
+
+// ---------------------------------------------------------------------------
+// Routes shared by the server (proxied) and the engine: runs, findings, usage samples
+
+function reviewRoutes<const P extends string>(prefix: P) {
+  const runs = `${prefix}/runs`;
+  return {
+    "runs.list": http({
+      method: "GET",
+      path: runs,
+      summary: "List runs.",
+      query: RunListQuerySchema,
+      response: z.object({ runs: z.array(RunStateSchema) }),
+    }),
+    "runs.preview": http({
+      method: "POST",
+      path: `${runs}/preview`,
+      summary: "Resolve the range and show the file groups without starting.",
+      body: RunRequestSchema,
+      response: RunPreviewSchema,
+    }),
+    "runs.create": http({
+      method: "POST",
+      path: runs,
+      summary: "Start a run.",
+      body: RunRequestSchema,
+      response: RunStateSchema,
+      status: 201,
+    }),
+    "runs.get": http({
+      method: "GET",
+      path: `${runs}/:runId`,
+      summary: "Get a run.",
+      response: RunStateSchema,
+    }),
+    "runs.pause": http({
+      method: "POST",
+      path: `${runs}/:runId/pause`,
+      summary: "Pause after the current agent call.",
+      response: RunStateSchema,
+    }),
+    "runs.resume": http({
+      method: "POST",
+      path: `${runs}/:runId/resume`,
+      summary: "Resume a paused run.",
+      response: RunStateSchema,
+    }),
+    "runs.cancel": http({
+      method: "POST",
+      path: `${runs}/:runId/cancel`,
+      summary: "Cancel a run.",
+      response: RunStateSchema,
+    }),
+    "runs.profile": http({
+      method: "PUT",
+      path: `${runs}/:runId/profile`,
+      summary: "Switch the profile from the next round.",
+      body: z.object({ profile: ProfileSchema }),
+      response: RunStateSchema,
+    }),
+    "runs.assign": http({
+      method: "POST",
+      path: `${runs}/:runId/assign`,
+      summary: "Move a role to a vendor from the next round.",
+      body: z.object({ role: RoleSchema, vendor: VendorSchema }),
+      response: RunStateSchema,
+    }),
+    "runs.rebaseBase": http({
+      method: "POST",
+      path: `${runs}/:runId/rebase-base`,
+      summary: "Re-resolve the base; the next round starts from it.",
+      response: RunStateSchema,
+    }),
+    "runs.decide": http({
+      method: "POST",
+      path: `${runs}/:runId/decision`,
+      summary: "Answer the decision a run waits for.",
+      body: DecisionAnswerSchema,
+      response: RunStateSchema,
+    }),
+    "runs.push": http({
+      method: "POST",
+      path: `${runs}/:runId/push`,
+      summary: "Push the branch, open or update the pull request, and start the post-push loop.",
+      body: z.object({ title: z.string().optional(), draft: z.boolean().default(false) }),
+      response: RunStateSchema,
+    }),
+    "runs.groups": http({
+      method: "GET",
+      path: `${runs}/:runId/groups`,
+      summary: "List the run's file groups.",
+      response: z.object({ groups: z.array(FileGroupSchema) }),
+    }),
+    "runs.rounds": http({
+      method: "GET",
+      path: `${runs}/:runId/rounds`,
+      summary: "List the run's round summaries.",
+      response: z.object({ rounds: z.array(RoundSummarySchema) }),
+    }),
+    "findings.list": http({
+      method: "GET",
+      path: `${runs}/:runId/findings`,
+      summary: "List a run's findings.",
+      query: FindingListQuerySchema,
+      response: z.object({ findings: z.array(FindingSchema) }),
+    }),
+    "findings.get": http({
+      method: "GET",
+      path: `${runs}/:runId/findings/:findingId`,
+      summary: "Get a finding with its diff and fix.",
+      response: FindingDetailSchema,
+    }),
+    "findings.waive": http({
+      method: "POST",
+      path: `${runs}/:runId/findings/:findingId/waive`,
+      summary: "Waive a finding.",
+      body: z.object({ reason: z.string().min(1) }),
+      response: FindingSchema,
+    }),
+    "usage.samples": http({
+      method: "GET",
+      path: `${prefix}/usage/samples`,
+      summary: "List usage samples.",
+      query: UsageSamplesQuerySchema,
+      response: z.object({ samples: z.array(TimedUsageSampleSchema) }),
+    }),
+  };
+}
+
+type Prefixed<P extends string, T> = { [K in keyof T & string as `${P}${K}`]: T[K] };
+
+function prefixKeys<const P extends string, T extends Record<string, unknown>>(
+  p: P,
+  table: T,
+): Prefixed<P, T> {
+  return Object.fromEntries(Object.entries(table).map(([k, v]) => [`${p}${k}`, v])) as Prefixed<
+    P,
+    T
+  >;
+}
+
+// ---------------------------------------------------------------------------
+// Server API
+
+const projects = `${V1}/projects`;
+const boxes = `${V1}/boxes`;
+
+export const serverRoutes = {
+  health: http({
+    method: "GET",
+    path: `${V1}/health`,
+    auth: false,
+    summary: "Server version and uptime.",
+    response: HealthSchema,
+  }),
+
+  // Projects
+  "projects.list": http({
+    method: "GET",
+    path: projects,
+    summary: "List projects with box counts.",
+    response: z.object({ projects: z.array(ProjectSummarySchema) }),
+  }),
+  "projects.create": http({
+    method: "POST",
+    path: projects,
+    summary: "Register a directory as a project.",
+    body: ProjectCreateSchema,
+    response: ProjectSchema,
+    status: 201,
+  }),
+  "projects.get": http({
+    method: "GET",
+    path: `${projects}/:projectId`,
+    summary: "Get a project.",
+    response: ProjectSummarySchema,
+  }),
+  "projects.update": http({
+    method: "PATCH",
+    path: `${projects}/:projectId`,
+    summary: "Change a project's name or settings.",
+    body: ProjectUpdateSchema,
+    response: ProjectUpdateResultSchema,
+  }),
+  "projects.restartContainer": http({
+    method: "POST",
+    path: `${projects}/:projectId/container/restart`,
+    summary: "Restart the project's container and every box that was running in it.",
+    response: BulkResultSchema,
+  }),
+  "projects.policy.get": http({
+    method: "GET",
+    path: `${projects}/:projectId/policy`,
+    summary: "Read the policy file, or the default when there is none.",
+    response: PolicyResultSchema,
+  }),
+  "projects.policy.put": http({
+    method: "PUT",
+    path: `${projects}/:projectId/policy`,
+    summary: "Write the policy file.",
+    body: PolicyFileSchema,
+    response: PolicyResultSchema,
+  }),
+
+  // Boxes
+  "boxes.list": http({
+    method: "GET",
+    path: boxes,
+    summary: "List boxes.",
+    query: z.object({ projectId: z.string().optional() }),
+    response: z.object({ boxes: z.array(BoxViewSchema) }),
+  }),
+  "boxes.create": http({
+    method: "POST",
+    path: boxes,
+    summary: "Create a box: new, adopted, or forked conversation.",
+    body: BoxCreateSchema,
+    response: BoxViewSchema,
+    status: 201,
+  }),
+  "boxes.get": http({
+    method: "GET",
+    path: `${boxes}/:boxId`,
+    summary: "Get a box.",
+    response: BoxViewSchema,
+  }),
+  "boxes.update": http({
+    method: "PATCH",
+    path: `${boxes}/:boxId`,
+    summary: "Edit a box; relinks the conversation when `sessionUuid` changes.",
+    body: BoxUpdateSchema,
+    response: BoxUpdateResultSchema,
+  }),
+  "boxes.start": http({
+    method: "POST",
+    path: `${boxes}/:boxId/start`,
+    summary: "Start a box's session.",
+    response: BoxViewSchema,
+  }),
+  "boxes.stop": http({
+    method: "POST",
+    path: `${boxes}/:boxId/stop`,
+    summary: "Stop a box's session.",
+    response: BoxViewSchema,
+  }),
+  "boxes.restart": http({
+    method: "POST",
+    path: `${boxes}/:boxId/restart`,
+    summary: "Stop and start a box's session.",
+    response: BoxViewSchema,
+  }),
+  "boxes.remove": http({
+    method: "DELETE",
+    path: `${boxes}/:boxId`,
+    summary: "Remove a stopped box from the dashboard; the conversation stays.",
+    query: z.object({ removeWorktree: QueryBooleanSchema.default("false") }),
+    response: OkSchema,
+  }),
+  "boxes.purge": http({
+    method: "POST",
+    path: `${boxes}/:boxId/purge`,
+    summary: "Delete the transcripts and records for the box's directory.",
+    response: PurgeResultSchema,
+  }),
+  "boxes.move": http({
+    method: "POST",
+    path: `${boxes}/:boxId/move`,
+    summary: "Rename the working directory and repoint every record that uses it.",
+    body: z.object({ newDir: z.string().min(1) }),
+    response: z.object({ movedBoxes: z.array(z.string()) }),
+  }),
+  "boxes.relink": http({
+    method: "POST",
+    path: `${boxes}/:boxId/relink`,
+    summary: "Repoint this record at another directory (Change Working Directory).",
+    body: z.object({ targetDir: z.string().min(1) }),
+    response: BoxViewSchema,
+  }),
+  "boxes.convertToWorktree": http({
+    method: "POST",
+    path: `${boxes}/:boxId/convert-to-worktree`,
+    summary: "Turn a workspace subfolder clone into a worktree.",
+    body: z.object({ copyBuildOutput: z.boolean().default(false) }),
+    response: ConvertToWorktreeResultSchema,
+  }),
+  "boxes.sideSessions.start": http({
+    method: "POST",
+    path: `${boxes}/:boxId/side-sessions`,
+    summary: "Start another CLI in its own tmux session next to the main one.",
+    body: z.object({ platform: PlatformSchema }),
+    response: z.object({ session: z.string().min(1) }),
+  }),
+  "boxes.platform": http({
+    method: "PUT",
+    path: `${boxes}/:boxId/platform`,
+    summary: "Change the main platform.",
+    body: z.object({ platform: PlatformSchema, restart: z.boolean().default(false) }),
+    response: BoxViewSchema,
+  }),
+  "boxes.message": http({
+    method: "POST",
+    path: `${boxes}/:boxId/message`,
+    summary:
+      "Send one message to the box's interactive session, such as the request to hold edits during a review.",
+    body: z.object({ text: z.string().min(1) }),
+    response: OkSchema,
+  }),
+  "boxes.startAll": http({
+    method: "POST",
+    path: `${boxes}/start-all`,
+    summary: "Start stopped boxes; by default only those that were running.",
+    body: z.object({ onlyWasRunning: z.boolean().default(true) }),
+    response: BulkResultSchema,
+  }),
+  "boxes.stopAll": http({
+    method: "POST",
+    path: `${boxes}/stop-all`,
+    summary: "Stop every running box.",
+    response: BulkResultSchema,
+  }),
+  "boxes.restartAll": http({
+    method: "POST",
+    path: `${boxes}/restart-all`,
+    summary: "Restart every running box.",
+    response: BulkResultSchema,
+  }),
+
+  // Terminals and jobs
+  "terminals.open": ws({
+    path: `${V1}/terminals`,
+    summary: "Attach to a box's session, a side session, or a shell in a container.",
+    query: TerminalQuerySchema,
+    clientMessage: TerminalClientMessageSchema,
+    serverMessage: TerminalServerMessageSchema,
+  }),
+  "jobs.get": http({
+    method: "GET",
+    path: `${V1}/jobs/:jobId`,
+    summary: "Get a job's state.",
+    response: JobSchema,
+  }),
+  "jobs.stream": ws({
+    path: `${V1}/jobs/:jobId/stream`,
+    summary: "Stream a job's terminal output.",
+    clientMessage: TerminalClientMessageSchema,
+    serverMessage: TerminalServerMessageSchema,
+  }),
+
+  // Catalog, models, image, setup, settings
+  "conversations.list": http({
+    method: "GET",
+    path: `${V1}/conversations`,
+    summary: "List the transcripts Claude has for a working directory.",
+    query: z.object({ dir: z.string().min(1) }),
+    response: z.object({ dir: z.string(), conversations: z.array(ConversationSummarySchema) }),
+  }),
+  "models.list": http({
+    method: "GET",
+    path: `${V1}/models`,
+    summary: "List models and the defaults for a directory.",
+    query: z.object({ dir: z.string().optional() }),
+    response: ModelsResultSchema,
+  }),
+  "models.rescan": http({
+    method: "POST",
+    path: `${V1}/models/rescan`,
+    summary: "Rescan the image for model ids.",
+    response: ModelsResultSchema,
+  }),
+  "image.status": http({
+    method: "GET",
+    path: `${V1}/image`,
+    summary: "Image, engine, and CLI versions.",
+    response: ImageStatusSchema,
+  }),
+  "image.build": http({
+    method: "POST",
+    path: `${V1}/image/build`,
+    summary: "Build or update the image.",
+    body: ImageBuildSchema,
+    response: JobSchema,
+    status: 202,
+  }),
+  "setup.get": http({
+    method: "GET",
+    path: `${V1}/setup`,
+    summary: "Run the setup checks.",
+    response: SetupStatusSchema,
+  }),
+  "setup.fix": http({
+    method: "POST",
+    path: `${V1}/setup/checks/:checkId/fix`,
+    summary: "Fix a failed check.",
+    response: JobSchema,
+    status: 202,
+  }),
+  "setup.complete": http({
+    method: "PUT",
+    path: `${V1}/setup`,
+    summary: "Finish the setup wizard.",
+    body: z.object({ defaultTargetDir: z.string().min(1).optional() }),
+    response: OkSchema,
+  }),
+  "settings.get": http({
+    method: "GET",
+    path: `${V1}/settings`,
+    summary: "Read the global settings.",
+    response: GlobalSettingsSchema,
+  }),
+  "settings.put": http({
+    method: "PUT",
+    path: `${V1}/settings`,
+    summary: "Replace the global settings.",
+    body: GlobalSettingsSchema,
+    response: GlobalSettingsSchema,
+  }),
+
+  // SSH remotes, global mounts, secrets
+  "sshRemotes.list": http({
+    method: "GET",
+    path: `${V1}/ssh-remotes`,
+    summary: "List SSH remotes.",
+    response: z.object({ remotes: z.array(SshRemoteViewSchema) }),
+  }),
+  "sshRemotes.put": http({
+    method: "PUT",
+    path: `${V1}/ssh-remotes/:name`,
+    summary:
+      "Create or replace a remote; a different `name` in the body renames it and rewrites box references.",
+    body: SshRemoteSchema,
+    response: SshRemoteViewSchema,
+  }),
+  "sshRemotes.delete": http({
+    method: "DELETE",
+    path: `${V1}/ssh-remotes/:name`,
+    summary: "Delete a remote and drop it from every box.",
+    response: z.object({ unlinkedBoxes: z.array(z.string()) }),
+  }),
+  "sshRemotes.test": http({
+    method: "POST",
+    path: `${V1}/ssh-remotes/:name/test`,
+    summary: "Test the connection.",
+    response: SshTestResultSchema,
+  }),
+  "sshRemotes.copyId": http({
+    method: "POST",
+    path: `${V1}/ssh-remotes/:name/copy-id`,
+    summary: "Run ssh-copy-id in a job terminal.",
+    response: JobSchema,
+    status: 202,
+  }),
+  "globalMounts.get": http({
+    method: "GET",
+    path: `${V1}/global-mounts`,
+    summary: "Read the global mounts.",
+    response: z.object({ mounts: z.array(MountSchema) }),
+  }),
+  "globalMounts.put": http({
+    method: "PUT",
+    path: `${V1}/global-mounts`,
+    summary: "Replace the global mounts; host directories must exist.",
+    body: z.object({ mounts: z.array(MountSchema) }),
+    response: z.object({ mounts: z.array(MountSchema), staleContainers: z.array(z.string()) }),
+  }),
+  "secrets.get": http({
+    method: "GET",
+    path: `${V1}/secrets`,
+    summary: "List secret references and the 1Password CLI state. Never values.",
+    response: SecretsViewSchema,
+  }),
+  "secrets.put": http({
+    method: "PUT",
+    path: `${V1}/secrets`,
+    summary: "Replace the global secret references.",
+    body: z.object({ refs: z.array(SecretRefSchema) }),
+    response: z.object({ refs: z.array(SecretRefSchema) }),
+  }),
+  "secrets.check": http({
+    method: "POST",
+    path: `${V1}/secrets/check`,
+    summary: "Try to resolve references, globally or for one project.",
+    body: z.object({ projectId: z.string().optional() }),
+    response: SecretsCheckResultSchema,
+  }),
+
+  // Review (proxied to the engine) and usage
+  ...reviewRoutes(V1),
+  "usage.get": http({
+    method: "GET",
+    path: `${V1}/usage`,
+    summary: "Usage per vendor account against its ceiling.",
+    response: z.object({ vendors: z.array(VendorUsageSchema) }),
+  }),
+
+  // Notifications and events
+  "notifications.list": http({
+    method: "GET",
+    path: `${V1}/notifications`,
+    summary: "List notifications.",
+    query: z.object({ unread: QueryBooleanSchema.optional() }),
+    response: z.object({ notifications: z.array(NotificationSchema) }),
+  }),
+  "notifications.read": http({
+    method: "POST",
+    path: `${V1}/notifications/:notificationId/read`,
+    summary: "Mark a notification read.",
+    response: OkSchema,
+  }),
+  "events.stream": ws({
+    path: `${V1}/events`,
+    summary:
+      "Every server event and every engine event, relayed. `seq` is the server's own counter.",
+    query: EventsQuerySchema,
+    clientMessage: z.never(),
+    serverMessage: EventSchema,
+  }),
+} as const;
+
+// ---------------------------------------------------------------------------
+// Engine API
+
+export const engineRoutes = {
+  "engine.health": http({
+    method: "GET",
+    path: `${V1}/health`,
+    auth: false,
+    summary: "Engine version and identity.",
+    response: EngineHealthSchema,
+  }),
+  "engine.repos.list": http({
+    method: "GET",
+    path: `${V1}/repos`,
+    summary: "List git repositories under the project root.",
+    response: z.object({ repos: z.array(RepoInfoSchema) }),
+  }),
+  "engine.repos.refs": http({
+    method: "GET",
+    path: `${V1}/repos/refs`,
+    summary: "Branches, tags, recent commits, and open pull requests of a repository.",
+    query: z.object({ repo: z.string().min(1) }),
+    response: RepoRefsSchema,
+  }),
+  ...prefixKeys("engine.", reviewRoutes(V1)),
+  "engine.ports": http({
+    method: "GET",
+    path: `${V1}/ports`,
+    summary: "Listening TCP ports in the container.",
+    response: z.object({ listeners: z.array(ListenerSchema) }),
+  }),
+  "engine.leases.respond": http({
+    method: "POST",
+    path: `${V1}/leases/:leaseId`,
+    summary: "The server's answer to a `lease.requested` event.",
+    body: LeaseResponseSchema,
+    response: OkSchema,
+  }),
+  "engine.events": ws({
+    path: `${V1}/events`,
+    summary: "The engine's events. `seq` is the engine's own counter.",
+    query: EventsQuerySchema,
+    clientMessage: z.never(),
+    serverMessage: EventSchema,
+  }),
+  "engine.proxy": {
+    kind: "proxy",
+    method: "ALL",
+    path: "/proxy/:port/*",
+    auth: true,
+    summary: "Forward HTTP and WebSocket traffic to `127.0.0.1:<port>` in the container.",
+  },
+} as const;
+
+/** Every route, keyed by name. Engine keys start with `engine.`. */
+export const routes = { ...serverRoutes, ...engineRoutes } as const;
+
+export type ServerRoutes = typeof serverRoutes;
+export type EngineRoutes = typeof engineRoutes;
+export type Routes = typeof routes;
+export type RouteKey = keyof Routes;
+export type ServerRouteKey = keyof ServerRoutes;
+export type EngineRouteKey = keyof EngineRoutes;
+
+// Type-level checks that every entry is a valid `RouteDef`.
+type AssertRoutes<T extends Record<string, RouteDef>> = T;
+export type _CheckRoutes = AssertRoutes<Routes>;
+
+// ---------------------------------------------------------------------------
+// Typed helpers
+
+/** The names of the `:params` in a path, as a union of string literals. */
+export type PathParamName<P extends string> = P extends `${string}:${infer Name}/${infer Rest}`
+  ? Name | PathParamName<`/${Rest}`>
+  : P extends `${string}:${infer Name}`
+    ? Name
+    : never;
+
+/** The params object for a path. */
+export type PathParams<P extends string> = { [K in PathParamName<P>]: string };
+
+type Inferred<T> = T extends z.ZodTypeAny ? z.infer<T> : undefined;
+type Input<T> = T extends z.ZodTypeAny ? z.input<T> : undefined;
+
+/**
+ * The typed shape of route `K`: what a client sends and receives. `query` and
+ * `body` are the inputs a client sends (before defaults); `response`,
+ * `serverMessage`, and `clientMessage` are parsed outputs.
+ */
+export type RouteOf<K extends RouteKey> = Routes[K] extends infer R
+  ? R extends { path: infer P extends string }
+    ? {
+        key: K;
+        kind: R extends { kind: infer Kind } ? Kind : never;
+        method: R extends { method: infer M } ? M : never;
+        path: P;
+        params: PathParams<P>;
+        query: R extends { query: infer Q } ? Input<Q> : undefined;
+        body: R extends { body: infer B } ? Input<B> : undefined;
+        response: R extends { response: infer S } ? Inferred<S> : undefined;
+        clientMessage: R extends { clientMessage: infer C } ? Inferred<C> : undefined;
+        serverMessage: R extends { serverMessage: infer S } ? Inferred<S> : undefined;
+      }
+    : never
+  : never;
+
+/** Lists the `:param` names in a path, in order. */
+export function pathParamNames(path: string): string[] {
+  return [...path.matchAll(/:([A-Za-z0-9_]+)/g)].map((m) => m[1] as string);
+}
+
+/** Returns a zod schema for a path's params, for frameworks that validate them. */
+export function pathParamsSchema(path: string): z.ZodObject<Record<string, z.ZodString>> {
+  return z.object(Object.fromEntries(pathParamNames(path).map((n) => [n, z.string().min(1)])));
+}
+
+/** Fills the `:params` in `path` with URL-encoded values. Throws on a missing param. */
+export function buildPath<P extends string>(path: P, params: PathParams<P>): string {
+  const values = params as Record<string, string | undefined>;
+  return path.replace(/:([A-Za-z0-9_]+)/g, (_match, name: string) => {
+    const value = values[name];
+    if (value === undefined) throw new Error(`Missing path parameter "${name}" for ${path}.`);
+    return encodeURIComponent(value);
+  });
+}
