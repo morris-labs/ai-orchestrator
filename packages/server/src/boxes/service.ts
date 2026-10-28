@@ -510,7 +510,8 @@ export class BoxService {
     let box: Box = BoxInputSchema.parse({
       id,
       projectId: project.id,
-      hostKey: allocateHostKey(id, this.repos.boxes.byProject(project.id)),
+      // Unique across every project: the proxy resolves a key without one.
+      hostKey: allocateHostKey(id, this.repos.boxes.list()),
       targetDir,
       sessionUuid,
       conversationName,
@@ -832,10 +833,10 @@ export class BoxService {
     return { dryRun, removedRecords, removedTranscriptDirs };
   }
 
-  /** Points `box` at `dir`'s project: its container, and a host key unique there. */
+  /** Points `box` at `dir`'s project and its container. The host key stays unique. */
   private repoint(box: Box, dir: string): Box {
     const project = this.deps.projects.ensureForRoot(dir);
-    const others = this.repos.boxes.byProject(project.id).filter((b) => b.id !== box.id);
+    const others = this.repos.boxes.list().filter((b) => b.id !== box.id);
     return {
       ...box,
       targetDir: dir,

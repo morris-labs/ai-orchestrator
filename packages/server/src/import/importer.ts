@@ -441,10 +441,8 @@ export function runImport(options: ImportOptions): ImportReport {
       }
 
       const time = mtimeIso(full, started);
-      const siblings = [
-        ...repos.boxes.byProject(draft.id),
-        ...boxes.filter((b) => b.projectId === draft.id),
-      ];
+      // Host keys are unique across every project; the proxy resolves them so.
+      const siblings = [...repos.boxes.list(), ...boxes];
       const input = {
         id: file,
         projectId: draft.id,

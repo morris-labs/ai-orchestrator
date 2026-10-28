@@ -1,7 +1,36 @@
 // Schema migrations, applied in order. `PRAGMA user_version` holds the number
-// of migrations applied. Never edit a migration that has shipped; add one.
+// of migrations applied. Never edit a migration that has shipped; add one. A
+// migration is SQL, or a function for a step that SQL can't express.
+import { deriveHostKey } from "@agentbox/contracts";
+import type { Sqlite } from "./database.js";
 
-export const MIGRATIONS: readonly string[] = [
+export type Migration = string | ((db: Sqlite) => void);
+
+/**
+ * Gives every box a host key no other box has. The proxy resolves
+ * `<port>.<hostKey>.localhost` across every project, so a key unique only
+ * within its project could reach another project's engine. The oldest box
+ * keeps a shared key; the others get a new one.
+ */
+export function rekeyDuplicateHostKeys(db: Sqlite): void {
+  const rows = db
+    .prepare("SELECT id, host_key, data FROM boxes ORDER BY created_at, id")
+    .all() as { id: string; host_key: string; data: string }[];
+  const taken = new Set<string>();
+  const update = db.prepare("UPDATE boxes SET host_key = ?, data = ? WHERE id = ?");
+  for (const row of rows) {
+    if (!taken.has(row.host_key)) {
+      taken.add(row.host_key);
+      continue;
+    }
+    const key = deriveHostKey(row.id, taken);
+    taken.add(key);
+    const data = { ...(JSON.parse(row.data) as Record<string, unknown>), hostKey: key };
+    update.run(key, JSON.stringify(data), row.id);
+  }
+}
+
+export const MIGRATIONS: readonly Migration[] = [
   // 1: records, settings, the engine registry, the review mirror, jobs, imports.
   `
   CREATE TABLE projects (
@@ -97,4 +126,9 @@ export const MIGRATIONS: readonly string[] = [
     report TEXT NOT NULL
   );
   `,
+  // 2: host keys unique across every project.
+  (db) => {
+    rekeyDuplicateHostKeys(db);
+    db.exec("CREATE UNIQUE INDEX boxes_host_key_unique ON boxes(host_key)");
+  },
 ];

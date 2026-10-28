@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
 import { defaultConfig, type Box, type Project } from "@agentbox/contracts";
 import { MIGRATIONS, migrate, openDatabase, repositories } from "../../src/db/index.js";
@@ -54,6 +55,43 @@ describe("openDatabase", () => {
     const again = openDatabase(file);
     expect(again.pragma("user_version", { simple: true })).toBe(MIGRATIONS.length);
     again.close();
+  });
+});
+
+describe("migration 2", () => {
+  it("re-keys host keys that two projects share and then refuses a duplicate", () => {
+    const db = new Database(":memory:");
+    db.exec(MIGRATIONS[0] as string);
+    db.pragma("user_version = 1");
+    const r = repositories(db);
+    r.projects.put(project());
+    r.projects.put(project("api-87654321", "/work/api"));
+    r.boxes.put(box("claude-agent-api.v2", { hostKey: "api-v2" }));
+    r.boxes.put(
+      box("claude-agent-api-v2", {
+        hostKey: "api-v2",
+        projectId: "api-87654321",
+        targetDir: "/work/api",
+        createdAt: "2026-10-29T09:00:00.000Z",
+      }),
+    );
+    migrate(db);
+    expect(r.boxes.get("claude-agent-api.v2")?.hostKey).toBe("api-v2");
+    expect(r.boxes.get("claude-agent-api-v2")?.hostKey).toBe("api-v2-2");
+    expect(
+      (db.prepare("SELECT host_key FROM boxes WHERE id = ?").get("claude-agent-api-v2") as {
+        host_key: string;
+      }).host_key,
+    ).toBe("api-v2-2");
+    expect(() =>
+      r.boxes.put(
+        box("claude-agent-other", {
+          hostKey: "api-v2",
+          projectId: "api-87654321",
+          targetDir: "/work/api",
+        }),
+      ),
+    ).toThrow(/UNIQUE/);
   });
 });
 

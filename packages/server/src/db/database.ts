@@ -29,7 +29,9 @@ export function migrate(db: Sqlite): number {
   const current = db.pragma("user_version", { simple: true }) as number;
   for (let i = current; i < MIGRATIONS.length; i += 1) {
     db.transaction(() => {
-      db.exec(MIGRATIONS[i] as string);
+      const migration = MIGRATIONS[i];
+      if (typeof migration === "function") migration(db);
+      else db.exec(migration as string);
       db.pragma(`user_version = ${i + 1}`);
     })();
   }

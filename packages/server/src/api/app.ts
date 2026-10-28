@@ -191,7 +191,10 @@ export async function startApp(options: AppOptions): Promise<App> {
 
   const proxy = new DevServerProxy(
     cachedResolver(async (hostKey) => {
-      const view = (await core.boxes.list({})).find((v) => v.box.hostKey === hostKey);
+      // The core keeps host keys unique across projects (migration 2 and
+      // allocateHostKey()); refuse rather than guess if two ever match.
+      const matches = (await core.boxes.list({})).filter((v) => v.box.hostKey === hostKey);
+      const view = matches.length === 1 ? matches[0] : undefined;
       const endpoint = view ? engines.get(view.container)?.endpoint : undefined;
       return endpoint?.hostPort ? { enginePort: endpoint.hostPort, token: endpoint.token } : null;
     }),

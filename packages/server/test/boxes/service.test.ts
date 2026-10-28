@@ -90,6 +90,16 @@ describe("create", () => {
     expect(second.hostKey).toBe("app-example-com-2");
   });
 
+  it("keeps host keys unique across projects", async () => {
+    const h = makeHarness();
+    h.core.settings.setPromptTemplates({ ...DEFAULT_PROMPT_TEMPLATES, starter: "" });
+    const a = await h.core.boxes.create({ targetDir: h.dir("x", "api.v2"), layout: "root" });
+    const b = await h.core.boxes.create({ targetDir: h.dir("y", "api-v2"), layout: "root" });
+    expect(a.projectId).not.toBe(b.projectId);
+    expect(a.hostKey).toBe("api-v2");
+    expect(b.hostKey).toBe("api-v2-2");
+  });
+
   it("provisions a workspace subfolder and names everything after the slug", async () => {
     const h = makeHarness();
     const dir = h.dir("app");
