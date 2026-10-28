@@ -1,6 +1,7 @@
 // Fleet: one row per project container with its connection state, engine
 // version match, active runs and stage, and CPU and memory from
 // `container.stats`.
+import { useId } from "react";
 import type { FleetRow } from "./selectors.js";
 import { formatBytes, formatPercent } from "./selectors.js";
 
@@ -41,10 +42,11 @@ export function FleetPanel({
   rows: readonly FleetRow[];
   onOpenRun?: (runId: string) => void;
 }) {
+  const titleId = useId();
   return (
-    <section className="ab-card" aria-labelledby="ab-fleet-title">
+    <section className="ab-card" aria-labelledby={titleId}>
       <header className="ab-card-head">
-        <h3 id="ab-fleet-title">Fleet</h3>
+        <h3 id={titleId}>Fleet</h3>
         <p className="ab-sub">{rows.length} containers</p>
       </header>
       {rows.length === 0 ? (

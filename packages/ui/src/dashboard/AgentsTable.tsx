@@ -1,6 +1,6 @@
 // Agents: one row per agent call with a live elapsed time, and the count of
 // running agents per vendor.
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import type { AgentView } from "./model.js";
 import { agentElapsed, formatCount, formatDuration, runningPerVendor } from "./selectors.js";
 import { VENDOR_LABELS, VENDORS, vendorColor } from "./tokens.js";
@@ -32,10 +32,11 @@ export function AgentsTable({
   const ticking = useNow(anyRunning && fixedNow === undefined);
   const now = fixedNow ?? ticking;
   const counts = runningPerVendor(agents);
+  const titleId = useId();
   return (
-    <section className="ab-card" aria-labelledby="ab-agents-title">
+    <section className="ab-card" aria-labelledby={titleId}>
       <header className="ab-card-head">
-        <h3 id="ab-agents-title">{title}</h3>
+        <h3 id={titleId}>{title}</h3>
         <ul className="ab-legend" aria-label="Running agents per vendor">
           {VENDORS.map((v) => (
             <li key={v}>
