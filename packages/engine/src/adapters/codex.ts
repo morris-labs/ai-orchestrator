@@ -7,14 +7,14 @@ import { join } from "node:path";
 import type { UsageSample, UsageWindow } from "@agentbox/contracts";
 import {
   CliAdapter,
-  detectLimitInText,
+  limitFromError,
   epochToIso,
   type CallContext,
   type CliAdapterOptions,
 } from "./base.js";
 import { parseStructuredText, toStrictJsonSchema } from "./output.js";
 import { runProcess } from "./process.js";
-import { AdapterError, type CliRequest, type CliResult, type CliLimitInfo } from "./types.js";
+import type { CliRequest, CliResult, CliLimitInfo } from "./types.js";
 
 export interface CodexAdapterOptions extends CliAdapterOptions {
   /**
@@ -67,6 +67,16 @@ export class CodexAdapter extends CliAdapter {
     );
   }
 
+  /**
+   * Where Codex runs: the scratch directory for a read-only call that has
+   * one, since `workspace-write` makes the working directory writable, and
+   * the repository otherwise. The prompt names the repository's path.
+   */
+  workingDir(req: CliRequest<unknown>): string {
+    const bypass = this.codexOptions.bypassSandboxForReadOnly === true;
+    return req.tools === "read-only" && req.scratchDir && !bypass ? req.scratchDir : req.cwd;
+  }
+
   /** The arguments for one call; the prompt goes on stdin through the `-` positional. */
   buildArgs(req: CliRequest<unknown>, schemaFile: string): string[] {
     const args = ["exec"];
@@ -74,10 +84,27 @@ export class CodexAdapter extends CliAdapter {
     const bypass =
       (req.tools === "write" && this.codexOptions.writeMode === "bypass") ||
       (req.tools === "read-only" && this.codexOptions.bypassSandboxForReadOnly === true);
-    if (!bypass) args.push("--sandbox", req.tools === "write" ? "workspace-write" : "read-only");
+    // A read-only call with a scratch directory runs in that directory under
+    // `workspace-write`, so the scratch directory is the only writable root;
+    // the temporary directories are excluded so the base checkout stays
+    // read-only too.
+    const scratch = req.tools === "read-only" && req.scratchDir !== undefined;
+    if (!bypass) {
+      args.push("--sandbox", req.tools === "write" || scratch ? "workspace-write" : "read-only");
+    }
     if (req.sessionId) args.push("resume", req.sessionId);
     args.push("--json", "--skip-git-repo-check", "--output-schema", schemaFile);
     if (bypass) args.push("--dangerously-bypass-approvals-and-sandbox");
+    if (scratch && !bypass) {
+      args.push(
+        "-c",
+        "sandbox_workspace_write.exclude_slash_tmp=true",
+        "-c",
+        "sandbox_workspace_write.exclude_tmpdir_env_var=true",
+        "-c",
+        "sandbox_workspace_write.network_access=false",
+      );
+    }
     if (req.model) args.push("--model", req.model);
     if (req.effort) args.push("-c", `model_reasoning_effort="${req.effort}"`);
     args.push("-");
@@ -94,9 +121,10 @@ export class CodexAdapter extends CliAdapter {
       const result = await runProcess({
         command: this.command,
         args: this.buildArgs(req, schemaFile),
-        cwd: req.cwd,
+        cwd: this.workingDir(req),
         input: prompt,
         env: this.options.env,
+        envProfile: `vendor:${this.vendor}`,
         timeoutMs: req.timeoutMs,
         signal: req.signal,
         onLine: (line) => parser.push(line),
@@ -153,10 +181,7 @@ export class CodexAdapter extends CliAdapter {
   }
 
   detectLimit(error: unknown): CliLimitInfo | null {
-    if (error instanceof AdapterError)
-      return error.limit ?? detectLimitInText(`${error.message}\n${error.raw}`, this.now());
-    if (error instanceof Error) return detectLimitInText(error.message, this.now());
-    return typeof error === "string" ? detectLimitInText(error, this.now()) : null;
+    return limitFromError(error, this.now());
   }
 }
 

@@ -1,7 +1,7 @@
 // Runs the Claude adapter against the real `claude` CLI. It costs a few
 // cents, so it runs only with AGENTBOX_REAL_CLAUDE=1. Each run saves the raw
 // stream under fixtures/ for the fixture tests.
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { UsageSampleSchema } from "@agentbox/contracts";
@@ -78,5 +78,29 @@ describe.skipIf(!enabled)("Claude adapter against the real CLI", () => {
     save("claude-real-fix.jsonl", result.raw);
     expect(result.output.done).toBe(true);
     expect(readFileSync(join(cwd, "done.txt"), "utf8")).toContain("fixed");
+  }, 150_000);
+
+  it("lets a read-only call write in its scratch directory and nowhere else", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "agentbox-claude-ro-"));
+    const scratch = join(mkdtempSync(join(tmpdir(), "agentbox-claude-scratch-")), "F-0001");
+    mkdirSync(scratch);
+    const result = await adapter.verify({
+      prompt:
+        `Use the Write tool to create ${join(scratch, "repro.sh")} containing 'exit 1'. ` +
+        `Then try to use the Write tool to create ${join(cwd, "bad.txt")} containing 'x'. ` +
+        "Report wrote true if the first write worked.",
+      cwd,
+      scratchDir: scratch,
+      tools: "read-only",
+      model,
+      effort: "low",
+      maxTurns: 6,
+      maxBudgetUsd: 0.5,
+      timeoutMs: 120_000,
+      outputSchema: z.object({ wrote: z.boolean() }),
+    });
+    expect(readFileSync(join(scratch, "repro.sh"), "utf8")).toContain("exit 1");
+    expect(existsSync(join(cwd, "bad.txt"))).toBe(false);
+    expect(typeof result.output.wrote).toBe("boolean");
   }, 150_000);
 });

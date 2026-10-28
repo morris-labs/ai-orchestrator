@@ -19,6 +19,7 @@ import {
   type Vendor,
 } from "@agentbox/contracts";
 import { z } from "zod";
+import type { EnvProfile } from "./process/env.js";
 import type { GitHubClient } from "./postpush/github.js";
 
 // ---------------------------------------------------------------------------
@@ -31,12 +32,24 @@ export interface CommandResult {
   stderr: string;
   /** True when the process ran past its timeout and was killed. */
   timedOut: boolean;
+  /**
+   * True when the program never ran, such as a missing file (`ENOENT`, exit
+   * code 127) or one that isn't executable (`EACCES`, exit code 126).
+   */
+  notStarted?: boolean;
+  /** The signal that ended the process, if one did. */
+  signal?: string | null;
 }
 
 export interface CommandOptions {
   cwd: string;
   timeoutMs?: number;
   env?: Record<string, string>;
+  /**
+   * Which of the engine's variables the process inherits. Absent: `github`
+   * for `git` and `gh`, `untrusted` for everything else.
+   */
+  envProfile?: EnvProfile;
   /** Written to the process's standard input. */
   input?: string;
   signal?: AbortSignal;
@@ -135,9 +148,9 @@ export const VerifyOutputSchema = z.object({
   /** Whether the flaw exists in the base worktree too, by the agent's reading. */
   presentAtBase: z.boolean().default(false),
   /**
-   * A reproduction script the agent wrote in the scratch directory. It must
-   * exit non-zero when the flaw reproduces. The engine reruns it at the tip
-   * and at the base.
+   * A reproduction script the agent wrote in the scratch directory. It exits
+   * 1 when the flaw reproduces and 0 when it doesn't. The engine reruns it at
+   * the tip and at the base.
    */
   script: z
     .object({
@@ -145,6 +158,11 @@ export const VerifyOutputSchema = z.object({
       path: z.string().min(1),
       /** The interpreter, such as `python3` or `bash`; absent runs the file directly. */
       interpreter: z.string().min(1).optional(),
+      /**
+       * The script's text, for an agent that couldn't write the file. The
+       * engine writes it to `path` when the file doesn't exist.
+       */
+      content: z.string().min(1).optional(),
     })
     .nullable()
     .default(null),
@@ -213,7 +231,11 @@ export interface LeaseActual {
  * `settle` only tells the broker the lease is finished.
  */
 export interface LeaseBroker {
-  acquire(request: LeaseRequest): Promise<LeaseResponse>;
+  /**
+   * Asks for a lease. Rejects when `signal` aborts. The response's `leaseId`
+   * is the lease to settle, which can differ from the request's.
+   */
+  acquire(request: LeaseRequest, signal?: AbortSignal): Promise<LeaseResponse>;
   settle(leaseId: string, actual: LeaseActual): void;
 }
 
@@ -384,6 +406,14 @@ export interface EngineDeps {
   models?: Partial<Record<Vendor, string>>;
   /** Container name for `RunState.container`. */
   container: string;
+  /** Where the core reports problems it can't surface on the run, such as a failed write. */
+  log?: CoreLog;
+}
+
+/** The logger the core writes to; the engine's `Logger` fits it. */
+export interface CoreLog {
+  warn(message: string, fields?: Record<string, unknown>): void;
+  error(message: string, fields?: Record<string, unknown>): void;
 }
 
 /** Role names the engine requests leases for. */

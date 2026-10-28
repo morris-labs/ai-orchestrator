@@ -17,7 +17,7 @@ import type { EventHub } from "../events/hub.js";
 import type { EngineLeaseBroker } from "../events/leases.js";
 import { parseTypesFilter, serveEventSocket } from "../events/stream.js";
 import { PROXY_PREFIX, parseProxyUrl, proxyHttp, proxyUpgrade } from "../proxy/proxy.js";
-import { isAuthorized, redactUrl } from "./auth.js";
+import { isAuthorized, isProxyAuthorized, redactUrl } from "./auth.js";
 import type { Logger } from "./core-interface.js";
 import { mapError } from "./errors.js";
 import type { EngineHandlers, EngineHttpKey, HandlerDeps } from "./handlers.js";
@@ -82,7 +82,7 @@ export async function buildEngineApp(options: EngineAppOptions): Promise<Fastify
       http.createServer((req, res) => {
         const target = req.url?.startsWith(PROXY_PREFIX) ? parseProxyUrl(req.url, token) : null;
         if (target === null) return handler(req, res);
-        if (!isAuthorized(req, token, false)) return sendRawError(res, 401, UNAUTHORIZED);
+        if (!isProxyAuthorized(req, token, false)) return sendRawError(res, 401, UNAUTHORIZED);
         log.debug("Proxy request", { method: req.method, port: target.port });
         proxyHttp(req, res, target, proxyOptions);
       }),
@@ -160,7 +160,7 @@ export async function buildEngineApp(options: EngineAppOptions): Promise<Fastify
     if (url.startsWith(PROXY_PREFIX)) {
       const target = parseProxyUrl(url, token);
       if (target === null) return rejectUpgrade(socket, 404, "Not Found");
-      if (!isAuthorized(req, token, true)) return rejectUpgrade(socket, 401, "Unauthorized");
+      if (!isProxyAuthorized(req, token, true)) return rejectUpgrade(socket, 401, "Unauthorized");
       return proxyUpgrade(req, socket, head, target, proxyOptions);
     }
     if (pathname !== eventsPath) return rejectUpgrade(socket, 404, "Not Found");

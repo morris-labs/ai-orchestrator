@@ -90,8 +90,8 @@ describe("pre-push end to end", () => {
     );
     expect(scenario.count("continueReview", "codex")).toBeGreaterThan(1);
     // The gate caught the bad fix and the second attempt passed.
-    const gate1 = JSON.parse(readFileSync(join(run.runDir, "rounds/1/gate-1.json"), "utf8"));
-    const gate2 = JSON.parse(readFileSync(join(run.runDir, "rounds/1/gate-2.json"), "utf8"));
+    const gate1 = JSON.parse(readFileSync(join(run.runDir, "rounds/1/gate-0-1.json"), "utf8"));
+    const gate2 = JSON.parse(readFileSync(join(run.runDir, "rounds/1/gate-0-2.json"), "utf8"));
     expect(gate1.regressed).toBe(true);
     expect(gate2.regressed).toBe(false);
     expect(
@@ -127,7 +127,8 @@ describe("pre-push end to end", () => {
       "merge",
       "verify",
       "sweep",
-      "fix-1",
+      "fix-0-1",
+      "fix-0-1-plan",
       "confirm",
       "summary",
     ]) {

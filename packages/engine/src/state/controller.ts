@@ -17,7 +17,10 @@ import {
 import type { z } from "zod";
 import type { EngineDeps } from "../core.js";
 import { systemClock } from "../core.js";
-import { loadPolicy } from "../policy/load.js";
+import { DEFAULT_POLICY } from "@agentbox/contracts";
+import { loadPolicy, loadPolicyExtras } from "../policy/load.js";
+import { Git } from "../range/git.js";
+import { baseWorktreePath, removeBaseWorktree } from "../verify/verify.js";
 import { drivePostPush } from "../postpush/loop.js";
 import { resolveRange } from "../range/resolve.js";
 import { newEngineState } from "../run/engine-state.js";
@@ -31,6 +34,7 @@ import {
   isTerminal,
 } from "./context.js";
 import { drivePrePush } from "./prepush.js";
+import { disposeBaseWorktree } from "./steps.js";
 import { assignRoles } from "./profiles.js";
 
 /** The action doesn't fit the run's status; the API answers `invalid_state`. */
@@ -52,7 +56,10 @@ export interface RunLocation {
 export class RunController {
   private active: Promise<void> | null = null;
 
-  private constructor(private readonly ctx: RunContext) {}
+  private constructor(
+    private readonly ctx: RunContext,
+    private readonly location: RunLocation,
+  ) {}
 
   /**
    * Creates a run: resolves the range (throwing `RangeError` with code
@@ -111,12 +118,14 @@ export class RunController {
     const eng = newEngineState();
     eng.tipRef = range.tipRef;
     eng.diffBaseSha = range.diffBaseSha;
+    eng.includeWorktree = range.includeWorktree;
     eng.phase = request.pipeline;
     const store = new RunStore(location.projectRoot, runId);
     const ctx = new RunContext(state, eng, [], store, deps, policy);
+    ctx.extras = await loadPolicyExtras(location.projectRoot, location.policyPath);
     await ctx.persist();
     await ctx.emitRun();
-    return new RunController(ctx);
+    return new RunController(ctx, location);
   }
 
   /** Loads a run from its directory, at the stage and status it was left in. */
@@ -129,8 +138,12 @@ export class RunController {
     const state = await store.loadState();
     const eng = await store.loadEngineState();
     const findings = await store.loadFindings();
-    const policy = await loadPolicy(location.projectRoot, location.policyPath);
-    return new RunController(new RunContext(state, eng, findings, store, deps, policy));
+    // The policy is read again each time the driver starts, so a typo in it
+    // fails only the runs that go on, and only until it's fixed.
+    const ctx = new RunContext(state, eng, findings, store, deps, DEFAULT_POLICY);
+    // A base checkout left by an engine that stopped mid-run is stale.
+    await removeBaseWorktree(new Git(deps.runner, state.request.repoPath), baseWorktreePath(runId));
+    return new RunController(ctx, location);
   }
 
   get id(): string {
@@ -194,12 +207,15 @@ export class RunController {
     const ctx = this.ctx;
     this.active = (async () => {
       try {
+        ctx.policy = await loadPolicy(this.location.projectRoot, this.location.policyPath);
+        ctx.extras = await loadPolicyExtras(this.location.projectRoot, this.location.policyPath);
         if (ctx.state.status !== "running") {
           await ctx.setStatus("running", {
             error: undefined,
             stopReason: null,
             decision: null,
             finishedAt: undefined,
+            pausedUntil: undefined,
           });
         }
         if (ctx.eng.phase === "pre-push") await drivePrePush(ctx);
@@ -210,21 +226,26 @@ export class RunController {
       } finally {
         this.active = null;
       }
-    })();
+    })().catch((error: unknown) => {
+      // `stopOn` doesn't reject; this keeps a bug there from crashing the engine.
+      ctx.deps.log?.error("The run driver failed", { runId: ctx.state.id, error: String(error) });
+    });
   }
 
+  /** Records why the driver stopped. Never rejects, even when the run directory can't be written. */
   private async stopOn(error: unknown): Promise<void> {
     const ctx = this.ctx;
+    await disposeBaseWorktree(ctx).catch(() => undefined);
     if (error instanceof DecisionNeeded) {
-      await ctx.setStatus("waiting_decision", { decision: error.decision });
+      await ctx.settleStatus("waiting_decision", { decision: error.decision });
     } else if (error instanceof RunCancelled || ctx.cancelled) {
-      await ctx.setStatus("cancelled", { stopReason: "cancelled" });
+      await ctx.settleStatus("cancelled", { stopReason: "cancelled" });
     } else {
       const message =
         error instanceof AgentFailed || error instanceof RoleDenied
           ? error.message
           : `The ${ctx.state.stage} stage failed: ${(error as Error)?.message ?? String(error)}`;
-      await ctx.setStatus("failed", { stopReason: "error", error: message });
+      await ctx.settleStatus("failed", { stopReason: "error", error: message });
     }
   }
 
@@ -263,7 +284,10 @@ export class RunController {
     this.requireLive("cancel");
     this.ctx.requestCancel();
     if (this.active) await this.settled();
-    else await this.ctx.setStatus("cancelled", { stopReason: "cancelled" });
+    else {
+      await disposeBaseWorktree(this.ctx).catch(() => undefined);
+      await this.ctx.setStatus("cancelled", { stopReason: "cancelled" });
+    }
     return this.state;
   }
 
@@ -317,6 +341,7 @@ export class RunController {
     }
     if (decision.kind === "gate_failed") {
       ctx.eng.gateAttempts = 0;
+      ctx.eng.fixEpoch += 1;
       if (ctx.eng.phase === "post-push" && ctx.state.stage === "import") await ctx.setStage("push");
     }
     if (decision.kind === "push_blocked") ctx.eng.reviewRequestedFor = null;
@@ -368,6 +393,7 @@ export class RunController {
       );
     }
     ctx.eng.phase = "post-push";
+    ctx.eng.postPushStartRound = ctx.state.round;
     ctx.eng.push = { title: options.title ?? null, draft: options.draft ?? false };
     ctx.eng.roundOpen = false;
     ctx.state.decision = null;

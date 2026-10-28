@@ -1,9 +1,9 @@
 // Verify stage (design.md, pre-push step 5): a disprover from another vendor
 // tries to disprove each finding, with a reproduction script where it can,
 // and the engine checks whether the flaw exists at the pinned base.
-import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { mkdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { Finding, PolicyFile, Profile, RoleAssignment, Vendor } from "@agentbox/contracts";
 import type { AdapterRequest, CommandRunner, VerifyOutput } from "../core.js";
 import { policyPromptSection } from "../policy/rules.js";
@@ -33,34 +33,68 @@ export function chooseDisprover(
   return preferred[0] ?? others[0] ?? roles.disprover;
 }
 
-/** A detached checkout of the pinned base in a temporary directory. */
+/** Where a run's base checkout lives: a temporary directory named after the run. */
+export function baseWorktreePath(runId: string): string {
+  return join(tmpdir(), `agentbox-base-${runId}`);
+}
+
+/**
+ * Removes a base checkout that an earlier engine left behind, and its entry
+ * in `git worktree list`. Never rejects.
+ */
+export async function removeBaseWorktree(git: Git, path: string): Promise<void> {
+  try {
+    await git.removeWorktree(path);
+  } catch {
+    // Nothing registered there.
+  }
+  await rm(path, { recursive: true, force: true }).catch(() => undefined);
+}
+
+/**
+ * A detached checkout of the pinned base. The directory is named after the
+ * run, so an engine that restarts finds and removes what a crash left.
+ */
 export class BaseWorktree {
   private path: Promise<string> | null = null;
+  private disposed = false;
 
   constructor(
     private readonly git: Git,
     private readonly baseSha: string,
+    private readonly dir: string = join(tmpdir(), `agentbox-base-${process.pid}-${Date.now()}`),
   ) {}
 
   /** Creates the checkout on first use and returns its path. */
   ensure(): Promise<string> {
+    if (this.disposed) return Promise.reject(new Error("The base checkout was already removed."));
     // Parallel disprovers share one checkout, so the promise is the cache.
     this.path ??= (async () => {
-      const dir = await mkdtemp(join(tmpdir(), "agentbox-base-"));
-      await this.git.addDetachedWorktree(dir, this.baseSha);
-      return dir;
+      await removeBaseWorktree(this.git, this.dir);
+      await mkdir(dirname(this.dir), { recursive: true });
+      try {
+        await this.git.addDetachedWorktree(this.dir, this.baseSha);
+      } catch (error) {
+        await removeBaseWorktree(this.git, this.dir);
+        throw error;
+      }
+      return this.dir;
     })();
+    // A failed checkout isn't cached, so the next call tries again.
+    this.path.catch(() => {
+      this.path = null;
+    });
     return this.path;
   }
 
   async dispose(): Promise<void> {
+    this.disposed = true;
     if (!this.path) return;
     const pending = this.path;
     this.path = null;
     const path = await pending.catch(() => null);
     if (!path) return;
-    await this.git.removeWorktree(path);
-    await rm(path, { recursive: true, force: true });
+    await removeBaseWorktree(this.git, path);
   }
 }
 
@@ -68,9 +102,46 @@ export interface ScriptRun {
   exitCode: number;
   timedOut: boolean;
   output: string;
+  /** True when the script never ran: missing, not executable, or no interpreter. */
+  notStarted?: boolean;
+  /** The signal that killed the script, if any. */
+  signal?: string | null;
 }
 
-/** Runs a reproduction script against `repoDir`. Refuses a path outside the scratch directory. */
+/** The exit code a reproduction script uses when the flaw reproduces. */
+export const REPRODUCED_EXIT_CODE = 1;
+
+/**
+ * Text that an interpreter prints when the script itself failed rather than
+ * reporting the flaw: a missing file, a syntax error, an uncaught exception.
+ */
+const SCRIPT_FAILURE_PATTERN =
+  /Traceback \(most recent call last\)|SyntaxError|can't open file|No such file or directory|command not found|cannot find module|ModuleNotFoundError|ImportError|Permission denied|Uncaught |ReferenceError|TypeError: .* is not a function|bad interpreter/i;
+
+/**
+ * What one run of a reproduction script shows: the flaw `reproduced`, the
+ * run was `clean`, or the script `failed` to run at all (missing, not
+ * executable, timed out, killed by a signal, crashed, or exited with a code
+ * other than 0 or 1). A failed run proves nothing either way.
+ */
+export function classifyRun(run: ScriptRun): "reproduced" | "clean" | "failed" {
+  if (run.notStarted || run.timedOut || run.signal) return "failed";
+  if (run.exitCode === 126 || run.exitCode === 127) return "failed";
+  if (run.exitCode === 0) return "clean";
+  if (run.exitCode !== REPRODUCED_EXIT_CODE) return "failed";
+  return SCRIPT_FAILURE_PATTERN.test(run.output) ? "failed" : "reproduced";
+}
+
+function failedRun(message: string): ScriptRun {
+  return { exitCode: 127, timedOut: false, output: message, notStarted: true };
+}
+
+/**
+ * Runs a reproduction script against `repoDir`. Refuses a path outside the
+ * scratch directory, symbolic links included. Writes `script.content` to the
+ * path when the agent couldn't write the file itself. A script that doesn't
+ * exist comes back as a run that never started.
+ */
 export async function runReproScript(
   runner: CommandRunner,
   scratchDir: string,
@@ -79,16 +150,51 @@ export async function runReproScript(
   timeoutMs = 120_000,
 ): Promise<ScriptRun> {
   const full = resolve(scratchDir, script.path);
-  const rel = relative(scratchDir, full);
-  if (rel.startsWith("..") || isAbsolute(rel)) {
+  if (!inside(scratchDir, full)) {
     throw new Error(`The reproduction script ${script.path} is outside the scratch directory.`);
   }
+  if (!(await exists(full)) && script.content) {
+    await mkdir(dirname(full), { recursive: true });
+    await writeFile(full, script.content, { mode: 0o700 });
+  }
+  if (!(await exists(full))) {
+    return failedRun(
+      `The reproduction script ${script.path} doesn't exist in the scratch directory.`,
+    );
+  }
+  const real = await realpath(full);
+  if (!inside(await realpath(scratchDir), real)) {
+    throw new Error(`The reproduction script ${script.path} links outside the scratch directory.`);
+  }
   const [program, args] = script.interpreter
-    ? [script.interpreter, [full, repoDir]]
-    : [full, [repoDir]];
-  const result = await runner.run(program, args, { cwd: repoDir, timeoutMs });
+    ? [script.interpreter, [real, repoDir]]
+    : [real, [repoDir]];
+  const result = await runner.run(program, args, {
+    cwd: repoDir,
+    timeoutMs,
+    envProfile: "untrusted",
+  });
   const output = `${result.stdout}${result.stderr}`.trim().split("\n").slice(-20).join("\n");
-  return { exitCode: result.exitCode, timedOut: result.timedOut, output };
+  return {
+    exitCode: result.exitCode,
+    timedOut: result.timedOut,
+    output,
+    notStarted: result.notStarted ?? false,
+    signal: result.signal ?? null,
+  };
+}
+
+function inside(dir: string, path: string): boolean {
+  const rel = relative(dir, path);
+  return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
+}
+
+async function exists(path: string): Promise<boolean> {
+  try {
+    return (await stat(path)).isFile();
+  } catch {
+    return false;
+  }
 }
 
 export interface VerdictDecision {
@@ -98,10 +204,25 @@ export interface VerdictDecision {
   evidence: string;
 }
 
+function describeRun(where: string, run: ScriptRun): string {
+  const how = run.notStarted
+    ? "didn't start"
+    : run.timedOut
+      ? "timed out"
+      : run.signal
+        ? `was killed by ${run.signal}`
+        : `exit ${run.exitCode}`;
+  return `Engine rerun at ${where}: ${how}.${run.output ? ` ${run.output}` : ""}`;
+}
+
 /**
- * Combines the disprover's answer with the engine's own script runs. A
- * script that reproduces at the tip confirms by script; one that also
- * reproduces at the base makes the finding pre-existing.
+ * Combines the disprover's answer with the engine's own script runs. Only a
+ * script that reproduces the flaw at the tip counts as script verification,
+ * and only then does the base run count: the flaw is pre-existing when the
+ * script reproduces it at the base as well. A script that fails to run at
+ * the tip leaves the verdict to the disprover's reading; one that fails to
+ * run at the base leaves the finding introduced. A failed run never makes a
+ * finding pre-existing.
  */
 export function decideVerdict(
   output: VerifyOutput,
@@ -120,23 +241,26 @@ export function decideVerdict(
   let verification: "script" | "code-reading" = output.verification;
   let presentAtBase = output.presentAtBase;
   if (tip) {
-    const reproduced = tip.exitCode !== 0 && !tip.timedOut;
-    parts.push(
-      `Engine rerun at tip: exit ${tip.exitCode}${tip.timedOut ? " (timed out)" : ""}.${tip.output ? ` ${tip.output}` : ""}`,
-    );
-    if (reproduced) {
+    parts.push(describeRun("tip", tip));
+    const atTip = classifyRun(tip);
+    if (atTip === "reproduced") {
       verification = "script";
-      if (base) {
-        const atBase = base.exitCode !== 0 && !base.timedOut;
+      const atBase = base ? classifyRun(base) : "failed";
+      if (base) parts.push(describeRun("base", base));
+      if (atBase === "failed") {
+        presentAtBase = false;
         parts.push(
-          `Engine rerun at base: exit ${base.exitCode}${base.timedOut ? " (timed out)" : ""}.`,
+          "The script didn't run at the base, so the engine treats the flaw as introduced.",
         );
-        presentAtBase = atBase;
+      } else {
+        presentAtBase = atBase === "reproduced";
       }
     } else {
       verification = "code-reading";
       parts.push(
-        "The script didn't reproduce the flaw when the engine reran it, so the verdict rests on code reading.",
+        atTip === "clean"
+          ? "The script didn't reproduce the flaw when the engine reran it, so the verdict rests on code reading."
+          : "The script failed to run, so the verdict rests on the disprover's code reading.",
       );
     }
   }
@@ -201,22 +325,19 @@ export async function verifyFinding(
   let tipRun: ScriptRun | null = null;
   let baseRun: ScriptRun | null = null;
   if (answer.output.script && answer.output.verdict === "confirmed") {
+    const script = answer.output.script;
     try {
-      tipRun = await runReproScript(
-        deps.runner,
-        scratchDir,
-        answer.output.script,
-        deps.range.repoPath,
-      );
-      if (tipRun.exitCode !== 0) {
-        baseRun = await runReproScript(deps.runner, scratchDir, answer.output.script, baseDir);
-      }
+      tipRun = await runReproScript(deps.runner, scratchDir, script, deps.range.repoPath);
     } catch (error) {
-      tipRun = {
-        exitCode: 0,
-        timedOut: false,
-        output: `The engine couldn't run the script: ${(error as Error).message}`,
-      };
+      tipRun = failedRun(`The engine couldn't run the script: ${(error as Error).message}`);
+    }
+    // The base comparison counts only after the script reproduced at the tip.
+    if (classifyRun(tipRun) === "reproduced") {
+      try {
+        baseRun = await runReproScript(deps.runner, scratchDir, script, baseDir);
+      } catch (error) {
+        baseRun = failedRun(`The engine couldn't run the script: ${(error as Error).message}`);
+      }
     }
   }
   return {

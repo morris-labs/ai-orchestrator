@@ -9,12 +9,14 @@ import {
   AUTH_PATTERN,
   CliAdapter,
   detectLimitInText,
+  limitFromError,
   epochToIso,
   tail,
   type CallContext,
   type CliAdapterOptions,
 } from "./base.js";
 import { parseStructured, parseStructuredText } from "./output.js";
+import { childEnv } from "../process/env.js";
 import { runProcess } from "./process.js";
 import { AdapterError, type CliRequest, type CliResult, type CliLimitInfo } from "./types.js";
 
@@ -34,13 +36,49 @@ export const CLAUDE_READ_ONLY_ALLOWED = [
   "Bash(git ls-files *)",
 ];
 
-export const CLAUDE_WRITE_DENIED_FOR_READ_ONLY = ["Edit", "Write", "NotebookEdit"];
+export const CLAUDE_WRITE_DENIED_FOR_READ_ONLY = [
+  "Edit",
+  "Write",
+  "NotebookEdit",
+  // `git diff`, `log`, and `show` write files with `--output`, and run
+  // programs with `--ext-diff` or `--textconv`. A deny wins over the allows.
+  "Bash(*--output*)",
+  "Bash(*--ext-diff*)",
+  "Bash(*--textconv*)",
+];
+
+/**
+ * The tool lists for a read-only call. With a scratch directory, `Write` is
+ * available but allowed only under that directory: `dontAsk` denies every
+ * call no allow rule covers. File-writing tools take their permission from
+ * `Edit(...)` path rules (a `Write(...)` rule matches nothing), and a path
+ * that starts with `//` is absolute. Checked against Claude Code 2.1.310.
+ */
+export function claudeReadOnlyPolicy(scratchDir?: string): {
+  tools: string[];
+  allowed: string[];
+  disallowed: string[];
+} {
+  if (!scratchDir) {
+    return {
+      tools: CLAUDE_READ_ONLY_TOOLS,
+      allowed: CLAUDE_READ_ONLY_ALLOWED,
+      disallowed: CLAUDE_WRITE_DENIED_FOR_READ_ONLY,
+    };
+  }
+  const dir = scratchDir.replace(/\/+$/, "");
+  return {
+    tools: [...CLAUDE_READ_ONLY_TOOLS, "Write"],
+    allowed: [...CLAUDE_READ_ONLY_ALLOWED, `Edit(/${dir}/**)`],
+    disallowed: CLAUDE_WRITE_DENIED_FOR_READ_ONLY.filter((t) => t !== "Write"),
+  };
+}
 
 export interface ClaudeAdapterOptions extends CliAdapterOptions {
   /**
    * Pass `--bare`, which skips hooks, plugins, and CLAUDE.md discovery. It
    * also skips OAuth, so it works only with `ANTHROPIC_API_KEY`. Defaults to
-   * true when that variable is set and false otherwise.
+   * true when the child's environment has that variable and false otherwise.
    */
   bare?: boolean;
   /** Permission mode for `tools: "write"`. Default `bypassPermissions`; the container is the sandbox. */
@@ -84,7 +122,7 @@ export class ClaudeAdapter extends CliAdapter {
     const args = ["-p", "--output-format", "stream-json", "--verbose"];
     const bare =
       this.claudeOptions.bare ??
-      Boolean(process.env.ANTHROPIC_API_KEY ?? this.options.env?.ANTHROPIC_API_KEY);
+      Boolean(childEnv("vendor:claude", this.options.env).ANTHROPIC_API_KEY);
     if (bare) args.push("--bare");
     if (req.model) args.push("--model", req.model);
     if (req.effort) args.push("--effort", req.effort);
@@ -95,13 +133,14 @@ export class ClaudeAdapter extends CliAdapter {
     for (const dir of req.addDirs ?? []) args.push("--add-dir", dir);
     args.push("--json-schema", JSON.stringify(this.jsonSchemaFor(req)));
     if (req.tools === "read-only") {
+      const policy = claudeReadOnlyPolicy(req.scratchDir);
       args.push(
         "--tools",
-        CLAUDE_READ_ONLY_TOOLS.join(","),
+        policy.tools.join(","),
         "--allowedTools",
-        CLAUDE_READ_ONLY_ALLOWED.join(","),
+        policy.allowed.join(","),
         "--disallowedTools",
-        CLAUDE_WRITE_DENIED_FOR_READ_ONLY.join(","),
+        policy.disallowed.join(","),
         "--permission-mode",
         "dontAsk",
         "--permission-prompts",
@@ -121,6 +160,7 @@ export class ClaudeAdapter extends CliAdapter {
       cwd: req.cwd,
       input: req.prompt,
       env: this.options.env,
+      envProfile: `vendor:${this.vendor}`,
       timeoutMs: req.timeoutMs,
       signal: req.signal,
       onLine: (line) => {
@@ -158,15 +198,26 @@ export class ClaudeAdapter extends CliAdapter {
     if (failed) {
       const errors = Array.isArray(res?.errors) ? (res.errors as unknown[]).join("; ") : "";
       const text = [summary.apiErrorText, resultText, errors, stderr].filter(Boolean).join("\n");
+      // Limits come from the CLI's own error channels: the rate-limit event,
+      // an API error, the error list, stderr, and the result text only when
+      // the CLI marked it an error. A failed turn's text is the model's.
+      const errorText = [
+        summary.apiError ? summary.apiErrorText : null,
+        res?.is_error === true ? resultText : null,
+        errors,
+        stderr,
+      ]
+        .filter(Boolean)
+        .join("\n");
       const limit =
         summary.rejected ??
         (summary.apiError && /rate_limit|overage|usage/i.test(summary.apiError)
-          ? (detectLimitInText(text, this.now()) ?? {
+          ? (detectLimitInText(errorText, this.now()) ?? {
               kind: "rate_limit" as const,
               resetAt: null,
-              message: text.slice(0, 300),
+              message: errorText.slice(0, 300),
             })
-          : detectLimitInText(text, this.now()));
+          : detectLimitInText(errorText, this.now()));
       if (limit) {
         throw new AdapterError(
           "claude",
@@ -216,12 +267,7 @@ export class ClaudeAdapter extends CliAdapter {
   }
 
   detectLimit(error: unknown): CliLimitInfo | null {
-    if (error instanceof AdapterError) {
-      if (error.limit) return error.limit;
-      return detectLimitInText(`${error.message}\n${error.raw}`, this.now());
-    }
-    if (error instanceof Error) return detectLimitInText(error.message, this.now());
-    return typeof error === "string" ? detectLimitInText(error, this.now()) : null;
+    return limitFromError(error, this.now());
   }
 }
 

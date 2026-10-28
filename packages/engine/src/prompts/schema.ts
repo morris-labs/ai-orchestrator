@@ -82,6 +82,11 @@ export const VERIFY_OUTPUT_JSON_SCHEMA = {
           properties: {
             path: { type: "string", description: "Relative to the scratch directory." },
             interpreter: { type: "string", description: "Such as python3, node, or bash." },
+            content: {
+              type: "string",
+              description:
+                "The script's text, when you couldn't write the file. The engine writes it to path.",
+            },
           },
         },
       ],

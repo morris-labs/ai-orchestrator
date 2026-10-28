@@ -62,3 +62,24 @@ describe("parseDiff", () => {
     expect(files[1]?.hunks[0]).toMatchObject({ start: 1, end: 3, added: 3 });
   });
 });
+
+describe("parseDiff content lines that look like headers", () => {
+  it("counts a removed `-- ` line and an added `++ ` line as changes", () => {
+    const text = [
+      "diff --git a/db/migrate.sql b/db/migrate.sql",
+      "index 1111111..2222222 100644",
+      "--- a/db/migrate.sql",
+      "+++ b/db/migrate.sql",
+      "@@ -1,3 +1,3 @@",
+      " CREATE TABLE t (id int);",
+      "--- legacy index",
+      "+++ x",
+      " SELECT 1;",
+      "",
+    ].join("\n");
+    const [file] = parseDiff(text);
+    expect(file).toMatchObject({ path: "db/migrate.sql", oldPath: "db/migrate.sql" });
+    expect(file?.added).toBe(1);
+    expect(file?.removed).toBe(1);
+  });
+});

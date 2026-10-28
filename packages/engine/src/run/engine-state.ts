@@ -29,6 +29,12 @@ export const EngineStateSchema = z.object({
     .default({}),
   /** The branch the fixer commits to, or `null` for a read-only SHA tip. */
   tipRef: z.string().nullable().default(null),
+  /**
+   * Whether round 1 reviews the working tree, as range resolution decided:
+   * never for a SHA tip, a tip that isn't checked out, or a clean tree.
+   * `null` in runs created before the engine recorded it.
+   */
+  includeWorktree: z.boolean().nullable().default(null),
   /** The commit the diff starts from: the merge base, or the pinned base. */
   diffBaseSha: z.string().nullable().default(null),
   /** Consecutive rounds that confirmed no finding above `nit`. */
@@ -39,6 +45,12 @@ export const EngineStateSchema = z.object({
   alternating: z.boolean().default(false),
   /** Fix and gate attempts in the current round. */
   gateAttempts: z.number().int().nonnegative().default(0),
+  /**
+   * Goes up each time a person answers a `gate_failed` decision. The fix and
+   * gate files of a round carry it, so a resumed run runs the fix and the
+   * gate again instead of replaying the attempts that led to the decision.
+   */
+  fixEpoch: z.number().int().nonnegative().default(0),
   /** Changes a person asked for, applied at the start of the next round. */
   pendingProfile: ProfileSchema.nullable().default(null),
   pendingAssign: z
@@ -57,14 +69,22 @@ export const EngineStateSchema = z.object({
   preFixSha: z.string().nullable().default(null),
   /** The gate's last failure report, for the next fix attempt. */
   lastGateFailure: z.string().nullable().default(null),
-  /** Findings the fixer declined as not real defects; not sent to it again. */
+  /** Merges whose findings are saved, by commit file; a resumed stage never applies one twice. */
+  appliedMerges: z.array(z.string()).default([]),
+  /** Findings the fixer declined, with a reason, as not real defects; not sent to it again. */
   declined: z.array(z.string()).default([]),
   /** Usage of the current round per vendor. */
   roundUsage: z.record(VendorSchema, VendorStatsSchema).default({}),
   /** Post-push: external references already imported as findings. */
   importedRefs: z.array(z.string()).default([]),
-  /** Post-push: review threads the loop already replied to and resolved. */
+  /** Post-push: review threads the loop already replied to. */
   answeredThreads: z.array(z.string()).default([]),
+  /** Post-push: review threads the loop already resolved. */
+  resolvedThreads: z.array(z.string()).default([]),
+  /** Post-push: the round the post-push loop started after; its rounds count from there. */
+  postPushStartRound: z.number().int().nonnegative().nullable().default(null),
+  /** Post-push: the commit the loop last pushed. */
+  pushedHead: z.string().nullable().default(null),
   /** Post-push: the head SHA whose Copilot review the loop last requested. */
   reviewRequestedFor: z.string().nullable().default(null),
 });

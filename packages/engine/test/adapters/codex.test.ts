@@ -116,6 +116,16 @@ describe("CodexAdapter.buildArgs", () => {
     ]);
   });
 
+  it("runs a read-only call with a scratch directory in it, under workspace-write", () => {
+    const request = { ...base, scratchDir: "/runs/r1/scratch/F-1" };
+    const args = adapter.buildArgs(request, "/s.json");
+    expect(args.slice(0, 3)).toEqual(["exec", "--sandbox", "workspace-write"]);
+    expect(args).toContain("sandbox_workspace_write.exclude_slash_tmp=true");
+    expect(adapter.workingDir(request)).toBe("/runs/r1/scratch/F-1");
+    expect(adapter.workingDir(base)).toBe("/w");
+    expect(adapter.workingDir({ ...base, tools: "write", scratchDir: "/x" })).toBe("/w");
+  });
+
   it("puts --sandbox before resume", () => {
     const args = adapter.buildArgs({ ...base, sessionId: "t1" }, "/s.json");
     expect(args.slice(0, 5)).toEqual(["exec", "--sandbox", "read-only", "resume", "t1"]);

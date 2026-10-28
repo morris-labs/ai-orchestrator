@@ -1,6 +1,7 @@
 // Runs a CLI as a child process with a timeout, cancellation, and a line
 // callback for streaming JSON output.
 import { spawn } from "node:child_process";
+import { childEnv, type EnvProfile } from "../process/env.js";
 
 export interface RunProcessOptions {
   command: string;
@@ -8,9 +9,18 @@ export interface RunProcessOptions {
   cwd: string;
   /** Written to the child's stdin, which is then closed. Absent closes stdin at once. */
   input?: string;
-  /** Added to this process's environment. A `undefined` value removes the variable. */
+  /**
+   * Added to the environment the profile allows. A `undefined` value removes
+   * the variable.
+   */
   env?: Record<string, string | undefined>;
-  timeoutMs: number;
+  /**
+   * Which of this process's variables the child inherits (see
+   * `src/process/env.ts`). Default `untrusted`: no credentials.
+   */
+  envProfile?: EnvProfile;
+  /** Kills the child after this many milliseconds. Absent or 0 means no limit. */
+  timeoutMs?: number;
   signal?: AbortSignal;
   /** Called for each complete stdout line, without the newline. */
   onLine?: (line: string) => void;
@@ -34,11 +44,7 @@ export interface ProcessResult {
 /** Runs one command to completion. It never rejects; inspect the result. */
 export function runProcess(opts: RunProcessOptions): Promise<ProcessResult> {
   const started = Date.now();
-  const env: NodeJS.ProcessEnv = { ...process.env };
-  for (const [key, value] of Object.entries(opts.env ?? {})) {
-    if (value === undefined) delete env[key];
-    else env[key] = value;
-  }
+  const env = childEnv(opts.envProfile ?? "untrusted", opts.env);
 
   return new Promise((resolve) => {
     let stdout = "";
@@ -80,10 +86,14 @@ export function runProcess(opts: RunProcessOptions): Promise<ProcessResult> {
       killTimer.unref();
     };
 
-    const timer = setTimeout(() => {
-      timedOut = true;
-      kill();
-    }, opts.timeoutMs);
+    const limit = opts.timeoutMs ?? 0;
+    const timer =
+      limit > 0 && Number.isFinite(limit)
+        ? setTimeout(() => {
+            timedOut = true;
+            kill();
+          }, limit)
+        : undefined;
     const onAbort = () => {
       cancelled = true;
       kill();

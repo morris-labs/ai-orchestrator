@@ -59,6 +59,7 @@ export function toCliRequest(
     prompt: request.prompt,
     cwd: request.repoPath,
     ...(addDirs.length > 0 ? { addDirs } : {}),
+    ...(request.scratchDir ? { scratchDir: request.scratchDir } : {}),
     tools: request.toolPolicy,
     timeoutMs: request.timeoutMs,
     ...(request.model !== undefined ? { model: request.model } : {}),

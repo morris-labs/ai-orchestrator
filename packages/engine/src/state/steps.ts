@@ -1,6 +1,7 @@
 // The stage bodies that the pre-push and post-push drivers share. Each step
 // reads its inputs from the run context, writes its output file to the run
 // directory, and emits handoff events with counts.
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type {
@@ -38,11 +39,12 @@ import {
 import { parseDiff } from "../range/diff.js";
 import {
   BaseWorktree,
+  baseWorktreePath,
   chooseDisprover,
   verifyFinding,
   type VerifyResult,
 } from "../verify/verify.js";
-import { DecisionNeeded, type RunContext } from "./context.js";
+import { DecisionNeeded, RunCancelled, type RunContext } from "./context.js";
 import { planReviews, type ReviewTask } from "./profiles.js";
 
 /** Ledger follow-ups per reviewer before the engine accepts missing verdicts. */
@@ -65,10 +67,18 @@ async function mapLimit<T, R>(
 ): Promise<R[]> {
   const results: R[] = new Array<R>(items.length);
   let next = 0;
+  let failed = false;
+  // After one item fails, the other workers take no new items: the stage is
+  // over, and work started now would outlive it.
   const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (next < items.length) {
+    while (next < items.length && !failed) {
       const index = next++;
-      results[index] = await fn(items[index] as T);
+      try {
+        results[index] = await fn(items[index] as T);
+      } catch (error) {
+        failed = true;
+        throw error;
+      }
     }
   });
   await Promise.all(workers);
@@ -83,9 +93,15 @@ export function estimateTokens(prompt: string): number {
 // ---------------------------------------------------------------------------
 // Diff and groups
 
-/** The tip the diff ends at: the tip SHA, or the working tree with `includeWorktree`. */
+/** True when the round reviews the working tree: round 1, when range resolution allowed it. */
+export function reviewsWorktree(ctx: RunContext): boolean {
+  const resolved = ctx.eng.includeWorktree ?? ctx.state.request.includeWorktree;
+  return resolved && ctx.round <= 1;
+}
+
+/** The tip the diff ends at: the tip SHA, or the working tree (`null`). */
 function diffTip(ctx: RunContext): string | null {
-  return ctx.state.request.includeWorktree && ctx.round <= 1 ? null : (ctx.state.tipSha ?? "HEAD");
+  return reviewsWorktree(ctx) ? null : (ctx.state.tipSha ?? "HEAD");
 }
 
 /** Computes the file groups for the current tip. */
@@ -356,30 +372,54 @@ async function symbolsOfFixed(ctx: RunContext): Promise<Map<string, string>> {
   return map;
 }
 
-/** Merges candidates into the run's findings and announces the new ones. */
+interface MergeCommit {
+  result: Omit<MergeResult, "findings">;
+  findings: Finding[];
+  findingCounter: number;
+}
+
+/**
+ * Merges candidates into the run's findings and announces the new ones,
+ * once. The merge result and the findings after it are saved in one file
+ * (`<name>-commit.json`) before the findings file, so a stage that resumes
+ * after a crash restores that result instead of merging the same
+ * candidates into their own copies.
+ */
 export async function mergeInto(
   ctx: RunContext,
-  candidates: readonly Candidate[],
-): Promise<MergeResult> {
-  const result = mergeCandidates(
-    ctx.findings,
-    candidates,
-    {
-      runId: ctx.state.id,
-      round: Math.max(1, ctx.round),
-      nextId: () => ctx.nextFindingId(),
-      acceptedOscillations: ctx.eng.acceptedOscillations,
-      now: () => ctx.nowIso(),
-    },
-    await symbolsOfFixed(ctx),
-  );
-  ctx.findings = result.findings;
-  await ctx.persist();
-  for (const id of result.created) {
-    const f = ctx.findingById(id);
-    if (f) await ctx.announceFinding(f);
+  candidates: readonly Candidate[] | (() => Promise<readonly Candidate[]>),
+  name: string,
+): Promise<Omit<MergeResult, "findings">> {
+  const file = ctx.store.roundFile(ctx.round, `${name}-commit`);
+  let commit = await ctx.store.readJson<MergeCommit>(file);
+  if (!commit) {
+    const list = typeof candidates === "function" ? await candidates() : candidates;
+    const { findings, ...result } = mergeCandidates(
+      ctx.findings,
+      list,
+      {
+        runId: ctx.state.id,
+        round: Math.max(1, ctx.round),
+        nextId: () => ctx.nextFindingId(),
+        acceptedOscillations: ctx.eng.acceptedOscillations,
+        now: () => ctx.nowIso(),
+      },
+      await symbolsOfFixed(ctx),
+    );
+    commit = { result, findings, findingCounter: ctx.eng.counters.finding };
+    await ctx.store.writeJson(file, commit);
   }
-  return result;
+  if (!ctx.eng.appliedMerges.includes(file)) {
+    ctx.findings = commit.findings;
+    ctx.eng.counters.finding = Math.max(ctx.eng.counters.finding, commit.findingCounter);
+    ctx.eng.appliedMerges = [...ctx.eng.appliedMerges, file];
+    await ctx.persist();
+    for (const id of commit.result.created) {
+      const f = ctx.findingById(id);
+      if (f) await ctx.announceFinding(f);
+    }
+  }
+  return commit.result;
 }
 
 /** The decision for findings that came back after their fix. */
@@ -422,8 +462,7 @@ export async function runMerge(
   );
   const raisedByVendor: Partial<Record<Vendor, number>> = {};
   for (const r of raw) raisedByVendor[r.vendor] = (raisedByVendor[r.vendor] ?? 0) + 1;
-  const candidates = await toCandidates(ctx, raw, "reviewer", groups);
-  const result = await mergeInto(ctx, candidates);
+  const result = await mergeInto(ctx, () => toCandidates(ctx, raw, "reviewer", groups), "merge");
   const output: MergeOutput = {
     round: ctx.round,
     created: result.created,
@@ -455,12 +494,19 @@ export function reporterVendor(f: Finding): Vendor | null {
   return v === "claude" || v === "codex" || v === "copilot" ? v : null;
 }
 
+/** The vendors a disprover of `f` must not be: its reporter, when known. */
+function avoidFor(f: Finding): Vendor[] {
+  const reporter = reporterVendor(f);
+  return reporter ? [reporter] : [];
+}
+
 const baseWorktrees = new WeakMap<RunContext, BaseWorktree>();
 
 export function baseWorktreeFor(ctx: RunContext): BaseWorktree {
+  if (ctx.cancelled) throw new RunCancelled();
   let wt = baseWorktrees.get(ctx);
   if (!wt) {
-    wt = new BaseWorktree(ctx.git, ctx.state.baseSha ?? "HEAD");
+    wt = new BaseWorktree(ctx.git, ctx.state.baseSha ?? "HEAD", baseWorktreePath(ctx.state.id));
     baseWorktrees.set(ctx, wt);
   }
   return wt;
@@ -501,6 +547,7 @@ export async function verifyPending(ctx: RunContext, stageFile: string): Promise
           groupId: f.groupId,
           estimateTokens: estimateTokens(request.prompt) + 6000,
           allowFallback: true,
+          ...(ctx.state.request.crossVendor ? { avoid: avoidFor(f) } : {}),
         });
         return { vendor: out.vendor, model: out.model, output: out.output };
       },
@@ -539,15 +586,17 @@ export async function runSweep(
   groups: readonly FileGroup[],
 ): Promise<MergeOutput | null> {
   const file = ctx.store.roundFile(ctx.round, "sweep");
-  const saved = await ctx.store.readJson<MergeOutput>(file);
-  if (saved) return saved;
+  // A sweep with no patterns saves `{ "skipped": true }`, since `readJson`
+  // can't tell a saved `null` from a missing file.
+  const saved = await ctx.store.readJson<MergeOutput | { skipped: true }>(file);
+  if (saved) return "skipped" in saved ? null : saved;
   const patterns = ctx.findings.filter(
     (f) =>
       f.verdict === "confirmed" &&
       f.history.some((h) => h.verdict === "confirmed" && h.round === ctx.round),
   );
   if (patterns.length === 0) {
-    await ctx.store.writeJson(file, null);
+    await ctx.store.writeJson(file, { skipped: true });
     return null;
   }
   const vendor =
@@ -576,8 +625,7 @@ export async function runSweep(
     model: out.model,
     groupId: null,
   }));
-  const candidates = await toCandidates(ctx, raw, "sweep", groups);
-  const result = await mergeInto(ctx, candidates);
+  const result = await mergeInto(ctx, () => toCandidates(ctx, raw, "sweep", groups), "sweep");
   const output: MergeOutput = {
     round: ctx.round,
     created: result.created,
@@ -601,19 +649,21 @@ export async function runSweep(
 // ---------------------------------------------------------------------------
 // Fix, gate, confirm
 
+export interface FixBatchRecord {
+  findingIds: string[];
+  before: string;
+  after: string;
+  commits: string[];
+  output: FixOutput;
+}
+
 export interface FixRecord {
   attempt: number;
   preFixSha: string;
-  batches: Array<{
-    findingIds: string[];
-    before: string;
-    after: string;
-    commits: string[];
-    output: FixOutput;
-  }>;
+  batches: FixBatchRecord[];
 }
 
-/** Findings the fixer should work on: confirmed, above `nit`, and not declined twice. */
+/** Findings the fixer should work on: confirmed, above `nit`, and not declined. */
 export function fixTargets(ctx: RunContext): Finding[] {
   const declined = new Set(ctx.eng.declined);
   return ctx.findings.filter(
@@ -621,14 +671,73 @@ export function fixTargets(ctx: RunContext): Finding[] {
   );
 }
 
-/** The fix stage: the fixer fixes confirmed findings in batches per group and commits. */
+/** The name of a fix or gate attempt's files: the decision epoch and the attempt. */
+export function attemptName(ctx: RunContext, stage: "fix" | "gate"): string {
+  return `${stage}-${ctx.eng.fixEpoch}-${ctx.eng.gateAttempts + 1}`;
+}
+
+/** A short, stable key for a batch: a hash of its sorted finding ids. */
+export function batchKey(findingIds: readonly string[]): string {
+  return createHash("sha1")
+    .update([...findingIds].sort().join(","))
+    .digest("hex")
+    .slice(0, 12);
+}
+
+/** Splits the targets into batches: one per group, or one for a gate retry. */
+function planBatches(targets: readonly Finding[], gateFailure?: string): string[][] {
+  if (gateFailure) return [targets.map((f) => f.id)];
+  const byGroup = new Map<string, string[]>();
+  for (const f of targets) {
+    const k = f.groupId ?? "none";
+    byGroup.set(k, [...(byGroup.get(k) ?? []), f.id]);
+  }
+  return [...byGroup.keys()].sort().map((k) => byGroup.get(k) ?? []);
+}
+
+/**
+ * Applies one batch's outcome to the findings. Idempotent, so a resumed run
+ * can apply a saved batch again. The fixer may mark only the batch's own
+ * findings, and may decline one only with a reason, which the finding keeps.
+ */
+async function applyBatch(ctx: RunContext, batch: FixBatchRecord): Promise<void> {
+  const inBatch = new Set(batch.findingIds);
+  const fixedIds = new Set(batch.output.fixed.filter((id) => inBatch.has(id)));
+  for (const id of batch.findingIds) {
+    const finding = ctx.findingById(id);
+    if (finding && fixedIds.has(id) && batch.commits.length > 0) finding.fixCommit = batch.after;
+  }
+  for (const nf of batch.output.notFixed) {
+    const reason = nf.reason.trim();
+    if (!inBatch.has(nf.id) || fixedIds.has(nf.id) || reason === "") continue;
+    if (ctx.eng.declined.includes(nf.id)) continue;
+    ctx.eng.declined = [...ctx.eng.declined, nf.id];
+    const finding = ctx.findingById(nf.id);
+    if (finding) {
+      await ctx.setVerdict(
+        finding,
+        finding.verdict,
+        { kind: "agent", vendor: ctx.state.roles.fixer, role: "fixer" },
+        `The fixer declined to fix it: ${reason}`,
+      );
+    }
+  }
+  ctx.state.tipSha = batch.after;
+  await ctx.persist();
+}
+
+/**
+ * The fix stage: the fixer fixes confirmed findings in batches per group and
+ * commits. The batch plan and each batch's outcome are saved as they happen,
+ * so a resumed stage keeps the same batches and the commits each one made.
+ */
 export async function runFix(
   ctx: RunContext,
   targets: readonly Finding[],
   gateFailure?: string,
 ): Promise<FixRecord> {
-  const attempt = ctx.eng.gateAttempts + 1;
-  const file = ctx.store.roundFile(ctx.round, `fix-${attempt}`);
+  const name = attemptName(ctx, "fix");
+  const file = ctx.store.roundFile(ctx.round, name);
   const saved = await ctx.store.readJson<FixRecord>(file);
   if (saved) return saved;
   const branch = ctx.eng.tipRef;
@@ -642,68 +751,55 @@ export async function runFix(
   ctx.eng.preFixSha = preFixSha;
   await ctx.persist();
 
-  // On a gate retry, one batch carries every target and the failure report.
-  const batches: Finding[][] = [];
-  if (gateFailure) batches.push([...targets]);
-  else {
-    const byGroup = new Map<string, Finding[]>();
-    for (const f of targets) {
-      const k = f.groupId ?? "none";
-      byGroup.set(k, [...(byGroup.get(k) ?? []), f]);
-    }
-    for (const k of [...byGroup.keys()].sort()) batches.push(byGroup.get(k) ?? []);
+  const planFile = ctx.store.roundFile(ctx.round, `${name}-plan`);
+  let plan = await ctx.store.readJson<string[][]>(planFile);
+  if (!plan) {
+    plan = planBatches(targets, gateFailure);
+    await ctx.store.writeJson(planFile, plan);
   }
 
-  const record: FixRecord = { attempt, preFixSha, batches: [] };
-  for (const [index, batch] of batches.entries()) {
-    const before = await ctx.git.head();
-    const prompt = fixerPrompt({
-      range: ctx.range(),
-      findings: batch,
-      gateFailure,
-      policySection: policyPromptSection(
-        ctx.policy,
-        batch.flatMap((f) => (f.file ? [f.file] : [])),
-      ),
-    });
-    const out = await ctx.callAgent<FixOutput>({
-      key: `fix-${attempt}-${index + 1}`,
-      role: "fixer",
-      vendor: ctx.state.roles.fixer,
-      method: "fix",
-      request: { prompt, repoPath: ctx.state.request.repoPath, toolPolicy: "write" },
-      groupId: batch[0]?.groupId ?? null,
-      estimateTokens: estimateTokens(prompt) + 8000,
-      allowFallback: false,
-    });
-    const after = await ctx.git.head();
-    if (!(await ctx.git.ok(["merge-base", "--is-ancestor", before, after]))) {
-      throw new Error(
-        `The fixer rewrote history on ${branch}: ${before} is no longer an ancestor of ${after}.`,
-      );
+  const record: FixRecord = { attempt: ctx.eng.gateAttempts + 1, preFixSha, batches: [] };
+  for (const ids of plan) {
+    const key = `${name}-${batchKey(ids)}`;
+    const batchFile = ctx.store.roundFile(ctx.round, key);
+    let batch = await ctx.store.readJson<FixBatchRecord>(batchFile);
+    if (!batch) {
+      const findings = ids.flatMap((id) => ctx.findingById(id) ?? []);
+      const before = await ctx.git.head();
+      const prompt = fixerPrompt({
+        range: ctx.range(),
+        findings,
+        gateFailure,
+        policySection: policyPromptSection(
+          ctx.policy,
+          findings.flatMap((f) => (f.file ? [f.file] : [])),
+        ),
+      });
+      const out = await ctx.callAgent<FixOutput>({
+        key,
+        role: "fixer",
+        vendor: ctx.state.roles.fixer,
+        method: "fix",
+        request: { prompt, repoPath: ctx.state.request.repoPath, toolPolicy: "write" },
+        groupId: findings[0]?.groupId ?? null,
+        estimateTokens: estimateTokens(prompt) + 8000,
+        allowFallback: false,
+      });
+      const after = await ctx.git.head();
+      if (!(await ctx.git.ok(["merge-base", "--is-ancestor", before, after]))) {
+        throw new Error(
+          `The fixer rewrote history on ${branch}: ${before} is no longer an ancestor of ${after}.`,
+        );
+      }
+      const commits = after === before ? [] : await ctx.git.commitsBetween(before, after);
+      batch = { findingIds: ids, before, after, commits, output: out.output };
+      await ctx.store.writeJson(batchFile, batch);
     }
-    const commits = after === before ? [] : await ctx.git.commitsBetween(before, after);
-    record.batches.push({
-      findingIds: batch.map((f) => f.id),
-      before,
-      after,
-      commits,
-      output: out.output,
-    });
-    const fixedIds = new Set(out.output.fixed);
-    for (const f of batch) {
-      const finding = ctx.findingById(f.id);
-      if (!finding) continue;
-      if (fixedIds.has(f.id) && commits.length > 0) finding.fixCommit = after;
-    }
-    for (const nf of out.output.notFixed) {
-      ctx.eng.declined = [...new Set([...ctx.eng.declined, nf.id])];
-    }
-    ctx.state.tipSha = after;
-    await ctx.persist();
+    record.batches.push(batch);
+    await applyBatch(ctx, batch);
   }
   await ctx.store.writeJson(file, record);
-  const fixed = targets.filter((f) => ctx.findingById(f.id)?.fixCommit).length;
+  const fixed = plan.flat().filter((id) => ctx.findingById(id)?.fixCommit).length;
   await ctx.handoff(
     { stage: "fix", vendor: ctx.state.roles.fixer, role: "fixer" },
     { stage: "gate" },
@@ -727,7 +823,7 @@ export interface GateRecord {
  */
 export async function runGateStage(ctx: RunContext, nextStage: Stage): Promise<GateRecord> {
   const attempt = ctx.eng.gateAttempts + 1;
-  const file = ctx.store.roundFile(ctx.round, `gate-${attempt}`);
+  const file = ctx.store.roundFile(ctx.round, attemptName(ctx, "gate"));
   const saved = await ctx.store.readJson<GateRecord>(file);
   if (saved) return saved;
   const baseline = (await ctx.store.readJson<{ baseline: GateRun }>("preflight.json"))
@@ -785,7 +881,9 @@ export async function runConfirm(
     fixDiff,
     policySection: policyPromptSection(ctx.policy),
   });
-  const vendor = ctx.state.request.crossVendor ? ctx.state.roles.confirmer : ctx.state.roles.fixer;
+  const crossVendor = ctx.state.request.crossVendor;
+  const fixer = ctx.state.roles.fixer;
+  const vendor = crossVendor ? ctx.state.roles.confirmer : fixer;
   const out = await ctx.callAgent<ConfirmOutput>({
     key: "confirm",
     role: "confirmer",
@@ -795,6 +893,7 @@ export async function runConfirm(
     groupId: null,
     estimateTokens: estimateTokens(prompt) + 3000,
     allowFallback: true,
+    ...(crossVendor ? { avoid: [fixer] } : {}),
   });
   const actor = { kind: "agent" as const, vendor: out.vendor, model: out.model, role: "confirmer" };
   const incomplete = new Map(out.output.incomplete.map((i) => [i.id, i.reason]));
@@ -825,8 +924,7 @@ export async function runConfirm(
     model: out.model,
     groupId: null,
   }));
-  const candidates = await toCandidates(ctx, raw, "confirmer", groups);
-  const merged = await mergeInto(ctx, candidates);
+  const merged = await mergeInto(ctx, () => toCandidates(ctx, raw, "confirmer", groups), "confirm");
   const record: ConfirmRecord = {
     confirmer: out.vendor,
     fixedIds,

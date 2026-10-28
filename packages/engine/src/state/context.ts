@@ -30,6 +30,7 @@ import {
   type RoleTimeouts,
   type VendorAdapter,
 } from "../core.js";
+import { NO_EXTRAS, type PolicyExtras } from "../policy/load.js";
 import { Git } from "../range/git.js";
 import { ShellRunner } from "../range/exec.js";
 import type { EngineState } from "../run/engine-state.js";
@@ -99,6 +100,12 @@ export interface AgentCallSpec {
   estimateTokens: number;
   /** Move to another vendor when this one hits its limit. The fixer never moves. */
   allowFallback?: boolean;
+  /**
+   * Vendors that must not take this call: the finding's reporter for a
+   * disprover, the fixer for a confirmer. A limit fallback skips them, and a
+   * server grant that redirects to one stops the run for a decision instead.
+   */
+  avoid?: readonly Vendor[];
 }
 
 export interface AgentOutcome<T> {
@@ -117,6 +124,8 @@ const ROLE_FOR_AGENT: Record<AgentRole, Role> = {
   sweeper: "reviewer",
 };
 
+const ZERO_USE: LeaseActual = { tokens: { in: 0, out: 0 }, premiumRequests: 0, costEstimate: 0 };
+
 const TERMINAL: readonly RunStatus[] = ["finished", "failed", "cancelled"];
 
 export function isTerminal(status: RunStatus): boolean {
@@ -133,6 +142,8 @@ export class RunContext {
   private cancelRequested = false;
   /** Every parallel call waits on the same gate while the run is paused. */
   private pauseGate: { promise: Promise<void>; open: () => void } | null = null;
+  /** Engine-only policy settings, such as the comment authors to trust. */
+  extras: PolicyExtras = NO_EXTRAS;
   /** Serializes writes, since parallel agent calls update the same files. */
   private writeChain: Promise<void> = Promise.resolve();
 
@@ -180,24 +191,33 @@ export class RunContext {
   // -------------------------------------------------------------------------
   // Persistence and events
 
+  /**
+   * Queues a write behind the earlier ones. The caller sees its own write's
+   * failure; the queue doesn't, so one failed write never blocks the next.
+   */
+  private enqueue(write: () => Promise<void>): Promise<void> {
+    const done = this.writeChain.then(write);
+    this.writeChain = done.catch(() => undefined);
+    return done;
+  }
+
   /** Writes state.json, engine.json, and findings.json. */
   persist(): Promise<void> {
     this.state.updatedAt = this.nowIso();
     const state = structuredClone(this.state);
     const eng = structuredClone(this.eng);
     const findings = structuredClone(this.findings);
-    this.writeChain = this.writeChain.then(async () => {
+    return this.enqueue(async () => {
       await this.store.saveState(state);
       await this.store.saveEngineState(eng);
       await this.store.saveFindings(findings);
     });
-    return this.writeChain;
   }
 
+  /** Sends an event, then appends it to `events.jsonl`. The event goes out even when the write fails. */
   async emit(draft: EventDraft): Promise<void> {
     const event = this.deps.events.emit(draft);
-    this.writeChain = this.writeChain.then(() => this.store.appendEvent(event));
-    await this.writeChain;
+    await this.enqueue(() => this.store.appendEvent(event));
   }
 
   async emitRun(roundSummary: RoundSummary | null = null): Promise<void> {
@@ -223,6 +243,34 @@ export class RunContext {
     if (isTerminal(status)) this.state.finishedAt = this.nowIso();
     await this.persist();
     await this.emitRun();
+  }
+
+  /**
+   * Sets a final status and announces it, even when the run directory can't
+   * be written: a write failure is logged, and the `run.changed` event still
+   * goes out. Never rejects.
+   */
+  async settleStatus(status: RunStatus, patch: Partial<RunState> = {}): Promise<void> {
+    Object.assign(this.state, patch, { status });
+    if (isTerminal(status)) this.state.finishedAt = this.nowIso();
+    try {
+      await this.persist();
+    } catch (error) {
+      this.deps.log?.error("Couldn't write the run's state", {
+        runId: this.state.id,
+        status,
+        error: String(error),
+      });
+    }
+    try {
+      await this.emitRun();
+    } catch (error) {
+      this.deps.log?.error("Couldn't record the run's status change", {
+        runId: this.state.id,
+        status,
+        error: String(error),
+      });
+    }
   }
 
   async handoff(
@@ -359,6 +407,7 @@ export class RunContext {
     from: Vendor,
     to: Vendor,
     reason: "ceiling" | "limit",
+    announce = true,
   ): Promise<void> {
     const contractRole = ROLE_FOR_AGENT[role];
     const roles = this.state.roles;
@@ -378,6 +427,9 @@ export class RunContext {
     // already moved; that changes nothing and gets no event.
     if (before.length === after.length && before.every((v, i) => v === after[i])) return;
     await this.persist();
+    // The server announces the moves it makes in a lease response; the
+    // engine announces only its own.
+    if (!announce) return;
     await this.emit({
       type: "role.reassigned",
       runId: this.state.id,
@@ -389,26 +441,51 @@ export class RunContext {
     });
   }
 
-  /** Requests a lease, waiting through `pause` answers. Returns the vendor to call. */
+  /**
+   * Requests a lease, waiting through `pause` answers. Returns the vendor to
+   * call and the lease id to settle, which is the server's.
+   */
   async acquireLease(
     vendor: Vendor,
     role: AgentRole,
     estimateTokens: number,
+    avoid: readonly Vendor[] = [],
   ): Promise<{ vendor: Vendor; leaseId: string }> {
     for (;;) {
       await this.checkpoint();
       this.eng.counters.lease += 1;
-      const leaseId = `${this.state.id}-L${this.eng.counters.lease}`;
-      const response = await this.deps.broker.acquire({
-        leaseId,
-        runId: this.state.id,
-        vendor,
-        role,
-        estimate: { tokens: Math.max(0, Math.round(estimateTokens)) },
-      });
+      const requested = `${this.state.id}-L${this.eng.counters.lease}`;
+      let response;
+      try {
+        response = await this.deps.broker.acquire(
+          {
+            leaseId: requested,
+            runId: this.state.id,
+            vendor,
+            role,
+            estimate: { tokens: Math.max(0, Math.round(estimateTokens)) },
+          },
+          this.signal,
+        );
+      } catch (error) {
+        if (this.cancelRequested) throw new RunCancelled();
+        throw error;
+      }
       if (response.decision === "granted") {
+        const leaseId = response.leaseId;
         if (response.vendor !== vendor && this.deps.adapters[response.vendor]) {
-          await this.reassign(role, vendor, response.vendor, "ceiling");
+          if (avoid.includes(response.vendor)) {
+            // Taking the grant would break the cross-vendor rule; hand the
+            // lease back unused and ask a person.
+            await this.settle(leaseId, response.vendor, role, ZERO_USE);
+            throw new DecisionNeeded({
+              kind: "ceiling",
+              findingIds: [],
+              options: ["resume", "cancel"],
+              message: `The server moved the ${role} call from ${vendor} to ${response.vendor}, but ${response.vendor} may not take it: a finding is never checked by the vendor that reported or fixed it. Resume when ${vendor} has room again, or assign the role to another vendor.`,
+            });
+          }
+          await this.reassign(role, vendor, response.vendor, "ceiling", false);
           return { vendor: response.vendor, leaseId };
         }
         return { vendor, leaseId };
@@ -427,10 +504,16 @@ export class RunContext {
     }
   }
 
-  private fallbackVendor(role: AgentRole, tried: readonly Vendor[]): Vendor | null {
+  private fallbackVendor(
+    role: AgentRole,
+    tried: readonly Vendor[],
+    avoid: readonly Vendor[] = [],
+  ): Vendor | null {
     if (role === "fixer") return null;
     return (
-      FALLBACK_ORDER.find((v) => !tried.includes(v) && this.deps.adapters[v] !== undefined) ?? null
+      FALLBACK_ORDER.find(
+        (v) => !tried.includes(v) && !avoid.includes(v) && this.deps.adapters[v] !== undefined,
+      ) ?? null
     );
   }
 
@@ -448,7 +531,7 @@ export class RunContext {
     let failures = 0;
     let limitHits = 0;
     for (;;) {
-      const lease = await this.acquireLease(vendor, spec.role, spec.estimateTokens);
+      const lease = await this.acquireLease(vendor, spec.role, spec.estimateTokens, spec.avoid);
       vendor = lease.vendor;
       const adapter: VendorAdapter | undefined = this.deps.adapters[vendor];
       if (!adapter)
@@ -507,7 +590,8 @@ export class RunContext {
               `${vendor} kept hitting its limit: ${limit.message}`,
             );
           tried.push(vendor);
-          const next = spec.allowFallback === false ? null : this.fallbackVendor(spec.role, tried);
+          const next =
+            spec.allowFallback === false ? null : this.fallbackVendor(spec.role, tried, spec.avoid);
           if (next) {
             await this.reassign(spec.role, vendor, next, "limit");
             vendor = next;
@@ -570,8 +654,19 @@ export class RunContext {
     timeoutMs: number,
   ): Promise<AdapterResult<T>> {
     const controller = new AbortController();
-    const onAbort = () => controller.abort(this.signal.reason);
-    this.signal.addEventListener("abort", onAbort, { once: true });
+    let rejectAborted: (error: Error) => void = () => undefined;
+    const aborted = new Promise<never>((_, reject) => {
+      rejectAborted = reject;
+    });
+    aborted.catch(() => undefined);
+    // One listener per call, removed in `finally`, so a long run doesn't
+    // pile listeners onto the run's signal.
+    const onAbort = () => {
+      controller.abort(this.signal.reason);
+      rejectAborted(new RunCancelled());
+    };
+    if (this.signal.aborted) onAbort();
+    else this.signal.addEventListener("abort", onAbort, { once: true });
     let timer: NodeJS.Timeout | undefined;
     const guard = new Promise<never>((_, reject) => {
       // The adapter enforces the timeout; this guard catches an adapter that doesn't.
@@ -582,11 +677,6 @@ export class RunContext {
       }, timeoutMs + 30_000);
       timer.unref?.();
     });
-    const aborted = new Promise<never>((_, reject) => {
-      if (this.signal.aborted) reject(new RunCancelled());
-      this.signal.addEventListener("abort", () => reject(new RunCancelled()), { once: true });
-    });
-    aborted.catch(() => undefined);
     const { sessionId, timeoutMs: _t, ...rest } = spec.request;
     const request = {
       ...rest,

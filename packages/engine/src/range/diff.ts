@@ -61,21 +61,7 @@ export function parseDiff(text: string): DiffFile[] {
       continue;
     }
     if (!file) continue;
-    if (line.startsWith("new file mode")) file.status = "added";
-    else if (line.startsWith("deleted file mode")) file.status = "deleted";
-    else if (line.startsWith("rename to ")) {
-      file.status = "renamed";
-      file.path = unquote(line.slice("rename to ".length));
-    } else if (line.startsWith("rename from "))
-      file.oldPath = unquote(line.slice("rename from ".length));
-    else if (line.startsWith("Binary files ")) file.binary = true;
-    else if (line.startsWith("--- ")) {
-      const p = stripPrefix(line.slice(4));
-      file.oldPath = p;
-    } else if (line.startsWith("+++ ")) {
-      const p = stripPrefix(line.slice(4));
-      if (p !== null) file.path = p;
-    } else if (line.startsWith("@@")) {
+    if (line.startsWith("@@")) {
       const m = HUNK_RE.exec(line);
       if (!m) continue;
       const oldStart = Number(m[1]);
@@ -93,7 +79,11 @@ export function parseDiff(text: string): DiffFile[] {
         removed: 0,
       };
       file.hunks.push(hunk);
-    } else if (hunk) {
+      continue;
+    }
+    if (hunk) {
+      // Inside a hunk every line is content, even one that starts with
+      // `--- ` or `+++ `, such as a removed SQL comment.
       if (line.startsWith("+")) {
         hunk.added += 1;
         file.added += 1;
@@ -101,6 +91,22 @@ export function parseDiff(text: string): DiffFile[] {
         hunk.removed += 1;
         file.removed += 1;
       }
+      continue;
+    }
+    // The file header: between `diff --git` and the first hunk.
+    if (line.startsWith("new file mode")) file.status = "added";
+    else if (line.startsWith("deleted file mode")) file.status = "deleted";
+    else if (line.startsWith("rename to ")) {
+      file.status = "renamed";
+      file.path = unquote(line.slice("rename to ".length));
+    } else if (line.startsWith("rename from "))
+      file.oldPath = unquote(line.slice("rename from ".length));
+    else if (line.startsWith("Binary files ")) file.binary = true;
+    else if (line.startsWith("--- ")) {
+      file.oldPath = stripPrefix(line.slice(4));
+    } else if (line.startsWith("+++ ")) {
+      const p = stripPrefix(line.slice(4));
+      if (p !== null) file.path = p;
     }
   }
   for (const f of files) {

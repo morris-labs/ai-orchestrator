@@ -8,6 +8,7 @@ import { join } from "node:path";
 import {
   CliAdapter,
   detectLimitInText,
+  limitFromError,
   parseResetTime,
   type CallContext,
   type CliAdapterOptions,
@@ -16,18 +17,25 @@ import { parseStructuredText } from "./output.js";
 import { runProcess } from "./process.js";
 import { AdapterError, type CliRequest, type CliResult, type CliLimitInfo } from "./types.js";
 
-/** Shell commands a read-only Copilot role may run. */
+/**
+ * Shell commands a read-only Copilot role may run. `git diff`, `log`, and
+ * `show` aren't here: they write files with `--output`, and Copilot's
+ * documented patterns match only a command's start, so they can't allow the
+ * command and deny the option. The prompt carries the diff instead.
+ */
 export const COPILOT_READ_ONLY_ALLOW = [
   "read",
-  "shell(git diff:*)",
-  "shell(git log:*)",
-  "shell(git show:*)",
   "shell(git blame:*)",
   "shell(git status:*)",
   "shell(git ls-files:*)",
 ];
 
-/** Denied for read-only roles. A deny wins over any allow. */
+/**
+ * Denied for read-only roles. A deny wins over any allow. Copilot's
+ * documentation doesn't say whether `write(PATH)` matches by path, so a
+ * read-only call gets no write access at all, scratch directory included: a
+ * Copilot disprover returns its reproduction script in `script.content`.
+ */
 export const COPILOT_READ_ONLY_DENY = ["write"];
 
 /**
@@ -155,6 +163,7 @@ export class CopilotAdapter extends CliAdapter {
         args: this.buildArgs(req, prompt, sessionId, promptFile),
         cwd: req.cwd,
         env: this.options.env,
+        envProfile: `vendor:${this.vendor}`,
         timeoutMs: req.timeoutMs,
         signal: req.signal,
       });
@@ -228,10 +237,7 @@ export class CopilotAdapter extends CliAdapter {
   }
 
   detectLimit(error: unknown): CliLimitInfo | null {
-    if (error instanceof AdapterError)
-      return error.limit ?? detectLimitInText(`${error.message}\n${error.raw}`, this.now());
-    if (error instanceof Error) return detectLimitInText(error.message, this.now());
-    return typeof error === "string" ? detectLimitInText(error, this.now()) : null;
+    return limitFromError(error, this.now());
   }
 }
 
