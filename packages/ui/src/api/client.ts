@@ -39,6 +39,14 @@ type BodyArg<K extends ServerRouteKey> = RouteOf<K>["body"] extends undefined
 /** What `call()` takes for route `K`: path params, query, and body as needed. */
 export type CallArgs<K extends ServerRouteKey> = ParamsArg<K> & QueryArg<K> & BodyArg<K>;
 
+/**
+ * The arguments of `call()` for route `K`: optional when the route needs no
+ * path params and no body, so `call("usage.get")` works.
+ */
+export type CallArgsTuple<K extends ServerRouteKey> =
+  // eslint-disable-next-line @typescript-eslint/no-empty-object-type
+  {} extends CallArgs<K> ? [args?: CallArgs<K>] : [args: CallArgs<K>];
+
 /** The parsed response of route `K`. */
 export type ResponseOf<K extends ServerRouteKey> = RouteOf<K>["response"];
 
@@ -91,7 +99,8 @@ export class ApiClient {
    * `ApiRequestError` on a failed call, an invalid body, or a response that
    * doesn't match the contract.
    */
-  async call<K extends HttpRouteKey>(key: K, args: CallArgs<K>): Promise<ResponseOf<K>> {
+  async call<K extends HttpRouteKey>(key: K, ...rest: CallArgsTuple<K>): Promise<ResponseOf<K>> {
+    const args = (rest[0] ?? {}) as CallArgs<K>;
     const route = serverRoutes[key] as ServerRoutes[K] & {
       method: string;
       body?: z.ZodTypeAny;

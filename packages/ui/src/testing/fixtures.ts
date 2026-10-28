@@ -76,6 +76,7 @@ export function makeBoxView(
     listeners: [],
     proxyUrls: [],
     sideSessions: [],
+    targetDirExists: true,
     ...rest,
   };
 }

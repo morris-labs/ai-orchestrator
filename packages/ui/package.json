@@ -7,6 +7,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./core": "./src/core.ts",
+    "./hooks": "./src/hooks.ts",
     "./testing": "./src/testing/index.ts",
     "./theme.css": "./src/theme/theme.css",
     "./dashboard": "./src/dashboard/index.ts",

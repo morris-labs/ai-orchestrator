@@ -78,6 +78,10 @@ export interface FakeState {
   image: ImageStatus;
   updates: Updates;
   notifications: Notification[];
+  /** Project ids whose container has stale mounts: `boxes.start` refuses without `force`. */
+  staleProjects: string[];
+  /** Subdirectory names by absolute path, for `fs.dirs`. */
+  dirs: Record<string, string[]>;
 }
 
 export interface FakeServerOptions {
@@ -165,6 +169,8 @@ export class FakeServer {
         claudeCode: { image: "2.1.300", latest: "2.1.300", stale: false },
       },
       notifications: [],
+      staleProjects: [],
+      dirs: { "/home/user": ["src", "work"], "/home/user/src": ["example-app"] },
     };
   }
 
@@ -498,6 +504,7 @@ const defaultHandlers: Partial<Record<HttpRouteKey, FakeHandler>> = {
         listeners: [],
         proxyUrls: [],
         sideSessions: [],
+        targetDirExists: true,
       });
       return { box };
     });
@@ -527,6 +534,10 @@ const defaultHandlers: Partial<Record<HttpRouteKey, FakeHandler>> = {
   "boxes.start": (r, s) => {
     const view = s.box(r.params.boxId as string);
     if (view.status === "running") throw new FakeApiError("box_running", "The box is running.");
+    const force = (r.body as { force?: boolean } | undefined)?.force ?? false;
+    if (!force && s.state.staleProjects.includes(view.box.projectId)) {
+      throw new FakeApiError("stale_mounts", "The project container's mounts changed.");
+    }
     setStatus(s, view, "running");
     return view;
   },
@@ -554,8 +565,10 @@ const defaultHandlers: Partial<Record<HttpRouteKey, FakeHandler>> = {
     if (running)
       throw new FakeApiError("box_running", `${running.box.id} is running against this directory.`);
     const removed = s.state.boxes.filter((b) => b.box.targetDir === dir).map((b) => b.box.id);
-    s.state.boxes = s.state.boxes.filter((b) => b.box.targetDir !== dir);
+    const dryRun = (r.body as { dryRun?: boolean } | undefined)?.dryRun ?? false;
+    if (!dryRun) s.state.boxes = s.state.boxes.filter((b) => b.box.targetDir !== dir);
     return {
+      dryRun,
       removedRecords: removed,
       removedTranscriptDirs: [`/home/user/.claude/projects/${dir.replace(/[^A-Za-z0-9]/g, "-")}`],
     };
@@ -590,6 +603,14 @@ const defaultHandlers: Partial<Record<HttpRouteKey, FakeHandler>> = {
         notCarried: [],
       };
     });
+  },
+  "boxes.convertToWorktree.plan": (r, s) => {
+    const view = s.box(r.params.boxId as string);
+    const slug = view.box.workspace?.split("/").pop() ?? "work";
+    return {
+      report: `${view.box.workspace ?? slug} becomes ${view.box.targetDir}/.worktrees/${slug} on branch claude/${slug}.`,
+      buildOutputBytes: 0,
+    };
   },
   "boxes.attachCommand": (r, s) => {
     const view = s.box(r.params.boxId as string);
@@ -684,9 +705,47 @@ const defaultHandlers: Partial<Record<HttpRouteKey, FakeHandler>> = {
   },
   "settings.get": (_r, s) => s.state.settings,
   "settings.patch": (r, s) => {
-    Object.assign(s.state.settings, r.body);
+    mergePatch(s.state.settings as unknown as Record<string, unknown>, r.body);
     return s.state.settings;
   },
+  "fs.dirs": (r, s) => {
+    const path = ((r.query.path as string | undefined) ?? "/home/user").replace(/(.)\/+$/, "$1");
+    const names = s.state.dirs[path];
+    if (!names) throw new FakeApiError("not_found", `No directory ${path}.`, 404);
+    const parent = path === "/" ? null : path.replace(/\/[^/]+$/, "") || "/";
+    return {
+      path,
+      parent,
+      entries: [...names]
+        .sort()
+        .map((name) => ({ name, path: `${path === "/" ? "" : path}/${name}` })),
+    };
+  },
+  "projects.repos.list": (r, s) => {
+    const p = s.state.projects.find((x) => x.id === r.params.projectId);
+    if (!p) throw new FakeApiError("not_found", "No such project.", 404);
+    const path = p.primaryRepo ?? p.root;
+    return {
+      repos: [
+        {
+          path,
+          name: path.split("/").filter(Boolean).pop() ?? path,
+          currentBranch: "main",
+          headSha: "4e1c2a9b7d3f00000000000000000000000000aa",
+          dirty: false,
+        },
+      ],
+    };
+  },
+  "projects.repos.refs": () => ({
+    localBranches: ["main"],
+    remoteBranches: ["origin/main"],
+    tags: [],
+    recentCommits: [],
+    pullRequests: [],
+  }),
+  "runs.list": () => ({ runs: [] }),
+  "usage.samples": () => ({ samples: [] }),
   "prompts.get": (_r, s) => ({
     templates: s.state.prompts,
     defaults: { ...DEFAULT_PROMPT_TEMPLATES },
@@ -716,6 +775,12 @@ const defaultHandlers: Partial<Record<HttpRouteKey, FakeHandler>> = {
     return { unlinkedBoxes: unlinked.map((b) => b.box.id) };
   },
   "sshRemotes.test": () => ({ ok: true, authFailed: false, output: "ok" }),
+  "sshRemotes.testSaved": (r, s) => {
+    if (r.body === undefined && !s.state.sshRemotes.some((x) => x.name === r.params.name)) {
+      throw new FakeApiError("not_found", "No such remote.", 404);
+    }
+    return { ok: true, authFailed: false, output: "ok" };
+  },
   "sshRemotes.reconnect": (r, s) => {
     const remote = s.state.sshRemotes.find((x) => x.name === r.params.name);
     if (!remote) throw new FakeApiError("not_found", "No such remote.", 404);
@@ -732,3 +797,23 @@ const defaultHandlers: Partial<Record<HttpRouteKey, FakeHandler>> = {
   "notifications.list": (_r, s) => ({ notifications: s.state.notifications }),
   "notifications.read": () => ({ ok: true }),
 };
+
+/** Applies a settings patch: nested objects merge, `null` deletes a key, other values replace. */
+function mergePatch(target: Record<string, unknown>, patch: unknown): void {
+  if (patch === null || typeof patch !== "object") return;
+  for (const [k, v] of Object.entries(patch as Record<string, unknown>)) {
+    if (v === undefined) continue;
+    if (v === null) {
+      delete target[k];
+    } else if (
+      typeof v === "object" &&
+      !Array.isArray(v) &&
+      typeof target[k] === "object" &&
+      target[k] !== null
+    ) {
+      mergePatch(target[k] as Record<string, unknown>, v);
+    } else {
+      target[k] = v;
+    }
+  }
+}
