@@ -13,7 +13,8 @@
     "test": "vitest run",
     "fixtures": "node scripts/make-demo-run.ts",
     "electron": "electron .",
-    "e2e": "playwright test -c e2e/playwright.config.ts"
+    "e2e": "playwright test -c e2e/playwright.config.ts",
+    "e2e:setup": "node node_modules/electron/install.js"
   },
   "dependencies": {
     "@agentbox/contracts": "workspace:*",
