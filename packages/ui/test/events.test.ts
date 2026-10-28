@@ -108,6 +108,58 @@ describe("EventsConnection", () => {
     ]);
   });
 
+  it("spreads the delay with jitter", () => {
+    expect(nextDelay(1, 500, 10_000, 0)).toBe(750);
+    expect(nextDelay(1, 500, 10_000, 0.5)).toBe(1000);
+    expect(nextDelay(1, 500, 10_000, 0.999)).toBeLessThanOrEqual(1250);
+  });
+
+  it("keeps backing off when the server closes before its hello", () => {
+    class ClosingSocket {
+      onopen: (() => void) | null = null;
+      onclose: (() => void) | null = null;
+      onmessage: unknown = null;
+      onerror: unknown = null;
+      readyState = 0;
+      constructor(_url: string) {
+        queueMicrotask(() => {
+          this.readyState = 1;
+          this.onopen?.();
+          this.readyState = 3;
+          this.onclose?.();
+        });
+      }
+      send() {}
+      close() {}
+    }
+    const delays: number[] = [];
+    const timers: (() => void)[] = [];
+    const conn = new EventsConnection({
+      client: new ApiClient({
+        baseUrl: "http://h",
+        WebSocket: ClosingSocket as unknown as new (url: string) => WebSocket,
+      }),
+      onEvent: () => undefined,
+      onResync: () => undefined,
+      random: () => 0.5,
+      setTimer: (fn, ms) => {
+        delays.push(ms);
+        timers.push(fn);
+      },
+      clearTimer: () => undefined,
+    });
+    conn.start();
+    return (async () => {
+      for (let i = 0; i < 3; i += 1) {
+        await flush();
+        timers.shift()?.();
+      }
+      await flush();
+      expect(delays).toEqual([500, 1000, 2000, 4000]);
+      conn.stop();
+    })();
+  });
+
   it("stops without reconnecting", async () => {
     const { conn, timers } = setup();
     conn.start();
