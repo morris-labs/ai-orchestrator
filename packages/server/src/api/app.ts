@@ -1,0 +1,232 @@
+// Builds the whole server from a core: the event hub and its listeners, the
+// engine supervisor, the scheduler, and the HTTP server with the proxy.
+import http from "node:http";
+import os from "node:os";
+import type { AgentBoxEvent, Box } from "@agentbox/contracts";
+import type { Core, CoreFactory, CoreServices } from "./core-interface.js";
+import type { ApiDeps } from "./deps.js";
+import { createApiServer, type ApiServer } from "./server.js";
+import { loadOrCreateToken } from "./auth.js";
+import { EngineSupervisor } from "../events/engines.js";
+import { EventHub } from "../events/hub.js";
+import { LateSink } from "../events/late-sink.js";
+import { RunMirror } from "../events/run-mirror.js";
+import { JobManager } from "../jobs/jobs.js";
+import { NodeProcessRunner, type ProcessRunner } from "../jobs/process.js";
+import { Notifier } from "../notify/notifier.js";
+import { DevServerProxy, cachedResolver } from "../proxy/proxy.js";
+import { Scheduler } from "../scheduler/scheduler.js";
+import { OpCli, type OpClient } from "../secrets/op.js";
+import { SecretsService } from "../secrets/secrets-service.js";
+import { SetupService } from "../setup/setup-service.js";
+import { UpdateChecker } from "../setup/updates.js";
+import { SshTunnelManager, startCopyIdJob, testConnection } from "../ssh/tunnels.js";
+import { installService, serviceInstalled } from "../systemd/service.js";
+import { DockerExecBackend, type ExecBackend } from "../terminals/exec.js";
+import { UsageService } from "../usage/usage-service.js";
+import { UsageStore } from "../usage/usage-store.js";
+
+export interface AppOptions {
+  home: string;
+  createCore: CoreFactory;
+  version: string;
+  expectedEngineVersion: string;
+  /** The command the systemd unit runs. */
+  execStart: string;
+  imageContext: string;
+  staticDirs?: ApiDeps["staticDirs"];
+  runner?: ProcessRunner;
+  op?: OpClient;
+  exec?: ExecBackend;
+  fetch?: typeof fetch;
+  /** Overrides the configured port; 0 picks a free one (tests). */
+  port?: number;
+  engineIntervalMs?: number;
+  log?: (message: string) => void;
+}
+
+export interface App {
+  core: Core & { close?(): Promise<void> };
+  hub: EventHub;
+  api: ApiServer;
+  port: number;
+  proxyPort: number | null;
+  close(): Promise<void>;
+}
+
+export async function startApp(options: AppOptions): Promise<App> {
+  const log = options.log ?? ((m: string) => console.error(m));
+  const runner = options.runner ?? new NodeProcessRunner();
+  const token = await loadOrCreateToken(options.home);
+  const sink = new LateSink();
+  let secrets: SecretsService | null = null;
+  let runs: RunMirror | null = null;
+  const services: CoreServices = {
+    events: sink,
+    resolveSecrets: async (projectId) => {
+      if (!secrets) throw new Error("The secrets service is not ready.");
+      secrets.beginLaunch();
+      return secrets.resolveEnv(projectId);
+    },
+    activeRunForBox: (boxId) => runs?.activeRunForBox(boxId) ?? null,
+  };
+  const core = await options.createCore({ home: options.home, services });
+  const settings = () => core.settings.get();
+
+  const hub = new EventHub({
+    db: core.db,
+    onListenerError: (err, event) => log(`A listener failed on ${event.type}: ${(err as Error).message}`),
+  });
+  sink.attach(hub);
+  runs = new RunMirror(core.db);
+  const runMirror = runs;
+  const usageStore = new UsageStore(core.db);
+  const usage = new UsageService({ store: usageStore, settings, emit: (e) => hub.emit(e) });
+  const scheduler = new Scheduler({
+    usage,
+    settings,
+    projectCeilings: async (projectId) => (await core.projects.get(projectId)).project.ceilingsOverride,
+    runRound: (runId) => runMirror.round(runId),
+    emit: (e) => hub.emit(e),
+  });
+  const notifier = new Notifier({ db: core.db, settings, emit: (e) => hub.emit(e) });
+  const op = options.op ?? new OpCli(runner);
+  secrets = new SecretsService({
+    op,
+    settings,
+    projectRefs: async (projectId) => (await core.projects.get(projectId)).project.secretRefs,
+    listProjects: async () =>
+      (await core.projects.list()).map((p) => ({ projectId: p.project.id, refs: p.project.secretRefs })),
+  });
+  const jobs = new JobManager({
+    onFinished: (job) =>
+      hub.emit({
+        type: "terminal.ended",
+        terminalId: job.id,
+        boxId: job.boxId,
+        kind: "job",
+        exitCode: job.exitCode,
+        unexpected: false,
+      }),
+  });
+  const tunnels = new SshTunnelManager({ runner, remotes: () => core.sshRemotes.list(), log });
+  const setup = new SetupService({
+    core,
+    jobs,
+    runner,
+    op,
+    home: options.home,
+    user: os.userInfo().username,
+    imageContext: options.imageContext,
+    serviceInstalled: () => serviceInstalled(options.home),
+    installService: async (io) => {
+      await installService({
+        home: options.home,
+        execStart: options.execStart,
+        runner,
+        log: (s) => io.write(s),
+      });
+    },
+  });
+  const updates = new UpdateChecker({ fetch: options.fetch, currentVersion: options.version, image: core.image });
+
+  const engines = new EngineSupervisor({
+    engines: core.engines,
+    db: core.db,
+    expectedVersion: options.expectedEngineVersion,
+    relay: (event) => hub.relay(event),
+    decideLease: (engineKey, projectId, request) => scheduler.decide(engineKey, projectId, request),
+    onRuns: (list) => list.forEach((run) => runMirror.upsert(run)),
+    log,
+    intervalMs: options.engineIntervalMs,
+  });
+
+  let tunnelSync: NodeJS.Timeout | null = null;
+  const syncTunnels = () => {
+    if (tunnelSync) return;
+    tunnelSync = setTimeout(async () => {
+      tunnelSync = null;
+      try {
+        const running: Box[] = (await core.boxes.list({}))
+          .filter((v) => v.status === "running")
+          .map((v) => v.box);
+        await tunnels.sync(running);
+      } catch (err) {
+        log(`SSH tunnel sync failed: ${(err as Error).message}`);
+      }
+    }, 200);
+  };
+
+  hub.subscribe((event: AgentBoxEvent) => {
+    runMirror.ingest(event);
+    usage.ingest(event);
+    notifier.ingest(event);
+    if (event.type === "box.changed") syncTunnels();
+    if (event.type === "container.changed") void engines.refresh();
+  });
+
+  const proxy = new DevServerProxy(
+    cachedResolver(async (hostKey) => {
+      const view = (await core.boxes.list({})).find((v) => v.box.hostKey === hostKey);
+      const endpoint = view ? engines.get(view.container)?.endpoint : undefined;
+      return endpoint?.hostPort ? { enginePort: endpoint.hostPort, token: endpoint.token } : null;
+    }),
+  );
+
+  const api = await createApiServer({
+    core,
+    token,
+    version: options.version,
+    startedAt: new Date(),
+    hub,
+    jobs,
+    runs: runMirror,
+    engines,
+    usage: { vendors: () => usage.vendors(), samples: (q) => usageStore.samples(q) },
+    notifications: notifier,
+    secrets,
+    setup,
+    updates,
+    ssh: {
+      status: (name) => tunnels.status(name),
+      reconnect: (name) => tunnels.reconnect(name),
+      test: (remote) => testConnection(runner, remote),
+      copyId: (remote) => startCopyIdJob(jobs, runner, remote),
+    },
+    exec: options.exec ?? new DockerExecBackend(core.docker.api),
+    proxy,
+    staticDirs: options.staticDirs,
+    log,
+  });
+  const config = settings();
+  const port = await api.listen(options.port ?? config.serverPort);
+
+  // A separate proxy port gets a listener that serves the proxy only.
+  let proxyServer: http.Server | null = null;
+  let proxyPort: number | null = null;
+  if (config.proxyPort !== undefined && config.proxyPort !== config.serverPort && options.port === undefined) {
+    proxyServer = http.createServer((req, res) => void proxy.handleRequest(req, res));
+    proxyServer.on("upgrade", (req, socket, head) => void proxy.handleUpgrade(req, socket, head));
+    await new Promise<void>((resolve) => proxyServer?.listen(config.proxyPort, "127.0.0.1", resolve));
+    proxyPort = config.proxyPort;
+  }
+
+  engines.start();
+  syncTunnels();
+
+  return {
+    core,
+    hub,
+    api,
+    port,
+    proxyPort,
+    async close() {
+      if (tunnelSync) clearTimeout(tunnelSync);
+      await api.close();
+      if (proxyServer) await new Promise<void>((resolve) => proxyServer?.close(() => resolve()));
+      await engines.stop();
+      await tunnels.stopAll();
+      await core.close?.();
+    },
+  };
+}
