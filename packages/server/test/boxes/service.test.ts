@@ -477,6 +477,24 @@ describe("start, stop, restart", () => {
     await expect(h.core.boxes.start(b.id)).resolves.toMatchObject({ wasRunning: true });
   });
 
+  it("makes a new container when the reused one leaves before the exec", async () => {
+    const h = makeHarness();
+    const box = await stopped(h);
+    const created = h.docker.callsOf("createContainer").length;
+    expect(h.docker.containers.get(box.container)?.running).toBe(true);
+    let first = true;
+    h.docker.beforeExec = async (container, options) => {
+      if (first && options.cmd[0] === START_SESSION_PATH) {
+        first = false;
+        // The idle keeper reaches its grace limit; AutoRemove deletes it.
+        h.docker.expireIdle(container);
+      }
+    };
+    await expect(h.core.boxes.start(box.id)).resolves.toMatchObject({ wasRunning: true });
+    expect(h.docker.callsOf("createContainer").length).toBe(created + 1);
+    expect(h.core.boxes.status(h.core.boxes.get(box.id))).toBe("running");
+  });
+
   it("starts despite stale mounts with force", async () => {
     const h = makeHarness();
     const dir = h.dir("app");

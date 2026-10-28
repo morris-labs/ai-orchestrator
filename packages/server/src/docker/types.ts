@@ -1,5 +1,7 @@
 // The thin Docker layer the core uses. `DockerodeClient` implements it over
 // the Engine API; `MemoryDocker` implements it in memory for tests.
+import type { ApiErrorCode } from "@agentbox/contracts";
+import { ApiError } from "../records/errors.js";
 
 /** A container as `GET /containers/json` lists it. */
 export interface ContainerSummary {
@@ -103,11 +105,40 @@ export interface RunOnceOptions {
 }
 
 /** Thrown by a client when the daemon does not answer. */
-export class DockerUnavailableError extends Error {
+export class DockerUnavailableError extends ApiError {
   constructor(message = "The Docker daemon is unreachable.") {
-    super(message);
+    super("docker_unavailable", message);
     this.name = "DockerUnavailableError";
   }
+}
+
+/** The contract error code for an HTTP status the Docker daemon answered with. */
+export function codeForDockerStatus(status: number): ApiErrorCode {
+  if (status === 404) return "not_found";
+  if (status === 409) return "conflict";
+  if (status === 400) return "validation";
+  return "internal";
+}
+
+/**
+ * Thrown by a client when the daemon refuses a call, such as 404 for a
+ * container that is gone or 409 for one that is not running. `dockerStatus`
+ * keeps the daemon's status; the field is not named `statusCode`, so the
+ * HTTP layer maps the error by its contract `code`.
+ */
+export class DockerApiError extends ApiError {
+  readonly dockerStatus: number;
+
+  constructor(dockerStatus: number, message: string) {
+    super(codeForDockerStatus(dockerStatus), message);
+    this.name = "DockerApiError";
+    this.dockerStatus = dockerStatus;
+  }
+}
+
+/** Whether `err` says the container does not exist (404) or is not running (409). */
+export function isContainerGone(err: unknown): boolean {
+  return err instanceof DockerApiError && (err.dockerStatus === 404 || err.dockerStatus === 409);
 }
 
 export interface DockerClient {
@@ -132,6 +163,10 @@ export interface DockerClient {
   stopContainer(nameOrId: string, timeoutS?: number): Promise<void>;
   /** Removes a container; a missing container is not an error. */
   removeContainer(nameOrId: string, options?: { force?: boolean }): Promise<void>;
+  /**
+   * Runs a command in a container. Throws `DockerApiError` with status 404
+   * when the container does not exist and 409 when it is not running.
+   */
   exec(container: string, options: ExecOptions): Promise<ExecResult>;
   /** One stats sample, or `null` when the container is gone. */
   stats(nameOrId: string): Promise<StatsSample | null>;

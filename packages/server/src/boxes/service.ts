@@ -33,7 +33,7 @@ import {
 import type { Repositories } from "../db/repositories.js";
 import { buildSessionCommand, sessionStartCmd } from "../docker/scripts.js";
 import { allLiveSessions, liveSessions } from "../docker/state.js";
-import type { DockerClient } from "../docker/types.js";
+import { isContainerGone, type DockerClient, type ExecResult } from "../docker/types.js";
 import { detectPrimaryRepo, normalizeRoot } from "../projects/ids.js";
 import type { ProjectService } from "../projects/service.js";
 import { PLATFORMS, allocateHostKey, boxTmuxSession, sideSessionName } from "../records/box.js";
@@ -261,11 +261,20 @@ export class BoxService {
           { container: ensured.container, differences: ensured.stale },
         );
       }
-      const r = await this.deps.docker.exec(box.container, {
-        cmd: sessionStartCmd(session, workDir, command),
-        user: this.env.user,
-        timeoutMs: 60_000,
-      });
+      let r: ExecResult;
+      try {
+        r = await this.deps.docker.exec(box.container, {
+          cmd: sessionStartCmd(session, workDir, command),
+          user: this.env.user,
+          timeoutMs: 60_000,
+        });
+      } catch (err) {
+        // The container left between ensureContainer() and the exec: its
+        // keeper reached the end of its grace period. Make a new one.
+        if (!isContainerGone(err)) throw err;
+        lastError = messageOf(err);
+        continue;
+      }
       if (r.exitCode === 0) return;
       lastError = (r.stderr || r.stdout).trim();
       if (r.exitCode === 3)
@@ -279,11 +288,18 @@ export class BoxService {
   private async killSession(container: string, session: string): Promise<void> {
     const inspect = await this.deps.docker.inspectContainer(container);
     if (!inspect?.running) return;
-    const r = await this.deps.docker.exec(container, {
-      cmd: ["tmux", "kill-session", "-t", `=${session}`],
-      user: this.env.user,
-      timeoutMs: 15_000,
-    });
+    let r: ExecResult;
+    try {
+      r = await this.deps.docker.exec(container, {
+        cmd: ["tmux", "kill-session", "-t", `=${session}`],
+        user: this.env.user,
+        timeoutMs: 15_000,
+      });
+    } catch (err) {
+      // A container that left took the session with it.
+      if (isContainerGone(err)) return;
+      throw err;
+    }
     if (r.exitCode !== 0 && !`${r.stderr}${r.stdout}`.includes("can't find session")) {
       throw new ApiError(
         "conflict",

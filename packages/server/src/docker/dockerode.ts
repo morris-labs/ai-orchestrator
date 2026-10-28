@@ -4,6 +4,7 @@ import path from "node:path";
 import { PassThrough } from "node:stream";
 import Docker from "dockerode";
 import {
+  DockerApiError,
   DockerUnavailableError,
   type ContainerCreateSpec,
   type ContainerInspect,
@@ -30,10 +31,24 @@ function statusOf(err: unknown): number | undefined {
   return (err as { statusCode?: number }).statusCode;
 }
 
-/** Turns a connection failure into `DockerUnavailableError`; rethrows anything else. */
+/** The daemon's own message of a dockerode error, without dockerode's prefix. */
+function daemonMessage(err: unknown): string {
+  const json = (err as { json?: { message?: unknown } }).json;
+  if (json && typeof json.message === "string" && json.message !== "") return json.message;
+  return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * Turns a connection failure into `DockerUnavailableError` and a refusal
+ * from the daemon into `DockerApiError`; rethrows anything else.
+ */
 function rethrow(err: unknown): never {
   const code = (err as { code?: string }).code;
   if (code && UNREACHABLE.has(code)) throw new DockerUnavailableError();
+  const status = statusOf(err);
+  if (typeof status === "number" && status >= 400) {
+    throw new DockerApiError(status, `Docker: ${daemonMessage(err)}`);
+  }
   throw err;
 }
 
