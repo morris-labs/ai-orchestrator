@@ -8,6 +8,7 @@ import { join } from "node:path";
 import {
   CliAdapter,
   detectLimitInText,
+  limitFromError,
   parseResetTime,
   type CallContext,
   type CliAdapterOptions,
@@ -234,10 +235,7 @@ export class CopilotAdapter extends CliAdapter {
   }
 
   detectLimit(error: unknown): CliLimitInfo | null {
-    if (error instanceof AdapterError)
-      return error.limit ?? detectLimitInText(`${error.message}\n${error.raw}`, this.now());
-    if (error instanceof Error) return detectLimitInText(error.message, this.now());
-    return typeof error === "string" ? detectLimitInText(error, this.now()) : null;
+    return limitFromError(error, this.now());
   }
 }
 

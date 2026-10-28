@@ -7,14 +7,14 @@ import { join } from "node:path";
 import type { UsageSample, UsageWindow } from "@agentbox/contracts";
 import {
   CliAdapter,
-  detectLimitInText,
+  limitFromError,
   epochToIso,
   type CallContext,
   type CliAdapterOptions,
 } from "./base.js";
 import { parseStructuredText, toStrictJsonSchema } from "./output.js";
 import { runProcess } from "./process.js";
-import { AdapterError, type CliRequest, type CliResult, type CliLimitInfo } from "./types.js";
+import type { CliRequest, CliResult, CliLimitInfo } from "./types.js";
 
 export interface CodexAdapterOptions extends CliAdapterOptions {
   /**
@@ -181,10 +181,7 @@ export class CodexAdapter extends CliAdapter {
   }
 
   detectLimit(error: unknown): CliLimitInfo | null {
-    if (error instanceof AdapterError)
-      return error.limit ?? detectLimitInText(`${error.message}\n${error.raw}`, this.now());
-    if (error instanceof Error) return detectLimitInText(error.message, this.now());
-    return typeof error === "string" ? detectLimitInText(error, this.now()) : null;
+    return limitFromError(error, this.now());
   }
 }
 

@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { DEFAULT_CEILINGS } from "@agentbox/contracts";
 import { detectLimitInText, parseResetTime } from "../../src/adapters/base.js";
+import { CodexAdapter } from "../../src/adapters/codex.js";
+import type { ProcessResult } from "../../src/adapters/process.js";
 
 const now = new Date("2026-10-28T09:00:00Z");
 
@@ -74,5 +77,77 @@ describe("parseResetTime", () => {
 
   it("returns null without a time", () => {
     expect(parseResetTime("Try again later.", now)).toBeNull();
+  });
+});
+
+describe("limit detection reads only the CLI's error channels", () => {
+  it("ignores limit words in the model's output", async () => {
+    const { AdapterError } = await import("../../src/adapters/types.js");
+    const { limitFromError } = await import("../../src/adapters/base.js");
+    const { ClaudeAdapter, ClaudeStreamParser } = await import("../../src/adapters/claude.js");
+    const { CodexAdapter } = await import("../../src/adapters/codex.js");
+    const { CopilotAdapter } = await import("../../src/adapters/copilot.js");
+    const { z } = await import("zod");
+    const modelText = "The client retries on HTTP 429 Too Many Requests and a usage limit.";
+    const output = new AdapterError("codex", "output", "Unusable answer", { raw: modelText });
+    expect(limitFromError(output)).toBeNull();
+    for (const adapter of [new ClaudeAdapter(), new CodexAdapter(), new CopilotAdapter()]) {
+      expect(adapter.detectLimit(output)).toBeNull();
+    }
+    // A failed Claude turn whose final text mentions a limit is not a limit.
+    const claude = new ClaudeAdapter({ bare: false });
+    const parser = new ClaudeStreamParser("a", DEFAULT_CEILINGS.claude);
+    parser.push(
+      JSON.stringify({
+        type: "result",
+        subtype: "error_max_turns",
+        is_error: false,
+        result: modelText,
+        session_id: "s",
+      }),
+    );
+    const req = {
+      prompt: "p",
+      cwd: "/",
+      tools: "read-only" as const,
+      timeoutMs: 1,
+      outputSchema: z.object({}),
+    };
+    try {
+      claude.interpret(req, parser.summary(), modelText, "", 1, 1);
+      expect.unreachable();
+    } catch (error) {
+      expect((error as InstanceType<typeof AdapterError>).kind).toBe("process");
+    }
+    // The real limit signal on stderr still counts.
+    const limited = new AdapterError("claude", "limit", "usage limit", {
+      limit: { kind: "usage_limit", resetAt: null, message: "usage limit" },
+    });
+    expect(limitFromError(limited)?.kind).toBe("usage_limit");
+  });
+});
+
+describe("exitFailure", () => {
+  class Probe extends CodexAdapter {
+    fail(result: ProcessResult, text: string) {
+      return this.exitFailure(result, null, text);
+    }
+  }
+  const result = (stdout: string, stderr: string): ProcessResult => ({
+    stdout,
+    stderr,
+    exitCode: 1,
+    signal: null,
+    timedOut: false,
+    cancelled: false,
+    durationMs: 1,
+    spawnError: null,
+  });
+
+  it("classifies by stderr and error events, never by stdout", () => {
+    const p = new Probe();
+    expect(p.fail(result('{"text":"handles 429 too many requests"}', ""), "").kind).toBe("process");
+    expect(p.fail(result("", "error: 429 Too Many Requests"), "").kind).toBe("limit");
+    expect(p.fail(result("", ""), "You've hit your usage limit.").kind).toBe("limit");
   });
 });

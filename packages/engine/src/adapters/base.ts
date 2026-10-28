@@ -156,9 +156,14 @@ export abstract class CliAdapter implements CliVendorAdapter {
     return null;
   }
 
-  /** The error for a nonzero exit, classified by the text the CLI printed. */
+  /**
+   * The error for a nonzero exit, classified by the CLI's error channels:
+   * `text` (the error events the adapter collected) and stderr. Stdout
+   * carries the model's own words and tool output, so it never decides
+   * that a call hit a limit.
+   */
   protected exitFailure(result: ProcessResult, sessionId: string | null, text = ""): AdapterError {
-    const combined = `${text}\n${result.stderr}\n${result.stdout}`;
+    const combined = `${text}\n${result.stderr}`;
     const limit = detectLimitInText(combined, this.now());
     if (limit) {
       return new AdapterError(this.vendor, "limit", limit.message, {
@@ -176,6 +181,18 @@ export abstract class CliAdapter implements CliVendorAdapter {
       { exitCode: result.exitCode, raw: result.stdout, sessionId },
     );
   }
+}
+
+/**
+ * The limit an error carries. An `AdapterError` has one only when the
+ * adapter found it on the CLI's error channels; its message and raw output
+ * aren't searched again, since they can hold the model's text. Any other
+ * error, such as a test double's, is read by its message.
+ */
+export function limitFromError(error: unknown, now: Date = new Date()): CliLimitInfo | null {
+  if (error instanceof AdapterError) return error.limit;
+  if (error instanceof Error) return detectLimitInText(error.message, now);
+  return typeof error === "string" ? detectLimitInText(error, now) : null;
 }
 
 /** Text that means the CLI isn't signed in. */

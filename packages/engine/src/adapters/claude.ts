@@ -9,6 +9,7 @@ import {
   AUTH_PATTERN,
   CliAdapter,
   detectLimitInText,
+  limitFromError,
   epochToIso,
   tail,
   type CallContext,
@@ -186,15 +187,26 @@ export class ClaudeAdapter extends CliAdapter {
     if (failed) {
       const errors = Array.isArray(res?.errors) ? (res.errors as unknown[]).join("; ") : "";
       const text = [summary.apiErrorText, resultText, errors, stderr].filter(Boolean).join("\n");
+      // Limits come from the CLI's own error channels: the rate-limit event,
+      // an API error, the error list, stderr, and the result text only when
+      // the CLI marked it an error. A failed turn's text is the model's.
+      const errorText = [
+        summary.apiError ? summary.apiErrorText : null,
+        res?.is_error === true ? resultText : null,
+        errors,
+        stderr,
+      ]
+        .filter(Boolean)
+        .join("\n");
       const limit =
         summary.rejected ??
         (summary.apiError && /rate_limit|overage|usage/i.test(summary.apiError)
-          ? (detectLimitInText(text, this.now()) ?? {
+          ? (detectLimitInText(errorText, this.now()) ?? {
               kind: "rate_limit" as const,
               resetAt: null,
-              message: text.slice(0, 300),
+              message: errorText.slice(0, 300),
             })
-          : detectLimitInText(text, this.now()));
+          : detectLimitInText(errorText, this.now()));
       if (limit) {
         throw new AdapterError(
           "claude",
@@ -244,12 +256,7 @@ export class ClaudeAdapter extends CliAdapter {
   }
 
   detectLimit(error: unknown): CliLimitInfo | null {
-    if (error instanceof AdapterError) {
-      if (error.limit) return error.limit;
-      return detectLimitInText(`${error.message}\n${error.raw}`, this.now());
-    }
-    if (error instanceof Error) return detectLimitInText(error.message, this.now());
-    return typeof error === "string" ? detectLimitInText(error, this.now()) : null;
+    return limitFromError(error, this.now());
   }
 }
 
