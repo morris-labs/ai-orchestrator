@@ -438,15 +438,26 @@ function num(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
-/** The signed-in account's email from `~/.claude.json`, or `null`. */
+const lastAccount = new Map<string, string>();
+
+/**
+ * The signed-in account's email from `~/.claude.json`, or `null`. Every
+ * running `claude` rewrites that file, so a read can catch it half written;
+ * a read that fails returns the last email this file gave, which keeps one
+ * account's usage samples from splitting under a fallback name.
+ */
 export function claudeAccount(file = join(homedir(), ".claude.json")): string | null {
   try {
     const data = JSON.parse(readFileSync(file, "utf8")) as {
       oauthAccount?: { emailAddress?: unknown };
     };
     const email = data.oauthAccount?.emailAddress;
-    return typeof email === "string" && email.length > 0 ? email : null;
+    if (typeof email === "string" && email.length > 0) {
+      lastAccount.set(file, email);
+      return email;
+    }
+    return lastAccount.get(file) ?? null;
   } catch {
-    return null;
+    return lastAccount.get(file) ?? null;
   }
 }
