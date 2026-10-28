@@ -31,6 +31,13 @@ export function terminalCommand(
       return { file: terminal, args: ["--title", title, "-e", ...argv] };
     case "xterm":
       return { file: terminal, args: ["-T", title, "-e", ...argv] };
+    // xfce4-terminal's -e takes one command string; -x takes the rest as argv.
+    case "xfce4-terminal":
+      return { file: terminal, args: ["--title", title, "-x", ...argv] };
+    case "foot":
+      return { file: terminal, args: ["--title", title, ...argv] };
+    case "wezterm":
+      return { file: terminal, args: ["start", "--", ...argv] };
     default:
       return { file: terminal, args: ["-e", ...argv] };
   }

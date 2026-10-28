@@ -40,6 +40,14 @@ describe("external terminals", () => {
     expect(terminalCommand("/usr/bin/xterm", argv, "t").args).toEqual(["-T", "t", "-e", ...argv]);
     expect(terminalCommand("kitty", argv, "t").args).toEqual(["--title", "t", ...argv]);
     expect(terminalCommand("alacritty", argv, "t").args).toEqual(["--title", "t", "-e", ...argv]);
+    expect(terminalCommand("/usr/bin/xfce4-terminal", argv, "t").args).toEqual([
+      "--title",
+      "t",
+      "-x",
+      ...argv,
+    ]);
+    expect(terminalCommand("foot", argv, "t").args).toEqual(["--title", "t", ...argv]);
+    expect(terminalCommand("wezterm", argv, "t").args).toEqual(["start", "--", ...argv]);
     expect(terminalCommand("/usr/bin/x-terminal-emulator", argv, "t").args).toEqual([
       "-e",
       ...argv,
