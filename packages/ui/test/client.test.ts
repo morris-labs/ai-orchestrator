@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ApiClient, ApiRequestError, isApiError } from "../src/core";
 import { FakeServer, makeBoxView } from "../src/testing";
 
@@ -94,5 +94,37 @@ describe("ApiClient", () => {
   it("falls back to an error for an unknown error body", () => {
     const e = ApiRequestError.fromResponse(500, "nope");
     expect(e.code).toBe("bad_response");
+  });
+});
+
+describe("timeouts", () => {
+  it("fails a request the server never answers", async () => {
+    vi.useFakeTimers();
+    try {
+      let signal: AbortSignal | undefined;
+      const client = new ApiClient({
+        baseUrl: "http://h",
+        fetch: ((_url: string, init: RequestInit) => {
+          signal = init.signal ?? undefined;
+          return new Promise(() => undefined);
+        }) as typeof fetch,
+        timeouts: { readMs: 1000, writeMs: 5000 },
+      });
+      const read = client.call("boxes.list", {});
+      const readCheck = expect(read).rejects.toMatchObject({ code: "unreachable" });
+      await vi.advanceTimersByTimeAsync(1001);
+      await readCheck;
+      expect(signal?.aborted).toBe(true);
+
+      const start = client.call("boxes.start", { params: { boxId: "claude-agent-x" } });
+      let settled = false;
+      start.catch(() => undefined).finally(() => (settled = true));
+      await vi.advanceTimersByTimeAsync(1001);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(4000);
+      await expect(start).rejects.toThrow(/didn't answer boxes.start within 5 seconds/);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

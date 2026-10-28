@@ -34,6 +34,7 @@ import {
   listenersForBox,
   projectCounts,
   proxyUrl,
+  settleTransient,
   withTransient,
 } from "../src/logic/store";
 import {
@@ -352,6 +353,20 @@ describe("lists", () => {
       }),
     ).toEqual(["/home/user/.claude/projects/-w-my-site", "the record of claude-agent-a"]);
     expect(runningOnDir([a, b], "/w/my.site")?.box.id).toBe("claude-agent-b");
+  });
+});
+
+describe("settleTransient", () => {
+  it("drops an overlay once the server reports progress on it", () => {
+    const t = new Map<string, BoxView["status"]>([
+      ["a", "starting"],
+      ["b", "stopping"],
+    ]);
+    expect(settleTransient(t, "a", "stopped")).toBe(t);
+    expect(settleTransient(t, "a", "running").has("a")).toBe(false);
+    expect(settleTransient(t, "b", "running")).toBe(t);
+    expect(settleTransient(t, "b", "stopped").has("b")).toBe(false);
+    expect(settleTransient(t, "c", "running")).toBe(t);
   });
 });
 

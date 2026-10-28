@@ -19,6 +19,7 @@ import {
   useApiClient,
   useChords,
   useContextMenu,
+  useEvent,
   useMessageBox,
   useStreamStatus,
   useToast,
@@ -47,7 +48,7 @@ import { formatBytes } from "../logic/format";
 import { purgePreviewList, resumableBoxes, resumeDetail, runningOnDir } from "../logic/lists";
 import { createBody, normalizeDir, projectForDir, updateBody, type BoxForm } from "../logic/newBox";
 import { PLATFORMS, displayName, platformLabel, statusBarText, updatedText } from "../logic/status";
-import { withTransient } from "../logic/store";
+import { settleTransient, withTransient } from "../logic/store";
 import {
   closeBoxTabs,
   closeOthers,
@@ -96,7 +97,7 @@ export function App() {
   const [page, setPage] = useState<"boxes" | "usage">("boxes");
   const [showDetails, setShowDetails] = useState(() => load("detailsVisible") !== "0");
   const [dialog, setDialog] = useState<DialogState>(null);
-  const [transient, setTransient] = useState<Map<string, BoxView["status"]>>(new Map());
+  const [transient, setTransient] = useState<ReadonlyMap<string, BoxView["status"]>>(new Map());
   const [updates, setUpdates] = useState<Updates | null>(null);
   const [image, setImage] = useState<ImageStatus | null>(null);
   const [dismissed, setDismissed] = useState<string | null>(() => load("dismissedVersion"));
@@ -235,6 +236,8 @@ export function App() {
       }
       return next;
     });
+
+  useEvent("box.changed", (ev) => setTransient((t) => settleTransient(t, ev.boxId, ev.status)));
 
   const openTerminal = (view: BoxView) =>
     setTabs((t) =>
