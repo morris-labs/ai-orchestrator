@@ -182,6 +182,8 @@ export const AgentFinishedEventSchema = z.object({
   tokens: TokensSchema,
   /** Copilot premium requests; 0 for other vendors. */
   premiumRequests: z.number().nonnegative(),
+  /** Copilot AI credits, when the CLI reports them; absent otherwise. */
+  aiCredits: z.number().nonnegative().optional(),
   /** Estimated cost in US dollars. */
   costEstimate: z.number().nonnegative(),
 });

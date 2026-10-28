@@ -82,5 +82,29 @@ describe("findings", () => {
       history: [],
       origin: "reviewer",
     });
+    expect(converted).not.toHaveProperty("symbol");
+  });
+
+  it("carries a vendor's symbol into the finding", () => {
+    const raw = VendorFindingSchema.parse({
+      severity: "P3",
+      title: "Off by one",
+      file: "src/range.ts",
+      symbol: "clampRange",
+      lines: [4, 9],
+      failure_case: "An empty range returns one item.",
+      category: "correctness",
+      introduced: true,
+    });
+    const converted = fromVendorFinding(raw, {
+      id: "F-0003",
+      fingerprint: "def",
+      reportedBy: "codex-gpt-5",
+      runId: RUN,
+      round: 1,
+      groupId: "G-01",
+    });
+    expect(converted.symbol).toBe("clampRange");
+    expect(roundTrip(FindingSchema, { ...finding, symbol: "send" }).symbol).toBe("send");
   });
 });

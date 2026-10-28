@@ -73,6 +73,8 @@ describe("runs", () => {
     expect(roundTrip(FileGroupSchema, fileGroup)).toEqual(fileGroup);
     const summary = roundTrip(RoundSummarySchema, roundSummary);
     expect(summary.perVendor.copilot?.premiumRequests).toBe(3);
+    expect(summary.perVendor.copilot?.aiCredits).toBe(1.5);
+    expect(summary.perVendor.codex).not.toHaveProperty("aiCredits");
     expect(summary.perVendor.claude).toBeUndefined();
   });
 });

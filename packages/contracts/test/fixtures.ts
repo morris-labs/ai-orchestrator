@@ -175,6 +175,7 @@ export const roundSummary = {
       tokensIn: 0,
       tokensOut: 0,
       premiumRequests: 3,
+      aiCredits: 1.5,
       costUsd: 0.12,
     },
   },

@@ -81,6 +81,8 @@ const findingFields = {
   title: z.string().min(1),
   /** `null` only for a `pr_comment` or `check_run` finding with no location. */
   file: z.string().min(1).nullable(),
+  /** The function, class, or other symbol the finding is about, when the reviewer names one. */
+  symbol: z.string().min(1).optional(),
   /** First and last line, inclusive, in the tip version of `file`; `null` with `file`. */
   lines: LinesSchema.nullable(),
   failureCase: z.string(),
@@ -151,6 +153,8 @@ export const VendorFindingSchema = z.object({
   severity: SeveritySchema,
   title: z.string().min(1),
   file: z.string().min(1),
+  /** The enclosing symbol; part of the fingerprint when present. */
+  symbol: z.string().min(1).optional(),
   lines: LinesSchema,
   failure_case: z.string(),
   category: z.string().min(1),
@@ -182,6 +186,7 @@ export function fromVendorFinding(raw: VendorFinding, ctx: FindingContext): Find
     severity: raw.severity,
     title: raw.title,
     file: raw.file,
+    ...(raw.symbol === undefined ? {} : { symbol: raw.symbol }),
     lines: raw.lines,
     failureCase: raw.failure_case,
     category: raw.category,

@@ -222,6 +222,8 @@ export const VendorRoundStatsSchema = z.object({
   tokensOut: CountSchema,
   /** Copilot premium requests; 0 for other vendors. */
   premiumRequests: z.number().nonnegative(),
+  /** Copilot AI credits, when the CLI reports them; absent otherwise. */
+  aiCredits: z.number().nonnegative().optional(),
   costUsd: z.number().nonnegative(),
 });
 export type VendorRoundStats = z.infer<typeof VendorRoundStatsSchema>;
