@@ -10,12 +10,28 @@ let engine: http.Server;
 let enginePort: number;
 let h: Harness;
 let port: number;
-let seen: { url?: string; auth?: string; host?: string }[];
+let seen: {
+  url?: string;
+  auth?: string;
+  host?: string;
+  engineToken?: string;
+  headers?: http.IncomingHttpHeaders;
+}[];
 
 beforeEach(async () => {
   seen = [];
   engine = http.createServer((req, res) => {
-    seen.push({ url: req.url, auth: req.headers.authorization, host: req.headers.host });
+    seen.push({
+      url: req.url,
+      auth: req.headers.authorization,
+      host: req.headers.host,
+      engineToken: req.headers["x-agentbox-engine-token"] as string | undefined,
+      headers: req.headers,
+    });
+    if (req.url?.includes("/slow")) {
+      res.on("close", () => seen.push({ url: "closed" }));
+      return;
+    }
     let body = "";
     req.on("data", (d) => (body += d));
     req.on("end", () => {
@@ -47,11 +63,17 @@ afterEach(async () => {
   await new Promise((r) => engine.close(r));
 });
 
-function request(host: string, path: string, method = "GET", body?: string) {
+function request(
+  host: string,
+  path: string,
+  method = "GET",
+  body?: string,
+  extra: http.OutgoingHttpHeaders = {},
+) {
   return new Promise<{ status: number; body: string; headers: http.IncomingHttpHeaders }>(
     (resolve, reject) => {
       const req = http.request(
-        { host: "127.0.0.1", port, path, method, headers: { host } },
+        { host: "127.0.0.1", port, path, method, headers: { host, ...extra } },
         (res) => {
           let data = "";
           res.on("data", (d) => (data += d));
@@ -92,6 +114,38 @@ describe("dev-server proxy", () => {
     expect(res.headers["x-engine"]).toBe("yes");
     expect(res.body).toBe("POST /proxy/3000/assets/app.js?v=1 data");
     expect(seen[0]?.auth).toBe(`Bearer ${ENGINE_TOKEN}`);
+    expect(seen[0]?.engineToken).toBe(ENGINE_TOKEN);
+  });
+
+  it("passes the browser's Authorization header and drops hop-by-hop headers", async () => {
+    const res = await request(`3000.emails.localhost:${port}`, "/api/me", "GET", undefined, {
+      authorization: "Bearer user-jwt",
+      "proxy-authorization": "Basic secret",
+      "x-agentbox-engine-token": "spoofed",
+      te: "trailers",
+      connection: "keep-alive, x-drop-me",
+      "x-drop-me": "1",
+    });
+    expect(res.status).toBe(200);
+    expect(seen[0]?.auth).toBe("Bearer user-jwt");
+    expect(seen[0]?.engineToken).toBe(ENGINE_TOKEN);
+    expect(seen[0]?.headers).not.toHaveProperty("proxy-authorization");
+    expect(seen[0]?.headers).not.toHaveProperty("te");
+    expect(seen[0]?.headers).not.toHaveProperty("x-drop-me");
+  });
+
+  it("ends the engine request when the browser disconnects", async () => {
+    const req = http.request({
+      host: "127.0.0.1",
+      port,
+      path: "/slow",
+      headers: { host: `3000.emails.localhost:${port}` },
+    });
+    req.on("error", () => undefined);
+    req.end();
+    await expect.poll(() => seen.length).toBe(1);
+    req.destroy();
+    await expect.poll(() => seen.some((s) => s.url === "closed")).toBe(true);
   });
 
   it("answers 502 for an unknown host key", async () => {
@@ -112,7 +166,20 @@ describe("dev-server proxy", () => {
     ws.send("ping");
     const reply = await new Promise<string>((r) => ws.once("message", (d) => r(d.toString())));
     expect(reply).toBe("echo:ping");
-    expect(seen[0]).toMatchObject({ url: "/proxy/5173/hmr", auth: `Bearer ${ENGINE_TOKEN}` });
+    expect(seen[0]).toMatchObject({ url: `/proxy/5173/hmr?token=${ENGINE_TOKEN}` });
+    expect(seen[0]?.auth).toBeUndefined();
+    ws.close();
+  });
+
+  it("keeps the browser's Authorization header on an upgrade", async () => {
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/hmr?x=1`, {
+      headers: { host: `5173.emails.localhost:${port}`, authorization: "Bearer user-jwt" },
+    });
+    await new Promise((r) => ws.once("open", r));
+    expect(seen[0]).toMatchObject({
+      url: `/proxy/5173/hmr?x=1&token=${ENGINE_TOKEN}`,
+      auth: "Bearer user-jwt",
+    });
     ws.close();
   });
 
