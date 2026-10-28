@@ -71,3 +71,38 @@ corepack pnpm --filter @agentbox/contracts build
 corepack pnpm --filter @agentbox/contracts test
 corepack pnpm --filter @agentbox/contracts typecheck
 ```
+
+## Changelog
+
+### C2
+
+Consumers must update for the changes marked **breaking**.
+
+- **Breaking:** `UsageSample.source` is `sampleSource`. The `usage.sample`
+  event spreads the sample's fields, so the old name replaced the event's
+  stream `source`. `TimedUsageSample` follows.
+- **Breaking:** `sshRemotes.test` is `POST /api/v1/ssh-remotes/test` and takes
+  a required `SshRemoteInput` body for an unsaved remote. The by-name route,
+  `POST /api/v1/ssh-remotes/:name/test`, is `sshRemotes.testSaved`.
+- **Breaking:** `EngineHealth.versionMatches` and `BoxView.targetDirExists`
+  are required booleans, `PurgeResult` has a required `dryRun`, and
+  `GlobalSettings` has a required `vendorDefaults` and
+  `notifications.readyToPush`. `GlobalSettingsInputSchema` fills both, so a
+  stored settings document or a `config.json` without them still parses
+  through it.
+- `ApiErrorCode` adds `unauthorized` (401) and `internal` (500).
+- `ENGINE_ENV.stateDir` (`AGENTBOX_STATE_DIR`, default `/run/claude-box`). On
+  a version mismatch the engine starts, logs a warning, and reports
+  `versionMatches: false`.
+- Server routes: `import.run` (`POST /api/v1/import`, `ImportReport`),
+  `projects.repos.list` and `projects.repos.refs` (the engine's schemas),
+  `boxes.convertToWorktree.plan`, and `fs.dirs`.
+- `boxes.start` takes `{ force }` to start despite stale mounts, and
+  `boxes.purge` takes `{ dryRun }`. Both bodies are optional.
+- `GlobalSettings.vendorDefaults` (Copilot's model defaults to `auto`) and its
+  patch, in which `null` clears a Claude or Codex model or effort.
+- `Finding.symbol` and `VendorFinding.symbol`, optional; `fromVendorFinding()`
+  copies it.
+- `aiCredits`, optional, on `agent.finished` and `VendorRoundStats`.
+- The `GlobalSettingsSchema` comment says where settings live: in the
+  database, seeded once from `~/.claude-box/config.json`.
