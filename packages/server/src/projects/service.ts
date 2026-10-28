@@ -1,0 +1,481 @@
+// Projects: CRUD, mounts, TCP maps, secret references, the policy path, the
+// engine port registry, and the project container (3.3.5 `ProjectRecord`,
+// `SharedContainer`, and `DockerBackend::startShared`).
+import crypto from "node:crypto";
+import fs from "node:fs";
+import net from "node:net";
+import path from "node:path";
+import {
+  DEFAULT_ENGINE_PORT,
+  ProjectInputSchema,
+  ProjectUpdateSchema,
+  projectContainerName,
+  type ContainerInfo,
+  type ContainerState,
+  type Project,
+  type ProjectSummary,
+} from "@agentbox/contracts";
+import type { z } from "zod";
+import type { EngineEndpoint, Repositories } from "../db/repositories.js";
+import type { ImageVersions } from "../docker/image.js";
+import {
+  LABELS,
+  buildLaunchSpec,
+  mergeMounts,
+  mountBind,
+  prepareLaunchHost,
+  tcpMapsLabel,
+} from "../docker/launch.js";
+import { liveSessions, readMountsFile, writeMountsFile } from "../docker/state.js";
+import type { ContainerInspect, DockerClient } from "../docker/types.js";
+import { boxTmuxSession } from "../records/box.js";
+import type { HostEnv } from "../records/env.js";
+import { ApiError, notFound } from "../records/errors.js";
+import type { CoreEvents } from "../records/events.js";
+import type { CoreHooks } from "../records/hooks.js";
+import type { KeyedMutex } from "../records/mutex.js";
+import { assertUniqueNames, type SettingsService } from "../records/settings.js";
+import { defaultProjectName, detectPrimaryRepo, normalizeRoot, projectIdForRoot } from "./ids.js";
+
+export type ProjectUpdate = z.input<typeof ProjectUpdateSchema>;
+
+/** Picks a free loopback port that is not in `exclude`. */
+export async function freeLoopbackPort(exclude: ReadonlySet<number>): Promise<number> {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const port = await new Promise<number>((resolve, reject) => {
+      const srv = net.createServer();
+      srv.once("error", reject);
+      srv.listen(0, "127.0.0.1", () => {
+        const addr = srv.address();
+        srv.close(() => resolve(typeof addr === "object" && addr ? addr.port : 0));
+      });
+    });
+    if (port > 0 && !exclude.has(port)) return port;
+  }
+  throw new Error("Could not find a free loopback port.");
+}
+
+/** Whether `port` can be bound on 127.0.0.1 right now. */
+export function loopbackPortFree(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const srv = net.createServer();
+    srv.once("error", () => resolve(false));
+    srv.listen(port, "127.0.0.1", () => srv.close(() => resolve(true)));
+  });
+}
+
+export interface ProjectServiceDeps {
+  env: HostEnv;
+  repos: Repositories;
+  docker: DockerClient;
+  events: CoreEvents;
+  settings: SettingsService;
+  hooks: () => CoreHooks;
+  mutex: KeyedMutex;
+  imageVersions: ImageVersions;
+  /** The engine version this server expects in the image. */
+  engineVersion: string;
+  /** Picks the engine's host port; tests replace it. */
+  allocatePort?: (exclude: ReadonlySet<number>) => Promise<number>;
+  /** Whether a stored engine port is still free; tests replace it. */
+  portFree?: (port: number) => Promise<boolean>;
+  /** Seconds the keeper lingers; 30 unless a test shortens it. */
+  graceSec?: number;
+  /** Milliseconds to wait for a stopped container to go away. */
+  removalTimeoutMs?: number;
+}
+
+export interface EnsureContainerResult {
+  container: string;
+  /** True when this call created the container. */
+  created: boolean;
+  /** Differences between a reused container and the project; empty when it matches. */
+  stale: string[];
+}
+
+function containerState(inspect: ContainerInspect | null): ContainerState {
+  if (!inspect) return "removed";
+  if (inspect.running) return "running";
+  return inspect.state === "created" ? "created" : "exited";
+}
+
+function isDirectory(p: string): boolean {
+  try {
+    return fs.statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+export class ProjectService {
+  constructor(private readonly deps: ProjectServiceDeps) {}
+
+  private get repos() {
+    return this.deps.repos;
+  }
+
+  private now(): string {
+    return this.deps.env.now().toISOString();
+  }
+
+  /** The project for a directory, created implicitly (as 3.3.5 did) when missing. */
+  ensureForRoot(rootIn: string): Project {
+    const root = normalizeRoot(rootIn);
+    if (root === "") throw new ApiError("validation", "A project needs a directory.");
+    const existing = this.repos.projects.byRoot(root);
+    if (existing) return existing;
+    const now = this.now();
+    const project = ProjectInputSchema.parse({
+      id: projectIdForRoot(root),
+      root,
+      name: defaultProjectName(root),
+      primaryRepo: detectPrimaryRepo(root),
+      createdAt: now,
+      updatedAt: now,
+    });
+    return this.repos.projects.put(project);
+  }
+
+  /** `projects.create`: registers an existing directory. */
+  create(input: { root: string; name?: string }): Project {
+    const root = normalizeRoot(input.root);
+    if (!isDirectory(root)) throw new ApiError("validation", `${input.root} is not a directory.`);
+    if (this.repos.projects.byRoot(root)) {
+      throw new ApiError("conflict", `${root} is already a project.`);
+    }
+    const project = this.ensureForRoot(root);
+    if (input.name !== undefined && input.name.trim() !== "") {
+      return this.repos.projects.put({
+        ...project,
+        name: input.name.trim(),
+        updatedAt: this.now(),
+      });
+    }
+    return project;
+  }
+
+  get(id: string): Project {
+    return this.repos.projects.get(id) ?? notFound(`The project ${id}`);
+  }
+
+  list(): Project[] {
+    return this.repos.projects.list();
+  }
+
+  containerName(project: Pick<Project, "id">): string {
+    return projectContainerName(project.id);
+  }
+
+  /** The absolute host path of the project's policy file. */
+  policyFile(project: Project): string {
+    return path.isAbsolute(project.policyPath)
+      ? project.policyPath
+      : path.join(project.root, project.policyPath);
+  }
+
+  engineEndpoint(projectId: string): EngineEndpoint | undefined {
+    return this.repos.engines.get(projectId);
+  }
+
+  async containerInfo(project: Project): Promise<ContainerInfo> {
+    const name = this.containerName(project);
+    const inspect = await this.deps.docker.inspectContainer(name);
+    const endpoint = this.repos.engines.get(project.id);
+    const health = this.deps.hooks().engineHealth(name);
+    return {
+      name,
+      state: containerState(inspect),
+      engine:
+        inspect || endpoint
+          ? {
+              hostPort: endpoint?.hostPort ?? null,
+              version: health.version,
+              healthy: health.healthy,
+              versionMatches:
+                health.version === null ? null : health.version === this.deps.engineVersion,
+            }
+          : null,
+    };
+  }
+
+  /** A project with its box counts and container, as `projects.list` returns it. */
+  async summary(project: Project): Promise<ProjectSummary> {
+    const boxes = this.repos.boxes.byProject(project.id);
+    const live = new Set(liveSessions(this.deps.env, this.containerName(project)));
+    const container: ContainerInfo | null = await this.containerInfo(project).catch(() => null);
+    return {
+      project,
+      running: boxes.filter((b) => live.has(boxTmuxSession(b))).length,
+      total: boxes.length,
+      container,
+    };
+  }
+
+  async summaries(): Promise<ProjectSummary[]> {
+    const list = this.list().sort((a, b) => a.name.localeCompare(b.name));
+    return Promise.all(list.map((p) => this.summary(p)));
+  }
+
+  /**
+   * `projects.update`. Returns the running boxes that keep the old mounts,
+   * ports, or secrets until their container restarts.
+   */
+  async update(
+    id: string,
+    input: ProjectUpdate,
+  ): Promise<{ project: Project; staleBoxes: string[] }> {
+    const parsed = ProjectUpdateSchema.safeParse(input);
+    if (!parsed.success)
+      throw new ApiError("validation", parsed.error.issues[0]?.message ?? "invalid update");
+    const u = parsed.data;
+    const project = this.get(id);
+    const next: Project = { ...project, updatedAt: this.now() };
+    if (u.name !== undefined) next.name = u.name.trim() || defaultProjectName(project.root);
+    if (u.primaryRepo !== undefined) {
+      if (u.primaryRepo === null) delete next.primaryRepo;
+      else if (!isDirectory(u.primaryRepo))
+        throw new ApiError("validation", `${u.primaryRepo} is not a directory.`);
+      else next.primaryRepo = u.primaryRepo;
+    }
+    if (u.tcpMaps !== undefined) {
+      const hosts = new Set<number>();
+      const containers = new Set<number>();
+      for (const t of u.tcpMaps) {
+        if (t.container === DEFAULT_ENGINE_PORT) {
+          throw new ApiError(
+            "validation",
+            `Container port ${DEFAULT_ENGINE_PORT} belongs to the engine.`,
+          );
+        }
+        if (hosts.has(t.host) || containers.has(t.container)) {
+          throw new ApiError("validation", `The TCP map ${t.host}:${t.container} repeats a port.`);
+        }
+        hosts.add(t.host);
+        containers.add(t.container);
+      }
+      next.tcpMaps = u.tcpMaps;
+    }
+    if (u.mounts !== undefined) {
+      const missing = u.mounts.filter((m) => !isDirectory(m.host)).map((m) => m.host);
+      if (missing.length > 0) {
+        throw new ApiError(
+          "validation",
+          `These host directories do not exist: ${missing.join(", ")}.`,
+          { missing },
+        );
+      }
+      next.mounts = u.mounts;
+    }
+    if (u.secretRefs !== undefined) {
+      assertUniqueNames(u.secretRefs);
+      next.secretRefs = u.secretRefs;
+    }
+    if (u.ceilingsOverride !== undefined) {
+      if (u.ceilingsOverride === null) delete next.ceilingsOverride;
+      else next.ceilingsOverride = u.ceilingsOverride;
+    }
+    if (u.policyPath !== undefined) next.policyPath = u.policyPath;
+    const saved = this.repos.projects.put(next);
+    const stale = await this.staleDifferences(saved);
+    return { project: saved, staleBoxes: stale.length > 0 ? this.runningBoxIds(saved) : [] };
+  }
+
+  /** Ids of the project's boxes whose session is live. */
+  runningBoxIds(project: Project): string[] {
+    const live = new Set(liveSessions(this.deps.env, this.containerName(project)));
+    return this.repos.boxes
+      .byProject(project.id)
+      .filter((b) => live.has(boxTmuxSession(b)))
+      .map((b) => b.id);
+  }
+
+  /** The mounts the container gets: the project's, then the global ones it does not shadow. */
+  wantedBinds(project: Project): string[] {
+    return mergeMounts(project.mounts, this.deps.settings.get().globalMounts).map(mountBind);
+  }
+
+  /**
+   * How a running project container differs from what the project asks for:
+   * mounts (compared with the recorded `mounts` file, else the container's
+   * binds), TCP maps, and, when `secretNames` is given, the secret names.
+   * Empty when the container is not running or matches.
+   */
+  async staleDifferences(project: Project, secretNames?: readonly string[]): Promise<string[]> {
+    const name = this.containerName(project);
+    const inspect = await this.deps.docker.inspectContainer(name);
+    if (!inspect?.running) return [];
+    const wanted = this.wantedBinds(project);
+    const diffs: string[] = [];
+    const had = readMountsFile(this.deps.env, name);
+    if (had) {
+      for (const d of wanted) if (!had.includes(d)) diffs.push(d);
+      for (const d of had) if (!wanted.includes(d)) diffs.push(`${d} (removed)`);
+    } else {
+      for (const d of wanted) if (!inspect.binds.includes(d)) diffs.push(d);
+    }
+    const haveMaps = inspect.labels[LABELS.tcpMaps] ?? "";
+    const wantMaps = tcpMapsLabel(project.tcpMaps);
+    if (haveMaps !== wantMaps)
+      diffs.push(`TCP maps ${haveMaps || "none"} -> ${wantMaps || "none"}`);
+    if (secretNames) {
+      const haveSecrets = inspect.labels[LABELS.secretNames] ?? "";
+      const wantSecrets = [...secretNames].sort().join(",");
+      if (haveSecrets !== wantSecrets)
+        diffs.push(`secrets ${haveSecrets || "none"} -> ${wantSecrets || "none"}`);
+    }
+    return diffs;
+  }
+
+  /** The environment variable names of the secrets a container of this project gets. */
+  secretNames(project: Project): string[] {
+    const names = new Set(this.deps.settings.get().secretRefs.map((r) => r.name));
+    for (const r of project.secretRefs) names.add(r.name);
+    return [...names].sort();
+  }
+
+  /** Checks the engine image: it must exist and carry the expected engine version. */
+  async checkImage(): Promise<{ image: string; imageId: string }> {
+    const image = this.deps.settings.get().engineImage;
+    const info = await this.deps.docker.inspectImage(image);
+    if (!info) {
+      throw new ApiError("image_missing", `The image ${image} does not exist. Build it first.`, {
+        image,
+      });
+    }
+    const read = await this.deps.imageVersions.read(image);
+    const have = read?.versions.engineVersion ?? null;
+    if (have !== this.deps.engineVersion) {
+      throw new ApiError(
+        "engine_mismatch",
+        `The image ${image} carries engine ${have ?? "(none)"}, but this server needs ${this.deps.engineVersion}. Rebuild the image.`,
+        { image, imageEngineVersion: have, expected: this.deps.engineVersion },
+      );
+    }
+    return { image, imageId: info.id };
+  }
+
+  /** Polls until the container is gone; returns whether it went. */
+  async waitForRemoval(container: string): Promise<boolean> {
+    const deadline = Date.now() + (this.deps.removalTimeoutMs ?? 5000);
+    for (;;) {
+      const inspect = await this.deps.docker.inspectContainer(container);
+      if (!inspect || !inspect.running) {
+        if (inspect) await this.deps.docker.removeContainer(container, { force: true });
+        return true;
+      }
+      if (Date.now() >= deadline) return false;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+  }
+
+  /** Stops the project container and waits until it is gone. */
+  async stopContainer(projectId: string): Promise<void> {
+    const name = projectContainerName(projectId);
+    await this.deps.docker.stopContainer(name, 10);
+    await this.waitForRemoval(name);
+    this.publishContainer(projectId, name, "removed");
+  }
+
+  private publishContainer(projectId: string, container: string, state: ContainerState): void {
+    const endpoint = this.repos.engines.get(projectId);
+    const health = this.deps.hooks().engineHealth(container);
+    this.deps.events.publish({
+      type: "container.changed",
+      container,
+      projectId,
+      state,
+      engine:
+        state === "removed"
+          ? null
+          : {
+              hostPort: endpoint?.hostPort ?? null,
+              version: health.version,
+              healthy: health.healthy,
+              versionMatches:
+                health.version === null ? null : health.version === this.deps.engineVersion,
+            },
+    });
+  }
+
+  /** Reuses the stored engine port when it is still free, else picks a new one. */
+  private async enginePort(projectId: string): Promise<number> {
+    const others = new Set(
+      this.repos.engines
+        .list()
+        .filter((e) => e.projectId !== projectId)
+        .map((e) => e.hostPort),
+    );
+    const stored = this.repos.engines.get(projectId)?.hostPort;
+    const portFree = this.deps.portFree ?? loopbackPortFree;
+    if (stored !== undefined && !others.has(stored) && (await portFree(stored))) return stored;
+    return (this.deps.allocatePort ?? freeLoopbackPort)(others);
+  }
+
+  /**
+   * Makes sure the project container runs (3.3.5 `startShared` minus the
+   * session): checks the image, replaces an idle container whose mounts went
+   * stale or whose image was rebuilt, and creates one when none runs.
+   */
+  async ensureContainer(
+    projectId: string,
+    options: { extraEnv?: Record<string, string> } = {},
+  ): Promise<EnsureContainerResult> {
+    return this.deps.mutex.run(projectId, async () => {
+      const project = this.get(projectId);
+      const { image, imageId } = await this.checkImage();
+      const name = this.containerName(project);
+      const docker = this.deps.docker;
+
+      const inspect = await docker.inspectContainer(name);
+      if (inspect?.running) {
+        const stale = await this.staleDifferences(
+          project,
+          options.extraEnv ? Object.keys(options.extraEnv) : this.secretNames(project),
+        );
+        const idle = liveSessions(this.deps.env, name).length === 0;
+        if (idle && (stale.length > 0 || inspect.imageId !== imageId)) {
+          await docker.stopContainer(name, 10);
+          await this.waitForRemoval(name);
+        } else {
+          return { container: name, created: false, stale };
+        }
+      } else if (inspect) {
+        // Exited but not removed, as after a daemon restart: clear it away.
+        await docker.removeContainer(name, { force: true });
+      }
+
+      // Secrets resolve only when a container is created: they are fixed for its life.
+      const extraEnv = options.extraEnv ?? (await this.deps.hooks().resolveEnv(projectId));
+      const hostPort = await this.enginePort(projectId);
+      const token = crypto.randomBytes(32).toString("hex");
+      const facts = prepareLaunchHost(this.deps.env, { container: name, root: project.root });
+      const spec = buildLaunchSpec(
+        this.deps.env,
+        {
+          container: name,
+          projectId,
+          root: project.root,
+          mounts: project.mounts,
+          globalMounts: this.deps.settings.get().globalMounts,
+          tcpMaps: project.tcpMaps,
+          image,
+          engine: { hostPort, token, version: this.deps.engineVersion },
+          extraEnv,
+          graceSec: this.deps.graceSec,
+        },
+        facts,
+      );
+      const id = await docker.createContainer(spec);
+      try {
+        await docker.startContainer(id);
+      } catch (err) {
+        await docker.removeContainer(id, { force: true }).catch(() => undefined);
+        throw err;
+      }
+      writeMountsFile(this.deps.env, name, this.wantedBinds(project));
+      this.repos.engines.put({ projectId, container: name, hostPort, token }, this.deps.env.now());
+      this.publishContainer(projectId, name, "running");
+      return { container: name, created: true, stale: [] };
+    });
+  }
+}

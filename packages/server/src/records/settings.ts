@@ -1,0 +1,181 @@
+// Global settings: stored in the database, validated by `GlobalSettingsSchema`,
+// and published as `settings.changed` on every change.
+import fs from "node:fs";
+import {
+  DEFAULT_PROMPT_TEMPLATES,
+  GlobalSettingsPatchSchema,
+  GlobalSettingsSchema,
+  MountSchema,
+  PromptTemplatesSchema,
+  SecretRefSchema,
+  parseConfig,
+  type GlobalSettings,
+  type GlobalSettingsPatch,
+  type ModelCache,
+  type Mount,
+  type PromptTemplates,
+  type SecretRef,
+} from "@agentbox/contracts";
+import { z } from "zod";
+import type { SettingsRepo } from "../db/repositories.js";
+import type { HostEnv } from "./env.js";
+import { homePaths } from "./env.js";
+import { ApiError } from "./errors.js";
+import type { CoreEvents } from "./events.js";
+
+function parseOrThrow<T>(schema: z.ZodType<T, z.ZodTypeDef, unknown>, value: unknown): T {
+  const r = schema.safeParse(value);
+  if (!r.success) {
+    throw new ApiError(
+      "validation",
+      r.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "),
+      {
+        issues: r.error.issues,
+      },
+    );
+  }
+  return r.data;
+}
+
+function changedKeys(before: GlobalSettings, after: GlobalSettings): string[] {
+  const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
+  return [...keys].filter(
+    (k) =>
+      JSON.stringify((before as Record<string, unknown>)[k]) !==
+      JSON.stringify((after as Record<string, unknown>)[k]),
+  );
+}
+
+export class SettingsService {
+  constructor(
+    private readonly env: HostEnv,
+    private readonly repo: SettingsRepo,
+    private readonly events: CoreEvents,
+  ) {}
+
+  /**
+   * Seeds the database from `~/.claude-box/config.json` the first time, when
+   * that file exists and no settings were saved yet. Returns whether it did.
+   */
+  seedFromConfigFile(): boolean {
+    if (this.repo.exists()) return false;
+    const file = homePaths(this.env).config;
+    let raw: string;
+    try {
+      raw = fs.readFileSync(file, "utf8");
+    } catch {
+      return false;
+    }
+    this.repo.put(parseConfig(JSON.parse(raw)), this.env.now());
+    return true;
+  }
+
+  get(): GlobalSettings {
+    return this.repo.get();
+  }
+
+  /** Validates and stores `next`, and publishes the keys that changed. */
+  private save(next: GlobalSettings): GlobalSettings {
+    const before = this.repo.get();
+    const saved = this.repo.put(parseOrThrow(GlobalSettingsSchema, next), this.env.now());
+    const keys = changedKeys(before, saved);
+    if (keys.length > 0)
+      this.events.publish({ type: "settings.changed", settings: saved, changedKeys: keys });
+    return saved;
+  }
+
+  /** Applies `PATCH /api/v1/settings`. `null` clears an optional field. */
+  patch(input: GlobalSettingsPatch): GlobalSettings {
+    const p = parseOrThrow(GlobalSettingsPatchSchema, input);
+    const next: GlobalSettings = structuredClone(this.get());
+    if (p.proxyPort !== undefined) {
+      if (p.proxyPort === null) delete next.proxyPort;
+      else next.proxyPort = p.proxyPort;
+    }
+    if (p.engineImage !== undefined) next.engineImage = p.engineImage;
+    if (p.ceilings !== undefined)
+      next.ceilings = { ...next.ceilings, ...stripUndefined(p.ceilings) };
+    if (p.notifications !== undefined) {
+      next.notifications = { ...next.notifications, ...stripUndefined(p.notifications) };
+    }
+    for (const key of ["defaultTargetDir", "sshIdentity"] as const) {
+      const v = p[key];
+      if (v === undefined) continue;
+      if (v === null) delete next[key];
+      else next[key] = v;
+    }
+    return this.save(next);
+  }
+
+  setPromptTemplates(templates: PromptTemplates): GlobalSettings {
+    const t = parseOrThrow(PromptTemplatesSchema, templates);
+    return this.save({ ...this.get(), promptTemplates: t });
+  }
+
+  /** The built-in prompt templates, for Reset to default. */
+  defaultPromptTemplates(): PromptTemplates {
+    return { ...DEFAULT_PROMPT_TEMPLATES };
+  }
+
+  /** Replaces the global mounts. Every host directory must exist. */
+  setGlobalMounts(mounts: Mount[]): GlobalSettings {
+    const list = parseOrThrow(z.array(MountSchema), mounts);
+    const missing = list.filter((m) => !isDirectory(m.host)).map((m) => m.host);
+    if (missing.length > 0) {
+      throw new ApiError(
+        "validation",
+        `These host directories do not exist: ${missing.join(", ")}.`,
+        {
+          missing,
+        },
+      );
+    }
+    return this.save({ ...this.get(), globalMounts: list });
+  }
+
+  setSecretRefs(refs: SecretRef[]): GlobalSettings {
+    const list = parseOrThrow(z.array(SecretRefSchema), refs);
+    assertUniqueNames(list);
+    return this.save({ ...this.get(), secretRefs: list });
+  }
+
+  completeSetup(defaultTargetDir?: string): GlobalSettings {
+    const next = { ...this.get(), setupCompleted: true };
+    if (defaultTargetDir !== undefined) next.defaultTargetDir = defaultTargetDir;
+    return this.save(next);
+  }
+
+  setModelCache(cache: ModelCache): GlobalSettings {
+    return this.save({ ...this.get(), modelCache: cache });
+  }
+
+  /** Remembers the New Box layout choice for a directory. */
+  rememberLayout(dir: string, choice: { workspace: boolean; worktree?: boolean }): GlobalSettings {
+    const s = this.get();
+    const defaults = structuredClone(s.newBoxDefaults);
+    defaults.workspaceDirs[dir] = choice.workspace;
+    if (choice.worktree !== undefined) defaults.worktreeDirs[dir] = choice.worktree;
+    return this.save({ ...s, newBoxDefaults: defaults });
+  }
+}
+
+function stripUndefined<T extends object>(o: T): Partial<T> {
+  return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as Partial<T>;
+}
+
+function isDirectory(p: string): boolean {
+  try {
+    return fs.statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/** Refuses two references that set the same environment variable. */
+export function assertUniqueNames(refs: readonly SecretRef[]): void {
+  const seen = new Set<string>();
+  for (const r of refs) {
+    if (seen.has(r.name)) throw new ApiError("validation", `The secret ${r.name} is listed twice.`);
+    seen.add(r.name);
+  }
+}
