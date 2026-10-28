@@ -21,8 +21,9 @@ export function mountProblems(mounts: readonly Mount[]): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
   for (const m of mounts) {
-    if (!m.host.startsWith("/") && !m.host.startsWith("~"))
-      out.push(`${m.host}: the host path must be absolute.`);
+    // The server doesn't expand `~`, so only an absolute path works.
+    if (!m.host.startsWith("/"))
+      out.push(`${m.host}: the host path must be absolute, such as /home/you/data.`);
     if (!m.container.startsWith("/")) out.push(`${m.container}: the box path must be absolute.`);
     if (seen.has(m.container)) out.push(`${m.container}: two mounts use this box path.`);
     seen.add(m.container);

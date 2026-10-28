@@ -167,6 +167,7 @@ describe("new box form", () => {
   it("needs a directory and, for a worktree or workspace, a name", () => {
     expect(validateForm({ ...base, targetDir: "" }, "new")).toEqual(["Choose a target directory."]);
     expect(validateForm({ ...base, targetDir: "rel/dir" }, "new")[0]).toMatch(/absolute/);
+    expect(validateForm({ ...base, targetDir: "~/src/app" }, "new")[0]).toMatch(/absolute/);
     expect(validateForm({ ...base, layout: "worktree", name: "!!" }, "new")[0]).toMatch(
       /worktree is named/,
     );
@@ -283,6 +284,7 @@ describe("mounts and ports", () => {
   });
   it("flags relative paths and repeated box paths", () => {
     expect(mountProblems([{ host: "a", container: "/a" }])[0]).toMatch(/absolute/);
+    expect(mountProblems([{ host: "~/data", container: "/data" }])[0]).toMatch(/absolute/);
     expect(parseMountText("/a:/x\n/b:/x").problems[0]).toMatch(/two mounts/);
   });
   it("checks TCP maps and mirrors an empty box port", () => {

@@ -106,8 +106,9 @@ export function validateForm(form: BoxForm, mode: DialogMode): string[] {
   const out: string[] = [];
   if (mode !== "edit") {
     if (form.targetDir.trim() === "") out.push("Choose a target directory.");
-    else if (!form.targetDir.trim().startsWith("/") && !form.targetDir.trim().startsWith("~")) {
-      out.push("The target directory must be an absolute path.");
+    else if (!form.targetDir.trim().startsWith("/")) {
+      // The server doesn't expand `~`.
+      out.push("The target directory must be an absolute path, such as /home/you/project.");
     }
     if ((form.layout === "worktree" || form.layout === "workspace") && slugify(form.name) === "") {
       out.push(
