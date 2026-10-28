@@ -1,0 +1,285 @@
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { DEFAULT_CEILINGS, UsageSampleSchema } from "@agentbox/contracts";
+import { describe, expect, it } from "vitest";
+import { z } from "zod";
+import {
+  ClaudeAdapter,
+  ClaudeStreamParser,
+  claudeAccount,
+  claudeTokens,
+} from "../../src/adapters/claude.js";
+import { VendorFindingsOutputSchema } from "../../src/adapters/output.js";
+import type { AdapterError } from "../../src/adapters/types.js";
+import { type AdapterRequest } from "../../src/adapters/types.js";
+import { fixture, lines } from "./helpers.js";
+
+const ceiling = DEFAULT_CEILINGS.claude;
+const adapter = new ClaudeAdapter({ account: "user@example.com", bare: false });
+
+function req<T>(
+  schema: z.ZodType<T, z.ZodTypeDef, unknown>,
+  extra: Partial<AdapterRequest<T>> = {},
+): AdapterRequest<T> {
+  return {
+    prompt: "p",
+    cwd: "/work",
+    tools: "read-only",
+    timeoutMs: 1000,
+    outputSchema: schema,
+    ...extra,
+  };
+}
+
+function replay(name: string) {
+  const parser = new ClaudeStreamParser("user@example.com", ceiling);
+  const raw = fixture(name);
+  for (const line of lines(raw)) parser.push(line);
+  return { summary: parser.summary(), raw };
+}
+
+describe("ClaudeStreamParser on recorded output", () => {
+  it("reads the session, model, and both rate-limit windows", () => {
+    const { summary } = replay("claude-real-review.jsonl");
+    expect(summary.sessionId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(summary.model).toBe("claude-haiku-5-5");
+    expect(summary.samples.map((s) => s.window).sort()).toEqual(["5h", "7d"]);
+    for (const sample of summary.samples) {
+      expect(UsageSampleSchema.parse(sample)).toEqual(sample);
+      expect(sample.source).toBe("rate_limit_event");
+      expect(sample.resetAt).toMatch(/Z$/);
+    }
+    expect(summary.result?.type).toBe("result");
+    expect(summary.badLines).toBe(0);
+  });
+
+  it("records the API error of a not-logged-in run", () => {
+    const { summary } = replay("claude-real-not-logged-in.jsonl");
+    expect(summary.apiError).toBe("authentication_failed");
+    expect(summary.apiErrorText).toMatch(/Not logged in/);
+  });
+
+  it("marks a rejected rate_limit_event as a usage limit", () => {
+    const parser = new ClaudeStreamParser("a", ceiling);
+    const samples = parser.push(
+      JSON.stringify({
+        type: "rate_limit_event",
+        rate_limit_info: {
+          status: "rejected",
+          resetsAt: 1793166000,
+          rateLimitType: "five_hour",
+          utilization: 1.0,
+        },
+      }),
+    );
+    expect(samples).toHaveLength(1);
+    expect(samples[0]).toMatchObject({
+      window: "5h",
+      utilization: 1,
+      resetAt: "2026-10-28T05:40:00.000Z",
+    });
+    expect(parser.summary().rejected).toMatchObject({
+      kind: "usage_limit",
+      resetAt: "2026-10-28T05:40:00.000Z",
+    });
+  });
+
+  it("counts lines that aren't JSON", () => {
+    const parser = new ClaudeStreamParser("a", ceiling);
+    parser.push("not json");
+    parser.push("42");
+    expect(parser.summary().badLines).toBe(2);
+  });
+});
+
+describe("ClaudeAdapter.interpret", () => {
+  it("returns structured findings, tokens, cost, and usage from a real review", () => {
+    const { summary, raw } = replay("claude-real-review.jsonl");
+    const result = adapter.interpret(req(VendorFindingsOutputSchema), summary, raw, "", 0, 10);
+    expect(result.output.findings[0]).toMatchObject({
+      file: "a.ts",
+      severity: "nit",
+      verdict: "pending",
+    });
+    expect(result.tokens.input).toBeGreaterThan(0);
+    expect(result.tokens.output).toBeGreaterThan(0);
+    expect(result.costUsd).toBeGreaterThan(0);
+    expect(result.model).toBe("claude-haiku-5-5");
+    expect(result.premiumRequests).toBe(0);
+    expect(result.usage).toHaveLength(2);
+  });
+
+  it("parses a real fix run", () => {
+    const { summary, raw } = replay("claude-real-fix.jsonl");
+    const result = adapter.interpret(
+      req(z.object({ done: z.boolean() }), { tools: "write" }),
+      summary,
+      raw,
+      "",
+      0,
+      10,
+    );
+    expect(result.output.done).toBe(true);
+  });
+
+  it("rejects structured output that misses the schema", () => {
+    const { summary, raw } = replay("claude-real-structured.jsonl");
+    try {
+      adapter.interpret(req(VendorFindingsOutputSchema), summary, raw, "", 0, 10);
+      expect.unreachable();
+    } catch (err) {
+      expect((err as AdapterError).kind).toBe("output");
+      expect((err as AdapterError).sessionId).toBe(summary.sessionId);
+    }
+  });
+
+  it("reports max turns as a process error", () => {
+    const { summary, raw } = replay("claude-real-max-turns.jsonl");
+    expect(() =>
+      adapter.interpret(req(VendorFindingsOutputSchema), summary, raw, "", 1, 10),
+    ).toThrow(/error_max_turns/);
+  });
+
+  it("reports a missing sign-in as an auth error", () => {
+    const { summary, raw } = replay("claude-real-not-logged-in.jsonl");
+    try {
+      adapter.interpret(req(VendorFindingsOutputSchema), summary, raw, "", 1, 10);
+      expect.unreachable();
+    } catch (err) {
+      expect((err as AdapterError).kind).toBe("auth");
+    }
+  });
+
+  it("reports a usage limit from the API error text", () => {
+    const parser = new ClaudeStreamParser("a", ceiling);
+    parser.push(
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          model: "<synthetic>",
+          content: [{ type: "text", text: "Claude AI usage limit reached|1793166000" }],
+        },
+        error: "rate_limit",
+      }),
+    );
+    parser.push(
+      JSON.stringify({
+        type: "result",
+        subtype: "success",
+        is_error: true,
+        result: "Claude AI usage limit reached|1793166000",
+      }),
+    );
+    try {
+      adapter.interpret(req(VendorFindingsOutputSchema), parser.summary(), "", "", 1, 10);
+      expect.unreachable();
+    } catch (err) {
+      const e = err as AdapterError;
+      expect(e.kind).toBe("limit");
+      expect(e.limit).toMatchObject({ kind: "usage_limit", resetAt: "2026-10-28T05:40:00.000Z" });
+      expect(adapter.detectLimit(e)).toBe(e.limit);
+    }
+  });
+
+  it("falls back to JSON in the result text", () => {
+    const parser = new ClaudeStreamParser("a", ceiling);
+    parser.push(
+      JSON.stringify({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        result: 'Sure: {"done":true}',
+        session_id: "s",
+      }),
+    );
+    const result = adapter.interpret(
+      req(z.object({ done: z.boolean() })),
+      parser.summary(),
+      "",
+      "",
+      0,
+      1,
+    );
+    expect(result.output.done).toBe(true);
+    expect(result.sessionId).toBe("s");
+  });
+
+  it("reports a missing result line", () => {
+    const parser = new ClaudeStreamParser("a", ceiling);
+    expect(() => adapter.interpret(req(z.object({})), parser.summary(), "", "boom", 1, 1)).toThrow(
+      /no result line/,
+    );
+  });
+});
+
+describe("ClaudeAdapter.buildArgs", () => {
+  it("builds a read-only review", () => {
+    const args = adapter.buildArgs(
+      req(VendorFindingsOutputSchema, {
+        model: "opus",
+        effort: "medium",
+        maxTurns: 5,
+        maxBudgetUsd: 2,
+        systemPrompt: "S",
+      }),
+    );
+    expect(args.slice(0, 4)).toEqual(["-p", "--output-format", "stream-json", "--verbose"]);
+    expect(args).not.toContain("--bare");
+    expect(args).toEqual(
+      expect.arrayContaining([
+        "--model",
+        "opus",
+        "--effort",
+        "medium",
+        "--max-turns",
+        "5",
+        "--max-budget-usd",
+        "2",
+      ]),
+    );
+    expect(args[args.indexOf("--append-system-prompt") + 1]).toBe("S");
+    expect(args[args.indexOf("--permission-mode") + 1]).toBe("dontAsk");
+    expect(args[args.indexOf("--tools") + 1]).toBe("Read,Grep,Glob,Bash");
+    expect(args[args.indexOf("--disallowedTools") + 1]).toBe("Edit,Write,NotebookEdit");
+    expect(JSON.parse(args[args.indexOf("--json-schema") + 1]!)).toHaveProperty(
+      "properties.findings",
+    );
+    expect(args).not.toContain("--resume");
+  });
+
+  it("builds a write call with bypass permissions and resume", () => {
+    const args = adapter.buildArgs(req(z.object({}), { tools: "write", sessionId: "abc" }));
+    expect(args[args.indexOf("--permission-mode") + 1]).toBe("bypassPermissions");
+    expect(args[args.indexOf("--resume") + 1]).toBe("abc");
+    expect(args).not.toContain("--tools");
+  });
+
+  it("adds --bare when asked", () => {
+    expect(new ClaudeAdapter({ bare: true }).buildArgs(req(z.object({})))).toContain("--bare");
+  });
+});
+
+describe("claudeTokens", () => {
+  it("falls back to the usage block without modelUsage", () => {
+    expect(
+      claudeTokens(
+        { usage: { input_tokens: 2, cache_read_input_tokens: 3, output_tokens: 4 } },
+        "m",
+      ),
+    ).toEqual({
+      tokens: { input: 5, output: 4 },
+      model: "m",
+    });
+  });
+});
+
+describe("claudeAccount", () => {
+  it("reads the OAuth email and tolerates a missing file", () => {
+    const dir = mkdtempSync(join(tmpdir(), "agentbox-acct-"));
+    const file = join(dir, "claude.json");
+    writeFileSync(file, JSON.stringify({ oauthAccount: { emailAddress: "user@example.com" } }));
+    expect(claudeAccount(file)).toBe("user@example.com");
+    expect(claudeAccount(join(dir, "missing.json"))).toBeNull();
+  });
+});

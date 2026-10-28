@@ -1,0 +1,216 @@
+#!/usr/bin/env node
+// A stand-in for `codex exec --json`, driven by MOCK_CLI_SCENARIO. See README.md.
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import {
+  answerText,
+  loadScenario,
+  logCall,
+  newId,
+  pickResponse,
+  readStdin,
+  sleep,
+  writeFiles,
+} from "../lib/scenario.mjs";
+
+const VALUE_FLAGS = new Set([
+  "-m",
+  "--model",
+  "-s",
+  "--sandbox",
+  "-C",
+  "--cd",
+  "--output-schema",
+  "-o",
+  "--output-last-message",
+  "-c",
+  "--config",
+  "-p",
+  "--profile",
+  "-i",
+  "--image",
+  "--add-dir",
+  "--color",
+]);
+const BOOL_FLAGS = new Set([
+  "--json",
+  "--experimental-json",
+  "--skip-git-repo-check",
+  "--ephemeral",
+  "--dangerously-bypass-approvals-and-sandbox",
+  "--yolo",
+  "--last",
+  "--all",
+  "--oss",
+]);
+
+const argv = process.argv.slice(2);
+if (argv.includes("--version") || argv.includes("-V")) {
+  console.log("codex-cli 0.0.0-mock");
+  process.exit(0);
+}
+if (argv.includes("--full-auto")) {
+  console.error("error: unexpected argument '--full-auto' found");
+  process.exit(2);
+}
+if (argv[0] !== "exec") {
+  console.error("mock codex: only `codex exec` is supported");
+  process.exit(2);
+}
+
+const flags = {};
+const positionals = [];
+for (let i = 1; i < argv.length; i += 1) {
+  const arg = argv[i];
+  if (VALUE_FLAGS.has(arg)) {
+    flags[arg] = [...(flags[arg] ?? []), argv[i + 1]];
+    i += 1;
+  } else if (BOOL_FLAGS.has(arg)) {
+    flags[arg] = true;
+  } else if (arg.startsWith("-") && arg !== "-") {
+    console.error(`error: unexpected argument '${arg}' found`);
+    process.exit(2);
+  } else {
+    positionals.push(arg);
+  }
+}
+
+let resumeId = null;
+if (positionals[0] === "resume") {
+  positionals.shift();
+  if (!flags["--last"]) resumeId = positionals.shift() ?? null;
+}
+const promptArg = positionals[0];
+const prompt = promptArg === undefined || promptArg === "-" ? readStdin() : promptArg;
+const json = Boolean(flags["--json"] || flags["--experimental-json"]);
+const model = (flags["-m"] ?? flags["--model"])?.at(-1) ?? "gpt-5.3-codex";
+const sandbox = (flags["-s"] ?? flags["--sandbox"])?.at(-1) ?? "read-only";
+const bypass = Boolean(flags["--dangerously-bypass-approvals-and-sandbox"] || flags["--yolo"]);
+
+const schemaFile = flags["--output-schema"]?.at(-1);
+if (schemaFile) {
+  const schema = JSON.parse(readFileSync(schemaFile, "utf8"));
+  if (schema.type === "object" && schema.additionalProperties !== false) {
+    console.error(
+      "mock codex: --output-schema must set additionalProperties to false (strict mode)",
+    );
+    process.exit(1);
+  }
+}
+
+const scenario = loadScenario("codex");
+const picked = pickResponse("codex", scenario, prompt);
+logCall("codex", {
+  argv,
+  prompt,
+  responseIndex: picked?.index ?? -1,
+  resumeId,
+  sandbox,
+  bypass,
+  model,
+});
+
+const threadId = resumeId ?? picked?.response.sessionId ?? newId();
+const emit = (event) => json && process.stdout.write(`${JSON.stringify(event)}\n`);
+
+emit({ type: "thread.started", thread_id: threadId });
+emit({ type: "turn.started" });
+
+if (!picked) {
+  emit({ type: "error", message: "mock codex: the scenario has no response for this prompt" });
+  process.exit(1);
+}
+const response = picked.response;
+if (response.delayMs) await sleep(response.delayMs);
+if (response.stderr) process.stderr.write(response.stderr);
+
+if (response.rateLimits && process.env.CODEX_HOME)
+  writeRollout(process.env.CODEX_HOME, threadId, response);
+
+const failures = {
+  usage_limit: "You’ve hit your usage limit. Try again at 3:15 PM.",
+  rate_limit: "exceeded retry limit, last status: 429 Too Many Requests",
+  auth: "401 Unauthorized: Your access token could not be refreshed. Please log in again.",
+  crash: "stream disconnected before completion",
+};
+if (response.error) {
+  const message = response.errorMessage ?? failures[response.error] ?? response.error;
+  emit({ type: "turn.failed", error: { message } });
+  if (!json) console.error(`ERROR: ${message}`);
+  process.exit(response.exitCode ?? 1);
+}
+
+if ((sandbox !== "read-only" || bypass) && response.writeFiles) {
+  writeFiles(response);
+  emit({
+    type: "item.completed",
+    item: {
+      id: "item_0",
+      type: "file_change",
+      changes: Object.keys(response.writeFiles).map((path) => ({ path, kind: "update" })),
+      status: "completed",
+    },
+  });
+}
+
+const text = answerText(response);
+emit({
+  type: "item.completed",
+  item: { id: "item_1", type: "reasoning", text: "Reviewing the change." },
+});
+emit({ type: "item.completed", item: { id: "item_2", type: "agent_message", text } });
+const tokens = response.tokens ?? { input: 1200, output: 80 };
+emit({
+  type: "turn.completed",
+  usage: {
+    input_tokens: tokens.input,
+    cached_input_tokens: 0,
+    output_tokens: tokens.output,
+    reasoning_output_tokens: 0,
+  },
+});
+const outFile = (flags["-o"] ?? flags["--output-last-message"])?.at(-1);
+if (outFile) writeFileSync(outFile, text);
+if (!json) process.stdout.write(`${text}\n`);
+process.exit(response.exitCode ?? 0);
+
+function writeRollout(home, thread, r) {
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  const dir = join(
+    home,
+    "sessions",
+    String(now.getFullYear()),
+    pad(now.getMonth() + 1),
+    pad(now.getDate()),
+  );
+  mkdirSync(dir, { recursive: true });
+  const stamp = now.toISOString().slice(0, 19).replace(/:/g, "-");
+  const window = (w, minutes) =>
+    w === undefined
+      ? null
+      : {
+          used_percent: w.usedPercent ?? w,
+          window_minutes: w.windowMinutes ?? minutes,
+          resets_at: w.resetsAt ?? Math.floor(now.getTime() / 1000) + minutes * 60,
+        };
+  const line = {
+    timestamp: now.toISOString(),
+    type: "event_msg",
+    payload: {
+      type: "token_count",
+      info: null,
+      rate_limits: {
+        limit_id: "codex",
+        primary: window(r.rateLimits.primary, 300),
+        secondary: window(r.rateLimits.secondary, 10080),
+        credits: null,
+        plan_type: "pro",
+      },
+    },
+  };
+  writeFileSync(join(dir, `rollout-${stamp}-${thread}.jsonl`), `${JSON.stringify(line)}\n`, {
+    flag: "a",
+  });
+}
