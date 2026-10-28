@@ -1,6 +1,6 @@
 // An in-memory `Core` for the API tests. It keeps projects, boxes, settings,
 // and SSH remotes in maps and records every call.
-import Database from "better-sqlite3";
+import { openDatabase } from "../../src/db/index.js";
 import {
   parseConfig,
   type Box,
@@ -9,7 +9,7 @@ import {
   type SshRemote,
 } from "@agentbox/contracts";
 import type { Core, EngineEndpoint } from "../../src/api/core-interface.js";
-import { ApiFailure } from "../../src/api/errors.js";
+import { ApiError } from "../../src/api/errors.js";
 import {
   CONTAINER,
   T1,
@@ -31,7 +31,7 @@ export interface FakeCore extends Core {
 }
 
 function notFound(what: string): never {
-  throw new ApiFailure("not_found", `No ${what}.`);
+  throw new ApiError("not_found", `No ${what}.`);
 }
 
 export function createFakeCore(): FakeCore {
@@ -51,7 +51,7 @@ export function createFakeCore(): FakeCore {
     get settingsValue() {
       return state.settings;
     },
-    db: new Database(":memory:"),
+    db: openDatabase(":memory:"),
     docker: {
       api: {} as Core["docker"]["api"],
       ping: async () => true,
@@ -73,7 +73,7 @@ export function createFakeCore(): FakeCore {
       list: async () => [projectSummary],
       create: async (input) => {
         record("projects.create");
-        if (input.root === project.root) throw new ApiFailure("conflict", "Already a project.");
+        if (input.root === project.root) throw new ApiError("conflict", "Already a project.");
         return { ...project, root: input.root, name: input.name ?? "new" };
       },
       get: async (id) => (id === project.id ? projectSummary : notFound(`project ${id}`)),
@@ -95,7 +95,7 @@ export function createFakeCore(): FakeCore {
       validateCreate: async (input) => {
         record("boxes.validateCreate");
         if (input.conversation.mode === "adopt" && input.conversation.sessionUuid === UUID) {
-          throw new ApiFailure("adoption_refused", "A running box holds that session.");
+          throw new ApiError("adoption_refused", "A running box holds that session.");
         }
       },
       create: async (input, log) => {
@@ -118,13 +118,13 @@ export function createFakeCore(): FakeCore {
       }),
       start: async (id, options) => {
         if (options?.force) record(`start:force:${id}`);
-        if (view(id).status === "running") throw new ApiFailure("box_running", "Already running.");
+        if (view(id).status === "running") throw new ApiError("box_running", "Already running.");
         return { ...view(id), status: "starting" };
       },
       stop: async (id) => ({ ...view(id), status: "stopping" }),
       restart: async (id) => view(id),
       remove: async (id) => {
-        if (view(id).status === "running") throw new ApiFailure("box_running", "Stop it first.");
+        if (view(id).status === "running") throw new ApiError("box_running", "Stop it first.");
         views.delete(id);
         return { removed: true, worktree: "none", reason: null };
       },
@@ -184,7 +184,7 @@ export function createFakeCore(): FakeCore {
         source: "baseline",
       }),
       rescan: async () => {
-        throw new ApiFailure("image_missing", "Build the image first.");
+        throw new ApiError("image_missing", "Build the image first.");
       },
     },
     settings: {
@@ -215,7 +215,7 @@ export function createFakeCore(): FakeCore {
       get: async (name) => remotes.get(name) ?? notFound(`remote ${name}`),
       put: async (name, remote) => {
         if (remote.name !== name && remotes.has(remote.name))
-          throw new ApiFailure("conflict", "Taken.");
+          throw new ApiError("conflict", "Taken.");
         remotes.delete(name);
         remotes.set(remote.name, remote);
         return remote;

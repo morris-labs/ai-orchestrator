@@ -51,7 +51,6 @@ export function makeHarness(options: { image?: boolean; engineLabel?: string } =
     env,
     dbPath: ":memory:",
     docker,
-    imageContext: path.join(home, "image"),
     allocatePort: async (exclude) => {
       while (exclude.has(nextPort)) nextPort += 1;
       return nextPort++;

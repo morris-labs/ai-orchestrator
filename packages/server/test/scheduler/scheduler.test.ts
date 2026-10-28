@@ -118,6 +118,24 @@ describe("Scheduler", () => {
     expect(await t.scheduler.decide("e", "p", req)).toMatchObject({ vendor: "copilot" });
   });
 
+  it("answers a repeated leaseId afresh once its grant or pause has expired", async () => {
+    const t = make();
+    t.sample("codex", { utilization: 0.1 });
+    const req = t.req();
+    const first = await t.scheduler.decide("e", "p", req);
+    expect(first).toMatchObject({ decision: "granted", vendor: "codex" });
+    t.sample("codex", { utilization: 0.9 });
+    t.clock.now += 11 * MIN;
+    expect(await t.scheduler.decide("e", "p", req)).toMatchObject({ vendor: "copilot" });
+
+    t.sample("claude", { utilization: 0.95, resetAt: iso(t.clock.now + 5 * MIN) });
+    const fix = t.req({ vendor: "claude", role: "fixer" });
+    expect(await t.scheduler.decide("e", "p", fix)).toMatchObject({ decision: "pause" });
+    t.clock.now += 6 * MIN;
+    t.sample("claude", { utilization: 0.1, resetAt: null });
+    expect(await t.scheduler.decide("e", "p", fix)).toMatchObject({ decision: "granted" });
+  });
+
   it("applies the project's ceiling override", async () => {
     const t = make({ codex: { kind: "utilization", window: "5h", max: 0.2 } });
     t.sample("codex", { utilization: 0.3 });

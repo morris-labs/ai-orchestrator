@@ -21,33 +21,9 @@ export const ACTIVE_RUN_STATUSES: readonly RunStatus[] = [
   "waiting_decision",
 ];
 
-const SCHEMA = `
-CREATE TABLE IF NOT EXISTS svc_runs (
-  id TEXT PRIMARY KEY,
-  project_id TEXT NOT NULL,
-  box_id TEXT,
-  container TEXT NOT NULL,
-  status TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  json TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS svc_runs_box ON svc_runs (box_id, status);
-CREATE TABLE IF NOT EXISTS svc_findings (
-  run_id TEXT NOT NULL,
-  finding_id TEXT NOT NULL,
-  round INTEGER NOT NULL,
-  verdict TEXT NOT NULL,
-  severity TEXT NOT NULL,
-  json TEXT NOT NULL,
-  PRIMARY KEY (run_id, finding_id)
-);
-`;
-
 export class RunMirror {
-  constructor(private readonly db: SqlDatabase) {
-    db.exec(SCHEMA);
-  }
+  /** `db` comes from `openDatabase()`, whose migrations create its tables. */
+  constructor(private readonly db: SqlDatabase) {}
 
   /** Stores a run unless the mirror already has a newer state of it. */
   upsert(run: RunState): void {
@@ -96,6 +72,17 @@ export class RunMirror {
         finding.severity,
         JSON.stringify(finding),
       );
+  }
+
+  /** Replaces every mirrored finding of a run, as after an engine resync. */
+  replaceFindings(runId: string, findings: readonly Finding[]): void {
+    const run = () => {
+      this.db.prepare("DELETE FROM svc_findings WHERE run_id = ?").run(runId);
+      for (const f of findings) this.upsertFinding(f);
+    };
+    const db = this.db as unknown as { transaction?: (fn: () => void) => () => void };
+    if (typeof db.transaction === "function") db.transaction(run)();
+    else run();
   }
 
   /** The mirrored findings of a run, by id. */

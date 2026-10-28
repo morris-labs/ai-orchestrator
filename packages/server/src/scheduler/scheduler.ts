@@ -61,17 +61,39 @@ export class Scheduler {
     return this.opts.now?.() ?? new Date();
   }
 
-  /** Answers a lease request. A repeated `leaseId` from one engine gets the same answer. */
+  /** A cached answer, or `undefined` when there is none or its time has passed. */
+  private cached(key: string): LeaseResponse | undefined {
+    const hit = this.cache.get(key);
+    if (!hit) return undefined;
+    const until =
+      hit.decision === "granted"
+        ? hit.expiresAt
+        : hit.decision === "pause"
+          ? hit.resumeAt
+          : undefined;
+    if (until !== undefined && Date.parse(until) <= this.now().getTime()) {
+      // A run that resumed from a checkpoint can repeat a lease id; it gets
+      // a fresh answer against current usage, not a stale grant or pause.
+      this.cache.delete(key);
+      return undefined;
+    }
+    return hit;
+  }
+
+  /**
+   * Answers a lease request. A repeated `leaseId` from one engine gets the
+   * same answer until the answer's `expiresAt` or `resumeAt` passes.
+   */
   async decide(engineKey: string, projectId: string, req: LeaseRequest): Promise<LeaseResponse> {
     const key = `${engineKey}\u0000${req.leaseId}`;
-    const cached = this.cache.get(key);
+    const cached = this.cached(key);
     if (cached) return cached;
     const ceilings = mergeCeilings(
       this.opts.settings().ceilings,
       await this.opts.projectCeilings(projectId),
     );
     // Another call may have answered the same lease while this one waited.
-    const raced = this.cache.get(key);
+    const raced = this.cached(key);
     if (raced) return raced;
     const response = this.compute(req, ceilings);
     this.cache.set(key, response);

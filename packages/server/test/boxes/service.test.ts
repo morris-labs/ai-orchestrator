@@ -90,6 +90,16 @@ describe("create", () => {
     expect(second.hostKey).toBe("app-example-com-2");
   });
 
+  it("keeps host keys unique across projects", async () => {
+    const h = makeHarness();
+    h.core.settings.setPromptTemplates({ ...DEFAULT_PROMPT_TEMPLATES, starter: "" });
+    const a = await h.core.boxes.create({ targetDir: h.dir("x", "api.v2"), layout: "root" });
+    const b = await h.core.boxes.create({ targetDir: h.dir("y", "api-v2"), layout: "root" });
+    expect(a.projectId).not.toBe(b.projectId);
+    expect(a.hostKey).toBe("api-v2");
+    expect(b.hostKey).toBe("api-v2-2");
+  });
+
   it("provisions a workspace subfolder and names everything after the slug", async () => {
     const h = makeHarness();
     const dir = h.dir("app");
@@ -143,6 +153,33 @@ describe("create", () => {
     ).rejects.toMatchObject({ code: "conflict" });
     expect(fs.existsSync(path.join(repo, ".worktrees", "Broken"))).toBe(false);
     expect(h.core.db.boxes.list().map((b) => b.id)).toEqual([box.id]);
+  });
+
+  it("gives two concurrent creates of one name separate boxes and keeps the worktree", async () => {
+    const h = makeHarness();
+    const repo = initRepo(h.dir("repo"));
+    const req = { targetDir: repo, layout: "worktree" as const, conversationName: "Fix login" };
+    const results = await Promise.allSettled([h.core.boxes.create(req), h.core.boxes.create(req)]);
+    expect(results.map((r) => r.status)).toEqual(["fulfilled", "fulfilled"]);
+    const [a, b] = results.map((r) => (r as PromiseFulfilledResult<Box>).value) as [Box, Box];
+    expect(new Set([a.id, b.id]).size).toBe(2);
+    expect(
+      h.core.db.boxes
+        .list()
+        .map((x) => x.id)
+        .sort(),
+    ).toEqual([a.id, b.id].sort());
+    expect(a.worktree).toBe(b.worktree);
+    expect(fs.existsSync(a.worktree!)).toBe(true);
+  });
+
+  it("removes the record of a create whose start fails", async () => {
+    const h = makeHarness();
+    h.docker.failingCommands = ["claude"];
+    await expect(
+      h.core.boxes.create({ targetDir: h.dir("app"), layout: "root" }),
+    ).rejects.toMatchObject({ code: "conflict" });
+    expect(h.core.db.boxes.list()).toEqual([]);
   });
 
   it("refuses a worktree without a repository and falls back for auto", async () => {
@@ -477,6 +514,63 @@ describe("start, stop, restart", () => {
     await expect(h.core.boxes.start(b.id)).resolves.toMatchObject({ wasRunning: true });
   });
 
+  it("refuses to start a box whose conversation a running box holds", async () => {
+    const h = makeHarness();
+    const a = await stopped(h);
+    h.transcript(a.targetDir, a.sessionUuid!);
+    const b = await h.core.boxes.create({
+      targetDir: a.targetDir,
+      layout: "root",
+      conversation: { mode: "adopt", sessionUuid: a.sessionUuid! },
+      force: true,
+      start: false,
+    });
+    expect(b.sessionUuid).toBe(a.sessionUuid);
+    await h.core.boxes.start(a.id);
+    await expect(h.core.boxes.start(b.id)).rejects.toMatchObject({ code: "adoption_refused" });
+    expect(h.core.boxes.status(h.core.boxes.get(b.id))).toBe("stopped");
+  });
+
+  it("keeps an edit made while the box starts", async () => {
+    const h = makeHarness();
+    const box = await stopped(h, { model: "claude-opus-5-5" });
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    h.docker.beforeExec = async (_c, options) => {
+      if (options.cmd[0] === START_SESSION_PATH) await held;
+    };
+    const starting = h.core.boxes.start(box.id);
+    await expect.poll(() => h.core.boxes.status(h.core.boxes.get(box.id))).toBe("starting");
+    await h.core.boxes.update(box.id, { model: "claude-sonnet-5-5", conversationName: "Edited" });
+    release();
+    const started = await starting;
+    expect(started).toMatchObject({
+      model: "claude-sonnet-5-5",
+      conversationName: "Edited",
+      launchedModel: "claude-opus-5-5",
+      wasRunning: true,
+    });
+    expect(h.core.boxes.get(box.id).model).toBe("claude-sonnet-5-5");
+  });
+
+  it("makes a new container when the reused one leaves before the exec", async () => {
+    const h = makeHarness();
+    const box = await stopped(h);
+    const created = h.docker.callsOf("createContainer").length;
+    expect(h.docker.containers.get(box.container)?.running).toBe(true);
+    let first = true;
+    h.docker.beforeExec = async (container, options) => {
+      if (first && options.cmd[0] === START_SESSION_PATH) {
+        first = false;
+        // The idle keeper reaches its grace limit; AutoRemove deletes it.
+        h.docker.expireIdle(container);
+      }
+    };
+    await expect(h.core.boxes.start(box.id)).resolves.toMatchObject({ wasRunning: true });
+    expect(h.docker.callsOf("createContainer").length).toBe(created + 1);
+    expect(h.core.boxes.status(h.core.boxes.get(box.id))).toBe("running");
+  });
+
   it("starts despite stale mounts with force", async () => {
     const h = makeHarness();
     const dir = h.dir("app");
@@ -576,6 +670,29 @@ describe("remove and purge", () => {
   });
 });
 
+describe("purge and move during a start", () => {
+  it("refuses while a box of the directory is starting", async () => {
+    const h = makeHarness();
+    const dir = h.dir("app");
+    const a = await h.core.boxes.create({ targetDir: dir, layout: "root" });
+    await h.core.boxes.stop(a.id);
+    const b = await h.core.boxes.create({ targetDir: dir, layout: "root", start: false });
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    h.docker.beforeExec = async (_c, options) => {
+      if (options.cmd[0] === START_SESSION_PATH) await held;
+    };
+    const starting = h.core.boxes.start(b.id);
+    await expect.poll(() => h.core.boxes.status(h.core.boxes.get(b.id))).toBe("starting");
+    await expect(h.core.boxes.purge(a.id)).rejects.toMatchObject({ code: "box_running" });
+    await expect(h.core.boxes.move(a.id, path.join(h.home, "moved"))).rejects.toMatchObject({
+      code: "box_running",
+    });
+    release();
+    await starting;
+  });
+});
+
 describe("move and relink", () => {
   it("moves the directory, its transcripts, every record, and the project settings", async () => {
     const h = makeHarness();
@@ -606,6 +723,26 @@ describe("move and relink", () => {
     });
     expect(() => h.core.projects.get(a.projectId)).toThrow(ApiError);
     await expect(h.core.boxes.move(a.id, target)).resolves.toEqual({ movedBoxes: [] });
+  });
+
+  it("refuses to move a directory that holds a worktree box", async () => {
+    const h = makeHarness();
+    const repo = initRepo(h.dir("repo"));
+    const plain = await h.core.boxes.create({ targetDir: repo, layout: "root", start: false });
+    const wt = await h.core.boxes.create({
+      targetDir: repo,
+      layout: "worktree",
+      conversationName: "feature",
+    });
+    await h.core.boxes.stop(wt.id);
+    const target = path.join(h.home, "moved");
+    await expect(h.core.boxes.move(plain.id, target)).rejects.toMatchObject({ code: "conflict" });
+    expect(fs.existsSync(repo)).toBe(true);
+    expect(fs.existsSync(target)).toBe(false);
+    expect(h.core.boxes.get(wt.id).worktree).toBe(wt.worktree);
+    // The .worktrees folder alone is enough, such as one made by hand.
+    await h.core.boxes.remove(wt.id);
+    await expect(h.core.boxes.move(plain.id, target)).rejects.toMatchObject({ code: "conflict" });
   });
 
   it("relinks one record to another directory", async () => {
@@ -684,31 +821,13 @@ describe("edit, platform, side sessions, messages", () => {
     });
   });
 
-  it("sends a message and builds attach commands", async () => {
+  it("sends a message", async () => {
     const h = makeHarness();
     const box = await h.core.boxes.create({ targetDir: h.dir("app"), layout: "root" });
     await h.core.boxes.sendMessage(box.id, "Hold edits, please.");
     expect(h.docker.containers.get(box.container)?.sentKeys.get(box.session)).toEqual([
       "-l Hold edits, please.",
       "Enter",
-    ]);
-    expect(h.core.boxes.attachArgv(box.id, "session")).toEqual([
-      "docker",
-      "exec",
-      "-it",
-      box.container,
-      "tmux",
-      "attach",
-      "-t",
-      `=${box.session}`,
-    ]);
-    expect(h.core.boxes.attachArgv(box.id, "side", "codex").at(-1)).toBe(`=${box.session}-codex`);
-    expect(h.core.boxes.attachArgv(box.id, "shell")).toEqual([
-      "docker",
-      "exec",
-      "-it",
-      box.container,
-      "bash",
     ]);
   });
 

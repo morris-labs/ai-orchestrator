@@ -7,6 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import {
   BoxInputSchema,
+  DEFAULT_ENGINE_PORT,
   EffortSchema,
   PlatformSchema,
   ProjectInputSchema,
@@ -98,6 +99,8 @@ interface ProjectDraft {
   tcpMaps: TcpMap[];
   createdAt: string;
   implicit: boolean;
+  /** The stored project when it exists already; the draft starts from its maps and mounts. */
+  existing?: Project;
 }
 
 function sourceDirs(env: HostEnv) {
@@ -233,6 +236,13 @@ export function runImport(options: ImportOptions): ImportReport {
     const drafts = new Map<string, ProjectDraft>();
     const addMount = (draft: ProjectDraft, mount: Mount, from: string, spec: string) => {
       const taken = draft.mounts.find((m) => m.container === mount.container);
+      // A rerun meets the stored project's own mounts again; that is no news.
+      if (
+        taken &&
+        taken.host === mount.host &&
+        draft.existing?.mounts.some((m) => m.container === mount.container && m.host === mount.host)
+      )
+        return;
       if (taken) {
         report.mountsSkipped.push({
           projectId: draft.id,
@@ -246,6 +256,17 @@ export function runImport(options: ImportOptions): ImportReport {
         return;
       }
       draft.mounts.push(mount);
+    };
+
+    /** Starts a draft from the stored project, so a rerun merges rather than discards. */
+    const seed = (draft: ProjectDraft): ProjectDraft => {
+      const existing = repos.projects.get(draft.id);
+      if (existing) {
+        draft.existing = existing;
+        draft.tcpMaps = [...existing.tcpMaps];
+        draft.mounts = [...existing.mounts];
+      }
+      return draft;
     };
 
     for (const file of listFiles(d.projects)) {
@@ -262,7 +283,7 @@ export function runImport(options: ImportOptions): ImportReport {
       }
       const name = kvLast(kv, "name") ?? "";
       const primary = kvLast(kv, "primary_repo") ?? "";
-      const draft: ProjectDraft = {
+      const draft: ProjectDraft = seed({
         id: file,
         root,
         name: name || defaultProjectName(root),
@@ -272,7 +293,7 @@ export function runImport(options: ImportOptions): ImportReport {
         tcpMaps: [],
         createdAt: mtimeIso(full, started),
         implicit: false,
-      };
+      });
       for (const p of kvAll(kv, "port")) {
         const hp = poolHostPort(p);
         if (hp !== undefined) draft.poolHostPorts.add(hp);
@@ -294,7 +315,7 @@ export function runImport(options: ImportOptions): ImportReport {
       const id = projectIdForRoot(root);
       let draft = drafts.get(id);
       if (!draft) {
-        draft = {
+        draft = seed({
           id,
           root,
           name: defaultProjectName(root),
@@ -304,7 +325,7 @@ export function runImport(options: ImportOptions): ImportReport {
           tcpMaps: [],
           createdAt: started.toISOString(),
           implicit: true,
-        };
+        });
         drafts.set(id, draft);
       }
       return draft;
@@ -386,6 +407,19 @@ export function runImport(options: ImportOptions): ImportReport {
           }
           continue;
         }
+        // The container publishes each container port once, so a second
+        // host port for it would silently replace the first.
+        const sameContainer = draft.tcpMaps.find((t) => t.container === map.container);
+        if (sameContainer) {
+          warn(
+            `port ${spec} conflicts with the project's map ${sameContainer.host}:${sameContainer.container}, which publishes the same container port; skipped.`,
+          );
+          continue;
+        }
+        if (map.container === DEFAULT_ENGINE_PORT) {
+          warn(`port ${spec} uses the engine's container port ${DEFAULT_ENGINE_PORT}; skipped.`);
+          continue;
+        }
         draft.tcpMaps.push(map);
         report.tcpMapsAdded.push({ projectId: draft.id, boxId: file, ...map });
       }
@@ -441,10 +475,8 @@ export function runImport(options: ImportOptions): ImportReport {
       }
 
       const time = mtimeIso(full, started);
-      const siblings = [
-        ...repos.boxes.byProject(draft.id),
-        ...boxes.filter((b) => b.projectId === draft.id),
-      ];
+      // Host keys are unique across every project; the proxy resolves them so.
+      const siblings = [...repos.boxes.list(), ...boxes];
       const input = {
         id: file,
         projectId: draft.id,
@@ -512,8 +544,17 @@ export function runImport(options: ImportOptions): ImportReport {
 
     // Write projects first: boxes reference them.
     for (const draft of [...drafts.values()].sort((a, b) => (a.id < b.id ? -1 : 1))) {
-      if (repos.projects.get(draft.id)) {
+      if (draft.existing) {
         report.projects.alreadyPresent.push(draft.id);
+        const e = draft.existing;
+        if (draft.tcpMaps.length !== e.tcpMaps.length || draft.mounts.length !== e.mounts.length) {
+          repos.projects.put({
+            ...e,
+            tcpMaps: draft.tcpMaps,
+            mounts: draft.mounts,
+            updatedAt: started.toISOString(),
+          });
+        }
         continue;
       }
       const project: Project = ProjectInputSchema.parse({

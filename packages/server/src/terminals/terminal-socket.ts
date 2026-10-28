@@ -8,7 +8,7 @@ import {
   type TerminalServerMessage,
 } from "@agentbox/contracts";
 import WebSocket from "ws";
-import { toApiFailure } from "../api/errors.js";
+import { toApiError } from "../api/errors.js";
 import type { ExecBackend, ExecRequest } from "./exec.js";
 
 export interface TerminalEnd {
@@ -43,7 +43,7 @@ export async function serveTerminal(
   try {
     session = await backend.start(request);
   } catch (err) {
-    sendControl(ws, { type: "error", error: toApiFailure(err).toBody().error });
+    sendControl(ws, { type: "error", error: toApiError(err).toBody().error });
     ws.close(1011, "exec failed");
     return { terminalId, exitCode: null, closedByClient };
   } finally {

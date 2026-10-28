@@ -1,4 +1,4 @@
-import Database from "better-sqlite3";
+import { openDatabase } from "../../src/db/index.js";
 import { describe, expect, it } from "vitest";
 import { FindingSchema } from "@agentbox/contracts";
 import { EventHub } from "../../src/events/hub.js";
@@ -90,7 +90,7 @@ describe("EventHub", () => {
   });
 
   it("keeps the stream id and replays from SQLite across a restart", () => {
-    const db = new Database(":memory:");
+    const db = openDatabase(":memory:");
     const first = new EventHub({ db });
     for (const id of ["a", "b", "c"]) first.emit(box(`claude-agent-${id}`));
     const second = new EventHub({ db, bufferSize: 1 });
@@ -105,7 +105,7 @@ describe("EventHub", () => {
   });
 
   it("prunes SQLite to the configured size", () => {
-    const db = new Database(":memory:");
+    const db = openDatabase(":memory:");
     const hub = new EventHub({ db, keep: 10, bufferSize: 5 });
     for (let i = 0; i < 1000; i += 1) hub.emit(box(`claude-agent-${i}`));
     const { n } = db.prepare("SELECT COUNT(*) AS n FROM svc_events").get() as { n: number };
@@ -129,7 +129,7 @@ describe("LateSink", () => {
 
 describe("RunMirror", () => {
   it("stores runs, keeps the newest state, and finds the active run of a box", () => {
-    const mirror = new RunMirror(new Database(":memory:"));
+    const mirror = new RunMirror(openDatabase(":memory:"));
     mirror.upsert(runState);
     mirror.upsert({ ...runState, status: "finished", updatedAt: "2026-10-28T08:00:00.000Z" });
     expect(mirror.get(RUN)?.status).toBe("running");
@@ -153,7 +153,7 @@ describe("RunMirror", () => {
   });
 
   it("keeps the latest state of each finding from finding.changed events", () => {
-    const mirror = new RunMirror(new Database(":memory:"));
+    const mirror = new RunMirror(openDatabase(":memory:"));
     const finding = FindingSchema.parse({
       id: "F-0001",
       fingerprint: "3f786850e387550fdab836ed7e6dc881de23001b",

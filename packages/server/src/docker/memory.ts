@@ -6,6 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { START_SESSION_PATH, STATE_MOUNT } from "./scripts.js";
 import {
+  DockerApiError,
   DockerUnavailableError,
   type ContainerCreateSpec,
   type ContainerInspect,
@@ -13,7 +14,6 @@ import {
   type DockerClient,
   type ExecOptions,
   type ExecResult,
-  type ImageBuildOptions,
   type ImageInspect,
   type RunOnceOptions,
   type StatsSample,
@@ -52,11 +52,12 @@ export class MemoryDocker implements DockerClient {
   runOnceAnswers = new Map<string, ExecResult>();
   /** Handles exec commands the double does not know. */
   execHandler: ExecHandler | undefined;
-  /** Output lines a build produces, and whether it succeeds. */
-  buildResult: { lines: string[]; ok: boolean; error?: string } = {
-    lines: ["Step 1/1\n"],
-    ok: true,
-  };
+  /**
+   * Runs before every exec in a running container, so a test can hold an
+   * exec open or change the world under it, such as a container that leaves
+   * between its check and the exec.
+   */
+  beforeExec: ((container: string, options: ExecOptions) => Promise<void>) | undefined;
   private nextId = 1;
   private cpuTick = 0;
 
@@ -181,9 +182,12 @@ export class MemoryDocker implements DockerClient {
   async createContainer(spec: ContainerCreateSpec): Promise<string> {
     this.record("createContainer", spec);
     if (this.containers.has(spec.name))
-      throw new Error(`Conflict. The container name "/${spec.name}" is already in use.`);
+      throw new DockerApiError(
+        409,
+        `Docker: Conflict. The container name "/${spec.name}" is already in use.`,
+      );
     const image = this.images.get(spec.image);
-    if (!image) throw new Error(`No such image: ${spec.image}`);
+    if (!image) throw new DockerApiError(404, `Docker: No such image: ${spec.image}`);
     const id = `c${String(this.nextId++).padStart(11, "0")}`;
     this.containers.set(spec.name, {
       id,
@@ -200,7 +204,7 @@ export class MemoryDocker implements DockerClient {
   async startContainer(id: string): Promise<void> {
     this.record("startContainer", id);
     const c = this.find(id);
-    if (!c) throw new Error(`No such container: ${id}`);
+    if (!c) throw new DockerApiError(404, `Docker: No such container: ${id}`);
     c.running = true;
     c.state = "running";
     this.writeState(c);
@@ -216,20 +220,19 @@ export class MemoryDocker implements DockerClient {
     this.record("removeContainer", nameOrId, options);
     const c = this.find(nameOrId);
     if (!c) return;
-    if (c.running && !options.force) throw new Error("You cannot remove a running container.");
+    if (c.running && !options.force)
+      throw new DockerApiError(409, "Docker: You cannot remove a running container.");
     this.containers.delete(c.spec.name);
   }
 
   async exec(container: string, options: ExecOptions): Promise<ExecResult> {
     this.record("exec", container, options);
+    // The daemon refuses an exec in a missing or stopped container, and
+    // dockerode throws that refusal rather than returning an exit code.
+    if (this.beforeExec) await this.beforeExec(container, options);
     const c = this.find(container);
-    if (!c || !c.running) {
-      return {
-        exitCode: 1,
-        stdout: "",
-        stderr: `Error response from daemon: container ${container} is not running`,
-      };
-    }
+    if (!c) throw new DockerApiError(404, `Docker: No such container: ${container}`);
+    if (!c.running) throw new DockerApiError(409, `Docker: Container ${c.id} is not running`);
     const cmd = options.cmd;
     if (cmd[0] === START_SESSION_PATH) {
       const [session, workDir, command] = [cmd[1] ?? "", cmd[2] ?? "", cmd[3] ?? ""];
@@ -290,24 +293,10 @@ export class MemoryDocker implements DockerClient {
     return this.images.get(name) ?? null;
   }
 
-  async buildImage(
-    options: ImageBuildOptions,
-    onOutput: (chunk: string) => void,
-  ): Promise<{ ok: boolean; error?: string }> {
-    this.record("buildImage", options);
-    for (const line of this.buildResult.lines) onOutput(line);
-    if (this.buildResult.ok) {
-      const prev = this.images.get(options.tag);
-      const n = prev ? Number(prev.id.split("-").pop()) + 1 : 1;
-      this.addImage(options.tag, prev?.labels ?? {}, `sha256:${options.tag}-${n}`);
-      return { ok: true };
-    }
-    return { ok: false, error: this.buildResult.error ?? "build failed" };
-  }
-
   async runOnce(options: RunOnceOptions): Promise<ExecResult> {
     this.record("runOnce", options);
-    if (!this.images.has(options.image)) throw new Error(`No such image: ${options.image}`);
+    if (!this.images.has(options.image))
+      throw new DockerApiError(404, `Docker: No such image: ${options.image}`);
     const key = [...options.entrypoint, ...options.cmd].join(" ");
     for (const [k, v] of this.runOnceAnswers) {
       if (key.includes(k)) return v;

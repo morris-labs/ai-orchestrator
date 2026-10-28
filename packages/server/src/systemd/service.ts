@@ -1,7 +1,7 @@
 // The systemd user service that runs `agentbox-server`.
 import { access, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { ApiFailure } from "../api/errors.js";
+import { ApiError } from "../api/errors.js";
 import type { ProcessRunner } from "../jobs/process.js";
 
 export const SERVICE_NAME = "agentbox-server.service";
@@ -53,7 +53,7 @@ export async function installService(opts: {
     const result = await opts.runner.run("systemctl", args, { timeoutMs: 30_000 });
     if (result.code !== 0) {
       const output = (result.stderr || result.stdout).trim();
-      throw new ApiFailure(
+      throw new ApiError(
         "conflict",
         `systemctl ${args.join(" ")} failed${output ? `: ${output}` : "."}`,
       );

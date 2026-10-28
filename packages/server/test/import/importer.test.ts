@@ -505,6 +505,47 @@ describe("runImport", () => {
     expect(summary.warnings.length).toBeGreaterThanOrEqual(report.warnings.length);
   });
 
+  it("skips a map whose container port is taken or is the engine's", () => {
+    const data = path.join(fx.home, ".claude-box", "known");
+    write(
+      path.join(data, "claude-agent-twin"),
+      [`target_dir=${fx.loose}`, "port=9100:9000", "port=9200:20411"],
+      fx.files,
+    );
+    const report = runImport({ env: fx.env, repos });
+    expect(repos.projects.get(fx.looseId)?.tcpMaps).toEqual([{ host: 9000, container: 9000 }]);
+    expect(report.tcpMapsAdded.filter((t) => t.boxId === "claude-agent-twin")).toEqual([]);
+    expect(
+      report.warnings.some((w) => w.includes("9100:9000") && w.includes("same container")),
+    ).toBe(true);
+    expect(report.warnings.some((w) => w.includes("9200:20411") && w.includes("engine"))).toBe(
+      true,
+    );
+  });
+
+  it("merges a later box's maps and mounts into a project that exists", () => {
+    runImport({ env: fx.env, repos });
+    const data = path.join(fx.home, ".claude-box", "known");
+    fs.mkdirSync(path.join(fx.home, "late"), { recursive: true });
+    write(
+      path.join(data, "claude-agent-late"),
+      [`target_dir=${fx.loose}`, "port=9300:7000", `dir=${fx.home}/late:/late`],
+      fx.files,
+    );
+    const second = runImport({ env: fx.env, repos });
+    expect(second.boxes.imported).toEqual(["claude-agent-late"]);
+    expect(second.tcpMapsAdded).toEqual([
+      { projectId: fx.looseId, boxId: "claude-agent-late", host: 9300, container: 7000 },
+    ]);
+    const loose = repos.projects.get(fx.looseId);
+    expect(loose?.tcpMaps).toEqual([
+      { host: 9000, container: 9000 },
+      { host: 9300, container: 7000 },
+    ]);
+    expect(loose?.mounts).toContainEqual({ host: `${fx.home}/late`, container: "/late" });
+    expect(second.mountsSkipped).toEqual([]);
+  });
+
   it("changes nothing on a second run", () => {
     runImport({ env: fx.env, repos });
     const dump = () => ({

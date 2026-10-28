@@ -72,6 +72,22 @@ describe("ContainerMonitor", () => {
     expect(h.core.boxes.get(b.id).wasRunning).toBe(true);
   });
 
+  it("reports no unexpected end for boxes a Docker restart dropped", async () => {
+    const h = makeHarness();
+    const dir = h.dir("app");
+    const a = await h.core.boxes.create({ targetDir: dir, layout: "root" });
+    const b = await h.core.boxes.create({ targetDir: dir, layout: "root" });
+    const ended: BoxEndedEvent[] = [];
+    h.core.monitor.on("boxEnded", (e: BoxEndedEvent) => ended.push(e));
+    await h.core.monitor.poll();
+    h.docker.containers.clear();
+    fs.rmSync(path.join(h.home, ".claude-box/state"), { recursive: true });
+    await h.core.monitor.poll();
+    expect(ended.sort((x, y) => (x.boxId < y.boxId ? -1 : 1))).toEqual(
+      [a.id, b.id].sort().map((boxId) => ({ boxId, unexpected: false })),
+    );
+  });
+
   it("marks a requested stop as expected", async () => {
     const h = makeHarness();
     const box = await h.core.boxes.create({ targetDir: h.dir("app"), layout: "root" });
@@ -136,11 +152,6 @@ describe("core", () => {
     expect(second.imported).toBeNull();
     const status = await h.core.image.status();
     expect(status).toMatchObject({ exists: true, engineMatches: true });
-    expect(h.core.image.plan("claude-code").command).toMatch(
-      /^docker build -t claude-code --build-arg USER_NAME=tester --build-arg CACHEBUST=\d+ /,
-    );
-    const lines: string[] = [];
-    expect(await h.core.image.build("rebuild", (l) => lines.push(l))).toEqual({ ok: true });
     h.core.close();
   });
 });

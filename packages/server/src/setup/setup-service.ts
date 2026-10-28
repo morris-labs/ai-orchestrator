@@ -1,17 +1,19 @@
 // The setup checks behind the setup wizard, their fixes, and the image build
 // jobs (inventory section 2.6).
+import { existsSync } from "node:fs";
 import { chmod, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { Job, SetupCheck, SetupStatusSchema } from "@agentbox/contracts";
 import type { z } from "zod";
 import type { Core } from "../api/core-interface.js";
-import { ApiFailure, toApiFailure } from "../api/errors.js";
+import { ApiError, toApiError } from "../api/errors.js";
+import { imageBuildOptions, type ImageBuildKind } from "../docker/image.js";
 import { processJob, type JobIO, type JobManager } from "../jobs/jobs.js";
 import { commandLine, type ProcessRunner } from "../jobs/process.js";
 import type { OpClient } from "../secrets/op.js";
 
 export type SetupStatus = z.infer<typeof SetupStatusSchema>;
-export type ImageBuildKind = "rebuild" | "packages" | "claude-code";
+export type { ImageBuildKind };
 
 export interface SetupServiceOptions {
   core: Pick<Core, "docker" | "image" | "settings">;
@@ -74,7 +76,7 @@ export class SetupService {
     try {
       return await run();
     } catch (err) {
-      return { id, status: "fail", message: toApiFailure(err).message, fixable: false };
+      return { id, status: "fail", message: toApiError(err).message, fixable: false };
     }
   }
 
@@ -96,7 +98,7 @@ export class SetupService {
     try {
       status = await this.opts.core.image.status();
     } catch (err) {
-      const message = toApiFailure(err).message;
+      const message = toApiError(err).message;
       return [
         Promise.resolve({ id: "image", status: "fail", message, fixable: true }),
         Promise.resolve({ id: "engine", status: "warn", message, fixable: true }),
@@ -310,49 +312,50 @@ export class SetupService {
           },
         );
       case "docker":
-        throw new ApiFailure(
+        throw new ApiError(
           "conflict",
           "Install Docker, start the daemon, and add your user to the docker group, then check again.",
         );
       case "ssh_client":
-        throw new ApiFailure(
+        throw new ApiError(
           "conflict",
           "Install the ssh client with sudo apt install openssh-client.",
         );
       case "op":
-        throw new ApiFailure(
+        throw new ApiError(
           "conflict",
           "Install the 1Password CLI and sign in with op signin, or set OP_SERVICE_ACCOUNT_TOKEN for the server.",
         );
       default:
-        throw new ApiFailure("not_found", `There is no setup check named ${checkId}.`);
+        throw new ApiError("not_found", `There is no setup check named ${checkId}.`);
     }
   }
 
-  /** The `docker build` argv for a build kind. */
+  /** The `docker build` argv for a build kind, rendered from `imageBuildOptions()`. */
   buildArgv(kind: ImageBuildKind): string[] {
-    const epoch = String(Math.floor((this.opts.now?.() ?? new Date()).getTime() / 1000));
-    const variant =
-      kind === "rebuild"
-        ? ["--no-cache", "--pull"]
-        : kind === "packages"
-          ? ["--build-arg", `CACHEBUST_PACKAGES=${epoch}`]
-          : ["--build-arg", `CACHEBUST=${epoch}`];
-    return [
-      "docker",
-      "build",
-      "-t",
-      this.opts.core.settings.get().engineImage,
-      ...variant,
-      "--build-arg",
-      `USER_NAME=${this.opts.user}`,
-      "--progress=plain",
-      this.opts.imageContext,
-    ];
+    const o = imageBuildOptions({
+      kind,
+      context: this.opts.imageContext,
+      tag: this.opts.core.settings.get().engineImage,
+      user: this.opts.user,
+      now: this.opts.now?.() ?? new Date(),
+    });
+    const argv = ["docker", "build", "-t", o.tag];
+    if (o.noCache) argv.push("--no-cache");
+    if (o.pull) argv.push("--pull");
+    for (const [k, v] of Object.entries(o.buildArgs)) argv.push("--build-arg", `${k}=${v}`);
+    argv.push("--progress=plain", o.context);
+    return argv;
   }
 
   /** Builds or updates the image as an `image_build` job. */
   buildImage(kind: ImageBuildKind): Job {
+    if (!existsSync(join(this.opts.imageContext, "Dockerfile"))) {
+      throw new ApiError(
+        "image_missing",
+        `The image build context ${this.opts.imageContext} has no Dockerfile. Set AGENTBOX_IMAGE_CONTEXT to the directory that holds the image's Dockerfile.`,
+      );
+    }
     const argv = this.buildArgv(kind);
     return this.opts.jobs.start({ kind: "image_build", command: commandLine(argv) }, (io) =>
       processJob(io, this.opts.runner.spawn(argv[0] as string, argv.slice(1), { pty: true })),

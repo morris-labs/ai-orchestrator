@@ -216,6 +216,17 @@ describe("checkRemovable and removeWorktree", () => {
     expect(sh(repo, "branch", "--list", "claude/fix")).toBe("");
   });
 
+  it("puts the notes back when git refuses the removal", async () => {
+    const { repo, wt } = await fresh();
+    write(`${wt}/.claude-box/STATUS.md`, "status");
+    sh(repo, "worktree", "lock", wt);
+    const r = await removeWorktree(repo, wt, new Date(2026, 9, 28, 9, 30, 15));
+    expect(r.ok).toBe(false);
+    expect(fs.existsSync(wt)).toBe(true);
+    expect(fs.readFileSync(`${wt}/.claude-box/STATUS.md`, "utf8")).toBe("status");
+    expect(fs.existsSync(`${repo}/.claude-box/archive/fix-20261028093015`)).toBe(false);
+  });
+
   it("keeps a branch outside claude/ and refuses an unsafe worktree", async () => {
     const repo = initRepo(path.join(tempDir(), "repo"));
     sh(repo, "worktree", "add", "-q", "-b", "other", `${repo}/.worktrees/other`);

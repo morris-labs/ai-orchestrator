@@ -1,5 +1,5 @@
-// The error the core throws for every failure that an API caller can act on.
-// W2 turns it into the contract's `ApiError` body and status code.
+// The error the server throws for every failure that an API caller can act
+// on, and the status code of each contract error code.
 import type { ApiErrorCode, ApiError as ApiErrorBody } from "@agentbox/contracts";
 
 /** The HTTP status for each contract error code. */
@@ -24,20 +24,26 @@ export const API_ERROR_STATUS: Record<ApiErrorCode, number> = {
   internal: 500,
 };
 
+/**
+ * The one error class for a failure an API caller can act on. Throw it from
+ * any service; the API layer answers with `status` and `toBody()`.
+ */
 export class ApiError extends Error {
   readonly code: ApiErrorCode;
   readonly details: unknown;
+  /** The HTTP status code: the code's usual status unless the constructor overrides it. */
+  readonly status: number;
 
-  constructor(code: ApiErrorCode, message: string, details?: unknown) {
+  /**
+   * `status` overrides the code's usual status, such as 502 for an
+   * `internal` failure that an engine caused.
+   */
+  constructor(code: ApiErrorCode, message: string, details?: unknown, status?: number) {
     super(message);
     this.name = "ApiError";
     this.code = code;
     this.details = details;
-  }
-
-  /** The HTTP status code for this error. */
-  get status(): number {
-    return API_ERROR_STATUS[this.code];
+    this.status = status ?? API_ERROR_STATUS[code];
   }
 
   /** The contract's JSON body for this error. */

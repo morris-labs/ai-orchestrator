@@ -4,12 +4,13 @@
 import type {
   AgentBoxEvent,
   EngineInfo,
+  Finding,
   LeaseRequest,
   LeaseResponse,
   RunState,
 } from "@agentbox/contracts";
 import type { CoreEngines, EngineEndpoint, SqlDatabase } from "../api/core-interface.js";
-import { ApiFailure } from "../api/errors.js";
+import { ApiError } from "../api/errors.js";
 import { EngineClient, type EngineClientOptions, type StreamCursor } from "./engine-client.js";
 
 export interface EngineSupervisorOptions {
@@ -22,6 +23,14 @@ export interface EngineSupervisorOptions {
   decideLease(engineKey: string, projectId: string, request: LeaseRequest): Promise<LeaseResponse>;
   /** Receives the runs an engine lists after a resync. */
   onRuns?(runs: RunState[]): void;
+  /** Receives every finding of one run after a resync; the list replaces the mirrored one. */
+  onFindings?(runId: string, findings: Finding[]): void;
+  /**
+   * Called when an engine's stream starts over (a new engine process, or a
+   * first connection), before its state is reloaded. Lease answers cached
+   * for `engineKey` belong to the old process.
+   */
+  onStreamReset?(engineKey: string): void;
   onInfo?(container: string, info: EngineInfo): void;
   log?(message: string): void;
   /** How often to look for added or removed containers. */
@@ -29,14 +38,6 @@ export interface EngineSupervisorOptions {
   /** Builds a client; tests replace it. */
   createClient?(options: EngineClientOptions): EngineClient;
 }
-
-const SCHEMA = `
-CREATE TABLE IF NOT EXISTS svc_engine_cursors (
-  container TEXT PRIMARY KEY,
-  stream_id TEXT NOT NULL,
-  last_seq INTEGER NOT NULL
-);
-`;
 
 /** A `StreamCursor` stored in SQLite, one row per container. */
 export function sqliteCursor(db: SqlDatabase, container: string): StreamCursor {
@@ -65,9 +66,8 @@ export class EngineSupervisor {
   private timer: NodeJS.Timeout | null = null;
   private refreshing: Promise<void> | null = null;
 
-  constructor(private readonly options: EngineSupervisorOptions) {
-    options.db.exec(SCHEMA);
-  }
+  /** `options.db` comes from `openDatabase()`, whose migrations create its tables. */
+  constructor(private readonly options: EngineSupervisorOptions) {}
 
   /** Starts watching; the first refresh runs at once. */
   start(): void {
@@ -127,14 +127,31 @@ export class EngineSupervisor {
     return this.options.createClient?.(options) ?? new EngineClient(options);
   }
 
+  /** Reloads an engine's runs and their findings after its stream starts over. */
   private async resync(container: string): Promise<void> {
     const client = this.clients.get(container);
     if (!client) return;
+    this.options.onStreamReset?.(container);
+    let runs: RunState[];
     try {
-      const { runs } = (await client.call("engine.runs.list")) as { runs: RunState[] };
+      runs = ((await client.call("engine.runs.list")) as { runs: RunState[] }).runs;
       this.options.onRuns?.(runs);
     } catch (err) {
       this.options.log?.(`Resync of ${container} failed: ${(err as Error).message}`);
+      return;
+    }
+    if (!this.options.onFindings) return;
+    for (const run of runs) {
+      try {
+        const { findings } = (await client.call("engine.findings.list", {
+          params: { runId: run.id },
+        })) as { findings: Finding[] };
+        this.options.onFindings(run.id, findings);
+      } catch (err) {
+        this.options.log?.(
+          `Resync of the findings of run ${run.id} in ${container} failed: ${(err as Error).message}`,
+        );
+      }
     }
   }
 
@@ -155,7 +172,7 @@ export class EngineSupervisor {
   requireProject(projectId: string): EngineClient {
     const client = this.forProject(projectId);
     if (!client) {
-      throw new ApiFailure(
+      throw new ApiError(
         "conflict",
         `The container of project ${projectId} is not running. Start a box in the project first.`,
       );

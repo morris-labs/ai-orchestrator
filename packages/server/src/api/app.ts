@@ -89,7 +89,6 @@ export async function startApp(options: AppOptions): Promise<App> {
     home: options.home,
     services,
     engineVersion: options.expectedEngineVersion,
-    imageContext: options.imageContext,
     log,
   });
   const settings = () => core.settings.get();
@@ -167,6 +166,8 @@ export async function startApp(options: AppOptions): Promise<App> {
     relay: (event) => hub.relay(event),
     decideLease: (engineKey, projectId, request) => scheduler.decide(engineKey, projectId, request),
     onRuns: (list) => list.forEach((run) => runMirror.upsert(run)),
+    onFindings: (runId, findings) => runMirror.replaceFindings(runId, findings),
+    onStreamReset: (engineKey) => scheduler.forget(engineKey),
     log,
     intervalMs: options.engineIntervalMs,
   });
@@ -202,7 +203,10 @@ export async function startApp(options: AppOptions): Promise<App> {
 
   const proxy = new DevServerProxy(
     cachedResolver(async (hostKey) => {
-      const view = (await core.boxes.list({})).find((v) => v.box.hostKey === hostKey);
+      // The core keeps host keys unique across projects (migration 2 and
+      // allocateHostKey()); refuse rather than guess if two ever match.
+      const matches = (await core.boxes.list({})).filter((v) => v.box.hostKey === hostKey);
+      const view = matches.length === 1 ? matches[0] : undefined;
       const endpoint = view ? engines.get(view.container)?.endpoint : undefined;
       return endpoint?.hostPort ? { enginePort: endpoint.hostPort, token: endpoint.token } : null;
     }),
@@ -267,6 +271,8 @@ export async function startApp(options: AppOptions): Promise<App> {
     proxyPort,
     async close() {
       if (tunnelSync) clearTimeout(tunnelSync);
+      // A running image build would otherwise keep the process alive.
+      await jobs.stopAll();
       await api.close();
       if (proxyServer) await new Promise<void>((resolve) => proxyServer?.close(() => resolve()));
       await engines.stop();

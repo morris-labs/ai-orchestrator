@@ -24,8 +24,10 @@ export function sideSessionName(box: Pick<Box, "session">, platform: Platform): 
 export const PLATFORMS: readonly Platform[] = ["claude", "codex", "copilot"];
 
 /**
- * Returns a `hostKey` for `boxId` that no other box in `siblings` uses. A box
- * that already has a key keeps it.
+ * Returns a `hostKey` for `boxId` that no other box in `siblings` uses. Pass
+ * every box: the proxy resolves `<port>.<hostKey>.localhost` across all
+ * projects, so the server keeps keys unique globally, a stricter rule than
+ * the contract's "unique within a project".
  */
 export function allocateHostKey(
   boxId: string,

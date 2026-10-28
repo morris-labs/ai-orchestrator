@@ -6,6 +6,7 @@
 // throwaway image on top of the base image that carries a test engine
 // version, and removes everything it made unless you pass --keep.
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -60,11 +61,8 @@ try {
     path.join(ctx, "Dockerfile"),
     `FROM ${baseImage}\nUSER root\nRUN echo ${engineVersion} > /etc/agentbox-engine-version\nLABEL agentbox.engine-version=${engineVersion}\n`,
   );
-  const built = await core.docker.buildImage(
-    { context: ctx, tag: testImage, buildArgs: {}, noCache: false, pull: false },
-    (line) => process.stdout.write(line),
-  );
-  assert.equal(built.ok, true, built.error);
+  const built = spawnSync("docker", ["build", "-t", testImage, ctx], { stdio: "inherit" });
+  assert.equal(built.status, 0, "docker build failed");
   core.settings.patch({ engineImage: testImage });
   const status = await core.image.status();
   console.log(status);

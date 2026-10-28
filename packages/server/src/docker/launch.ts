@@ -5,6 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { DEFAULT_ENGINE_PORT, ENGINE_ENV, type Mount, type TcpMap } from "@agentbox/contracts";
+import { RESERVED_ENV_NAMES } from "../records/settings.js";
 import {
   containerHome,
   homePaths,
@@ -161,7 +162,11 @@ export function buildLaunchSpec(
     `${ENGINE_ENV.engineVersion}=${input.engine.version}`,
     `${ENGINE_ENV.stateDir}=${STATE_MOUNT}`,
   );
-  const secretNames = Object.keys(input.extraEnv).sort();
+  // A reserved name never reaches the container from a secret, even one
+  // stored before the settings refused it.
+  const secretNames = Object.keys(input.extraEnv)
+    .filter((n) => !RESERVED_ENV_NAMES.has(n))
+    .sort();
   for (const name of secretNames) envList.push(`${name}=${input.extraEnv[name]}`);
 
   const portBindings: ContainerCreateSpec["portBindings"] = {

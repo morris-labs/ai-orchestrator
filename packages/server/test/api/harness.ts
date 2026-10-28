@@ -1,12 +1,12 @@
 // Builds an API server over the fake core and fake services.
+import { openDatabase } from "../../src/db/index.js";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { PassThrough, Duplex } from "node:stream";
 import type { EngineRouteKey, Job, RunState } from "@agentbox/contracts";
-import Database from "better-sqlite3";
 import type { ApiDeps, ApiEngine, ApiEngines } from "../../src/api/deps.js";
-import { ApiFailure } from "../../src/api/errors.js";
+import { ApiError } from "../../src/api/errors.js";
 import { createApiServer, type ApiServer } from "../../src/api/server.js";
 import type { EngineCallInput } from "../../src/events/engine-client.js";
 import { EventHub } from "../../src/events/hub.js";
@@ -29,12 +29,12 @@ export class FakeEngine implements ApiEngine {
     readonly handlers: Partial<Record<EngineRouteKey, (input: EngineCallInput) => unknown>>,
   ) {}
   assertVersion(): void {
-    if (this.mismatch) throw new ApiFailure("engine_mismatch", "Rebuild the image.");
+    if (this.mismatch) throw new ApiError("engine_mismatch", "Rebuild the image.");
   }
   async call(key: EngineRouteKey, input: EngineCallInput = {}): Promise<unknown> {
     this.calls.push({ key, input });
     const handler = this.handlers[key];
-    if (!handler) throw new ApiFailure("conflict", `No fake for ${key}.`);
+    if (!handler) throw new ApiError("conflict", `No fake for ${key}.`);
     return handler(input);
   }
 }
@@ -52,7 +52,7 @@ export class FakeEngines implements ApiEngines {
   }
   requireProject(projectId: string) {
     const e = this.forProject(projectId);
-    if (!e) throw new ApiFailure("conflict", "Not running.");
+    if (!e) throw new ApiError("conflict", "Not running.");
     e.assertVersion();
     return e;
   }
@@ -62,8 +62,7 @@ export class FakeEngines implements ApiEngines {
 export function defaultEngine(): FakeEngine {
   const runFor = (input: EngineCallInput): RunState => {
     const id = input.params?.runId;
-    if (id !== undefined && id !== runState.id)
-      throw new ApiFailure("run_not_found", "No such run.");
+    if (id !== undefined && id !== runState.id) throw new ApiError("run_not_found", "No such run.");
     return runState;
   };
   const finding = {
@@ -187,7 +186,7 @@ export interface Harness {
 
 export async function createHarness(overrides: { proxy?: DevServerProxy } = {}): Promise<Harness> {
   const core = createFakeCore();
-  const db = new Database(":memory:");
+  const db = openDatabase(":memory:");
   const hub = new EventHub({ db });
   const jobs = new JobManager();
   const engine = defaultEngine();
@@ -269,7 +268,7 @@ export async function createHarness(overrides: { proxy?: DevServerProxy } = {}):
     setup: {
       status: async () => ({ completed: false, defaultTargetDir: null, checks: [] }),
       fix: (id) => {
-        if (id !== "ssh_key") throw new ApiFailure("not_found", "No such check.");
+        if (id !== "ssh_key") throw new ApiError("not_found", "No such check.");
         return job("setup_fix");
       },
       buildImage: () => job("image_build"),

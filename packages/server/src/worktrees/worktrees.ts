@@ -294,7 +294,20 @@ export async function removeWorktree(
 
   const branch = await currentBranch(wt);
   const r = await git(repo, ["worktree", "remove", wt]);
-  if (!r.ok) return { ok: false, reason: r.output };
+  if (!r.ok) {
+    // The worktree stays, so its notes go back where its session looks.
+    if (archive !== undefined && !fs.existsSync(notes)) {
+      try {
+        fs.renameSync(archive, notes);
+      } catch {
+        return {
+          ok: false,
+          reason: `${r.output} The notes stay in ${archive}; they could not be moved back.`,
+        };
+      }
+    }
+    return { ok: false, reason: r.output };
+  }
   // checkRemovable() proved nothing unique is on the branch, so -D is safe.
   if (branch !== "" && branch.startsWith(BRANCH_PREFIX)) {
     await git(repo, ["branch", "-D", branch]);

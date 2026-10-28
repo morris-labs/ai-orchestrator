@@ -1,9 +1,8 @@
 // `DockerClient` over the Docker Engine API through dockerode.
-import fs from "node:fs";
-import path from "node:path";
 import { PassThrough } from "node:stream";
 import Docker from "dockerode";
 import {
+  DockerApiError,
   DockerUnavailableError,
   type ContainerCreateSpec,
   type ContainerInspect,
@@ -11,7 +10,6 @@ import {
   type DockerClient,
   type ExecOptions,
   type ExecResult,
-  type ImageBuildOptions,
   type ImageInspect,
   type RunOnceOptions,
   type StatsSample,
@@ -30,10 +28,24 @@ function statusOf(err: unknown): number | undefined {
   return (err as { statusCode?: number }).statusCode;
 }
 
-/** Turns a connection failure into `DockerUnavailableError`; rethrows anything else. */
+/** The daemon's own message of a dockerode error, without dockerode's prefix. */
+function daemonMessage(err: unknown): string {
+  const json = (err as { json?: { message?: unknown } }).json;
+  if (json && typeof json.message === "string" && json.message !== "") return json.message;
+  return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * Turns a connection failure into `DockerUnavailableError` and a refusal
+ * from the daemon into `DockerApiError`; rethrows anything else.
+ */
 function rethrow(err: unknown): never {
   const code = (err as { code?: string }).code;
   if (code && UNREACHABLE.has(code)) throw new DockerUnavailableError();
+  const status = statusOf(err);
+  if (typeof status === "number" && status >= 400) {
+    throw new DockerApiError(status, `Docker: ${daemonMessage(err)}`);
+  }
   throw err;
 }
 
@@ -60,17 +72,6 @@ function mapBindings(
   const out: ContainerInspect["portBindings"] = {};
   for (const [port, list] of Object.entries(raw ?? {})) {
     out[port] = (list ?? []).map((b) => ({ hostIp: b.HostIp ?? "", hostPort: b.HostPort ?? "" }));
-  }
-  return out;
-}
-
-/** Lists every file under `dir`, relative to it, for the build context. */
-function contextFiles(dir: string, rel = ""): string[] {
-  const out: string[] = [];
-  for (const entry of fs.readdirSync(path.join(dir, rel), { withFileTypes: true })) {
-    const p = rel ? `${rel}/${entry.name}` : entry.name;
-    if (entry.isDirectory()) out.push(...contextFiles(dir, p));
-    else out.push(p);
   }
   return out;
 }
@@ -286,46 +287,6 @@ export class DockerodeClient implements DockerClient {
       if (statusOf(err) === 404) return null;
       return rethrow(err);
     }
-  }
-
-  async buildImage(
-    options: ImageBuildOptions,
-    onOutput: (chunk: string) => void,
-  ): Promise<{ ok: boolean; error?: string }> {
-    const stream = await call(() =>
-      this.docker.buildImage(
-        { context: options.context, src: contextFiles(options.context) },
-        {
-          t: options.tag,
-          buildargs: options.buildArgs,
-          nocache: options.noCache,
-          pull: options.pull,
-        },
-      ),
-    );
-    return new Promise((resolve) => {
-      let error: string | undefined;
-      this.docker.modem.followProgress(
-        stream,
-        (err: Error | null) => {
-          if (err) error = err.message;
-          resolve(error ? { ok: false, error } : { ok: true });
-        },
-        (event: {
-          stream?: string;
-          status?: string;
-          error?: string;
-          errorDetail?: { message?: string };
-        }) => {
-          if (event.stream) onOutput(event.stream);
-          else if (event.status) onOutput(`${event.status}\n`);
-          if (event.error) {
-            error = event.errorDetail?.message ?? event.error;
-            onOutput(`${error}\n`);
-          }
-        },
-      );
-    });
   }
 
   async runOnce(options: RunOnceOptions): Promise<ExecResult> {

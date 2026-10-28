@@ -34,11 +34,6 @@ export interface ReplayPlan {
   events: AgentBoxEvent[];
 }
 
-const SCHEMA = `
-CREATE TABLE IF NOT EXISTS svc_event_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS svc_events (seq INTEGER PRIMARY KEY, type TEXT NOT NULL, json TEXT NOT NULL);
-`;
-
 export class EventHub implements EventSink {
   readonly streamId: string;
   private seq: number;
@@ -53,7 +48,6 @@ export class EventHub implements EventSink {
     this.keep = options.keep ?? 50_000;
     const db = options.db;
     if (db) {
-      db.exec(SCHEMA);
       const row = db.prepare("SELECT value FROM svc_event_meta WHERE key = 'streamId'").get() as
         { value: string } | undefined;
       const max = db.prepare("SELECT MAX(seq) AS seq FROM svc_events").get() as {

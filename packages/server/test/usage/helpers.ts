@@ -1,7 +1,7 @@
 // Shared setup for the usage, scheduler, and notifier tests: an in-memory
 // database, a settable clock, and a real event hub that validates every
 // event against the contracts.
-import Database from "better-sqlite3";
+import { openDatabase } from "../../src/db/index.js";
 import { randomUUID } from "node:crypto";
 import {
   EventSchema,
@@ -23,7 +23,7 @@ export const iso = (ms: number) => new Date(ms).toISOString();
 export function setup() {
   const clock = { now: T0 };
   const now = () => new Date(clock.now);
-  const db: SqlDatabase = new Database(":memory:");
+  const db: SqlDatabase = openDatabase(":memory:");
   const hub = new EventHub({ now });
   const events: AgentBoxEvent[] = [];
   hub.subscribe((e) => events.push(e));

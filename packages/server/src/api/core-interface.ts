@@ -5,7 +5,7 @@
 //
 // Every input and output is a contract type. A method that fails throws an
 // error whose `code` property names a contract `ApiErrorCode` (for example an
-// `ApiFailure` from `./errors.ts`); the API maps it to a status code.
+// `ApiError` from `./errors.ts`); the API maps it to a status code.
 import type {
   AgentBoxEvent,
   Box,
@@ -259,8 +259,6 @@ export interface CoreFactoryOptions {
   services: CoreServices;
   /** The engine version this server expects in the image and in each container. */
   engineVersion: string;
-  /** The image build context, the repository's `image/` directory. */
-  imageContext: string;
   log?(message: string): void;
 }
 

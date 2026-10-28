@@ -25,7 +25,7 @@ import type WebSocket from "ws";
 import type { z } from "zod";
 import { isAuthorized } from "./auth.js";
 import type { ApiDeps } from "./deps.js";
-import { ApiFailure, toApiFailure } from "./errors.js";
+import { ApiError, toApiError } from "./errors.js";
 import { createHandlers, type HttpHandlers, type HttpRouteKey } from "./handlers.js";
 import { attachCmd, shellCmd, sideSessionName } from "../terminals/attach.js";
 import type { ExecRequest } from "../terminals/exec.js";
@@ -56,8 +56,28 @@ function authInput(request: FastifyRequest, ws: boolean) {
   };
 }
 
-function sendFailure(reply: FastifyReply, failure: ApiFailure): FastifyReply {
+function sendFailure(reply: FastifyReply, failure: ApiError): FastifyReply {
   return reply.code(failure.status).send(failure.toBody());
+}
+
+/**
+ * The failure to answer for an error that reached Fastify's error handler.
+ * An error with a contract `code` keeps it, whatever else it carries; only
+ * Fastify's own 4xx errors (a bad body, a missing route) map by `statusCode`.
+ */
+export function failureOf(err: unknown): ApiError {
+  const failure = toApiError(err);
+  if (failure.code !== "internal" || err instanceof ApiError) return failure;
+  const status = (err as { statusCode?: number }).statusCode;
+  if (status !== undefined && status >= 400 && status < 500) {
+    return new ApiError(
+      status === 404 ? "not_found" : status === 401 ? "unauthorized" : "validation",
+      (err as Error).message,
+      undefined,
+      status,
+    );
+  }
+  return failure;
 }
 
 export interface ApiServer {
@@ -99,33 +119,18 @@ export async function createApiServer(deps: ApiDeps): Promise<ApiServer> {
     try {
       done(null, JSON.parse(text));
     } catch {
-      done(new ApiFailure("validation", "The body is not valid JSON."), undefined);
+      done(new ApiError("validation", "The body is not valid JSON."), undefined);
     }
   });
 
   app.setErrorHandler((err, _request, reply) => {
-    if (err instanceof ApiFailure) return sendFailure(reply, err);
-    const status = (err as { statusCode?: number }).statusCode;
-    if (status !== undefined && status >= 400 && status < 500) {
-      return sendFailure(
-        reply,
-        new ApiFailure(
-          status === 404 ? "not_found" : status === 401 ? "unauthorized" : "validation",
-          (err as Error).message,
-          undefined,
-          status,
-        ),
-      );
-    }
-    const failure = toApiFailure(err);
-    if (failure.status >= 500) deps.log?.(`Request failed: ${failure.message}`);
+    const failure = failureOf(err);
+    if (failure.status >= 500 && failure.code !== "docker_unavailable")
+      deps.log?.(`Request failed: ${failure.message}`);
     return sendFailure(reply, failure);
   });
   app.setNotFoundHandler((request, reply) =>
-    sendFailure(
-      reply,
-      new ApiFailure("not_found", `No route for ${request.method} ${request.url}.`),
-    ),
+    sendFailure(reply, new ApiError("not_found", `No route for ${request.method} ${request.url}.`)),
   );
 
   app.addHook("onRequest", async (request, reply) => {
@@ -134,7 +139,7 @@ export async function createApiServer(deps: ApiDeps): Promise<ApiServer> {
     if (!isAuthorized(authInput(request, config.ws), deps.token)) {
       // A refused upgrade leaves no HTTP connection worth keeping.
       if (config.ws) reply.header("connection", "close");
-      return sendFailure(reply, new ApiFailure("unauthorized", "Missing or wrong bearer token."));
+      return sendFailure(reply, new ApiError("unauthorized", "Missing or wrong bearer token."));
     }
   });
 
@@ -214,7 +219,7 @@ function registerHttp(
       const result = await handler(ctx);
       const checked = def.response.safeParse(result);
       if (!checked.success) {
-        throw new ApiFailure(
+        throw new ApiError(
           "internal",
           `The server built an invalid response for ${key}.`,
           checked.error.issues,
@@ -229,11 +234,7 @@ function registerHttp(
 function parse(schema: z.ZodTypeAny, value: unknown, where: string): unknown {
   const result = schema.safeParse(value);
   if (!result.success) {
-    throw new ApiFailure(
-      "validation",
-      `The ${where} doesn't match its schema.`,
-      result.error.issues,
-    );
+    throw new ApiError("validation", `The ${where} doesn't match its schema.`, result.error.issues);
   }
   return result.data;
 }
@@ -250,7 +251,7 @@ function registerWs(
     handler: (_request, reply) =>
       sendFailure(
         reply,
-        new ApiFailure("validation", "This route needs a WebSocket upgrade.", undefined, 426),
+        new ApiError("validation", "This route needs a WebSocket upgrade.", undefined, 426),
       ),
     wsHandler: (socket, request) => {
       void Promise.resolve(handler(socket, request)).catch(() => socket.close(1011));
@@ -272,7 +273,7 @@ export function parseTypes(types: string | undefined): Set<EventType> | null {
     .filter(Boolean);
   const unknown = list.filter((t) => !QUERY_TYPES.has(t));
   if (unknown.length)
-    throw new ApiFailure("validation", `Unknown event types: ${unknown.join(", ")}.`);
+    throw new ApiError("validation", `Unknown event types: ${unknown.join(", ")}.`);
   return new Set(list as EventType[]);
 }
 
@@ -282,7 +283,7 @@ function serveEvents(deps: ApiDeps, socket: WebSocket, request: FastifyRequest):
     const query = serverRoutes["events.stream"].query.parse(request.query ?? {});
     types = parseTypes(query.types);
   } catch (err) {
-    socket.close(1008, toApiFailure(err).message.slice(0, 120));
+    socket.close(1008, toApiError(err).message.slice(0, 120));
     return;
   }
   let sentUpTo: number | null = null;
@@ -362,26 +363,20 @@ async function serveTerminalRoute(deps: ApiDeps, socket: WebSocket, request: Fas
     kind = query.kind;
     target = await resolveTerminal(deps, query);
   } catch (err) {
-    sendControl(socket, { type: "error", error: toApiFailure(err).toBody().error });
+    sendControl(socket, { type: "error", error: toApiError(err).toBody().error });
     socket.close(1008, "bad terminal request");
     return;
   }
   const end = await serveTerminal(socket, deps.exec, target);
-  let unexpected = false;
-  if (kind === "session" && !end.closedByClient && target.boxId) {
-    try {
-      unexpected = (await deps.core.boxes.get(target.boxId)).status === "stopped";
-    } catch {
-      unexpected = false;
-    }
-  }
+  // Only the container monitor reports a session that ended unexpectedly,
+  // once per session end; a closing tab never does.
   deps.hub.emit({
     type: "terminal.ended",
     terminalId: end.terminalId,
     boxId: target.boxId,
     kind,
     exitCode: end.exitCode,
-    unexpected,
+    unexpected: false,
   });
 }
 

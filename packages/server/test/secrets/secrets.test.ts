@@ -5,7 +5,7 @@ import {
   type SecretRef,
 } from "@agentbox/contracts";
 import { describe, expect, it } from "vitest";
-import { ApiFailure } from "../../src/api/errors.js";
+import { ApiError } from "../../src/api/errors.js";
 import { OpCli, type OpClient } from "../../src/secrets/op.js";
 import { mergeSecretRefs, SecretsService } from "../../src/secrets/secrets-service.js";
 import { FakeRunner } from "../setup/fake-runner.js";
@@ -57,9 +57,9 @@ describe("OpCli", () => {
   ] as const)("maps a failure to its code", async (result, code) => {
     const op = new OpCli(new FakeRunner(() => ({ ...result, stdout: SECRET })), {});
     const err = await op.read("op://v/i/f").catch((e: unknown) => e);
-    expect(err).toBeInstanceOf(ApiFailure);
-    expect((err as ApiFailure).code).toBe(code);
-    expect((err as ApiFailure).message).not.toContain(SECRET);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).code).toBe(code);
+    expect((err as ApiError).message).not.toContain(SECRET);
   });
 });
 
@@ -75,8 +75,7 @@ class FakeOp implements OpClient {
   async read(ref: string) {
     this.reads.push(ref);
     const v = this.values[ref];
-    if (v === undefined)
-      throw new ApiFailure("secrets_unavailable", `Can't resolve ${ref}: missing`);
+    if (v === undefined) throw new ApiError("secrets_unavailable", `Can't resolve ${ref}: missing`);
     return v;
   }
 }
@@ -89,7 +88,7 @@ function service(op: OpClient, global: SecretRef[], project: SecretRef[] = []) {
     op,
     settings: () => settings,
     projectRefs: async (id) => {
-      if (id !== "p-00000000") throw new ApiFailure("not_found", "no project");
+      if (id !== "p-00000000") throw new ApiError("not_found", "no project");
       return project;
     },
     listProjects: async () => [{ projectId: "p-00000000", refs: project }],

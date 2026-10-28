@@ -4,11 +4,15 @@
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import type { Job } from "@agentbox/contracts";
-import { toApiFailure } from "../api/errors.js";
+import { toApiError } from "../api/errors.js";
 import type { SpawnedProcess } from "./process.js";
 
 /** The most output a job keeps; older bytes are dropped from the front. */
 export const JOB_OUTPUT_LIMIT = 2 * 1024 * 1024;
+/** How many finished jobs the manager keeps; older ones are dropped first. */
+export const FINISHED_JOB_LIMIT = 50;
+/** How long a finished job stays readable. */
+export const FINISHED_JOB_TTL_MS = 60 * 60 * 1000;
 
 /** What a job's body uses to talk to its terminal. */
 export interface JobIO {
@@ -16,6 +20,8 @@ export interface JobIO {
   /** Registers the receiver of the terminal's input (binary frames or `input` messages). */
   onInput(listener: (data: Buffer) => void): void;
   onResize(listener: (cols: number, rows: number) => void): void;
+  /** Registers what ends the job early, such as killing its process at shutdown. */
+  onStop(listener: () => void): void;
 }
 
 /** What a job's body returns. A thrown error fails the job with its code. */
@@ -41,6 +47,9 @@ interface JobEntry {
   events: EventEmitter;
   input: ((data: Buffer) => void) | null;
   resize: ((cols: number, rows: number) => void) | null;
+  stop: (() => void) | null;
+  /** When the job finished, in epoch milliseconds. */
+  finishedMs: number | null;
 }
 
 /** A client's view of a job's terminal. */
@@ -60,6 +69,10 @@ export class JobManager {
   constructor(
     private readonly options: {
       now?: () => Date;
+      /** How many finished jobs to keep. */
+      finishedLimit?: number;
+      /** How long to keep a finished job, in milliseconds. */
+      finishedTtlMs?: number;
       /** Called when a job ends, for the `terminal.ended` event. */
       onFinished?: (job: Job) => void;
     } = {},
@@ -90,12 +103,16 @@ export class JobManager {
       events: new EventEmitter(),
       input: null,
       resize: null,
+      stop: null,
+      finishedMs: null,
     };
+    this.evict();
     this.jobs.set(job.id, entry);
     const io: JobIO = {
       write: (data) => this.append(entry, typeof data === "string" ? Buffer.from(data) : data),
       onInput: (l) => (entry.input = l),
       onResize: (l) => (entry.resize = l),
+      onStop: (l) => (entry.stop = l),
     };
     // Run on the next tick so the caller gets the job before any output.
     setImmediate(() => {
@@ -114,7 +131,7 @@ export class JobManager {
           });
         },
         (err: unknown) => {
-          const failure = toApiFailure(err);
+          const failure = toApiError(err);
           this.append(entry, Buffer.from(`\r\n${failure.message}\r\n`));
           this.finish(entry, {
             status: "failed",
@@ -167,7 +184,51 @@ export class JobManager {
     entry.events.emit("data", chunk);
   }
 
+  /** Drops finished jobs past their age, then the oldest past the count limit. */
+  private evict(): void {
+    const limit = this.options.finishedLimit ?? FINISHED_JOB_LIMIT;
+    const cutoff = Date.now() - (this.options.finishedTtlMs ?? FINISHED_JOB_TTL_MS);
+    const finished = [...this.jobs.values()]
+      .filter((e) => e.finishedMs !== null)
+      .sort((a, b) => (a.finishedMs as number) - (b.finishedMs as number));
+    let excess = finished.length - limit;
+    for (const e of finished) {
+      if (excess > 0 || (e.finishedMs as number) < cutoff) {
+        this.jobs.delete(e.job.id);
+        excess -= 1;
+      }
+    }
+  }
+
+  /**
+   * Stops every running job, as at shutdown, and waits until each has
+   * finished or `timeoutMs` passes. A job without a stop handler is waited for.
+   */
+  async stopAll(timeoutMs = 5000): Promise<void> {
+    const running = [...this.jobs.values()].filter((e) => e.job.status === "running");
+    const done = running.map(
+      (e) =>
+        new Promise<void>((resolve) => {
+          e.events.once("done", () => resolve());
+          try {
+            e.stop?.();
+          } catch {
+            // A failing stop leaves the job to finish on its own.
+          }
+        }),
+    );
+    let timer: NodeJS.Timeout | undefined;
+    await Promise.race([
+      Promise.all(done),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, timeoutMs);
+      }),
+    ]);
+    clearTimeout(timer);
+  }
+
   private finish(entry: JobEntry, fields: Pick<Job, "status" | "exitCode" | "result" | "error">) {
+    entry.finishedMs = Date.now();
     Object.assign(entry.job, fields, { finishedAt: this.now() });
     entry.events.emit("done", { ...entry.job });
     this.options.onFinished?.({ ...entry.job });
@@ -181,6 +242,7 @@ export class JobManager {
 export function processJob(io: JobIO, proc: SpawnedProcess): Promise<JobOutcome> {
   proc.onData((chunk) => io.write(chunk));
   io.onInput((data) => proc.write(data));
+  io.onStop(() => proc.kill());
   return new Promise((resolve) => {
     proc.onExit((code, error) => {
       if (error) io.write(`\r\nFailed to start: ${error}\r\n`);

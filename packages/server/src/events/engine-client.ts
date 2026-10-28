@@ -18,7 +18,7 @@ import {
 } from "@agentbox/contracts";
 import WebSocket from "ws";
 import type { z } from "zod";
-import { ApiFailure } from "../api/errors.js";
+import { ApiError } from "../api/errors.js";
 import type { EngineEndpoint } from "../api/core-interface.js";
 
 export type EngineHealth = z.infer<typeof EngineHealthSchema>;
@@ -98,7 +98,7 @@ export class EngineClient {
   private baseUrl(): string {
     const port = this.options.endpoint.hostPort;
     if (port === null) {
-      throw new ApiFailure(
+      throw new ApiError(
         "conflict",
         `The engine of ${this.options.endpoint.container} has no host port yet.`,
       );
@@ -128,7 +128,7 @@ export class EngineClient {
   /** Throws `engine_mismatch` when the engine's version is known to differ. */
   assertVersion(): void {
     if (this.engineInfo.versionMatches === false) {
-      throw new ApiFailure(
+      throw new ApiError(
         "engine_mismatch",
         `The engine in ${this.options.endpoint.container} is version ${this.engineInfo.version ?? "unknown"}, but this server needs ${this.options.expectedVersion}. Rebuild the image.`,
         { engineVersion: this.engineInfo.version, expected: this.options.expectedVersion },
@@ -164,8 +164,8 @@ export class EngineClient {
         signal: AbortSignal.timeout(this.options.timeoutMs ?? 30_000),
       });
     } catch (err) {
-      if (err instanceof ApiFailure) throw err;
-      throw new ApiFailure(
+      if (err instanceof ApiError) throw err;
+      throw new ApiError(
         "conflict",
         `The engine of ${this.options.endpoint.container} is not reachable: ${(err as Error).message}`,
       );
@@ -176,9 +176,9 @@ export class EngineClient {
       const parsed = ApiErrorSchema.safeParse(json);
       if (parsed.success) {
         const { code, message, details } = parsed.data.error;
-        throw new ApiFailure(code, message, details, res.status);
+        throw new ApiError(code, message, details, res.status);
       }
-      throw new ApiFailure("internal", `The engine answered ${res.status}.`, undefined, 502);
+      throw new ApiError("internal", `The engine answered ${res.status}.`, undefined, 502);
     }
     return json;
   }
@@ -253,7 +253,11 @@ export class EngineClient {
     });
     ws.on("message", (data, isBinary) => {
       if (isBinary) return;
-      void this.onFrame(ws, data.toString());
+      this.onFrame(ws, data.toString()).catch((err: unknown) => {
+        this.options.log?.(
+          `Engine ${this.options.endpoint.container} frame failed: ${(err as Error).message}`,
+        );
+      });
     });
     ws.on("error", (err) => {
       this.options.log?.(`Engine ${this.options.endpoint.container} socket error: ${err.message}`);
@@ -299,7 +303,16 @@ export class EngineClient {
       }
       return;
     }
+    // Relay first: the cursor moves past an event only once the hub has it,
+    // so a reconnect replays an event whose relay failed.
+    try {
+      this.options.onEvent(frame);
+    } catch (err) {
+      this.options.log?.(
+        `Engine ${this.options.endpoint.container} event ${frame.seq} failed to relay: ${(err as Error).message}`,
+      );
+      return;
+    }
     this.options.cursor.set(frame.streamId, frame.seq);
-    this.options.onEvent(frame);
   }
 }

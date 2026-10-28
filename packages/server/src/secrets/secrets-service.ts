@@ -8,7 +8,7 @@ import type {
   SecretsViewSchema,
 } from "@agentbox/contracts";
 import type { z } from "zod";
-import { ApiFailure, toApiFailure } from "../api/errors.js";
+import { ApiError, toApiError } from "../api/errors.js";
 import type { OpClient } from "./op.js";
 
 export type SecretsCheckResult = z.infer<typeof SecretsCheckResultSchema>;
@@ -73,13 +73,13 @@ export class SecretsService {
   private async requireSignedIn(): Promise<void> {
     const status = await this.opts.op.status();
     if (!status.installed) {
-      throw new ApiFailure(
+      throw new ApiError(
         "secrets_unavailable",
         "The 1Password CLI (op) is not installed, and this launch needs secret references resolved.",
       );
     }
     if (!status.signedIn) {
-      throw new ApiFailure(
+      throw new ApiError(
         "secrets_locked",
         "The 1Password CLI is not signed in. Sign in with op signin or unlock the desktop app, then try again.",
       );
@@ -115,7 +115,7 @@ export class SecretsService {
         try {
           await this.opts.op.read(ref.ref);
         } catch (err) {
-          error = toApiFailure(err).message;
+          error = toApiError(err).message;
         }
       }
       results.push({ name: ref.name, ref: ref.ref, scope, ok: error === null, error });

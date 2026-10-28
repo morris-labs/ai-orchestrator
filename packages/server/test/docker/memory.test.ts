@@ -59,18 +59,4 @@ describe("MemoryDocker", () => {
     await expect(d.listContainers()).rejects.toBeInstanceOf(DockerUnavailableError);
     expect(await d.ping()).toBe(false);
   });
-
-  it("bumps the image id on a build", async () => {
-    const d = new MemoryDocker();
-    d.addImage("claude-code");
-    const lines: string[] = [];
-    expect(
-      await d.buildImage(
-        { context: "/", tag: "claude-code", buildArgs: {}, noCache: true, pull: true },
-        (l) => lines.push(l),
-      ),
-    ).toEqual({ ok: true });
-    expect((await d.inspectImage("claude-code"))?.id).toBe("sha256:claude-code-2");
-    expect(lines).toEqual(["Step 1/1\n"]);
-  });
 });

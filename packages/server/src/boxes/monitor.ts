@@ -24,7 +24,7 @@ export interface ContainerStatsSnapshot {
 /** Emitted as `"boxEnded"` when a running box's session goes away. */
 export interface BoxEndedEvent {
   boxId: string;
-  /** True when nobody asked for the stop through the server. */
+  /** True when nobody asked for the stop and it doesn't look like a Docker restart. */
   unexpected: boolean;
 }
 
@@ -170,7 +170,12 @@ export class ContainerMonitor extends EventEmitter {
         const box = repos.boxes.get(id);
         if (box?.wasRunning) repos.boxes.put({ ...box, wasRunning: false });
       }
-      this.emit("boxEnded", { boxId: id, unexpected: !requested } satisfies BoxEndedEvent);
+      // A Docker daemon restart ends every session at once; that is not one
+      // session ending unexpectedly per box.
+      this.emit("boxEnded", {
+        boxId: id,
+        unexpected: !requested && !engineRestart,
+      } satisfies BoxEndedEvent);
     }
     await this.deps.onRunning?.(running);
   }

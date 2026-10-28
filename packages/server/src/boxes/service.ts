@@ -33,7 +33,7 @@ import {
 import type { Repositories } from "../db/repositories.js";
 import { buildSessionCommand, sessionStartCmd } from "../docker/scripts.js";
 import { allLiveSessions, liveSessions } from "../docker/state.js";
-import type { DockerClient } from "../docker/types.js";
+import { isContainerGone, type DockerClient, type ExecResult } from "../docker/types.js";
 import { detectPrimaryRepo, normalizeRoot } from "../projects/ids.js";
 import type { ProjectService } from "../projects/service.js";
 import { PLATFORMS, allocateHostKey, boxTmuxSession, sideSessionName } from "../records/box.js";
@@ -47,6 +47,7 @@ import {
 import { ApiError, messageOf, notFound } from "../records/errors.js";
 import type { CoreEvents } from "../records/events.js";
 import type { CoreHooks } from "../records/hooks.js";
+import { KeyedMutex } from "../records/mutex.js";
 import type { SettingsService } from "../records/settings.js";
 import {
   executeMigration,
@@ -139,6 +140,8 @@ export class BoxService {
   /** Boxes whose stop a person asked for, so the monitor does not call it unexpected. */
   private readonly requestedStops = new Map<string, number>();
   private readonly converting = new Set<string>();
+  /** Serializes the part of `create()` that picks a name and saves the record. */
+  private readonly createLock = new KeyedMutex();
 
   constructor(private readonly deps: BoxServiceDeps) {}
 
@@ -261,11 +264,20 @@ export class BoxService {
           { container: ensured.container, differences: ensured.stale },
         );
       }
-      const r = await this.deps.docker.exec(box.container, {
-        cmd: sessionStartCmd(session, workDir, command),
-        user: this.env.user,
-        timeoutMs: 60_000,
-      });
+      let r: ExecResult;
+      try {
+        r = await this.deps.docker.exec(box.container, {
+          cmd: sessionStartCmd(session, workDir, command),
+          user: this.env.user,
+          timeoutMs: 60_000,
+        });
+      } catch (err) {
+        // The container left between ensureContainer() and the exec: its
+        // keeper reached the end of its grace period. Make a new one.
+        if (!isContainerGone(err)) throw err;
+        lastError = messageOf(err);
+        continue;
+      }
       if (r.exitCode === 0) return;
       lastError = (r.stderr || r.stdout).trim();
       if (r.exitCode === 3)
@@ -279,11 +291,18 @@ export class BoxService {
   private async killSession(container: string, session: string): Promise<void> {
     const inspect = await this.deps.docker.inspectContainer(container);
     if (!inspect?.running) return;
-    const r = await this.deps.docker.exec(container, {
-      cmd: ["tmux", "kill-session", "-t", `=${session}`],
-      user: this.env.user,
-      timeoutMs: 15_000,
-    });
+    let r: ExecResult;
+    try {
+      r = await this.deps.docker.exec(container, {
+        cmd: ["tmux", "kill-session", "-t", `=${session}`],
+        user: this.env.user,
+        timeoutMs: 15_000,
+      });
+    } catch (err) {
+      // A container that left took the session with it.
+      if (isContainerGone(err)) return;
+      throw err;
+    }
     if (r.exitCode !== 0 && !`${r.stderr}${r.stdout}`.includes("can't find session")) {
       throw new ApiError(
         "conflict",
@@ -419,131 +438,148 @@ export class BoxService {
       layout = "root";
     }
 
-    let conversationName = req.conversationName.trim();
-    const provision = !resumeExisting && conversationName !== "" && layout !== "root";
-    let slug = "";
-    let openingPrompt = "";
-    let worktree: string | undefined;
-    let branch: string | undefined;
-    let workspace: string | undefined;
-    let createdWorktree: { repo: string; path: string } | null = null;
+    // Name, worktree, and record are settled under one lock, so two creates
+    // that want the same name (a double-clicked Create) can't both take it,
+    // and the second sees the first one's worktree as existing.
+    const prepared = await this.createLock.run("create", async () => {
+      let conversationName = req.conversationName.trim();
+      const provision = !resumeExisting && conversationName !== "" && layout !== "root";
+      let slug = "";
+      let openingPrompt = "";
+      let worktree: string | undefined;
+      let branch: string | undefined;
+      let workspace: string | undefined;
+      let createdWorktree: { repo: string; path: string } | null = null;
 
-    if (provision) {
-      slug = slugifyIssueName(conversationName);
-      if (slug === "")
-        throw new ApiError("validation", "The conversation name has no usable characters.");
-      let workPath: string;
-      if (layout === "worktree") {
-        const repo = project.primaryRepo as string;
-        const existed = fs.existsSync(worktreePath(repo, slug));
-        const added = await addWorktree(repo, slug);
-        if (!added.ok)
-          throw new ApiError("conflict", `Could not create the worktree: ${added.error}`);
-        workPath = added.path;
-        worktree = added.path;
-        branch = branchFor(slug);
-        if (!existed) createdWorktree = { repo, path: added.path };
-      } else {
-        workPath = path.join(targetDir, slug);
-        if (!isDirectory(workPath)) {
-          try {
-            fs.mkdirSync(workPath, { recursive: true });
-          } catch (err) {
-            throw new ApiError(
-              "conflict",
-              `Could not create the workspace folder ${workPath}: ${messageOf(err)}`,
-            );
+      if (provision) {
+        slug = slugifyIssueName(conversationName);
+        if (slug === "")
+          throw new ApiError("validation", "The conversation name has no usable characters.");
+        let workPath: string;
+        if (layout === "worktree") {
+          const repo = project.primaryRepo as string;
+          const existed = fs.existsSync(worktreePath(repo, slug));
+          const added = await addWorktree(repo, slug);
+          if (!added.ok)
+            throw new ApiError("conflict", `Could not create the worktree: ${added.error}`);
+          workPath = added.path;
+          worktree = added.path;
+          branch = branchFor(slug);
+          if (!existed) createdWorktree = { repo, path: added.path };
+        } else {
+          workPath = path.join(targetDir, slug);
+          if (!isDirectory(workPath)) {
+            try {
+              fs.mkdirSync(workPath, { recursive: true });
+            } catch (err) {
+              throw new ApiError(
+                "conflict",
+                `Could not create the workspace folder ${workPath}: ${messageOf(err)}`,
+              );
+            }
           }
+          workspace = slug;
         }
-        workspace = slug;
+        const notes = worktree ? ensureWorktreeNotesDir(worktree) : ensureNotesDir(targetDir, slug);
+        if (project.primaryRepo) await ensureExcluded(project.primaryRepo);
+        const notesPath = promptPath(this.env, notes);
+        const infraPath = promptPath(this.env, infraFile(targetDir));
+        openingPrompt = worktree
+          ? expandTemplate(templates.worktree, [
+              slug,
+              conversationName,
+              promptPath(this.env, workPath),
+              notesPath,
+              infraPath,
+              promptPath(this.env, project.primaryRepo as string),
+              branch as string,
+            ])
+          : expandTemplate(templates.workspace, [
+              slug,
+              conversationName,
+              promptPath(this.env, workPath),
+              notesPath,
+              infraPath,
+            ]);
+        conversationName = slug;
+      } else if (!resumeExisting && templates.starter !== "") {
+        openingPrompt = expandTemplate(templates.starter, [
+          conversationName,
+          promptPath(this.env, targetDir),
+        ]);
       }
-      const notes = worktree ? ensureWorktreeNotesDir(worktree) : ensureNotesDir(targetDir, slug);
-      if (project.primaryRepo) await ensureExcluded(project.primaryRepo);
-      const notesPath = promptPath(this.env, notes);
-      const infraPath = promptPath(this.env, infraFile(targetDir));
-      openingPrompt = worktree
-        ? expandTemplate(templates.worktree, [
-            slug,
-            conversationName,
-            promptPath(this.env, workPath),
-            notesPath,
-            infraPath,
-            promptPath(this.env, project.primaryRepo as string),
-            branch as string,
-          ])
-        : expandTemplate(templates.workspace, [
-            slug,
-            conversationName,
-            promptPath(this.env, workPath),
-            notesPath,
-            infraPath,
-          ]);
-      conversationName = slug;
-    } else if (!resumeExisting && templates.starter !== "") {
-      openingPrompt = expandTemplate(templates.starter, [
-        conversationName,
-        promptPath(this.env, targetDir),
-      ]);
-    }
 
-    const containers = (await this.deps.docker.listContainers({ all: true })).map((c) => c.name);
-    const id = uniqueBoxName(slug || path.posix.basename(targetDir), this.takenNames(containers));
-    const sessionUuid = adoptUuid ?? crypto.randomUUID();
-    if (conversationName === "") conversationName = id;
-    const now = this.now();
-    let box: Box = BoxInputSchema.parse({
-      id,
-      projectId: project.id,
-      hostKey: allocateHostKey(id, this.repos.boxes.byProject(project.id)),
-      targetDir,
-      sessionUuid,
-      conversationName,
-      transcriptSyncedName: conversationName,
-      platform: req.platform,
-      model: req.platform === "claude" ? req.model : undefined,
-      effort: req.platform === "claude" ? req.effort : undefined,
-      skipPermissions: req.skipPermissions,
-      workspace,
-      worktree,
-      branch,
-      container: projectContainerName(project.id),
-      session: id,
-      wasRunning: false,
-      sshRemoteRefs: req.sshRemoteRefs,
-      createdAt: now,
-      updatedAt: now,
+      const containers = (await this.deps.docker.listContainers({ all: true })).map((c) => c.name);
+      const id = uniqueBoxName(slug || path.posix.basename(targetDir), this.takenNames(containers));
+      const sessionUuid = adoptUuid ?? crypto.randomUUID();
+      if (conversationName === "") conversationName = id;
+      const now = this.now();
+      const box: Box = BoxInputSchema.parse({
+        id,
+        projectId: project.id,
+        // Unique across every project: the proxy resolves a key without one.
+        hostKey: allocateHostKey(id, this.repos.boxes.list()),
+        targetDir,
+        sessionUuid,
+        conversationName,
+        transcriptSyncedName: conversationName,
+        platform: req.platform,
+        model: req.platform === "claude" ? req.model : undefined,
+        effort: req.platform === "claude" ? req.effort : undefined,
+        skipPermissions: req.skipPermissions,
+        workspace,
+        worktree,
+        branch,
+        container: projectContainerName(project.id),
+        session: id,
+        wasRunning: false,
+        sshRemoteRefs: req.sshRemoteRefs,
+        createdAt: now,
+        updatedAt: now,
+      });
+      // The record reserves the name before the lock opens. A box saved
+      // without a start waits for its first start to resume or mint a session.
+      const saved = this.repos.boxes.put(req.start ? box : { ...box, sessionUuid: adoptUuid });
+      return { box: saved, openingPrompt, conversationName, createdWorktree };
     });
 
+    let box = prepared.box;
+    const { openingPrompt, conversationName, createdWorktree } = prepared;
+    const sessionUuid = box.sessionUuid as string;
     if (!req.start) {
-      // The record waits for its first start, which resumes or mints a session.
-      box = this.repos.boxes.put({ ...box, sessionUuid: adoptUuid });
       this.publish(box, "stopped");
       return box;
     }
 
     let args = [...baseClaudeArgs(box, project), "--name", conversationName];
     if (openingPrompt !== "") args.push(openingPrompt);
-    if (forkFrom) {
-      await this.copyForkTranscript(forkFrom, boxWorkDir(box));
-      args.push("--resume", forkFrom.uuid, "--fork-session", "--session-id", sessionUuid);
-    } else {
-      args.push(resumeExisting ? "--resume" : "--session-id", sessionUuid);
-    }
-    if (box.platform !== "claude")
-      args = platformArgs(box, project, box.platform, false, openingPrompt);
-
     this.mark(box, "starting");
     try {
+      if (forkFrom) {
+        await this.copyForkTranscript(forkFrom, boxWorkDir(box));
+        args.push("--resume", forkFrom.uuid, "--fork-session", "--session-id", sessionUuid);
+      } else {
+        args.push(resumeExisting ? "--resume" : "--session-id", sessionUuid);
+      }
+      if (box.platform !== "claude")
+        args = platformArgs(box, project, box.platform, false, openingPrompt);
       await this.startSession(box, box.platform, args);
     } catch (err) {
       this.transitions.delete(box.id);
-      if (createdWorktree)
+      this.repos.boxes.delete(box.id);
+      // Never take a worktree from under another record.
+      if (
+        createdWorktree &&
+        !this.repos.boxes.list().some((b) => b.worktree === createdWorktree.path)
+      )
         await removeWorktree(createdWorktree.repo, createdWorktree.path, this.env.now());
       this.publish(null, "stopped", box.id);
       throw err;
     }
+    // Re-read: an edit may have landed while the session started.
+    const current = this.repos.boxes.get(box.id) ?? box;
     box = this.repos.boxes.put({
-      ...box,
+      ...current,
       wasRunning: true,
       launchedModel: box.model,
       launchedEffort: box.effort,
@@ -594,6 +630,20 @@ export class BoxService {
       );
     }
     if (this.isRunning(box)) throw new ApiError("box_running", `${id} is already running.`);
+    if (box.sessionUuid) {
+      // `force` lets a stopped box share a conversation; two running ones
+      // would write over each other's transcript.
+      const holder = this.repos.boxes
+        .bySession(box.sessionUuid)
+        .find((b) => b.id !== id && (this.isRunning(b) || this.transitions.has(b.id)));
+      if (holder) {
+        throw new ApiError(
+          "adoption_refused",
+          `The running box ${holder.id} already holds this conversation.`,
+          { holders: [holder.id] },
+        );
+      }
+    }
     const project = this.project(box);
     const workDir = boxWorkDir(box);
 
@@ -632,8 +682,11 @@ export class BoxService {
       this.publish(box, "stopped");
       throw err;
     }
+    // Re-read: Edit Box and the session watcher write this record while the
+    // session starts. Only the fields a start owns change here.
+    const current = this.repos.boxes.get(id) ?? box;
     const next: Box = {
-      ...box,
+      ...current,
       sessionUuid,
       wasRunning: true,
       launchedModel: box.model,
@@ -723,6 +776,19 @@ export class BoxService {
   // -------------------------------------------------------------------------
   // Remove, purge, move, relink
 
+  /**
+   * Refuses while a box of the directory runs, or is starting or stopping:
+   * the keeper lists a starting session only after a second or two.
+   */
+  private requireSiblingsStopped(siblings: readonly Box[]): void {
+    const busy = siblings.find((b) => this.isRunning(b) || this.transitions.has(b.id));
+    if (busy)
+      throw new ApiError(
+        "box_running",
+        `${busy.id} is running against this directory; stop it first.`,
+      );
+  }
+
   private requireStopped(box: Box, action: string): void {
     if (this.isRunning(box) || this.transitions.has(box.id)) {
       throw new ApiError("box_running", `Stop ${box.id} before you ${action}.`);
@@ -779,12 +845,7 @@ export class BoxService {
     const box = this.get(id);
     const dir = box.targetDir;
     const siblings = this.repos.boxes.byTargetDir(dir);
-    const running = siblings.find((b) => this.isRunning(b));
-    if (running)
-      throw new ApiError(
-        "box_running",
-        `${running.id} is running against this directory; stop it first.`,
-      );
+    this.requireSiblingsStopped(siblings);
 
     const paths = homePaths(this.env);
     const allowed = [`${paths.claudeProjects}/`, `${paths.dataDir}/`];
@@ -816,10 +877,10 @@ export class BoxService {
     return { dryRun, removedRecords, removedTranscriptDirs };
   }
 
-  /** Points `box` at `dir`'s project: its container, and a host key unique there. */
+  /** Points `box` at `dir`'s project and its container. The host key stays unique. */
   private repoint(box: Box, dir: string): Box {
     const project = this.deps.projects.ensureForRoot(dir);
-    const others = this.repos.boxes.byProject(project.id).filter((b) => b.id !== box.id);
+    const others = this.repos.boxes.list().filter((b) => b.id !== box.id);
     return {
       ...box,
       targetDir: dir,
@@ -842,12 +903,25 @@ export class BoxService {
     if (box.worktree) throw new ApiError("conflict", "A worktree box cannot be moved.");
     const currentDir = box.targetDir;
     const siblings = this.repos.boxes.byTargetDir(currentDir);
-    const running = siblings.find((b) => this.isRunning(b));
-    if (running)
+    this.requireSiblingsStopped(siblings);
+    // A worktree's record and its git metadata hold absolute paths under the
+    // root, so renaming the root would strand every worktree box there.
+    const root = normalizeRoot(currentDir);
+    const worktreeBox = this.repos.boxes
+      .list()
+      .find((b) => b.worktree && (b.worktree === root || b.worktree.startsWith(`${root}/`)));
+    if (worktreeBox) {
       throw new ApiError(
-        "box_running",
-        `${running.id} is running against this directory; stop it first.`,
+        "conflict",
+        `The worktree box ${worktreeBox.id} lives under ${root}; a directory with worktrees cannot be moved.`,
       );
+    }
+    if (fs.existsSync(path.join(root, ".worktrees"))) {
+      throw new ApiError(
+        "conflict",
+        `${root} holds git worktrees in .worktrees; a directory with worktrees cannot be moved.`,
+      );
+    }
     const newDir = normalizeRoot(path.resolve(newDirIn));
     if (newDir === normalizeRoot(currentDir)) return { movedBoxes: [] };
     if (fs.existsSync(newDir)) throw new ApiError("conflict", `${newDir} already exists.`);
@@ -1091,18 +1165,6 @@ export class BoxService {
           `Could not send the message: ${(r.stderr || r.stdout).trim()}`,
         );
     }
-  }
-
-  /**
-   * `boxes.attachCommand`: the argv for an external terminal. A session
-   * attaches without detaching other clients; a shell opens bash.
-   */
-  attachArgv(id: string, kind: "session" | "side" | "shell", platform?: Platform): string[] {
-    const box = this.get(id);
-    if (kind === "shell") return ["docker", "exec", "-it", box.container, "bash"];
-    const session =
-      kind === "side" ? sideSessionName(box, platform as Platform) : boxTmuxSession(box);
-    return ["docker", "exec", "-it", box.container, "tmux", "attach", "-t", `=${session}`];
   }
 
   // -------------------------------------------------------------------------
