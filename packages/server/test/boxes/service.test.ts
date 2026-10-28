@@ -512,6 +512,23 @@ describe("start, stop, restart", () => {
     await expect(h.core.boxes.start(b.id)).resolves.toMatchObject({ wasRunning: true });
   });
 
+  it("refuses to start a box whose conversation a running box holds", async () => {
+    const h = makeHarness();
+    const a = await stopped(h);
+    h.transcript(a.targetDir, a.sessionUuid!);
+    const b = await h.core.boxes.create({
+      targetDir: a.targetDir,
+      layout: "root",
+      conversation: { mode: "adopt", sessionUuid: a.sessionUuid! },
+      force: true,
+      start: false,
+    });
+    expect(b.sessionUuid).toBe(a.sessionUuid);
+    await h.core.boxes.start(a.id);
+    await expect(h.core.boxes.start(b.id)).rejects.toMatchObject({ code: "adoption_refused" });
+    expect(h.core.boxes.status(h.core.boxes.get(b.id))).toBe("stopped");
+  });
+
   it("makes a new container when the reused one leaves before the exec", async () => {
     const h = makeHarness();
     const box = await stopped(h);

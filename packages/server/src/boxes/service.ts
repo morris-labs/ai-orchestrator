@@ -632,6 +632,20 @@ export class BoxService {
       );
     }
     if (this.isRunning(box)) throw new ApiError("box_running", `${id} is already running.`);
+    if (box.sessionUuid) {
+      // `force` lets a stopped box share a conversation; two running ones
+      // would write over each other's transcript.
+      const holder = this.repos.boxes
+        .bySession(box.sessionUuid)
+        .find((b) => b.id !== id && (this.isRunning(b) || this.transitions.has(b.id)));
+      if (holder) {
+        throw new ApiError(
+          "adoption_refused",
+          `The running box ${holder.id} already holds this conversation.`,
+          { holders: [holder.id] },
+        );
+      }
+    }
     const project = this.project(box);
     const workDir = boxWorkDir(box);
 
