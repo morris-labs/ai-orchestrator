@@ -118,6 +118,7 @@ export class RunController {
     const eng = newEngineState();
     eng.tipRef = range.tipRef;
     eng.diffBaseSha = range.diffBaseSha;
+    eng.includeWorktree = range.includeWorktree;
     eng.phase = request.pipeline;
     const store = new RunStore(location.projectRoot, runId);
     const ctx = new RunContext(state, eng, [], store, deps, policy);

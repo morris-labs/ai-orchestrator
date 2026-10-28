@@ -29,6 +29,12 @@ export const EngineStateSchema = z.object({
     .default({}),
   /** The branch the fixer commits to, or `null` for a read-only SHA tip. */
   tipRef: z.string().nullable().default(null),
+  /**
+   * Whether round 1 reviews the working tree, as range resolution decided:
+   * never for a SHA tip, a tip that isn't checked out, or a clean tree.
+   * `null` in runs created before the engine recorded it.
+   */
+  includeWorktree: z.boolean().nullable().default(null),
   /** The commit the diff starts from: the merge base, or the pinned base. */
   diffBaseSha: z.string().nullable().default(null),
   /** Consecutive rounds that confirmed no finding above `nit`. */

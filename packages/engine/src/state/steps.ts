@@ -85,9 +85,15 @@ export function estimateTokens(prompt: string): number {
 // ---------------------------------------------------------------------------
 // Diff and groups
 
-/** The tip the diff ends at: the tip SHA, or the working tree with `includeWorktree`. */
+/** True when the round reviews the working tree: round 1, when range resolution allowed it. */
+export function reviewsWorktree(ctx: RunContext): boolean {
+  const resolved = ctx.eng.includeWorktree ?? ctx.state.request.includeWorktree;
+  return resolved && ctx.round <= 1;
+}
+
+/** The tip the diff ends at: the tip SHA, or the working tree (`null`). */
 function diffTip(ctx: RunContext): string | null {
-  return ctx.state.request.includeWorktree && ctx.round <= 1 ? null : (ctx.state.tipSha ?? "HEAD");
+  return reviewsWorktree(ctx) ? null : (ctx.state.tipSha ?? "HEAD");
 }
 
 /** Computes the file groups for the current tip. */

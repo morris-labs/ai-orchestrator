@@ -77,3 +77,25 @@ describe("an oscillation in the last round", () => {
     expect(ctx.state.stage).toBe("find");
   });
 });
+
+describe("working-tree inclusion", () => {
+  it("follows range resolution, not the request flag", async () => {
+    const { execFileSync } = await import("node:child_process");
+    const { appendFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const { buildSampleRepo } = await import("./scenario.js");
+    const { computeGroups, reviewsWorktree } = await import("../../src/state/steps.js");
+    const repo = buildSampleRepo();
+    const sha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim();
+    appendFileSync(join(repo, "lint.py"), "\n# uncommitted\n");
+    const { ctx } = await makeRun({
+      repo,
+      request: { tip: sha, readOnly: true, includeWorktree: true, base: "origin/main" },
+    });
+    ctx.state.round = 1;
+    expect(ctx.eng.includeWorktree).toBe(false);
+    expect(reviewsWorktree(ctx)).toBe(false);
+    const files = (await computeGroups(ctx)).flatMap((g) => g.files);
+    expect(files).not.toContain("lint.py");
+  });
+});

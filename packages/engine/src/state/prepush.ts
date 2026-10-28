@@ -93,6 +93,8 @@ export async function rebaseBase(ctx: RunContext): Promise<void> {
       mergeBase: ctx.state.request.mergeBase,
       exactBase: ctx.state.request.exactBase,
       readOnly: ctx.state.request.readOnly,
+      // The tree may have changed since the run started; a new base doesn't
+      // make a clean-tree run start reviewing uncommitted changes.
       includeWorktree: true,
       prNumber: ctx.state.prNumber ?? ctx.state.request.prNumber,
     },
@@ -101,6 +103,8 @@ export async function rebaseBase(ctx: RunContext): Promise<void> {
   ctx.state.baseSha = range.baseSha;
   ctx.state.tipSha = range.tipSha;
   ctx.eng.diffBaseSha = range.diffBaseSha;
+  ctx.eng.includeWorktree =
+    (ctx.eng.includeWorktree ?? ctx.state.request.includeWorktree) && range.includeWorktree;
   await disposeBaseWorktree(ctx);
 }
 
