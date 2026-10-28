@@ -1,5 +1,6 @@
 // Runs external commands (git, gh, ss, tmux) behind an interface that tests replace.
-import { execFile } from "node:child_process";
+import { runProcess } from "../adapters/process.js";
+import { profileForProgram, type EnvProfile } from "../process/env.js";
 
 export interface CommandResult {
   /** The exit code; 127 when the program doesn't exist, 124 on a timeout. */
@@ -11,7 +12,10 @@ export interface CommandResult {
 export interface CommandOptions {
   cwd?: string;
   timeoutMs?: number;
-  env?: NodeJS.ProcessEnv;
+  /** Added to the environment the profile allows; `undefined` removes a variable. */
+  env?: Record<string, string | undefined>;
+  /** Absent: `github` for `git` and `gh`, `untrusted` for everything else. */
+  envProfile?: EnvProfile;
 }
 
 export interface CommandRunner {
@@ -19,29 +23,20 @@ export interface CommandRunner {
   run(program: string, args: readonly string[], options?: CommandOptions): Promise<CommandResult>;
 }
 
-/** The real runner, on `child_process.execFile`. */
+/** The real runner, on `runProcess`: a timeout kills the whole process group. */
 export const execRunner: CommandRunner = {
-  run(program, args, options = {}) {
-    return new Promise((resolve) => {
-      execFile(
-        program,
-        [...args],
-        {
-          cwd: options.cwd,
-          env: options.env ?? process.env,
-          timeout: options.timeoutMs ?? 15_000,
-          maxBuffer: 16 * 1024 * 1024,
-          encoding: "utf8",
-        },
-        (error, stdout, stderr) => {
-          if (!error) return resolve({ code: 0, stdout, stderr });
-          const e = error as NodeJS.ErrnoException & { code?: unknown; killed?: boolean };
-          let code = typeof e.code === "number" ? e.code : 1;
-          if (e.code === "ENOENT") code = 127;
-          if (e.killed) code = 124;
-          resolve({ code, stdout: stdout ?? "", stderr: stderr ?? "" });
-        },
-      );
+  async run(program, args, options = {}) {
+    const result = await runProcess({
+      command: program,
+      args: [...args],
+      cwd: options.cwd ?? process.cwd(),
+      env: options.env,
+      envProfile: options.envProfile ?? profileForProgram(program),
+      timeoutMs: options.timeoutMs ?? 15_000,
     });
+    let code = result.exitCode ?? 1;
+    if (result.spawnError) code = result.spawnError.code === "EACCES" ? 126 : 127;
+    if (result.timedOut) code = 124;
+    return { code, stdout: result.stdout, stderr: result.stderr };
   },
 };

@@ -567,8 +567,19 @@ export class RunContext {
     timeoutMs: number,
   ): Promise<AdapterResult<T>> {
     const controller = new AbortController();
-    const onAbort = () => controller.abort(this.signal.reason);
-    this.signal.addEventListener("abort", onAbort, { once: true });
+    let rejectAborted: (error: Error) => void = () => undefined;
+    const aborted = new Promise<never>((_, reject) => {
+      rejectAborted = reject;
+    });
+    aborted.catch(() => undefined);
+    // One listener per call, removed in `finally`, so a long run doesn't
+    // pile listeners onto the run's signal.
+    const onAbort = () => {
+      controller.abort(this.signal.reason);
+      rejectAborted(new RunCancelled());
+    };
+    if (this.signal.aborted) onAbort();
+    else this.signal.addEventListener("abort", onAbort, { once: true });
     let timer: NodeJS.Timeout | undefined;
     const guard = new Promise<never>((_, reject) => {
       // The adapter enforces the timeout; this guard catches an adapter that doesn't.
@@ -579,11 +590,6 @@ export class RunContext {
       }, timeoutMs + 30_000);
       timer.unref?.();
     });
-    const aborted = new Promise<never>((_, reject) => {
-      if (this.signal.aborted) reject(new RunCancelled());
-      this.signal.addEventListener("abort", () => reject(new RunCancelled()), { once: true });
-    });
-    aborted.catch(() => undefined);
     const { sessionId, timeoutMs: _t, ...rest } = spec.request;
     const request = {
       ...rest,

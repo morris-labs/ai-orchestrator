@@ -15,6 +15,7 @@ import {
   type CliAdapterOptions,
 } from "./base.js";
 import { parseStructured, parseStructuredText } from "./output.js";
+import { childEnv } from "../process/env.js";
 import { runProcess } from "./process.js";
 import { AdapterError, type CliRequest, type CliResult, type CliLimitInfo } from "./types.js";
 
@@ -40,7 +41,7 @@ export interface ClaudeAdapterOptions extends CliAdapterOptions {
   /**
    * Pass `--bare`, which skips hooks, plugins, and CLAUDE.md discovery. It
    * also skips OAuth, so it works only with `ANTHROPIC_API_KEY`. Defaults to
-   * true when that variable is set and false otherwise.
+   * true when the child's environment has that variable and false otherwise.
    */
   bare?: boolean;
   /** Permission mode for `tools: "write"`. Default `bypassPermissions`; the container is the sandbox. */
@@ -84,7 +85,7 @@ export class ClaudeAdapter extends CliAdapter {
     const args = ["-p", "--output-format", "stream-json", "--verbose"];
     const bare =
       this.claudeOptions.bare ??
-      Boolean(process.env.ANTHROPIC_API_KEY ?? this.options.env?.ANTHROPIC_API_KEY);
+      Boolean(childEnv("vendor:claude", this.options.env).ANTHROPIC_API_KEY);
     if (bare) args.push("--bare");
     if (req.model) args.push("--model", req.model);
     if (req.effort) args.push("--effort", req.effort);
@@ -121,6 +122,7 @@ export class ClaudeAdapter extends CliAdapter {
       cwd: req.cwd,
       input: req.prompt,
       env: this.options.env,
+      envProfile: `vendor:${this.vendor}`,
       timeoutMs: req.timeoutMs,
       signal: req.signal,
       onLine: (line) => {

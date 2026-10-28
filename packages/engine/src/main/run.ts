@@ -233,6 +233,11 @@ export async function main(
     return 2;
   }
 
+  // The token stays in `checked.env` for the API. Removing it from this
+  // process's environment keeps it out of every child, whatever runner
+  // starts the child.
+  if (env === process.env) delete process.env[ENGINE_ENV.token];
+
   let handle: EngineHandle;
   try {
     const { adapters } = await selectAdapters(env, log);

@@ -105,6 +105,7 @@ export abstract class CliAdapter implements CliVendorAdapter {
       args: this.versionArgs(),
       cwd: process.cwd(),
       env: this.options.env,
+      envProfile: `vendor:${this.vendor}`,
       timeoutMs: 15_000,
     });
     if (result.spawnError || result.exitCode !== 0) {

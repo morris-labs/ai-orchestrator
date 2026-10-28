@@ -19,6 +19,7 @@ import {
   type Vendor,
 } from "@agentbox/contracts";
 import { z } from "zod";
+import type { EnvProfile } from "./process/env.js";
 import type { GitHubClient } from "./postpush/github.js";
 
 // ---------------------------------------------------------------------------
@@ -31,12 +32,24 @@ export interface CommandResult {
   stderr: string;
   /** True when the process ran past its timeout and was killed. */
   timedOut: boolean;
+  /**
+   * True when the program never ran, such as a missing file (`ENOENT`, exit
+   * code 127) or one that isn't executable (`EACCES`, exit code 126).
+   */
+  notStarted?: boolean;
+  /** The signal that ended the process, if one did. */
+  signal?: string | null;
 }
 
 export interface CommandOptions {
   cwd: string;
   timeoutMs?: number;
   env?: Record<string, string>;
+  /**
+   * Which of the engine's variables the process inherits. Absent: `github`
+   * for `git` and `gh`, `untrusted` for everything else.
+   */
+  envProfile?: EnvProfile;
   /** Written to the process's standard input. */
   input?: string;
   signal?: AbortSignal;

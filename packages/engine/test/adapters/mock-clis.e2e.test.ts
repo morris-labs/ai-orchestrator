@@ -9,7 +9,7 @@ import { ClaudeAdapter } from "../../src/adapters/claude.js";
 import { CodexAdapter } from "../../src/adapters/codex.js";
 import { CopilotAdapter } from "../../src/adapters/copilot.js";
 import { VendorFindingsOutputSchema } from "../../src/adapters/output.js";
-import { retryOnce } from "../../src/adapters/retry.js";
+import { isRetryable } from "../../src/adapters/retry.js";
 import { AdapterError, type CliVendorAdapter } from "../../src/adapters/types.js";
 import { MOCK_BIN } from "./helpers.js";
 
@@ -183,9 +183,13 @@ describe.each(["claude", "codex", "copilot"] as const)(
     it("succeeds on the retry after an unusable answer", async () => {
       const { dir, adapters } = setup();
       let attempts = 0;
-      const result = await retryOnce(() => {
+      const attempt = () => {
         attempts += 1;
         return adapters[vendor].review(request(dir, "FLAKY"));
+      };
+      const result = await attempt().catch((error: unknown) => {
+        expect(isRetryable(error)).toBe(true);
+        return attempt();
       });
       expect(attempts).toBe(2);
       expect(result.output.findings).toEqual([]);

@@ -97,6 +97,7 @@ export class CodexAdapter extends CliAdapter {
         cwd: req.cwd,
         input: prompt,
         env: this.options.env,
+        envProfile: `vendor:${this.vendor}`,
         timeoutMs: req.timeoutMs,
         signal: req.signal,
         onLine: (line) => parser.push(line),
