@@ -17,7 +17,10 @@ import {
 import type { z } from "zod";
 import type { EngineDeps } from "../core.js";
 import { systemClock } from "../core.js";
+import { DEFAULT_POLICY } from "@agentbox/contracts";
 import { loadPolicy, loadPolicyExtras } from "../policy/load.js";
+import { Git } from "../range/git.js";
+import { baseWorktreePath, removeBaseWorktree } from "../verify/verify.js";
 import { drivePostPush } from "../postpush/loop.js";
 import { resolveRange } from "../range/resolve.js";
 import { newEngineState } from "../run/engine-state.js";
@@ -31,6 +34,7 @@ import {
   isTerminal,
 } from "./context.js";
 import { drivePrePush } from "./prepush.js";
+import { disposeBaseWorktree } from "./steps.js";
 import { assignRoles } from "./profiles.js";
 
 /** The action doesn't fit the run's status; the API answers `invalid_state`. */
@@ -52,7 +56,10 @@ export interface RunLocation {
 export class RunController {
   private active: Promise<void> | null = null;
 
-  private constructor(private readonly ctx: RunContext) {}
+  private constructor(
+    private readonly ctx: RunContext,
+    private readonly location: RunLocation,
+  ) {}
 
   /**
    * Creates a run: resolves the range (throwing `RangeError` with code
@@ -117,7 +124,7 @@ export class RunController {
     ctx.extras = await loadPolicyExtras(location.projectRoot, location.policyPath);
     await ctx.persist();
     await ctx.emitRun();
-    return new RunController(ctx);
+    return new RunController(ctx, location);
   }
 
   /** Loads a run from its directory, at the stage and status it was left in. */
@@ -130,10 +137,12 @@ export class RunController {
     const state = await store.loadState();
     const eng = await store.loadEngineState();
     const findings = await store.loadFindings();
-    const policy = await loadPolicy(location.projectRoot, location.policyPath);
-    const ctx = new RunContext(state, eng, findings, store, deps, policy);
-    ctx.extras = await loadPolicyExtras(location.projectRoot, location.policyPath);
-    return new RunController(ctx);
+    // The policy is read again each time the driver starts, so a typo in it
+    // fails only the runs that go on, and only until it's fixed.
+    const ctx = new RunContext(state, eng, findings, store, deps, DEFAULT_POLICY);
+    // A base checkout left by an engine that stopped mid-run is stale.
+    await removeBaseWorktree(new Git(deps.runner, state.request.repoPath), baseWorktreePath(runId));
+    return new RunController(ctx, location);
   }
 
   get id(): string {
@@ -197,12 +206,15 @@ export class RunController {
     const ctx = this.ctx;
     this.active = (async () => {
       try {
+        ctx.policy = await loadPolicy(this.location.projectRoot, this.location.policyPath);
+        ctx.extras = await loadPolicyExtras(this.location.projectRoot, this.location.policyPath);
         if (ctx.state.status !== "running") {
           await ctx.setStatus("running", {
             error: undefined,
             stopReason: null,
             decision: null,
             finishedAt: undefined,
+            pausedUntil: undefined,
           });
         }
         if (ctx.eng.phase === "pre-push") await drivePrePush(ctx);
@@ -222,6 +234,7 @@ export class RunController {
   /** Records why the driver stopped. Never rejects, even when the run directory can't be written. */
   private async stopOn(error: unknown): Promise<void> {
     const ctx = this.ctx;
+    await disposeBaseWorktree(ctx).catch(() => undefined);
     if (error instanceof DecisionNeeded) {
       await ctx.settleStatus("waiting_decision", { decision: error.decision });
     } else if (error instanceof RunCancelled || ctx.cancelled) {
@@ -270,7 +283,10 @@ export class RunController {
     this.requireLive("cancel");
     this.ctx.requestCancel();
     if (this.active) await this.settled();
-    else await this.ctx.setStatus("cancelled", { stopReason: "cancelled" });
+    else {
+      await disposeBaseWorktree(this.ctx).catch(() => undefined);
+      await this.ctx.setStatus("cancelled", { stopReason: "cancelled" });
+    }
     return this.state;
   }
 

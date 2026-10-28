@@ -39,6 +39,7 @@ import {
 import { parseDiff } from "../range/diff.js";
 import {
   BaseWorktree,
+  baseWorktreePath,
   chooseDisprover,
   verifyFinding,
   type VerifyResult,
@@ -467,7 +468,7 @@ const baseWorktrees = new WeakMap<RunContext, BaseWorktree>();
 export function baseWorktreeFor(ctx: RunContext): BaseWorktree {
   let wt = baseWorktrees.get(ctx);
   if (!wt) {
-    wt = new BaseWorktree(ctx.git, ctx.state.baseSha ?? "HEAD");
+    wt = new BaseWorktree(ctx.git, ctx.state.baseSha ?? "HEAD", baseWorktreePath(ctx.state.id));
     baseWorktrees.set(ctx, wt);
   }
   return wt;

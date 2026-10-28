@@ -109,15 +109,27 @@ export class EngineRunManager implements RunManager {
     };
   }
 
+  /** Timers that resume runs paused for a usage limit, by run id. */
+  private readonly resumeTimers = new Map<string, NodeJS.Timeout>();
+
   /**
    * Loads every run that is still active, so `activeRunCount()` counts it,
-   * and continues the ones a stopped engine left pending or running.
+   * continues the ones a stopped engine left pending or running, and sets a
+   * timer for the ones paused until a usage limit resets. A run that can't
+   * be loaded is marked failed and skipped, so one bad run directory never
+   * keeps the engine from starting.
    */
   async init(): Promise<void> {
     for (const id of await listRunIds(this.deps.projectRoot)) {
       const state = await this.readState(id);
       if (!state || !ACTIVE_RUN_STATUSES.includes(state.status)) continue;
-      const run = await this.controller(id);
+      let run: RunController | null;
+      try {
+        run = await this.controller(id);
+      } catch (error) {
+        await this.markFailed(state, error);
+        continue;
+      }
       if (!run) continue;
       if (state.status === "running" || state.status === "pending") {
         this.deps.log.info("Continuing a run the engine left unfinished", {
@@ -129,7 +141,55 @@ export class EngineRunManager implements RunManager {
         } catch (error) {
           this.deps.log.warn("Couldn't continue a run", { runId: id, error: String(error) });
         }
+      } else if (state.status === "paused" && state.pausedUntil) {
+        this.scheduleResume(run, state.pausedUntil);
       }
+    }
+  }
+
+  /** Resumes a run paused for a usage limit once the limit resets. */
+  private scheduleResume(run: RunController, until: string): void {
+    const now = this.deps.clock?.now() ?? Date.now();
+    const ms = Math.max(0, Date.parse(until) - now);
+    this.deps.log.info("A run waits for a usage limit to reset", { runId: run.id, until });
+    const timer = setTimeout(() => {
+      this.resumeTimers.delete(run.id);
+      if (run.status !== "paused" || run.running) return;
+      try {
+        void run.start();
+      } catch (error) {
+        this.deps.log.warn("Couldn't resume a run after its limit reset", {
+          runId: run.id,
+          error: String(error),
+        });
+      }
+    }, ms);
+    timer.unref();
+    this.resumeTimers.set(run.id, timer);
+  }
+
+  /** Records that a run's files can't be loaded. Never rejects. */
+  private async markFailed(state: RunState, error: unknown): Promise<void> {
+    const message = `The engine couldn't load the run: ${String((error as Error)?.message ?? error)}`;
+    this.deps.log.error("Marked a run failed because it can't be loaded", {
+      runId: state.id,
+      error: String(error),
+    });
+    try {
+      const now = new Date(this.deps.clock?.now() ?? Date.now()).toISOString();
+      await new RunStore(this.deps.projectRoot, state.id).saveState({
+        ...state,
+        status: "failed",
+        stopReason: "error",
+        error: message,
+        updatedAt: now,
+        finishedAt: now,
+      });
+    } catch (writeError) {
+      this.deps.log.error("Couldn't record the failed run", {
+        runId: state.id,
+        error: String(writeError),
+      });
     }
   }
 
@@ -367,10 +427,16 @@ export class EngineRunManager implements RunManager {
     return out.sort((a, b) => Date.parse(a.time) - Date.parse(b.time));
   }
 
+  /**
+   * Runs that keep the container alive. A run paused until a usage limit
+   * resets doesn't count: the next engine resumes it from its run directory.
+   */
   activeRunCount(): number {
     let n = 0;
     for (const run of this.controllers.values()) {
-      if (ACTIVE_RUN_STATUSES.includes(run.status)) n += 1;
+      if (!ACTIVE_RUN_STATUSES.includes(run.status)) continue;
+      if (run.status === "paused" && run.state.pausedUntil) continue;
+      n += 1;
     }
     return n;
   }
@@ -380,6 +446,8 @@ export class EngineRunManager implements RunManager {
    * run directory, and the next engine continues it from its stage.
    */
   async close(): Promise<void> {
+    for (const timer of this.resumeTimers.values()) clearTimeout(timer);
+    this.resumeTimers.clear();
     await Promise.resolve();
   }
 }

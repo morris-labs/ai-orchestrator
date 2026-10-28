@@ -1,7 +1,7 @@
 // Verify stage (design.md, pre-push step 5): a disprover from another vendor
 // tries to disprove each finding, with a reproduction script where it can,
 // and the engine checks whether the flaw exists at the pinned base.
-import { mkdtemp, mkdir, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { Finding, PolicyFile, Profile, RoleAssignment, Vendor } from "@agentbox/contracts";
@@ -33,23 +33,55 @@ export function chooseDisprover(
   return preferred[0] ?? others[0] ?? roles.disprover;
 }
 
-/** A detached checkout of the pinned base in a temporary directory. */
+/** Where a run's base checkout lives: a temporary directory named after the run. */
+export function baseWorktreePath(runId: string): string {
+  return join(tmpdir(), `agentbox-base-${runId}`);
+}
+
+/**
+ * Removes a base checkout that an earlier engine left behind, and its entry
+ * in `git worktree list`. Never rejects.
+ */
+export async function removeBaseWorktree(git: Git, path: string): Promise<void> {
+  try {
+    await git.removeWorktree(path);
+  } catch {
+    // Nothing registered there.
+  }
+  await rm(path, { recursive: true, force: true }).catch(() => undefined);
+}
+
+/**
+ * A detached checkout of the pinned base. The directory is named after the
+ * run, so an engine that restarts finds and removes what a crash left.
+ */
 export class BaseWorktree {
   private path: Promise<string> | null = null;
 
   constructor(
     private readonly git: Git,
     private readonly baseSha: string,
+    private readonly dir: string = join(tmpdir(), `agentbox-base-${process.pid}-${Date.now()}`),
   ) {}
 
   /** Creates the checkout on first use and returns its path. */
   ensure(): Promise<string> {
     // Parallel disprovers share one checkout, so the promise is the cache.
     this.path ??= (async () => {
-      const dir = await mkdtemp(join(tmpdir(), "agentbox-base-"));
-      await this.git.addDetachedWorktree(dir, this.baseSha);
-      return dir;
+      await removeBaseWorktree(this.git, this.dir);
+      await mkdir(dirname(this.dir), { recursive: true });
+      try {
+        await this.git.addDetachedWorktree(this.dir, this.baseSha);
+      } catch (error) {
+        await removeBaseWorktree(this.git, this.dir);
+        throw error;
+      }
+      return this.dir;
     })();
+    // A failed checkout isn't cached, so the next call tries again.
+    this.path.catch(() => {
+      this.path = null;
+    });
     return this.path;
   }
 
@@ -59,8 +91,7 @@ export class BaseWorktree {
     this.path = null;
     const path = await pending.catch(() => null);
     if (!path) return;
-    await this.git.removeWorktree(path);
-    await rm(path, { recursive: true, force: true });
+    await removeBaseWorktree(this.git, path);
   }
 }
 
