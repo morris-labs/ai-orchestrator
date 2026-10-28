@@ -260,6 +260,29 @@ export interface ImportRecord {
   checksPassed: boolean;
 }
 
+/**
+ * The logins whose comments the loop imports: the policy's
+ * `commentAuthors`, else the repository's collaborators, else (when the
+ * token can't list collaborators) only Copilot and the pull request's
+ * author. Lowercased.
+ */
+export async function allowedCommentAuthors(ctx: RunContext): Promise<Set<string>> {
+  const configured = ctx.extras.commentAuthors;
+  if (configured) return new Set(configured.map((l) => l.toLowerCase()));
+  const gh = github(ctx);
+  const repo = ctx.state.request.repoPath;
+  const collaborators = (await gh.listCollaborators?.(repo)) ?? null;
+  if (collaborators) return new Set(collaborators.map((l) => l.toLowerCase()));
+  const out = new Set<string>();
+  const pr = ctx.state.prNumber ? await gh.viewPr(repo, ctx.state.prNumber) : null;
+  if (pr?.author) out.add(pr.author.toLowerCase());
+  return out;
+}
+
+function isAllowedAuthor(login: string, allowed: ReadonlySet<string>): boolean {
+  return isCopilotLogin(login) || allowed.has(login.toLowerCase());
+}
+
 /** Imports unresolved review threads and failing checks as findings. */
 async function stageImport(ctx: RunContext, poll: PollResult): Promise<ImportRecord> {
   const file = ctx.store.roundFile(ctx.round, "import");
@@ -272,9 +295,18 @@ async function stageImport(ctx: RunContext, poll: PollResult): Promise<ImportRec
   const imported: Finding[] = [];
   const known = new Set(ctx.eng.importedRefs);
 
+  const allowed = await allowedCommentAuthors(ctx);
   for (const thread of await gh.listReviewThreads(repo, pr)) {
     if (thread.isResolved || known.has(thread.id)) continue;
-    const f = threadFinding(ctx, thread);
+    // A thread counts only when a trusted author started it, and only
+    // trusted authors' replies go into the finding.
+    const first = thread.comments[0];
+    if (!first || !isAllowedAuthor(first.author, allowed)) continue;
+    const trusted = {
+      ...thread,
+      comments: thread.comments.filter((c) => isAllowedAuthor(c.author, allowed)),
+    };
+    const f = threadFinding(ctx, trusted);
     if (!f) continue;
     known.add(thread.id);
     imported.push(f);

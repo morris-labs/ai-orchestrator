@@ -17,7 +17,7 @@ import {
 import type { z } from "zod";
 import type { EngineDeps } from "../core.js";
 import { systemClock } from "../core.js";
-import { loadPolicy } from "../policy/load.js";
+import { loadPolicy, loadPolicyExtras } from "../policy/load.js";
 import { drivePostPush } from "../postpush/loop.js";
 import { resolveRange } from "../range/resolve.js";
 import { newEngineState } from "../run/engine-state.js";
@@ -114,6 +114,7 @@ export class RunController {
     eng.phase = request.pipeline;
     const store = new RunStore(location.projectRoot, runId);
     const ctx = new RunContext(state, eng, [], store, deps, policy);
+    ctx.extras = await loadPolicyExtras(location.projectRoot, location.policyPath);
     await ctx.persist();
     await ctx.emitRun();
     return new RunController(ctx);
@@ -130,7 +131,9 @@ export class RunController {
     const eng = await store.loadEngineState();
     const findings = await store.loadFindings();
     const policy = await loadPolicy(location.projectRoot, location.policyPath);
-    return new RunController(new RunContext(state, eng, findings, store, deps, policy));
+    const ctx = new RunContext(state, eng, findings, store, deps, policy);
+    ctx.extras = await loadPolicyExtras(location.projectRoot, location.policyPath);
+    return new RunController(ctx);
   }
 
   get id(): string {

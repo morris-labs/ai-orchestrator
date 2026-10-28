@@ -4,7 +4,13 @@ import { join } from "node:path";
 import { DEFAULT_POLICY, PolicyFileSchema } from "@agentbox/contracts";
 import { describe, expect, it } from "vitest";
 import { globToRegExp, matchesAny, matchesGlob } from "../../src/policy/glob.js";
-import { PolicyError, loadPolicy, parsePolicy, policyFilePath } from "../../src/policy/load.js";
+import {
+  PolicyError,
+  loadPolicy,
+  parsePolicy,
+  parsePolicyExtras,
+  policyFilePath,
+} from "../../src/policy/load.js";
 import { isRiskPath, policyPromptSection, rulesFor } from "../../src/policy/rules.js";
 
 describe("glob", () => {
@@ -78,5 +84,16 @@ describe("rules", () => {
     expect(text).toContain("[phi] Never log patient data.");
     expect(text).toContain("Windows-only code under win/.");
     expect(policyPromptSection(DEFAULT_POLICY)).toBe("");
+  });
+});
+
+describe("engine-only policy settings", () => {
+  it("reads commentAuthors and keeps the contract schema strict otherwise", () => {
+    const text = "version: 1\ncommentAuthors: [alice]\n";
+    expect(parsePolicy(text).version).toBe(1);
+    expect(parsePolicyExtras(text).commentAuthors).toEqual(["alice"]);
+    expect(parsePolicyExtras("version: 1\n").commentAuthors).toBeNull();
+    expect(() => parsePolicyExtras("version: 1\ncommentAuthors: 3\n")).toThrow(/commentAuthors/);
+    expect(() => parsePolicy("version: 1\nbogus: 1\n")).toThrow();
   });
 });

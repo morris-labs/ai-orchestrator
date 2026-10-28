@@ -30,6 +30,7 @@ import {
   type RoleTimeouts,
   type VendorAdapter,
 } from "../core.js";
+import { NO_EXTRAS, type PolicyExtras } from "../policy/load.js";
 import { Git } from "../range/git.js";
 import { ShellRunner } from "../range/exec.js";
 import type { EngineState } from "../run/engine-state.js";
@@ -133,6 +134,8 @@ export class RunContext {
   private cancelRequested = false;
   /** Every parallel call waits on the same gate while the run is paused. */
   private pauseGate: { promise: Promise<void>; open: () => void } | null = null;
+  /** Engine-only policy settings, such as the comment authors to trust. */
+  extras: PolicyExtras = NO_EXTRAS;
   /** Serializes writes, since parallel agent calls update the same files. */
   private writeChain: Promise<void> = Promise.resolve();
 
