@@ -9,6 +9,7 @@
     "./core": "./src/core.ts",
     "./hooks": "./src/hooks.ts",
     "./testing": "./src/testing/index.ts",
+    "./testing/node": "./src/testing/node.ts",
     "./theme.css": "./src/theme/theme.css",
     "./dashboard": "./src/dashboard/index.ts",
     "./package.json": "./package.json"

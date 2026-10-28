@@ -1,19 +1,24 @@
-// Electron smoke test for the host peer. Build first (`pnpm --filter
-// @agentbox/review build`) and fetch the Electron binary once
-// (`pnpm --filter @agentbox/review e2e:setup`). The test starts a mock
-// server, launches the app with a deep link, and checks the launcher,
-// navigation, the token header, and the single-instance hand-off.
+// Electron smoke test. Build first (`pnpm --filter @agentbox/review build`)
+// and fetch the Electron binary once (`pnpm --filter @agentbox/review
+// e2e:setup`). The test serves the built renderer and the shared fake server
+// from `@agentbox/ui/testing`, launches the app with a deep link, and checks
+// the launcher, navigation, the token header, and the single-instance
+// hand-off. Without a display, run it under `xvfb-run`.
 import { spawnSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { _electron as electron, expect, test } from "@playwright/test";
-import { PROJECT_ID, startMockServer } from "./mockServer.js";
+import { DEMO_PROJECT as PROJECT_ID, FakeServer, makeProject } from "@agentbox/ui/testing";
+import { serveFake } from "@agentbox/ui/testing/node";
 
 const appDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const main = resolve(appDir, "dist/electron/main.js");
 
 test("launches, prefills the launcher, and keeps a single instance", async () => {
-  const mock = await startMockServer(resolve(appDir, "dist/renderer"));
+  const fake = new FakeServer({
+    projects: [makeProject({ root: "/home/user/src/example-app", id: PROJECT_ID })],
+  });
+  const mock = await serveFake(fake, { static: { "/review/": resolve(appDir, "dist/renderer") } });
   const env = {
     ...process.env,
     AGENTBOX_SERVER_URL: mock.url,
@@ -50,6 +55,6 @@ test("launches, prefills the launcher, and keeps a single instance", async () =>
   } finally {
     await app.evaluate(({ app: a }) => a.quit());
     await app.close().catch(() => undefined);
-    mock.server.close();
+    await mock.close();
   }
 });

@@ -1,5 +1,7 @@
-// Playwright configuration for the Electron smoke test. It runs on the host
-// peer, which has a display: `pnpm --filter @agentbox/review e2e`.
+// Playwright configuration for the Electron smoke test:
+// `pnpm --filter @agentbox/review e2e`. Without a display, wrap it in
+// `xvfb-run -a`; in a container without a setuid sandbox helper, also set
+// ELECTRON_DISABLE_SANDBOX=1.
 import { defineConfig } from "@playwright/test";
 
 export default defineConfig({

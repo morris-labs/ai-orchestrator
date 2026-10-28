@@ -41,6 +41,8 @@ let quitting = false;
 let counts: TrayCounts | null = null;
 
 function readToken(): string | null {
+  // A test or a wrapper can hand the token over without the file.
+  if (process.env.AGENTBOX_SERVER_TOKEN) return process.env.AGENTBOX_SERVER_TOKEN;
   try {
     return readFileSync(join(homedir(), HOME_PATHS.serverToken), "utf8").trim() || null;
   } catch {
