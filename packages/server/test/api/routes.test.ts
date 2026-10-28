@@ -1,0 +1,392 @@
+import { RunIdSchema, serverRoutes } from "@agentbox/contracts";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { sessionValue } from "../../src/api/auth.js";
+import { HOLD_EDITS_MESSAGE } from "../../src/api/handlers.js";
+import { AUTH, TOKEN, createHarness, type Harness } from "./harness.js";
+import { RUN, UUID, box, sshRemote } from "./fixtures.js";
+
+const V1 = "/api/v1";
+const B = `${V1}/boxes/${box.id}`;
+const P = `${V1}/projects/example-app-1a2b3c4d`;
+const R = `${V1}/runs/${RUN}`;
+
+interface Case {
+  key: keyof typeof serverRoutes;
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+  url: string;
+  body?: unknown;
+  status: number;
+  setup?: (h: Harness) => void;
+}
+
+const policy = { version: 1 };
+
+// One successful call per HTTP route. Each response passes the route's
+// response schema inside the server, or the call fails with a 500.
+const cases: Case[] = [
+  { key: "health", method: "GET", url: `${V1}/health`, status: 200 },
+  { key: "auth.session", method: "POST", url: `${V1}/auth/session`, status: 200 },
+  { key: "projects.list", method: "GET", url: `${V1}/projects`, status: 200 },
+  { key: "projects.create", method: "POST", url: `${V1}/projects`, body: { root: "/work/other" }, status: 201 },
+  { key: "projects.get", method: "GET", url: P, status: 200 },
+  { key: "projects.update", method: "PATCH", url: P, body: { name: "Renamed" }, status: 200 },
+  { key: "projects.restartContainer", method: "POST", url: `${P}/container/restart`, status: 200 },
+  { key: "projects.policy.get", method: "GET", url: `${P}/policy`, status: 200 },
+  { key: "projects.policy.put", method: "PUT", url: `${P}/policy`, body: policy, status: 200 },
+  { key: "boxes.list", method: "GET", url: `${V1}/boxes?projectId=example-app-1a2b3c4d`, status: 200 },
+  {
+    key: "boxes.create",
+    method: "POST",
+    url: `${V1}/boxes`,
+    body: { targetDir: "/work/example-app", conversationName: "fix it", layout: "worktree" },
+    status: 202,
+  },
+  { key: "boxes.get", method: "GET", url: B, status: 200 },
+  { key: "boxes.update", method: "PATCH", url: B, body: { conversationName: "x" }, status: 200 },
+  {
+    key: "boxes.start",
+    method: "POST",
+    url: B + "/start",
+    status: 200,
+    setup: (h) => h.core.views.set(box.id, { ...h.core.views.get(box.id)!, status: "stopped" }),
+  },
+  { key: "boxes.stop", method: "POST", url: `${B}/stop`, status: 200 },
+  { key: "boxes.restart", method: "POST", url: `${B}/restart`, status: 200 },
+  {
+    key: "boxes.remove",
+    method: "DELETE",
+    url: `${B}?removeWorktree=true`,
+    status: 200,
+    setup: (h) => h.core.views.set(box.id, { ...h.core.views.get(box.id)!, status: "stopped" }),
+  },
+  { key: "boxes.purge", method: "POST", url: `${B}/purge`, status: 200 },
+  { key: "boxes.move", method: "POST", url: `${B}/move`, body: { newDir: "/work/b" }, status: 200 },
+  { key: "boxes.relink", method: "POST", url: `${B}/relink`, body: { targetDir: "/work/b" }, status: 200 },
+  { key: "boxes.convertToWorktree", method: "POST", url: `${B}/convert-to-worktree`, body: {}, status: 202 },
+  { key: "boxes.attachCommand", method: "GET", url: `${B}/attach-command?kind=session`, status: 200 },
+  { key: "boxes.sideSessions.start", method: "POST", url: `${B}/side-sessions`, body: { platform: "codex" }, status: 200 },
+  { key: "boxes.sideSessions.stop", method: "DELETE", url: `${B}/side-sessions/codex`, status: 200 },
+  { key: "boxes.platform", method: "PUT", url: `${B}/platform`, body: { platform: "codex" }, status: 200 },
+  { key: "boxes.message", method: "POST", url: `${B}/message`, body: { text: "hello" }, status: 200 },
+  { key: "boxes.startAll", method: "POST", url: `${V1}/boxes/start-all`, body: {}, status: 200 },
+  { key: "boxes.stopAll", method: "POST", url: `${V1}/boxes/stop-all`, status: 200 },
+  { key: "boxes.restartAll", method: "POST", url: `${V1}/boxes/restart-all`, status: 200 },
+  { key: "stats.refresh", method: "POST", url: `${V1}/stats/refresh`, status: 200 },
+  {
+    key: "jobs.get",
+    method: "GET",
+    url: `${V1}/jobs/JOB`,
+    status: 200,
+  },
+  { key: "conversations.list", method: "GET", url: `${V1}/conversations?dir=/work/example-app`, status: 200 },
+  { key: "models.list", method: "GET", url: `${V1}/models`, status: 200 },
+  { key: "models.rescan", method: "POST", url: `${V1}/models/rescan`, status: 409 },
+  { key: "image.status", method: "GET", url: `${V1}/image`, status: 200 },
+  { key: "image.build", method: "POST", url: `${V1}/image/build`, body: { kind: "packages" }, status: 202 },
+  { key: "updates.check", method: "GET", url: `${V1}/updates?force=true`, status: 200 },
+  { key: "setup.get", method: "GET", url: `${V1}/setup`, status: 200 },
+  { key: "setup.fix", method: "POST", url: `${V1}/setup/checks/ssh_key/fix`, status: 202 },
+  { key: "setup.complete", method: "PUT", url: `${V1}/setup`, body: { defaultTargetDir: "/work" }, status: 200 },
+  { key: "settings.get", method: "GET", url: `${V1}/settings`, status: 200 },
+  { key: "settings.patch", method: "PATCH", url: `${V1}/settings`, body: { engineImage: "x" }, status: 200 },
+  { key: "prompts.get", method: "GET", url: `${V1}/prompts`, status: 200 },
+  {
+    key: "prompts.put",
+    method: "PUT",
+    url: `${V1}/prompts`,
+    body: { workspace: "a", worktree: "b", portHint: "", starter: "" },
+    status: 200,
+  },
+  { key: "sshRemotes.list", method: "GET", url: `${V1}/ssh-remotes`, status: 200 },
+  { key: "sshRemotes.put", method: "PUT", url: `${V1}/ssh-remotes/staging`, body: { name: "staging", host: "a@b" }, status: 200 },
+  { key: "sshRemotes.delete", method: "DELETE", url: `${V1}/ssh-remotes/staging`, status: 200 },
+  { key: "sshRemotes.test", method: "POST", url: `${V1}/ssh-remotes/staging/test`, status: 200 },
+  { key: "sshRemotes.reconnect", method: "POST", url: `${V1}/ssh-remotes/staging/reconnect`, status: 200 },
+  { key: "sshRemotes.copyId", method: "POST", url: `${V1}/ssh-remotes/staging/copy-id`, status: 202 },
+  { key: "globalMounts.get", method: "GET", url: `${V1}/global-mounts`, status: 200 },
+  {
+    key: "globalMounts.put",
+    method: "PUT",
+    url: `${V1}/global-mounts`,
+    body: { mounts: [{ host: "/srv", container: "/srv" }] },
+    status: 200,
+  },
+  { key: "secrets.get", method: "GET", url: `${V1}/secrets`, status: 200 },
+  {
+    key: "secrets.put",
+    method: "PUT",
+    url: `${V1}/secrets`,
+    body: { refs: [{ name: "X", ref: "op://V/I/F" }] },
+    status: 200,
+  },
+  { key: "secrets.check", method: "POST", url: `${V1}/secrets/check`, body: {}, status: 200 },
+  { key: "runs.list", method: "GET", url: `${V1}/runs?boxId=${box.id}`, status: 200 },
+  {
+    key: "runs.preview",
+    method: "POST",
+    url: `${V1}/runs/preview`,
+    body: { projectId: "example-app-1a2b3c4d", repoPath: "/work/example-app" },
+    status: 200,
+  },
+  {
+    key: "runs.create",
+    method: "POST",
+    url: `${V1}/runs`,
+    body: { projectId: "example-app-1a2b3c4d", repoPath: "/work/example-app", boxId: box.id },
+    status: 201,
+  },
+  { key: "runs.get", method: "GET", url: R, status: 200 },
+  { key: "runs.pause", method: "POST", url: `${R}/pause`, status: 200 },
+  { key: "runs.resume", method: "POST", url: `${R}/resume`, status: 200 },
+  { key: "runs.cancel", method: "POST", url: `${R}/cancel`, status: 200 },
+  { key: "runs.profile", method: "PUT", url: `${R}/profile`, body: { profile: "fast" }, status: 200 },
+  { key: "runs.assign", method: "POST", url: `${R}/assign`, body: { role: "reviewer", vendors: ["codex"] }, status: 200 },
+  { key: "runs.rebaseBase", method: "POST", url: `${R}/rebase-base`, status: 200 },
+  { key: "runs.decide", method: "POST", url: `${R}/decision`, body: { option: "resume" }, status: 200 },
+  { key: "runs.push", method: "POST", url: `${R}/push`, body: {}, status: 200 },
+  { key: "runs.groups", method: "GET", url: `${R}/groups`, status: 200 },
+  { key: "runs.rounds", method: "GET", url: `${R}/rounds`, status: 200 },
+  { key: "findings.list", method: "GET", url: `${R}/findings?round=1`, status: 200 },
+  { key: "findings.get", method: "GET", url: `${R}/findings/F-0001`, status: 200 },
+  { key: "findings.waive", method: "POST", url: `${R}/findings/F-0001/waive`, body: { reason: "ok" }, status: 200 },
+  { key: "usage.samples", method: "GET", url: `${V1}/usage/samples?vendor=claude`, status: 200 },
+  { key: "usage.get", method: "GET", url: `${V1}/usage`, status: 200 },
+  { key: "notifications.list", method: "GET", url: `${V1}/notifications?unread=true`, status: 200 },
+  { key: "notifications.read", method: "POST", url: `${V1}/notifications/n1/read`, status: 200 },
+];
+
+let h: Harness;
+beforeEach(async () => {
+  h = await createHarness();
+});
+afterEach(async () => {
+  await h.server.close();
+});
+
+describe("route table", () => {
+  it("has a case for every HTTP route", () => {
+    const httpKeys = Object.entries(serverRoutes)
+      .filter(([, def]) => def.kind === "http")
+      .map(([k]) => k)
+      .sort();
+    expect(cases.map((c) => c.key).sort()).toEqual(httpKeys);
+  });
+
+  it("matches each case's method and path to the contract", () => {
+    for (const c of cases) {
+      const def = serverRoutes[c.key];
+      expect(def.method, c.key).toBe(c.method);
+      const pattern = new RegExp(`^${def.path.replace(/:[A-Za-z]+/g, "[^/]+")}(\\?.*)?$`);
+      expect(c.url, c.key).toMatch(pattern);
+    }
+  });
+
+  for (const c of cases) {
+    it(`answers ${c.key}`, async () => {
+      c.setup?.(h);
+      let url = c.url;
+      if (c.key === "jobs.get") {
+        const job = h.jobs.start({ kind: "image_build", command: "docker build" }, async () => ({ exitCode: 0 }));
+        url = url.replace("JOB", job.id);
+      }
+      const res = await h.server.app.inject({
+        method: c.method,
+        url,
+        headers: AUTH,
+        ...(c.body === undefined ? {} : { payload: c.body as object }),
+      });
+      expect(res.statusCode, res.body).toBe(c.status);
+    });
+  }
+});
+
+describe("authentication", () => {
+  it("refuses a request without the token", async () => {
+    const res = await h.server.app.inject({ method: "GET", url: `${V1}/projects` });
+    expect(res.statusCode).toBe(401);
+    expect(res.json().error.code).toBe("validation");
+  });
+
+  it("refuses a wrong token and a query token on an HTTP route", async () => {
+    const wrong = await h.server.app.inject({
+      method: "GET",
+      url: `${V1}/projects`,
+      headers: { authorization: "Bearer nope" },
+    });
+    expect(wrong.statusCode).toBe(401);
+    const query = await h.server.app.inject({ method: "GET", url: `${V1}/projects?token=${TOKEN}` });
+    expect(query.statusCode).toBe(401);
+  });
+
+  it("serves health without a token", async () => {
+    const res = await h.server.app.inject({ method: "GET", url: `${V1}/health` });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().version).toBe("4.0.0-dev");
+  });
+
+  it("sets the session cookie and accepts it afterwards", async () => {
+    const res = await h.server.app.inject({ method: "POST", url: `${V1}/auth/session`, headers: AUTH });
+    const cookie = res.headers["set-cookie"] as string;
+    expect(cookie).toContain("HttpOnly");
+    expect(cookie).toContain("SameSite=Strict");
+    expect(cookie).toContain("Path=/");
+    expect(cookie).not.toContain(TOKEN);
+    const value = cookie.split(";")[0] as string;
+    expect(value).toBe(`agentbox_session=${sessionValue(TOKEN)}`);
+    const next = await h.server.app.inject({ method: "GET", url: `${V1}/projects`, headers: { cookie: value } });
+    expect(next.statusCode).toBe(200);
+  });
+
+  it("needs the bearer header, not the cookie, to set the cookie", async () => {
+    const res = await h.server.app.inject({
+      method: "POST",
+      url: `${V1}/auth/session`,
+      headers: { cookie: `agentbox_session=${sessionValue(TOKEN)}` },
+    });
+    expect(res.statusCode).toBe(401);
+  });
+});
+
+describe("errors", () => {
+  const call = (method: Case["method"], url: string, body?: object) =>
+    h.server.app.inject({ method, url, headers: AUTH, ...(body ? { payload: body } : {}) });
+
+  it("maps not_found to 404", async () => {
+    const res = await call("GET", `${V1}/boxes/claude-agent-missing`);
+    expect(res.statusCode).toBe(404);
+    expect(res.json().error.code).toBe("not_found");
+  });
+
+  it("maps box_running to 409", async () => {
+    const res = await call("POST", `${B}/start`);
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe("box_running");
+  });
+
+  it("answers adoption_refused before starting a job", async () => {
+    const res = await call("POST", `${V1}/boxes`, {
+      targetDir: "/work/example-app",
+      layout: "root",
+      conversation: { mode: "adopt", sessionUuid: UUID },
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe("adoption_refused");
+  });
+
+  it("rejects a body that fails its schema with 400 validation", async () => {
+    const res = await call("POST", `${V1}/boxes`, { targetDir: "/x", layout: "worktree" });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe("validation");
+  });
+
+  it("rejects invalid JSON", async () => {
+    const res = await h.server.app.inject({
+      method: "POST",
+      url: `${B}/message`,
+      headers: { ...AUTH, "content-type": "application/json" },
+      payload: "{nope",
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it("rejects a query that fails its schema", async () => {
+    const res = await call("GET", `${V1}/conversations`);
+    expect(res.statusCode).toBe(400);
+  });
+
+  it("answers an unknown route with not_found", async () => {
+    const res = await call("GET", `${V1}/nothing`);
+    expect(res.statusCode).toBe(404);
+    expect(res.json().error.code).toBe("not_found");
+  });
+
+  it("reports run_not_found from the engine", async () => {
+    const res = await call("GET", `${V1}/runs/01JB8Z5K3W6Q2V9X4T7R0M1N2Q`);
+    expect(res.statusCode).toBe(404);
+    expect(res.json().error.code).toBe("run_not_found");
+  });
+
+  it("refuses runs on a mismatched engine", async () => {
+    h.engine.mismatch = true;
+    const res = await call("POST", `${V1}/runs`, {
+      projectId: "example-app-1a2b3c4d",
+      repoPath: "/work/example-app",
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe("engine_mismatch");
+  });
+
+  it("refuses an unknown side-session platform", async () => {
+    const res = await call("DELETE", `${B}/side-sessions/emacs`);
+    expect(res.statusCode).toBe(400);
+  });
+
+  it("fails with 500 when a handler builds an invalid response", async () => {
+    h.core.models.list = async () => ({ models: [] }) as never;
+    const res = await call("GET", `${V1}/models`);
+    expect(res.statusCode).toBe(500);
+  });
+});
+
+describe("review routes", () => {
+  it("mints a ULID run id, mirrors the run, and asks the box to hold edits", async () => {
+    const res = await h.server.app.inject({
+      method: "POST",
+      url: `${V1}/runs`,
+      headers: AUTH,
+      payload: { projectId: "example-app-1a2b3c4d", repoPath: "/work/example-app", boxId: box.id },
+    });
+    expect(res.statusCode).toBe(201);
+    const run = res.json();
+    expect(RunIdSchema.safeParse(run.id).success).toBe(true);
+    const sent = h.engine.calls.find((c) => c.key === "engine.runs.create");
+    expect((sent?.input.body as { runId: string }).runId).toBe(run.id);
+    expect(h.runs.get(run.id)?.status).toBe("pending");
+    expect(h.core.calls).toContain(`message:${box.id}:${HOLD_EDITS_MESSAGE.slice(0, 20)}`);
+  });
+
+  it("forwards params, query, and body to the engine", async () => {
+    await h.server.app.inject({ method: "GET", url: `${R}/findings?verdict=fixed&round=2`, headers: AUTH });
+    const call = h.engine.calls.find((c) => c.key === "engine.findings.list");
+    expect(call?.input.params).toEqual({ runId: RUN });
+    expect(call?.input.query).toEqual({ verdict: "fixed", round: 2 });
+  });
+
+  it("updates the mirror from a proxied run state", async () => {
+    await h.server.app.inject({ method: "POST", url: `${R}/pause`, headers: AUTH });
+    expect(h.runs.get(RUN)?.status).toBe("paused");
+  });
+});
+
+describe("jobs", () => {
+  it("runs box creation as a job that returns the box", async () => {
+    const res = await h.server.app.inject({
+      method: "POST",
+      url: `${V1}/boxes`,
+      headers: AUTH,
+      payload: { targetDir: "/work/example-app", conversationName: "new", layout: "worktree" },
+    });
+    const job = res.json();
+    expect(job.kind).toBe("box_create");
+    await new Promise((r) => setTimeout(r, 20));
+    const done = await h.server.app.inject({ method: "GET", url: `${V1}/jobs/${job.id}`, headers: AUTH });
+    expect(done.json().status).toBe("finished");
+    expect(done.json().result.box.id).toBe("claude-agent-new");
+  });
+
+  it("answers an unknown job with not_found", async () => {
+    const res = await h.server.app.inject({ method: "GET", url: `${V1}/jobs/nope`, headers: AUTH });
+    expect(res.statusCode).toBe(404);
+  });
+});
+
+describe("ssh remotes", () => {
+  it("lists remotes with references and tunnel state", async () => {
+    const res = await h.server.app.inject({ method: "GET", url: `${V1}/ssh-remotes`, headers: AUTH });
+    expect(res.json().remotes[0]).toMatchObject({
+      remote: { name: sshRemote.name },
+      referencedBy: [box.id],
+      tunnelUp: true,
+    });
+  });
+});
