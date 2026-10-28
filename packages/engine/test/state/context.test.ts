@@ -12,7 +12,7 @@ import {
   type VendorAdapter,
 } from "../../src/core.js";
 import { EngineLeaseBroker } from "../../src/events/leases.js";
-import { DecisionNeeded } from "../../src/state/context.js";
+import { DecisionNeeded, describeError } from "../../src/state/context.js";
 import { makeRun } from "./harness.js";
 
 class LimitError extends Error {}
@@ -72,6 +72,60 @@ describe("callAgent", () => {
       });
     }
     expect(getEventListeners(ctx.signal, "abort")).toHaveLength(0);
+  });
+});
+
+describe("a failed agent call", () => {
+  it("logs the reason at warn level before it retries", async () => {
+    const warnings: Array<{ msg: string; fields: Record<string, unknown> | undefined }> = [];
+    const log = {
+      debug() {},
+      info() {},
+      warn: (msg: string, fields?: Record<string, unknown>) => warnings.push({ msg, fields }),
+      error() {},
+    };
+    let calls = 0;
+    const adapter = answering("codex");
+    const ok = adapter.review.bind(adapter);
+    adapter.review = (req: AdapterRequest) => {
+      calls += 1;
+      return calls === 1
+        ? Promise.reject(new Error("claude exited 1:\n  lock held"))
+        : (ok(req) as never);
+    };
+    const { ctx } = await makeRun({ adapters: { codex: adapter }, deps: { log } });
+    const out = await ctx.callAgent<ReviewOutput>({
+      key: "k1",
+      role: "reviewer",
+      vendor: "codex",
+      method: "review",
+      request: { prompt: "p", repoPath: ctx.state.request.repoPath, toolPolicy: "read-only" },
+      groupId: "G01",
+      estimateTokens: 1,
+    });
+    expect(out.output).toEqual({ findings: [], ledger: [] });
+    expect(warnings).toEqual([
+      {
+        msg: "An agent call failed",
+        fields: expect.objectContaining({
+          key: "k1",
+          vendor: "codex",
+          role: "reviewer",
+          outcome: "error",
+          error: "claude exited 1: lock held",
+        }),
+      },
+    ]);
+  });
+});
+
+describe("describeError", () => {
+  it("puts the message on one line and caps its length", () => {
+    expect(describeError(new Error("a\n  b"))).toBe("a b");
+    expect(describeError("plain")).toBe("plain");
+    const long = describeError(new Error("x".repeat(600)));
+    expect(long).toHaveLength(500);
+    expect(long.endsWith("...")).toBe(true);
   });
 });
 

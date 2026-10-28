@@ -1,6 +1,7 @@
 import type { FileGroup } from "@agentbox/contracts";
 import { describe, expect, it } from "vitest";
 import { assignRoles, planReviews, profileRoles } from "../../src/state/profiles.js";
+import { runPerVendor } from "../../src/state/steps.js";
 
 const all = ["claude", "codex", "copilot"] as const;
 
@@ -97,5 +98,25 @@ describe("profiles", () => {
     expect(balanced[1]?.focusAreas).not.toEqual(balanced[2]?.focusAreas);
     const fast = planReviews(["claude", "codex"], groups, "fast");
     expect(fast).toHaveLength(6);
+  });
+});
+
+describe("runPerVendor", () => {
+  it("caps the calls in flight per vendor and keeps the items' order", async () => {
+    const items = [
+      ...Array.from({ length: 5 }, (_, i) => ({ vendor: "claude" as const, i })),
+      ...Array.from({ length: 3 }, (_, i) => ({ vendor: "codex" as const, i: 10 + i })),
+    ];
+    const inFlight = { claude: 0, codex: 0 };
+    const peak = { claude: 0, codex: 0 };
+    const out = await runPerVendor(items, 2, async (item) => {
+      inFlight[item.vendor] += 1;
+      peak[item.vendor] = Math.max(peak[item.vendor], inFlight[item.vendor]);
+      await new Promise((r) => setTimeout(r, 5));
+      inFlight[item.vendor] -= 1;
+      return item.i;
+    });
+    expect(out).toEqual([0, 1, 2, 3, 4, 10, 11, 12]);
+    expect(peak).toEqual({ claude: 2, codex: 2 });
   });
 });

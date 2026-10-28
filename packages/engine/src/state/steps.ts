@@ -53,11 +53,43 @@ export const LEDGER_FOLLOW_UPS = 2;
 export const GATE_ATTEMPTS = 3;
 /** Parallel disprover calls. */
 const VERIFY_CONCURRENCY = 4;
+/**
+ * Parallel reviewer tasks per vendor in the find stage. Each task is one
+ * CLI agent; without a limit a large range starts one per group at once,
+ * which spends a usage window before a ceiling or a cancel can react.
+ */
+export const FIND_CONCURRENCY_PER_VENDOR = 6;
 
 const SEVERITY_ABOVE_NIT = new Set(["P1", "P2", "P3"]);
 
 export function aboveNit(f: Pick<Finding, "severity">): boolean {
   return SEVERITY_ABOVE_NIT.has(f.severity);
+}
+
+/**
+ * Runs `fn` over items with at most `limit` in flight per vendor, every
+ * vendor at once, and returns the results in the items' order.
+ */
+export async function runPerVendor<T extends { vendor: Vendor }, R>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const byVendor = new Map<Vendor, number[]>();
+  items.forEach((item, index) => {
+    const list = byVendor.get(item.vendor) ?? [];
+    list.push(index);
+    byVendor.set(item.vendor, list);
+  });
+  const results: R[] = new Array<R>(items.length);
+  await Promise.all(
+    [...byVendor.values()].map((indexes) =>
+      mapLimit(indexes, limit, async (index) => {
+        results[index] = await fn(items[index] as T);
+      }),
+    ),
+  );
+  return results;
 }
 
 async function mapLimit<T, R>(
@@ -285,7 +317,9 @@ export async function runFind(ctx: RunContext, groups: readonly FileGroup[]): Pr
   const saved = await ctx.store.readJson<FindOutput>(file);
   if (saved) return saved;
   const tasks = planReviews(ctx.state.roles.reviewer, groups, ctx.state.profile);
-  const results = await Promise.all(tasks.map((t) => runReviewTask(ctx, t, groups)));
+  const results = await runPerVendor(tasks, FIND_CONCURRENCY_PER_VENDOR, (t) =>
+    runReviewTask(ctx, t, groups),
+  );
   const output: FindOutput = { round: ctx.round, tasks: results };
   await ctx.store.writeJson(file, output);
   await ctx.store.writeJson(

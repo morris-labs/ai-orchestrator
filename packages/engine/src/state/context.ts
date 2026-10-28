@@ -581,6 +581,16 @@ export class RunContext {
           costEstimate: 0,
         });
         if (outcome === "cancelled") throw new RunCancelled();
+        this.deps.log?.warn("An agent call failed", {
+          runId: this.state.id,
+          agentId,
+          key: spec.key,
+          vendor,
+          role: spec.role,
+          outcome,
+          elapsedMs,
+          error: describeError(error),
+        });
         if (limit) {
           limitHits += 1;
           if (limitHits > 4)
@@ -727,4 +737,11 @@ export class RunContext {
       costEstimate: actual.costEstimate,
     });
   }
+}
+
+/** An error's message for a log line, on one line and at most 500 characters. */
+export function describeError(error: unknown): string {
+  const text = error instanceof Error ? error.message : String(error);
+  const line = text.replace(/\s+/g, " ").trim();
+  return line.length > 500 ? `${line.slice(0, 497)}...` : line;
 }
