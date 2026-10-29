@@ -5,7 +5,7 @@ import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import net from "node:net";
 import type { Duplex } from "node:stream";
 import type { ApiError } from "@agentbox/contracts";
-import { ENGINE_TOKEN_HEADER, isEngineBearer, tokensEqual } from "../api/auth.js";
+import { ENGINE_TOKEN_HEADER, isEngineBearer } from "../api/auth.js";
 import type { Logger } from "../api/core-interface.js";
 
 export const PROXY_PREFIX = "/proxy/";
@@ -18,31 +18,15 @@ export interface ProxyTarget {
 
 /**
  * Splits `/proxy/<port>/<rest>?<query>` into the port and the upstream path.
- * Drops a `token` query parameter equal to `engineToken`, which a WebSocket
- * client uses to authenticate. Returns `null` when the URL isn't a proxy URL
- * or the port is out of range.
+ * The query passes unchanged: the engine token never travels in it. Returns
+ * `null` when the URL isn't a proxy URL or the port is out of range.
  */
-export function parseProxyUrl(url: string, engineToken?: string): ProxyTarget | null {
+export function parseProxyUrl(url: string): ProxyTarget | null {
   const m = /^\/proxy\/(\d{1,5})(\/[^?]*)?(\?.*)?$/.exec(url);
   if (!m) return null;
   const port = Number(m[1]);
   if (port < 1 || port > 65535) return null;
-  let query = m[3] ?? "";
-  if (engineToken !== undefined && query !== "") {
-    // Each pair is decoded the way `isAuthorized` reads the query, so an
-    // encoded key such as `%74oken` is stripped too. Other pairs pass as sent.
-    const kept = query
-      .slice(1)
-      .split("&")
-      .filter((pair) => {
-        for (const [k, v] of new URLSearchParams(pair)) {
-          if (k === "token" && tokensEqual(v, engineToken)) return false;
-        }
-        return true;
-      });
-    query = kept.length > 0 ? `?${kept.join("&")}` : "";
-  }
-  return { port, path: `${m[2] ?? "/"}${query}` };
+  return { port, path: `${m[2] ?? "/"}${m[3] ?? ""}` };
 }
 
 /** True when a header carries the engine's credential and must not go upstream. */

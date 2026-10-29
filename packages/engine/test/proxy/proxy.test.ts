@@ -14,15 +14,8 @@ describe("parseProxyUrl", () => {
     expect(parseProxyUrl("/proxy/80?x=1")).toEqual({ port: 80, path: "/?x=1" });
   });
 
-  it("drops only a token parameter equal to the engine token", () => {
-    expect(parseProxyUrl("/proxy/80/a?token=t&x=1", "t")).toEqual({ port: 80, path: "/a?x=1" });
-    expect(parseProxyUrl("/proxy/80/a?token=t", "t")).toEqual({ port: 80, path: "/a" });
-    expect(parseProxyUrl("/proxy/80/a?token=app", "t")).toEqual({ port: 80, path: "/a?token=app" });
-  });
-
-  it("drops an encoded token key too", () => {
-    expect(parseProxyUrl("/proxy/80/a?%74oken=t&x=1", "t")).toEqual({ port: 80, path: "/a?x=1" });
-    expect(parseProxyUrl("/proxy/80/a?token=%74", "t")).toEqual({ port: 80, path: "/a" });
+  it("passes every query parameter, a token one included, to the app", () => {
+    expect(parseProxyUrl("/proxy/80/a?token=t&x=1")).toEqual({ port: 80, path: "/a?token=t&x=1" });
   });
 
   it("rejects other URLs and bad ports", () => {
@@ -150,8 +143,18 @@ describe("proxy", () => {
     expect(await res.json()).toMatchObject({ error: { code: "not_found" } });
   });
 
-  it("forwards a WebSocket with the query token removed", async () => {
+  it("refuses a WebSocket with the engine token only in the query", async () => {
     const socket = new WebSocket(`${engine.ws}/proxy/${upstreamPort}/live?token=${TOKEN}&room=7`);
+    const status = await new Promise<number>((resolve) =>
+      socket.on("unexpected-response", (_req, res) => resolve(res.statusCode ?? 0)),
+    );
+    expect(status).toBe(401);
+  });
+
+  it("forwards a WebSocket with the engine-token header and its query unchanged", async () => {
+    const socket = new WebSocket(`${engine.ws}/proxy/${upstreamPort}/live?room=7`, {
+      headers: { "x-agentbox-engine-token": TOKEN },
+    });
     const messages: string[] = [];
     await new Promise<void>((resolve, reject) => {
       socket.on("message", (m) => {
@@ -184,7 +187,7 @@ describe("proxy", () => {
   });
 
   it("refuses an upgrade on an unknown path", async () => {
-    const socket = new WebSocket(`${engine.ws}/api/v1/other?token=${TOKEN}`);
+    const socket = new WebSocket(`${engine.ws}/api/v1/other`, { headers: auth });
     const status = await new Promise<number>((resolve) =>
       socket.on("unexpected-response", (_req, res) => resolve(res.statusCode ?? 0)),
     );

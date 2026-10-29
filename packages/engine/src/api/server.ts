@@ -80,9 +80,9 @@ export async function buildEngineApp(options: EngineAppOptions): Promise<Fastify
     // The proxy bypasses Fastify so request bodies stream through untouched.
     serverFactory: (handler) =>
       http.createServer((req, res) => {
-        const target = req.url?.startsWith(PROXY_PREFIX) ? parseProxyUrl(req.url, token) : null;
+        const target = req.url?.startsWith(PROXY_PREFIX) ? parseProxyUrl(req.url) : null;
         if (target === null) return handler(req, res);
-        if (!isProxyAuthorized(req, token, false)) return sendRawError(res, 401, UNAUTHORIZED);
+        if (!isProxyAuthorized(req, token)) return sendRawError(res, 401, UNAUTHORIZED);
         log.debug("Proxy request", { method: req.method, port: target.port });
         proxyHttp(req, res, target, proxyOptions);
       }),
@@ -132,7 +132,7 @@ export async function buildEngineApp(options: EngineAppOptions): Promise<Fastify
       method: route.method,
       url: route.path,
       handler: async (req, reply) => {
-        if (route.auth && !isAuthorized(req.raw, token, false)) return unauthorized(reply);
+        if (route.auth && !isAuthorized(req.raw, token)) return unauthorized(reply);
         const input = {
           params: paramsSchema.parse(req.params),
           query: route.query ? route.query.parse(req.query ?? {}) : undefined,
@@ -158,13 +158,13 @@ export async function buildEngineApp(options: EngineAppOptions): Promise<Fastify
     const url = req.url ?? "/";
     const pathname = url.split("?")[0];
     if (url.startsWith(PROXY_PREFIX)) {
-      const target = parseProxyUrl(url, token);
+      const target = parseProxyUrl(url);
       if (target === null) return rejectUpgrade(socket, 404, "Not Found");
-      if (!isProxyAuthorized(req, token, true)) return rejectUpgrade(socket, 401, "Unauthorized");
+      if (!isProxyAuthorized(req, token)) return rejectUpgrade(socket, 401, "Unauthorized");
       return proxyUpgrade(req, socket, head, target, proxyOptions);
     }
     if (pathname !== eventsPath) return rejectUpgrade(socket, 404, "Not Found");
-    if (!isAuthorized(req, token, true)) return rejectUpgrade(socket, 401, "Unauthorized");
+    if (!isAuthorized(req, token)) return rejectUpgrade(socket, 401, "Unauthorized");
     const query = EventsQuerySchema.safeParse(
       Object.fromEntries(new URL(url, "http://engine").searchParams),
     );

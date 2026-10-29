@@ -65,7 +65,8 @@ export class FakeEngineServer {
     });
     const wss = new WebSocketServer({ noServer: true });
     this.server.on("upgrade", (req, socket, head) => {
-      if (!req.url?.includes(`token=${ENGINE_TOKEN}`)) {
+      // Like the real engine: the bearer header only, never a query token.
+      if (req.headers.authorization !== `Bearer ${ENGINE_TOKEN}` || req.url?.includes("token=")) {
         socket.destroy();
         return;
       }

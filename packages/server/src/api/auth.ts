@@ -56,8 +56,6 @@ export function readCookie(header: string | undefined, name: string): string | u
 export interface AuthInput {
   authorization?: string;
   cookie?: string;
-  /** The `token` query parameter; accepted only on WebSocket routes. */
-  queryToken?: string;
 }
 
 /** True when the request carries the bearer token. */
@@ -66,12 +64,15 @@ export function hasBearer(input: AuthInput, token: string): boolean {
   return m !== null && safeEqual((m[1] as string).trim(), token);
 }
 
-/** True when the request carries the bearer token, the session cookie, or (WebSocket) the token query. */
+/**
+ * True when the request carries the bearer token or the session cookie. A
+ * WebSocket upgrade authenticates the same way: a `token` query parameter is
+ * never accepted, so the token stays out of URLs.
+ */
 export function isAuthorized(input: AuthInput, token: string): boolean {
   if (hasBearer(input, token)) return true;
   const cookie = readCookie(input.cookie, SESSION_COOKIE);
-  if (cookie !== undefined && safeEqual(cookie, sessionValue(token))) return true;
-  return input.queryToken !== undefined && safeEqual(input.queryToken, token);
+  return cookie !== undefined && safeEqual(cookie, sessionValue(token));
 }
 
 /** The `Set-Cookie` header value for `auth.session`. */

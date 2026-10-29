@@ -15,7 +15,7 @@ afterEach(async () => {
 });
 
 /** A client that queues every frame, validated against the engine frame schema. */
-function connect(query = `token=${TOKEN}`, headers: Record<string, string> = {}) {
+function connect(query = "", headers: Record<string, string> = { authorization: `Bearer ${TOKEN}` }) {
   const socket = new WebSocket(`${engine.ws}/api/v1/events?${query}`, { headers });
   sockets.push(socket);
   const frames: unknown[] = [];
@@ -67,16 +67,15 @@ describe("engine.events", () => {
 
   it("refuses a connection without the token", async () => {
     engine = await listenEngine();
-    await expect(connect("").opened).rejects.toThrow("status 401");
-    await expect(connect("token=wrong").opened).rejects.toThrow("status 401");
+    await expect(connect("", {}).opened).rejects.toThrow("status 401");
+    await expect(connect("", { authorization: "Bearer wrong" }).opened).rejects.toThrow(
+      "status 401",
+    );
   });
 
-  it("accepts the bearer header instead of the query token", async () => {
+  it("refuses the token in the query string", async () => {
     engine = await listenEngine();
-    const c = connect("", { authorization: `Bearer ${TOKEN}` });
-    await c.opened;
-    c.send({ type: "hello", streamId: null, lastSeq: null });
-    expect((await c.take(1))[0]).toMatchObject({ type: "hello" });
+    await expect(connect(`token=${TOKEN}`, {}).opened).rejects.toThrow("status 401");
   });
 
   it("answers a first hello without replay and then streams live events", async () => {
@@ -131,7 +130,7 @@ describe("engine.events", () => {
 
   it("filters events by type but always sends control frames", async () => {
     engine = await listenEngine();
-    const c = connect(`token=${TOKEN}&types=run.changed`);
+    const c = connect("types=run.changed");
     await c.opened;
     c.send({ type: "hello", streamId: null, lastSeq: null });
     await c.take(1);

@@ -48,12 +48,11 @@ describe("token file", () => {
 
 describe("auth checks", () => {
   const token = "x".repeat(64);
-  it("accepts the bearer header, the cookie, and the query token", () => {
+  it("accepts the bearer header and the cookie", () => {
     expect(isAuthorized({ authorization: `Bearer ${token}` }, token)).toBe(true);
     expect(isAuthorized({ cookie: `a=1; agentbox_session=${sessionValue(token)}` }, token)).toBe(
       true,
     );
-    expect(isAuthorized({ queryToken: token }, token)).toBe(true);
     expect(isAuthorized({ authorization: "Bearer y" }, token)).toBe(false);
     expect(isAuthorized({ cookie: "agentbox_session=nope" }, token)).toBe(false);
     expect(isAuthorized({}, token)).toBe(false);

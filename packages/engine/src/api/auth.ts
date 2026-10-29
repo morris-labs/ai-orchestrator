@@ -20,15 +20,12 @@ export function bearerToken(header: string | string[] | undefined): string | nul
 
 /**
  * True when the request carries the engine token in its `Authorization`
- * header or, when `allowQuery` is set (WebSocket upgrades), in a `token`
- * query parameter.
+ * header. WebSocket upgrades authenticate the same way: a `token` query
+ * parameter is never accepted, so the token stays out of URLs.
  */
-export function isAuthorized(req: IncomingMessage, expected: string, allowQuery: boolean): boolean {
+export function isAuthorized(req: IncomingMessage, expected: string): boolean {
   const header = bearerToken(req.headers.authorization);
-  if (header !== null && tokensEqual(header, expected)) return true;
-  if (!allowQuery) return false;
-  const token = new URL(req.url ?? "/", "http://engine").searchParams.get("token");
-  return token !== null && tokensEqual(token, expected);
+  return header !== null && tokensEqual(header, expected);
 }
 
 /**
@@ -51,20 +48,21 @@ export function isEngineBearer(value: string | string[] | undefined, expected: s
 }
 
 /**
- * True when a `/proxy` request carries the engine token: in
- * `x-agentbox-engine-token`, or any way `isAuthorized` accepts.
+ * True when a `/proxy` request, HTTP or WebSocket upgrade, carries the engine
+ * token: in `x-agentbox-engine-token`, which the server sends, or in
+ * `Authorization`.
  */
-export function isProxyAuthorized(
-  req: IncomingMessage,
-  expected: string,
-  allowQuery: boolean,
-): boolean {
+export function isProxyAuthorized(req: IncomingMessage, expected: string): boolean {
   const header = headerToken(req.headers[ENGINE_TOKEN_HEADER]);
   if (header !== null && tokensEqual(header, expected)) return true;
-  return isAuthorized(req, expected, allowQuery);
+  return isAuthorized(req, expected);
 }
 
-/** Removes the value of a `token` query parameter from a URL, for logs. */
+/**
+ * Removes the value of a `token` query parameter from a URL, for logs. The
+ * engine accepts no such parameter, but a stray one from an old client or a
+ * proxied app stays out of the log.
+ */
 export function redactUrl(url: string): string {
   return url.replace(/([?&]token=)[^&]*/g, "$1[redacted]");
 }

@@ -1,8 +1,9 @@
 // The dev-server proxy: `http://<port>.<hostKey>.localhost:<serverPort>/...`
 // forwards HTTP and WebSocket upgrades to the engine of the box's container,
 // at `/proxy/<port>/...`. The listener is on loopback, so the proxy needs no
-// authentication; the engine call carries the engine token, never in place
-// of the browser's own `Authorization` header.
+// authentication; the engine call carries the engine token in its own
+// header, never in the URL and never in place of the browser's own
+// `Authorization` header.
 import http from "node:http";
 import net from "node:net";
 import type { Duplex } from "node:stream";
@@ -25,7 +26,7 @@ export interface ProxyTarget {
 
 export type ProxyResolver = (hostKey: string) => Promise<ProxyTarget | null>;
 
-/** The header that carries the engine token when the browser's `Authorization` must pass. */
+/** The header that carries the engine token, so the browser's `Authorization` passes untouched. */
 export const ENGINE_TOKEN_HEADER = "x-agentbox-engine-token";
 
 /** Hop-by-hop headers (RFC 9110 section 7.6.1), which a proxy must not forward. */
@@ -44,9 +45,8 @@ const HOP_BY_HOP = [
 /**
  * The headers for the engine. The browser's `Authorization` header belongs
  * to the dev server and passes unchanged; the engine token travels in
- * `x-agentbox-engine-token`, and also in `Authorization` when the browser
- * sent none, which the engine strips. An upgrade keeps `Connection` and
- * `Upgrade` and carries the token in the query instead (see `upstreamPath`).
+ * `x-agentbox-engine-token`, which the engine strips, on plain requests and
+ * upgrades alike. An upgrade keeps `Connection` and `Upgrade`.
  */
 export function upstreamHeaders(
   req: http.IncomingMessage,
@@ -62,29 +62,14 @@ export function upstreamHeaders(
     if (upgrade && (name === "connection" || name === "upgrade")) continue;
     delete headers[name];
   }
-  delete headers[ENGINE_TOKEN_HEADER];
-  if (!upgrade) {
-    headers[ENGINE_TOKEN_HEADER] = token;
-    if (headers.authorization === undefined) headers.authorization = `Bearer ${token}`;
-  }
+  headers[ENGINE_TOKEN_HEADER] = token;
   headers["x-forwarded-host"] = req.headers.host;
   return headers;
 }
 
-/**
- * The engine path for a proxied request. An upgrade carries the engine
- * token as a `token` query parameter, which the engine accepts on upgrades
- * and drops before forwarding.
- */
-export function upstreamPath(
-  port: number,
-  url: string | undefined,
-  token: string,
-  upgrade: boolean,
-): string {
-  const base = `/proxy/${port}${url ?? "/"}`;
-  if (!upgrade) return base;
-  return `${base}${base.includes("?") ? "&" : "?"}token=${encodeURIComponent(token)}`;
+/** The engine path for a proxied request, with the browser's query unchanged. */
+export function upstreamPath(port: number, url: string | undefined): string {
+  return `/proxy/${port}${url ?? "/"}`;
 }
 
 function plainError(res: http.ServerResponse, status: number, message: string): void {
@@ -119,7 +104,7 @@ export class DevServerProxy {
         host: "127.0.0.1",
         port: target.enginePort,
         method: req.method,
-        path: upstreamPath(parsed.port, req.url, target.token, false),
+        path: upstreamPath(parsed.port, req.url),
         headers: upstreamHeaders(req, target.token),
       },
       (up) => {
@@ -154,7 +139,7 @@ export class DevServerProxy {
     const upstream = net.connect(target.enginePort, "127.0.0.1", () => {
       const headers = upstreamHeaders(req, target.token, true);
       const lines = [
-        `${req.method ?? "GET"} ${upstreamPath(parsed.port, req.url, target.token, true)} HTTP/1.1`,
+        `${req.method ?? "GET"} ${upstreamPath(parsed.port, req.url)} HTTP/1.1`,
       ];
       for (const [name, value] of Object.entries(headers)) {
         if (value === undefined) continue;

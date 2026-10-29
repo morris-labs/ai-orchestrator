@@ -57,11 +57,10 @@ describe("auth", () => {
     expect(bearerToken(undefined)).toBeNull();
   });
 
-  it("accepts the query token only when allowed", () => {
-    expect(isAuthorized(req("/x?token=t1"), "t1", true)).toBe(true);
-    expect(isAuthorized(req("/x?token=t1"), "t1", false)).toBe(false);
-    expect(isAuthorized(req("/x", "Bearer t1"), "t1", false)).toBe(true);
-    expect(isAuthorized(req("/x", "Bearer t2"), "t1", true)).toBe(false);
+  it("accepts the bearer header and never a query token", () => {
+    expect(isAuthorized(req("/x?token=t1"), "t1")).toBe(false);
+    expect(isAuthorized(req("/x", "Bearer t1"), "t1")).toBe(true);
+    expect(isAuthorized(req("/x", "Bearer t2"), "t1")).toBe(false);
   });
 
   it("redacts a token in a URL", () => {

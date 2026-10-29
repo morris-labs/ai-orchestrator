@@ -46,13 +46,8 @@ function fastifyPath(path: string): string {
   return path;
 }
 
-function authInput(request: FastifyRequest, ws: boolean) {
-  const query = request.query as Record<string, unknown> | undefined;
-  return {
-    authorization: request.headers.authorization,
-    cookie: request.headers.cookie,
-    queryToken: ws && typeof query?.token === "string" ? query.token : undefined,
-  };
+function authInput(request: FastifyRequest) {
+  return { authorization: request.headers.authorization, cookie: request.headers.cookie };
 }
 
 function sendFailure(reply: FastifyReply, failure: ApiError): FastifyReply {
@@ -135,7 +130,7 @@ export async function createApiServer(deps: ApiDeps): Promise<ApiServer> {
   app.addHook("onRequest", async (request, reply) => {
     const config = request.routeOptions.config.agentbox;
     if (!config?.auth) return;
-    if (!isAuthorized(authInput(request, config.ws), deps.token)) {
+    if (!isAuthorized(authInput(request), deps.token)) {
       // A refused upgrade leaves no HTTP connection worth keeping.
       if (config.ws) reply.header("connection", "close");
       return sendFailure(reply, new ApiError("unauthorized", "Missing or wrong bearer token."));

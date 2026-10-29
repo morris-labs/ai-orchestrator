@@ -1,5 +1,6 @@
 // A small WebSocket client for the tests: collects frames and waits for them.
 import WebSocket from "ws";
+import { AUTH } from "./harness.js";
 
 export interface TestSocket {
   ws: WebSocket;
@@ -10,9 +11,10 @@ export interface TestSocket {
   until(predicate: (s: TestSocket) => boolean, timeoutMs?: number): Promise<void>;
 }
 
+/** Opens a socket; sends the bearer header unless `headers` replaces it. */
 export async function connect(
   url: string,
-  headers: Record<string, string> = {},
+  headers: Record<string, string> = AUTH,
 ): Promise<TestSocket> {
   const ws = new WebSocket(url, { headers });
   const socket: TestSocket = {

@@ -235,8 +235,10 @@ export class EngineClient {
       return;
     }
     if (this.stopped) return;
-    const url = `ws://127.0.0.1:${this.options.endpoint.hostPort}/api/v1/events?token=${encodeURIComponent(this.options.endpoint.token)}`;
-    const ws = new WebSocket(url);
+    // The engine token travels in the upgrade's header, never in the URL.
+    const ws = new WebSocket(`ws://127.0.0.1:${this.options.endpoint.hostPort}/api/v1/events`, {
+      headers: { authorization: `Bearer ${this.options.endpoint.token}` },
+    });
     this.ws = ws;
     ws.on("open", () => {
       this.attempt = 0;

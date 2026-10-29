@@ -20,7 +20,11 @@ const boxEvent = (boxId: string) =>
 
 describe("events.stream", () => {
   it("refuses a socket without the token", async () => {
-    await expect(connect(base)).rejects.toThrow("HTTP 401");
+    await expect(connect(base, {})).rejects.toThrow("HTTP 401");
+  });
+
+  it("refuses the token in the query string", async () => {
+    await expect(connect(`${base}?token=${TOKEN}`, {})).rejects.toThrow("HTTP 401");
   });
 
   it("accepts the session cookie", async () => {
@@ -31,7 +35,7 @@ describe("events.stream", () => {
 
   it("sends hello, then live events numbered in order", async () => {
     h.hub.emit(boxEvent("claude-agent-a"));
-    const s = await connect(`${base}?token=${TOKEN}`);
+    const s = await connect(`${base}`);
     s.ws.send(JSON.stringify({ type: "hello", streamId: null, lastSeq: null }));
     await s.until((x) => x.texts.length === 1);
     expect(s.texts[0]).toEqual({
@@ -49,7 +53,7 @@ describe("events.stream", () => {
 
   it("replays events after the client's lastSeq when the stream id matches", async () => {
     for (const id of ["a", "b", "c"]) h.hub.emit(boxEvent(`claude-agent-${id}`));
-    const s = await connect(`${base}?token=${TOKEN}`);
+    const s = await connect(`${base}`);
     s.ws.send(JSON.stringify({ type: "hello", streamId: h.hub.streamId, lastSeq: 1 }));
     await s.until((x) => x.texts.length === 3);
     expect(s.texts[0]).toMatchObject({ type: "hello", replaying: true, lastSeq: 3 });
@@ -62,7 +66,7 @@ describe("events.stream", () => {
 
   it("replays nothing for another stream id, and resyncs on a second hello", async () => {
     h.hub.emit(boxEvent("claude-agent-a"));
-    const s = await connect(`${base}?token=${TOKEN}`);
+    const s = await connect(`${base}`);
     s.ws.send(JSON.stringify({ type: "hello", streamId: "old-stream", lastSeq: 9 }));
     await s.until((x) => x.texts.length === 1);
     expect(s.texts[0]).toMatchObject({ replaying: false, lastSeq: 1 });
@@ -74,7 +78,7 @@ describe("events.stream", () => {
   });
 
   it("filters by type", async () => {
-    const s = await connect(`${base}?token=${TOKEN}&types=notification`);
+    const s = await connect(`${base}?types=notification`);
     s.ws.send(JSON.stringify({ type: "hello", streamId: null, lastSeq: null }));
     await s.until((x) => x.texts.length === 1);
     h.hub.emit(boxEvent("claude-agent-a"));
@@ -110,7 +114,7 @@ describe("events.stream", () => {
         severity: "warning",
         read: false,
       }) as const;
-    const url = `${base}?token=${TOKEN}&types=notification`;
+    const url = `${base}?types=notification`;
     // The same check `EventsConnection` makes: each event must follow the last.
     const gapless = (frames: unknown[], from: number) => {
       let last = from;
@@ -155,13 +159,13 @@ describe("events.stream", () => {
   });
 
   it("closes on a frame that is not a hello", async () => {
-    const s = await connect(`${base}?token=${TOKEN}`);
+    const s = await connect(`${base}`);
     s.ws.send("nonsense");
     expect((await s.closed).code).toBe(1008);
   });
 
   it("closes on an unknown event type", async () => {
-    const s = await connect(`${base}?token=${TOKEN}&types=bogus`);
+    const s = await connect(`${base}?types=bogus`);
     expect((await s.closed).code).toBe(1008);
   });
 

@@ -41,7 +41,11 @@ beforeEach(async () => {
   });
   const wss = new WebSocketServer({ noServer: true });
   engine.on("upgrade", (req, socket, head) => {
-    seen.push({ url: req.url, auth: req.headers.authorization });
+    seen.push({
+      url: req.url,
+      auth: req.headers.authorization,
+      engineToken: req.headers["x-agentbox-engine-token"] as string | undefined,
+    });
     wss.handleUpgrade(req, socket, head, (ws) =>
       ws.on("message", (d) => ws.send(`echo:${d.toString()}`)),
     );
@@ -113,7 +117,7 @@ describe("dev-server proxy", () => {
     expect(res.status).toBe(200);
     expect(res.headers["x-engine"]).toBe("yes");
     expect(res.body).toBe("POST /proxy/3000/assets/app.js?v=1 data");
-    expect(seen[0]?.auth).toBe(`Bearer ${ENGINE_TOKEN}`);
+    expect(seen[0]?.auth).toBeUndefined();
     expect(seen[0]?.engineToken).toBe(ENGINE_TOKEN);
   });
 
@@ -166,25 +170,31 @@ describe("dev-server proxy", () => {
     ws.send("ping");
     const reply = await new Promise<string>((r) => ws.once("message", (d) => r(d.toString())));
     expect(reply).toBe("echo:ping");
-    expect(seen[0]).toMatchObject({ url: `/proxy/5173/hmr?token=${ENGINE_TOKEN}` });
-    expect(seen[0]?.auth).toBeUndefined();
+    expect(seen[0]).toEqual({ url: "/proxy/5173/hmr", auth: undefined, engineToken: ENGINE_TOKEN });
     ws.close();
   });
 
-  it("keeps the browser's Authorization header on an upgrade", async () => {
+  it("keeps the browser's Authorization header and query on an upgrade", async () => {
     const ws = new WebSocket(`ws://127.0.0.1:${port}/hmr?x=1`, {
-      headers: { host: `5173.emails.localhost:${port}`, authorization: "Bearer user-jwt" },
+      headers: {
+        host: `5173.emails.localhost:${port}`,
+        authorization: "Bearer user-jwt",
+        "x-agentbox-engine-token": "spoofed",
+      },
     });
     await new Promise((r) => ws.once("open", r));
-    expect(seen[0]).toMatchObject({
-      url: `/proxy/5173/hmr?x=1&token=${ENGINE_TOKEN}`,
+    expect(seen[0]).toEqual({
+      url: "/proxy/5173/hmr?x=1",
       auth: "Bearer user-jwt",
+      engineToken: ENGINE_TOKEN,
     });
     ws.close();
   });
 
   it("keeps API WebSockets working next to the proxy", async () => {
-    const ws = new WebSocket(`ws://127.0.0.1:${port}/api/v1/events?token=${TOKEN}`);
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/api/v1/events`, {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
     await new Promise((r) => ws.once("open", r));
     ws.send(JSON.stringify({ type: "hello", streamId: null, lastSeq: null }));
     const hello = await new Promise<string>((r) => ws.once("message", (d) => r(d.toString())));

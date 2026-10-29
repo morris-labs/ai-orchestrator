@@ -5,7 +5,7 @@ import {
   externalAttachArgv,
   sideSessionName,
 } from "../../src/terminals/attach.js";
-import { TOKEN, createHarness, type Harness } from "../api/harness.js";
+import { createHarness, type Harness } from "../api/harness.js";
 import { connect } from "../api/ws-client.js";
 import { CONTAINER, box } from "../api/fixtures.js";
 
@@ -56,7 +56,7 @@ describe("attach commands", () => {
 describe("terminals.open", () => {
   it("attaches to the session and carries bytes both ways", async () => {
     const s = await connect(
-      `${base}/terminals?kind=session&boxId=${box.id}&cols=100&rows=30&token=${TOKEN}`,
+      `${base}/terminals?kind=session&boxId=${box.id}&cols=100&rows=30`,
     );
     await s.until((x) => x.texts.length === 1);
     expect(s.texts[0]).toMatchObject({ type: "ready" });
@@ -84,7 +84,7 @@ describe("terminals.open", () => {
 
   it("sends exit and emits terminal.ended, never unexpected, when the session ends", async () => {
     h.core.views.set(box.id, { ...h.core.views.get(box.id)!, status: "running" });
-    const s = await connect(`${base}/terminals?kind=session&boxId=${box.id}&token=${TOKEN}`);
+    const s = await connect(`${base}/terminals?kind=session&boxId=${box.id}`);
     await s.until((x) => x.texts.length === 1);
     h.exec.sessions[0]!.exitCode = 0;
     h.core.views.set(box.id, { ...h.core.views.get(box.id)!, status: "stopped" });
@@ -103,7 +103,7 @@ describe("terminals.open", () => {
   });
 
   it("closes the exec when the client leaves; that end is expected", async () => {
-    const s = await connect(`${base}/terminals?kind=session&boxId=${box.id}&token=${TOKEN}`);
+    const s = await connect(`${base}/terminals?kind=session&boxId=${box.id}`);
     await s.until((x) => x.texts.length === 1);
     s.ws.close();
     await s.until(() => h.exec.sessions[0]!.closed && ended().length > 0);
@@ -112,13 +112,13 @@ describe("terminals.open", () => {
 
   it("opens a side session and a shell", async () => {
     const side = await connect(
-      `${base}/terminals?kind=side&boxId=${box.id}&platform=codex&token=${TOKEN}`,
+      `${base}/terminals?kind=side&boxId=${box.id}&platform=codex`,
     );
     await side.until((x) => x.texts.length === 1);
     expect(h.exec.requests[0]!.cmd.at(-1)).toBe(`${box.session}-codex`);
     side.ws.close();
     const shell = await connect(
-      `${base}/terminals?kind=shell&projectId=example-app-1a2b3c4d&token=${TOKEN}`,
+      `${base}/terminals?kind=shell&projectId=example-app-1a2b3c4d`,
     );
     await shell.until((x) => x.texts.length === 1);
     expect(h.exec.requests[1]).toMatchObject({
@@ -127,19 +127,19 @@ describe("terminals.open", () => {
       container: CONTAINER,
     });
     shell.ws.close();
-    const boxShell = await connect(`${base}/terminals?kind=shell&boxId=${box.id}&token=${TOKEN}`);
+    const boxShell = await connect(`${base}/terminals?kind=shell&boxId=${box.id}`);
     await boxShell.until((x) => x.texts.length === 1);
     expect(h.exec.requests[2]).toMatchObject({ workingDir: box.worktree });
     boxShell.ws.close();
   });
 
   it("sends an error frame for a bad query or an unknown box", async () => {
-    const bad = await connect(`${base}/terminals?kind=session&token=${TOKEN}`);
+    const bad = await connect(`${base}/terminals?kind=session`);
     await bad.until((x) => x.texts.length === 1);
     expect(bad.texts[0]).toMatchObject({ type: "error", error: { code: "validation" } });
     expect((await bad.closed).code).toBe(1008);
     const missing = await connect(
-      `${base}/terminals?kind=session&boxId=claude-agent-zz&token=${TOKEN}`,
+      `${base}/terminals?kind=session&boxId=claude-agent-zz`,
     );
     await missing.until((x) => x.texts.length === 1);
     expect(missing.texts[0]).toMatchObject({ type: "error", error: { code: "not_found" } });
@@ -147,14 +147,14 @@ describe("terminals.open", () => {
 
   it("reports a failed exec", async () => {
     h.exec.fail = Object.assign(new Error("daemon down"), { code: "docker_unavailable" });
-    const s = await connect(`${base}/terminals?kind=session&boxId=${box.id}&token=${TOKEN}`);
+    const s = await connect(`${base}/terminals?kind=session&boxId=${box.id}`);
     await s.until((x) => x.texts.length === 1);
     expect(s.texts[0]).toMatchObject({ type: "error", error: { code: "docker_unavailable" } });
     expect((await s.closed).code).toBe(1011);
   });
 
   it("answers a terminal control frame that is not JSON with an error", async () => {
-    const s = await connect(`${base}/terminals?kind=session&boxId=${box.id}&token=${TOKEN}`);
+    const s = await connect(`${base}/terminals?kind=session&boxId=${box.id}`);
     await s.until((x) => x.texts.length === 1);
     s.ws.send("not json");
     await s.until((x) => x.texts.length === 2);
@@ -176,7 +176,7 @@ describe("jobs.stream", () => {
       return { exitCode: 0 };
     });
     await new Promise((r) => setTimeout(r, 10));
-    const s = await connect(`${base}/jobs/${job.id}/stream?token=${TOKEN}`);
+    const s = await connect(`${base}/jobs/${job.id}/stream`);
     await s.until((x) => x.texts.length === 1 && x.binary.length === 1);
     expect(s.texts[0]).toEqual({ type: "ready", terminalId: job.id });
     expect(s.binary[0]!.toString()).toBe("Password: ");
@@ -189,7 +189,7 @@ describe("jobs.stream", () => {
   });
 
   it("refuses an unknown job", async () => {
-    const s = await connect(`${base}/jobs/nope/stream?token=${TOKEN}`);
+    const s = await connect(`${base}/jobs/nope/stream`);
     await s.until((x) => x.texts.length === 1);
     expect(s.texts[0]).toMatchObject({ type: "error", error: { code: "not_found" } });
   });
