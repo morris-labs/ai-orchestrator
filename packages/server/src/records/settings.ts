@@ -19,6 +19,7 @@ import {
 } from "@agentbox/contracts";
 import { z } from "zod";
 import type { SettingsRepo } from "../db/repositories.js";
+import { ENGINE_TOKEN_FILE_ENV } from "../docker/state.js";
 import type { HostEnv } from "./env.js";
 import { homePaths } from "./env.js";
 import { ApiError } from "./errors.js";
@@ -194,6 +195,7 @@ export const RESERVED_ENV_NAMES: ReadonlySet<string> = new Set([
   "IS_SANDBOX",
   "DISABLE_AUTOUPDATER",
   "GIT_CONFIG_GLOBAL",
+  ENGINE_TOKEN_FILE_ENV,
   ...Object.values(ENGINE_ENV),
 ]);
 

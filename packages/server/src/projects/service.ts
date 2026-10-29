@@ -26,7 +26,12 @@ import {
   prepareLaunchHost,
   tcpMapsLabel,
 } from "../docker/launch.js";
-import { liveSessions, readMountsFile, writeMountsFile } from "../docker/state.js";
+import {
+  liveSessions,
+  readMountsFile,
+  writeEngineTokenFile,
+  writeMountsFile,
+} from "../docker/state.js";
 import type { ContainerInspect, DockerClient } from "../docker/types.js";
 import { boxTmuxSession } from "../records/box.js";
 import type { HostEnv } from "../records/env.js";
@@ -468,6 +473,7 @@ export class ProjectService {
         },
         facts,
       );
+      writeEngineTokenFile(this.deps.env, name, token);
       const id = await docker.createContainer(spec);
       try {
         await docker.startContainer(id);

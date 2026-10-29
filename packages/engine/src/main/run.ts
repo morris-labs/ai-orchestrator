@@ -21,6 +21,7 @@ import { createRunManager } from "../state/manager.js";
 import { startActiveRunsWriter } from "./active-runs.js";
 import { MOCK_SCRIPT_ENV, MOCK_VENDORS_ENV, selectAdapters } from "./adapters.js";
 import { LOG_LEVELS, createLogger, isLogLevel } from "./logger.js";
+import { ENGINE_TOKEN_FILE_ENV, loadEngineToken } from "./token.js";
 import { readPackageVersion } from "./version.js";
 
 export const LOG_LEVEL_ENV = "AGENTBOX_LOG_LEVEL";
@@ -35,7 +36,10 @@ Options:
   --help             Print this help and exit.
 
 Environment:
-  ${ENGINE_ENV.token}    Bearer token for every request. Required, 16 characters or more.
+  ${ENGINE_TOKEN_FILE_ENV}  File that holds the bearer token for every request, 16
+                         characters or more. Default: engine.token in the state directory.
+  ${ENGINE_ENV.token}    The bearer token itself, for an engine started by hand in
+                         development. Ignored when ${ENGINE_TOKEN_FILE_ENV} is set.
   ${ENGINE_ENV.port}     Port to listen on. Default: 20411.
   ${ENGINE_ENV.projectRoot}   The project root as the container sees it. Required.
   ${ENGINE_ENV.container}      The container's name. Required.
@@ -228,16 +232,24 @@ export async function main(
   const level: LogLevel = args.logLevel ?? (envLevel && isLogLevel(envLevel) ? envLevel : "info");
   const log = createLogger(level);
 
-  const checked = checkEnv(env);
+  const loaded = loadEngineToken(env);
+  if (!loaded.ok) {
+    log.error(`The engine refuses to start: ${loaded.problem}`);
+    return 2;
+  }
+  const checked = checkEnv(loaded.env);
   if (!checked.ok) {
     for (const problem of checked.problems) log.error(`The engine refuses to start: ${problem}`);
     return 2;
   }
 
-  // The token stays in `checked.env` for the API. Removing it from this
-  // process's environment keeps it out of every child, whatever runner
-  // starts the child.
-  if (env === process.env) delete process.env[ENGINE_ENV.token];
+  // The token stays in `checked.env` for the API. Removing it, and the name
+  // of its file, from this process's environment keeps both out of every
+  // child, whatever runner starts the child.
+  if (env === process.env) {
+    delete process.env[ENGINE_ENV.token];
+    delete process.env[ENGINE_TOKEN_FILE_ENV];
+  }
 
   let handle: EngineHandle;
   try {

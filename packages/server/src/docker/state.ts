@@ -1,6 +1,7 @@
 // The host side of a project container's keeper state:
 // `~/.claude-box/state/<container>/sessions` (live tmux sessions, rewritten
-// every second) and `mounts` (the mounts the container was created with).
+// every second), `mounts` (the mounts the container was created with), and
+// `engine.token` (the engine's bearer token, mode 0600).
 import fs from "node:fs";
 import path from "node:path";
 import { homePaths, type HostEnv } from "../records/env.js";
@@ -18,6 +19,36 @@ export function stateFile(env: HostEnv, container: string): string {
 
 export function mountsFile(env: HostEnv, container: string): string {
   return path.join(stateDir(env, container), "mounts");
+}
+
+/**
+ * The engine token file's name in the state directory. The engine reads it
+ * at `AGENTBOX_ENGINE_TOKEN_FILE`, which defaults to this name in its state
+ * directory.
+ */
+export const ENGINE_TOKEN_FILE_NAME = "engine.token";
+
+/** The variable that tells the engine where its token file is. */
+export const ENGINE_TOKEN_FILE_ENV = "AGENTBOX_ENGINE_TOKEN_FILE";
+
+export function engineTokenFile(env: HostEnv, container: string): string {
+  return path.join(stateDir(env, container), ENGINE_TOKEN_FILE_NAME);
+}
+
+/**
+ * Writes the engine token for a container about to start, readable by its
+ * owner only. The token goes to a file rather than the container's
+ * environment because every `docker exec`, and so every tmux session and
+ * agent CLI, inherits that environment.
+ */
+export function writeEngineTokenFile(env: HostEnv, container: string, token: string): void {
+  const dir = stateDir(env, container);
+  fs.mkdirSync(dir, { recursive: true });
+  const file = engineTokenFile(env, container);
+  const tmp = `${file}.tmp`;
+  fs.rmSync(tmp, { force: true });
+  fs.writeFileSync(tmp, `${token}\n`, { mode: 0o600, flag: "wx" });
+  fs.renameSync(tmp, file);
 }
 
 /** The names in a sessions file's content, one per line. */

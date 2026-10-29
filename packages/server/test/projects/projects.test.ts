@@ -10,7 +10,7 @@ import {
   projectSlug,
 } from "../../src/projects/ids.js";
 import { freeLoopbackPort, loopbackPortFree } from "../../src/projects/service.js";
-import { readMountsFile } from "../../src/docker/state.js";
+import { engineTokenFile, readMountsFile } from "../../src/docker/state.js";
 import { ApiError } from "../../src/records/errors.js";
 import { ENGINE_VERSION, assertContractEvent, makeHarness } from "../boxes/harness.js";
 
@@ -127,7 +127,10 @@ describe("ProjectService", () => {
     expect(endpoint).toMatchObject({ hostPort: 41000, container: r.container });
     expect(endpoint.token).toMatch(/^[0-9a-f]{64}$/);
     const c = h.docker.containers.get(r.container)!;
-    expect(c.spec.env).toContain(`AGENTBOX_ENGINE_TOKEN=${endpoint.token}`);
+    expect(c.spec.env.join("\n")).not.toContain(endpoint.token);
+    const tokenFile = engineTokenFile(h.env, r.container);
+    expect(fs.readFileSync(tokenFile, "utf8")).toBe(`${endpoint.token}\n`);
+    expect(fs.statSync(tokenFile).mode & 0o777).toBe(0o600);
     expect(c.spec.env).toContain("SECRET=v");
     expect(c.spec.env).toContain(`AGENTBOX_ENGINE_VERSION=${ENGINE_VERSION}`);
     expect(readMountsFile(h.env, r.container)).toEqual([]);

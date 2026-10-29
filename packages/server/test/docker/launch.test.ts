@@ -43,17 +43,29 @@ describe("buildLaunchSpec", () => {
       { ...input, extraEnv: { AGENTBOX_ENGINE_TOKEN: "evil", API_KEY: "k" } },
       { projectsSymlinkTarget: null, hasGitconfig: false },
     );
-    expect(spec.env.filter((e) => e.startsWith("AGENTBOX_ENGINE_TOKEN="))).toEqual([
-      "AGENTBOX_ENGINE_TOKEN=secret-token-value-0123456789",
-    ]);
+    expect(spec.env.filter((e) => e.startsWith("AGENTBOX_ENGINE_TOKEN="))).toEqual([]);
     expect(spec.env).toContain("API_KEY=k");
+    const file = buildLaunchSpec(
+      env,
+      { ...input, extraEnv: { AGENTBOX_ENGINE_TOKEN_FILE: "/tmp/evil" } },
+      { projectsSymlinkTarget: null, hasGitconfig: false },
+    );
+    expect(file.env.filter((e) => e.startsWith("AGENTBOX_ENGINE_TOKEN_FILE="))).toEqual([
+      "AGENTBOX_ENGINE_TOKEN_FILE=/run/claude-box/engine.token",
+    ]);
+  });
+
+  it("keeps the engine token out of the container's environment", () => {
+    const spec = buildLaunchSpec(env, input, { projectsSymlinkTarget: null, hasGitconfig: false });
+    expect(spec.env.join("\n")).not.toContain(input.engine.token);
   });
 
   // The golden spec is the 3.3.5 launch minus the port pool, plus the engine.
   // It differs from 3.3.5 in the command and one variable on purpose: the
   // container runs the image's keeper.sh (which also keeps the engine
   // running) in place of the inline 3.3.5 keeper, and gets
-  // AGENTBOX_STATE_DIR, where keeper.sh and the engine share state.
+  // AGENTBOX_STATE_DIR, where keeper.sh and the engine share state. The
+  // engine token is a file in that directory, not a variable.
   it("matches the inventoried 3.3.5 launch, minus the pool, plus the engine", () => {
     const spec = buildLaunchSpec(env, input, {
       projectsSymlinkTarget: "/home/tester/.claude-projects-shared",
@@ -76,7 +88,7 @@ describe("buildLaunchSpec", () => {
         "IS_SANDBOX=1",
         "DISABLE_AUTOUPDATER=1",
         "GIT_CONFIG_GLOBAL=/home/tester/work/app/gitconfig",
-        "AGENTBOX_ENGINE_TOKEN=secret-token-value-0123456789",
+        "AGENTBOX_ENGINE_TOKEN_FILE=/run/claude-box/engine.token",
         "AGENTBOX_ENGINE_PORT=20411",
         "AGENTBOX_PROJECT_ROOT=/home/tester/work/app",
         `AGENTBOX_CONTAINER=${C}`,
@@ -142,7 +154,8 @@ describe("buildLaunchSpec", () => {
       "-e",
       "IS_SANDBOX=1",
     ]);
-    expect(args).toContain("AGENTBOX_ENGINE_TOKEN=***");
+    expect(args).toContain("AGENTBOX_ENGINE_TOKEN_FILE=/run/claude-box/engine.token");
+    expect(args.join(" ")).not.toContain(input.engine.token);
     expect(args).toContain("GITHUB_TOKEN=***");
     expect(args.join(" ")).not.toContain("ghp_value");
     expect(args).toContain("127.0.0.1:41000:20411");

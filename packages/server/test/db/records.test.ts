@@ -246,7 +246,12 @@ describe("SettingsService", () => {
 
   it("refuses a secret named like a variable the server sets", () => {
     const { settings } = setup();
-    for (const name of ["AGENTBOX_ENGINE_TOKEN", "IS_SANDBOX", "GIT_CONFIG_GLOBAL"]) {
+    for (const name of [
+      "AGENTBOX_ENGINE_TOKEN",
+      "AGENTBOX_ENGINE_TOKEN_FILE",
+      "IS_SANDBOX",
+      "GIT_CONFIG_GLOBAL",
+    ]) {
       expect(() => settings.setSecretRefs([{ name, ref: "op://Vault/Item/field" }])).toThrow(
         /reserved/,
       );

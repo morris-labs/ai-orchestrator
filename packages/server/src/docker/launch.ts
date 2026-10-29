@@ -14,7 +14,7 @@ import {
   type HostEnv,
 } from "../records/env.js";
 import { STARTUP_GRACE_SEC, STATE_MOUNT, sharedKeeperCommand } from "./scripts.js";
-import { prepareStateDir } from "./state.js";
+import { ENGINE_TOKEN_FILE_ENV, ENGINE_TOKEN_FILE_NAME, prepareStateDir } from "./state.js";
 import type { ContainerCreateSpec } from "./types.js";
 
 /** Labels the server sets on every project container. */
@@ -154,8 +154,11 @@ export function buildLaunchSpec(
 
   const envList = ["IS_SANDBOX=1", "DISABLE_AUTOUPDATER=1"];
   if (facts.hasGitconfig) envList.push(`GIT_CONFIG_GLOBAL=${containerDir}/gitconfig`);
+  // The engine token is not in this list: `writeEngineTokenFile()` puts it in
+  // the state directory, out of reach of the environment `docker exec`
+  // passes to every session.
   envList.push(
-    `${ENGINE_ENV.token}=${input.engine.token}`,
+    `${ENGINE_TOKEN_FILE_ENV}=${STATE_MOUNT}/${ENGINE_TOKEN_FILE_NAME}`,
     `${ENGINE_ENV.port}=${DEFAULT_ENGINE_PORT}`,
     `${ENGINE_ENV.projectRoot}=${containerDir}`,
     `${ENGINE_ENV.container}=${input.container}`,
@@ -221,6 +224,7 @@ export function toDockerRunArgs(
     "IS_SANDBOX",
     "DISABLE_AUTOUPDATER",
     "GIT_CONFIG_GLOBAL",
+    ENGINE_TOKEN_FILE_ENV,
     ENGINE_ENV.port,
     ENGINE_ENV.projectRoot,
     ENGINE_ENV.container,
