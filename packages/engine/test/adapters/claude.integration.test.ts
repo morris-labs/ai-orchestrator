@@ -19,7 +19,9 @@ function save(name: string, raw: string): void {
 }
 
 describe.skipIf(!enabled)("Claude adapter against the real CLI", () => {
-  const adapter = new ClaudeAdapter();
+  // No session persistence: the temporary working directories would
+  // otherwise leave transcript folders in ~/.claude/projects.
+  const adapter = new ClaudeAdapter({ persistSessions: false });
   const model = "claude-haiku-5-5";
 
   it("reports health with a version", async () => {

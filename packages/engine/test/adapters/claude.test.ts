@@ -275,6 +275,13 @@ describe("ClaudeAdapter.buildArgs", () => {
   it("adds --bare when asked", () => {
     expect(new ClaudeAdapter({ bare: true }).buildArgs(req(z.object({})))).toContain("--bare");
   });
+
+  it("turns session persistence off only when asked", () => {
+    expect(adapter.buildArgs(req(z.object({})))).not.toContain("--no-session-persistence");
+    expect(new ClaudeAdapter({ persistSessions: false }).buildArgs(req(z.object({})))).toContain(
+      "--no-session-persistence",
+    );
+  });
 });
 
 describe("claudeTokens", () => {

@@ -83,6 +83,12 @@ export interface ClaudeAdapterOptions extends CliAdapterOptions {
   bare?: boolean;
   /** Permission mode for `tools: "write"`. Default `bypassPermissions`; the container is the sandbox. */
   writePermissionMode?: "acceptEdits" | "auto" | "bypassPermissions";
+  /**
+   * Whether Claude Code saves each session under `~/.claude/projects`.
+   * Default true, which `sessionId` resumes need. False passes
+   * `--no-session-persistence`, so a test leaves no transcript behind.
+   */
+  persistSessions?: boolean;
 }
 
 /** What the adapter learned from one stream. */
@@ -124,6 +130,7 @@ export class ClaudeAdapter extends CliAdapter {
       this.claudeOptions.bare ??
       Boolean(childEnv("vendor:claude", this.options.env).ANTHROPIC_API_KEY);
     if (bare) args.push("--bare");
+    if (this.claudeOptions.persistSessions === false) args.push("--no-session-persistence");
     if (req.model) args.push("--model", req.model);
     if (req.effort) args.push("--effort", req.effort);
     if (req.maxTurns !== undefined) args.push("--max-turns", String(req.maxTurns));
