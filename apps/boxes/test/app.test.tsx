@@ -503,6 +503,58 @@ describe("main window", () => {
     expect(server.contractViolations).toEqual([]);
   });
 
+  const createWithPort = async (user: ReturnType<typeof userEvent.setup>) => {
+    await user.keyboard("{Control>}{Shift>}N{/Shift}{/Control}");
+    const dialog = await screen.findByRole("dialog", { name: "New Box" });
+    await user.type(within(dialog).getByLabelText("Target directory"), "/w/new");
+    await user.type(within(dialog).getByLabelText("Conversation name"), "Ports");
+    await user.click(within(dialog).getByRole("button", { name: /TCP port maps/ }));
+    await user.click(within(dialog).getByRole("button", { name: "Add port" }));
+    await user.type(within(dialog).getByLabelText("Host port 1"), "8080");
+    await user.click(within(dialog).getByRole("button", { name: "Create" }));
+  };
+
+  // Findings 8 and 9: Restart Container used to return without a retry.
+  it("retries the deferred start after the user restarts a stale container", async () => {
+    const user = userEvent.setup();
+    const server = new FakeServer({ boxes: boxes() });
+    let first = true;
+    server.on("boxes.start", (req, s) => {
+      if (first) {
+        first = false;
+        throw new FakeApiError("stale_mounts", "The container's mounts changed.");
+      }
+      const v = s.box(req.params.boxId as string);
+      v.status = "running";
+      return v;
+    });
+    await renderApp(server);
+    await createWithPort(user);
+    const dialog = await screen.findByRole("dialog", { name: "New Box" }, { timeout: 3000 });
+    expect(dialog).toHaveTextContent(/mounts, ports, or secrets/);
+    await user.click(within(dialog).getByRole("button", { name: "Restart Container" }));
+    await waitFor(() => expect(server.callsTo("boxes.start")).toHaveLength(2));
+    expect(server.callsTo("projects.restartContainer")).toHaveLength(1);
+    expect(
+      await screen.findByRole("tab", { name: /Ports/ }, { timeout: 3000 }),
+    ).toBeInTheDocument();
+  });
+
+  // Finding 11: a failed settings save used to end in a bare error.
+  it("says the new box is stopped when saving its project settings fails", async () => {
+    const user = userEvent.setup();
+    const server = new FakeServer({ boxes: boxes() });
+    server.on("projects.update", () => {
+      throw new FakeApiError("validation", "Port 8080 is taken.", 400);
+    });
+    await renderApp(server);
+    await createWithPort(user);
+    const dialog = await screen.findByRole("dialog", { name: "New Box" }, { timeout: 3000 });
+    expect(dialog).toHaveTextContent(/saving the project settings failed: Port 8080 is taken\./);
+    expect(dialog).toHaveTextContent(/The box is stopped\./);
+    expect(server.callsTo("boxes.start")).toHaveLength(0);
+  });
+
   it("shows a bar when the server is unreachable", async () => {
     const server = new FakeServer();
     server.on("projects.list", () => {

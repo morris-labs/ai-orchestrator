@@ -503,6 +503,10 @@ describe("SetupWizard and jobs", () => {
       makeJob({ id: "j", kind: "box_create", command: "create box", status, ...extra });
     expect(createJobMessage(job("finished"))).toBeNull();
     expect(createJobMessage(job("running"))).toMatch(/still running/);
+    expect(createJobMessage(job("running"))).not.toMatch(/project settings/);
+    expect(createJobMessage(job("running"), true)).toMatch(
+      /project settings you edited aren't saved and the box doesn't start/,
+    );
     expect(createJobMessage(job("failed", { exitCode: 2 }))).toBe(
       "Creating the box failed (exit 2).",
     );

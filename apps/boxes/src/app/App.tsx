@@ -330,7 +330,15 @@ export function App() {
   // -------------------------------------------------------------------------
   // Box actions
 
-  const startBox = async (view: BoxView, openTab = true) => {
+  /**
+   * Starts a box, and retries after the user restarts a stale container or
+   * picks Start Anyway. Returns the started box, or null when it didn't start.
+   */
+  const startBox = async (
+    view: BoxView,
+    openTab = true,
+    title = "Start",
+  ): Promise<BoxView | null> => {
     mark([view.box.id], "starting");
     try {
       let force = false;
@@ -342,10 +350,10 @@ export function App() {
           });
           data.putBox(v);
           if (openTab) openTerminal(v);
-          return;
+          return v;
         } catch (err) {
-          const next = await handleLaunchError("Start", err, view, true);
-          if (!next) return;
+          const next = await handleLaunchError(title, err, view, true);
+          if (!next) return null;
           force = next === "force";
         }
       }
@@ -785,8 +793,9 @@ export function App() {
           intervalMs: 700,
         })
           .then(async (done) => {
-            const message = createJobMessage(done);
+            const message = createJobMessage(done, deferStart);
             if (message !== null) {
+              if (done.status === "running") void data.reload();
               void inform(title, message);
               return;
             }
@@ -795,13 +804,29 @@ export function App() {
               ? await client.call("boxes.get", { params: { boxId: id } }).catch(() => null)
               : null;
             if (deferStart) {
-              await saveProjectSettings(v?.box.targetDir ?? form.targetDir, project);
-              if (v) {
-                try {
-                  v = await client.call("boxes.start", { params: { boxId: v.box.id } });
-                } catch (err) {
-                  await handleLaunchError(title, err, v);
-                }
+              let settingsError: string | null;
+              try {
+                settingsError = await saveProjectSettings(
+                  v?.box.targetDir ?? form.targetDir,
+                  project,
+                );
+              } catch (err) {
+                settingsError = errorMessage(err);
+              }
+              const name = v?.box.id ?? id ?? (form.name || form.targetDir);
+              if (settingsError !== null) {
+                // Starting now would give the box the old mounts and ports.
+                void inform(
+                  title,
+                  `Created ${name}, but saving the project settings failed: ${settingsError}\n\nThe box is stopped. Edit the project settings again, then start the box.`,
+                );
+              } else if (!v) {
+                void inform(
+                  title,
+                  `Created ${name}, but the app couldn't load it to start it. The box is stopped; start it from the list.`,
+                );
+              } else {
+                v = (await startBox(v, false, title)) ?? v;
               }
             }
             await data.reload();

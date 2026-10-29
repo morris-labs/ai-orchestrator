@@ -20,10 +20,14 @@ export function jobLabel(job: Job | null, command: string): string {
  * returned: `null` when it finished, a note that it still runs when the wait
  * gave up first, else why it failed.
  */
-export function createJobMessage(job: Job): string | null {
+export function createJobMessage(job: Job, deferredStart = false): string | null {
   if (job.status === "finished") return null;
   if (job.status === "running") {
-    return `Creating the box is still running after a long wait (${job.command}). It appears in the list when it finishes.`;
+    const base = `Creating the box is still running after a long wait (${job.command}). It appears in the list when it finishes.`;
+    // The app stops waiting, so the steps it would take after the job don't run.
+    return deferredStart
+      ? `${base}\n\nThe app stopped waiting for it, so the project settings you edited aren't saved and the box doesn't start by itself. When it appears, edit the project settings again, then start the box.`
+      : base;
   }
   return job.error?.message ?? `Creating the box failed (exit ${job.exitCode ?? "unknown"}).`;
 }
