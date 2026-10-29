@@ -1,9 +1,9 @@
 // Verify stage (design.md, pre-push step 5): a disprover from another vendor
 // tries to disprove each finding, with a reproduction script where it can,
 // and the engine checks whether the flaw exists at the pinned base.
-import { mkdir, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { Finding, PolicyFile, Profile, RoleAssignment, Vendor } from "@agentbox/contracts";
 import type { AdapterRequest, CommandRunner, VerifyOutput } from "../core.js";
 import { policyPromptSection } from "../policy/rules.js";
@@ -153,9 +153,8 @@ export async function runReproScript(
   if (!inside(scratchDir, full)) {
     throw new Error(`The reproduction script ${script.path} is outside the scratch directory.`);
   }
-  if (!(await exists(full)) && script.content) {
-    await mkdir(dirname(full), { recursive: true });
-    await writeFile(full, script.content, { mode: 0o700 });
+  if (script.content && !(await present(full))) {
+    await writeInside(scratchDir, full, script.content);
   }
   if (!(await exists(full))) {
     return failedRun(
@@ -187,6 +186,47 @@ export async function runReproScript(
 function inside(dir: string, path: string): boolean {
   const rel = relative(dir, path);
   return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
+}
+
+/** True when anything, a dangling symbolic link included, is at `path`. */
+async function present(path: string): Promise<boolean> {
+  try {
+    await lstat(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Writes `content` to `full`, a path inside `scratchDir`, without following
+ * a symbolic link: each directory on the way must be a real directory, and
+ * the `wx` flag refuses a file or link already at `full`. A link planted in
+ * the scratch directory can't send the write outside it.
+ */
+async function writeInside(scratchDir: string, full: string, content: string): Promise<void> {
+  const parts = relative(scratchDir, dirname(full)).split(sep).filter(Boolean);
+  let dir = scratchDir;
+  for (const part of parts) {
+    dir = join(dir, part);
+    let info;
+    try {
+      info = await lstat(dir);
+    } catch {
+      await mkdir(dir, { mode: 0o700 });
+      continue;
+    }
+    if (!info.isDirectory()) {
+      throw new Error(
+        `The reproduction script's directory ${relative(scratchDir, dir)} is not a directory in the scratch directory.`,
+      );
+    }
+  }
+  try {
+    await writeFile(full, content, { mode: 0o700, flag: "wx" });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+  }
 }
 
 async function exists(path: string): Promise<boolean> {

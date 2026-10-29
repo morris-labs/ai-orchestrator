@@ -1,4 +1,11 @@
-import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FindingInputSchema, type RoleAssignment } from "@agentbox/contracts";
@@ -113,6 +120,57 @@ describe("runReproScript", () => {
     await expect(runReproScript(runner, scratch, { path: "../evil.sh" }, repo)).rejects.toThrow(
       /outside/,
     );
+  });
+
+  // Finding 48: the write used to follow a dangling link planted in the
+  // scratch directory and create the file outside it.
+  it("doesn't write script content through a dangling link", async () => {
+    const root = mkdtempSync(join(tmpdir(), "agentbox-verify-"));
+    const scratch = join(root, "scratch");
+    mkdirSync(scratch);
+    const repo = mkdtempSync(join(tmpdir(), "agentbox-repo-"));
+    const target = join(root, "outside.sh");
+    symlinkSync(target, join(scratch, "r.sh"));
+    const run = await runReproScript(
+      new ExecaRunner(),
+      scratch,
+      { path: "r.sh", interpreter: "sh", content: "exit 1\n" },
+      repo,
+    );
+    expect(existsSync(target)).toBe(false);
+    expect(run.notStarted).toBe(true);
+  });
+
+  it("doesn't write script content through a linked directory", async () => {
+    const root = mkdtempSync(join(tmpdir(), "agentbox-verify-"));
+    const scratch = join(root, "scratch");
+    const outside = join(root, "outside");
+    mkdirSync(scratch);
+    mkdirSync(outside);
+    const repo = mkdtempSync(join(tmpdir(), "agentbox-repo-"));
+    symlinkSync(outside, join(scratch, "dir"));
+    await expect(
+      runReproScript(
+        new ExecaRunner(),
+        scratch,
+        { path: "dir/sub/r.sh", interpreter: "sh", content: "exit 1\n" },
+        repo,
+      ),
+    ).rejects.toThrow(/not a directory/);
+    expect(existsSync(join(outside, "sub"))).toBe(false);
+  });
+
+  it("creates the directories for script content inside the scratch directory", async () => {
+    const scratch = mkdtempSync(join(tmpdir(), "agentbox-scratch-"));
+    const repo = mkdtempSync(join(tmpdir(), "agentbox-repo-"));
+    const run = await runReproScript(
+      new ExecaRunner(),
+      scratch,
+      { path: "a/b/r.sh", interpreter: "sh", content: "exit 1\n" },
+      repo,
+    );
+    expect(run.exitCode).toBe(1);
+    expect(readFileSync(join(scratch, "a/b/r.sh"), "utf8")).toBe("exit 1\n");
   });
 });
 
