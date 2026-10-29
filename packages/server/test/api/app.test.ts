@@ -1,6 +1,5 @@
 // The whole server over the fake core and a fake engine on a real socket.
-import { mkdtemp, readFile } from "node:fs/promises";
-import os from "node:os";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { startApp, type App } from "../../src/api/app.js";
@@ -10,6 +9,7 @@ import { FakeRunner } from "../setup/fake-runner.js";
 import { createFakeCore, type FakeCore } from "./fake-core.js";
 import { CONTAINER, PROJECT_ID, RUN, runState } from "./fixtures.js";
 import { FakeExec } from "./harness.js";
+import { tempDir } from "../tmp.js";
 
 let app: App;
 let engine: FakeEngineServer;
@@ -23,7 +23,7 @@ const op: OpClient = {
 };
 
 beforeEach(async () => {
-  home = await mkdtemp(path.join(os.tmpdir(), "agentbox-app-"));
+  home = tempDir("agentbox-app-");
   engine = await new FakeEngineServer().start();
   core = createFakeCore();
   core.endpoints = [

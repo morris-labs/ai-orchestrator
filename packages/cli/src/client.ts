@@ -115,7 +115,7 @@ export class ServerClient {
         throw new ApiCallError(
           401,
           "unauthorized",
-          "The server refused the token. Check ~/.claude-box/server.token or AGENTBOX_TOKEN.",
+          "The server refused the token. Check server.token in the data directory (~/.claude-box or AGENTBOX_DATA_DIR), or AGENTBOX_TOKEN.",
         );
       }
       if (parsed.success) {

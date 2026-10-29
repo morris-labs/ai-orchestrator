@@ -1,8 +1,6 @@
 // Builds an API server over the fake core and fake services.
 import { openDatabase } from "../../src/db/index.js";
 import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import { PassThrough, Duplex } from "node:stream";
 import type { EngineRouteKey, Job, RunState } from "@agentbox/contracts";
 import type { ApiDeps, ApiEngine, ApiEngines } from "../../src/api/deps.js";
@@ -16,6 +14,7 @@ import type { ExecBackend, ExecRequest, ExecSession } from "../../src/terminals/
 import type { DevServerProxy } from "../../src/proxy/proxy.js";
 import { createFakeCore, type FakeCore } from "./fake-core.js";
 import { CONTAINER, PROJECT_ID, T1, runState } from "./fixtures.js";
+import { tempDir } from "../tmp.js";
 
 export const TOKEN = "t".repeat(64);
 export const AUTH = { authorization: `Bearer ${TOKEN}` };
@@ -211,7 +210,7 @@ export async function createHarness(overrides: { proxy?: DevServerProxy } = {}):
     });
   const deps: ApiDeps = {
     core,
-    home: fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "api-home-"))),
+    home: fs.realpathSync(tempDir("api-home-")),
     token: TOKEN,
     version: "4.0.0-dev",
     startedAt: new Date(),

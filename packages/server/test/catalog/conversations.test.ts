@@ -1,5 +1,4 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ConversationSummarySchema } from "@agentbox/contracts";
@@ -13,6 +12,7 @@ import {
   transcriptExists,
 } from "../../src/catalog/index.js";
 import type { HostEnv } from "../../src/records/env.js";
+import { tempDir } from "../tmp.js";
 
 const U1 = "11111111-1111-4111-8111-111111111111";
 const U2 = "22222222-2222-4222-8222-222222222222";
@@ -35,7 +35,7 @@ function write(uuid: string, lines: string[], mtime?: Date): string {
 }
 
 beforeEach(() => {
-  home = fs.mkdtempSync(path.join(os.tmpdir(), "catalog-"));
+  home = tempDir("catalog-");
   env = { home, user: "tester", now: () => new Date() };
 });
 afterEach(() => fs.rmSync(home, { recursive: true, force: true }));

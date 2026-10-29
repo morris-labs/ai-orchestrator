@@ -1,6 +1,5 @@
 // Golden tests for the launch spec against inventory sections 4.1 and 4.2.
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
@@ -14,6 +13,7 @@ import {
 } from "../../src/docker/launch.js";
 import { KEEPER_PATH } from "../../src/docker/scripts.js";
 import type { HostEnv } from "../../src/records/env.js";
+import { tempDir } from "../tmp.js";
 
 const env: HostEnv = { home: "/home/tester", user: "tester", now: () => new Date() };
 const C = "claude-agent-proj-app-1a2b3c4d";
@@ -179,7 +179,7 @@ describe("mergeMounts", () => {
 
 describe("host preparation", () => {
   it("creates the host directories, empties the sessions dir, and finds the symlink target", () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "agentbox-launch-"));
+    const home = tempDir("agentbox-launch-");
     const e = { ...env, home };
     const root = path.join(home, "work");
     fs.mkdirSync(root);
@@ -201,7 +201,7 @@ describe("host preparation", () => {
   });
 
   it("ignores a projects symlink that points inside ~/.claude", () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "agentbox-launch-"));
+    const home = tempDir("agentbox-launch-");
     fs.mkdirSync(path.join(home, ".claude", "real"), { recursive: true });
     fs.symlinkSync(path.join(home, ".claude", "real"), path.join(home, ".claude", "projects"));
     expect(projectsSymlinkTarget({ ...env, home })).toBeNull();

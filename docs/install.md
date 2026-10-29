@@ -86,6 +86,11 @@ The server listens on `127.0.0.1:21400` only. On its first start it writes a
 bearer token to `~/.claude-box/server.token` with mode `0600`. The apps and
 the CLI read that file; anything else that calls the API must send the token.
 
+The server keeps all its data in `~/.claude-box` unless you start it with
+`--data-dir PATH` or set `AGENTBOX_DATA_DIR`. When you move it, set
+`AGENTBOX_DATA_DIR` for the CLI and the apps as well, so they find the token.
+For details, see the server's `packages/server/README.md` file.
+
 ## Build the container image
 
 Every project runs in one container from the `claude-code` image. The image
@@ -160,6 +165,15 @@ electron-builder comes in as a dev dependency of the two apps.
    corepack enable
    pnpm install
    pnpm test
+   ```
+
+   `corepack enable` writes its shims next to the `node` binary, which needs
+   root when Node.js lives in `/usr/bin`. To install the `pnpm` shim for
+   your user only, without `sudo`, run this instead and make sure
+   `~/.local/bin` is on your `PATH`:
+
+   ```sh
+   corepack enable --install-directory ~/.local/bin pnpm
    ```
 
 1. Build the package:

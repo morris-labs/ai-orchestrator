@@ -2,7 +2,6 @@
 // the in-memory Docker double: the reconciliation of the API's `Core`
 // interface with the core modules.
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { BoxViewSchema, ProjectSummarySchema } from "@agentbox/contracts";
@@ -12,6 +11,7 @@ import { MemoryDocker } from "../../src/docker/memory.js";
 import { waitFor } from "../events/fake-engine.js";
 import { FakeRunner } from "../setup/fake-runner.js";
 import { FakeExec } from "./harness.js";
+import { tempDir } from "../tmp.js";
 
 const ENGINE_VERSION = "4.0.0-test";
 
@@ -28,7 +28,7 @@ afterEach(async () => {
 });
 
 async function start(docker: MemoryDocker) {
-  const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "agentbox-real-")));
+  const home = fs.realpathSync(tempDir("agentbox-real-"));
   const logs: string[] = [];
   let real: Awaited<ReturnType<typeof createCore>> | null = null;
   app = await startApp({

@@ -1,14 +1,14 @@
 // RepoService against real git repositories in a temporary directory, with
 // `gh` replaced by a fake.
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { RepoInfoSchema, RepoRefsSchema } from "@agentbox/contracts";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { RepoService } from "../../src/api/repos.js";
 import { execRunner, type CommandRunner } from "../../src/api/runner.js";
 import { silentLogger } from "../../src/main/logger.js";
+import { tempDir } from "../tmp.js";
 
 let root: string;
 const env = {
@@ -31,7 +31,7 @@ const runner: CommandRunner = {
 };
 
 beforeAll(() => {
-  root = mkdtempSync(path.join(tmpdir(), "engine-repos-"));
+  root = tempDir("engine-repos-");
   git(root, "init", "-q", "-b", "main");
   writeFileSync(path.join(root, "a.txt"), "one\n");
   git(root, "add", "a.txt");
@@ -115,7 +115,7 @@ describe("RepoService", () => {
   });
 
   it("lists nothing under a root that isn't a repository", async () => {
-    const empty = mkdtempSync(path.join(tmpdir(), "engine-empty-"));
+    const empty = tempDir("engine-empty-");
     try {
       expect(
         await new RepoService({ projectRoot: empty, runner, log: silentLogger }).list(),

@@ -3,7 +3,7 @@
 // review kinds, a single instance, and `agentbox-review://` deep links.
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, posix, resolve } from "node:path";
 import { HOME_PATHS, DEFAULT_SERVER_PORT, type NotificationToggles } from "@agentbox/contracts";
 import { ApiClient, EventsConnection, isAppPage, isWebUrl } from "@agentbox/ui/core";
 import {
@@ -27,11 +27,18 @@ import {
   trayTooltip,
 } from "./logic.js";
 
+/** A file in the server's data directory: `AGENTBOX_DATA_DIR`, else `~/.claude-box`. */
+function dataFile(homeRelative: string): string {
+  const dataDir = process.env.AGENTBOX_DATA_DIR
+    ? resolve(process.env.AGENTBOX_DATA_DIR)
+    : join(homedir(), HOME_PATHS.dataDir);
+  return join(dataDir, posix.relative(HOME_PATHS.dataDir, homeRelative));
+}
+
 function readServerConfig(): { serverUrl: string; token: string | null } {
-  const home = homedir();
   let port = DEFAULT_SERVER_PORT;
   try {
-    const cfg = JSON.parse(readFileSync(join(home, HOME_PATHS.config), "utf8")) as {
+    const cfg = JSON.parse(readFileSync(dataFile(HOME_PATHS.config), "utf8")) as {
       serverPort?: number;
     };
     if (typeof cfg.serverPort === "number") port = cfg.serverPort;
@@ -40,7 +47,7 @@ function readServerConfig(): { serverUrl: string; token: string | null } {
   }
   let token: string | null = null;
   try {
-    token = readFileSync(join(home, HOME_PATHS.serverToken), "utf8").trim() || null;
+    token = readFileSync(dataFile(HOME_PATHS.serverToken), "utf8").trim() || null;
   } catch {
     // No token yet: the server isn't set up. The window shows the connection error.
   }

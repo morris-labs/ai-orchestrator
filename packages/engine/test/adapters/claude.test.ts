@@ -1,5 +1,4 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DEFAULT_CEILINGS, UsageSampleSchema } from "@agentbox/contracts";
 import { describe, expect, it } from "vitest";
@@ -14,6 +13,7 @@ import { VendorFindingsOutputSchema } from "../../src/adapters/output.js";
 import type { AdapterError } from "../../src/adapters/types.js";
 import { type CliRequest } from "../../src/adapters/types.js";
 import { fixture, lines } from "./helpers.js";
+import { tempDir } from "../tmp.js";
 
 const ceiling = DEFAULT_CEILINGS.claude;
 const adapter = new ClaudeAdapter({ account: "user@example.com", bare: false });
@@ -275,6 +275,13 @@ describe("ClaudeAdapter.buildArgs", () => {
   it("adds --bare when asked", () => {
     expect(new ClaudeAdapter({ bare: true }).buildArgs(req(z.object({})))).toContain("--bare");
   });
+
+  it("turns session persistence off only when asked", () => {
+    expect(adapter.buildArgs(req(z.object({})))).not.toContain("--no-session-persistence");
+    expect(new ClaudeAdapter({ persistSessions: false }).buildArgs(req(z.object({})))).toContain(
+      "--no-session-persistence",
+    );
+  });
 });
 
 describe("claudeTokens", () => {
@@ -293,7 +300,7 @@ describe("claudeTokens", () => {
 
 describe("claudeAccount", () => {
   it("reads the OAuth email and tolerates a missing file", () => {
-    const dir = mkdtempSync(join(tmpdir(), "agentbox-acct-"));
+    const dir = tempDir("agentbox-acct-");
     const file = join(dir, "claude.json");
     writeFileSync(file, JSON.stringify({ oauthAccount: { emailAddress: "user@example.com" } }));
     expect(claudeAccount(file)).toBe("user@example.com");
@@ -301,7 +308,7 @@ describe("claudeAccount", () => {
   });
 
   it("keeps the last email while another claude rewrites the file", () => {
-    const dir = mkdtempSync(join(tmpdir(), "agentbox-acct-"));
+    const dir = tempDir("agentbox-acct-");
     const file = join(dir, "claude.json");
     writeFileSync(file, JSON.stringify({ oauthAccount: { emailAddress: "user@example.com" } }));
     expect(claudeAccount(file)).toBe("user@example.com");

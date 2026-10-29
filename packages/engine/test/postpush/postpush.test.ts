@@ -1,6 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
@@ -24,6 +23,7 @@ import { isNonCodeFailure, severityFromText } from "../../src/postpush/loop.js";
 import { ExecaRunner } from "../../src/range/exec.js";
 import { RunController } from "../../src/state/controller.js";
 import { Scenario, buildSampleRepo } from "../state/scenario.js";
+import { tempDir } from "../tmp.js";
 
 let seq = 500;
 const nextRunId = () => `01JD${String(++seq).padStart(22, "0")}`;
@@ -227,7 +227,7 @@ describe("post-push loop", () => {
   it("never force-pushes over a branch that moved on origin", async () => {
     const repo = buildSampleRepo();
     const origin = join(dirname(repo), "origin.git");
-    const other = mkdtempSync(join(tmpdir(), "agentbox-other-"));
+    const other = tempDir("agentbox-other-");
     git(other, "clone", "-q", origin, "c");
     const clone = join(other, "c");
     git(clone, "checkout", "-q", "-b", "feature");

@@ -9,10 +9,12 @@
 #   PROJECT:  its project id
 #   REMOTE:   a saved SSH remote name
 #   DEV_PORT: a port a dev server listens on inside the box's container
+# Set AGENTBOX_DATA_DIR when the server runs with --data-dir.
 set -euo pipefail
 
 SERVER="${SERVER:-http://127.0.0.1:21400}"
-TOKEN="$(cat ~/.claude-box/server.token)"
+DATA_DIR="${AGENTBOX_DATA_DIR:-$HOME/.claude-box}"
+TOKEN="$(cat "$DATA_DIR/server.token")"
 H=(-H "Authorization: Bearer ${TOKEN}")
 BOX_ID="${BOX_ID:?set BOX_ID}"
 PROJECT="${PROJECT:?set PROJECT}"
@@ -27,7 +29,7 @@ case "$step" in
     ;;
   token)
     # Expect mode 600 and a 64-character token.
-    stat -c '%a %s' ~/.claude-box/server.token
+    stat -c '%a %s' "$DATA_DIR/server.token"
     curl -fsS "$SERVER/api/v1/health"
     curl -s -o /dev/null -w '%{http_code}\n' "$SERVER/api/v1/projects"   # expect 401
     ;;

@@ -2,9 +2,10 @@
 // Host smoke test for the server core against real Docker. Run it on the
 // host, never in a box. See README.md in this directory.
 //
-// It uses a temporary database and a temporary project directory, builds a
-// throwaway image on top of the base image that carries a test engine
-// version, and removes everything it made unless you pass --keep.
+// It uses a temporary data directory (database, keeper state, and sessions
+// directories) and a temporary project directory, builds a throwaway image on
+// top of the base image that carries a test engine version, and removes
+// everything it made unless you pass --keep.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -15,6 +16,7 @@ import {
   buildLaunchSpec,
   createServerCore,
   defaultHostEnv,
+  homePaths,
   liveSessions,
   projectsSymlinkTarget,
   sessionStartCmd,
@@ -26,8 +28,9 @@ const baseImage = process.argv.find((a) => a.startsWith("--image="))?.slice(8) ?
 const keep = args.has("--keep");
 const withClaude = args.has("--claude");
 
-const env = defaultHostEnv();
 const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "agentbox-host-")));
+const env = { ...defaultHostEnv(), dataDir: path.join(tmp, "data") };
+const { stateDir } = homePaths(env);
 const root = path.join(tmp, "project");
 fs.mkdirSync(root);
 const engineVersion = `hosttest-${Date.now()}`;
@@ -35,7 +38,6 @@ const testImage = "agentbox-hosttest";
 const core = createServerCore({
   engineVersion,
   env,
-  dbPath: path.join(tmp, "agentbox.db"),
   graceSec: 5,
 });
 
@@ -50,6 +52,14 @@ async function waitFor(what, fn, timeoutMs = 10000) {
     if (Date.now() > deadline) throw new Error(`Timed out waiting for ${what}.`);
     await sleep(250);
   }
+}
+
+async function waitForContainerGone(name, timeoutMs = 20000) {
+  await waitFor(
+    `${name} to exit`,
+    async () => (await core.docker.inspectContainer(name)) === null,
+    timeoutMs,
+  );
 }
 
 let container;
@@ -111,7 +121,7 @@ try {
 
   step("The keeper writes its state file");
   await waitFor("the keeper state file", () =>
-    fs.existsSync(path.join(env.home, ".claude-box/state", container, "sessions")),
+    fs.existsSync(path.join(stateDir, container, "sessions")),
   );
 
   step("Start a tmux session with the session start script");
@@ -138,30 +148,17 @@ try {
   assert.equal(dies.exitCode, 2);
 
   step("Sample stats twice");
+  // The monitor samples every claude-agent-* container on the host; keep
+  // only this test's own.
   const stats = [];
-  core.events.on("container.stats", (e) => stats.push(e));
+  core.events.on("container.stats", (e) => {
+    if (e.container === container) stats.push(e);
+  });
   await core.monitor.poll({ sampleStats: true });
   await sleep(1000);
   await core.monitor.poll({ sampleStats: true });
   console.log(stats.at(-1));
-  assert.ok(stats.length >= 1);
-
-  if (withClaude) {
-    step("Create, stop, and purge a real Claude box");
-    const box = await core.boxes.create({
-      targetDir: root,
-      layout: "root",
-      conversationName: "host smoke",
-    });
-    await waitFor(
-      "the claude session",
-      () => core.boxes.status(core.boxes.get(box.id)) === "running",
-    );
-    await sleep(5000);
-    await core.boxes.stop(box.id);
-    const purged = await core.boxes.purge(box.id);
-    console.log(purged);
-  }
+  assert.ok(stats.length >= 1, `no stats sample for ${container}`);
 
   step("Kill the session; the idle container leaves after its grace period");
   const kill = await core.docker.exec(container, {
@@ -169,13 +166,34 @@ try {
     user: env.user,
   });
   assert.equal(kill.exitCode, 0, kill.stderr);
-  if (!keep) {
-    await waitFor(
-      "the container to exit",
-      async () => (await core.docker.inspectContainer(container)) === null,
-      20000,
-    );
+  if (!keep || withClaude) {
+    await waitForContainerGone(container);
     console.log("Container removed itself.");
+  }
+
+  if (withClaude) {
+    // The container from the earlier steps carried AGENTBOX_HOSTTEST, which
+    // boxes.create() would count as a stale secret. It is gone by now, so
+    // create() starts a new one with the project's own settings.
+    step("Create, stop, and purge a real Claude box");
+    const box = await core.boxes.create({
+      targetDir: root,
+      layout: "root",
+      conversationName: "host smoke",
+    });
+    const status = () => core.boxes.status(core.boxes.get(box.id));
+    await waitFor("the claude session", () => status() === "running");
+    await sleep(5000);
+    await core.boxes.stop(box.id);
+    const stoppedAt = Date.now();
+    // purge() refuses with box_running while the box is still stopping.
+    await waitFor("the box to stop", () => status() === "stopped", 15000);
+    console.log(`Box stopped after ${Date.now() - stoppedAt} ms.`);
+    console.log(await core.boxes.purge(box.id));
+    if (!keep) {
+      await waitForContainerGone(container);
+      console.log("Container removed itself.");
+    }
   }
   console.log("\nHost smoke test passed.");
 } finally {
@@ -187,16 +205,6 @@ try {
       .remove()
       .catch(() => undefined);
     fs.rmSync(tmp, { recursive: true, force: true });
-    if (container)
-      fs.rmSync(path.join(env.home, ".claude-box/state", container), {
-        recursive: true,
-        force: true,
-      });
-    if (container)
-      fs.rmSync(path.join(env.home, ".claude-box/sessions", container), {
-        recursive: true,
-        force: true,
-      });
   } else {
     console.log(`Kept ${tmp}, the container ${container}, and the image ${testImage}.`);
   }

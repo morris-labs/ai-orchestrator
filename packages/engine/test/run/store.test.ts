@@ -1,16 +1,16 @@
-import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { RoundSummary, RunState } from "@agentbox/contracts";
 import { describe, expect, it } from "vitest";
 import { newEngineState } from "../../src/run/engine-state.js";
 import { appendJsonLine, readJson, writeJsonAtomic } from "../../src/run/files.js";
 import { RunNotFoundError, RunStore, listRunIds } from "../../src/run/store.js";
+import { tempDir } from "../tmp.js";
 
 const RUN_ID = "01JB0000000000000000000001";
 
 function tmp(): string {
-  return mkdtempSync(join(tmpdir(), "agentbox-store-"));
+  return tempDir("agentbox-store-");
 }
 
 function state(): RunState {

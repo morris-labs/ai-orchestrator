@@ -20,10 +20,40 @@ export const VERSION_FILES = {
 
 type VersionKey = keyof typeof VERSION_FILES;
 
-/** One `sh` command that prints `key=value` for each version file. */
-export const VERSION_PROBE_COMMAND = (Object.entries(VERSION_FILES) as [VersionKey, string][])
-  .map(([k, f]) => `printf '%s=' ${k}; head -n1 ${f} 2>/dev/null; echo`)
-  .join("; ");
+/**
+ * The npm package of each agent CLI. An image whose Dockerfile wrote no
+ * version file for a CLI, as the first 4.0 image did for Codex and Copilot,
+ * still reports the version from the package's `package.json`.
+ */
+export const CLI_PACKAGES: Partial<Record<VersionKey, string>> = {
+  claude: "@anthropic-ai/claude-code",
+  codex: "@openai/codex",
+  copilot: "@github/copilot",
+};
+
+/**
+ * Builds one POSIX `sh` command that prints `key=value` for each version
+ * file. When a CLI's file is missing, it reads the version from the
+ * package's `package.json` under `npm root -g`, using the `node` and `npm`
+ * that the image's `PATH` finds. `files` exists for tests.
+ */
+export function versionProbeCommand(
+  files: Record<VersionKey, string> = VERSION_FILES,
+  packages: Partial<Record<VersionKey, string>> = CLI_PACKAGES,
+): string {
+  return (Object.entries(files) as [VersionKey, string][])
+    .map(([k, f]) => {
+      const pkg = packages[k];
+      const fallback = pkg
+        ? ` || node -p "require(process.argv[1] + '/${pkg}/package.json').version" "$(npm root -g 2>/dev/null)" 2>/dev/null`
+        : "";
+      return `printf '%s=' ${k}; { head -n1 ${f} 2>/dev/null${fallback}; }; echo`;
+    })
+    .join("; ");
+}
+
+/** The probe against the image's own version files. */
+export const VERSION_PROBE_COMMAND = versionProbeCommand();
 
 /** Parses the probe output into a map of trimmed, non-empty values. */
 export function parseVersionProbe(output: string): Partial<Record<VersionKey, string>> {

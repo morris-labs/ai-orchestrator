@@ -1,13 +1,13 @@
 // A core over a temporary home, an in-memory database, and the in-memory
 // Docker double. Every test gets its own.
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { EventSchema } from "@agentbox/contracts";
 import { createServerCore, type ServerCore } from "../../src/core.js";
 import type { CoreEventPayload } from "../../src/records/events.js";
 import type { HostEnv } from "../../src/records/env.js";
 import { MemoryDocker } from "../../src/docker/memory.js";
+import { tempDir } from "../tmp.js";
 
 export const ENGINE_VERSION = "4.0.0-test";
 
@@ -37,7 +37,7 @@ export function assertContractEvent(payload: CoreEventPayload): void {
 }
 
 export function makeHarness(options: { image?: boolean; engineLabel?: string } = {}): Harness {
-  const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "agentbox-core-")));
+  const home = fs.realpathSync(tempDir("agentbox-core-"));
   const env: HostEnv = { home, user: "tester", now: () => new Date() };
   const docker = new MemoryDocker();
   if (options.image ?? true) {

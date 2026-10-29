@@ -1,7 +1,6 @@
 // Tests for the record helpers: environment, errors, events, settings, SSH
 // remotes, the keyed mutex, and derived box values.
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_PROMPT_TEMPLATES, defaultConfig, type Box } from "@agentbox/contracts";
@@ -26,9 +25,10 @@ import {
   type HostEnv,
 } from "../../src/records/index.js";
 import { assertContractEvent } from "../boxes/harness.js";
+import { tempDir } from "../tmp.js";
 
 function tempEnv(): HostEnv {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "agentbox-rec-"));
+  const home = tempDir("agentbox-rec-");
   return { home, user: "tester", now: () => new Date("2026-10-28T09:00:00Z") };
 }
 

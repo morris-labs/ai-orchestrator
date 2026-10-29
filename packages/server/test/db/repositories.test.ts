@@ -1,10 +1,10 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
 import { defaultConfig, type Box, type Project } from "@agentbox/contracts";
 import { MIGRATIONS, migrate, openDatabase, repositories } from "../../src/db/index.js";
+import { tempDir } from "../tmp.js";
 
 const T = "2026-10-28T09:00:00.000Z";
 
@@ -45,7 +45,7 @@ function box(id: string, overrides: Partial<Box> = {}): Box {
 
 describe("openDatabase", () => {
   it("creates the file with mode 0600 and applies every migration once", () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agentbox-db-"));
+    const dir = tempDir("agentbox-db-");
     const file = path.join(dir, "sub", "agentbox.db");
     const db = openDatabase(file);
     expect(fs.statSync(file).mode & 0o777).toBe(0o600);
@@ -60,7 +60,7 @@ describe("openDatabase", () => {
 
 describe("database file modes", () => {
   it("keeps the directory, the database, and its WAL files private under a loose umask", () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agentbox-db-"));
+    const dir = tempDir("agentbox-db-");
     const file = path.join(dir, "data", "agentbox.db");
     const old = process.umask(0o022);
     try {

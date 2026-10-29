@@ -14,7 +14,7 @@ import {
 import { spawn } from "node:child_process";
 import { accessSync, constants, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, posix, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   app,
@@ -66,11 +66,19 @@ let tray: Tray | null = null;
 let quitting = false;
 let counts: TrayCounts | null = null;
 
+/** The token file in the server's data directory: `AGENTBOX_DATA_DIR`, else `~/.claude-box`. */
+function tokenFile(): string {
+  const dataDir = process.env.AGENTBOX_DATA_DIR
+    ? resolve(process.env.AGENTBOX_DATA_DIR)
+    : join(homedir(), HOME_PATHS.dataDir);
+  return join(dataDir, posix.relative(HOME_PATHS.dataDir, HOME_PATHS.serverToken));
+}
+
 function readToken(): string | null {
   // A test or a wrapper can hand the token over without the file.
   if (process.env.AGENTBOX_SERVER_TOKEN) return process.env.AGENTBOX_SERVER_TOKEN;
   try {
-    return readFileSync(join(homedir(), HOME_PATHS.serverToken), "utf8").trim() || null;
+    return readFileSync(tokenFile(), "utf8").trim() || null;
   } catch {
     return null;
   }

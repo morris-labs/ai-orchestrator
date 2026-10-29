@@ -1,5 +1,4 @@
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { chmod, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   defaultConfig,
@@ -14,6 +13,7 @@ import { JobManager } from "../../src/jobs/jobs.js";
 import type { OpClient } from "../../src/secrets/op.js";
 import { SetupService } from "../../src/setup/setup-service.js";
 import { FakeRunner, waitFor } from "./fake-runner.js";
+import { tempDir } from "../tmp.js";
 
 const image: ImageStatus = {
   name: "claude-code",
@@ -28,7 +28,7 @@ const image: ImageStatus = {
 
 let home: string;
 beforeEach(async () => {
-  home = await mkdtemp(join(tmpdir(), "agentbox-setup-"));
+  home = tempDir("agentbox-setup-");
 });
 afterEach(async () => rm(home, { recursive: true, force: true }));
 

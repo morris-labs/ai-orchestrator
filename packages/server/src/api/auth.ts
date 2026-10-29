@@ -3,15 +3,17 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { HOME_PATHS } from "@agentbox/contracts";
+import { dataPath } from "../records/env.js";
 
 export const SESSION_COOKIE = "agentbox_session";
 
 /**
- * Reads `~/.claude-box/server.token`, or creates it with mode 0600 on first
- * start. Tightens the mode of an existing file that others can read.
+ * Reads `server.token` in the data directory (`~/.claude-box` unless
+ * `dataDir` is set), or creates it with mode 0600 on first start. Tightens
+ * the mode of an existing file that others can read.
  */
-export async function loadOrCreateToken(home: string): Promise<string> {
-  const file = path.join(home, HOME_PATHS.serverToken);
+export async function loadOrCreateToken(home: string, dataDir?: string): Promise<string> {
+  const file = dataPath({ home, dataDir }, HOME_PATHS.serverToken);
   try {
     const token = (await readFile(file, "utf8")).trim();
     if (token.length >= 32) {

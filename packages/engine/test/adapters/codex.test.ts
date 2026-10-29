@@ -1,5 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DEFAULT_CEILINGS, UsageSampleSchema } from "@agentbox/contracts";
 import { describe, expect, it } from "vitest";
@@ -13,6 +12,7 @@ import {
 import { parseStructuredText, VendorFindingsOutputSchema } from "../../src/adapters/output.js";
 import type { CliRequest } from "../../src/adapters/types.js";
 import { fixture, lines } from "./helpers.js";
+import { tempDir } from "../tmp.js";
 
 function parse(name: string) {
   const parser = new CodexStreamParser();
@@ -82,7 +82,7 @@ describe("codexRateLimitSamples", () => {
 
 describe("findRolloutFile", () => {
   it("finds the thread's rollout in the newest day directories", () => {
-    const sessions = mkdtempSync(join(tmpdir(), "agentbox-codex-sessions-"));
+    const sessions = tempDir("agentbox-codex-sessions-");
     const day = join(sessions, "2026", "10", "28");
     mkdirSync(day, { recursive: true });
     mkdirSync(join(sessions, "2026", "10", "27"), { recursive: true });

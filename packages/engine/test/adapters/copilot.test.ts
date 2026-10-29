@@ -1,5 +1,4 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
@@ -13,6 +12,7 @@ import {
 import { parseStructuredText, VendorFindingsOutputSchema } from "../../src/adapters/output.js";
 import type { CliRequest } from "../../src/adapters/types.js";
 import { fixture, fixturePath } from "./helpers.js";
+import { tempDir } from "../tmp.js";
 
 const now = new Date("2026-10-28T09:00:00Z");
 const base: CliRequest<unknown> = {
@@ -172,7 +172,7 @@ describe("CopilotAdapter", () => {
   });
 
   it("returns the AI credits the exit summary reports", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "copilot-credits-"));
+    const dir = tempDir("copilot-credits-");
     const cli = join(dir, "copilot");
     writeFileSync(
       cli,

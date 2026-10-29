@@ -1,13 +1,13 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { installService, serviceInstalled, unitFile, unitPath } from "../../src/systemd/service.js";
 import { FakeRunner } from "./fake-runner.js";
+import { tempDir } from "../tmp.js";
 
 let home: string;
 beforeEach(async () => {
-  home = await mkdtemp(join(tmpdir(), "agentbox-service-"));
+  home = tempDir("agentbox-service-");
 });
 afterEach(async () => rm(home, { recursive: true, force: true }));
 

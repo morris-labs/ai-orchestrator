@@ -5,11 +5,41 @@ projects, and worktrees, serves the REST and WebSocket API on 127.0.0.1,
 subscribes to the engine in each project container, and runs the lease
 scheduler. Run `agentbox-server --help` for its commands.
 
+## Data directory
+
+The server keeps its data in `~/.claude-box`: the `agentbox.db` database,
+the `server.token` bearer token, `config.json`, the keeper state in `state/`,
+the per-container `sessions/` directories, and the 3.x records that the
+one-time import reads.
+
+To use another directory, pass `--data-dir PATH` or set `AGENTBOX_DATA_DIR`.
+The flag wins when you give both, and a relative path resolves against the
+working directory. The server still reads your Claude Code files in
+`~/.claude` and `~/.claude.json`, so a test server can run against a copy of
+your data without writing to `~/.claude-box`:
+
+```sh
+cp -a ~/.claude-box /tmp/agentbox-data
+agentbox-server --data-dir /tmp/agentbox-data
+```
+
+The `agentbox` CLI and the two apps read `AGENTBOX_DATA_DIR` too, to find
+`server.token` and the server port in `config.json`. Set it in their
+environment when the server runs with another data directory:
+
+```sh
+AGENTBOX_DATA_DIR=/tmp/agentbox-data agentbox doctor
+```
+
+`agentbox-server install-service` writes a non-default data directory into
+the unit's `ExecStart=` line as `--data-dir`.
+
 ## Environment
 
 | Variable | Meaning |
 |---|---|
-| `AGENTBOX_HOME` | The home directory to use in place of yours. The server keeps its data in `AGENTBOX_HOME/.claude-box`. |
+| `AGENTBOX_DATA_DIR` | The data directory, when `--data-dir` isn't given. Default: `~/.claude-box`. |
+| `AGENTBOX_HOME` | The home directory to use in place of yours. Without a data directory option, the server keeps its data in `AGENTBOX_HOME/.claude-box`. |
 | `AGENTBOX_ENGINE_VERSION` | The engine version to expect. Default: this package's version. |
 | `AGENTBOX_IMAGE_CONTEXT` | The image build context. Default: `image/` in the repository. |
 | `AGENTBOX_BOXES_DIR` | The built Boxes app to serve at `/boxes/`. |

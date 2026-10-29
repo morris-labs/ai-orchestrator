@@ -54,8 +54,9 @@ rebuild the image from the setup wizard, or run the following command:
 /usr/share/agentbox/scripts/build-image.sh
 ```
 
-The image records its versions in `/etc/agentbox-engine-version` and
-`/etc/claude-code-version`. To read them, run
+The image records its versions in `/etc/agentbox-engine-version`,
+`/etc/claude-code-version`, `/etc/codex-version`, and `/etc/copilot-version`.
+To read them, run
 `docker run --rm claude-code cat /etc/agentbox-engine-version`.
 
 ## A box won't start because of secrets

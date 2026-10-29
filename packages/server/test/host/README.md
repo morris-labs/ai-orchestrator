@@ -44,15 +44,44 @@ The script does the following:
 1. Waits for the keeper's state file, starts a tmux session with the session
    start script, and checks exit codes 0, 3 (already running), and 2 (ended
    right away).
-1. Samples stats twice and prints the `container.stats` event.
-1. With `--claude`, creates a real Claude box in the project, stops it, and
-   purges its transcripts. This uses your Claude sign-in.
+1. Samples stats twice and prints a `container.stats` event for its own
+   container. The monitor samples every `claude-agent-*` container on the
+   host, so the script ignores the others.
 1. Kills the session and waits for the idle container to remove itself after
    its 5-second grace period.
+1. With `--claude`, creates a real Claude box in the project, which starts a
+   new project container without the test's extra environment variable. It
+   stops the box, waits until its status is `stopped`, and purges its
+   transcripts. This uses your Claude sign-in.
 
-Without `--keep`, the script removes the container, the test image, the
-temporary directory, and the state and sessions directories it made. It uses a
-temporary database, so it never touches `~/.claude-box/agentbox.db`.
+Without `--keep`, the script removes the container, the test image, and the
+temporary directory. The temporary directory is also the server's data
+directory, so the database, the keeper state, and the sessions directories
+never touch `~/.claude-box`.
+
+## Start retry
+
+```sh
+node packages/server/test/host/start-retry.mjs [--image=IMAGE]
+```
+
+Replace `IMAGE` with the image to start from; the default is `claude-code`.
+Its engine version must match this checkout's server version, so build it
+from the same checkout with `scripts/build-image.sh`.
+
+The script checks that a box still starts when its project container goes
+away between `ensureContainer()` and the session start, as it does when a
+keeper leaves at the end of its grace period. It does the following:
+
+1. Creates a project in a temporary directory, with a temporary data
+   directory.
+1. Wraps `docker.exec` so that the first session-start exec force-removes
+   the project container just before it runs.
+1. Creates a real Claude box and checks that a new container runs. This uses
+   your Claude sign-in.
+1. Stops the box, waits until its status is `stopped`, and purges it.
+
+It removes the container and the temporary directory when it ends.
 
 ## Import check against the real records
 

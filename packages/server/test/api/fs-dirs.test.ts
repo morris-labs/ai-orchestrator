@@ -1,12 +1,12 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { DirListingSchema } from "@agentbox/contracts";
 import { listDirs, resolveDirQuery } from "../../src/api/fs-dirs.js";
+import { tempDir } from "../tmp.js";
 
 function tree(): string {
-  const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "fs-dirs-")));
+  const home = fs.realpathSync(tempDir("fs-dirs-"));
   fs.mkdirSync(path.join(home, "b-dir"));
   fs.mkdirSync(path.join(home, "a-dir", "inner"), { recursive: true });
   fs.writeFileSync(path.join(home, "file.txt"), "x");

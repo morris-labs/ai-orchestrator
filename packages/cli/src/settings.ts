@@ -20,11 +20,26 @@ function readText(file: string): string | null {
 }
 
 /**
- * Resolves the server URL and token.
+ * Returns the server's data directory: `AGENTBOX_DATA_DIR` when set, the same
+ * variable `agentbox-server` reads, else `~/.claude-box`.
+ */
+export function dataDirFor(env: Record<string, string | undefined>, home: string): string {
+  const override = env.AGENTBOX_DATA_DIR;
+  return override ? path.resolve(override) : path.join(home, HOME_PATHS.dataDir);
+}
+
+/** A `HOME_PATHS` entry under `~/.claude-box`, resolved against the data directory. */
+function inDataDir(dataDir: string, homeRelative: string): string {
+  return path.join(dataDir, path.posix.relative(HOME_PATHS.dataDir, homeRelative));
+}
+
+/**
+ * Resolves the server URL and token. The data directory is
+ * `AGENTBOX_DATA_DIR`, else `~/.claude-box`.
  *
  * - URL: `--server`, then `AGENTBOX_SERVER`, then `http://127.0.0.1:<serverPort>`
- *   with the port from `~/.claude-box/config.json` (21400 by default).
- * - Token: `AGENTBOX_TOKEN`, then `~/.claude-box/server.token`.
+ *   with the port from `config.json` in the data directory (21400 by default).
+ * - Token: `AGENTBOX_TOKEN`, then `server.token` in the data directory.
  */
 export function resolveSettings(options: {
   env: Record<string, string | undefined>;
@@ -32,8 +47,9 @@ export function resolveSettings(options: {
   server?: string;
 }): CliSettings {
   const { env, home } = options;
+  const dataDir = dataDirFor(env, home);
   let port = DEFAULT_SERVER_PORT;
-  const configText = readText(path.join(home, HOME_PATHS.config));
+  const configText = readText(inDataDir(dataDir, HOME_PATHS.config));
   if (configText !== null) {
     try {
       port = parseConfig(JSON.parse(configText)).serverPort;
@@ -42,7 +58,7 @@ export function resolveSettings(options: {
     }
   }
   const baseUrl = options.server ?? env.AGENTBOX_SERVER ?? `http://127.0.0.1:${port}`;
-  const tokenFile = path.join(home, HOME_PATHS.serverToken);
+  const tokenFile = inDataDir(dataDir, HOME_PATHS.serverToken);
   const fromEnv = env.AGENTBOX_TOKEN?.trim();
   if (fromEnv) return { baseUrl, token: fromEnv, tokenSource: "AGENTBOX_TOKEN", tokenFile };
   const fromFile = readText(tokenFile)?.trim();

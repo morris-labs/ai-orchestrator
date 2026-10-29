@@ -1,8 +1,8 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { kvAll, kvLast, parseKv, readKvFile } from "../../src/import/kv.js";
+import { tempDir } from "../tmp.js";
 
 describe("parseKv", () => {
   it("splits at the first equals sign and keeps order and repeats", () => {
@@ -20,7 +20,7 @@ describe("parseKv", () => {
   });
 
   it("reads a file", () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kv-"));
+    const dir = tempDir("kv-");
     const file = path.join(dir, "rec");
     fs.writeFileSync(file, "target_dir=/x\n");
     expect(readKvFile(file)).toEqual([["target_dir", "/x"]]);

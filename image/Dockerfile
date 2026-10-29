@@ -98,7 +98,8 @@ ENV PATH=${NVM_DIR}/current/bin:${SDKMAN_DIR}/candidates/gradle/current/bin:${PA
 # The agent CLIs, pinned in image/versions.env. They sit after the toolchain
 # so a version bump, or --build-arg CACHEBUST=$(date +%s), rebuilds only
 # this layer and the ones after it. /usr/bin/npm is the system npm, not the
-# nvm one that PATH finds first.
+# nvm one that PATH finds first. Each CLI's version goes in its own
+# /etc/*-version file, which the server reads for the image status.
 USER root
 ARG CACHEBUST=1
 ARG CLAUDE_CODE_VERSION
@@ -112,10 +113,14 @@ RUN echo "agent CLI cache key: ${CACHEBUST}" && \
       "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
       "@openai/codex@${CODEX_VERSION}" \
       "@github/copilot@${COPILOT_VERSION}" && \
-    /usr/bin/node -p \
-      "require('$(/usr/bin/npm root -g)/@anthropic-ai/claude-code/package.json').version" \
-      > /etc/claude-code-version && \
-    test "$(cat /etc/claude-code-version)" = "${CLAUDE_CODE_VERSION}"
+    root="$(/usr/bin/npm root -g)" && \
+    for pair in /etc/claude-code-version:@anthropic-ai/claude-code:CLAUDE_CODE_VERSION \
+                /etc/codex-version:@openai/codex:CODEX_VERSION \
+                /etc/copilot-version:@github/copilot:COPILOT_VERSION; do \
+      file="${pair%%:*}"; rest="${pair#*:}"; pkg="${rest%:*}"; pin="${rest##*:}"; \
+      /usr/bin/node -p "require('${root}/${pkg}/package.json').version" > "$file" && \
+      test "$(cat "$file")" = "${!pin}" || { echo "$file doesn't match ${pin}" >&2; exit 1; }; \
+    done
 
 # The engine, from the tarballs scripts/build-image.sh packs into dist/:
 # @agentbox/engine and the workspace packages it depends on, such as
