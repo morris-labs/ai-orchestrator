@@ -76,18 +76,77 @@ export function checkServerUrl(baseUrl: string, insecure: boolean): string | nul
   return `The CLI won't send its token over plain HTTP to ${url.host}. Use https, or pass --insecure if you trust the network.`;
 }
 
-/** Programs a server-provided attach command may run, by bare name. */
-export const ATTACH_PROGRAMS: readonly string[] = ["docker", "agentbox"];
+/**
+ * The script the server's session and side-session attach commands run in
+ * the container. It is a copy of `EXTERNAL_ATTACH_SCRIPT` in
+ * `packages/server/src/terminals/attach.ts`; a test checks the two match.
+ */
+export const ATTACH_SCRIPT =
+  'for i in $(seq 1 300); do tmux has-session -t "=$1" 2>/dev/null && break; sleep 0.1; done; exec tmux attach -t "=$1"';
+
+/** A box container name: docker's name rules, under the `claude-agent-` prefix. */
+const CONTAINER_NAME = /^claude-agent-[a-zA-Z0-9][a-zA-Z0-9_.-]*$/;
+/** A tmux session name the attach script receives as `$1`. */
+const SESSION_NAME = /^[a-zA-Z0-9_][a-zA-Z0-9_.-]*$/;
+
+/** True for an absolute POSIX path with no control characters. */
+function isWorkDir(path: string): boolean {
+  // eslint-disable-next-line no-control-regex
+  return path.startsWith("/") && !/[\x00-\x1f\x7f]/.test(path);
+}
+
+/** Matches `argv` against `shape`, where a function checks a variable argument. */
+function matchesShape(
+  argv: readonly string[],
+  shape: readonly (string | ((arg: string) => boolean))[],
+): boolean {
+  return (
+    argv.length === shape.length &&
+    shape.every((part, i) => {
+      const arg = argv[i]!;
+      return typeof part === "string" ? arg === part : part(arg);
+    })
+  );
+}
+
+const isContainer = (arg: string) => CONTAINER_NAME.test(arg);
+const isSession = (arg: string) => SESSION_NAME.test(arg);
 
 /**
- * Checks an argv the server returned for `box attach` and `box open`: the
- * program must be `docker` or `agentbox`, found on `PATH`, not a path the
- * server picked. Returns an error message, or `null`.
+ * The argv shapes `boxes.attachCommand` returns: `docker exec` into a box
+ * container with a shell, or with the fixed script that attaches to a tmux
+ * session. Nothing else, so a hostile server can't add flags such as
+ * `--privileged`, `-v`, or `--mount`, or run `docker run`.
+ */
+const ATTACH_SHAPES: readonly (readonly (string | ((arg: string) => boolean))[])[] = [
+  ["docker", "exec", "-it", "-w", isWorkDir, isContainer, "bash", "-l"],
+  [
+    "docker",
+    "exec",
+    "-it",
+    "--detach-keys=ctrl-],ctrl-]",
+    isContainer,
+    "bash",
+    "-c",
+    ATTACH_SCRIPT,
+    "_",
+    isSession,
+  ],
+];
+
+/**
+ * Checks an argv the server returned for `box attach` and `box open`. The
+ * argv must have one of the exact shapes the server builds, which run
+ * `docker exec` into a box container, with `docker` found on `PATH` rather
+ * than a path the server picked. Returns an error message, or `null`.
  */
 export function checkAttachArgv(argv: readonly string[]): string | null {
-  const program = argv[0];
-  if (program === undefined || !ATTACH_PROGRAMS.includes(program)) {
-    return `The server asked to run ${JSON.stringify(program ?? "")}; the CLI runs only ${ATTACH_PROGRAMS.join(" or ")} to attach.`;
+  if (argv.length === 0) return "The server returned an empty attach command.";
+  if (argv[0] !== "docker") {
+    return `The server asked to run ${JSON.stringify(argv[0])}; the CLI runs only docker exec to attach.`;
+  }
+  if (!ATTACH_SHAPES.some((shape) => matchesShape(argv, shape))) {
+    return `The server's attach command isn't one the CLI runs: ${JSON.stringify(argv.join(" ").slice(0, 200))}. The CLI runs only docker exec into a box container.`;
   }
   return null;
 }
