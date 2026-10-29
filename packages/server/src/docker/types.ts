@@ -87,15 +87,6 @@ export interface ImageInspect {
   labels: Record<string, string>;
 }
 
-export interface ImageBuildOptions {
-  /** The build context directory. */
-  context: string;
-  tag: string;
-  buildArgs: Record<string, string>;
-  noCache: boolean;
-  pull: boolean;
-}
-
 export interface RunOnceOptions {
   image: string;
   /** Replaces the image's entry point; `[]` clears it. */

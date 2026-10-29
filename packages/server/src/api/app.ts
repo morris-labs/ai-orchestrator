@@ -1,7 +1,6 @@
 // Builds the whole server from a core: the event hub and its listeners, the
 // engine supervisor, the scheduler, and the HTTP server with the proxy.
 import http from "node:http";
-import os from "node:os";
 import type { AgentBoxEvent, Box, Listener } from "@agentbox/contracts";
 import type { Core, CoreFactory, CoreServices, EngineEndpoint } from "./core-interface.js";
 import type { ApiDeps } from "./deps.js";
@@ -144,7 +143,6 @@ export async function startApp(options: AppOptions): Promise<App> {
     runner,
     op,
     home: options.home,
-    user: os.userInfo().username,
     imageContext: options.imageContext,
     serviceInstalled: () => serviceInstalled(options.home),
     installService: async (io) => {

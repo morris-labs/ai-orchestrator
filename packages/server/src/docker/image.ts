@@ -1,6 +1,8 @@
 // The engine image: its status, the engine version it carries, and builds.
 import { ENGINE_VERSION_FILE, type ImageStatus } from "@agentbox/contracts";
-import type { DockerClient, ImageBuildOptions } from "./types.js";
+import { existsSync } from "node:fs";
+import path from "node:path";
+import type { DockerClient } from "./types.js";
 
 /** Image labels that W8's Dockerfile sets; the version files are the fallback. */
 export const IMAGE_LABELS = {
@@ -140,27 +142,47 @@ export async function imageStatus(
 export type ImageBuildKind = "rebuild" | "packages" | "claude-code";
 
 /**
- * The build options for a kind, as 3.3.5's setup wizard ran them:
- * `rebuild` is `--no-cache --pull`; `packages` busts `CACHEBUST_PACKAGES` and
- * `claude-code` busts `CACHEBUST`, both with the current epoch seconds.
+ * The `scripts/build-image.sh` options for a build kind, as 3.3.5's setup
+ * wizard ran them: `rebuild` is `--no-cache` (which also pulls the base
+ * image), `packages` busts `CACHEBUST_PACKAGES`, and `claude-code` busts
+ * `CACHEBUST`.
  */
-export function imageBuildOptions(input: {
-  kind: ImageBuildKind;
-  context: string;
-  tag: string;
-  user: string;
-  now: Date;
-}): ImageBuildOptions {
-  const epoch = String(Math.floor(input.now.getTime() / 1000));
-  const buildArgs: Record<string, string> = {};
-  if (input.kind === "packages") buildArgs.CACHEBUST_PACKAGES = epoch;
-  if (input.kind === "claude-code") buildArgs.CACHEBUST = epoch;
-  buildArgs.USER_NAME = input.user;
-  return {
-    context: input.context,
-    tag: input.tag,
-    buildArgs,
-    noCache: input.kind === "rebuild",
-    pull: input.kind === "rebuild",
-  };
+export function imageBuildScriptArgs(kind: ImageBuildKind): string[] {
+  switch (kind) {
+    case "rebuild":
+      return ["--no-cache"];
+    case "packages":
+      return ["--update-packages"];
+    case "claude-code":
+      return ["--update-cli"];
+  }
+}
+
+/**
+ * The build script for an image build context. The script and the context
+ * sit side by side, in a source checkout (`scripts/` and `image/`) and in the
+ * installed package (`/usr/share/agentbox/scripts` and
+ * `/usr/share/agentbox/image`). The script builds `../image` from its own
+ * directory, so the context must be a directory named `image`.
+ */
+export function imageBuildScript(context: string): string {
+  return path.join(path.dirname(path.resolve(context)), "scripts", "build-image.sh");
+}
+
+/** Where the installed package puts the image build context. */
+export const INSTALLED_IMAGE_CONTEXT = "/usr/share/agentbox/image";
+
+/**
+ * The image build context when `AGENTBOX_IMAGE_CONTEXT` isn't set: `image/`
+ * in the source checkout at `repoRoot` when it has a Dockerfile, else the
+ * installed package's context.
+ */
+export function defaultImageContext(
+  repoRoot: string,
+  exists: (p: string) => boolean = existsSync,
+): string {
+  const checkout = path.join(repoRoot, "image");
+  if (exists(path.join(checkout, "Dockerfile"))) return checkout;
+  if (exists(path.join(INSTALLED_IMAGE_CONTEXT, "Dockerfile"))) return INSTALLED_IMAGE_CONTEXT;
+  return checkout;
 }

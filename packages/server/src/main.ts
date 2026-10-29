@@ -12,6 +12,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { startApp } from "./api/app.js";
 import { createCore } from "./core.js";
+import { defaultImageContext } from "./docker/image.js";
 import { DEV_ENGINES_ENV, parseDevEngines } from "./events/dev-engines.js";
 import { NodeProcessRunner } from "./jobs/process.js";
 import { DATA_DIR_ENV } from "./records/env.js";
@@ -117,7 +118,9 @@ export async function main(argv: string[]): Promise<number> {
         "  AGENTBOX_DATA_DIR       The data directory, when --data-dir isn't given.\n" +
         "  AGENTBOX_HOME           The home directory to use in place of yours.\n" +
         "  AGENTBOX_ENGINE_VERSION The engine version to expect. Default: this server's version.\n" +
-        "  AGENTBOX_IMAGE_CONTEXT  The image build context. Default: image/ in the repository.\n" +
+        "  AGENTBOX_IMAGE_CONTEXT  The image build context, an image/ directory with scripts/build-image.sh\n" +
+        "                          beside it. Default: image/ in the repository, else\n" +
+        "                          /usr/share/agentbox/image.\n" +
         "  AGENTBOX_BOXES_DIR      The built Boxes app to serve at /boxes/.\n" +
         "  AGENTBOX_REVIEW_DIR     The built Review app to serve at /review/.\n" +
         "  AGENTBOX_DEV_ENGINES    Development only: engines for projects without a container,\n" +
@@ -141,7 +144,7 @@ export async function main(argv: string[]): Promise<number> {
     expectedEngineVersion: process.env.AGENTBOX_ENGINE_VERSION ?? version,
     execStart: execStartLine(dataDir),
     devEngines,
-    imageContext: process.env.AGENTBOX_IMAGE_CONTEXT ?? path.join(repoRoot, "image"),
+    imageContext: process.env.AGENTBOX_IMAGE_CONTEXT ?? defaultImageContext(repoRoot),
     staticDirs: {
       boxes: process.env.AGENTBOX_BOXES_DIR ?? path.join(repoRoot, "apps", "boxes", "dist"),
       review: process.env.AGENTBOX_REVIEW_DIR ?? path.join(repoRoot, "apps", "review", "dist"),

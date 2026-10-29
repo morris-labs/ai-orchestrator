@@ -102,4 +102,5 @@ fi
 
 require_tool docker "Install Docker Engine (docker.io or docker-ce) and add your user to the docker group."
 log "Building image $TAG for user $USER_NAME"
-"${CMD[@]}"
+# Replace this shell with the docker client, so a signal to the job reaches it.
+exec "${CMD[@]}"

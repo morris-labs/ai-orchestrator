@@ -11,6 +11,7 @@ import {
   IMPORT_SOURCE,
   needsImport,
   parseForward,
+  privateIdentity,
   runImport,
   summarizeImport,
 } from "../../src/import/index.js";
@@ -546,6 +547,38 @@ describe("runImport", () => {
     expect(second.mountsSkipped).toEqual([]);
   });
 
+  it("swaps a .pub identity for the private key beside it, or warns", () => {
+    const ssh = path.join(fx.home, ".ssh");
+    fs.mkdirSync(ssh, { recursive: true });
+    fs.writeFileSync(path.join(ssh, "id_ed25519"), "private");
+    fs.writeFileSync(path.join(ssh, "id_ed25519.pub"), "public");
+    const data = path.join(fx.home, ".claude-box");
+    const remote = (file: string, identity: string) =>
+      fs.writeFileSync(
+        path.join(data, "ssh_remotes", file),
+        `name=${file}\nhost=me@192.0.2.10\nidentity=${identity}\n`,
+      );
+    remote("Mac Box", path.join(ssh, "id_ed25519.pub"));
+    remote("tilde", "~/.ssh/id_ed25519.pub");
+    remote("orphan", path.join(ssh, "only.pub"));
+    fs.writeFileSync(
+      path.join(data, "known", "claude-agent-pubinline"),
+      `target_dir=${fx.home}/work/loose\nsession_uuid=\nssh_remote=0|me@192.0.2.11\nssh_identity=0|${ssh}/id_ed25519.pub\n`,
+    );
+
+    const report = runImport({ env: fx.env, repos });
+    expect(repos.sshRemotes.get("Mac Box")?.identity).toBe(path.join(ssh, "id_ed25519"));
+    expect(repos.sshRemotes.get("tilde")?.identity).toBe("~/.ssh/id_ed25519");
+    expect(repos.sshRemotes.get("orphan")?.identity).toBe(path.join(ssh, "only.pub"));
+    expect(repos.sshRemotes.get("claude-agent-pubinline-0")?.identity).toBe(
+      path.join(ssh, "id_ed25519"),
+    );
+    const pubWarnings = report.warnings.filter((w) => w.includes("is a public key"));
+    expect(pubWarnings).toEqual([
+      `SSH remote orphan: its identity ${path.join(ssh, "only.pub")} is a public key, and there is no private key at ${path.join(ssh, "only")}; choose the private key in the remote's settings.`,
+    ]);
+  });
+
   it("changes nothing on a second run", () => {
     runImport({ env: fx.env, repos });
     const dump = () => ({
@@ -571,6 +604,27 @@ describe("runImport", () => {
     expect(forced.settingsApplied.length).toBeGreaterThan(0);
     expect(repos.settings.get().setupCompleted).toBe(true);
     expect(repos.boxes.list()).toEqual(first.boxes);
+  });
+});
+
+describe("privateIdentity", () => {
+  const has = (files: string[]) => (p: string) => files.includes(p);
+  it("keeps a private key as it is", () => {
+    expect(privateIdentity("/k/id_ed25519", "/home/me", has([]))).toEqual({
+      identity: "/k/id_ed25519",
+    });
+  });
+  it("swaps a .pub for the private key when it exists, ~ included", () => {
+    expect(privateIdentity("/k/id.pub", "/home/me", has(["/k/id"]))).toEqual({ identity: "/k/id" });
+    expect(privateIdentity("~/.ssh/id.pub", "/home/me", has(["/home/me/.ssh/id"]))).toEqual({
+      identity: "~/.ssh/id",
+    });
+  });
+  it("keeps a .pub with no private key beside it, with a warning", () => {
+    const r = privateIdentity("/k/id.pub", "/home/me", has(["/k/id.pub"]));
+    expect(r.identity).toBe("/k/id.pub");
+    expect(r.warning).toMatch(/is a public key, and there is no private key at \/k\/id;/);
+    expect(privateIdentity(".pub", "/home/me", has([""])).warning).toBeDefined();
   });
 });
 

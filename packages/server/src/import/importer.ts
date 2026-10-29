@@ -114,6 +114,29 @@ function sourceDirs(env: HostEnv) {
   };
 }
 
+/**
+ * The private key for a 3.x SSH identity. 3.x let you pick the public key
+ * (`id_ed25519.pub`), and `ssh -i` with a public key works only when an agent
+ * or the private key beside it supplies the key. When the identity ends with
+ * `.pub` and the file without `.pub` exists, that private key is returned.
+ * Otherwise the identity stays as it is, with a warning for a `.pub` one.
+ * A leading `~/` resolves against `home` for the existence check only.
+ */
+export function privateIdentity(
+  identity: string,
+  home: string,
+  exists: (p: string) => boolean = fs.existsSync,
+): { identity: string; warning?: string } {
+  if (!identity.endsWith(".pub")) return { identity };
+  const key = identity.slice(0, -".pub".length);
+  const onDisk = key.startsWith("~/") ? path.join(home, key.slice(2)) : key;
+  if (key !== "" && exists(onDisk)) return { identity: key };
+  return {
+    identity,
+    warning: `its identity ${identity} is a public key, and there is no private key at ${key}; choose the private key in the remote's settings.`,
+  };
+}
+
 function listFiles(dir: string): string[] {
   if (!fs.existsSync(dir)) return [];
   return fs
@@ -456,6 +479,11 @@ export function runImport(options: ImportOptions): ImportReport {
           warn(`skipped inline SSH remote ${n}: it has no host.`);
           continue;
         }
+        if (r.identity) {
+          const id = privateIdentity(r.identity, env.home);
+          r.identity = id.identity;
+          if (id.warning) warn(`inline SSH remote ${n}: ${id.warning}`);
+        }
         const forwards: SshForward[] = [];
         for (const f of r.forwards) {
           const parsed = parseForward(f);
@@ -528,7 +556,12 @@ export function runImport(options: ImportOptions): ImportReport {
         if (parsed) forwards.push(parsed);
         else report.warnings.push(`SSH remote ${name}: skipped the invalid forward ${f}.`);
       }
-      const identity = kvLast(kv, "identity");
+      let identity = kvLast(kv, "identity");
+      if (identity) {
+        const id = privateIdentity(identity, env.home);
+        identity = id.identity;
+        if (id.warning) report.warnings.push(`SSH remote ${name}: ${id.warning}`);
+      }
       const parsed = SshRemoteInputSchema.safeParse({
         name,
         host: kvLast(kv, "host") ?? "",

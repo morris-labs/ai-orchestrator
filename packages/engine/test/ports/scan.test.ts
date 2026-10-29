@@ -6,6 +6,7 @@ import { execRunner, type CommandRunner } from "../../src/api/runner.js";
 import { silentLogger } from "../../src/main/logger.js";
 import {
   parentPid,
+  PANES_FORMAT,
   parsePanes,
   parseProcNetTcp,
   parseSs,
@@ -51,13 +52,14 @@ function fakeProc(): ProcFs {
   };
 }
 
-const panes = "claude-agent-feature\t100\nclaude-agent-feature-codex\t200\n";
+const panes = "100 claude-agent-feature\n200 claude-agent-feature-codex\n";
 
 function fakeRunner(ss: { code: number; stdout: string }): CommandRunner {
   return {
-    run: async (program) => {
+    run: async (program, args) => {
       if (program === "ss") return { ...ss, stderr: "" };
-      if (program === "tmux") return { code: 0, stdout: panes, stderr: "" };
+      if (program === "tmux" && args.at(-1) === PANES_FORMAT)
+        return { code: 0, stdout: panes, stderr: "" };
       return { code: 127, stdout: "", stderr: "" };
     },
   };
@@ -85,6 +87,32 @@ describe("parsers", () => {
     expect(socketOwners(proc, new Set())).toEqual(new Map());
     expect(parentPid(proc, 110)).toBe(100);
     expect(parentPid(proc, 999)).toBeNull();
+  });
+
+  it("parses real tmux 3.6 output in PANES_FORMAT", () => {
+    // Captured from tmux 3.6 in the image with `tmux list-panes -a -F "#{pane_pid} #{session_name}"`.
+    const real =
+      "762 claude-agent-agentbox-hostcheck-bmrt\n3779 claude-agent-agentbox-hostcheck-bmrt\n";
+    expect(parsePanes(real)).toEqual(
+      new Map([
+        [762, "claude-agent-agentbox-hostcheck-bmrt"],
+        [3779, "claude-agent-agentbox-hostcheck-bmrt"],
+      ]),
+    );
+  });
+
+  it("keeps spaces inside a session name and skips malformed lines", () => {
+    expect(parsePanes("42 my box name\nnot-a-pid name\n7\n\n")).toEqual(
+      new Map([[42, "my box name"]]),
+    );
+  });
+
+  it("ignores the old tab format, which tmux 3.6 prints as an underscore", () => {
+    expect(parsePanes("claude-agent-feature_100\n")).toEqual(new Map());
+  });
+
+  it("asks tmux for the pid first, separated by a space", () => {
+    expect(PANES_FORMAT).toBe("#{pane_pid} #{session_name}");
   });
 
   it("parses tmux panes", () => {
