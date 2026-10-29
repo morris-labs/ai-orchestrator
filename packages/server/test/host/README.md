@@ -44,15 +44,20 @@ The script does the following:
 1. Waits for the keeper's state file, starts a tmux session with the session
    start script, and checks exit codes 0, 3 (already running), and 2 (ended
    right away).
-1. Samples stats twice and prints the `container.stats` event.
-1. With `--claude`, creates a real Claude box in the project, stops it, and
-   purges its transcripts. This uses your Claude sign-in.
+1. Samples stats twice and prints a `container.stats` event for its own
+   container. The monitor samples every `claude-agent-*` container on the
+   host, so the script ignores the others.
 1. Kills the session and waits for the idle container to remove itself after
    its 5-second grace period.
+1. With `--claude`, creates a real Claude box in the project, which starts a
+   new project container without the test's extra environment variable. It
+   stops the box, waits until its status is `stopped`, and purges its
+   transcripts. This uses your Claude sign-in.
 
-Without `--keep`, the script removes the container, the test image, the
-temporary directory, and the state and sessions directories it made. It uses a
-temporary database, so it never touches `~/.claude-box/agentbox.db`.
+Without `--keep`, the script removes the container, the test image, and the
+temporary directory. The temporary directory is also the server's data
+directory, so the database, the keeper state, and the sessions directories
+never touch `~/.claude-box`.
 
 ## Import check against the real records
 
