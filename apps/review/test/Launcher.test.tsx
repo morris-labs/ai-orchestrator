@@ -52,7 +52,9 @@ describe("Launcher", () => {
         "/home/user/src/example-app/.worktrees/Emails_not_sending",
       ),
     );
-    expect(screen.getByText(/showing the project's primary repository/)).toBeInTheDocument();
+    // The repository value comes from the box, so it can settle before the
+    // failed repository listing does. Wait for the fallback hint itself.
+    expect(await screen.findByText(/showing the project's primary repository/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Preview groups" }));
     expect(await screen.findByText(/2 groups, 312 changed lines/)).toBeInTheDocument();
