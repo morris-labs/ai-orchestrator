@@ -3,14 +3,16 @@
 // subscribes to the engine's event stream, grants every lease request on the
 // vendor asked for, and prints each event type it sees.
 //
-// Usage: node lease-granter.mjs PORT
-// The engine token comes from AGENTBOX_ENGINE_TOKEN; it is never printed.
+// Usage: node lease-granter.mjs PORT TOKEN_FILE
+// TOKEN_FILE holds the engine token, as the engine's own token file does; the
+// token is never printed and never passes through the environment or argv.
+import { readFileSync } from "node:fs";
 import WebSocket from "ws";
 
-const port = process.argv[2];
-const token = process.env.AGENTBOX_ENGINE_TOKEN;
+const [port, tokenFile] = process.argv.slice(2);
+const token = tokenFile ? readFileSync(tokenFile, "utf8").trim() : "";
 if (!port || !token) {
-  console.error("Usage: AGENTBOX_ENGINE_TOKEN=TOKEN node lease-granter.mjs PORT");
+  console.error("Usage: node lease-granter.mjs PORT TOKEN_FILE");
   process.exit(2);
 }
 

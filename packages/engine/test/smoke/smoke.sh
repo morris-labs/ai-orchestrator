@@ -31,22 +31,25 @@ echo '$ tools/sample-repo/build.sh "$S/sample"'
 tools/sample-repo/build.sh "$S/sample"
 R="$S/sample/repo"
 umask 077
-AGENTBOX_ENGINE_TOKEN="$(head -c 24 /dev/urandom | base64 | tr -d '/+=')"
-export AGENTBOX_ENGINE_TOKEN
+# The token lives only in two 0600 files: the engine's token file and a curl
+# header file. It never reaches an environment or a command line.
+TOKEN_FILE="$S/state/engine.token"
+head -c 24 /dev/urandom | base64 | tr -d '/+=' > "$TOKEN_FILE"
+printf 'authorization: Bearer %s\n' "$(cat "$TOKEN_FILE")" > "$S/auth.header"
+H="@$S/auth.header"
 echo '$ node packages/engine/dist/main.js &'
-AGENTBOX_ENGINE_PORT=20499 AGENTBOX_PROJECT_ROOT="$R" \
+AGENTBOX_ENGINE_TOKEN_FILE="$TOKEN_FILE" AGENTBOX_ENGINE_PORT=20499 AGENTBOX_PROJECT_ROOT="$R" \
   AGENTBOX_CONTAINER=claude-agent-proj-sample AGENTBOX_ENGINE_VERSION=4.0.0-dev \
   AGENTBOX_STATE_DIR="$S/state" AGENTBOX_MOCK_VENDORS=1 \
   AGENTBOX_MOCK_SCRIPT="$ROOT/packages/engine/test/smoke/mock-script.json" \
   node packages/engine/dist/main.js > "$S/engine.log" 2>&1 &
 ENGINE=$!
 B=http://127.0.0.1:20499/api/v1
-H="authorization: Bearer $AGENTBOX_ENGINE_TOKEN"
 for _ in $(seq 50); do curl -sf "$B/health" >/dev/null && break; sleep 0.2; done
 echo '$ curl -s $B/health'
 curl -s "$B/health"; echo
-echo '$ node packages/engine/test/smoke/lease-granter.mjs 20499 &'
-(cd packages/engine && node test/smoke/lease-granter.mjs 20499 > "$S/granter.log" 2>&1) &
+echo '$ node packages/engine/test/smoke/lease-granter.mjs 20499 "$TOKEN_FILE" &'
+(cd packages/engine && node test/smoke/lease-granter.mjs 20499 "$TOKEN_FILE" > "$S/granter.log" 2>&1) &
 sleep 0.5
 RUN=01JBSM0KE0000000000000000A
 echo '$ curl -s -X POST $B/runs -H "$H" -d {runId, projectId, repoPath, base, readOnly}'

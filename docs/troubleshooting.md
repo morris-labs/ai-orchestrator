@@ -33,6 +33,20 @@ If the CLI reports `401 Unauthorized`, the token in
 `~/.claude-box/server.token` doesn't match the running server. Restart the
 service, which rereads the file.
 
+If a script or an older client gets `401 Unauthorized` on a WebSocket such
+as `/api/v1/events`, check how it sends the token. The server accepts only
+the `Authorization: Bearer TOKEN` header or the session cookie on an
+upgrade, never a `token` query parameter. With `websocat`, for example,
+pass `-H "Authorization: Bearer TOKEN"`, where `TOKEN` is the content of
+`~/.claude-box/server.token`.
+
+If a project's engine never becomes healthy and the container log says
+`The engine token file /run/claude-box/engine.token can't be read`, the
+container started without the token file the server writes to
+`~/.claude-box/state/CONTAINER/engine.token`. Stop the container and let the
+server create it again; check that the state directory is writable by your
+user.
+
 ## Docker is unavailable
 
 A `docker_unavailable` error means the server can't reach the Docker socket

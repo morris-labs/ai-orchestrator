@@ -37,7 +37,11 @@ usage scheduler, and terminals.
   `/api/v1/`, the two apps' pages at `/boxes/` and `/review/`, and the
   dev-server proxy for `PORT.BOX.localhost` host names.
 - Every API call needs the bearer token in `~/.claude-box/server.token`
-  (mode `0600`), or the session cookie that the token buys.
+  (mode `0600`), or the session cookie that the token buys. WebSocket
+  upgrades authenticate the same way: the CLI and the Electron main
+  processes send `Authorization: Bearer`, and the app pages, whose browser
+  WebSockets can't set headers, trade the token for the cookie first. No
+  route accepts a token in the query string, so tokens stay out of URLs.
 - It stores its state in SQLite at `~/.claude-box/agentbox.db` and its
   settings in `~/.claude-box/config.json`.
 - It's the only client of each engine.
@@ -50,9 +54,20 @@ keeper script, the container's first process, starts it.
 
 - It binds `0.0.0.0:20411` inside the container. Docker maps that port to a
   free port on the host's loopback address, so only the host can reach it.
-- Every call needs the token that the server generates and passes in the
-  container's environment as `AGENTBOX_ENGINE_TOKEN`. The health route,
-  `/api/v1/health`, needs no token; the image's health check calls it.
+- Every call, WebSocket upgrades included, needs the token that the server
+  generates for each container, in `Authorization: Bearer`. The health
+  route, `/api/v1/health`, needs no token; the image's health check calls
+  it.
+- The server writes the token to `engine.token` (mode `0600`) in the
+  container's state directory, `~/.claude-box/state/CONTAINER/` on the host
+  and `/run/claude-box/` in the container, before the container starts. The
+  engine reads it from `AGENTBOX_ENGINE_TOKEN_FILE`. The token isn't in the
+  container's environment, so the tmux sessions, shells, and agent CLIs
+  that `docker exec` starts don't inherit it, and the engine withholds every
+  `AGENTBOX_` variable from the processes it starts.
+- The dev-server proxy sends the engine token in its own header,
+  `X-Agentbox-Engine-Token`, on HTTP requests and WebSocket upgrades alike,
+  so the browser's `Authorization` header reaches the dev server unchanged.
 - It runs the review pipeline and its vendor adapters, writes each run's
   files, discovers listening ports with `ss`, and proxies HTTP to them.
 - It refuses to start when its version differs from
@@ -147,8 +162,9 @@ The image, `claude-code` by default, is built on the host from
   tmux session.
 
 The server creates each container with the keeper as its command, the
-project root mounted at the same path, and the engine's port, token, and
-secrets in its environment. The image has no default command.
+project root mounted at the same path, the engine's port and the project's
+secrets in its environment, and the engine token in a file in the mounted
+state directory. The image has no default command.
 
 ## Repository layout
 

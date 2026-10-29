@@ -43,16 +43,16 @@ case "$step" in
   terminal)
     # Attach to the box's tmux session; type, resize the window, then detach.
     [ -n "$WS" ] || { echo "Install websocat first." >&2; exit 1; }
-    "$WS" -b "ws://127.0.0.1:21400/api/v1/terminals?kind=session&boxId=$BOX_ID&cols=120&rows=40&token=$TOKEN"
+    "$WS" -b -H "Authorization: Bearer $TOKEN" "ws://127.0.0.1:21400/api/v1/terminals?kind=session&boxId=$BOX_ID&cols=120&rows=40"
     ;;
   shell)
     [ -n "$WS" ] || { echo "Install websocat first." >&2; exit 1; }
-    "$WS" -b "ws://127.0.0.1:21400/api/v1/terminals?kind=shell&projectId=$PROJECT&token=$TOKEN"
+    "$WS" -b -H "Authorization: Bearer $TOKEN" "ws://127.0.0.1:21400/api/v1/terminals?kind=shell&projectId=$PROJECT"
     ;;
   events)
     # Send {"type":"hello","streamId":null,"lastSeq":null}; then start and stop a box.
     [ -n "$WS" ] || { echo "Install websocat first." >&2; exit 1; }
-    "$WS" "ws://127.0.0.1:21400/api/v1/events?token=$TOKEN"
+    "$WS" -H "Authorization: Bearer $TOKEN" "ws://127.0.0.1:21400/api/v1/events"
     ;;
   proxy)
     # Expect the dev server's page, through the engine's /proxy route.
@@ -72,7 +72,8 @@ case "$step" in
     curl -fsS "${H[@]}" "$SERVER/api/v1/ssh-remotes"   # tunnelUp true while a box using it runs
     ;;
   image-build)
-    # Starts a job; stream it with: websocat -b ws://127.0.0.1:21400/api/v1/jobs/JOB_ID/stream?token=...
+    # Starts a job; stream it with:
+    #   websocat -b -H "Authorization: Bearer $TOKEN" ws://127.0.0.1:21400/api/v1/jobs/JOB_ID/stream
     curl -fsS "${H[@]}" -H 'content-type: application/json' -d '{"kind":"packages"}' "$SERVER/api/v1/image/build"
     ;;
   setup)

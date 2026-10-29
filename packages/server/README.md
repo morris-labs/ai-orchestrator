@@ -66,7 +66,8 @@ Replace the following:
 - `HOST`: a loopback host, such as `127.0.0.1`. The server always connects
   to the engine on 127.0.0.1.
 - `PORT`: the engine's port, its `AGENTBOX_ENGINE_PORT`.
-- `TOKEN`: the engine's `AGENTBOX_ENGINE_TOKEN`, at least 16 characters.
+- `TOKEN`: the engine's token, the content of its `AGENTBOX_ENGINE_TOKEN_FILE`,
+  at least 16 characters.
 
 Start each engine with `AGENTBOX_CONTAINER` set to the project's container
 name, `claude-agent-proj-PROJECT_ID`. The server finds the engine that holds a
@@ -85,7 +86,9 @@ For example, to run the built engine with mock vendors next to a server in a
 scratch home directory:
 
 ```sh
-AGENTBOX_ENGINE_TOKEN=TOKEN AGENTBOX_ENGINE_PORT=20599 \
+mkdir -p /tmp/engine-state
+(umask 077 && echo TOKEN > /tmp/engine-state/engine.token)
+AGENTBOX_ENGINE_TOKEN_FILE=/tmp/engine-state/engine.token AGENTBOX_ENGINE_PORT=20599 \
   AGENTBOX_PROJECT_ROOT=/path/to/repo AGENTBOX_CONTAINER=claude-agent-proj-PROJECT_ID \
   AGENTBOX_ENGINE_VERSION=4.0.0-dev AGENTBOX_STATE_DIR=/tmp/engine-state \
   AGENTBOX_MOCK_VENDORS=1 node packages/engine/dist/main.js &
