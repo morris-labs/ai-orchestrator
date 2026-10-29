@@ -303,4 +303,29 @@ describe("seedDashboard", () => {
     const s = seedDashboard(newer, { runs: [run] });
     expect(s.runs[run.id]!.run?.status).toBe("finished");
   });
+
+  it("skips boxes and containers that events removed while the snapshot loaded", () => {
+    const project = makeProject({ root: "/w/app", id: "app-1" });
+    const s = seedDashboard(emptyDashboard(), {
+      runs: [],
+      projects: [
+        {
+          project,
+          running: 1,
+          total: 1,
+          container: { name: "claude-agent-proj-app-1", state: "running", engine: null },
+        },
+      ],
+      boxes: [
+        makeBoxView({ box: { id: "claude-agent-x", targetDir: "/w/app" }, status: "running" }),
+        makeBoxView({ box: { id: "claude-agent-y", targetDir: "/w/app" }, status: "stopped" }),
+      ],
+      removed: {
+        boxes: new Set(["claude-agent-x"]),
+        containers: new Set(["claude-agent-proj-app-1"]),
+      },
+    });
+    expect(s.boxes).toEqual({ "claude-agent-y": "stopped" });
+    expect(s.containers).toEqual({});
+  });
 });

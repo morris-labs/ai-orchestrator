@@ -48,6 +48,12 @@ export class AppStore {
   private synced = false;
   /** Counts snapshot loads, so that only the latest one applies. */
   private loads = 0;
+  /**
+   * Boxes and containers that events removed since the latest snapshot load
+   * started, or `null` when no load runs. The snapshot may predate those
+   * events, so it must not bring them back.
+   */
+  private removedDuringLoad: { boxes: Set<string>; containers: Set<string> } | null = null;
 
   constructor(
     readonly api: ApiClient,
@@ -73,9 +79,22 @@ export class AppStore {
 
   /** Applies one event; the stream connection and the tests call it. */
   ingest(event: AgentBoxEvent): void {
+    this.trackRemoval(event);
     this.set({ dashboard: applyEvent(this.state.dashboard, event) });
     this.hub.emit(event);
     if (event.type === "usage.sample" || event.type === "ceiling.crossed") void this.loadUsage();
+  }
+
+  private trackRemoval(event: AgentBoxEvent): void {
+    const removed = this.removedDuringLoad;
+    if (!removed) return;
+    if (event.type === "box.changed") {
+      if (event.box === null) removed.boxes.add(event.boxId);
+      else removed.boxes.delete(event.boxId);
+    } else if (event.type === "container.changed") {
+      if (event.state === "removed") removed.containers.add(event.container);
+      else removed.containers.delete(event.container);
+    }
   }
 
   async loadUsage(): Promise<void> {
@@ -112,6 +131,8 @@ export class AppStore {
    */
   async loadSnapshot(): Promise<void> {
     const load = ++this.loads;
+    const removed = { boxes: new Set<string>(), containers: new Set<string>() };
+    this.removedDuringLoad = removed;
     try {
       const [{ runs }, { projects }, { boxes }] = await Promise.all([
         this.api.call("runs.list", {}),
@@ -119,7 +140,8 @@ export class AppStore {
         this.api.call("boxes.list", {}),
       ]);
       const open = runs.filter((r) => OPEN_RUN_STATUSES.includes(r.status));
-      const details = await Promise.all(
+      // One run's failure, such as a run deleted meanwhile, keeps the rest.
+      const settled = await Promise.allSettled(
         open.map(async (r) => {
           const params = { params: { runId: r.id } };
           const [rounds, findings] = await Promise.all([
@@ -130,6 +152,10 @@ export class AppStore {
         }),
       );
       if (load !== this.loads) return;
+      const details = settled.flatMap((x) => (x.status === "fulfilled" ? [x.value] : []));
+      const failed = settled.flatMap((x, i) =>
+        x.status === "rejected" ? [`${open[i]!.id}: ${errorText(x.reason)}`] : [],
+      );
       this.set({
         dashboard: seedDashboard(this.state.dashboard, {
           runs,
@@ -138,10 +164,19 @@ export class AppStore {
           projects,
           boxes,
           time: new Date(this.now()).toISOString(),
+          removed,
         }),
+        ...(failed.length > 0
+          ? {
+              error: `Couldn't load the rounds and findings of ${failed.length} run(s): ${failed.join("; ")}`,
+            }
+          : {}),
       });
+      if (failed.length > 0) console.warn("Snapshot load skipped runs:", failed);
     } catch (err) {
       if (load === this.loads) this.set({ error: (err as Error).message });
+    } finally {
+      if (load === this.loads) this.removedDuringLoad = null;
     }
   }
 
@@ -184,6 +219,10 @@ export class AppStore {
     this.connection?.stop();
     this.connection = null;
   }
+}
+
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 export const StoreContext = createContext<AppStore | null>(null);

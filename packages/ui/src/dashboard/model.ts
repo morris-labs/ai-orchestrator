@@ -484,13 +484,18 @@ export interface DashboardSnapshot {
   boxes?: readonly BoxView[];
   /** When the snapshot was taken; the containers' `updatedAt`. */
   time?: string;
+  /**
+   * Box ids and container names that events removed while the snapshot
+   * loaded. The snapshot may predate the removal, so it can't bring them back.
+   */
+  removed?: { boxes?: ReadonlySet<string>; containers?: ReadonlySet<string> };
 }
 
 /**
  * Fills the state from a REST snapshot, as the event contract asks after a
  * `hello` that can't replay. Events applied while the snapshot loaded are
  * newer, so they win: a run, container, box, round, or finding the state
- * already has keeps its value.
+ * already has keeps its value, and one an event removed stays removed.
  */
 export function seedDashboard(state: DashboardState, snap: DashboardSnapshot): DashboardState {
   const runs = { ...state.runs };
@@ -517,6 +522,7 @@ export function seedDashboard(state: DashboardState, snap: DashboardSnapshot): D
   for (const p of snap.projects ?? []) {
     const c = p.container;
     if (!c || containers[c.name] || c.state === "removed") continue;
+    if (snap.removed?.containers?.has(c.name)) continue;
     containers[c.name] = {
       ...container(state, c.name, p.project.id, snap.time ?? new Date().toISOString()),
       state: c.state,
@@ -524,7 +530,9 @@ export function seedDashboard(state: DashboardState, snap: DashboardSnapshot): D
     };
   }
   const boxes = { ...state.boxes };
-  for (const b of snap.boxes ?? []) boxes[b.box.id] ??= b.status;
+  for (const b of snap.boxes ?? []) {
+    if (!snap.removed?.boxes?.has(b.box.id)) boxes[b.box.id] ??= b.status;
+  }
   return { ...state, runs, containers, boxes };
 }
 
