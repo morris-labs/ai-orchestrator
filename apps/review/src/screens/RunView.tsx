@@ -190,15 +190,18 @@ function RoleEditor({
     const v = run.roles[role];
     return Array.isArray(v) ? v : [v];
   };
-  const [draft, setDraft] = useState<Record<Role, Vendor[]>>(
-    () =>
-      Object.fromEntries(RoleSchema.options.map((r) => [r, current(r)])) as Record<Role, Vendor[]>,
-  );
-  useEffect(() => {
-    setDraft(
-      Object.fromEntries(RoleSchema.options.map((r) => [r, current(r)])) as Record<Role, Vendor[]>,
-    );
-  }, [run.roles]);
+  // Reset the draft only when the run's roles actually change. Resetting from
+  // an effect raced a click made before the mount effect flushed: the effect's
+  // update landed after the click's and wiped the choice.
+  const rolesKey = JSON.stringify(run.roles);
+  const initial = () =>
+    Object.fromEntries(RoleSchema.options.map((r) => [r, current(r)])) as Record<Role, Vendor[]>;
+  const [draft, setDraft] = useState<Record<Role, Vendor[]>>(initial);
+  const [draftKey, setDraftKey] = useState(rolesKey);
+  if (draftKey !== rolesKey) {
+    setDraftKey(rolesKey);
+    setDraft(initial());
+  }
   return (
     <table className="ab-table" aria-label="Roles">
       <thead>

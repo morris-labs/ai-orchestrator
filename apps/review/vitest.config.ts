@@ -12,5 +12,8 @@ export default defineConfig({
     environment: "jsdom",
     include: ["test/**/*.test.{ts,tsx}", "electron/**/*.test.ts"],
     setupFiles: ["test/setup.ts"],
+    // The jsdom screen tests take about 1 second alone and over 5 under heavy
+    // parallel load, so the default 5-second test timeout fails them spuriously.
+    testTimeout: 20000,
   },
 });
