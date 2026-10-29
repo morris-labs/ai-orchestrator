@@ -8,6 +8,12 @@ import { HOME_PATHS } from "@agentbox/contracts";
 export interface HostEnv {
   /** The host user's home directory. Every `~` path below resolves against it. */
   home: string;
+  /**
+   * The server's data directory, which holds the database, the token, the
+   * keeper state, the sessions directories, and the 3.x records the import
+   * reads. Default: `~/.claude-box`.
+   */
+  dataDir?: string;
   /** The user name inside the container; see `containerUsername()`. */
   user: string;
   /** The current time. */
@@ -34,17 +40,39 @@ export function containerHome(env: HostEnv): string {
   return `/home/${env.user}`;
 }
 
-/** Paths under the home directory that the core reads and writes. */
+/** The environment variable that sets the data directory. */
+export const DATA_DIR_ENV = "AGENTBOX_DATA_DIR";
+
+/** The data directory: `env.dataDir` when set, else `~/.claude-box`. */
+export function dataDirOf(env: Pick<HostEnv, "home" | "dataDir">): string {
+  return env.dataDir ? path.resolve(env.dataDir) : path.join(env.home, HOME_PATHS.dataDir);
+}
+
+/**
+ * Resolves a `HOME_PATHS` entry under the `~/.claude-box` directory against
+ * the data directory instead.
+ */
+export function dataPath(env: Pick<HostEnv, "home" | "dataDir">, homeRelative: string): string {
+  const prefix = `${HOME_PATHS.dataDir}/`;
+  if (!homeRelative.startsWith(prefix)) {
+    throw new Error(`${homeRelative} isn't under ${HOME_PATHS.dataDir}.`);
+  }
+  return path.join(dataDirOf(env), homeRelative.slice(prefix.length));
+}
+
+/** Paths under the home and data directories that the core reads and writes. */
 export function homePaths(env: HostEnv) {
   const at = (rel: string) => path.join(env.home, rel);
+  const data = (rel: string) => dataPath(env, rel);
   return {
-    dataDir: at(HOME_PATHS.dataDir),
-    database: at(HOME_PATHS.database),
-    config: at(HOME_PATHS.config),
-    stateDir: at(HOME_PATHS.stateDir),
-    sessionsDir: at(HOME_PATHS.sessionsDir),
-    backupDir: at(HOME_PATHS.backupDir),
-    importReport: at(`${HOME_PATHS.dataDir}/import-report.json`),
+    dataDir: dataDirOf(env),
+    database: data(HOME_PATHS.database),
+    config: data(HOME_PATHS.config),
+    serverToken: data(HOME_PATHS.serverToken),
+    stateDir: data(HOME_PATHS.stateDir),
+    sessionsDir: data(HOME_PATHS.sessionsDir),
+    backupDir: data(HOME_PATHS.backupDir),
+    importReport: data(`${HOME_PATHS.dataDir}/import-report.json`),
     claudeDir: at(".claude"),
     claudeJson: at(".claude.json"),
     claudeProjects: at(".claude/projects"),
@@ -54,7 +82,7 @@ export function homePaths(env: HostEnv) {
   };
 }
 
-/** `~/.claude-box/sessions/<name>`: mounted over a container's `~/.claude/sessions`. */
+/** `<data dir>/sessions/<name>`: mounted over a container's `~/.claude/sessions`. */
 export function sessionsDirFor(env: HostEnv, name: string): string {
   return path.join(homePaths(env).sessionsDir, name);
 }

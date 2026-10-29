@@ -71,7 +71,7 @@ export function tailEvents(options: TailOptions): Promise<void> {
       finish(
         new Error(
           res.statusCode === 401
-            ? "The server refused the token. Check ~/.claude-box/server.token or AGENTBOX_TOKEN."
+            ? "The server refused the token. Check server.token in the data directory (~/.claude-box or AGENTBOX_DATA_DIR), or AGENTBOX_TOKEN."
             : `The server refused the event stream with status ${res.statusCode}.`,
         ),
       );

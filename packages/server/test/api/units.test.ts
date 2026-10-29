@@ -36,6 +36,14 @@ describe("token file", () => {
     expect((await stat(file)).mode & 0o777).toBe(0o600);
     expect(await readFile(file, "utf8")).toContain("a");
   });
+
+  it("uses the data directory in place of ~/.claude-box when given", async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), "agentbox-"));
+    const dataDir = path.join(home, "data");
+    const token = await loadOrCreateToken(home, dataDir);
+    expect((await readFile(path.join(dataDir, "server.token"), "utf8")).trim()).toBe(token);
+    await expect(stat(path.join(home, ".claude-box"))).rejects.toThrow();
+  });
 });
 
 describe("auth checks", () => {

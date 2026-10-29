@@ -29,6 +29,8 @@ import { UsageStore } from "../usage/usage-store.js";
 
 export interface AppOptions {
   home: string;
+  /** The data directory in place of `~/.claude-box`; see `HostEnv.dataDir`. */
+  dataDir?: string;
   createCore: CoreFactory;
   version: string;
   expectedEngineVersion: string;
@@ -68,7 +70,7 @@ export async function startApp(options: AppOptions): Promise<App> {
   const devEngines = options.devEngines ?? [];
   assertDevEnginesAllowed(devEngines, BIND_HOST);
   const runner = options.runner ?? new NodeProcessRunner();
-  const token = await loadOrCreateToken(options.home);
+  const token = await loadOrCreateToken(options.home, options.dataDir);
   const sink = new LateSink();
   let secrets: SecretsService | null = null;
   let runs: RunMirror | null = null;
@@ -87,6 +89,7 @@ export async function startApp(options: AppOptions): Promise<App> {
   services.engineInfo = (container) => engineSupervisor?.info(container) ?? null;
   const core = await options.createCore({
     home: options.home,
+    dataDir: options.dataDir,
     services,
     engineVersion: options.expectedEngineVersion,
     log,

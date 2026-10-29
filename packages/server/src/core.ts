@@ -32,7 +32,7 @@ export interface CoreOptions {
   engineVersion: string;
   /** Home directory, container user, and clock. Default: this process's. */
   env?: HostEnv;
-  /** The SQLite file, or `":memory:"`. Default: `~/.claude-box/agentbox.db`. */
+  /** The SQLite file, or `":memory:"`. Default: `agentbox.db` in the data directory. */
   dbPath?: string;
   /** Default: dockerode on the local socket (`DOCKER_HOST` honored). */
   docker?: DockerClient;
@@ -220,7 +220,7 @@ export async function createCore(
 ): Promise<ApiCore & { server: ServerCore; close(): Promise<void> }> {
   const log = options.log ?? ((m: string) => console.error(m));
   const dockerode = new DockerodeClient();
-  const env: HostEnv = { ...defaultHostEnv(), home: options.home };
+  const env: HostEnv = { ...defaultHostEnv(), home: options.home, dataDir: options.dataDir };
   const server = createServerCore({
     engineVersion: options.engineVersion,
     env,

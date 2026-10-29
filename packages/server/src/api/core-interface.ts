@@ -256,6 +256,8 @@ export interface CoreServices {
 export interface CoreFactoryOptions {
   /** The host user's home directory; every `~` path resolves against it. */
   home: string;
+  /** The data directory in place of `~/.claude-box`; see `HostEnv.dataDir`. */
+  dataDir?: string;
   services: CoreServices;
   /** The engine version this server expects in the image and in each container. */
   engineVersion: string;

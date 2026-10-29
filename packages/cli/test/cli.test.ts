@@ -76,6 +76,24 @@ describe("settings", () => {
     expect(last()?.authorization).toBe(`Bearer ${TOKEN}`);
   });
 
+  it("reads the token and config.json from AGENTBOX_DATA_DIR when set", async () => {
+    const dataDir = path.join(home, "data");
+    mkdirSync(dataDir);
+    writeFileSync(path.join(dataDir, "server.token"), `${TOKEN}\n`);
+    writeFileSync(
+      path.join(dataDir, "config.json"),
+      JSON.stringify({ serverPort: Number(new URL(server.url).port) }),
+    );
+    server.on("GET /api/v1/boxes", { body: { boxes: [] } });
+    const code = await cli(["box", "list"], {
+      AGENTBOX_SERVER: undefined,
+      AGENTBOX_TOKEN: undefined,
+      AGENTBOX_DATA_DIR: dataDir,
+    });
+    expect(code).toBe(0);
+    expect(last()?.authorization).toBe(`Bearer ${TOKEN}`);
+  });
+
   it("prefers --server over AGENTBOX_SERVER", async () => {
     server.on("GET /api/v1/boxes", { body: { boxes: [] } });
     expect(

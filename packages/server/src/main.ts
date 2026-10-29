@@ -3,6 +3,9 @@
 //
 //   agentbox-server                  Starts the server.
 //   agentbox-server install-service  Writes and enables the systemd user unit.
+//
+// `--data-dir PATH` (or `AGENTBOX_DATA_DIR`) moves the data directory away
+// from `~/.claude-box`.
 import { readFileSync, realpathSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -11,6 +14,7 @@ import { startApp } from "./api/app.js";
 import { createCore } from "./core.js";
 import { DEV_ENGINES_ENV, parseDevEngines } from "./events/dev-engines.js";
 import { NodeProcessRunner } from "./jobs/process.js";
+import { DATA_DIR_ENV } from "./records/env.js";
 import { installService } from "./systemd/service.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -23,9 +27,55 @@ export function serverVersion(): string {
   return pkg.version;
 }
 
-/** The command line that starts this server, for the systemd unit. */
-export function execStartLine(): string {
-  return `${process.execPath} ${fileURLToPath(import.meta.url)}`;
+/** Quotes one `ExecStart=` word for systemd when it needs it. */
+function systemdWord(word: string): string {
+  return /^[\w@%+=:,./-]+$/.test(word) ? word : `"${word.replace(/(["\\])/g, "\\$1")}"`;
+}
+
+/**
+ * The command line that starts this server, for the systemd unit. A data
+ * directory other than the default becomes `--data-dir`, so the service
+ * uses the same one as the command that installed it.
+ */
+export function execStartLine(dataDir?: string): string {
+  const words = [process.execPath, fileURLToPath(import.meta.url)];
+  if (dataDir) words.push("--data-dir", dataDir);
+  return words.map(systemdWord).join(" ");
+}
+
+export interface ServerArgs {
+  /** The command, or `undefined` to start the server. */
+  command?: string;
+  /** The absolute data directory, or `undefined` for `~/.claude-box`. */
+  dataDir?: string;
+  /** Set when the arguments are invalid; the caller prints it and exits 2. */
+  error?: string;
+}
+
+/**
+ * Parses the command line. `--data-dir PATH` and `--data-dir=PATH` win over
+ * `AGENTBOX_DATA_DIR`; a relative path resolves against the working
+ * directory.
+ */
+export function parseServerArgs(
+  argv: readonly string[],
+  env: NodeJS.ProcessEnv = process.env,
+): ServerArgs {
+  let command: string | undefined;
+  let dataDir: string | undefined = env[DATA_DIR_ENV] || undefined;
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i] as string;
+    if (arg === "--data-dir" || arg.startsWith("--data-dir=")) {
+      const value = arg === "--data-dir" ? argv[++i] : arg.slice("--data-dir=".length);
+      if (!value) return { error: "--data-dir needs a directory." };
+      dataDir = value;
+    } else if (command === undefined) {
+      command = arg;
+    } else {
+      return { error: `Unexpected argument: ${arg}.` };
+    }
+  }
+  return { command, dataDir: dataDir ? path.resolve(dataDir) : undefined };
 }
 
 /**
@@ -40,11 +90,15 @@ export function serverHome(env: NodeJS.ProcessEnv = process.env): string {
 
 export async function main(argv: string[]): Promise<number> {
   const home = serverHome();
-  const [command] = argv;
+  const { command, dataDir, error } = parseServerArgs(argv);
+  if (error) {
+    process.stderr.write(`${error} Run agentbox-server --help.\n`);
+    return 2;
+  }
   if (command === "install-service") {
     const { path: unit } = await installService({
       home,
-      execStart: execStartLine(),
+      execStart: execStartLine(dataDir),
       runner: new NodeProcessRunner(),
       log: (s) => process.stdout.write(s.replace(/\r\n/g, "\n")),
     });
@@ -53,10 +107,14 @@ export async function main(argv: string[]): Promise<number> {
   }
   if (command === "--help" || command === "-h") {
     process.stdout.write(
-      "Usage: agentbox-server [install-service]\n\n" +
+      "Usage: agentbox-server [--data-dir PATH] [install-service]\n\n" +
         "Without a command, starts the Agent Box server on 127.0.0.1.\n" +
         "install-service writes ~/.config/systemd/user/agentbox-server.service and enables it.\n\n" +
+        "Options:\n" +
+        "  --data-dir PATH         The directory for agentbox.db, server.token, state/, sessions/,\n" +
+        "                          and the 3.x records to import. Default: ~/.claude-box.\n\n" +
         "Environment:\n" +
+        "  AGENTBOX_DATA_DIR       The data directory, when --data-dir isn't given.\n" +
         "  AGENTBOX_HOME           The home directory to use in place of yours.\n" +
         "  AGENTBOX_ENGINE_VERSION The engine version to expect. Default: this server's version.\n" +
         "  AGENTBOX_IMAGE_CONTEXT  The image build context. Default: image/ in the repository.\n" +
@@ -77,10 +135,11 @@ export async function main(argv: string[]): Promise<number> {
   const repoRoot = path.resolve(here, "..", "..", "..");
   const app = await startApp({
     home,
+    dataDir,
     createCore,
     version,
     expectedEngineVersion: process.env.AGENTBOX_ENGINE_VERSION ?? version,
-    execStart: execStartLine(),
+    execStart: execStartLine(dataDir),
     devEngines,
     imageContext: process.env.AGENTBOX_IMAGE_CONTEXT ?? path.join(repoRoot, "image"),
     staticDirs: {
@@ -89,6 +148,7 @@ export async function main(argv: string[]): Promise<number> {
     },
   });
   process.stderr.write(`agentbox-server ${version} listening on 127.0.0.1:${app.port}\n`);
+  if (dataDir) process.stderr.write(`Using the data directory ${dataDir}.\n`);
 
   await new Promise<void>((resolve) => {
     let closing = false;
