@@ -183,6 +183,8 @@ class ImageTest(unittest.TestCase):
         text = DOCKERFILE.read_text()
         self.assertIn("/etc/agentbox-engine-version", text)
         self.assertIn("/etc/claude-code-version", text)
+        self.assertIn("/etc/codex-version", text)
+        self.assertIn("/etc/copilot-version", text)
         self.assertIn("/usr/local/lib/agentbox/", text)
         self.assertIn("keeper/keeper.sh keeper/start-session.sh", text)
         self.assertRegex(text, r"(?m)^HEALTHCHECK .*\n.*/api/v1/health")
