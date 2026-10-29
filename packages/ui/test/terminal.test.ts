@@ -32,7 +32,6 @@ describe("openTerminalSocket", () => {
       boxId: "b",
       cols: "100",
       rows: "30",
-      token: "t",
     });
   });
   it("opens side, shell, and job streams", () => {

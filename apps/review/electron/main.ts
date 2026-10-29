@@ -5,7 +5,14 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, posix, resolve } from "node:path";
 import { HOME_PATHS, DEFAULT_SERVER_PORT, type NotificationToggles } from "@agentbox/contracts";
-import { ApiClient, EventsConnection, isAppPage, isWebUrl } from "@agentbox/ui/core";
+import {
+  ApiClient,
+  EventsConnection,
+  isAppPage,
+  isWebUrl,
+  type WebSocketCtor,
+} from "@agentbox/ui/core";
+import WebSocket from "ws";
 import {
   BrowserWindow,
   Menu,
@@ -61,7 +68,14 @@ const config = readServerConfig();
 const DEV_URL = process.env.AGENTBOX_REVIEW_DEV_URL;
 /** The pages that get the token; anything else is foreign. */
 const APP_PAGES = [rendererUrl(config.serverUrl, null), ...(DEV_URL ? [DEV_URL] : [])];
-const client = new ApiClient({ baseUrl: config.serverUrl, token: config.token });
+// The `ws` package sends the token in the upgrade's `Authorization` header,
+// which keeps it out of the event stream's URL.
+const client = new ApiClient({
+  baseUrl: config.serverUrl,
+  token: config.token,
+  WebSocket: WebSocket as unknown as WebSocketCtor,
+  socketAuth: "header",
+});
 let win: BrowserWindow | null = null;
 let tray: Tray | null = null;
 const active = new ActiveRuns();

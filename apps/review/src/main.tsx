@@ -1,5 +1,7 @@
 // Renderer entry. Electron's preload provides the token and the server URL;
-// a plain browser on the server's origin uses the session cookie.
+// a plain browser on the server's origin uses the session cookie. The page's
+// WebSockets always use the cookie, since a browser can't set their headers,
+// so a token is traded for the cookie before the store opens them.
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App.js";
@@ -9,8 +11,9 @@ import { AppStore, StoreProvider } from "./state/store.js";
 import "./styles.css";
 
 const b = bridge();
-const store = new AppStore(new ApiClient({ baseUrl: b?.serverUrl ?? "", token: b?.token ?? null }));
-store.start();
+const client = new ApiClient({ baseUrl: b?.serverUrl ?? "", token: b?.token ?? null });
+const store = new AppStore(client);
+void client.startSession().finally(() => store.start());
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

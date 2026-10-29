@@ -9,6 +9,8 @@ export class FakeSocket {
   static readonly CLOSED = 3;
 
   readonly url: string;
+  /** Headers given to the constructor, as `ws` in Node takes them; a browser sends none. */
+  headers: Record<string, string> = {};
   readyState = 0;
   binaryType: "blob" | "arraybuffer" = "blob";
   /** Frames the client sent: strings for JSON, `Uint8Array` for binary. */

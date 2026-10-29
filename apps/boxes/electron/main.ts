@@ -6,6 +6,7 @@ import { HOME_PATHS, boxWorkDir, type BoxView } from "@agentbox/contracts";
 import {
   ApiClient,
   EventsConnection,
+  type WebSocketCtor,
   errorMessage,
   isAllowedOpenPath,
   isAppPage,
@@ -16,6 +17,7 @@ import { accessSync, constants, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, posix, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import WebSocket from "ws";
 import {
   app,
   BrowserWindow,
@@ -85,7 +87,14 @@ function readToken(): string | null {
 }
 
 function client(): ApiClient {
-  return new ApiClient({ baseUrl: SERVER_URL, token: readToken() });
+  // The `ws` package sends the token in the upgrade's `Authorization` header,
+  // which keeps it out of the event stream's URL.
+  return new ApiClient({
+    baseUrl: SERVER_URL,
+    token: readToken(),
+    WebSocket: WebSocket as unknown as WebSocketCtor,
+    socketAuth: "header",
+  });
 }
 
 function executable(path: string): boolean {
@@ -155,9 +164,13 @@ function createWindow() {
   });
   win.webContents.on("will-attach-webview", (e) => e.preventDefault());
   // The server serves the page; when it doesn't answer, the copy built into
-  // the app loads instead and shows its "server not reachable" state.
+  // the app loads instead and shows its "server not reachable" state. That
+  // copy can't get the session cookie its WebSockets need, so the server's
+  // page replaces it once the server answers.
   win.webContents.on("did-fail-load", (_e, _code, _desc, url) => {
-    if (url.startsWith(SERVER_URL)) void win?.loadFile(LOCAL_PAGE);
+    if (!url.startsWith(SERVER_URL)) return;
+    void win?.loadFile(LOCAL_PAGE);
+    retryServerPage();
   });
   win.on("close", (e) => {
     if (!quitting && tray) {
@@ -166,6 +179,20 @@ function createWindow() {
     }
   });
   void win.loadURL(BOXES_URL);
+}
+
+let serverRetry: ReturnType<typeof setTimeout> | null = null;
+/** Loads the server's page again once the server answers, while the local copy shows. */
+function retryServerPage() {
+  if (serverRetry) return;
+  serverRetry = setTimeout(() => {
+    serverRetry = null;
+    if (!win || win.webContents.getURL().startsWith(SERVER_URL)) return;
+    client()
+      .call("health", {})
+      .then(() => void win?.loadURL(BOXES_URL))
+      .catch(retryServerPage);
+  }, 5000);
 }
 
 function trayImage(state: "running" | "idle" | "offline") {

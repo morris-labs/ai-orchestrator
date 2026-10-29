@@ -60,8 +60,26 @@ export type CallArgsTuple<K extends ServerRouteKey> =
 /** The parsed response of route `K`. */
 export type ResponseOf<K extends ServerRouteKey> = RouteOf<K>["response"];
 
-/** A WebSocket constructor, injectable for tests and for Node. */
-export type WebSocketCtor = new (url: string) => WebSocket;
+/**
+ * A WebSocket constructor, injectable for tests and for Node. The second
+ * argument is passed only with `socketAuth: "header"`, for a constructor that
+ * takes headers, such as the `ws` package.
+ */
+export type WebSocketCtor = new (
+  url: string,
+  options?: { headers?: Record<string, string> },
+) => WebSocket;
+
+/**
+ * How a WebSocket proves who it is. The token never goes in the URL.
+ *
+ * - `cookie`: the `agentbox_session` cookie, which a browser sends with the
+ *   upgrade. Browsers can't set WebSocket headers, so a renderer with a token
+ *   calls `startSession()` first to get the cookie.
+ * - `header`: `Authorization: Bearer <token>` on the upgrade, for a
+ *   constructor that takes headers (an Electron main process or Node).
+ */
+export type SocketAuth = "cookie" | "header";
 
 export interface ApiClientOptions {
   /** Origin of the server, such as `http://127.0.0.1:21400`. Empty means the page's own origin. */
@@ -70,17 +88,18 @@ export interface ApiClientOptions {
   token?: string | null;
   fetch?: typeof fetch;
   WebSocket?: WebSocketCtor;
+  /** How WebSockets authenticate. Default: `cookie`. */
+  socketAuth?: SocketAuth;
   /** Timeouts in milliseconds for `GET` routes and for the others. */
   timeouts?: { readMs?: number; writeMs?: number };
 }
 
-function queryString(query: Record<string, unknown> | undefined, extra?: Record<string, string>) {
+function queryString(query: Record<string, unknown> | undefined) {
   const sp = new URLSearchParams();
   for (const [k, v] of Object.entries(query ?? {})) {
     if (v === undefined || v === null) continue;
     sp.set(k, String(v));
   }
-  for (const [k, v] of Object.entries(extra ?? {})) sp.set(k, v);
   const s = sp.toString();
   return s === "" ? "" : `?${s}`;
 }
@@ -91,6 +110,7 @@ export class ApiClient {
   readonly token: string | null;
   private readonly fetchImpl: typeof fetch;
   private readonly wsCtor: WebSocketCtor | undefined;
+  private readonly socketAuth: SocketAuth;
 
   private readonly readTimeoutMs: number;
   private readonly writeTimeoutMs: number;
@@ -100,6 +120,7 @@ export class ApiClient {
     this.token = options.token ?? null;
     this.fetchImpl = options.fetch ?? ((...args) => globalThis.fetch(...args));
     this.wsCtor = options.WebSocket ?? (globalThis.WebSocket as WebSocketCtor | undefined);
+    this.socketAuth = options.socketAuth ?? "cookie";
     this.readTimeoutMs = options.timeouts?.readMs ?? READ_TIMEOUT_MS;
     this.writeTimeoutMs = options.timeouts?.writeMs ?? WRITE_TIMEOUT_MS;
   }
@@ -214,7 +235,23 @@ export class ApiClient {
     return parsed.data as ResponseOf<K>;
   }
 
-  /** Builds the `ws://` URL of a WebSocket route, with the token as a query parameter. */
+  /**
+   * Trades the bearer token for the `agentbox_session` cookie, which a
+   * browser WebSocket sends with its upgrade. Resolves `false` without a
+   * token or when the server refuses; a page served by the server with the
+   * cookie already set still connects.
+   */
+  async startSession(): Promise<boolean> {
+    if (!this.token) return false;
+    try {
+      await this.call("auth.session", {});
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Builds the `ws://` URL of a WebSocket route. The token never goes in it. */
   wsUrl<K extends WsRouteKey>(
     key: K,
     args: { params?: Record<string, string>; query?: Record<string, unknown> } = {},
@@ -228,8 +265,7 @@ export class ApiClient {
           ? location.origin
           : "http://127.0.0.1:21400";
     const wsOrigin = origin.replace(/^http/, "ws");
-    const extra: Record<string, string> = this.token ? { token: this.token } : {};
-    return `${wsOrigin}${path}${queryString(args.query, extra)}`;
+    return `${wsOrigin}${path}${queryString(args.query)}`;
   }
 
   /** Opens a WebSocket route. */
@@ -238,6 +274,10 @@ export class ApiClient {
     args: { params?: Record<string, string>; query?: Record<string, unknown> } = {},
   ): WebSocket {
     if (!this.wsCtor) throw new Error("No WebSocket implementation is available.");
-    return new this.wsCtor(this.wsUrl(key, args));
+    const url = this.wsUrl(key, args);
+    if (this.socketAuth === "header" && this.token) {
+      return new this.wsCtor(url, { headers: { Authorization: `Bearer ${this.token}` } });
+    }
+    return new this.wsCtor(url);
   }
 }

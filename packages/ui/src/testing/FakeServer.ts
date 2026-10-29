@@ -23,7 +23,7 @@ import {
   type Updates,
 } from "@agentbox/contracts";
 import type { z } from "zod";
-import type { HttpRouteKey, ResponseOf } from "../api/client";
+import type { HttpRouteKey, ResponseOf, WebSocketCtor } from "../api/client";
 import { FakeSocket } from "./FakeSocket";
 import { makeBox, makeJob, makeProject, makeSettings, projectIdFor, T0 } from "./fixtures";
 
@@ -279,15 +279,16 @@ export class FakeServer {
   // WebSockets
 
   /** The constructor to give `ApiClient` as `WebSocket`. */
-  get WebSocket(): new (url: string) => WebSocket {
+  get WebSocket(): WebSocketCtor {
     // eslint-disable-next-line @typescript-eslint/no-this-alias
     const server = this;
     return class extends FakeSocket {
-      constructor(url: string) {
+      constructor(url: string, options?: { headers?: Record<string, string> }) {
         super(url);
+        this.headers = { ...options?.headers };
         server.attach(this);
       }
-    } as unknown as new (url: string) => WebSocket;
+    } as unknown as WebSocketCtor;
   }
 
   /** Open sockets whose path ends with `suffix`. */

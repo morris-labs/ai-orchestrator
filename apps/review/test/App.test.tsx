@@ -41,7 +41,7 @@ describe("App with the scripted event stream", () => {
     const { store, server } = renderWithStore(<App search="" />, handlers());
     store.start();
     const [ws] = server.socketsFor("/api/v1/events");
-    expect(ws!.url).toBe("ws://localhost:3000/api/v1/events?token=t");
+    expect(ws!.url).toBe("ws://localhost:3000/api/v1/events");
     expect(await screen.findByText("● Live")).toBeInTheDocument();
     await waitFor(() => expect(server.callsTo("stats.refresh")).toHaveLength(1));
     act(() => {

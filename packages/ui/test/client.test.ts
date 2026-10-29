@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { ApiClient, ApiRequestError, isApiError } from "../src/core";
-import { FakeServer, makeBoxView } from "../src/testing";
+import { FakeServer, FakeSocket, makeBoxView } from "../src/testing";
 
 function setup() {
   const server = new FakeServer({
@@ -84,11 +84,50 @@ describe("ApiClient", () => {
     await expect(client.call("health", {})).rejects.toMatchObject({ code: "unreachable" });
   });
 
-  it("builds WebSocket URLs with the token", () => {
+  it("builds WebSocket URLs without the token", () => {
     const { client } = setup();
     expect(client.wsUrl("events.stream", { query: { types: "box.changed" } })).toBe(
-      "ws://127.0.0.1:21400/api/v1/events?types=box.changed&token=tok",
+      "ws://127.0.0.1:21400/api/v1/events?types=box.changed",
     );
+  });
+
+  it("leaves a browser socket to the cookie and sends the header when asked", () => {
+    const { client, server } = setup();
+    const browser = client.openSocket("events.stream") as unknown as FakeSocket;
+    expect(browser.headers).toEqual({});
+    expect(browser.url).not.toContain("tok");
+    const node = new ApiClient({
+      baseUrl: "http://127.0.0.1:21400",
+      token: "tok",
+      fetch: server.fetch,
+      WebSocket: server.WebSocket,
+      socketAuth: "header",
+    });
+    const socket = node.openSocket("events.stream") as unknown as FakeSocket;
+    expect(socket.headers).toEqual({ Authorization: "Bearer tok" });
+    expect(socket.url).toBe("ws://127.0.0.1:21400/api/v1/events");
+  });
+
+  it("trades the token for the session cookie", async () => {
+    const calls: string[] = [];
+    const fetchSpy: typeof fetch = async (input, init) => {
+      calls.push(`${init?.method} ${String(input)} ${JSON.stringify(init?.headers)}`);
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    };
+    const withToken = new ApiClient({ baseUrl: "http://h", token: "tok", fetch: fetchSpy });
+    expect(await withToken.startSession()).toBe(true);
+    expect(calls[0]).toContain("POST http://h/api/v1/auth/session");
+    expect(calls[0]).toContain("Bearer tok");
+    expect(await new ApiClient({ baseUrl: "http://h", fetch: fetchSpy }).startSession()).toBe(
+      false,
+    );
+    expect(calls).toHaveLength(1);
+    const refusing = new ApiClient({
+      baseUrl: "http://h",
+      token: "bad",
+      fetch: async () => new Response("{}", { status: 401 }),
+    });
+    expect(await refusing.startSession()).toBe(false);
   });
 
   it("falls back to an error for an unknown error body", () => {
