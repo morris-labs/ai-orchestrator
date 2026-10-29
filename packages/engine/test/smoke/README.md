@@ -35,10 +35,14 @@ repository, the state directory, and the logs. `SMOKE_DIR` is optional:
 without it, the script makes a new temporary directory and prints its path
 first. Run `smoke.sh --help` for the usage line.
 
-The script generates a random engine token and never prints it. The engine
+The script generates a random engine token and never prints it. The token
+goes only into two files with mode `0600`: the engine's token file,
+`SMOKE_DIR/state/engine.token`, and a header file that `curl` reads with
+`-H @FILE`, so it appears in no environment and no command line. The engine
 runs with the following environment:
 
 ```sh
+AGENTBOX_ENGINE_TOKEN_FILE=SMOKE_DIR/state/engine.token
 AGENTBOX_ENGINE_PORT=20499
 AGENTBOX_PROJECT_ROOT=SMOKE_DIR/sample/repo
 AGENTBOX_CONTAINER=claude-agent-proj-sample
@@ -52,7 +56,8 @@ AGENTBOX_MOCK_SCRIPT=packages/engine/test/smoke/mock-script.json
 
 The following transcript is from the C2 engine integration on October 28,
 2026, on branch `claude/v4-int-engine`. `$S` stands for `SMOKE_DIR`, `$B` for
-`http://127.0.0.1:20499/api/v1`, and `$H` for the bearer token header:
+`http://127.0.0.1:20499/api/v1`, and `$H` for the bearer token header (in
+that run, the header itself; the script now passes `@` and the header file):
 
 ```text
 $ tools/sample-repo/build.sh "$S/sample"
