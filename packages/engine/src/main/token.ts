@@ -1,42 +1,29 @@
 // Where the engine finds its bearer token. The server writes it to a 0600
-// file in the keeper's state directory before the container starts, so the
-// token is never part of the container's environment, which every
-// `docker exec` (and so every tmux session and agent CLI) inherits.
+// file in the keeper's state directory before the container starts and names
+// that file in `AGENTBOX_ENGINE_TOKEN_FILE`, so the token is never part of
+// the container's environment, which every `docker exec` (and so every tmux
+// session and agent CLI) inherits.
 import { readFileSync } from "node:fs";
-import path from "node:path";
-import { DEFAULT_ENGINE_STATE_DIR, ENGINE_ENV } from "@agentbox/contracts";
+import { ENGINE_ENV, type EngineEnv } from "@agentbox/contracts";
 
-/** The variable that names the token file. */
-export const ENGINE_TOKEN_FILE_ENV = "AGENTBOX_ENGINE_TOKEN_FILE";
-
-/** The token file's name inside the state directory. */
-export const ENGINE_TOKEN_FILE_NAME = "engine.token";
-
-/** The token file to read: `AGENTBOX_ENGINE_TOKEN_FILE`, or `engine.token` in the state directory. */
-export function engineTokenFile(env: Record<string, string | undefined>): string {
-  const named = env[ENGINE_TOKEN_FILE_ENV]?.trim();
-  if (named) return named;
-  const stateDir = env[ENGINE_ENV.stateDir]?.trim() || DEFAULT_ENGINE_STATE_DIR;
-  return path.join(stateDir, ENGINE_TOKEN_FILE_NAME);
-}
-
-export type TokenLoad =
-  { ok: true; env: Record<string, string | undefined> } | { ok: false; problem: string };
+export type TokenLoad = { ok: true; token: string } | { ok: false; problem: string };
 
 /**
- * Returns a copy of `env` with `AGENTBOX_ENGINE_TOKEN` filled from the token
- * file, ready for `checkEnv`. An explicit `AGENTBOX_ENGINE_TOKEN_FILE` always
- * wins. Without one, a token already in the environment stays, for an engine
- * started by hand in development; otherwise the default file is read. The
- * problem names the file, never its content.
+ * Returns the bearer token from a validated environment: the content of
+ * `AGENTBOX_ENGINE_TOKEN_FILE` when it is set, else `AGENTBOX_ENGINE_TOKEN`.
+ * The problem names the file, never its content.
  */
 export function loadEngineToken(
-  env: Record<string, string | undefined>,
+  env: EngineEnv,
   read: (file: string) => string = (file) => readFileSync(file, "utf8"),
 ): TokenLoad {
-  const explicit = env[ENGINE_TOKEN_FILE_ENV]?.trim();
-  if (!explicit && env[ENGINE_ENV.token]) return { ok: true, env: { ...env } };
-  const file = engineTokenFile(env);
+  const file = env[ENGINE_ENV.tokenFile];
+  if (file === undefined) {
+    const token = env[ENGINE_ENV.token];
+    return token === undefined
+      ? { ok: false, problem: `Neither ${ENGINE_ENV.tokenFile} nor ${ENGINE_ENV.token} is set.` }
+      : { ok: true, token };
+  }
   let token: string;
   try {
     token = read(file).trim();
@@ -45,5 +32,8 @@ export function loadEngineToken(
     return { ok: false, problem: `The engine token file ${file} can't be read (${code}).` };
   }
   if (token === "") return { ok: false, problem: `The engine token file ${file} is empty.` };
-  return { ok: true, env: { ...env, [ENGINE_ENV.token]: token } };
+  if (token.length < 16) {
+    return { ok: false, problem: `The engine token in ${file} must be at least 16 characters.` };
+  }
+  return { ok: true, token };
 }
