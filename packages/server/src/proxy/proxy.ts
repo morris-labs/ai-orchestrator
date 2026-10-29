@@ -138,9 +138,7 @@ export class DevServerProxy {
     }
     const upstream = net.connect(target.enginePort, "127.0.0.1", () => {
       const headers = upstreamHeaders(req, target.token, true);
-      const lines = [
-        `${req.method ?? "GET"} ${upstreamPath(parsed.port, req.url)} HTTP/1.1`,
-      ];
+      const lines = [`${req.method ?? "GET"} ${upstreamPath(parsed.port, req.url)} HTTP/1.1`];
       for (const [name, value] of Object.entries(headers)) {
         if (value === undefined) continue;
         for (const v of Array.isArray(value) ? value : [value]) lines.push(`${name}: ${v}`);

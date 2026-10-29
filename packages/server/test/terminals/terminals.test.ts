@@ -55,9 +55,7 @@ describe("attach commands", () => {
 
 describe("terminals.open", () => {
   it("attaches to the session and carries bytes both ways", async () => {
-    const s = await connect(
-      `${base}/terminals?kind=session&boxId=${box.id}&cols=100&rows=30`,
-    );
+    const s = await connect(`${base}/terminals?kind=session&boxId=${box.id}&cols=100&rows=30`);
     await s.until((x) => x.texts.length === 1);
     expect(s.texts[0]).toMatchObject({ type: "ready" });
     expect(h.exec.requests[0]).toMatchObject({
@@ -111,15 +109,11 @@ describe("terminals.open", () => {
   });
 
   it("opens a side session and a shell", async () => {
-    const side = await connect(
-      `${base}/terminals?kind=side&boxId=${box.id}&platform=codex`,
-    );
+    const side = await connect(`${base}/terminals?kind=side&boxId=${box.id}&platform=codex`);
     await side.until((x) => x.texts.length === 1);
     expect(h.exec.requests[0]!.cmd.at(-1)).toBe(`${box.session}-codex`);
     side.ws.close();
-    const shell = await connect(
-      `${base}/terminals?kind=shell&projectId=example-app-1a2b3c4d`,
-    );
+    const shell = await connect(`${base}/terminals?kind=shell&projectId=example-app-1a2b3c4d`);
     await shell.until((x) => x.texts.length === 1);
     expect(h.exec.requests[1]).toMatchObject({
       cmd: ["bash", "-l"],
@@ -138,9 +132,7 @@ describe("terminals.open", () => {
     await bad.until((x) => x.texts.length === 1);
     expect(bad.texts[0]).toMatchObject({ type: "error", error: { code: "validation" } });
     expect((await bad.closed).code).toBe(1008);
-    const missing = await connect(
-      `${base}/terminals?kind=session&boxId=claude-agent-zz`,
-    );
+    const missing = await connect(`${base}/terminals?kind=session&boxId=claude-agent-zz`);
     await missing.until((x) => x.texts.length === 1);
     expect(missing.texts[0]).toMatchObject({ type: "error", error: { code: "not_found" } });
   });

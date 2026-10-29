@@ -15,7 +15,10 @@ afterEach(async () => {
 });
 
 /** A client that queues every frame, validated against the engine frame schema. */
-function connect(query = "", headers: Record<string, string> = { authorization: `Bearer ${TOKEN}` }) {
+function connect(
+  query = "",
+  headers: Record<string, string> = { authorization: `Bearer ${TOKEN}` },
+) {
   const socket = new WebSocket(`${engine.ws}/api/v1/events?${query}`, { headers });
   sockets.push(socket);
   const frames: unknown[] = [];

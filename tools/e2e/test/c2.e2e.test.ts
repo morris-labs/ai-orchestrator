@@ -154,7 +154,10 @@ beforeAll(async () => {
   serverToken = readFileSync(path.join(home, ".claude-box", "server.token"), "utf8").trim();
   // The CLI reads the token from server.token in the data directory, so it
   // stays out of the CLI's environment.
-  cliEnv = childEnv({ AGENTBOX_SERVER: serverUrl, AGENTBOX_DATA_DIR: path.join(home, ".claude-box") });
+  cliEnv = childEnv({
+    AGENTBOX_SERVER: serverUrl,
+    AGENTBOX_DATA_DIR: path.join(home, ".claude-box"),
+  });
   // The server subscribes to the engine's event stream on its own.
   await waitFor("the server to subscribe to the engine", () =>
     engine?.output().includes("Event subscriber connected") ? true : undefined,

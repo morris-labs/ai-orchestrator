@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { ApiClient, ApiRequestError, isApiError } from "../src/core";
-import { FakeServer, FakeSocket, makeBoxView } from "../src/testing";
+import { FakeServer, makeBoxView, type FakeSocket } from "../src/testing";
 
 function setup() {
   const server = new FakeServer({

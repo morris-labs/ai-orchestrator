@@ -21,8 +21,7 @@ export function engineTokenFile(env: Record<string, string | undefined>): string
 }
 
 export type TokenLoad =
-  | { ok: true; env: Record<string, string | undefined> }
-  | { ok: false; problem: string };
+  { ok: true; env: Record<string, string | undefined> } | { ok: false; problem: string };
 
 /**
  * Returns a copy of `env` with `AGENTBOX_ENGINE_TOKEN` filled from the token
