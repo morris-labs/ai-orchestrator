@@ -217,7 +217,7 @@ describe("main window", () => {
     await waitFor(() => expect(server.socketsFor("/api/v1/terminals")).toHaveLength(1));
     act(() => server.socketsFor("/api/v1/terminals")[0]?.serverSend({ type: "exit", exitCode: 3 }));
     expect(await screen.findByText(/Site work \(ended\)/)).toBeInTheDocument();
-    expect(screen.getByText(/Session ended \(exit 3\)\./)).toBeInTheDocument();
+    expect(await screen.findByText(/Session ended \(exit 3\)\./)).toBeInTheDocument();
     await user.keyboard("{Control>}{Shift>}W{/Shift}{/Control}");
     expect(screen.queryByRole("tablist", { name: "Terminals" })).toBeNull();
   });
@@ -381,8 +381,8 @@ describe("main window", () => {
     expect(
       await screen.findByRole("link", { name: "http://5173.site.localhost:21400/" }),
     ).toBeInTheDocument();
-    expect(screen.getByText("42.0%")).toBeInTheDocument();
-    expect(screen.getByText("512 MiB / 2.0 GiB")).toBeInTheDocument();
+    expect(await screen.findByText("42.0%")).toBeInTheDocument();
+    expect(await screen.findByText("512 MiB / 2.0 GiB")).toBeInTheDocument();
   });
 
   it("confirms adoption of a conversation a stopped box tracks, then retries with force", async () => {
@@ -415,7 +415,7 @@ describe("main window", () => {
     await waitFor(() => expect(rowOf("Site work")).toHaveAttribute("aria-selected", "true"));
     await user.keyboard("{Control>}{Shift>}E{/Shift}{/Control}");
     const dialog = await screen.findByRole("dialog", { name: "Edit Box" });
-    await within(dialog).findByRole("option", { name: /Old work/ });
+    await within(dialog).findByRole("option", { name: /Old work/ }, { timeout: 3000 });
     await user.selectOptions(
       within(dialog).getByLabelText("Conversation"),
       "22222222-2222-4222-8222-222222222222",

@@ -139,18 +139,21 @@ export function App() {
     }
   }, [data.loaded, data.projects, projectId]);
 
-  // The first row is selected when nothing is, as in the Qt table.
+  // The first row is selected when nothing is, as in the Qt table. The update
+  // reads the latest selection, not this render's: a click can land before
+  // this effect runs, and a stale empty selection would overwrite it.
   useEffect(() => {
     const visible = new Set(rows.map((b) => b.box.id));
-    const kept = [...selected].filter((id) => visible.has(id));
-    if (kept.length === 0 && rows.length > 0) {
-      const first = [...rows].sort(
-        (a, b) => Number(b.status === "running") - Number(a.status === "running"),
-      )[0];
-      if (first) setSelected(new Set([first.box.id]));
-    } else if (kept.length !== selected.size) {
-      setSelected(new Set(kept));
-    }
+    setSelected((prev) => {
+      const kept = [...prev].filter((id) => visible.has(id));
+      if (kept.length === 0 && rows.length > 0) {
+        const first = [...rows].sort(
+          (a, b) => Number(b.status === "running") - Number(a.status === "running"),
+        )[0];
+        return first ? new Set([first.box.id]) : prev;
+      }
+      return kept.length !== prev.size ? new Set(kept) : prev;
+    });
   }, [rows, selected]);
 
   // -------------------------------------------------------------------------

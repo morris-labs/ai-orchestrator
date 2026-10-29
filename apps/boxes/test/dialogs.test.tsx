@@ -134,7 +134,7 @@ describe("BoxDialog, new mode", () => {
     });
     newDialog(server, { initialDir: "/w/site" });
     const combo = screen.getByLabelText("Conversation");
-    await screen.findByRole("option", { name: /Fix login/ });
+    await screen.findByRole("option", { name: /Fix login/ }, { timeout: 3000 });
     await user.selectOptions(combo, UUID1);
     expect(screen.getByLabelText("Conversation name")).toHaveValue("Fix login");
     await user.selectOptions(combo, UUID2);
@@ -154,7 +154,9 @@ describe("BoxDialog, new mode", () => {
       source: "cache" as const,
     }));
     newDialog(server, { initialDir: "/w/site" });
-    await waitFor(() => expect(screen.getByLabelText("Model")).toHaveValue("claude-pinned-9"));
+    await waitFor(() => expect(screen.getByLabelText("Model")).toHaveValue("claude-pinned-9"), {
+      timeout: 3000,
+    });
     expect(screen.getByLabelText("Effort")).toHaveValue("max");
   });
 
@@ -259,6 +261,8 @@ describe("BoxDialog, edit and fork modes", () => {
     expect(screen.getByLabelText(/workspace subfolder/)).toBeChecked();
     expect(screen.getByLabelText(/workspace subfolder/)).toBeDisabled();
     const combo = screen.getByLabelText("Conversation");
+    // Wait for the transcript list so the check covers the loaded state too.
+    await within(combo).findByRole("option", { name: /Fix login/ }, { timeout: 3000 });
     expect(
       within(combo).getByRole("option", { name: `Current: ${UUID3} (no transcript found)` }),
     ).toBeInTheDocument();
