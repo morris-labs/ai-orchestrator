@@ -60,18 +60,45 @@ export const SESSION_START_SCRIPT =
   'tmux has-session -t "=$S" 2>/dev/null || { echo "$S ended right after starting" >&2; exit 2; }\n';
 
 /**
- * The container command: trust every directory for git (worktree boxes need
- * it), then replace the shell with the keeper, which stays PID 1 so that
- * `docker stop` reaches its SIGTERM trap and stops the engine cleanly.
+ * Gives the container user the directories docker created as root above a
+ * bind mount. Docker creates every missing parent of a mount's container
+ * path as root, so a project under `/tmp/claude-1000/...` leaves
+ * `/tmp/claude-1000` owned by root, and Claude Code then refuses to start
+ * ("Temp directory /tmp/claude-1000 is owned by uid 0"). For each path in
+ * `$@`, the script walks up its parents and, for a root-owned one under
+ * `/tmp` or the user's home, runs `sudo -n chown` to the user. It never
+ * touches `/tmp`, the home directory, or the mount point itself, never
+ * recurses, and ignores every failure, such as an image without sudo.
  */
-export function sharedKeeperCommand(graceSec: number = STARTUP_GRACE_SEC): string[] {
+export const OWN_MOUNT_PARENTS_SCRIPT =
+  'for p in "$@"; do d=$(dirname -- "$p"); ' +
+  'while [ "$d" != / ] && [ "$d" != . ]; do ' +
+  'case "$d" in /tmp/*|"$HOME"/*) ' +
+  'if [ -d "$d" ] && [ "$(stat -c %u -- "$d" 2>/dev/null)" = 0 ]; then ' +
+  'sudo -n chown "$(id -u):$(id -g)" -- "$d" 2>/dev/null; fi;; esac; ' +
+  'd=$(dirname -- "$d"); done; done';
+
+/**
+ * The container command: trust every directory for git (worktree boxes need
+ * it), give the user the root-owned parents of the mount paths
+ * (`OWN_MOUNT_PARENTS_SCRIPT`, in a subshell that drops the keeper's two
+ * arguments), then replace the shell with the keeper, which stays PID 1 so
+ * that `docker stop` reaches its SIGTERM trap and stops the engine cleanly.
+ * `mountPaths` are the container paths of the project root and the other
+ * bind mounts.
+ */
+export function sharedKeeperCommand(
+  graceSec: number = STARTUP_GRACE_SEC,
+  mountPaths: readonly string[] = [],
+): string[] {
   return [
     "bash",
     "-c",
-    `git config --global --add safe.directory '*' 2>/dev/null; exec ${KEEPER_PATH} "$1" "$2"`,
+    `git config --global --add safe.directory '*' 2>/dev/null; (shift 2; ${OWN_MOUNT_PARENTS_SCRIPT}); exec ${KEEPER_PATH} "$1" "$2"`,
     "_",
     STATE_MOUNT,
     String(graceSec),
+    ...mountPaths,
   ];
 }
 

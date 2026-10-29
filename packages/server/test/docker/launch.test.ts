@@ -11,7 +11,7 @@ import {
   toDockerRunArgs,
   type LaunchInput,
 } from "../../src/docker/launch.js";
-import { KEEPER_PATH } from "../../src/docker/scripts.js";
+import { KEEPER_PATH, OWN_MOUNT_PARENTS_SCRIPT } from "../../src/docker/scripts.js";
 import type { HostEnv } from "../../src/records/env.js";
 import { tempDir } from "../tmp.js";
 
@@ -79,10 +79,14 @@ describe("buildLaunchSpec", () => {
       cmd: [
         "bash",
         "-c",
-        `git config --global --add safe.directory '*' 2>/dev/null; exec ${KEEPER_PATH} "$1" "$2"`,
+        `git config --global --add safe.directory '*' 2>/dev/null; (shift 2; ${OWN_MOUNT_PARENTS_SCRIPT}); exec ${KEEPER_PATH} "$1" "$2"`,
         "_",
         "/run/claude-box",
         "30",
+        "/home/tester/work/app",
+        "/data/ref",
+        "/shared",
+        "/home/tester/Bin/.project_archive",
       ],
       env: [
         "IS_SANDBOX=1",
@@ -160,7 +164,7 @@ describe("buildLaunchSpec", () => {
     expect(args.join(" ")).not.toContain("ghp_value");
     expect(args).toContain("127.0.0.1:41000:20411");
     expect(args).toContain("8080:3000");
-    expect(args.indexOf("claude-code")).toBe(args.length - 7);
+    expect(args.indexOf("claude-code")).toBe(args.length - 1 - spec.cmd.length);
   });
 });
 

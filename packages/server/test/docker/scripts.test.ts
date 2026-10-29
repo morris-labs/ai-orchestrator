@@ -2,13 +2,16 @@
 // section 4.2 as the reference for the image's keeper.sh and
 // start-session.sh; this test reads the inventory itself.
 import { execFileSync } from "node:child_process";
-import fs from "node:fs";
+import fs, { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   KEEPER_PATH,
   KEEPER_SCRIPT,
+  OWN_MOUNT_PARENTS_SCRIPT,
   SESSION_START_SCRIPT,
   START_SESSION_PATH,
   STATE_MOUNT,
@@ -48,12 +51,67 @@ describe("scripts", () => {
     expect(sharedKeeperCommand()).toEqual([
       "bash",
       "-c",
-      `git config --global --add safe.directory '*' 2>/dev/null; exec ${KEEPER_PATH} "$1" "$2"`,
+      `git config --global --add safe.directory '*' 2>/dev/null; (shift 2; ${OWN_MOUNT_PARENTS_SCRIPT}); exec ${KEEPER_PATH} "$1" "$2"`,
       "_",
       STATE_MOUNT,
       "30",
     ]);
     expect(sharedKeeperCommand(2).at(-1)).toBe("2");
+    expect(sharedKeeperCommand(2, ["/tmp/a/b"]).slice(-2)).toEqual(["2", "/tmp/a/b"]);
+  });
+
+  it("gives the user the root-owned parents of a mount under /tmp or home, and nothing else", () => {
+    const dir = mkdtempSync(join(tmpdir(), "own-parents-"));
+    // The home directory must sit outside /tmp, or /tmp's rule covers it too.
+    const home = mkdtempSync(join(path.dirname(fileURLToPath(import.meta.url)), ".home-"));
+    try {
+      const bin = join(dir, "bin");
+      mkdirSync(bin);
+      const log = join(dir, "sudo.log");
+      // Every directory reads as root-owned; sudo records what it would chown.
+      writeFileSync(join(bin, "stat"), "#!/bin/sh\necho 0\n", { mode: 0o755 });
+      writeFileSync(join(bin, "sudo"), `#!/bin/sh\nprintf '%s\\n' "$*" >> '${log}'\n`, {
+        mode: 0o755,
+      });
+      writeFileSync(join(bin, "id"), '#!/bin/sh\n[ "$1" = -u ] && echo 1000 || echo 1000\n', {
+        mode: 0o755,
+      });
+      mkdirSync(join(home, "deep", "er"), { recursive: true });
+      const tmpProject = mkdtempSync(join(tmpdir(), "own-parents-tmp-"));
+      mkdirSync(join(tmpProject, "x", "y"), { recursive: true });
+      const [, , script, ...args] = sharedKeeperCommand(1, [
+        join(tmpProject, "x", "y", "repo"),
+        join(home, "deep", "er", "mount"),
+        "/usr/share/mount",
+      ]);
+      // Run only the ownership step: replace the keeper with a no-op.
+      const body = script!.replace(/exec \S+ "\$1" "\$2"$/, "true");
+      execFileSync("bash", ["-c", body, ...args], {
+        env: { PATH: `${bin}:${process.env.PATH ?? ""}`, HOME: home },
+      });
+      const calls = readFileSync(log, "utf8").trim().split("\n");
+      rmSync(tmpProject, { recursive: true, force: true });
+      const owned = calls.map((c) => c.replace("-n chown 1000:1000 -- ", ""));
+      // The temporary directory can sit deeper under /tmp; every parent up
+      // to /tmp counts, /tmp itself never does.
+      const underTmp = owned.filter((d) => !d.startsWith(`${home}/`));
+      expect(underTmp.slice(0, 3)).toEqual([
+        join(tmpProject, "x", "y"),
+        join(tmpProject, "x"),
+        tmpProject,
+      ]);
+      expect(underTmp.every((d) => d.startsWith("/tmp/"))).toBe(true);
+      expect(owned.filter((d) => d.startsWith(`${home}/`))).toEqual([
+        join(home, "deep", "er"),
+        join(home, "deep"),
+      ]);
+      expect(owned).not.toContain("/tmp");
+      expect(owned).not.toContain(home);
+      expect(owned.some((d) => d.startsWith("/usr"))).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it("quotes every byte safely for bash", () => {
