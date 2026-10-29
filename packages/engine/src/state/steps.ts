@@ -880,6 +880,7 @@ export async function runGateStage(ctx: RunContext, nextStage: Stage): Promise<G
   const run = await runGate(ctx.policy, {
     repoPath: ctx.state.request.repoPath,
     shell: ctx.shell,
+    git: ctx.deps.runner,
     signal: ctx.signal,
   });
   const comparison = compareGate(baseline, run);
