@@ -112,6 +112,10 @@ beforeAll(async () => {
   engineToken = randomBytes(24).toString("hex");
   const stateDir = path.join(dir, "state");
   mkdirSync(stateDir);
+  // The engine reads its token from a file, as in a container, so the token
+  // stays out of the engine's environment.
+  const tokenFile = path.join(stateDir, "engine.token");
+  writeFileSync(tokenFile, `${engineToken}\n`, { mode: 0o600 });
   home = path.join(dir, "home");
   mkdirSync(path.join(home, ".claude-box"), { recursive: true });
   writeFileSync(
@@ -122,7 +126,7 @@ beforeAll(async () => {
   engine = startProcess(
     ENGINE_MAIN,
     childEnv({
-      AGENTBOX_ENGINE_TOKEN: engineToken,
+      AGENTBOX_ENGINE_TOKEN_FILE: tokenFile,
       AGENTBOX_ENGINE_PORT: String(enginePort),
       AGENTBOX_PROJECT_ROOT: repo,
       AGENTBOX_CONTAINER: projectContainerName(projectId),
@@ -148,7 +152,9 @@ beforeAll(async () => {
     server?.output().includes("listening on") ? true : undefined,
   );
   serverToken = readFileSync(path.join(home, ".claude-box", "server.token"), "utf8").trim();
-  cliEnv = childEnv({ AGENTBOX_SERVER: serverUrl, AGENTBOX_TOKEN: serverToken });
+  // The CLI reads the token from server.token in the data directory, so it
+  // stays out of the CLI's environment.
+  cliEnv = childEnv({ AGENTBOX_SERVER: serverUrl, AGENTBOX_DATA_DIR: path.join(home, ".claude-box") });
   // The server subscribes to the engine's event stream on its own.
   await waitFor("the server to subscribe to the engine", () =>
     engine?.output().includes("Event subscriber connected") ? true : undefined,
