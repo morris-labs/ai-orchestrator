@@ -10,7 +10,7 @@ import {
   parseCopilotText,
 } from "../../src/adapters/copilot.js";
 import { parseStructuredText, VendorFindingsOutputSchema } from "../../src/adapters/output.js";
-import { AdapterError, type CliRequest } from "../../src/adapters/types.js";
+import type { AdapterError, CliRequest } from "../../src/adapters/types.js";
 import { fixture, fixturePath } from "./helpers.js";
 import { tempDir } from "../tmp.js";
 
