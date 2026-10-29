@@ -81,7 +81,72 @@ export function childEnv(
     if (value === undefined) delete env[name];
     else env[name] = value;
   }
+  if (profile === "vendor:copilot") dropClassicCopilotTokens(env);
   return env;
+}
+
+/**
+ * The variables the Copilot CLI reads a token from, in its order of
+ * precedence. The CLI takes the first one set over its own sign-in.
+ */
+export const COPILOT_TOKEN_VARIABLES = [
+  "COPILOT_GITHUB_TOKEN",
+  "GH_TOKEN",
+  "GITHUB_TOKEN",
+] as const;
+
+/**
+ * True for a classic personal access token (`ghp_`). The Copilot CLI refuses
+ * one; it takes a fine-grained token (`github_pat_`), an OAuth token
+ * (`gho_`), or a GitHub App user token (`ghu_`).
+ */
+export function isClassicGitHubToken(value: string | undefined): boolean {
+  return value !== undefined && value.trim().startsWith("ghp_");
+}
+
+/**
+ * Removes every classic token from a Copilot environment, so that the CLI
+ * falls through to a usable token or to its own sign-in instead of failing.
+ * Returns the names it removed.
+ */
+export function dropClassicCopilotTokens(env: NodeJS.ProcessEnv): string[] {
+  const dropped: string[] = [];
+  for (const name of COPILOT_TOKEN_VARIABLES) {
+    if (isClassicGitHubToken(env[name])) {
+      delete env[name];
+      dropped.push(name);
+    }
+  }
+  return dropped;
+}
+
+/**
+ * Explains why Copilot might not sign in, or returns `null` when the
+ * environment holds a token Copilot accepts or no classic token at all. The
+ * environment is the one the engine would hand a Copilot child, before the
+ * classic tokens are dropped. The message names variables, never values.
+ */
+export function copilotTokenProblem(
+  base: NodeJS.ProcessEnv = process.env,
+  extra: Record<string, string | undefined> = {},
+): string | null {
+  const merged: NodeJS.ProcessEnv = { ...base };
+  for (const [name, value] of Object.entries(extra)) {
+    if (value === undefined) delete merged[name];
+    else merged[name] = value;
+  }
+  const classic = COPILOT_TOKEN_VARIABLES.filter((n) => isClassicGitHubToken(merged[n]));
+  if (classic.length === 0) return null;
+  const usable = COPILOT_TOKEN_VARIABLES.some(
+    (n) => merged[n] !== undefined && merged[n] !== "" && !isClassicGitHubToken(merged[n]),
+  );
+  if (usable) return null;
+  return (
+    `${classic.join(" and ")} ${classic.length === 1 ? "holds" : "hold"} a classic personal access token (ghp_), ` +
+    "which the Copilot CLI refuses, so the engine doesn't pass it to Copilot. " +
+    "Sign in to Copilot inside the container with `copilot` and `/login`, or set " +
+    "COPILOT_GITHUB_TOKEN to a fine-grained token with the Copilot Requests permission."
+  );
 }
 
 /** The profile for a program run without a shell: `git` and `gh` get GitHub access. */

@@ -35,6 +35,11 @@ function scale(sample: TimedUsageSample, ceiling: Ceiling): { value: number; lim
   return { value: sample.spendUsd ?? sample.utilization * ceiling.maxUsd, limit: ceiling.maxUsd };
 }
 
+/** The value at which the ceiling is reached, on the ceiling's own scale. */
+export function ceilingLimit(ceiling: Ceiling): number {
+  return ceiling.kind === "utilization" ? ceiling.max : ceiling.maxUsd;
+}
+
 /**
  * Whether a sample is at or over its ceiling. A sample whose `resetAt` has
  * passed counts as reset, so it is never over.
@@ -127,7 +132,9 @@ export class UsageService {
   isOver(vendor: Vendor, ceilings: Ceilings, account?: string): OverState {
     const ceiling = ceilings[vendor];
     const latest = this.opts.store.latest(vendor, ceilingWindow(ceiling), account);
-    if (!latest) return { over: false, resetAt: null, utilization: null };
+    // With no sample the usage is unknown, which counts as under a ceiling
+    // above zero; a ceiling of zero means "don't use this vendor".
+    if (!latest) return { over: ceilingLimit(ceiling) <= 0, resetAt: null, utilization: null };
     return {
       over: sampleIsOver(latest, ceiling, this.nowMs()),
       resetAt: latest.resetAt,

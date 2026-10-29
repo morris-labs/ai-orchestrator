@@ -1,6 +1,7 @@
 // The test and lint gate (design.md, pre-push steps 1 and 7): a baseline at
 // preflight, a rerun after each fix, and regression detection against the
 // baseline.
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { PolicyCommand, PolicyFile } from "@agentbox/contracts";
 import type { CommandRunner } from "../core.js";
@@ -61,6 +62,12 @@ function tail(text: string, lines = 40): string {
 export interface GateOptions {
   repoPath: string;
   shell: CommandRunner;
+  /**
+   * Runs `git`. When present, the gate deletes the untracked files its
+   * commands created, so build output such as `__pycache__/` doesn't leave
+   * the tree dirty for the next run. Files git ignores are never touched.
+   */
+  git?: CommandRunner;
   timeoutMs?: number;
   signal?: AbortSignal;
 }
@@ -74,6 +81,7 @@ async function runOne(
     cwd: cmd.cwd ? join(options.repoPath, cmd.cwd) : options.repoPath,
     timeoutMs: options.timeoutMs ?? 30 * 60_000,
     signal: options.signal,
+    env: GATE_ENV,
   });
   const output = `${result.stdout}\n${result.stderr}`;
   return {
@@ -88,11 +96,46 @@ async function runOne(
   };
 }
 
-/** Runs every test and lint command of the policy, in order. */
+/**
+ * Environment for the gate's commands that keeps them from writing build
+ * output into the tree: Python skips its `__pycache__` directories.
+ */
+export const GATE_ENV: Record<string, string> = { PYTHONDONTWRITEBYTECODE: "1" };
+
+/**
+ * Untracked files that git doesn't ignore, relative to the repository,
+ * without the engine's own `.claude-box/` directory. `null` when git fails.
+ */
+export async function untrackedFiles(
+  git: CommandRunner,
+  repoPath: string,
+): Promise<Set<string> | null> {
+  const r = await git.run("git", ["ls-files", "--others", "--exclude-standard", "-z"], {
+    cwd: repoPath,
+    timeoutMs: 60_000,
+  });
+  if (r.exitCode !== 0) return null;
+  return new Set(r.stdout.split("\0").filter((p) => p !== "" && !p.startsWith(".claude-box/")));
+}
+
+/**
+ * Runs every test and lint command of the policy, in order, then deletes
+ * the untracked files the commands created when `options.git` is set.
+ */
 export async function runGate(policy: PolicyFile, options: GateOptions): Promise<GateRun> {
+  const before = options.git ? await untrackedFiles(options.git, options.repoPath) : null;
   const commands: GateCommandResult[] = [];
-  for (const cmd of policy.tests) commands.push(await runOne("test", cmd, options));
-  for (const cmd of policy.lint) commands.push(await runOne("lint", cmd, options));
+  try {
+    for (const cmd of policy.tests) commands.push(await runOne("test", cmd, options));
+    for (const cmd of policy.lint) commands.push(await runOne("lint", cmd, options));
+  } finally {
+    if (options.git && before) {
+      const after = await untrackedFiles(options.git, options.repoPath);
+      for (const path of after ?? []) {
+        if (!before.has(path)) await rm(join(options.repoPath, path), { force: true });
+      }
+    }
+  }
   return { passed: commands.every((c) => c.passed), commands };
 }
 

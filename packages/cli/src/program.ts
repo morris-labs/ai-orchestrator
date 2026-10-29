@@ -605,6 +605,22 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
   }
 
   review
+    .command("push")
+    .description(
+      "Push a run's branch, open or update its pull request, and start the post-push loop.",
+    )
+    .argument("<runId>")
+    .option("--title <text>", "The pull request title; default the server's choice.")
+    .option("--draft", "Open the pull request as a draft.")
+    .action(async (runId: string, o: { title?: string; draft?: boolean }) => {
+      const r = await client().call("runs.push", {
+        params: { runId },
+        body: { title: o.title, draft: o.draft ?? false },
+      });
+      print(r, () => `Pushed run ${r.id}; status ${r.status}, stage ${r.stage}.\n`);
+    });
+
+  review
     .command("assign")
     .description("Give a role to one or more vendors from the next round.")
     .argument("<runId>")

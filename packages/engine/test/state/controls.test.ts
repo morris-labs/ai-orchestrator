@@ -340,7 +340,7 @@ describe("run controls", () => {
           res({
             verdict: "disproved",
             verification: "code-reading",
-            evidence: "no",
+            evidence: "The rounding matches the documented banker's rounding.",
             presentAtBase: false,
             script: null,
           }),

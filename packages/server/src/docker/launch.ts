@@ -149,7 +149,8 @@ export function buildLaunchSpec(
     if (!binds.includes(b)) binds.push(b);
   }
   binds.push(`${sessionsDirFor(env, input.container)}:${home}/.claude/sessions`);
-  for (const m of mergeMounts(input.mounts, input.globalMounts)) binds.push(mountBind(m));
+  const merged = mergeMounts(input.mounts, input.globalMounts);
+  for (const m of merged) binds.push(mountBind(m));
   binds.push(`${path.join(paths.stateDir, input.container)}:${STATE_MOUNT}`);
 
   const envList = ["IS_SANDBOX=1", "DISABLE_AUTOUPDATER=1"];
@@ -186,7 +187,10 @@ export function buildLaunchSpec(
     image: input.image,
     user: env.user,
     workingDir: containerDir,
-    cmd: sharedKeeperCommand(input.graceSec ?? STARTUP_GRACE_SEC),
+    cmd: sharedKeeperCommand(input.graceSec ?? STARTUP_GRACE_SEC, [
+      containerDir,
+      ...merged.map((m) => m.container),
+    ]),
     env: envList,
     binds,
     portBindings,

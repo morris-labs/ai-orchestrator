@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
@@ -10,7 +10,7 @@ import {
   parseCopilotText,
 } from "../../src/adapters/copilot.js";
 import { parseStructuredText, VendorFindingsOutputSchema } from "../../src/adapters/output.js";
-import type { CliRequest } from "../../src/adapters/types.js";
+import type { AdapterError, CliRequest } from "../../src/adapters/types.js";
 import { fixture, fixturePath } from "./helpers.js";
 import { tempDir } from "../tmp.js";
 
@@ -66,6 +66,22 @@ describe("parseCopilotJson", () => {
     expect(parseCopilotJson(fixture("copilot-legacy.stdout.txt")).text?.trim()).toBe(
       '{"findings":[]}',
     );
+  });
+});
+
+describe("parseCopilotJson tool errors", () => {
+  it("collects tool calls that report success false", () => {
+    const stream = [
+      { type: "tool.execution_complete", data: { toolCallId: "1", success: true } },
+      {
+        type: "tool.execution_complete",
+        data: { toolCallId: "2", success: false, error: { message: "Permission denied" } },
+      },
+      { type: "assistant.message", data: { content: "{}" } },
+    ]
+      .map((e) => JSON.stringify(e))
+      .join("\n");
+    expect(parseCopilotJson(stream).toolErrors).toEqual(["Permission denied"]);
   });
 });
 
@@ -188,6 +204,55 @@ describe("CopilotAdapter", () => {
     });
     expect(out.aiCredits).toBe(7.02);
     expect(out.output).toEqual({ findings: [] });
+  });
+
+  it("never hands Copilot a classic token and says how to sign in", async () => {
+    const dir = tempDir("copilot-token-");
+    const cli = join(dir, "copilot");
+    const seen = join(dir, "seen.txt");
+    writeFileSync(
+      cli,
+      [
+        "#!/bin/sh",
+        `printf '%s|%s|%s' "$COPILOT_GITHUB_TOKEN" "$GH_TOKEN" "$GITHUB_TOKEN" > '${seen}'`,
+        'case "$GH_TOKEN$GITHUB_TOKEN$COPILOT_GITHUB_TOKEN" in',
+        '  ghp_*) echo "Error: Classic Personal Access Tokens (ghp_) are not supported by Copilot." >&2; exit 1;;',
+        "esac",
+        'echo "Error: No authentication information found." >&2',
+        "exit 1",
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    const withClassic = new CopilotAdapter({
+      command: cli,
+      outputFormat: "text",
+      env: {
+        GH_TOKEN: "ghp_classic0123",
+        GITHUB_TOKEN: undefined,
+        COPILOT_GITHUB_TOKEN: undefined,
+      },
+    });
+    const err = (await withClassic
+      .review({ ...base, cwd: dir, timeoutMs: 10_000 })
+      .catch((e: unknown) => e)) as AdapterError;
+    expect(readFileSync(seen, "utf8")).toBe("||");
+    expect(err.kind).toBe("auth");
+    expect(err.message).toMatch(/Copilot can't sign in/);
+    expect(err.message).toMatch(/COPILOT_GITHUB_TOKEN to a fine-grained token/);
+    expect(err.message).not.toContain("ghp_classic0123");
+
+    const fineGrained = new CopilotAdapter({
+      command: cli,
+      outputFormat: "text",
+      env: {
+        GH_TOKEN: "ghp_classic0123",
+        GITHUB_TOKEN: undefined,
+        COPILOT_GITHUB_TOKEN: "github_pat_fine",
+      },
+    });
+    await fineGrained.review({ ...base, cwd: dir, timeoutMs: 10_000 }).catch(() => undefined);
+    expect(readFileSync(seen, "utf8")).toBe("github_pat_fine||");
   });
 
   it("points at a prompt file for a long prompt", () => {

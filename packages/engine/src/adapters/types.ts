@@ -73,6 +73,12 @@ export interface CliResult<T = unknown> {
   /** The CLI's stdout, for the run directory. */
   raw: string;
   durationMs: number;
+  /**
+   * Tool calls that failed during the call, as the CLI's event stream
+   * reported them: a command that exited nonzero, one the sandbox refused, or
+   * a tool that returned an error. Absent when the CLI reports none.
+   */
+  toolErrors?: string[];
 }
 
 /** A usage or rate limit a vendor reported: the core's `LimitInfo` plus its kind. */

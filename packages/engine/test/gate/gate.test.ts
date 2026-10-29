@@ -91,4 +91,55 @@ describe("gate", () => {
       ["lint", false],
     ]);
   });
+
+  it("runs commands without Python bytecode and deletes the untracked files they made", async () => {
+    const { execFileSync } = await import("node:child_process");
+    const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const { tempDir } = await import("../tmp.js");
+    const { ExecaRunner, ShellRunner } = await import("../../src/range/exec.js");
+    const repo = tempDir("gate-clean-");
+    execFileSync("git", ["init", "-q"], { cwd: repo });
+    writeFileSync(join(repo, ".gitignore"), "ignored/\n");
+    writeFileSync(join(repo, "mine.txt"), "untracked before the gate");
+    const policy = PolicyFileSchema.parse({
+      version: 1,
+      tests: [
+        {
+          command:
+            'echo "$PYTHONDONTWRITEBYTECODE" > flag.out; mkdir -p cache ignored .claude-box; touch cache/a.pyc ignored/keep .claude-box/run.json',
+        },
+      ],
+    });
+    mkdirSync(join(repo, "sub"));
+    const result = await runGate(policy, {
+      repoPath: repo,
+      shell: new ShellRunner(),
+      git: new ExecaRunner(),
+    });
+    expect(result.passed).toBe(true);
+    expect(existsSync(join(repo, "flag.out"))).toBe(false);
+    expect(existsSync(join(repo, "cache", "a.pyc"))).toBe(false);
+    expect(existsSync(join(repo, "mine.txt"))).toBe(true);
+    expect(existsSync(join(repo, "ignored", "keep"))).toBe(true);
+    expect(existsSync(join(repo, ".claude-box", "run.json"))).toBe(true);
+    expect(result.commands[0]?.outputTail).toBe("");
+  });
+
+  it("passes PYTHONDONTWRITEBYTECODE to every command", async () => {
+    const envs: Array<Record<string, string> | undefined> = [];
+    const shell: CommandRunner = {
+      run: async (_line, _args, options) => {
+        envs.push(options.env);
+        return { exitCode: 0, stdout: "", stderr: "", timedOut: false };
+      },
+    };
+    const policy = PolicyFileSchema.parse({
+      version: 1,
+      tests: [{ command: "t" }],
+      lint: [{ command: "l" }],
+    });
+    await runGate(policy, { repoPath: "/repo", shell });
+    expect(envs).toEqual([{ PYTHONDONTWRITEBYTECODE: "1" }, { PYTHONDONTWRITEBYTECODE: "1" }]);
+  });
 });

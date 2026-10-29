@@ -86,6 +86,15 @@ describe("resolveRange", () => {
     git(repo, "checkout", "--", "shop/pricing.py");
   });
 
+  it("doesn't count files git ignores as a dirty tree", async () => {
+    const { mkdirSync, rmSync } = await import("node:fs");
+    writeFileSync(join(repo, ".git", "info", "exclude"), "__pycache__/\n", { flag: "a" });
+    mkdirSync(join(repo, "shop", "__pycache__"), { recursive: true });
+    writeFileSync(join(repo, "shop", "__pycache__", "pricing.cpython-312.pyc"), "x");
+    await expect(resolveRange(runner, input(repo))).resolves.toMatchObject({ dirty: false });
+    rmSync(join(repo, "shop", "__pycache__"), { recursive: true });
+  });
+
   it("reports a bad base", async () => {
     await expect(resolveRange(runner, input(repo, { base: "nope" }))).rejects.toMatchObject({
       code: "bad_ref",

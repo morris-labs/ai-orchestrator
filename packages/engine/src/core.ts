@@ -109,6 +109,11 @@ export interface AdapterResult<T> {
   aiCredits?: number;
   /** Estimated cost in US dollars. */
   costEstimate: number;
+  /**
+   * Tool calls that failed during the call, from the vendor's event stream.
+   * Absent when the vendor reported none.
+   */
+  toolErrors?: string[];
 }
 
 /** What `detectLimit` reports for an error that a usage or rate limit caused. */
@@ -140,9 +145,13 @@ export const SweepOutputSchema = z.object({
 });
 export type SweepOutput = z.infer<typeof SweepOutputSchema>;
 
-/** A disprover's answer for one finding. */
+/**
+ * A disprover's answer for one finding. `unverified` means the disprover
+ * couldn't check the finding, such as when its tools failed; the finding
+ * stays pending and is verified again in the next round.
+ */
 export const VerifyOutputSchema = z.object({
-  verdict: z.enum(["confirmed", "disproved"]),
+  verdict: z.enum(["confirmed", "disproved", "unverified"]),
   verification: z.enum(["script", "code-reading"]),
   evidence: z.string(),
   /** Whether the flaw exists in the base worktree too, by the agent's reading. */

@@ -32,6 +32,7 @@ export async function stagePreflight(ctx: RunContext): Promise<void> {
     const baseline = await runGate(ctx.policy, {
       repoPath: ctx.state.request.repoPath,
       shell: ctx.shell,
+      git: ctx.deps.runner,
       signal: ctx.signal,
     });
     preflight = {

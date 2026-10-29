@@ -223,6 +223,27 @@ describe("the cross-vendor rule under limits and redirects", () => {
   });
 });
 
+describe("a server redirect to a vendor the engine can't call", () => {
+  it("hands the grant back and asks a person instead of calling either vendor", async () => {
+    const { broker, settled } = redirecting("copilot");
+    let codexCalls = 0;
+    const codex = {
+      ...answering("codex"),
+      review: (r: AdapterRequest) => {
+        codexCalls += 1;
+        return answering("codex").review(r);
+      },
+    } as VendorAdapter;
+    const { ctx, events } = await makeRun({ adapters: { codex }, broker });
+    const err = await ctx.callAgent(review(ctx.state.request.repoPath)).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(DecisionNeeded);
+    expect((err as Error).message).toMatch(/no working copilot CLI/);
+    expect(codexCalls).toBe(0);
+    expect(events.ofType("agent.started")).toHaveLength(0);
+    expect(settled.map((s) => s.leaseId)).toEqual([`server-${ctx.state.id}-L1`]);
+  });
+});
+
 describe("role.reassigned", () => {
   it("leaves a move the server made in a lease response to the server", async () => {
     const { broker } = redirecting("claude");
@@ -281,5 +302,63 @@ describe("leases", () => {
     } finally {
       broker.close();
     }
+  });
+});
+
+describe("a read-only call", () => {
+  it("fails when it changes the worktree, and the engine restores the tree", async () => {
+    const { writeFileSync, existsSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    let calls = 0;
+    const editing = {
+      ...answering("codex"),
+      review: (r: AdapterRequest) => {
+        calls += 1;
+        writeFileSync(join(r.repoPath, `stray-${calls}.txt`), "x");
+        return answering("codex").review(r);
+      },
+    } as VendorAdapter;
+    const { ctx } = await makeRun({ adapters: { codex: editing } });
+    const repo = ctx.state.request.repoPath;
+    const call = ctx.callAgent<ReviewOutput>({
+      key: "k",
+      role: "reviewer",
+      vendor: "codex",
+      method: "review",
+      request: { prompt: "p", repoPath: repo, toolPolicy: "read-only" },
+      groupId: null,
+      estimateTokens: 1,
+    });
+    await expect(call).rejects.toThrow(/read-only call changed the worktree/);
+    expect(calls).toBe(2);
+    expect(existsSync(join(repo, "stray-1.txt"))).toBe(false);
+    expect(existsSync(join(repo, "stray-2.txt"))).toBe(false);
+  });
+
+  it("may write in the run directory", async () => {
+    const { mkdirSync, writeFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const { ctx } = await makeRun({ adapters: {} });
+    const scratch = ctx.store.scratchDir("F-0001");
+    const writing = {
+      ...answering("codex"),
+      review: (r: AdapterRequest) => {
+        mkdirSync(scratch, { recursive: true });
+        writeFileSync(join(scratch, "repro.py"), "x");
+        return answering("codex").review(r);
+      },
+    } as VendorAdapter;
+    ctx.deps.adapters.codex = writing;
+    await expect(
+      ctx.callAgent<ReviewOutput>({
+        key: "k",
+        role: "reviewer",
+        vendor: "codex",
+        method: "review",
+        request: { prompt: "p", repoPath: ctx.state.request.repoPath, toolPolicy: "read-only" },
+        groupId: null,
+        estimateTokens: 1,
+      }),
+    ).resolves.toMatchObject({ vendor: "codex" });
   });
 });

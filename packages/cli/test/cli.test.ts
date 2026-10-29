@@ -407,6 +407,19 @@ describe("review", () => {
     ]);
   });
 
+  it("pushes a run's branch", async () => {
+    server.on(`POST /api/v1/runs/${RUN}/push`, { body: runState });
+    expect(await cli(["review", "push", RUN])).toBe(0);
+    expect(last()?.body).toEqual({ draft: false });
+    expect(out).toContain(`Pushed run ${RUN}`);
+    await cli(["review", "push", RUN, "--title", "Fix the mailer", "--draft"]);
+    expect(last()?.body).toEqual({ title: "Fix the mailer", draft: true });
+    expect(await cli(["review", "push"])).toBe(2);
+    out = "";
+    expect(await cli(["review", "push", "--help"])).toBe(0);
+    expect(out.replace(/\s+/g, " ")).toContain("post-push loop");
+  });
+
   it("assigns roles and switches profiles", async () => {
     server.on(`POST /api/v1/runs/${RUN}/assign`, { body: runState });
     await cli(["review", "assign", RUN, "reviewer", "codex", "claude"]);
