@@ -109,14 +109,22 @@ export function parentPid(proc: ProcFs, pid: number): number | null {
   return Number.isInteger(ppid) && ppid > 0 ? ppid : null;
 }
 
-/** Parses `tmux list-panes -a -F '#{session_name}\t#{pane_pid}'` into pane pid to session. */
+/**
+ * The `tmux list-panes -F` format `parsePanes` reads. The pid comes first and
+ * a space separates it from the session name: tmux 3.6 prints a tab in a
+ * format as `_`, but it keeps spaces, and a pid never contains one.
+ */
+export const PANES_FORMAT = "#{pane_pid} #{session_name}";
+
+/** Parses `tmux list-panes -a -F PANES_FORMAT` into pane pid to session. */
 export function parsePanes(output: string): Map<number, string> {
   const panes = new Map<number, string>();
   for (const line of output.split("\n")) {
-    const tab = line.lastIndexOf("\t");
-    if (tab < 0) continue;
-    const pid = Number(line.slice(tab + 1));
-    if (Number.isInteger(pid) && pid > 0) panes.set(pid, line.slice(0, tab));
+    const space = line.indexOf(" ");
+    if (space <= 0) continue;
+    const pid = Number(line.slice(0, space));
+    const session = line.slice(space + 1).replace(/\r$/, "");
+    if (Number.isInteger(pid) && pid > 0 && session !== "") panes.set(pid, session);
   }
   return panes;
 }
@@ -163,7 +171,7 @@ export async function scanListeners(options: ScannerOptions): Promise<Listener[]
 
   const panesOut = await options.runner.run(
     "tmux",
-    ["list-panes", "-a", "-F", "#{session_name}\t#{pane_pid}"],
+    ["list-panes", "-a", "-F", PANES_FORMAT],
     { timeoutMs: 5_000 },
   );
   const panes = panesOut.code === 0 ? parsePanes(panesOut.stdout) : new Map<number, string>();
