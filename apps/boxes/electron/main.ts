@@ -31,6 +31,7 @@ import {
 } from "electron";
 import type { BridgeResult, ExternalTerminalRequest } from "../src/bridge";
 import {
+  childEnv,
   findTerminal,
   isBoxNotification,
   reviewCommand,
@@ -91,7 +92,13 @@ function executable(path: string): boolean {
 function detached(file: string, args: string[]): Promise<BridgeResult> {
   return new Promise((resolve) => {
     try {
-      const child = spawn(file, args, { detached: true, stdio: "ignore" });
+      // The token stays in this process: a terminal, its shell, and the
+      // review app don't get it.
+      const child = spawn(file, args, {
+        detached: true,
+        stdio: "ignore",
+        env: childEnv(process.env),
+      });
       child.once("error", (err) => resolve({ ok: false, error: `${file}: ${err.message}` }));
       child.once("spawn", () => {
         child.unref();

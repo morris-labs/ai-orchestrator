@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  childEnv,
   findTerminal,
   isBoxNotification,
   reviewCommand,
@@ -104,6 +105,11 @@ describe("notifications and review", () => {
       args: ["--project=p", "--box=b"],
     });
     expect(reviewCommand("p", "b", "").file).toBe("agentbox-review");
+  });
+  it("keeps the server token out of a spawned process's environment", () => {
+    const env = { PATH: "/usr/bin", AGENTBOX_SERVER_TOKEN: "secret", HOME: "/home/dev" };
+    expect(childEnv(env)).toEqual({ PATH: "/usr/bin", HOME: "/home/dev" });
+    expect(env.AGENTBOX_SERVER_TOKEN).toBe("secret");
   });
   it("reads the server URL from the environment", () => {
     expect(serverUrl({})).toBe("http://127.0.0.1:21400");

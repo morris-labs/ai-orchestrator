@@ -165,6 +165,22 @@ export function reviewCommand(
   };
 }
 
+/** Environment variables that hold a secret and never reach a spawned process. */
+export const SECRET_ENV: readonly string[] = ["AGENTBOX_SERVER_TOKEN"];
+
+/**
+ * A copy of `env` for a process this app spawns, such as a terminal or the
+ * review app, without the variables in `SECRET_ENV`. The review app reads
+ * the token from its file instead.
+ */
+export function childEnv(
+  env: Record<string, string | undefined>,
+): Record<string, string | undefined> {
+  const copy = { ...env };
+  for (const name of SECRET_ENV) delete copy[name];
+  return copy;
+}
+
 /** The server origin from the environment: `AGENTBOX_SERVER_URL`, else the default port. */
 export function serverUrl(env: Record<string, string | undefined>): string {
   return (env.AGENTBOX_SERVER_URL ?? "http://127.0.0.1:21400").replace(/\/$/, "");
