@@ -109,7 +109,7 @@ describe("Scheduler", () => {
     const t = make();
     t.settings.value = {
       ...t.settings.value,
-      ceilings: { ...t.settings.value.ceilings, copilot: { kind: "spend", maxUsd: 0 } },
+      ceilings: { ...t.settings.value.ceilings, copilot: { kind: "spend", period: "month", maxUsd: 0 } },
     };
     t.sample("codex", { utilization: 0.8, resetAt: iso(T0 + 30 * MIN) });
     const res = await t.scheduler.decide("e", "p", t.req());
