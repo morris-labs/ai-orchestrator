@@ -116,6 +116,69 @@ describe("EventHub", () => {
   });
 });
 
+describe("EventHub filtered streams", () => {
+  const only = new Set(["box.changed"] as const);
+  it("numbers the filtered stream by position and replays without gaps", () => {
+    const hub = new EventHub();
+    hub.emit(box("claude-agent-a"));
+    hub.emit(note());
+    hub.emit(box("claude-agent-b"));
+    const id = hub.filteredStreamId(only);
+    expect(id).not.toBe(hub.streamId);
+    expect(hub.filteredStreamId(null)).toBe(hub.streamId);
+    expect(hub.filteredLastSeq(only)).toBe(2);
+    const plan = hub.replay({ type: "hello", streamId: id, lastSeq: 0 }, only);
+    expect(plan.hello).toEqual({ type: "hello", streamId: id, lastSeq: 2, replaying: true });
+    expect(plan.events.map((e) => [e.seq, e.streamId, "boxId" in e && e.boxId])).toEqual([
+      [1, id, "claude-agent-a"],
+      [2, id, "claude-agent-b"],
+    ]);
+    // The hub's own position means nothing on the filtered stream.
+    expect(
+      hub.replay({ type: "hello", streamId: hub.streamId, lastSeq: 3 }, only).hello.replaying,
+    ).toBe(false);
+    expect(hub.replay({ type: "hello", streamId: id, lastSeq: 3 }, only).hello.replaying).toBe(
+      false,
+    );
+  });
+
+  it("keeps the filtered numbering across a restart and a prune", () => {
+    const db = openDatabase(":memory:");
+    const first = new EventHub({ db, keep: 10, bufferSize: 5 });
+    for (let i = 0; i < 1005; i += 1) {
+      first.emit(i % 2 === 0 ? box(`claude-agent-${i}`) : note());
+    }
+    const boxes = first.filteredLastSeq(only);
+    expect(boxes).toBe(503);
+    const second = new EventHub({ db, keep: 10, bufferSize: 5 });
+    expect(second.filteredLastSeq(only)).toBe(boxes);
+    expect(second.filteredStreamId(only)).toBe(first.filteredStreamId(only));
+    const id = second.filteredStreamId(only);
+    const plan = second.replay({ type: "hello", streamId: id, lastSeq: boxes - 3 }, only);
+    expect(plan.hello.replaying).toBe(true);
+    expect(plan.events.map((e) => e.seq)).toEqual([boxes - 2, boxes - 1, boxes]);
+    expect(plan.events.map((e) => e.sourceSeq)).toEqual([1001, 1003, 1005]);
+    // Further back than SQLite keeps: the client must reload.
+    expect(
+      second.replay({ type: "hello", streamId: id, lastSeq: boxes - 50 }, only).hello.replaying,
+    ).toBe(false);
+  });
+});
+
+function note() {
+  return {
+    type: "notification",
+    notificationId: "n",
+    kind: "box_ended",
+    title: "Box ended",
+    body: "",
+    runId: null,
+    boxId: null,
+    severity: "warning",
+    read: false,
+  } as const;
+}
+
 describe("LateSink", () => {
   it("holds events until the hub is attached", () => {
     const sink = new LateSink();

@@ -3,6 +3,7 @@
 import type {
   AgentBoxEvent,
   EngineRouteKey,
+  EventType,
   Job,
   Notification,
   RunState,
@@ -42,9 +43,15 @@ export interface ApiEngines {
 
 export interface ApiHub {
   readonly streamId: string;
+  /** The `seq` of the newest event in the unfiltered stream. */
+  readonly lastSeq: number;
   emit(event: EventInput): AgentBoxEvent;
   subscribe(listener: (event: AgentBoxEvent) => void): () => void;
-  replay(hello: { type: "hello"; streamId: string | null; lastSeq: number | null }): ReplayPlan;
+  /** With `filter`, plans the stream of those event types only; see `EventHub.replay`. */
+  replay(
+    hello: { type: "hello"; streamId: string | null; lastSeq: number | null },
+    filter?: ReadonlySet<EventType> | null,
+  ): ReplayPlan;
 }
 
 export interface ApiRuns {

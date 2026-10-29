@@ -13,7 +13,6 @@ import {
   pathParamsSchema,
   projectContainerName,
   serverRoutes,
-  type AgentBoxEvent,
   type EventType,
   type HttpRouteDef,
   type WsRouteDef,
@@ -286,17 +285,26 @@ function serveEvents(deps: ApiDeps, socket: WebSocket, request: FastifyRequest):
     socket.close(1008, toApiError(err).message.slice(0, 120));
     return;
   }
+  // `sentUpTo` is the hub `seq` this socket has caught up to. A filtered
+  // socket numbers what it sends by counting on from its hello's `lastSeq`,
+  // so its stream has no gaps where the other types were.
   let sentUpTo: number | null = null;
+  let streamId = deps.hub.streamId;
+  let position = 0;
   const send = (frame: unknown) => {
     if (socket.readyState === socket.OPEN) {
       socket.send(JSON.stringify(ServerStreamFrameSchema.parse(frame)));
     }
   };
-  const wanted = (event: AgentBoxEvent) => types === null || types.has(event.type);
   const unsubscribe = deps.hub.subscribe((event) => {
     if (sentUpTo === null || event.seq <= sentUpTo) return;
     sentUpTo = event.seq;
-    if (wanted(event)) send(event);
+    if (types === null) {
+      send(event);
+    } else if (types.has(event.type)) {
+      position += 1;
+      send({ ...event, streamId, seq: position });
+    }
   });
   socket.on("message", (data, isBinary) => {
     if (isBinary) {
@@ -311,10 +319,12 @@ function serveEvents(deps: ApiDeps, socket: WebSocket, request: FastifyRequest):
       return;
     }
     // Replay and subscription run in one tick, so no event falls between them.
-    const plan = deps.hub.replay(hello);
+    const plan = deps.hub.replay(hello, types);
     send(plan.hello);
-    for (const event of plan.events) if (wanted(event)) send(event);
-    sentUpTo = plan.hello.lastSeq;
+    for (const event of plan.events) send(event);
+    streamId = plan.hello.streamId;
+    position = plan.hello.lastSeq;
+    sentUpTo = deps.hub.lastSeq;
   });
   socket.on("close", unsubscribe);
 }

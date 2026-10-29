@@ -90,8 +90,68 @@ describe("events.stream", () => {
       read: false,
     });
     await s.until((x) => x.texts.length === 2);
-    expect(s.texts[1]).toMatchObject({ type: "notification", seq: 2 });
+    expect(s.texts[1]).toMatchObject({ type: "notification", seq: 1 });
     s.ws.close();
+  });
+
+  // Finding 17: a filtered stream used to keep the hub's `seq`, so every
+  // event of another type left a gap. The client's gap check sent a hello,
+  // the replay had the same gap, and the client stalled.
+  it("numbers a filtered stream without gaps, live and on replay", async () => {
+    const note = (id: string) =>
+      ({
+        type: "notification",
+        notificationId: id,
+        kind: "box_ended",
+        title: "Box ended",
+        body: "",
+        runId: null,
+        boxId: null,
+        severity: "warning",
+        read: false,
+      }) as const;
+    const url = `${base}?token=${TOKEN}&types=notification`;
+    // The same check `EventsConnection` makes: each event must follow the last.
+    const gapless = (frames: unknown[], from: number) => {
+      let last = from;
+      for (const f of frames as { seq: number }[]) {
+        expect(f.seq).toBe(last + 1);
+        last = f.seq;
+      }
+      return last;
+    };
+    h.hub.emit(boxEvent("claude-agent-a"));
+    h.hub.emit(note("n1"));
+    const s = await connect(url);
+    s.ws.send(JSON.stringify({ type: "hello", streamId: null, lastSeq: null }));
+    await s.until((x) => x.texts.length === 1);
+    const hello = s.texts[0] as { streamId: string; lastSeq: number };
+    expect(hello).toMatchObject({ replaying: false, lastSeq: 1 });
+    expect(hello.streamId).not.toBe(h.hub.streamId);
+    h.hub.emit(boxEvent("claude-agent-b"));
+    h.hub.emit(note("n2"));
+    h.hub.emit(boxEvent("claude-agent-c"));
+    h.hub.emit(note("n3"));
+    await s.until((x) => x.texts.length === 3);
+    const live = s.texts.slice(1) as { streamId: string; seq: number }[];
+    expect(live.every((e) => e.streamId === hello.streamId)).toBe(true);
+    expect(gapless(live, hello.lastSeq)).toBe(3);
+    s.ws.close();
+
+    // A reconnect resumes from the filtered position and replays only what it missed.
+    h.hub.emit(boxEvent("claude-agent-d"));
+    h.hub.emit(note("n4"));
+    const r = await connect(url);
+    r.ws.send(JSON.stringify({ type: "hello", streamId: hello.streamId, lastSeq: 2 }));
+    await r.until((x) => x.texts.length === 3);
+    expect(r.texts[0]).toMatchObject({ replaying: true, lastSeq: 4, streamId: hello.streamId });
+    const replayed = r.texts.slice(1) as { notificationId: string; seq: number }[];
+    expect(replayed.map((e) => e.notificationId)).toEqual(["n3", "n4"]);
+    expect(gapless(replayed, 2)).toBe(4);
+    h.hub.emit(note("n5"));
+    await r.until((x) => x.texts.length === 4);
+    expect(r.texts[3]).toMatchObject({ notificationId: "n5", seq: 5 });
+    r.ws.close();
   });
 
   it("closes on a frame that is not a hello", async () => {

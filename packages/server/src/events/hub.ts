@@ -5,11 +5,19 @@
 // The stream id survives a server restart as long as the SQLite mirror does,
 // so a client can resume across restarts. A client that asks for events
 // older than the mirror keeps gets `replaying: false` and reloads.
-import { randomUUID } from "node:crypto";
+//
+// A client that subscribes to some event types only reads a stream of its
+// own: the contract defines `seq` as the position in the stream you are
+// reading, so a filtered stream numbers its events 1, 2, 3, ... without the
+// gaps the other types would leave. The hub counts the events of each type,
+// so that number is the same on every connection and across restarts, and a
+// filtered client can resume like any other.
+import { createHash, randomUUID } from "node:crypto";
 import {
   EventSchema,
   type AgentBoxEvent,
   type ClientHello,
+  type EventType,
   type StreamHello,
 } from "@agentbox/contracts";
 import type { EventInput, EventSink, SqlDatabase } from "../api/core-interface.js";
@@ -34,9 +42,23 @@ export interface ReplayPlan {
   events: AgentBoxEvent[];
 }
 
+/** The event types a client reads, or `null` for all of them. */
+export type EventFilter = ReadonlySet<EventType> | null;
+
+/** The `svc_event_meta` key that holds the per-type counts. */
+const COUNTS_KEY = "typeCounts";
+
+interface StoredCounts {
+  /** The hub `seq` the counts include. */
+  through: number;
+  counts: Record<string, number>;
+}
+
 export class EventHub implements EventSink {
   readonly streamId: string;
   private seq: number;
+  /** How many events of each type the stream holds, from its first event. */
+  private readonly typeCounts = new Map<string, number>();
   private readonly buffer: AgentBoxEvent[] = [];
   private readonly listeners = new Set<EventListener>();
   private readonly bufferSize: number;
@@ -56,10 +78,12 @@ export class EventHub implements EventSink {
       if (row) {
         this.streamId = row.value;
         this.seq = max.seq ?? 0;
+        this.loadCounts(db);
       } else {
         this.streamId = randomUUID();
         this.seq = 0;
         db.prepare("DELETE FROM svc_events").run();
+        db.prepare("DELETE FROM svc_event_meta WHERE key = ?").run(COUNTS_KEY);
         db.prepare("INSERT INTO svc_event_meta (key, value) VALUES ('streamId', ?)").run(
           this.streamId,
         );
@@ -72,6 +96,55 @@ export class EventHub implements EventSink {
 
   get lastSeq(): number {
     return this.seq;
+  }
+
+  /**
+   * Reads the stored per-type counts and adds the events stored after them.
+   * The counts are saved before every prune, so every event they don't
+   * include is still in `svc_events`.
+   */
+  private loadCounts(db: SqlDatabase): void {
+    const row = db.prepare("SELECT value FROM svc_event_meta WHERE key = ?").get(COUNTS_KEY) as
+      { value: string } | undefined;
+    let stored: StoredCounts = { through: 0, counts: {} };
+    if (row) {
+      try {
+        stored = JSON.parse(row.value) as StoredCounts;
+      } catch {
+        // A damaged row counts from what SQLite still keeps.
+      }
+    }
+    for (const [type, n] of Object.entries(stored.counts)) this.typeCounts.set(type, n);
+    const rows = db
+      .prepare("SELECT type, COUNT(*) AS n FROM svc_events WHERE seq > ? GROUP BY type")
+      .all(stored.through) as { type: string; n: number }[];
+    for (const r of rows) this.typeCounts.set(r.type, (this.typeCounts.get(r.type) ?? 0) + r.n);
+  }
+
+  private saveCounts(db: SqlDatabase): void {
+    const value: StoredCounts = { through: this.seq, counts: Object.fromEntries(this.typeCounts) };
+    db.prepare(
+      "INSERT INTO svc_event_meta (key, value) VALUES (?, ?) " +
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    ).run(COUNTS_KEY, JSON.stringify(value));
+  }
+
+  /**
+   * The id of the stream a client with `filter` reads: the hub's own id for
+   * every type, and an id derived from it and the type list otherwise.
+   */
+  filteredStreamId(filter: EventFilter): string {
+    if (filter === null) return this.streamId;
+    const key = [...filter].sort().join(",");
+    return `${this.streamId}.${createHash("sha256").update(key).digest("hex").slice(0, 16)}`;
+  }
+
+  /** The newest `seq` of the stream a client with `filter` reads. */
+  filteredLastSeq(filter: EventFilter): number {
+    if (filter === null) return this.seq;
+    let n = 0;
+    for (const type of filter) n += this.typeCounts.get(type) ?? 0;
+    return n;
   }
 
   /** Emits an event the server produces itself. */
@@ -105,6 +178,7 @@ export class EventHub implements EventSink {
   private publish(candidate: unknown): AgentBoxEvent {
     const event = EventSchema.parse(candidate);
     this.seq = event.seq;
+    this.typeCounts.set(event.type, (this.typeCounts.get(event.type) ?? 0) + 1);
     this.buffer.push(event);
     if (this.buffer.length > this.bufferSize) this.buffer.shift();
     this.persist(event);
@@ -129,6 +203,7 @@ export class EventHub implements EventSink {
     this.insertsSincePrune += 1;
     if (this.insertsSincePrune >= 1000) {
       this.insertsSincePrune = 0;
+      this.saveCounts(db);
       db.prepare("DELETE FROM svc_events WHERE seq <= ?").run(this.seq - this.keep);
     }
   }
@@ -142,8 +217,13 @@ export class EventHub implements EventSink {
   /**
    * Answers a client's hello: replays every event after the client's
    * `lastSeq` when its `streamId` matches and the events are still kept.
+   *
+   * With a `filter`, the plan describes the filtered stream: its own
+   * `streamId`, and events numbered by their position in it. The caller
+   * numbers later live events by counting on from `hello.lastSeq`.
    */
-  replay(hello: ClientHello): ReplayPlan {
+  replay(hello: ClientHello, filter: EventFilter = null): ReplayPlan {
+    if (filter !== null) return this.replayFiltered(hello, filter);
     const none: ReplayPlan = {
       hello: { type: "hello", streamId: this.streamId, lastSeq: this.seq, replaying: false },
       events: [],
@@ -155,6 +235,51 @@ export class EventHub implements EventSink {
     const events = this.eventsAfter(from);
     if (events === null) return none;
     return { hello: { ...none.hello, replaying: true }, events };
+  }
+
+  private replayFiltered(hello: ClientHello, filter: ReadonlySet<EventType>): ReplayPlan {
+    const streamId = this.filteredStreamId(filter);
+    const lastSeq = this.filteredLastSeq(filter);
+    const none: ReplayPlan = {
+      hello: { type: "hello", streamId, lastSeq, replaying: false },
+      events: [],
+    };
+    if (hello.streamId !== streamId || hello.lastSeq === null) return none;
+    const from = hello.lastSeq;
+    if (from > lastSeq) return none;
+    const missed = this.lastMatching(filter, lastSeq - from);
+    if (missed === null) return none;
+    return {
+      hello: { ...none.hello, replaying: true },
+      events: missed.map((e, i) => ({ ...e, streamId, seq: from + 1 + i })),
+    };
+  }
+
+  /**
+   * The newest `count` events whose type is in `filter`, oldest first, or
+   * `null` when fewer are kept. The buffer and SQLite each keep an unbroken
+   * run of the newest events, so the newest `count` matches in either one
+   * are the newest in the stream.
+   */
+  private lastMatching(filter: ReadonlySet<EventType>, count: number): AgentBoxEvent[] | null {
+    if (count === 0) return [];
+    const found: AgentBoxEvent[] = [];
+    for (let i = this.buffer.length - 1; i >= 0 && found.length < count; i -= 1) {
+      const event = this.buffer[i]!;
+      if (filter.has(event.type)) found.push(event);
+    }
+    if (found.length === count) return found.reverse();
+    const db = this.options.db;
+    if (!db) return null;
+    const types = [...filter];
+    const rows = db
+      .prepare(
+        `SELECT json FROM svc_events WHERE type IN (${types.map(() => "?").join(", ")}) ` +
+          "ORDER BY seq DESC LIMIT ?",
+      )
+      .all(...types, count) as { json: string }[];
+    if (rows.length !== count) return null;
+    return rows.reverse().map((r) => EventSchema.parse(JSON.parse(r.json)));
   }
 
   /** Every kept event after `seq`, or `null` when some of them are gone. */
