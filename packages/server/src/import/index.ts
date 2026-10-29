@@ -2,6 +2,7 @@ export {
   runImport,
   needsImport,
   parseForward,
+  privateIdentity,
   summarizeImport,
   IMPORT_SOURCE,
 } from "./importer.js";
