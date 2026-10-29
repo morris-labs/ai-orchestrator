@@ -7,11 +7,7 @@ import type { Job, SetupCheck, SetupStatusSchema } from "@agentbox/contracts";
 import type { z } from "zod";
 import type { Core } from "../api/core-interface.js";
 import { ApiError, toApiError } from "../api/errors.js";
-import {
-  imageBuildScript,
-  imageBuildScriptArgs,
-  type ImageBuildKind,
-} from "../docker/image.js";
+import { imageBuildScript, imageBuildScriptArgs, type ImageBuildKind } from "../docker/image.js";
 import { processJob, type JobIO, type JobManager } from "../jobs/jobs.js";
 import { commandLine, type ProcessRunner } from "../jobs/process.js";
 import type { OpClient } from "../secrets/op.js";

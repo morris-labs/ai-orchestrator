@@ -68,9 +68,9 @@ describe("image helpers", () => {
   it("defaults the context to the checkout, else the installed package", () => {
     const has = (files: string[]) => (p: string) => files.includes(p);
     expect(defaultImageContext("/repo", has(["/repo/image/Dockerfile"]))).toBe("/repo/image");
-    expect(
-      defaultImageContext("/usr/lib", has(["/usr/share/agentbox/image/Dockerfile"])),
-    ).toBe("/usr/share/agentbox/image");
+    expect(defaultImageContext("/usr/lib", has(["/usr/share/agentbox/image/Dockerfile"]))).toBe(
+      "/usr/share/agentbox/image",
+    );
     expect(defaultImageContext("/repo", has([]))).toBe("/repo/image");
   });
 

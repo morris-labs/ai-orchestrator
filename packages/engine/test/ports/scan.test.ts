@@ -58,7 +58,8 @@ function fakeRunner(ss: { code: number; stdout: string }): CommandRunner {
   return {
     run: async (program, args) => {
       if (program === "ss") return { ...ss, stderr: "" };
-      if (program === "tmux" && args.at(-1) === PANES_FORMAT) return { code: 0, stdout: panes, stderr: "" };
+      if (program === "tmux" && args.at(-1) === PANES_FORMAT)
+        return { code: 0, stdout: panes, stderr: "" };
       return { code: 127, stdout: "", stderr: "" };
     },
   };
@@ -90,7 +91,8 @@ describe("parsers", () => {
 
   it("parses real tmux 3.6 output in PANES_FORMAT", () => {
     // Captured from tmux 3.6 in the image with `tmux list-panes -a -F "#{pane_pid} #{session_name}"`.
-    const real = "762 claude-agent-agentbox-hostcheck-bmrt\n3779 claude-agent-agentbox-hostcheck-bmrt\n";
+    const real =
+      "762 claude-agent-agentbox-hostcheck-bmrt\n3779 claude-agent-agentbox-hostcheck-bmrt\n";
     expect(parsePanes(real)).toEqual(
       new Map([
         [762, "claude-agent-agentbox-hostcheck-bmrt"],
@@ -100,7 +102,9 @@ describe("parsers", () => {
   });
 
   it("keeps spaces inside a session name and skips malformed lines", () => {
-    expect(parsePanes("42 my box name\nnot-a-pid name\n7\n\n")).toEqual(new Map([[42, "my box name"]]));
+    expect(parsePanes("42 my box name\nnot-a-pid name\n7\n\n")).toEqual(
+      new Map([[42, "my box name"]]),
+    );
   });
 
   it("ignores the old tab format, which tmux 3.6 prints as an underscore", () => {

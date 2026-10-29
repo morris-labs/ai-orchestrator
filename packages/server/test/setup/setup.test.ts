@@ -184,7 +184,10 @@ describe("SetupService image builds and fixes", () => {
   it("refuses an image build without the build script beside the context", async () => {
     const { svc, runner } = make({ imageContext: await context({ script: false }) });
     expect(() => svc.buildImage("rebuild")).toThrow(
-      expect.objectContaining({ code: "image_missing", message: expect.stringMatching(/build-image\.sh/) }),
+      expect.objectContaining({
+        code: "image_missing",
+        message: expect.stringMatching(/build-image\.sh/),
+      }),
     );
     expect(runner.spawned).toHaveLength(0);
   });
@@ -201,7 +204,9 @@ describe("SetupService image builds and fixes", () => {
     });
     const job = svc.buildImage("rebuild");
     expect(job.kind).toBe("image_build");
-    expect(job.command).toBe(`${join(home, "scripts", "build-image.sh")} --tag my-image --no-cache`);
+    expect(job.command).toBe(
+      `${join(home, "scripts", "build-image.sh")} --tag my-image --no-cache`,
+    );
     await waitFor(() => runner.spawned.length === 1);
     expect(runner.spawned[0]?.argv).toEqual([
       join(home, "scripts", "build-image.sh"),
@@ -224,9 +229,15 @@ describe("SetupService image builds and fixes", () => {
     await mkdir(join(img, "keeper"), { recursive: true });
     await mkdir(join(img, "dist"), { recursive: true });
     await mkdir(join(root, "scripts", "lib"), { recursive: true });
-    await copyFile(join(repo, "scripts", "build-image.sh"), join(root, "scripts", "build-image.sh"));
+    await copyFile(
+      join(repo, "scripts", "build-image.sh"),
+      join(root, "scripts", "build-image.sh"),
+    );
     await chmod(join(root, "scripts", "build-image.sh"), 0o755);
-    await copyFile(join(repo, "scripts", "lib", "common.sh"), join(root, "scripts", "lib", "common.sh"));
+    await copyFile(
+      join(repo, "scripts", "lib", "common.sh"),
+      join(root, "scripts", "lib", "common.sh"),
+    );
     const versions = await readFile(join(repo, "image", "versions.env"), "utf8");
     await writeFile(join(img, "versions.env"), versions);
     await writeFile(join(img, "Dockerfile"), "FROM ubuntu\n");
@@ -237,7 +248,9 @@ describe("SetupService image builds and fixes", () => {
 
     const { svc } = make({ imageContext: img, settings: { engineImage: "claude-code:v4test" } });
     const argv = svc.buildArgv("packages");
-    const out = execFileSync(argv[0] as string, [...argv.slice(1), "--print"], { encoding: "utf8" });
+    const out = execFileSync(argv[0] as string, [...argv.slice(1), "--print"], {
+      encoding: "utf8",
+    });
     expect(out).toContain("docker build -t claude-code:v4test");
     expect(out).toMatch(/--build-arg CACHEBUST_PACKAGES=\d+/);
     for (const line of versions.split("\n").filter((l) => /^[A-Z]/.test(l))) {

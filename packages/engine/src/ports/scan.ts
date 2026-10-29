@@ -169,11 +169,9 @@ export async function scanListeners(options: ScannerOptions): Promise<Listener[]
     }
   }
 
-  const panesOut = await options.runner.run(
-    "tmux",
-    ["list-panes", "-a", "-F", PANES_FORMAT],
-    { timeoutMs: 5_000 },
-  );
+  const panesOut = await options.runner.run("tmux", ["list-panes", "-a", "-F", PANES_FORMAT], {
+    timeoutMs: 5_000,
+  });
   const panes = panesOut.code === 0 ? parsePanes(panesOut.stdout) : new Map<number, string>();
   const live = new Set(panes.values());
 
