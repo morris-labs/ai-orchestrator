@@ -179,10 +179,14 @@ export class RunContext {
     return this.state.round;
   }
 
+  /** Vendors this engine has an adapter for: a CLI that answered, or a mock. */
   get availableVendors(): Vendor[] {
-    return (["claude", "codex", "copilot"] as const).filter(
-      (v) => this.deps.adapters[v] !== undefined,
-    );
+    return (["claude", "codex", "copilot"] as const).filter((v) => this.usable(v));
+  }
+
+  /** True when this engine has an adapter for `vendor`. */
+  usable(vendor: Vendor): boolean {
+    return this.deps.adapters[vendor] !== undefined;
   }
 
   range(): RangeInfo {
@@ -483,7 +487,20 @@ export class RunContext {
       }
       if (response.decision === "granted") {
         const leaseId = response.leaseId;
-        if (response.vendor !== vendor && this.deps.adapters[response.vendor]) {
+        if (response.vendor !== vendor) {
+          if (!this.usable(response.vendor)) {
+            // The server doesn't know which CLIs this engine has; taking the
+            // grant would call a vendor that can't answer, and calling the
+            // requested vendor instead would ignore its ceiling.
+            await this.settle(leaseId, response.vendor, role, ZERO_USE);
+            const why = `this engine has no working ${response.vendor} CLI`;
+            throw new DecisionNeeded({
+              kind: "ceiling",
+              findingIds: [],
+              options: ["resume", "cancel"],
+              message: `The server moved the ${role} call from ${vendor}, which is over its ceiling, to ${response.vendor}, but ${why}. No usable vendor can take the call. Resume when ${vendor} has room again, raise its ceiling, or fix ${response.vendor}'s setup.`,
+            });
+          }
           if (avoid.includes(response.vendor)) {
             // Taking the grant would break the cross-vendor rule; hand the
             // lease back unused and ask a person.
@@ -521,9 +538,7 @@ export class RunContext {
   ): Vendor | null {
     if (role === "fixer") return null;
     return (
-      FALLBACK_ORDER.find(
-        (v) => !tried.includes(v) && !avoid.includes(v) && this.deps.adapters[v] !== undefined,
-      ) ?? null
+      FALLBACK_ORDER.find((v) => !tried.includes(v) && !avoid.includes(v) && this.usable(v)) ?? null
     );
   }
 
@@ -637,10 +652,13 @@ export class RunContext {
         failures += 1;
         // One retry per call, unless the adapter knows a retry fails the same way.
         if (failures >= 2 || adapter.isRetryable?.(error) === false) {
+          const reason = (error as Error).message ?? String(error);
           throw new AgentFailed(
             spec.role,
             vendor,
-            `The ${spec.role} call on ${vendor} failed twice: ${(error as Error).message ?? String(error)}`,
+            failures >= 2
+              ? `The ${spec.role} call on ${vendor} failed twice: ${reason}`
+              : `The ${spec.role} call on ${vendor} failed: ${reason}`,
           );
         }
         continue;

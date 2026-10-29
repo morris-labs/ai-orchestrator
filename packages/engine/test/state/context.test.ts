@@ -223,6 +223,27 @@ describe("the cross-vendor rule under limits and redirects", () => {
   });
 });
 
+describe("a server redirect to a vendor the engine can't call", () => {
+  it("hands the grant back and asks a person instead of calling either vendor", async () => {
+    const { broker, settled } = redirecting("copilot");
+    let codexCalls = 0;
+    const codex = {
+      ...answering("codex"),
+      review: (r: AdapterRequest) => {
+        codexCalls += 1;
+        return answering("codex").review(r);
+      },
+    } as VendorAdapter;
+    const { ctx, events } = await makeRun({ adapters: { codex }, broker });
+    const err = await ctx.callAgent(review(ctx.state.request.repoPath)).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(DecisionNeeded);
+    expect((err as Error).message).toMatch(/no working copilot CLI/);
+    expect(codexCalls).toBe(0);
+    expect(events.ofType("agent.started")).toHaveLength(0);
+    expect(settled.map((s) => s.leaseId)).toEqual([`server-${ctx.state.id}-L1`]);
+  });
+});
+
 describe("role.reassigned", () => {
   it("leaves a move the server made in a lease response to the server", async () => {
     const { broker } = redirecting("claude");

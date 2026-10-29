@@ -40,6 +40,49 @@ export interface SchedulerOptions {
   now?: () => Date;
   grantTtlMs?: number;
   fallbackOrder?: Vendor[];
+  /**
+   * Whether a vendor can take a redirected call in a run: set up, and not
+   * known to be failing in that run. Absent means every vendor is usable.
+   * `VendorHealth.usable` is the usual source.
+   */
+  usable?: (runId: string, vendor: Vendor) => boolean;
+}
+
+/**
+ * Tracks vendors that fail in each run, from `agent.finished` events. A
+ * vendor whose last call in a run ended in an error or a timeout is failing
+ * in that run until one of its calls succeeds there. A scheduler doesn't
+ * redirect a role to a failing vendor.
+ */
+export class VendorHealth {
+  private readonly failing = new Map<string, Set<Vendor>>();
+  private readonly order: string[] = [];
+
+  constructor(private readonly maxRuns = 1000) {}
+
+  ingest(event: AgentBoxEvent): void {
+    if (event.type !== "agent.finished") return;
+    if (event.outcome === "error" || event.outcome === "timeout") {
+      let set = this.failing.get(event.runId);
+      if (!set) {
+        set = new Set();
+        this.failing.set(event.runId, set);
+        this.order.push(event.runId);
+        if (this.order.length > this.maxRuns) {
+          const oldest = this.order.shift();
+          if (oldest !== undefined) this.failing.delete(oldest);
+        }
+      }
+      set.add(event.vendor);
+    } else if (event.outcome === "ok") {
+      this.failing.get(event.runId)?.delete(event.vendor);
+    }
+  }
+
+  /** True unless the vendor's last call in the run failed. */
+  usable(runId: string, vendor: Vendor): boolean {
+    return !this.failing.get(runId)?.has(vendor);
+  }
 }
 
 /** Applies a project's override to the global ceilings. */
@@ -128,9 +171,14 @@ export class Scheduler {
 
     const order = this.opts.fallbackOrder ?? DEFAULT_FALLBACK_ORDER;
     const start = order.indexOf(req.vendor);
-    const candidates = order
+    const capable = order
       .map((_, i) => order[(start + 1 + i) % order.length] as Vendor)
       .filter((v) => v !== req.vendor && VENDOR_ROLES[v].includes(req.role));
+    // A vendor that is failing in this run would only fail the call; its
+    // window resetting doesn't make it work, so its reset doesn't count.
+    const usable = this.opts.usable ?? (() => true);
+    const candidates = capable.filter((v) => usable(req.runId, v));
+    const failing = capable.filter((v) => !candidates.includes(v));
     const resets: string[] = requested.resetAt ? [requested.resetAt] : [];
     for (const vendor of candidates) {
       const state = usage.isOver(vendor, ceilings);
@@ -141,21 +189,15 @@ export class Scheduler {
       if (state.resetAt) resets.push(state.resetAt);
     }
 
+    const reason =
+      failing.length > 0
+        ? `${req.vendor} is over its ceiling, and no other vendor can take the ${req.role} role: ${failing.join(" and ")} failed earlier in this run${candidates.length > 0 ? `, and ${candidates.join(" and ")} ${candidates.length === 1 ? "is" : "are"} over the ceiling too` : ""}.`
+        : `Every vendor that can take the ${req.role} role is over its ceiling.`;
     if (resets.length === 0) {
-      return {
-        decision: "deny",
-        leaseId: req.leaseId,
-        reason: `Every vendor that can take the ${req.role} role is over its ceiling.`,
-        action: "pause",
-      };
+      return { decision: "deny", leaseId: req.leaseId, reason, action: "pause" };
     }
     const earliest = resets.reduce((a, b) => (Date.parse(a) <= Date.parse(b) ? a : b));
-    return {
-      decision: "pause",
-      leaseId: req.leaseId,
-      resumeAt: earliest,
-      reason: `Every vendor that can take the ${req.role} role is over its ceiling.`,
-    };
+    return { decision: "pause", leaseId: req.leaseId, resumeAt: earliest, reason };
   }
 
   private grant(req: LeaseRequest, vendor: Vendor, now: Date): LeaseResponse {

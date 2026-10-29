@@ -1,13 +1,14 @@
-import type { CeilingsOverride, LeaseRequest } from "@agentbox/contracts";
+import type { AgentBoxEvent, CeilingsOverride, LeaseRequest, Vendor } from "@agentbox/contracts";
 import { describe, expect, it } from "vitest";
-import { Scheduler, mergeCeilings } from "../../src/scheduler/scheduler.js";
+import { Scheduler, VendorHealth, mergeCeilings } from "../../src/scheduler/scheduler.js";
 import { MIN, T0, iso, setup } from "../usage/helpers.js";
 
 const RUN = "01JB8Z5K3W6Q2V9X4T7R0M1N2P";
 
-function make(override?: CeilingsOverride) {
+function make(override?: CeilingsOverride, health?: VendorHealth) {
   const t = setup();
   const scheduler = new Scheduler({
+    ...(health ? { usable: (runId: string, v: Vendor) => health.usable(runId, v) } : {}),
     usage: t.usage,
     settings: () => t.settings.value,
     projectCeilings: async () => override,
@@ -102,6 +103,53 @@ describe("Scheduler", () => {
     t.sample("codex", { utilization: 0.9, resetAt: null });
     const res = await t.scheduler.decide("e", "p", t.req({ role: "confirmer" }));
     expect(res).toMatchObject({ decision: "deny", action: "pause" });
+  });
+
+  it("counts a zero ceiling with no sample as over", async () => {
+    const t = make();
+    t.settings.value = {
+      ...t.settings.value,
+      ceilings: { ...t.settings.value.ceilings, copilot: { kind: "spend", maxUsd: 0 } },
+    };
+    t.sample("codex", { utilization: 0.8, resetAt: iso(T0 + 30 * MIN) });
+    const res = await t.scheduler.decide("e", "p", t.req());
+    // codex is over and copilot's $0 ceiling keeps it out, so claude reviews.
+    expect(res).toMatchObject({ decision: "granted", vendor: "claude" });
+  });
+
+  it("skips a vendor that failed earlier in the run", async () => {
+    const health = new VendorHealth();
+    const finished = (vendor: Vendor, outcome: "ok" | "error") =>
+      ({ type: "agent.finished", runId: RUN, vendor, outcome }) as unknown as AgentBoxEvent;
+    health.ingest(finished("copilot", "error"));
+    const t = make(undefined, health);
+    t.sample("codex", { utilization: 0.8 });
+    expect(await t.scheduler.decide("e", "p", t.req())).toMatchObject({ vendor: "claude" });
+    expect(health.usable("01JB8Z5K3W6Q2V9X4T7R0M1N2Q", "copilot")).toBe(true);
+    health.ingest(finished("copilot", "ok"));
+    expect(health.usable(RUN, "copilot")).toBe(true);
+  });
+
+  it("pauses with a clear reason instead of picking a failing vendor", async () => {
+    const health = new VendorHealth();
+    for (const vendor of ["copilot", "claude"] as const)
+      health.ingest({
+        type: "agent.finished",
+        runId: RUN,
+        vendor,
+        outcome: "error",
+      } as unknown as AgentBoxEvent);
+    const t = make(undefined, health);
+    t.sample("codex", { utilization: 0.8, resetAt: iso(T0 + 30 * MIN) });
+    const res = await t.scheduler.decide("e", "p", t.req());
+    expect(res).toMatchObject({ decision: "pause", resumeAt: iso(T0 + 30 * MIN) });
+    expect(res.decision === "pause" && res.reason).toMatch(/copilot and claude failed earlier/);
+    const t2 = make(undefined, health);
+    t2.sample("codex", { utilization: 0.8, resetAt: null });
+    expect(await t2.scheduler.decide("e", "p", t2.req())).toMatchObject({
+      decision: "deny",
+      action: "pause",
+    });
   });
 
   it("answers a repeated leaseId with the same response", async () => {

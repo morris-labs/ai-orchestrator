@@ -15,7 +15,7 @@ import { JobManager } from "../jobs/jobs.js";
 import { NodeProcessRunner, type ProcessRunner } from "../jobs/process.js";
 import { Notifier } from "../notify/notifier.js";
 import { DevServerProxy, cachedResolver } from "../proxy/proxy.js";
-import { Scheduler } from "../scheduler/scheduler.js";
+import { Scheduler, VendorHealth } from "../scheduler/scheduler.js";
 import { OpCli, type OpClient } from "../secrets/op.js";
 import { SecretsService } from "../secrets/secrets-service.js";
 import { SetupService } from "../setup/setup-service.js";
@@ -105,8 +105,10 @@ export async function startApp(options: AppOptions): Promise<App> {
   const runMirror = runs;
   const usageStore = new UsageStore(core.db);
   const usage = new UsageService({ store: usageStore, settings, emit: (e) => hub.emit(e) });
+  const vendorHealth = new VendorHealth();
   const scheduler = new Scheduler({
     usage,
+    usable: (runId, vendor) => vendorHealth.usable(runId, vendor),
     settings,
     projectCeilings: async (projectId) =>
       (await core.projects.get(projectId)).project.ceilingsOverride,
@@ -193,6 +195,7 @@ export async function startApp(options: AppOptions): Promise<App> {
   hub.subscribe((event: AgentBoxEvent) => {
     runMirror.ingest(event);
     usage.ingest(event);
+    vendorHealth.ingest(event);
     notifier.ingest(event);
     if (event.type === "box.changed") syncTunnels();
     if (event.type === "container.changed") {
