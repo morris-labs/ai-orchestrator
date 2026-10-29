@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
+import { INSTALLED_WEB_ROOT, defaultStaticDir } from "../../src/api/static-dirs.js";
 import { demuxBuffer } from "../../src/docker/dockerode.js";
 import {
   ImageVersions,
@@ -74,6 +75,17 @@ describe("image helpers", () => {
     expect(defaultImageContext("/repo", has([]))).toBe("/repo/image");
   });
 
+  it("defaults the web bundles to the checkout, else the installed package", () => {
+    const has = (files: string[]) => (p: string) => files.includes(p);
+    expect(
+      defaultStaticDir("/repo", "boxes", has(["/repo/apps/boxes/dist/renderer/index.html"])),
+    ).toBe("/repo/apps/boxes/dist/renderer");
+    expect(
+      defaultStaticDir("/usr/lib", "review", has([`${INSTALLED_WEB_ROOT}/review/index.html`])),
+    ).toBe("/usr/share/agentbox/web/review");
+    expect(defaultStaticDir("/repo", "boxes", has([]))).toBe("/repo/apps/boxes/dist/renderer");
+  });
+
   it("parses the version probe", () => {
     expect(parseVersionProbe("engineVersion=4.0.0\nclaude=2.1.310\ncodex=\nbogus=1\n")).toEqual({
       engineVersion: "4.0.0",
@@ -133,6 +145,12 @@ describe("image helpers", () => {
       const dir = tempDir("agentbox-probe-");
       dirs.push(dir);
       const missing = path.join(dir, "missing");
+      // An empty npm root, so the CLIs installed on this host stay out of it.
+      const root = path.join(dir, "lib", "node_modules");
+      fs.mkdirSync(root, { recursive: true });
+      const bin = path.join(dir, "bin");
+      fs.mkdirSync(bin);
+      fs.writeFileSync(path.join(bin, "npm"), `#!/bin/sh\necho '${root}'\n`, { mode: 0o755 });
       const r = spawnSync(
         "/bin/sh",
         [
@@ -144,7 +162,10 @@ describe("image helpers", () => {
             copilot: missing,
           }),
         ],
-        { encoding: "utf8", env: { ...process.env, PATH: `${dir}:/usr/bin:/bin` } },
+        {
+          encoding: "utf8",
+          env: { ...process.env, PATH: `${bin}:${path.dirname(process.execPath)}:/usr/bin:/bin` },
+        },
       );
       expect(r.status).toBe(0);
       expect(parseVersionProbe(r.stdout)).toEqual({});

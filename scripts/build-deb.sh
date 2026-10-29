@@ -117,6 +117,11 @@ for app in boxes review; do
   [[ -x "$out/linux-unpacked/agentbox-$app" ]] ||
     die "electron-builder produced no $out/linux-unpacked/agentbox-$app"
   cp -a "$out/linux-unpacked" "$R/usr/lib/agentbox/$app"
+  # The server serves the renderer bundle from here; the copy inside
+  # app.asar is readable only by Electron.
+  [[ -f "$ROOT/apps/$app/dist/renderer/index.html" ]] || die "apps/$app/dist/renderer has no index.html"
+  mkdir -p "$R/usr/share/agentbox/web"
+  cp -a "$ROOT/apps/$app/dist/renderer" "$R/usr/share/agentbox/web/$app"
   install -m 0644 "$ROOT/packaging/desktop/agentbox-$app.desktop" "$R/usr/share/applications/"
   install -m 0644 "$ROOT/packaging/icons/agentbox-$app.svg" "$R/usr/share/icons/hicolor/scalable/apps/"
   install -m 0644 "$ROOT/packaging/deb/apparmor/agentbox-$app" "$R/etc/apparmor.d/"

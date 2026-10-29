@@ -12,6 +12,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { startApp } from "./api/app.js";
 import { createCore } from "./core.js";
+import { defaultStaticDir } from "./api/static-dirs.js";
 import { defaultImageContext } from "./docker/image.js";
 import { DEV_ENGINES_ENV, parseDevEngines } from "./events/dev-engines.js";
 import { NodeProcessRunner } from "./jobs/process.js";
@@ -146,8 +147,8 @@ export async function main(argv: string[]): Promise<number> {
     devEngines,
     imageContext: process.env.AGENTBOX_IMAGE_CONTEXT ?? defaultImageContext(repoRoot),
     staticDirs: {
-      boxes: process.env.AGENTBOX_BOXES_DIR ?? path.join(repoRoot, "apps", "boxes", "dist"),
-      review: process.env.AGENTBOX_REVIEW_DIR ?? path.join(repoRoot, "apps", "review", "dist"),
+      boxes: process.env.AGENTBOX_BOXES_DIR ?? defaultStaticDir(repoRoot, "boxes"),
+      review: process.env.AGENTBOX_REVIEW_DIR ?? defaultStaticDir(repoRoot, "review"),
     },
   });
   process.stderr.write(`agentbox-server ${version} listening on 127.0.0.1:${app.port}\n`);

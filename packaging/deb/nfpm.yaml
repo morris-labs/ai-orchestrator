@@ -97,6 +97,11 @@ contents:
     file_info:
       mode: 0644
 
+  # The apps' web bundles, which the server serves at /boxes/ and /review/.
+  - src: root/usr/share/agentbox/web
+    dst: /usr/share/agentbox/web
+    type: tree
+
   # The image build context and its build script, for the setup wizard.
   - src: root/usr/share/agentbox/image
     dst: /usr/share/agentbox/image
