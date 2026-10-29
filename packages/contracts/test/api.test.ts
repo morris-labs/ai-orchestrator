@@ -119,14 +119,18 @@ describe("route catalog", () => {
     }
   });
 
-  it("gives every WebSocket route a token query parameter", () => {
+  it("keeps a token out of every WebSocket route's query", () => {
     for (const [key, route] of Object.entries(routes)) {
       if (route.kind !== "ws") continue;
-      const query = route.query as { safeParse(v: unknown): { success: boolean } };
+      const query = route.query as {
+        safeParse(v: unknown): { success: boolean; data?: Record<string, unknown> };
+      };
       expect(query, key).toBeDefined();
       const sample =
         key === "terminals.open" ? { kind: "session", boxId: "b", token: "t" } : { token: "t" };
-      expect(query.safeParse(sample).success, key).toBe(true);
+      const parsed = query.safeParse(sample);
+      expect(parsed.success, key).toBe(true);
+      expect(parsed.data, key).not.toHaveProperty("token");
     }
   });
 

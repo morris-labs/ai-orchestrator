@@ -16,15 +16,18 @@
 //   bearer header. The Electron apps receive the token from their preload
 //   script and send the header; a plain browser opening the single-page apps
 //   uses the cookie.
-// - WebSocket routes (`kind: "ws"`) on both APIs authenticate with a `token`
-//   query parameter, because browsers can't set headers on a WebSocket. The
-//   server also accepts its session cookie there.
+// - WebSocket routes (`kind: "ws"`) authenticate the upgrade request the
+//   same way: `Authorization: Bearer <token>` from a client that can set
+//   headers (the CLI, the Electron main processes), or the session cookie
+//   from a browser renderer. No API accepts a token in the query string, so
+//   tokens stay out of URLs and logs.
 // - Dev-server proxy. Requests to `http://<port>.<hostKey>.localhost:<proxy
 //   port>/` need no authentication: the listener is bound to loopback only.
 // - Engine. The engine listens on `0.0.0.0:20411` inside its container, and
-//   every route with `auth: true` needs `Authorization: Bearer
-//   $AGENTBOX_ENGINE_TOKEN` (or `token` on a WebSocket). Only the server
-//   calls it.
+//   every route with `auth: true`, WebSocket upgrades included, needs
+//   `Authorization: Bearer <engine token>`. Only the server calls it. The
+//   engine's `/proxy` route takes the token in `X-Agentbox-Engine-Token`
+//   instead, so the browser's own `Authorization` header reaches the app.
 //
 // Other conventions:
 //
@@ -159,9 +162,6 @@ function ws<const R extends Omit<WsRouteDef, "kind" | "auth" | "method"> & { aut
 /** A query-string boolean: `true` or `false`. (`z.coerce.boolean` reads "false" as true.) */
 export const QueryBooleanSchema = z.enum(["true", "false"]).transform((v) => v === "true");
 const queryInt = z.coerce.number().int().nonnegative();
-
-/** The `token` query parameter that authenticates a WebSocket route. */
-const wsToken = { token: z.string().min(1).optional() };
 
 // ---------------------------------------------------------------------------
 // Shared payloads
@@ -448,7 +448,6 @@ export const TerminalQuerySchema = z
     platform: PlatformSchema.optional(),
     cols: z.coerce.number().int().positive().default(80),
     rows: z.coerce.number().int().positive().default(24),
-    ...wsToken,
   })
   .superRefine(checkTerminalTarget);
 
@@ -690,7 +689,6 @@ export const VendorUsageSchema = z.object({
 export const EventsQuerySchema = z.object({
   /** Comma-separated event types to receive; absent means all. */
   types: z.string().optional(),
-  ...wsToken,
 });
 
 export const HealthSchema = z.object({
@@ -1189,7 +1187,7 @@ export const serverRoutes = {
   "jobs.stream": ws({
     path: `${V1}/jobs/:jobId/stream`,
     summary: "Stream a job's terminal output.",
-    query: z.object(wsToken),
+    query: z.object({}),
     clientMessage: TerminalClientMessageSchema,
     serverMessage: TerminalServerMessageSchema,
   }),

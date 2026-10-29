@@ -68,8 +68,8 @@ export type RunId = z.infer<typeof RunIdSchema>;
  * - `not_found`, `run_not_found`: no such resource (404).
  * - `conflict`: any other conflicting state (409).
  * - `validation`: the request doesn't match its schema (400).
- * - `unauthorized`: the bearer token, the session cookie, or the WebSocket
- *   `token` is missing or wrong (401).
+ * - `unauthorized`: the bearer token or the session cookie is missing or
+ *   wrong (401).
  * - `internal`: an unexpected failure on the server or the engine (500).
  * - `docker_unavailable`: the Docker daemon is unreachable (503).
  * - `image_missing`: the engine image doesn't exist (409).
