@@ -1,10 +1,10 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { MemoryDocker } from "../../src/docker/memory.js";
 import { sessionStartCmd } from "../../src/docker/scripts.js";
 import { DockerUnavailableError, type ContainerCreateSpec } from "../../src/docker/types.js";
+import { tempDir } from "../tmp.js";
 
 function spec(stateDir: string): ContainerCreateSpec {
   return {
@@ -25,7 +25,7 @@ function spec(stateDir: string): ContainerCreateSpec {
 
 describe("MemoryDocker", () => {
   it("plays the keeper and the tmux commands", async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agentbox-mem-"));
+    const dir = tempDir("agentbox-mem-");
     const d = new MemoryDocker();
     d.addImage("claude-code");
     const id = await d.createContainer(spec(dir));

@@ -7,8 +7,7 @@
 // disproves the false positive. The fake fixer applies the prepared
 // find-and-replace patches and commits.
 import { execFileSync, spawnSync } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Vendor, VendorFinding } from "@agentbox/contracts";
@@ -25,6 +24,7 @@ import type {
   VendorAdapter,
   VerifyOutput,
 } from "../../src/core.js";
+import { tempDir } from "../tmp.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 export const SAMPLE_DIR = resolve(here, "../../../../tools/sample-repo");
@@ -64,7 +64,7 @@ export function loadBugs(): Bug[] {
 
 /** Builds the sample repository in a new temporary directory and returns the repo path. */
 export function buildSampleRepo(): string {
-  const dest = mkdtempSync(join(tmpdir(), "agentbox-sample-"));
+  const dest = tempDir("agentbox-sample-");
   execFileSync("bash", [join(SAMPLE_DIR, "build.sh"), dest], { stdio: "pipe" });
   return join(dest, "repo");
 }

@@ -1,5 +1,4 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
@@ -9,10 +8,11 @@ import {
   sameModel,
   sessionEntryKey,
 } from "../../src/catalog/index.js";
+import { tempDir } from "../tmp.js";
 
 let dir: string;
 beforeEach(() => {
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), "sessions-"));
+  dir = tempDir("sessions-");
 });
 afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
 

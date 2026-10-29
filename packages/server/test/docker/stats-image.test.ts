@@ -1,6 +1,5 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
@@ -15,6 +14,7 @@ import {
 } from "../../src/docker/image.js";
 import { MemoryDocker } from "../../src/docker/memory.js";
 import { CpuTracker } from "../../src/docker/stats.js";
+import { tempDir } from "../tmp.js";
 
 describe("CpuTracker", () => {
   it("computes docker's CPU formula across two samples and memory without cache", () => {
@@ -87,7 +87,7 @@ describe("image helpers", () => {
     });
 
     it("reports every CLI, from its file or else its npm package", () => {
-      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agentbox-probe-"));
+      const dir = tempDir("agentbox-probe-");
       dirs.push(dir);
       // A global npm root with all three CLIs, and an `npm` that prints it.
       const root = path.join(dir, "lib", "node_modules");
@@ -128,7 +128,7 @@ describe("image helpers", () => {
     });
 
     it("leaves a CLI out when neither its file nor its package exists", () => {
-      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agentbox-probe-"));
+      const dir = tempDir("agentbox-probe-");
       dirs.push(dir);
       const missing = path.join(dir, "missing");
       const r = spawnSync(

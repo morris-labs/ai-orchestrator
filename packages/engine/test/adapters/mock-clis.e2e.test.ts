@@ -1,5 +1,5 @@
 // Runs each CLI adapter end to end against the stand-ins in tools/mock-clis.
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { UsageSampleSchema, type Vendor } from "@agentbox/contracts";
@@ -12,6 +12,7 @@ import { VendorFindingsOutputSchema } from "../../src/adapters/output.js";
 import { isRetryable } from "../../src/adapters/retry.js";
 import { AdapterError, type CliVendorAdapter } from "../../src/adapters/types.js";
 import { MOCK_BIN } from "./helpers.js";
+import { tempDir } from "../tmp.js";
 
 const finding = {
   severity: "P1",
@@ -47,7 +48,7 @@ const scenario = {
 };
 
 function setup() {
-  const dir = mkdtempSync(join(tmpdir(), "agentbox-mockcli-"));
+  const dir = tempDir("agentbox-mockcli-");
   const file = join(dir, "scenario.json");
   writeFileSync(file, JSON.stringify({ codex: scenario, copilot: scenario, claude: scenario }));
   const log = join(dir, "calls.jsonl");

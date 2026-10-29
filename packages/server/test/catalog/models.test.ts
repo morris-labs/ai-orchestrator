@@ -1,5 +1,4 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ModelsResultSchema, type ModelCache } from "@agentbox/contracts";
@@ -16,13 +15,14 @@ import {
 import type { DockerClient, RunOnceOptions } from "../../src/docker/types.js";
 import type { HostEnv } from "../../src/records/env.js";
 import { ApiError } from "../../src/records/errors.js";
+import { tempDir } from "../tmp.js";
 
 let home: string;
 let env: HostEnv;
 let now = new Date("2026-10-28T00:00:00Z");
 
 beforeEach(() => {
-  home = fs.mkdtempSync(path.join(os.tmpdir(), "models-"));
+  home = tempDir("models-");
   now = new Date("2026-10-28T00:00:00Z");
   env = { home, user: "tester", now: () => now };
 });

@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -6,9 +6,12 @@ import { FakeServer } from "../src/testing";
 import { serveFake, staticFile, type ServedFake } from "../src/testing/node";
 
 let served: ServedFake | null = null;
+let dir: string | null = null;
 afterEach(async () => {
   await served?.close();
   served = null;
+  if (dir) rmSync(dir, { recursive: true, force: true });
+  dir = null;
 });
 
 describe("serveFake", () => {
@@ -20,7 +23,7 @@ describe("serveFake", () => {
   });
 
   it("answers API routes from the fake and serves files", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "serve-fake-"));
+    dir = mkdtempSync(join(tmpdir(), "serve-fake-"));
     writeFileSync(join(dir, "index.html"), "<title>x</title>");
     const fake = new FakeServer();
     served = await serveFake(fake, { static: { "/app/": dir } });

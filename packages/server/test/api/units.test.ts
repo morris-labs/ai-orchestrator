@@ -1,5 +1,4 @@
-import { mkdtemp, readFile, stat, writeFile, mkdir, chmod } from "node:fs/promises";
-import os from "node:os";
+import { readFile, stat, writeFile, mkdir, chmod } from "node:fs/promises";
 import path from "node:path";
 import { RunIdSchema } from "@agentbox/contracts";
 import { describe, expect, it } from "vitest";
@@ -15,10 +14,11 @@ import { ApiError, toApiError } from "../../src/api/errors.js";
 import { ulid } from "../../src/api/ulid.js";
 import { JobManager, processJob } from "../../src/jobs/jobs.js";
 import { NodeProcessRunner, commandLine, shellQuote } from "../../src/jobs/process.js";
+import { tempDir } from "../tmp.js";
 
 describe("token file", () => {
   it("creates the token with mode 0600 and reads it back", async () => {
-    const home = await mkdtemp(path.join(os.tmpdir(), "agentbox-"));
+    const home = tempDir("agentbox-");
     const token = await loadOrCreateToken(home);
     const file = path.join(home, ".claude-box", "server.token");
     expect(token).toMatch(/^[0-9a-f]{64}$/);
@@ -27,7 +27,7 @@ describe("token file", () => {
   });
 
   it("tightens an existing file's mode", async () => {
-    const home = await mkdtemp(path.join(os.tmpdir(), "agentbox-"));
+    const home = tempDir("agentbox-");
     await mkdir(path.join(home, ".claude-box"));
     const file = path.join(home, ".claude-box", "server.token");
     await writeFile(file, `${"a".repeat(64)}\n`);
@@ -38,7 +38,7 @@ describe("token file", () => {
   });
 
   it("uses the data directory in place of ~/.claude-box when given", async () => {
-    const home = await mkdtemp(path.join(os.tmpdir(), "agentbox-"));
+    const home = tempDir("agentbox-");
     const dataDir = path.join(home, "data");
     const token = await loadOrCreateToken(home, dataDir);
     expect((await readFile(path.join(dataDir, "server.token"), "utf8")).trim()).toBe(token);

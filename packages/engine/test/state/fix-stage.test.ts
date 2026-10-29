@@ -1,7 +1,6 @@
 // The fix and gate stages across a resume and a gate decision.
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, writeFileSync, appendFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, rmSync, writeFileSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
 import { FindingInputSchema, type Finding, type LeaseRequest } from "@agentbox/contracts";
 import { describe, expect, it } from "vitest";
@@ -16,6 +15,7 @@ import {
 import { fixTargets, runFix } from "../../src/state/steps.js";
 import { makeRun } from "./harness.js";
 import { Scenario, buildSampleRepo } from "./scenario.js";
+import { tempDir } from "../tmp.js";
 
 function confirmed(id: string, groupId: string, runId: string): Finding {
   const f = FindingInputSchema.parse({
@@ -137,7 +137,7 @@ describe("runFix", () => {
 describe("a gate_failed decision", () => {
   it("runs the fix and the gate again on resume instead of replaying them", async () => {
     const repo = buildSampleRepo();
-    const markerDir = mkdtempSync(join(tmpdir(), "agentbox-marker-"));
+    const markerDir = tempDir("agentbox-marker-");
     const marker = join(markerDir, "broken");
     writeFileSync(
       join(repo, ".claude-box/policy.yaml"),

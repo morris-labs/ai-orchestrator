@@ -1,5 +1,4 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
@@ -13,9 +12,10 @@ import {
   writeMountsFile,
 } from "../../src/docker/state.js";
 import type { HostEnv } from "../../src/records/env.js";
+import { tempDir } from "../tmp.js";
 
 function env(now = () => new Date()): HostEnv {
-  return { home: fs.mkdtempSync(path.join(os.tmpdir(), "agentbox-state-")), user: "tester", now };
+  return { home: tempDir("agentbox-state-"), user: "tester", now };
 }
 
 describe("keeper state", () => {

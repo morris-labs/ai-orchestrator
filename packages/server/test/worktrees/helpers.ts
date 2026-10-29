@@ -1,10 +1,10 @@
 // Helpers that build real git repositories in temporary directories.
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import type { Box } from "@agentbox/contracts";
 import type { HostEnv } from "../../src/records/env.js";
+import { tempDir as registeredTempDir } from "../tmp.js";
 
 // Keep the developer's own git configuration out of the tests.
 process.env.GIT_CONFIG_GLOBAL = "/dev/null";
@@ -12,7 +12,7 @@ process.env.GIT_CONFIG_NOSYSTEM = "1";
 
 export function tempDir(prefix = "agentbox-wt-"): string {
   // realpath: git reports resolved paths, and /tmp can be a symlink.
-  return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+  return fs.realpathSync(registeredTempDir(prefix));
 }
 
 export function sh(dir: string, ...args: string[]): string {

@@ -1,5 +1,4 @@
-import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { FindingInputSchema, type RoleAssignment } from "@agentbox/contracts";
 import { describe, expect, it } from "vitest";
@@ -14,6 +13,7 @@ import {
   verifyFinding,
   type BaseWorktree,
 } from "../../src/verify/verify.js";
+import { tempDir } from "../tmp.js";
 
 const roles: RoleAssignment = {
   reviewer: ["codex", "copilot"],
@@ -99,9 +99,9 @@ describe("decideVerdict", () => {
 
 describe("runReproScript", () => {
   it("runs a script against a directory and refuses one outside the scratch directory", async () => {
-    const scratch = mkdtempSync(join(tmpdir(), "agentbox-scratch-"));
+    const scratch = tempDir("agentbox-scratch-");
     writeFileSync(join(scratch, "r.sh"), 'test -f "$1/marker" && exit 1; exit 0\n');
-    const repo = mkdtempSync(join(tmpdir(), "agentbox-repo-"));
+    const repo = tempDir("agentbox-repo-");
     const runner = new ExecaRunner();
     expect(
       (await runReproScript(runner, scratch, { path: "r.sh", interpreter: "sh" }, repo)).exitCode,
@@ -201,7 +201,7 @@ describe("verifyFinding", () => {
   }
 
   function dirs() {
-    const root = mkdtempSync(join(tmpdir(), "agentbox-verify-"));
+    const root = tempDir("agentbox-verify-");
     const scratch = join(root, "scratch");
     const repo = join(root, "repo");
     const base = join(root, "base");

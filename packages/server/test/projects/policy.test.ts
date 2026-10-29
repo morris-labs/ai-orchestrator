@@ -1,12 +1,12 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_POLICY } from "@agentbox/contracts";
 import { readPolicy, writePolicy } from "../../src/projects/policy.js";
+import { tempDir } from "../tmp.js";
 
 function tempFile(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "policy-"));
+  const dir = tempDir("policy-");
   return path.join(dir, ".claude-box", "policy.yaml");
 }
 

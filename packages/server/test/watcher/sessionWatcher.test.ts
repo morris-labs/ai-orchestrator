@@ -1,5 +1,4 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { BoxChangedEventSchema, type Box } from "@agentbox/contracts";
@@ -7,6 +6,7 @@ import { openDatabase, repositories, type Repositories } from "../../src/db/inde
 import { sessionsDirFor, type HostEnv } from "../../src/records/env.js";
 import { CoreEvents, type CoreEventPayload } from "../../src/records/events.js";
 import { SessionWatcher } from "../../src/watcher/index.js";
+import { tempDir } from "../tmp.js";
 
 const U1 = "11111111-1111-4111-8111-111111111111";
 const U2 = "22222222-2222-4222-8222-222222222222";
@@ -51,7 +51,7 @@ function entry(dir: string, file: string, data: Record<string, unknown>) {
 }
 
 beforeEach(() => {
-  home = fs.mkdtempSync(path.join(os.tmpdir(), "watcher-"));
+  home = tempDir("watcher-");
   env = { home, user: "tester", now: () => new Date("2026-10-29T00:00:00Z") };
   repos = repositories(openDatabase(":memory:"));
   repos.projects.put({

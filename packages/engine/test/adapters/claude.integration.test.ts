@@ -1,14 +1,15 @@
 // Runs the Claude adapter against the real `claude` CLI. It costs a few
 // cents, so it runs only with AGENTBOX_REAL_CLAUDE=1. Each run saves the raw
 // stream under fixtures/ for the fixture tests.
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { UsageSampleSchema } from "@agentbox/contracts";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { ClaudeAdapter } from "../../src/adapters/claude.js";
 import { VendorFindingsOutputSchema } from "../../src/adapters/output.js";
+import { tempDir } from "../tmp.js";
 
 const enabled = process.env.AGENTBOX_REAL_CLAUDE === "1";
 const fixtures = join(import.meta.dirname, "fixtures");
@@ -31,7 +32,7 @@ describe.skipIf(!enabled)("Claude adapter against the real CLI", () => {
   });
 
   it("returns schema-valid findings and records the rate_limit_event", async () => {
-    const cwd = mkdtempSync(join(tmpdir(), "agentbox-claude-"));
+    const cwd = tempDir("agentbox-claude-");
     writeFileSync(join(cwd, "a.ts"), "// teh greeting\nexport const greet = () => 'hi';\n");
     const seen: unknown[] = [];
     const result = await adapter.review({
@@ -64,7 +65,7 @@ describe.skipIf(!enabled)("Claude adapter against the real CLI", () => {
   }, 150_000);
 
   it("writes a file with tools set to write", async () => {
-    const cwd = mkdtempSync(join(tmpdir(), "agentbox-claude-fix-"));
+    const cwd = tempDir("agentbox-claude-fix-");
     const result = await adapter.fix({
       prompt:
         "Create a file named done.txt in the current directory containing the word fixed, then report done true.",
@@ -83,8 +84,8 @@ describe.skipIf(!enabled)("Claude adapter against the real CLI", () => {
   }, 150_000);
 
   it("lets a read-only call write in its scratch directory and nowhere else", async () => {
-    const cwd = mkdtempSync(join(tmpdir(), "agentbox-claude-ro-"));
-    const scratch = join(mkdtempSync(join(tmpdir(), "agentbox-claude-scratch-")), "F-0001");
+    const cwd = tempDir("agentbox-claude-ro-");
+    const scratch = join(tempDir("agentbox-claude-scratch-"), "F-0001");
     mkdirSync(scratch);
     const result = await adapter.verify({
       prompt:

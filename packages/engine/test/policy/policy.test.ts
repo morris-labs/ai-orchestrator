@@ -1,5 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DEFAULT_POLICY, PolicyFileSchema } from "@agentbox/contracts";
 import { describe, expect, it } from "vitest";
@@ -12,6 +11,7 @@ import {
   policyFilePath,
 } from "../../src/policy/load.js";
 import { isRiskPath, policyPromptSection, rulesFor } from "../../src/policy/rules.js";
+import { tempDir } from "../tmp.js";
 
 describe("glob", () => {
   it.each([
@@ -47,7 +47,7 @@ describe("policy loading", () => {
   });
 
   it("loads the file from the project, or the default when absent", async () => {
-    const root = mkdtempSync(join(tmpdir(), "agentbox-policy-"));
+    const root = tempDir("agentbox-policy-");
     expect(await loadPolicy(root)).toEqual(DEFAULT_POLICY);
     mkdirSync(join(root, ".claude-box"));
     writeFileSync(join(root, ".claude-box/policy.yaml"), "version: 1\ngroupSizeLimit: 50\n");

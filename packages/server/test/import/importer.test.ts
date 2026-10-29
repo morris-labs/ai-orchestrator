@@ -1,5 +1,4 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
@@ -17,6 +16,7 @@ import {
 } from "../../src/import/index.js";
 import { projectIdForRoot } from "../../src/projects/ids.js";
 import type { HostEnv } from "../../src/records/env.js";
+import { tempDir } from "../tmp.js";
 
 const UUID_A = "11111111-2222-4333-8444-555555555555";
 const UUID_B = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
@@ -40,7 +40,7 @@ function write(file: string, lines: string[], files: string[]) {
 }
 
 function buildFixture(): Fixture {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "import-home-"));
+  const home = tempDir("import-home-");
   const files: string[] = [];
   const app = path.join(home, "work", "my.app");
   const loose = path.join(home, "work", "loose");
@@ -225,7 +225,7 @@ describe("runImport", () => {
     expect(needsImport(fx.env, repos)).toBe(true);
     runImport({ env: fx.env, repos });
     expect(needsImport(fx.env, repos)).toBe(false);
-    const empty = fs.mkdtempSync(path.join(os.tmpdir(), "import-empty-"));
+    const empty = tempDir("import-empty-");
     expect(needsImport({ ...fx.env, home: empty }, repositories(openDatabase(":memory:")))).toBe(
       false,
     );

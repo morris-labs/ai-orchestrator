@@ -1,7 +1,6 @@
 // The entry point's pieces: arguments, environment, adapter selection, the
 // active-runs file, and a full start and stop.
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { EngineEnv, Vendor } from "@agentbox/contracts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -13,10 +12,11 @@ import { silentLogger } from "../../src/main/logger.js";
 import { checkEnv, parseArgs, startEngine } from "../../src/main/run.js";
 import { readPackageVersion } from "../../src/main/version.js";
 import { CONTAINER, PROJECT_ROOT, TOKEN, fakeRunManager } from "./fixtures.js";
+import { tempDir } from "../tmp.js";
 
 let dir: string;
 beforeEach(() => {
-  dir = mkdtempSync(path.join(tmpdir(), "engine-main-"));
+  dir = tempDir("engine-main-");
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
