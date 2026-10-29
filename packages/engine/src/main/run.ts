@@ -21,7 +21,7 @@ import { createRunManager } from "../state/manager.js";
 import { startActiveRunsWriter } from "./active-runs.js";
 import { MOCK_SCRIPT_ENV, MOCK_VENDORS_ENV, selectAdapters } from "./adapters.js";
 import { LOG_LEVELS, createLogger, isLogLevel } from "./logger.js";
-import { ENGINE_TOKEN_FILE_ENV, loadEngineToken } from "./token.js";
+import { loadEngineToken } from "./token.js";
 import { readPackageVersion } from "./version.js";
 
 export const LOG_LEVEL_ENV = "AGENTBOX_LOG_LEVEL";
@@ -36,10 +36,10 @@ Options:
   --help             Print this help and exit.
 
 Environment:
-  ${ENGINE_TOKEN_FILE_ENV}  File that holds the bearer token for every request, 16
-                         characters or more. Default: engine.token in the state directory.
+  ${ENGINE_ENV.tokenFile}  File that holds the bearer token for every request, 16
+                         characters or more. This or ${ENGINE_ENV.token} is required.
   ${ENGINE_ENV.token}    The bearer token itself, for an engine started by hand in
-                         development. Ignored when ${ENGINE_TOKEN_FILE_ENV} is set.
+                         development. Ignored when ${ENGINE_ENV.tokenFile} is set.
   ${ENGINE_ENV.port}     Port to listen on. Default: 20411.
   ${ENGINE_ENV.projectRoot}   The project root as the container sees it. Required.
   ${ENGINE_ENV.container}      The container's name. Required.
@@ -84,6 +84,7 @@ export function checkEnv(
   const parsed = EngineEnvSchema.safeParse(env);
   if (parsed.success) return { ok: true, env: parsed.data };
   const problems = parsed.error.issues.map((issue) => {
+    if (issue.code === "custom") return issue.message;
     const name = String(issue.path[0] ?? "environment");
     if (env[name] === undefined || env[name] === "") return `${name} isn't set.`;
     if (name === ENGINE_ENV.token) return `${name} must be at least 16 characters.`;
@@ -105,6 +106,8 @@ export interface EngineHandle {
 
 export interface StartOptions {
   env: EngineEnv;
+  /** The bearer token the API requires, from `loadEngineToken`. */
+  token: string;
   log: Logger;
   /** Where to write `active-runs`. Defaults to `AGENTBOX_STATE_DIR`. */
   stateDir?: string;
@@ -162,7 +165,7 @@ export async function startEngine(options: StartOptions): Promise<EngineHandle> 
   ports.start();
 
   const app = await buildEngineApp({
-    token: env[ENGINE_ENV.token],
+    token: options.token,
     container,
     projectRoot,
     engineVersion,
@@ -232,29 +235,29 @@ export async function main(
   const level: LogLevel = args.logLevel ?? (envLevel && isLogLevel(envLevel) ? envLevel : "info");
   const log = createLogger(level);
 
-  const loaded = loadEngineToken(env);
-  if (!loaded.ok) {
-    log.error(`The engine refuses to start: ${loaded.problem}`);
-    return 2;
-  }
-  const checked = checkEnv(loaded.env);
+  const checked = checkEnv(env);
   if (!checked.ok) {
     for (const problem of checked.problems) log.error(`The engine refuses to start: ${problem}`);
     return 2;
   }
+  const loaded = loadEngineToken(checked.env);
+  if (!loaded.ok) {
+    log.error(`The engine refuses to start: ${loaded.problem}`);
+    return 2;
+  }
 
-  // The token stays in `checked.env` for the API. Removing it, and the name
+  // The token stays in `loaded.token` for the API. Removing it, and the name
   // of its file, from this process's environment keeps both out of every
   // child, whatever runner starts the child.
   if (env === process.env) {
     delete process.env[ENGINE_ENV.token];
-    delete process.env[ENGINE_TOKEN_FILE_ENV];
+    delete process.env[ENGINE_ENV.tokenFile];
   }
 
   let handle: EngineHandle;
   try {
     const { adapters } = await selectAdapters(env, log);
-    handle = await startEngine({ env: checked.env, log, adapters });
+    handle = await startEngine({ env: checked.env, token: loaded.token, log, adapters });
   } catch (err) {
     log.error("The engine failed to start", { error: String(err) });
     return 1;

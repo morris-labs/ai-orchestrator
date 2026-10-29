@@ -50,8 +50,16 @@ export function defaultConfig(): ServerConfig {
 
 /** Environment variable names the server sets on every project container. */
 export const ENGINE_ENV = {
-  /** Bearer token the engine requires on every request. */
+  /**
+   * Bearer token the engine requires on every request, for an engine started
+   * by hand in development. Ignored when `tokenFile` is set.
+   */
   token: "AGENTBOX_ENGINE_TOKEN",
+  /**
+   * File that holds the bearer token. The server sets this rather than
+   * `token`, so the token stays out of the container's environment.
+   */
+  tokenFile: "AGENTBOX_ENGINE_TOKEN_FILE",
   /** Port the engine listens on inside the container. */
   port: "AGENTBOX_ENGINE_PORT",
   /** The project root as the container sees it. */
@@ -71,15 +79,24 @@ export const ENGINE_ENV = {
 /** The container path the server mounts the keeper's state directory at. */
 export const DEFAULT_ENGINE_STATE_DIR = "/run/claude-box";
 
-/** The engine's view of its environment, after parsing. */
-export const EngineEnvSchema = z.object({
-  [ENGINE_ENV.token]: z.string().min(16),
-  [ENGINE_ENV.port]: z.coerce.number().pipe(PortSchema).default(DEFAULT_ENGINE_PORT),
-  [ENGINE_ENV.projectRoot]: z.string().min(1),
-  [ENGINE_ENV.container]: z.string().min(1),
-  [ENGINE_ENV.engineVersion]: z.string().min(1),
-  [ENGINE_ENV.stateDir]: z.string().min(1).default(DEFAULT_ENGINE_STATE_DIR),
-});
+/**
+ * The engine's view of its environment, after parsing. It needs the token
+ * file or the token itself; the engine prefers the file when both are set.
+ */
+export const EngineEnvSchema = z
+  .object({
+    [ENGINE_ENV.token]: z.string().min(16).optional(),
+    [ENGINE_ENV.tokenFile]: z.string().trim().min(1).optional(),
+    [ENGINE_ENV.port]: z.coerce.number().pipe(PortSchema).default(DEFAULT_ENGINE_PORT),
+    [ENGINE_ENV.projectRoot]: z.string().min(1),
+    [ENGINE_ENV.container]: z.string().min(1),
+    [ENGINE_ENV.engineVersion]: z.string().min(1),
+    [ENGINE_ENV.stateDir]: z.string().min(1).default(DEFAULT_ENGINE_STATE_DIR),
+  })
+  .refine((env) => env[ENGINE_ENV.tokenFile] !== undefined || env[ENGINE_ENV.token] !== undefined, {
+    message: `Set ${ENGINE_ENV.tokenFile} or ${ENGINE_ENV.token}.`,
+    path: [ENGINE_ENV.tokenFile],
+  });
 export type EngineEnv = z.infer<typeof EngineEnvSchema>;
 
 /** Parses the engine's settings from an environment such as `process.env`. */

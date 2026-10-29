@@ -49,10 +49,22 @@ describe("checkEnv", () => {
 
   it("refuses to start without a token and never echoes values", () => {
     const r = checkEnv({ ...good, AGENTBOX_ENGINE_TOKEN: undefined });
-    expect(r).toEqual({ ok: false, problems: ["AGENTBOX_ENGINE_TOKEN isn't set."] });
+    expect(r).toEqual({
+      ok: false,
+      problems: ["Set AGENTBOX_ENGINE_TOKEN_FILE or AGENTBOX_ENGINE_TOKEN."],
+    });
     const short = checkEnv({ ...good, AGENTBOX_ENGINE_TOKEN: "short-secret" });
     expect(short.ok).toBe(false);
     expect(JSON.stringify(short)).not.toContain("short-secret");
+  });
+
+  it("accepts the token file instead of the token", () => {
+    const r = checkEnv({
+      ...good,
+      AGENTBOX_ENGINE_TOKEN: undefined,
+      AGENTBOX_ENGINE_TOKEN_FILE: "/run/claude-box/engine.token",
+    });
+    expect(r.ok && r.env.AGENTBOX_ENGINE_TOKEN_FILE).toBe("/run/claude-box/engine.token");
   });
 
   it("defaults the state directory to /run/claude-box", () => {
@@ -207,6 +219,7 @@ describe("startEngine", () => {
     const runs = fakeRunManager();
     const handle = await startEngine({
       env,
+      token: TOKEN,
       log: silentLogger,
       stateDir: dir,
       host: "127.0.0.1",
@@ -239,6 +252,7 @@ describe("startEngine with the real core", () => {
     } as unknown as EngineEnv;
     const handle = await startEngine({
       env,
+      token: TOKEN,
       log: silentLogger,
       host: "127.0.0.1",
       runner: { run: async () => ({ code: 1, stdout: "", stderr: "" }) },

@@ -23,13 +23,9 @@ export function mountsFile(env: HostEnv, container: string): string {
 
 /**
  * The engine token file's name in the state directory. The engine reads it
- * at `AGENTBOX_ENGINE_TOKEN_FILE`, which defaults to this name in its state
- * directory.
+ * at the path the server passes in `ENGINE_ENV.tokenFile`.
  */
 export const ENGINE_TOKEN_FILE_NAME = "engine.token";
-
-/** The variable that tells the engine where its token file is. */
-export const ENGINE_TOKEN_FILE_ENV = "AGENTBOX_ENGINE_TOKEN_FILE";
 
 export function engineTokenFile(env: HostEnv, container: string): string {
   return path.join(stateDir(env, container), ENGINE_TOKEN_FILE_NAME);

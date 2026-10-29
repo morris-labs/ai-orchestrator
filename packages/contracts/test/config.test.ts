@@ -61,6 +61,12 @@ describe("config", () => {
     );
     expect(parseEngineEnv({ ...raw, [ENGINE_ENV.port]: "20500" }).AGENTBOX_ENGINE_PORT).toBe(20500);
     expect(() => parseEngineEnv({ ...raw, [ENGINE_ENV.token]: "short" })).toThrow();
+    const { [ENGINE_ENV.token]: _token, ...noToken } = raw;
+    expect(() => parseEngineEnv(noToken)).toThrow();
+    expect(
+      parseEngineEnv({ ...noToken, [ENGINE_ENV.tokenFile]: "/run/claude-box/engine.token" })
+        .AGENTBOX_ENGINE_TOKEN_FILE,
+    ).toBe("/run/claude-box/engine.token");
     expect(() => parseEngineEnv({ ...raw, [ENGINE_ENV.port]: "http" })).toThrow();
   });
 });
