@@ -238,7 +238,11 @@ async function exists(path: string): Promise<boolean> {
 }
 
 export interface VerdictDecision {
-  verdict: "confirmed" | "disproved" | "pre-existing";
+  /**
+   * `unverified`: the disprover couldn't check the finding. The engine
+   * leaves the finding pending, so it is verified again in the next round.
+   */
+  verdict: "confirmed" | "disproved" | "pre-existing" | "unverified";
   verification: "script" | "code-reading";
   introduced: boolean;
   evidence: string;
@@ -256,7 +260,44 @@ function describeRun(where: string, run: ScriptRun): string {
 }
 
 /**
- * Combines the disprover's answer with the engine's own script runs. Only a
+ * Text that says a tool couldn't run at all, as opposed to a command that
+ * ran and failed: a sandbox that can't start, a refused permission, or a
+ * missing program.
+ */
+const TOOL_FAILURE =
+  /\bbwrap\b|bubblewrap|landlock|seccomp|sandbox(?:ing)? (?:error|failure|failed|denied|refused|unavailable|execution failed)|(?:sandbox|namespace)[^.\n]{0,40}(?:fail|denied|refused|not permitted|no permission)|no permissions? to create (?:a )?new namespace|operation not permitted|permission denied|read-only file system|\bEACCES\b|\bEPERM\b|command not found|could not (?:run|execute|start)|couldn't (?:run|execute|start)|unable to (?:run|execute|start)|failed to (?:run|execute|start|spawn)|tool (?:call )?(?:failed|error)/i;
+
+/** Evidence that admits the disprover didn't check the finding. */
+const UNCHECKED =
+  /\bunverified\b|not (?:been )?verified|could(?:n't| not) (?:verify|confirm|check|reproduce|test)|unable to (?:verify|confirm|check|reproduce|test)|not demonstrated|cannot (?:verify|confirm|check)/i;
+
+/** The shortest evidence that can carry a positive reason to disprove. */
+const MIN_DISPROOF_EVIDENCE = 20;
+
+/**
+ * Why a `disproved` answer doesn't count, or `null` when it does. A
+ * disprover must show that the failure case can't happen; one whose tools
+ * failed, or whose evidence admits it didn't check, hasn't.
+ */
+export function disproofProblem(
+  output: VerifyOutput,
+  toolErrors: readonly string[],
+): string | null {
+  const evidence = output.evidence.trim();
+  if (evidence.length < MIN_DISPROOF_EVIDENCE) return "The disproof gives no evidence.";
+  if (UNCHECKED.test(evidence) || TOOL_FAILURE.test(evidence)) {
+    return "The disprover's evidence says it couldn't check the finding.";
+  }
+  const failed = toolErrors.find((e) => TOOL_FAILURE.test(e));
+  if (failed) return `The disprover's tools failed: ${failed.replace(/\s+/g, " ").slice(0, 200)}`;
+  return null;
+}
+
+/**
+ * Combines the disprover's answer with the engine's own script runs. A
+ * disprover that couldn't check the finding never disproves it: an
+ * `unverified` answer, or a `disproved` one that `disproofProblem()`
+ * rejects, makes the finding `unverified`. Only a
  * script that reproduces the flaw at the tip counts as script verification,
  * and only then does the base run count: the flaw is pre-existing when the
  * script reproduces it at the base as well. A script that fails to run at
@@ -268,9 +309,30 @@ export function decideVerdict(
   output: VerifyOutput,
   tip: ScriptRun | null,
   base: ScriptRun | null,
+  toolErrors: readonly string[] = [],
 ): VerdictDecision {
   const parts = [output.evidence.trim()];
+  if (output.verdict === "unverified") {
+    return {
+      verdict: "unverified",
+      verification: output.verification,
+      introduced: true,
+      evidence: parts.join("\n"),
+    };
+  }
   if (output.verdict === "disproved") {
+    const problem = disproofProblem(output, toolErrors);
+    if (problem) {
+      parts.push(
+        `${problem} The engine doesn't accept the disproof and leaves the finding pending.`,
+      );
+      return {
+        verdict: "unverified",
+        verification: output.verification,
+        introduced: true,
+        evidence: parts.join("\n").trim(),
+      };
+    }
     return {
       verdict: "disproved",
       verification: output.verification,
@@ -325,7 +387,13 @@ export interface VerifyDeps {
     vendor: Vendor,
     finding: Finding,
     request: AdapterRequest,
-  ) => Promise<{ vendor: Vendor; model: string; output: VerifyOutput } | null>;
+  ) => Promise<{
+    vendor: Vendor;
+    model: string;
+    output: VerifyOutput;
+    /** Tool calls that failed during the call, from the vendor's event stream. */
+    toolErrors?: string[];
+  } | null>;
 }
 
 export interface VerifyResult {
@@ -384,7 +452,7 @@ export async function verifyFinding(
     findingId: finding.id,
     vendor: answer.vendor,
     model: answer.model,
-    decision: decideVerdict(answer.output, tipRun, baseRun),
+    decision: decideVerdict(answer.output, tipRun, baseRun, answer.toolErrors ?? []),
     tipRun,
     baseRun,
   };

@@ -71,8 +71,38 @@ describe("chooseDisprover", () => {
 describe("decideVerdict", () => {
   const run = (exitCode: number) => ({ exitCode, timedOut: false, output: "" });
 
-  it("keeps a disproof", () => {
-    expect(decideVerdict(out({ verdict: "disproved" }), null, null).verdict).toBe("disproved");
+  const disproof = out({
+    verdict: "disproved",
+    verification: "code-reading",
+    evidence: "send() checks the attempt count on line 12 and stops after three tries.",
+  });
+
+  it("keeps a disproof with positive evidence", () => {
+    expect(decideVerdict(disproof, null, null).verdict).toBe("disproved");
+    // A failing test command isn't a tool failure.
+    expect(decideVerdict(disproof, null, null, ["pytest: 1 failed"]).verdict).toBe("disproved");
+  });
+
+  it("passes an unverified answer through", () => {
+    const d = decideVerdict(out({ verdict: "unverified", evidence: "x" }), null, null);
+    expect(d.verdict).toBe("unverified");
+  });
+
+  it("refuses a disproof from a disprover that couldn't check", () => {
+    // Round 3's Codex answer, word for word.
+    const sandbox = out({
+      verdict: "disproved",
+      evidence: "Unverified, not demonstrated false: sandbox execution failed",
+    });
+    expect(decideVerdict(sandbox, null, null).verdict).toBe("unverified");
+    const empty = decideVerdict(out({ verdict: "disproved", evidence: " " }), null, null);
+    expect(empty.verdict).toBe("unverified");
+    expect(empty.evidence).toContain("no evidence");
+    const tools = decideVerdict(disproof, null, null, [
+      "python3 -c 1: bwrap: No permissions to create a new namespace",
+    ]);
+    expect(tools.verdict).toBe("unverified");
+    expect(tools.evidence).toMatch(/tools failed: .*bwrap/);
   });
 
   it("confirms by script when the engine's rerun reproduces at the tip only", () => {
@@ -259,6 +289,24 @@ describe("verifyFinding", () => {
     for (const d of [scratch, repo, base]) mkdirSync(d);
     return { root, scratch, repo, base };
   }
+
+  it("passes the call's tool errors to the verdict", async () => {
+    const { scratch, repo, base } = dirs();
+    const result = await verifyFinding(finding, "codex", {
+      ...deps(null, scratch, repo, base),
+      callDisprover: () =>
+        Promise.resolve({
+          vendor: "codex" as const,
+          model: "m",
+          output: out({
+            verdict: "disproved",
+            evidence: "The caller always passes a non-empty list, so the index is valid.",
+          }),
+          toolErrors: ["cat a.py: bwrap: No permissions to create a new namespace"],
+        }),
+    });
+    expect(result?.decision.verdict).toBe("unverified");
+  });
 
   it("keeps a confirmed finding when the script the disprover named doesn't exist", async () => {
     const { scratch, repo, base } = dirs();

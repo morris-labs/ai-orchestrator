@@ -91,6 +91,27 @@ describe("ClaudeStreamParser on recorded output", () => {
     parser.push("42");
     expect(parser.summary().badLines).toBe(2);
   });
+
+  it("collects tool results marked as errors", () => {
+    const parser = new ClaudeStreamParser("a", ceiling);
+    const user = (blocks: unknown[]) =>
+      JSON.stringify({ type: "user", message: { role: "user", content: blocks } });
+    parser.push(
+      user([
+        { type: "tool_result", tool_use_id: "t1", content: "ok", is_error: false },
+        {
+          type: "tool_result",
+          tool_use_id: "t2",
+          content: [{ type: "text", text: "Permission denied: python3" }],
+          is_error: true,
+        },
+      ]),
+    );
+    parser.push(
+      user([{ type: "tool_result", tool_use_id: "t3", content: "boom", is_error: true }]),
+    );
+    expect(parser.summary().toolErrors).toEqual(["Permission denied: python3", "boom"]);
+  });
 });
 
 describe("ClaudeAdapter.interpret", () => {

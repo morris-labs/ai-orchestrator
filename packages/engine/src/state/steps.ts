@@ -583,11 +583,26 @@ export async function verifyPending(ctx: RunContext, stageFile: string): Promise
           allowFallback: true,
           ...(ctx.state.request.crossVendor ? { avoid: avoidFor(f) } : {}),
         });
-        return { vendor: out.vendor, model: out.model, output: out.output };
+        return {
+          vendor: out.vendor,
+          model: out.model,
+          output: out.output,
+          ...(out.toolErrors ? { toolErrors: out.toolErrors } : {}),
+        };
       },
     });
-    if (result) {
-      const d = result.decision;
+    if (!result) return result;
+    const d = result.decision;
+    if (d.verdict === "unverified") {
+      // The finding stays pending: the run can't stop clean, and the next
+      // round verifies it again.
+      ctx.deps.log?.warn("A disprover couldn't verify a finding; it stays pending", {
+        runId: ctx.state.id,
+        findingId: finding.id,
+        vendor: result.vendor,
+        evidence: d.evidence.slice(0, 500),
+      });
+    } else {
       await ctx.setVerdict(
         finding,
         d.verdict,

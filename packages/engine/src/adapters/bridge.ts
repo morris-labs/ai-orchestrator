@@ -91,6 +91,7 @@ export function toCoreResult<T>(
     premiumRequests: result.premiumRequests,
     ...(result.aiCredits !== undefined ? { aiCredits: result.aiCredits } : {}),
     costEstimate: result.costUsd ?? 0,
+    ...(result.toolErrors?.length ? { toolErrors: result.toolErrors } : {}),
   };
 }
 

@@ -48,6 +48,29 @@ describe("CodexStreamParser", () => {
     expect(s.errors).toEqual(["You’ve hit your usage limit. Try again at 3:15 PM."]);
     expect(s.lastMessage).toBeNull();
   });
+
+  it("collects failed and declined commands as tool errors", () => {
+    const parser = new CodexStreamParser();
+    const item = (status: string, output: string) =>
+      JSON.stringify({
+        type: "item.completed",
+        item: {
+          id: "i",
+          type: "command_execution",
+          command: "bash -lc 'python3 -c 1'",
+          aggregated_output: output,
+          exit_code: 1,
+          status,
+        },
+      });
+    parser.push(item("failed", "bwrap: No permissions to create a new namespace"));
+    parser.push(item("completed", "ok"));
+    parser.push(item("declined", ""));
+    expect(parser.summary().toolErrors).toEqual([
+      "bash -lc 'python3 -c 1': bwrap: No permissions to create a new namespace",
+      "bash -lc 'python3 -c 1': declined",
+    ]);
+  });
 });
 
 describe("codexRateLimitSamples", () => {
@@ -97,13 +120,14 @@ describe("findRolloutFile", () => {
 
 describe("CodexAdapter.buildArgs", () => {
   const adapter = new CodexAdapter();
+  const ownSandbox = new CodexAdapter({ sandbox: "codex" });
 
-  it("builds a read-only exec with the prompt on stdin", () => {
+  it("builds an exec with the prompt on stdin and the container as the sandbox", () => {
     const args = adapter.buildArgs({ ...base, model: "gpt-5.3-codex", effort: "high" }, "/s.json");
     expect(args).toEqual([
       "exec",
       "--sandbox",
-      "read-only",
+      "danger-full-access",
       "--json",
       "--skip-git-repo-check",
       "--output-schema",
@@ -114,32 +138,43 @@ describe("CodexAdapter.buildArgs", () => {
       'model_reasoning_effort="high"',
       "-",
     ]);
+    expect(adapter.buildArgs({ ...base, tools: "write" }, "/s")).toContain("danger-full-access");
+    expect(adapter.buildArgs({ ...base, tools: "write" }, "/s")).not.toContain(
+      "--dangerously-bypass-approvals-and-sandbox",
+    );
   });
 
-  it("runs a read-only call with a scratch directory in it, under workspace-write", () => {
+  it("runs a read-only call with a scratch directory in that directory", () => {
     const request = { ...base, scratchDir: "/runs/r1/scratch/F-1" };
-    const args = adapter.buildArgs(request, "/s.json");
-    expect(args.slice(0, 3)).toEqual(["exec", "--sandbox", "workspace-write"]);
-    expect(args).toContain("sandbox_workspace_write.exclude_slash_tmp=true");
+    expect(adapter.buildArgs(request, "/s.json").slice(0, 3)).toEqual([
+      "exec",
+      "--sandbox",
+      "danger-full-access",
+    ]);
+    expect(adapter.buildArgs(request, "/s.json")).not.toContain(
+      "sandbox_workspace_write.exclude_slash_tmp=true",
+    );
     expect(adapter.workingDir(request)).toBe("/runs/r1/scratch/F-1");
     expect(adapter.workingDir(base)).toBe("/w");
     expect(adapter.workingDir({ ...base, tools: "write", scratchDir: "/x" })).toBe("/w");
   });
 
-  it("puts --sandbox before resume", () => {
-    const args = adapter.buildArgs({ ...base, sessionId: "t1" }, "/s.json");
-    expect(args.slice(0, 5)).toEqual(["exec", "--sandbox", "read-only", "resume", "t1"]);
-    expect(args.at(-1)).toBe("-");
+  it("uses Codex's own sandbox when asked", () => {
+    expect(ownSandbox.buildArgs(base, "/s").slice(0, 3)).toEqual([
+      "exec",
+      "--sandbox",
+      "read-only",
+    ]);
+    expect(ownSandbox.buildArgs({ ...base, tools: "write" }, "/s")).toContain("workspace-write");
+    const scratch = ownSandbox.buildArgs({ ...base, scratchDir: "/runs/r1/scratch/F-1" }, "/s");
+    expect(scratch.slice(0, 3)).toEqual(["exec", "--sandbox", "workspace-write"]);
+    expect(scratch).toContain("sandbox_workspace_write.exclude_slash_tmp=true");
   });
 
-  it("uses workspace-write for writes, or bypass when configured", () => {
-    expect(adapter.buildArgs({ ...base, tools: "write" }, "/s")).toContain("workspace-write");
-    const bypass = new CodexAdapter({ writeMode: "bypass" }).buildArgs(
-      { ...base, tools: "write" },
-      "/s",
-    );
-    expect(bypass).toContain("--dangerously-bypass-approvals-and-sandbox");
-    expect(bypass).not.toContain("--sandbox");
-    expect(bypass).not.toContain("--full-auto");
+  it("puts --sandbox before resume", () => {
+    const args = adapter.buildArgs({ ...base, sessionId: "t1" }, "/s.json");
+    expect(args.slice(0, 5)).toEqual(["exec", "--sandbox", "danger-full-access", "resume", "t1"]);
+    expect(args.at(-1)).toBe("-");
+    expect(args).not.toContain("--full-auto");
   });
 });

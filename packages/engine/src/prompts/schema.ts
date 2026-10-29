@@ -66,7 +66,11 @@ export const VERIFY_OUTPUT_JSON_SCHEMA = {
   type: "object",
   required: ["verdict", "verification", "evidence", "presentAtBase", "script"],
   properties: {
-    verdict: { enum: ["confirmed", "disproved"] },
+    verdict: {
+      enum: ["confirmed", "disproved", "unverified"],
+      description:
+        "unverified when your tools failed and the code alone doesn't settle the finding.",
+    },
     verification: { enum: ["script", "code-reading"] },
     evidence: { type: "string", description: "What you ran or read, and what it showed." },
     presentAtBase: {

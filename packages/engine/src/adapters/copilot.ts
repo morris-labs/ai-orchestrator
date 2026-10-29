@@ -14,6 +14,7 @@ import {
   type CliAdapterOptions,
 } from "./base.js";
 import { parseStructuredText } from "./output.js";
+import { copilotTokenProblem } from "../process/env.js";
 import { runProcess } from "./process.js";
 import { AdapterError, type CliRequest, type CliResult, type CliLimitInfo } from "./types.js";
 
@@ -83,6 +84,8 @@ export interface CopilotRunSummary {
   aiCredits: number | null;
   costUsd: number | null;
   error: { type: string | null; code: string | null; message: string } | null;
+  /** Tool calls that reported `success: false`, from `tool.execution_complete`. */
+  toolErrors: string[];
 }
 
 export class CopilotAdapter extends CliAdapter {
@@ -188,10 +191,13 @@ export class CopilotAdapter extends CliAdapter {
         }
       }
       if (result.exitCode !== 0 || summary.error || summary.text === null) {
-        throw this.exitFailure(
-          result,
-          session,
-          summary.error?.message ?? (summary.text === null ? "Copilot returned no answer." : ""),
+        throw this.signInFailure(
+          this.exitFailure(
+            result,
+            session,
+            summary.error?.message ?? (summary.text === null ? "Copilot returned no answer." : ""),
+          ),
+          `${summary.error?.message ?? ""}\n${result.stderr}`,
         );
       }
 
@@ -220,12 +226,35 @@ export class CopilotAdapter extends CliAdapter {
         costUsd,
         premiumRequests,
         ...(summary.aiCredits !== null ? { aiCredits: summary.aiCredits } : {}),
+        ...(summary.toolErrors.length > 0 ? { toolErrors: summary.toolErrors } : {}),
         raw: result.stdout,
         durationMs: result.durationMs,
       };
     } finally {
       if (dir) rmSync(dir, { recursive: true, force: true });
     }
+  }
+
+  /**
+   * Turns a failure that a token caused into a setup error that says what to
+   * do. Copilot refuses a classic token, and the engine drops one from
+   * Copilot's environment, so a sign-in failure with only a classic token
+   * around means Copilot has neither its own sign-in nor a usable token.
+   */
+  signInFailure(error: AdapterError, text: string): AdapterError {
+    if (error.kind === "limit") return error;
+    const problem = copilotTokenProblem(process.env, this.options.env);
+    const refused = CLASSIC_TOKEN_REFUSED.test(text);
+    if (!refused && !(problem && error.kind === "auth")) return error;
+    const advice =
+      problem ??
+      "The Copilot CLI refuses classic personal access tokens (ghp_). Sign in to Copilot inside the container with `copilot` and `/login`, or set COPILOT_GITHUB_TOKEN to a fine-grained token with the Copilot Requests permission.";
+    return new AdapterError("copilot", "auth", `Copilot can't sign in. ${advice}`, {
+      exitCode: error.exitCode,
+      raw: error.raw,
+      sessionId: error.sessionId,
+      cause: error,
+    });
   }
 
   /** One call's premium requests: the model's multiplier, less the automatic-selection discount. */
@@ -240,6 +269,9 @@ export class CopilotAdapter extends CliAdapter {
     return limitFromError(error, this.now());
   }
 }
+
+/** The Copilot CLI's refusal of a classic token. */
+const CLASSIC_TOKEN_REFUSED = /classic personal access tokens?|\(ghp_\)/i;
 
 /** Maps a `session.error` to a limit, by its `errorType` first and its text second. */
 export function copilotErrorLimit(
@@ -276,6 +308,7 @@ function emptySummary(): CopilotRunSummary {
     aiCredits: null,
     costUsd: null,
     error: null,
+    toolErrors: [],
   };
 }
 
@@ -319,6 +352,14 @@ export function parseCopilotJson(stdout: string, stderr = ""): CopilotRunSummary
       case "session.shutdown":
         if (typeof data.totalPremiumRequests === "number")
           s.premiumRequests = data.totalPremiumRequests;
+        break;
+      case "tool.execution_complete":
+        if (data.success === false) {
+          const error = data.error as { message?: unknown } | undefined;
+          const text =
+            typeof error?.message === "string" ? error.message.trim() : "A tool call failed.";
+          s.toolErrors.push(text.length > 300 ? text.slice(-300) : text);
+        }
         break;
       case "session.error":
         s.error = {

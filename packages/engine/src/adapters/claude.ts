@@ -104,6 +104,8 @@ export interface ClaudeStreamSummary {
   result: Record<string, unknown> | null;
   /** Lines that weren't JSON. */
   badLines: number;
+  /** The text of each `tool_result` block marked `is_error`, cut to its last 300 characters. */
+  toolErrors?: string[];
 }
 
 export class ClaudeAdapter extends CliAdapter {
@@ -270,6 +272,7 @@ export class ClaudeAdapter extends CliAdapter {
       premiumRequests: 0,
       raw: stdout,
       durationMs,
+      ...(summary.toolErrors?.length ? { toolErrors: summary.toolErrors } : {}),
     };
   }
 
@@ -288,6 +291,7 @@ export class ClaudeStreamParser {
   private apiErrorText: string | null = null;
   private result: Record<string, unknown> | null = null;
   private badLines = 0;
+  private readonly toolErrors: string[] = [];
 
   constructor(
     private readonly account: string,
@@ -324,6 +328,9 @@ export class ClaudeStreamParser {
         }
         return [];
       }
+      case "user":
+        this.collectToolErrors(event.message);
+        return [];
       case "rate_limit_event":
         return this.rateLimit(event.rate_limit_info);
       case "result":
@@ -345,7 +352,20 @@ export class ClaudeStreamParser {
       apiErrorText: this.apiErrorText,
       result: this.result,
       badLines: this.badLines,
+      toolErrors: [...this.toolErrors],
     };
+  }
+
+  private collectToolErrors(message: unknown): void {
+    const content = (message as { content?: unknown } | undefined)?.content;
+    if (!Array.isArray(content)) return;
+    for (const part of content as unknown[]) {
+      if (!part || typeof part !== "object") continue;
+      const block = part as Record<string, unknown>;
+      if (block.type !== "tool_result" || block.is_error !== true) continue;
+      const text = toolResultText(block.content).trim();
+      this.toolErrors.push(text.length > 300 ? text.slice(-300) : text || "A tool failed.");
+    }
   }
 
   private rateLimit(info: unknown): UsageSample[] {
@@ -397,6 +417,17 @@ const CLAUDE_WINDOWS: Record<string, UsageWindow | undefined> = {
   five_hour: "5h",
   seven_day: "7d",
 };
+
+function toolResultText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((part: unknown) =>
+      part && typeof part === "object" && "text" in part ? String(part.text) : "",
+    )
+    .filter(Boolean)
+    .join("\n");
+}
 
 function assistantText(message: Record<string, unknown> | undefined): string | null {
   const content = message?.content;

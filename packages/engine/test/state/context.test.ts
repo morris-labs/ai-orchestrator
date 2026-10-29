@@ -283,3 +283,61 @@ describe("leases", () => {
     }
   });
 });
+
+describe("a read-only call", () => {
+  it("fails when it changes the worktree, and the engine restores the tree", async () => {
+    const { writeFileSync, existsSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    let calls = 0;
+    const editing = {
+      ...answering("codex"),
+      review: (r: AdapterRequest) => {
+        calls += 1;
+        writeFileSync(join(r.repoPath, `stray-${calls}.txt`), "x");
+        return answering("codex").review(r);
+      },
+    } as VendorAdapter;
+    const { ctx } = await makeRun({ adapters: { codex: editing } });
+    const repo = ctx.state.request.repoPath;
+    const call = ctx.callAgent<ReviewOutput>({
+      key: "k",
+      role: "reviewer",
+      vendor: "codex",
+      method: "review",
+      request: { prompt: "p", repoPath: repo, toolPolicy: "read-only" },
+      groupId: null,
+      estimateTokens: 1,
+    });
+    await expect(call).rejects.toThrow(/read-only call changed the worktree/);
+    expect(calls).toBe(2);
+    expect(existsSync(join(repo, "stray-1.txt"))).toBe(false);
+    expect(existsSync(join(repo, "stray-2.txt"))).toBe(false);
+  });
+
+  it("may write in the run directory", async () => {
+    const { mkdirSync, writeFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const { ctx } = await makeRun({ adapters: {} });
+    const scratch = ctx.store.scratchDir("F-0001");
+    const writing = {
+      ...answering("codex"),
+      review: (r: AdapterRequest) => {
+        mkdirSync(scratch, { recursive: true });
+        writeFileSync(join(scratch, "repro.py"), "x");
+        return answering("codex").review(r);
+      },
+    } as VendorAdapter;
+    ctx.deps.adapters.codex = writing;
+    await expect(
+      ctx.callAgent<ReviewOutput>({
+        key: "k",
+        role: "reviewer",
+        vendor: "codex",
+        method: "review",
+        request: { prompt: "p", repoPath: ctx.state.request.repoPath, toolPolicy: "read-only" },
+        groupId: null,
+        estimateTokens: 1,
+      }),
+    ).resolves.toMatchObject({ vendor: "codex" });
+  });
+});

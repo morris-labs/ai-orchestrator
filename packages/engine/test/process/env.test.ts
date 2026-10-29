@@ -1,7 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { execRunner } from "../../src/api/runner.js";
 import { ClaudeAdapter } from "../../src/adapters/claude.js";
-import { childEnv, isWithheld, profileForProgram } from "../../src/process/env.js";
+import {
+  childEnv,
+  copilotTokenProblem,
+  isClassicGitHubToken,
+  isWithheld,
+  profileForProgram,
+} from "../../src/process/env.js";
 import { ProcessRunner, ShellRunner } from "../../src/range/exec.js";
 import { VerifyOutputSchema } from "../../src/core.js";
 
@@ -19,6 +25,36 @@ const BASE = {
   AWS_SECRET_ACCESS_KEY: "aws",
   LANG: "C.UTF-8",
 };
+
+describe("Copilot tokens", () => {
+  it("drops classic tokens from Copilot's environment only", () => {
+    const base = { ...BASE, GH_TOKEN: "ghp_classic", GITHUB_TOKEN: "gho_oauth" };
+    const copilot = childEnv("vendor:copilot", {}, base);
+    expect(copilot.GH_TOKEN).toBeUndefined();
+    expect(copilot.GITHUB_TOKEN).toBe("gho_oauth");
+    expect(childEnv("github", {}, base).GH_TOKEN).toBe("ghp_classic");
+    const extra = childEnv("vendor:copilot", { COPILOT_GITHUB_TOKEN: "ghp_x" }, BASE);
+    expect(extra.COPILOT_GITHUB_TOKEN).toBeUndefined();
+    expect(extra.GH_TOKEN).toBe("gh");
+  });
+
+  it("recognizes classic tokens", () => {
+    expect(isClassicGitHubToken("ghp_abc")).toBe(true);
+    expect(isClassicGitHubToken("github_pat_abc")).toBe(false);
+    expect(isClassicGitHubToken(undefined)).toBe(false);
+  });
+
+  it("explains a classic token with no usable token beside it", () => {
+    expect(copilotTokenProblem({ GH_TOKEN: "ghp_secret" })).toMatch(
+      /GH_TOKEN holds a classic personal access token .*COPILOT_GITHUB_TOKEN/,
+    );
+    expect(copilotTokenProblem({ GH_TOKEN: "ghp_secret" })).not.toContain("ghp_secret");
+    expect(
+      copilotTokenProblem({ GH_TOKEN: "ghp_secret" }, { COPILOT_GITHUB_TOKEN: "github_pat_x" }),
+    ).toBeNull();
+    expect(copilotTokenProblem({})).toBeNull();
+  });
+});
 
 describe("childEnv", () => {
   it("never passes the engine's own variables", () => {

@@ -35,6 +35,7 @@ import { Git } from "../range/git.js";
 import { ShellRunner } from "../range/exec.js";
 import type { EngineState } from "../run/engine-state.js";
 import type { RunStore } from "../run/store.js";
+import { TreeGuard } from "./tree-guard.js";
 import { FALLBACK_ORDER } from "../verify/verify.js";
 import type { RangeInfo } from "../prompts/templates.js";
 
@@ -114,6 +115,8 @@ export interface AgentOutcome<T> {
   sessionId: string | null;
   output: T;
   tokens: { in: number; out: number };
+  /** Tool calls that failed during the call, when the vendor reported any. */
+  toolErrors?: string[];
 }
 
 const ROLE_FOR_AGENT: Record<AgentRole, Role> = {
@@ -144,6 +147,8 @@ export class RunContext {
   private pauseGate: { promise: Promise<void>; open: () => void } | null = null;
   /** Engine-only policy settings, such as the comment authors to trust. */
   extras: PolicyExtras = NO_EXTRAS;
+  /** Checks that read-only calls leave the worktree as they found it. */
+  private readonly treeGuard: TreeGuard;
   /** Serializes writes, since parallel agent calls update the same files. */
   private writeChain: Promise<void> = Promise.resolve();
 
@@ -159,6 +164,11 @@ export class RunContext {
     this.git = new Git(deps.runner, state.request.repoPath);
     this.shell = deps.shellRunner ?? new ShellRunner(deps.runner);
     this.timeouts = { ...DEFAULT_TIMEOUTS, ...deps.timeouts };
+    this.treeGuard = new TreeGuard({
+      runner: deps.runner,
+      repoPath: state.request.repoPath,
+      ignore: [store.dir],
+    });
   }
 
   get signal(): AbortSignal {
@@ -555,7 +565,19 @@ export class RunContext {
       const timeoutMs = spec.request.timeoutMs ?? this.timeouts[spec.role];
       let result: AdapterResult<T>;
       try {
-        result = await this.invoke<T>(adapter, spec, timeoutMs);
+        result =
+          spec.request.toolPolicy === "read-only"
+            ? await this.treeGuard.run(
+                () => this.invoke<T>(adapter, spec, timeoutMs),
+                (message) =>
+                  this.deps.log?.warn("A failed read-only call changed the worktree", {
+                    runId: this.state.id,
+                    agentId,
+                    vendor,
+                    error: message,
+                  }),
+              )
+            : await this.invoke<T>(adapter, spec, timeoutMs);
       } catch (error) {
         const elapsedMs = Math.max(0, this.clock.now() - started);
         const limit = this.signal.aborted ? null : adapter.detectLimit(error);
@@ -652,6 +674,7 @@ export class RunContext {
         sessionId: result.sessionId,
         output: result.output,
         tokens: actual.tokens,
+        ...(result.toolErrors?.length ? { toolErrors: result.toolErrors } : {}),
       };
       await this.store.writeJson(this.callFile(spec.key), outcome);
       return outcome;

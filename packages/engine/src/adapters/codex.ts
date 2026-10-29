@@ -18,18 +18,15 @@ import type { CliRequest, CliResult, CliLimitInfo } from "./types.js";
 
 export interface CodexAdapterOptions extends CliAdapterOptions {
   /**
-   * How a `tools: "write"` call runs. `workspace-write` uses Codex's own
-   * sandbox; `bypass` passes `--dangerously-bypass-approvals-and-sandbox`,
-   * for containers where the Codex sandbox can't start. Default
-   * `workspace-write`.
+   * Which sandbox confines Codex. `container` (the default) passes
+   * `--sandbox danger-full-access` to every call: the project container is
+   * the sandbox, since Codex's own sandbox can't start in it (bubblewrap
+   * needs user namespaces that the host refuses). The engine then checks
+   * after each read-only call that the worktree didn't change. `codex` uses
+   * Codex's own sandbox: `read-only`, or `workspace-write` for a write call
+   * and for a read-only call with a scratch directory.
    */
-  writeMode?: "workspace-write" | "bypass";
-  /**
-   * Also bypass the sandbox for read-only calls. Use it only when Codex's
-   * sandbox fails inside the container; the prompt then carries the only
-   * read-only instruction. Default false.
-   */
-  bypassSandboxForReadOnly?: boolean;
+  sandbox?: "container" | "codex";
   /** `CODEX_HOME`, where the session rollout files live. Default `$CODEX_HOME` or `~/.codex`. */
   codexHome?: string;
 }
@@ -38,6 +35,12 @@ export interface CodexStreamSummary {
   threadId: string | null;
   /** The text of the last `agent_message` item. */
   lastMessage: string | null;
+  /**
+   * Commands that failed or were declined, as `command: output` (the output
+   * cut to its last 300 characters). A failing test is in here as well as
+   * a sandbox that couldn't start the command.
+   */
+  toolErrors: string[];
   tokens: { input: number; output: number };
   /** Messages from `turn.failed` and top-level `error` events. */
   errors: string[];
@@ -73,29 +76,27 @@ export class CodexAdapter extends CliAdapter {
    * the repository otherwise. The prompt names the repository's path.
    */
   workingDir(req: CliRequest<unknown>): string {
-    const bypass = this.codexOptions.bypassSandboxForReadOnly === true;
-    return req.tools === "read-only" && req.scratchDir && !bypass ? req.scratchDir : req.cwd;
+    return req.tools === "read-only" && req.scratchDir ? req.scratchDir : req.cwd;
+  }
+
+  private get containerSandbox(): boolean {
+    return this.codexOptions.sandbox !== "codex";
   }
 
   /** The arguments for one call; the prompt goes on stdin through the `-` positional. */
   buildArgs(req: CliRequest<unknown>, schemaFile: string): string[] {
     const args = ["exec"];
-    // `--sandbox` isn't a global flag, so it goes before `resume`.
-    const bypass =
-      (req.tools === "write" && this.codexOptions.writeMode === "bypass") ||
-      (req.tools === "read-only" && this.codexOptions.bypassSandboxForReadOnly === true);
-    // A read-only call with a scratch directory runs in that directory under
-    // `workspace-write`, so the scratch directory is the only writable root;
-    // the temporary directories are excluded so the base checkout stays
-    // read-only too.
+    // A read-only call with a scratch directory runs in that directory, so
+    // under Codex's own sandbox `workspace-write` makes the scratch directory
+    // the only writable root; the temporary directories are excluded so the
+    // base checkout stays read-only too.
     const scratch = req.tools === "read-only" && req.scratchDir !== undefined;
-    if (!bypass) {
-      args.push("--sandbox", req.tools === "write" || scratch ? "workspace-write" : "read-only");
-    }
+    // `--sandbox` isn't a global flag, so it goes before `resume`.
+    if (this.containerSandbox) args.push("--sandbox", "danger-full-access");
+    else args.push("--sandbox", req.tools === "write" || scratch ? "workspace-write" : "read-only");
     if (req.sessionId) args.push("resume", req.sessionId);
     args.push("--json", "--skip-git-repo-check", "--output-schema", schemaFile);
-    if (bypass) args.push("--dangerously-bypass-approvals-and-sandbox");
-    if (scratch && !bypass) {
+    if (scratch && !this.containerSandbox) {
       args.push(
         "-c",
         "sandbox_workspace_write.exclude_slash_tmp=true",
@@ -158,6 +159,7 @@ export class CodexAdapter extends CliAdapter {
         model: req.model ?? null,
         usage,
         tokens: summary.tokens,
+        toolErrors: summary.toolErrors,
         premiumRequests: 0,
         raw: result.stdout,
         durationMs: result.durationMs,
@@ -189,6 +191,7 @@ export class CodexAdapter extends CliAdapter {
 export class CodexStreamParser {
   private threadId: string | null = null;
   private lastMessage: string | null = null;
+  private readonly toolErrors: string[] = [];
   private input = 0;
   private output = 0;
   private readonly errors: string[] = [];
@@ -230,6 +233,17 @@ export class CodexStreamParser {
         const item = event.item as Record<string, unknown> | undefined;
         if (item?.type === "agent_message" && typeof item.text === "string")
           this.lastMessage = item.text;
+        else if (
+          item?.type === "command_execution" &&
+          (item.status === "failed" || item.status === "declined")
+        ) {
+          const command = typeof item.command === "string" ? item.command : "a command";
+          const output =
+            typeof item.aggregated_output === "string" ? item.aggregated_output.trim() : "";
+          this.toolErrors.push(
+            `${command}: ${output.length > 300 ? output.slice(-300) : output || String(item.status)}`,
+          );
+        }
         break;
       }
       default:
@@ -241,6 +255,7 @@ export class CodexStreamParser {
     return {
       threadId: this.threadId,
       lastMessage: this.lastMessage,
+      toolErrors: [...this.toolErrors],
       tokens: { input: this.input, output: this.output },
       errors: [...this.errors],
       turnsCompleted: this.turnsCompleted,

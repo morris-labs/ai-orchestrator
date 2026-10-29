@@ -24,6 +24,7 @@ export const FOCUS_AREAS: readonly (readonly string[])[] = [
 /** The precision rules. They appear in the disprover prompt and nowhere else. */
 export const PRECISION_RULES = [
   "Zero confirmed findings is an acceptable outcome. Disprove anything you can't support.",
+  "Disproving needs positive evidence: the code, input, or run that shows the failure case can't happen. When your tools fail (a command can't start, the sandbox refuses it, or a file can't be read) and the code alone doesn't settle the finding, answer `unverified`, never `disproved`.",
   "No speculative flaws: confirm only when you can name the input or state that triggers the failure.",
   "Style, naming, and preference are not defects.",
   "A flaw in code the change didn't touch still counts, but say so: report whether it exists at the base.",

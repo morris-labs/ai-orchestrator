@@ -124,7 +124,7 @@ describe.each(["claude", "codex", "copilot"] as const)(
       const log = calls();
       expect(log).toHaveLength(2);
       expect(log[1]!.argv.join(" ")).toContain(first.sessionId!);
-      if (vendor === "codex") expect(log[0]!.sandbox).toBe("read-only");
+      if (vendor === "codex") expect(log[0]!.sandbox).toBe("danger-full-access");
       if (vendor === "copilot") expect(log[0]!.writable).toBe(false);
       if (vendor === "claude") expect(log[0]!.readOnly).toBe(true);
     });
