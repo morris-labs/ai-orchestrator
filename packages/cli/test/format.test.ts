@@ -28,10 +28,10 @@ describe("format", () => {
     expect(percent(0.425)).toBe("43%");
   });
 
-  it("builds the events URL", () => {
-    expect(eventsUrl("http://127.0.0.1:21400/", "t k", "a,b")).toBe(
-      "ws://127.0.0.1:21400/api/v1/events?token=t+k&types=a%2Cb",
+  it("builds the events URL without a token", () => {
+    expect(eventsUrl("http://127.0.0.1:21400/", "a,b")).toBe(
+      "ws://127.0.0.1:21400/api/v1/events?types=a%2Cb",
     );
-    expect(eventsUrl("https://example.com", "t")).toBe("wss://example.com/api/v1/events?token=t");
+    expect(eventsUrl("https://example.com")).toBe("wss://example.com/api/v1/events");
   });
 });

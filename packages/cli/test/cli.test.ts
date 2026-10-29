@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { runCli } from "../src/program.js";
+import { childEnv, runCli } from "../src/program.js";
 import { startFakeServer, type FakeServer } from "./fake-server.js";
 import {
   BOX_ID,
@@ -553,7 +553,7 @@ describe("events", () => {
       .split("\n")
       .map((l) => JSON.parse(l));
     expect(lines.map((l) => l.type)).toEqual(["hello", "ports.changed", "ports.changed"]);
-    expect(server.lastEventsQuery).toEqual({ token: TOKEN, types: "ports.changed" });
+    expect(server.lastEventsQuery).toEqual({ types: "ports.changed" });
   });
 
   it("fails on a frame that breaks the contract", async () => {
@@ -674,5 +674,12 @@ describe("trust in the server", () => {
         WebSocket: FakeSocket as never,
       }),
     ).rejects.toThrow(/isn't JSON/);
+  });
+});
+
+describe("child environment", () => {
+  it("drops the server token and keeps everything else", () => {
+    const env = childEnv({ PATH: "/usr/bin", AGENTBOX_TOKEN: "t", AGENTBOX_SERVER_TOKEN: "s" });
+    expect(env).toEqual({ PATH: "/usr/bin" });
   });
 });

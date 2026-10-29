@@ -77,7 +77,12 @@ export async function startFakeServer(token = "cli-test-token"): Promise<FakeSer
   const wss = new WebSocketServer({ noServer: true });
   server.on("upgrade", (req, socket, head) => {
     const url = new URL(req.url ?? "/", "http://fake");
-    if (url.pathname !== "/api/v1/events" || url.searchParams.get("token") !== token) {
+    // Like the server: the bearer header only, never a query token.
+    if (
+      url.pathname !== "/api/v1/events" ||
+      req.headers.authorization !== `Bearer ${token}` ||
+      url.searchParams.has("token")
+    ) {
       socket.end("HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n");
       return;
     }

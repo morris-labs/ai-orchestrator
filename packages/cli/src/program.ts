@@ -181,10 +181,20 @@ function projectRows(projects: ProjectSummary[]) {
   );
 }
 
+/** Variables that hold the server token, which no child of the CLI needs. */
+const TOKEN_ENV = ["AGENTBOX_TOKEN", "AGENTBOX_SERVER_TOKEN"];
+
+/** `env` without the server token, for a child such as the attach command. */
+export function childEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const out = { ...env };
+  for (const name of TOKEN_ENV) delete out[name];
+  return out;
+}
+
 function defaultExec(argv: string[]): Promise<number> {
   return new Promise((resolve, reject) => {
     const [program, ...args] = argv as [string, ...string[]];
-    const child = spawn(program, args, { stdio: "inherit" });
+    const child = spawn(program, args, { stdio: "inherit", env: childEnv() });
     child.on("error", reject);
     child.on("exit", (code, signal) => resolve(code ?? (signal ? 1 : 0)));
   });

@@ -15,11 +15,10 @@ export interface TailOptions {
   signal?: AbortSignal;
 }
 
-/** Builds the `events.stream` WebSocket URL. */
-export function eventsUrl(baseUrl: string, token: string, types?: string): string {
+/** Builds the `events.stream` WebSocket URL. The token never goes in it. */
+export function eventsUrl(baseUrl: string, types?: string): string {
   const url = new URL(serverRoutes["events.stream"].path, baseUrl.replace(/\/$/, "") + "/");
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-  url.searchParams.set("token", token);
   if (types) url.searchParams.set("types", types);
   return url.toString();
 }
@@ -32,7 +31,10 @@ export function eventsUrl(baseUrl: string, token: string, types?: string): strin
 export function tailEvents(options: TailOptions): Promise<void> {
   const Ctor = options.WebSocket ?? WebSocket;
   return new Promise<void>((resolve, reject) => {
-    const socket = new Ctor(eventsUrl(options.baseUrl, options.token, options.types));
+    // The token goes in the upgrade's `Authorization` header, out of the URL.
+    const socket = new Ctor(eventsUrl(options.baseUrl, options.types), {
+      headers: { authorization: `Bearer ${options.token}` },
+    });
     let seen = 0;
     let settled = false;
     const finish = (err?: Error) => {
