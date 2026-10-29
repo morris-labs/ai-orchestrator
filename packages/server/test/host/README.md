@@ -59,6 +59,30 @@ temporary directory. The temporary directory is also the server's data
 directory, so the database, the keeper state, and the sessions directories
 never touch `~/.claude-box`.
 
+## Start retry
+
+```sh
+node packages/server/test/host/start-retry.mjs [--image=IMAGE]
+```
+
+Replace `IMAGE` with the image to start from; the default is `claude-code`.
+Its engine version must match this checkout's server version, so build it
+from the same checkout with `scripts/build-image.sh`.
+
+The script checks that a box still starts when its project container goes
+away between `ensureContainer()` and the session start, as it does when a
+keeper leaves at the end of its grace period. It does the following:
+
+1. Creates a project in a temporary directory, with a temporary data
+   directory.
+1. Wraps `docker.exec` so that the first session-start exec force-removes
+   the project container just before it runs.
+1. Creates a real Claude box and checks that a new container runs. This uses
+   your Claude sign-in.
+1. Stops the box, waits until its status is `stopped`, and purges it.
+
+It removes the container and the temporary directory when it ends.
+
 ## Import check against the real records
 
 ```sh
