@@ -7,7 +7,10 @@ import { demuxBuffer } from "../../src/docker/dockerode.js";
 import {
   ImageVersions,
   VERSION_PROBE_COMMAND,
-  imageBuildOptions,
+  INSTALLED_IMAGE_CONTEXT,
+  defaultImageContext,
+  imageBuildScript,
+  imageBuildScriptArgs,
   imageStatus,
   parseVersionProbe,
   versionProbeCommand,
@@ -48,28 +51,27 @@ describe("CpuTracker", () => {
 });
 
 describe("image helpers", () => {
-  it("builds the three kinds like the 3.3.5 setup wizard", () => {
-    const now = new Date("2026-10-28T09:00:00Z");
-    const o = imageBuildOptions({
-      kind: "rebuild",
-      context: "/repo/image",
-      tag: "claude-code",
-      user: "tester",
-      now,
-    });
-    expect(o).toEqual({
-      context: "/repo/image",
-      tag: "claude-code",
-      buildArgs: { USER_NAME: "tester" },
-      noCache: true,
-      pull: true,
-    });
+  it("maps the three kinds to build script options like the 3.3.5 setup wizard", () => {
+    expect(imageBuildScriptArgs("rebuild")).toEqual(["--no-cache"]);
+    expect(imageBuildScriptArgs("packages")).toEqual(["--update-packages"]);
+    expect(imageBuildScriptArgs("claude-code")).toEqual(["--update-cli"]);
+  });
+
+  it("finds the build script beside the context, in a checkout and installed", () => {
+    expect(imageBuildScript("/repo/image")).toBe("/repo/scripts/build-image.sh");
+    expect(imageBuildScript("/repo/image/")).toBe("/repo/scripts/build-image.sh");
+    expect(imageBuildScript(INSTALLED_IMAGE_CONTEXT)).toBe(
+      "/usr/share/agentbox/scripts/build-image.sh",
+    );
+  });
+
+  it("defaults the context to the checkout, else the installed package", () => {
+    const has = (files: string[]) => (p: string) => files.includes(p);
+    expect(defaultImageContext("/repo", has(["/repo/image/Dockerfile"]))).toBe("/repo/image");
     expect(
-      imageBuildOptions({ kind: "packages", context: ".", tag: "t", user: "u", now }).buildArgs,
-    ).toEqual({ USER_NAME: "u", CACHEBUST_PACKAGES: "1793178000" });
-    expect(
-      imageBuildOptions({ kind: "claude-code", context: ".", tag: "t", user: "u", now }),
-    ).toMatchObject({ buildArgs: { CACHEBUST: "1793178000" }, noCache: false, pull: false });
+      defaultImageContext("/usr/lib", has(["/usr/share/agentbox/image/Dockerfile"])),
+    ).toBe("/usr/share/agentbox/image");
+    expect(defaultImageContext("/repo", has([]))).toBe("/repo/image");
   });
 
   it("parses the version probe", () => {

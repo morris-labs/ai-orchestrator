@@ -2,12 +2,16 @@
 // jobs (inventory section 2.6).
 import { existsSync } from "node:fs";
 import { chmod, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import type { Job, SetupCheck, SetupStatusSchema } from "@agentbox/contracts";
 import type { z } from "zod";
 import type { Core } from "../api/core-interface.js";
 import { ApiError, toApiError } from "../api/errors.js";
-import { imageBuildOptions, type ImageBuildKind } from "../docker/image.js";
+import {
+  imageBuildScript,
+  imageBuildScriptArgs,
+  type ImageBuildKind,
+} from "../docker/image.js";
 import { processJob, type JobIO, type JobManager } from "../jobs/jobs.js";
 import { commandLine, type ProcessRunner } from "../jobs/process.js";
 import type { OpClient } from "../secrets/op.js";
@@ -21,14 +25,13 @@ export interface SetupServiceOptions {
   runner: ProcessRunner;
   op: OpClient;
   home: string;
-  /** The host user name, passed to the image build as `USER_NAME`. */
-  user: string;
-  /** The directory that holds the image's Dockerfile. */
+  /**
+   * The directory that holds the image's Dockerfile, named `image`, with
+   * `scripts/build-image.sh` beside it in the same parent directory.
+   */
   imageContext: string;
   serviceInstalled: () => Promise<boolean>;
   installService: (io: JobIO) => Promise<void>;
-  /** The build time stamp; seconds since the epoch. */
-  now?: () => Date;
 }
 
 type CheckId = SetupCheck["id"];
@@ -331,34 +334,43 @@ export class SetupService {
     }
   }
 
-  /** The `docker build` argv for a build kind, rendered from `imageBuildOptions()`. */
+  /**
+   * The argv of an image build: `scripts/build-image.sh`, the one source of
+   * truth for the build. It passes every pin in `image/versions.env` as a
+   * build argument, packs the engine in a source checkout, and uses the
+   * engine tarball the package ships otherwise.
+   */
   buildArgv(kind: ImageBuildKind): string[] {
-    const o = imageBuildOptions({
-      kind,
-      context: this.opts.imageContext,
-      tag: this.opts.core.settings.get().engineImage,
-      user: this.opts.user,
-      now: this.opts.now?.() ?? new Date(),
-    });
-    const argv = ["docker", "build", "-t", o.tag];
-    if (o.noCache) argv.push("--no-cache");
-    if (o.pull) argv.push("--pull");
-    for (const [k, v] of Object.entries(o.buildArgs)) argv.push("--build-arg", `${k}=${v}`);
-    argv.push("--progress=plain", o.context);
-    return argv;
+    return [
+      imageBuildScript(this.opts.imageContext),
+      "--tag",
+      this.opts.core.settings.get().engineImage,
+      ...imageBuildScriptArgs(kind),
+    ];
   }
 
   /** Builds or updates the image as an `image_build` job. */
   buildImage(kind: ImageBuildKind): Job {
-    if (!existsSync(join(this.opts.imageContext, "Dockerfile"))) {
+    const context = this.opts.imageContext;
+    if (!existsSync(join(context, "Dockerfile"))) {
       throw new ApiError(
         "image_missing",
-        `The image build context ${this.opts.imageContext} has no Dockerfile. Set AGENTBOX_IMAGE_CONTEXT to the directory that holds the image's Dockerfile.`,
+        `The image build context ${context} has no Dockerfile. Set AGENTBOX_IMAGE_CONTEXT to the directory that holds the image's Dockerfile.`,
+      );
+    }
+    const script = imageBuildScript(context);
+    if (basename(context) !== "image" || !existsSync(script)) {
+      throw new ApiError(
+        "image_missing",
+        `The image build needs ${script} beside the build context ${context}, and the context directory must be named image. Set AGENTBOX_IMAGE_CONTEXT to the image directory of a source checkout or of the installed package.`,
       );
     }
     const argv = this.buildArgv(kind);
+    // The script's `docker build` prints one line per step instead of
+    // redrawing the terminal, which reads better in the job log.
+    const env = { ...process.env, BUILDKIT_PROGRESS: "plain" };
     return this.opts.jobs.start({ kind: "image_build", command: commandLine(argv) }, (io) =>
-      processJob(io, this.opts.runner.spawn(argv[0] as string, argv.slice(1), { pty: true })),
+      processJob(io, this.opts.runner.spawn(argv[0] as string, argv.slice(1), { pty: true, env })),
     );
   }
 }

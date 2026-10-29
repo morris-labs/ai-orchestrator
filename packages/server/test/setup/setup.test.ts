@@ -1,5 +1,7 @@
-import { chmod, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { chmod, copyFile, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   defaultConfig,
   type GlobalSettings,
@@ -68,14 +70,12 @@ function make(overrides: {
     runner,
     op,
     home,
-    user: "me",
     imageContext: overrides.imageContext ?? "/opt/agentbox/image",
     serviceInstalled: async () => overrides.installed ?? false,
     installService: async (io) => {
       installs.push("install");
       io.write("installed\r\n");
     },
-    now: () => new Date("2026-10-28T00:00:00Z"),
   });
   return { svc, runner, jobs, installs };
 }
@@ -150,29 +150,28 @@ describe("SetupService checks", () => {
 
 describe("SetupService image builds and fixes", () => {
   it.each([
-    ["rebuild", ["--no-cache", "--pull"]],
-    ["packages", ["--build-arg", "CACHEBUST_PACKAGES=1793145600"]],
-    ["claude-code", ["--build-arg", "CACHEBUST=1793145600"]],
-  ] as const)("builds the %s argv", (kind, variant) => {
+    ["rebuild", ["--no-cache"]],
+    ["packages", ["--update-packages"]],
+    ["claude-code", ["--update-cli"]],
+  ] as const)("runs the build script for %s", (kind, variant) => {
     const { svc } = make({});
     expect(svc.buildArgv(kind)).toEqual([
-      "docker",
-      "build",
-      "-t",
+      "/opt/agentbox/scripts/build-image.sh",
+      "--tag",
       "claude-code",
       ...variant,
-      "--build-arg",
-      "USER_NAME=me",
-      "--progress=plain",
-      "/opt/agentbox/image",
     ]);
   });
 
-  /** A build context that holds a Dockerfile. */
-  async function context(): Promise<string> {
-    const dir = join(home, "image");
+  /** A build context that holds a Dockerfile, with the build script beside it. */
+  async function context(opts: { script?: boolean; name?: string } = {}): Promise<string> {
+    const dir = join(home, opts.name ?? "image");
     await mkdir(dir, { recursive: true });
     await writeFile(join(dir, "Dockerfile"), "FROM ubuntu\n");
+    if (opts.script ?? true) {
+      await mkdir(join(home, "scripts"), { recursive: true });
+      await writeFile(join(home, "scripts", "build-image.sh"), "#!/bin/sh\n", { mode: 0o755 });
+    }
     return dir;
   }
 
@@ -182,18 +181,69 @@ describe("SetupService image builds and fixes", () => {
     expect(runner.spawned).toHaveLength(0);
   });
 
-  it("runs an image build as a job under a pty", async () => {
+  it("refuses an image build without the build script beside the context", async () => {
+    const { svc, runner } = make({ imageContext: await context({ script: false }) });
+    expect(() => svc.buildImage("rebuild")).toThrow(
+      expect.objectContaining({ code: "image_missing", message: expect.stringMatching(/build-image\.sh/) }),
+    );
+    expect(runner.spawned).toHaveLength(0);
+  });
+
+  it("refuses a context that isn't named image, since the script builds ../image", async () => {
+    const { svc } = make({ imageContext: await context({ name: "other" }) });
+    expect(() => svc.buildImage("rebuild")).toThrow(/must be named image/);
+  });
+
+  it("runs the build script as a job under a pty with plain progress", async () => {
     const { svc, runner, jobs } = make({
       settings: { engineImage: "my-image" },
       imageContext: await context(),
     });
     const job = svc.buildImage("rebuild");
     expect(job.kind).toBe("image_build");
-    expect(job.command).toContain("docker build -t my-image --no-cache --pull");
+    expect(job.command).toBe(`${join(home, "scripts", "build-image.sh")} --tag my-image --no-cache`);
     await waitFor(() => runner.spawned.length === 1);
+    expect(runner.spawned[0]?.argv).toEqual([
+      join(home, "scripts", "build-image.sh"),
+      "--tag",
+      "my-image",
+      "--no-cache",
+    ]);
     expect(runner.spawned[0]?.options.pty).toBe(true);
+    expect(runner.spawned[0]?.options.env?.BUILDKIT_PROGRESS).toBe("plain");
     runner.spawned[0]!.exit(1);
     await waitFor(() => jobs.get(job.id)?.status === "failed");
+  });
+
+  it("builds with every versions.env pin when run from the installed layout", async () => {
+    // Mimics /usr/share/agentbox with the real script, so the job's argv and
+    // the script agree on the options and the script passes the pins.
+    const repo = fileURLToPath(new URL("../../../../", import.meta.url));
+    const root = join(home, "share");
+    const img = join(root, "image");
+    await mkdir(join(img, "keeper"), { recursive: true });
+    await mkdir(join(img, "dist"), { recursive: true });
+    await mkdir(join(root, "scripts", "lib"), { recursive: true });
+    await copyFile(join(repo, "scripts", "build-image.sh"), join(root, "scripts", "build-image.sh"));
+    await chmod(join(root, "scripts", "build-image.sh"), 0o755);
+    await copyFile(join(repo, "scripts", "lib", "common.sh"), join(root, "scripts", "lib", "common.sh"));
+    const versions = await readFile(join(repo, "image", "versions.env"), "utf8");
+    await writeFile(join(img, "versions.env"), versions);
+    await writeFile(join(img, "Dockerfile"), "FROM ubuntu\n");
+    await writeFile(join(img, "keeper", "keeper.sh"), "");
+    await writeFile(join(img, "keeper", "start-session.sh"), "");
+    const engine = /^AGENTBOX_ENGINE_VERSION=(.+)$/m.exec(versions)?.[1];
+    await writeFile(join(img, "dist", `agentbox-engine-${engine}.tgz`), "");
+
+    const { svc } = make({ imageContext: img, settings: { engineImage: "claude-code:v4test" } });
+    const argv = svc.buildArgv("packages");
+    const out = execFileSync(argv[0] as string, [...argv.slice(1), "--print"], { encoding: "utf8" });
+    expect(out).toContain("docker build -t claude-code:v4test");
+    expect(out).toMatch(/--build-arg CACHEBUST_PACKAGES=\d+/);
+    for (const line of versions.split("\n").filter((l) => /^[A-Z]/.test(l))) {
+      expect(out).toContain(`--build-arg ${line}`);
+    }
+    expect(out).toContain("NVM_VERSION=");
   });
 
   it("routes fixes", async () => {
