@@ -7,7 +7,7 @@
 # Replace the following before you start:
 #   BOX_ID:   a running box, such as claude-agent-example
 #   PROJECT:  its project id
-#   REMOTE:   a saved SSH remote name
+#   REMOTE:   a saved SSH remote name, such as "Mac Box"; the script encodes it
 #   DEV_PORT: a port a dev server listens on inside the box's container
 # Set AGENTBOX_DATA_DIR when the server runs with --data-dir.
 set -euo pipefail
@@ -21,6 +21,13 @@ PROJECT="${PROJECT:?set PROJECT}"
 REMOTE="${REMOTE:-staging}"
 DEV_PORT="${DEV_PORT:-5173}"
 WS="$(command -v websocat || true)"
+
+# Prints $1 percent-encoded for one URL path segment. Remote names can hold
+# spaces, such as "Mac Box".
+urlencode() {
+  python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$1"
+}
+REMOTE_PATH="$(urlencode "$REMOTE")"
 
 step="${1:-list}"
 case "$step" in
@@ -68,7 +75,7 @@ case "$step" in
     curl -fsS "${H[@]}" -H 'content-type: application/json' -d "{\"projectId\":\"$PROJECT\"}" "$SERVER/api/v1/secrets/check"
     ;;
   ssh)
-    curl -fsS "${H[@]}" -X POST "$SERVER/api/v1/ssh-remotes/$REMOTE/test"
+    curl -fsS "${H[@]}" -X POST "$SERVER/api/v1/ssh-remotes/$REMOTE_PATH/test"
     curl -fsS "${H[@]}" "$SERVER/api/v1/ssh-remotes"   # tunnelUp true while a box using it runs
     ;;
   image-build)
