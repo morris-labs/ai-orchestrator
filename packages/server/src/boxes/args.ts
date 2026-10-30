@@ -12,8 +12,11 @@ import { infraFile, worktreeNotesDir } from "../worktrees/worktrees.js";
  * box's repository is a subdirectory of it.
  */
 export function baseClaudeArgs(box: Box, project: Pick<Project, "root" | "primaryRepo">): string[] {
-  const args = ["--remote-control"];
-  if (box.conversationName !== "") args.push(box.conversationName);
+  // `--flag=value` keeps a name that starts with "-" a value: claude reads
+  // `--remote-control -x` as the flag with no name, followed by `-x`.
+  const args = [
+    box.conversationName === "" ? "--remote-control" : `--remote-control=${box.conversationName}`,
+  ];
   args.push("--permission-mode", "auto");
   if (box.skipPermissions) args.push("--allow-dangerously-skip-permissions");
   if (box.model) args.push("--model", box.model);
@@ -75,4 +78,9 @@ export function movedMessage(env: HostEnv, box: Box): string {
     "Read them there, keep updating them there, and use these paths in place of any earlier " +
     "ones from this conversation. Reply with one line to confirm, then carry on."
   );
+}
+
+/** `--name=<name>`, in the one form that keeps a leading "-" part of the name. */
+export function nameArg(name: string): string {
+  return `--name=${name}`;
 }

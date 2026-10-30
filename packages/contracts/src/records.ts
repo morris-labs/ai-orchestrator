@@ -119,10 +119,53 @@ export const MountSchema = z.object({
 });
 export type Mount = z.infer<typeof MountSchema>;
 
-/** An explicit `HOST:CONTAINER` TCP port map for a project's container. */
+// Docker reads a bind as `HOST:CONTAINER[:OPTIONS]`, and the server keeps
+// binds one per line, so neither side can hold a colon (other than a Windows
+// drive letter's) or a control character.
+// eslint-disable-next-line no-control-regex
+const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
+
+/**
+ * Why a host directory can't be bound into a container, or `null` when it
+ * can: it must be absolute (`/...`, or `C:\...` on Windows), with no colon
+ * after the drive letter and no control character.
+ */
+export function hostPathProblem(p: string): string | null {
+  if (CONTROL_CHARS.test(p)) return `${JSON.stringify(p)} contains a control character.`;
+  const drive = /^[A-Za-z]:[\\/]/.test(p);
+  if (!drive && !p.startsWith("/")) return `${p} is not an absolute path.`;
+  if (p.slice(drive ? 2 : 0).includes(":"))
+    return `${p} contains a colon, which Docker can't bind.`;
+  return null;
+}
+
+/**
+ * Why a path can't be a mount point in the container, or `null` when it can:
+ * it must be absolute, not `/` itself, and hold no colon or control
+ * character.
+ */
+export function containerPathProblem(p: string): string | null {
+  if (CONTROL_CHARS.test(p)) return `${JSON.stringify(p)} contains a control character.`;
+  if (!p.startsWith("/")) return `The container path ${p} is not absolute.`;
+  if (p.replace(/\/+$/, "") === "") return "The container path can't be /.";
+  if (p.includes(":")) return `The container path ${p} contains a colon, which Docker can't bind.`;
+  return null;
+}
+
+/** Why a mount can't be bound, or `null` when it can. */
+export function mountProblem(m: Mount): string | null {
+  return hostPathProblem(m.host) ?? containerPathProblem(m.container);
+}
+
+/**
+ * An explicit `HOST:CONTAINER` TCP port map for a project's container. The
+ * host port listens on 127.0.0.1 unless `allInterfaces` is true, which
+ * publishes it on every host interface, reachable from the network.
+ */
 export const TcpMapSchema = z.object({
   host: PortSchema,
   container: PortSchema,
+  allInterfaces: z.boolean().optional(),
 });
 export type TcpMap = z.infer<typeof TcpMapSchema>;
 
@@ -256,7 +299,7 @@ export type SshForward = z.infer<typeof SshForwardSchema>;
 /** A named SSH remote. Boxes refer to it by `name` in `sshRemoteRefs`. */
 export const SshRemoteSchema = z.object({
   name: z.string().min(1),
-  /** `user@host[:port]`. */
+  /** `user@host[:port]`; an IPv6 address takes a port only in brackets, `user@[ADDR]:port`. */
   host: z.string().min(1),
   /** Path to the identity file on the host. */
   identity: z.string().min(1).optional(),
@@ -264,8 +307,50 @@ export const SshRemoteSchema = z.object({
 });
 export type SshRemote = z.infer<typeof SshRemoteSchema>;
 
-/** An SSH remote with defaults: no forwards, and `localhost` bind addresses. */
+/**
+ * Why an SSH remote's `host` is unsafe or unusable, or `null` when it is
+ * fine: it must not start with `-`, which `ssh` would read as an option,
+ * and holds no whitespace or control character.
+ */
+export function sshHostProblem(host: string): string | null {
+  if (host.startsWith("-")) return `The SSH host ${host} starts with "-".`;
+  if (/\s/.test(host) || CONTROL_CHARS.test(host))
+    return "The SSH host contains a space or a control character.";
+  const at = host.lastIndexOf("@");
+  const hostPart = host.slice(at + 1);
+  if (hostPart === "" || hostPart.startsWith("-"))
+    return `The SSH host ${host} has no usable host name.`;
+  return null;
+}
+
+/** Why an identity file path is unsafe, or `null` when it is fine. */
+export function sshIdentityProblem(identity: string): string | null {
+  if (identity.startsWith("-")) return `The identity file ${identity} starts with "-".`;
+  if (CONTROL_CHARS.test(identity)) return "The identity file path contains a control character.";
+  return null;
+}
+
+/**
+ * An SSH remote with defaults: no forwards, and `localhost` bind addresses.
+ * The host and the identity file are checked here, on the way in, rather
+ * than in `SshRemoteSchema`, so a record stored before the check still loads.
+ */
 export const SshRemoteInputSchema = SshRemoteSchema.extend({
+  host: z
+    .string()
+    .min(1)
+    .superRefine((h, ctx) => {
+      const problem = sshHostProblem(h);
+      if (problem) ctx.addIssue({ code: "custom", message: problem });
+    }),
+  identity: z
+    .string()
+    .min(1)
+    .superRefine((i, ctx) => {
+      const problem = sshIdentityProblem(i);
+      if (problem) ctx.addIssue({ code: "custom", message: problem });
+    })
+    .optional(),
   forwards: z
     .array(SshForwardSchema.extend({ bindAddress: z.string().min(1).default("localhost") }))
     .default([]),
@@ -339,6 +424,16 @@ export const BoxSchema = z.object({
   session: z.string().min(1),
   launchedModel: z.string().min(1).optional(),
   launchedEffort: EffortSchema.optional(),
+  /**
+   * What the first start of a box created without a start needs: the
+   * opening prompt, and the conversation to fork from. That start clears it.
+   */
+  firstStart: z
+    .object({
+      openingPrompt: z.string(),
+      forkFrom: z.object({ uuid: z.string().uuid(), workDir: z.string().min(1) }).optional(),
+    })
+    .optional(),
   wasRunning: z.boolean(),
   sshRemoteRefs: z.array(z.string().min(1)),
   createdAt: IsoDateTimeSchema,

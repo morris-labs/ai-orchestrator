@@ -1,14 +1,14 @@
 // The setup checks behind the setup wizard, their fixes, and the image build
 // jobs (inventory section 2.6).
 import { existsSync } from "node:fs";
-import { chmod, stat } from "node:fs/promises";
+import { chmod, stat, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import type { Job, SetupCheck, SetupStatusSchema } from "@agentbox/contracts";
 import type { z } from "zod";
 import type { Core } from "../api/core-interface.js";
 import { ApiError, toApiError } from "../api/errors.js";
 import { imageBuildScript, imageBuildScriptArgs, type ImageBuildKind } from "../docker/image.js";
-import { processJob, type JobIO, type JobManager } from "../jobs/jobs.js";
+import { processJob, type JobIO, type JobManager, type JobOutcome } from "../jobs/jobs.js";
 import { commandLine, type ProcessRunner } from "../jobs/process.js";
 import type { OpClient } from "../secrets/op.js";
 
@@ -264,6 +264,36 @@ export class SetupService {
         };
   }
 
+  /**
+   * Writes the public half of an existing private key when it is missing;
+   * leaves a complete pair alone.
+   */
+  private async completeKeyPair(
+    io: JobIO,
+    identity: string,
+    derive: string[],
+  ): Promise<JobOutcome> {
+    const pub = `${identity}.pub`;
+    if (existsSync(pub)) {
+      io.write(`Key pair ${identity} already exists; nothing to do.\r\n`);
+      return { exitCode: 0, failed: false };
+    }
+    const r = await this.opts.runner.run(derive[0] as string, derive.slice(1), {
+      timeoutMs: 15_000,
+    });
+    const key = r.stdout.trim();
+    if (r.code !== 0 || key === "") {
+      io.write(
+        `Couldn't read ${identity}: ${(r.stderr || r.stdout).trim() || "ssh-keygen failed"}.\r\n` +
+          "If the key has a passphrase, run ssh-keygen -y -f on it yourself.\r\n",
+      );
+      return { exitCode: r.code ?? 1, failed: true };
+    }
+    await writeFile(pub, `${key}\n`, { mode: 0o644, flag: "wx" });
+    io.write(`Wrote ${pub} from the existing private key.\r\n`);
+    return { exitCode: 0, failed: false };
+  }
+
   /** Starts the job that fixes a check. */
   fix(checkId: string): Job {
     switch (checkId) {
@@ -271,17 +301,17 @@ export class SetupService {
       case "engine":
         return this.buildImage("rebuild");
       case "ssh_key": {
-        const argv = [
-          "ssh-keygen",
-          "-t",
-          "ed25519",
-          "-N",
-          "",
-          "-f",
-          this.identity(),
-          "-C",
-          "claude-box",
-        ];
+        const identity = this.identity();
+        // ssh-keygen -f on an existing key stops at "Overwrite (y/n)?", and
+        // a "y" destroys the key, so an existing key is only completed.
+        if (existsSync(identity)) {
+          const derive = ["ssh-keygen", "-y", "-P", "", "-f", identity];
+          return this.opts.jobs.start(
+            { kind: "setup_fix", command: `${commandLine(derive)} > ${identity}.pub` },
+            (io) => this.completeKeyPair(io, identity, derive),
+          );
+        }
+        const argv = ["ssh-keygen", "-t", "ed25519", "-N", "", "-f", identity, "-C", "claude-box"];
         return this.opts.jobs.start({ kind: "setup_fix", command: commandLine(argv) }, (io) =>
           processJob(io, this.opts.runner.spawn(argv[0] as string, argv.slice(1))),
         );

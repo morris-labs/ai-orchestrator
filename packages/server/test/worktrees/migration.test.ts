@@ -33,11 +33,11 @@ describe("normalizeUrl and parseStatus", () => {
     expect(normalizeUrl("")).toBe("");
   });
 
-  it("parses porcelain entries and skips rename sources", () => {
+  it("parses porcelain entries and keeps rename sources as from", () => {
     const raw = " M a.txt\0R  new.txt\0old.txt\0?? b.txt\0 D c.txt\0";
     expect(parseStatus(raw)).toEqual([
       { xy: " M", path: "a.txt" },
-      { xy: "R ", path: "new.txt" },
+      { xy: "R ", path: "new.txt", from: "old.txt" },
       { xy: "??", path: "b.txt" },
       { xy: " D", path: "c.txt" },
     ]);
@@ -256,6 +256,39 @@ describe("executeMigration", () => {
     expect(fs.readFileSync(`${clone}/README.md`, "utf8")).toBe("changed\n");
     expect(fs.readFileSync(`${clone}/PLAN.md`, "utf8")).toBe("the plan\n");
     expect(sh(clone, "symbolic-ref", "--short", "HEAD")).toBe("feature");
+  });
+
+  it("carries a staged rename over as a rename, not a copy", async () => {
+    const { env, project, clone, box } = scenario();
+    write(`${clone}/SYNTHETIC_old.txt`, "renamed content\n");
+    sh(clone, "add", "SYNTHETIC_old.txt");
+    sh(clone, "commit", "-q", "-m", "SYNTHETIC file to rename");
+    sh(clone, "mv", "SYNTHETIC_old.txt", "renamed.txt");
+    const plan = await planMigration({ env, box, primaryRepo: project });
+    expect(plan.copyFiles).toContain("renamed.txt");
+    expect(plan.removeFiles).toContain("SYNTHETIC_old.txt");
+    await executeMigration({ env, box, plan, saveBox: () => undefined });
+    const wt = `${project}/.worktrees/fix_login`;
+    expect(fs.existsSync(`${wt}/renamed.txt`)).toBe(true);
+    expect(fs.existsSync(`${wt}/SYNTHETIC_old.txt`)).toBe(false);
+  });
+
+  it("rolls back when it can't create a directory, so a retry can run", async () => {
+    const { env, project, clone, box } = scenario();
+    // A file where the worktree's notes directory must go.
+    write(`${clone}/.claude-box`, "SYNTHETIC file in the way\n");
+    sh(clone, "add", "-f", ".claude-box");
+    sh(clone, "commit", "-q", "-m", "SYNTHETIC blocker");
+    const plan = await planMigration({ env, box, primaryRepo: project });
+    expect(plan.ok).toBe(true);
+    await expect(
+      executeMigration({ env, box, plan, saveBox: () => undefined }),
+    ).rejects.toMatchObject({
+      code: "conflict",
+      message: expect.stringMatching(/could not create/),
+    });
+    expect(fs.existsSync(`${project}/.worktrees/fix_login`)).toBe(false);
+    expect(sh(project, "branch", "--list", "claude/fix_login")).toBe("");
   });
 
   it("throws conflict for a plan that is not ok", async () => {

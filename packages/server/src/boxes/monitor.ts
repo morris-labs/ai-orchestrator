@@ -5,6 +5,7 @@ import { EventEmitter } from "node:events";
 import { CONTAINER_PREFIX, type BoxStatus, type ContainerState } from "@agentbox/contracts";
 import type { Repositories } from "../db/repositories.js";
 import { LABELS } from "../docker/launch.js";
+import { STATE_MAX_AGE_SEC } from "../docker/state.js";
 import { CpuTracker } from "../docker/stats.js";
 import {
   DockerUnavailableError,
@@ -30,6 +31,12 @@ export interface BoxEndedEvent {
 
 const PROJECT_PREFIX = `${CONTAINER_PREFIX}proj-`;
 
+/**
+ * How often a container's writable-layer size is measured. Docker walks the
+ * whole layer for it, so the routine poll reuses the last figure.
+ */
+export const DISK_SIZE_INTERVAL_MS = 60_000;
+
 function stateOf(c: ContainerSummary | undefined): ContainerState {
   if (!c) return "removed";
   if (c.state === "running") return "running";
@@ -52,11 +59,13 @@ export function looksLikeEngineRestart(
 export class ContainerMonitor extends EventEmitter {
   private readonly cpu = new CpuTracker();
   private readonly stats = new Map<string, ContainerStatsSnapshot>();
+  private readonly disk = new Map<string, { bytes: number; at: number }>();
   private readonly containerStates = new Map<string, ContainerState>();
   private readonly boxStatuses = new Map<string, BoxStatus>();
   private timer: NodeJS.Timeout | undefined;
   private polling: Promise<void> | undefined;
   private firstPoll = true;
+  private lastPollAt: number | undefined;
 
   constructor(
     private readonly deps: {
@@ -66,6 +75,10 @@ export class ContainerMonitor extends EventEmitter {
       boxes: BoxService;
       /** Called with the running box ids after every poll (the session watcher). */
       onRunning?: (boxIds: string[]) => void | Promise<void>;
+      /** The clock, in milliseconds; the host's clock unless a test sets one. */
+      now?: () => number;
+      /** Overrides `DISK_SIZE_INTERVAL_MS`. */
+      diskSizeIntervalMs?: number;
     },
   ) {
     super();
@@ -103,6 +116,14 @@ export class ContainerMonitor extends EventEmitter {
 
   private async pollOnce(sampleStats: boolean): Promise<void> {
     const { docker, events, repos, boxes } = this.deps;
+    // After a gap longer than a sessions file stays fresh, as when the host
+    // wakes from suspend, every keeper's file looks stale until the keepers
+    // rewrite it. A box that seems to have stopped then is checked again on
+    // the next poll rather than reported as ended.
+    const now = this.now();
+    const resumed =
+      this.lastPollAt !== undefined && now - this.lastPollAt > STATE_MAX_AGE_SEC * 1000;
+    this.lastPollAt = now;
     let containers: ContainerSummary[] = [];
     let unreachable = false;
     try {
@@ -135,6 +156,7 @@ export class ContainerMonitor extends EventEmitter {
         this.containerStates.set(name, state);
         if (state !== "running") {
           this.stats.delete(name);
+          this.disk.delete(name);
           this.cpu.forget(name);
         }
       }
@@ -152,6 +174,7 @@ export class ContainerMonitor extends EventEmitter {
     for (const box of all) {
       const status = boxes.status(box);
       const prev = this.boxStatuses.get(box.id);
+      if (resumed && (prev === "running" || prev === "stopping") && status === "stopped") continue;
       if (status === "running") running.push(box.id);
       if ((prev === "running" || prev === "stopping") && status === "stopped") ended.push(box.id);
       if (prev !== undefined && prev !== status) {
@@ -193,12 +216,11 @@ export class ContainerMonitor extends EventEmitter {
       return;
     }
     const figures = this.cpu.update(c.name, raw);
-    const inspect = await docker.inspectContainer(c.id, { size: true }).catch(() => null);
     const snapshot: ContainerStatsSnapshot = {
       cpuPercent: figures.cpuPercent ?? 0,
       memBytes: Math.round(figures.memBytes),
       memLimitBytes: Math.round(figures.memLimitBytes),
-      diskBytes: Math.round(inspect?.sizeRw ?? 0),
+      diskBytes: await this.diskBytes(c),
     };
     this.stats.set(c.name, snapshot);
     if (figures.cpuPercent === null) return;
@@ -208,5 +230,22 @@ export class ContainerMonitor extends EventEmitter {
       projectId: c.labels[LABELS.project] ?? c.name.slice(PROJECT_PREFIX.length),
       ...snapshot,
     });
+  }
+
+  /** The container's writable-layer size, measured at most every `diskSizeIntervalMs`. */
+  private async diskBytes(c: ContainerSummary): Promise<number> {
+    const now = this.now();
+    const last = this.disk.get(c.name);
+    const interval = this.deps.diskSizeIntervalMs ?? DISK_SIZE_INTERVAL_MS;
+    if (last && now - last.at < interval) return last.bytes;
+    const inspect = await this.deps.docker.inspectContainer(c.id, { size: true }).catch(() => null);
+    if (inspect?.sizeRw === undefined) return last?.bytes ?? 0;
+    const bytes = Math.round(inspect.sizeRw);
+    this.disk.set(c.name, { bytes, at: now });
+    return bytes;
+  }
+
+  private now(): number {
+    return (this.deps.now ?? Date.now)();
   }
 }

@@ -61,8 +61,10 @@ RUN usermod -l "${USER_NAME}" ubuntu && \
     usermod -d "/home/${USER_NAME}" -m "${USER_NAME}"
 
 # Passwordless sudo: the container is a disposable sandbox, so a sudo
-# password adds no safety. sudo ignores sudoers.d files whose names contain
-# a dot, so the file has a fixed name rather than the user name.
+# password adds no safety. Container root is still host root on the bind
+# mounts; docs/architecture.md ("Container boundaries") lists what that
+# allows. sudo ignores sudoers.d files whose names contain a dot, so the file
+# has a fixed name rather than the user name.
 RUN echo "${USER_NAME} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/claude-box && \
     chmod 0440 /etc/sudoers.d/claude-box
 

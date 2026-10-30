@@ -57,6 +57,11 @@ async function call<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
+/** Whether a 409 message says the daemon is already removing the container. */
+export function isRemovalInProgress(message: string): boolean {
+  return /removal of container .* is already in progress/i.test(message);
+}
+
 function collect(stream: NodeJS.ReadableStream): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
@@ -165,7 +170,12 @@ export class DockerodeClient implements DockerClient {
         Tty: spec.tty,
         OpenStdin: spec.openStdin,
         ExposedPorts: exposed,
-        HostConfig: { Binds: spec.binds, AutoRemove: spec.autoRemove, PortBindings: bindings },
+        HostConfig: {
+          Binds: spec.binds,
+          AutoRemove: spec.autoRemove,
+          PortBindings: bindings,
+          ...(spec.capDrop ? { CapDrop: spec.capDrop } : {}),
+        },
       }),
     );
     return c.id;
@@ -190,11 +200,19 @@ export class DockerodeClient implements DockerClient {
     }
   }
 
+  /**
+   * Removes a container. A container that is gone, or that the daemon is
+   * already removing (409, as for an auto-remove container that just
+   * exited), counts as removed; callers that reuse the name wait for it to
+   * disappear.
+   */
   async removeContainer(nameOrId: string, options: { force?: boolean } = {}): Promise<void> {
     try {
       await this.docker.getContainer(nameOrId).remove({ force: options.force ?? false });
     } catch (err) {
-      if (statusOf(err) === 404) return;
+      const s = statusOf(err);
+      if (s === 404) return;
+      if (s === 409 && isRemovalInProgress(daemonMessage(err))) return;
       rethrow(err);
     }
   }

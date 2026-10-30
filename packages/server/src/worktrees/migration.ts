@@ -131,17 +131,25 @@ export function normalizeUrl(input: string): string {
   return url.toLowerCase();
 }
 
-/** Parses `git status --porcelain=v1 -z` into status codes and paths. */
-export function parseStatus(raw: string): { xy: string; path: string }[] {
-  const out: { xy: string; path: string }[] = [];
+/**
+ * Parses `git status --porcelain=v1 -z` into status codes and paths. A
+ * rename or copy also carries its source path as `from`.
+ */
+export function parseStatus(raw: string): { xy: string; path: string; from?: string }[] {
+  const out: { xy: string; path: string; from?: string }[] = [];
   const parts = raw.split("\0").filter((p) => p !== "");
   for (let i = 0; i < parts.length; i += 1) {
     const p = parts[i] as string;
     if (p.length < 4) continue;
     const xy = p.slice(0, 2);
-    out.push({ xy, path: p.slice(3) });
     // A rename or copy is followed by its source path as a separate field.
-    if (xy.includes("R") || xy.includes("C")) i += 1;
+    if (xy.includes("R") || xy.includes("C")) {
+      const from = parts[i + 1];
+      i += 1;
+      out.push(from === undefined ? { xy, path: p.slice(3) } : { xy, path: p.slice(3), from });
+    } else {
+      out.push({ xy, path: p.slice(3) });
+    }
   }
   return out;
 }
@@ -342,6 +350,16 @@ export async function planMigration(input: {
     }
     if (e.xy.includes("D") && !fs.existsSync(`${p.oldDir}/${e.path}`)) p.removeFiles.push(e.path);
     else p.copyFiles.push(e.path);
+    // A rename's source is gone from the clone; left alone, the worktree
+    // would keep it, and the rename would arrive as a copy.
+    if (
+      e.from !== undefined &&
+      e.xy.includes("R") &&
+      !fs.existsSync(`${p.oldDir}/${e.from}`) &&
+      !p.removeFiles.includes(e.from)
+    ) {
+      p.removeFiles.push(e.from);
+    }
   }
   // A committed notes file stays in the worktree, and is also copied to the
   // notes directory that the new prompt points at.
@@ -557,12 +575,22 @@ export async function executeMigration(input: {
     }
   }
 
+  // A directory this run needs; failing to make one rolls the run back, so
+  // a retry doesn't find a half-made worktree in its way.
+  const mkdirOrFail = async (dir: string) => {
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+    } catch (err) {
+      await failAfter(`could not create ${dir}: ${messageOf(err)}`);
+    }
+  };
+
   // 5. PLAN.md and STATUS.md go to the worktree's notes folder; INFRA.md is
   // the project's shared file.
-  fs.mkdirSync(plan.notesDir, { recursive: true });
+  await mkdirOrFail(plan.notesDir);
   for (const n of plan.notesFiles) {
     const dst = n === "INFRA.md" ? infraFile(box.targetDir) : `${plan.notesDir}/${n}`;
-    fs.mkdirSync(path.dirname(dst), { recursive: true });
+    await mkdirOrFail(path.dirname(dst));
     if (!fs.existsSync(dst)) {
       try {
         fs.copyFileSync(`${plan.oldDir}/${n}`, dst);
@@ -574,7 +602,7 @@ export async function executeMigration(input: {
   }
 
   // 6. Transcripts: copied, never moved, then size-checked.
-  fs.mkdirSync(plan.transcriptTo, { recursive: true });
+  await mkdirOrFail(plan.transcriptTo);
   const folderProject = projectDirFor(env, plan.oldDir);
   for (const n of plan.transcripts) {
     let src = path.join(plan.transcriptFrom, n);

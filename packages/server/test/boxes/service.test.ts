@@ -57,8 +57,8 @@ describe("create", () => {
     expect([session, workDir]).toEqual(["claude-agent-app", dir]);
     const prompt = expandTemplate(DEFAULT_PROMPT_TEMPLATES.starter, ["Quick look", dir]);
     expect(command).toBe(
-      `claude '--remote-control' 'Quick look' '--permission-mode' 'auto' '--allow-dangerously-skip-permissions' ` +
-        `'--model' 'claude-opus-5-5' '--effort' 'high' '--name' 'Quick look' '${prompt.replace(/'/g, `'\\''`)}' '--session-id' '${box.sessionUuid}'`,
+      `claude '--remote-control=Quick look' '--permission-mode' 'auto' '--allow-dangerously-skip-permissions' ` +
+        `'--model' 'claude-opus-5-5' '--effort' 'high' '--name=Quick look' '${prompt.replace(/'/g, `'\\''`)}' '--session-id' '${box.sessionUuid}'`,
     );
     expect(h.core.boxes.status(box)).toBe("running");
     const view = h.core.boxes.view(box);
@@ -125,7 +125,7 @@ describe("create", () => {
       path.join(dir, ".claude-box/INFRA.md"),
     ]);
     expect(lastCommand(h)).toContain(`'${prompt.replace(/'/g, `'\\''`)}'`);
-    expect(lastCommand(h)).toContain("'--remote-control' 'Emails_not_sending'");
+    expect(lastCommand(h)).toContain("--remote-control=Emails_not_sending");
     expect(starts(h)[0]![1]).toBe(dir);
   });
 
@@ -299,6 +299,34 @@ describe("create", () => {
     );
   });
 
+  it("keeps the fork source and the opening prompt for a box created without a start", async () => {
+    const h = makeHarness();
+    const repo = initRepo(h.dir("repo"));
+    const src = await h.core.boxes.create({ targetDir: repo, layout: "root" });
+    h.transcript(repo, src.sessionUuid!);
+    const fork = await h.core.boxes.create({
+      targetDir: repo,
+      layout: "worktree",
+      conversationName: "Try C",
+      conversation: { mode: "fork", fromBoxId: src.id },
+      start: false,
+    });
+    expect(fork.sessionUuid).toBeNull();
+    expect(fork.firstStart?.forkFrom).toEqual({ uuid: src.sessionUuid, workDir: repo });
+    expect(fork.firstStart?.openingPrompt).toContain(fork.worktree!);
+
+    const started = await h.core.boxes.start(fork.id);
+    const command = lastCommand(h);
+    expect(command).toContain(
+      `'--resume' '${src.sessionUuid}' '--fork-session' '--session-id' '${started.sessionUuid}'`,
+    );
+    expect(command).toContain(fork.worktree!);
+    expect(fs.existsSync(h.core.catalog.transcriptPath(fork.worktree!, src.sessionUuid!))).toBe(
+      true,
+    );
+    expect(started.firstStart).toBeUndefined();
+  });
+
   it("refuses a fork whose transcript is missing", async () => {
     const h = makeHarness();
     const repo = initRepo(h.dir("repo"));
@@ -375,9 +403,7 @@ describe("start, stop, restart", () => {
       transcriptSyncedName: "Renamed in Claude",
       wasRunning: true,
     });
-    expect(lastCommand(h)).toContain(
-      `'--name' 'Renamed in Claude' '--resume' '${box.sessionUuid}'`,
-    );
+    expect(lastCommand(h)).toContain(`'--name=Renamed in Claude' '--resume' '${box.sessionUuid}'`);
     await expect(h.core.boxes.start(box.id)).rejects.toMatchObject({ code: "box_running" });
   });
 

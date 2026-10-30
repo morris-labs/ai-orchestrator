@@ -116,14 +116,15 @@ describe("buildLaunchSpec", () => {
       ],
       portBindings: {
         "20411/tcp": [{ hostIp: "127.0.0.1", hostPort: "41000" }],
-        "3000/tcp": [{ hostIp: "", hostPort: "8080" }],
+        "3000/tcp": [{ hostIp: "127.0.0.1", hostPort: "8080" }],
       },
       labels: {
         "agentbox.project": "app-1a2b3c4d",
-        "agentbox.tcp-maps": "8080:3000",
+        "agentbox.tcp-maps": "127.0.0.1:8080:3000",
         "agentbox.secret-names": "API_KEY,GITHUB_TOKEN",
         "agentbox.engine-version": "4.0.0",
       },
+      capDrop: ["MKNOD", "SETFCAP"],
       tty: true,
       openStdin: true,
       autoRemove: true,
@@ -142,10 +143,46 @@ describe("buildLaunchSpec", () => {
     expect(spec.labels["agentbox.secret-names"]).toBe("");
   });
 
+  it("publishes TCP maps on loopback unless a map asks for every interface", () => {
+    const spec = buildLaunchSpec(
+      env,
+      {
+        ...input,
+        tcpMaps: [
+          { host: 8080, container: 3000 },
+          { host: 9090, container: 4000, allInterfaces: true },
+        ],
+      },
+      { projectsSymlinkTarget: null, hasGitconfig: false },
+    );
+    expect(spec.portBindings["3000/tcp"]).toEqual([{ hostIp: "127.0.0.1", hostPort: "8080" }]);
+    expect(spec.portBindings["4000/tcp"]).toEqual([{ hostIp: "", hostPort: "9090" }]);
+    expect(spec.labels["agentbox.tcp-maps"]).toBe("127.0.0.1:8080:3000,9090:4000");
+    expect(toDockerRunArgs(spec)).toContain("9090:4000");
+  });
+
+  it("refuses a relative root or a mount docker can't bind", () => {
+    const facts = { projectsSymlinkTarget: null, hasGitconfig: false };
+    expect(() => buildLaunchSpec(env, { ...input, root: "work/app" }, facts)).toThrow(
+      expect.objectContaining({ code: "validation" }),
+    );
+    for (const bad of [
+      { host: "data/ref", container: "/data/ref" },
+      { host: "/data/ref", container: "relative" },
+      { host: "/data/a:b", container: "/x" },
+      { host: "/data/ref", container: "/x:ro" },
+      { host: "/data/ref", container: "/" },
+    ]) {
+      expect(() => buildLaunchSpec(env, { ...input, mounts: [bad] }, facts)).toThrow(
+        expect.objectContaining({ code: "validation" }),
+      );
+    }
+  });
+
   it("prints a docker run line with secrets masked", () => {
     const spec = buildLaunchSpec(env, input, { projectsSymlinkTarget: null, hasGitconfig: false });
     const args = toDockerRunArgs(spec);
-    expect(args.slice(0, 11)).toEqual([
+    expect(args.slice(0, 15)).toEqual([
       "run",
       "-d",
       "-i",
@@ -155,6 +192,10 @@ describe("buildLaunchSpec", () => {
       C,
       "--user",
       "tester",
+      "--cap-drop",
+      "MKNOD",
+      "--cap-drop",
+      "SETFCAP",
       "-e",
       "IS_SANDBOX=1",
     ]);
@@ -163,7 +204,7 @@ describe("buildLaunchSpec", () => {
     expect(args).toContain("GITHUB_TOKEN=***");
     expect(args.join(" ")).not.toContain("ghp_value");
     expect(args).toContain("127.0.0.1:41000:20411");
-    expect(args).toContain("8080:3000");
+    expect(args).toContain("127.0.0.1:8080:3000");
     expect(args.indexOf("claude-code")).toBe(args.length - 1 - spec.cmd.length);
   });
 });
@@ -190,7 +231,7 @@ describe("mergeMounts", () => {
         { host: 9000, container: 3000 },
         { host: 8080, container: 80 },
       ]),
-    ).toBe("8080:80,9000:3000");
+    ).toBe("127.0.0.1:8080:80,127.0.0.1:9000:3000");
   });
 });
 
@@ -215,6 +256,20 @@ describe("host preparation", () => {
       expect(fs.statSync(path.join(home, d)).isDirectory()).toBe(true);
     expect(fs.readdirSync(sessions)).toEqual([]);
     expect(fs.existsSync(path.join(home, ".claude-box", "state", C))).toBe(true);
+    // Docker would otherwise create a missing ~/.claude.json as a root-owned directory.
+    const claudeJson = path.join(home, ".claude.json");
+    expect(fs.lstatSync(claudeJson).isFile()).toBe(true);
+    expect(fs.statSync(claudeJson).mode & 0o777).toBe(0o600);
+    expect(fs.readFileSync(claudeJson, "utf8")).toBe("{}\n");
+  });
+
+  it("leaves an existing ~/.claude.json alone", () => {
+    const home = tempDir("agentbox-launch-");
+    const root = path.join(home, "work");
+    fs.mkdirSync(root);
+    fs.writeFileSync(path.join(home, ".claude.json"), '{"SYNTHETIC":1}');
+    prepareLaunchHost({ ...env, home }, { container: C, root });
+    expect(fs.readFileSync(path.join(home, ".claude.json"), "utf8")).toBe('{"SYNTHETIC":1}');
   });
 
   it("ignores a projects symlink that points inside ~/.claude", () => {

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ConversationSummarySchema } from "@agentbox/contracts";
 import {
   condense,
+  claudePathHash,
   encodeProjectDir,
   listConversations,
   openingPromptTitle,
@@ -47,6 +48,18 @@ describe("path encoding", () => {
   it("replaces each UTF-16 unit of a non-ASCII character", () => {
     expect(encodeProjectDir("/a/é")).toBe("-a--");
     expect(encodeProjectDir("/a/😀")).toBe("-a---");
+  });
+  it("truncates and hashes a name longer than 200 characters as Claude Code does", () => {
+    // Java's String.hashCode("hello"), which Claude Code's hash matches.
+    expect(claudePathHash("hello")).toBe(99162322);
+    const long = `/home/tester/${"SYNTHETIC_long_directory_name/".repeat(8)}`;
+    const encoded = encodeProjectDir(long);
+    expect(encoded).toHaveLength(207);
+    expect(encoded).toBe(
+      `${"-home-tester-" + "SYNTHETIC-long-directory-name-".repeat(6)}SYNTHET-mc3r3c`,
+    );
+    const exactly200 = `/${"a".repeat(199)}`;
+    expect(encodeProjectDir(exactly200)).toBe(`-${"a".repeat(199)}`);
   });
   it("cleans the path first and gives empty for an empty directory", () => {
     expect(encodeProjectDir("/a/b/")).toBe("-a-b");

@@ -58,6 +58,12 @@ export class MemoryDocker implements DockerClient {
    * between its check and the exec.
    */
   beforeExec: ((container: string, options: ExecOptions) => Promise<void>) | undefined;
+  /**
+   * Containers the daemon is removing, with the number of inspections they
+   * still survive. Removing one again does nothing, as `DockerodeClient`
+   * treats the daemon's 409 "already in progress" as done.
+   */
+  readonly removing = new Map<string, number>();
   private nextId = 1;
   private cpuTick = 0;
 
@@ -164,6 +170,15 @@ export class MemoryDocker implements DockerClient {
     this.record("inspectContainer", nameOrId);
     const c = this.find(nameOrId);
     if (!c) return null;
+    const left = this.removing.get(c.spec.name);
+    if (left !== undefined) {
+      if (left <= 0) {
+        this.removing.delete(c.spec.name);
+        this.containers.delete(c.spec.name);
+        return null;
+      }
+      this.removing.set(c.spec.name, left - 1);
+    }
     return {
       id: c.id,
       name: c.spec.name,
@@ -220,6 +235,7 @@ export class MemoryDocker implements DockerClient {
     this.record("removeContainer", nameOrId, options);
     const c = this.find(nameOrId);
     if (!c) return;
+    if (this.removing.has(c.spec.name)) return;
     if (c.running && !options.force)
       throw new DockerApiError(409, "Docker: You cannot remove a running container.");
     this.containers.delete(c.spec.name);

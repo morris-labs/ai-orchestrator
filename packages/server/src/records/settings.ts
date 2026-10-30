@@ -8,6 +8,7 @@ import {
   GlobalSettingsSchema,
   MountSchema,
   PromptTemplatesSchema,
+  mountProblem,
   SecretRefSchema,
   parseConfig,
   type GlobalSettings,
@@ -45,6 +46,17 @@ function changedKeys(before: GlobalSettings, after: GlobalSettings): string[] {
       JSON.stringify((before as Record<string, unknown>)[k]) !==
       JSON.stringify((after as Record<string, unknown>)[k]),
   );
+}
+
+/**
+ * Throws `validation` for the first mount docker can't bind: a relative or
+ * colon-bearing host path, or a container path that isn't absolute.
+ */
+export function assertMountable(mounts: readonly Mount[]): void {
+  for (const m of mounts) {
+    const problem = mountProblem(m);
+    if (problem) throw new ApiError("validation", problem, { mount: m });
+  }
 }
 
 export class SettingsService {
@@ -134,6 +146,7 @@ export class SettingsService {
   /** Replaces the global mounts. Every host directory must exist. */
   setGlobalMounts(mounts: Mount[]): GlobalSettings {
     const list = parseOrThrow(z.array(MountSchema), mounts);
+    assertMountable(list);
     const missing = list.filter((m) => !isDirectory(m.host)).map((m) => m.host);
     if (missing.length > 0) {
       throw new ApiError(

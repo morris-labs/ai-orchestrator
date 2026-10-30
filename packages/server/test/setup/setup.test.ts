@@ -285,6 +285,29 @@ describe("SetupService image builds and fixes", () => {
     expect(() => svc.fix("nope")).toThrow(expect.objectContaining({ code: "not_found" }));
   });
 
+  it("completes an existing key instead of running ssh-keygen over it", async () => {
+    await mkdir(join(home, ".ssh"));
+    const key = join(home, ".ssh", "id_ed25519");
+    await writeFile(key, "SYNTHETIC private key\n", { mode: 0o600 });
+    const runner = new FakeRunner((argv) =>
+      argv[1] === "-y" ? { stdout: "ssh-ed25519 SYNTHETICKEY claude-box\n" } : {},
+    );
+    const { svc, jobs } = make({ runner });
+    const job = svc.fix("ssh_key");
+    await waitFor(() => jobs.get(job.id)?.status !== "running");
+    expect(jobs.get(job.id)?.status).toBe("finished");
+    expect(runner.spawned).toHaveLength(0);
+    expect(runner.runs.map((r) => r.argv)).toEqual([["ssh-keygen", "-y", "-P", "", "-f", key]]);
+    expect(await readFile(`${key}.pub`, "utf8")).toBe("ssh-ed25519 SYNTHETICKEY claude-box\n");
+    expect(await readFile(key, "utf8")).toBe("SYNTHETIC private key\n");
+
+    // A complete pair is left alone.
+    const again = svc.fix("ssh_key");
+    await waitFor(() => jobs.get(again.id)?.status !== "running");
+    expect(jobs.get(again.id)?.status).toBe("finished");
+    expect(runner.runs).toHaveLength(1);
+  });
+
   it("fixes SSH permissions", async () => {
     await mkdir(join(home, ".ssh"));
     await chmod(join(home, ".ssh"), 0o755);

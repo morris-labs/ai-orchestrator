@@ -174,13 +174,44 @@ describe("ProjectService", () => {
     const updated = h.core.projects.get(p.id);
     expect(await h.core.projects.staleDifferences(updated)).toEqual([
       `${extra}:/extra`,
-      "TCP maps none -> 9000:3000",
+      "TCP maps none -> 127.0.0.1:9000:3000",
     ]);
     expect(await h.core.projects.staleDifferences(updated, ["X"])).toContain("secrets none -> X");
     const r = await h.core.projects.ensureContainer(p.id);
     expect(r.created).toBe(true);
     expect(h.docker.callsOf("stopContainer")).toHaveLength(1);
     expect(await h.core.projects.staleDifferences(h.core.projects.get(p.id))).toEqual([]);
+  });
+
+  it("refuses a relative root and mounts docker can't bind", async () => {
+    const h = makeHarness();
+    expect(() => h.core.projects.ensureForRoot("SYNTHETIC_relative")).toThrow(
+      expect.objectContaining({ code: "validation" }),
+    );
+    expect(() => h.core.projects.create({ root: "SYNTHETIC_relative" })).toThrow(
+      expect.objectContaining({ code: "validation" }),
+    );
+    const p = h.core.projects.ensureForRoot(h.dir("app"));
+    await expect(
+      h.core.projects.update(p.id, { mounts: [{ host: h.dir("x"), container: "relative" }] }),
+    ).rejects.toMatchObject({ code: "validation" });
+    expect(() => h.core.settings.setGlobalMounts([{ host: "relative", container: "/x" }])).toThrow(
+      expect.objectContaining({ code: "validation" }),
+    );
+  });
+
+  it("waits for an exited container the daemon is still removing before creating one", async () => {
+    const h = makeHarness();
+    const p = h.core.projects.ensureForRoot(h.dir("app"));
+    const first = await h.core.projects.ensureContainer(p.id);
+    const c = h.docker.containers.get(first.container)!;
+    c.running = false;
+    c.state = "exited";
+    h.docker.removing.set(first.container, 2);
+    const r = await h.core.projects.ensureContainer(p.id);
+    expect(r.created).toBe(true);
+    expect(h.docker.callsOf("createContainer")).toHaveLength(2);
+    expect(h.docker.containers.get(first.container)?.running).toBe(true);
   });
 
   it("replaces an idle container built from an older image", async () => {
