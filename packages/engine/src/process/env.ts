@@ -1,6 +1,24 @@
 // Builds the environment for every process the engine starts. The engine's
 // own environment holds its bearer token and, often, credentials for every
 // vendor and for GitHub; a child gets only what its job needs.
+//
+// A profile controls only what a child inherits through its environment. It
+// isn't isolation. Every process in the container runs as the same user, so
+// repository code that the `untrusted` profile starts (a test command, a
+// reproduction script) can still read, among others:
+//
+// - `/proc/1/environ`: the keeper's environment, which holds every variable
+//   the container started with, `agent.env` secrets included.
+// - `/proc/PID/environ` of a vendor CLI or a `git` process, which hold that
+//   child's credentials.
+// - The engine token file that `AGENTBOX_ENGINE_TOKEN_FILE` names, and the
+//   vendors' sign-in files under the home directory.
+//
+// With the engine token, such code can call the engine API, which can push.
+// Only a separate user or a separate container would keep secrets from
+// repository code; the engine has neither. What the engine does guarantee:
+// its own `/proc/PID/environ` holds no credential (see
+// `src/main/environ.ts`), and no child inherits a credential it doesn't need.
 import type { Vendor } from "@agentbox/contracts";
 
 /**
@@ -9,8 +27,9 @@ import type { Vendor } from "@agentbox/contracts";
  * - `vendor:<name>`: a vendor CLI; keeps that vendor's credentials only.
  * - `github`: `git` and `gh`; keeps the GitHub token for pushes and API calls.
  * - `untrusted`: the policy's test and lint commands, reproduction scripts,
- *   and anything else that runs code from the reviewed repository; keeps no
- *   credentials at all.
+ *   and anything else that runs code from the reviewed repository; inherits
+ *   no credentials. It can still read them elsewhere as the same user (see
+ *   the top of this file).
  */
 export type EnvProfile = `vendor:${Vendor}` | "github" | "untrusted";
 
@@ -50,6 +69,17 @@ function kept(profile: EnvProfile): RegExp[] {
   if (profile === "github") return GITHUB_CREDENTIALS;
   if (profile === "untrusted") return [];
   return VENDOR_CREDENTIALS[profile.slice("vendor:".length) as Vendor] ?? [];
+}
+
+/**
+ * True when `name` looks like a credential: a secret-like name, or a
+ * variable some vendor or GitHub tool takes its credentials from. The engine
+ * keeps these out of its own `/proc/PID/environ`.
+ */
+export function looksLikeCredential(name: string): boolean {
+  if (SECRET_NAME.test(name)) return true;
+  if (GITHUB_CREDENTIALS.some((re) => re.test(name))) return true;
+  return Object.values(VENDOR_CREDENTIALS).some((list) => list.some((re) => re.test(name)));
 }
 
 /** True when `name` is a variable the profile must not pass on. */
