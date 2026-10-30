@@ -17,9 +17,10 @@ import {
   type GitHubClient,
   type PrInfo,
   type PrReview,
+  type ReviewRequestResult,
   type ReviewThread,
 } from "../../src/postpush/github.js";
-import { isNonCodeFailure, severityFromText } from "../../src/postpush/loop.js";
+import { POLL_TIMEOUT_MS, isNonCodeFailure, severityFromText } from "../../src/postpush/loop.js";
 import { ExecaRunner } from "../../src/range/exec.js";
 import { RunController } from "../../src/state/controller.js";
 import { Scenario, buildSampleRepo } from "../state/scenario.js";
@@ -35,6 +36,12 @@ class FakeGitHub implements GitHubClient {
   pr: PrInfo | null = null;
   created: CreatePrInput[] = [];
   reviewRequests: string[] = [];
+  /** GitHub answers 201 to a review request but drops it, as in host round 4. */
+  dropReviewRequests = false;
+  droppedRequests: string[] = [];
+  confirmOnTimelineOnly = false;
+  timelineEvents = 0;
+  timelineReads = 0;
   replies: Array<{ thread: string; body: string }> = [];
   resolved = new Set<string>();
   threads: ReviewThread[] = [];
@@ -75,8 +82,23 @@ class FakeGitHub implements GitHubClient {
   async defaultBranch(): Promise<string> {
     return "main";
   }
-  async requestCopilotReview(): Promise<void> {
-    this.reviewRequests.push(this.head(this.pr?.headRefName ?? "feature"));
+  async requestCopilotReview(): Promise<ReviewRequestResult> {
+    const head = this.head(this.pr?.headRefName ?? "feature");
+    if (this.dropReviewRequests) {
+      this.droppedRequests.push(head);
+      return { requestedReviewers: [] };
+    }
+    this.reviewRequests.push(head);
+    // A request that the response doesn't confirm but the timeline does.
+    if (this.confirmOnTimelineOnly) {
+      this.timelineEvents += 1;
+      return { requestedReviewers: [] };
+    }
+    return { requestedReviewers: ["Copilot"] };
+  }
+  async copilotReviewEvents(): Promise<number> {
+    this.timelineReads += 1;
+    return this.timelineEvents;
   }
   async listReviews(): Promise<PrReview[]> {
     return this.reviewRequests.map((sha, i) => ({
@@ -208,6 +230,52 @@ describe("post-push loop", () => {
       stopReason: "pr_clean",
       round: 1,
     });
+  });
+
+  it("stops waiting for a Copilot review that GitHub dropped, and says why", async () => {
+    const repo = buildSampleRepo();
+    const gh = new FakeGitHub(join(dirname(repo), "origin.git"));
+    gh.checks = [{ name: "tests", bucket: "pass", link: null, workflow: "ci" }];
+    gh.dropReviewRequests = true;
+    const d = deps(new Scenario(), gh);
+    const started = d.clock!.now();
+    const run = await RunController.create(
+      { runId: nextRunId(), projectId: "sample", repoPath: repo, pipeline: "post-push" },
+      { projectRoot: repo },
+      d,
+    );
+    await run.start();
+    const state = await run.settled();
+    expect(state).toMatchObject({ status: "finished", stopReason: "pr_clean" });
+    expect(gh.droppedRequests).toHaveLength(1);
+    expect(state.notices).toEqual([
+      expect.stringMatching(
+        /^GitHub didn't take the Copilot review request for pull request #7 at [0-9a-f]{12}: .*review_requested.*might be used up/,
+      ),
+    ]);
+    // It looked at the timeline a few times, then stopped the wait.
+    expect(gh.timelineReads).toBe(4);
+    expect(d.clock!.now() - started).toBeLessThan(POLL_TIMEOUT_MS);
+    expect(
+      d.events.events.some((e) => e.type === "run.changed" && (e.run.notices ?? []).length === 1),
+    ).toBe(true);
+  });
+
+  it("trusts a review request that only the timeline confirms", async () => {
+    const repo = buildSampleRepo();
+    const gh = new FakeGitHub(join(dirname(repo), "origin.git"));
+    gh.checks = [{ name: "tests", bucket: "pass", link: null, workflow: "ci" }];
+    gh.confirmOnTimelineOnly = true;
+    const run = await RunController.create(
+      { runId: nextRunId(), projectId: "sample", repoPath: repo, pipeline: "post-push" },
+      { projectRoot: repo },
+      deps(new Scenario(), gh),
+    );
+    await run.start();
+    const state = await run.settled();
+    expect(state).toMatchObject({ status: "finished", stopReason: "pr_clean" });
+    expect(state.notices).toBeUndefined();
+    expect(gh.reviewRequests).toHaveLength(1);
   });
 
   it("never pushes the default branch", async () => {
@@ -530,6 +598,33 @@ describe("GhCliClient", () => {
       calls.some((c) => c.includes("thread=T") && c.some((a) => a.includes("resolveReviewThread"))),
     ).toBe(true);
     expect(calls.every((c) => !c.includes("--force"))).toBe(true);
+  });
+
+  it("reads the review request's answer and counts Copilot's timeline events", async () => {
+    const { runner, calls } = scripted({
+      "gh api --method POST": {
+        stdout: JSON.stringify({ number: 3, requested_reviewers: [{ login: "Copilot" }, null] }),
+      },
+      "gh api --paginate repos/{owner}/{repo}/issues/3/timeline": {
+        stdout: "review_requested\ncopilot_work_started\n",
+      },
+    });
+    const gh = new GhCliClient(runner);
+    expect(await gh.requestCopilotReview("/r", 3)).toEqual({ requestedReviewers: ["Copilot"] });
+    expect(await gh.copilotReviewEvents("/r", 3)).toBe(2);
+    expect(calls.at(-1)?.slice(0, 5)).toEqual([
+      "gh",
+      "api",
+      "--paginate",
+      "repos/{owner}/{repo}/issues/3/timeline",
+      "--jq",
+    ]);
+    const dropped = scripted({
+      "gh api --method POST": { stdout: JSON.stringify({ number: 3, requested_reviewers: [] }) },
+    });
+    expect(await new GhCliClient(dropped.runner).requestCopilotReview("/r", 3)).toEqual({
+      requestedReviewers: [],
+    });
   });
 
   it("skips a fork's pull request from a branch of the same name", async () => {

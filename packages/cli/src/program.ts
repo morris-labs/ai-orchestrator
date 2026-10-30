@@ -154,6 +154,7 @@ function runDetail(r: RunState): string {
     ["Paused until", r.pausedUntil],
     ["Pull request", r.prUrl],
     ["Error", r.error],
+    ...(r.notices ?? []).map((n): [string, string] => ["Notice", n]),
   ]);
 }
 

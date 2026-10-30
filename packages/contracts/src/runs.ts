@@ -216,6 +216,11 @@ export const RunStateSchema = z.object({
   prNumber: z.number().int().positive().optional(),
   prUrl: z.string().url().optional(),
   error: z.string().optional(),
+  /**
+   * Problems the run reports without stopping for them, such as a Copilot
+   * review request that GitHub dropped. Oldest first.
+   */
+  notices: z.array(z.string()).optional(),
   createdAt: IsoDateTimeSchema,
   updatedAt: IsoDateTimeSchema,
   finishedAt: IsoDateTimeSchema.optional(),

@@ -409,6 +409,11 @@ export function RunView({ runId }: { runId: string }) {
         <p className="muted">Stopped: {run.stopReason.replace(/_/g, " ")}.</p>
       ) : null}
       {run.error ? <p className="banner banner-error">✕ {run.error}</p> : null}
+      {(run.notices ?? []).map((notice, i) => (
+        <p key={i} className="banner banner-warning">
+          ! {notice}
+        </p>
+      ))}
       {run.pausedUntil ? (
         <p className="banner banner-warning">
           ‖ Paused until {new Date(run.pausedUntil).toLocaleString()}.

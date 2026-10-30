@@ -49,6 +49,12 @@ export interface CheckRun {
   workflow: string | null;
 }
 
+/** What GitHub answered to a review request. */
+export interface ReviewRequestResult {
+  /** The logins that the pull request's `requested_reviewers` lists after the request. */
+  requestedReviewers: string[];
+}
+
 export interface CreatePrInput {
   base: string;
   head: string;
@@ -64,7 +70,15 @@ export interface GitHubClient {
   findOpenPr(repoPath: string, branch: string): Promise<PrInfo | null>;
   createPr(repoPath: string, input: CreatePrInput): Promise<PrInfo>;
   defaultBranch(repoPath: string): Promise<string>;
-  requestCopilotReview(repoPath: string, pr: number): Promise<void>;
+  /** Asks Copilot to review the pull request. GitHub can drop the request without an error. */
+  requestCopilotReview(repoPath: string, pr: number): Promise<ReviewRequestResult>;
+  /**
+   * How many events on the pull request's timeline show that GitHub took a
+   * Copilot review request: `review_requested` for Copilot, and
+   * `copilot_work_started`. Absent, the loop can't check a request that the
+   * response doesn't confirm, and trusts it.
+   */
+  copilotReviewEvents?(repoPath: string, pr: number): Promise<number>;
   listReviews(repoPath: string, pr: number): Promise<PrReview[]>;
   listReviewThreads(repoPath: string, pr: number): Promise<ReviewThread[]>;
   listChecks(repoPath: string, pr: number): Promise<CheckRun[]>;
@@ -193,6 +207,15 @@ const RESOLVE_MUTATION = `mutation($thread: ID!) {
   resolveReviewThread(input: {threadId: $thread}) { thread { id } }
 }`;
 
+/**
+ * Selects the timeline events that show GitHub took a Copilot review
+ * request, with the logins `isCopilotLogin` accepts.
+ */
+const COPILOT_EVENTS_JQ =
+  '.[] | select(.event == "copilot_work_started" or (.event == "review_requested" and ' +
+  '((.requested_reviewer.login // "") | ascii_downcase | . == "copilot" or ' +
+  'startswith("copilot-pull-request-reviewer")))) | .event';
+
 /** `GitHubClient` over the `gh` CLI, run in the repository directory. */
 export class GhCliClient implements GitHubClient {
   constructor(private readonly runner: CommandRunner) {}
@@ -270,8 +293,8 @@ export class GhCliClient implements GitHubClient {
     return out.trim();
   }
 
-  async requestCopilotReview(repoPath: string, pr: number): Promise<void> {
-    await this.gh(repoPath, [
+  async requestCopilotReview(repoPath: string, pr: number): Promise<ReviewRequestResult> {
+    const out = await this.gh(repoPath, [
       "api",
       "--method",
       "POST",
@@ -279,6 +302,29 @@ export class GhCliClient implements GitHubClient {
       "-f",
       `reviewers[]=${COPILOT_REVIEWER}`,
     ]);
+    let body: { requested_reviewers?: Array<{ login?: string } | null> } = {};
+    try {
+      body = JSON.parse(out || "{}") as typeof body;
+    } catch {
+      // An answer that isn't JSON confirms nothing; the timeline decides.
+    }
+    return {
+      requestedReviewers: (body.requested_reviewers ?? [])
+        .map((r) => r?.login ?? "")
+        .filter((login) => login !== ""),
+    };
+  }
+
+  async copilotReviewEvents(repoPath: string, pr: number): Promise<number> {
+    // `--jq` prints one line per matching event, on every page.
+    const out = await this.gh(repoPath, [
+      "api",
+      "--paginate",
+      `repos/{owner}/{repo}/issues/${pr}/timeline`,
+      "--jq",
+      COPILOT_EVENTS_JQ,
+    ]);
+    return out.split("\n").filter((line) => line.trim() !== "").length;
   }
 
   async listReviews(repoPath: string, pr: number): Promise<PrReview[]> {

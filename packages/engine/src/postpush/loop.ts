@@ -33,6 +33,13 @@ import {
 export const POLL_INTERVAL_MS = 60_000;
 /** How long the loop waits for the review and the checks before it moves on. */
 export const POLL_TIMEOUT_MS = 2 * 60 * 60_000;
+/**
+ * How often, and how many times, the loop looks for a timeline event after
+ * a review request that the response doesn't confirm. GitHub adds the
+ * event within seconds of a request it takes.
+ */
+export const REVIEW_CHECK_INTERVAL_MS = 10_000;
+export const REVIEW_CHECK_ATTEMPTS = 3;
 
 /** Log patterns of check failures that code changes can't fix. */
 const NON_CODE_PATTERNS: RegExp[] = [
@@ -175,11 +182,24 @@ async function stagePush(ctx: RunContext, requestReview = true): Promise<PrInfo>
   const head = await ctx.git.head();
   ctx.state.tipSha = head;
   ctx.eng.pushedHead = head;
+  let dropped = false;
   if (requestReview && ctx.eng.reviewRequestedFor !== head) {
-    await gh.requestCopilotReview(repo, pr.number);
+    dropped = !(await requestCopilotReview(ctx, gh, pr.number));
     ctx.eng.reviewRequestedFor = head;
+    ctx.eng.reviewDroppedFor = dropped ? head : null;
+    if (dropped) {
+      ctx.state.notices = [
+        ...(ctx.state.notices ?? []),
+        `GitHub didn't take the Copilot review request for pull request #${pr.number} at ${head.slice(0, 12)}: ` +
+          `the response lists no Copilot reviewer, and the timeline has no review_requested or copilot_work_started event ` +
+          `${(REVIEW_CHECK_ATTEMPTS * REVIEW_CHECK_INTERVAL_MS) / 1000} seconds later. ` +
+          "The account's Copilot review allowance might be used up. The loop doesn't wait for a Copilot review of this commit.",
+      ];
+    }
   }
   await ctx.persist();
+  // The notice goes out at once; the run's next change might be hours away.
+  if (dropped) await ctx.emitRun();
   await ctx.store.writeJson(ctx.store.roundFile(ctx.round, "push"), { pr, head });
   await ctx.handoff(
     { stage: "push" },
@@ -191,13 +211,47 @@ async function stagePush(ctx: RunContext, requestReview = true): Promise<PrInfo>
   return pr;
 }
 
+/**
+ * Requests a Copilot review and resolves to whether GitHub took it. GitHub
+ * can answer `201` and still drop the request, such as when the account's
+ * Copilot review allowance is used up: the response then lists no Copilot
+ * reviewer, and the timeline gets no event. A client that can't read the
+ * timeline gets the benefit of the doubt.
+ */
+async function requestCopilotReview(
+  ctx: RunContext,
+  gh: GitHubClient,
+  pr: number,
+): Promise<boolean> {
+  const repo = ctx.state.request.repoPath;
+  const before = gh.copilotReviewEvents ? await gh.copilotReviewEvents(repo, pr) : null;
+  const result = await gh.requestCopilotReview(repo, pr);
+  if (result.requestedReviewers.some(isCopilotLogin)) return true;
+  if (before === null || !gh.copilotReviewEvents) return true;
+  for (let attempt = 0; attempt < REVIEW_CHECK_ATTEMPTS; attempt++) {
+    try {
+      await ctx.clock.sleep(REVIEW_CHECK_INTERVAL_MS, ctx.signal);
+    } catch {
+      await ctx.checkpoint();
+    }
+    if ((await gh.copilotReviewEvents(repo, pr)) > before) return true;
+  }
+  return false;
+}
+
 interface PollResult {
   reviewed: boolean;
   checks: CheckRun[];
   timedOut: boolean;
+  /** True when the poll didn't wait for a review, since GitHub dropped the request. */
+  reviewDropped?: boolean;
 }
 
-/** Polls until Copilot reviewed the head and no check is pending, or the poll times out. */
+/**
+ * Polls until Copilot reviewed the head and no check is pending, or the
+ * poll times out. When GitHub dropped the review request for the head, it
+ * waits for the checks only.
+ */
 async function stagePoll(ctx: RunContext): Promise<PollResult> {
   const file = ctx.store.roundFile(ctx.round, "poll");
   const saved = await ctx.store.readJson<PollResult>(file);
@@ -207,6 +261,7 @@ async function stagePoll(ctx: RunContext): Promise<PollResult> {
   const pr = ctx.state.prNumber as number;
   const head = ctx.state.tipSha ?? (await ctx.git.head());
   const started = ctx.clock.now();
+  const reviewDropped = ctx.eng.reviewDroppedFor === head;
   let result: PollResult;
   for (;;) {
     await ctx.checkpoint();
@@ -217,8 +272,8 @@ async function stagePoll(ctx: RunContext): Promise<PollResult> {
     const checks = await gh.listChecks(repo, pr);
     const pending = checks.some((c) => c.bucket === "pending");
     const timedOut = ctx.clock.now() - started >= POLL_TIMEOUT_MS;
-    if ((reviewed && !pending) || timedOut) {
-      result = { reviewed, checks, timedOut };
+    if (((reviewed || reviewDropped) && !pending) || timedOut) {
+      result = { reviewed, checks, timedOut, ...(reviewDropped ? { reviewDropped } : {}) };
       break;
     }
     try {

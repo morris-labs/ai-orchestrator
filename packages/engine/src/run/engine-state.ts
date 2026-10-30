@@ -87,6 +87,11 @@ export const EngineStateSchema = z.object({
   pushedHead: z.string().nullable().default(null),
   /** Post-push: the head SHA whose Copilot review the loop last requested. */
   reviewRequestedFor: z.string().nullable().default(null),
+  /**
+   * Post-push: the head SHA whose Copilot review request GitHub didn't
+   * take. The poll doesn't wait for a review of it.
+   */
+  reviewDroppedFor: z.string().nullable().default(null),
 });
 export type EngineState = z.infer<typeof EngineStateSchema>;
 
