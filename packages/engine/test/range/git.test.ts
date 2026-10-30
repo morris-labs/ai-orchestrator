@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { parseDiff } from "../../src/range/diff.js";
 import { ExecaRunner } from "../../src/range/exec.js";
 import { Git } from "../../src/range/git.js";
 import { tempDir } from "../tmp.js";
@@ -30,6 +31,25 @@ function renamedRepo(): { repo: string; base: string; tip: string } {
   git(repo, "commit", "-q", "-m", "rename");
   return { repo, base, tip: git(repo, "rev-parse", "HEAD") };
 }
+
+describe("non-ASCII paths", () => {
+  it("parse to the real path, which then gives the file's diff and content", async () => {
+    const repo = tempDir("agentbox-git-");
+    git(repo, "init", "-q", "-b", "main");
+    writeFileSync(join(repo, "café.txt"), "a\n");
+    git(repo, "add", ".");
+    git(repo, "commit", "-q", "-m", "base");
+    const base = git(repo, "rev-parse", "HEAD");
+    writeFileSync(join(repo, "café.txt"), "b\n");
+    git(repo, "commit", "-q", "-am", "change");
+    const tip = git(repo, "rev-parse", "HEAD");
+    const g = new Git(new ExecaRunner(), repo);
+    const files = parseDiff(await g.diff(base, tip));
+    expect(files.map((f) => f.path)).toEqual(["café.txt"]);
+    expect(await g.diffForPrompt(base, tip, ["café.txt"])).toContain("+b");
+    expect(await g.show(tip, "café.txt")).toBe("b\n");
+  });
+});
 
 describe("Git.diffForPrompt", () => {
   it("shows a renamed file as a rename when the pathspec names only its new path", async () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseDiff } from "../../src/range/diff.js";
+import { parseDiff, unquote } from "../../src/range/diff.js";
 
 const DIFF = `diff --git a/src/a.ts b/src/a.ts
 index 1111111..2222222 100644
@@ -81,5 +81,37 @@ describe("parseDiff content lines that look like headers", () => {
     expect(file).toMatchObject({ path: "db/migrate.sql", oldPath: "db/migrate.sql" });
     expect(file?.added).toBe(1);
     expect(file?.removed).toBe(1);
+  });
+});
+
+describe("parseDiff quoted paths", () => {
+  it("decodes octal escapes in non-ASCII paths, binary files included", () => {
+    const text = [
+      'diff --git "a/caf\\303\\251.txt" "b/caf\\303\\251.txt"',
+      "index 1111111..2222222 100644",
+      '--- "a/caf\\303\\251.txt"',
+      '+++ "b/caf\\303\\251.txt"',
+      "@@ -1 +1 @@",
+      "-a",
+      "+b",
+      'diff --git "a/\\346\\227\\245\\346\\234\\254.png" "b/\\346\\227\\245\\346\\234\\254.png"',
+      "index 1111111..2222222 100644",
+      'Binary files "a/\\346\\227\\245\\346\\234\\254.png" and "b/\\346\\227\\245\\346\\234\\254.png" differ',
+      'diff --git a/plain.txt "b/tab\\there \\"q\\".txt"',
+      "similarity index 100%",
+      "rename from plain.txt",
+      'rename to "tab\\there \\"q\\".txt"',
+      "",
+    ].join("\n");
+    expect(parseDiff(text).map((f) => [f.path, f.oldPath, f.status])).toEqual([
+      ["café.txt", "café.txt", "modified"],
+      ["日本.png", "日本.png", "modified"],
+      ['tab\there "q".txt', "plain.txt", "renamed"],
+    ]);
+  });
+
+  it("leaves an unquoted path alone", () => {
+    expect(unquote("a/caf\\303.txt")).toBe("a/caf\\303.txt");
+    expect(unquote('"a\\\\b"')).toBe("a\\b");
   });
 });
