@@ -122,21 +122,24 @@ RUN echo "agent CLI cache key: ${CACHEBUST}" && \
       test "$(cat "$file")" = "${!pin}" || { echo "$file doesn't match ${pin}" >&2; exit 1; }; \
     done
 
-# The engine, from the tarballs scripts/build-image.sh packs into dist/:
-# @agentbox/engine and the workspace packages it depends on, such as
-# @agentbox/contracts. npm installs them together into one prefix, so the
-# engine's dependency on a private workspace package resolves to the
-# sibling tarball instead of the npm registry. The engine layer comes last
-# among the installs because it changes most often.
+# The engine, from the tarball scripts/build-image.sh packs into dist/: a
+# `pnpm deploy` of @agentbox/engine with node_modules already in it, at the
+# versions in pnpm-lock.yaml, including workspace packages such as
+# @agentbox/contracts. The build only unpacks it, so no dependency comes
+# from the npm registry and every host gets the versions the tests ran
+# against. The engine layer comes last among the installs because it
+# changes most often.
 ARG AGENTBOX_ENGINE_VERSION
 COPY dist/ /tmp/agentbox-dist/
 RUN test -n "${AGENTBOX_ENGINE_VERSION}" || { echo "AGENTBOX_ENGINE_VERSION is not set; build with scripts/build-image.sh" >&2; exit 1; } && \
     test -f "/tmp/agentbox-dist/agentbox-engine-${AGENTBOX_ENGINE_VERSION}.tgz" || \
       { echo "dist/agentbox-engine-${AGENTBOX_ENGINE_VERSION}.tgz is missing; run scripts/build-image.sh" >&2; exit 1; } && \
-    mkdir -p /usr/local/lib/agentbox/engine && \
-    /usr/bin/npm install --prefix /usr/local/lib/agentbox/engine \
-      --omit=dev --no-audit --no-fund --no-package-lock /tmp/agentbox-dist/*.tgz && \
-    engine_pkg=/usr/local/lib/agentbox/engine/node_modules/@agentbox/engine && \
+    mkdir -p /usr/local/lib/agentbox && \
+    tar -xzf "/tmp/agentbox-dist/agentbox-engine-${AGENTBOX_ENGINE_VERSION}.tgz" \
+      -C /usr/local/lib/agentbox --no-same-owner && \
+    engine_pkg=/usr/local/lib/agentbox/engine && \
+    { test -d "${engine_pkg}/node_modules" || \
+      { echo "dist/agentbox-engine-${AGENTBOX_ENGINE_VERSION}.tgz has no node_modules; pack it with scripts/build-image.sh" >&2; exit 1; }; } && \
     /usr/bin/node -p "require('${engine_pkg}/package.json').version" > /etc/agentbox-engine-version && \
     test "$(cat /etc/agentbox-engine-version)" = "${AGENTBOX_ENGINE_VERSION}" && \
     engine_bin="$(/usr/bin/node -p "const p=require('${engine_pkg}/package.json'); typeof p.bin === 'string' ? p.bin : p.bin['agentbox-engine']")" && \

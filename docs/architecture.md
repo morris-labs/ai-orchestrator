@@ -154,8 +154,9 @@ The image, `claude-code` by default, is built on the host from
 - The Claude Code, Codex, and GitHub Copilot CLIs at the versions pinned in
   `image/versions.env`, with their versions in `/etc/claude-code-version`,
   `/etc/codex-version`, and `/etc/copilot-version`.
-- The engine, installed from the workspace's packed tarballs into
-  `/usr/local/lib/agentbox/engine`, and started through
+- The engine, unpacked into `/usr/local/lib/agentbox/engine` from a
+  tarball that carries its dependencies at the versions in
+  `pnpm-lock.yaml`, and started through
   `/usr/local/bin/agentbox-engine` on the system Node.js 22.
 - The keeper scripts in `/usr/local/lib/agentbox/`: `keeper.sh`, the
   container's first process, and `start-session.sh`, which starts one box's

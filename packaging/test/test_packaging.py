@@ -193,6 +193,19 @@ class ImageTest(unittest.TestCase):
         order = [text.index(s) for s in ("ARG CACHEBUST_PACKAGES", "ARG CACHEBUST=", "COPY dist/")]
         self.assertEqual(order, sorted(order))
 
+    def test_engine_dependencies_are_locked(self):
+        # The engine's dependencies must come from pnpm-lock.yaml at pack
+        # time, never from a fresh registry resolve during the image build.
+        text = DOCKERFILE.read_text()
+        engine_step = text[text.index("COPY dist/"):text.index("COPY --chmod=0755 keeper/")]
+        self.assertNotIn("npm install", engine_step)
+        self.assertNotIn("--no-package-lock", engine_step)
+        self.assertIn('tar -xzf "/tmp/agentbox-dist/agentbox-engine-${AGENTBOX_ENGINE_VERSION}.tgz"', engine_step)
+        self.assertIn("node_modules", engine_step)
+        script = (ROOT / "scripts/build-image.sh").read_text()
+        self.assertRegex(script, r"--filter @agentbox/engine deploy --legacy --prod --frozen-lockfile")
+        self.assertNotIn(" pack --pack-destination", script)
+
     def test_hadolint(self):
         hadolint = tool("hadolint")
         subprocess.run(
