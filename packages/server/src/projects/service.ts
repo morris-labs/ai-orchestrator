@@ -200,6 +200,9 @@ export class ProjectService {
     const inspect = await this.deps.docker.inspectContainer(name);
     const endpoint = this.repos.engines.get(project.id);
     const health = this.deps.hooks().engineHealth(name);
+    // The same check as a project change or a box start makes, so the list
+    // and the view flag a container that those would call stale.
+    const stale = this.staleFromInspect(project, inspect);
     return {
       name,
       state: containerState(inspect),
@@ -212,6 +215,7 @@ export class ProjectService {
               versionMatches: this.versionMatches(health),
             }
           : null,
+      ...(stale.length > 0 ? { stale } : {}),
     };
   }
 
@@ -325,8 +329,13 @@ export class ProjectService {
    * request. Empty when the container is not running or matches.
    */
   async staleDifferences(project: Project): Promise<string[]> {
+    const inspect = await this.deps.docker.inspectContainer(this.containerName(project));
+    return this.staleFromInspect(project, inspect);
+  }
+
+  /** `staleDifferences` for a container already inspected. */
+  private staleFromInspect(project: Project, inspect: ContainerInspect | null): string[] {
     const name = this.containerName(project);
-    const inspect = await this.deps.docker.inspectContainer(name);
     if (!inspect?.running) return [];
     const wanted = this.wantedBinds(project);
     const diffs: string[] = [];

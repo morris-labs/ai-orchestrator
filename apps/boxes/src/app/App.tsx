@@ -1413,6 +1413,12 @@ export function App() {
               <DetailsPanel
                 view={single}
                 project={singleProject}
+                containerStale={
+                  single
+                    ? data.projects.find((p) => p.project.id === single.box.projectId)?.container
+                        ?.stale
+                    : undefined
+                }
                 settings={data.settings}
                 diskBytes={single ? data.disk.get(single.container) : undefined}
                 remotes={selectedRemotes}

@@ -240,6 +240,19 @@ describe("ProjectService", () => {
     expect(await h.core.projects.staleDifferences(p)).toEqual(["secrets environment -> broker"]);
   });
 
+  it("flags a stale container in the project list and the project view", async () => {
+    const h = makeHarness();
+    const p = h.core.projects.ensureForRoot(h.dir("app"));
+    const r = await h.core.projects.ensureContainer(p.id);
+    expect((await h.core.projects.summary(p)).container).not.toHaveProperty("stale");
+    delete h.docker.containers.get(r.container)!.spec.labels["agentbox.secrets"];
+    expect((await h.core.projects.summary(p)).container?.stale).toEqual([
+      "secrets environment -> broker",
+    ]);
+    const listed = (await h.core.projects.summaries()).find((s) => s.project.id === p.id);
+    expect(listed?.container?.stale).toEqual(["secrets environment -> broker"]);
+  });
+
   it("blocks the launch when the pre-start check fails", async () => {
     const h = makeHarness();
     const p = h.core.projects.ensureForRoot(h.dir("app"));

@@ -230,6 +230,23 @@ describe("main window", () => {
     expect(await screen.findByRole("tab", { name: /Api/ })).toBeInTheDocument();
   });
 
+  it("flags a project whose container runs with old settings", async () => {
+    const server = new FakeServer({ boxes: boxes() });
+    const site = server.box("claude-agent-site").box.projectId;
+    server.state.staleProjects.push(site);
+    await renderApp(server);
+    const badge = within(screen.getByRole("option", { name: /^site/ })).getByText("stale");
+    expect(badge).toHaveAttribute(
+      "title",
+      expect.stringContaining("secrets environment -> broker"),
+    );
+    expect(within(screen.getByRole("option", { name: /^api/ })).queryByText("stale")).toBeNull();
+    // The first row, Site work, is selected; its details say the same.
+    expect(
+      await screen.findByText(/Runs with old settings: secrets environment -> broker\./),
+    ).toBeInTheDocument();
+  });
+
   it("offers to restart the container when a start finds stale mounts", async () => {
     const user = userEvent.setup();
     const server = new FakeServer({ boxes: boxes() });

@@ -204,6 +204,12 @@ export const ContainerInfoSchema = z.object({
   name: z.string().min(1),
   state: ContainerStateSchema,
   engine: EngineInfoSchema.nullable(),
+  /**
+   * How a running container differs from what the project asks for, such
+   * as `secrets environment -> broker`; a restart applies the project's
+   * settings. Empty or absent when it matches or isn't running.
+   */
+  stale: z.array(z.string()).optional(),
 });
 export type ContainerInfo = z.infer<typeof ContainerInfoSchema>;
 

@@ -318,6 +318,21 @@ describe("project", () => {
     expect(out).toContain("Secrets:");
     expect(out).toContain("API_TOKEN");
     expect(out).not.toContain("op://");
+    expect(out).not.toContain("stale");
+  });
+
+  it("flags a container that runs with old settings", async () => {
+    const stale = {
+      ...projectSummary,
+      container: { ...projectSummary.container, stale: ["secrets environment -> broker"] },
+    };
+    server.on("GET /api/v1/projects", { body: { projects: [stale] } });
+    await cli(["project", "list"]);
+    expect(out).toContain(`${CONTAINER} (running, stale)`);
+    server.on(`GET /api/v1/projects/${PROJECT_ID}`, { body: stale });
+    out = "";
+    await cli(["project", "show", PROJECT_ID]);
+    expect(out).toMatch(/Stale: +secrets environment -> broker/);
   });
 
   it("changes settings and reports stale boxes", async () => {

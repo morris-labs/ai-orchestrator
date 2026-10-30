@@ -1,5 +1,6 @@
 // The project list left of the box table: "All projects (N)", then one row
-// per project with its running and total counts, sorted by name.
+// per project with its running and total counts, sorted by name. A project
+// whose container runs with old settings gets a "stale" badge.
 import type { ProjectSummary } from "@agentbox/contracts";
 import { StatusDot, useContextMenu, type MenuEntry } from "@agentbox/ui";
 
@@ -55,6 +56,14 @@ export function ProjectPanel({
           <span className="bx-dim">
             ({p.running}/{p.total})
           </span>
+          {p.container?.stale && p.container.stale.length > 0 && (
+            <span
+              className="bx-badge"
+              title={`The container runs with old settings: ${p.container.stale.join(", ")}. Restart it to apply the project's settings.`}
+            >
+              stale
+            </span>
+          )}
         </div>
       ))}
       {menu.element}

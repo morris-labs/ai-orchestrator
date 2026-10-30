@@ -18,6 +18,8 @@ export interface SshRemoteStatus {
 export interface DetailsPanelProps {
   view: BoxView | null;
   project: Project | undefined;
+  /** How the box's project container differs from the project's settings; see `ContainerInfo.stale`. */
+  containerStale?: string[];
   settings: GlobalSettings | null;
   diskBytes: number | undefined;
   remotes: SshRemoteStatus[];
@@ -70,6 +72,12 @@ export function DetailsPanel(props: DetailsPanelProps) {
       <Field label="Box">{box.id}</Field>
       <Field label="Container">
         {view.container} <span className="bx-dim">(tmux session {view.tmuxSession})</span>
+        {props.containerStale && props.containerStale.length > 0 && (
+          <div className="ab-error-text">
+            Runs with old settings: {props.containerStale.join(", ")}. Restart the container to
+            apply the project settings.
+          </div>
+        )}
       </Field>
       <Field label="Directory">
         <div className="bx-row">

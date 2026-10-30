@@ -393,7 +393,16 @@ function summary(server: FakeServer, p: Project) {
     project: p,
     running: boxes.filter((b) => b.status === "running").length,
     total: boxes.length,
-    container: null,
+    // A stale project's container runs with old settings, as one from a
+    // server before the secrets broker does.
+    container: server.state.staleProjects.includes(p.id)
+      ? {
+          name: `claude-agent-proj-${p.id}`,
+          state: "running" as const,
+          engine: null,
+          stale: ["secrets environment -> broker"],
+        }
+      : null,
   };
 }
 

@@ -13,6 +13,7 @@ import {
   isReadOnlyPostPush,
   type BoxView,
   type Ceiling,
+  type ContainerInfo,
   type Finding,
   type Job,
   type ProjectSummary,
@@ -179,6 +180,11 @@ function checkRows(checks: SetupCheck[]) {
   );
 }
 
+/** A container's name and state, with `stale` when it runs with old settings. */
+function containerCell(c: ContainerInfo): string {
+  return `${c.name} (${c.state}${c.stale && c.stale.length > 0 ? ", stale" : ""})`;
+}
+
 function projectRows(projects: ProjectSummary[]) {
   return table(
     ["PROJECT", "NAME", "ROOT", "RUNNING", "TOTAL", "CONTAINER", "ENGINE"],
@@ -188,7 +194,7 @@ function projectRows(projects: ProjectSummary[]) {
       p.project.root,
       p.running,
       p.total,
-      p.container ? `${p.container.name} (${p.container.state})` : null,
+      p.container ? containerCell(p.container) : null,
       p.container?.engine
         ? `${p.container.engine.version ?? "?"}${p.container.engine.healthy ? "" : " unhealthy"}${
             p.container.engine.versionMatches === false ? " mismatch" : ""
@@ -471,7 +477,8 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
           ["Root", p.root],
           ["Primary repository", p.primaryRepo],
           ["Boxes", `${r.running} running of ${r.total}`],
-          ["Container", r.container ? `${r.container.name} (${r.container.state})` : null],
+          ["Container", r.container ? containerCell(r.container) : null],
+          ["Stale", r.container?.stale?.join(", ")],
           ["TCP maps", p.tcpMaps.map((m) => `${m.host}:${m.container}`).join(", ")],
           ["Mounts", p.mounts.map((m) => `${m.host}:${m.container}`).join(", ")],
           ["Secrets", p.secretRefs.map((s) => s.name).join(", ")],
