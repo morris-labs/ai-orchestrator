@@ -47,6 +47,9 @@ the upgrade steps, see `docs/migration-3x.md`.
 - Terminals use xterm.js, with scrollback and selection.
 - The box filter also matches container names.
 - An empty Starter prompt template turns the starter prompt off.
+- Project TCP maps listen on `127.0.0.1` unless a map sets
+  `allInterfaces`.
+- Project containers drop the `MKNOD` and `SETFCAP` capabilities.
 
 ### Removed
 

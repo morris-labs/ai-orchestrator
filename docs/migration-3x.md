@@ -61,6 +61,9 @@ drops or changes, and doesn't change the 3.x files. After the import,
 - A box's `port=HOST:CONTAINER` entry that isn't in its project's 10-port
   pool becomes an explicit TCP map on the project. Ports from the pool are
   dropped: the engine proxies dev servers without them.
+- TCP maps listen on `127.0.0.1` only. 3.x published them on every host
+  interface. To reach one from another machine, set the map's
+  `allInterfaces` field to `true` through the API.
 - A box's `dir=` mounts merge into its project's mounts. When two mounts name
   the same container path, the first one wins, project mounts first, and
   the import reports each mount it skipped.
