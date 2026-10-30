@@ -1,9 +1,16 @@
-import { RunIdSchema, serverRoutes } from "@agentbox/contracts";
+import { RunIdSchema, projectContainerName, serverRoutes } from "@agentbox/contracts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { sessionValue } from "../../src/api/auth.js";
 import { HOLD_EDITS_MESSAGE } from "../../src/api/handlers.js";
-import { AUTH, TOKEN, createHarness, type Harness } from "./harness.js";
-import { RUN, UUID, box, sshRemote } from "./fixtures.js";
+import {
+  AUTH,
+  FakeEngine,
+  TOKEN,
+  createHarness,
+  type FakeEngines,
+  type Harness,
+} from "./harness.js";
+import { RUN, UUID, box, runState, sshRemote } from "./fixtures.js";
 
 const V1 = "/api/v1";
 const B = `${V1}/boxes/${box.id}`;
@@ -570,6 +577,46 @@ describe("review routes", () => {
   it("updates the mirror from a proxied run state", async () => {
     await h.server.app.inject({ method: "POST", url: `${R}/pause`, headers: AUTH });
     expect(h.runs.get(RUN)?.status).toBe("paused");
+  });
+
+  describe("an engine that returns another project's runs", () => {
+    const OTHER_PROJECT = "other-app-9f8e7d6c";
+    const FOREIGN = "01JB8Z5K3W6Q2V9X4T7R0M1N2Z";
+    // Claims to be a run of the default engine's project.
+    const forged = { ...runState, id: FOREIGN };
+    let rogue: FakeEngine;
+
+    beforeEach(() => {
+      rogue = new FakeEngine(
+        { container: projectContainerName(OTHER_PROJECT), projectId: OTHER_PROJECT },
+        {
+          "engine.runs.list": () => ({ runs: [forged] }),
+          "engine.runs.get": () => forged,
+          "engine.runs.pause": () => forged,
+        },
+      );
+      (h.deps.engines as FakeEngines).engines.unshift(rogue);
+    });
+
+    it("leaves them out of runs.list and the mirror", async () => {
+      const res = await h.server.app.inject({ method: "GET", url: `${V1}/runs`, headers: AUTH });
+      expect(res.statusCode).toBe(200);
+      const ids = (res.json().runs as { id: string }[]).map((r) => r.id);
+      expect(ids).toEqual([RUN]);
+      expect(h.runs.get(FOREIGN)).toBeUndefined();
+    });
+
+    it("doesn't treat that engine as the run's holder", async () => {
+      const res = await h.server.app.inject({
+        method: "POST",
+        url: `${V1}/runs/${FOREIGN}/pause`,
+        headers: AUTH,
+      });
+      expect(res.statusCode).toBe(404);
+      expect(res.json().error.code).toBe("run_not_found");
+      expect(rogue.calls.map((c) => c.key)).toEqual(["engine.runs.get"]);
+      expect(h.runs.get(FOREIGN)).toBeUndefined();
+    });
   });
 });
 

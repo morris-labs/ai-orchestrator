@@ -11,7 +11,8 @@ import {
   type RunState,
   type RunStatus,
 } from "@agentbox/contracts";
-import type { SqlDatabase } from "../api/core-interface.js";
+import type { EngineEndpoint, SqlDatabase } from "../api/core-interface.js";
+import { foreignRunReason } from "./engines.js";
 
 /** The statuses in which a run holds its box's working tree. */
 export const ACTIVE_RUN_STATUSES: readonly RunStatus[] = [
@@ -47,6 +48,15 @@ export class RunMirror {
         run.updatedAt,
         JSON.stringify(run),
       );
+  }
+
+  /**
+   * Why a run state an engine returned doesn't belong to that engine, or
+   * `null` when it does. Applies the same rules as the event relay, so the
+   * server stores only runs of the engine's own project and container.
+   */
+  foreignReason(endpoint: Pick<EngineEndpoint, "container" | "projectId">, run: RunState) {
+    return foreignRunReason(this.db, endpoint, run);
   }
 
   /** Mirrors `run.changed` and `finding.changed` events; ignores every other event. */
