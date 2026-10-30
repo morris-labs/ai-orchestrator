@@ -36,13 +36,21 @@ describe("removeUnusedBrokerDirs", () => {
     const { env, home, root, dir } = setup();
     const docker = new MemoryDocker();
     addContainer(docker, "claude-agent-proj-live-00000001");
-    addContainer(docker, "claude-agent-proj-legacy-00000002");
+    addContainer(docker, "claude-agent-proj-legacy-00000002", [
+      `${path.join(root, "claude-agent-proj-legacy-00000002")}:/run/agentbox-broker:ro`,
+    ]);
+    // Recreated since the hashed names: its per-name directory is a leftover.
+    addContainer(docker, "claude-agent-proj-recreated-00000005", [
+      `${path.join(root, brokerDirName("claude-agent-proj-recreated-00000005"))}:/run/agentbox-broker:ro`,
+    ]);
     addContainer(docker, "claude-agent-proj-bound-00000003", [
       `${path.join(root, "mounted")}:/run/agentbox-broker:ro`,
     ]);
     dir(brokerDirName("claude-agent-proj-live-00000001"));
     dir("claude-agent-proj-legacy-00000002");
     dir("mounted");
+    dir("claude-agent-proj-recreated-00000005");
+    dir(brokerDirName("claude-agent-proj-recreated-00000005"));
     dir("claude-agent-proj-gone-00000004");
     const gone = dir(brokerDirName("claude-agent-proj-gone-00000004"));
     // A link inside a removed directory goes with it; its target stays.
@@ -57,12 +65,17 @@ describe("removeUnusedBrokerDirs", () => {
     const removed = await removeUnusedBrokerDirs(env, docker);
 
     expect(removed).toEqual(
-      [brokerDirName("claude-agent-proj-gone-00000004"), "claude-agent-proj-gone-00000004"].sort(),
+      [
+        brokerDirName("claude-agent-proj-gone-00000004"),
+        "claude-agent-proj-gone-00000004",
+        "claude-agent-proj-recreated-00000005",
+      ].sort(),
     );
     expect(fs.readdirSync(root).sort()).toEqual(
       [
         brokerDirName("claude-agent-proj-live-00000001"),
         "claude-agent-proj-legacy-00000002",
+        brokerDirName("claude-agent-proj-recreated-00000005"),
         "linked",
         "mounted",
         "note.txt",

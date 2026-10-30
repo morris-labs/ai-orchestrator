@@ -34,9 +34,11 @@ export async function removeUnusedBrokerDirs(
   const used = new Set<string>();
   for (const c of await docker.listContainers({ all: true, nameRegex: "." })) {
     used.add(brokerDirName(c.name));
-    // The directory a server before the hashed names gave the container.
-    used.add(c.name);
     const inspect = await docker.inspectContainer(c.id);
+    // A server before the hashed names named the directory after the
+    // container. The bind check below keeps it for a container that still
+    // mounts it; without inspect data, keep it, since nothing tells.
+    if (!inspect) used.add(c.name);
     for (const bind of inspect?.binds ?? []) {
       const host = bind.split(":")[0] ?? "";
       if (path.dirname(path.resolve(host)) === root) used.add(path.basename(host));
