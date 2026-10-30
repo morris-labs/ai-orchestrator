@@ -299,6 +299,34 @@ describe("create", () => {
     );
   });
 
+  it("keeps the fork source and the opening prompt for a box created without a start", async () => {
+    const h = makeHarness();
+    const repo = initRepo(h.dir("repo"));
+    const src = await h.core.boxes.create({ targetDir: repo, layout: "root" });
+    h.transcript(repo, src.sessionUuid!);
+    const fork = await h.core.boxes.create({
+      targetDir: repo,
+      layout: "worktree",
+      conversationName: "Try C",
+      conversation: { mode: "fork", fromBoxId: src.id },
+      start: false,
+    });
+    expect(fork.sessionUuid).toBeNull();
+    expect(fork.firstStart?.forkFrom).toEqual({ uuid: src.sessionUuid, workDir: repo });
+    expect(fork.firstStart?.openingPrompt).toContain(fork.worktree!);
+
+    const started = await h.core.boxes.start(fork.id);
+    const command = lastCommand(h);
+    expect(command).toContain(
+      `'--resume' '${src.sessionUuid}' '--fork-session' '--session-id' '${started.sessionUuid}'`,
+    );
+    expect(command).toContain(fork.worktree!);
+    expect(fs.existsSync(h.core.catalog.transcriptPath(fork.worktree!, src.sessionUuid!))).toBe(
+      true,
+    );
+    expect(started.firstStart).toBeUndefined();
+  });
+
   it("refuses a fork whose transcript is missing", async () => {
     const h = makeHarness();
     const repo = initRepo(h.dir("repo"));

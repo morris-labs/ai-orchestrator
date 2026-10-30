@@ -544,8 +544,17 @@ export class BoxService {
         updatedAt: now,
       });
       // The record reserves the name before the lock opens. A box saved
-      // without a start waits for its first start to resume or mint a session.
-      const saved = this.repos.boxes.put(req.start ? box : { ...box, sessionUuid: adoptUuid });
+      // without a start waits for its first start to resume or mint a
+      // session, and keeps what that start needs to open the conversation.
+      const firstStart =
+        openingPrompt !== "" || forkFrom
+          ? { openingPrompt, ...(forkFrom ? { forkFrom } : {}) }
+          : undefined;
+      const saved = this.repos.boxes.put(
+        req.start
+          ? box
+          : { ...box, sessionUuid: adoptUuid, ...(firstStart ? { firstStart } : {}) },
+      );
       return { box: saved, openingPrompt, conversationName, createdWorktree };
     });
 
@@ -672,14 +681,33 @@ export class BoxService {
     const hasTranscript =
       box.sessionUuid !== null && (await transcriptExists(this.env, workDir, box.sessionUuid));
     const sessionUuid = hasTranscript ? (box.sessionUuid as string) : crypto.randomUUID();
+    // A box created without a start opens its conversation now, the way
+    // create() would have: with the opening prompt, or as a fork.
+    const first = hasTranscript ? undefined : box.firstStart;
     let args = baseClaudeArgs(box, project);
     if (box.conversationName !== "") args.push(nameArg(box.conversationName));
-    args.push(hasTranscript ? "--resume" : "--session-id", sessionUuid);
+    if (first) {
+      if (first.openingPrompt !== "") args.push(first.openingPrompt);
+      if (first.forkFrom) {
+        args.push("--resume", first.forkFrom.uuid, "--fork-session", "--session-id", sessionUuid);
+      } else {
+        args.push("--session-id", sessionUuid);
+      }
+    } else {
+      args.push(hasTranscript ? "--resume" : "--session-id", sessionUuid);
+    }
     if (hasTranscript && box.movedFrom && box.worktree) args.push(movedMessage(this.env, box));
-    if (box.platform !== "claude") args = platformArgs(box, project, box.platform, true, "");
+    if (box.platform !== "claude") {
+      args = first
+        ? platformArgs(box, project, box.platform, false, first.openingPrompt)
+        : platformArgs(box, project, box.platform, true, "");
+    }
 
     this.mark(box, "starting");
     try {
+      if (first?.forkFrom && box.platform === "claude") {
+        await this.copyForkTranscript(first.forkFrom, workDir);
+      }
       await this.startSession(box, box.platform, args, boxTmuxSession(box), {
         force: options.force ?? false,
       });
@@ -700,6 +728,7 @@ export class BoxService {
       updatedAt: this.now(),
     };
     delete next.movedFrom;
+    delete next.firstStart;
     if (next.launchedModel === undefined) delete next.launchedModel;
     if (next.launchedEffort === undefined) delete next.launchedEffort;
     box = this.repos.boxes.put(next);
