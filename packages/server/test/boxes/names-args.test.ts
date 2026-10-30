@@ -3,6 +3,7 @@ import type { Box } from "@agentbox/contracts";
 import {
   baseClaudeArgs,
   movedMessage,
+  nameArg,
   platformArgs,
   sideSessionArgs,
 } from "../../src/boxes/args.js";
@@ -54,8 +55,7 @@ describe("sanitizers", () => {
 describe("claude arguments", () => {
   it("builds the base flags like 3.3.5", () => {
     expect(baseClaudeArgs(box, project)).toEqual([
-      "--remote-control",
-      "Fix it",
+      "--remote-control=Fix it",
       "--permission-mode",
       "auto",
       "--allow-dangerously-skip-permissions",
@@ -74,6 +74,16 @@ describe("claude arguments", () => {
       "--effort",
       "max",
     ]);
+  });
+
+  it("keeps a name that starts with a dash a value, not a flag", () => {
+    const args = baseClaudeArgs(
+      { ...box, conversationName: "--dangerously-skip-permissions" },
+      project,
+    );
+    expect(args[0]).toBe("--remote-control=--dangerously-skip-permissions");
+    expect(args).not.toContain("--dangerously-skip-permissions");
+    expect(nameArg("-p")).toBe("--name=-p");
   });
 
   it("adds the project root for a worktree box whose repository is a subdirectory", () => {

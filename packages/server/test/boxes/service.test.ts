@@ -57,8 +57,8 @@ describe("create", () => {
     expect([session, workDir]).toEqual(["claude-agent-app", dir]);
     const prompt = expandTemplate(DEFAULT_PROMPT_TEMPLATES.starter, ["Quick look", dir]);
     expect(command).toBe(
-      `claude '--remote-control' 'Quick look' '--permission-mode' 'auto' '--allow-dangerously-skip-permissions' ` +
-        `'--model' 'claude-opus-5-5' '--effort' 'high' '--name' 'Quick look' '${prompt.replace(/'/g, `'\\''`)}' '--session-id' '${box.sessionUuid}'`,
+      `claude '--remote-control=Quick look' '--permission-mode' 'auto' '--allow-dangerously-skip-permissions' ` +
+        `'--model' 'claude-opus-5-5' '--effort' 'high' '--name=Quick look' '${prompt.replace(/'/g, `'\\''`)}' '--session-id' '${box.sessionUuid}'`,
     );
     expect(h.core.boxes.status(box)).toBe("running");
     const view = h.core.boxes.view(box);
@@ -125,7 +125,7 @@ describe("create", () => {
       path.join(dir, ".claude-box/INFRA.md"),
     ]);
     expect(lastCommand(h)).toContain(`'${prompt.replace(/'/g, `'\\''`)}'`);
-    expect(lastCommand(h)).toContain("'--remote-control' 'Emails_not_sending'");
+    expect(lastCommand(h)).toContain("--remote-control=Emails_not_sending");
     expect(starts(h)[0]![1]).toBe(dir);
   });
 
@@ -376,7 +376,7 @@ describe("start, stop, restart", () => {
       wasRunning: true,
     });
     expect(lastCommand(h)).toContain(
-      `'--name' 'Renamed in Claude' '--resume' '${box.sessionUuid}'`,
+      `'--name=Renamed in Claude' '--resume' '${box.sessionUuid}'`,
     );
     await expect(h.core.boxes.start(box.id)).rejects.toMatchObject({ code: "box_running" });
   });

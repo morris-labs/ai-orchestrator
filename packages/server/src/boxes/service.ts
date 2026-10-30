@@ -65,7 +65,13 @@ import {
   removeWorktree,
   worktreePath,
 } from "../worktrees/worktrees.js";
-import { baseClaudeArgs, movedMessage, platformArgs, sideSessionArgs } from "./args.js";
+import {
+  baseClaudeArgs,
+  movedMessage,
+  nameArg,
+  platformArgs,
+  sideSessionArgs,
+} from "./args.js";
 import { slugifyIssueName, uniqueBoxName } from "./names.js";
 
 export type BoxCreateInput = z.input<typeof BoxCreateSchema>;
@@ -551,7 +557,7 @@ export class BoxService {
       return box;
     }
 
-    let args = [...baseClaudeArgs(box, project), "--name", conversationName];
+    let args = [...baseClaudeArgs(box, project), nameArg(conversationName)];
     if (openingPrompt !== "") args.push(openingPrompt);
     this.mark(box, "starting");
     try {
@@ -667,7 +673,7 @@ export class BoxService {
       box.sessionUuid !== null && (await transcriptExists(this.env, workDir, box.sessionUuid));
     const sessionUuid = hasTranscript ? (box.sessionUuid as string) : crypto.randomUUID();
     let args = baseClaudeArgs(box, project);
-    if (box.conversationName !== "") args.push("--name", box.conversationName);
+    if (box.conversationName !== "") args.push(nameArg(box.conversationName));
     args.push(hasTranscript ? "--resume" : "--session-id", sessionUuid);
     if (hasTranscript && box.movedFrom && box.worktree) args.push(movedMessage(this.env, box));
     if (box.platform !== "claude") args = platformArgs(box, project, box.platform, true, "");
