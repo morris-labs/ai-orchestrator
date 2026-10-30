@@ -248,6 +248,8 @@ export function useMessageBoxOpen(): boolean {
 }
 
 interface Pending {
+  /** Unique per request, so a queued request never reuses an open box's state. */
+  id: number;
   options: MessageOptions;
   resolve: (r: MessageResult) => void;
 }
@@ -255,8 +257,13 @@ interface Pending {
 /** Hosts the message boxes that `useMessageBox()` opens, one at a time. */
 export function MessageBoxProvider({ children }: { children: ReactNode }) {
   const [queue, setQueue] = useState<Pending[]>([]);
+  const nextId = useRef(0);
   const ask = useCallback<Ask>(
-    (options) => new Promise((resolve) => setQueue((q) => [...q, { options, resolve }])),
+    (options) =>
+      new Promise((resolve) => {
+        const id = nextId.current++;
+        setQueue((q) => [...q, { id, options, resolve }]);
+      }),
     [],
   );
   const current = queue[0];
@@ -267,7 +274,7 @@ export function MessageBoxProvider({ children }: { children: ReactNode }) {
       </MessageOpenContext.Provider>
       {current && (
         <MessageBox
-          key={queue.length + current.options.title}
+          key={current.id}
           options={current.options}
           onDone={(r) => {
             current.resolve(r);
