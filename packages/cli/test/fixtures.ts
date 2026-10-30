@@ -197,6 +197,7 @@ export const setupStatus = {
     { id: "image", status: "ok", message: "claude-code exists.", fixable: false },
     { id: "engine", status: "warn", message: "No engine running.", fixable: false },
     { id: "op", status: "fail", message: "op isn't installed.", fixable: true },
+    { id: "sudo", status: "ok", message: "sudo is off in containers.", fixable: false },
   ],
 };
 

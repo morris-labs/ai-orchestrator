@@ -66,6 +66,7 @@ export class SetupService {
       this.guard("ssh_key", () => this.checkSshKey()),
       this.guard("ssh_permissions", () => this.checkSshPermissions()),
       this.guard("op", () => this.checkOp()),
+      this.guard("sudo", () => this.checkSudo()),
       this.guard("service", () => this.checkService()),
     ]);
   }
@@ -247,6 +248,61 @@ export class SetupService {
     };
   }
 
+  /**
+   * Whether containers get sudo: off without a reference, and with one, on
+   * only when the reference resolves. Never returns the value.
+   */
+  private async checkSudo(): Promise<SetupCheck> {
+    const ref = this.opts.core.settings.get().sudoPasswordRef;
+    if (ref === undefined) {
+      return {
+        id: "sudo",
+        status: "ok",
+        message:
+          "sudo is off in containers because no sudo password reference is set. To allow sudo with a password, set a 1Password reference for it in the setup wizard.",
+        fixable: false,
+      };
+    }
+    const op = await this.opts.op.status();
+    const problem = !op.installed
+      ? "the 1Password CLI (op) is not installed"
+      : !op.signedIn
+        ? "the 1Password CLI is not signed in"
+        : null;
+    if (problem === null) {
+      try {
+        // Only whether it resolves to a usable value matters; the value is
+        // dropped at once.
+        const value = await this.opts.op.read(ref);
+        if (value.length === 0 || /[\n\r]/.test(value)) {
+          throw new ApiError(
+            "secrets_unavailable",
+            "The value is empty or has more than one line.",
+          );
+        }
+      } catch (err) {
+        return {
+          id: "sudo",
+          status: "fail",
+          message: `The sudo password reference ${ref} doesn't resolve, so containers won't start: ${toApiError(err).message}`,
+          fixable: false,
+        };
+      }
+      return {
+        id: "sudo",
+        status: "ok",
+        message: `sudo in containers asks for the password at ${ref}.`,
+        fixable: false,
+      };
+    }
+    return {
+      id: "sudo",
+      status: "fail",
+      message: `The sudo password reference ${ref} can't be resolved because ${problem}, so containers won't start.`,
+      fixable: false,
+    };
+  }
+
   private async checkService(): Promise<SetupCheck> {
     return (await this.opts.serviceInstalled())
       ? {
@@ -354,6 +410,11 @@ export class SetupService {
         throw new ApiError(
           "conflict",
           "Install the 1Password CLI and sign in with op signin, or set OP_SERVICE_ACCOUNT_TOKEN for the server.",
+        );
+      case "sudo":
+        throw new ApiError(
+          "conflict",
+          "Set the sudo password reference to an op:// reference that resolves, or clear it to turn sudo off.",
         );
       default:
         throw new ApiError("not_found", `There is no setup check named ${checkId}.`);

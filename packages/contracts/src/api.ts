@@ -544,6 +544,7 @@ export const SetupCheckSchema = z.object({
     "ssh_key",
     "ssh_permissions",
     "op",
+    "sudo",
     "service",
   ]),
   status: z.enum(["ok", "warn", "fail"]),

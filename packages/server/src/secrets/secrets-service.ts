@@ -1,6 +1,8 @@
 // Resolves secret references into environment variables for a container
 // launch, and reports which references resolve. Values never leave this
-// module except in the environment map `resolveEnv` returns.
+// module except in the environment map `resolveEnv` returns. The sudo
+// password never leaves it at all: `sudoPasswordHash` returns only its
+// SHA-512 crypt hash.
 import type {
   GlobalSettings,
   SecretRef,
@@ -9,6 +11,7 @@ import type {
 } from "@agentbox/contracts";
 import type { z } from "zod";
 import { ApiError, toApiError } from "../api/errors.js";
+import { hashSudoPassword } from "./crypt.js";
 import type { OpClient } from "./op.js";
 
 export type SecretsCheckResult = z.infer<typeof SecretsCheckResultSchema>;
@@ -68,6 +71,35 @@ export class SecretsService {
     } finally {
       this.clearCache();
     }
+  }
+
+  /**
+   * Resolves the sudo password reference and returns the password's SHA-512
+   * crypt hash, or `null` when no reference is set, which turns sudo off.
+   * The plaintext stays in this function. Throws like `resolveEnv`.
+   */
+  async sudoPasswordHash(): Promise<string | null> {
+    const ref = this.opts.settings().sudoPasswordRef;
+    if (ref === undefined) return null;
+    return hashSudoPassword(await this.readSudoPassword(ref));
+  }
+
+  private async readSudoPassword(ref: string): Promise<string> {
+    await this.requireSignedIn();
+    const password = await this.opts.op.read(ref);
+    if (password.length === 0) {
+      throw new ApiError(
+        "secrets_unavailable",
+        `The sudo password reference ${ref} resolves to an empty value.`,
+      );
+    }
+    if (/[\n\r]/.test(password)) {
+      throw new ApiError(
+        "secrets_unavailable",
+        `The sudo password reference ${ref} resolves to more than one line. Use a single-line password.`,
+      );
+    }
+    return password;
   }
 
   private async requireSignedIn(): Promise<void> {

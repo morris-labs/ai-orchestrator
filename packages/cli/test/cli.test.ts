@@ -566,7 +566,7 @@ describe("migrate, setup, doctor", () => {
   const healthy = () => {
     server.on("GET /api/v1/health", { body: { version: "4.0.0-dev", uptimeS: 5 } });
     server.on("GET /api/v1/setup", {
-      body: { ...setupStatus, checks: setupStatus.checks.slice(0, 3) },
+      body: { ...setupStatus, checks: setupStatus.checks.filter((c) => c.id !== "op") },
     });
     server.on("GET /api/v1/image", { body: imageStatus });
     server.on("GET /api/v1/projects", { body: { projects: [projectSummary] } });
@@ -578,6 +578,27 @@ describe("migrate, setup, doctor", () => {
     expect(out).toMatch(/server\s+ok/);
     expect(out).toMatch(/token\s+ok\s+AGENTBOX_TOKEN/);
     expect(out).toMatch(new RegExp(`engine ${PROJECT_ID}\\s+ok`));
+    expect(out).toMatch(/sudo\s+ok\s+sudo is off in containers\./);
+  });
+
+  it("fails doctor when the sudo password reference doesn't resolve", async () => {
+    healthy();
+    server.on("GET /api/v1/setup", {
+      body: {
+        ...setupStatus,
+        checks: [
+          ...setupStatus.checks.filter((c) => c.id !== "sudo"),
+          {
+            id: "sudo",
+            status: "fail",
+            message: "The sudo password reference op://SYNTHETIC/sudo/password doesn't resolve.",
+            fixable: false,
+          },
+        ],
+      },
+    });
+    expect(await cli(["doctor"])).toBe(1);
+    expect(out).toMatch(/sudo\s+fail/);
   });
 
   it("fails doctor on a mismatched engine", async () => {

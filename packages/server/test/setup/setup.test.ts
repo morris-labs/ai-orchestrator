@@ -42,6 +42,7 @@ function make(overrides: {
   runner?: FakeRunner;
   settings?: Partial<GlobalSettings>;
   imageContext?: string;
+  opRead?: (ref: string) => Promise<string>;
 }) {
   const settings: GlobalSettings = { ...defaultConfig(), ...overrides.settings };
   const runner =
@@ -52,7 +53,7 @@ function make(overrides: {
   const op: OpClient = {
     status: async () =>
       overrides.op ?? { installed: true, version: "2.30.0", signedIn: true, mode: "desktop" },
-    read: async () => "",
+    read: overrides.opRead ?? (async () => ""),
   };
   const core = {
     docker: { ping: async () => overrides.ping ?? true },
@@ -99,11 +100,46 @@ describe("SetupService checks", () => {
       "ssh_key",
       "ssh_permissions",
       "op",
+      "sudo",
       "service",
     ]);
     expect(checks.every((c) => c.status === "ok")).toBe(true);
     expect(byId(checks).ssh_client?.message).toBe("OpenSSH_9.6p1");
     expect(byId(checks).image?.message).toContain("sha256:abc");
+  });
+
+  it("reports sudo as off without a reference, and checks a reference without showing it", async () => {
+    const off = byId(await make({}).svc.checks()).sudo;
+    expect(off).toMatchObject({ status: "ok", fixable: false });
+    expect(off?.message).toContain("sudo is off in containers");
+
+    const ref = "op://SYNTHETIC/sudo/password";
+    const value = "SYNTHETIC_SUDO_PASSWORD";
+    const reads: string[] = [];
+    const on = byId(
+      await make({
+        settings: { sudoPasswordRef: ref },
+        opRead: async (r) => {
+          reads.push(r);
+          return value;
+        },
+      }).svc.checks(),
+    ).sudo;
+    expect(reads).toEqual([ref]);
+    expect(on).toMatchObject({ status: "ok" });
+    expect(on?.message).toContain(ref);
+    expect(on?.message).not.toContain(value);
+
+    const empty = byId(await make({ settings: { sudoPasswordRef: ref } }).svc.checks()).sudo;
+    expect(empty?.status).toBe("fail");
+    const locked = byId(
+      await make({
+        settings: { sudoPasswordRef: ref },
+        op: { installed: true, version: "2.30.0", signedIn: false, mode: "desktop" },
+      }).svc.checks(),
+    ).sudo;
+    expect(locked).toMatchObject({ status: "fail" });
+    expect(locked?.message).toContain("not signed in");
   });
 
   it("reports failures", async () => {
@@ -144,7 +180,7 @@ describe("SetupService checks", () => {
     const status = await svc.status();
     expect(status.completed).toBe(true);
     expect(status.defaultTargetDir).toBe("/work");
-    expect(status.checks).toHaveLength(8);
+    expect(status.checks).toHaveLength(9);
   });
 });
 

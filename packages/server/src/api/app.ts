@@ -88,6 +88,10 @@ export async function startApp(options: AppOptions): Promise<App> {
       secrets.beginLaunch();
       return secrets.resolveEnv(projectId);
     },
+    sudoPasswordHash: async () => {
+      if (!secrets) throw new Error("The secrets service is not ready.");
+      return secrets.sudoPasswordHash();
+    },
     activeRunForBox: (boxId) => runs?.activeRunForBox(boxId) ?? null,
   };
   const ports = new Map<string, Listener[]>();
