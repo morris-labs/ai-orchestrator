@@ -267,7 +267,11 @@ describe("post-push loop", () => {
     const d = deps(new Scenario(), gh);
     const request = { projectId: "sample", repoPath: repo, pipeline: "post-push" as const };
     await expect(
-      RunController.create({ runId: nextRunId(), ...request, readOnly: true }, { projectRoot: repo }, d),
+      RunController.create(
+        { runId: nextRunId(), ...request, readOnly: true },
+        { projectRoot: repo },
+        d,
+      ),
     ).rejects.toThrow(/read-only run can't use the post-push pipeline/);
 
     // A run stored before the schema refused the combination still can't push.
@@ -327,7 +331,11 @@ describe("post-push loop", () => {
 });
 
 describe("post-push pull request choice", () => {
-  async function postPush(repo: string, gh: FakeGitHub, extra: { base?: string; prNumber?: number } = {}) {
+  async function postPush(
+    repo: string,
+    gh: FakeGitHub,
+    extra: { base?: string; prNumber?: number } = {},
+  ) {
     const run = await RunController.create(
       { runId: nextRunId(), projectId: "sample", repoPath: repo, pipeline: "post-push", ...extra },
       { projectRoot: repo },
@@ -389,7 +397,9 @@ describe("post-push pull request choice", () => {
       const state2 = await postPush(repo, gh, { prNumber: 7 });
       expect(state2.decision?.kind).toBe("push_blocked");
       expect(state2.decision?.message).toMatch(message);
-      expect(git(join(dirname(repo), "origin.git"), "rev-parse", "refs/heads/feature")).toBe(before);
+      expect(git(join(dirname(repo), "origin.git"), "rev-parse", "refs/heads/feature")).toBe(
+        before,
+      );
       expect(gh.reviewRequests).toEqual([]);
     }
   });
@@ -574,7 +584,7 @@ describe("GhCliClient", () => {
       run: async (program, args) => {
         calls.push([program, ...args]);
         const has = (a: string) => args.includes(a);
-        let stdout = "";
+        let stdout: string;
         if (has("id=T1") && has("after=T1-K1")) {
           stdout = JSON.stringify({
             data: {

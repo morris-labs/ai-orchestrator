@@ -165,9 +165,7 @@ describe("merge", () => {
     // A similar title or a similar failure case does.
     expect(sameIssue(base, { ...other, title: "Order lookup SQL injection" })).toBe(true);
     expect(sameIssue(base, { ...other, title: "Unescaped input" })).toBe(true);
-    expect(
-      sameIssue(base, { ...other, title: "Unescaped input", failureCase: "" }),
-    ).toBe(false);
+    expect(sameIssue(base, { ...other, title: "Unescaped input", failureCase: "" })).toBe(false);
     // Lines in another version of the file aren't compared; the fingerprint still is.
     expect(sameIssue(base, { ...other, linesAt: "2".repeat(40) })).toBe(false);
     expect(sameIssue(base, { ...other, linesAt: undefined })).toBe(false);

@@ -85,7 +85,7 @@ interface Comparable {
   file: string | null;
   lines: readonly [number, number] | null;
   /** The code version `lines` count in; lines in different versions aren't compared. */
-  linesAt: string | undefined;
+  linesAt?: string | undefined;
   title: string;
   failureCase: string;
 }

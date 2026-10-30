@@ -129,9 +129,8 @@ function refuseReadOnlyPostPush(
  * What starts a run: the body of the server's `runs.create`. Defaults follow
  * design.md. A read-only request can't use the post-push pipeline.
  */
-export const RunRequestSchema = RunRequestFieldsSchema.superRefine(refuseReadOnlyPostPush).transform(
-  foldExactBase,
-);
+export const RunRequestSchema =
+  RunRequestFieldsSchema.superRefine(refuseReadOnlyPostPush).transform(foldExactBase);
 export type RunRequest = z.infer<typeof RunRequestSchema>;
 export type RunRequestInput = z.input<typeof RunRequestSchema>;
 
