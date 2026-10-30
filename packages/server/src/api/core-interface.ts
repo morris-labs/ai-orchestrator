@@ -243,8 +243,11 @@ export interface Core {
  */
 export interface CoreServices {
   events: EventSink;
-  /** Resolves the global and project secret references into environment variables. */
-  resolveSecrets(projectId: string): Promise<Record<string, string>>;
+  /**
+   * Checks that the global and project secret references resolve, opens the
+   * container's secrets broker socket, and returns the secret names.
+   */
+  prepareSecrets(projectId: string, container: string): Promise<string[]>;
   /** The hash of the container user's sudo password, or `null` for sudo off. Default: `null`. */
   sudoPasswordHash?(): Promise<string | null>;
   /** The active run that holds a box's working tree, or `null`. */

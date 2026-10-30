@@ -124,8 +124,15 @@ describe("ProjectService", () => {
     const { project: p } = await h.core.projects.update(created.id, {
       secretRefs: [{ name: "SECRET", ref: "op://V/I/f" }],
     });
-    h.core.setHooks({ resolveEnv: async () => ({ SECRET: "v" }) });
+    const prepared: string[][] = [];
+    h.core.setHooks({
+      prepareSecrets: async (projectId, container) => {
+        prepared.push([projectId, container]);
+        return ["SECRET"];
+      },
+    });
     const r = await h.core.projects.ensureContainer(p.id);
+    expect(prepared).toEqual([[p.id, `claude-agent-proj-${p.id}`]]);
     expect(r).toEqual({ container: `claude-agent-proj-${p.id}`, created: true, stale: [] });
     const endpoint = h.core.projects.engineEndpoint(p.id)!;
     expect(endpoint).toMatchObject({ hostPort: 41000, container: r.container });
@@ -135,7 +142,8 @@ describe("ProjectService", () => {
     const tokenFile = engineTokenFile(h.env, r.container);
     expect(fs.readFileSync(tokenFile, "utf8")).toBe(`${endpoint.token}\n`);
     expect(fs.statSync(tokenFile).mode & 0o777).toBe(0o600);
-    expect(c.spec.env).toContain("SECRET=v");
+    expect(c.spec.env.some((e) => e.startsWith("SECRET="))).toBe(false);
+    expect(c.spec.labels["agentbox.secret-names"]).toBe("SECRET");
     expect(c.spec.env).toContain(`AGENTBOX_ENGINE_VERSION=${ENGINE_VERSION}`);
     expect(readMountsFile(h.env, r.container)).toEqual([]);
     const again = await h.core.projects.ensureContainer(p.id);
@@ -222,6 +230,30 @@ describe("ProjectService", () => {
     expect(await h.core.projects.staleDifferences(p)).toEqual(["sudo passwordless -> off"]);
   });
 
+  it("reports a container with secrets in its environment as stale", async () => {
+    const h = makeHarness();
+    const p = h.core.projects.ensureForRoot(h.dir("app"));
+    const r = await h.core.projects.ensureContainer(p.id);
+    expect(await h.core.projects.staleDifferences(p)).toEqual([]);
+    // A container that a server from before the broker created has no label.
+    delete h.docker.containers.get(r.container)!.spec.labels["agentbox.secrets"];
+    expect(await h.core.projects.staleDifferences(p)).toEqual(["secrets environment -> broker"]);
+  });
+
+  it("blocks the launch when the pre-start check fails", async () => {
+    const h = makeHarness();
+    const p = h.core.projects.ensureForRoot(h.dir("app"));
+    h.core.setHooks({
+      prepareSecrets: async () => {
+        throw new ApiError("secrets_locked", "The 1Password CLI is not signed in.");
+      },
+    });
+    await expect(h.core.projects.ensureContainer(p.id)).rejects.toMatchObject({
+      code: "secrets_locked",
+    });
+    expect(h.docker.callsOf("createContainer")).toHaveLength(0);
+  });
+
   it("refuses a missing image or a mismatched engine", async () => {
     const missing = makeHarness({ image: false });
     const p1 = missing.core.projects.ensureForRoot(missing.dir("app"));
@@ -250,7 +282,9 @@ describe("ProjectService", () => {
       `${extra}:/extra`,
       "TCP maps none -> 127.0.0.1:9000:3000",
     ]);
-    expect(await h.core.projects.staleDifferences(updated, ["X"])).toContain("secrets none -> X");
+    // The secret list doesn't make a container stale: the broker reads it on every request.
+    await h.core.projects.update(p.id, { secretRefs: [{ name: "X", ref: "op://V/I/x" }] });
+    expect(await h.core.projects.staleDifferences(h.core.projects.get(p.id))).toHaveLength(2);
     const r = await h.core.projects.ensureContainer(p.id);
     expect(r.created).toBe(true);
     expect(h.docker.callsOf("stopContainer")).toHaveLength(1);

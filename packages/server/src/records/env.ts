@@ -71,6 +71,7 @@ export function homePaths(env: HostEnv) {
     serverToken: data(HOME_PATHS.serverToken),
     stateDir: data(HOME_PATHS.stateDir),
     sessionsDir: data(HOME_PATHS.sessionsDir),
+    brokerDir: data(HOME_PATHS.brokerDir),
     backupDir: data(HOME_PATHS.backupDir),
     importReport: data(`${HOME_PATHS.dataDir}/import-report.json`),
     claudeDir: at(".claude"),
@@ -85,6 +86,14 @@ export function homePaths(env: HostEnv) {
 /** `<data dir>/sessions/<name>`: mounted over a container's `~/.claude/sessions`. */
 export function sessionsDirFor(env: HostEnv, name: string): string {
   return path.join(homePaths(env).sessionsDir, name);
+}
+
+/**
+ * `<data dir>/broker/<container>`: the directory of the container's secrets
+ * broker socket, mounted read-only at `BROKER_MOUNT`.
+ */
+export function brokerDirFor(env: Pick<HostEnv, "home" | "dataDir">, container: string): string {
+  return path.join(dataPath(env, HOME_PATHS.brokerDir), container);
 }
 
 /**

@@ -34,26 +34,51 @@ const input: LaunchInput = {
   tcpMaps: [{ host: 8080, container: 3000 }],
   image: "claude-code",
   engine: { hostPort: 41000, token: "secret-token-value-0123456789", version: "4.0.0" },
-  extraEnv: { GITHUB_TOKEN: "ghp_value", API_KEY: "k" },
+  secretNames: ["GITHUB_TOKEN", "API_KEY"],
 };
 
 describe("buildLaunchSpec", () => {
-  it("never lets a secret replace a variable the server sets", () => {
+  it("puts no secret in the environment and leaves reserved names out of the label", () => {
     const spec = buildLaunchSpec(
       env,
-      { ...input, extraEnv: { AGENTBOX_ENGINE_TOKEN: "evil", API_KEY: "k" } },
+      { ...input, secretNames: ["AGENTBOX_ENGINE_TOKEN", "AGENTBOX_BROKER_SOCKET", "API_KEY"] },
       { projectsSymlinkTarget: null, hasGitconfig: false },
     );
     expect(spec.env.filter((e) => e.startsWith("AGENTBOX_ENGINE_TOKEN="))).toEqual([]);
-    expect(spec.env).toContain("API_KEY=k");
-    const file = buildLaunchSpec(
+    expect(spec.env.some((e) => e.startsWith("API_KEY"))).toBe(false);
+    expect(spec.env.filter((e) => e.startsWith("AGENTBOX_BROKER_SOCKET="))).toEqual([
+      "AGENTBOX_BROKER_SOCKET=/run/agentbox-broker/broker.sock",
+    ]);
+    expect(spec.labels["agentbox.secret-names"]).toBe("API_KEY");
+    expect(spec.labels["agentbox.secrets"]).toBe("broker");
+  });
+
+  it("adds a host test script's plain variables, never over a reserved one", () => {
+    const spec = buildLaunchSpec(
       env,
-      { ...input, extraEnv: { AGENTBOX_ENGINE_TOKEN_FILE: "/tmp/evil" } },
+      {
+        ...input,
+        extraEnv: { AGENTBOX_MOCK_VENDORS: "1", AGENTBOX_ENGINE_TOKEN_FILE: "/tmp/evil" },
+      },
       { projectsSymlinkTarget: null, hasGitconfig: false },
     );
-    expect(file.env.filter((e) => e.startsWith("AGENTBOX_ENGINE_TOKEN_FILE="))).toEqual([
+    expect(spec.env).toContain("AGENTBOX_MOCK_VENDORS=1");
+    expect(spec.env.filter((e) => e.startsWith("AGENTBOX_ENGINE_TOKEN_FILE="))).toEqual([
       "AGENTBOX_ENGINE_TOKEN_FILE=/run/claude-box/engine.token",
     ]);
+  });
+
+  it("mounts the broker directory read-only, and prepares it on the host", () => {
+    const home = tempDir("agentbox-launch-");
+    const hostEnv: HostEnv = { home, user: "tester", now: () => new Date() };
+    prepareLaunchHost(hostEnv, { container: C, root: path.join(home, "app") });
+    const dir = path.join(home, ".claude-box", "broker", C);
+    expect(fs.statSync(dir).mode & 0o777).toBe(0o700);
+    const spec = buildLaunchSpec(hostEnv, input, {
+      projectsSymlinkTarget: null,
+      hasGitconfig: false,
+    });
+    expect(spec.binds).toContain(`${dir}:/run/agentbox-broker:ro`);
   });
 
   it("labels whether the container's sudo asks for a password, and lists the mount paths", () => {
@@ -111,8 +136,7 @@ describe("buildLaunchSpec", () => {
         `AGENTBOX_CONTAINER=${C}`,
         "AGENTBOX_ENGINE_VERSION=4.0.0",
         "AGENTBOX_STATE_DIR=/run/claude-box",
-        "API_KEY=k",
-        "GITHUB_TOKEN=ghp_value",
+        "AGENTBOX_BROKER_SOCKET=/run/agentbox-broker/broker.sock",
       ],
       binds: [
         "/home/tester/work/app:/home/tester/work/app",
@@ -126,6 +150,7 @@ describe("buildLaunchSpec", () => {
         "/data/shared:/shared",
         "/home/tester/Bin/.project_archive:/home/tester/Bin/.project_archive",
         `/home/tester/.claude-box/state/${C}:/run/claude-box`,
+        `/home/tester/.claude-box/broker/${C}:/run/agentbox-broker:ro`,
       ],
       portBindings: {
         "20411/tcp": [{ hostIp: "127.0.0.1", hostPort: "41000" }],
@@ -137,6 +162,7 @@ describe("buildLaunchSpec", () => {
         "agentbox.secret-names": "API_KEY,GITHUB_TOKEN",
         "agentbox.engine-version": "4.0.0",
         "agentbox.sudo": "off",
+        "agentbox.secrets": "broker",
       },
       capDrop: ["MKNOD", "SETFCAP"],
       tty: true,
@@ -148,11 +174,11 @@ describe("buildLaunchSpec", () => {
   it("omits GIT_CONFIG_GLOBAL and the symlink bind when absent", () => {
     const spec = buildLaunchSpec(
       env,
-      { ...input, extraEnv: {}, tcpMaps: [] },
+      { ...input, secretNames: [], tcpMaps: [] },
       { projectsSymlinkTarget: null, hasGitconfig: false },
     );
     expect(spec.env.some((e) => e.startsWith("GIT_CONFIG_GLOBAL="))).toBe(false);
-    expect(spec.binds).toHaveLength(10);
+    expect(spec.binds).toHaveLength(11);
     expect(Object.keys(spec.portBindings)).toEqual(["20411/tcp"]);
     expect(spec.labels["agentbox.secret-names"]).toBe("");
   });
@@ -194,7 +220,9 @@ describe("buildLaunchSpec", () => {
   });
 
   it("prints a docker run line with secrets masked", () => {
-    const spec = buildLaunchSpec(env, input, { projectsSymlinkTarget: null, hasGitconfig: false });
+    const built = buildLaunchSpec(env, input, { projectsSymlinkTarget: null, hasGitconfig: false });
+    // A spec carries no secret value, but a masked line stays safe if one ever does.
+    const spec = { ...built, env: [...built.env, "GITHUB_TOKEN=ghp_value"] };
     const args = toDockerRunArgs(spec);
     expect(args.slice(0, 15)).toEqual([
       "run",
@@ -216,6 +244,8 @@ describe("buildLaunchSpec", () => {
     expect(args).toContain("AGENTBOX_ENGINE_TOKEN_FILE=/run/claude-box/engine.token");
     expect(args.join(" ")).not.toContain(input.engine.token);
     expect(args).toContain("GITHUB_TOKEN=***");
+    expect(args).toContain("AGENTBOX_BROKER_SOCKET=/run/agentbox-broker/broker.sock");
+    expect(args).toContain(`/home/tester/.claude-box/broker/${C}:/run/agentbox-broker:ro`);
     expect(args.join(" ")).not.toContain("ghp_value");
     expect(args).toContain("127.0.0.1:41000:20411");
     expect(args).toContain("127.0.0.1:8080:3000");

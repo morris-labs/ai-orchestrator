@@ -1,10 +1,14 @@
 // The launch parameters of a project container, described once (3.3.5
 // `DockerBackend::launchSpec`, inventory sections 4.1 and 4.2), minus the
 // port pool, plus the engine port, the engine environment, project TCP maps,
-// and secret environment.
+// and the secrets broker mount. Secret values never reach the spec: the
+// container asks the broker for them (docs/v4/design-secrets-broker.md).
 import fs from "node:fs";
 import path from "node:path";
 import {
+  BROKER_ENV,
+  BROKER_MOUNT,
+  BROKER_SOCKET_PATH,
   DEFAULT_ENGINE_PORT,
   ENGINE_ENV,
   hostPathProblem,
@@ -15,6 +19,7 @@ import {
 import { ApiError } from "../records/errors.js";
 import { RESERVED_ENV_NAMES } from "../records/settings.js";
 import {
+  brokerDirFor,
   containerHome,
   homePaths,
   hostToContainer,
@@ -33,7 +38,15 @@ export const LABELS = {
   engineVersion: "agentbox.engine-version",
   /** `password` when the container user's sudo asks for a password, `off` when sudo is off. */
   sudo: "agentbox.sudo",
+  /**
+   * `broker` when secrets come from the broker socket. A container without
+   * the label has its secret values in its environment.
+   */
+  secrets: "agentbox.secrets",
 } as const;
+
+/** The `agentbox.secrets` label value of a container that gets secrets from the broker. */
+export const SECRETS_LABEL_BROKER = "broker";
 
 /** The `agentbox.sudo` label value for a container with or without a sudo password. */
 export function sudoLabel(passwordSet: boolean): "password" | "off" {
@@ -53,8 +66,17 @@ export interface LaunchInput {
   tcpMaps: readonly TcpMap[];
   image: string;
   engine: { hostPort: number; token: string; version: string };
-  /** Resolved secrets and any other environment the server adds. Never logged. */
-  extraEnv: Readonly<Record<string, string>>;
+  /**
+   * The names of the secrets the container may request from the broker, for
+   * the `agentbox.secret-names` label. The values never enter the spec.
+   */
+  secretNames: readonly string[];
+  /**
+   * Plain variables that the host test scripts add, such as
+   * `AGENTBOX_MOCK_VENDORS`. Never secrets: `docker inspect` shows them. A
+   * name the server sets itself is dropped.
+   */
+  extraEnv?: Readonly<Record<string, string>>;
   /** Seconds the keeper lingers with no sessions; 30 unless a test shortens it. */
   graceSec?: number;
   /** Whether the root setup step installs a sudo password; false means sudo is off. */
@@ -147,7 +169,7 @@ export const DROPPED_CAPABILITIES = ["MKNOD", "SETFCAP"] as const;
  * Creates the host directories docker would otherwise create as root
  * (`~/.claude/sessions`, `~/.codex`, `~/.copilot`) and an empty
  * `~/.claude.json` when there is none, which docker would otherwise create as
- * a root-owned directory; empties the container's sessions directory, clears
+ * a root-owned directory; creates the container's broker directory; empties the container's sessions directory, clears
  * a stale keeper state file, and gathers the host facts the launch spec
  * needs.
  */
@@ -159,6 +181,10 @@ export function prepareLaunchHost(
   for (const dir of [paths.claudeSessions, paths.codexDir, paths.copilotDir]) {
     fs.mkdirSync(dir, { recursive: true });
   }
+  // The broker listens here; created now so docker doesn't create it as root.
+  const broker = brokerDirFor(env, input.container);
+  fs.mkdirSync(broker, { recursive: true, mode: 0o700 });
+  fs.chmodSync(broker, 0o700);
   try {
     fs.writeFileSync(paths.claudeJson, "{}\n", { mode: 0o600, flag: "wx" });
   } catch (err) {
@@ -209,6 +235,10 @@ export function buildLaunchSpec(
   binds.push(`${sessionsDirFor(env, input.container)}:${home}/.claude/sessions`);
   for (const m of merged) binds.push(mountBind(m));
   binds.push(`${path.join(paths.stateDir, input.container)}:${STATE_MOUNT}`);
+  // Read-only, so the container can't remove or replace the socket;
+  // connecting to it needs no write access. The directory, not the socket,
+  // is mounted, so a socket the server recreates stays reachable.
+  binds.push(`${brokerDirFor(env, input.container)}:${BROKER_MOUNT}:ro`);
 
   const envList = ["IS_SANDBOX=1", "DISABLE_AUTOUPDATER=1"];
   if (facts.hasGitconfig) envList.push(`GIT_CONFIG_GLOBAL=${containerDir}/gitconfig`);
@@ -222,13 +252,16 @@ export function buildLaunchSpec(
     `${ENGINE_ENV.container}=${input.container}`,
     `${ENGINE_ENV.engineVersion}=${input.engine.version}`,
     `${ENGINE_ENV.stateDir}=${STATE_MOUNT}`,
+    `${BROKER_ENV.socket}=${BROKER_SOCKET_PATH}`,
   );
-  // A reserved name never reaches the container from a secret, even one
-  // stored before the settings refused it.
-  const secretNames = Object.keys(input.extraEnv)
+  for (const [name, value] of Object.entries(input.extraEnv ?? {})) {
+    if (!RESERVED_ENV_NAMES.has(name)) envList.push(`${name}=${value}`);
+  }
+  // Names only, for the label. A reserved name, stored before the settings
+  // refused it, is left out.
+  const secretNames = [...new Set(input.secretNames)]
     .filter((n) => !RESERVED_ENV_NAMES.has(n))
     .sort();
-  for (const name of secretNames) envList.push(`${name}=${input.extraEnv[name]}`);
 
   const portBindings: ContainerCreateSpec["portBindings"] = {
     [`${DEFAULT_ENGINE_PORT}/tcp`]: [
@@ -258,6 +291,7 @@ export function buildLaunchSpec(
       [LABELS.secretNames]: secretNames.join(","),
       [LABELS.engineVersion]: input.engine.version,
       [LABELS.sudo]: sudoLabel(input.sudoPassword ?? false),
+      [LABELS.secrets]: SECRETS_LABEL_BROKER,
     },
     capDrop: [...DROPPED_CAPABILITIES],
     tty: true,
@@ -285,7 +319,7 @@ export function tcpMapsLabel(maps: readonly TcpMap[]): string {
 /**
  * The same spec as a `docker run` command line, for logs, docs, and the host
  * test scripts. Environment values are masked except the fixed ones, so the
- * result is safe to print.
+ * result is safe to print even for a spec from before the broker.
  */
 export function toDockerRunArgs(
   spec: ContainerCreateSpec,
@@ -302,6 +336,7 @@ export function toDockerRunArgs(
     ENGINE_ENV.container,
     ENGINE_ENV.engineVersion,
     ENGINE_ENV.stateDir,
+    BROKER_ENV.socket,
   ]);
   const args = ["run", "-d", "-i", "-t"];
   if (spec.autoRemove) args.push("--rm");

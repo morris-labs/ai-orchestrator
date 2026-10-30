@@ -19,7 +19,9 @@ import { Notifier } from "../notify/notifier.js";
 import { DevServerProxy, cachedResolver, proxyPorts } from "../proxy/proxy.js";
 import { Scheduler, VendorHealth } from "../scheduler/scheduler.js";
 import { OpCli, type OpClient } from "../secrets/op.js";
+import { BROKER_SYNC_INTERVAL_MS, SecretsBroker } from "../secrets/broker.js";
 import { SecretsService } from "../secrets/secrets-service.js";
+import { brokerDirFor } from "../records/env.js";
 import { SetupService } from "../setup/setup-service.js";
 import { UpdateChecker } from "../setup/updates.js";
 import { SshTunnelManager, startCopyIdJob, testConnection } from "../ssh/tunnels.js";
@@ -81,12 +83,28 @@ export async function startApp(options: AppOptions): Promise<App> {
   const sink = new LateSink();
   let secrets: SecretsService | null = null;
   let runs: RunMirror | null = null;
+  const broker = new SecretsBroker({
+    source: {
+      names: async (projectId) => {
+        if (!secrets) throw new Error("The secrets service is not ready.");
+        return secrets.names(projectId);
+      },
+      read: async (projectId, names) => {
+        if (!secrets) throw new Error("The secrets service is not ready.");
+        return secrets.readNames(projectId, names);
+      },
+    },
+    dirFor: (container) =>
+      brokerDirFor({ home: options.home, dataDir: options.dataDir }, container),
+    log,
+  });
   const services: CoreServices = {
     events: sink,
-    resolveSecrets: async (projectId) => {
+    prepareSecrets: async (projectId, container) => {
       if (!secrets) throw new Error("The secrets service is not ready.");
-      secrets.beginLaunch();
-      return secrets.resolveEnv(projectId);
+      const names = await secrets.preflight(projectId);
+      await broker.open({ container, projectId });
+      return names;
     },
     sudoPasswordHash: async () => {
       if (!secrets) throw new Error("The secrets service is not ready.");
@@ -204,6 +222,36 @@ export async function startApp(options: AppOptions): Promise<App> {
     }, 200);
   };
 
+  // Every running project container keeps a broker socket: a restarted
+  // server recreates each one in its mounted directory, and a removed
+  // container's socket closes. One sync runs at a time; a request during a
+  // sync runs once more after it.
+  let brokerSync: Promise<void> | null = null;
+  let brokerSyncAgain = false;
+  let closing = false;
+  const syncBroker = (): void => {
+    if (closing) return;
+    if (brokerSync) {
+      brokerSyncAgain = true;
+      return;
+    }
+    brokerSync = (async () => {
+      do {
+        brokerSyncAgain = false;
+        try {
+          const running = await core.engines.list();
+          if (!closing) await broker.sync(running);
+        } catch (err) {
+          log(`Secrets broker sync failed: ${(err as Error).message}`);
+        }
+      } while (brokerSyncAgain && !closing);
+    })().finally(() => {
+      brokerSync = null;
+    });
+  };
+  const brokerTimer = setInterval(syncBroker, BROKER_SYNC_INTERVAL_MS);
+  brokerTimer.unref();
+
   hub.subscribe((event: AgentBoxEvent) => {
     runMirror.ingest(event);
     usage.ingest(event);
@@ -213,6 +261,7 @@ export async function startApp(options: AppOptions): Promise<App> {
     if (event.type === "container.changed") {
       if (event.state !== "running") ports.delete(event.container);
       void engines.refresh();
+      syncBroker();
     }
     if (event.type === "ports.changed") ports.set(event.container, event.listeners);
   });
@@ -299,6 +348,7 @@ export async function startApp(options: AppOptions): Promise<App> {
 
   engines.start();
   syncTunnels();
+  syncBroker();
 
   return {
     core,
@@ -315,6 +365,10 @@ export async function startApp(options: AppOptions): Promise<App> {
       if (proxyServer) await new Promise<void>((resolve) => proxyServer?.close(() => resolve()));
       await engines.stop();
       await tunnels.stopAll();
+      closing = true;
+      clearInterval(brokerTimer);
+      await brokerSync;
+      await broker.closeAll();
       await core.close?.();
     },
   };
