@@ -303,6 +303,26 @@ describe("host git safety", () => {
     expect(fs.existsSync(marker)).toBe(true);
   });
 
+  it("keeps a filter driver set only in the user's global configuration", async () => {
+    const repo = initRepo(path.join(tempDir(), "repo"));
+    const globalFile = path.join(tempDir("agentbox-global-"), "gitconfig");
+    write(globalFile, '[filter "up"]\n\tsmudge = tr a-z A-Z\n\tclean = cat\n');
+    write(path.join(repo, ".gitattributes"), "*.txt filter=up\n");
+    write(path.join(repo, "b.txt"), "SYNTHETIC lower\n");
+    commitAll(repo, "attrs");
+    const saved = process.env.GIT_CONFIG_GLOBAL;
+    process.env.GIT_CONFIG_GLOBAL = globalFile;
+    try {
+      const added = await addWorktree(repo, "lfs-like");
+      expect(added.ok).toBe(true);
+      if (added.ok) {
+        expect(fs.readFileSync(path.join(added.path, "b.txt"), "utf8")).toBe("SYNTHETIC LOWER\n");
+      }
+    } finally {
+      process.env.GIT_CONFIG_GLOBAL = saved;
+    }
+  });
+
   it("refuses transports other than local paths", async () => {
     const repo = initRepo(path.join(tempDir(), "repo"));
     const marker = path.join(tempDir("agentbox-marker-"), "SYNTHETIC_PWNED");

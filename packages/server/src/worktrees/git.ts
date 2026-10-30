@@ -61,20 +61,26 @@ export function configEnv(pairs: readonly (readonly [string, string])[]): NodeJS
 }
 
 /**
- * Empty commands for every filter driver configured for `dir`: a driver's
- * name is arbitrary, so it can't be turned off without reading it first.
- * Reading configuration runs nothing.
+ * Empty commands for every filter driver that the repository's own
+ * configuration defines or redefines: a driver's name is arbitrary, so it
+ * can't be turned off without reading it first, and reading configuration
+ * runs nothing. Drivers set only in the user's global or the system
+ * configuration, such as Git LFS, keep working.
  */
 async function filterOverrides(dir: string, base: NodeJS.ProcessEnv): Promise<[string, string][]> {
   if (dir === "") return [];
   const r = await run(
-    ["-C", dir, "config", "--name-only", "--get-regexp", "^filter\\."],
+    ["-C", dir, "config", "--show-scope", "--name-only", "--get-regexp", "^filter\\."],
     base,
     30000,
   );
   if (r.error) return [];
   const drivers = new Set<string>();
-  for (const key of r.stdout.split("\n")) {
+  for (const line of r.stdout.split("\n")) {
+    const tab = line.indexOf("\t");
+    const scope = line.slice(0, tab);
+    const key = line.slice(tab + 1);
+    if (tab < 0 || scope === "system" || scope === "global" || scope === "command") continue;
     const dot = key.lastIndexOf(".");
     if (key.startsWith("filter.") && dot > "filter.".length) {
       drivers.add(key.slice("filter.".length, dot));
