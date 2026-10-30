@@ -37,23 +37,49 @@ describe("parseCopilotJson", () => {
     expect(out.findings[0]?.file).toBe("src/cache.ts");
   });
 
-  it("prefers assistant.usage tokens and cost", () => {
+  it("prefers assistant.usage tokens and the reported premium-request total", () => {
     const stream = [
       { type: "assistant.message", data: { content: "{}", outputTokens: 9 } },
       {
         type: "assistant.usage",
-        data: { inputTokens: 100, outputTokens: 10, cost: 0.02, model: "gpt-5.1" },
+        data: { inputTokens: 100, outputTokens: 10, cost: 1, model: "gpt-5.1" },
       },
       { type: "session.shutdown", data: { totalPremiumRequests: 2 } },
     ]
       .map((e) => JSON.stringify(e))
       .join("\n");
-    expect(parseCopilotJson(stream)).toMatchObject({
+    const s = parseCopilotJson(stream);
+    expect(s).toMatchObject({
       tokens: { input: 100, output: 10 },
-      costUsd: 0.02,
       premiumRequests: 2,
       model: "gpt-5.1",
     });
+    expect(s).not.toHaveProperty("costUsd");
+  });
+
+  it("counts assistant.usage cost as a premium-request multiplier, not dollars", async () => {
+    const stream = [
+      { type: "assistant.message", data: { content: '{"ok":true}', outputTokens: 9 } },
+      { type: "assistant.usage", data: { inputTokens: 100, outputTokens: 5, cost: 1 } },
+      { type: "assistant.usage", data: { inputTokens: 50, outputTokens: 4, cost: 0.33 } },
+    ]
+      .map((e) => JSON.stringify(e))
+      .join("\n");
+    expect(parseCopilotJson(stream).premiumRequests).toBe(1.33);
+
+    const dir = tempDir("copilot-cost-");
+    const cli = join(dir, "copilot");
+    const out = join(dir, "stream.jsonl");
+    writeFileSync(out, `${stream}\n`);
+    writeFileSync(cli, `#!/bin/sh\ncat '${out}'\n`, { mode: 0o755 });
+    const result = await new CopilotAdapter({ command: cli }).review({
+      ...base,
+      cwd: dir,
+      timeoutMs: 10_000,
+    });
+    expect(result.premiumRequests).toBe(1.33);
+    // 1.33 premium requests at $0.04 each, not $1.33.
+    expect(result.costUsd).toBeCloseTo(0.0532, 6);
   });
 
   it("reads a quota error", () => {
@@ -141,8 +167,9 @@ describe("CopilotAdapter", () => {
   });
 
   it("builds read-only args with automatic model selection and a fixed session id", () => {
-    const args = adapter.buildArgs(base, "PROMPT", "sid");
-    expect(args.slice(0, 2)).toEqual(["-p", "PROMPT"]);
+    const args = adapter.buildArgs(base, "/tmp/x/prompt.md", "sid");
+    expect(args[0]).toBe("-p");
+    expect(args[1]).toMatch(/^Read the file \/tmp\/x\/prompt\.md /);
     expect(args).toEqual(
       expect.arrayContaining([
         "--output-format",
@@ -166,7 +193,7 @@ describe("CopilotAdapter", () => {
   it("builds a write continuation", () => {
     const args = adapter.buildArgs(
       { ...base, tools: "write", sessionId: "s1", model: "gpt-5.1", effort: "low" },
-      "P",
+      "/tmp/x/prompt.md",
       "unused",
     );
     expect(args).toEqual(
@@ -183,7 +210,11 @@ describe("CopilotAdapter", () => {
   });
 
   it("adds each extra directory with --add-dir", () => {
-    const args = adapter.buildArgs({ ...base, addDirs: ["/base", "/scratch"] }, "P", "sid");
+    const args = adapter.buildArgs(
+      { ...base, addDirs: ["/base", "/scratch"] },
+      "/tmp/x/prompt.md",
+      "sid",
+    );
     expect(args.join(" ")).toContain("--add-dir /base --add-dir /scratch");
   });
 
@@ -255,10 +286,42 @@ describe("CopilotAdapter", () => {
     expect(readFileSync(seen, "utf8")).toBe("github_pat_fine||");
   });
 
-  it("points at a prompt file for a long prompt", () => {
-    const args = adapter.buildArgs(base, "P", "sid", "/tmp/x/prompt.md");
+  it("points at the prompt file and lets a read-only call read it", () => {
+    const args = adapter.buildArgs(base, "/tmp/x/prompt.md", "sid");
     expect(args[1]).toMatch(/Read the file \/tmp\/x\/prompt.md/);
     expect(args).toEqual(expect.arrayContaining(["--add-dir", "/tmp/x", "read(/tmp/x/prompt.md)"]));
+  });
+
+  it("never puts the prompt on the command line, however short", async () => {
+    const dir = tempDir("copilot-argv-");
+    const cli = join(dir, "copilot");
+    const seen = join(dir, "seen.txt");
+    writeFileSync(
+      cli,
+      [
+        "#!/bin/sh",
+        `printf '%s\\n' "$@" > '${seen}'`,
+        'file=$(printf "%s" "$2" | sed -n "s/^Read the file \\([^ ]*\\) and follow.*/\\1/p")',
+        `stat -c '%a' "$file" "$(dirname "$file")" >> '${seen}'`,
+        `cat "$file" >> '${seen}'`,
+        "echo '{\"ok\":true}'",
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    const copilot = new CopilotAdapter({ command: cli, outputFormat: "text" });
+    const out = await copilot.review({
+      ...base,
+      prompt: "SYNTHETIC_SECRET_SOURCE diff",
+      cwd: dir,
+      timeoutMs: 10_000,
+    });
+    expect(out.output).toEqual({ ok: true });
+    const lines = readFileSync(seen, "utf8").split("\n");
+    const argv = lines.slice(0, lines.indexOf("600"));
+    expect(argv.join("\n")).not.toContain("SYNTHETIC_SECRET_SOURCE");
+    expect(lines).toEqual(expect.arrayContaining(["600", "700"]));
+    expect(lines.join("\n")).toContain("SYNTHETIC_SECRET_SOURCE diff");
   });
 
   it("estimates premium requests with the automatic discount", () => {

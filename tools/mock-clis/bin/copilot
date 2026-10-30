@@ -78,7 +78,7 @@ if (prompt === undefined) {
   console.error("mock copilot: only headless mode (-p) is supported");
   process.exit(2);
 }
-// The adapter passes a long prompt as a file reference.
+// The adapter passes every prompt as a file reference.
 const fileRef = /^Read the file (\S+) and follow/.exec(prompt);
 if (fileRef) prompt = readFileSync(fileRef[1], "utf8");
 

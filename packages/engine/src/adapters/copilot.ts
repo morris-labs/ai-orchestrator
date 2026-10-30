@@ -64,9 +64,6 @@ export const COPILOT_USD_PER_PREMIUM_REQUEST = 0.04;
 /** US dollars per AI credit. */
 export const COPILOT_USD_PER_AI_CREDIT = 0.01;
 
-/** Prompts longer than this go through a file, to stay under the kernel's argument limit. */
-export const COPILOT_MAX_PROMPT_ARG = 100_000;
-
 export interface CopilotAdapterOptions extends CliAdapterOptions {
   /** `json` reads the JSONL event stream; `text` reads plain stdout. Default `json`. */
   outputFormat?: "json" | "text";
@@ -82,7 +79,6 @@ export interface CopilotRunSummary {
   tokens: { input: number; output: number };
   premiumRequests: number | null;
   aiCredits: number | null;
-  costUsd: number | null;
   error: { type: string | null; code: string | null; message: string } | null;
   /** Tool calls that reported `success: false`, from `tool.execution_complete`. */
   toolErrors: string[];
@@ -115,23 +111,20 @@ export class CopilotAdapter extends CliAdapter {
       .join("\n\n");
   }
 
-  buildArgs(
-    req: CliRequest<unknown>,
-    prompt: string,
-    sessionId: string,
-    promptFile?: string,
-  ): string[] {
-    const args: string[] = [];
-    if (promptFile) {
-      args.push(
-        "-p",
-        `Read the file ${promptFile} and follow the instructions in it exactly. Its last part says how to format your answer.`,
-        "--add-dir",
-        join(promptFile, ".."),
-      );
-    } else {
-      args.push("-p", prompt);
-    }
+  /**
+   * The command line for one call. The prompt holds the diff and the
+   * reviewed source, and every local user can read a process's arguments,
+   * so the prompt itself never goes on the command line: `-p` only names
+   * `promptFile`, a 0600 file in a 0700 directory. Copilot ignores stdin
+   * under `-p`, so a file is the only other way in.
+   */
+  buildArgs(req: CliRequest<unknown>, promptFile: string, sessionId: string): string[] {
+    const args: string[] = [
+      "-p",
+      `Read the file ${promptFile} and follow the instructions in it exactly. Its last part says how to format your answer.`,
+      "--add-dir",
+      join(promptFile, ".."),
+    ];
     for (const dir of req.addDirs ?? []) args.push("--add-dir", dir);
     if (this.copilotOptions.outputFormat !== "text") args.push("--output-format", "json");
     args.push("--no-color", "--no-ask-user", "--model", req.model ?? "auto");
@@ -141,9 +134,7 @@ export class CopilotAdapter extends CliAdapter {
     if (req.tools === "write") {
       args.push("--allow-all-tools");
     } else {
-      const allow = promptFile
-        ? [...COPILOT_READ_ONLY_ALLOW, `read(${promptFile})`]
-        : COPILOT_READ_ONLY_ALLOW;
+      const allow = [...COPILOT_READ_ONLY_ALLOW, `read(${promptFile})`];
       for (const pattern of allow) args.push("--allow-tool", pattern);
       for (const pattern of COPILOT_READ_ONLY_DENY) args.push("--deny-tool", pattern);
     }
@@ -153,17 +144,14 @@ export class CopilotAdapter extends CliAdapter {
   protected async call<T>(req: CliRequest<T>, _ctx: CallContext): Promise<CliResult<T>> {
     const prompt = this.buildPrompt(req);
     const sessionId = req.sessionId ?? randomUUID();
-    let dir: string | undefined;
-    let promptFile: string | undefined;
-    if (Buffer.byteLength(prompt) > COPILOT_MAX_PROMPT_ARG) {
-      dir = mkdtempSync(join(tmpdir(), "agentbox-copilot-"));
-      promptFile = join(dir, "prompt.md");
-      writeFileSync(promptFile, prompt);
-    }
+    // `mkdtempSync` makes the directory 0700.
+    const dir = mkdtempSync(join(tmpdir(), "agentbox-copilot-"));
+    const promptFile = join(dir, "prompt.md");
     try {
+      writeFileSync(promptFile, prompt, { mode: 0o600 });
       const result = await runProcess({
         command: this.command,
-        args: this.buildArgs(req, prompt, sessionId, promptFile),
+        args: this.buildArgs(req, promptFile, sessionId),
         cwd: req.cwd,
         env: this.options.env,
         envProfile: `vendor:${this.vendor}`,
@@ -213,10 +201,9 @@ export class CopilotAdapter extends CliAdapter {
         summary.premiumRequests ??
         this.estimatePremiumRequests(model, req.model === undefined || req.model === "auto");
       const costUsd =
-        summary.costUsd ??
-        (summary.aiCredits !== null
+        summary.aiCredits !== null
           ? summary.aiCredits * COPILOT_USD_PER_AI_CREDIT
-          : premiumRequests * COPILOT_USD_PER_PREMIUM_REQUEST);
+          : premiumRequests * COPILOT_USD_PER_PREMIUM_REQUEST;
       return {
         output,
         sessionId: session,
@@ -231,7 +218,7 @@ export class CopilotAdapter extends CliAdapter {
         durationMs: result.durationMs,
       };
     } finally {
-      if (dir) rmSync(dir, { recursive: true, force: true });
+      rmSync(dir, { recursive: true, force: true });
     }
   }
 
@@ -306,7 +293,6 @@ function emptySummary(): CopilotRunSummary {
     tokens: { input: 0, output: 0 },
     premiumRequests: null,
     aiCredits: null,
-    costUsd: null,
     error: null,
     toolErrors: [],
   };
@@ -319,6 +305,9 @@ export function parseCopilotJson(stdout: string, stderr = ""): CopilotRunSummary
   // `assistant.usage` carries both directions; `assistant.message` only output.
   let sawUsage = false;
   const usage = { input: 0, output: 0 };
+  // `assistant.usage`'s `cost` is the call's premium-request multiplier,
+  // such as 1 or 0.33, not US dollars (SDK `AssistantUsageData`).
+  let multipliers: number | null = null;
   let messageOutput = 0;
   for (const line of stdout.split("\n")) {
     const trimmed = line.trim();
@@ -346,7 +335,8 @@ export function parseCopilotJson(stdout: string, stderr = ""): CopilotRunSummary
         sawUsage = true;
         usage.input += num(data.inputTokens);
         usage.output += num(data.outputTokens);
-        if (typeof data.cost === "number") s.costUsd = (s.costUsd ?? 0) + data.cost;
+        if (typeof data.cost === "number" && Number.isFinite(data.cost))
+          multipliers = (multipliers ?? 0) + data.cost;
         if (typeof data.model === "string") s.model = data.model;
         break;
       case "session.shutdown":
@@ -382,6 +372,8 @@ export function parseCopilotJson(stdout: string, stderr = ""): CopilotRunSummary
   if (jsonLines === 0) return parseCopilotText(stdout, stderr);
   s.tokens = sawUsage ? usage : { input: 0, output: messageOutput };
   applyExitSummary(s, stderr);
+  // A reported total wins; the per-request multipliers sum to the same count.
+  if (s.premiumRequests === null && multipliers !== null) s.premiumRequests = round(multipliers);
   return s;
 }
 
