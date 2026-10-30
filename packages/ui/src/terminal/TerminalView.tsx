@@ -13,6 +13,7 @@ import { terminalTheme } from "../theme/tokens";
 import { beep } from "./beep";
 import { openTerminalSocket, TerminalConnection, type TerminalTarget } from "./connection";
 import { endedBanner, handleTerminalKey } from "./keys";
+import { oscLinkHandler, openTerminalLink } from "./links";
 
 /** Clipboard access; Electron and the browser both provide `navigator.clipboard`. */
 export interface ClipboardLike {
@@ -92,16 +93,13 @@ export function TerminalView(props: TerminalViewProps) {
       fontSize: 13,
       cursorBlink: true,
       allowProposedApi: true,
+      linkHandler: oscLinkHandler(() => propsRef.current.openLink),
     });
     termRef.current = term;
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.loadAddon(
-      new WebLinksAddon((_e, url) => {
-        const open = propsRef.current.openLink;
-        if (open) open(url);
-        else window.open(url, "_blank", "noopener");
-      }),
+      new WebLinksAddon((_e, url) => openTerminalLink(url, propsRef.current.openLink)),
     );
     term.open(host);
     try {
