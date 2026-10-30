@@ -136,6 +136,17 @@ function diffTip(ctx: RunContext): string | null {
   return reviewsWorktree(ctx) ? null : (ctx.state.tipSha ?? "HEAD");
 }
 
+/**
+ * The code version that this stage's finding lines count in, for the
+ * merge's `linesAt`: the tip SHA, prefixed with `worktree:` when the round
+ * reviews uncommitted changes. Empty when the tip isn't known yet.
+ */
+export function linesVersion(ctx: RunContext): { linesAt?: string } {
+  const tip = ctx.state.tipSha;
+  if (!tip) return {};
+  return { linesAt: reviewsWorktree(ctx) ? `worktree:${tip}` : tip };
+}
+
 /** Computes the file groups for the current tip. */
 export async function computeGroups(ctx: RunContext): Promise<FileGroup[]> {
   const diffBase = ctx.eng.diffBaseSha ?? ctx.state.baseSha ?? "";
@@ -437,6 +448,7 @@ export async function mergeInto(
         nextId: () => ctx.nextFindingId(),
         acceptedOscillations: ctx.eng.acceptedOscillations,
         now: () => ctx.nowIso(),
+        ...linesVersion(ctx),
       },
       await symbolsOfFixed(ctx),
     );

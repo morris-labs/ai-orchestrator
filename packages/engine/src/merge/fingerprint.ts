@@ -58,6 +58,16 @@ export function titleSimilarity(a: string, b: string): number {
   return common / (ta.size + tb.size - common);
 }
 
+/**
+ * Jaccard similarity of two texts' word sets, such as two failure cases,
+ * from 0 to 1. Unlike `titleSimilarity`, a text with no words matches
+ * nothing, so two empty failure cases don't count as alike.
+ */
+export function textSimilarity(a: string, b: string): number {
+  if (titleTokens(a).length === 0 || titleTokens(b).length === 0) return 0;
+  return titleSimilarity(a, b);
+}
+
 const SYMBOL_PATTERNS: RegExp[] = [
   /^\s*(?:async\s+)?def\s+([A-Za-z_]\w*)/, // Python function
   /^\s*class\s+([A-Za-z_$][\w$]*)/, // class in most languages

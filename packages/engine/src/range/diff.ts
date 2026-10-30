@@ -24,12 +24,52 @@ export interface DiffFile {
 }
 
 const HUNK_RE = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
+const QUOTED = String.raw`"(?:[^"\\]|\\.)*"`;
+const DIFF_GIT_RE = new RegExp(`^diff --git (${QUOTED}|a/.+?) (${QUOTED}|b/.+)$`);
 
-function unquote(path: string): string {
-  if (path.startsWith('"') && path.endsWith('"')) {
-    return path.slice(1, -1).replace(/\\(["\\])/g, "$1");
+const ESCAPES: Record<string, number> = {
+  a: 7,
+  b: 8,
+  t: 9,
+  n: 10,
+  v: 11,
+  f: 12,
+  r: 13,
+  '"': 34,
+  "\\": 92,
+};
+
+/**
+ * Reverses git's C-style quoting of a path, which git uses for a path with
+ * a control character, a quote, a backslash, or (with the default
+ * `core.quotePath`) any non-ASCII byte, written as octal escapes such as
+ * `\303\251` for `é`.
+ */
+export function unquote(path: string): string {
+  if (path.length < 2 || !path.startsWith('"') || !path.endsWith('"')) return path;
+  const chars = Array.from(path.slice(1, -1));
+  const bytes: number[] = [];
+  for (let i = 0; i < chars.length; i++) {
+    const ch = chars[i] as string;
+    if (ch !== "\\") {
+      bytes.push(...Buffer.from(ch, "utf8"));
+      continue;
+    }
+    const octal = chars.slice(i + 1, i + 4).join("");
+    if (/^[0-3][0-7]{2}$/.test(octal)) {
+      bytes.push(parseInt(octal, 8));
+      i += 3;
+      continue;
+    }
+    const code = ESCAPES[chars[i + 1] ?? ""];
+    if (code !== undefined) {
+      bytes.push(code);
+      i += 1;
+      continue;
+    }
+    bytes.push(92);
   }
-  return path;
+  return Buffer.from(bytes).toString("utf8");
 }
 
 function stripPrefix(path: string): string | null {
@@ -46,10 +86,11 @@ export function parseDiff(text: string): DiffFile[] {
 
   for (const line of text.split("\n")) {
     if (line.startsWith("diff --git ")) {
-      const m = /^diff --git (?:"?a\/(.+?)"?) (?:"?b\/(.+?)"?)$/.exec(line);
+      // Each side is a plain `a/PATH` or a quoted `"a/PATH"`.
+      const m = DIFF_GIT_RE.exec(line);
       file = {
-        path: m?.[2] ?? "",
-        oldPath: m?.[1] ?? null,
+        path: (m?.[2] && stripPrefix(m[2])) ?? "",
+        oldPath: (m?.[1] && stripPrefix(m[1])) ?? null,
         status: "modified",
         binary: false,
         added: 0,

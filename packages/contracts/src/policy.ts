@@ -35,8 +35,10 @@ export const PolicyFileSchema = z
     /** A group with more changed lines than this splits into smaller groups. */
     groupSizeLimit: z.number().int().positive().default(DEFAULT_GROUP_SIZE_LIMIT),
     /**
-     * GitHub logins whose pull request comments the post-push loop imports, in
-     * addition to Copilot and the collaborators. Absent means no extra logins.
+     * GitHub logins whose pull request comments the post-push loop imports.
+     * The loop always imports Copilot's comments. When set, this list
+     * replaces the repository's collaborators; absent means the
+     * collaborators. Logins are case-insensitive.
      */
     commentAuthors: z.array(z.string().min(1)).optional(),
   })

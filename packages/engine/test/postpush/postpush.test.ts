@@ -33,6 +33,7 @@ const git = (cwd: string, ...args: string[]) =>
 /** A pull request on a bare origin repository, with scripted review threads and checks. */
 class FakeGitHub implements GitHubClient {
   pr: PrInfo | null = null;
+  created: CreatePrInput[] = [];
   reviewRequests: string[] = [];
   replies: Array<{ thread: string; body: string }> = [];
   resolved = new Set<string>();
@@ -60,6 +61,7 @@ class FakeGitHub implements GitHubClient {
     return this.viewPr();
   }
   async createPr(_repo: string, input: CreatePrInput): Promise<PrInfo> {
+    this.created.push(input);
     this.pr = {
       number: 7,
       url: "https://github.com/o/r/pull/7",
@@ -258,6 +260,40 @@ describe("post-push loop", () => {
     expect(git(origin, "rev-parse", "refs/heads/feature")).toBe(theirs);
   });
 
+  it("refuses a read-only post-push run at create and before it pushes", async () => {
+    const repo = buildSampleRepo();
+    const origin = join(dirname(repo), "origin.git");
+    const gh = new FakeGitHub(origin);
+    const d = deps(new Scenario(), gh);
+    const request = { projectId: "sample", repoPath: repo, pipeline: "post-push" as const };
+    await expect(
+      RunController.create(
+        { runId: nextRunId(), ...request, readOnly: true },
+        { projectRoot: repo },
+        d,
+      ),
+    ).rejects.toThrow(/read-only run can't use the post-push pipeline/);
+
+    // A run stored before the schema refused the combination still can't push.
+    const created = await RunController.create(
+      { runId: nextRunId(), ...request },
+      { projectRoot: repo },
+      d,
+    );
+    const stateFile = join(created.runDir, "state.json");
+    const stored = JSON.parse(readFileSync(stateFile, "utf8"));
+    stored.request.readOnly = true;
+    writeFileSync(stateFile, JSON.stringify(stored));
+    const run = await RunController.load(created.id, { projectRoot: repo }, d);
+    await run.start();
+    const state = await run.settled();
+    expect(state.status).toBe("failed");
+    expect(state.error).toMatch(/read-only run can't use the post-push pipeline/);
+    expect(gh.pr).toBeNull();
+    expect(gh.reviewRequests).toEqual([]);
+    expect(git(origin, "branch", "--list", "feature")).toBe("");
+  });
+
   it("starts after a finished pre-push run", async () => {
     const repo = buildSampleRepo();
     const gh = new FakeGitHub(join(dirname(repo), "origin.git"));
@@ -274,6 +310,98 @@ describe("post-push loop", () => {
     const state = await run.settled();
     expect(state).toMatchObject({ status: "finished", stopReason: "pr_clean", prNumber: 7 });
     expect(state.round).toBe(5);
+    expect(gh.created.map((c) => c.title)).toEqual(["Shop fixes"]);
+  });
+
+  it("opens the pull request with the default title when the given one is blank", async () => {
+    const repo = buildSampleRepo();
+    const gh = new FakeGitHub(join(dirname(repo), "origin.git"));
+    gh.checks = [];
+    const run = await RunController.create(
+      { runId: nextRunId(), projectId: "sample", repoPath: repo },
+      { projectRoot: repo },
+      deps(new Scenario(), gh),
+    );
+    await run.start();
+    expect((await run.settled()).stopReason).toBe("clean");
+    await run.push({ title: "  " });
+    expect(await run.settled()).toMatchObject({ stopReason: "pr_clean" });
+    expect(gh.created.map((c) => c.title)).toEqual(["Review fixes for feature"]);
+  });
+});
+
+describe("post-push pull request choice", () => {
+  async function postPush(
+    repo: string,
+    gh: FakeGitHub,
+    extra: { base?: string; prNumber?: number } = {},
+  ) {
+    const run = await RunController.create(
+      { runId: nextRunId(), projectId: "sample", repoPath: repo, pipeline: "post-push", ...extra },
+      { projectRoot: repo },
+      deps(new Scenario(), gh),
+    );
+    await run.start();
+    return run.settled();
+  }
+
+  function cleanGitHub(repo: string): FakeGitHub {
+    const gh = new FakeGitHub(join(dirname(repo), "origin.git"));
+    gh.checks = [{ name: "tests", bucket: "pass", link: null, workflow: "ci" }];
+    return gh;
+  }
+
+  it("targets the branch of a base on another remote", async () => {
+    const repo = buildSampleRepo();
+    const origin = join(dirname(repo), "origin.git");
+    git(repo, "push", "-q", "origin", "main:refs/heads/release");
+    git(repo, "remote", "add", "upstream", origin);
+    git(repo, "fetch", "-q", "upstream");
+    const gh = cleanGitHub(repo);
+    expect(await postPush(repo, gh, { base: "upstream/release" })).toMatchObject({
+      stopReason: "pr_clean",
+    });
+    expect(gh.created.map((c) => c.base)).toEqual(["release"]);
+  });
+
+  it("targets the default branch when the base is a tag", async () => {
+    const repo = buildSampleRepo();
+    git(repo, "tag", "SYNTHETIC_v1", "main");
+    const gh = cleanGitHub(repo);
+    expect(await postPush(repo, gh, { base: "SYNTHETIC_v1" })).toMatchObject({
+      stopReason: "pr_clean",
+    });
+    expect(gh.created.map((c) => c.base)).toEqual(["main"]);
+  });
+
+  it("refuses a closed, merged, or forked pull request picked by number", async () => {
+    for (const [state, crossRepository, message] of [
+      ["MERGED", false, /is merged/],
+      ["CLOSED", false, /is closed/],
+      ["OPEN", true, /from a fork/],
+    ] as const) {
+      const repo = buildSampleRepo();
+      git(repo, "push", "-q", "origin", "feature");
+      const before = git(repo, "rev-parse", "HEAD");
+      git(repo, "commit", "-q", "--allow-empty", "-m", "SYNTHETIC local change");
+      const gh = cleanGitHub(repo);
+      gh.pr = {
+        number: 7,
+        url: "https://github.com/o/r/pull/7",
+        headRefName: "feature",
+        baseRefName: "main",
+        headSha: before,
+        state,
+        crossRepository,
+      };
+      const state2 = await postPush(repo, gh, { prNumber: 7 });
+      expect(state2.decision?.kind).toBe("push_blocked");
+      expect(state2.decision?.message).toMatch(message);
+      expect(git(join(dirname(repo), "origin.git"), "rev-parse", "refs/heads/feature")).toBe(
+        before,
+      );
+      expect(gh.reviewRequests).toEqual([]);
+    }
   });
 });
 
@@ -402,6 +530,83 @@ describe("GhCliClient", () => {
       calls.some((c) => c.includes("thread=T") && c.some((a) => a.includes("resolveReviewThread"))),
     ).toBe(true);
     expect(calls.every((c) => !c.includes("--force"))).toBe(true);
+  });
+
+  it("skips a fork's pull request from a branch of the same name", async () => {
+    const pr = (number: number, isCrossRepository: boolean) => ({
+      number,
+      url: `https://github.com/o/r/pull/${number}`,
+      headRefName: "f",
+      baseRefName: "main",
+      headRefOid: "abc1234",
+      state: "OPEN",
+      isCrossRepository,
+    });
+    const fork = scripted({ "gh pr list": { stdout: JSON.stringify([pr(9, true)]) } });
+    expect(await new GhCliClient(fork.runner).findOpenPr("/r", "f")).toBeNull();
+    const both = scripted({
+      "gh pr list": { stdout: JSON.stringify([pr(9, true), pr(4, false)]) },
+    });
+    expect(await new GhCliClient(both.runner).findOpenPr("/r", "f")).toMatchObject({
+      number: 4,
+      crossRepository: false,
+    });
+  });
+
+  it("reads every page of review threads and of each thread's comments", async () => {
+    const calls: string[][] = [];
+    const comment = (id: string) => ({ id, body: id, url: null, author: { login: "Copilot" } });
+    const thread = (id: string, more: boolean) => ({
+      id,
+      isResolved: false,
+      path: "a",
+      line: 1,
+      startLine: null,
+      comments: {
+        pageInfo: { hasNextPage: more, endCursor: more ? `${id}-K1` : null },
+        nodes: [comment(`${id}-c1`)],
+      },
+    });
+    const page = (nodes: unknown[], next: string | null) =>
+      JSON.stringify({
+        data: {
+          repository: {
+            pullRequest: {
+              reviewThreads: {
+                pageInfo: { hasNextPage: next !== null, endCursor: next },
+                nodes,
+              },
+            },
+          },
+        },
+      });
+    const runner: CommandRunner = {
+      run: async (program, args) => {
+        calls.push([program, ...args]);
+        const has = (a: string) => args.includes(a);
+        let stdout: string;
+        if (has("id=T1") && has("after=T1-K1")) {
+          stdout = JSON.stringify({
+            data: {
+              node: {
+                comments: {
+                  pageInfo: { hasNextPage: false, endCursor: null },
+                  nodes: [comment("T1-c2")],
+                },
+              },
+            },
+          });
+        } else if (has("after=P1")) stdout = page([thread("T2", false)], null);
+        else stdout = page([thread("T1", true)], "P1");
+        return { exitCode: 0, stdout, stderr: "", timedOut: false };
+      },
+    };
+    const threads = await new GhCliClient(runner).listReviewThreads("/r", 3);
+    expect(threads.map((t) => [t.id, t.comments.map((c) => c.id)])).toEqual([
+      ["T1", ["T1-c1", "T1-c2"]],
+      ["T2", ["T2-c1"]],
+    ]);
+    expect(calls).toHaveLength(3);
   });
 });
 

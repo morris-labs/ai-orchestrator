@@ -6,6 +6,7 @@ import {
   LeaseRequestSchema,
   LeaseResponseFrameSchema,
   LeaseResponseSchema,
+  READ_ONLY_POST_PUSH_MESSAGE,
   ResolvedRunRequestSchema,
   RoundSummarySchema,
   RunRequestSchema,
@@ -56,6 +57,16 @@ describe("runs", () => {
     const parsed = EngineRunCreateSchema.parse({ ...runRequest, runId: RUN, exactBase: true });
     expect(parsed.runId).toBe(RUN);
     expect(parsed.mergeBase).toBe(false);
+  });
+
+  it("refuses a read-only request for the post-push pipeline", () => {
+    const bad = { ...runRequest, readOnly: true, pipeline: "post-push" };
+    const result = RunRequestSchema.safeParse(bad);
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0]?.message).toBe(READ_ONLY_POST_PUSH_MESSAGE);
+    expect(EngineRunCreateSchema.safeParse({ ...bad, runId: RUN }).success).toBe(false);
+    expect(RunRequestSchema.safeParse({ ...runRequest, readOnly: true }).success).toBe(true);
+    expect(RunRequestSchema.safeParse({ ...runRequest, pipeline: "post-push" }).success).toBe(true);
   });
 
   it("round-trips a run state waiting for a decision", () => {

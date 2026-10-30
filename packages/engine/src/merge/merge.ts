@@ -8,7 +8,7 @@ import {
   type Vendor,
   type VendorFinding,
 } from "@agentbox/contracts";
-import { titleSimilarity } from "./fingerprint.js";
+import { textSimilarity, titleSimilarity } from "./fingerprint.js";
 
 /** A raw finding from one agent, before the merge gives it an id. */
 export interface Candidate {
@@ -31,6 +31,12 @@ export interface MergeContext {
   /** Fixed findings whose return a person already accepted. */
   acceptedOscillations?: readonly string[];
   now: () => string;
+  /**
+   * The code version the candidates' lines count in, stored on each new
+   * finding as `linesAt`. Absent means unknown, and then lines are never
+   * compared, only fingerprints.
+   */
+  linesAt?: string;
 }
 
 export interface Oscillation {
@@ -68,21 +74,36 @@ export function linesOverlap(
   return a[0] <= b[1] && b[0] <= a[1];
 }
 
+/**
+ * Two findings with overlapping lines are one issue when their titles or
+ * their failure cases are at least this similar (`titleSimilarity`).
+ */
+export const SAME_ISSUE_SIMILARITY = 0.5;
+
 interface Comparable {
   fingerprint: string;
   file: string | null;
   lines: readonly [number, number] | null;
-  category: string;
+  /** The code version `lines` count in; lines in different versions aren't compared. */
+  linesAt?: string | undefined;
   title: string;
+  failureCase: string;
 }
 
-/** Two findings describe the same issue: same fingerprint, or overlapping lines with a similar category or title. */
+/**
+ * Two findings describe the same issue: they have the same fingerprint, or
+ * their lines overlap in the same code version and their titles or failure
+ * cases are similar. The category plays no part, since unrelated bugs often
+ * share one.
+ */
 export function sameIssue(a: Comparable, b: Comparable): boolean {
   if (a.fingerprint === b.fingerprint) return true;
-  if (a.file === null || a.file !== b.file || !linesOverlap(a.lines, b.lines)) return false;
+  if (a.file === null || a.file !== b.file) return false;
+  if (a.linesAt === undefined || a.linesAt !== b.linesAt) return false;
+  if (!linesOverlap(a.lines, b.lines)) return false;
   return (
-    a.category.toLowerCase() === b.category.toLowerCase() ||
-    titleSimilarity(a.title, b.title) >= 0.3
+    titleSimilarity(a.title, b.title) >= SAME_ISSUE_SIMILARITY ||
+    textSimilarity(a.failureCase, b.failureCase) >= SAME_ISSUE_SIMILARITY
   );
 }
 
@@ -105,13 +126,14 @@ export function returnsAfterFix(
   );
 }
 
-function toComparable(c: Candidate): Comparable {
+function toComparable(c: Candidate, linesAt: string | undefined): Comparable {
   return {
     fingerprint: c.fingerprint,
     file: c.raw.file,
     lines: c.raw.lines,
-    category: c.raw.category,
+    linesAt,
     title: c.raw.title,
+    failureCase: c.raw.failure_case,
   };
 }
 
@@ -136,7 +158,7 @@ export function mergeCandidates(
   const accepted = new Set(ctx.acceptedOscillations ?? []);
 
   for (const candidate of candidates) {
-    const cmp = toComparable(candidate);
+    const cmp = toComparable(candidate, ctx.linesAt);
     const open = findings.find(
       (f) => (f.verdict === "pending" || f.verdict === "confirmed") && sameIssue(f, cmp),
     );
@@ -185,6 +207,7 @@ export function mergeCandidates(
         groupId: candidate.groupId,
         hunkIds: candidate.hunkIds,
         origin: candidate.origin,
+        ...(ctx.linesAt === undefined ? {} : { linesAt: ctx.linesAt }),
       },
     );
     finding.history.push({

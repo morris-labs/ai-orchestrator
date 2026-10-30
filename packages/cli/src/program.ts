@@ -5,9 +5,11 @@ import {
   EffortSchema,
   PlatformSchema,
   ProfileSchema,
+  READ_ONLY_POST_PUSH_MESSAGE,
   RoleSchema,
   SeveritySchema,
   VerdictSchema,
+  isReadOnlyPostPush,
   type BoxView,
   type Ceiling,
   type Finding,
@@ -516,6 +518,9 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
       nonNegativeInt,
     )
     .action(async (o) => {
+      if (isReadOnlyPostPush({ readOnly: o.readOnly ?? false, pipeline: o.pipeline })) {
+        throw new UsageError(READ_ONLY_POST_PUSH_MESSAGE);
+      }
       const c = client();
       let projectId: string | undefined = o.project;
       let repoPath: string | undefined = o.repo;

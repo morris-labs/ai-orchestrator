@@ -85,6 +85,14 @@ const findingFields = {
   symbol: z.string().min(1).optional(),
   /** First and last line, inclusive, in the tip version of `file`; `null` with `file`. */
   lines: LinesSchema.nullable(),
+  /**
+   * The version of the code that `lines` count in: the tip commit when the
+   * finding was raised, prefixed with `worktree:` when the round reviewed
+   * uncommitted changes. The merge compares two findings' lines only when
+   * this matches. Absent on imported findings and on findings stored before
+   * the field existed.
+   */
+  linesAt: z.string().min(1).optional(),
   failureCase: z.string(),
   category: z.string().min(1),
   /** False when the flaw already exists at the pinned base. */
@@ -176,6 +184,8 @@ export interface FindingContext {
   groupId: string | null;
   hunkIds?: string[];
   origin?: FindingOrigin;
+  /** The code version the lines count in; see `Finding.linesAt`. */
+  linesAt?: string;
 }
 
 /** Converts a vendor's snake_case finding into a `Finding`. */
@@ -188,6 +198,7 @@ export function fromVendorFinding(raw: VendorFinding, ctx: FindingContext): Find
     file: raw.file,
     ...(raw.symbol === undefined ? {} : { symbol: raw.symbol }),
     lines: raw.lines,
+    ...(ctx.linesAt === undefined ? {} : { linesAt: ctx.linesAt }),
     failureCase: raw.failure_case,
     category: raw.category,
     introduced: raw.introduced,
