@@ -130,6 +130,32 @@ describe("ApiClient", () => {
     expect(await refusing.startSession()).toBe(false);
   });
 
+  it("forgets the token once the cookie authenticates, and keeps it when the trade fails", async () => {
+    const headers: string[] = [];
+    const fetchSpy: typeof fetch = async (_input, init) => {
+      headers.push(JSON.stringify(init?.headers));
+      return new Response(JSON.stringify({ boxes: [], ok: true }), { status: 200 });
+    };
+    const client = new ApiClient({
+      baseUrl: "http://h",
+      token: "SYNTHETIC_TOKEN",
+      fetch: fetchSpy,
+    });
+    expect(await client.startSession()).toBe(true);
+    expect(client.token).toBeNull();
+    await client.call("boxes.list", {});
+    expect(headers[1]).not.toContain("SYNTHETIC_TOKEN");
+    expect(JSON.stringify(client)).not.toContain("SYNTHETIC_TOKEN");
+
+    const refused = new ApiClient({
+      baseUrl: "http://h",
+      token: "SYNTHETIC_TOKEN",
+      fetch: async () => new Response("{}", { status: 401 }),
+    });
+    expect(await refused.startSession()).toBe(false);
+    expect(refused.token).toBe("SYNTHETIC_TOKEN");
+  });
+
   it("falls back to an error for an unknown error body", () => {
     const e = ApiRequestError.fromResponse(500, "nope");
     expect(e.code).toBe("bad_response");

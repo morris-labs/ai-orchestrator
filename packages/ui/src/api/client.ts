@@ -82,7 +82,7 @@ export type WebSocketCtor = new (
 export type SocketAuth = "cookie" | "header";
 
 export interface ApiClientOptions {
-  /** Origin of the server, such as `http://127.0.0.1:21400`. Empty means the page's own origin. */
+  /** Origin of the server, such as `https://127.0.0.1:21400`. Empty means the page's own origin. */
   baseUrl?: string;
   /** The bearer token. Absent means the `agentbox_session` cookie authenticates. */
   token?: string | null;
@@ -107,7 +107,7 @@ function queryString(query: Record<string, unknown> | undefined) {
 /** The typed server API client. */
 export class ApiClient {
   readonly baseUrl: string;
-  readonly token: string | null;
+  private bearer: string | null;
   private readonly fetchImpl: typeof fetch;
   private readonly wsCtor: WebSocketCtor | undefined;
   private readonly socketAuth: SocketAuth;
@@ -117,12 +117,17 @@ export class ApiClient {
 
   constructor(options: ApiClientOptions = {}) {
     this.baseUrl = (options.baseUrl ?? "").replace(/\/$/, "");
-    this.token = options.token ?? null;
+    this.bearer = options.token ?? null;
     this.fetchImpl = options.fetch ?? ((...args) => globalThis.fetch(...args));
     this.wsCtor = options.WebSocket ?? (globalThis.WebSocket as WebSocketCtor | undefined);
     this.socketAuth = options.socketAuth ?? "cookie";
     this.readTimeoutMs = options.timeouts?.readMs ?? READ_TIMEOUT_MS;
     this.writeTimeoutMs = options.timeouts?.writeMs ?? WRITE_TIMEOUT_MS;
+  }
+
+  /** The bearer token, or `null` once the client authenticates with the cookie only. */
+  get token(): string | null {
+    return this.bearer;
   }
 
   /** Builds the URL of an HTTP route with its path params and query. */
@@ -240,18 +245,24 @@ export class ApiClient {
    * browser WebSocket sends with its upgrade. Resolves `false` without a
    * token or when the server refuses; a page served by the server with the
    * cookie already set still connects.
+   *
+   * After a successful exchange the client forgets the token and
+   * authenticates with the cookie only, so a page keeps no reusable
+   * credential in reach of its scripts. A failed exchange keeps the token
+   * for the bearer header.
    */
   async startSession(): Promise<boolean> {
-    if (!this.token) return false;
+    if (!this.bearer) return false;
     try {
       await this.call("auth.session", {});
+      this.bearer = null;
       return true;
     } catch {
       return false;
     }
   }
 
-  /** Builds the `ws://` URL of a WebSocket route. The token never goes in it. */
+  /** Builds the `wss://` or `ws://` URL of a WebSocket route. The token never goes in it. */
   wsUrl<K extends WsRouteKey>(
     key: K,
     args: { params?: Record<string, string>; query?: Record<string, unknown> } = {},
@@ -263,7 +274,7 @@ export class ApiClient {
         ? this.baseUrl
         : typeof location !== "undefined"
           ? location.origin
-          : "http://127.0.0.1:21400";
+          : "https://127.0.0.1:21400";
     const wsOrigin = origin.replace(/^http/, "ws");
     return `${wsOrigin}${path}${queryString(args.query)}`;
   }
