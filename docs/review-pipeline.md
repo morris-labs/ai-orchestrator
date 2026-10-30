@@ -170,6 +170,9 @@ The post-push loop works under the following rules:
 - It never merges. When the pull request is mergeable, the review app shows
   its link and you merge it.
 - It answers a disproved comment with evidence instead of a code change.
+- It never runs for a read-only run. The CLI, the server, and the engine
+  refuse a read-only request for the post-push pipeline, because the loop
+  pushes and commits fixes.
 
 ## Repository policy
 

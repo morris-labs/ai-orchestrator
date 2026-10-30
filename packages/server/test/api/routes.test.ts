@@ -499,6 +499,23 @@ describe("review routes", () => {
     expect(h.core.calls).toContain(`message:${box.id}:${HOLD_EDITS_MESSAGE.slice(0, 20)}`);
   });
 
+  it("refuses a read-only post-push run before it reaches the engine", async () => {
+    const res = await h.server.app.inject({
+      method: "POST",
+      url: `${V1}/runs`,
+      headers: AUTH,
+      payload: {
+        projectId: "example-app-1a2b3c4d",
+        repoPath: "/work/example-app",
+        readOnly: true,
+        pipeline: "post-push",
+      },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(JSON.stringify(res.json())).toContain("read-only run can't use the post-push pipeline");
+    expect(h.engine.calls.some((c) => c.key === "engine.runs.create")).toBe(false);
+  });
+
   it("forwards params, query, and body to the engine", async () => {
     await h.server.app.inject({
       method: "GET",

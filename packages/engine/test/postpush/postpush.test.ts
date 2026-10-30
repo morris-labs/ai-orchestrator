@@ -258,6 +258,36 @@ describe("post-push loop", () => {
     expect(git(origin, "rev-parse", "refs/heads/feature")).toBe(theirs);
   });
 
+  it("refuses a read-only post-push run at create and before it pushes", async () => {
+    const repo = buildSampleRepo();
+    const origin = join(dirname(repo), "origin.git");
+    const gh = new FakeGitHub(origin);
+    const d = deps(new Scenario(), gh);
+    const request = { projectId: "sample", repoPath: repo, pipeline: "post-push" as const };
+    await expect(
+      RunController.create({ runId: nextRunId(), ...request, readOnly: true }, { projectRoot: repo }, d),
+    ).rejects.toThrow(/read-only run can't use the post-push pipeline/);
+
+    // A run stored before the schema refused the combination still can't push.
+    const created = await RunController.create(
+      { runId: nextRunId(), ...request },
+      { projectRoot: repo },
+      d,
+    );
+    const stateFile = join(created.runDir, "state.json");
+    const stored = JSON.parse(readFileSync(stateFile, "utf8"));
+    stored.request.readOnly = true;
+    writeFileSync(stateFile, JSON.stringify(stored));
+    const run = await RunController.load(created.id, { projectRoot: repo }, d);
+    await run.start();
+    const state = await run.settled();
+    expect(state.status).toBe("failed");
+    expect(state.error).toMatch(/read-only run can't use the post-push pipeline/);
+    expect(gh.pr).toBeNull();
+    expect(gh.reviewRequests).toEqual([]);
+    expect(git(origin, "branch", "--list", "feature")).toBe("");
+  });
+
   it("starts after a finished pre-push run", async () => {
     const repo = buildSampleRepo();
     const gh = new FakeGitHub(join(dirname(repo), "origin.git"));

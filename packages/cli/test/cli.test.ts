@@ -377,6 +377,14 @@ describe("review", () => {
     expect(await cli([...args, "--continuation-cap", "-1"])).not.toBe(0);
   });
 
+  it("refuses a read-only post-push run without calling the server", async () => {
+    server.on("POST /api/v1/runs", { status: 201, body: runState });
+    const args = ["review", "start", "--project", PROJECT_ID, "--repo", "/r", "--read-only"];
+    expect(await cli([...args, "--pipeline", "post-push"])).toBe(2);
+    expect(last()).toBeUndefined();
+    expect(err).toContain("read-only run can't use the post-push pipeline");
+  });
+
   it("needs a box or a project and repository", async () => {
     expect(await cli(["review", "start"])).toBe(2);
   });

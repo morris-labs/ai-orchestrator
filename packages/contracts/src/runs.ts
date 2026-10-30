@@ -103,8 +103,35 @@ export const RunRequestFieldsSchema = ResolvedRunRequestSchema.extend({
 const foldExactBase = <T extends { exactBase: boolean; mergeBase: boolean }>(r: T): T =>
   r.exactBase ? { ...r, mergeBase: false } : r;
 
-/** What starts a run: the body of the server's `runs.create`. Defaults follow design.md. */
-export const RunRequestSchema = RunRequestFieldsSchema.transform(foldExactBase);
+/** The reason every layer gives when it refuses a read-only post-push request. */
+export const READ_ONLY_POST_PUSH_MESSAGE =
+  "A read-only run can't use the post-push pipeline, which pushes, opens a pull request, and commits fixes.";
+
+/** True when a request asks for a read-only run of the post-push pipeline. */
+export function isReadOnlyPostPush(r: { readOnly: boolean; pipeline: Pipeline }): boolean {
+  return r.readOnly && r.pipeline === "post-push";
+}
+
+function refuseReadOnlyPostPush(
+  r: { readOnly: boolean; pipeline: Pipeline },
+  ctx: z.RefinementCtx,
+): void {
+  if (isReadOnlyPostPush(r)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["readOnly"],
+      message: READ_ONLY_POST_PUSH_MESSAGE,
+    });
+  }
+}
+
+/**
+ * What starts a run: the body of the server's `runs.create`. Defaults follow
+ * design.md. A read-only request can't use the post-push pipeline.
+ */
+export const RunRequestSchema = RunRequestFieldsSchema.superRefine(refuseReadOnlyPostPush).transform(
+  foldExactBase,
+);
 export type RunRequest = z.infer<typeof RunRequestSchema>;
 export type RunRequestInput = z.input<typeof RunRequestSchema>;
 
@@ -114,7 +141,9 @@ export type RunRequestInput = z.input<typeof RunRequestSchema>;
  */
 export const EngineRunCreateSchema = RunRequestFieldsSchema.extend({
   runId: RunIdSchema,
-}).transform(foldExactBase);
+})
+  .superRefine(refuseReadOnlyPostPush)
+  .transform(foldExactBase);
 export type EngineRunCreate = z.infer<typeof EngineRunCreateSchema>;
 
 /** The vendor for each role. Several reviewers can run in one round. */

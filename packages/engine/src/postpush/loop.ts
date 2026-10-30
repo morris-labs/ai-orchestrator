@@ -2,7 +2,13 @@
 // the pull request, request a Copilot review, poll the review and the checks,
 // import comments and failing checks as findings, verify, fix, gate, reply,
 // resolve, and push again.
-import { FindingInputSchema, type Finding, type Severity } from "@agentbox/contracts";
+import {
+  FindingInputSchema,
+  READ_ONLY_POST_PUSH_MESSAGE,
+  isReadOnlyPostPush,
+  type Finding,
+  type Severity,
+} from "@agentbox/contracts";
 import { createHash } from "node:crypto";
 import { DecisionNeeded, type RunContext } from "../state/context.js";
 import { finish, startRound, stagePreflight } from "../state/prepush.js";
@@ -457,6 +463,9 @@ async function endPostPushRound(ctx: RunContext): Promise<boolean> {
 
 /** Drives the post-push loop until the pull request is clean, the run waits, or it fails. */
 export async function drivePostPush(ctx: RunContext): Promise<void> {
+  // The request schema refuses this combination, but a run stored before
+  // that check existed can still carry it, and the loop pushes and commits.
+  if (isReadOnlyPostPush(ctx.state.request)) throw new Error(READ_ONLY_POST_PUSH_MESSAGE);
   for (;;) {
     await ctx.checkpoint();
     switch (ctx.state.stage) {

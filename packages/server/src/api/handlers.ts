@@ -2,7 +2,9 @@
 // `HttpHandlers` type makes a missing or extra route a compile error.
 import {
   DEFAULT_PROMPT_TEMPLATES,
+  READ_ONLY_POST_PUSH_MESSAGE,
   boxWorkDir,
+  isReadOnlyPostPush,
   type EngineRouteKey,
   type PathParams,
   type RunState,
@@ -353,6 +355,8 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
     "runs.preview": async ({ body }) =>
       deps.engines.requireProject(body.projectId).call("engine.runs.preview", { body }) as never,
     "runs.create": async ({ body, reply }) => {
+      // The request schema refuses this too; the check here keeps the refusal if the schema changes.
+      if (isReadOnlyPostPush(body)) throw new ApiError("validation", READ_ONLY_POST_PUSH_MESSAGE);
       const engine = deps.engines.requireProject(body.projectId);
       const run = (await engine.call("engine.runs.create", {
         body: { ...body, runId: ulid() },
