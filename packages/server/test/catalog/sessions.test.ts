@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -17,6 +18,21 @@ beforeEach(() => {
 afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
 
 describe("readSessionEntries", () => {
+  it("skips a FIFO or a link instead of blocking on it", async () => {
+    const entry = JSON.stringify({ pid: 12, sessionId: "s2", name: "N", updatedAt: 1 });
+    fs.writeFileSync(path.join(dir, "12.json"), entry);
+    execFileSync("mkfifo", [path.join(dir, "13.json")]);
+    const outside = path.join(tempDir("sessions-out-"), "SYNTHETIC.json");
+    fs.writeFileSync(outside, JSON.stringify({ pid: 14, sessionId: "s3", updatedAt: 1 }));
+    fs.symlinkSync(outside, path.join(dir, "14.json"));
+    const started = Date.now();
+    const entries = await readSessionEntries(dir);
+    expect(Date.now() - started).toBeLessThan(1000);
+    expect(entries.map((e) => e.pid)).toEqual([12]);
+    execFileSync("mkfifo", [path.join(dir, "t.jsonl")]);
+    expect(await liveModelAndEffort(path.join(dir, "t.jsonl"))).toEqual({});
+  });
+
   it("reads valid entries and skips the rest", async () => {
     fs.writeFileSync(
       path.join(dir, "11.json"),

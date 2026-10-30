@@ -4,6 +4,7 @@
 // `DockerBackend.cpp`).
 import fs from "node:fs/promises";
 import path from "node:path";
+import { GUARDED_READ_FLAGS, readRegularFile } from "../records/regular-file.js";
 
 /** One `<pid>.json` file from a Claude Code sessions directory. */
 export interface SessionEntry {
@@ -35,8 +36,10 @@ function num(v: unknown): number {
 
 /**
  * Reads every `*.json` in a sessions directory. Files that do not parse (a
- * half-written rewrite) and entries without a pid or a session id are
- * skipped. A missing directory gives `[]`.
+ * half-written rewrite), entries without a pid or a session id, and
+ * anything other than a regular file are skipped: the container writes this
+ * directory, and a FIFO there would block the read until a writer appears.
+ * A missing directory gives `[]`.
  */
 export async function readSessionEntries(dir: string): Promise<SessionEntry[]> {
   let names: string[];
@@ -50,8 +53,10 @@ export async function readSessionEntries(dir: string): Promise<SessionEntry[]> {
     if (!name.endsWith(".json")) continue;
     const file = path.join(dir, name);
     let obj: Record<string, unknown>;
+    const content = await readRegularFile(file);
+    if (content === null) continue;
     try {
-      const v: unknown = JSON.parse(await fs.readFile(file, "utf8"));
+      const v: unknown = JSON.parse(content);
       if (v === null || typeof v !== "object" || Array.isArray(v)) continue;
       obj = v as Record<string, unknown>;
     } catch {
@@ -101,12 +106,15 @@ export async function liveModelAndEffort(
 ): Promise<{ model?: string; effort?: string }> {
   let handle;
   try {
-    handle = await fs.open(transcriptFile, "r");
+    // The container writes transcripts too: refuse a FIFO or a link.
+    handle = await fs.open(transcriptFile, GUARDED_READ_FLAGS);
   } catch {
     return {};
   }
   try {
-    const { size } = await handle.stat();
+    const st = await handle.stat();
+    if (!st.isFile()) return {};
+    const { size } = st;
     const start = Math.max(0, size - TAIL_BYTES);
     const buf = Buffer.alloc(size - start);
     await handle.read(buf, 0, buf.length, start);
