@@ -90,7 +90,11 @@ and `review` command groups, plus `migrate`, `setup`, and `doctor`.
 
 Every pipeline stage writes its result as JSON under
 `PROJECT/.claude-box/runs/RUN_ID/`. A run resumes from the last complete
-stage after a crash or a container restart. The engine streams events about
+stage after a crash or a container restart. The engine records the process
+groups it starts in `engine-children.json` in the keeper's state directory,
+and an engine that the keeper restarts first kills the groups that the
+crashed engine left running, so a resumed stage never runs beside an
+orphaned agent. The engine streams events about
 each stage, agent call, and finding; the server tails that stream and
 mirrors runs, findings, and usage into SQLite for the apps and the CLI.
 
