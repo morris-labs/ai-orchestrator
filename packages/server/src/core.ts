@@ -138,6 +138,7 @@ export function createServerCore(options: CoreOptions): ServerCore {
     events,
     boxes,
     onRunning: (ids) => watcher.setRunning(ids),
+    now: () => env.now().getTime(),
   });
   const models = new ModelCatalog({
     env,
