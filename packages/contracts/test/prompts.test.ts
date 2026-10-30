@@ -9,8 +9,10 @@ import {
   DEFAULT_STARTER_TEMPLATE,
   DEFAULT_WORKSPACE_TEMPLATE,
   DEFAULT_WORKTREE_TEMPLATE,
+  SECRETS_PROMPT_HINT,
   expandTemplate,
   parseConfig,
+  withSecretsHint,
 } from "../src/index.js";
 
 const EXPECTED_WORKSPACE = `Your workspace for this conversation is %3. It already exists.
@@ -119,5 +121,32 @@ describe("expandTemplate", () => {
     ]);
     expect(text).not.toMatch(/%[1-7]/);
     expect(text).toContain('opened as "Name"');
+  });
+});
+
+describe("secrets hint", () => {
+  it("tells the agent how to get a secret and not to reveal it", () => {
+    expect(SECRETS_PROMPT_HINT).toContain("agentbox-secret list");
+    expect(SECRETS_PROMPT_HINT).toContain(
+      "agentbox-secret run NAME[,NAME...] -- COMMAND [ARGS...]",
+    );
+    expect(SECRETS_PROMPT_HINT).toContain(
+      "never print a value or write one to a file, a log, or your replies",
+    );
+    expect(SECRETS_PROMPT_HINT).toContain("`GH_TOKEN` also come from the broker");
+    expect(SECRETS_PROMPT_HINT).not.toMatch(/%[1-9]/);
+  });
+
+  it("is not part of any default template", () => {
+    for (const t of Object.values(DEFAULT_PROMPT_TEMPLATES))
+      expect(t).not.toContain("agentbox-secret");
+  });
+
+  it("follows the prompt as its own paragraph", () => {
+    expect(withSecretsHint("Start here.")).toBe(`Start here.\n\n${SECRETS_PROMPT_HINT}`);
+  });
+
+  it("leaves an empty prompt empty", () => {
+    expect(withSecretsHint("")).toBe("");
   });
 });

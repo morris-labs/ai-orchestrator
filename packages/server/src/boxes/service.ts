@@ -13,6 +13,7 @@ import {
   expandTemplate,
   projectContainerName,
   proxyPortOf,
+  withSecretsHint,
   type Box,
   type BoxCreate,
   type BoxStatus,
@@ -509,6 +510,10 @@ export class BoxService {
           promptPath(this.env, targetDir),
         ]);
       }
+      // Every project container gets the broker socket, but only a project
+      // with secret references has anything for the agent to ask it for.
+      if (settings.secretRefs.length > 0 || project.secretRefs.length > 0)
+        openingPrompt = withSecretsHint(openingPrompt);
 
       const containers = (await this.deps.docker.listContainers({ all: true })).map((c) => c.name);
       const id = uniqueBoxName(slug || path.posix.basename(targetDir), this.takenNames(containers));

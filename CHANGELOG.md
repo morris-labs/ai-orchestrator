@@ -30,7 +30,8 @@ the upgrade steps, see `docs/migration-3x.md`.
   automatically, with optional explicit TCP maps per project.
 - Secrets from 1Password references, served on request by a per-container
   broker socket and the `agentbox-secret` command in the image, never put
-  in a container's environment.
+  in a container's environment. When a project has secret references, the
+  opening prompt tells the agent how to use `agentbox-secret`.
 - A repository policy file, `.claude-box/policy.yaml`.
 - Tray icons and desktop notifications.
 - A one-time import of 3.x records and settings into SQLite.

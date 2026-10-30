@@ -20,7 +20,7 @@ Records and responses follow two rules:
 |---|---|
 | `records.ts` | `Project`, `ProjectSettings`, `Box`, `SshRemote`, `SshForward`, `GlobalSettings`, and the settings patch, with the mapping from the 3.3.5 record keys and the import rules |
 | `common.ts` | Ports, ISO times, ULID run ids, commit SHAs, vendors, and the `ApiErrorCode` list |
-| `prompts.ts` | The four default prompt templates and `expandTemplate()` |
+| `prompts.ts` | The four default prompt templates, `expandTemplate()`, and the secrets hint (`SECRETS_PROMPT_HINT`, `withSecretsHint()`) |
 | `findings.ts` | `Finding`, the vendor JSON form, and its converter |
 | `runs.ts` | `RunRequest`, `RunState`, `FileGroup`, `RoundSummary`, and decisions |
 | `lease.ts` | Lease requests, responses, their stream frames, and settlements, with the lease protocol |
@@ -60,7 +60,9 @@ workstream's branch.
 
 The prompt template defaults must stay byte for byte equal to
 `docs/v4/inventory-gui.md` section 4.7. The `test/prompts.test.ts` file holds
-the expected text and fails on any difference.
+the expected text and fails on any difference. The secrets hint isn't a
+template: the server adds it after the opening prompt, so the templates
+stay unchanged.
 
 ## Develop
 

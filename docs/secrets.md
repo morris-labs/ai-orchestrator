@@ -78,8 +78,24 @@ follows:
 for a name the project doesn't list, and 5 when 1Password is locked or a
 reference doesn't resolve.
 
-Agents don't know about the command unless you tell them. Name the secrets a
-project uses, and how to start the tools that need them, in the project's
+When a project has at least one global or project reference, the server
+ends the opening prompt of each new conversation in that project with the
+following paragraph:
+
+> Secrets come from the Agent Box secrets broker: run `agentbox-secret list`
+> to see their names and `agentbox-secret run NAME[,NAME...] -- COMMAND [ARGS...]`
+> to give them to one command, and never print a value or write one to a
+> file, a log, or your replies. Variables such as `GH_TOKEN` also come from
+> the broker where the project configures them, so pass them the same way,
+> for example `agentbox-secret run GH_TOKEN -- gh pr list`.
+
+The paragraph follows whichever prompt template the box uses, including one
+you edited, and isn't part of the templates, so you can't edit or remove it
+there. A box that adopts an existing conversation gets no opening prompt and
+no paragraph, and neither does a box whose template you set to empty.
+
+The paragraph names only the command. To tell agents which secrets a project
+uses and how to start the tools that need them, write that in the project's
 `CLAUDE.md` file.
 
 ### Credentials for the engine

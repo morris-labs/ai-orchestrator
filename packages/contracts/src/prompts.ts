@@ -45,6 +45,22 @@ This container is a sandbox. Install any missing build tools freely without aski
 
 When you stop work or are asked to checkpoint, update STATUS.md with: the active plan, your current step, what you have done since the last checkpoint, what comes next, and any blockers. Keep STATUS.md under 60 lines.`;
 
+/**
+ * The paragraph the server adds to an opening prompt when the box's project
+ * container has secrets to give: at least one global or project secret
+ * reference. It is not a template and has no placeholders. See
+ * `docs/secrets.md`.
+ */
+export const SECRETS_PROMPT_HINT = `Secrets come from the Agent Box secrets broker: run \`agentbox-secret list\` to see their names and \`agentbox-secret run NAME[,NAME...] -- COMMAND [ARGS...]\` to give them to one command, and never print a value or write one to a file, a log, or your replies. Variables such as \`GH_TOKEN\` also come from the broker where the project configures them, so pass them the same way, for example \`agentbox-secret run GH_TOKEN -- gh pr list\`.`;
+
+/**
+ * Adds `SECRETS_PROMPT_HINT` to `prompt` as its last paragraph. An empty
+ * prompt stays empty, since a box without an opening prompt sends none.
+ */
+export function withSecretsHint(prompt: string): string {
+  return prompt === "" ? "" : `${prompt}\n\n${SECRETS_PROMPT_HINT}`;
+}
+
 /** The four default templates, keyed as in `GlobalSettings.promptTemplates`. */
 export const DEFAULT_PROMPT_TEMPLATES = {
   workspace: DEFAULT_WORKSPACE_TEMPLATE,

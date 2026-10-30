@@ -5,7 +5,9 @@ import {
   BoxSchema,
   BoxViewSchema,
   DEFAULT_PROMPT_TEMPLATES,
+  SECRETS_PROMPT_HINT,
   expandTemplate,
+  withSecretsHint,
   type Box,
 } from "@agentbox/contracts";
 import { START_SESSION_PATH } from "../../src/docker/scripts.js";
@@ -88,6 +90,33 @@ describe("create", () => {
     const second = await h.core.boxes.create({ targetDir: box.targetDir, layout: "root" });
     expect(second.id).toBe("claude-agent-app.example.com-2");
     expect(second.hostKey).toBe("app-example-com-2");
+  });
+
+  it("adds the secrets hint only when the project has secret references", async () => {
+    const h = makeHarness();
+    const dir = h.dir("work", "app");
+    const plain = await h.core.boxes.create({ targetDir: dir, layout: "root", start: false });
+    expect(plain.firstStart?.openingPrompt).not.toContain("agentbox-secret");
+
+    h.core.settings.setSecretRefs([{ name: "GH_TOKEN", ref: "op://V/github/token" }]);
+    const global = await h.core.boxes.create({
+      targetDir: dir,
+      layout: "workspace",
+      conversationName: "Fix login",
+      start: false,
+    });
+    const prompt = global.firstStart?.openingPrompt ?? "";
+    expect(prompt).toContain("Your workspace for this conversation is");
+    expect(prompt.endsWith(`\n\n${SECRETS_PROMPT_HINT}`)).toBe(true);
+
+    h.core.settings.setSecretRefs([]);
+    await h.core.projects.update(global.projectId, {
+      secretRefs: [{ name: "DATABASE_URL", ref: "op://V/db/url" }],
+    });
+    const project = await h.core.boxes.create({ targetDir: dir, layout: "root", start: false });
+    expect(project.firstStart?.openingPrompt).toBe(
+      withSecretsHint(expandTemplate(DEFAULT_PROMPT_TEMPLATES.starter, ["", dir])),
+    );
   });
 
   it("keeps host keys unique across projects", async () => {
