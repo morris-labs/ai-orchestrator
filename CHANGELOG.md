@@ -50,6 +50,10 @@ the upgrade steps, see `docs/migration-3x.md`.
 - Project TCP maps listen on `127.0.0.1` unless a map sets
   `allInterfaces`.
 - Project containers drop the `MKNOD` and `SETFCAP` capabilities.
+- The container user has no passwordless `sudo`. `sudo` is off unless the
+  settings name a 1Password reference for a sudo password, which a container
+  gets only as a SHA-512 crypt hash and which `sudo` asks for on every use.
+  The server runs its root steps with `docker exec --user root`.
 
 ### Removed
 

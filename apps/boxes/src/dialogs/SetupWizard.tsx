@@ -1,5 +1,6 @@
 // The setup wizard: the host checks with their fixes, the image builds as
-// streamed jobs, and the default directory for New Box.
+// streamed jobs, the default directory for New Box, and the 1Password
+// reference of the containers' sudo password.
 import type { Job, SetupCheck } from "@agentbox/contracts";
 import { Button, Dialog, StatusDot, errorMessage, useApiClient } from "@agentbox/ui";
 import { useCallback, useEffect, useState } from "react";
@@ -13,6 +14,7 @@ const checkTitles: Record<SetupCheck["id"], string> = {
   ssh_key: "SSH keypair",
   ssh_permissions: "SSH permissions",
   op: "1Password CLI",
+  sudo: "sudo in containers",
   service: "Server service",
 };
 
@@ -36,6 +38,9 @@ export function SetupWizard({ onClose, onDone, stacked }: SetupWizardProps) {
   const client = useApiClient();
   const [checks, setChecks] = useState<SetupCheck[] | null>(null);
   const [dir, setDir] = useState("");
+  // `null` until the settings load, so Done never clears a reference it hasn't seen.
+  const [sudoRef, setSudoRef] = useState<string | null>(null);
+  const [savedSudoRef, setSavedSudoRef] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [job, setJob] = useState<{ title: string; job: Job } | null>(null);
 
@@ -53,6 +58,17 @@ export function SetupWizard({ onClose, onDone, stacked }: SetupWizardProps) {
 
   useEffect(recheck, [recheck]);
 
+  useEffect(() => {
+    client
+      .call("settings.get", {})
+      .then((s) => {
+        const ref = s.sudoPasswordRef ?? "";
+        setSavedSudoRef(ref);
+        setSudoRef((r) => r ?? ref);
+      })
+      .catch((err: unknown) => setError(errorMessage(err)));
+  }, [client]);
+
   const run = async (title: string, start: () => Promise<Job>) => {
     try {
       setJob({ title, job: await start() });
@@ -66,6 +82,11 @@ export function SetupWizard({ onClose, onDone, stacked }: SetupWizardProps) {
 
   const done = async () => {
     try {
+      const ref = sudoRef?.trim();
+      if (ref !== undefined && ref !== savedSudoRef) {
+        await client.call("settings.patch", { body: { sudoPasswordRef: ref || null } });
+        setSavedSudoRef(ref);
+      }
       await client.call("setup.complete", {
         body: dir.trim() ? { defaultTargetDir: dir.trim() } : {},
       });
@@ -159,6 +180,22 @@ export function SetupWizard({ onClose, onDone, stacked }: SetupWizardProps) {
           placeholder="/home/you/projects"
           onChange={(e) => setDir(e.target.value)}
         />
+      </div>
+      <div className="ab-field">
+        <label htmlFor="bx-sudo-ref">Sudo password reference (1Password)</label>
+        <input
+          id="bx-sudo-ref"
+          className="ab-input"
+          value={sudoRef ?? ""}
+          disabled={sudoRef === null}
+          placeholder="op://VAULT/ITEM/FIELD"
+          onChange={(e) => setSudoRef(e.target.value)}
+        />
+        <div className="bx-dim">
+          Leave this empty to turn sudo off in containers. With a reference, sudo asks for that
+          password every time; containers get only its hash. Restart running project containers to
+          apply a change.
+        </div>
       </div>
       {error && (
         <div role="alert" className="ab-error-text">

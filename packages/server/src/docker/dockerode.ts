@@ -224,12 +224,18 @@ export class DockerodeClient implements DockerClient {
         User: options.user,
         Env: options.env,
         WorkingDir: options.workingDir,
+        AttachStdin: options.stdin !== undefined,
         AttachStdout: true,
         AttachStderr: true,
         Tty: false,
       }),
     );
-    const stream = await call(() => exec.start({ hijack: true, stdin: false }));
+    const withStdin = options.stdin !== undefined;
+    const stream = await call(() => exec.start({ hijack: true, stdin: withStdin }));
+    // The input is written without half-closing the hijacked connection, so
+    // a command that takes input gets no end-of-file and must stop reading
+    // on its own, as the root setup step does after one line.
+    if (withStdin) stream.write(options.stdin);
     const out = new PassThrough();
     const err = new PassThrough();
     this.docker.modem.demuxStream(stream, out, err);

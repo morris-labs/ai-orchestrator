@@ -6,6 +6,7 @@ import {
 } from "@agentbox/contracts";
 import { describe, expect, it } from "vitest";
 import { ApiError } from "../../src/api/errors.js";
+import { SHA512_CRYPT_PATTERN, sha512Crypt } from "../../src/secrets/crypt.js";
 import { OpCli, type OpClient } from "../../src/secrets/op.js";
 import { mergeSecretRefs, SecretsService } from "../../src/secrets/secrets-service.js";
 import { FakeRunner } from "../setup/fake-runner.js";
@@ -173,6 +174,46 @@ describe("SecretsService", () => {
       ok: false,
       error: "The 1Password CLI is not signed in.",
     });
+  });
+
+  it("hashes the sudo password and never returns it", async () => {
+    const ref = "op://SYNTHETIC/sudo/password";
+    const make = (op: OpClient, sudoPasswordRef?: string) => {
+      const settings: GlobalSettings = {
+        ...defaultConfig(),
+        ...(sudoPasswordRef ? { sudoPasswordRef } : {}),
+      };
+      return new SecretsService({
+        op,
+        settings: () => settings,
+        projectRefs: async () => [],
+        listProjects: async () => [],
+      });
+    };
+    const off = new FakeOp({ installed: false, version: null, signedIn: false, mode: "none" });
+    expect(await make(off).sudoPasswordHash()).toBeNull();
+
+    const hash = await make(new FakeOp(undefined, { [ref]: SECRET }), ref).sudoPasswordHash();
+    expect(hash).toMatch(SHA512_CRYPT_PATTERN);
+    expect(hash).not.toContain(SECRET);
+    const salt = hash!.split("$")[3]!;
+    const rounds = Number(/rounds=(\d+)/.exec(hash!)![1]);
+    expect(sha512Crypt(SECRET, salt, rounds)).toBe(hash);
+
+    const locked = new FakeOp({ installed: true, version: "2", signedIn: false, mode: "desktop" });
+    await expect(make(locked, ref).sudoPasswordHash()).rejects.toMatchObject({
+      code: "secrets_locked",
+    });
+    await expect(make(new FakeOp(), ref).sudoPasswordHash()).rejects.toMatchObject({
+      code: "secrets_unavailable",
+    });
+    for (const bad of ["", "two\nlines"]) {
+      const err = await make(new FakeOp(undefined, { [ref]: bad }), ref)
+        .sudoPasswordHash()
+        .catch((e: unknown) => e);
+      expect(err).toMatchObject({ code: "secrets_unavailable" });
+      if (bad) expect((err as ApiError).message).not.toContain(bad);
+    }
   });
 
   it("builds the view", async () => {

@@ -782,7 +782,9 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
 
   program
     .command("doctor")
-    .description("Check the server, the token, Docker, the image, and the engines.")
+    .description(
+      "Check the server, the token, Docker, the image, the engines, and sudo in containers.",
+    )
     .action(async () => {
       const s = settings();
       const c = client();
@@ -807,7 +809,7 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
           try {
             const setup = await c.call("setup.get");
             add("token", "ok", s.tokenSource === "file" ? s.tokenFile : "AGENTBOX_TOKEN");
-            for (const id of ["docker", "image", "engine"] as const) {
+            for (const id of ["docker", "image", "engine", "sudo"] as const) {
               const check = setup.checks.find((x) => x.id === id);
               if (check) add(id, check.status, check.message);
             }

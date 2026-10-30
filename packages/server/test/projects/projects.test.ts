@@ -10,8 +10,12 @@ import {
   projectSlug,
 } from "../../src/projects/ids.js";
 import { freeLoopbackPort, loopbackPortFree } from "../../src/projects/service.js";
+import { ROOT_SETUP_SCRIPT, SUDOERS_FILE } from "../../src/docker/scripts.js";
 import { engineTokenFile, readMountsFile } from "../../src/docker/state.js";
+import type { ExecOptions } from "../../src/docker/types.js";
+import { containerHome } from "../../src/records/env.js";
 import { ApiError } from "../../src/records/errors.js";
+import { sha512Crypt } from "../../src/secrets/crypt.js";
 import { ENGINE_VERSION, assertContractEvent, makeHarness } from "../boxes/harness.js";
 
 describe("project ids", () => {
@@ -146,6 +150,76 @@ describe("ProjectService", () => {
       total: 0,
       container: { state: "running", engine: { hostPort: 41000 } },
     });
+  });
+
+  it("runs the root setup step as root, without sudo, and turns sudo off by default", async () => {
+    const h = makeHarness();
+    const p = h.core.projects.ensureForRoot(h.dir("app"));
+    const r = await h.core.projects.ensureContainer(p.id);
+    const execs = h.docker.callsOf("exec");
+    expect(execs).toHaveLength(1);
+    const [, options] = execs[0]!.args as [string, ExecOptions];
+    expect(options.user).toBe("root");
+    expect(options.cmd.slice(0, 3)).toEqual(["/bin/sh", "-c", ROOT_SETUP_SCRIPT]);
+    expect(options.cmd.slice(4)).toEqual([h.env.user, containerHome(h.env), SUDOERS_FILE, p.root]);
+    expect(options.stdin).toBe("\n");
+    expect(h.docker.containers.get(r.container)!.spec.labels["agentbox.sudo"]).toBe("off");
+  });
+
+  it("installs the sudo password hash only through the root step's standard input", async () => {
+    const h = makeHarness();
+    const p = h.core.projects.ensureForRoot(h.dir("app"));
+    const hash = sha512Crypt("SYNTHETIC_PASSWORD", "SYNTHETICsalt", 1000);
+    h.core.setHooks({ sudoPasswordHash: async () => hash });
+    const r = await h.core.projects.ensureContainer(p.id);
+    const [, options] = h.docker.callsOf("exec")[0]!.args as [string, ExecOptions];
+    expect(options.stdin).toBe(`${hash}\n`);
+    const c = h.docker.containers.get(r.container)!;
+    expect(c.spec.labels["agentbox.sudo"]).toBe("password");
+    expect(JSON.stringify(c.spec)).not.toContain(hash);
+    expect(JSON.stringify(options.cmd) + JSON.stringify(options.env)).not.toContain(hash);
+  });
+
+  it("removes the container when the root setup step fails", async () => {
+    const h = makeHarness();
+    const p = h.core.projects.ensureForRoot(h.dir("app"));
+    h.docker.execHandler = (_c, options) =>
+      options.user === "root"
+        ? { exitCode: 12, stdout: "", stderr: "can't remove /etc/sudoers.d/claude-box\n" }
+        : undefined;
+    await expect(h.core.projects.ensureContainer(p.id)).rejects.toMatchObject({
+      code: "internal",
+      message: expect.stringContaining("can't remove /etc/sudoers.d/claude-box"),
+    });
+    expect(h.docker.callsOf("removeContainer")).toHaveLength(1);
+    expect(h.core.projects.engineEndpoint(p.id)).toBeUndefined();
+  });
+
+  it("blocks the launch when the sudo password can't be resolved", async () => {
+    const h = makeHarness();
+    const p = h.core.projects.ensureForRoot(h.dir("app"));
+    h.core.setHooks({
+      sudoPasswordHash: async () => {
+        throw new ApiError("secrets_locked", "The 1Password CLI is not signed in.");
+      },
+    });
+    await expect(h.core.projects.ensureContainer(p.id)).rejects.toMatchObject({
+      code: "secrets_locked",
+    });
+    expect(h.docker.callsOf("createContainer")).toHaveLength(0);
+  });
+
+  it("reports a container whose sudo policy differs from the settings as stale", async () => {
+    const h = makeHarness();
+    const p = h.core.projects.ensureForRoot(h.dir("app"));
+    const r = await h.core.projects.ensureContainer(p.id);
+    expect(await h.core.projects.staleDifferences(p)).toEqual([]);
+    h.core.settings.patch({ sudoPasswordRef: "op://SYNTHETIC/sudo/password" });
+    expect(await h.core.projects.staleDifferences(p)).toEqual(["sudo off -> password"]);
+    // A container from an older server has the image's passwordless sudo.
+    delete h.docker.containers.get(r.container)!.spec.labels["agentbox.sudo"];
+    h.core.settings.patch({ sudoPasswordRef: null });
+    expect(await h.core.projects.staleDifferences(p)).toEqual(["sudo passwordless -> off"]);
   });
 
   it("refuses a missing image or a mismatched engine", async () => {

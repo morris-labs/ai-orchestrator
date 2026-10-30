@@ -558,6 +558,12 @@ export const GlobalSettingsSchema = z
     globalMounts: z.array(MountSchema),
     /** Secrets every container gets. A project's reference of the same name wins. */
     secretRefs: z.array(SecretRefSchema),
+    /**
+     * The 1Password reference of the container user's sudo password. Absent
+     * means sudo is off in every container. The server installs only a hash
+     * of the value; see docs/secrets.md.
+     */
+    sudoPasswordRef: OpReferenceSchema.optional(),
   })
   .strict();
 export type GlobalSettings = z.infer<typeof GlobalSettingsSchema>;
@@ -658,6 +664,7 @@ export const GlobalSettingsPatchSchema = z
     notifications: NotificationTogglesSchema.partial(),
     defaultTargetDir: z.string().min(1).nullable(),
     sshIdentity: z.string().min(1).nullable(),
+    sudoPasswordRef: OpReferenceSchema.nullable(),
   })
   .partial()
   .strict();

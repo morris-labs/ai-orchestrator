@@ -124,7 +124,7 @@ export class SettingsService {
     if (p.notifications !== undefined) {
       next.notifications = { ...next.notifications, ...stripUndefined(p.notifications) };
     }
-    for (const key of ["defaultTargetDir", "sshIdentity"] as const) {
+    for (const key of ["defaultTargetDir", "sshIdentity", "sudoPasswordRef"] as const) {
       const v = p[key];
       if (v === undefined) continue;
       if (v === null) delete next[key];

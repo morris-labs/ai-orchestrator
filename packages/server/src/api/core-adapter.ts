@@ -31,6 +31,7 @@ export function reviewStateOf(services: CoreServices, boxId: string): ReviewStat
 export function wireHooks(server: ServerCore, services: CoreServices): void {
   server.setHooks({
     resolveEnv: (projectId) => services.resolveSecrets(projectId),
+    sudoPasswordHash: async () => (services.sudoPasswordHash ? services.sudoPasswordHash() : null),
     reviewState: (boxId) => reviewStateOf(services, boxId),
     listeners: (container) => services.listeners?.(container) ?? [],
     engineHealth: (container) => {

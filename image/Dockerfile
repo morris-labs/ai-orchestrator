@@ -60,13 +60,15 @@ RUN usermod -l "${USER_NAME}" ubuntu && \
     groupmod -n "${USER_NAME}" ubuntu && \
     usermod -d "/home/${USER_NAME}" -m "${USER_NAME}"
 
-# Passwordless sudo: the container is a disposable sandbox, so a sudo
-# password adds no safety. Container root is still host root on the bind
-# mounts; docs/architecture.md ("Container boundaries") lists what that
-# allows. sudo ignores sudoers.d files whose names contain a dot, so the file
-# has a fixed name rather than the user name.
-RUN echo "${USER_NAME} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/claude-box && \
-    chmod 0440 /etc/sudoers.d/claude-box
+# No passwordless sudo: container root is host root on the bind mounts (see
+# "Container boundaries" in docs/architecture.md), so an agent must not be
+# able to become root. The image has no sudo rule for the user and locks the
+# user's password. When the settings name a sudo password reference, the
+# server's root setup step installs the password's hash and a rule that asks
+# for it in each container it starts (docs/secrets.md). The server runs what
+# needs root through `docker exec --user root`, never sudo.
+RUN rm -f /etc/sudoers.d/claude-box && \
+    usermod -p '!' "${USER_NAME}"
 
 # System Node.js 22 from NodeSource: it runs the agent CLIs and the engine.
 # Ubuntu's own nodejs package lags behind.

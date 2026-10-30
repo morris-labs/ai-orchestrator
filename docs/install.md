@@ -151,8 +151,13 @@ carries the toolchain, the Claude Code, Codex, and GitHub Copilot CLIs at the
 versions pinned in `image/versions.env`, and the Agent Box engine.
 
 To build the image, open **Agent Box** from your applications menu. The setup
-wizard checks Docker, the image, the engine version, SSH, 1Password, and the
-server, and offers **Build image** when the image is missing.
+wizard checks Docker, the image, the engine version, SSH, 1Password, `sudo`
+in containers, and the server, and offers **Build image** when the image is
+missing.
+
+The image gives the container user no passwordless `sudo`. Unless you set a
+sudo password reference in the setup wizard, `sudo` is off in every
+container. See [The sudo password](secrets.md#the-sudo-password).
 
 To build the image from a terminal instead, run the script that ships with
 the package:

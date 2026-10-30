@@ -61,6 +61,11 @@ export interface ExecOptions {
   user?: string;
   env?: string[];
   workingDir?: string;
+  /**
+   * Written to the command's standard input. Unlike the command line and
+   * the environment, it shows in no `docker inspect` output.
+   */
+  stdin?: string;
   /** Kills the wait after this many milliseconds; the result then has exit code `null`. */
   timeoutMs?: number;
 }

@@ -24,9 +24,12 @@ import {
   buildLaunchSpec,
   mergeMounts,
   mountBind,
+  mountContainerPaths,
   prepareLaunchHost,
+  sudoLabel,
   tcpMapsLabel,
 } from "../docker/launch.js";
+import { rootSetupExec } from "../docker/scripts.js";
 import {
   liveSessions,
   mountsFile,
@@ -36,12 +39,13 @@ import {
 } from "../docker/state.js";
 import type { ContainerInspect, DockerClient } from "../docker/types.js";
 import { boxTmuxSession } from "../records/box.js";
-import type { HostEnv } from "../records/env.js";
+import { containerHome, type HostEnv } from "../records/env.js";
 import { ApiError, notFound } from "../records/errors.js";
 import type { CoreEvents } from "../records/events.js";
 import type { CoreHooks, EngineHealth } from "../records/hooks.js";
 import type { KeyedMutex } from "../records/mutex.js";
 import { assertMountable, assertUniqueNames, type SettingsService } from "../records/settings.js";
+import { SHA512_CRYPT_PATTERN } from "../secrets/crypt.js";
 import { defaultProjectName, detectPrimaryRepo, normalizeRoot, projectIdForRoot } from "./ids.js";
 
 export type ProjectUpdate = z.input<typeof ProjectUpdateSchema>;
@@ -341,6 +345,10 @@ export class ProjectService {
       if (haveSecrets !== wantSecrets)
         diffs.push(`secrets ${haveSecrets || "none"} -> ${wantSecrets || "none"}`);
     }
+    // A container from before the label has the old image's passwordless sudo.
+    const haveSudo = inspect.labels[LABELS.sudo] ?? "passwordless";
+    const wantSudo = sudoLabel(this.deps.settings.get().sudoPasswordRef !== undefined);
+    if (haveSudo !== wantSudo) diffs.push(`sudo ${haveSudo} -> ${wantSudo}`);
     return diffs;
   }
 
@@ -436,6 +444,39 @@ export class ProjectService {
   }
 
   /**
+   * Runs the root setup step (`ROOT_SETUP_SCRIPT`) in a container that just
+   * started: `docker exec --user root`, never sudo. The hash travels on
+   * standard input, so it is in no command line, environment, or inspect
+   * output. Throws when the step fails, because the container's sudo
+   * policy is then unknown and an older image's passwordless rule may
+   * still be in place.
+   */
+  private async runRootSetup(
+    container: string,
+    project: Project,
+    passwordHash: string | null,
+  ): Promise<void> {
+    const exec = rootSetupExec(
+      this.deps.env.user,
+      containerHome(this.deps.env),
+      mountContainerPaths({
+        root: project.root,
+        mounts: project.mounts,
+        globalMounts: this.deps.settings.get().globalMounts,
+      }),
+      passwordHash,
+    );
+    const r = await this.deps.docker.exec(container, { ...exec, timeoutMs: 60_000 });
+    if (r.exitCode !== 0) {
+      const reason = r.stderr.trim().slice(0, 300) || `exit code ${r.exitCode ?? "unknown"}`;
+      throw new ApiError(
+        "internal",
+        `The container's sudo setup failed, so the container was removed: ${reason}`,
+      );
+    }
+  }
+
+  /**
    * Makes sure the project container runs (3.3.5 `startShared` minus the
    * session): checks the image, replaces an idle container whose mounts went
    * stale or whose image was rebuilt, and creates one when none runs.
@@ -476,6 +517,11 @@ export class ProjectService {
 
       // Secrets resolve only when a container is created: they are fixed for its life.
       const extraEnv = options.extraEnv ?? (await this.deps.hooks().resolveEnv(projectId));
+      // So is the sudo password: only its hash reaches the container.
+      const passwordHash = await this.deps.hooks().sudoPasswordHash();
+      if (passwordHash !== null && !SHA512_CRYPT_PATTERN.test(passwordHash)) {
+        throw new ApiError("internal", "The sudo password hash is not a SHA-512 crypt hash.");
+      }
       const hostPort = await this.enginePort(projectId);
       const token = crypto.randomBytes(32).toString("hex");
       const facts = prepareLaunchHost(this.deps.env, { container: name, root: project.root });
@@ -492,6 +538,7 @@ export class ProjectService {
           engine: { hostPort, token, version: this.deps.engineVersion },
           extraEnv,
           graceSec: this.deps.graceSec,
+          sudoPassword: passwordHash !== null,
         },
         facts,
       );
@@ -499,6 +546,7 @@ export class ProjectService {
       const id = await docker.createContainer(spec);
       try {
         await docker.startContainer(id);
+        await this.runRootSetup(id, project, passwordHash);
       } catch (err) {
         await docker.removeContainer(id, { force: true }).catch(() => undefined);
         throw err;

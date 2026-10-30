@@ -5,13 +5,14 @@ import { describe, expect, it } from "vitest";
 import {
   buildLaunchSpec,
   mergeMounts,
+  mountContainerPaths,
   prepareLaunchHost,
   projectsSymlinkTarget,
   tcpMapsLabel,
   toDockerRunArgs,
   type LaunchInput,
 } from "../../src/docker/launch.js";
-import { KEEPER_PATH, OWN_MOUNT_PARENTS_SCRIPT } from "../../src/docker/scripts.js";
+import { KEEPER_PATH } from "../../src/docker/scripts.js";
 import type { HostEnv } from "../../src/records/env.js";
 import { tempDir } from "../tmp.js";
 
@@ -55,6 +56,22 @@ describe("buildLaunchSpec", () => {
     ]);
   });
 
+  it("labels whether the container's sudo asks for a password, and lists the mount paths", () => {
+    const facts = { projectsSymlinkTarget: null, hasGitconfig: false };
+    expect(buildLaunchSpec(env, input, facts).labels["agentbox.sudo"]).toBe("off");
+    const on = buildLaunchSpec(env, { ...input, sudoPassword: true }, facts);
+    expect(on.labels["agentbox.sudo"]).toBe("password");
+    // Neither the keeper command nor the environment carries anything about sudo.
+    expect(on.cmd.join(" ")).not.toContain("sudo");
+    expect(on.env.join(" ")).not.toContain("sudo");
+    expect(mountContainerPaths(input)).toEqual([
+      "/home/tester/work/app",
+      "/data/ref",
+      "/shared",
+      "/home/tester/Bin/.project_archive",
+    ]);
+  });
+
   it("keeps the engine token out of the container's environment", () => {
     const spec = buildLaunchSpec(env, input, { projectsSymlinkTarget: null, hasGitconfig: false });
     expect(spec.env.join("\n")).not.toContain(input.engine.token);
@@ -79,14 +96,10 @@ describe("buildLaunchSpec", () => {
       cmd: [
         "bash",
         "-c",
-        `git config --global --add safe.directory '*' 2>/dev/null; (shift 2; ${OWN_MOUNT_PARENTS_SCRIPT}); exec ${KEEPER_PATH} "$1" "$2"`,
+        `git config --global --add safe.directory '*' 2>/dev/null; exec ${KEEPER_PATH} "$1" "$2"`,
         "_",
         "/run/claude-box",
         "30",
-        "/home/tester/work/app",
-        "/data/ref",
-        "/shared",
-        "/home/tester/Bin/.project_archive",
       ],
       env: [
         "IS_SANDBOX=1",
@@ -123,6 +136,7 @@ describe("buildLaunchSpec", () => {
         "agentbox.tcp-maps": "127.0.0.1:8080:3000",
         "agentbox.secret-names": "API_KEY,GITHUB_TOKEN",
         "agentbox.engine-version": "4.0.0",
+        "agentbox.sudo": "off",
       },
       capDrop: ["MKNOD", "SETFCAP"],
       tty: true,

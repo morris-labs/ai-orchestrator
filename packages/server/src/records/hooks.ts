@@ -28,6 +28,12 @@ export interface CoreHooks {
    * `secrets_unavailable`) to block the launch. Default: none.
    */
   resolveEnv(projectId: string): Promise<Record<string, string>>;
+  /**
+   * The SHA-512 crypt hash of the container user's sudo password, installed
+   * in a project container at creation, or `null` to turn sudo off. Throws
+   * like `resolveEnv` to block the launch. Default: `null`.
+   */
+  sudoPasswordHash(): Promise<string | null>;
 }
 
 export function defaultHooks(): CoreHooks {
@@ -36,5 +42,6 @@ export function defaultHooks(): CoreHooks {
     listeners: () => [],
     engineHealth: () => ({ version: null, healthy: false }),
     resolveEnv: async () => ({}),
+    sudoPasswordHash: async () => null,
   };
 }

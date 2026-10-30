@@ -4,7 +4,9 @@ Agent Box gives containers secrets from 1Password and from nowhere else. You
 store 1Password references in the global settings and in project settings;
 the server resolves them with the 1Password CLI (`op`) each time it starts a
 project container and passes the values to the container as environment
-variables.
+variables. One reference is different: the container user's `sudo`
+password, which reaches a container only as a hash. See
+[The sudo password](#the-sudo-password).
 
 ## How secrets work
 
@@ -92,6 +94,66 @@ without `op`.
 The server resolves secrets only when it creates a container. A box started
 in a container that's already running uses the values the container got at
 launch. To pick up a changed secret, restart the project container.
+
+## The sudo password
+
+The container user has no passwordless `sudo`. Docker runs without a user
+namespace, so root in a container is root on the host's bind mounts, and an
+agent with root could leave a setuid-root file in your project or in
+`~/.claude`. For details, see "Container boundaries" in
+[Architecture](architecture.md#container-boundaries).
+
+By default, `sudo` is off in every container: the container has no `sudo`
+rule for the user, and the user's password is locked. There is no
+passwordless fallback.
+
+To allow `sudo` with a password that you keep in 1Password, follow these
+steps:
+
+1. Store a password in a 1Password item. Use a password you don't use
+   anywhere else, on a single line.
+1. In the Boxes app, open the setup wizard, enter the reference in
+   **Sudo password reference (1Password)**, and click **Done**. Through the
+   API, send `PATCH /api/v1/settings` with
+   `{"sudoPasswordRef": "op://VAULT/ITEM/FIELD"}`.
+1. Restart each running project container. A container keeps the `sudo`
+   policy it started with, and shows as stale until it restarts.
+
+To turn `sudo` off again, clear the field, or send `{"sudoPasswordRef": null}`.
+
+With a reference set, `sudo` in a container asks for the password on every
+use and keeps no cached credentials, so a password you type in one terminal
+doesn't unlock `sudo` for an agent that shares it. Type the password from
+1Password in a shell you open in the box. An agent can't answer the prompt,
+because it doesn't know the password.
+
+### How the password reaches the container
+
+The plaintext never enters a container. When the server creates a project
+container, it does the following:
+
+1. It runs `op read` for the reference, the same way it resolves secrets.
+1. It hashes the value with SHA-512 crypt (`$6$`), with a random salt and
+   100,000 rounds, in its own memory, and drops the plaintext. The value
+   never appears in a record, an API response, an event, or a log.
+1. It starts the container and runs a root setup step with
+   `docker exec --user root`. The hash travels on the step's standard input,
+   so it's in no command line, environment variable, `docker inspect`
+   output, or container log.
+1. The step installs the hash with `chpasswd -e` and writes a `sudo` rule to
+   `/etc/sudoers.d/claude-box`.
+
+The agent can't read or replace the hash. `/etc/shadow` is readable only by
+root and the `shadow` group, which the container user isn't in, and only
+root can write it. Changing the password with `passwd` asks for the current
+one. The root setup step runs before any box session starts, with a fixed
+`PATH` of system directories, so nothing the container user writes runs as
+root.
+
+When a reference is set and the server can't resolve it, the container
+doesn't start, with the same `secrets_locked` and `secrets_unavailable`
+errors as other secrets. The **sudo in containers** check in the setup
+wizard, and `agentbox doctor`, report whether the reference resolves.
 
 ## Migrate from `agent.env`
 
