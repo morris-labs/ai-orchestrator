@@ -114,6 +114,20 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
     }
   }
 
+  /**
+   * Stores a run an engine returned, unless it belongs to another engine's
+   * project or container. Returns true when the run belongs to `engine`.
+   */
+  function mirrorOwnRun(engine: ApiEngine, run: RunState): boolean {
+    const refusal = deps.runs.foreignReason(engine.endpoint, run);
+    if (refusal) {
+      deps.log?.(`Ignored a run from ${engine.endpoint.container}: ${refusal}.`);
+      return false;
+    }
+    deps.runs.upsert(run);
+    return true;
+  }
+
   /** Finds the engine that holds a run: the mirror first, then every engine. */
   async function engineForRun(runId: string): Promise<ApiEngine> {
     const known = deps.runs.get(runId);
@@ -131,7 +145,8 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
     for (const engine of deps.engines.all()) {
       try {
         const run = await engine.call("engine.runs.get", { params: { runId } });
-        if (isRunState(run)) deps.runs.upsert(run);
+        // An engine that answers for another project's run doesn't hold it.
+        if (isRunState(run) && !mirrorOwnRun(engine, run)) continue;
         engine.assertVersion();
         return engine;
       } catch (err) {
@@ -150,7 +165,9 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
         query: ctx.query as Record<string, unknown> | undefined,
         body: ctx.body,
       });
-      if (isRunState(result)) deps.runs.upsert(result);
+      if (isRunState(result) && !mirrorOwnRun(engine, result)) {
+        throw new ApiError("run_not_found", `No run has the id ${params.runId}.`);
+      }
       return result;
     }) as unknown as HttpHandlers[K];
   }
@@ -394,8 +411,7 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
               runs: RunState[];
             };
             for (const run of runs) {
-              deps.runs.upsert(run);
-              byId.set(run.id, run);
+              if (mirrorOwnRun(engine, run)) byId.set(run.id, run);
             }
           } catch (err) {
             deps.log?.(

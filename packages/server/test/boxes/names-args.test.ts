@@ -97,8 +97,17 @@ describe("claude arguments", () => {
   it("builds Codex and Copilot flags and side sessions", () => {
     expect(platformArgs(box, project, "codex", false, "hi")).toEqual([
       "--dangerously-bypass-approvals-and-sandbox",
+      "--",
       "hi",
     ]);
+    // A prompt that looks like a flag or a subcommand stays the prompt.
+    expect(platformArgs(box, project, "codex", false, "-x fix it").slice(-2)).toEqual([
+      "--",
+      "-x fix it",
+    ]);
+    expect(
+      platformArgs({ ...box, skipPermissions: false }, project, "codex", false, "resume"),
+    ).toEqual(["--", "resume"]);
     expect(platformArgs({ ...box, skipPermissions: false }, project, "codex", true, "hi")).toEqual([
       "resume",
       "--last",

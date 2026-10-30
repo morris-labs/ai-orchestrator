@@ -4,7 +4,6 @@ import {
   findTerminal,
   isBoxNotification,
   reviewCommand,
-  serverUrl,
   terminalCandidates,
   terminalCommand,
   trayCounts,
@@ -110,9 +109,5 @@ describe("notifications and review", () => {
     const env = { PATH: "/usr/bin", AGENTBOX_SERVER_TOKEN: "secret", HOME: "/home/dev" };
     expect(childEnv(env)).toEqual({ PATH: "/usr/bin", HOME: "/home/dev" });
     expect(env.AGENTBOX_SERVER_TOKEN).toBe("secret");
-  });
-  it("reads the server URL from the environment", () => {
-    expect(serverUrl({})).toBe("https://127.0.0.1:21400");
-    expect(serverUrl({ AGENTBOX_SERVER_URL: "https://127.0.0.1:9/" })).toBe("https://127.0.0.1:9");
   });
 });

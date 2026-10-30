@@ -2,11 +2,16 @@
 // page, a tray icon with the active run count, desktop notifications for the
 // review kinds, a single instance, and `agentbox-review://` deep links.
 import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join, posix, resolve } from "node:path";
-import { HOME_PATHS, DEFAULT_SERVER_PORT, type NotificationToggles } from "@agentbox/contracts";
+import { join } from "node:path";
+import { HOME_PATHS, type NotificationToggles } from "@agentbox/contracts";
 import { ApiClient, EventsConnection, isAppPage, isWebUrl } from "@agentbox/ui/core";
-import { certificateVerdict, pinReader, pinnedTransport } from "@agentbox/ui/electron-main";
+import {
+  certificateVerdict,
+  dataFile,
+  pinReader,
+  pinnedTransport,
+  serverUrl,
+} from "@agentbox/ui/electron-main";
 import WebSocket from "ws";
 import {
   BrowserWindow,
@@ -30,27 +35,6 @@ import {
   trayTooltip,
 } from "./logic.js";
 
-/** A file in the server's data directory: `AGENTBOX_DATA_DIR`, else `~/.claude-box`. */
-function dataFile(homeRelative: string): string {
-  const dataDir = process.env.AGENTBOX_DATA_DIR
-    ? resolve(process.env.AGENTBOX_DATA_DIR)
-    : join(homedir(), HOME_PATHS.dataDir);
-  return join(dataDir, posix.relative(HOME_PATHS.dataDir, homeRelative));
-}
-
-function readServerConfig(): { serverUrl: string } {
-  let port = DEFAULT_SERVER_PORT;
-  try {
-    const cfg = JSON.parse(readFileSync(dataFile(HOME_PATHS.config), "utf8")) as {
-      serverPort?: number;
-    };
-    if (typeof cfg.serverPort === "number") port = cfg.serverPort;
-  } catch {
-    // No config file: the default port applies.
-  }
-  return { serverUrl: process.env.AGENTBOX_SERVER_URL ?? `https://127.0.0.1:${port}` };
-}
-
 /** The token, read again for every use, so a server set up after the app started still works. */
 function readToken(): string | null {
   if (process.env.AGENTBOX_SERVER_TOKEN) return process.env.AGENTBOX_SERVER_TOKEN;
@@ -69,7 +53,7 @@ function readToken(): string | null {
  */
 const readPin = pinReader(dataFile(HOME_PATHS.serverCert));
 
-const config = readServerConfig();
+const config = { serverUrl: serverUrl() };
 const DEV_URL = process.env.AGENTBOX_REVIEW_DEV_URL;
 /** The pages that get the token; anything else is foreign. */
 const APP_PAGES = [rendererUrl(config.serverUrl, null), ...(DEV_URL ? [DEV_URL] : [])];

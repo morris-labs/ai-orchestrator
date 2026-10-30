@@ -56,6 +56,8 @@ export interface ApiHub {
 
 export interface ApiRuns {
   upsert(run: RunState): void;
+  /** Why `run` doesn't belong to the engine at `endpoint`, or `null` when it does. */
+  foreignReason(endpoint: ApiEngine["endpoint"], run: RunState): string | null;
   get(runId: string): RunState | undefined;
   list(query: { projectId?: string; boxId?: string; status?: RunState["status"] }): RunState[];
 }

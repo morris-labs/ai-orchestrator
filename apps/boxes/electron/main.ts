@@ -11,11 +11,16 @@ import {
   isAppPage,
   isWebUrl,
 } from "@agentbox/ui/core";
-import { certificateVerdict, pinReader, pinnedTransport } from "@agentbox/ui/electron-main";
+import {
+  certificateVerdict,
+  dataFile,
+  pinReader,
+  pinnedTransport,
+  serverUrl,
+} from "@agentbox/ui/electron-main";
 import { spawn } from "node:child_process";
 import { accessSync, constants, readFileSync, statSync } from "node:fs";
-import { homedir } from "node:os";
-import { join, posix, resolve } from "node:path";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import WebSocket from "ws";
 import {
@@ -38,7 +43,6 @@ import {
   findTerminal,
   isBoxNotification,
   reviewCommand,
-  serverUrl as serverUrlFrom,
   terminalCommand,
   trayCounts,
   trayIconBitmap,
@@ -46,7 +50,7 @@ import {
   type TrayCounts,
 } from "./logic";
 
-const SERVER_URL = serverUrlFrom(process.env);
+const SERVER_URL = serverUrl();
 const BOXES_URL = process.env.AGENTBOX_BOXES_URL ?? `${SERVER_URL}/boxes/`;
 /** The copy of the page built into the app, shown when the server doesn't answer. */
 const LOCAL_PAGE = join(__dirname, "../renderer/index.html");
@@ -68,14 +72,6 @@ let win: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let quitting = false;
 let counts: TrayCounts | null = null;
-
-/** A file in the server's data directory: `AGENTBOX_DATA_DIR`, else `~/.claude-box`. */
-function dataFile(homeRelative: string): string {
-  const dataDir = process.env.AGENTBOX_DATA_DIR
-    ? resolve(process.env.AGENTBOX_DATA_DIR)
-    : join(homedir(), HOME_PATHS.dataDir);
-  return join(dataDir, posix.relative(HOME_PATHS.dataDir, homeRelative));
-}
 
 function readToken(): string | null {
   // A test or a wrapper can hand the token over without the file.
