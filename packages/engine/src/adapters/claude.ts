@@ -240,7 +240,9 @@ export class ClaudeAdapter extends CliAdapter {
           },
         );
       }
-      const auth = summary.apiError === "authentication_failed" || AUTH_PATTERN.test(text);
+      // Sign-in failures come from the same channels; a failed turn's text is
+      // the model's, and a review of auth code says "401 Unauthorized" there.
+      const auth = summary.apiError === "authentication_failed" || AUTH_PATTERN.test(errorText);
       const reason = res
         ? `${String(res.subtype)} (${String(res.terminal_reason ?? "unknown")})${text ? `: ${tail(text)}` : ""}`
         : `no result line; exit code ${String(exitCode)}${text ? `: ${tail(text)}` : ""}`;

@@ -162,6 +162,26 @@ describe("ClaudeAdapter.interpret", () => {
     ).toThrow(/error_max_turns/);
   });
 
+  it("doesn't take the model's own text about a 401 for a sign-in failure", () => {
+    const parser = new ClaudeStreamParser("a", ceiling);
+    parser.push(
+      JSON.stringify({
+        type: "result",
+        subtype: "error_max_turns",
+        is_error: false,
+        result: "The handler at src/api.ts:40 returns 401 Unauthorized when the token expires.",
+        session_id: "11111111-2222-4333-8444-555555555555",
+      }),
+    );
+    try {
+      adapter.interpret(req(VendorFindingsOutputSchema), parser.summary(), "", "", 1, 10);
+      expect.unreachable();
+    } catch (err) {
+      expect((err as AdapterError).kind).toBe("process");
+      expect((err as Error).message).toMatch(/error_max_turns/);
+    }
+  });
+
   it("reports a missing sign-in as an auth error", () => {
     const { summary, raw } = replay("claude-real-not-logged-in.jsonl");
     try {
