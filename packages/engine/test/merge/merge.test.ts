@@ -16,6 +16,7 @@ import {
 } from "../../src/merge/merge.js";
 
 const RUN = "01JB0000000000000000000001";
+const TIP = "1111111111111111111111111111111111111111";
 
 function raw(
   title: string,
@@ -55,6 +56,7 @@ function ctx() {
     round: 1,
     nextId: () => `F-${String(++n).padStart(4, "0")}`,
     now: () => "2026-10-28T09:00:00.000Z",
+    linesAt: TIP,
   };
 }
 
@@ -151,13 +153,65 @@ describe("merge", () => {
       fingerprint: "x",
       file: "a",
       lines: [1, 3] as [number, number],
-      category: "security",
-      title: "SQL injection",
+      linesAt: TIP,
+      title: "SQL injection in the order lookup",
+      failureCase: "A quote in the order id ends the string and runs a second statement.",
     };
+    const other = { ...base, fingerprint: "y" };
+    // Overlapping lines alone don't make two findings one issue.
     expect(
-      sameIssue(base, { ...base, fingerprint: "y", category: "correctness", title: "wrong total" }),
+      sameIssue(base, { ...other, title: "Wrong total", failureCase: "The total drops tax." }),
     ).toBe(false);
-    expect(sameIssue(base, { ...base, fingerprint: "y", title: "wrong total" })).toBe(true);
+    // A similar title or a similar failure case does.
+    expect(sameIssue(base, { ...other, title: "Order lookup SQL injection" })).toBe(true);
+    expect(sameIssue(base, { ...other, title: "Unescaped input" })).toBe(true);
+    expect(
+      sameIssue(base, { ...other, title: "Unescaped input", failureCase: "" }),
+    ).toBe(false);
+    // Lines in another version of the file aren't compared; the fingerprint still is.
+    expect(sameIssue(base, { ...other, linesAt: "2".repeat(40) })).toBe(false);
+    expect(sameIssue(base, { ...other, linesAt: undefined })).toBe(false);
+    expect(sameIssue(base, { ...base, linesAt: "2".repeat(40), lines: [90, 99] })).toBe(true);
+    expect(sameIssue(base, { ...other, lines: [4, 9] })).toBe(false);
+  });
+
+  it("keeps unrelated findings in one category whose lines overlap", () => {
+    const loop = raw("Off-by-one in SYNTHETIC_loop", "a.py", [10, 60]);
+    const sql = raw("SQL built from unescaped input", "a.py", [40, 42]);
+    const result = mergeCandidates([], [cand(loop, "codex-gpt"), cand(sql, "copilot-auto")], ctx());
+    expect(result.created).toEqual(["F-0001", "F-0002"]);
+    expect(result.duplicates).toEqual([]);
+
+    // A waived finding doesn't hide an unrelated one on the same lines.
+    const waived: Finding[] = [{ ...result.findings[0]!, verdict: "waived" }];
+    const again = mergeCandidates(waived, [cand(sql, "copilot-auto", "g")], {
+      ...ctx(),
+      nextId: () => "F-0003",
+    });
+    expect(again.known).toEqual([]);
+    expect(again.created).toEqual(["F-0003"]);
+  });
+
+  it("compares lines only within the tip they were raised on", () => {
+    const first = mergeCandidates(
+      [],
+      [cand(raw("Divide by zero on empty list", "a.py", [10, 12]), "codex-gpt")],
+      ctx(),
+    );
+    expect(first.findings[0]?.linesAt).toBe(TIP);
+    const moved = mergeCandidates(
+      first.findings,
+      [cand(raw("Empty list divides by zero", "a.py", [11, 11]), "copilot-auto", "g")],
+      { ...ctx(), linesAt: "2".repeat(40), nextId: () => "F-0002" },
+    );
+    expect(moved.created).toEqual(["F-0002"]);
+    const same = mergeCandidates(
+      first.findings,
+      [cand(raw("Empty list divides by zero", "a.py", [11, 11]), "copilot-auto", "g")],
+      { ...ctx(), nextId: () => "F-0002" },
+    );
+    expect(same.created).toEqual([]);
+    expect(same.duplicates).toHaveLength(1);
   });
 
   it("builds the findings log from closed findings", () => {

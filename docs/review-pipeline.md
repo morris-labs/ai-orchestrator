@@ -95,8 +95,10 @@ Each round of a pre-push run goes through the following stages:
 1. **Find**: runs fresh, read-only reviewers in parallel. Each reviewer gets
    the findings already fixed or disproved, must give a verdict for every
    diff hunk, and continues in the same session until it finds nothing new.
-1. **Merge**: removes duplicate findings by fingerprint and overlapping
-   lines, and records the overlap rate between reviewers.
+1. **Merge**: removes duplicate findings, and records the overlap rate
+   between reviewers. Two findings are duplicates when they have the same
+   fingerprint, or when their lines overlap in the same commit and their
+   titles or failure cases share at least half their words.
 1. **Verify**: a disprover from another vendor tries to disprove each
    finding, with a reproduction script where it can, and checks whether the
    flaw already exists at the base.
