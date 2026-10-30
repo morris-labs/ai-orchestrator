@@ -38,6 +38,16 @@ export function Launcher({ prefill }: { prefill: { project: string | null; box: 
     api.call("projects.list").then((r) => setProjects(r.projects), setError);
   }, [api]);
 
+  // A later deep link, such as a second-instance launch, changes the prefill
+  // while the launcher stays open. A project-only link selects that project
+  // as the project menu would; a box link then fills in the rest below.
+  useEffect(() => {
+    if (!prefill.project) return;
+    const projectId = prefill.project;
+    setForm((f) => (f.projectId === projectId ? f : { ...f, projectId, repoPath: "", boxId: "" }));
+    setPreview(null);
+  }, [prefill.project]);
+
   useEffect(() => {
     if (!prefill.box) return;
     api

@@ -4,6 +4,7 @@ import { Launcher } from "../src/screens/Launcher.js";
 import { BOX, PROJECT, boxView, lastRun, project } from "./helpers/data.js";
 import { FakeApiError } from "@agentbox/ui/testing";
 import { renderWithStore } from "./helpers/render.js";
+import { StoreProvider } from "../src/state/store.js";
 
 const preview = {
   baseSha: "4e1c2a9b7d3f",
@@ -156,5 +157,35 @@ describe("Launcher", () => {
     await waitFor(() => expect(screen.getByLabelText(/^Repository/)).not.toHaveValue(""));
     fireEvent.click(screen.getByRole("button", { name: "Start" }));
     expect(await screen.findByText(/uncommitted changes\./)).toBeInTheDocument();
+  });
+
+  it("follows a later project-only deep link while it stays open", async () => {
+    const OTHER = "other-app-9f8e7d6c";
+    const other = {
+      ...project,
+      project: {
+        ...project.project,
+        id: OTHER,
+        name: "other-app",
+        root: "/home/user/src/other-app",
+        primaryRepo: "/home/user/src/other-app",
+      },
+    };
+    const r = renderWithStore(<Launcher prefill={{ project: PROJECT, box: null }} />, {
+      ...handlers(),
+      "projects.list": () => ({ projects: [project, other] }),
+    });
+    await waitFor(() =>
+      expect(screen.getByLabelText(/^Repository/)).toHaveValue("/home/user/src/example-app"),
+    );
+    r.rerender(
+      <StoreProvider store={r.store}>
+        <Launcher prefill={{ project: OTHER, box: null }} />
+      </StoreProvider>,
+    );
+    await waitFor(() => expect(screen.getByLabelText("Container")).toHaveValue(OTHER));
+    await waitFor(() =>
+      expect(screen.getByLabelText(/^Repository/)).toHaveValue("/home/user/src/other-app"),
+    );
   });
 });
