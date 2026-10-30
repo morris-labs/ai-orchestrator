@@ -2,7 +2,6 @@
 // reads its inputs from the run context, writes its output file to the run
 // directory, and emits handoff events with counts.
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
@@ -38,6 +37,7 @@ import {
   sweepPrompt,
 } from "../prompts/templates.js";
 import { parseDiff } from "../range/diff.js";
+import { readRepoFile } from "../range/repo-file.js";
 import {
   BaseWorktree,
   baseWorktreePath,
@@ -198,12 +198,12 @@ export async function computeGroups(ctx: RunContext): Promise<FileGroup[]> {
   });
 }
 
-async function readWorkingFile(ctx: RunContext, path: string): Promise<string | null> {
-  try {
-    return await readFile(join(ctx.state.request.repoPath, path), "utf8");
-  } catch {
-    return null;
-  }
+/**
+ * A working-tree file by a path from the diff or from a reviewer's finding,
+ * confined to the repository (see `readRepoFile`).
+ */
+function readWorkingFile(ctx: RunContext, path: string): Promise<string | null> {
+  return readRepoFile(ctx.state.request.repoPath, path);
 }
 
 /** Reads a file at the current tip, with a per-call cache. */
