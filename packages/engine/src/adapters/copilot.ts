@@ -186,7 +186,7 @@ export class CopilotAdapter extends CliAdapter {
           this.exitFailure(
             result,
             session,
-            summary.error?.message ?? (summary.text === null ? "Copilot returned no answer." : ""),
+            summary.error?.message ?? (summary.text === null ? noAnswerMessage(result.stderr) : ""),
           ),
           `${summary.error?.message ?? ""}\n${result.stderr}`,
           credentials,
@@ -399,6 +399,19 @@ export function parseCopilotText(stdout: string, stderr = ""): CopilotRunSummary
 
 const SUMMARY_START =
   /^\s*(?:Total usage est:|Changes\s{2,}|AI Credits\s|Total duration|Usage by model:|Tokens\s{2,}|Resume\s{2,})/m;
+
+/**
+ * The error for a call with no answer, with the end of Copilot's error
+ * output, without its exit summary, when there is any. The JSON output
+ * doesn't carry every error: an organization policy that blocks the CLI
+ * shows only on stderr.
+ */
+export function noAnswerMessage(stderr: string): string {
+  const errors = splitExitSummary(stderr).answer.trim();
+  if (!errors) return "Copilot returned no answer.";
+  const end = errors.length > 400 ? `...${errors.slice(-400).trimStart()}` : errors;
+  return `Copilot returned no answer. Its error output ends with: ${end}`;
+}
 
 function splitExitSummary(text: string): { answer: string; summary: string } {
   const match = SUMMARY_START.exec(text);

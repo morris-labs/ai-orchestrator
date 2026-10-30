@@ -6,6 +6,7 @@ import {
   CopilotAdapter,
   copilotErrorLimit,
   count,
+  noAnswerMessage,
   parseCopilotJson,
   parseCopilotText,
 } from "../../src/adapters/copilot.js";
@@ -238,6 +239,33 @@ describe("CopilotAdapter", () => {
     });
     expect(out.aiCredits).toBe(7.02);
     expect(out.output).toEqual({ findings: [] });
+  });
+
+  it("keeps the end of stderr when Copilot returns no answer", async () => {
+    const dir = tempDir("copilot-no-answer-");
+    const cli = join(dir, "copilot");
+    writeFileSync(
+      cli,
+      [
+        "#!/bin/sh",
+        `echo '{"type":"session.start","data":{"sessionId":"s1"}}'`,
+        "echo 'Error: Access denied by policy settings' >&2",
+        `cat '${fixturePath("copilot-credits.stderr.txt")}' >&2`,
+        "exit 1",
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    const err = (await new CopilotAdapter({ command: cli })
+      .review({ ...base, cwd: dir, timeoutMs: 10_000 })
+      .catch((e: unknown) => e)) as AdapterError;
+    expect(err.message).toMatch(
+      /Copilot returned no answer\. Its error output ends with: Error: Access denied by policy settings$/,
+    );
+    expect(noAnswerMessage("")).toBe("Copilot returned no answer.");
+    expect(noAnswerMessage(`${"x".repeat(1000)}\nError: denied`)).toMatch(
+      /^Copilot returned no answer\. Its error output ends with: \.\.\.x+\nError: denied$/,
+    );
   });
 
   it("never hands Copilot a classic token and says how to sign in", async () => {
