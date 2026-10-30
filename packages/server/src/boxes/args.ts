@@ -43,7 +43,8 @@ export function platformArgs(
   if (program === "codex") {
     if (resume) args.push("resume", "--last");
     if (box.skipPermissions) args.push("--dangerously-bypass-approvals-and-sandbox");
-    if (!resume && prompt !== "") args.push(prompt);
+    // After `--`, a prompt that starts with `-` or names a subcommand is still the prompt.
+    if (!resume && prompt !== "") args.push("--", prompt);
     return args;
   }
   if (program === "copilot") {
