@@ -30,6 +30,12 @@ caches the values for that launch only. Values never appear in a record, an
 API response, an event, a log, or the review app. The API shows only names
 and references.
 
+The values are part of the container's configuration, because agents in the
+container need them as environment variables. Anyone who can reach the
+Docker daemon can read them with `docker inspect` or `docker exec ... env`
+for as long as the container exists. On a host where other users are in the
+`docker` group, treat every secret you give a project as shared with them.
+
 The following example sets two references on a project:
 
 | Name | Reference |

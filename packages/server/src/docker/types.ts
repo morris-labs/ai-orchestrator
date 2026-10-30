@@ -49,6 +49,8 @@ export interface ContainerCreateSpec {
   /** `"<port>/tcp"` to host bindings. */
   portBindings: Record<string, { hostIp: string; hostPort: string }[]>;
   labels: Record<string, string>;
+  /** Linux capabilities removed from the container's default set. */
+  capDrop?: string[];
   tty: boolean;
   openStdin: boolean;
   autoRemove: boolean;

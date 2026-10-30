@@ -170,7 +170,12 @@ export class DockerodeClient implements DockerClient {
         Tty: spec.tty,
         OpenStdin: spec.openStdin,
         ExposedPorts: exposed,
-        HostConfig: { Binds: spec.binds, AutoRemove: spec.autoRemove, PortBindings: bindings },
+        HostConfig: {
+          Binds: spec.binds,
+          AutoRemove: spec.autoRemove,
+          PortBindings: bindings,
+          ...(spec.capDrop ? { CapDrop: spec.capDrop } : {}),
+        },
       }),
     );
     return c.id;

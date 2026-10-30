@@ -4,7 +4,15 @@
 // and secret environment.
 import fs from "node:fs";
 import path from "node:path";
-import { DEFAULT_ENGINE_PORT, ENGINE_ENV, type Mount, type TcpMap } from "@agentbox/contracts";
+import {
+  DEFAULT_ENGINE_PORT,
+  ENGINE_ENV,
+  hostPathProblem,
+  mountProblem,
+  type Mount,
+  type TcpMap,
+} from "@agentbox/contracts";
+import { ApiError } from "../records/errors.js";
 import { RESERVED_ENV_NAMES } from "../records/settings.js";
 import {
   containerHome,
@@ -104,10 +112,22 @@ export function projectsSymlinkTarget(env: HostEnv): string | null {
 }
 
 /**
+ * Capabilities every project container drops. Neither is one `sudo` needs
+ * (it needs `SETUID`, `SETGID`, and a setuid binary, which stay), and each
+ * would let container root leave something on a host bind mount that
+ * escalates on the host: a device node (`MKNOD`) or a binary with file
+ * capabilities (`SETFCAP`). Container root can still leave a setuid-root
+ * file; docs/architecture.md describes that risk.
+ */
+export const DROPPED_CAPABILITIES = ["MKNOD", "SETFCAP"] as const;
+
+/**
  * Creates the host directories docker would otherwise create as root
- * (`~/.claude/sessions`, `~/.codex`, `~/.copilot`), empties the container's
- * sessions directory, clears a stale keeper state file, and gathers the host
- * facts the launch spec needs.
+ * (`~/.claude/sessions`, `~/.codex`, `~/.copilot`) and an empty
+ * `~/.claude.json` when there is none, which docker would otherwise create as
+ * a root-owned directory; empties the container's sessions directory, clears
+ * a stale keeper state file, and gathers the host facts the launch spec
+ * needs.
  */
 export function prepareLaunchHost(
   env: HostEnv,
@@ -116,6 +136,12 @@ export function prepareLaunchHost(
   const paths = homePaths(env);
   for (const dir of [paths.claudeSessions, paths.codexDir, paths.copilotDir]) {
     fs.mkdirSync(dir, { recursive: true });
+  }
+  try {
+    fs.writeFileSync(paths.claudeJson, "{}\n", { mode: 0o600, flag: "wx" });
+  } catch (err) {
+    // An existing file, or a link to one, is the user's own: leave it.
+    if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
   }
   const sessions = sessionsDirFor(env, input.container);
   fs.rmSync(sessions, { recursive: true, force: true });
@@ -135,6 +161,15 @@ export function buildLaunchSpec(
 ): ContainerCreateSpec {
   const home = containerHome(env);
   const paths = homePaths(env);
+  // A bad path otherwise reaches docker as a bind it refuses with a 400, or
+  // a relative one that it takes for a named volume.
+  const rootProblem = hostPathProblem(input.root);
+  if (rootProblem) throw new ApiError("validation", `The project root can't be mounted: ${rootProblem}`);
+  const merged = mergeMounts(input.mounts, input.globalMounts);
+  for (const m of merged) {
+    const problem = mountProblem(m);
+    if (problem) throw new ApiError("validation", `The mount ${m.host} can't be used: ${problem}`);
+  }
   const containerDir = hostToContainer(input.root);
 
   const binds = [
@@ -149,7 +184,6 @@ export function buildLaunchSpec(
     if (!binds.includes(b)) binds.push(b);
   }
   binds.push(`${sessionsDirFor(env, input.container)}:${home}/.claude/sessions`);
-  const merged = mergeMounts(input.mounts, input.globalMounts);
   for (const m of merged) binds.push(mountBind(m));
   binds.push(`${path.join(paths.stateDir, input.container)}:${STATE_MOUNT}`);
 
@@ -178,8 +212,12 @@ export function buildLaunchSpec(
       { hostIp: "127.0.0.1", hostPort: String(input.engine.hostPort) },
     ],
   };
+  // Loopback unless the map asks for every interface: a published port is
+  // otherwise reachable from the network the host is on.
   for (const t of input.tcpMaps) {
-    portBindings[`${t.container}/tcp`] = [{ hostIp: "", hostPort: String(t.host) }];
+    portBindings[`${t.container}/tcp`] = [
+      { hostIp: t.allInterfaces ? "" : "127.0.0.1", hostPort: String(t.host) },
+    ];
   }
 
   return {
@@ -200,16 +238,23 @@ export function buildLaunchSpec(
       [LABELS.secretNames]: secretNames.join(","),
       [LABELS.engineVersion]: input.engine.version,
     },
+    capDrop: [...DROPPED_CAPABILITIES],
     tty: true,
     openStdin: true,
     autoRemove: true,
   };
 }
 
-/** The `agentbox.tcp-maps` label value: sorted `HOST:CONTAINER` pairs, comma-separated. */
+/**
+ * The `agentbox.tcp-maps` label value, sorted and comma-separated:
+ * `127.0.0.1:HOST:CONTAINER` for a loopback map and `HOST:CONTAINER` for one
+ * on every interface. Containers created before loopback became the default
+ * published every map on all interfaces with the second form, so they show
+ * as stale until restarted.
+ */
 export function tcpMapsLabel(maps: readonly TcpMap[]): string {
   return maps
-    .map((t) => `${t.host}:${t.container}`)
+    .map((t) => (t.allInterfaces ? `${t.host}:${t.container}` : `127.0.0.1:${t.host}:${t.container}`))
     .sort()
     .join(",");
 }
@@ -238,6 +283,7 @@ export function toDockerRunArgs(
   const args = ["run", "-d", "-i", "-t"];
   if (spec.autoRemove) args.push("--rm");
   args.push("--name", spec.name, "--user", spec.user);
+  for (const cap of spec.capDrop ?? []) args.push("--cap-drop", cap);
   for (const e of spec.env) {
     const name = e.slice(0, e.indexOf("="));
     args.push("-e", mask && !shown.has(name) ? `${name}=***` : e);

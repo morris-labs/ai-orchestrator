@@ -166,6 +166,33 @@ project root mounted at the same path, the engine's port and the project's
 secrets in its environment, and the engine token in a file in the mounted
 state directory. The image has no default command.
 
+### Container boundaries
+
+- **Published ports.** The engine port and each project TCP map listen on
+  the host's loopback address, `127.0.0.1`. A TCP map whose `allInterfaces`
+  field is `true` listens on every host interface instead, and anything on
+  the host's network can reach it. The Boxes app doesn't show that field yet,
+  so you set it through the API, and saving TCP maps from the app clears it.
+  A container created before loopback became the default shows its TCP maps
+  as stale until it restarts.
+- **Secrets.** Secret values are in the container's environment, so
+  `docker inspect` shows them to anyone who can reach the Docker daemon. See
+  [Secrets](secrets.md).
+- **Root in the container.** The container user has passwordless `sudo`, and
+  Docker runs without a user namespace, so container root is host root on
+  every bind mount: the project root, `~/.claude`, `~/.claude.json`,
+  `~/.codex`, `~/.copilot`, and every project and global mount. The server
+  drops the `MKNOD` and `SETFCAP` capabilities, which `sudo` doesn't need,
+  so container root can't leave a device node or a binary with file
+  capabilities on a mount. It can still leave a setuid-root file there, or a
+  root-owned one you can't change. Docker has no `nosuid` option for bind
+  mounts, and a capability drop doesn't help, because root owns the files it
+  creates and needs no capability to set the setuid bit on them. Rootless
+  Docker or `userns-remap` closes this, but both change which host user owns
+  the files a box writes, so check ownership on the mounts before you switch.
+  Otherwise, don't run host binaries from a mounted directory that a box can
+  write.
+
 ## Repository layout
 
 The repository is a pnpm workspace:

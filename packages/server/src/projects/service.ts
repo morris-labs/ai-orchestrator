@@ -9,6 +9,7 @@ import {
   DEFAULT_ENGINE_PORT,
   ProjectInputSchema,
   ProjectUpdateSchema,
+  hostPathProblem,
   projectContainerName,
   type ContainerInfo,
   type ContainerState,
@@ -40,7 +41,7 @@ import { ApiError, notFound } from "../records/errors.js";
 import type { CoreEvents } from "../records/events.js";
 import type { CoreHooks, EngineHealth } from "../records/hooks.js";
 import type { KeyedMutex } from "../records/mutex.js";
-import { assertUniqueNames, type SettingsService } from "../records/settings.js";
+import { assertMountable, assertUniqueNames, type SettingsService } from "../records/settings.js";
 import { defaultProjectName, detectPrimaryRepo, normalizeRoot, projectIdForRoot } from "./ids.js";
 
 export type ProjectUpdate = z.input<typeof ProjectUpdateSchema>;
@@ -128,6 +129,8 @@ export class ProjectService {
   ensureForRoot(rootIn: string): Project {
     const root = normalizeRoot(rootIn);
     if (root === "") throw new ApiError("validation", "A project needs a directory.");
+    const problem = hostPathProblem(root);
+    if (problem) throw new ApiError("validation", `The project directory can't be used: ${problem}`);
     const existing = this.repos.projects.byRoot(root);
     if (existing) return existing;
     const now = this.now();
@@ -145,6 +148,8 @@ export class ProjectService {
   /** `projects.create`: registers an existing directory. */
   create(input: { root: string; name?: string }): Project {
     const root = normalizeRoot(input.root);
+    const problem = hostPathProblem(root);
+    if (problem) throw new ApiError("validation", `The project directory can't be used: ${problem}`);
     if (!isDirectory(root)) throw new ApiError("validation", `${input.root} is not a directory.`);
     if (this.repos.projects.byRoot(root)) {
       throw new ApiError("conflict", `${root} is already a project.`);
@@ -266,6 +271,7 @@ export class ProjectService {
       next.tcpMaps = u.tcpMaps;
     }
     if (u.mounts !== undefined) {
+      assertMountable(u.mounts);
       const missing = u.mounts.filter((m) => !isDirectory(m.host)).map((m) => m.host);
       if (missing.length > 0) {
         throw new ApiError(
