@@ -1,7 +1,9 @@
 // The whole server over the fake core and a fake engine on a real socket.
 import { readFile } from "node:fs/promises";
+import http from "node:http";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { createServerIdentity, pinFromPem, pinnedFetch } from "@agentbox/contracts/tls";
 import { startApp, type App } from "../../src/api/app.js";
 import type { OpClient } from "../../src/secrets/op.js";
 import { ENGINE_TOKEN, FakeEngineServer, waitFor } from "../events/fake-engine.js";
@@ -41,6 +43,7 @@ beforeEach(async () => {
     op,
     exec: new FakeExec(),
     port: 0,
+    proxyPort: 0,
     engineIntervalMs: 50,
     log: () => undefined,
   });
@@ -53,7 +56,8 @@ afterEach(async () => {
 
 async function api(method: string, url: string, body?: unknown) {
   const token = (await readFile(path.join(home, ".claude-box", "server.token"), "utf8")).trim();
-  const res = await fetch(`http://127.0.0.1:${app.port}${url}`, {
+  const cert = await readFile(path.join(home, ".claude-box", "server.crt"), "utf8");
+  const res = await pinnedFetch(() => pinFromPem(cert))(`https://127.0.0.1:${app.port}${url}`, {
     method,
     headers: {
       authorization: `Bearer ${token}`,
@@ -64,10 +68,43 @@ async function api(method: string, url: string, body?: unknown) {
   return { status: res.status, json: (await res.json()) as Record<string, unknown> };
 }
 
+/** A plain HTTP request to `port` with `host` as the `Host` header. */
+function plainGet(port: number, host: string, url: string) {
+  return new Promise<{ status: number; body: string }>((resolve, reject) => {
+    const req = http.request({ host: "127.0.0.1", port, path: url, headers: { host } }, (res) => {
+      let body = "";
+      res.on("data", (c: Buffer) => (body += c.toString()));
+      res.on("end", () => resolve({ status: res.statusCode ?? 0, body }));
+    });
+    req.on("error", reject);
+    req.end();
+  });
+}
+
 describe("startApp", () => {
   it("serves the API with the token from the token file", async () => {
     const res = await api("GET", "/api/v1/projects");
     expect(res.status).toBe(200);
+  });
+
+  it("serves the API over HTTPS only, with the certificate in server.crt", async () => {
+    await expect(plainGet(app.port, `127.0.0.1:${app.port}`, "/api/v1/health")).rejects.toThrow();
+    const other = pinnedFetch(() => pinFromPem(createServerIdentity().cert));
+    await expect(other(`https://127.0.0.1:${app.port}/api/v1/health`)).rejects.toThrow();
+  });
+
+  it("serves the dev-server proxy on its own plain HTTP listener", async () => {
+    expect(app.proxyPort).not.toBeNull();
+    const proxied = await plainGet(app.proxyPort!, "3000.nobox.localhost", "/");
+    expect(proxied).toMatchObject({ status: 502 });
+    expect(proxied.body).toContain("nobox");
+    // The proxy listener serves no API, and the API listener no proxy.
+    expect((await plainGet(app.proxyPort!, "127.0.0.1", "/api/v1/health")).status).toBe(400);
+    const cert = await readFile(path.join(home, ".claude-box", "server.crt"), "utf8");
+    const res = await pinnedFetch(() => pinFromPem(cert))(`https://127.0.0.1:${app.port}/`, {
+      headers: { host: "3000.nobox.localhost" },
+    });
+    expect(res.status).toBe(404);
   });
 
   it("relays engine events, mirrors runs, and raises notifications", async () => {

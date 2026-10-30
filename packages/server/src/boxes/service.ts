@@ -12,6 +12,7 @@ import {
   boxWorkDir,
   expandTemplate,
   projectContainerName,
+  proxyPortOf,
   type Box,
   type BoxCreate,
   type BoxStatus,
@@ -210,7 +211,7 @@ export class BoxService {
     const hooks = this.deps.hooks();
     const live = new Set(liveSessions(this.env, box.container));
     const settings = this.deps.settings.get();
-    const proxyPort = settings.proxyPort ?? settings.serverPort;
+    const proxyPort = proxyPortOf(settings);
     const listeners = hooks.listeners(box.container).filter((l) => l.boxId === box.id);
     return {
       box,

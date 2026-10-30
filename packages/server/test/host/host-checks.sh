@@ -12,15 +12,20 @@
 # Set AGENTBOX_DATA_DIR when the server runs with --data-dir.
 set -euo pipefail
 
-SERVER="${SERVER:-http://127.0.0.1:21400}"
+SERVER="${SERVER:-https://127.0.0.1:21400}"
 DATA_DIR="${AGENTBOX_DATA_DIR:-$HOME/.claude-box}"
 TOKEN="$(cat "$DATA_DIR/server.token")"
+# The server serves HTTPS with its own certificate; curl and websocat trust
+# that certificate only.
+CERT="$DATA_DIR/server.crt"
+curl() { command curl --cacert "$CERT" "$@"; }
+websocat() { SSL_CERT_FILE="$CERT" command websocat "$@"; }
 H=(-H "Authorization: Bearer ${TOKEN}")
 BOX_ID="${BOX_ID:?set BOX_ID}"
 PROJECT="${PROJECT:?set PROJECT}"
 REMOTE="${REMOTE:-staging}"
 DEV_PORT="${DEV_PORT:-5173}"
-WS="$(command -v websocat || true)"
+WS="$(command -v websocat >/dev/null && echo websocat || true)"
 
 # Prints $1 percent-encoded for one URL path segment. Remote names can hold
 # spaces, such as "Mac Box".
@@ -50,21 +55,21 @@ case "$step" in
   terminal)
     # Attach to the box's tmux session; type, resize the window, then detach.
     [ -n "$WS" ] || { echo "Install websocat first." >&2; exit 1; }
-    "$WS" -b -H "Authorization: Bearer $TOKEN" "ws://127.0.0.1:21400/api/v1/terminals?kind=session&boxId=$BOX_ID&cols=120&rows=40"
+    "$WS" -b -H "Authorization: Bearer $TOKEN" "wss://127.0.0.1:21400/api/v1/terminals?kind=session&boxId=$BOX_ID&cols=120&rows=40"
     ;;
   shell)
     [ -n "$WS" ] || { echo "Install websocat first." >&2; exit 1; }
-    "$WS" -b -H "Authorization: Bearer $TOKEN" "ws://127.0.0.1:21400/api/v1/terminals?kind=shell&projectId=$PROJECT"
+    "$WS" -b -H "Authorization: Bearer $TOKEN" "wss://127.0.0.1:21400/api/v1/terminals?kind=shell&projectId=$PROJECT"
     ;;
   events)
     # Send {"type":"hello","streamId":null,"lastSeq":null}; then start and stop a box.
     [ -n "$WS" ] || { echo "Install websocat first." >&2; exit 1; }
-    "$WS" -H "Authorization: Bearer $TOKEN" "ws://127.0.0.1:21400/api/v1/events"
+    "$WS" -H "Authorization: Bearer $TOKEN" "wss://127.0.0.1:21400/api/v1/events"
     ;;
   proxy)
     # Expect the dev server's page, through the engine's /proxy route.
     KEY="$(curl -fsS "${H[@]}" "$SERVER/api/v1/boxes/$BOX_ID" | python3 -c 'import json,sys; print(json.load(sys.stdin)["box"]["hostKey"])')"
-    curl -sS -o /dev/null -w '%{http_code}\n' "http://$DEV_PORT.$KEY.localhost:21400/"
+    curl -sS -o /dev/null -w '%{http_code}\n' "http://$DEV_PORT.$KEY.localhost:21401/"
     ;;
   engine)
     # Expect versionMatches true for the running project container.
@@ -80,7 +85,7 @@ case "$step" in
     ;;
   image-build)
     # Starts a job; stream it with:
-    #   websocat -b -H "Authorization: Bearer $TOKEN" ws://127.0.0.1:21400/api/v1/jobs/JOB_ID/stream
+    #   websocat -b -H "Authorization: Bearer $TOKEN" wss://127.0.0.1:21400/api/v1/jobs/JOB_ID/stream
     curl -fsS "${H[@]}" -H 'content-type: application/json' -d '{"kind":"packages"}' "$SERVER/api/v1/image/build"
     ;;
   setup)

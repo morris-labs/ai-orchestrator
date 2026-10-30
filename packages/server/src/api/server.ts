@@ -1,7 +1,9 @@
 // The Fastify server: every route in the contracts' `serverRoutes` table,
-// registered by iterating the table, plus the static apps and the dev-server
-// proxy, which shares the listener and is told apart by its `Host` header.
+// registered by iterating the table, plus the static apps and, on a plain
+// HTTP listener, the dev-server proxy, which is told apart by its `Host`
+// header.
 import http from "node:http";
+import https from "node:https";
 import type { Duplex } from "node:stream";
 import { existsSync } from "node:fs";
 import {
@@ -17,6 +19,7 @@ import {
   type HttpRouteDef,
   type WsRouteDef,
 } from "@agentbox/contracts";
+import type { TlsIdentity } from "@agentbox/contracts/tls";
 import fastifyStatic from "@fastify/static";
 import fastifyWebsocket from "@fastify/websocket";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
@@ -81,16 +84,26 @@ export interface ApiServer {
   close(): Promise<void>;
 }
 
-export async function createApiServer(deps: ApiDeps): Promise<ApiServer> {
-  const proxy = deps.proxy;
+/**
+ * Builds the API server. With `tls`, it serves HTTPS with that key and
+ * certificate, and the dev-server proxy stays off this listener: the proxy's
+ * `*.localhost` names aren't in the certificate, so `startApp` gives the
+ * proxy a plain HTTP listener of its own.
+ */
+export async function createApiServer(deps: ApiDeps & { tls?: TlsIdentity }): Promise<ApiServer> {
+  const tls = deps.tls;
+  const proxy = tls ? undefined : deps.proxy;
   const app = Fastify({
     logger: false,
     forceCloseConnections: true,
     serverFactory: (handler) => {
-      const server = http.createServer((req, res) => {
+      const listener: http.RequestListener = (req, res) => {
         if (proxy?.matches(req)) void proxy.handleRequest(req, res);
         else handler(req, res);
-      });
+      };
+      const server: http.Server = tls
+        ? https.createServer({ key: tls.key, cert: tls.cert }, listener)
+        : http.createServer(listener);
       // Divert proxy-host upgrades before @fastify/websocket sees them.
       const emit = server.emit.bind(server) as (event: string, ...args: unknown[]) => boolean;
       server.emit = ((event: string, ...args: unknown[]) => {

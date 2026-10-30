@@ -64,6 +64,9 @@ describe("auth checks", () => {
     expect(sessionCookieHeader(token)).toBe(
       `agentbox_session=${sessionValue(token)}; HttpOnly; SameSite=Strict; Path=/`,
     );
+    expect(sessionCookieHeader(token, true)).toBe(
+      `agentbox_session=${sessionValue(token)}; HttpOnly; SameSite=Strict; Path=/; Secure`,
+    );
   });
 });
 

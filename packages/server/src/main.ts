@@ -110,11 +110,13 @@ export async function main(argv: string[]): Promise<number> {
   if (command === "--help" || command === "-h") {
     process.stdout.write(
       "Usage: agentbox-server [--data-dir PATH] [install-service]\n\n" +
-        "Without a command, starts the Agent Box server on 127.0.0.1.\n" +
+        "Without a command, starts the Agent Box server: the API over HTTPS on 127.0.0.1,\n" +
+        "with the certificate in server.crt, and the dev-server proxy over HTTP.\n" +
         "install-service writes ~/.config/systemd/user/agentbox-server.service and enables it.\n\n" +
         "Options:\n" +
-        "  --data-dir PATH         The directory for agentbox.db, server.token, state/, sessions/,\n" +
-        "                          and the 3.x records to import. Default: ~/.claude-box.\n\n" +
+        "  --data-dir PATH         The directory for agentbox.db, server.token, server.crt, server.key,\n" +
+        "                          state/, sessions/, and the 3.x records to import.\n" +
+        "                          Default: ~/.claude-box.\n\n" +
         "Environment:\n" +
         "  AGENTBOX_DATA_DIR       The data directory, when --data-dir isn't given.\n" +
         "  AGENTBOX_HOME           The home directory to use in place of yours.\n" +
@@ -151,7 +153,10 @@ export async function main(argv: string[]): Promise<number> {
       review: process.env.AGENTBOX_REVIEW_DIR ?? defaultStaticDir(repoRoot, "review"),
     },
   });
-  process.stderr.write(`agentbox-server ${version} listening on 127.0.0.1:${app.port}\n`);
+  process.stderr.write(`agentbox-server ${version} listening on https://127.0.0.1:${app.port}\n`);
+  if (app.proxyPort !== null) {
+    process.stderr.write(`Dev-server proxy on http://*.localhost:${app.proxyPort}\n`);
+  }
   if (dataDir) process.stderr.write(`Using the data directory ${dataDir}.\n`);
 
   await new Promise<void>((resolve) => {

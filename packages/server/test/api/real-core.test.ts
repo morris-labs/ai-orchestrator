@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { BoxViewSchema, ProjectSummarySchema } from "@agentbox/contracts";
+import { pinFromPem, pinnedFetch } from "@agentbox/contracts/tls";
 import { startApp, type App } from "../../src/api/app.js";
 import { createCore } from "../../src/core.js";
 import { MemoryDocker } from "../../src/docker/memory.js";
@@ -52,8 +53,11 @@ async function start(docker: MemoryDocker) {
     log: (m) => logs.push(m),
   });
   const token = fs.readFileSync(path.join(home, ".claude-box", "server.token"), "utf8").trim();
+  const fetchPinned = pinnedFetch(() =>
+    pinFromPem(fs.readFileSync(path.join(home, ".claude-box", "server.crt"), "utf8")),
+  );
   async function api(method: string, url: string, body?: unknown) {
-    const res = await fetch(`http://127.0.0.1:${app!.port}${url}`, {
+    const res = await fetchPinned(`https://127.0.0.1:${app!.port}${url}`, {
       method,
       headers: {
         authorization: `Bearer ${token}`,
