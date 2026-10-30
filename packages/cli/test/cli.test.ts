@@ -42,8 +42,9 @@ afterEach(async () => {
   rmSync(home, { recursive: true, force: true });
 });
 
-function cli(args: string[], env: Record<string, string | undefined> = {}) {
+function cli(args: string[], env: Record<string, string | undefined> = {}, cwd?: string) {
   return runCli(args, {
+    cwd,
     env: { AGENTBOX_SERVER: server.url, AGENTBOX_TOKEN: TOKEN, ...env },
     home,
     out: (t) => (out += t),
@@ -464,6 +465,46 @@ describe("review", () => {
       waiveFindingIds: ["F-0001"],
       reason: "Accepted",
     });
+  });
+});
+
+describe("relative paths", () => {
+  const CWD = "/home/user/src/example";
+
+  it("resolves them against the CLI's working directory before sending", async () => {
+    server.on("POST /api/v1/boxes", { status: 202, body: job("running") });
+    await cli(["box", "new", ".", "--layout", "root", "--no-wait"], {}, CWD);
+    expect(last()?.body).toMatchObject({ targetDir: CWD });
+
+    server.on(`PATCH /api/v1/projects/${PROJECT_ID}`, {
+      body: { project, staleBoxes: [] },
+    });
+    await cli(
+      [
+        "project",
+        "set",
+        PROJECT_ID,
+        "--primary-repo",
+        "../repo",
+        "--mount",
+        "data",
+        "--mount",
+        "cache:/cache",
+      ],
+      {},
+      CWD,
+    );
+    expect(last()?.body).toEqual({
+      primaryRepo: "/home/user/src/repo",
+      mounts: [
+        { host: `${CWD}/data`, container: `${CWD}/data` },
+        { host: `${CWD}/cache`, container: "/cache" },
+      ],
+    });
+
+    server.on("POST /api/v1/runs", { status: 201, body: runState });
+    await cli(["review", "start", "--project", PROJECT_ID, "--repo", "."], {}, CWD);
+    expect(last()?.body).toMatchObject({ repoPath: CWD });
   });
 });
 

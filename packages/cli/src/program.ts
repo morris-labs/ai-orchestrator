@@ -1,5 +1,6 @@
 // The `agentbox` command tree.
 import { spawn } from "node:child_process";
+import path from "node:path";
 import {
   DecisionOptionSchema,
   EffortSchema,
@@ -35,6 +36,8 @@ export interface CliDeps {
   pollMs?: number;
   /** Stops `events`; Ctrl+C by default. */
   signal?: AbortSignal;
+  /** The directory relative paths resolve against; the process's own by default. */
+  cwd?: string;
 }
 
 /** A usage problem the CLI reports with exit code 2. */
@@ -84,13 +87,18 @@ function parsePortPair(spec: string): { host: number; container: number } {
   return { host, container };
 }
 
-function parseMount(spec: string): { host: string; container: string } {
+/**
+ * Parses `HOST[:CONTAINER]`. A relative host path resolves against `cwd`,
+ * and a missing container path mirrors the resolved host path.
+ */
+function parseMount(spec: string, cwd: string): { host: string; container: string } {
   const i = spec.indexOf(":");
   const host = i < 0 ? spec : spec.slice(0, i);
   const container = i < 0 ? spec : spec.slice(i + 1);
   if (host === "" || container === "")
     throw new UsageError(`Invalid mount ${spec}; use HOST[:CONTAINER].`);
-  return { host, container };
+  const resolved = path.resolve(cwd, host);
+  return { host: resolved, container: i < 0 ? resolved : container };
 }
 
 function ceilingText(c: Ceiling): string {
@@ -233,6 +241,10 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
     deps.out(globals().json ? `${JSON.stringify(json, null, 2)}\n` : text());
   };
   const exec = deps.exec ?? defaultExec;
+  // The server resolves nothing against its own working directory, so every
+  // path leaves the CLI absolute.
+  const cwd = deps.cwd ?? process.cwd();
+  const absolute = (p: string) => path.resolve(cwd, p);
 
   // -------------------------------------------------------------------------
   // box
@@ -280,7 +292,7 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
           : { mode: "new" as const };
       let job: Job = await c.call("boxes.create", {
         body: {
-          targetDir: dir,
+          targetDir: absolute(dir),
           platform: o.platform,
           conversationName: o.name,
           conversation,
@@ -467,12 +479,12 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
     .action(async (projectId: string, o) => {
       const body: Record<string, unknown> = {};
       if (o.name !== undefined) body.name = o.name;
-      if (o.primaryRepo !== undefined) body.primaryRepo = o.primaryRepo;
+      if (o.primaryRepo !== undefined) body.primaryRepo = absolute(o.primaryRepo as string);
       if (o.clearPrimaryRepo) body.primaryRepo = null;
       if (o.policyPath !== undefined) body.policyPath = o.policyPath;
       if (o.tcpMap) body.tcpMaps = (o.tcpMap as string[]).map(parsePortPair);
       if (o.clearTcpMaps) body.tcpMaps = [];
-      if (o.mount) body.mounts = (o.mount as string[]).map(parseMount);
+      if (o.mount) body.mounts = (o.mount as string[]).map((m) => parseMount(m, cwd));
       if (o.clearMounts) body.mounts = [];
       if (o.clearCeilings) body.ceilingsOverride = null;
       if (Object.keys(body).length === 0)
@@ -497,7 +509,10 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
     .description("Start a review run.")
     .option("--box <boxId>", "Review this box's working tree and branch.")
     .option("--project <projectId>", "The project; implied by --box.")
-    .option("--repo <path>", "The repository as the container sees it; implied by --box.")
+    .option(
+      "--repo <path>",
+      "The repository as the container sees it, relative to the current directory; implied by --box.",
+    )
     .option("--base <ref>", "The base ref, or `pr` for the pull request's base.", "origin/main")
     .option("--tip <branch>", "The branch to review; default the checked-out branch.")
     .option("--exact-base", "Diff from the base commit, not the merge base.")
@@ -518,7 +533,7 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
     .action(async (o) => {
       const c = client();
       let projectId: string | undefined = o.project;
-      let repoPath: string | undefined = o.repo;
+      let repoPath: string | undefined = o.repo === undefined ? undefined : absolute(o.repo);
       let tip: string | undefined = o.tip;
       if (o.box) {
         const v = await c.call("boxes.get", { params: { boxId: o.box } });

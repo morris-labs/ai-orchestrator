@@ -433,6 +433,29 @@ describe("errors", () => {
     expect(res.json().error.code).toBe("validation");
   });
 
+  it("rejects relative paths before acting on them", async () => {
+    const relative: [Case["method"], string, object][] = [
+      ["POST", `${V1}/projects`, { root: "work/other" }],
+      ["PATCH", P, { primaryRepo: "./repo" }],
+      ["PATCH", P, { mounts: [{ host: "data", container: "/data" }] }],
+      ["PATCH", P, { mounts: [{ host: "/srv/data", container: "data" }] }],
+      ["POST", `${V1}/boxes`, { targetDir: ".", conversationName: "fix it", layout: "root" }],
+      ["POST", `${B}/move`, { newDir: "../b" }],
+      ["POST", `${B}/relink`, { targetDir: "b" }],
+      ["PUT", `${V1}/global-mounts`, { mounts: [{ host: "srv", container: "/srv" }] }],
+      ["POST", `${V1}/runs/preview`, { projectId: "example-app-1a2b3c4d", repoPath: "repo" }],
+      ["POST", `${V1}/runs`, { projectId: "example-app-1a2b3c4d", repoPath: "." }],
+    ];
+    const before = h.core.calls.length;
+    for (const [method, url, body] of relative) {
+      const res = await call(method, url, body);
+      expect(res.statusCode, `${method} ${url}`).toBe(400);
+      expect(res.json().error.message).toMatch(/must be an absolute path/);
+    }
+    expect(h.core.calls.slice(before)).toEqual([]);
+    expect(h.engine.calls.filter((c) => c.key.startsWith("engine.runs."))).toEqual([]);
+  });
+
   it("rejects invalid JSON", async () => {
     const res = await h.server.app.inject({
       method: "POST",
