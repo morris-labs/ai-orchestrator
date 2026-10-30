@@ -339,7 +339,10 @@ export function Policy({ projectId }: { projectId: string | null }) {
         </div>
       )}
       <div className="actions">
-        <button type="button" className="primary" onClick={() => void save()}
+        <button
+          type="button"
+          className="primary"
+          onClick={() => void save()}
           disabled={!selected || loadedFor !== selected}
         >
           Save

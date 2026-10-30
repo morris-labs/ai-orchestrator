@@ -26,13 +26,7 @@ import { ErrorBanner, RunStatusBadge, shortId } from "../components/common.js";
 import { href } from "../state/router.js";
 import { useApiClient, useAnyEvent } from "@agentbox/ui/hooks";
 import { useStore } from "../state/store.js";
-import {
-  decisionView,
-  isNewerRun,
-  oscillationPairs,
-  runControls,
-  stepStates,
-} from "./runModel.js";
+import { decisionView, isNewerRun, oscillationPairs, runControls, stepStates } from "./runModel.js";
 
 export function StageStepper({ run }: { run: Pick<RunState, "stage" | "status" | "request"> }) {
   const steps = stepStates(run.request.pipeline, run.stage, run.status);
