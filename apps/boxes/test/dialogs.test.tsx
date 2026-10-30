@@ -478,6 +478,29 @@ describe("SetupWizard and jobs", () => {
     });
   });
 
+  it("saves and clears the sudo password reference on Done", async () => {
+    const user = userEvent.setup();
+    const server = new FakeServer({ settings: { setupCompleted: false } });
+    const onClose = vi.fn();
+    const { unmount } = renderWithServer(<SetupWizard onClose={onClose} />, server);
+    await screen.findByText("Docker reachable");
+    const field = screen.getByLabelText("Sudo password reference (1Password)");
+    await waitFor(() => expect(field).toBeEnabled());
+    expect(field).toHaveValue("");
+    await user.type(field, "op://SYNTHETIC/sudo/password");
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(server.state.settings.sudoPasswordRef).toBe("op://SYNTHETIC/sudo/password");
+    unmount();
+
+    renderWithServer(<SetupWizard onClose={onClose} />, server);
+    const again = screen.getByLabelText("Sudo password reference (1Password)");
+    await waitFor(() => expect(again).toHaveValue("op://SYNTHETIC/sudo/password"));
+    await user.clear(again);
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    await waitFor(() => expect(server.state.settings.sudoPasswordRef).toBeUndefined());
+  });
+
   it("words the job states like the Qt dialog", () => {
     const base: Job = {
       id: "j",
