@@ -86,7 +86,7 @@ The following 3.x features and files have no 4.0.0 equivalent:
 - **Classic one-container-per-box mode**: every project runs one shared
   container.
 - **The port pool and the port hint prompt**: dev servers are found and
-  proxied at `http://PORT.BOX.localhost:21400/`. Use a project TCP map when
+  proxied at `http://PORT.BOX.localhost:21401/`. Use a project TCP map when
   you need a fixed host port.
 - **`agent.env` files**: secrets come from 1Password references only. For
   more information, see [Secrets](secrets.md#migrate-from-agentenv).
