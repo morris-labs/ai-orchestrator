@@ -1,11 +1,13 @@
 // Builds the whole server from a core: the event hub and its listeners, the
-// engine supervisor, the scheduler, and the HTTP server with the proxy.
+// engine supervisor, the scheduler, the HTTPS API server, and the plain HTTP
+// listener of the dev-server proxy.
 import http from "node:http";
-import type { AgentBoxEvent, Box, Listener } from "@agentbox/contracts";
+import { proxyPortOf, type AgentBoxEvent, type Box, type Listener } from "@agentbox/contracts";
 import type { Core, CoreFactory, CoreServices, EngineEndpoint } from "./core-interface.js";
 import type { ApiDeps } from "./deps.js";
 import { createApiServer, type ApiServer } from "./server.js";
 import { loadOrCreateToken } from "./auth.js";
+import { loadOrCreateTlsIdentity } from "./tls.js";
 import { assertDevEnginesAllowed, withDevEngines } from "../events/dev-engines.js";
 import { EngineSupervisor } from "../events/engines.js";
 import { EventHub } from "../events/hub.js";
@@ -43,6 +45,11 @@ export interface AppOptions {
   fetch?: typeof fetch;
   /** Overrides the configured port; 0 picks a free one (tests). */
   port?: number;
+  /**
+   * The dev-server proxy port when `port` is set; 0 picks a free one.
+   * Absent with `port` set means no proxy listener.
+   */
+  proxyPort?: number;
   engineIntervalMs?: number;
   /**
    * Engines of projects without a container, from `AGENTBOX_DEV_ENGINES`.
@@ -70,6 +77,7 @@ export async function startApp(options: AppOptions): Promise<App> {
   assertDevEnginesAllowed(devEngines, BIND_HOST);
   const runner = options.runner ?? new NodeProcessRunner();
   const token = await loadOrCreateToken(options.home, options.dataDir);
+  const tls = await loadOrCreateTlsIdentity(options.home, options.dataDir);
   const sink = new LateSink();
   let secrets: SecretsService | null = null;
   let runs: RunMirror | null = null;
@@ -249,6 +257,7 @@ export async function startApp(options: AppOptions): Promise<App> {
     },
     exec: options.exec ?? new DockerExecBackend(core.docker.api),
     proxy,
+    tls,
     staticDirs: options.staticDirs,
     log,
   });
@@ -258,20 +267,30 @@ export async function startApp(options: AppOptions): Promise<App> {
     log(`Development engine for project ${e.projectId} on port ${e.hostPort}.`);
   }
 
-  // A separate proxy port gets a listener that serves the proxy only.
+  // The proxy gets a plain HTTP listener of its own: the API listener's
+  // certificate names loopback only, not `*.localhost`. Tests that pick the
+  // API port pick the proxy port too, or go without the proxy listener.
   let proxyServer: http.Server | null = null;
   let proxyPort: number | null = null;
-  if (
-    config.proxyPort !== undefined &&
-    config.proxyPort !== config.serverPort &&
-    options.port === undefined
-  ) {
-    proxyServer = http.createServer((req, res) => void proxy.handleRequest(req, res));
-    proxyServer.on("upgrade", (req, socket, head) => void proxy.handleUpgrade(req, socket, head));
-    await new Promise<void>((resolve) =>
-      proxyServer?.listen(config.proxyPort, "127.0.0.1", resolve),
-    );
-    proxyPort = config.proxyPort;
+  const wantProxyPort = options.port === undefined ? proxyPortOf(config) : options.proxyPort;
+  if (wantProxyPort !== undefined) {
+    const server = http.createServer((req, res) => void proxy.handleRequest(req, res));
+    server.on("upgrade", (req, socket, head) => void proxy.handleUpgrade(req, socket, head));
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(wantProxyPort, BIND_HOST, () => {
+          server.off("error", reject);
+          resolve();
+        });
+      });
+      proxyServer = server;
+      const address = server.address();
+      proxyPort = typeof address === "object" && address ? address.port : wantProxyPort;
+    } catch (err) {
+      // The API matters more than the proxy, so the server starts without it.
+      log(`The dev-server proxy can't listen on port ${wantProxyPort}: ${(err as Error).message}`);
+    }
   }
 
   engines.start();

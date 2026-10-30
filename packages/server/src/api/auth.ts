@@ -75,7 +75,12 @@ export function isAuthorized(input: AuthInput, token: string): boolean {
   return cookie !== undefined && safeEqual(cookie, sessionValue(token));
 }
 
-/** The `Set-Cookie` header value for `auth.session`. */
-export function sessionCookieHeader(token: string): string {
-  return `${SESSION_COOKIE}=${sessionValue(token)}; HttpOnly; SameSite=Strict; Path=/`;
+/**
+ * The `Set-Cookie` header value for `auth.session`. Over HTTPS the cookie
+ * is `Secure`, so the browser never sends it to a plain HTTP listener on the
+ * same host, such as the dev-server proxy.
+ */
+export function sessionCookieHeader(token: string, secure = false): string {
+  const flags = secure ? "; Secure" : "";
+  return `${SESSION_COOKIE}=${sessionValue(token)}; HttpOnly; SameSite=Strict; Path=/${flags}`;
 }

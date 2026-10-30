@@ -82,14 +82,67 @@ a package installs for every user and the server belongs to one.
    agentbox doctor
    ```
 
-The server listens on `127.0.0.1:21400` only. On its first start it writes a
-bearer token to `~/.claude-box/server.token` with mode `0600`. The apps and
-the CLI read that file; anything else that calls the API must send the token.
+The server serves its API over HTTPS on `127.0.0.1:21400` only. On its first
+start it writes the following files to `~/.claude-box`, which it keeps at
+mode `0700`:
+
+- `server.token`, the bearer token, with mode `0600`.
+- `server.key`, the private key of the server's certificate, with mode
+  `0600`.
+- `server.crt`, a self-signed certificate for `127.0.0.1`, `::1`, and
+  `localhost`. The server replaces it when it is within 30 days of its end,
+  which is 10 years after it was made, or when it no longer matches the key.
+
+The apps and the CLI read `server.token` and trust `server.crt` and no other
+certificate: before they send the token, the server must prove that it holds
+`server.key`. A program that takes the port while the server is down gets
+nothing. Anything else that calls the API must send the token, and must
+trust `server.crt` rather than skip the certificate check. With `curl`, for
+example, pass `--cacert ~/.claude-box/server.crt`.
+
+The dev-server proxy has its own plain HTTP listener on the port after the
+server's, `127.0.0.1:21401`, because a certificate can't name every
+`PORT.BOX.localhost` host. The proxy carries no token.
 
 The server keeps all its data in `~/.claude-box` unless you start it with
 `--data-dir PATH` or set `AGENTBOX_DATA_DIR`. When you move it, set
-`AGENTBOX_DATA_DIR` for the CLI and the apps as well, so they find the token.
-For details, see the server's `packages/server/README.md` file.
+`AGENTBOX_DATA_DIR` for the CLI and the apps as well, so they find the token
+and the certificate. For details, see the server's `packages/server/README.md`
+file.
+
+### Open the apps in a browser
+
+The server also serves the two apps' pages at
+`https://127.0.0.1:21400/boxes/` and `https://127.0.0.1:21400/review/`. A
+browser doesn't know the server's self-signed certificate, so trust it once
+before you open them:
+
+- **Chrome or Chromium on Linux:** install the `libnss3-tools` package, then
+  add the certificate to your NSS database as a trusted server certificate:
+
+  ```sh
+  certutil -d sql:"$HOME/.pki/nssdb" -A -t "P,," -n "Agent Box server" \
+    -i ~/.claude-box/server.crt
+  ```
+
+  Restart the browser.
+
+- **Firefox:** open `https://127.0.0.1:21400/boxes/`, click **Advanced**, and
+  check that the certificate's SHA-256 fingerprint matches the output of the
+  following command before you click **Accept the Risk and Continue**:
+
+  ```sh
+  openssl x509 -in ~/.claude-box/server.crt -noout -fingerprint -sha256
+  ```
+
+To sign the page in, open it once with the token in the address's fragment,
+`https://127.0.0.1:21400/boxes/#token=TOKEN`, where `TOKEN` is the content of
+`~/.claude-box/server.token`. The page trades the token for a session
+cookie and removes it from the address bar.
+
+When the server replaces its certificate, trust the new one the same way.
+In Chrome, first remove the old entry with
+`certutil -d sql:"$HOME/.pki/nssdb" -D -n "Agent Box server"`.
 
 ## Build the container image
 

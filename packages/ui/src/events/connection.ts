@@ -17,7 +17,12 @@ import type { ApiClient } from "../api/client";
 export type StreamStatus = "connecting" | "open" | "closed";
 
 export interface EventsConnectionOptions {
-  client: ApiClient;
+  /**
+   * The client, or a function that returns one for each connection attempt,
+   * so a reconnect reads the token and server certificate again: a server
+   * that started after the app, or that replaced its token, still connects.
+   */
+  client: ApiClient | (() => ApiClient);
   /** Event types to receive; absent means all. */
   types?: readonly EventType[];
   onEvent: (event: AgentBoxEvent) => void;
@@ -125,7 +130,8 @@ export class EventsConnection {
     if (this.opts.types && this.opts.types.length > 0) query.types = this.opts.types.join(",");
     let socket: WebSocket;
     try {
-      socket = this.opts.client.openSocket("events.stream", { query });
+      const client = typeof this.opts.client === "function" ? this.opts.client() : this.opts.client;
+      socket = client.openSocket("events.stream", { query });
     } catch {
       this.scheduleReconnect();
       return;

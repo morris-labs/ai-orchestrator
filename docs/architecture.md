@@ -17,7 +17,8 @@ host                                     container (one per project)
 |  worktrees, catalog, watcher,|         |  agentbox-engine :20411      |
 |  SQLite, secrets, scheduler, |<--------|   pipeline, adapters, run    |
 |  usage, events, terminals,   | :2041x  |   files, port discovery,     |
-|  REST+WS on 127.0.0.1:21400  | mapped  |   dev-server proxy           |
+|  HTTPS REST+WS :21400,       | mapped  |   dev-server proxy           |
+|  dev-server proxy :21401     |         |                              |
 +-------^----------^-----------+         +------------------------------+
         |          |
   agentbox (boxes) agentbox-review        agentbox CLI
@@ -33,15 +34,28 @@ user. It owns everything that touches Docker or host files: projects, boxes,
 worktrees, the conversation catalog, the session watcher, secrets, the
 usage scheduler, and terminals.
 
-- It listens on `127.0.0.1:21400` and serves a REST and WebSocket API under
-  `/api/v1/`, the two apps' pages at `/boxes/` and `/review/`, and the
-  dev-server proxy for `PORT.BOX.localhost` host names.
+- It listens on `127.0.0.1:21400` and serves, over HTTPS, a REST and
+  WebSocket API under `/api/v1/` and the two apps' pages at `/boxes/` and
+  `/review/`. A second, plain HTTP listener on `127.0.0.1:21401` serves the
+  dev-server proxy for `PORT.BOX.localhost` host names, which the
+  certificate can't name.
+- The certificate is self-signed and lives in `~/.claude-box/server.crt`,
+  its key in `server.key` (mode `0600`). Every client pins it: the CLI, the
+  Electron main processes for their REST calls and WebSockets, and both
+  apps' windows for the pages they load. A client checks the certificate
+  before it sends the token, so a program that binds the port while the
+  server is down never receives the token.
 - Every API call needs the bearer token in `~/.claude-box/server.token`
   (mode `0600`), or the session cookie that the token buys. WebSocket
   upgrades authenticate the same way: the CLI and the Electron main
   processes send `Authorization: Bearer`, and the app pages, whose browser
-  WebSockets can't set headers, trade the token for the cookie first. No
-  route accepts a token in the query string, so tokens stay out of URLs.
+  WebSockets can't set headers, trade the token for the cookie first and
+  then drop it. No route accepts a token in the query string, so tokens
+  stay out of URLs.
+- A WebSocket upgrade with an `Origin` header must come from the server's
+  own origin, `https://127.0.0.1:21400` or the same port on `localhost` or
+  `[::1]`, so a page on another port can't open a terminal with the
+  user's cookie. Clients without a browser send no `Origin`.
 - It stores its state in SQLite at `~/.claude-box/agentbox.db` and its
   settings in `~/.claude-box/config.json`.
 - It's the only client of each engine.

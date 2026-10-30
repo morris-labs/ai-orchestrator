@@ -23,7 +23,13 @@ import { Command, CommanderError, InvalidArgumentError, Option } from "commander
 import { ApiCallError, ServerClient, ServerUnreachableError } from "./client.js";
 import { tailEvents, type WebSocketCtor } from "./events.js";
 import { jsonText, keyValues, percent, table, terminalText } from "./format.js";
-import { checkAttachArgv, checkServerUrl, resolveSettings } from "./settings.js";
+import {
+  checkAttachArgv,
+  checkServerUrl,
+  resolveSettings,
+  serverFetch,
+  serverTls,
+} from "./settings.js";
 
 export interface CliDeps {
   env: Record<string, string | undefined>;
@@ -217,11 +223,11 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
     .option("--json", "Print the server's JSON instead of a table.")
     .option(
       "--server <url>",
-      "The server URL. Default: $AGENTBOX_SERVER or http://127.0.0.1:21400.",
+      "The server URL. Default: $AGENTBOX_SERVER or https://127.0.0.1:21400.",
     )
     .option(
       "--insecure",
-      "Allow a plain http server URL on another host. The token then crosses the network unencrypted.",
+      "Allow a plain http server URL. The token then travels unencrypted to whatever answers.",
     )
     .showHelpAfterError()
     .exitOverride()
@@ -236,7 +242,11 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
   };
   const client = () => {
     const s = settings();
-    return new ServerClient({ baseUrl: s.baseUrl, token: s.token, fetch: deps.fetch });
+    return new ServerClient({
+      baseUrl: s.baseUrl,
+      token: s.token,
+      fetch: deps.fetch ?? serverFetch(s),
+    });
   };
   /** Prints raw JSON with `--json`, or the text form. */
   const print = (json: unknown, text: () => string) => {
@@ -860,6 +870,7 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
         count: o.count,
         write: deps.out,
         WebSocket: deps.WebSocket,
+        tls: serverTls(s),
         signal: deps.signal,
       });
     });

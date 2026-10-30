@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { ApiClient, EventHub, EventsConnection, nextDelay } from "../src/core";
+import { ApiClient, EventHub, EventsConnection, nextDelay, type WebSocketCtor } from "../src/core";
 import type { FakeSocket } from "../src/testing";
 import { FakeServer, makeEvent } from "../src/testing";
 
@@ -30,6 +30,39 @@ const boxEvent = () =>
   makeEvent("box.changed", { boxId: "claude-agent-x", status: "running", box: null });
 
 describe("EventsConnection", () => {
+  it("asks a client factory again on every reconnect, so a token written later is used", async () => {
+    const server = new FakeServer();
+    const sent: (string | undefined)[] = [];
+    const Recording = function (url: string, options?: { headers?: Record<string, string> }) {
+      sent.push(options?.headers?.Authorization);
+      return new server.WebSocket(url);
+    } as unknown as WebSocketCtor;
+    // The app starts before the server's first run, when there is no token yet.
+    let token: string | null = null;
+    const timers: (() => void)[] = [];
+    const conn = new EventsConnection({
+      client: () =>
+        new ApiClient({
+          baseUrl: "http://h",
+          token,
+          fetch: server.fetch,
+          WebSocket: Recording,
+          socketAuth: "header",
+        }),
+      onEvent: () => undefined,
+      onResync: () => undefined,
+      setTimer: (fn) => timers.push(fn),
+      clearTimer: () => undefined,
+    });
+    conn.start();
+    await flush();
+    token = "SYNTHETIC_TOKEN_WRITTEN_LATER";
+    (server.socketsFor("/api/v1/events")[0] as FakeSocket).serverClose();
+    timers[0]?.();
+    await flush();
+    expect(sent).toEqual([undefined, "Bearer SYNTHETIC_TOKEN_WRITTEN_LATER"]);
+  });
+
   it("says hello and resyncs on the first connection", async () => {
     const { server, conn, onResync } = setup();
     conn.start();

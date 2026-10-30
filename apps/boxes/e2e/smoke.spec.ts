@@ -3,7 +3,8 @@
 // box, its terminal echoes what you type. With AGENTBOX_SERVER_URL set, it
 // runs against that server (a real host); without it, against the shared
 // fake server from `@agentbox/ui/testing`, which serves the built renderer
-// at /boxes/. Without a display, run it under `xvfb-run`.
+// at /boxes/ over HTTPS with a certificate in a temporary data directory.
+// Without a display, run it under `xvfb-run`.
 import {
   _electron as electron,
   expect,
@@ -14,8 +15,10 @@ import {
 import { FakeServer, makeBoxView } from "@agentbox/ui/testing";
 import { serveFake, type ServedFake } from "@agentbox/ui/testing/node";
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { createServerIdentity } from "@agentbox/contracts/tls";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 
 const appDir = resolve(import.meta.dirname, "..");
 const mainFile = resolve(appDir, "dist/electron/main.cjs");
@@ -23,6 +26,7 @@ const mainFile = resolve(appDir, "dist/electron/main.cjs");
 let app: ElectronApplication;
 let page: Page;
 let fake: ServedFake | null = null;
+let dataDir: string | null = null;
 const env: Record<string, string> = { ...(process.env as Record<string, string>) };
 
 test.beforeAll(async () => {
@@ -37,8 +41,16 @@ test.beforeAll(async () => {
         makeBoxView({ box: { id: "claude-agent-api", targetDir: "/w/api" } }),
       ],
     });
-    fake = await serveFake(server, { static: { "/boxes/": resolve(appDir, "dist/renderer") } });
+    // The app pins the certificate in the data directory, as with the real server.
+    const identity = createServerIdentity();
+    dataDir = mkdtempSync(join(tmpdir(), "agentbox-e2e-"));
+    writeFileSync(join(dataDir, "server.crt"), identity.cert);
+    fake = await serveFake(server, {
+      static: { "/boxes/": resolve(appDir, "dist/renderer") },
+      tls: identity,
+    });
     env.AGENTBOX_SERVER_URL = fake.url;
+    env.AGENTBOX_DATA_DIR = dataDir;
     env.AGENTBOX_SERVER_TOKEN = "smoke-token";
   }
   app = await electron.launch({ args: [appDir], env });
@@ -50,6 +62,7 @@ test.afterAll(async () => {
   await app?.evaluate(({ app: electronApp }) => electronApp.quit()).catch(() => undefined);
   await app?.close().catch(() => undefined);
   await fake?.close();
+  if (dataDir) rmSync(dataDir, { recursive: true, force: true });
 });
 
 test("opens the main window from the server", async () => {
@@ -61,19 +74,22 @@ test("opens the main window from the server", async () => {
   expect(page.url()).toContain("/boxes/");
 });
 
-test("exposes the Electron bridge with a token", async () => {
+test("hands the page the token once, for the session cookie", async () => {
   const bridge = await page.evaluate(() => {
-    const b = (window as unknown as { agentbox?: { token: string | null; serverUrl: string } })
-      .agentbox;
-    return b
-      ? { hasToken: typeof b.token === "string" && b.token.length > 0, serverUrl: b.serverUrl }
-      : null;
+    const b = (
+      window as unknown as {
+        agentbox?: { token?: unknown; takeToken: () => string | null; serverUrl: string };
+      }
+    ).agentbox;
+    return b ? { onBridge: "token" in b, again: b.takeToken(), serverUrl: b.serverUrl } : null;
   });
-  expect(bridge).not.toBeNull();
-  expect(bridge?.hasToken).toBe(true);
+  // The page took the token at start, so the bridge has none left to give.
+  expect(bridge).toMatchObject({ onBridge: false, again: null });
   if (fake) {
     await expect
-      .poll(() => fake?.requests.some((r) => r.startsWith("GET /api/v1/boxes Bearer smoke-token")))
+      .poll(() =>
+        fake?.requests.some((r) => r.startsWith("POST /api/v1/auth/session Bearer smoke-token")),
+      )
       .toBe(true);
   }
 });

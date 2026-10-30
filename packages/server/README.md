@@ -1,16 +1,23 @@
 # Agent Box server
 
 The `agentbox-server` package is the host server: it manages Docker, boxes,
-projects, and worktrees, serves the REST and WebSocket API on 127.0.0.1,
+projects, and worktrees, serves the REST and WebSocket API over HTTPS on
+127.0.0.1, serves the dev-server proxy over plain HTTP on the next port,
 subscribes to the engine in each project container, and runs the lease
 scheduler. Run `agentbox-server --help` for its commands.
 
 ## Data directory
 
-The server keeps its data in `~/.claude-box`: the `agentbox.db` database,
-the `server.token` bearer token, `config.json`, the keeper state in `state/`,
-the per-container `sessions/` directories, and the 3.x records that the
-one-time import reads.
+The server keeps its data in `~/.claude-box`, at mode `0700`: the
+`agentbox.db` database, the `server.token` bearer token, the TLS key and
+certificate in `server.key` and `server.crt`, `config.json`, the keeper state
+in `state/`, the per-container `sessions/` directories, and the 3.x records
+that the one-time import reads.
+
+Every client pins `server.crt`: it checks that the server holds the matching
+key before it sends the token. The server creates the key and certificate on
+its first start with `node:crypto`, and replaces them when they don't match,
+can't be read, or are within 30 days of their end.
 
 To use another directory, pass `--data-dir PATH` or set `AGENTBOX_DATA_DIR`.
 The flag wins when you give both, and a relative path resolves against the
@@ -24,8 +31,8 @@ agentbox-server --data-dir /tmp/agentbox-data
 ```
 
 The `agentbox` CLI and the two apps read `AGENTBOX_DATA_DIR` too, to find
-`server.token` and the server port in `config.json`. Set it in their
-environment when the server runs with another data directory:
+`server.token`, `server.crt`, and the server port in `config.json`. Set it in
+their environment when the server runs with another data directory:
 
 ```sh
 AGENTBOX_DATA_DIR=/tmp/agentbox-data agentbox doctor

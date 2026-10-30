@@ -842,7 +842,7 @@ describe("edit, platform, side sessions, messages", () => {
       reviewState: () => ({ state: "under_review", runId: "01HZY3D5Q9B8M6V4T2R0P8N6K4" }),
     });
     const view = BoxViewSchema.parse(h.core.boxes.view(box));
-    expect(view.proxyUrls).toEqual([{ port: 5173, url: "http://5173.app.localhost:21400/" }]);
+    expect(view.proxyUrls).toEqual([{ port: 5173, url: "http://5173.app.localhost:21401/" }]);
     expect(view.reviewState.state).toBe("under_review");
   });
 });

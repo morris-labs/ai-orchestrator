@@ -5,7 +5,9 @@ import {
   externalAttachArgv,
   sideSessionName,
 } from "../../src/terminals/attach.js";
-import { createHarness, type Harness } from "../api/harness.js";
+import WebSocket from "ws";
+import { isOwnOrigin } from "../../src/api/server.js";
+import { AUTH, createHarness, type Harness } from "../api/harness.js";
 import { connect } from "../api/ws-client.js";
 import { CONTAINER, box } from "../api/fixtures.js";
 
@@ -184,5 +186,54 @@ describe("jobs.stream", () => {
     const s = await connect(`${base}/jobs/nope/stream`);
     await s.until((x) => x.texts.length === 1);
     expect(s.texts[0]).toMatchObject({ type: "error", error: { code: "not_found" } });
+  });
+});
+
+describe("WebSocket origins", () => {
+  /** The status of an upgrade to `path` with `origin`, or 101 when it opens. */
+  function upgradeStatus(path: string, origin?: string): Promise<number> {
+    const ws = new WebSocket(`${base}${path}`, {
+      headers: { ...AUTH, ...(origin ? { origin } : {}) },
+    });
+    return new Promise((resolve) => {
+      ws.on("open", () => {
+        ws.close();
+        resolve(101);
+      });
+      ws.on("unexpected-response", (_req, res) => resolve(res.statusCode ?? 0));
+      ws.on("error", () => resolve(-1));
+    });
+  }
+
+  it("accepts the server's own origin and clients that send none", async () => {
+    const port = new URL(base).port;
+    expect(await upgradeStatus("/events")).toBe(101);
+    expect(await upgradeStatus("/events", `http://127.0.0.1:${port}`)).toBe(101);
+    expect(await upgradeStatus("/events", `http://localhost:${port}`)).toBe(101);
+  });
+
+  it("refuses a page on another port, scheme, or host", async () => {
+    const port = Number(new URL(base).port);
+    for (const origin of [
+      `http://127.0.0.1:${port + 1}`,
+      `https://127.0.0.1:${port}`,
+      `http://example.com:${port}`,
+      "null",
+    ]) {
+      expect(await upgradeStatus("/events", origin), origin).toBe(403);
+      expect(
+        await upgradeStatus(`/terminals?kind=session&boxId=${box.id}&cols=80&rows=24`, origin),
+        origin,
+      ).toBe(403);
+    }
+  });
+
+  it("matches the scheme of the listener", () => {
+    expect(isOwnOrigin(undefined, true, 21400)).toBe(true);
+    expect(isOwnOrigin("https://127.0.0.1:21400", true, 21400)).toBe(true);
+    expect(isOwnOrigin("https://[::1]:21400", true, 21400)).toBe(true);
+    expect(isOwnOrigin("http://127.0.0.1:21400", true, 21400)).toBe(false);
+    expect(isOwnOrigin("https://127.0.0.1:21401", true, 21400)).toBe(false);
+    expect(isOwnOrigin("https://127.0.0.1.example.com:21400", true, 21400)).toBe(false);
   });
 });

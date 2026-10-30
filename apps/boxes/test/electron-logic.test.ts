@@ -112,7 +112,7 @@ describe("notifications and review", () => {
     expect(env.AGENTBOX_SERVER_TOKEN).toBe("secret");
   });
   it("reads the server URL from the environment", () => {
-    expect(serverUrl({})).toBe("http://127.0.0.1:21400");
-    expect(serverUrl({ AGENTBOX_SERVER_URL: "http://127.0.0.1:9/" })).toBe("http://127.0.0.1:9");
+    expect(serverUrl({})).toBe("https://127.0.0.1:21400");
+    expect(serverUrl({ AGENTBOX_SERVER_URL: "https://127.0.0.1:9/" })).toBe("https://127.0.0.1:9");
   });
 });

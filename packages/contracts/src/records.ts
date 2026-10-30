@@ -438,13 +438,13 @@ export const DEFAULT_ENGINE_IMAGE = "claude-code";
 export const GlobalSettingsSchema = z
   .object({
     version: z.literal(1),
-    /** The REST and WebSocket port on 127.0.0.1. */
+    /** The HTTPS REST and WebSocket port on 127.0.0.1. */
     serverPort: PortSchema,
     /**
-     * The dev-server proxy port. Absent means `serverPort`: the server tells
-     * proxy requests apart by their `Host` header,
-     * `<port>.<hostKey>.localhost`. A different value starts a second
-     * listener.
+     * The dev-server proxy port, a plain HTTP listener on 127.0.0.1 that
+     * serves `http://<port>.<hostKey>.localhost:<proxyPort>/`. Absent, or
+     * equal to `serverPort`, means the port after `serverPort`; see
+     * `proxyPortOf()`.
      */
     proxyPort: PortSchema.optional(),
     /** The image every project container runs. */
@@ -466,6 +466,19 @@ export const GlobalSettingsSchema = z
   })
   .strict();
 export type GlobalSettings = z.infer<typeof GlobalSettingsSchema>;
+
+/**
+ * The dev-server proxy's port: `proxyPort`, else the port after
+ * `serverPort`. The API listener serves HTTPS with a certificate for
+ * loopback only, so the proxy's `*.localhost` names need a listener of their
+ * own; a `proxyPort` equal to `serverPort`, which 4.0 development builds
+ * allowed, counts as absent.
+ */
+export function proxyPortOf(settings: Pick<GlobalSettings, "serverPort" | "proxyPort">): number {
+  const { serverPort, proxyPort } = settings;
+  if (proxyPort !== undefined && proxyPort !== serverPort) return proxyPort;
+  return serverPort < 65535 ? serverPort + 1 : serverPort - 1;
+}
 
 /**
  * The configuration file's content with every missing field defaulted, so

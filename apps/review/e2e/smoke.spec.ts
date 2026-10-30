@@ -1,13 +1,16 @@
 // Electron smoke test. Build first (`pnpm --filter @agentbox/review build`)
 // and fetch the Electron binary once (`pnpm --filter @agentbox/review
 // e2e:setup`). The test serves the built renderer and the shared fake server
-// from `@agentbox/ui/testing`, launches the app with a deep link, and checks
-// the launcher, navigation, the token header, and the single-instance
-// hand-off. Without a display, run it under `xvfb-run`.
+// from `@agentbox/ui/testing` over HTTPS, launches the app with a deep link,
+// and checks the launcher, navigation, the token hand-off, and the
+// single-instance hand-off. Without a display, run it under `xvfb-run`.
 import { spawnSync } from "node:child_process";
-import { dirname, resolve } from "node:path";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { _electron as electron, expect, test } from "@playwright/test";
+import { createServerIdentity } from "@agentbox/contracts/tls";
 import { DEMO_PROJECT as PROJECT_ID, FakeServer, makeProject } from "@agentbox/ui/testing";
 import { serveFake } from "@agentbox/ui/testing/node";
 
@@ -18,10 +21,18 @@ test("launches, prefills the launcher, and keeps a single instance", async () =>
   const fake = new FakeServer({
     projects: [makeProject({ root: "/home/user/src/example-app", id: PROJECT_ID })],
   });
-  const mock = await serveFake(fake, { static: { "/review/": resolve(appDir, "dist/renderer") } });
+  // The app pins the certificate in the data directory, as with the real server.
+  const identity = createServerIdentity();
+  const dataDir = mkdtempSync(join(tmpdir(), "agentbox-e2e-"));
+  writeFileSync(join(dataDir, "server.crt"), identity.cert);
+  const mock = await serveFake(fake, {
+    static: { "/review/": resolve(appDir, "dist/renderer") },
+    tls: identity,
+  });
   const env = {
     ...process.env,
     AGENTBOX_SERVER_URL: mock.url,
+    AGENTBOX_DATA_DIR: dataDir,
     AGENTBOX_SERVER_TOKEN: "smoke-token",
   } as Record<string, string>;
   const app = await electron.launch({ args: [main, `--project=${PROJECT_ID}`], env, cwd: appDir });
@@ -30,9 +41,16 @@ test("launches, prefills the launcher, and keeps a single instance", async () =>
     await expect(page).toHaveTitle("Agent Box Review");
     await expect(page.getByRole("heading", { name: "Start a review run" })).toBeVisible();
     await expect(page.getByLabel("Container")).toHaveValue(PROJECT_ID);
-    expect(mock.requests.some((r) => r.includes("GET /api/v1/projects Bearer smoke-token"))).toBe(
-      true,
-    );
+    // The page trades the token for the cookie and keeps none on its bridge.
+    expect(
+      mock.requests.some((r) => r.includes("POST /api/v1/auth/session Bearer smoke-token")),
+    ).toBe(true);
+    expect(
+      await page.evaluate(() => {
+        const b = (window as unknown as { agentbox: { takeToken(): string | null } }).agentbox;
+        return { onBridge: "token" in b, again: b.takeToken() };
+      }),
+    ).toEqual({ onBridge: false, again: null });
 
     await page.getByRole("link", { name: "Dashboard" }).click();
     await expect(page.getByRole("heading", { name: "Infrastructure" })).toBeVisible();
@@ -81,5 +99,6 @@ test("launches, prefills the launcher, and keeps a single instance", async () =>
     await app.evaluate(({ app: a }) => a.quit());
     await app.close().catch(() => undefined);
     await mock.close();
+    rmSync(dataDir, { recursive: true, force: true });
   }
 });

@@ -4,7 +4,8 @@
 // are in `@agentbox/ui/testing`. WebSocket upgrades are refused, so an app
 // under test shows its event stream as offline.
 import { readFile } from "node:fs/promises";
-import { createServer, type IncomingMessage, type Server } from "node:http";
+import { createServer, type IncomingMessage, type RequestListener, type Server } from "node:http";
+import { createServer as createTlsServer } from "node:https";
 import { extname, join, normalize } from "node:path";
 import type { FakeServer } from "./FakeServer";
 
@@ -23,10 +24,16 @@ export interface ServeFakeOptions {
   static?: Record<string, string>;
   /** The port to listen on; 0, the default, picks a free one. */
   port?: number;
+  /**
+   * A key and certificate, PEM, to serve HTTPS with, as the real server
+   * does. The apps pin the certificate, so write it to the data directory
+   * they read.
+   */
+  tls?: { key: string; cert: string };
 }
 
 export interface ServedFake {
-  /** The origin, such as `http://127.0.0.1:41234`. */
+  /** The origin, such as `https://127.0.0.1:41234`, or `http://` without `tls`. */
   url: string;
   /** Every request as `METHOD /path AUTHORIZATION`, for header checks. */
   requests: string[];
@@ -57,13 +64,13 @@ function readBody(req: IncomingMessage): Promise<string> {
   });
 }
 
-/** Starts an HTTP server on 127.0.0.1 in front of `fake`. */
+/** Starts an HTTP or HTTPS server on 127.0.0.1 in front of `fake`. */
 export async function serveFake(
   fake: FakeServer,
   options: ServeFakeOptions = {},
 ): Promise<ServedFake> {
   const requests: string[] = [];
-  const server = createServer((req, res) => {
+  const listener: RequestListener = (req, res) => {
     void (async () => {
       const url = new URL(req.url ?? "/", "http://127.0.0.1");
       requests.push(`${req.method} ${url.pathname} ${req.headers.authorization ?? ""}`);
@@ -97,7 +104,10 @@ export async function serveFake(
       res.writeHead(500, { "content-type": "application/json" });
       res.end(JSON.stringify({ error: { code: "internal", message: String(err) } }));
     });
-  });
+  };
+  const server: Server = options.tls
+    ? createTlsServer({ key: options.tls.key, cert: options.tls.cert }, listener)
+    : createServer(listener);
   server.on("upgrade", (_req, socket) => {
     socket.end("HTTP/1.1 501 Not Implemented\r\n\r\n");
   });
@@ -105,7 +115,7 @@ export async function serveFake(
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("The fake server has no port.");
   return {
-    url: `http://127.0.0.1:${address.port}`,
+    url: `${options.tls ? "https" : "http"}://127.0.0.1:${address.port}`,
     requests,
     server,
     close: () => new Promise((resolve) => server.close(() => resolve())),

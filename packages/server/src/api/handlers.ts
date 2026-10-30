@@ -168,7 +168,7 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
       if (!hasBearer({ authorization: request.headers.authorization }, deps.token)) {
         throw new ApiError("unauthorized", "Setting the session cookie needs the bearer header.");
       }
-      reply.header("set-cookie", sessionCookieHeader(deps.token));
+      reply.header("set-cookie", sessionCookieHeader(deps.token, request.protocol === "https"));
       return { ok: true };
     },
 

@@ -1,7 +1,8 @@
 // A fake Agent Box server for CLI tests: canned answers per route and a
 // recording of every request.
-import http from "node:http";
+import https from "node:https";
 import type { AddressInfo } from "node:net";
+import { createServerIdentity, type TlsIdentity } from "@agentbox/contracts/tls";
 import { WebSocketServer } from "ws";
 
 export interface Recorded {
@@ -17,6 +18,8 @@ export type Answer =
 
 export interface FakeServer {
   url: string;
+  /** The certificate the fake serves, PEM; the CLI pins it from the data directory. */
+  cert: string;
   requests: Recorded[];
   /** Sets the answer for `"METHOD /path"`. */
   on(route: string, answer: Answer): void;
@@ -29,10 +32,13 @@ export interface FakeServer {
   close(): Promise<void>;
 }
 
-export async function startFakeServer(token = "cli-test-token"): Promise<FakeServer> {
+export async function startFakeServer(
+  token = "cli-test-token",
+  identity: TlsIdentity = createServerIdentity(),
+): Promise<FakeServer> {
   const answers = new Map<string, Answer>();
   const requests: Recorded[] = [];
-  const server = http.createServer((req, res) => {
+  const server = https.createServer({ key: identity.key, cert: identity.cert }, (req, res) => {
     const url = new URL(req.url ?? "/", "http://fake");
     let raw = "";
     req.on("data", (c: Buffer) => (raw += c.toString()));
@@ -65,6 +71,7 @@ export async function startFakeServer(token = "cli-test-token"): Promise<FakeSer
   });
   const fake: FakeServer = {
     url: "",
+    cert: identity.cert,
     requests,
     events: [],
     lastEventsQuery: null,
@@ -74,6 +81,7 @@ export async function startFakeServer(token = "cli-test-token"): Promise<FakeSer
       new Promise((r) => {
         wss.clients.forEach((c) => c.terminate());
         wss.close();
+        server.closeAllConnections();
         server.close(() => r());
       }),
   };
@@ -104,6 +112,6 @@ export async function startFakeServer(token = "cli-test-token"): Promise<FakeSer
     });
   });
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
-  fake.url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  fake.url = `https://127.0.0.1:${(server.address() as AddressInfo).port}`;
   return fake;
 }

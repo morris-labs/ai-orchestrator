@@ -1,7 +1,9 @@
 // The Fastify server: every route in the contracts' `serverRoutes` table,
-// registered by iterating the table, plus the static apps and the dev-server
-// proxy, which shares the listener and is told apart by its `Host` header.
+// registered by iterating the table, plus the static apps and, on a plain
+// HTTP listener, the dev-server proxy, which is told apart by its `Host`
+// header.
 import http from "node:http";
+import https from "node:https";
 import type { Duplex } from "node:stream";
 import { existsSync } from "node:fs";
 import {
@@ -17,6 +19,7 @@ import {
   type HttpRouteDef,
   type WsRouteDef,
 } from "@agentbox/contracts";
+import type { TlsIdentity } from "@agentbox/contracts/tls";
 import fastifyStatic from "@fastify/static";
 import fastifyWebsocket from "@fastify/websocket";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
@@ -81,16 +84,42 @@ export interface ApiServer {
   close(): Promise<void>;
 }
 
-export async function createApiServer(deps: ApiDeps): Promise<ApiServer> {
-  const proxy = deps.proxy;
+/** The loopback names a page of the server's own origin can use. */
+const LOOPBACK_NAMES = ["127.0.0.1", "localhost", "[::1]"];
+
+/**
+ * True when a WebSocket upgrade may proceed: it carries no `Origin`, as from
+ * the CLI or an Electron main process, or its `Origin` is this listener's
+ * own, with its scheme and the port the request arrived on. A page on
+ * another port or host can't open the server's sockets with the user's
+ * cookie.
+ */
+export function isOwnOrigin(origin: string | undefined, secure: boolean, port: number): boolean {
+  if (origin === undefined) return true;
+  const scheme = secure ? "https" : "http";
+  return LOOPBACK_NAMES.some((name) => origin.toLowerCase() === `${scheme}://${name}:${port}`);
+}
+
+/**
+ * Builds the API server. With `tls`, it serves HTTPS with that key and
+ * certificate, and the dev-server proxy stays off this listener: the proxy's
+ * `*.localhost` names aren't in the certificate, so `startApp` gives the
+ * proxy a plain HTTP listener of its own.
+ */
+export async function createApiServer(deps: ApiDeps & { tls?: TlsIdentity }): Promise<ApiServer> {
+  const tls = deps.tls;
+  const proxy = tls ? undefined : deps.proxy;
   const app = Fastify({
     logger: false,
     forceCloseConnections: true,
     serverFactory: (handler) => {
-      const server = http.createServer((req, res) => {
+      const listener: http.RequestListener = (req, res) => {
         if (proxy?.matches(req)) void proxy.handleRequest(req, res);
         else handler(req, res);
-      });
+      };
+      const server: http.Server = tls
+        ? https.createServer({ key: tls.key, cert: tls.cert }, listener)
+        : http.createServer(listener);
       // Divert proxy-host upgrades before @fastify/websocket sees them.
       const emit = server.emit.bind(server) as (event: string, ...args: unknown[]) => boolean;
       server.emit = ((event: string, ...args: unknown[]) => {
@@ -129,6 +158,14 @@ export async function createApiServer(deps: ApiDeps): Promise<ApiServer> {
 
   app.addHook("onRequest", async (request, reply) => {
     const config = request.routeOptions.config.agentbox;
+    const port = request.socket.localPort ?? 0;
+    if (config?.ws && !isOwnOrigin(request.headers.origin, tls !== undefined, port)) {
+      reply.header("connection", "close");
+      return sendFailure(
+        reply,
+        new ApiError("unauthorized", "The upgrade came from another origin.", undefined, 403),
+      );
+    }
     if (!config?.auth) return;
     if (!isAuthorized(authInput(request), deps.token)) {
       // A refused upgrade leaves no HTTP connection worth keeping.

@@ -20,7 +20,7 @@ clean. You decide when to push and when to merge.
   scrollback and selection, plus an external terminal on request.
 - **Dev servers without port juggling**: the engine finds listening ports in
   the container and the server proxies them at
-  `http://PORT.BOX.localhost:21400/`.
+  `http://PORT.BOX.localhost:21401/`.
 - **Review pipeline**: profiles that decide how much Claude reviews, a
   coverage ledger per diff hunk, cross-vendor verification, a test and lint
   gate, oscillation detection, and a post-push loop on the pull request.

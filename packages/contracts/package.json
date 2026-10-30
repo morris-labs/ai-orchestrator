@@ -11,6 +11,10 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
+    "./tls": {
+      "types": "./dist/tls.d.ts",
+      "import": "./dist/tls.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [
