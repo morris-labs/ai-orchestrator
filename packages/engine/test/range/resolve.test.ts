@@ -7,6 +7,7 @@ import { ExecaRunner } from "../../src/range/exec.js";
 import { Git } from "../../src/range/git.js";
 import { RangeError, resolveRange, type RangeInput } from "../../src/range/resolve.js";
 import { buildSampleRepo } from "../state/scenario.js";
+import { tempDir } from "../tmp.js";
 
 const runner = new ExecaRunner();
 const git = (repo: string, ...args: string[]) =>
@@ -93,6 +94,22 @@ describe("resolveRange", () => {
     writeFileSync(join(repo, "shop", "__pycache__", "pricing.cpython-312.pyc"), "x");
     await expect(resolveRange(runner, input(repo))).resolves.toMatchObject({ dirty: false });
     rmSync(join(repo, "shop", "__pycache__"), { recursive: true });
+  });
+
+  it("doesn't count the engine's own files as a dirty tree without the exclude", async () => {
+    const { mkdirSync } = await import("node:fs");
+    const fresh = tempDir("agentbox-fresh-");
+    git(fresh, "init", "-q", "-b", "main");
+    writeFileSync(join(fresh, "app.py"), "x = 1\n");
+    git(fresh, "add", ".");
+    git(fresh, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", "a");
+    mkdirSync(join(fresh, ".claude-box", "runs", "RUN"), { recursive: true });
+    writeFileSync(join(fresh, ".claude-box", "runs", "RUN", "state.json"), "{}");
+    const plain = input(fresh, { base: "main" });
+    await expect(resolveRange(runner, plain)).resolves.toMatchObject({ dirty: false });
+    // Any other change still counts.
+    writeFileSync(join(fresh, "app.py"), "x = 2\n");
+    await expect(resolveRange(runner, plain)).rejects.toMatchObject({ code: "dirty_tree" });
   });
 
   it("reports a bad base", async () => {

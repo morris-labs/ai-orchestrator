@@ -47,6 +47,17 @@ export class RangeError extends Error {
 
 const SHA_RE = /^[0-9a-f]{7,64}$/;
 
+/**
+ * Whether a `git status --porcelain` line names only paths in a
+ * `.claude-box/` directory, the engine's own. A rename names two paths.
+ */
+function isEngineStatusLine(line: string): boolean {
+  return line
+    .slice(3)
+    .split(" -> ")
+    .every((p) => /(^|\/)\.claude-box\//.test(p.replace(/^"/, "")));
+}
+
 /** Resolves `base` to a ref, reading the pull request's base branch for `pr`. */
 export async function resolveBaseRef(
   git: Git,
@@ -116,7 +127,9 @@ export async function resolveRange(
     );
   }
 
-  const dirty = (await git.statusLines()).length > 0;
+  // The engine's own run files don't count, in case `info/exclude` lacks
+  // `.claude-box/`.
+  const dirty = (await git.statusLines()).some((l) => !isEngineStatusLine(l));
   if (dirty && !input.includeWorktree) {
     throw new RangeError(
       "dirty_tree",
