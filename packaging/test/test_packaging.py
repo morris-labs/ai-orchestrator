@@ -358,6 +358,42 @@ class ScriptsTest(unittest.TestCase):
             )
             self.assertIn(f"into {os.path.realpath(tmp)}/dist.", result.stdout)
 
+    def test_host_checks_keep_the_token_out_of_argv(self):
+        # Other local users can read every process's argument list with ps,
+        # so the server token must reach curl and the WebSocket client
+        # through files only.
+        token = "SYNTHETIC_TOKEN_0123456789abcdef"
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = pathlib.Path(tmp)
+            (tmp / "data").mkdir()
+            (tmp / "data/server.token").write_text(token + "\n")
+            (tmp / "bin").mkdir()
+            argv_log = tmp / "argv.log"
+            for name in ("curl", "node"):
+                fake = tmp / "bin" / name
+                fake.write_text(
+                    "#!/bin/sh\n"
+                    f'printf "%s\\n" "$*" >> "{argv_log}"\n'
+                    'for a in "$@"; do case $a in @*) cat "${a#@}" >> "$HEADERS_LOG" ;; esac; done\n'
+                )
+                fake.chmod(0o755)
+            env = {
+                **os.environ,
+                "PATH": f"{tmp / 'bin'}:{os.environ['PATH']}",
+                "AGENTBOX_DATA_DIR": str(tmp / "data"),
+                "BOX_ID": "claude-agent-SYNTHETIC",
+                "PROJECT": "SYNTHETIC_PROJECT",
+                "HEADERS_LOG": str(tmp / "headers.log"),
+            }
+            script = str(ROOT / "packages/server/test/host/host-checks.sh")
+            for step in ("routes", "events", "terminal", "secrets"):
+                subprocess.run([script, step], env=env, check=True, capture_output=True)
+            argv = argv_log.read_text()
+            self.assertIn("ws-client.mjs", argv)
+            self.assertIn(str(tmp / "data/server.token"), argv)
+            self.assertNotIn(token, argv)
+            self.assertIn(f"Authorization: Bearer {token}", (tmp / "headers.log").read_text())
+
     def test_build_deb_fails_clearly_without_tools(self):
         # With an empty PATH apart from bash and coreutils, the script must
         # stop at the first missing tool with a message that names it.
