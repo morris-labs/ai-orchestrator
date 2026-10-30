@@ -2,11 +2,18 @@
 // the server, as a form or as raw YAML, validated with the contract schema.
 import type { PolicyCommand, PolicyFile, PolicyRule, ProjectSummary } from "@agentbox/contracts";
 import { DEFAULT_POLICY } from "@agentbox/contracts";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ErrorBanner, Field } from "../components/common.js";
 import { href, navigate } from "../state/router.js";
 import { useApiClient } from "@agentbox/ui/hooks";
-import { commaList, lines, parsePolicyYaml, policyToYaml, validatePolicy } from "./policyModel.js";
+import {
+  commaList,
+  lines,
+  parsePolicyYaml,
+  policyToYaml,
+  sameList,
+  validatePolicy,
+} from "./policyModel.js";
 
 function CommandList({
   label,
@@ -52,6 +59,38 @@ function CommandList({
   );
 }
 
+/**
+ * A comma-separated glob list. It keeps the text as typed, so a trailing
+ * comma or space survives until the next glob is typed, and takes the value
+ * again only when it changes from outside, such as on a project load.
+ */
+function GlobListInput({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string[] | undefined;
+  onChange: (value: string[] | undefined) => void;
+}) {
+  const joined = value?.join(", ") ?? "";
+  const [text, setText] = useState(joined);
+  useEffect(() => {
+    setText((t) => (sameList(commaList(t), value) ? t : joined));
+  }, [joined, value]);
+  return (
+    <input
+      aria-label={label}
+      value={text}
+      placeholder="Every file, or globs separated by commas"
+      onChange={(e) => {
+        setText(e.target.value);
+        onChange(commaList(e.target.value));
+      }}
+    />
+  );
+}
+
 function RuleList({
   rules,
   onChange,
@@ -73,16 +112,11 @@ function RuleList({
                 onChange(rules.map((x, j) => (j === i ? { ...x, id: e.target.value } : x)))
               }
             />
-            <input
-              aria-label={`Rule ${i + 1} applies to`}
-              value={r.appliesTo?.join(", ") ?? ""}
-              placeholder="Every file, or globs separated by commas"
-              onChange={(e) =>
-                onChange(
-                  rules.map((x, j) =>
-                    j === i ? { ...x, appliesTo: commaList(e.target.value) } : x,
-                  ),
-                )
+            <GlobListInput
+              label={`Rule ${i + 1} applies to`}
+              value={r.appliesTo}
+              onChange={(appliesTo) =>
+                onChange(rules.map((x, j) => (j === i ? { ...x, appliesTo } : x)))
               }
             />
             <button type="button" onClick={() => onChange(rules.filter((_, j) => j !== i))}>
@@ -118,11 +152,17 @@ export function Policy({ projectId }: { projectId: string | null }) {
   const [errors, setErrors] = useState<string[]>([]);
   const [error, setError] = useState<unknown>(null);
   const [saved, setSaved] = useState(false);
+  // The project whose policy the form holds. Save stays off until the
+  // selected project's policy loads, so a failed or late load can't write
+  // one project's policy into another.
+  const [loadedFor, setLoadedFor] = useState<string | null>(null);
 
   useEffect(() => {
     api.call("projects.list").then((r) => setProjects(r.projects), setError);
   }, [api]);
   const selected = projectId ?? projects[0]?.project.id ?? null;
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
 
   function load(p: PolicyFile) {
     setPolicy(p);
@@ -134,11 +174,25 @@ export function Policy({ projectId }: { projectId: string | null }) {
 
   useEffect(() => {
     if (!selected) return;
+    let live = true;
     setSaved(false);
-    api.call("projects.policy.get", { params: { projectId: selected } }).then((r) => {
-      setMeta({ path: r.path, exists: r.exists });
-      load(r.policy);
-    }, setError);
+    setLoadedFor(null);
+    setMeta(null);
+    setError(null);
+    api.call("projects.policy.get", { params: { projectId: selected } }).then(
+      (r) => {
+        if (!live) return;
+        setMeta({ path: r.path, exists: r.exists });
+        load(r.policy);
+        setLoadedFor(selected);
+      },
+      (err: unknown) => {
+        if (live) setError(err);
+      },
+    );
+    return () => {
+      live = false;
+    };
   }, [api, selected]);
 
   /** The policy as the active tab holds it. */
@@ -163,22 +217,26 @@ export function Policy({ projectId }: { projectId: string | null }) {
   }
 
   async function save() {
+    const target = loadedFor;
+    if (!target || target !== selected) return;
     const r = current();
-    if (!r.ok || !selected) {
-      setErrors(r.ok ? [] : r.errors);
+    if (!r.ok) {
+      setErrors(r.errors);
       return;
     }
     try {
       const res = await api.call("projects.policy.put", {
-        params: { projectId: selected },
+        params: { projectId: target },
         body: r.policy,
       });
+      // The user may have switched projects while the save ran.
+      if (selectedRef.current !== target) return;
       setMeta({ path: res.path, exists: res.exists });
       load(res.policy);
       setSaved(true);
       setError(null);
     } catch (err) {
-      setError(err);
+      if (selectedRef.current === target) setError(err);
     }
   }
 
@@ -281,7 +339,9 @@ export function Policy({ projectId }: { projectId: string | null }) {
         </div>
       )}
       <div className="actions">
-        <button type="button" className="primary" onClick={() => void save()} disabled={!selected}>
+        <button type="button" className="primary" onClick={() => void save()}
+          disabled={!selected || loadedFor !== selected}
+        >
           Save
         </button>
       </div>
