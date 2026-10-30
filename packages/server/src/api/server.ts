@@ -84,6 +84,22 @@ export interface ApiServer {
   close(): Promise<void>;
 }
 
+/** The loopback names a page of the server's own origin can use. */
+const LOOPBACK_NAMES = ["127.0.0.1", "localhost", "[::1]"];
+
+/**
+ * True when a WebSocket upgrade may proceed: it carries no `Origin`, as from
+ * the CLI or an Electron main process, or its `Origin` is this listener's
+ * own, with its scheme and the port the request arrived on. A page on
+ * another port or host can't open the server's sockets with the user's
+ * cookie.
+ */
+export function isOwnOrigin(origin: string | undefined, secure: boolean, port: number): boolean {
+  if (origin === undefined) return true;
+  const scheme = secure ? "https" : "http";
+  return LOOPBACK_NAMES.some((name) => origin.toLowerCase() === `${scheme}://${name}:${port}`);
+}
+
 /**
  * Builds the API server. With `tls`, it serves HTTPS with that key and
  * certificate, and the dev-server proxy stays off this listener: the proxy's
@@ -142,6 +158,14 @@ export async function createApiServer(deps: ApiDeps & { tls?: TlsIdentity }): Pr
 
   app.addHook("onRequest", async (request, reply) => {
     const config = request.routeOptions.config.agentbox;
+    const port = request.socket.localPort ?? 0;
+    if (config?.ws && !isOwnOrigin(request.headers.origin, tls !== undefined, port)) {
+      reply.header("connection", "close");
+      return sendFailure(
+        reply,
+        new ApiError("unauthorized", "The upgrade came from another origin.", undefined, 403),
+      );
+    }
     if (!config?.auth) return;
     if (!isAuthorized(authInput(request), deps.token)) {
       // A refused upgrade leaves no HTTP connection worth keeping.
