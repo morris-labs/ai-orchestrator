@@ -11,9 +11,13 @@ import {
   SshRemoteInputSchema,
   SshRemoteSchema,
   boxWorkDir,
+  containerPathProblem,
   deriveHostKey,
+  hostPathProblem,
+  mountProblem,
   parseConfig,
   projectContainerName,
+  sshHostProblem,
 } from "../src/index.js";
 import { box, minimalBoxInput, project, settingsFile, sshRemote } from "./fixtures.js";
 import { roundTrip } from "./helpers.js";
@@ -180,5 +184,34 @@ describe("deriveHostKey", () => {
     }
     expect(HostKeySchema.safeParse("-bad").success).toBe(false);
     expect(HostKeySchema.safeParse("a".repeat(31)).success).toBe(false);
+  });
+});
+
+describe("mount and SSH checks", () => {
+  it("accepts absolute paths and refuses ones docker can't bind", () => {
+    expect(mountProblem({ host: "/data/ref", container: "/data/ref" })).toBeNull();
+    expect(hostPathProblem("C:\\Users\\SYNTHETIC")).toBeNull();
+    expect(hostPathProblem("relative/dir")).toMatch(/not an absolute path/);
+    expect(hostPathProblem("/data/a:b")).toMatch(/colon/);
+    expect(hostPathProblem("/data/a\nb")).toMatch(/control character/);
+    expect(containerPathProblem("relative")).toMatch(/not absolute/);
+    expect(containerPathProblem("/")).toMatch(/can't be \//);
+    expect(containerPathProblem("/x:ro")).toMatch(/colon/);
+  });
+
+  it("refuses SSH hosts and identity files that ssh would read as options", () => {
+    expect(sshHostProblem("me@example.com:2222")).toBeNull();
+    expect(sshHostProblem("me@[2001:db8::1]:22")).toBeNull();
+    expect(sshHostProblem("-oProxyCommand=SYNTHETIC")).not.toBeNull();
+    expect(sshHostProblem("me@-oProxyCommand=SYNTHETIC")).not.toBeNull();
+    expect(sshHostProblem("me@example.com other")).not.toBeNull();
+    expect(SshRemoteInputSchema.safeParse({ name: "x", host: "-oX=y" }).success).toBe(false);
+    expect(
+      SshRemoteInputSchema.safeParse({ name: "x", host: "example.com", identity: "-oX=y" }).success,
+    ).toBe(false);
+    // A stored record still loads, so the list keeps working.
+    expect(SshRemoteSchema.safeParse({ name: "x", host: "-oX=y", forwards: [] }).success).toBe(
+      true,
+    );
   });
 });

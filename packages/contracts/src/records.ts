@@ -299,7 +299,7 @@ export type SshForward = z.infer<typeof SshForwardSchema>;
 /** A named SSH remote. Boxes refer to it by `name` in `sshRemoteRefs`. */
 export const SshRemoteSchema = z.object({
   name: z.string().min(1),
-  /** `user@host[:port]`. */
+  /** `user@host[:port]`; an IPv6 address takes a port only in brackets, `user@[ADDR]:port`. */
   host: z.string().min(1),
   /** Path to the identity file on the host. */
   identity: z.string().min(1).optional(),

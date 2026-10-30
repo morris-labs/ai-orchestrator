@@ -35,6 +35,31 @@ describe("ssh arguments", () => {
     expect(parseSshHost("example.com:99999")).toEqual({ target: "example.com:99999", port: null });
   });
 
+  it("parses IPv6 hosts", () => {
+    expect(parseSshHost("::1")).toEqual({ target: "::1", port: null });
+    expect(parseSshHost("me@2001:db8::1")).toEqual({ target: "me@2001:db8::1", port: null });
+    expect(parseSshHost("me@[2001:db8::1]:2222")).toEqual({
+      target: "me@2001:db8::1",
+      port: 2222,
+    });
+    expect(parseSshHost("[::1]")).toEqual({ target: "::1", port: null });
+  });
+
+  it("refuses a host or an identity that ssh would read as an option", async () => {
+    const evil: SshRemote = { name: "evil", host: "-oProxyCommand=SYNTHETIC", forwards: [] };
+    expect(() => copyIdArgv(evil)).toThrow(expect.objectContaining({ code: "validation" }));
+    const runner = new FakeRunner(() => ({ code: 0 }));
+    expect(await testConnection(runner, evil)).toMatchObject({ ok: false });
+    expect(
+      await testConnection(runner, { ...plain, identity: "-oProxyCommand=SYNTHETIC" }),
+    ).toMatchObject({ ok: false });
+    expect(runner.runs).toHaveLength(0);
+    const manager = new SshTunnelManager({ runner, remotes: async () => [evil] });
+    await manager.sync([{ id: "claude-agent-x", sshRemoteRefs: ["evil"] }]);
+    expect(runner.spawned).toHaveLength(0);
+    expect(manager.status("evil")).toEqual({ tunnelUp: false, tunnelError: expect.any(String) });
+  });
+
   it("builds the tunnel argv", () => {
     expect(tunnelArgs(remote)).toEqual([
       "-N",
@@ -56,9 +81,10 @@ describe("ssh arguments", () => {
       "localhost:5432:db:5432",
       "-R",
       "0.0.0.0:9000:localhost:3000",
+      "--",
       "me@example.com",
     ]);
-    expect(tunnelArgs(plain).slice(-1)).toEqual(["me@192.0.2.1"]);
+    expect(tunnelArgs(plain).slice(-2)).toEqual(["--", "me@192.0.2.1"]);
     expect(tunnelArgs(plain)).not.toContain("-i");
   });
 
@@ -69,9 +95,10 @@ describe("ssh arguments", () => {
       "/home/me/.ssh/id_ed25519.pub",
       "-p",
       "2222",
+      "--",
       "me@example.com",
     ]);
-    expect(copyIdArgv(plain)).toEqual(["ssh-copy-id", "me@192.0.2.1"]);
+    expect(copyIdArgv(plain)).toEqual(["ssh-copy-id", "--", "me@192.0.2.1"]);
   });
 });
 
@@ -95,6 +122,7 @@ describe("testConnection", () => {
       "/home/me/.ssh/id_ed25519",
       "-p",
       "2222",
+      "--",
       "me@example.com",
       "true",
     ]);
@@ -118,7 +146,9 @@ describe("ssh-copy-id job", () => {
     const jobs = new JobManager();
     const job = startCopyIdJob(jobs, runner, remote);
     expect(job.kind).toBe("ssh_copy_id");
-    expect(job.command).toBe("ssh-copy-id -i /home/me/.ssh/id_ed25519.pub -p 2222 me@example.com");
+    expect(job.command).toBe(
+      "ssh-copy-id -i /home/me/.ssh/id_ed25519.pub -p 2222 -- me@example.com",
+    );
     await waitFor(() => runner.spawned.length === 1);
     const proc = runner.spawned[0]!;
     expect(proc.options.pty).toBe(true);

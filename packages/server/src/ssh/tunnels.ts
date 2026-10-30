@@ -1,21 +1,59 @@
 // SSH remotes: the tunnels the server keeps up for running boxes, the
 // connection test, and ssh-copy-id as a job. The tunnel arguments follow
 // inventory section 6 (`SshTunnelSession`).
-import type { Box, Job, SshRemote, SshTestResultSchema } from "@agentbox/contracts";
+import {
+  sshHostProblem,
+  sshIdentityProblem,
+  type Box,
+  type Job,
+  type SshRemote,
+  type SshTestResultSchema,
+} from "@agentbox/contracts";
+import { ApiError } from "../records/errors.js";
 import type { z } from "zod";
 import { processJob, type JobManager } from "../jobs/jobs.js";
 import { commandLine, type ProcessRunner, type SpawnedProcess } from "../jobs/process.js";
 
 export type SshTestResult = z.infer<typeof SshTestResultSchema>;
 
-/** Splits `user@host[:port]` into the ssh target and the port. */
+/**
+ * Splits `user@host[:port]` into the ssh target and the port. An IPv6
+ * address takes a port only in brackets, `user@[2001:db8::1]:22`; the
+ * brackets are dropped from the target. A bare address with more than one
+ * colon, such as `::1`, has no port.
+ */
 export function parseSshHost(host: string): { target: string; port: number | null } {
-  const match = /^(.*?):(\d+)$/.exec(host);
-  if (match && !match[1]?.includes("]")) {
-    const port = Number(match[2]);
-    if (port >= 1 && port <= 65535) return { target: match[1] as string, port };
+  const at = host.lastIndexOf("@");
+  const user = host.slice(0, at + 1);
+  const rest = host.slice(at + 1);
+  const portOf = (p: string | undefined): number | null => {
+    if (p === undefined) return null;
+    const n = Number(p);
+    return n >= 1 && n <= 65535 ? n : null;
+  };
+  const bracketed = /^\[([^\]]+)\](?::(\d+))?$/.exec(rest);
+  if (bracketed) {
+    const port = portOf(bracketed[2]);
+    if (bracketed[2] === undefined || port !== null) {
+      return { target: `${user}${bracketed[1] as string}`, port };
+    }
+    return { target: host, port: null };
   }
+  const single = /^([^:]+):(\d+)$/.exec(rest);
+  const port = portOf(single?.[2]);
+  if (single && port !== null) return { target: `${user}${single[1] as string}`, port };
   return { target: host, port: null };
+}
+
+/**
+ * Why `ssh` must not be run for a remote, or `null`. The API refuses such a
+ * remote when it is saved; this catches one stored before that check.
+ */
+export function remoteProblem(remote: SshRemote): string | null {
+  return (
+    sshHostProblem(remote.host) ??
+    (remote.identity === undefined ? null : sshIdentityProblem(remote.identity))
+  );
 }
 
 function connectionArgs(remote: SshRemote): { args: string[]; target: string } {
@@ -46,6 +84,8 @@ export function tunnelArgs(remote: SshRemote): string[] {
       `-${f.direction}`,
       `${f.bindAddress}:${f.bindPort}:${f.destHost}:${f.destPort}`,
     ]),
+    // "--" ends the options, so the target can't be read as one.
+    "--",
     target,
   ];
 }
@@ -168,6 +208,12 @@ export class SshTunnelManager {
     tunnel.output = "";
     tunnel.generation += 1;
     const generation = tunnel.generation;
+    const problem = remoteProblem(remote);
+    if (problem) {
+      tunnel.up = false;
+      tunnel.error = problem;
+      return;
+    }
     const args = tunnelArgs(remote);
     this.opts.log?.(`Starting the SSH tunnel for ${tunnel.name}.`);
     const proc = this.opts.runner.spawn("ssh", args);
@@ -211,6 +257,8 @@ export async function testConnection(
   runner: ProcessRunner,
   remote: SshRemote,
 ): Promise<SshTestResult> {
+  const problem = remoteProblem(remote);
+  if (problem) return { ok: false, authFailed: false, output: problem };
   const { args, target } = connectionArgs(remote);
   const result = await runner.run(
     "ssh",
@@ -222,6 +270,7 @@ export async function testConnection(
       "-o",
       "StrictHostKeyChecking=accept-new",
       ...args,
+      "--",
       target,
       "true",
     ],
@@ -239,11 +288,13 @@ export async function testConnection(
 
 /** The `ssh-copy-id` argv that installs the remote's public key. */
 export function copyIdArgv(remote: SshRemote): string[] {
+  const problem = remoteProblem(remote);
+  if (problem) throw new ApiError("validation", problem);
   const { target, port } = parseSshHost(remote.host);
   const argv = ["ssh-copy-id"];
   if (remote.identity) argv.push("-i", `${remote.identity}.pub`);
   if (port !== null) argv.push("-p", String(port));
-  argv.push(target);
+  argv.push("--", target);
   return argv;
 }
 
