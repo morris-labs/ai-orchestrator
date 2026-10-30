@@ -4,8 +4,13 @@
 // or a disprover call. The guard takes a snapshot of the worktree before the
 // first of a set of overlapping read-only calls and compares each call's end
 // against it.
+//
+// The guard never deletes or resets anything itself. It can't tell an
+// agent's change from one that a person or another process made during the
+// call, so it restores a worktree only through the `restore` callback, which
+// the engine passes only for a checkout it owns (see `checkout.ts`).
 import { createHash } from "node:crypto";
-import { lstat, readFile, readlink, rm } from "node:fs/promises";
+import { lstat, readFile, readlink } from "node:fs/promises";
 import { isAbsolute, join, relative, sep } from "node:path";
 import type { CommandRunner } from "../core.js";
 
@@ -41,6 +46,13 @@ export interface TreeGuardOptions {
    * scratch directories. Changes under them don't count.
    */
   ignore: readonly string[];
+  /**
+   * Puts the worktree back the way it was before the calls; resolves to
+   * whether it did. Pass it only for a worktree that holds nothing but the
+   * engine's own files. Absent, the guard reports a change and leaves the
+   * worktree as it is.
+   */
+  restore?: () => Promise<boolean>;
 }
 
 /**
@@ -151,42 +163,29 @@ export class TreeGuard {
     }
   }
 
-  /** Compares the worktree with `baseline`; restores it and throws when they differ. */
+  /** Compares the worktree with `baseline`; restores it when it may, and throws when they differ. */
   private async check(baseline: TreeSnapshot): Promise<void> {
     const { runner, repoPath, ignore } = this.opts;
     const after = await snapshotTree(runner, repoPath, ignore);
     const change = describeTreeChange(baseline, after);
     if (!change) return;
-    const restored = await this.restore(baseline, after);
+    const restored = await this.restore(baseline);
     throw new ReadOnlyViolation(
       `A read-only call changed the worktree ${repoPath}: ${change}. ` +
         (restored
-          ? "The engine restored the worktree and treats the call as failed."
-          : "The engine couldn't restore it safely, because the worktree had uncommitted changes or another branch before the call; check it by hand. The call counts as failed."),
+          ? "The engine restored its checkout and treats the call as failed."
+          : this.opts.restore
+            ? "The engine couldn't restore its checkout. The call counts as failed."
+            : "The engine doesn't own this worktree, so it changed nothing; the change might be a person's or another process's. Check it by hand. The call counts as failed."),
       restored,
     );
   }
 
-  /**
-   * Puts the worktree back the way `baseline` found it, but only when that
-   * can't lose anyone's work: the worktree was clean and on the same branch
-   * before the call. Resets to the baseline commit and deletes the untracked
-   * files the call created. Returns whether it restored.
-   */
-  private async restore(baseline: TreeSnapshot, after: TreeSnapshot): Promise<boolean> {
-    if (baseline.status.length > 0 || !baseline.head) return false;
-    if (baseline.branch !== after.branch) return false;
-    const { runner, repoPath, ignore } = this.opts;
-    const reset = await runner.run("git", ["reset", "-q", "--hard", baseline.head], {
-      cwd: repoPath,
-      timeoutMs: 60_000,
-    });
-    if (reset.exitCode !== 0) return false;
-    const now = await snapshotTree(runner, repoPath, ignore);
-    for (const entry of now.status.filter((s) => s.startsWith("?? "))) {
-      const path = entry.slice(3);
-      await rm(join(repoPath, path), { recursive: true, force: true });
-    }
+  /** Runs the `restore` callback and checks the result against `baseline`. */
+  private async restore(baseline: TreeSnapshot): Promise<boolean> {
+    const { runner, repoPath, ignore, restore } = this.opts;
+    if (!restore) return false;
+    if (!(await restore().catch(() => false))) return false;
     const final = await snapshotTree(runner, repoPath, ignore);
     return describeTreeChange(baseline, final) === null;
   }

@@ -276,6 +276,8 @@ describe("verifyFinding", () => {
       baseWorktree: { ensure: () => Promise.resolve(base) } as unknown as BaseWorktree,
       scratchDirFor: () => scratch,
       timeoutMs: 1000,
+      inScriptCheckout: <T>(side: "tip" | "base", fn: (dir: string) => Promise<T>) =>
+        fn(side === "tip" ? repo : base),
       callDisprover: () =>
         Promise.resolve({ vendor: "codex" as const, model: "m", output: out({ script }) }),
     };
@@ -339,6 +341,49 @@ describe("verifyFinding", () => {
       deps({ path: "r.sh", interpreter: "sh", content: "exit 1\n" }, scratch, repo, base),
     );
     expect(result?.decision).toMatchObject({ verdict: "pre-existing", verification: "script" });
+  });
+
+  it("runs the script only in the engine's script checkouts, never in the checkout under review", async () => {
+    const { root, scratch, repo, base } = dirs();
+    const tipCopy = join(root, "tip-copy");
+    const baseCopy = join(root, "base-copy");
+    for (const d of [tipCopy, baseCopy]) mkdirSync(d);
+    const sides: string[] = [];
+    const result = await verifyFinding(finding, "codex", {
+      ...deps(
+        {
+          path: "r.sh",
+          interpreter: "sh",
+          content: 'echo helper > "$1/SYNTHETIC_helper.txt"\nexit 1\n',
+        },
+        scratch,
+        repo,
+        base,
+      ),
+      inScriptCheckout: <T>(side: "tip" | "base", fn: (dir: string) => Promise<T>) => {
+        sides.push(side);
+        return fn(side === "tip" ? tipCopy : baseCopy);
+      },
+    });
+    expect(sides).toEqual(["tip", "base"]);
+    expect(result?.tipRun?.exitCode).toBe(1);
+    expect(existsSync(join(repo, "SYNTHETIC_helper.txt"))).toBe(false);
+    expect(existsSync(join(base, "SYNTHETIC_helper.txt"))).toBe(false);
+    expect(existsSync(join(tipCopy, "SYNTHETIC_helper.txt"))).toBe(true);
+  });
+
+  it("stops a reproduction script when the run is cancelled", async () => {
+    const { scratch, repo, base } = dirs();
+    const abort = new AbortController();
+    const started = Date.now();
+    setTimeout(() => abort.abort(), 200);
+    await expect(
+      verifyFinding(finding, "codex", {
+        ...deps({ path: "r.sh", interpreter: "sh", content: "sleep 30\n" }, scratch, repo, base),
+        signal: abort.signal,
+      }),
+    ).rejects.toThrow(/cancelled/);
+    expect(Date.now() - started).toBeLessThan(10_000);
   });
 
   it("refuses a script that links outside the scratch directory", async () => {

@@ -1,4 +1,5 @@
 // A thin `git` client over a `CommandRunner`.
+import { rm } from "node:fs/promises";
 import type { CommandRunner } from "../core.js";
 
 export class GitError extends Error {
@@ -21,12 +22,13 @@ export class Git {
   /** Runs git and returns its standard output; throws `GitError` on a non-zero exit. */
   async run(
     args: readonly string[],
-    options: { input?: string; cwd?: string } = {},
+    options: { input?: string; cwd?: string; env?: Record<string, string> } = {},
   ): Promise<string> {
     const result = await this.runner.run("git", args, {
       cwd: options.cwd ?? this.cwd,
       input: options.input,
       timeoutMs: 120_000,
+      ...(options.env ? { env: options.env } : {}),
     });
     if (result.exitCode !== 0) throw new GitError(args, result.exitCode, result.stderr);
     return result.stdout;
@@ -126,4 +128,43 @@ export class Git {
     await this.ok(["worktree", "remove", "--force", path]);
     await this.ok(["worktree", "prune"]);
   }
+
+  /**
+   * A commit whose tree is the working tree: `HEAD` plus the tracked changes
+   * and the untracked files git doesn't ignore, without `.claude-box/`.
+   * Returns `HEAD` itself when the working tree has no changes. The commit
+   * is built in a temporary index file, so the checkout's own index, its
+   * files, and its refs stay as they are; the commit is reachable from no
+   * ref.
+   */
+  async snapshotWorktree(indexFile: string): Promise<string> {
+    const head = await this.head();
+    const env = { GIT_INDEX_FILE: indexFile };
+    try {
+      await this.run(["read-tree", head], { env });
+      await this.run(["add", "--all", "--", ".", ":(exclude).claude-box"], { env });
+      const tree = (await this.run(["write-tree"], { env })).trim();
+      const headTree = (await this.revParseTree(head)).trim();
+      if (tree === headTree) return head;
+      const commit = await this.run(
+        ["commit-tree", tree, "-p", head, "-m", "Agent Box snapshot of the working tree"],
+        { env: SNAPSHOT_IDENTITY },
+      );
+      return commit.trim();
+    } finally {
+      await rm(indexFile, { force: true });
+    }
+  }
+
+  private revParseTree(rev: string): Promise<string> {
+    return this.run(["rev-parse", "--verify", "--quiet", `${rev}^{tree}`]);
+  }
 }
+
+/** The author and committer of a snapshot commit, so `commit-tree` needs no user settings. */
+const SNAPSHOT_IDENTITY: Record<string, string> = {
+  GIT_AUTHOR_NAME: "Agent Box",
+  GIT_AUTHOR_EMAIL: "agentbox@localhost",
+  GIT_COMMITTER_NAME: "Agent Box",
+  GIT_COMMITTER_EMAIL: "agentbox@localhost",
+};

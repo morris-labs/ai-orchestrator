@@ -92,9 +92,9 @@ describe("gate", () => {
     ]);
   });
 
-  it("runs commands without Python bytecode and deletes the untracked files they made", async () => {
+  it("runs commands without Python bytecode and lists the untracked files they made", async () => {
     const { execFileSync } = await import("node:child_process");
-    const { existsSync, mkdirSync, writeFileSync } = await import("node:fs");
+    const { existsSync, mkdirSync, readFileSync, writeFileSync } = await import("node:fs");
     const { join } = await import("node:path");
     const { tempDir } = await import("../tmp.js");
     const { ExecaRunner, ShellRunner } = await import("../../src/range/exec.js");
@@ -118,12 +118,41 @@ describe("gate", () => {
       git: new ExecaRunner(),
     });
     expect(result.passed).toBe(true);
-    expect(existsSync(join(repo, "flag.out"))).toBe(false);
-    expect(existsSync(join(repo, "cache", "a.pyc"))).toBe(false);
+    // The gate deletes nothing: it can't tell its own files from a person's.
+    expect(readFileSync(join(repo, "flag.out"), "utf8")).toBe("1\n");
+    expect(existsSync(join(repo, "cache", "a.pyc"))).toBe(true);
+    expect(result.leftovers).toEqual(["cache/a.pyc", "flag.out"]);
     expect(existsSync(join(repo, "mine.txt"))).toBe(true);
     expect(existsSync(join(repo, "ignored", "keep"))).toBe(true);
     expect(existsSync(join(repo, ".claude-box", "run.json"))).toBe(true);
     expect(result.commands[0]?.outputTail).toBe("");
+  });
+
+  it("keeps a file that someone else creates in the checkout while the gate runs", async () => {
+    const { execFileSync } = await import("node:child_process");
+    const { readFileSync, writeFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const { tempDir } = await import("../tmp.js");
+    const { ExecaRunner, ShellRunner } = await import("../../src/range/exec.js");
+    const repo = tempDir("gate-person-");
+    execFileSync("git", ["init", "-q"], { cwd: repo });
+    const policy = PolicyFileSchema.parse({ version: 1, tests: [{ command: "sleep 1" }] });
+    // A person saves new work 300 ms into the gate's test command.
+    const timer = setTimeout(
+      () => writeFileSync(join(repo, "SYNTHETIC_notes.py"), "print('mine')\n"),
+      300,
+    );
+    try {
+      const result = await runGate(policy, {
+        repoPath: repo,
+        shell: new ShellRunner(),
+        git: new ExecaRunner(),
+      });
+      expect(result.leftovers).toEqual(["SYNTHETIC_notes.py"]);
+    } finally {
+      clearTimeout(timer);
+    }
+    expect(readFileSync(join(repo, "SYNTHETIC_notes.py"), "utf8")).toBe("print('mine')\n");
   });
 
   it("passes PYTHONDONTWRITEBYTECODE to every command", async () => {
