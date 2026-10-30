@@ -348,6 +348,16 @@ class ScriptsTest(unittest.TestCase):
         shellcheck = tool("shellcheck")
         subprocess.run([shellcheck, "-x", *map(str, SHELL_SCRIPTS)], check=True, cwd=ROOT)
 
+    def test_build_deb_resolves_a_relative_out_dir(self):
+        # nfpm runs from the staging directory, so a relative --out such as
+        # the release workflow's `--out dist` must be made absolute first.
+        with tempfile.TemporaryDirectory() as tmp:
+            result = subprocess.run(
+                [str(ROOT / "scripts/build-deb.sh"), "--out", "dist", "--help"],
+                cwd=tmp, check=True, capture_output=True, text=True,
+            )
+            self.assertIn(f"into {os.path.realpath(tmp)}/dist.", result.stdout)
+
     def test_build_deb_fails_clearly_without_tools(self):
         # With an empty PATH apart from bash and coreutils, the script must
         # stop at the first missing tool with a message that names it.
