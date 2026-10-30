@@ -11,6 +11,8 @@ export interface PrInfo {
   state: "OPEN" | "CLOSED" | "MERGED";
   /** The login of the pull request's author, when known. */
   author?: string;
+  /** True when the head branch is in a fork, not in this repository. */
+  crossRepository?: boolean;
 }
 
 export interface PrReview {
@@ -58,7 +60,7 @@ export interface CreatePrInput {
 export interface GitHubClient {
   /** The pull request for a number or a branch, or `null` when there is none. */
   viewPr(repoPath: string, selector: number | string): Promise<PrInfo | null>;
-  /** The open pull request whose head is `branch`, or `null`. */
+  /** The open pull request whose head is `branch` in this repository, not a fork, or `null`. */
   findOpenPr(repoPath: string, branch: string): Promise<PrInfo | null>;
   createPr(repoPath: string, input: CreatePrInput): Promise<PrInfo>;
   defaultBranch(repoPath: string): Promise<string>;
@@ -86,7 +88,7 @@ export function isCopilotLogin(login: string): boolean {
   return l === "copilot" || l.startsWith("copilot-pull-request-reviewer");
 }
 
-const PR_FIELDS = "number,url,headRefName,baseRefName,headRefOid,state,author";
+const PR_FIELDS = "number,url,headRefName,baseRefName,headRefOid,state,author,isCrossRepository";
 
 interface RawPr {
   number: number;
@@ -96,6 +98,7 @@ interface RawPr {
   headRefOid: string;
   state: PrInfo["state"];
   author?: { login?: string } | null;
+  isCrossRepository?: boolean;
 }
 
 function toPr(raw: RawPr): PrInfo {
@@ -107,6 +110,7 @@ function toPr(raw: RawPr): PrInfo {
     headSha: raw.headRefOid,
     state: raw.state,
     ...(raw.author?.login ? { author: raw.author.login } : {}),
+    ...(raw.isCrossRepository === undefined ? {} : { crossRepository: raw.isCrossRepository }),
   };
 }
 
@@ -123,18 +127,63 @@ export class GhError extends Error {
   }
 }
 
-const THREADS_QUERY = `query($owner: String!, $repo: String!, $number: Int!) {
+// GraphQL returns at most 100 nodes a page, so both lists are paged with
+// their cursors: the threads, and the comments of any thread with more.
+const COMMENT_FIELDS = "pageInfo { hasNextPage endCursor } nodes { id body url author { login } }";
+
+const THREADS_QUERY = `query($owner: String!, $repo: String!, $number: Int!, $after: String) {
   repository(owner: $owner, name: $repo) {
     pullRequest(number: $number) {
-      reviewThreads(first: 100) {
+      reviewThreads(first: 100, after: $after) {
+        pageInfo { hasNextPage endCursor }
         nodes {
           id isResolved path line startLine
-          comments(first: 50) { nodes { id body url author { login } } }
+          comments(first: 100) { ${COMMENT_FIELDS} }
         }
       }
     }
   }
 }`;
+
+const THREAD_COMMENTS_QUERY = `query($id: ID!, $after: String) {
+  node(id: $id) {
+    ... on PullRequestReviewThread { comments(first: 100, after: $after) { ${COMMENT_FIELDS} } }
+  }
+}`;
+
+/** The most pages the client reads of one list, so a bad cursor can't loop forever. */
+const MAX_PAGES = 100;
+
+interface PageInfo {
+  hasNextPage: boolean;
+  endCursor: string | null;
+}
+
+interface RawComment {
+  id: string;
+  body: string;
+  url: string | null;
+  author: { login: string } | null;
+}
+
+interface RawCommentPage {
+  pageInfo?: PageInfo;
+  nodes: RawComment[];
+}
+
+interface RawThread {
+  id: string;
+  isResolved: boolean;
+  path: string | null;
+  line: number | null;
+  startLine: number | null;
+  comments: RawCommentPage;
+}
+
+/** The cursor of the next page, or `null` when there is none. */
+function nextCursor(page: PageInfo | undefined): string | null {
+  return page?.hasNextPage && page.endCursor ? page.endCursor : null;
+}
 
 const REPLY_MUTATION = `mutation($thread: ID!, $body: String!) {
   addPullRequestReviewThreadReply(input: {pullRequestReviewThreadId: $thread, body: $body}) { comment { id } }
@@ -174,11 +223,16 @@ export class GhCliClient implements GitHubClient {
       branch,
       "--state",
       "open",
+      "--limit",
+      "100",
       "--json",
       PR_FIELDS,
     ]);
+    // `--head` matches the branch name only, so a fork's pull request from a
+    // branch of the same name is in the list too.
     const list = JSON.parse(out || "[]") as RawPr[];
-    return list[0] ? toPr(list[0]) : null;
+    const own = list.find((pr) => pr.isCrossRepository === false);
+    return own ? toPr(own) : null;
   }
 
   async createPr(repoPath: string, input: CreatePrInput): Promise<PrInfo> {
@@ -249,50 +303,80 @@ export class GhCliClient implements GitHubClient {
     }));
   }
 
+  /** Every review thread of the pull request, with every comment, page by page. */
   async listReviewThreads(repoPath: string, pr: number): Promise<ReviewThread[]> {
+    const threads: RawThread[] = [];
+    let after: string | null = null;
+    for (let page = 0; page < MAX_PAGES; page++) {
+      const args = [
+        "api",
+        "graphql",
+        "-f",
+        `query=${THREADS_QUERY}`,
+        "-F",
+        "owner={owner}",
+        "-F",
+        "repo={repo}",
+        "-F",
+        `number=${pr}`,
+      ];
+      if (after !== null) args.push("-f", `after=${after}`);
+      const data = JSON.parse(await this.gh(repoPath, args)) as {
+        data: {
+          repository: {
+            pullRequest: { reviewThreads: { pageInfo?: PageInfo; nodes: RawThread[] } };
+          };
+        };
+      };
+      const list = data.data.repository.pullRequest.reviewThreads;
+      threads.push(...list.nodes);
+      after = nextCursor(list.pageInfo);
+      if (after === null) break;
+    }
+    const out: ReviewThread[] = [];
+    for (const t of threads) {
+      const comments = [...t.comments.nodes];
+      let cursor = nextCursor(t.comments.pageInfo);
+      for (let page = 0; cursor !== null && page < MAX_PAGES; page++) {
+        const more = await this.threadComments(repoPath, t.id, cursor);
+        comments.push(...more.nodes);
+        cursor = nextCursor(more.pageInfo);
+      }
+      out.push({
+        id: t.id,
+        isResolved: t.isResolved,
+        path: t.path,
+        line: t.line,
+        startLine: t.startLine,
+        comments: comments.map((c) => ({
+          id: c.id,
+          author: c.author?.login ?? "",
+          body: c.body,
+          url: c.url,
+        })),
+      });
+    }
+    return out;
+  }
+
+  /** One page of a review thread's comments, after the `after` cursor. */
+  private async threadComments(
+    repoPath: string,
+    threadId: string,
+    after: string,
+  ): Promise<RawCommentPage> {
     const out = await this.gh(repoPath, [
       "api",
       "graphql",
       "-f",
-      `query=${THREADS_QUERY}`,
-      "-F",
-      "owner={owner}",
-      "-F",
-      "repo={repo}",
-      "-F",
-      `number=${pr}`,
+      `query=${THREAD_COMMENTS_QUERY}`,
+      "-f",
+      `id=${threadId}`,
+      "-f",
+      `after=${after}`,
     ]);
-    type RawThread = {
-      id: string;
-      isResolved: boolean;
-      path: string | null;
-      line: number | null;
-      startLine: number | null;
-      comments: {
-        nodes: Array<{
-          id: string;
-          body: string;
-          url: string | null;
-          author: { login: string } | null;
-        }>;
-      };
-    };
-    const data = JSON.parse(out) as {
-      data: { repository: { pullRequest: { reviewThreads: { nodes: RawThread[] } } } };
-    };
-    return data.data.repository.pullRequest.reviewThreads.nodes.map((t) => ({
-      id: t.id,
-      isResolved: t.isResolved,
-      path: t.path,
-      line: t.line,
-      startLine: t.startLine,
-      comments: t.comments.nodes.map((c) => ({
-        id: c.id,
-        author: c.author?.login ?? "",
-        body: c.body,
-        url: c.url,
-      })),
-    }));
+    const data = JSON.parse(out) as { data: { node: { comments?: RawCommentPage } | null } };
+    return data.data.node?.comments ?? { nodes: [] };
   }
 
   async listChecks(repoPath: string, pr: number): Promise<CheckRun[]> {

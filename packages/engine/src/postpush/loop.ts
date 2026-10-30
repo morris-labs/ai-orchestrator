@@ -80,8 +80,30 @@ function github(ctx: RunContext): GitHubClient {
   return ctx.deps.github;
 }
 
-function strippedBase(ref: string): string {
-  return ref.replace(/^refs\/heads\//, "").replace(/^origin\//, "");
+/**
+ * The branch a new pull request targets: the run's base as a branch name.
+ * A remote-tracking base such as `upstream/main` loses its remote. A base
+ * that names no branch, such as a tag or a commit, gives the default
+ * branch, since a pull request can only target a branch.
+ */
+async function prBase(ctx: RunContext, defaultBranch: string, branch: string): Promise<string> {
+  const base = ctx.state.request.base;
+  let name: string | null = null;
+  if (base === "pr") name = defaultBranch;
+  else if (base.startsWith("refs/heads/")) name = base.slice("refs/heads/".length);
+  else {
+    const short = base.replace(/^refs\/remotes\//, "");
+    const remotes = (await ctx.git.run(["remote"]))
+      .split("\n")
+      .map((r) => r.trim())
+      .filter(Boolean)
+      .sort((a, b) => b.length - a.length);
+    const remote = remotes.find((r) => short.startsWith(`${r}/`));
+    if (remote && (await ctx.git.ok(["show-ref", "--verify", "--quiet", `refs/remotes/${short}`])))
+      name = short.slice(remote.length + 1);
+    else if (await ctx.git.isLocalBranch(short)) name = short;
+  }
+  return name === null || name === "" || name === branch ? defaultBranch : name;
 }
 
 /**
@@ -115,6 +137,18 @@ async function stagePush(ctx: RunContext, requestReview = true): Promise<PrInfo>
       `Pull request #${pr.number} is for ${pr.headRefName}, not ${branch}; the loop pushes only the pull request's branch.`,
     );
   }
+  if (pr && pr.state !== "OPEN") {
+    throw blocked(
+      `Pull request #${pr.number} is ${pr.state.toLowerCase()}; the loop works only on an open pull request.`,
+    );
+  }
+  if (pr?.crossRepository) {
+    throw blocked(
+      `Pull request #${pr.number} comes from a fork; the loop works only on a pull request from this repository.`,
+    );
+  }
+  // Settled before the push, so nothing after it can fail on the base.
+  const base = pr ? null : await prBase(ctx, defaultBranch, branch);
   // Never force: a rejected push means someone else moved the branch.
   const push = await ctx.deps.runner.run(
     "git",
@@ -127,13 +161,11 @@ async function stagePush(ctx: RunContext, requestReview = true): Promise<PrInfo>
   if (push.exitCode !== 0)
     throw blocked(`git push was rejected; the loop never force-pushes:\n${push.stderr.trim()}`);
   if (!pr) {
-    const base = strippedBase(
-      ctx.state.request.base === "pr" ? defaultBranch : ctx.state.request.base,
-    );
     pr = await gh.createPr(repo, {
-      base: base === branch ? defaultBranch : base,
+      base: base ?? defaultBranch,
       head: branch,
-      title: ctx.eng.push?.title ?? `Review fixes for ${branch}`,
+      // A blank title gets the default, since gh refuses an empty one.
+      title: ctx.eng.push?.title?.trim() || `Review fixes for ${branch}`,
       body: `Opened by Agent Box run ${ctx.state.id}.`,
       draft: ctx.eng.push?.draft ?? false,
     });
