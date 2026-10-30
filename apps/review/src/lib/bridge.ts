@@ -4,7 +4,8 @@
 
 /** What the Electron preload exposes. */
 export interface AgentboxBridge {
-  token: string | null;
+  /** The server token on the first call, `null` on every later one. */
+  takeToken(): string | null;
   serverUrl: string | null;
   onNavigate?(listener: (hash: string) => void): () => void;
 }

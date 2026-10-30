@@ -1,7 +1,13 @@
 // The app's live data: projects, boxes, and settings, loaded through REST
 // and kept current with server events. While the event stream is down, the
 // data reloads every 3 seconds, as the Qt app polled.
-import type { BoxView, GlobalSettings, ProjectSummary } from "@agentbox/contracts";
+import {
+  DEFAULT_SERVER_PORT,
+  proxyPortOf,
+  type BoxView,
+  type GlobalSettings,
+  type ProjectSummary,
+} from "@agentbox/contracts";
 import { isApiError, useApiClient, useEvent, useResync, useStreamStatus } from "@agentbox/ui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { applyBoxChanged, applyPorts, applyStats, projectCounts } from "../logic/store";
@@ -115,7 +121,7 @@ export function useBoxesData(): BoxesData {
     setUpdatedAt(new Date());
   });
   useEvent("ports.changed", (ev) => {
-    const proxyPort = settings?.proxyPort ?? settings?.serverPort ?? 21400;
+    const proxyPort = proxyPortOf(settings ?? { serverPort: DEFAULT_SERVER_PORT });
     changeBoxes((all) => applyPorts(all, ev, proxyPort));
   });
   useEvent("settings.changed", (ev) => setSettings(ev.settings));

@@ -379,7 +379,7 @@ describe("main window", () => {
       );
     });
     expect(
-      await screen.findByRole("link", { name: "http://5173.site.localhost:21400/" }),
+      await screen.findByRole("link", { name: "http://5173.site.localhost:21401/" }),
     ).toBeInTheDocument();
     expect(await screen.findByText("42.0%")).toBeInTheDocument();
     expect(await screen.findByText("512 MiB / 2.0 GiB")).toBeInTheDocument();

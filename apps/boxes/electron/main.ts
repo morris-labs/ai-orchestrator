@@ -6,12 +6,12 @@ import { HOME_PATHS, boxWorkDir, type BoxView } from "@agentbox/contracts";
 import {
   ApiClient,
   EventsConnection,
-  type WebSocketCtor,
   errorMessage,
   isAllowedOpenPath,
   isAppPage,
   isWebUrl,
 } from "@agentbox/ui/core";
+import { certificateVerdict, pinReader, pinnedTransport } from "@agentbox/ui/electron-main";
 import { spawn } from "node:child_process";
 import { accessSync, constants, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
@@ -28,6 +28,7 @@ import {
   Menu,
   nativeImage,
   Notification,
+  session,
   shell,
   Tray,
 } from "electron";
@@ -68,31 +69,39 @@ let tray: Tray | null = null;
 let quitting = false;
 let counts: TrayCounts | null = null;
 
-/** The token file in the server's data directory: `AGENTBOX_DATA_DIR`, else `~/.claude-box`. */
-function tokenFile(): string {
+/** A file in the server's data directory: `AGENTBOX_DATA_DIR`, else `~/.claude-box`. */
+function dataFile(homeRelative: string): string {
   const dataDir = process.env.AGENTBOX_DATA_DIR
     ? resolve(process.env.AGENTBOX_DATA_DIR)
     : join(homedir(), HOME_PATHS.dataDir);
-  return join(dataDir, posix.relative(HOME_PATHS.dataDir, HOME_PATHS.serverToken));
+  return join(dataDir, posix.relative(HOME_PATHS.dataDir, homeRelative));
 }
 
 function readToken(): string | null {
   // A test or a wrapper can hand the token over without the file.
   if (process.env.AGENTBOX_SERVER_TOKEN) return process.env.AGENTBOX_SERVER_TOKEN;
   try {
-    return readFileSync(tokenFile(), "utf8").trim() || null;
+    return readFileSync(dataFile(HOME_PATHS.serverToken), "utf8").trim() || null;
   } catch {
     return null;
   }
 }
 
+/**
+ * The server's certificate, read again for every connection. Every request,
+ * socket, and page load to the server must present it before the token or
+ * the cookie goes out.
+ */
+const readPin = pinReader(dataFile(HOME_PATHS.serverCert));
+
+/** A client with the current token. Call it for every use, so a new token is picked up. */
 function client(): ApiClient {
   // The `ws` package sends the token in the upgrade's `Authorization` header,
   // which keeps it out of the event stream's URL.
   return new ApiClient({
     baseUrl: SERVER_URL,
     token: readToken(),
-    WebSocket: WebSocket as unknown as WebSocketCtor,
+    ...pinnedTransport(WebSocket, readPin),
     socketAuth: "header",
   });
 }
@@ -246,7 +255,8 @@ function refreshCounts() {
 
 function watchEvents() {
   const conn = new EventsConnection({
-    client: client(),
+    // A factory, so a reconnect reads the token and the certificate again.
+    client,
     types: ["box.changed", "notification"],
     onResync: refreshCounts,
     onStatus: (s) => {
@@ -297,7 +307,11 @@ async function reportedDirectories(): Promise<string[]> {
 
 function registerIpc() {
   ipcMain.on("agentbox:init", (e) => {
-    e.returnValue = { token: fromApp(e) ? readToken() : null, serverUrl: SERVER_URL };
+    e.returnValue = { serverUrl: SERVER_URL };
+  });
+  // The preload asks once per page load and hands the token to the page once.
+  ipcMain.on("agentbox:token", (e) => {
+    e.returnValue = fromApp(e) ? readToken() : null;
   });
   ipcMain.handle(
     "agentbox:open-external-terminal",
@@ -380,6 +394,11 @@ if (!app.requestSingleInstanceLock()) {
   void app.whenReady().then(() => {
     Menu.setApplicationMenu(null);
     registerIpc();
+    // Pages and their sockets on the server's host load only from a server
+    // that presents the pinned certificate.
+    session.defaultSession.setCertificateVerifyProc((request, callback) =>
+      callback(certificateVerdict(request, SERVER_URL, readPin)),
+    );
     createWindow();
     tray = new Tray(trayImage("offline"));
     tray.on("click", showWindow);

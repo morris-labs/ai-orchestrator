@@ -5,13 +5,8 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, posix, resolve } from "node:path";
 import { HOME_PATHS, DEFAULT_SERVER_PORT, type NotificationToggles } from "@agentbox/contracts";
-import {
-  ApiClient,
-  EventsConnection,
-  isAppPage,
-  isWebUrl,
-  type WebSocketCtor,
-} from "@agentbox/ui/core";
+import { ApiClient, EventsConnection, isAppPage, isWebUrl } from "@agentbox/ui/core";
+import { certificateVerdict, pinReader, pinnedTransport } from "@agentbox/ui/electron-main";
 import WebSocket from "ws";
 import {
   BrowserWindow,
@@ -21,6 +16,7 @@ import {
   app,
   ipcMain,
   nativeImage,
+  session,
   shell,
 } from "electron";
 import {
@@ -42,7 +38,7 @@ function dataFile(homeRelative: string): string {
   return join(dataDir, posix.relative(HOME_PATHS.dataDir, homeRelative));
 }
 
-function readServerConfig(): { serverUrl: string; token: string | null } {
+function readServerConfig(): { serverUrl: string } {
   let port = DEFAULT_SERVER_PORT;
   try {
     const cfg = JSON.parse(readFileSync(dataFile(HOME_PATHS.config), "utf8")) as {
@@ -52,30 +48,43 @@ function readServerConfig(): { serverUrl: string; token: string | null } {
   } catch {
     // No config file: the default port applies.
   }
-  let token: string | null = null;
+  return { serverUrl: process.env.AGENTBOX_SERVER_URL ?? `https://127.0.0.1:${port}` };
+}
+
+/** The token, read again for every use, so a server set up after the app started still works. */
+function readToken(): string | null {
+  if (process.env.AGENTBOX_SERVER_TOKEN) return process.env.AGENTBOX_SERVER_TOKEN;
   try {
-    token = readFileSync(dataFile(HOME_PATHS.serverToken), "utf8").trim() || null;
+    return readFileSync(dataFile(HOME_PATHS.serverToken), "utf8").trim() || null;
   } catch {
     // No token yet: the server isn't set up. The window shows the connection error.
+    return null;
   }
-  return {
-    serverUrl: process.env.AGENTBOX_SERVER_URL ?? `http://127.0.0.1:${port}`,
-    token: process.env.AGENTBOX_SERVER_TOKEN ?? token,
-  };
 }
+
+/**
+ * The server's certificate, read again for every connection. Every request,
+ * socket, and page load to the server must present it before the token or
+ * the cookie goes out.
+ */
+const readPin = pinReader(dataFile(HOME_PATHS.serverCert));
 
 const config = readServerConfig();
 const DEV_URL = process.env.AGENTBOX_REVIEW_DEV_URL;
 /** The pages that get the token; anything else is foreign. */
 const APP_PAGES = [rendererUrl(config.serverUrl, null), ...(DEV_URL ? [DEV_URL] : [])];
-// The `ws` package sends the token in the upgrade's `Authorization` header,
-// which keeps it out of the event stream's URL.
-const client = new ApiClient({
-  baseUrl: config.serverUrl,
-  token: config.token,
-  WebSocket: WebSocket as unknown as WebSocketCtor,
-  socketAuth: "header",
-});
+
+/** A client with the current token. Call it for every use, so a new token is picked up. */
+function client(): ApiClient {
+  // The `ws` package sends the token in the upgrade's `Authorization` header,
+  // which keeps it out of the event stream's URL.
+  return new ApiClient({
+    baseUrl: config.serverUrl,
+    token: readToken(),
+    ...pinnedTransport(WebSocket, readPin),
+    socketAuth: "header",
+  });
+}
 let win: BrowserWindow | null = null;
 let tray: Tray | null = null;
 const active = new ActiveRuns();
@@ -155,9 +164,9 @@ function createWindow(link: ReturnType<typeof parseDeepLink>) {
 
 async function loadInitialState() {
   try {
-    const { runs } = await client.call("runs.list", {});
+    const { runs } = await client().call("runs.list", {});
     active.seed(runs);
-    toggles = (await client.call("settings.get", {})).notifications;
+    toggles = (await client().call("settings.get", {})).notifications;
   } catch {
     // The server may be starting; the event stream retries and the counts catch up.
   }
@@ -165,13 +174,14 @@ async function loadInitialState() {
 }
 
 /**
- * Follows the event stream with the shared client, which resumes from the
- * last event it saw after a reconnect, so a notification sent while the
+ * Follows the event stream with the shared connection, which resumes from
+ * the last event it saw after a reconnect, so a notification sent while the
  * socket was down still arrives. When the server can't replay, the counts
  * and toggles reload through REST.
  */
 function connectEvents() {
   const conn = new EventsConnection({
+    // A factory, so a reconnect reads the token and the certificate again.
     client,
     types: ["run.changed", "notification", "settings.changed"],
     onResync: () => void loadInitialState(),
@@ -187,7 +197,7 @@ function connectEvents() {
         });
         n.on("click", () => {
           show(notice.hash);
-          void client
+          void client()
             .call("notifications.read", { params: { notificationId: notice.notificationId } })
             .catch(() => undefined);
         });
@@ -219,17 +229,23 @@ if (!app.requestSingleInstanceLock()) {
   });
   app.on("activate", () => show());
   ipcMain.on("agentbox:config", (e) => {
+    // Under the Vite dev server the page calls its own origin, which proxies to the server.
+    e.returnValue = { serverUrl: DEV_URL ? null : config.serverUrl };
+  });
+  // The preload asks once per page load and hands the token to the page once.
+  ipcMain.on("agentbox:token", (e) => {
     // Only the app's own page gets the token.
     const url = e.senderFrame?.url;
     const trusted = typeof url === "string" && isAppPage(url, APP_PAGES);
-    // Under the Vite dev server the page calls its own origin, which proxies to the server.
-    e.returnValue = {
-      token: trusted ? config.token : null,
-      serverUrl: DEV_URL ? null : config.serverUrl,
-    };
+    e.returnValue = trusted ? readToken() : null;
   });
   void app.whenReady().then(() => {
     app.setAppUserModelId("agentbox-review");
+    // Pages and their sockets on the server's host load only from a server
+    // that presents the pinned certificate.
+    session.defaultSession.setCertificateVerifyProc((request, callback) =>
+      callback(certificateVerdict(request, config.serverUrl, readPin)),
+    );
     tray = new Tray(nativeImage.createFromBitmap(trayBitmap(0), { width: 32, height: 32 }));
     tray.on("click", () => show());
     updateTray();
