@@ -24,6 +24,8 @@ export const HOME_PATHS = {
   stateDir: ".claude-box/state",
   /** Per-container Claude sessions directory, mounted over `~/.claude/sessions`. */
   sessionsDir: ".claude-box/sessions",
+  /** Per-container secrets broker directory, `broker/<container>/broker.sock`. */
+  brokerDir: ".claude-box/broker",
   backupDir: ".claude-box/backup",
 } as const;
 

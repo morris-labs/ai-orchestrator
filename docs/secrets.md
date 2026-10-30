@@ -1,10 +1,11 @@
 # Secrets
 
 Agent Box gives containers secrets from 1Password and from nowhere else. You
-store 1Password references in the global settings and in project settings;
-the server resolves them with the 1Password CLI (`op`) each time it starts a
-project container and passes the values to the container as environment
-variables. One reference is different: the container user's `sudo`
+store 1Password references in the global settings and in project settings.
+The server keeps the values out of every container's configuration and
+environment: a process in a project container asks the server's secrets
+broker for a value when it needs one, through a socket mounted into the
+container. One reference is different: the container user's `sudo`
 password, which reaches a container only as a hash. See
 [The sudo password](#the-sudo-password).
 
@@ -12,8 +13,8 @@ password, which reaches a container only as a hash. See
 
 A secret reference has two parts:
 
-- `name`: the environment variable the container receives, for example
-  `DATABASE_URL`.
+- `name`: the name a process asks for, and the environment variable that
+  `agentbox-secret run` sets, for example `DATABASE_URL`.
 - `ref`: a 1Password secret reference in the form
   `op://VAULT/ITEM/FIELD`.
 
@@ -27,30 +28,93 @@ Replace the following:
 Global references apply to every project container. A project reference
 with the same `name` as a global one wins for that project.
 
-When a container starts, the server runs `op read` for each reference and
-caches the values for that launch only. Values never appear in a record, an
-API response, an event, a log, or the review app. The API shows only names
-and references.
-
-The values are part of the container's configuration, because agents in the
-container need them as environment variables. Anyone who can reach the
-Docker daemon can read them with `docker inspect` or `docker exec ... env`
-for as long as the container exists. On a host where other users are in the
-`docker` group, treat every secret you give a project as shared with them.
-
-Inside the container, every process runs as the same user, so any code
-there, repository code that a test command or a review runs included, can
-read the secrets from the container's environment, for example from
-`/proc/1/environ`. The engine keeps credentials out of the environment of
-the test commands and scripts it starts, but that doesn't stop such code
-from reading them elsewhere.
-
 The following example sets two references on a project:
 
 | Name | Reference |
 |---|---|
 | `DATABASE_URL` | `op://Development/orders-db/connection-string` |
 | `STRIPE_API_KEY` | `op://Development/stripe-test/credential` |
+
+### The secrets broker
+
+For each project container, the server listens on a Unix socket,
+`~/.claude-box/broker/CONTAINER/broker.sock`, readable only by you. It
+mounts the socket's directory read-only at `/run/agentbox-broker` in the
+container, and sets `AGENTBOX_BROKER_SOCKET` to the socket's path there. Any
+process in the container can ask the socket for a secret that the project
+lists, at any time, without a prompt.
+
+When a process asks, the server checks the name against the current global
+and project references and resolves the value with `op read`. It keeps each
+value in its own memory for 5 minutes, so that repeated requests don't reach
+1Password each time. Because the server checks the references on every
+request, a reference you add or remove takes effect at once, without a
+container restart. A value that a process already received stays with that
+process.
+
+The server logs every request to its journal with the container, the
+secret names, the asking program's name, and the outcome. A log line never
+holds a value. To read the log, run `journalctl --user -u agentbox-server`.
+
+Values never appear in a record, an API response, an event, a log, the
+review app, or the container's configuration. `docker inspect` shows only
+the names, in the `agentbox.secret-names` label.
+
+### Use a secret in a container
+
+The image includes the `agentbox-secret` command. In a box, use it as
+follows:
+
+- To print one value, for a tool that reads a secret from a command, run
+  `agentbox-secret NAME`. The value has no trailing newline.
+- To run a command with secrets in its environment, run
+  `agentbox-secret run NAME[,NAME...] -- COMMAND [ARGS...]`. Only that
+  command and its children get the values. For example, to start a dev
+  server that reads `DATABASE_URL`, run
+  `agentbox-secret run DATABASE_URL -- npm run dev`.
+- To see which names the container can ask for, run `agentbox-secret list`.
+
+`agentbox-secret` exits with status 3 when the server can't be reached, 4
+for a name the project doesn't list, and 5 when 1Password is locked or a
+reference doesn't resolve.
+
+Agents don't know about the command unless you tell them. Name the secrets a
+project uses, and how to start the tools that need them, in the project's
+`CLAUDE.md` file.
+
+### Credentials for the engine
+
+The engine asks the broker for the credentials it hands the programs it
+starts, and gives each program only its own:
+
+- A vendor CLI gets the names it signs in with, for example
+  `ANTHROPIC_API_KEY` for Claude, `OPENAI_API_KEY` for Codex, and
+  `COPILOT_GITHUB_TOKEN` for Copilot.
+- `git` and `gh` get `GH_TOKEN`, `GITHUB_TOKEN`, and their enterprise forms.
+- Test and lint commands and other repository code get nothing. A policy
+  test command that needs a secret must ask for it, for example with
+  `agentbox-secret run DATABASE_URL -- npm test`.
+
+When the broker can't answer, the engine logs a warning and starts the
+program without the values. A vendor CLI signed in with its own account
+keeps working; one that needs a key reports a sign-in error.
+
+### What the broker doesn't protect
+
+Every process in a project container runs as the same user. Any process
+there, including repository code that a test command or a review runs, can
+ask the socket for any secret the project lists, and can read a value from
+the environment of a process that received it. The broker keeps values out
+of `docker inspect`, out of every session's environment, and out of
+processes that don't ask, and it logs who asked. It doesn't hide a listed
+secret from the agent or from repository code. List only the secrets a
+project needs.
+
+The vendor sign-ins aren't 1Password secrets and don't go through the
+broker. Every container mounts your `~/.claude`, `~/.codex`, and `~/.copilot`
+directories, so any process in any project container can read and change
+the Claude, Codex, and Copilot sign-ins stored there, such as
+`~/.claude/.credentials.json` and `~/.codex/auth.json`.
 
 ## Connect 1Password
 
@@ -79,8 +143,11 @@ reason, and never shows a value.
 ## When 1Password is locked or missing
 
 Agent Box has no fallback. In 3.x, a project could hold an `agent.env` file
-of plain values; 4.0.0 doesn't read it. If a container needs secrets and the
-server can't resolve every reference, the container doesn't start:
+of plain values; 4.0.0 doesn't read it.
+
+Before the server creates a project container, it runs a pre-start check:
+it resolves every reference with a fresh `op read`. If the server can't
+resolve every reference, the container doesn't start:
 
 | Situation | Result |
 |---|---|
@@ -91,9 +158,15 @@ server can't resolve every reference, the container doesn't start:
 A project that has no references, globally or in its settings, starts
 without `op`.
 
-The server resolves secrets only when it creates a container. A box started
-in a container that's already running uses the values the container got at
-launch. To pick up a changed secret, restart the project container.
+After the container starts, a request for a value that isn't in the cache
+can fail the same way, for example when 1Password locks while a box runs.
+`agentbox-secret` then exits with status 5 and the same message. In desktop
+mode, the server's `op` call can show the unlock prompt on your desktop; in
+service account mode, fix the token.
+
+A container that a server from before the broker created has its secret
+values in its environment. It shows as stale, with
+`secrets environment -> broker`, until it restarts.
 
 ## The sudo password
 
@@ -132,7 +205,8 @@ because it doesn't know the password.
 The plaintext never enters a container. When the server creates a project
 container, it does the following:
 
-1. It runs `op read` for the reference, the same way it resolves secrets.
+1. It runs `op read` for the reference. The password never goes through the
+   secrets broker or its cache.
 1. It hashes the value with SHA-512 crypt (`$6$`), with a random salt and
    100,000 rounds, in its own memory, and drops the plaintext. The value
    never appears in a record, an API response, an event, or a log.

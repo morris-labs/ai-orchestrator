@@ -2,6 +2,7 @@
 // repositories, port discovery, API, and the active-runs file, in that
 // order, and stops them in reverse on a signal.
 import {
+  BROKER_ENV,
   DEFAULT_ENGINE_STATE_DIR,
   ENGINE_ENV,
   EngineEnvSchema,
@@ -20,7 +21,9 @@ import { PortWatcher } from "../ports/watcher.js";
 import type { AdapterSet } from "../core.js";
 import { createRunManager } from "../state/manager.js";
 import { ChildRegistry, setChildRegistry } from "../process/children.js";
+import { setCredentialSource } from "../process/credentials.js";
 import { looksLikeCredential } from "../process/env.js";
+import { BrokerClient } from "../secrets/broker-client.js";
 import { moveSecretsOutOfEnviron } from "./environ.js";
 import { startActiveRunsWriter } from "./active-runs.js";
 import { MOCK_SCRIPT_ENV, MOCK_VENDORS_ENV, selectAdapters } from "./adapters.js";
@@ -282,6 +285,18 @@ export async function main(
   if (reaped > 0)
     log.warn("Stopped process groups that an earlier engine left running", { reaped });
   setChildRegistry(children);
+
+  // The server sets the broker socket on every container it creates; an
+  // engine started by hand without it gives children no brokered credentials.
+  if (env[BROKER_ENV.socket] || env[BROKER_ENV.url]) {
+    try {
+      setCredentialSource(new BrokerClient({ env }), (message, fields) =>
+        log.warn(message, fields),
+      );
+    } catch (err) {
+      log.warn("The engine can't use the secrets broker", { reason: (err as Error).message });
+    }
+  }
 
   let handle: EngineHandle;
   try {

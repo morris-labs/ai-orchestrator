@@ -28,8 +28,10 @@ While the agent works, the following happens without any setup:
   box's details panel shows a link to it, in the form
   `http://PORT.BOX.localhost:21401/`. The engine finds listening ports and
   the server proxies them.
-- **Secrets**: The project's 1Password references arrive in the container as
-  environment variables. For more information, see [Secrets](secrets.md).
+- **Secrets**: A process in the box gets the project's 1Password secrets on
+  request, for example with `agentbox-secret run DATABASE_URL -- npm run dev`.
+  They aren't in the box's environment. For more information, see
+  [Secrets](secrets.md#use-a-secret-in-a-container).
 - **Notes**: The agent keeps its `PLAN.md` and `STATUS.md` files in
   `WORKTREE/.claude-box/`, which git ignores.
 

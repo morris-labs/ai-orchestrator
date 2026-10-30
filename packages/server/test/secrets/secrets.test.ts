@@ -103,16 +103,20 @@ describe("SecretsService", () => {
     ).toEqual([g("A", "op://v/a/2"), g("B", "op://v/b/1")]);
   });
 
-  it("resolves the environment and reads each reference once per launch", async () => {
+  it("checks every reference before a launch with a fresh read, and returns names", async () => {
     const op = new FakeOp(undefined, { "op://v/a/2": "one", "op://v/b/1": "two" });
     const svc = service(
       op,
       [g("A", "op://v/a/1"), g("B", "op://v/b/1"), g("C", "op://v/b/1")],
       [g("A", "op://v/a/2")],
     );
-    expect(await svc.resolveEnv("p-00000000")).toEqual({ A: "one", B: "two", C: "two" });
+    expect(await svc.preflight("p-00000000")).toEqual(["A", "B", "C"]);
     expect(op.reads).toEqual(["op://v/a/2", "op://v/b/1"]);
-    await svc.resolveEnv("p-00000000");
+    // The pre-start check bypasses the cache, so a locked 1Password still blocks.
+    await svc.preflight("p-00000000");
+    expect(op.reads).toHaveLength(4);
+    // And it warms the cache for the broker.
+    expect(await svc.readNames("p-00000000", ["A", "C"])).toEqual({ A: "one", C: "two" });
     expect(op.reads).toHaveLength(4);
   });
 
@@ -121,7 +125,7 @@ describe("SecretsService", () => {
       new FakeOp({ installed: false, version: null, signedIn: false, mode: "none" }),
       [],
     );
-    expect(await svc.resolveEnv("p-00000000")).toEqual({});
+    expect(await svc.preflight("p-00000000")).toEqual([]);
   });
 
   it("refuses when op is missing or locked", async () => {
@@ -129,20 +133,79 @@ describe("SecretsService", () => {
       new FakeOp({ installed: false, version: null, signedIn: false, mode: "none" }),
       [g("A", "op://v/a/1")],
     );
-    await expect(missing.resolveEnv("p-00000000")).rejects.toMatchObject({
+    await expect(missing.preflight("p-00000000")).rejects.toMatchObject({
       code: "secrets_unavailable",
     });
     const locked = service(
       new FakeOp({ installed: true, version: "2", signedIn: false, mode: "desktop" }),
       [g("A", "op://v/a/1")],
     );
-    await expect(locked.resolveEnv("p-00000000")).rejects.toMatchObject({ code: "secrets_locked" });
+    await expect(locked.preflight("p-00000000")).rejects.toMatchObject({ code: "secrets_locked" });
   });
 
   it("passes not_found for an unknown project", async () => {
-    await expect(service(new FakeOp(), []).resolveEnv("nope")).rejects.toMatchObject({
+    await expect(service(new FakeOp(), []).preflight("nope")).rejects.toMatchObject({
       code: "not_found",
     });
+  });
+
+  it("keeps values for the cache lifetime only, and never keeps a failure", async () => {
+    let now = 1_000;
+    const values: Record<string, string> = {};
+    const op = new FakeOp(undefined, values);
+    const settings: GlobalSettings = { ...defaultConfig(), secretRefs: [g("A", "op://v/a/1")] };
+    const svc = new SecretsService({
+      op,
+      settings: () => settings,
+      projectRefs: async () => [],
+      listProjects: async () => [],
+      cacheTtlMs: 60_000,
+      now: () => now,
+    });
+    await expect(svc.readNames("p-00000000", ["A"])).rejects.toMatchObject({
+      code: "secrets_unavailable",
+    });
+    values["op://v/a/1"] = "SYNTHETIC_ONE";
+    expect(await svc.readNames("p-00000000", ["A"])).toEqual({ A: "SYNTHETIC_ONE" });
+    values["op://v/a/1"] = "SYNTHETIC_TWO";
+    now += 59_999;
+    expect(await svc.readNames("p-00000000", ["A"])).toEqual({ A: "SYNTHETIC_ONE" });
+    now += 1;
+    expect(await svc.readNames("p-00000000", ["A"])).toEqual({ A: "SYNTHETIC_TWO" });
+    expect(op.reads).toHaveLength(3);
+  });
+
+  it("serves only the names listed at the time of the request, all or nothing", async () => {
+    const op = new FakeOp(undefined, { "op://v/a/1": "one", "op://v/b/1": "two" });
+    let global = [g("A", "op://v/a/1"), g("B", "op://v/b/1")];
+    const svc = new SecretsService({
+      op,
+      settings: () => ({ ...defaultConfig(), secretRefs: global }),
+      projectRefs: async () => [],
+      listProjects: async () => [],
+    });
+    expect(await svc.names("p-00000000")).toEqual(["A", "B"]);
+    expect(await svc.readNames("p-00000000", ["B"])).toEqual({ B: "two" });
+    global = [g("A", "op://v/a/1")];
+    const err = await svc.readNames("p-00000000", ["A", "B"]).catch((e: unknown) => e);
+    expect(err).toMatchObject({ code: "not_found", details: { names: ["B"] } });
+    expect((err as Error).message).not.toContain("two");
+    expect(await svc.names("p-00000000")).toEqual(["A"]);
+  });
+
+  it("never caches the sudo password", async () => {
+    const ref = "op://v/sudo/password";
+    const op = new FakeOp(undefined, { [ref]: SECRET });
+    const settings: GlobalSettings = { ...defaultConfig(), sudoPasswordRef: ref };
+    const svc = new SecretsService({
+      op,
+      settings: () => settings,
+      projectRefs: async () => [],
+      listProjects: async () => [],
+    });
+    await svc.sudoPasswordHash();
+    await svc.sudoPasswordHash();
+    expect(op.reads).toEqual([ref, ref]);
   });
 
   it("checks references without returning values", async () => {

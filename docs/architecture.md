@@ -58,6 +58,14 @@ usage scheduler, and terminals.
   user's cookie. Clients without a browser send no `Origin`.
 - It stores its state in SQLite at `~/.claude-box/agentbox.db` and its
   settings in `~/.claude-box/config.json`.
+- It runs the secrets broker: one Unix socket per project container, in
+  `~/.claude-box/broker/CONTAINER/`, mounted read-only at
+  `/run/agentbox-broker` in the container. A process in the container asks
+  the socket for a secret by name, and the server resolves it from
+  1Password on demand, with a 5-minute cache. At startup, after each
+  container event, and every 30 seconds, the server opens a socket for each
+  running project container and closes the sockets of containers that are
+  gone. See [Secrets](secrets.md#the-secrets-broker).
 - It's the only client of each engine.
 
 ### Engine
@@ -84,10 +92,13 @@ keeper script, the container's first process, starts it.
 - These measures control what a process inherits; they aren't isolation.
   Every process in the container runs as one user, so repository code that
   the review runs, such as a test command or a reproduction script, can
-  still read the token file, the keeper's `/proc/1/environ` with the
-  project's secrets, and a vendor CLI's environment. With the token it can
+  still read the token file, ask the secrets broker for any secret the
+  project lists, and read a vendor CLI's environment. With the token it can
   call the engine API. Run reviews only on code you would run in the box
   yourself.
+- The engine gets the credentials it hands vendor CLIs, `git`, and `gh` from
+  the secrets broker when it starts each one, and gives each program only
+  the names its job takes. Repository code it starts gets none.
 - The dev-server proxy sends the engine token in its own header,
   `X-Agentbox-Engine-Token`, on HTTP requests and WebSocket upgrades alike,
   so the browser's `Authorization` header reaches the dev server unchanged.
@@ -195,11 +206,15 @@ The image, `claude-code` by default, is built on the host from
 - The keeper scripts in `/usr/local/lib/agentbox/`: `keeper.sh`, the
   container's first process, and `start-session.sh`, which starts one box's
   tmux session.
+- `/usr/local/bin/agentbox-secret`, the client of the secrets broker, from
+  the engine package.
 
 The server creates each container with the keeper as its command, the
-project root mounted at the same path, the engine's port and the project's
-secrets in its environment, and the engine token in a file in the mounted
-state directory. The image has no default command.
+project root mounted at the same path, the engine's port and the broker
+socket's path in its environment, the engine token in a file in the mounted
+state directory, and the broker's directory mounted read-only. No secret
+value is in the container's configuration or environment. The image has no
+default command.
 
 Right after a container starts, and before any box session runs in it, the
 server runs a root setup step with `docker exec --user root`. The step
@@ -232,9 +247,17 @@ older image's passwordless rule might still be in place.
   so you set it through the API, and saving TCP maps from the app clears it.
   A container created before loopback became the default shows its TCP maps
   as stale until it restarts.
-- **Secrets.** Secret values are in the container's environment, so
-  `docker inspect` shows them to anyone who can reach the Docker daemon. See
-  [Secrets](secrets.md).
+- **Secrets.** Secret values aren't in the container's configuration or
+  environment, so `docker inspect` shows only their names. Any process in
+  the container can still ask the broker socket for any secret the project
+  lists, without a prompt, and every request is logged with names only.
+  The socket's directory is mounted read-only, and the container user can't
+  become root, so a process in the container can't remove or replace the
+  socket or the `agentbox-secret` command. See [Secrets](secrets.md).
+- **Vendor sign-ins.** Every container mounts your `~/.claude`,
+  `~/.claude.json`, `~/.codex`, and `~/.copilot`, so any process in any
+  project container can read and change the Claude, Codex, and Copilot
+  sign-ins stored there.
 - **Root in the container.** Docker runs without a user namespace, so
   container root is host root on every bind mount: the project root,
   `~/.claude`, `~/.claude.json`, `~/.codex`, `~/.copilot`, and every project

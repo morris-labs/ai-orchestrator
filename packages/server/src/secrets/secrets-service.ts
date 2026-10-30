@@ -1,8 +1,9 @@
-// Resolves secret references into environment variables for a container
-// launch, and reports which references resolve. Values never leave this
-// module except in the environment map `resolveEnv` returns. The sudo
-// password never leaves it at all: `sudoPasswordHash` returns only its
-// SHA-512 crypt hash.
+// Resolves secret references for the secrets broker and for the pre-start
+// check of a container launch, and reports which references resolve. Values
+// leave this module only through `readNames`, which the broker calls for a
+// container that asks. The sudo password never leaves it at all:
+// `sudoPasswordHash` returns only its SHA-512 crypt hash, and the password
+// never enters the cache.
 import type {
   GlobalSettings,
   SecretRef,
@@ -17,12 +18,19 @@ import type { OpClient } from "./op.js";
 export type SecretsCheckResult = z.infer<typeof SecretsCheckResultSchema>;
 export type SecretsView = z.infer<typeof SecretsViewSchema>;
 
+/** The default time a resolved value stays in the cache: 5 minutes. */
+export const SECRET_CACHE_TTL_MS = 5 * 60_000;
+
 export interface SecretsServiceOptions {
   op: OpClient;
   settings: () => GlobalSettings;
   /** The project's references; throws `not_found` for an unknown project. */
   projectRefs: (projectId: string) => Promise<SecretRef[]>;
   listProjects: () => Promise<{ projectId: string; refs: SecretRef[] }[]>;
+  /** How long a resolved value stays cached, in milliseconds. Default: `SECRET_CACHE_TTL_MS`. */
+  cacheTtlMs?: number;
+  /** The clock in milliseconds; tests replace it. Default: `Date.now`. */
+  now?: () => number;
 }
 
 /**
@@ -37,46 +45,72 @@ export function mergeSecretRefs(global: SecretRef[], project: SecretRef[]): Secr
 }
 
 export class SecretsService {
-  /** Values by reference, for the current launch only. */
-  private cache = new Map<string, Promise<string>>();
+  /** Values by reference, each until its expiry time. Failed reads aren't kept. */
+  private cache = new Map<string, { value: Promise<string>; expiresAt: number }>();
 
   constructor(private readonly opts: SecretsServiceOptions) {}
-
-  /** Starts a new launch: later reads go to `op` again. */
-  beginLaunch(): void {
-    this.cache = new Map();
-  }
 
   clearCache(): void {
     this.cache = new Map();
   }
 
+  /** The global and the project's references, merged. Throws `not_found` for an unknown project. */
+  async refsFor(projectId: string): Promise<SecretRef[]> {
+    return mergeSecretRefs(this.opts.settings().secretRefs, await this.opts.projectRefs(projectId));
+  }
+
+  /** The variable names a container of the project may request, sorted. */
+  async names(projectId: string): Promise<string[]> {
+    return (await this.refsFor(projectId)).map((r) => r.name).sort();
+  }
+
   /**
-   * Resolves the global and the project's references into an environment
-   * map. Throws `secrets_unavailable` when `op` is missing or a reference
-   * doesn't resolve, and `secrets_locked` when `op` is not signed in.
+   * The pre-start check of a container launch: resolves every reference with
+   * a fresh `op read`, keeps the values in the cache for the broker, and
+   * returns the names, sorted. Throws `secrets_unavailable` when `op` is
+   * missing or a reference doesn't resolve, and `secrets_locked` when `op`
+   * is not signed in.
    */
-  async resolveEnv(projectId: string): Promise<Record<string, string>> {
-    const refs = mergeSecretRefs(
-      this.opts.settings().secretRefs,
-      await this.opts.projectRefs(projectId),
-    );
-    if (refs.length === 0) return {};
-    this.beginLaunch();
-    try {
-      await this.requireSignedIn();
-      const env: Record<string, string> = {};
-      for (const ref of refs) env[ref.name] = await this.read(ref.ref);
-      return env;
-    } finally {
-      this.clearCache();
+  async preflight(projectId: string): Promise<string[]> {
+    const refs = await this.refsFor(projectId);
+    if (refs.length === 0) return [];
+    await this.requireSignedIn();
+    const fresh = new Set<string>();
+    for (const ref of refs) {
+      if (fresh.has(ref.ref)) continue;
+      fresh.add(ref.ref);
+      this.cache.delete(ref.ref);
+      await this.read(ref.ref);
     }
+    return refs.map((r) => r.name).sort();
+  }
+
+  /**
+   * Resolves named secrets of a project for the broker. The names are
+   * checked against the current references on every call, so a removed
+   * reference stops resolving at once. All or nothing: throws `not_found`
+   * when the project doesn't list a name, and `secrets_locked` or
+   * `secrets_unavailable` when a value doesn't resolve.
+   */
+  async readNames(projectId: string, names: readonly string[]): Promise<Record<string, string>> {
+    const byName = new Map((await this.refsFor(projectId)).map((r) => [r.name, r.ref]));
+    const missing = names.filter((n) => !byName.has(n));
+    if (missing.length > 0) {
+      throw new ApiError(
+        "not_found",
+        `This project doesn't list the secret ${missing.join(", ")}. Add a reference for it in the project or global settings.`,
+        { names: missing },
+      );
+    }
+    const values: Record<string, string> = {};
+    for (const name of names) values[name] = await this.read(byName.get(name)!);
+    return values;
   }
 
   /**
    * Resolves the sudo password reference and returns the password's SHA-512
    * crypt hash, or `null` when no reference is set, which turns sudo off.
-   * The plaintext stays in this function. Throws like `resolveEnv`.
+   * The plaintext stays in this function. Throws like `preflight`.
    */
   async sudoPasswordHash(): Promise<string | null> {
     const ref = this.opts.settings().sudoPasswordRef;
@@ -118,12 +152,18 @@ export class SecretsService {
     }
   }
 
+  /** One reference's value, from the cache while it's fresh, else from `op`. */
   private read(ref: string): Promise<string> {
-    let value = this.cache.get(ref);
-    if (!value) {
-      value = this.opts.op.read(ref);
-      this.cache.set(ref, value);
-    }
+    const now = (this.opts.now ?? Date.now)();
+    const hit = this.cache.get(ref);
+    if (hit && hit.expiresAt > now) return hit.value;
+    const value = this.opts.op.read(ref);
+    const entry = { value, expiresAt: now + (this.opts.cacheTtlMs ?? SECRET_CACHE_TTL_MS) };
+    this.cache.set(ref, entry);
+    // A failure isn't cached: the next request asks 1Password again.
+    value.catch(() => {
+      if (this.cache.get(ref) === entry) this.cache.delete(ref);
+    });
     return value;
   }
 

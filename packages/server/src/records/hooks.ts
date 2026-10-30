@@ -23,15 +23,17 @@ export interface CoreHooks {
   /** The engine's health as the engine client last saw it. Default: unknown. */
   engineHealth(container: string): EngineHealth;
   /**
-   * The environment to inject into a project container at creation: the
-   * resolved secrets. Throw an `ApiError` (`secrets_locked`,
-   * `secrets_unavailable`) to block the launch. Default: none.
+   * The pre-start check of a project container: resolves every secret
+   * reference, opens the container's secrets broker socket, and returns the
+   * names the container may request. Throw an `ApiError` (`secrets_locked`,
+   * `secrets_unavailable`) to block the launch. Default: no secrets and no
+   * socket.
    */
-  resolveEnv(projectId: string): Promise<Record<string, string>>;
+  prepareSecrets(projectId: string, container: string): Promise<string[]>;
   /**
    * The SHA-512 crypt hash of the container user's sudo password, installed
    * in a project container at creation, or `null` to turn sudo off. Throws
-   * like `resolveEnv` to block the launch. Default: `null`.
+   * like `prepareSecrets` to block the launch. Default: `null`.
    */
   sudoPasswordHash(): Promise<string | null>;
 }
@@ -41,7 +43,7 @@ export function defaultHooks(): CoreHooks {
     reviewState: () => ({ state: "idle" }),
     listeners: () => [],
     engineHealth: () => ({ version: null, healthy: false }),
-    resolveEnv: async () => ({}),
+    prepareSecrets: async () => [],
     sudoPasswordHash: async () => null,
   };
 }

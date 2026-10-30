@@ -28,8 +28,10 @@ clean. You decide when to push and when to merge.
   under its ceiling and moves work between vendors.
 - **Dashboard**: **Agent Box Review** shows the fleet, the data flow between
   stages, every agent call, usage against ceilings, and run health, live.
-- **Secrets from 1Password**: `op://` references resolved at launch and
-  passed as environment variables. Values never reach a log or the apps.
+- **Secrets from 1Password**: `op://` references checked at launch and
+  served on request through a per-container socket and the `agentbox-secret`
+  command, never through the container's environment. Values never reach a
+  log or the apps.
 - **Desktop integration**: tray icons and notifications for decisions,
   finished runs, and boxes that end unexpectedly.
 

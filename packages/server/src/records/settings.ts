@@ -3,6 +3,7 @@
 import fs from "node:fs";
 import {
   DEFAULT_PROMPT_TEMPLATES,
+  BROKER_ENV,
   ENGINE_ENV,
   GlobalSettingsPatchSchema,
   GlobalSettingsSchema,
@@ -208,6 +209,7 @@ export const RESERVED_ENV_NAMES: ReadonlySet<string> = new Set([
   "DISABLE_AUTOUPDATER",
   "GIT_CONFIG_GLOBAL",
   ...Object.values(ENGINE_ENV),
+  ...Object.values(BROKER_ENV),
 ]);
 
 /**

@@ -92,7 +92,7 @@ try {
       tcpMaps: [],
       image: testImage,
       engine: { hostPort: 1, token: "x", version: engineVersion },
-      extraEnv: {},
+      secretNames: [],
     },
     { projectsSymlinkTarget: projectsSymlinkTarget(env), hasGitconfig: false },
   );

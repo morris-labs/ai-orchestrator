@@ -21,6 +21,7 @@ import type { EngineEndpoint, Repositories } from "../db/repositories.js";
 import type { ImageVersions } from "../docker/image.js";
 import {
   LABELS,
+  SECRETS_LABEL_BROKER,
   buildLaunchSpec,
   mergeMounts,
   mountBind,
@@ -319,10 +320,11 @@ export class ProjectService {
   /**
    * How a running project container differs from what the project asks for:
    * mounts (compared with the recorded `mounts` file, else the container's
-   * binds), TCP maps, and, when `secretNames` is given, the secret names.
-   * Empty when the container is not running or matches.
+   * binds), TCP maps, the sudo policy, and whether secrets come from the
+   * broker. The secret names don't count: the broker reads them on every
+   * request. Empty when the container is not running or matches.
    */
-  async staleDifferences(project: Project, secretNames?: readonly string[]): Promise<string[]> {
+  async staleDifferences(project: Project): Promise<string[]> {
     const name = this.containerName(project);
     const inspect = await this.deps.docker.inspectContainer(name);
     if (!inspect?.running) return [];
@@ -339,24 +341,15 @@ export class ProjectService {
     const wantMaps = tcpMapsLabel(project.tcpMaps);
     if (haveMaps !== wantMaps)
       diffs.push(`TCP maps ${haveMaps || "none"} -> ${wantMaps || "none"}`);
-    if (secretNames) {
-      const haveSecrets = inspect.labels[LABELS.secretNames] ?? "";
-      const wantSecrets = [...secretNames].sort().join(",");
-      if (haveSecrets !== wantSecrets)
-        diffs.push(`secrets ${haveSecrets || "none"} -> ${wantSecrets || "none"}`);
-    }
+    // A container from before the broker holds its secret values in its
+    // environment, where `docker inspect` shows them.
+    if (inspect.labels[LABELS.secrets] !== SECRETS_LABEL_BROKER)
+      diffs.push("secrets environment -> broker");
     // A container from before the label has the old image's passwordless sudo.
     const haveSudo = inspect.labels[LABELS.sudo] ?? "passwordless";
     const wantSudo = sudoLabel(this.deps.settings.get().sudoPasswordRef !== undefined);
     if (haveSudo !== wantSudo) diffs.push(`sudo ${haveSudo} -> ${wantSudo}`);
     return diffs;
-  }
-
-  /** The environment variable names of the secrets a container of this project gets. */
-  secretNames(project: Project): string[] {
-    const names = new Set(this.deps.settings.get().secretRefs.map((r) => r.name));
-    for (const r of project.secretRefs) names.add(r.name);
-    return [...names].sort();
   }
 
   /** Checks the engine image: it must exist and carry the expected engine version. */
@@ -480,6 +473,8 @@ export class ProjectService {
    * Makes sure the project container runs (3.3.5 `startShared` minus the
    * session): checks the image, replaces an idle container whose mounts went
    * stale or whose image was rebuilt, and creates one when none runs.
+   * `options.extraEnv` is for the host test scripts: plain variables, never
+   * secrets.
    */
   async ensureContainer(
     projectId: string,
@@ -493,10 +488,7 @@ export class ProjectService {
 
       const inspect = await docker.inspectContainer(name);
       if (inspect?.running) {
-        const stale = await this.staleDifferences(
-          project,
-          options.extraEnv ? Object.keys(options.extraEnv) : this.secretNames(project),
-        );
+        const stale = await this.staleDifferences(project);
         const idle = liveSessions(this.deps.env, name).length === 0;
         if (idle && (stale.length > 0 || inspect.imageId !== imageId)) {
           await docker.stopContainer(name, 10);
@@ -515,8 +507,10 @@ export class ProjectService {
         }
       }
 
-      // Secrets resolve only when a container is created: they are fixed for its life.
-      const extraEnv = options.extraEnv ?? (await this.deps.hooks().resolveEnv(projectId));
+      // The pre-start check: every reference must resolve now, so a locked
+      // 1Password blocks the launch instead of failing later inside a tool.
+      // It also opens the broker socket that the container asks for values.
+      const secretNames = await this.deps.hooks().prepareSecrets(projectId, name);
       // So is the sudo password: only its hash reaches the container.
       const passwordHash = await this.deps.hooks().sudoPasswordHash();
       if (passwordHash !== null && !SHA512_CRYPT_PATTERN.test(passwordHash)) {
@@ -536,7 +530,8 @@ export class ProjectService {
           tcpMaps: project.tcpMaps,
           image,
           engine: { hostPort, token, version: this.deps.engineVersion },
-          extraEnv,
+          secretNames,
+          extraEnv: options.extraEnv,
           graceSec: this.deps.graceSec,
           sudoPassword: passwordHash !== null,
         },

@@ -14,6 +14,7 @@ import {
   type CliAdapterOptions,
 } from "./base.js";
 import { parseStructuredText } from "./output.js";
+import { credentialsFor } from "../process/credentials.js";
 import { copilotTokenProblem } from "../process/env.js";
 import { runProcess } from "./process.js";
 import { AdapterError, type CliRequest, type CliResult, type CliLimitInfo } from "./types.js";
@@ -149,9 +150,11 @@ export class CopilotAdapter extends CliAdapter {
     const promptFile = join(dir, "prompt.md");
     try {
       writeFileSync(promptFile, prompt, { mode: 0o600 });
+      const credentials = await credentialsFor(`vendor:${this.vendor}`, this.command);
       const result = await runProcess({
         command: this.command,
         args: this.buildArgs(req, promptFile, sessionId),
+        credentials,
         cwd: req.cwd,
         env: this.options.env,
         envProfile: `vendor:${this.vendor}`,
@@ -186,6 +189,7 @@ export class CopilotAdapter extends CliAdapter {
             summary.error?.message ?? (summary.text === null ? "Copilot returned no answer." : ""),
           ),
           `${summary.error?.message ?? ""}\n${result.stderr}`,
+          credentials,
         );
       }
 
@@ -228,9 +232,13 @@ export class CopilotAdapter extends CliAdapter {
    * Copilot's environment, so a sign-in failure with only a classic token
    * around means Copilot has neither its own sign-in nor a usable token.
    */
-  signInFailure(error: AdapterError, text: string): AdapterError {
+  signInFailure(
+    error: AdapterError,
+    text: string,
+    credentials: Record<string, string> = {},
+  ): AdapterError {
     if (error.kind === "limit") return error;
-    const problem = copilotTokenProblem(process.env, this.options.env);
+    const problem = copilotTokenProblem(process.env, { ...credentials, ...this.options.env });
     const refused = CLASSIC_TOKEN_REFUSED.test(text);
     if (!refused && !(problem && error.kind === "auth")) return error;
     const advice =

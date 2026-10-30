@@ -13,6 +13,9 @@ import { parseStructuredText, VendorFindingsOutputSchema } from "../../src/adapt
 import type { AdapterError, CliRequest } from "../../src/adapters/types.js";
 import { fixture, fixturePath } from "./helpers.js";
 import { tempDir } from "../tmp.js";
+import { setCredentialSource } from "../../src/process/credentials.js";
+import { BrokerClient } from "../../src/secrets/broker-client.js";
+import { startFakeBroker } from "../secrets/fake-broker.js";
 
 const now = new Date("2026-10-28T09:00:00Z");
 const base: CliRequest<unknown> = {
@@ -284,6 +287,27 @@ describe("CopilotAdapter", () => {
     });
     await fineGrained.review({ ...base, cwd: dir, timeoutMs: 10_000 }).catch(() => undefined);
     expect(readFileSync(seen, "utf8")).toBe("github_pat_fine||");
+
+    // The same holds for a token that comes from the secrets broker.
+    const broker = await startFakeBroker({ GH_TOKEN: "ghp_classic0123", DATABASE_URL: "x" });
+    setCredentialSource(new BrokerClient({ socketPath: broker.socketPath }));
+    try {
+      const brokered = new CopilotAdapter({
+        command: cli,
+        outputFormat: "text",
+        env: { GITHUB_TOKEN: undefined, COPILOT_GITHUB_TOKEN: undefined },
+      });
+      const fromBroker = (await brokered
+        .review({ ...base, cwd: dir, timeoutMs: 10_000 })
+        .catch((e: unknown) => e)) as AdapterError;
+      expect(readFileSync(seen, "utf8")).toBe("||");
+      expect(broker.reads.map((r) => r.names)).toEqual([["GH_TOKEN"]]);
+      expect(fromBroker.message).toMatch(/GH_TOKEN holds a classic personal access token/);
+      expect(fromBroker.message).not.toContain("ghp_classic0123");
+    } finally {
+      setCredentialSource(null);
+      await broker.close();
+    }
   });
 
   it("points at the prompt file and lets a read-only call read it", () => {

@@ -2,6 +2,7 @@
 // callback for streaming JSON output.
 import { spawn } from "node:child_process";
 import { trackChild } from "../process/children.js";
+import { credentialsFor } from "../process/credentials.js";
 import { childEnv, type EnvProfile } from "../process/env.js";
 
 export interface RunProcessOptions {
@@ -20,6 +21,12 @@ export interface RunProcessOptions {
    * `src/process/env.ts`). Default `untrusted`: no credentials.
    */
   envProfile?: EnvProfile;
+  /**
+   * The profile's credentials, when the caller already got them from the
+   * broker. Absent means `runProcess` asks the broker itself. `env` wins
+   * over these.
+   */
+  credentials?: Record<string, string>;
   /** Kills the child after this many milliseconds. Absent or 0 means no limit. */
   timeoutMs?: number;
   signal?: AbortSignal;
@@ -43,9 +50,11 @@ export interface ProcessResult {
 }
 
 /** Runs one command to completion. It never rejects; inspect the result. */
-export function runProcess(opts: RunProcessOptions): Promise<ProcessResult> {
+export async function runProcess(opts: RunProcessOptions): Promise<ProcessResult> {
   const started = Date.now();
-  const env = childEnv(opts.envProfile ?? "untrusted", opts.env);
+  const profile = opts.envProfile ?? "untrusted";
+  const credentials = opts.credentials ?? (await credentialsFor(profile, opts.command));
+  const env = childEnv(profile, { ...credentials, ...opts.env });
 
   return new Promise((resolve) => {
     let stdout = "";
