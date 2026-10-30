@@ -84,7 +84,7 @@ export function AgentsTable({
                     ) : a.outcome === "ok" ? (
                       <span className="ab-status ab-tone-good">✓ Done</span>
                     ) : (
-                      <span className="ab-status ab-tone-serious">▲ {a.outcome}</span>
+                      <span className="ab-status ab-tone-serious">▲ {a.outcome ?? "ended"}</span>
                     )}
                   </td>
                 </tr>

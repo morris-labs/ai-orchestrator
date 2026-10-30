@@ -46,3 +46,10 @@ export function commaList(text: string): string[] | undefined {
     .filter(Boolean);
   return items.length > 0 ? items : undefined;
 }
+
+/** Reports whether two optional lists hold the same items in the same order. */
+export function sameList(a: string[] | undefined, b: string[] | undefined): boolean {
+  const x = a ?? [];
+  const y = b ?? [];
+  return x.length === y.length && x.every((v, i) => v === y[i]);
+}

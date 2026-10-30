@@ -45,8 +45,22 @@ function FindingDetail({
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   useEffect(() => {
+    // A response for a finding the user has since left must not replace the
+    // detail, or Waive acts on a finding other than the one shown.
+    let live = true;
     setDetail(null);
-    api.call("findings.get", { params: { runId, findingId } }).then(setDetail, setError);
+    setError(null);
+    api.call("findings.get", { params: { runId, findingId } }).then(
+      (d) => {
+        if (live) setDetail(d);
+      },
+      (err: unknown) => {
+        if (live) setError(err);
+      },
+    );
+    return () => {
+      live = false;
+    };
   }, [api, runId, findingId]);
   if (!detail) return error ? <ErrorBanner error={error} /> : <p className="muted">Loading…</p>;
   const f = detail.finding;
@@ -54,8 +68,9 @@ function FindingDetail({
   async function waive() {
     setBusy(true);
     try {
+      // Waive the finding on screen, which is the one the reason was typed for.
       const updated = await api.call("findings.waive", {
-        params: { runId, findingId },
+        params: { runId, findingId: f.id },
         body: { reason: reason.trim() },
       });
       setDetail((d) => (d ? { ...d, finding: updated } : d));
@@ -192,10 +207,27 @@ export function Findings({ runId, findingId }: { runId: string | null; findingId
   const selectedRun = runId ?? runs[0]?.id ?? null;
   useEffect(() => {
     if (!selectedRun) return;
-    api
-      .call("findings.list", { params: { runId: selectedRun } })
-      .then((r) => setFindings(r.findings), setError);
+    // Drop a late list for a run the user has since left.
+    let live = true;
+    api.call("findings.list", { params: { runId: selectedRun } }).then(
+      (r) => {
+        if (live) setFindings(r.findings);
+      },
+      (err: unknown) => {
+        if (live) setError(err);
+      },
+    );
+    return () => {
+      live = false;
+    };
   }, [api, selectedRun, resets]);
+
+  // Another run's findings never show under this run while its list loads.
+  const [listedRun, setListedRun] = useState(selectedRun);
+  if (listedRun !== selectedRun) {
+    setListedRun(selectedRun);
+    setFindings([]);
+  }
 
   useAnyEvent((e) => {
     if (e.type === "finding.changed" && e.runId === selectedRun) {
@@ -320,6 +352,7 @@ export function Findings({ runId, findingId }: { runId: string | null; findingId
         <div className="detail-pane">
           {selectedRun && findingId ? (
             <FindingDetail
+              key={`${selectedRun}/${findingId}`}
               runId={selectedRun}
               findingId={findingId}
               run={run}

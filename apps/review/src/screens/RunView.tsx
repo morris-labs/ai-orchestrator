@@ -21,12 +21,12 @@ import {
   formatUsd,
   vendorColor,
 } from "@agentbox/ui/dashboard";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ErrorBanner, RunStatusBadge, shortId } from "../components/common.js";
 import { href } from "../state/router.js";
 import { useApiClient, useAnyEvent } from "@agentbox/ui/hooks";
 import { useStore } from "../state/store.js";
-import { decisionView, oscillationPairs, runControls, stepStates } from "./runModel.js";
+import { decisionView, isNewerRun, oscillationPairs, runControls, stepStates } from "./runModel.js";
 
 export function StageStepper({ run }: { run: Pick<RunState, "stage" | "status" | "request"> }) {
   const steps = stepStates(run.request.pipeline, run.stage, run.status);
@@ -275,19 +275,30 @@ export function RunView({ runId }: { runId: string }) {
   const dashboard = useStore((s) => s.dashboard);
   const agents = agentRows(dashboard, runId);
 
+  // The newest run state seen from either REST or the event stream. Kept in
+  // a ref so a late response can be compared without a state updater.
+  const latest = useRef<RunState | null>(null);
+  const applyRun = useCallback((next: RunState): boolean => {
+    if (!isNewerRun(latest.current, next)) return false;
+    latest.current = next;
+    setRun(next);
+    return true;
+  }, []);
+
   const load = useCallback(async () => {
     try {
       const [r, rs] = await Promise.all([
         api.call("runs.get", { params: { runId } }),
         api.call("runs.rounds", { params: { runId } }),
       ]);
-      setRun(r);
-      setRounds(rs.rounds);
+      // The rounds come from the same moment as the run, so a stale run
+      // means stale rounds too.
+      if (applyRun(r)) setRounds(rs.rounds);
       setError(null);
     } catch (err) {
       setError(err);
     }
-  }, [api, runId]);
+  }, [api, runId, applyRun]);
 
   useEffect(() => {
     void load();
@@ -295,7 +306,7 @@ export function RunView({ runId }: { runId: string }) {
 
   useAnyEvent((e) => {
     if (e.type === "run.changed" && e.run.id === runId) {
-      setRun(e.run);
+      if (!applyRun(e.run)) return;
       const summary = e.roundSummary;
       if (summary)
         setRounds((rs) =>
@@ -304,7 +315,11 @@ export function RunView({ runId }: { runId: string }) {
           ),
         );
     } else if (e.type === "stage.changed" && e.runId === runId) {
-      setRun((r) => (r ? { ...r, stage: e.stage, round: e.round } : r));
+      const prev = latest.current;
+      if (prev) {
+        latest.current = { ...prev, stage: e.stage, round: e.round };
+        setRun(latest.current);
+      }
     }
   });
 
@@ -339,7 +354,7 @@ export function RunView({ runId }: { runId: string }) {
   async function act(fn: () => Promise<RunState>) {
     setBusy(true);
     try {
-      setRun(await fn());
+      applyRun(await fn());
       setError(null);
     } catch (err) {
       setError(err);

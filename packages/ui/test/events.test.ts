@@ -168,6 +168,19 @@ describe("EventsConnection", () => {
     expect(timers).toHaveLength(0);
     expect(conn.currentStatus).toBe("closed");
   });
+
+  it("delivers no frame after stop, as Node's ws does for buffered frames", async () => {
+    const { server, conn, events } = setup();
+    conn.start();
+    await flush();
+    const sock = server.socketsFor("/api/v1/events")[0] as FakeSocket;
+    server.emit(boxEvent());
+    conn.stop();
+    // `ws` fires `message` for frames it read before `close()` took effect.
+    sock.serverSend({ ...boxEvent(), seq: 2, sourceSeq: 2 });
+    expect(events).toEqual(["box.changed#1"]);
+    expect(sock.onmessage).toBeNull();
+  });
 });
 
 describe("EventHub", () => {

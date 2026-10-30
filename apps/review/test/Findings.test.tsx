@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { Findings } from "../src/screens/Findings.js";
 import { RUN_ID, demoFindings, lastRun, loadDemoEvents } from "./helpers/data.js";
 import { renderWithStore } from "./helpers/render.js";
+import { StoreProvider } from "../src/state/store.js";
 
 const findings = demoFindings();
 const run = { ...lastRun(), prUrl: "https://github.com/octo/app/pull/12", prNumber: 12 };
@@ -79,5 +80,62 @@ describe("Findings", () => {
       for (const e of loadDemoEvents()) store.ingest(e);
     });
     expect(screen.getByText("6 of 6 findings")).toBeInTheDocument();
+  });
+});
+
+describe("Findings with out-of-order responses", () => {
+  const OTHER_RUN = "01JB8Z5K3W6Q2V9X4T7R0M1N2Q";
+
+  function gate() {
+    let release!: () => void;
+    const wait = new Promise<void>((res) => (release = res));
+    return { wait, release };
+  }
+
+  function show(r: ReturnType<typeof renderWithStore>, ui: React.ReactElement) {
+    r.rerender(<StoreProvider store={r.store}>{ui}</StoreProvider>);
+  }
+
+  it("keeps the detail and Waive on the finding the user selected last", async () => {
+    const slow = gate();
+    const base = handlers();
+    const r = renderWithStore(<Findings runId={RUN_ID} findingId="F-0001" />, {
+      ...base,
+      "findings.get": async (c: { params: Record<string, string> }) => {
+        if (c.params.findingId === "F-0001") await slow.wait;
+        return base["findings.get"](c);
+      },
+    });
+    show(r, <Findings runId={RUN_ID} findingId="F-0007" />);
+    await screen.findByRole("article", { name: "Finding F-0007" });
+    slow.release();
+    await new Promise((res) => setTimeout(res, 20));
+    const detail = screen.getByRole("article", { name: "Finding F-0007" });
+    fireEvent.change(within(detail).getByLabelText("Reason for waiving"), {
+      target: { value: "SYNTHETIC reason" },
+    });
+    fireEvent.click(within(detail).getByRole("button", { name: "Waive" }));
+    await waitFor(() => expect(r.server.callsTo("findings.waive")).toHaveLength(1));
+    expect(r.server.callsTo("findings.waive")[0]!.params.findingId).toBe("F-0007");
+  });
+
+  it("ignores a late findings list for a run the user left", async () => {
+    const slow = gate();
+    const r = renderWithStore(<Findings runId={RUN_ID} findingId={null} />, {
+      ...handlers(),
+      "runs.list": () => ({ runs: [run, { ...run, id: OTHER_RUN }] }),
+      "findings.list": async (c: { params: Record<string, string> }) => {
+        if (c.params.runId === RUN_ID) {
+          await slow.wait;
+          return { findings };
+        }
+        return { findings: [] };
+      },
+    });
+    show(r, <Findings runId={OTHER_RUN} findingId={null} />);
+    await waitFor(() => expect(r.server.callsTo("findings.list")).toHaveLength(2));
+    slow.release();
+    await new Promise((res) => setTimeout(res, 20));
+    expect(screen.getByText("0 of 0 findings")).toBeInTheDocument();
   });
 });

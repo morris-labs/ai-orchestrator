@@ -271,6 +271,32 @@ describe("MessageBox", () => {
     await user.keyboard("{Escape}");
     expect(onAnswer).toHaveBeenLastCalledWith({ button: "no", checked: false });
   });
+  it("keeps an open box's checkbox when a second request queues behind it", async () => {
+    const onAnswer = vi.fn();
+    const user = userEvent.setup();
+    let ask!: ReturnType<typeof useMessageBox>["ask"];
+    function Capture() {
+      ask = useMessageBox().ask;
+      return null;
+    }
+    render(
+      <MessageBoxProvider>
+        <Asker onAnswer={onAnswer} />
+        <Capture />
+      </MessageBoxProvider>,
+    );
+    await user.click(screen.getByText("go"));
+    await user.click(screen.getByLabelText("Also copy"));
+    expect(screen.getByLabelText("Also copy")).toBeChecked();
+    act(() => {
+      void ask({ title: "SYNTHETIC second", text: "Later", buttons: [{ id: "ok", label: "OK" }] });
+    });
+    expect(screen.getByRole("dialog", { name: "Restart All" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Also copy")).toBeChecked();
+    await user.click(screen.getByText("Yes"));
+    expect(onAnswer).toHaveBeenLastCalledWith({ button: "yes", checked: true });
+    expect(screen.getByRole("dialog", { name: "SYNTHETIC second" })).toBeInTheDocument();
+  });
 });
 
 describe("menus, toasts, and collapsibles", () => {

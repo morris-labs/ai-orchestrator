@@ -96,6 +96,11 @@ export class EventsConnection {
     const s = this.socket;
     this.socket = null;
     if (s) {
+      // Node's `ws` keeps delivering frames it already buffered after
+      // `close()`, so detach every handler, not only `onclose`.
+      s.onopen = null;
+      s.onmessage = null;
+      s.onerror = null;
       s.onclose = null;
       s.close();
     }
@@ -129,9 +134,12 @@ export class EventsConnection {
     // The backoff resets on the server's hello, not on open: a server that
     // accepts the upgrade and then closes, such as one that rejects the
     // token, keeps backing off.
-    socket.onopen = () => this.sendHello();
+    socket.onopen = () => {
+      if (this.socket === socket) this.sendHello();
+    };
     socket.onmessage = (ev: MessageEvent) => {
-      if (typeof ev.data !== "string") return;
+      // A frame from a socket this connection has let go of is stale.
+      if (this.socket !== socket || typeof ev.data !== "string") return;
       let raw: unknown;
       try {
         raw = JSON.parse(ev.data);

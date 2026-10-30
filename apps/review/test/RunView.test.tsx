@@ -162,4 +162,31 @@ describe("RunView", () => {
     act(() => store.ingest({ ...ev, run: { ...run, status: "paused" } } as typeof ev));
     expect(await screen.findByRole("button", { name: "Resume" })).toBeInTheDocument();
   });
+
+  it("keeps a newer event's state when an older REST response arrives late", async () => {
+    const run = { ...lastRun(), status: "running" as const, decision: null };
+    let release!: () => void;
+    const gate = new Promise<void>((res) => (release = res));
+    const { store, server } = renderWithStore(<RunView runId={RUN_ID} />, {
+      ...handlers(run),
+      "runs.get": async () => {
+        await gate;
+        return run;
+      },
+    });
+    await waitFor(() => expect(server.callsTo("runs.get")).toHaveLength(1));
+    const later = new Date(Date.parse(run.updatedAt) + 60_000).toISOString();
+    const ev = loadDemoEvents().find((e) => e.type === "run.changed")!;
+    act(() =>
+      store.ingest({
+        ...ev,
+        run: { ...run, status: "paused", updatedAt: later },
+      } as typeof ev),
+    );
+    expect(await screen.findByRole("button", { name: "Resume" })).toBeInTheDocument();
+    release();
+    await new Promise((res) => setTimeout(res, 20));
+    expect(screen.getByRole("button", { name: "Resume" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Pause" })).toBeNull();
+  });
 });

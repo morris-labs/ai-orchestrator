@@ -1,7 +1,9 @@
-import type { AgentBoxEvent, TimedUsageSample } from "@agentbox/contracts";
+import type { AgentBoxEvent, EventOf, TimedUsageSample } from "@agentbox/contracts";
 import {
   addUsageSamples,
   applyEvent,
+  CLOSED_RUN_LIMIT,
+  type DashboardState,
   edgeKey,
   emptyDashboard,
   replay,
@@ -327,5 +329,92 @@ describe("seedDashboard", () => {
     });
     expect(s.boxes).toEqual({ "claude-agent-y": "stopped" });
     expect(s.containers).toEqual({});
+  });
+});
+
+describe("agents that never report agent.finished", () => {
+  const started = events.find((e) => e.type === "agent.started") as EventOf<"agent.started">;
+  const runEvent = [...events]
+    .reverse()
+    .find((e) => e.type === "run.changed") as EventOf<"run.changed">;
+  const run = runEvent.run;
+  const running = (s: DashboardState) =>
+    Object.values(s.agents).filter((a) => a.finishedAt === null).length;
+
+  function withRunningAgent(start = state) {
+    const s = applyEvent(
+      start,
+      makeEvent("agent.started", { ...started, agentId: "SYNTHETIC_agent", round: 3 }),
+    );
+    expect(running(s)).toBe(1);
+    return s;
+  }
+
+  it("ends a run's running agents when the run ends", () => {
+    const s = applyEvent(
+      withRunningAgent(),
+      makeEvent("run.changed", { run: { ...run, status: "failed" }, roundSummary: null }),
+    );
+    expect(running(s)).toBe(0);
+    const a = s.agents[`${RUN_ID}/SYNTHETIC_agent`]!;
+    expect(a.finishedAt).not.toBeNull();
+    expect(a.outcome).toBeNull();
+  });
+
+  it("ends a project's running agents when its engine goes unhealthy", () => {
+    const s = applyEvent(
+      withRunningAgent(),
+      makeEvent("container.changed", {
+        container: CONTAINER,
+        projectId: run.request.projectId,
+        state: "running",
+        engine: { hostPort: 20412, version: "4.0.0-dev", healthy: false, versionMatches: true },
+      }),
+    );
+    expect(running(s)).toBe(0);
+  });
+
+  it("leaves other projects' agents running", () => {
+    const s = applyEvent(
+      withRunningAgent(),
+      makeEvent("container.changed", {
+        container: "claude-agent-proj-SYNTHETIC_other",
+        projectId: "SYNTHETIC_other",
+        state: "exited",
+        engine: null,
+      }),
+    );
+    expect(running(s)).toBe(1);
+  });
+
+  it("ends the agents of a run that a snapshot reports as ended", () => {
+    const s = seedDashboard(withRunningAgent(emptyDashboard()), {
+      runs: [{ ...run, status: "cancelled" }],
+      time: "2026-10-28T12:00:00.000Z",
+    });
+    expect(running(s)).toBe(0);
+  });
+
+  it("keeps only the newest finished runs, with their agents and flows", () => {
+    let s = emptyDashboard();
+    const total = CLOSED_RUN_LIMIT + 5;
+    const idOf = (i: number) => `SYNTHETIC_run_${String(i).padStart(3, "0")}`;
+    for (let i = 0; i < total; i += 1) {
+      const id = idOf(i);
+      const at = new Date(Date.parse("2026-10-01T00:00:00.000Z") + i * 60_000).toISOString();
+      s = applyEvent(s, makeEvent("agent.started", { ...started, runId: id, agentId: "a1" }));
+      s = applyEvent(
+        s,
+        makeEvent("run.changed", {
+          run: { ...run, id, status: "finished", updatedAt: at },
+          roundSummary: null,
+        }),
+      );
+    }
+    expect(Object.keys(s.runs)).toHaveLength(CLOSED_RUN_LIMIT);
+    expect(Object.keys(s.agents)).toHaveLength(CLOSED_RUN_LIMIT);
+    expect(s.runs[idOf(0)]).toBeUndefined();
+    expect(s.agents[`${idOf(0)}/a1`]).toBeUndefined();
+    expect(s.runs[idOf(total - 1)]).toBeDefined();
   });
 });

@@ -71,7 +71,9 @@ export function runningPerVendor(agents: readonly AgentView[]): Record<Vendor, n
 /** Milliseconds an agent has run: final when finished, else up to `now`. */
 export function agentElapsed(agent: AgentView, now: number): number {
   if (agent.elapsedMs !== null) return agent.elapsedMs;
-  return Math.max(0, now - Date.parse(agent.startedAt));
+  // An agent ended without `agent.finished` stops counting when it ended.
+  const end = agent.finishedAt === null ? now : Date.parse(agent.finishedAt);
+  return Math.max(0, end - Date.parse(agent.startedAt));
 }
 
 // ---------------------------------------------------------------------------
