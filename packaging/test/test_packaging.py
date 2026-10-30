@@ -38,6 +38,9 @@ SHELL_SCRIPTS = [
     ROOT / "scripts/lib/common.sh",
     ROOT / "packaging/deb/scripts/postinst",
     ROOT / "packaging/deb/scripts/prerm",
+    ROOT / "image/keeper/keeper.sh",
+    ROOT / "image/keeper/start-session.sh",
+    ROOT / "image/keeper/test-keeper.sh",
 ]
 
 
@@ -155,6 +158,37 @@ class WorkflowTest(unittest.TestCase):
         self.assertIn("dist/*.deb", files["with"]["files"])
         self.assertIn("dist/*.tgz", files["with"]["files"])
 
+    def test_actions_are_pinned_by_commit(self):
+        # A tag can be moved to other code; a commit SHA can't.
+        for f in sorted(WORKFLOWS.glob("*.yml")):
+            uses = re.findall(r"(?m)^\s*-?\s*uses:\s*(.*)$", f.read_text())
+            self.assertTrue(uses, f.name)
+            for line in uses:
+                self.assertRegex(line, r"^[\w.-]+/[\w.-]+@[0-9a-f]{40} # v\d+\.\d+\.\d+$", f"{f.name}: {line}")
+
+    def test_downloads_are_checksummed(self):
+        # Every tool a workflow downloads is saved to a file and checked with
+        # sha256sum against a pinned *_SHA256 value before it runs.
+        for f in sorted(WORKFLOWS.glob("*.yml")):
+            doc = load_yaml(f)
+            pins = doc.get("env", {})
+            for job in doc["jobs"].values():
+                for step in job["steps"]:
+                    run = step.get("run", "")
+                    if "curl" not in run:
+                        continue
+                    self.assertNotRegex(run, r"curl[^\n]*\|", f"{f.name}: a download is piped before its check")
+                    self.assertIn("sha256sum -c", run, f"{f.name}: {step.get('name')}")
+                    for var in re.findall(r"\$\{?([A-Z_]+_SHA256)\}?", run):
+                        self.assertRegex(pins.get(var, ""), r"^[0-9a-f]{64}$", f"{f.name}: {var}")
+                    downloads = len(re.findall(r"\bcurl\b", run))
+                    self.assertEqual(downloads, len(set(re.findall(r"\$([A-Z_]+_SHA256)", run))), f.name)
+
+    def test_ci_runs_the_keeper_tests(self):
+        doc = load_yaml(WORKFLOWS / "ci.yml")
+        runs = [s.get("run", "") for s in doc["jobs"]["packaging"]["steps"]]
+        self.assertIn("image/keeper/test-keeper.sh", runs)
+
     def test_actionlint(self):
         actionlint = tool("actionlint")
         subprocess.run([actionlint, *map(str, sorted(WORKFLOWS.glob("*.yml")))], check=True)
@@ -192,6 +226,19 @@ class ImageTest(unittest.TestCase):
         # The CLI layer comes after the package layer, and the engine after both.
         order = [text.index(s) for s in ("ARG CACHEBUST_PACKAGES", "ARG CACHEBUST=", "COPY dist/")]
         self.assertEqual(order, sorted(order))
+
+    def test_engine_dependencies_are_locked(self):
+        # The engine's dependencies must come from pnpm-lock.yaml at pack
+        # time, never from a fresh registry resolve during the image build.
+        text = DOCKERFILE.read_text()
+        engine_step = text[text.index("COPY dist/"):text.index("COPY --chmod=0755 keeper/")]
+        self.assertNotIn("npm install", engine_step)
+        self.assertNotIn("--no-package-lock", engine_step)
+        self.assertIn('tar -xzf "/tmp/agentbox-dist/agentbox-engine-${AGENTBOX_ENGINE_VERSION}.tgz"', engine_step)
+        self.assertIn("node_modules", engine_step)
+        script = (ROOT / "scripts/build-image.sh").read_text()
+        self.assertRegex(script, r"--filter @agentbox/engine deploy --legacy --prod --frozen-lockfile")
+        self.assertNotIn(" pack --pack-destination", script)
 
     def test_hadolint(self):
         hadolint = tool("hadolint")
@@ -347,6 +394,73 @@ class ScriptsTest(unittest.TestCase):
     def test_shellcheck(self):
         shellcheck = tool("shellcheck")
         subprocess.run([shellcheck, "-x", *map(str, SHELL_SCRIPTS)], check=True, cwd=ROOT)
+
+    def test_build_deb_resolves_a_relative_out_dir(self):
+        # nfpm runs from the staging directory, so a relative --out such as
+        # the release workflow's `--out dist` must be made absolute first.
+        with tempfile.TemporaryDirectory() as tmp:
+            result = subprocess.run(
+                [str(ROOT / "scripts/build-deb.sh"), "--out", "dist", "--help"],
+                cwd=tmp, check=True, capture_output=True, text=True,
+            )
+            self.assertIn(f"into {os.path.realpath(tmp)}/dist.", result.stdout)
+
+    def test_host_checks_keep_the_token_out_of_argv(self):
+        # Other local users can read every process's argument list with ps,
+        # so the server token must reach curl and the WebSocket client
+        # through files only.
+        token = "SYNTHETIC_TOKEN_0123456789abcdef"
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = pathlib.Path(tmp)
+            (tmp / "data").mkdir()
+            (tmp / "data/server.token").write_text(token + "\n")
+            (tmp / "bin").mkdir()
+            argv_log = tmp / "argv.log"
+            for name in ("curl", "node"):
+                fake = tmp / "bin" / name
+                fake.write_text(
+                    "#!/bin/sh\n"
+                    f'printf "%s\\n" "$*" >> "{argv_log}"\n'
+                    'for a in "$@"; do case $a in @*) cat "${a#@}" >> "$HEADERS_LOG" ;; esac; done\n'
+                )
+                fake.chmod(0o755)
+            env = {
+                **os.environ,
+                "PATH": f"{tmp / 'bin'}:{os.environ['PATH']}",
+                "AGENTBOX_DATA_DIR": str(tmp / "data"),
+                "BOX_ID": "claude-agent-SYNTHETIC",
+                "PROJECT": "SYNTHETIC_PROJECT",
+                "HEADERS_LOG": str(tmp / "headers.log"),
+            }
+            script = str(ROOT / "packages/server/test/host/host-checks.sh")
+            for step in ("routes", "events", "terminal", "secrets"):
+                subprocess.run([script, step], env=env, check=True, capture_output=True)
+            argv = argv_log.read_text()
+            self.assertIn("ws-client.mjs", argv)
+            self.assertIn(str(tmp / "data/server.token"), argv)
+            self.assertNotIn(token, argv)
+            self.assertIn(f"Authorization: Bearer {token}", (tmp / "headers.log").read_text())
+
+    def test_postinst_asks_for_a_restart_on_upgrade(self):
+        # PATH holds only cat, so the script skips AppArmor and the desktop
+        # caches; no chrome-sandbox helper exists outside an installed host.
+        if pathlib.Path("/usr/lib/agentbox").exists():
+            self.skipTest("agentbox is installed on this host")
+        restart = "systemctl --user daemon-reload && systemctl --user restart agentbox-server"
+        with tempfile.TemporaryDirectory() as tmp:
+            (pathlib.Path(tmp) / "cat").symlink_to(shutil.which("cat"))
+            env = {"PATH": tmp}
+            postinst = str(ROOT / "packaging/deb/scripts/postinst")
+            upgrade = subprocess.run(
+                [postinst, "configure", "4.0.0"], env=env, check=True, capture_output=True, text=True
+            ).stdout
+            self.assertIn(restart, upgrade)
+            self.assertNotIn("enable --now", upgrade)
+            fresh = subprocess.run(
+                [postinst, "configure", ""], env=env, check=True, capture_output=True, text=True
+            ).stdout
+            self.assertIn("systemctl --user enable --now agentbox-server", fresh)
+            self.assertNotIn(restart, fresh)
 
     def test_build_deb_fails_clearly_without_tools(self):
         # With an empty PATH apart from bash and coreutils, the script must

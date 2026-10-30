@@ -2,7 +2,7 @@ name: CI
 
 # Runs on every push and pull request: the workspace checks, then the
 # packaging checks (version agreement, YAML and shell lint, Dockerfile lint,
-# and an nfpm dry run).
+# an nfpm dry run, and the keeper script tests).
 on:
   push:
   pull_request:
@@ -14,19 +14,29 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Each downloaded tool is checked against the SHA-256 checksum published
+# with its release. When you change a version, copy the new checksum from
+# the project's release page. Actions are pinned by commit, with the tag
+# the commit had in a comment.
 env:
   HADOLINT_VERSION: "2.14.0"
+  # hadolint-linux-x86_64.sha256 of https://github.com/hadolint/hadolint/releases/tag/v2.14.0
+  HADOLINT_SHA256: "6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc5a47"
   NFPM_VERSION: "2.48.0"
+  # checksums.txt of https://github.com/goreleaser/nfpm/releases/tag/v2.48.0
+  NFPM_SHA256: "6d7f9a28b2f397934403950fcbba83f598b08d02edbe79a0815b3b4897341750"
   ACTIONLINT_VERSION: "1.7.12"
+  # actionlint_1.7.12_checksums.txt of https://github.com/rhysd/actionlint/releases/tag/v1.7.12
+  ACTIONLINT_SHA256: "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
 
 jobs:
   workspace:
     name: Build, lint, typecheck, and test
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
 
@@ -52,9 +62,9 @@ jobs:
     name: Packaging checks
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
 
@@ -66,13 +76,21 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends python3-yaml shellcheck
           mkdir -p "$RUNNER_TEMP/bin"
-          curl -fsSL -o "$RUNNER_TEMP/bin/hadolint" \
+          cd "$RUNNER_TEMP"
+          curl -fsSL -o hadolint \
             "https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-linux-x86_64"
-          chmod +x "$RUNNER_TEMP/bin/hadolint"
-          curl -fsSL "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz" |
-            tar -xz -C "$RUNNER_TEMP/bin" nfpm
-          curl -fsSL "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" |
-            tar -xz -C "$RUNNER_TEMP/bin" actionlint
+          curl -fsSL -o nfpm.tar.gz \
+            "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz"
+          curl -fsSL -o actionlint.tar.gz \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          sha256sum -c - <<SUMS
+          $HADOLINT_SHA256  hadolint
+          $NFPM_SHA256  nfpm.tar.gz
+          $ACTIONLINT_SHA256  actionlint.tar.gz
+          SUMS
+          install -m 0755 hadolint "$RUNNER_TEMP/bin/hadolint"
+          tar -xzf nfpm.tar.gz -C "$RUNNER_TEMP/bin" nfpm
+          tar -xzf actionlint.tar.gz -C "$RUNNER_TEMP/bin" actionlint
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
 
       - name: Run the packaging tests
@@ -80,3 +98,6 @@ jobs:
           # Fail instead of skipping when a tool is missing in CI.
           AGENTBOX_REQUIRE_TOOLS: "1"
         run: python3 -m unittest discover -s packaging/test -v
+
+      - name: Run the keeper script tests
+        run: image/keeper/test-keeper.sh

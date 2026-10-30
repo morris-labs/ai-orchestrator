@@ -29,6 +29,26 @@ case "$1" in
       gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor || true
     fi
 
+    # dpkg passes the previously configured version as $2 on an upgrade.
+    # The running server keeps the old code, and the files under it have
+    # changed, so it must be restarted. Root can't reach each user's
+    # systemd user manager, so the package asks instead.
+    if [ -n "${2:-}" ]; then
+      cat <<'MSG'
+
+Agent Box is upgraded. A server that was already running still runs the
+old version. As each user who runs the server, restart it:
+
+  systemctl --user daemon-reload && systemctl --user restart agentbox-server
+
+Then rebuild the container image from the setup wizard, or with
+/usr/share/agentbox/scripts/build-image.sh, so that its engine matches the
+new server.
+
+MSG
+      exit 0
+    fi
+
     cat <<'MSG'
 
 Agent Box is installed. The server runs as your user, not as root, under

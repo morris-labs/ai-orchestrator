@@ -53,7 +53,7 @@ The package installs the following:
 | `/usr/bin/agentbox-boxes`, `/usr/bin/agentbox-review` | The two desktop apps |
 | `/usr/lib/agentbox/` | The server, the CLI, and both apps |
 | `/usr/lib/systemd/user/agentbox-server.service` | The systemd user unit |
-| `/usr/share/agentbox/image/` | The Dockerfile, the keeper scripts, and the engine tarballs |
+| `/usr/share/agentbox/image/` | The Dockerfile, the keeper scripts, and the engine tarball |
 | `/usr/share/applications/` | The **Agent Box** and **Agent Box Review** desktop entries |
 
 ## Start the server
@@ -133,7 +133,13 @@ the review pipeline uses only the vendors that are signed in.
 ## Upgrade
 
 1. Install the new package with `sudo apt install ./agentbox_VERSION_amd64.deb`.
-1. Restart the server: `systemctl --user restart agentbox-server`.
+1. As each user who runs the server, reload the unit and restart the
+   server, which still runs the old version until you do:
+
+   ```sh
+   systemctl --user daemon-reload && systemctl --user restart agentbox-server
+   ```
+
 1. Rebuild the image from the setup wizard or with `build-image.sh`.
 
 ## Uninstall
@@ -183,8 +189,9 @@ electron-builder comes in as a dev dependency of the two apps.
    ```
 
    The script checks for every tool before it starts and names any that are
-   missing. It writes `dist/agentbox_VERSION_amd64.deb` and packs the engine
-   tarballs into `image/dist/`.
+   missing. It writes `dist/agentbox_VERSION_amd64.deb` and packs the engine,
+   with its dependencies at the versions in `pnpm-lock.yaml`, into
+   `image/dist/`.
 
 1. Optional: Build the image from the checkout:
 
@@ -207,5 +214,5 @@ The `scripts/` directory holds the following release tools:
 
 To release, set the version, commit, and push a `vVERSION` tag. The release
 workflow builds the `.deb`, checks that the tag matches the version, and
-attaches the package and the engine tarballs to a GitHub release. The image
+attaches the package and the engine tarball to a GitHub release. The image
 isn't pushed to a registry.

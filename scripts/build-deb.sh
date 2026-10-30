@@ -25,7 +25,8 @@ Builds the agentbox .deb into $OUT_DIR.
 
 Options:
   --no-install   Skip \`pnpm install --frozen-lockfile\`.
-  --out DIR      Write the package to DIR. Default: dist/.
+  --out DIR      Write the package to DIR, relative to the current
+                 directory. Default: dist/ at the repository root.
   -h, --help     Show this help.
 
 Environment:
@@ -39,7 +40,13 @@ USAGE
 while (($#)); do
   case "$1" in
     --no-install) INSTALL=0 ;;
-    --out) OUT_DIR="${2:?--out needs a directory}"; shift ;;
+    # nfpm runs from the staging directory, so a relative DIR is resolved
+    # against the directory you run the script from.
+    --out)
+      OUT_DIR="${2:?--out needs a directory}"
+      [[ "$OUT_DIR" == /* ]] || OUT_DIR="$PWD/$OUT_DIR"
+      shift
+      ;;
     -h | --help) usage; exit 0 ;;
     *) usage >&2; die "unknown option: $1" ;;
   esac

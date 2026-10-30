@@ -139,7 +139,8 @@ pid=$!
 if wait_exit "$pid" 6; then pass "the keeper runs without an engine program"; else fail "the keeper runs without an engine program"; kill "$pid"; fi
 check "a missing engine is reported once" [ "$(grep -c "isn't installed" "$CASE/stderr")" -eq 1 ]
 
-# 8. start-session.sh: start, refuse a duplicate, report an early exit.
+# 8. start-session.sh: start, refuse a duplicate or a missing directory,
+# and report an early exit.
 new_case session
 "$HERE/start-session.sh" claude-agent-x /tmp "claude --name x" 2>/dev/null
 status=$?
@@ -155,6 +156,11 @@ check "start-session reports a session that ends at once" [ "$status" -eq 2 ]
 FAKE_FAIL=1 "$HERE/start-session.sh" claude-agent-z /tmp "true" 2>/dev/null
 status=$?
 check "start-session reports a tmux failure" [ "$status" -eq 1 ]
+: > "$FAKE_LOG"
+"$HERE/start-session.sh" claude-agent-w "$CASE/SYNTHETIC_missing_dir" "true" 2>/dev/null
+status=$?
+check "start-session refuses a missing work directory" [ "$status" -eq 4 ]
+check "start-session starts no session in a missing work directory" [ ! -s "$FAKE_LOG" ]
 
 if [ "$FAILURES" -gt 0 ]; then
   printf '%d failed\n' "$FAILURES"

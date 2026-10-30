@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # Builds the Agent Box container image.
 #
-# In a source checkout, the script packs @agentbox/engine and the workspace
-# packages it depends on into image/dist/, then runs `docker build` on the
-# image/ directory with every pin from image/versions.env as a build
-# argument. In an installed package (/usr/share/agentbox), the engine
-# tarballs ship in image/dist/ already, so the script skips packing.
+# In a source checkout, the script deploys @agentbox/engine with its
+# production dependencies at the versions in pnpm-lock.yaml and packs the
+# result, node_modules included, into image/dist/. It then runs `docker
+# build` on the image/ directory with every pin from image/versions.env as
+# a build argument. The image build only unpacks the tarball, so every host
+# gets the dependencies the workspace tests ran against, and none come from
+# the npm registry. In an installed package (/usr/share/agentbox), the
+# engine tarball ships in image/dist/ already, so the script skips packing.
 #
 # Environment:
 #   IMAGE_TAG   The image tag. Default: claude-code. The --tag option
@@ -39,7 +42,7 @@ Options:
   --update-packages      Rebuild every layer after the base image
                          (--build-arg CACHEBUST_PACKAGES=<now>).
   --no-cache             Pass --no-cache --pull to docker build.
-  --no-pack              Use the tarballs already in image/dist/.
+  --no-pack              Use the tarball already in image/dist/.
   --pack-only            Pack the engine into image/dist/ and stop.
   --print                Print the docker build command instead of running it.
   -h, --help             Show this help.
@@ -74,10 +77,17 @@ if [[ "$PACK" == auto && -f "$ROOT/pnpm-workspace.yaml" ]]; then
   read -r -a PNPM <<< "$(pnpm_cmd)"
   log "Building @agentbox/engine and its workspace dependencies"
   (cd "$ROOT" && "${PNPM[@]}" --filter "@agentbox/engine..." build)
-  log "Packing the engine into $IMAGE_DIR/dist"
+  log "Packing the engine and its locked dependencies into $IMAGE_DIR/dist"
   rm -rf "$IMAGE_DIR/dist"
   mkdir -p "$IMAGE_DIR/dist"
-  (cd "$ROOT" && "${PNPM[@]}" --filter "@agentbox/engine..." pack --pack-destination "$IMAGE_DIR/dist" > /dev/null)
+  DEPLOY="$(mktemp -d)"
+  # pnpm deploy installs from pnpm-lock.yaml and copies workspace packages,
+  # such as @agentbox/contracts, into node_modules. Its symlinks are
+  # relative, so the tree works wherever the Dockerfile unpacks it.
+  (cd "$ROOT" && "${PNPM[@]}" --filter @agentbox/engine deploy --legacy --prod --frozen-lockfile "$DEPLOY/engine" > /dev/null)
+  [[ -d "$DEPLOY/engine/node_modules" ]] || die "pnpm deploy left no node_modules in $DEPLOY/engine"
+  tar -C "$DEPLOY" --owner=0 --group=0 --numeric-owner -czf "$ENGINE_TARBALL" engine
+  rm -rf "$DEPLOY"
 fi
 
 [[ -f "$ENGINE_TARBALL" ]] ||
