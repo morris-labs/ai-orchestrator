@@ -246,6 +246,54 @@ function addCost(r: RunView, round: number, cost: number): RunView {
   };
 }
 
+/** Finished runs the dashboard keeps, with their agents and flows; older ones drop off. */
+export const CLOSED_RUN_LIMIT = 50;
+
+function isOpen(status: RunStatus): boolean {
+  return OPEN_RUN_STATUSES.includes(status);
+}
+
+/**
+ * Marks the agents of the runs that `ends` picks as ended at `time`. An
+ * agent that never reported `agent.finished`, because its run ended or its
+ * engine went away, would otherwise count as running forever. The outcome
+ * stays `null`; a later `agent.finished` still replaces the row.
+ */
+function endAgents(
+  state: DashboardState,
+  ends: (runId: string) => boolean,
+  time: string,
+): DashboardState {
+  let agents: Record<string, AgentView> | null = null;
+  for (const [key, a] of Object.entries(state.agents)) {
+    if (a.finishedAt !== null || !ends(a.runId)) continue;
+    agents ??= { ...state.agents };
+    agents[key] = { ...a, finishedAt: time };
+  }
+  return agents ? { ...state, agents } : state;
+}
+
+/**
+ * Keeps the newest `CLOSED_RUN_LIMIT` finished runs and drops older ones with
+ * their agents and flows, so a long-running app's maps stay bounded. Open runs
+ * and runs whose state isn't known yet always stay.
+ */
+function pruneRuns(state: DashboardState): DashboardState {
+  const closed = Object.values(state.runs)
+    .filter((r) => r.run !== null && !isOpen(r.run.status))
+    .sort((a, b) => Date.parse(b.run!.updatedAt) - Date.parse(a.run!.updatedAt));
+  if (closed.length <= CLOSED_RUN_LIMIT) return state;
+  const drop = new Set(closed.slice(CLOSED_RUN_LIMIT).map((r) => r.runId));
+  const keep = <T>(m: Record<string, T>, runOf: (v: T) => string) =>
+    Object.fromEntries(Object.entries(m).filter(([, v]) => !drop.has(runOf(v))));
+  return {
+    ...state,
+    runs: keep(state.runs, (r) => r.runId),
+    agents: keep(state.agents, (a) => a.runId),
+    flows: keep(state.flows, (f) => f.runId),
+  };
+}
+
 /** Applies one event. Events of other streams or older `seq` values still apply. */
 export function applyEvent(prev: DashboardState, event: AgentBoxEvent): DashboardState {
   const state: DashboardState = {
@@ -380,14 +428,17 @@ export function applyEvent(prev: DashboardState, event: AgentBoxEvent): Dashboar
       // `agent.finished` already carries the call's cost; a settlement only
       // confirms it, so the dashboard counts it once.
       return state;
-    case "run.changed":
-      return withRun(state, event.run.id, (r) => ({
+    case "run.changed": {
+      const next = withRun(state, event.run.id, (r) => ({
         ...r,
         run: event.run,
         stage: event.run.stage,
         round: event.run.round,
         rounds: event.roundSummary ? upsertRound(r.rounds, event.roundSummary) : r.rounds,
       }));
+      if (isOpen(event.run.status)) return next;
+      return pruneRuns(endAgents(next, (id) => id === event.run.id, event.time));
+    }
     case "box.changed":
       if (event.box === null) {
         const { [event.boxId]: _gone, ...boxes } = state.boxes;
@@ -396,12 +447,23 @@ export function applyEvent(prev: DashboardState, event: AgentBoxEvent): Dashboar
       return { ...state, boxes: { ...state.boxes, [event.boxId]: event.status } };
     case "container.changed": {
       const c = container(state, event.container, event.projectId, event.time);
+      // Without a running, healthy engine, the project's agents have stopped
+      // reporting. A crashed engine never sends their `agent.finished`.
+      const engineGone =
+        event.state !== "running" || event.engine === null || !event.engine.healthy;
+      const ended = engineGone
+        ? endAgents(
+            state,
+            (id) => state.runs[id]?.run?.request.projectId === event.projectId,
+            event.time,
+          )
+        : state;
       if (event.state === "removed") {
-        const { [event.container]: _gone, ...containers } = state.containers;
-        return { ...state, containers };
+        const { [event.container]: _gone, ...containers } = ended.containers;
+        return { ...ended, containers };
       }
       return {
-        ...state,
+        ...ended,
         containers: {
           ...state.containers,
           [event.container]: {
@@ -533,7 +595,16 @@ export function seedDashboard(state: DashboardState, snap: DashboardSnapshot): D
   for (const b of snap.boxes ?? []) {
     if (!snap.removed?.boxes?.has(b.box.id)) boxes[b.box.id] ??= b.status;
   }
-  return { ...state, runs, containers, boxes };
+  // Agents of a run that ended while the stream was away never finish otherwise.
+  const seeded = endAgents(
+    { ...state, runs, containers, boxes },
+    (id) => {
+      const run = runs[id]?.run;
+      return run !== null && run !== undefined && !isOpen(run.status);
+    },
+    snap.time ?? new Date().toISOString(),
+  );
+  return pruneRuns(seeded);
 }
 
 /** Applies events in order. */
