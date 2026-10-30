@@ -447,6 +447,21 @@ describe("review", () => {
     expect(out).toContain("src/mailer.ts:120-134");
   });
 
+  it("shows control characters in model text instead of sending them to the terminal", async () => {
+    const osc52 = "\u001b]52;c;U1lOVEhFVElD\u0007";
+    const title = `Retry loop ${osc52}never \u009b31m gives up`;
+    server.on(`GET /api/v1/runs/${RUN}/findings`, {
+      body: { findings: [{ ...finding, title }] },
+    });
+    await cli(["review", "findings", RUN]);
+    expect(out).toContain("Retry loop \\x1b]52;c;U1lOVEhFVElD\\x07never \\x9b31m gives up");
+    out = "";
+    await cli(["--json", "review", "findings", RUN]);
+    // eslint-disable-next-line no-control-regex -- the test looks for raw control characters.
+    expect(out).not.toMatch(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/);
+    expect(JSON.parse(out).findings[0].title).toBe(title);
+  });
+
   it("answers a decision", async () => {
     server.on(`POST /api/v1/runs/${RUN}/decision`, { body: runState });
     expect(await cli(["review", "decide", RUN, "resume_waive"])).toBe(2);

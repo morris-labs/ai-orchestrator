@@ -20,7 +20,7 @@ import {
 import { Command, CommanderError, InvalidArgumentError, Option } from "commander";
 import { ApiCallError, ServerClient, ServerUnreachableError } from "./client.js";
 import { tailEvents, type WebSocketCtor } from "./events.js";
-import { keyValues, percent, table } from "./format.js";
+import { jsonText, keyValues, percent, table, terminalText } from "./format.js";
 import { checkAttachArgv, checkServerUrl, resolveSettings } from "./settings.js";
 
 export interface CliDeps {
@@ -238,7 +238,7 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
   };
   /** Prints raw JSON with `--json`, or the text form. */
   const print = (json: unknown, text: () => string) => {
-    deps.out(globals().json ? `${JSON.stringify(json, null, 2)}\n` : text());
+    deps.out(globals().json ? `${jsonText(json, 2)}\n` : terminalText(text()));
   };
   const exec = deps.exec ?? defaultExec;
   // The server resolves nothing against its own working directory, so every
@@ -312,8 +312,12 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
       }
       if (job.status === "failed") {
         state.code = 1;
-        deps.err(`Box creation failed: ${job.error?.message ?? `exit code ${job.exitCode}`}\n`);
-        if (globals().json) deps.out(`${JSON.stringify(job, null, 2)}\n`);
+        deps.err(
+          terminalText(
+            `Box creation failed: ${job.error?.message ?? `exit code ${job.exitCode}`}\n`,
+          ),
+        );
+        if (globals().json) deps.out(`${jsonText(job, 2)}\n`);
         return;
       }
       print(job, () =>
@@ -879,9 +883,9 @@ export async function runCli(argv: string[], deps: CliDeps): Promise<number> {
       return 2;
     }
     if (err instanceof ApiCallError) {
-      deps.err(`Error (${err.code}): ${err.message}\n`);
+      deps.err(terminalText(`Error (${err.code}): ${err.message}\n`));
       if (err.details !== undefined && program.opts().json) {
-        deps.err(`${JSON.stringify(err.details, null, 2)}\n`);
+        deps.err(`${jsonText(err.details, 2)}\n`);
       }
       return 1;
     }
@@ -889,7 +893,7 @@ export async function runCli(argv: string[], deps: CliDeps): Promise<number> {
       deps.err(`${err.message}\nStart it with: systemctl --user start agentbox-server\n`);
       return 1;
     }
-    deps.err(`${err instanceof Error ? err.message : String(err)}\n`);
+    deps.err(terminalText(`${err instanceof Error ? err.message : String(err)}\n`));
     return 1;
   }
 }

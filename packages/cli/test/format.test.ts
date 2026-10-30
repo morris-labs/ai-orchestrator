@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { eventsUrl } from "../src/events.js";
-import { keyValues, percent, table } from "../src/format.js";
+import { jsonText, keyValues, percent, table, terminalText } from "../src/format.js";
 
 describe("format", () => {
   it("aligns table columns and fills empty cells", () => {
@@ -26,6 +26,22 @@ describe("format", () => {
 
   it("formats percentages", () => {
     expect(percent(0.425)).toBe("43%");
+  });
+
+  it("shows control characters as escapes", () => {
+    expect(terminalText("a\u001b[2Jb\tc\nd\u007f\u0085")).toBe("a\\x1b[2Jb\tc\nd\\x7f\\x85");
+    // A cell is one line, so tabs and newlines are escaped too.
+    expect(table(["T"], [["a\nb\tc\u0007"]])).toBe("T\na\\x0ab\\x09c\\x07\n");
+    expect(keyValues([["Title", "x\u001b]0;SYNTHETIC\u0007"]])).toBe(
+      "Title: x\\x1b]0;SYNTHETIC\\x07\n",
+    );
+  });
+
+  it("escapes DEL and C1 controls in JSON and keeps it valid", () => {
+    const value = { t: "a\u001bb\u007fc\u009bd" };
+    const text = jsonText(value);
+    expect(text).toBe('{"t":"a\\u001bb\\u007fc\\u009bd"}');
+    expect(JSON.parse(text)).toEqual(value);
   });
 
   it("builds the events URL without a token", () => {

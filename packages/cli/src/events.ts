@@ -1,6 +1,7 @@
 // `agentbox events`: tails the server's event stream as JSON lines.
 import { ServerStreamFrameSchema, serverRoutes } from "@agentbox/contracts";
 import WebSocket from "ws";
+import { jsonText } from "./format.js";
 
 export type WebSocketCtor = typeof WebSocket;
 
@@ -70,7 +71,7 @@ export function tailEvents(options: TailOptions): Promise<void> {
         finish(new Error("The server sent an event that doesn't match the contract."));
         return;
       }
-      options.write(`${JSON.stringify(parsed.data)}\n`);
+      options.write(`${jsonText(parsed.data)}\n`);
       if (parsed.data.type !== "hello") seen += 1;
       if (options.count !== undefined && seen >= options.count) finish();
     });
