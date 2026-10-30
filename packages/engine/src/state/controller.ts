@@ -76,6 +76,10 @@ export class RunController {
     const { runId, ...request } = create;
     const clock = deps.clock ?? systemClock;
     const policy = await loadPolicy(location.projectRoot, location.policyPath);
+    // The run directory goes under `.claude-box/`, which is inside the
+    // working tree when the project root is the repository. The dirty-tree
+    // check skips it too, so a failure here only leaves it in `git status`.
+    await new Git(deps.runner, request.repoPath).excludeEngineDir().catch(() => false);
     const range = await resolveRange(
       deps.runner,
       {

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseDiff } from "../../src/range/diff.js";
@@ -72,5 +72,28 @@ describe("Git.diffForPrompt", () => {
     ]);
     expect(diff).toContain("rename from SYNTHETIC_old.py");
     expect(diff).not.toContain("new file mode");
+  });
+});
+
+describe("excludeEngineDir", () => {
+  it("adds .claude-box/ to the shared info/exclude once, from any worktree", async () => {
+    const repo = tempDir("agentbox-git-");
+    git(repo, "init", "-q", "-b", "main");
+    writeFileSync(join(repo, "app.py"), "x = 1\n");
+    git(repo, "add", ".");
+    git(repo, "commit", "-q", "-m", "a");
+    const exclude = join(repo, ".git", "info", "exclude");
+    // A last line without a newline stays intact.
+    writeFileSync(exclude, "*.log");
+    const linked = join(tempDir("agentbox-git-wt-"), "wt");
+    git(repo, "worktree", "add", "-q", linked);
+
+    expect(await new Git(new ExecaRunner(), linked).excludeEngineDir()).toBe(true);
+    expect(await new Git(new ExecaRunner(), repo).excludeEngineDir()).toBe(false);
+    expect(readFileSync(exclude, "utf8")).toBe("*.log\n.claude-box/\n");
+
+    mkdirSync(join(linked, ".claude-box", "runs"), { recursive: true });
+    writeFileSync(join(linked, ".claude-box", "runs", "state.json"), "{}");
+    expect(git(linked, "status", "--porcelain", "--untracked-files=all")).toBe("");
   });
 });

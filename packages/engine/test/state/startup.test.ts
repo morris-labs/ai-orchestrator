@@ -127,6 +127,20 @@ describe("engine startup", () => {
     await runs.close();
   });
 
+  it("excludes its run directory from git when the project root is the repository", async () => {
+    const repo = buildSampleRepo();
+    const exclude = join(repo, ".git", "info", "exclude");
+    const without = readFileSync(exclude, "utf8").replace(".claude-box/\n", "");
+    writeFileSync(exclude, without);
+    await leftRun(repo, {});
+    expect(readFileSync(exclude, "utf8")).toBe(`${without}.claude-box/\n`);
+    const status = execFileSync("git", ["status", "--porcelain", "--untracked-files=all"], {
+      cwd: repo,
+      encoding: "utf8",
+    });
+    expect(status).toBe("");
+  });
+
   it("removes the directory of a base checkout that git couldn't create", async () => {
     const repo = buildSampleRepo();
     const path = baseWorktreePath(runId());

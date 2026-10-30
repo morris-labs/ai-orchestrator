@@ -1,6 +1,10 @@
 // A thin `git` client over a `CommandRunner`.
-import { rm } from "node:fs/promises";
+import { appendFile, mkdir, readFile, rm } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import type { CommandRunner } from "../core.js";
+
+/** The `info/exclude` line that hides the engine's own directory. */
+const ENGINE_DIR_PATTERN = ".claude-box/";
 
 export class GitError extends Error {
   constructor(
@@ -71,6 +75,28 @@ export class Git {
 
   async mergeBase(a: string, b: string): Promise<string> {
     return (await this.run(["merge-base", a, b])).trim();
+  }
+
+  /**
+   * Adds `.claude-box/` to the repository's `info/exclude`, which every
+   * worktree of the repository shares, unless a line there already names
+   * it. Returns whether it added the line.
+   */
+  async excludeEngineDir(): Promise<boolean> {
+    const commonDir = resolve(this.cwd, (await this.run(["rev-parse", "--git-common-dir"])).trim());
+    const file = join(commonDir, "info", "exclude");
+    let text = "";
+    try {
+      text = await readFile(file, "utf8");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    const names = new Set([".claude-box", ".claude-box/", "/.claude-box", "/.claude-box/"]);
+    if (text.split("\n").some((l) => names.has(l.trim()))) return false;
+    await mkdir(dirname(file), { recursive: true });
+    const sep = text === "" || text.endsWith("\n") ? "" : "\n";
+    await appendFile(file, `${sep}${ENGINE_DIR_PATTERN}\n`);
+    return true;
   }
 
   /** `git status --porcelain` lines, untracked files included, ignored files not. */
