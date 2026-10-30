@@ -133,7 +133,13 @@ the review pipeline uses only the vendors that are signed in.
 ## Upgrade
 
 1. Install the new package with `sudo apt install ./agentbox_VERSION_amd64.deb`.
-1. Restart the server: `systemctl --user restart agentbox-server`.
+1. As each user who runs the server, reload the unit and restart the
+   server, which still runs the old version until you do:
+
+   ```sh
+   systemctl --user daemon-reload && systemctl --user restart agentbox-server
+   ```
+
 1. Rebuild the image from the setup wizard or with `build-image.sh`.
 
 ## Uninstall

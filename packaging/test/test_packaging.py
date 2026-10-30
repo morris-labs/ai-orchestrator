@@ -441,6 +441,27 @@ class ScriptsTest(unittest.TestCase):
             self.assertNotIn(token, argv)
             self.assertIn(f"Authorization: Bearer {token}", (tmp / "headers.log").read_text())
 
+    def test_postinst_asks_for_a_restart_on_upgrade(self):
+        # PATH holds only cat, so the script skips AppArmor and the desktop
+        # caches; no chrome-sandbox helper exists outside an installed host.
+        if pathlib.Path("/usr/lib/agentbox").exists():
+            self.skipTest("agentbox is installed on this host")
+        restart = "systemctl --user daemon-reload && systemctl --user restart agentbox-server"
+        with tempfile.TemporaryDirectory() as tmp:
+            (pathlib.Path(tmp) / "cat").symlink_to(shutil.which("cat"))
+            env = {"PATH": tmp}
+            postinst = str(ROOT / "packaging/deb/scripts/postinst")
+            upgrade = subprocess.run(
+                [postinst, "configure", "4.0.0"], env=env, check=True, capture_output=True, text=True
+            ).stdout
+            self.assertIn(restart, upgrade)
+            self.assertNotIn("enable --now", upgrade)
+            fresh = subprocess.run(
+                [postinst, "configure", ""], env=env, check=True, capture_output=True, text=True
+            ).stdout
+            self.assertIn("systemctl --user enable --now agentbox-server", fresh)
+            self.assertNotIn(restart, fresh)
+
     def test_build_deb_fails_clearly_without_tools(self):
         # With an empty PATH apart from bash and coreutils, the script must
         # stop at the first missing tool with a message that names it.
