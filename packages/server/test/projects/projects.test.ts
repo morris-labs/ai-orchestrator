@@ -195,9 +195,9 @@ describe("ProjectService", () => {
     await expect(
       h.core.projects.update(p.id, { mounts: [{ host: h.dir("x"), container: "relative" }] }),
     ).rejects.toMatchObject({ code: "validation" });
-    expect(() =>
-      h.core.settings.setGlobalMounts([{ host: "relative", container: "/x" }]),
-    ).toThrow(expect.objectContaining({ code: "validation" }));
+    expect(() => h.core.settings.setGlobalMounts([{ host: "relative", container: "/x" }])).toThrow(
+      expect.objectContaining({ code: "validation" }),
+    );
   });
 
   it("waits for an exited container the daemon is still removing before creating one", async () => {

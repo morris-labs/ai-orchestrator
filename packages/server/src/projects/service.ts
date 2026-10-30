@@ -130,7 +130,8 @@ export class ProjectService {
     const root = normalizeRoot(rootIn);
     if (root === "") throw new ApiError("validation", "A project needs a directory.");
     const problem = hostPathProblem(root);
-    if (problem) throw new ApiError("validation", `The project directory can't be used: ${problem}`);
+    if (problem)
+      throw new ApiError("validation", `The project directory can't be used: ${problem}`);
     const existing = this.repos.projects.byRoot(root);
     if (existing) return existing;
     const now = this.now();
@@ -149,7 +150,8 @@ export class ProjectService {
   create(input: { root: string; name?: string }): Project {
     const root = normalizeRoot(input.root);
     const problem = hostPathProblem(root);
-    if (problem) throw new ApiError("validation", `The project directory can't be used: ${problem}`);
+    if (problem)
+      throw new ApiError("validation", `The project directory can't be used: ${problem}`);
     if (!isDirectory(root)) throw new ApiError("validation", `${input.root} is not a directory.`);
     if (this.repos.projects.byRoot(root)) {
       throw new ApiError("conflict", `${root} is already a project.`);
@@ -465,7 +467,10 @@ export class ProjectService {
         // Exited but not removed, as after a daemon restart, or an idle
         // container the daemon is removing right now: clear it away.
         if (!(await this.waitForRemoval(name))) {
-          throw new ApiError("conflict", `The container ${name} is still being removed. Try again.`);
+          throw new ApiError(
+            "conflict",
+            `The container ${name} is still being removed. Try again.`,
+          );
         }
       }
 

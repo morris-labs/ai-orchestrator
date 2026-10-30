@@ -403,9 +403,7 @@ describe("start, stop, restart", () => {
       transcriptSyncedName: "Renamed in Claude",
       wasRunning: true,
     });
-    expect(lastCommand(h)).toContain(
-      `'--name=Renamed in Claude' '--resume' '${box.sessionUuid}'`,
-    );
+    expect(lastCommand(h)).toContain(`'--name=Renamed in Claude' '--resume' '${box.sessionUuid}'`);
     await expect(h.core.boxes.start(box.id)).rejects.toMatchObject({ code: "box_running" });
   });
 

@@ -164,7 +164,8 @@ export function buildLaunchSpec(
   // A bad path otherwise reaches docker as a bind it refuses with a 400, or
   // a relative one that it takes for a named volume.
   const rootProblem = hostPathProblem(input.root);
-  if (rootProblem) throw new ApiError("validation", `The project root can't be mounted: ${rootProblem}`);
+  if (rootProblem)
+    throw new ApiError("validation", `The project root can't be mounted: ${rootProblem}`);
   const merged = mergeMounts(input.mounts, input.globalMounts);
   for (const m of merged) {
     const problem = mountProblem(m);
@@ -254,7 +255,9 @@ export function buildLaunchSpec(
  */
 export function tcpMapsLabel(maps: readonly TcpMap[]): string {
   return maps
-    .map((t) => (t.allInterfaces ? `${t.host}:${t.container}` : `127.0.0.1:${t.host}:${t.container}`))
+    .map((t) =>
+      t.allInterfaces ? `${t.host}:${t.container}` : `127.0.0.1:${t.host}:${t.container}`,
+    )
     .sort()
     .join(",");
 }

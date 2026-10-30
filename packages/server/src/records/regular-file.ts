@@ -12,7 +12,8 @@ export const REGULAR_FILE_MAX_BYTES = 1024 * 1024;
 
 // O_NONBLOCK makes opening a FIFO return at once instead of waiting for a
 // writer; a caller's fstat check then refuses it. O_NOFOLLOW refuses a link.
-export const GUARDED_READ_FLAGS = fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK;
+export const GUARDED_READ_FLAGS =
+  fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK;
 
 /**
  * Reads a file only when it is a regular file, not a link, and at most

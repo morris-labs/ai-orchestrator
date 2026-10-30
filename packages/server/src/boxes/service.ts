@@ -65,13 +65,7 @@ import {
   removeWorktree,
   worktreePath,
 } from "../worktrees/worktrees.js";
-import {
-  baseClaudeArgs,
-  movedMessage,
-  nameArg,
-  platformArgs,
-  sideSessionArgs,
-} from "./args.js";
+import { baseClaudeArgs, movedMessage, nameArg, platformArgs, sideSessionArgs } from "./args.js";
 import { slugifyIssueName, uniqueBoxName } from "./names.js";
 
 export type BoxCreateInput = z.input<typeof BoxCreateSchema>;
@@ -551,9 +545,7 @@ export class BoxService {
           ? { openingPrompt, ...(forkFrom ? { forkFrom } : {}) }
           : undefined;
       const saved = this.repos.boxes.put(
-        req.start
-          ? box
-          : { ...box, sessionUuid: adoptUuid, ...(firstStart ? { firstStart } : {}) },
+        req.start ? box : { ...box, sessionUuid: adoptUuid, ...(firstStart ? { firstStart } : {}) },
       );
       return { box: saved, openingPrompt, conversationName, createdWorktree };
     });
