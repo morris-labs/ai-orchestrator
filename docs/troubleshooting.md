@@ -94,6 +94,19 @@ installed or a reference can't be read. For each case, see
 come from the sudo password reference, when one is set; the message names
 it.
 
+## agentbox-secret fails in a box
+
+The `agentbox-secret` command exits with a status that names the cause:
+
+| Status | Cause | What to do |
+|---|---|---|
+| 3 | The secrets broker socket doesn't answer. | Check that the server runs with `systemctl --user status agentbox-server`. The server recreates the socket within 30 seconds of starting. |
+| 4 | The project doesn't list the name. | Add a reference with that name in the project or global settings. No restart is needed. |
+| 5 | 1Password is locked, or the reference doesn't resolve. | Unlock 1Password or fix the reference, then try again. |
+
+The server's journal, `journalctl --user -u agentbox-server`, logs each
+request with the container, the names, and the outcome.
+
 ## sudo fails in a container
 
 `sudo` is off in containers unless the settings name a sudo password
