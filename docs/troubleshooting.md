@@ -8,7 +8,8 @@ agentbox doctor
 ```
 
 The command runs the same checks as the setup wizard: Docker, the image, the
-engine version, the SSH client and key, 1Password, and the server.
+engine version, the SSH client and key, 1Password, `sudo` in containers,
+and the server.
 
 ## The apps say they can't reach the server
 
@@ -89,7 +90,21 @@ To read them, run
 A `secrets_locked` error means 1Password is locked, or the service account
 token is missing or expired. A `secrets_unavailable` error means `op` isn't
 installed or a reference can't be read. For each case, see
-[Secrets](secrets.md#when-1password-is-locked-or-missing).
+[Secrets](secrets.md#when-1password-is-locked-or-missing). The same errors
+come from the sudo password reference, when one is set; the message names
+it.
+
+## sudo fails in a container
+
+`sudo` is off in containers unless the settings name a sudo password
+reference. When `sudo` says the user isn't in the sudoers file, or every
+password is wrong, set the reference and restart the project container. See
+[The sudo password](secrets.md#the-sudo-password).
+
+If a box fails to start with `The container's sudo setup failed`, the root
+setup step that sets the `sudo` policy failed, and the server removed the
+container rather than run it with an unknown policy. The message gives the
+step's error. Rebuild the image if it predates 4.0.0.
 
 ## A container shows as unhealthy
 

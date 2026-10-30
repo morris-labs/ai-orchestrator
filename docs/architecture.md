@@ -201,6 +201,28 @@ project root mounted at the same path, the engine's port and the project's
 secrets in its environment, and the engine token in a file in the mounted
 state directory. The image has no default command.
 
+Right after a container starts, and before any box session runs in it, the
+server runs a root setup step with `docker exec --user root`. The step
+never calls `sudo`. It does the following:
+
+- Gives the container user the directories that Docker created as root
+  above a bind mount under `/tmp` or the home directory, such as
+  `/tmp/claude-1000` above a project in `/tmp/claude-1000/...`. Claude Code
+  refuses to start when its temporary directory is owned by root. The step
+  skips any path with a symbolic link in it.
+- Sets the `sudo` policy. It removes `/etc/sudoers.d/claude-box`, where
+  images built before 4.0.0 granted passwordless `sudo`. With a sudo
+  password reference in the settings, it installs the password's hash and a
+  rule that asks for the password every time. Without one, it locks the
+  user's password, so `sudo` is off. See
+  [The sudo password](secrets.md#the-sudo-password).
+
+The step runs with a fixed `PATH` of system directories and with the
+variables that load code into a program cleared, because the container's
+own `PATH` starts with directories the container user can write. When the
+step fails, the server removes the container and the launch fails, since an
+older image's passwordless rule might still be in place.
+
 ### Container boundaries
 
 - **Published ports.** The engine port and each project TCP map listen on
@@ -213,20 +235,32 @@ state directory. The image has no default command.
 - **Secrets.** Secret values are in the container's environment, so
   `docker inspect` shows them to anyone who can reach the Docker daemon. See
   [Secrets](secrets.md).
-- **Root in the container.** The container user has passwordless `sudo`, and
-  Docker runs without a user namespace, so container root is host root on
-  every bind mount: the project root, `~/.claude`, `~/.claude.json`,
-  `~/.codex`, `~/.copilot`, and every project and global mount. The server
-  drops the `MKNOD` and `SETFCAP` capabilities, which `sudo` doesn't need,
-  so container root can't leave a device node or a binary with file
-  capabilities on a mount. It can still leave a setuid-root file there, or a
+- **Root in the container.** Docker runs without a user namespace, so
+  container root is host root on every bind mount: the project root,
+  `~/.claude`, `~/.claude.json`, `~/.codex`, `~/.copilot`, and every project
+  and global mount. Container root could leave a setuid-root file there, or a
   root-owned one you can't change. Docker has no `nosuid` option for bind
   mounts, and a capability drop doesn't help, because root owns the files it
-  creates and needs no capability to set the setuid bit on them. Rootless
-  Docker or `userns-remap` closes this, but both change which host user owns
-  the files a box writes, so check ownership on the mounts before you switch.
-  Otherwise, don't run host binaries from a mounted directory that a box can
-  write.
+  creates and needs no capability to set the setuid bit on them. For that
+  reason, the container user has no passwordless `sudo`, and an agent can't
+  become root:
+  - Without a sudo password reference in the settings, `sudo` is off: the
+    container has no `sudo` rule for the user, and the user's password is
+    locked.
+  - With a reference, `sudo` asks for the password on every use, with no
+    cached credentials. You type it from 1Password. The container gets only
+    a SHA-512 crypt hash of it, in `/etc/shadow`, which only root can read or
+    write. See [The sudo password](secrets.md#the-sudo-password).
+
+  The server drops the `MKNOD` and `SETFCAP` capabilities, which `sudo`
+  doesn't need, so even root that you start with `sudo` can't leave a device
+  node or a binary with file capabilities on a mount. A container that a
+  server older than this change created still has passwordless `sudo`; it
+  shows as stale with `sudo passwordless -> off` until it restarts. Rootless
+  Docker or `userns-remap` closes the setuid risk for root you start too, but
+  both change which host user owns the files a box writes, so check
+  ownership on the mounts before you switch. Don't run host binaries from a
+  mounted directory that a box can write.
 
 ## Repository layout
 
