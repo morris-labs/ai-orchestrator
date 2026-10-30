@@ -620,6 +620,17 @@ describe("events", () => {
     expect(await cli(["events"], { AGENTBOX_TOKEN: "wrong" })).toBe(1);
     expect(err).toContain("refused the token");
   });
+
+  it("fails when the server closes the stream with an error code", async () => {
+    server.closeEventsWith = { code: 1008, reason: "Unknown event types: bogus." };
+    expect(await cli(["events", "--types", "bogus"])).toBe(1);
+    expect(err).toContain("Unknown event types: bogus.");
+  });
+
+  it("ends cleanly when the server closes the stream normally", async () => {
+    server.closeEventsWith = { code: 1000, reason: "" };
+    expect(await cli(["events"])).toBe(0);
+  });
 });
 
 describe("help", () => {

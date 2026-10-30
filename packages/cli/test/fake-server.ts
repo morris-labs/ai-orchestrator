@@ -24,6 +24,8 @@ export interface FakeServer {
   events: unknown[];
   /** The query of the last event-socket connection. */
   lastEventsQuery: Record<string, string> | null;
+  /** Closes each event socket at once with this code and reason, like a refused query. */
+  closeEventsWith: { code: number; reason: string } | null;
   close(): Promise<void>;
 }
 
@@ -66,6 +68,7 @@ export async function startFakeServer(token = "cli-test-token"): Promise<FakeSer
     requests,
     events: [],
     lastEventsQuery: null,
+    closeEventsWith: null,
     on: (route, answer) => void answers.set(route, answer),
     close: () =>
       new Promise((r) => {
@@ -88,6 +91,10 @@ export async function startFakeServer(token = "cli-test-token"): Promise<FakeSer
     }
     fake.lastEventsQuery = Object.fromEntries(url.searchParams);
     wss.handleUpgrade(req, socket, head, (ws) => {
+      if (fake.closeEventsWith) {
+        ws.close(fake.closeEventsWith.code, fake.closeEventsWith.reason);
+        return;
+      }
       ws.on("message", (m) => {
         const hello = JSON.parse(m.toString()) as { type: string };
         if (hello.type !== "hello") return;

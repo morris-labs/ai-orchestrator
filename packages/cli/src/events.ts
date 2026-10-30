@@ -15,6 +15,9 @@ export interface TailOptions {
   signal?: AbortSignal;
 }
 
+/** Close codes that end a stream without an error: normal, going away, and no status. */
+const NORMAL_CLOSE_CODES = new Set([1000, 1001, 1005]);
+
 /** Builds the `events.stream` WebSocket URL. The token never goes in it. */
 export function eventsUrl(baseUrl: string, types?: string): string {
   const url = new URL(serverRoutes["events.stream"].path, baseUrl.replace(/\/$/, "") + "/");
@@ -25,8 +28,10 @@ export function eventsUrl(baseUrl: string, types?: string): string {
 
 /**
  * Connects, sends a first `hello`, and writes every frame as one JSON line.
- * Resolves when the socket closes, `count` events arrive, or `signal` aborts.
- * Rejects when the connection fails or a frame breaks the contract.
+ * Resolves when the server closes the socket normally, `count` events
+ * arrive, or `signal` aborts. Rejects when the connection fails, a frame
+ * breaks the contract, or the server closes the socket with an error code,
+ * as it does for an unknown event type.
  */
 export function tailEvents(options: TailOptions): Promise<void> {
   const Ctor = options.WebSocket ?? WebSocket;
@@ -79,6 +84,10 @@ export function tailEvents(options: TailOptions): Promise<void> {
       );
     });
     socket.on("error", (err) => finish(err));
-    socket.on("close", () => finish());
+    socket.on("close", (code: number, reason: Buffer) => {
+      if (NORMAL_CLOSE_CODES.has(code)) return finish();
+      const why = reason.toString() || "no reason given";
+      finish(new Error(`The server closed the event stream: ${why} (code ${code}).`));
+    });
   });
 }
