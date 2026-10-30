@@ -240,6 +240,20 @@ describe("ProjectService", () => {
     expect(await h.core.projects.staleDifferences(p)).toEqual(["secrets environment -> broker"]);
   });
 
+  it("reports a container on an image from before a rebuild as stale", async () => {
+    const h = makeHarness();
+    const p = h.core.projects.ensureForRoot(h.dir("app"));
+    const r = await h.core.projects.ensureContainer(p.id);
+    expect(await h.core.projects.staleDifferences(p)).toEqual([]);
+    // The tag now names a rebuilt image; the container keeps the old one.
+    h.docker.containers.get(r.container)!.imageId = "sha256:older";
+    expect(await h.core.projects.staleDifferences(p)).toEqual(["image -> rebuilt"]);
+    expect((await h.core.projects.summary(p)).container?.stale).toEqual(["image -> rebuilt"]);
+    // Without image data, nothing is flagged.
+    h.docker.images.clear();
+    expect(await h.core.projects.staleDifferences(p)).toEqual([]);
+  });
+
   it("flags a stale container in the project list and the project view", async () => {
     const h = makeHarness();
     const p = h.core.projects.ensureForRoot(h.dir("app"));

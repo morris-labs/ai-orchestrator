@@ -202,7 +202,7 @@ export class ProjectService {
     const health = this.deps.hooks().engineHealth(name);
     // The same check as a project change or a box start makes, so the list
     // and the view flag a container that those would call stale.
-    const stale = this.staleFromInspect(project, inspect);
+    const stale = this.staleFromInspect(project, inspect, await this.currentImageId(inspect));
     return {
       name,
       state: containerState(inspect),
@@ -325,16 +325,36 @@ export class ProjectService {
    * How a running project container differs from what the project asks for:
    * mounts (compared with the recorded `mounts` file, else the container's
    * binds), TCP maps, the sudo policy, and whether secrets come from the
-   * broker. The secret names don't count: the broker reads them on every
-   * request. Empty when the container is not running or matches.
+   * broker, and the image when the configured tag names a rebuilt one. The
+   * secret names don't count: the broker reads them on every request. Empty
+   * when the container is not running or matches.
    */
   async staleDifferences(project: Project): Promise<string[]> {
     const inspect = await this.deps.docker.inspectContainer(this.containerName(project));
-    return this.staleFromInspect(project, inspect);
+    return this.staleFromInspect(project, inspect, await this.currentImageId(inspect));
   }
 
-  /** `staleDifferences` for a container already inspected. */
-  private staleFromInspect(project: Project, inspect: ContainerInspect | null): string[] {
+  /**
+   * The id of the image the configured tag names now, for a running
+   * container only. `undefined` when the image can't be inspected, which
+   * then flags nothing.
+   */
+  private async currentImageId(inspect: ContainerInspect | null): Promise<string | undefined> {
+    if (!inspect?.running) return undefined;
+    const image = this.deps.settings.get().engineImage;
+    const info = await this.deps.docker.inspectImage(image).catch(() => null);
+    return info?.id;
+  }
+
+  /**
+   * `staleDifferences` for a container already inspected. `imageId` is the
+   * configured image's id, from `currentImageId`.
+   */
+  private staleFromInspect(
+    project: Project,
+    inspect: ContainerInspect | null,
+    imageId: string | undefined,
+  ): string[] {
     const name = this.containerName(project);
     if (!inspect?.running) return [];
     const wanted = this.wantedBinds(project);
@@ -358,6 +378,9 @@ export class ProjectService {
     const haveSudo = inspect.labels[LABELS.sudo] ?? "passwordless";
     const wantSudo = sudoLabel(this.deps.settings.get().sudoPasswordRef !== undefined);
     if (haveSudo !== wantSudo) diffs.push(`sudo ${haveSudo} -> ${wantSudo}`);
+    // Every engine reports the same development version, so only the image
+    // id shows a container that runs an image from before a rebuild.
+    if (imageId !== undefined && inspect.imageId !== imageId) diffs.push("image -> rebuilt");
     return diffs;
   }
 

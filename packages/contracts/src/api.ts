@@ -206,8 +206,8 @@ export const ContainerInfoSchema = z.object({
   engine: EngineInfoSchema.nullable(),
   /**
    * How a running container differs from what the project asks for, such
-   * as `secrets environment -> broker`; a restart applies the project's
-   * settings. Empty or absent when it matches or isn't running.
+   * as `secrets environment -> broker` or `image -> rebuilt`; a restart
+   * applies the project's settings and the configured image. Empty or absent when it matches or isn't running.
    */
   stale: z.array(z.string()).optional(),
 });
