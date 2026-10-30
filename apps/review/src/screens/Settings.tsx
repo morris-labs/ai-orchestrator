@@ -10,11 +10,12 @@ import {
   type Vendor,
 } from "@agentbox/contracts";
 import { VENDOR_LABELS, VENDORS } from "@agentbox/ui/dashboard";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ErrorBanner, Field } from "../components/common.js";
 import { useApiClient, useAnyEvent } from "@agentbox/ui/hooks";
 import {
   draftFrom,
+  rebaseDraft,
   settingsPatch,
   switchCeilingKind,
   type SettingsDraft,
@@ -155,9 +156,15 @@ export function Settings() {
   const [draft, setDraft] = useState<SettingsDraft | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [saved, setSaved] = useState(false);
+  // The settings the draft was last based on, kept outside state so that two
+  // events in one batch each rebase onto the one before.
+  const baseRef = useRef<GlobalSettings | null>(null);
 
   useEffect(() => {
     api.call("settings.get").then((s) => {
+      // An event that arrived first is newer than this response.
+      if (baseRef.current) return;
+      baseRef.current = s;
       setSettings(s);
       setDraft(draftFrom(s));
     }, setError);
@@ -165,8 +172,11 @@ export function Settings() {
 
   useAnyEvent((e) => {
     if (e.type === "settings.changed") {
+      // Keep unsaved edits; take the change for every field the user left alone.
+      const base = baseRef.current;
+      baseRef.current = e.settings;
+      setDraft((d) => (d && base ? rebaseDraft(base, d, e.settings) : draftFrom(e.settings)));
       setSettings(e.settings);
-      setDraft(draftFrom(e.settings));
     }
   });
 
@@ -185,6 +195,7 @@ export function Settings() {
     if (!patch) return;
     try {
       const next = await api.call("settings.patch", { body: patch });
+      baseRef.current = next;
       setSettings(next);
       setDraft(draftFrom(next));
       setSaved(true);

@@ -88,4 +88,44 @@ describe("Settings", () => {
       ),
     ).toHaveValue(90);
   });
+
+  it("keeps unsaved edits when settings.changed arrives", async () => {
+    const settings = defaultConfig();
+    const { store, server } = renderWithStore(<Settings />, { "settings.get": () => settings });
+    const codex = await screen.findByRole("group", { name: "Codex" });
+    fireEvent.change(within(codex).getByLabelText("Ceiling (%)"), { target: { value: "50" } });
+    act(() =>
+      store.ingest({
+        id: "e",
+        time: "2026-10-28T10:00:00.000Z",
+        source: "server",
+        streamId: "s",
+        seq: 1,
+        sourceSeq: 1,
+        type: "settings.changed",
+        settings: {
+          ...settings,
+          ceilings: {
+            ...settings.ceilings,
+            copilot: { kind: "spend", period: "month", maxUsd: 90 },
+          },
+        },
+        changedKeys: ["ceilings"],
+      }),
+    );
+    // The edit survives, and the other client's change shows.
+    expect(
+      within(screen.getByRole("group", { name: "Codex" })).getByLabelText("Ceiling (%)"),
+    ).toHaveValue(50);
+    expect(
+      within(screen.getByRole("group", { name: "Copilot" })).getByLabelText(
+        "Ceiling (US dollars per month)",
+      ),
+    ).toHaveValue(90);
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(server.callsTo("settings.patch")).toHaveLength(1));
+    expect(server.callsTo("settings.patch")[0]!.body).toEqual({
+      ceilings: { codex: { kind: "utilization", window: "5h", max: 0.5 } },
+    });
+  });
 });

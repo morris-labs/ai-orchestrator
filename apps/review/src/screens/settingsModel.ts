@@ -84,6 +84,34 @@ export function settingsPatch(
   return GlobalSettingsPatchSchema.parse(patch);
 }
 
+/** Takes `theirs` for each field where `mine` still equals `base`, and keeps `mine` otherwise. */
+function rebaseFields<T extends object>(base: T, mine: T, theirs: T): T {
+  const out = { ...theirs };
+  for (const k of Object.keys(theirs) as Array<keyof T>) {
+    if (JSON.stringify(mine[k]) !== JSON.stringify(base[k])) out[k] = mine[k];
+  }
+  return out;
+}
+
+/**
+ * Moves a draft from the settings it was edited against onto newer ones, as
+ * when another client changes the settings: each field the user edited keeps
+ * the draft's value, and every other field takes the newer value.
+ */
+export function rebaseDraft(
+  base: GlobalSettings,
+  draft: SettingsDraft,
+  next: GlobalSettings,
+): SettingsDraft {
+  const was = draftFrom(base);
+  const now = draftFrom(next);
+  return {
+    ceilings: rebaseFields(was.ceilings, draft.ceilings, now.ceilings),
+    notifications: rebaseFields(was.notifications, draft.notifications, now.notifications),
+    vendorDefaults: rebaseFields(was.vendorDefaults, draft.vendorDefaults, now.vendorDefaults),
+  };
+}
+
 /** A ceiling of the other kind, with that kind's default values. */
 export function switchCeilingKind(c: Ceiling, kind: Ceiling["kind"]): Ceiling {
   if (c.kind === kind) return c;
