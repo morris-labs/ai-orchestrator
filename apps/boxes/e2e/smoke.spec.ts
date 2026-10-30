@@ -13,7 +13,12 @@ import {
   type Page,
 } from "@playwright/test";
 import { FakeServer, makeBoxView } from "@agentbox/ui/testing";
-import { serveFake, type ServedFake } from "@agentbox/ui/testing/node";
+import {
+  describeExit,
+  secondInstanceCommand,
+  serveFake,
+  type ServedFake,
+} from "@agentbox/ui/testing/node";
 import { spawnSync } from "node:child_process";
 import { createServerIdentity } from "@agentbox/contracts/tls";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -96,14 +101,15 @@ test("hands the page the token once, for the session cookie", async () => {
 
 test("keeps the single-instance lock", () => {
   // The second instance hands over to the first and quits at once. It is
-  // spawned directly: Playwright's launch fails on a process that exits
-  // before its debugger connects.
-  const second = spawnSync(String(app.process().spawnfile), [appDir], {
-    env,
+  // spawned directly, with the switches Playwright gave the first; see
+  // `secondInstanceCommand`.
+  const command = secondInstanceCommand([appDir], env);
+  const second = spawnSync(String(app.process().spawnfile), command.args, {
+    env: command.env,
     cwd: appDir,
     timeout: 20_000,
   });
-  expect(second.status).toBe(0);
+  expect(second.status, describeExit(second)).toBe(0);
   expect(app.windows()).toHaveLength(1);
 });
 

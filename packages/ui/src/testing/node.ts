@@ -121,3 +121,5 @@ export async function serveFake(
     close: () => new Promise((resolve) => server.close(() => resolve())),
   };
 }
+
+export { describeExit, secondInstanceCommand, type SecondInstanceCommand } from "./second-instance";

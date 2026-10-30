@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 import { _electron as electron, expect, test } from "@playwright/test";
 import { createServerIdentity } from "@agentbox/contracts/tls";
 import { DEMO_PROJECT as PROJECT_ID, FakeServer, makeProject } from "@agentbox/ui/testing";
-import { serveFake } from "@agentbox/ui/testing/node";
+import { describeExit, secondInstanceCommand, serveFake } from "@agentbox/ui/testing/node";
 
 const appDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const main = resolve(appDir, "dist/electron/main.cjs");
@@ -57,17 +57,15 @@ test("launches, prefills the launcher, and keeps a single instance", async () =>
     await page.getByRole("link", { name: "Settings" }).click();
     await expect(page.getByRole("group", { name: "Copilot defaults" })).toBeVisible();
 
-    // A second launch hands its deep link to the first window and exits.
-    const second = spawnSync(
-      String(app.process().spawnfile),
-      [main, "agentbox-review://launch?project=other"],
-      {
-        env,
-        cwd: appDir,
-        timeout: 20_000,
-      },
-    );
-    expect(second.status).toBe(0);
+    // A second launch hands its deep link to the first window and exits. It
+    // gets the switches Playwright gave the first; see `secondInstanceCommand`.
+    const command = secondInstanceCommand([main, "agentbox-review://launch?project=other"], env);
+    const second = spawnSync(String(app.process().spawnfile), command.args, {
+      env: command.env,
+      cwd: appDir,
+      timeout: 20_000,
+    });
+    expect(second.status, describeExit(second)).toBe(0);
     await expect(page).toHaveURL(/#\/launch\?project=other/);
     expect(app.windows()).toHaveLength(1);
 
