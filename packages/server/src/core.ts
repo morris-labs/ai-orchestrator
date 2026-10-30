@@ -24,6 +24,7 @@ import { defaultHooks, type CoreHooks } from "./records/hooks.js";
 import { KeyedMutex } from "./records/mutex.js";
 import { SettingsService } from "./records/settings.js";
 import { SshRemoteService } from "./records/sshRemotes.js";
+import { removeUnusedBrokerDirs } from "./secrets/broker-dirs.js";
 import { SessionWatcher } from "./watcher/sessionWatcher.js";
 import * as worktrees from "./worktrees/index.js";
 
@@ -232,6 +233,18 @@ export async function createCore(
   try {
     if (!(await server.docker.ping())) {
       log("Docker is unreachable. Box actions fail until the daemon answers; polling continues.");
+    } else {
+      // Before the API listens, so no container start opens a directory meanwhile.
+      try {
+        const removed = await removeUnusedBrokerDirs(env, server.docker);
+        if (removed.length > 0) {
+          log(
+            `Removed ${removed.length} unused secrets broker director${removed.length === 1 ? "y" : "ies"}: ${removed.join(", ")}.`,
+          );
+        }
+      } catch (err) {
+        log(`Couldn't remove unused secrets broker directories: ${(err as Error).message}`);
+      }
     }
     const { imported } = await server.start(options.start);
     if (imported) {

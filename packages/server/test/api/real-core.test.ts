@@ -28,8 +28,9 @@ afterEach(async () => {
   app = null;
 });
 
-async function start(docker: MemoryDocker) {
+async function start(docker: MemoryDocker, before?: (home: string) => void) {
   const home = fs.realpathSync(tempDir("agentbox-real-"));
+  before?.(home);
   const logs: string[] = [];
   let real: Awaited<ReturnType<typeof createCore>> | null = null;
   app = await startApp({
@@ -151,5 +152,16 @@ describe("the server over the real core", () => {
     expect(logs.some((l) => l.includes("Docker is unreachable"))).toBe(true);
     expect((await api("GET", "/api/v1/health")).status).toBe(200);
     expect((await api("GET", "/api/v1/boxes")).json).toEqual({ boxes: [] });
+  });
+
+  it("removes broker directories that no container uses at start", async () => {
+    const broker = (home: string) => path.join(home, ".claude-box", "broker");
+    const { home, logs } = await start(dockerWithImage(), (h) => {
+      fs.mkdirSync(path.join(broker(h), "claude-agent-proj-old-00000001"), { recursive: true });
+    });
+    expect(fs.readdirSync(broker(home))).toEqual([]);
+    expect(logs).toContain(
+      "Removed 1 unused secrets broker directory: claude-agent-proj-old-00000001.",
+    );
   });
 });
