@@ -31,7 +31,14 @@ export const LABELS = {
   tcpMaps: "agentbox.tcp-maps",
   secretNames: "agentbox.secret-names",
   engineVersion: "agentbox.engine-version",
+  /** `password` when the container user's sudo asks for a password, `off` when sudo is off. */
+  sudo: "agentbox.sudo",
 } as const;
+
+/** The `agentbox.sudo` label value for a container with or without a sudo password. */
+export function sudoLabel(passwordSet: boolean): "password" | "off" {
+  return passwordSet ? "password" : "off";
+}
 
 export interface LaunchInput {
   /** `projectContainerName(projectId)`. */
@@ -50,6 +57,8 @@ export interface LaunchInput {
   extraEnv: Readonly<Record<string, string>>;
   /** Seconds the keeper lingers with no sessions; 30 unless a test shortens it. */
   graceSec?: number;
+  /** Whether the root setup step installs a sudo password; false means sudo is off. */
+  sudoPassword?: boolean;
 }
 
 /** What the launch needs to know about the host, gathered by `prepareLaunchHost()`. */
@@ -83,6 +92,19 @@ export function mergeMounts(own: readonly Mount[], global: readonly Mount[]): Mo
 /** A mount as a docker bind string, with the host side made absolute. */
 export function mountBind(m: Mount): string {
   return `${path.resolve(m.host)}:${m.container}`;
+}
+
+/**
+ * The container paths of the project root and its merged mounts: the paths
+ * whose root-owned parents the root setup step gives the container user.
+ */
+export function mountContainerPaths(
+  input: Pick<LaunchInput, "root" | "mounts" | "globalMounts">,
+): string[] {
+  return [
+    hostToContainer(input.root),
+    ...mergeMounts(input.mounts, input.globalMounts).map((m) => m.container),
+  ];
 }
 
 /**
@@ -226,10 +248,7 @@ export function buildLaunchSpec(
     image: input.image,
     user: env.user,
     workingDir: containerDir,
-    cmd: sharedKeeperCommand(input.graceSec ?? STARTUP_GRACE_SEC, [
-      containerDir,
-      ...merged.map((m) => m.container),
-    ]),
+    cmd: sharedKeeperCommand(input.graceSec ?? STARTUP_GRACE_SEC),
     env: envList,
     binds,
     portBindings,
@@ -238,6 +257,7 @@ export function buildLaunchSpec(
       [LABELS.tcpMaps]: tcpMapsLabel(input.tcpMaps),
       [LABELS.secretNames]: secretNames.join(","),
       [LABELS.engineVersion]: input.engine.version,
+      [LABELS.sudo]: sudoLabel(input.sudoPassword ?? false),
     },
     capDrop: [...DROPPED_CAPABILITIES],
     tty: true,

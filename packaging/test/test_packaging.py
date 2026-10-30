@@ -227,6 +227,16 @@ class ImageTest(unittest.TestCase):
         order = [text.index(s) for s in ("ARG CACHEBUST_PACKAGES", "ARG CACHEBUST=", "COPY dist/")]
         self.assertEqual(order, sorted(order))
 
+    def test_no_passwordless_sudo(self):
+        # Container root is host root on the bind mounts, so the image must
+        # not let the container user become root without a password. The
+        # server's root setup step installs any sudo rule at start.
+        text = DOCKERFILE.read_text()
+        self.assertNotIn("NOPASSWD", text)
+        self.assertNotRegex(text, r"> */etc/sudoers")
+        self.assertIn("rm -f /etc/sudoers.d/claude-box", text)
+        self.assertIn("usermod -p '!' \"${USER_NAME}\"", text)
+
     def test_engine_dependencies_are_locked(self):
         # The engine's dependencies must come from pnpm-lock.yaml at pack
         # time, never from a fresh registry resolve during the image build.

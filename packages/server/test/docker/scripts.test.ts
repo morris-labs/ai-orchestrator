@@ -11,11 +11,13 @@ import { describe, expect, it } from "vitest";
 import {
   KEEPER_PATH,
   KEEPER_SCRIPT,
-  OWN_MOUNT_PARENTS_SCRIPT,
+  ROOT_SETUP_SCRIPT,
   SESSION_START_SCRIPT,
   START_SESSION_PATH,
   STATE_MOUNT,
+  SUDOERS_FILE,
   buildSessionCommand,
+  rootSetupExec,
   sessionStartCmd,
   sharedKeeperCommand,
   shellQuote,
@@ -28,6 +30,46 @@ const inventory = fs.readFileSync(
   ),
   "utf8",
 );
+
+/**
+ * Fake root tools in `dir/bin`: every directory reads as root-owned, and
+ * `chown`, `usermod`, `visudo`, and `chpasswd` only record their calls (and
+ * `chpasswd` its input) in `dir/calls.log`.
+ */
+function fakeRootTools(dir: string, options: { chpasswdFails?: boolean } = {}) {
+  const bin = join(dir, "bin");
+  mkdirSync(bin);
+  const log = join(dir, "calls.log");
+  writeFileSync(log, "");
+  const tool = (name: string, body: string) =>
+    writeFileSync(join(bin, name), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+  tool("stat", "echo 0");
+  for (const name of ["chown", "usermod", "visudo"]) {
+    tool(name, `printf '%s\\n' "${name} $*" >> '${log}'`);
+  }
+  tool(
+    "chpasswd",
+    options.chpasswdFails
+      ? "exit 1"
+      : `IFS= read -r line; printf '%s\\n' "chpasswd $* <<< $line" >> '${log}'`,
+  );
+  return { bin, log };
+}
+
+/** Runs the root setup step with the fake tools first on PATH. */
+function runRootSetup(
+  bin: string,
+  sudoers: string,
+  home: string,
+  stdin: string,
+  mountPaths: string[],
+): void {
+  execFileSync("/bin/sh", ["-c", ROOT_SETUP_SCRIPT, "_", "tester", home, sudoers, ...mountPaths], {
+    input: stdin,
+    env: { PATH: `${bin}:${process.env.PATH ?? ""}` },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+}
 
 function codeBlockAfter(marker: string): string {
   const at = inventory.indexOf(marker);
@@ -47,17 +89,44 @@ describe("scripts", () => {
 
   // 4.0.0 runs the image's keeper.sh, which does what the 3.3.5 keeper did
   // and also keeps the engine running, instead of the inline 3.3.5 script.
-  it("runs the image's keeper after trusting every directory for git", () => {
+  it("runs the image's keeper after trusting every directory for git, without sudo", () => {
     expect(sharedKeeperCommand()).toEqual([
       "bash",
       "-c",
-      `git config --global --add safe.directory '*' 2>/dev/null; (shift 2; ${OWN_MOUNT_PARENTS_SCRIPT}); exec ${KEEPER_PATH} "$1" "$2"`,
+      `git config --global --add safe.directory '*' 2>/dev/null; exec ${KEEPER_PATH} "$1" "$2"`,
       "_",
       STATE_MOUNT,
       "30",
     ]);
     expect(sharedKeeperCommand(2).at(-1)).toBe("2");
-    expect(sharedKeeperCommand(2, ["/tmp/a/b"]).slice(-2)).toEqual(["2", "/tmp/a/b"]);
+    expect(sharedKeeperCommand().join(" ")).not.toContain("sudo");
+  });
+
+  it("runs the root setup step as root with system tools and the hash on standard input", () => {
+    const hash = `$6$rounds=100000$SYNTHETICsalt$${"a".repeat(86)}`;
+    const exec = rootSetupExec("tester", "/home/tester", ["/tmp/a/b"], hash);
+    expect(exec.user).toBe("root");
+    expect(exec.workingDir).toBe("/");
+    expect(exec.cmd).toEqual([
+      "/bin/sh",
+      "-c",
+      ROOT_SETUP_SCRIPT,
+      "_",
+      "tester",
+      "/home/tester",
+      SUDOERS_FILE,
+      "/tmp/a/b",
+    ]);
+    expect(exec.stdin).toBe(`${hash}\n`);
+    // The hash is in neither the command line nor the environment.
+    expect(exec.cmd.join(" ")).not.toContain(hash);
+    expect(exec.env.join(" ")).not.toContain(hash);
+    // The container's PATH starts with directories the user can write.
+    expect(exec.env).toContain("PATH=/usr/sbin:/usr/bin:/sbin:/bin");
+    expect(exec.env).toContain("LD_PRELOAD=");
+    // It runs as root and never calls sudo as a command.
+    expect(ROOT_SETUP_SCRIPT).not.toMatch(/(^|[;&|{(]|\$\()\s*sudo\s/m);
+    expect(rootSetupExec("tester", "/home/tester", [], null).stdin).toBe("\n");
   });
 
   it("gives the user the root-owned parents of a mount under /tmp or home, and nothing else", () => {
@@ -65,33 +134,24 @@ describe("scripts", () => {
     // The home directory must sit outside /tmp, or /tmp's rule covers it too.
     const home = mkdtempSync(join(path.dirname(fileURLToPath(import.meta.url)), ".home-"));
     try {
-      const bin = join(dir, "bin");
-      mkdirSync(bin);
-      const log = join(dir, "sudo.log");
-      // Every directory reads as root-owned; sudo records what it would chown.
-      writeFileSync(join(bin, "stat"), "#!/bin/sh\necho 0\n", { mode: 0o755 });
-      writeFileSync(join(bin, "sudo"), `#!/bin/sh\nprintf '%s\\n' "$*" >> '${log}'\n`, {
-        mode: 0o755,
-      });
-      writeFileSync(join(bin, "id"), '#!/bin/sh\n[ "$1" = -u ] && echo 1000 || echo 1000\n', {
-        mode: 0o755,
-      });
+      const { bin, log } = fakeRootTools(dir);
       mkdirSync(join(home, "deep", "er"), { recursive: true });
       const tmpProject = mkdtempSync(join(tmpdir(), "own-parents-tmp-"));
       mkdirSync(join(tmpProject, "x", "y"), { recursive: true });
-      const [, , script, ...args] = sharedKeeperCommand(1, [
+      // A symbolic link among the parents is never followed or changed.
+      fs.symlinkSync("/usr", join(home, "link"));
+      runRootSetup(bin, join(dir, "sudoers"), home, "", [
         join(tmpProject, "x", "y", "repo"),
         join(home, "deep", "er", "mount"),
+        join(home, "link", "share", "mount"),
         "/usr/share/mount",
       ]);
-      // Run only the ownership step: replace the keeper with a no-op.
-      const body = script!.replace(/exec \S+ "\$1" "\$2"$/, "true");
-      execFileSync("bash", ["-c", body, ...args], {
-        env: { PATH: `${bin}:${process.env.PATH ?? ""}`, HOME: home },
-      });
-      const calls = readFileSync(log, "utf8").trim().split("\n");
+      const calls = readFileSync(log, "utf8")
+        .trim()
+        .split("\n")
+        .filter((c) => c.startsWith("chown "));
       rmSync(tmpProject, { recursive: true, force: true });
-      const owned = calls.map((c) => c.replace("-n chown 1000:1000 -- ", ""));
+      const owned = calls.map((c) => c.replace("chown -h -- tester: ", ""));
       // The temporary directory can sit deeper under /tmp; every parent up
       // to /tmp counts, /tmp itself never does.
       const underTmp = owned.filter((d) => !d.startsWith(`${home}/`));
@@ -108,9 +168,62 @@ describe("scripts", () => {
       expect(owned).not.toContain("/tmp");
       expect(owned).not.toContain(home);
       expect(owned.some((d) => d.startsWith("/usr"))).toBe(false);
+      expect(owned.some((d) => d.startsWith(join(home, "link")))).toBe(false);
     } finally {
       rmSync(dir, { recursive: true, force: true });
       rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("turns sudo off without a hash, removing an older image's passwordless rule", () => {
+    const dir = mkdtempSync(join(tmpdir(), "root-setup-"));
+    try {
+      const { bin, log } = fakeRootTools(dir);
+      const sudoers = join(dir, "sudoers");
+      writeFileSync(sudoers, "tester ALL=(ALL) NOPASSWD:ALL\n");
+      runRootSetup(bin, sudoers, "/home/tester", "\n", []);
+      expect(fs.existsSync(sudoers)).toBe(false);
+      expect(readFileSync(log, "utf8").trim().split("\n")).toEqual(["usermod -p ! -- tester"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("installs the hash and a rule that asks for the password every time", () => {
+    const dir = mkdtempSync(join(tmpdir(), "root-setup-"));
+    try {
+      const { bin, log } = fakeRootTools(dir);
+      const sudoers = join(dir, "sudoers");
+      writeFileSync(sudoers, "tester ALL=(ALL) NOPASSWD:ALL\n");
+      const hash = `$6$rounds=100000$SYNTHETICsalt$${"b".repeat(86)}`;
+      // No end-of-file follows the line, as with the server's exec.
+      runRootSetup(bin, sudoers, "/home/tester", `${hash}\n`, []);
+      expect(readFileSync(sudoers, "utf8")).toBe(
+        "tester ALL=(ALL:ALL) ALL\nDefaults:tester timestamp_timeout=0\n",
+      );
+      expect((fs.statSync(sudoers).mode & 0o777).toString(8)).toBe("440");
+      expect(fs.existsSync(`${sudoers}.tmp`)).toBe(false);
+      const calls = readFileSync(log, "utf8").trim().split("\n");
+      expect(calls).toEqual([`chpasswd -e <<< tester:${hash}`, `visudo -cqf ${sudoers}.tmp`]);
+      // The hash appears only in what chpasswd read from its input.
+      expect(calls.filter((c) => c.includes(hash))).toHaveLength(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("fails without a sudo rule when the hash can't be installed", () => {
+    const dir = mkdtempSync(join(tmpdir(), "root-setup-"));
+    try {
+      const { bin } = fakeRootTools(dir, { chpasswdFails: true });
+      const sudoers = join(dir, "sudoers");
+      writeFileSync(sudoers, "tester ALL=(ALL) NOPASSWD:ALL\n");
+      expect(() =>
+        runRootSetup(bin, sudoers, "/home/tester", `$6$rounds=1000$s$${"c".repeat(86)}\n`, []),
+      ).toThrow();
+      expect(fs.existsSync(sudoers)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 
