@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -239,5 +240,82 @@ describe("checkRemovable and removeWorktree", () => {
     const r = await removeWorktree(repo, added.path);
     expect(r).toEqual({ ok: false, reason: "it has uncommitted or untracked changes" });
     expect(fs.existsSync(added.path)).toBe(true);
+  });
+});
+
+describe("host git safety", () => {
+  it("runs no hook, fsmonitor, or filter driver that a box wrote into the repository", async () => {
+    const repo = initRepo(path.join(tempDir(), "repo"));
+    const marker = path.join(tempDir("agentbox-marker-"), "SYNTHETIC_PWNED");
+    const script = path.join(repo, ".git", "SYNTHETIC_payload.sh");
+    write(script, `#!/bin/sh\necho "$0 $*" >> '${marker}'\ncat\n`);
+    fs.chmodSync(script, 0o755);
+    for (const hook of ["post-checkout", "reference-transaction", "post-index-change"]) {
+      write(path.join(repo, ".git", "hooks", hook), `#!/bin/sh\n'${script}' ${hook} </dev/null\n`);
+      fs.chmodSync(path.join(repo, ".git", "hooks", hook), 0o755);
+    }
+    sh(repo, "config", "core.fsmonitor", script);
+    sh(repo, "config", "filter.x.smudge", script);
+    sh(repo, "config", "filter.x.clean", script);
+    sh(repo, "config", "filter.x.required", "true");
+    write(path.join(repo, ".gitattributes"), "*.txt filter=x\n");
+    write(path.join(repo, "a.txt"), "SYNTHETIC content\n");
+    // Commit without the payload: the test helper's git honors the config.
+    execFileSync("git", [
+      "-C",
+      repo,
+      "-c",
+      "core.hooksPath=/dev/null",
+      "-c",
+      "filter.x.clean=",
+      "-c",
+      "filter.x.required=false",
+      "-c",
+      "core.fsmonitor=false",
+      "add",
+      "-A",
+    ]);
+    execFileSync("git", [
+      "-C",
+      repo,
+      "-c",
+      "core.hooksPath=/dev/null",
+      "-c",
+      "core.fsmonitor=false",
+      "commit",
+      "-q",
+      "-m",
+      "attrs",
+    ]);
+    fs.rmSync(marker, { force: true });
+
+    const added = await addWorktree(repo, "safety");
+    expect(added.ok).toBe(true);
+    if (!added.ok) return;
+    expect(fs.readFileSync(path.join(added.path, "a.txt"), "utf8")).toBe("SYNTHETIC content\n");
+    write(path.join(added.path, "a.txt"), "changed\n");
+    await git(added.path, ["status", "--porcelain"]);
+    await checkRemovable(repo, added.path);
+    expect(fs.existsSync(marker)).toBe(false);
+
+    // The same repository does run the payload under plain git.
+    sh(repo, "status", "--porcelain");
+    expect(fs.existsSync(marker)).toBe(true);
+  });
+
+  it("refuses transports other than local paths", async () => {
+    const repo = initRepo(path.join(tempDir(), "repo"));
+    const marker = path.join(tempDir("agentbox-marker-"), "SYNTHETIC_PWNED");
+    const script = path.join(repo, ".git", "SYNTHETIC_ssh.sh");
+    write(script, `#!/bin/sh\ntouch '${marker}'\nexit 1\n`);
+    fs.chmodSync(script, 0o755);
+    sh(repo, "config", "core.sshCommand", script);
+    sh(repo, "config", "url.ssh://git@example.com/x.insteadOf", "SYNTHETIC:");
+    const r = await git(repo, ["fetch", "SYNTHETIC:x", "main"]);
+    expect(r.ok).toBe(false);
+    expect(fs.existsSync(marker)).toBe(false);
+    // A local path still fetches.
+    const other = initRepo(path.join(tempDir(), "other"));
+    expect((await git(repo, ["fetch", other, "main:refs/heads/SYNTHETIC_other"])).ok).toBe(true);
   });
 });
