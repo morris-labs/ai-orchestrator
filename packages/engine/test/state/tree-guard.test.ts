@@ -9,6 +9,7 @@ import {
   ReadOnlyViolation,
   TreeGuard,
   describeTreeChange,
+  isBytecode,
   parsePorcelainZ,
   snapshotTree,
 } from "../../src/state/tree-guard.js";
@@ -53,6 +54,22 @@ describe("snapshotTree", () => {
     const after = await snapshotTree(runner, dir, [runs]);
     expect(describeTreeChange(before, after)).toMatch(/files changed: .*a\.py/);
     expect(describeTreeChange(before, after)).toMatch(/new\.txt/);
+  });
+
+  it("leaves Python bytecode out in a repository that doesn't ignore it", async () => {
+    const dir = repo();
+    writeFileSync(join(dir, ".gitignore"), "");
+    const before = await snapshotTree(runner, dir);
+    mkdirSync(join(dir, "__pycache__"));
+    writeFileSync(join(dir, "__pycache__", "a.cpython-314.pyc"), "x");
+    mkdirSync(join(dir, "pkg", "__pycache__"), { recursive: true });
+    writeFileSync(join(dir, "pkg", "__pycache__", "b.cpython-314.pyc"), "x");
+    writeFileSync(join(dir, "pkg", "c.pyc"), "x");
+    expect(describeTreeChange(before, await snapshotTree(runner, dir))).toBeNull();
+    writeFileSync(join(dir, "pkg", "d.py"), "x");
+    expect(describeTreeChange(before, await snapshotTree(runner, dir))).toMatch(/pkg\/d\.py/);
+    expect(isBytecode("pycache_notes/x.py")).toBe(false);
+    expect(isBytecode("my__pycache__/x.py")).toBe(false);
   });
 
   it("sees a second edit to a file that was already changed", async () => {

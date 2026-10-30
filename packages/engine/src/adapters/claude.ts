@@ -175,7 +175,7 @@ export class ClaudeAdapter extends CliAdapter {
       credentials,
       cwd: req.cwd,
       input: req.prompt,
-      env: this.options.env,
+      env: this.env,
       envProfile: `vendor:${this.vendor}`,
       timeoutMs: req.timeoutMs,
       signal: req.signal,

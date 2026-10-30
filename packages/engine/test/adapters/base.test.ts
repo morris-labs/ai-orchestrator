@@ -1,8 +1,14 @@
+import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import { DEFAULT_CEILINGS } from "@agentbox/contracts";
 import { detectLimitInText, parseResetTime } from "../../src/adapters/base.js";
+import { ClaudeAdapter } from "../../src/adapters/claude.js";
 import { CodexAdapter } from "../../src/adapters/codex.js";
+import { CopilotAdapter } from "../../src/adapters/copilot.js";
 import type { ProcessResult } from "../../src/adapters/process.js";
+import { tempDir } from "../tmp.js";
 
 const now = new Date("2026-10-28T09:00:00Z");
 
@@ -149,5 +155,36 @@ describe("exitFailure", () => {
     expect(p.fail(result('{"text":"handles 429 too many requests"}', ""), "").kind).toBe("process");
     expect(p.fail(result("", "error: 429 Too Many Requests"), "").kind).toBe("limit");
     expect(p.fail(result("", ""), "You've hit your usage limit.").kind).toBe("limit");
+  });
+});
+
+describe("vendor environment", () => {
+  it("keeps every vendor CLI from writing Python bytecode", async () => {
+    const dir = tempDir("vendor-env-");
+    const seen = join(dir, "seen.txt");
+    const cli = join(dir, "cli");
+    writeFileSync(
+      cli,
+      `#!/bin/sh\nprintf '%s\\n' "\${PYTHONDONTWRITEBYTECODE:-unset}" >> '${seen}'\nexit 1\n`,
+      { mode: 0o755 },
+    );
+    const req = {
+      prompt: "p",
+      cwd: dir,
+      tools: "read-only" as const,
+      timeoutMs: 10_000,
+      outputSchema: z.object({}),
+    };
+    for (const adapter of [
+      new ClaudeAdapter({ command: cli }),
+      new CodexAdapter({ command: cli }),
+      new CopilotAdapter({ command: cli }),
+    ]) {
+      await adapter.review(req).catch(() => undefined);
+    }
+    await new CodexAdapter({ command: cli, env: { PYTHONDONTWRITEBYTECODE: undefined } })
+      .review(req)
+      .catch(() => undefined);
+    expect(readFileSync(seen, "utf8").trim().split("\n")).toEqual(["1", "1", "1", "unset"]);
   });
 });

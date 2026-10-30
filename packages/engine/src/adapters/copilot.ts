@@ -156,7 +156,7 @@ export class CopilotAdapter extends CliAdapter {
         args: this.buildArgs(req, promptFile, sessionId),
         credentials,
         cwd: req.cwd,
-        env: this.options.env,
+        env: this.env,
         envProfile: `vendor:${this.vendor}`,
         timeoutMs: req.timeoutMs,
         signal: req.signal,

@@ -20,7 +20,7 @@ export interface TreeSnapshot {
   head: string;
   /** The checked-out branch, or an empty string for a detached `HEAD`. */
   branch: string;
-  /** `git status --porcelain` entries, sorted, without the ignored paths. */
+  /** `git status --porcelain` entries, sorted, without the ignored paths and Python bytecode. */
   status: string[];
   /** A hash of the tracked changes against `HEAD` and of every untracked file's content. */
   digest: string;
@@ -58,7 +58,8 @@ export interface TreeGuardOptions {
 /**
  * Takes a snapshot of the worktree: `HEAD`, the branch, the status, and a
  * hash of the tracked changes and of the untracked files' contents. Files
- * git ignores don't count.
+ * git ignores don't count, and neither does Python bytecode (see
+ * `isBytecode`).
  */
 export async function snapshotTree(
   runner: CommandRunner,
@@ -77,7 +78,7 @@ export async function snapshotTree(
   const branch = (await git(["symbolic-ref", "-q", "--short", "HEAD"], true)).trim();
   const prefixes = ignorePrefixes(repoPath, ignore);
   const kept = (path: string) =>
-    !prefixes.some((p) => path === p.slice(0, -1) || path.startsWith(p));
+    !isBytecode(path) && !prefixes.some((p) => path === p.slice(0, -1) || path.startsWith(p));
   const entries = parsePorcelainZ(
     await git(["status", "--porcelain=v1", "-z", "--untracked-files=all"]),
   ).filter((e) => kept(e.path));
@@ -213,6 +214,22 @@ export function parsePorcelainZ(text: string): PorcelainEntry[] {
     }
   }
   return out;
+}
+
+/**
+ * True for Python bytecode: a `*.pyc` file or anything under a `__pycache__`
+ * directory. A vendor that runs the repository's Python writes it unless
+ * `PYTHONDONTWRITEBYTECODE` is set, and many repositories don't ignore it.
+ * It's build output, not a change to the code under review.
+ */
+export function isBytecode(path: string): boolean {
+  return (
+    path.endsWith(".pyc") ||
+    path === "__pycache__" ||
+    path.startsWith("__pycache__/") ||
+    path.includes("/__pycache__/") ||
+    path.endsWith("/__pycache__")
+  );
 }
 
 /** Repository-relative prefixes, each ending in `/`, for the ignored directories inside the repository. */

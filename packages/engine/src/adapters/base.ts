@@ -28,6 +28,9 @@ export interface CliAdapterOptions {
   now?: () => Date;
 }
 
+/** Environment every vendor call gets unless `CliAdapterOptions.env` overrides it. */
+export const VENDOR_ENV: Record<string, string> = { PYTHONDONTWRITEBYTECODE: "1" };
+
 /** Context each concrete adapter gets for one call. */
 export interface CallContext {
   method: AdapterMethod;
@@ -45,6 +48,16 @@ export abstract class CliAdapter implements CliVendorAdapter {
   protected abstract call<T>(req: CliRequest<T>, ctx: CallContext): Promise<CliResult<T>>;
   protected abstract versionArgs(): string[];
   abstract detectLimit(error: unknown): CliLimitInfo | null;
+
+  /**
+   * The extra environment for every call: `options.env` over the engine's
+   * defaults. Python skips its `__pycache__` directories, as for the gate
+   * (`GATE_ENV`), so a vendor that runs the repository's Python doesn't
+   * leave bytecode in a worktree that the read-only guard checks.
+   */
+  protected get env(): Record<string, string | undefined> {
+    return { ...VENDOR_ENV, ...this.options.env };
+  }
 
   protected get command(): string {
     return this.options.command ?? this.vendor;
@@ -104,7 +117,7 @@ export abstract class CliAdapter implements CliVendorAdapter {
       command: this.command,
       args: this.versionArgs(),
       cwd: process.cwd(),
-      env: this.options.env,
+      env: this.env,
       envProfile: `vendor:${this.vendor}`,
       timeoutMs: 15_000,
     });

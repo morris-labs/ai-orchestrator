@@ -124,7 +124,7 @@ export class CodexAdapter extends CliAdapter {
         args: this.buildArgs(req, schemaFile),
         cwd: this.workingDir(req),
         input: prompt,
-        env: this.options.env,
+        env: this.env,
         envProfile: `vendor:${this.vendor}`,
         timeoutMs: req.timeoutMs,
         signal: req.signal,
