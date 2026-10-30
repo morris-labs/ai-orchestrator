@@ -83,6 +83,33 @@ describe("decideVerdict", () => {
     expect(decideVerdict(disproof, null, null, ["pytest: 1 failed"]).verdict).toBe("disproved");
   });
 
+  it("keeps a disproof that tried and couldn't reproduce, or that names an error code", () => {
+    const tried = out({
+      verdict: "disproved",
+      verification: "code-reading",
+      evidence: "Could not reproduce the hang; the guard at src/a.ts:10 returns early.",
+    });
+    expect(decideVerdict(tried, null, null).verdict).toBe("disproved");
+    const code = out({
+      verdict: "disproved",
+      verification: "code-reading",
+      evidence:
+        "open() fails with EACCES or permission denied on a read-only file, and the handler at src/io.ts:40 retries read-only, so it never crashes.",
+    });
+    expect(decideVerdict(code, null, null).verdict).toBe("disproved");
+  });
+
+  it("still refuses a disproof whose author says it couldn't run anything", () => {
+    for (const evidence of [
+      "I couldn't run the script: permission denied, so this rests on reading only.",
+      "Could not test it; the guard at src/a.ts:10 looks fine.",
+    ]) {
+      expect(decideVerdict(out({ verdict: "disproved", evidence }), null, null).verdict).toBe(
+        "unverified",
+      );
+    }
+  });
+
   it("passes an unverified answer through", () => {
     const d = decideVerdict(out({ verdict: "unverified", evidence: "x" }), null, null);
     expect(d.verdict).toBe("unverified");

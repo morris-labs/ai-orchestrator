@@ -269,16 +269,22 @@ function describeRun(where: string, run: ScriptRun): string {
 }
 
 /**
- * Text that says a tool couldn't run at all, as opposed to a command that
- * ran and failed: a sandbox that can't start, a refused permission, or a
- * missing program.
+ * Text in a failed tool call's error that says the tool couldn't run at
+ * all, as opposed to a command that ran and failed: a sandbox that can't
+ * start, a refused permission, or a missing program. Only tool errors are
+ * matched against it; evidence names error codes such as `EACCES` when it
+ * describes the reviewed code.
  */
 const TOOL_FAILURE =
   /\bbwrap\b|bubblewrap|landlock|seccomp|sandbox(?:ing)? (?:error|failure|failed|denied|refused|unavailable|execution failed)|(?:sandbox|namespace)[^.\n]{0,40}(?:fail|denied|refused|not permitted|no permission)|no permissions? to create (?:a )?new namespace|operation not permitted|permission denied|read-only file system|\bEACCES\b|\bEPERM\b|command not found|could not (?:run|execute|start)|couldn't (?:run|execute|start)|unable to (?:run|execute|start)|failed to (?:run|execute|start|spawn)|tool (?:call )?(?:failed|error)/i;
 
-/** Evidence that admits the disprover didn't check the finding. */
+/**
+ * Evidence that admits the disprover didn't check the finding: it says so,
+ * or says its sandbox or its own tools failed. "Could not reproduce" isn't
+ * here: a disprover that tried and saw no failure says exactly that.
+ */
 const UNCHECKED =
-  /\bunverified\b|not (?:been )?verified|could(?:n't| not) (?:verify|confirm|check|reproduce|test)|unable to (?:verify|confirm|check|reproduce|test)|not demonstrated|cannot (?:verify|confirm|check)/i;
+  /\bunverified\b|not (?:been )?verified|could(?:n't| not) (?:verify|confirm|check|test)|unable to (?:verify|confirm|check|test)|not demonstrated|cannot (?:verify|confirm|check)|\bbwrap\b|bubblewrap|sandbox(?:ing)? (?:error|failure|failed|denied|refused|unavailable|execution failed)|(?:sandbox|namespace)[^.\n]{0,40}(?:fail|denied|refused|not permitted|no permission)|no permissions? to create (?:a )?new namespace|tool (?:call )?(?:failed|error)|\b(?:I|we) (?:could(?:n't| not)|was unable to|were unable to|failed to) (?:run|execute|start|spawn)\b/i;
 
 /** The shortest evidence that can carry a positive reason to disprove. */
 const MIN_DISPROOF_EVIDENCE = 20;
@@ -294,7 +300,7 @@ export function disproofProblem(
 ): string | null {
   const evidence = output.evidence.trim();
   if (evidence.length < MIN_DISPROOF_EVIDENCE) return "The disproof gives no evidence.";
-  if (UNCHECKED.test(evidence) || TOOL_FAILURE.test(evidence)) {
+  if (UNCHECKED.test(evidence)) {
     return "The disprover's evidence says it couldn't check the finding.";
   }
   const failed = toolErrors.find((e) => TOOL_FAILURE.test(e));
