@@ -180,8 +180,3 @@ export function childEnv(
   for (const name of SECRET_ENV) delete copy[name];
   return copy;
 }
-
-/** The server origin from the environment: `AGENTBOX_SERVER_URL`, else the default port. */
-export function serverUrl(env: Record<string, string | undefined>): string {
-  return (env.AGENTBOX_SERVER_URL ?? "https://127.0.0.1:21400").replace(/\/$/, "");
-}

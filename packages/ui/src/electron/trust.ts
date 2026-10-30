@@ -11,6 +11,8 @@ import {
 } from "@agentbox/contracts/tls";
 import type { WebSocketCtor } from "../api/client";
 
+export { dataFile, serverUrl } from "./server-config";
+
 /**
  * Returns a function that reads the certificate in `certFile` each time it
  * runs, so a certificate the server replaced is picked up. The function
