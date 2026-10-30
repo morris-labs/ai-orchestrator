@@ -97,6 +97,21 @@ function requireAbsoluteMounts(mounts: { host: string; container: string }[] | u
 export function createHandlers(deps: ApiDeps): HttpHandlers {
   const { core } = deps;
 
+  /**
+   * Refuses a run whose box is in another project: the run would hold that
+   * box, and the hold-edits message would go to it.
+   */
+  async function requireBoxInProject(boxId: string | undefined, projectId: string) {
+    if (boxId === undefined) return;
+    const { box } = await core.boxes.get(boxId);
+    if (box.projectId !== projectId) {
+      throw new ApiError(
+        "validation",
+        `Box ${boxId} belongs to project ${box.projectId}, not ${projectId}.`,
+      );
+    }
+  }
+
   /** Finds the engine that holds a run: the mirror first, then every engine. */
   async function engineForRun(runId: string): Promise<ApiEngine> {
     const known = deps.runs.get(runId);
@@ -392,12 +407,14 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
     },
     "runs.preview": async ({ body }) => {
       requireAbsolute(body.repoPath, "The repository path", "container");
+      await requireBoxInProject(body.boxId, body.projectId);
       return deps.engines
         .requireProject(body.projectId)
         .call("engine.runs.preview", { body }) as never;
     },
     "runs.create": async ({ body, reply }) => {
       requireAbsolute(body.repoPath, "The repository path", "container");
+      await requireBoxInProject(body.boxId, body.projectId);
       const engine = deps.engines.requireProject(body.projectId);
       const run = (await engine.call("engine.runs.create", {
         body: { ...body, runId: ulid() },

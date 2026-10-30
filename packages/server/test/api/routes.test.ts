@@ -522,6 +522,23 @@ describe("review routes", () => {
     expect(h.core.calls).toContain(`message:${box.id}:${HOLD_EDITS_MESSAGE.slice(0, 20)}`);
   });
 
+  it("refuses a run whose box is in another project", async () => {
+    const other = "other-app-9f8e7d6c";
+    const before = h.core.calls.length;
+    for (const url of [`${V1}/runs`, `${V1}/runs/preview`]) {
+      const res = await h.server.app.inject({
+        method: "POST",
+        url,
+        headers: AUTH,
+        payload: { projectId: other, repoPath: "/work/other-app", boxId: box.id },
+      });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error.message).toContain(`belongs to project ${box.projectId}`);
+    }
+    expect(h.engine.calls.filter((c) => c.key.startsWith("engine.runs."))).toEqual([]);
+    expect(h.core.calls.slice(before).filter((c) => c.startsWith("message:"))).toEqual([]);
+  });
+
   it("forwards params, query, and body to the engine", async () => {
     await h.server.app.inject({
       method: "GET",
