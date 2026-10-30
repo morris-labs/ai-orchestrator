@@ -10,6 +10,7 @@ import {
   type RunState,
   type ServerRoutes,
 } from "@agentbox/contracts";
+import path from "node:path";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import type { z } from "zod";
 import { hasBearer, sessionCookieHeader } from "./auth.js";
@@ -73,8 +74,45 @@ function isRunState(value: unknown): value is RunState {
   );
 }
 
+/**
+ * Refuses a relative path. The server's working directory means nothing to
+ * the caller, so a client resolves a path against its own before sending it.
+ * A `container` path is a POSIX path whatever the host is.
+ */
+export function requireAbsolute(
+  value: string | null | undefined,
+  field: string,
+  side: "host" | "container" = "host",
+): void {
+  if (value === null || value === undefined) return;
+  const absolute = side === "host" ? path.isAbsolute(value) : path.posix.isAbsolute(value);
+  if (!absolute) throw new ApiError("validation", `${field} must be an absolute path: ${value}.`);
+}
+
+function requireAbsoluteMounts(mounts: { host: string; container: string }[] | undefined): void {
+  for (const m of mounts ?? []) {
+    requireAbsolute(m.host, "A mount's host path");
+    requireAbsolute(m.container, "A mount's container path", "container");
+  }
+}
+
 export function createHandlers(deps: ApiDeps): HttpHandlers {
   const { core } = deps;
+
+  /**
+   * Refuses a run whose box is in another project: the run would hold that
+   * box, and the hold-edits message would go to it.
+   */
+  async function requireBoxInProject(boxId: string | undefined, projectId: string) {
+    if (boxId === undefined) return;
+    const { box } = await core.boxes.get(boxId);
+    if (box.projectId !== projectId) {
+      throw new ApiError(
+        "validation",
+        `Box ${boxId} belongs to project ${box.projectId}, not ${projectId}.`,
+      );
+    }
+  }
 
   /** Finds the engine that holds a run: the mirror first, then every engine. */
   async function engineForRun(runId: string): Promise<ApiEngine> {
@@ -136,9 +174,16 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
 
     // Projects
     "projects.list": async () => ({ projects: await core.projects.list() }),
-    "projects.create": async ({ body }) => core.projects.create(body),
+    "projects.create": async ({ body }) => {
+      requireAbsolute(body.root, "The project root");
+      return core.projects.create(body);
+    },
     "projects.get": async ({ params }) => core.projects.get(params.projectId),
-    "projects.update": async ({ params, body }) => core.projects.update(params.projectId, body),
+    "projects.update": async ({ params, body }) => {
+      requireAbsolute(body.primaryRepo, "The primary repository");
+      requireAbsoluteMounts(body.mounts);
+      return core.projects.update(params.projectId, body);
+    },
     "projects.restartContainer": async ({ params }) =>
       core.projects.restartContainer(params.projectId),
     "projects.policy.get": async ({ params }) => core.projects.getPolicy(params.projectId),
@@ -158,6 +203,7 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
     // Boxes
     "boxes.list": async ({ query }) => ({ boxes: await core.boxes.list(query) }),
     "boxes.create": async ({ body }) => {
+      requireAbsolute(body.targetDir, "The target directory");
       await core.boxes.validateCreate(body);
       const label = body.conversationName.trim() || body.targetDir;
       return deps.jobs.start(
@@ -178,8 +224,14 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
       core.boxes.remove(params.boxId, { removeWorktree: query.removeWorktree }),
     "boxes.purge": async ({ params, body }) =>
       core.boxes.purge(params.boxId, { dryRun: body.dryRun }),
-    "boxes.move": async ({ params, body }) => core.boxes.move(params.boxId, body.newDir),
-    "boxes.relink": async ({ params, body }) => core.boxes.relink(params.boxId, body.targetDir),
+    "boxes.move": async ({ params, body }) => {
+      requireAbsolute(body.newDir, "The new directory");
+      return core.boxes.move(params.boxId, body.newDir);
+    },
+    "boxes.relink": async ({ params, body }) => {
+      requireAbsolute(body.targetDir, "The target directory");
+      return core.boxes.relink(params.boxId, body.targetDir);
+    },
     "boxes.convertToWorktree": async ({ params, body }) => {
       await core.boxes.validateConvertToWorktree(params.boxId);
       return deps.jobs.start(
@@ -312,7 +364,10 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
     "sshRemotes.copyId": async ({ params }) =>
       deps.ssh.copyId(await core.sshRemotes.get(params.name)),
     "globalMounts.get": async () => ({ mounts: core.settings.get().globalMounts }),
-    "globalMounts.put": async ({ body }) => core.settings.setGlobalMounts(body.mounts),
+    "globalMounts.put": async ({ body }) => {
+      requireAbsoluteMounts(body.mounts);
+      return core.settings.setGlobalMounts(body.mounts);
+    },
     "secrets.get": async () => deps.secrets.view(),
     "secrets.put": async ({ body }) => {
       const settings = await core.settings.setSecretRefs(body.refs);
@@ -352,11 +407,18 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
       const runs = [...byId.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
       return { runs };
     },
-    "runs.preview": async ({ body }) =>
-      deps.engines.requireProject(body.projectId).call("engine.runs.preview", { body }) as never,
+    "runs.preview": async ({ body }) => {
+      requireAbsolute(body.repoPath, "The repository path", "container");
+      await requireBoxInProject(body.boxId, body.projectId);
+      return deps.engines
+        .requireProject(body.projectId)
+        .call("engine.runs.preview", { body }) as never;
+    },
     "runs.create": async ({ body, reply }) => {
       // The request schema refuses this too; the check here keeps the refusal if the schema changes.
       if (isReadOnlyPostPush(body)) throw new ApiError("validation", READ_ONLY_POST_PUSH_MESSAGE);
+      requireAbsolute(body.repoPath, "The repository path", "container");
+      await requireBoxInProject(body.boxId, body.projectId);
       const engine = deps.engines.requireProject(body.projectId);
       const run = (await engine.call("engine.runs.create", {
         body: { ...body, runId: ulid() },

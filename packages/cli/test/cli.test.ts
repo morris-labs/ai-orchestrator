@@ -42,8 +42,9 @@ afterEach(async () => {
   rmSync(home, { recursive: true, force: true });
 });
 
-function cli(args: string[], env: Record<string, string | undefined> = {}) {
+function cli(args: string[], env: Record<string, string | undefined> = {}, cwd?: string) {
   return runCli(args, {
+    cwd,
     env: { AGENTBOX_SERVER: server.url, AGENTBOX_TOKEN: TOKEN, ...env },
     home,
     out: (t) => (out += t),
@@ -454,6 +455,21 @@ describe("review", () => {
     expect(out).toContain("src/mailer.ts:120-134");
   });
 
+  it("shows control characters in model text instead of sending them to the terminal", async () => {
+    const osc52 = "\u001b]52;c;U1lOVEhFVElD\u0007";
+    const title = `Retry loop ${osc52}never \u009b31m gives up`;
+    server.on(`GET /api/v1/runs/${RUN}/findings`, {
+      body: { findings: [{ ...finding, title }] },
+    });
+    await cli(["review", "findings", RUN]);
+    expect(out).toContain("Retry loop \\x1b]52;c;U1lOVEhFVElD\\x07never \\x9b31m gives up");
+    out = "";
+    await cli(["--json", "review", "findings", RUN]);
+    // eslint-disable-next-line no-control-regex -- the test looks for raw control characters.
+    expect(out).not.toMatch(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/);
+    expect(JSON.parse(out).findings[0].title).toBe(title);
+  });
+
   it("answers a decision", async () => {
     server.on(`POST /api/v1/runs/${RUN}/decision`, { body: runState });
     expect(await cli(["review", "decide", RUN, "resume_waive"])).toBe(2);
@@ -472,6 +488,46 @@ describe("review", () => {
       waiveFindingIds: ["F-0001"],
       reason: "Accepted",
     });
+  });
+});
+
+describe("relative paths", () => {
+  const CWD = "/home/user/src/example";
+
+  it("resolves them against the CLI's working directory before sending", async () => {
+    server.on("POST /api/v1/boxes", { status: 202, body: job("running") });
+    await cli(["box", "new", ".", "--layout", "root", "--no-wait"], {}, CWD);
+    expect(last()?.body).toMatchObject({ targetDir: CWD });
+
+    server.on(`PATCH /api/v1/projects/${PROJECT_ID}`, {
+      body: { project, staleBoxes: [] },
+    });
+    await cli(
+      [
+        "project",
+        "set",
+        PROJECT_ID,
+        "--primary-repo",
+        "../repo",
+        "--mount",
+        "data",
+        "--mount",
+        "cache:/cache",
+      ],
+      {},
+      CWD,
+    );
+    expect(last()?.body).toEqual({
+      primaryRepo: "/home/user/src/repo",
+      mounts: [
+        { host: `${CWD}/data`, container: `${CWD}/data` },
+        { host: `${CWD}/cache`, container: "/cache" },
+      ],
+    });
+
+    server.on("POST /api/v1/runs", { status: 201, body: runState });
+    await cli(["review", "start", "--project", PROJECT_ID, "--repo", "."], {}, CWD);
+    expect(last()?.body).toMatchObject({ repoPath: CWD });
   });
 });
 
@@ -586,6 +642,17 @@ describe("events", () => {
   it("fails on a refused token", async () => {
     expect(await cli(["events"], { AGENTBOX_TOKEN: "wrong" })).toBe(1);
     expect(err).toContain("refused the token");
+  });
+
+  it("fails when the server closes the stream with an error code", async () => {
+    server.closeEventsWith = { code: 1008, reason: "Unknown event types: bogus." };
+    expect(await cli(["events", "--types", "bogus"])).toBe(1);
+    expect(err).toContain("Unknown event types: bogus.");
+  });
+
+  it("ends cleanly when the server closes the stream normally", async () => {
+    server.closeEventsWith = { code: 1000, reason: "" };
+    expect(await cli(["events"])).toBe(0);
   });
 });
 

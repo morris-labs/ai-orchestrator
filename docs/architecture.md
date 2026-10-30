@@ -68,6 +68,9 @@ keeper script, the container's first process, starts it.
 - The dev-server proxy sends the engine token in its own header,
   `X-Agentbox-Engine-Token`, on HTTP requests and WebSocket upgrades alike,
   so the browser's `Authorization` header reaches the dev server unchanged.
+  It refuses a request whose `Origin` isn't the proxy host itself or whose
+  `Sec-Fetch-Site` is other than `same-origin` or `none`, and forwards only
+  to the ports the box listens on or the project maps.
 - It runs the review pipeline and its vendor adapters, writes each run's
   files, discovers listening ports with `ss`, and proxies HTTP to them.
 - It refuses to start when its version differs from
@@ -93,6 +96,10 @@ Every pipeline stage writes its result as JSON under
 stage after a crash or a container restart. The engine streams events about
 each stage, agent call, and finding; the server tails that stream and
 mirrors runs, findings, and usage into SQLite for the apps and the CLI.
+The server drops an engine event of a type only the server emits, such as
+`box.changed`, and any event about another container, another project, or
+a run of another project, so code in one container can't change what the
+server knows about another.
 
 ## Lease flow
 

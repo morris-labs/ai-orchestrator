@@ -1,7 +1,14 @@
 import http from "node:http";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import WebSocket, { WebSocketServer } from "ws";
-import { DevServerProxy, cachedResolver, parseProxyHost } from "../../src/proxy/proxy.js";
+import {
+  DevServerProxy,
+  cachedResolver,
+  crossSiteReason,
+  parseProxyHost,
+  proxyPorts,
+  type ProxyTarget,
+} from "../../src/proxy/proxy.js";
 import { TOKEN, createHarness, type Harness } from "../api/harness.js";
 
 const ENGINE_TOKEN = "e".repeat(32);
@@ -10,6 +17,10 @@ let engine: http.Server;
 let enginePort: number;
 let h: Harness;
 let port: number;
+let proxy: DevServerProxy;
+let serverClosed: boolean;
+/** The ports the box with the host key `emails` serves. */
+const SERVED = new Set([3000, 5173]);
 let seen: {
   url?: string;
   auth?: string;
@@ -52,17 +63,20 @@ beforeEach(async () => {
   });
   await new Promise<void>((r) => engine.listen(0, "127.0.0.1", r));
   enginePort = (engine.address() as { port: number }).port;
-  const proxy = new DevServerProxy(
+  proxy = new DevServerProxy(
     cachedResolver(async (hostKey) =>
-      hostKey === "emails" ? { enginePort, token: ENGINE_TOKEN } : null,
+      hostKey === "emails"
+        ? { enginePort, token: ENGINE_TOKEN, allowsPort: (p) => SERVED.has(p) }
+        : null,
     ),
   );
   h = await createHarness({ proxy });
   port = await h.server.listen(0);
+  serverClosed = false;
 });
 
 afterEach(async () => {
-  await h.server.close();
+  if (!serverClosed) await h.server.close();
   engine.closeAllConnections();
   await new Promise((r) => engine.close(r));
 });
@@ -200,5 +214,148 @@ describe("dev-server proxy", () => {
     const hello = await new Promise<string>((r) => ws.once("message", (d) => r(d.toString())));
     expect(JSON.parse(hello).type).toBe("hello");
     ws.close();
+  });
+});
+
+describe("cross-site requests", () => {
+  const host = () => `3000.emails.localhost:${port}`;
+
+  it("refuses a request that another site sends", async () => {
+    const res = await request(host(), "/api/delete", "POST", "x", {
+      origin: "https://attacker.example.com",
+      "sec-fetch-site": "cross-site",
+    });
+    expect(res.status).toBe(403);
+    expect(seen).toHaveLength(0);
+  });
+
+  it("refuses another port's origin and an opaque origin", async () => {
+    for (const extra of [
+      { origin: `http://5173.emails.localhost:${port}`, "sec-fetch-site": "same-site" },
+      { origin: `http://5173.emails.localhost:${port}` },
+      { origin: "null" },
+    ]) {
+      expect((await request(host(), "/", "POST", "x", extra)).status).toBe(403);
+    }
+    expect(seen).toHaveLength(0);
+  });
+
+  it("allows a page on the proxy host itself and the person's own navigation", async () => {
+    const same = await request(host(), "/api/save", "POST", "x", {
+      origin: `http://${host()}`,
+      "sec-fetch-site": "same-origin",
+    });
+    expect(same.status).toBe(200);
+    const typed = await request(host(), "/", "GET", undefined, { "sec-fetch-site": "none" });
+    expect(typed.status).toBe(200);
+  });
+
+  it("refuses a cross-site WebSocket upgrade", async () => {
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/hmr`, {
+      headers: { host: `5173.emails.localhost:${port}` },
+      origin: "https://attacker.example.com",
+    });
+    ws.on("error", () => undefined);
+    const status = await new Promise<number>((resolve) =>
+      ws.once("unexpected-response", (_req, res) => resolve(res.statusCode ?? 0)),
+    );
+    expect(status).toBe(403);
+    expect(seen).toHaveLength(0);
+  });
+
+  it("reads Origin and Sec-Fetch-Site", () => {
+    const req = (headers: http.IncomingHttpHeaders) => ({ headers }) as http.IncomingMessage;
+    const h = "3000.emails.localhost:21400";
+    expect(crossSiteReason(req({ host: h }))).toBeNull();
+    expect(crossSiteReason(req({ host: h, origin: `http://${h.toUpperCase()}` }))).toBeNull();
+    expect(crossSiteReason(req({ host: h, "sec-fetch-site": "same-site" }))).not.toBeNull();
+    expect(crossSiteReason(req({ host: h, origin: "not a url" }))).not.toBeNull();
+    expect(crossSiteReason(req({ host: h, origin: "http://127.0.0.1:21400" }))).not.toBeNull();
+  });
+});
+
+describe("proxied ports", () => {
+  it("refuses a port the box doesn't serve, such as the engine's own", async () => {
+    const res = await request(`20411.emails.localhost:${port}`, "/api/v1/health");
+    expect(res.status).toBe(403);
+    expect(seen).toHaveLength(0);
+  });
+
+  it("counts the box's own listeners and the project's mapped ports only", () => {
+    let listeners: { port: number; boxId: string | null }[] = [
+      { port: 3000, boxId: "B1" },
+      { port: 4000, boxId: "B2" },
+      { port: 20411, boxId: null },
+    ];
+    const check = proxyPorts("B1", () => listeners, [8080]);
+    expect([3000, 4000, 20411, 8080, 9000].map((p) => check.allowsPort(p))).toEqual([
+      true,
+      false,
+      false,
+      true,
+      false,
+    ]);
+    // A listener change counts at once, without waiting for the resolver cache.
+    listeners = [{ port: 9000, boxId: "B1" }];
+    expect(check.allowsPort(3000)).toBe(false);
+    expect(check.allowsPort(9000)).toBe(true);
+  });
+});
+
+describe("cachedResolver", () => {
+  const target: ProxyTarget = { enginePort: 1, token: "t", allowsPort: () => true };
+
+  it("keeps at most the given number of host keys", async () => {
+    const asked: string[] = [];
+    const resolve = cachedResolver(
+      async (key) => {
+        asked.push(key);
+        return key === "real" ? target : null;
+      },
+      60_000,
+      3,
+    );
+    await resolve("real");
+    for (const key of ["made-up-1", "made-up-2", "made-up-3"]) await resolve(key);
+    // `real` was the oldest of four keys, so the fourth pushed it out.
+    await resolve("real");
+    expect(asked.filter((k) => k === "real")).toHaveLength(2);
+    await resolve("made-up-3");
+    expect(asked.filter((k) => k === "made-up-3")).toHaveLength(1);
+  });
+
+  it("asks again once an entry expires", async () => {
+    let calls = 0;
+    const resolve = cachedResolver(async () => {
+      calls += 1;
+      return target;
+    }, 0);
+    await resolve("a");
+    await resolve("a");
+    expect(calls).toBe(2);
+  });
+});
+
+describe("closing the proxy", () => {
+  async function openSocket() {
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/hmr`, {
+      headers: { host: `5173.emails.localhost:${port}` },
+    });
+    await new Promise((r) => ws.once("open", r));
+    return { ws, closed: new Promise((r) => ws.once("close", r)) };
+  }
+
+  it("destroys the upgraded sockets it holds", async () => {
+    const { ws, closed } = await openSocket();
+    proxy.close();
+    await closed;
+    expect(ws.readyState).toBe(WebSocket.CLOSED);
+  });
+
+  it("lets the API server close while a proxied WebSocket is open", async () => {
+    const { closed } = await openSocket();
+    serverClosed = true;
+    await h.server.close();
+    await closed;
   });
 });

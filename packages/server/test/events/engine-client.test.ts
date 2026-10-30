@@ -7,7 +7,7 @@ import {
 } from "@agentbox/contracts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { EngineClient, type StreamCursor } from "../../src/events/engine-client.js";
-import { EngineSupervisor, sqliteCursor } from "../../src/events/engines.js";
+import { EngineSupervisor, engineEventRefusal, sqliteCursor } from "../../src/events/engines.js";
 import { RunMirror } from "../../src/events/run-mirror.js";
 import { CONTAINER, PROJECT_ID, RUN, runState } from "../api/fixtures.js";
 import { ENGINE_TOKEN, FakeEngineServer, waitFor } from "./fake-engine.js";
@@ -310,6 +310,186 @@ describe("EngineSupervisor", () => {
     expect(resets).toEqual([CONTAINER]);
     expect(mirror.get(RUN)?.id).toBe(RUN);
     expect(mirror.findings(RUN).map((f) => [f.id, f.verdict])).toEqual([["F-0001", "confirmed"]]);
+    await sup.stop();
+  });
+});
+
+describe("engine event admission", () => {
+  const endpoint = { container: CONTAINER, projectId: PROJECT_ID };
+  const OTHER_PROJECT = "other-app-9f8e7d6c";
+  const OTHER_RUN = "01JB8Z5K3W6Q2V9X4T7R0M1N2Q";
+  const base = {
+    id: "e1",
+    time: "2026-10-28T09:00:00.000Z",
+    source: `engine:${CONTAINER}`,
+    streamId: "S",
+    seq: 1,
+    sourceSeq: 1,
+  };
+  const ev = (event: Record<string, unknown>) => ({ ...base, ...event }) as AgentBoxEvent;
+  const stage = (runId: string) =>
+    ev({ type: "stage.changed", runId, round: 1, stage: "find", previousStage: null });
+
+  function seededDb() {
+    const db = openDatabase(":memory:");
+    const mirror = new RunMirror(db);
+    mirror.upsert(runState);
+    mirror.upsert({
+      ...runState,
+      id: OTHER_RUN,
+      projectId: OTHER_PROJECT,
+      container: `claude-agent-proj-${OTHER_PROJECT}`,
+      boxId: undefined,
+    });
+    db.prepare(
+      "INSERT INTO projects (id, root, data, created_at, updated_at) VALUES (?, ?, '{}', ?, ?)",
+    ).run(OTHER_PROJECT, "/work/other-app", "2026-10-28T09:00:00.000Z", "2026-10-28T09:00:00.000Z");
+    db.prepare(
+      `INSERT INTO boxes (id, project_id, host_key, target_dir, data, created_at, updated_at)
+       VALUES (?, ?, ?, ?, '{}', ?, ?)`,
+    ).run(
+      "SYNTHETIC_OTHER_BOX",
+      OTHER_PROJECT,
+      "other",
+      "/work/other-app",
+      "2026-10-28T09:00:00.000Z",
+      "2026-10-28T09:00:00.000Z",
+    );
+    return db;
+  }
+
+  it("accepts the engine's own events", () => {
+    const db = seededDb();
+    expect(engineEventRefusal(db, endpoint, runEvent as unknown as AgentBoxEvent)).toBeNull();
+    expect(engineEventRefusal(db, endpoint, stage(RUN))).toBeNull();
+    expect(
+      engineEventRefusal(
+        db,
+        endpoint,
+        ev({ type: "ports.changed", container: CONTAINER, listeners: [] }),
+      ),
+    ).toBeNull();
+  });
+
+  it("refuses event types only the server emits", () => {
+    const db = seededDb();
+    for (const event of [
+      ev({ type: "box.changed", boxId: "B", status: "stopped", box: null }),
+      ev({ type: "settings.changed", settings: {}, changedKeys: [] }),
+      ev({
+        type: "terminal.ended",
+        terminalId: "T",
+        boxId: null,
+        kind: "job",
+        exitCode: 0,
+        unexpected: false,
+      }),
+    ]) {
+      expect(engineEventRefusal(db, endpoint, event)).toMatch(/don't emit/);
+    }
+  });
+
+  it("refuses events for another container, project, run, or box", () => {
+    const db = seededDb();
+    const other = `claude-agent-proj-${OTHER_PROJECT}`;
+    expect(
+      engineEventRefusal(
+        db,
+        endpoint,
+        ev({ type: "ports.changed", container: other, listeners: [] }),
+      ),
+    ).not.toBeNull();
+    // A run of another project, and a run the server never saw.
+    expect(engineEventRefusal(db, endpoint, stage(OTHER_RUN))).toMatch(OTHER_PROJECT);
+    expect(engineEventRefusal(db, endpoint, stage("01JB8Z5K3W6Q2V9X4T7R0M1N2R"))).toMatch(
+      /unknown/,
+    );
+    const hijack = (run: Record<string, unknown>) =>
+      ev({ type: "run.changed", run: { ...runState, ...run }, roundSummary: null });
+    // Taking over another project's run, claiming another project, or holding its box.
+    expect(engineEventRefusal(db, endpoint, hijack({ id: OTHER_RUN }))).not.toBeNull();
+    expect(
+      engineEventRefusal(db, endpoint, hijack({ projectId: OTHER_PROJECT, container: other })),
+    ).not.toBeNull();
+    expect(engineEventRefusal(db, endpoint, hijack({ boxId: "SYNTHETIC_OTHER_BOX" }))).toMatch(
+      OTHER_PROJECT,
+    );
+    expect(engineEventRefusal(db, endpoint, hijack({ container: other }))).not.toBeNull();
+  });
+
+  it("drops a refused event, logs it, and relays the rest", async () => {
+    const db = seededDb();
+    const relayed: AgentBoxEvent[] = [];
+    const logs: string[] = [];
+    const sup = new EngineSupervisor({
+      engines: {
+        list: async () => [
+          {
+            container: CONTAINER,
+            projectId: PROJECT_ID,
+            hostPort: engine.port,
+            token: ENGINE_TOKEN,
+          },
+        ],
+      },
+      db,
+      expectedVersion: "4.0.0-dev",
+      relay: (e) => relayed.push(e),
+      decideLease: async () => {
+        throw new Error("unused");
+      },
+      log: (m) => logs.push(m),
+      intervalMs: 50,
+    });
+    sup.start();
+    await waitFor(() => sup.get(CONTAINER)?.connected === true);
+    engine.emit({
+      type: "box.changed",
+      boxId: "SYNTHETIC_OTHER_BOX",
+      status: "stopped",
+      box: null,
+    });
+    engine.emit({
+      type: "stage.changed",
+      runId: OTHER_RUN,
+      round: 1,
+      stage: "find",
+      previousStage: null,
+    });
+    engine.emit(runEvent);
+    await waitFor(() => relayed.length === 1);
+    expect(relayed[0]?.type).toBe("run.changed");
+    expect(logs.filter((l) => l.startsWith("Dropped event"))).toHaveLength(2);
+    await sup.stop();
+  });
+
+  it("keeps only the engine's own runs on a resync", async () => {
+    const db = seededDb();
+    const runs: string[] = [];
+    engine.runs = [runState, { ...runState, id: OTHER_RUN, projectId: OTHER_PROJECT }];
+    const sup = new EngineSupervisor({
+      engines: {
+        list: async () => [
+          {
+            container: CONTAINER,
+            projectId: PROJECT_ID,
+            hostPort: engine.port,
+            token: ENGINE_TOKEN,
+          },
+        ],
+      },
+      db,
+      expectedVersion: "4.0.0-dev",
+      relay: () => undefined,
+      decideLease: async () => {
+        throw new Error("unused");
+      },
+      onRuns: (list) => runs.push(...list.map((r) => r.id)),
+      intervalMs: 50,
+    });
+    sup.start();
+    await waitFor(() => runs.length > 0);
+    expect(runs).toEqual([RUN]);
     await sup.stop();
   });
 });

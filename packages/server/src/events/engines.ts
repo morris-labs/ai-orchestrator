@@ -57,6 +57,85 @@ export function sqliteCursor(db: SqlDatabase, container: string): StreamCursor {
   };
 }
 
+/** The project a run belongs to in the mirror, or `undefined` for a run it hasn't seen. */
+function runProject(db: SqlDatabase, runId: string): string | undefined {
+  const row = db.prepare("SELECT project_id FROM svc_runs WHERE id = ?").get(runId) as
+    { project_id: string } | undefined;
+  return row?.project_id;
+}
+
+/** The project of a box, or `undefined` for a box the database doesn't hold. */
+function boxProject(db: SqlDatabase, boxId: string): string | undefined {
+  const row = db.prepare("SELECT project_id FROM boxes WHERE id = ?").get(boxId) as
+    { project_id: string } | undefined;
+  return row?.project_id;
+}
+
+/** Why a run state doesn't belong to the engine at `endpoint`, or `null` when it does. */
+export function foreignRunReason(
+  db: SqlDatabase,
+  endpoint: Pick<EngineEndpoint, "container" | "projectId">,
+  run: RunState,
+): string | null {
+  if (run.projectId !== endpoint.projectId || run.container !== endpoint.container) {
+    return `run ${run.id} belongs to ${run.container} in project ${run.projectId}`;
+  }
+  const known = runProject(db, run.id);
+  if (known !== undefined && known !== endpoint.projectId) {
+    return `run ${run.id} belongs to project ${known}`;
+  }
+  if (run.boxId !== undefined) {
+    const owner = boxProject(db, run.boxId);
+    if (owner !== undefined && owner !== endpoint.projectId) {
+      return `box ${run.boxId} belongs to project ${owner}`;
+    }
+  }
+  return null;
+}
+
+/**
+ * Why the server must drop an event from the engine at `endpoint`, or `null`
+ * to relay it. An engine emits run, agent, finding, lease, usage, and port
+ * events, and only for its own container, its own project, and runs of that
+ * project; a run event needs the run's `run.changed` first. Boxes,
+ * containers, terminals, notifications, settings, and ceilings are the
+ * server's own events.
+ */
+export function engineEventRefusal(
+  db: SqlDatabase,
+  endpoint: Pick<EngineEndpoint, "container" | "projectId">,
+  event: AgentBoxEvent,
+): string | null {
+  const ownRun = (runId: string) => {
+    const project = runProject(db, runId);
+    if (project === undefined) return `run ${runId} is unknown`;
+    return project === endpoint.projectId ? null : `run ${runId} belongs to project ${project}`;
+  };
+  switch (event.type) {
+    case "usage.sample":
+      return null;
+    case "ports.changed":
+      return event.container === endpoint.container
+        ? null
+        : `the listeners are for ${event.container}`;
+    case "run.changed":
+      return foreignRunReason(db, endpoint, event.run);
+    case "finding.changed":
+      return event.finding.runId === event.runId
+        ? ownRun(event.runId)
+        : `finding ${event.finding.id} belongs to run ${event.finding.runId}`;
+    case "agent.started":
+    case "agent.finished":
+    case "stage.changed":
+    case "handoff":
+    case "role.reassigned":
+    case "lease.settled":
+      return ownRun(event.runId);
+    default:
+      return `engines don't emit ${event.type} events`;
+  }
+}
+
 function sameEndpoint(a: EngineEndpoint, b: EngineEndpoint): boolean {
   return a.hostPort === b.hostPort && a.token === b.token && a.projectId === b.projectId;
 }
@@ -118,7 +197,14 @@ export class EngineSupervisor {
       endpoint,
       expectedVersion: this.options.expectedVersion,
       cursor: sqliteCursor(this.options.db, endpoint.container),
-      onEvent: (event) => this.options.relay(event),
+      onEvent: (event) => {
+        const refusal = engineEventRefusal(this.options.db, endpoint, event);
+        if (refusal) {
+          this.options.log?.(`Dropped event ${event.seq} from ${endpoint.container}: ${refusal}.`);
+          return;
+        }
+        this.options.relay(event);
+      },
       onLease: (request) => this.options.decideLease(engineKey, endpoint.projectId, request),
       onResync: () => void this.resync(endpoint.container),
       onInfo: (info) => this.options.onInfo?.(endpoint.container, info),
@@ -134,7 +220,12 @@ export class EngineSupervisor {
     this.options.onStreamReset?.(container);
     let runs: RunState[];
     try {
-      runs = ((await client.call("engine.runs.list")) as { runs: RunState[] }).runs;
+      const listed = ((await client.call("engine.runs.list")) as { runs: RunState[] }).runs;
+      runs = listed.filter((run) => {
+        const refusal = foreignRunReason(this.options.db, client.endpoint, run);
+        if (refusal) this.options.log?.(`Resync of ${container} dropped a run: ${refusal}.`);
+        return refusal === null;
+      });
       this.options.onRuns?.(runs);
     } catch (err) {
       this.options.log?.(`Resync of ${container} failed: ${(err as Error).message}`);
@@ -146,7 +237,10 @@ export class EngineSupervisor {
         const { findings } = (await client.call("engine.findings.list", {
           params: { runId: run.id },
         })) as { findings: Finding[] };
-        this.options.onFindings(run.id, findings);
+        this.options.onFindings(
+          run.id,
+          findings.filter((f) => f.runId === run.id),
+        );
       } catch (err) {
         this.options.log?.(
           `Resync of the findings of run ${run.id} in ${container} failed: ${(err as Error).message}`,
