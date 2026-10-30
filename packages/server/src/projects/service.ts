@@ -28,6 +28,7 @@ import {
 } from "../docker/launch.js";
 import {
   liveSessions,
+  mountsFile,
   readMountsFile,
   writeEngineTokenFile,
   writeMountsFile,
@@ -363,14 +364,21 @@ export class ProjectService {
     return { image, imageId: info.id };
   }
 
-  /** Polls until the container is gone; returns whether it went. */
+  /**
+   * Polls until the container is gone, removing it once it has stopped;
+   * returns whether it went. A stopped auto-remove container may still be
+   * on its way out, so the name is free only once inspect finds nothing.
+   */
   async waitForRemoval(container: string): Promise<boolean> {
     const deadline = Date.now() + (this.deps.removalTimeoutMs ?? 5000);
+    let removeAsked = false;
     for (;;) {
       const inspect = await this.deps.docker.inspectContainer(container);
-      if (!inspect || !inspect.running) {
-        if (inspect) await this.deps.docker.removeContainer(container, { force: true });
-        return true;
+      if (!inspect) return true;
+      if (!inspect.running && !removeAsked) {
+        await this.deps.docker.removeContainer(container, { force: true });
+        removeAsked = true;
+        continue;
       }
       if (Date.now() >= deadline) return false;
       await new Promise((r) => setTimeout(r, 100));
@@ -448,8 +456,11 @@ export class ProjectService {
           return { container: name, created: false, stale };
         }
       } else if (inspect) {
-        // Exited but not removed, as after a daemon restart: clear it away.
-        await docker.removeContainer(name, { force: true });
+        // Exited but not removed, as after a daemon restart, or an idle
+        // container the daemon is removing right now: clear it away.
+        if (!(await this.waitForRemoval(name))) {
+          throw new ApiError("conflict", `The container ${name} is still being removed. Try again.`);
+        }
       }
 
       // Secrets resolve only when a container is created: they are fixed for its life.
@@ -481,7 +492,15 @@ export class ProjectService {
         await docker.removeContainer(id, { force: true }).catch(() => undefined);
         throw err;
       }
-      writeMountsFile(this.deps.env, name, this.wantedBinds(project));
+      // The container runs: losing the mounts record only costs a stale
+      // check against the container's binds, so it must not lose the engine
+      // record below.
+      try {
+        writeMountsFile(this.deps.env, name, this.wantedBinds(project));
+      } catch {
+        // Without the file, staleDifferences() compares the container's binds.
+        fs.rmSync(mountsFile(this.deps.env, name), { recursive: true, force: true });
+      }
       this.repos.engines.put({ projectId, container: name, hostPort, token }, this.deps.env.now());
       this.publishContainer(projectId, name, "running");
       return { container: name, created: true, stale: [] };

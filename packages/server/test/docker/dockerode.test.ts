@@ -38,6 +38,18 @@ describe("DockerodeClient errors", () => {
     expect(failureOf(err)).toMatchObject({ code: "conflict", status: 409 });
   });
 
+  it("treats a removal already in progress as removed", async () => {
+    const inProgress = daemonError(409, "removal of container abc is already in progress");
+    const docker = { getContainer: () => ({ remove: async () => Promise.reject(inProgress) }) };
+    const client = new DockerodeClient(docker as unknown as Docker);
+    await expect(client.removeContainer("abc", { force: true })).resolves.toBeUndefined();
+    const other = daemonError(409, "You cannot remove a running container abc");
+    const refusing = { getContainer: () => ({ remove: async () => Promise.reject(other) }) };
+    await expect(
+      new DockerodeClient(refusing as unknown as Docker).removeContainer("abc"),
+    ).rejects.toMatchObject({ dockerStatus: 409 });
+  });
+
   it("throws a 404 as not_found", async () => {
     const client = new DockerodeClient(failingDocker(daemonError(404, "No such container: x")));
     const err = await client.exec("x", { cmd: ["true"] }).catch((e: unknown) => e);

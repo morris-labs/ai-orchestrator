@@ -183,6 +183,20 @@ describe("ProjectService", () => {
     expect(await h.core.projects.staleDifferences(h.core.projects.get(p.id))).toEqual([]);
   });
 
+  it("waits for an exited container the daemon is still removing before creating one", async () => {
+    const h = makeHarness();
+    const p = h.core.projects.ensureForRoot(h.dir("app"));
+    const first = await h.core.projects.ensureContainer(p.id);
+    const c = h.docker.containers.get(first.container)!;
+    c.running = false;
+    c.state = "exited";
+    h.docker.removing.set(first.container, 2);
+    const r = await h.core.projects.ensureContainer(p.id);
+    expect(r.created).toBe(true);
+    expect(h.docker.callsOf("createContainer")).toHaveLength(2);
+    expect(h.docker.containers.get(first.container)?.running).toBe(true);
+  });
+
   it("replaces an idle container built from an older image", async () => {
     const h = makeHarness();
     const p = h.core.projects.ensureForRoot(h.dir("app"));
