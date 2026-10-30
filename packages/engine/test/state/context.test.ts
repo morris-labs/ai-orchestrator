@@ -13,6 +13,7 @@ import {
 } from "../../src/core.js";
 import { EngineLeaseBroker } from "../../src/events/leases.js";
 import { DecisionNeeded, describeError } from "../../src/state/context.js";
+import { disposeCheckouts, readOnlyRepo } from "../../src/state/steps.js";
 import { makeRun } from "./harness.js";
 
 class LimitError extends Error {}
@@ -306,7 +307,7 @@ describe("leases", () => {
 });
 
 describe("a read-only call", () => {
-  it("fails when it changes the worktree, and the engine restores the tree", async () => {
+  it("runs in the engine's checkout, fails when it changes it, and restores only that", async () => {
     const { writeFileSync, existsSync } = await import("node:fs");
     const { join } = await import("node:path");
     let calls = 0;
@@ -318,8 +319,71 @@ describe("a read-only call", () => {
         return answering("codex").review(r);
       },
     } as VendorAdapter;
-    const { ctx } = await makeRun({ adapters: { codex: editing } });
-    const repo = ctx.state.request.repoPath;
+    const { ctx, repo } = await makeRun({ adapters: { codex: editing } });
+    const checkout = await readOnlyRepo(ctx);
+    expect(checkout).not.toBe(repo);
+    const call = ctx.callAgent<ReviewOutput>({
+      key: "k",
+      role: "reviewer",
+      vendor: "codex",
+      method: "review",
+      request: { prompt: "p", repoPath: checkout, toolPolicy: "read-only" },
+      groupId: null,
+      estimateTokens: 1,
+    });
+    await expect(call).rejects.toThrow(/read-only call changed the worktree/);
+    expect(calls).toBe(2);
+    expect(existsSync(join(checkout, "stray-1.txt"))).toBe(false);
+    expect(existsSync(join(checkout, "stray-2.txt"))).toBe(false);
+    expect(existsSync(join(repo, "stray-1.txt"))).toBe(false);
+    await disposeCheckouts(ctx);
+    expect(existsSync(checkout)).toBe(false);
+  });
+
+  it("never reverts or deletes work done in the checkout under review during the call", async () => {
+    const { readFileSync, writeFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    let repo = "";
+    // While the reviewer reads, a person edits a tracked file and creates a
+    // file in the checkout under review (the E1-1 failure case).
+    const person = {
+      ...answering("codex"),
+      review: (r: AdapterRequest) => {
+        writeFileSync(join(repo, "README.md"), "SYNTHETIC edit by a person\n");
+        writeFileSync(join(repo, "SYNTHETIC_new.py"), "print('mine')\n");
+        return answering("codex").review(r);
+      },
+    } as VendorAdapter;
+    const h = await makeRun({ adapters: { codex: person } });
+    repo = h.repo;
+    const out = await h.ctx.callAgent<ReviewOutput>({
+      key: "k",
+      role: "reviewer",
+      vendor: "codex",
+      method: "review",
+      request: { prompt: "p", repoPath: await readOnlyRepo(h.ctx), toolPolicy: "read-only" },
+      groupId: null,
+      estimateTokens: 1,
+    });
+    expect(out.vendor).toBe("codex");
+    expect(readFileSync(join(repo, "README.md"), "utf8")).toBe("SYNTHETIC edit by a person\n");
+    expect(readFileSync(join(repo, "SYNTHETIC_new.py"), "utf8")).toBe("print('mine')\n");
+    await disposeCheckouts(h.ctx);
+  });
+
+  it("only reports a change to the checkout under review, and keeps every file", async () => {
+    const { existsSync, writeFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    let calls = 0;
+    const editing = {
+      ...answering("codex"),
+      review: (r: AdapterRequest) => {
+        calls += 1;
+        writeFileSync(join(r.repoPath, `SYNTHETIC_stray-${calls}.txt`), "x");
+        return answering("codex").review(r);
+      },
+    } as VendorAdapter;
+    const { ctx, repo } = await makeRun({ adapters: { codex: editing } });
     const call = ctx.callAgent<ReviewOutput>({
       key: "k",
       role: "reviewer",
@@ -329,10 +393,9 @@ describe("a read-only call", () => {
       groupId: null,
       estimateTokens: 1,
     });
-    await expect(call).rejects.toThrow(/read-only call changed the worktree/);
-    expect(calls).toBe(2);
-    expect(existsSync(join(repo, "stray-1.txt"))).toBe(false);
-    expect(existsSync(join(repo, "stray-2.txt"))).toBe(false);
+    await expect(call).rejects.toThrow(/doesn't own this worktree/);
+    expect(existsSync(join(repo, "SYNTHETIC_stray-1.txt"))).toBe(true);
+    expect(existsSync(join(repo, "SYNTHETIC_stray-2.txt"))).toBe(true);
   });
 
   it("may write in the run directory", async () => {

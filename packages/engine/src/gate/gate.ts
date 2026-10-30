@@ -1,7 +1,12 @@
 // The test and lint gate (design.md, pre-push steps 1 and 7): a baseline at
 // preflight, a rerun after each fix, and regression detection against the
 // baseline.
-import { rm } from "node:fs/promises";
+//
+// The gate runs in the checkout under review, not in an engine checkout:
+// test and lint commands need the dependencies and build caches that live
+// there as ignored files. A person or the box's session can work in that
+// checkout while the commands run, so the gate never deletes a file there.
+// It reports the untracked files that appeared instead.
 import { join } from "node:path";
 import type { PolicyCommand, PolicyFile } from "@agentbox/contracts";
 import type { CommandRunner } from "../core.js";
@@ -22,6 +27,13 @@ export interface GateCommandResult {
 export interface GateRun {
   passed: boolean;
   commands: GateCommandResult[];
+  /**
+   * Untracked files that git doesn't ignore and that appeared while the
+   * commands ran, such as build output. The gate leaves them in place: it
+   * can't tell its commands' files from a person's. Absent when the gate
+   * didn't check.
+   */
+  leftovers?: string[];
 }
 
 export interface Regression {
@@ -63,9 +75,9 @@ export interface GateOptions {
   repoPath: string;
   shell: CommandRunner;
   /**
-   * Runs `git`. When present, the gate deletes the untracked files its
-   * commands created, so build output such as `__pycache__/` doesn't leave
-   * the tree dirty for the next run. Files git ignores are never touched.
+   * Runs `git`. When present, the gate lists the untracked files that
+   * appeared while its commands ran in `GateRun.leftovers`, so a report can
+   * say why the tree is dirty afterwards. It never deletes them.
    */
   git?: CommandRunner;
   timeoutMs?: number;
@@ -119,24 +131,21 @@ export async function untrackedFiles(
 }
 
 /**
- * Runs every test and lint command of the policy, in order, then deletes
- * the untracked files the commands created when `options.git` is set.
+ * Runs every test and lint command of the policy, in order. When
+ * `options.git` is set, lists the untracked files that appeared meanwhile
+ * in `leftovers`, without deleting any.
  */
 export async function runGate(policy: PolicyFile, options: GateOptions): Promise<GateRun> {
   const before = options.git ? await untrackedFiles(options.git, options.repoPath) : null;
   const commands: GateCommandResult[] = [];
-  try {
-    for (const cmd of policy.tests) commands.push(await runOne("test", cmd, options));
-    for (const cmd of policy.lint) commands.push(await runOne("lint", cmd, options));
-  } finally {
-    if (options.git && before) {
-      const after = await untrackedFiles(options.git, options.repoPath);
-      for (const path of after ?? []) {
-        if (!before.has(path)) await rm(join(options.repoPath, path), { force: true });
-      }
-    }
+  for (const cmd of policy.tests) commands.push(await runOne("test", cmd, options));
+  for (const cmd of policy.lint) commands.push(await runOne("lint", cmd, options));
+  const run: GateRun = { passed: commands.every((c) => c.passed), commands };
+  if (options.git && before) {
+    const after = await untrackedFiles(options.git, options.repoPath);
+    if (after) run.leftovers = [...after].filter((path) => !before.has(path)).sort();
   }
-  return { passed: commands.every((c) => c.passed), commands };
+  return run;
 }
 
 function key(c: Pick<GateCommandResult, "kind" | "command" | "cwd">): string {

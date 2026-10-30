@@ -8,6 +8,7 @@ import {
   type EngineEnv,
 } from "@agentbox/contracts";
 import type { FastifyInstance } from "fastify";
+import { join } from "node:path";
 import { type LogLevel, type Logger, type RunManager } from "../api/core-interface.js";
 import { RepoService } from "../api/repos.js";
 import { execRunner, type CommandRunner } from "../api/runner.js";
@@ -18,6 +19,9 @@ import { scanListeners } from "../ports/scan.js";
 import { PortWatcher } from "../ports/watcher.js";
 import type { AdapterSet } from "../core.js";
 import { createRunManager } from "../state/manager.js";
+import { ChildRegistry, setChildRegistry } from "../process/children.js";
+import { looksLikeCredential } from "../process/env.js";
+import { moveSecretsOutOfEnviron } from "./environ.js";
 import { startActiveRunsWriter } from "./active-runs.js";
 import { MOCK_SCRIPT_ENV, MOCK_VENDORS_ENV, selectAdapters } from "./adapters.js";
 import { LOG_LEVELS, createLogger, isLogLevel } from "./logger.js";
@@ -235,6 +239,18 @@ export async function main(
   const level: LogLevel = args.logLevel ?? (envLevel && isLogLevel(envLevel) ? envLevel : "info");
   const log = createLogger(level);
 
+  if (env === process.env) {
+    // Executes the engine again without its credentials in the environ, the
+    // first time through; returns once they are back in `process.env`.
+    const step = moveSecretsOutOfEnviron({ isSecret: looksLikeCredential });
+    if (step.kind === "unsupported") {
+      log.warn(
+        "This Node has no process.execve, so the engine's /proc environ still holds its credentials",
+        { names: step.names },
+      );
+    }
+  }
+
   const checked = checkEnv(env);
   if (!checked.ok) {
     for (const problem of checked.problems) log.error(`The engine refuses to start: ${problem}`);
@@ -247,12 +263,25 @@ export async function main(
   }
 
   // The token stays in `loaded.token` for the API. Removing it, and the name
-  // of its file, from this process's environment keeps both out of every
-  // child, whatever runner starts the child.
+  // of its file, from `process.env` keeps both out of every child, whatever
+  // runner starts the child. `/proc/PID/environ` doesn't change when
+  // `process.env` does; `moveSecretsOutOfEnviron` above keeps the token out
+  // of it.
   if (env === process.env) {
     delete process.env[ENGINE_ENV.token];
     delete process.env[ENGINE_ENV.tokenFile];
   }
+
+  // Before any run resumes, stop the vendor CLIs and commands that a crashed
+  // engine in this container left running, so a resumed fixer never works
+  // beside an orphaned one.
+  const children = new ChildRegistry(
+    join(checked.env[ENGINE_ENV.stateDir], "engine-children.json"),
+  );
+  const reaped = children.reap();
+  if (reaped > 0)
+    log.warn("Stopped process groups that an earlier engine left running", { reaped });
+  setChildRegistry(children);
 
   let handle: EngineHandle;
   try {

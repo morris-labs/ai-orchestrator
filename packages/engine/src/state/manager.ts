@@ -1,8 +1,6 @@
 // The engine API's `RunManager` over the core's `RunController`s: one
 // controller per run, loaded from its run directory on demand, with the
 // project-wide reads (run list, preview, usage samples) the API needs.
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
 import {
   RunIdSchema,
   TimedUsageSampleSchema,
@@ -36,6 +34,7 @@ import { GhCliClient } from "../postpush/github.js";
 import { parseDiff } from "../range/diff.js";
 import { ExecaRunner } from "../range/exec.js";
 import { Git, GitError } from "../range/git.js";
+import { readRepoFile } from "../range/repo-file.js";
 import { RangeError, resolveRange } from "../range/resolve.js";
 import { RunNotFoundError, RunStore, listRunIds } from "../run/store.js";
 import { RunController } from "./controller.js";
@@ -67,12 +66,8 @@ async function api<T>(work: () => Promise<T>): Promise<T> {
   }
 }
 
-async function readWorkingFile(repoPath: string, path: string): Promise<string | null> {
-  try {
-    return await readFile(join(repoPath, path), "utf8");
-  } catch {
-    return null;
-  }
+function readWorkingFile(repoPath: string, path: string): Promise<string | null> {
+  return readRepoFile(repoPath, path);
 }
 
 function inWindow(time: string, filter: UsageFilter): boolean {

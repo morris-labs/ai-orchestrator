@@ -95,17 +95,25 @@ Each round of a pre-push run goes through the following stages:
 1. **Find**: runs fresh, read-only reviewers in parallel. Each reviewer gets
    the findings already fixed or disproved, must give a verdict for every
    diff hunk, and continues in the same session until it finds nothing new.
+   Reviewers, disprovers, confirmers, and sweepers read a checkout of the
+   tip that the engine owns, not your checkout, so you can keep working
+   while they run.
 1. **Merge**: removes duplicate findings, and records the overlap rate
    between reviewers. Two findings are duplicates when they have the same
    fingerprint, or when their lines overlap in the same commit and their
    titles or failure cases share at least half their words.
 1. **Verify**: a disprover from another vendor tries to disprove each
    finding, with a reproduction script where it can, and checks whether the
-   flaw already exists at the base.
+   flaw already exists at the base. The engine reruns each script in a
+   throwaway checkout of the tip and of the base, and stops it when you
+   cancel the run.
 1. **Fix**: Claude fixes the confirmed findings on the tip branch and commits
    each batch.
-1. **Gate**: reruns tests and lint. A regression against the baseline sends
-   the round back to the fix stage.
+1. **Gate**: reruns tests and lint in your checkout, where the dependencies
+   are. A regression against the baseline sends the round back to the fix
+   stage. The gate never deletes files: untracked files that appear while
+   it runs, such as build output, stay, and the engine log lists them. Add
+   build output to `.gitignore`, or the next run refuses the dirty tree.
 1. **Confirm**: a reviewer from a vendor other than the fixer checks the fix
    diff for incomplete fixes and regressions.
 1. **Sweep**: turns each confirmed finding into a pattern and searches the

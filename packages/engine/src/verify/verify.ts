@@ -137,10 +137,12 @@ function failedRun(message: string): ScriptRun {
 }
 
 /**
- * Runs a reproduction script against `repoDir`. Refuses a path outside the
- * scratch directory, symbolic links included. Writes `script.content` to the
- * path when the agent couldn't write the file itself. A script that doesn't
- * exist comes back as a run that never started.
+ * Runs a reproduction script against `repoDir`, which must be a checkout the
+ * engine owns: the script is repository code with no guard around it.
+ * Refuses a path outside the scratch directory, symbolic links included.
+ * Writes `script.content` to the path when the agent couldn't write the file
+ * itself. A script that doesn't exist comes back as a run that never
+ * started. `signal` kills the script's process group, as a cancel does.
  */
 export async function runReproScript(
   runner: CommandRunner,
@@ -148,6 +150,7 @@ export async function runReproScript(
   script: NonNullable<VerifyOutput["script"]>,
   repoDir: string,
   timeoutMs = 120_000,
+  signal?: AbortSignal,
 ): Promise<ScriptRun> {
   const full = resolve(scratchDir, script.path);
   if (!inside(scratchDir, full)) {
@@ -172,6 +175,7 @@ export async function runReproScript(
     cwd: repoDir,
     timeoutMs,
     envProfile: "untrusted",
+    ...(signal ? { signal } : {}),
   });
   const output = `${result.stdout}${result.stderr}`.trim().split("\n").slice(-20).join("\n");
   return {
@@ -181,6 +185,11 @@ export async function runReproScript(
     notStarted: result.notStarted ?? false,
     signal: result.signal ?? null,
   };
+}
+
+/** Throws when the run was cancelled, so a killed script never becomes a verdict. */
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw new Error("The run was cancelled during a reproduction script.");
 }
 
 function inside(dir: string, path: string): boolean {
@@ -260,16 +269,22 @@ function describeRun(where: string, run: ScriptRun): string {
 }
 
 /**
- * Text that says a tool couldn't run at all, as opposed to a command that
- * ran and failed: a sandbox that can't start, a refused permission, or a
- * missing program.
+ * Text in a failed tool call's error that says the tool couldn't run at
+ * all, as opposed to a command that ran and failed: a sandbox that can't
+ * start, a refused permission, or a missing program. Only tool errors are
+ * matched against it; evidence names error codes such as `EACCES` when it
+ * describes the reviewed code.
  */
 const TOOL_FAILURE =
   /\bbwrap\b|bubblewrap|landlock|seccomp|sandbox(?:ing)? (?:error|failure|failed|denied|refused|unavailable|execution failed)|(?:sandbox|namespace)[^.\n]{0,40}(?:fail|denied|refused|not permitted|no permission)|no permissions? to create (?:a )?new namespace|operation not permitted|permission denied|read-only file system|\bEACCES\b|\bEPERM\b|command not found|could not (?:run|execute|start)|couldn't (?:run|execute|start)|unable to (?:run|execute|start)|failed to (?:run|execute|start|spawn)|tool (?:call )?(?:failed|error)/i;
 
-/** Evidence that admits the disprover didn't check the finding. */
+/**
+ * Evidence that admits the disprover didn't check the finding: it says so,
+ * or says its sandbox or its own tools failed. "Could not reproduce" isn't
+ * here: a disprover that tried and saw no failure says exactly that.
+ */
 const UNCHECKED =
-  /\bunverified\b|not (?:been )?verified|could(?:n't| not) (?:verify|confirm|check|reproduce|test)|unable to (?:verify|confirm|check|reproduce|test)|not demonstrated|cannot (?:verify|confirm|check)/i;
+  /\bunverified\b|not (?:been )?verified|could(?:n't| not) (?:verify|confirm|check|test)|unable to (?:verify|confirm|check|test)|not demonstrated|cannot (?:verify|confirm|check)|\bbwrap\b|bubblewrap|sandbox(?:ing)? (?:error|failure|failed|denied|refused|unavailable|execution failed)|(?:sandbox|namespace)[^.\n]{0,40}(?:fail|denied|refused|not permitted|no permission)|no permissions? to create (?:a )?new namespace|tool (?:call )?(?:failed|error)|\b(?:I|we) (?:could(?:n't| not)|was unable to|were unable to|failed to) (?:run|execute|start|spawn)\b/i;
 
 /** The shortest evidence that can carry a positive reason to disprove. */
 const MIN_DISPROOF_EVIDENCE = 20;
@@ -285,7 +300,7 @@ export function disproofProblem(
 ): string | null {
   const evidence = output.evidence.trim();
   if (evidence.length < MIN_DISPROOF_EVIDENCE) return "The disproof gives no evidence.";
-  if (UNCHECKED.test(evidence) || TOOL_FAILURE.test(evidence)) {
+  if (UNCHECKED.test(evidence)) {
     return "The disprover's evidence says it couldn't check the finding.";
   }
   const failed = toolErrors.find((e) => TOOL_FAILURE.test(e));
@@ -380,6 +395,15 @@ export interface VerifyDeps {
   scratchDirFor: (findingId: string) => string;
   timeoutMs: number;
   /**
+   * Runs `fn` in a throwaway checkout that the engine owns, of the tip the
+   * disprover read or of the base, and removes the checkout afterwards. A
+   * reproduction script runs only there, never in the checkout under review
+   * or in the checkouts parallel disprovers read.
+   */
+  inScriptCheckout: <T>(side: "tip" | "base", fn: (dir: string) => Promise<T>) => Promise<T>;
+  /** The run's cancel signal; it stops a reproduction script. */
+  signal?: AbortSignal;
+  /**
    * Makes the disprover call under a lease. Returns `null` when the call
    * failed after its retry or the lease was refused for this role.
    */
@@ -434,19 +458,20 @@ export async function verifyFinding(
   let baseRun: ScriptRun | null = null;
   if (answer.output.script && answer.output.verdict === "confirmed") {
     const script = answer.output.script;
-    try {
-      tipRun = await runReproScript(deps.runner, scratchDir, script, deps.range.repoPath);
-    } catch (error) {
-      tipRun = failedRun(`The engine couldn't run the script: ${(error as Error).message}`);
-    }
-    // The base comparison counts only after the script reproduced at the tip.
-    if (classifyRun(tipRun) === "reproduced") {
+    const run = async (side: "tip" | "base"): Promise<ScriptRun> => {
       try {
-        baseRun = await runReproScript(deps.runner, scratchDir, script, baseDir);
+        return await deps.inScriptCheckout(side, (dir) =>
+          runReproScript(deps.runner, scratchDir, script, dir, undefined, deps.signal),
+        );
       } catch (error) {
-        baseRun = failedRun(`The engine couldn't run the script: ${(error as Error).message}`);
+        return failedRun(`The engine couldn't run the script: ${(error as Error).message}`);
+      } finally {
+        throwIfAborted(deps.signal);
       }
-    }
+    };
+    tipRun = await run("tip");
+    // The base comparison counts only after the script reproduced at the tip.
+    if (classifyRun(tipRun) === "reproduced") baseRun = await run("base");
   }
   return {
     findingId: finding.id,

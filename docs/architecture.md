@@ -78,7 +78,16 @@ keeper script, the container's first process, starts it.
   engine reads it from `AGENTBOX_ENGINE_TOKEN_FILE`. The token isn't in the
   container's environment, so the tmux sessions, shells, and agent CLIs
   that `docker exec` starts don't inherit it, and the engine withholds every
-  `AGENTBOX_` variable from the processes it starts.
+  `AGENTBOX_` variable from the processes it starts. At startup the engine
+  also executes itself again without its credentials in the environment and
+  keeps them in memory, so its own `/proc/PID/environ` holds none.
+- These measures control what a process inherits; they aren't isolation.
+  Every process in the container runs as one user, so repository code that
+  the review runs, such as a test command or a reproduction script, can
+  still read the token file, the keeper's `/proc/1/environ` with the
+  project's secrets, and a vendor CLI's environment. With the token it can
+  call the engine API. Run reviews only on code you would run in the box
+  yourself.
 - The dev-server proxy sends the engine token in its own header,
   `X-Agentbox-Engine-Token`, on HTTP requests and WebSocket upgrades alike,
   so the browser's `Authorization` header reaches the dev server unchanged.
@@ -107,7 +116,11 @@ and `review` command groups, plus `migrate`, `setup`, and `doctor`.
 
 Every pipeline stage writes its result as JSON under
 `PROJECT/.claude-box/runs/RUN_ID/`. A run resumes from the last complete
-stage after a crash or a container restart. The engine streams events about
+stage after a crash or a container restart. The engine records the process
+groups it starts in `engine-children.json` in the keeper's state directory,
+and an engine that the keeper restarts first kills the groups that the
+crashed engine left running, so a resumed stage never runs beside an
+orphaned agent. The engine streams events about
 each stage, agent call, and finding; the server tails that stream and
 mirrors runs, findings, and usage into SQLite for the apps and the CLI.
 The server drops an engine event of a type only the server emits, such as

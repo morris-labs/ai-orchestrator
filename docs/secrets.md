@@ -36,6 +36,13 @@ Docker daemon can read them with `docker inspect` or `docker exec ... env`
 for as long as the container exists. On a host where other users are in the
 `docker` group, treat every secret you give a project as shared with them.
 
+Inside the container, every process runs as the same user, so any code
+there, repository code that a test command or a review runs included, can
+read the secrets from the container's environment, for example from
+`/proc/1/environ`. The engine keeps credentials out of the environment of
+the test commands and scripts it starts, but that doesn't stop such code
+from reading them elsewhere.
+
 The following example sets two references on a project:
 
 | Name | Reference |

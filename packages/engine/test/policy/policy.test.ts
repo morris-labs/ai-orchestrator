@@ -46,6 +46,27 @@ describe("policy loading", () => {
     expect(parsePolicy("")).toEqual(DEFAULT_POLICY);
   });
 
+  it("rejects a malformed glob when the policy loads, not when a prompt is built", () => {
+    expect(() =>
+      parsePolicy(
+        'version: 1\nrules:\n  - id: r1\n    text: t\n    appliesTo: ["src/{auth,api"]\n',
+      ),
+    ).toThrow(/rules\.0\.appliesTo\.0: The glob src\/\{auth,api has a \{ without its \}/);
+    const err = (() => {
+      try {
+        parsePolicy('version: 1\nriskPaths: ["src/[z-a].ts"]\n');
+      } catch (e) {
+        return e;
+      }
+      return null;
+    })();
+    expect(err).toBeInstanceOf(PolicyError);
+    expect((err as Error).message).toMatch(/riskPaths\.0: The glob src\/\[z-a\]\.ts is invalid/);
+    expect(parsePolicy('version: 1\nriskPaths: ["src/{auth,api}/**"]\n').riskPaths).toEqual([
+      "src/{auth,api}/**",
+    ]);
+  });
+
   it("loads the file from the project, or the default when absent", async () => {
     const root = tempDir("agentbox-policy-");
     expect(await loadPolicy(root)).toEqual(DEFAULT_POLICY);

@@ -9,6 +9,7 @@ import {
 } from "@agentbox/contracts";
 import { parse } from "yaml";
 import { ZodError } from "zod";
+import { globProblem } from "./glob.js";
 
 export class PolicyError extends Error {
   constructor(
@@ -61,8 +62,9 @@ export function parsePolicyExtras(text: string, path = "policy.yaml"): PolicyExt
 export function parsePolicy(text: string, path = "policy.yaml"): PolicyFile {
   const raw = readYaml(text, path);
   if (raw === null) return DEFAULT_POLICY;
+  let policy: PolicyFile;
   try {
-    return PolicyFileSchema.parse(raw);
+    policy = PolicyFileSchema.parse(raw);
   } catch (error) {
     if (error instanceof ZodError) {
       const detail = error.issues
@@ -72,6 +74,18 @@ export function parsePolicy(text: string, path = "policy.yaml"): PolicyFile {
     }
     throw error;
   }
+  const globs: Array<[string, string]> = [
+    ...policy.riskPaths.map((g, i): [string, string] => [`riskPaths.${i}`, g]),
+    ...policy.rules.flatMap((rule, r) =>
+      (rule.appliesTo ?? []).map((g, i): [string, string] => [`rules.${r}.appliesTo.${i}`, g]),
+    ),
+  ];
+  const problems = globs.flatMap(([where, glob]) => {
+    const problem = globProblem(glob);
+    return problem ? [`${where}: ${problem}`] : [];
+  });
+  if (problems.length > 0) throw new PolicyError(path, problems.join("; "));
+  return policy;
 }
 
 /** Loads the policy file, or returns `DEFAULT_POLICY` when it doesn't exist. */

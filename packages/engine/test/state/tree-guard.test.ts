@@ -3,6 +3,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ProcessRunner } from "../../src/range/exec.js";
+import { Git } from "../../src/range/git.js";
+import { EngineCheckout } from "../../src/state/checkout.js";
 import {
   ReadOnlyViolation,
   TreeGuard,
@@ -71,23 +73,57 @@ describe("snapshotTree", () => {
 });
 
 describe("TreeGuard", () => {
+  /** An engine checkout of `dir`'s `HEAD` in a temporary directory, and a guard that restores it. */
+  async function engineCheckout(dir: string) {
+    const git = new Git(runner, dir);
+    const checkout = new EngineCheckout(git, join(tempDir("tree-guard-wt-"), "tip"));
+    const head = await git.head();
+    const path = await checkout.ensure({ commit: head, head });
+    const guard = new TreeGuard({
+      runner,
+      repoPath: path,
+      ignore: [],
+      restore: () => checkout.reset(),
+    });
+    return { checkout, path, guard };
+  }
+
   it("passes a call that changes nothing", async () => {
     const dir = repo();
     const guard = new TreeGuard({ runner, repoPath: dir, ignore: [] });
     await expect(guard.run(async () => 42)).resolves.toBe(42);
   });
 
-  it("fails a call that edits a clean tree and restores it", async () => {
+  it("reports a change in a worktree it doesn't own and leaves every file in place", async () => {
     const dir = repo();
     const guard = new TreeGuard({ runner, repoPath: dir, ignore: [] });
+    // A person edits the checkout while the call runs; the guard can't tell
+    // their work from the agent's, so it must not touch either.
+    const err = (await guard
+      .run(async () => {
+        writeFileSync(join(dir, "a.py"), "print('SYNTHETIC person edit')\n");
+        writeFileSync(join(dir, "SYNTHETIC_new.py"), "work in progress\n");
+      })
+      .catch((e: unknown) => e)) as ReadOnlyViolation;
+    expect(err).toBeInstanceOf(ReadOnlyViolation);
+    expect(err.restored).toBe(false);
+    expect(err.message).toMatch(/doesn't own this worktree/);
+    expect(readFileSync(join(dir, "a.py"), "utf8")).toBe("print('SYNTHETIC person edit')\n");
+    expect(readFileSync(join(dir, "SYNTHETIC_new.py"), "utf8")).toBe("work in progress\n");
+  });
+
+  it("restores an engine checkout that a call edited and committed to", async () => {
+    const dir = repo();
+    const liveHead = execFileSync("git", ["rev-parse", "HEAD"], { cwd: dir, encoding: "utf8" });
+    const { path, guard } = await engineCheckout(dir);
     const err = await guard
       .run(async () => {
-        writeFileSync(join(dir, "a.py"), "print('edited')\n");
-        writeFileSync(join(dir, "stray.txt"), "s");
+        writeFileSync(join(path, "a.py"), "print('edited')\n");
+        writeFileSync(join(path, "stray.txt"), "s");
         execFileSync(
           "git",
           ["-c", "user.name=T", "-c", "user.email=t@example.com", "commit", "-qam", "x"],
-          { cwd: dir },
+          { cwd: path },
         );
         return "answer";
       })
@@ -95,44 +131,35 @@ describe("TreeGuard", () => {
     expect(err).toBeInstanceOf(ReadOnlyViolation);
     expect((err as ReadOnlyViolation).restored).toBe(true);
     expect((err as Error).message).toMatch(/HEAD moved/);
-    expect(readFileSync(join(dir, "a.py"), "utf8")).toBe("print(1)\n");
+    expect(readFileSync(join(path, "a.py"), "utf8")).toBe("print(1)\n");
+    expect(existsSync(join(path, "stray.txt"))).toBe(false);
+    // The checkout under review and its branch never moved.
+    expect(execFileSync("git", ["rev-parse", "HEAD"], { cwd: dir, encoding: "utf8" })).toBe(
+      liveHead,
+    );
     expect(existsSync(join(dir, "stray.txt"))).toBe(false);
   });
 
-  it("doesn't restore a tree that was dirty before the call", async () => {
+  it("keeps a failed call's own error and still restores the engine checkout", async () => {
     const dir = repo();
-    writeFileSync(join(dir, "mine.txt"), "work in progress");
-    const guard = new TreeGuard({ runner, repoPath: dir, ignore: [] });
-    const err = (await guard
-      .run(async () => {
-        writeFileSync(join(dir, "a.py"), "print('edited')\n");
-      })
-      .catch((e: unknown) => e)) as ReadOnlyViolation;
-    expect(err.restored).toBe(false);
-    expect(err.message).toMatch(/couldn't restore it safely/);
-    expect(readFileSync(join(dir, "mine.txt"), "utf8")).toBe("work in progress");
-  });
-
-  it("keeps a failed call's own error and still restores the tree", async () => {
-    const dir = repo();
-    const guard = new TreeGuard({ runner, repoPath: dir, ignore: [] });
+    const { path, guard } = await engineCheckout(dir);
     const notes: string[] = [];
     await expect(
       guard.run(
         async () => {
-          writeFileSync(join(dir, "stray.txt"), "s");
+          writeFileSync(join(path, "stray.txt"), "s");
           throw new Error("the CLI crashed");
         },
         (m) => notes.push(m),
       ),
     ).rejects.toThrow("the CLI crashed");
-    expect(existsSync(join(dir, "stray.txt"))).toBe(false);
+    expect(existsSync(join(path, "stray.txt"))).toBe(false);
     expect(notes[0]).toMatch(/stray\.txt/);
   });
 
   it("compares overlapping calls against one baseline", async () => {
     const dir = repo();
-    const guard = new TreeGuard({ runner, repoPath: dir, ignore: [] });
+    const { path, guard } = await engineCheckout(dir);
     let release: () => void = () => undefined;
     const gate = new Promise<void>((r) => (release = r));
     const slow = guard.run(async () => {
@@ -140,10 +167,60 @@ describe("TreeGuard", () => {
       return "slow";
     });
     const writer = guard.run(async () => {
-      writeFileSync(join(dir, "stray.txt"), "s");
+      writeFileSync(join(path, "stray.txt"), "s");
     });
     await expect(writer).rejects.toBeInstanceOf(ReadOnlyViolation);
     release();
     await expect(slow).resolves.toBe("slow");
+  });
+});
+
+describe("EngineCheckout", () => {
+  it("shows a snapshot's uncommitted changes as uncommitted and leaves the source alone", async () => {
+    const dir = repo();
+    writeFileSync(join(dir, "a.py"), "print(2)\n");
+    writeFileSync(join(dir, "SYNTHETIC_new.py"), "n\n");
+    execFileSync("git", ["add", "a.py"], { cwd: dir });
+    const statusBefore = execFileSync("git", ["status", "--porcelain"], {
+      cwd: dir,
+      encoding: "utf8",
+    });
+    const git = new Git(runner, dir);
+    const head = await git.head();
+    const commit = await git.snapshotWorktree(join(tempDir("tree-guard-idx-"), "index"));
+    expect(commit).not.toBe(head);
+    const checkout = new EngineCheckout(git, join(tempDir("tree-guard-wt-"), "tip"));
+    const path = await checkout.ensure({ commit, head });
+    expect(readFileSync(join(path, "a.py"), "utf8")).toBe("print(2)\n");
+    expect(readFileSync(join(path, "SYNTHETIC_new.py"), "utf8")).toBe("n\n");
+    const status = execFileSync("git", ["status", "--porcelain"], { cwd: path, encoding: "utf8" });
+    expect(status).toMatch(/ M a\.py/);
+    expect(status).toMatch(/\?\? SYNTHETIC_new\.py/);
+    // The source's index and branch are as they were.
+    expect(execFileSync("git", ["status", "--porcelain"], { cwd: dir, encoding: "utf8" })).toBe(
+      statusBefore,
+    );
+    expect(await git.head()).toBe(head);
+
+    writeFileSync(join(path, "stray.txt"), "s");
+    expect(await checkout.reset()).toBe(true);
+    expect(existsSync(join(path, "stray.txt"))).toBe(false);
+    expect(execFileSync("git", ["status", "--porcelain"], { cwd: path, encoding: "utf8" })).toBe(
+      status,
+    );
+
+    await checkout.dispose();
+    expect(existsSync(path)).toBe(false);
+    expect(execFileSync("git", ["worktree", "list"], { cwd: dir, encoding: "utf8" })).not.toContain(
+      path,
+    );
+  });
+
+  it("takes HEAD itself as the snapshot of a clean tree", async () => {
+    const dir = repo();
+    const git = new Git(runner, dir);
+    expect(await git.snapshotWorktree(join(tempDir("tree-guard-idx-"), "index"))).toBe(
+      await git.head(),
+    );
   });
 });

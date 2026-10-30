@@ -35,6 +35,7 @@ import { Git } from "../range/git.js";
 import { ShellRunner } from "../range/exec.js";
 import type { EngineState } from "../run/engine-state.js";
 import type { RunStore } from "../run/store.js";
+import { EngineCheckout, readOnlyCheckoutPath } from "./checkout.js";
 import { TreeGuard } from "./tree-guard.js";
 import { FALLBACK_ORDER } from "../verify/verify.js";
 import type { RangeInfo } from "../prompts/templates.js";
@@ -147,8 +148,13 @@ export class RunContext {
   private pauseGate: { promise: Promise<void>; open: () => void } | null = null;
   /** Engine-only policy settings, such as the comment authors to trust. */
   extras: PolicyExtras = NO_EXTRAS;
-  /** Checks that read-only calls leave the worktree as they found it. */
-  private readonly treeGuard: TreeGuard;
+  /** Checks that read-only calls leave their worktree as they found it, one guard per worktree. */
+  private readonly treeGuards = new Map<string, TreeGuard>();
+  /**
+   * The engine-owned checkout that read-only calls run in (see
+   * `checkout.ts`). Steps move it with `readOnlyRepo()` in `steps.ts`.
+   */
+  readonly readOnlyCheckout: EngineCheckout;
   /** Serializes writes, since parallel agent calls update the same files. */
   private writeChain: Promise<void> = Promise.resolve();
 
@@ -164,11 +170,27 @@ export class RunContext {
     this.git = new Git(deps.runner, state.request.repoPath);
     this.shell = deps.shellRunner ?? new ShellRunner(deps.runner);
     this.timeouts = { ...DEFAULT_TIMEOUTS, ...deps.timeouts };
-    this.treeGuard = new TreeGuard({
-      runner: deps.runner,
-      repoPath: state.request.repoPath,
-      ignore: [store.dir],
-    });
+    this.readOnlyCheckout = new EngineCheckout(this.git, readOnlyCheckoutPath(state.id));
+  }
+
+  /**
+   * The guard for read-only calls in `repoPath`. Only the engine's own
+   * checkout gets restored after a call changed it; any other worktree,
+   * such as the checkout under review, is only reported.
+   */
+  private treeGuardFor(repoPath: string): TreeGuard {
+    let guard = this.treeGuards.get(repoPath);
+    if (!guard) {
+      const checkout = this.readOnlyCheckout;
+      guard = new TreeGuard({
+        runner: this.deps.runner,
+        repoPath,
+        ignore: [this.store.dir],
+        ...(repoPath === checkout.dir ? { restore: () => checkout.reset() } : {}),
+      });
+      this.treeGuards.set(repoPath, guard);
+    }
+    return guard;
   }
 
   get signal(): AbortSignal {
@@ -189,9 +211,10 @@ export class RunContext {
     return this.deps.adapters[vendor] !== undefined;
   }
 
-  range(): RangeInfo {
+  /** The run's range. `repoPath` overrides the repository path, such as for a read-only checkout. */
+  range(repoPath: string = this.state.request.repoPath): RangeInfo {
     return {
-      repoPath: this.state.request.repoPath,
+      repoPath,
       baseSha: this.state.baseSha ?? "",
       tipSha: this.state.tipSha ?? "",
       tipRef: this.eng.tipRef,
@@ -582,7 +605,7 @@ export class RunContext {
       try {
         result =
           spec.request.toolPolicy === "read-only"
-            ? await this.treeGuard.run(
+            ? await this.treeGuardFor(spec.request.repoPath).run(
                 () => this.invoke<T>(adapter, spec, timeoutMs),
                 (message) =>
                   this.deps.log?.warn("A failed read-only call changed the worktree", {

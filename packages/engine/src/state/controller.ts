@@ -33,8 +33,9 @@ import {
   RunContext,
   isTerminal,
 } from "./context.js";
+import { readOnlyCheckoutPath, removeCheckout, scriptCheckoutsDir } from "./checkout.js";
 import { drivePrePush } from "./prepush.js";
-import { disposeBaseWorktree } from "./steps.js";
+import { disposeCheckouts } from "./steps.js";
 import { assignRoles } from "./profiles.js";
 
 /** The action doesn't fit the run's status; the API answers `invalid_state`. */
@@ -141,8 +142,11 @@ export class RunController {
     // The policy is read again each time the driver starts, so a typo in it
     // fails only the runs that go on, and only until it's fixed.
     const ctx = new RunContext(state, eng, findings, store, deps, DEFAULT_POLICY);
-    // A base checkout left by an engine that stopped mid-run is stale.
-    await removeBaseWorktree(new Git(deps.runner, state.request.repoPath), baseWorktreePath(runId));
+    // Checkouts left by an engine that stopped mid-run are stale.
+    const git = new Git(deps.runner, state.request.repoPath);
+    await removeBaseWorktree(git, baseWorktreePath(runId));
+    await removeCheckout(git, readOnlyCheckoutPath(runId));
+    await removeCheckout(git, scriptCheckoutsDir(runId));
     return new RunController(ctx, location);
   }
 
@@ -235,7 +239,7 @@ export class RunController {
   /** Records why the driver stopped. Never rejects, even when the run directory can't be written. */
   private async stopOn(error: unknown): Promise<void> {
     const ctx = this.ctx;
-    await disposeBaseWorktree(ctx).catch(() => undefined);
+    await disposeCheckouts(ctx).catch(() => undefined);
     if (error instanceof DecisionNeeded) {
       await ctx.settleStatus("waiting_decision", { decision: error.decision });
     } else if (error instanceof RunCancelled || ctx.cancelled) {
@@ -285,7 +289,7 @@ export class RunController {
     this.ctx.requestCancel();
     if (this.active) await this.settled();
     else {
-      await disposeBaseWorktree(this.ctx).catch(() => undefined);
+      await disposeCheckouts(this.ctx).catch(() => undefined);
       await this.ctx.setStatus("cancelled", { stopReason: "cancelled" });
     }
     return this.state;

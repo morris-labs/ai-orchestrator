@@ -2,7 +2,7 @@
 // reads its inputs from the run context, writes its output file to the run
 // directory, and emits handoff events with counts.
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
   FileGroup,
@@ -37,6 +37,7 @@ import {
   sweepPrompt,
 } from "../prompts/templates.js";
 import { parseDiff } from "../range/diff.js";
+import { readRepoFile } from "../range/repo-file.js";
 import {
   BaseWorktree,
   baseWorktreePath,
@@ -44,6 +45,12 @@ import {
   verifyFinding,
   type VerifyResult,
 } from "../verify/verify.js";
+import {
+  EngineCheckout,
+  removeCheckout,
+  scriptCheckoutsDir,
+  type CheckoutState,
+} from "./checkout.js";
 import { DecisionNeeded, RunCancelled, type RunContext } from "./context.js";
 import { planReviews, type ReviewTask } from "./profiles.js";
 
@@ -147,6 +154,49 @@ export function linesVersion(ctx: RunContext): { linesAt?: string } {
   return { linesAt: reviewsWorktree(ctx) ? `worktree:${tip}` : tip };
 }
 
+/** The live state for one stage's read-only checkout, by run context. */
+const readOnlyStates = new WeakMap<RunContext, { key: string; state: Promise<CheckoutState> }>();
+
+/**
+ * What a read-only call of the current stage looks at: the tip commit, or,
+ * when the round reviews the working tree, a snapshot commit of it with
+ * `HEAD` at the tip, so the uncommitted changes show as uncommitted. The
+ * snapshot is taken once per stage, so every parallel call sees the same
+ * files.
+ */
+function readOnlyState(ctx: RunContext): Promise<CheckoutState> {
+  const worktree = reviewsWorktree(ctx);
+  const key = `${ctx.round}:${ctx.state.stage}:${ctx.state.tipSha ?? ""}:${worktree}`;
+  const cached = readOnlyStates.get(ctx);
+  if (cached?.key === key) return cached.state;
+  const state = (async (): Promise<CheckoutState> => {
+    if (!worktree) {
+      const tip = ctx.state.tipSha ?? (await ctx.git.head());
+      return { commit: tip, head: tip };
+    }
+    const head = await ctx.git.head();
+    const index = join(tmpdir(), `agentbox-index-${ctx.state.id}-${Date.now()}`);
+    return { commit: await ctx.git.snapshotWorktree(index), head };
+  })();
+  readOnlyStates.set(ctx, { key, state });
+  state.catch(() => {
+    if (readOnlyStates.get(ctx)?.state === state) readOnlyStates.delete(ctx);
+  });
+  return state;
+}
+
+/**
+ * The engine-owned checkout that the current stage's read-only calls run
+ * in, created or moved to the stage's state (see `checkout.ts`). Read-only
+ * calls never run in the checkout under review, so a person, the box's
+ * session, or another run can keep working there, and restoring the
+ * checkout after a call changed it can't touch their files.
+ */
+export async function readOnlyRepo(ctx: RunContext): Promise<string> {
+  if (ctx.cancelled) throw new RunCancelled();
+  return ctx.readOnlyCheckout.ensure(await readOnlyState(ctx));
+}
+
 /** Computes the file groups for the current tip. */
 export async function computeGroups(ctx: RunContext): Promise<FileGroup[]> {
   const diffBase = ctx.eng.diffBaseSha ?? ctx.state.baseSha ?? "";
@@ -159,12 +209,12 @@ export async function computeGroups(ctx: RunContext): Promise<FileGroup[]> {
   });
 }
 
-async function readWorkingFile(ctx: RunContext, path: string): Promise<string | null> {
-  try {
-    return await readFile(join(ctx.state.request.repoPath, path), "utf8");
-  } catch {
-    return null;
-  }
+/**
+ * A working-tree file by a path from the diff or from a reviewer's finding,
+ * confined to the repository (see `readRepoFile`).
+ */
+function readWorkingFile(ctx: RunContext, path: string): Promise<string | null> {
+  return readRepoFile(ctx.state.request.repoPath, path);
 }
 
 /** Reads a file at the current tip, with a per-call cache. */
@@ -219,8 +269,9 @@ async function runReviewTask(
   const hunks: Hunk[] = group ? group.hunks : groups.flatMap((g) => g.hunks);
   const diffBase = ctx.eng.diffBaseSha ?? ctx.state.baseSha ?? "";
   const diff = await ctx.git.diffForPrompt(diffBase, diffTip(ctx), files);
+  const repoPath = await readOnlyRepo(ctx);
   const prompt = finderPrompt({
-    range: ctx.range(),
+    range: ctx.range(repoPath),
     round: ctx.round,
     groupId: task.groupId,
     files,
@@ -240,7 +291,7 @@ async function runReviewTask(
     key: `find-${task.key}`,
     vendor: task.vendor,
     method: "review",
-    request: { prompt, repoPath: ctx.state.request.repoPath, toolPolicy: "read-only" },
+    request: { prompt, repoPath, toolPolicy: "read-only" },
     estimateTokens: estimateTokens(prompt) + 4000,
   });
   const vendor = first.vendor;
@@ -279,7 +330,7 @@ async function runReviewTask(
         method: "continueReview",
         request: {
           prompt: followUp,
-          repoPath: ctx.state.request.repoPath,
+          repoPath,
           toolPolicy: "read-only",
           sessionId,
         },
@@ -298,7 +349,7 @@ async function runReviewTask(
         method: "continueReview",
         request: {
           prompt: more,
-          repoPath: ctx.state.request.repoPath,
+          repoPath,
           toolPolicy: "read-only",
           sessionId,
         },
@@ -548,6 +599,27 @@ function avoidFor(f: Finding): Vendor[] {
 
 const baseWorktrees = new WeakMap<RunContext, BaseWorktree>();
 
+/**
+ * Runs `fn` in a new engine-owned checkout for one run of a reproduction
+ * script, and removes the checkout afterwards. A script can write anything
+ * there without touching the checkout under review or the checkout that
+ * parallel disprovers read.
+ */
+async function inScriptCheckout<T>(
+  ctx: RunContext,
+  name: string,
+  state: CheckoutState,
+  fn: (dir: string) => Promise<T>,
+): Promise<T> {
+  if (ctx.cancelled) throw new RunCancelled();
+  const checkout = new EngineCheckout(ctx.git, join(scriptCheckoutsDir(ctx.state.id), name));
+  try {
+    return await fn(await checkout.ensure(state));
+  } finally {
+    await checkout.dispose();
+  }
+}
+
 export function baseWorktreeFor(ctx: RunContext): BaseWorktree {
   if (ctx.cancelled) throw new RunCancelled();
   let wt = baseWorktrees.get(ctx);
@@ -567,9 +639,19 @@ export async function disposeBaseWorktree(ctx: RunContext): Promise<void> {
   }
 }
 
+/** Removes every checkout the run made: the base, the read-only checkout, and script checkouts. */
+export async function disposeCheckouts(ctx: RunContext): Promise<void> {
+  await disposeBaseWorktree(ctx);
+  readOnlyStates.delete(ctx);
+  await ctx.readOnlyCheckout.dispose();
+  await removeCheckout(ctx.git, scriptCheckoutsDir(ctx.state.id));
+}
+
 /** Verifies every pending finding with a disprover from another vendor. */
 export async function verifyPending(ctx: RunContext, stageFile: string): Promise<VerifyResult[]> {
   const pending = ctx.findings.filter((f) => f.verdict === "pending");
+  const repoPath = pending.length > 0 ? await readOnlyRepo(ctx) : ctx.state.request.repoPath;
+  const tipState = pending.length > 0 ? await readOnlyState(ctx) : null;
   const results = await mapLimit(pending, VERIFY_CONCURRENCY, async (finding) => {
     const vendor = chooseDisprover(reporterVendor(finding), ctx.state.roles, {
       crossVendor: ctx.state.request.crossVendor,
@@ -578,9 +660,15 @@ export async function verifyPending(ctx: RunContext, stageFile: string): Promise
     });
     const result = await verifyFinding(finding, vendor, {
       runner: ctx.deps.runner,
-      range: ctx.range(),
+      range: ctx.range(repoPath),
       policy: ctx.policy,
       baseWorktree: baseWorktreeFor(ctx),
+      signal: ctx.signal,
+      inScriptCheckout: (side, fn) => {
+        const base = ctx.state.baseSha ?? "HEAD";
+        const state = side === "tip" && tipState ? tipState : { commit: base, head: base };
+        return inScriptCheckout(ctx, `${finding.id}-${side}`, state, fn);
+      },
       scratchDirFor: (id) => ctx.store.scratchDir(id),
       timeoutMs: ctx.timeouts.disprover,
       callDisprover: async (v, f, request) => {
@@ -664,8 +752,9 @@ export async function runSweep(
     ctx.state.roles.reviewer.find((v) => v !== "claude") ?? ctx.state.roles.reviewer[0] ?? "codex";
   const diffBase = ctx.eng.diffBaseSha ?? ctx.state.baseSha ?? "";
   const diff = await ctx.git.diffForPrompt(diffBase, diffTip(ctx));
+  const repoPath = await readOnlyRepo(ctx);
   const prompt = sweepPrompt({
-    range: ctx.range(),
+    range: ctx.range(repoPath),
     patterns,
     diff,
     policySection: policyPromptSection(ctx.policy),
@@ -675,7 +764,7 @@ export async function runSweep(
     role: "sweeper",
     vendor,
     method: "sweep",
-    request: { prompt, repoPath: ctx.state.request.repoPath, toolPolicy: "read-only" },
+    request: { prompt, repoPath, toolPolicy: "read-only" },
     groupId: null,
     estimateTokens: estimateTokens(prompt) + 3000,
     allowFallback: true,
@@ -871,6 +960,15 @@ export async function runFix(
   return record;
 }
 
+/** Logs the untracked files a gate run left in the checkout under review. */
+export function warnLeftovers(ctx: RunContext, run: GateRun): void {
+  if (!run.leftovers?.length) return;
+  ctx.deps.log?.warn(
+    "Untracked files appeared in the checkout while the gate ran; the engine left them in place",
+    { runId: ctx.state.id, files: run.leftovers.slice(0, 20) },
+  );
+}
+
 export interface GateRecord {
   attempt: number;
   run: GateRun;
@@ -895,6 +993,7 @@ export async function runGateStage(ctx: RunContext, nextStage: Stage): Promise<G
     git: ctx.deps.runner,
     signal: ctx.signal,
   });
+  warnLeftovers(ctx, run);
   const comparison = compareGate(baseline, run);
   const record: GateRecord = {
     attempt,
@@ -937,8 +1036,9 @@ export async function runConfirm(
   }
   const head = await ctx.git.head();
   const fixDiff = await ctx.git.diffForPrompt(preFixSha, head);
+  const repoPath = await readOnlyRepo(ctx);
   const prompt = confirmerPrompt({
-    range: ctx.range(),
+    range: ctx.range(repoPath),
     findings: fixed,
     fixDiff,
     policySection: policyPromptSection(ctx.policy),
@@ -951,7 +1051,7 @@ export async function runConfirm(
     role: "confirmer",
     vendor,
     method: "confirm",
-    request: { prompt, repoPath: ctx.state.request.repoPath, toolPolicy: "read-only" },
+    request: { prompt, repoPath, toolPolicy: "read-only" },
     groupId: null,
     estimateTokens: estimateTokens(prompt) + 3000,
     allowFallback: true,

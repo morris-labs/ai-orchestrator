@@ -13,6 +13,7 @@ import {
   computeGroups,
   confirmedThisRound,
   disposeBaseWorktree,
+  disposeCheckouts,
   fixTargets,
   oscillationDecision,
   runConfirm,
@@ -22,6 +23,7 @@ import {
   runMerge,
   runSweep,
   verifyPending,
+  warnLeftovers,
   type MergeOutput,
 } from "./steps.js";
 
@@ -35,6 +37,7 @@ export async function stagePreflight(ctx: RunContext): Promise<void> {
       git: ctx.deps.runner,
       signal: ctx.signal,
     });
+    warnLeftovers(ctx, baseline);
     preflight = {
       range: {
         baseRef: ctx.state.request.base,
@@ -230,7 +233,7 @@ export function openFindings(ctx: RunContext): Finding[] {
 
 /** Finishes the run with a stop reason. */
 export async function finish(ctx: RunContext, reason: StopReason): Promise<void> {
-  await disposeBaseWorktree(ctx);
+  await disposeCheckouts(ctx);
   await ctx.setStage("done");
   await ctx.setStatus("finished", { stopReason: reason, decision: null });
 }

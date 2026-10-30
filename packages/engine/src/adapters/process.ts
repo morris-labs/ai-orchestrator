@@ -1,6 +1,7 @@
 // Runs a CLI as a child process with a timeout, cancellation, and a line
 // callback for streaming JSON output.
 import { spawn } from "node:child_process";
+import { trackChild } from "../process/children.js";
 import { childEnv, type EnvProfile } from "../process/env.js";
 
 export interface RunProcessOptions {
@@ -78,6 +79,11 @@ export function runProcess(opts: RunProcessOptions): Promise<ProcessResult> {
       stdio: ["pipe", "pipe", "pipe"],
       detached: process.platform !== "win32",
     });
+    // The group outlives a crashed engine; the record lets the next one stop it.
+    const untrack =
+      child.pid !== undefined && process.platform !== "win32"
+        ? trackChild(child.pid)
+        : () => undefined;
 
     const kill = () => {
       if (child.exitCode !== null || child.signalCode !== null) return;
@@ -128,6 +134,7 @@ export function runProcess(opts: RunProcessOptions): Promise<ProcessResult> {
     const finish = (exitCode: number | null, signal: NodeJS.Signals | null) => {
       if (settled) return;
       settled = true;
+      untrack();
       clearTimeout(timer);
       if (killTimer) clearTimeout(killTimer);
       opts.signal?.removeEventListener("abort", onAbort);
