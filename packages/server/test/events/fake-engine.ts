@@ -20,6 +20,8 @@ export class FakeEngineServer {
   healthCalls = 0;
   /** What `findings.list` answers for the run. */
   findings: unknown[] = [];
+  /** What `runs.list` answers. */
+  runs: unknown[] = [runState];
   /** What the engine itself reports about its version check. */
   versionMatches = true;
 
@@ -47,7 +49,7 @@ export class FakeEngineServer {
       }
       if (req.url === "/api/v1/runs") {
         res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ runs: [runState] }));
+        res.end(JSON.stringify({ runs: this.runs }));
         return;
       }
       if (req.url === `/api/v1/runs/${RUN}/findings`) {

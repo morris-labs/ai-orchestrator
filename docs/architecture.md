@@ -96,6 +96,10 @@ Every pipeline stage writes its result as JSON under
 stage after a crash or a container restart. The engine streams events about
 each stage, agent call, and finding; the server tails that stream and
 mirrors runs, findings, and usage into SQLite for the apps and the CLI.
+The server drops an engine event of a type only the server emits, such as
+`box.changed`, and any event about another container, another project, or
+a run of another project, so code in one container can't change what the
+server knows about another.
 
 ## Lease flow
 
