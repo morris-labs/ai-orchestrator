@@ -13,6 +13,13 @@ export const HOME_PATHS = {
   database: ".claude-box/agentbox.db",
   /** The server's bearer token, mode 0600. */
   serverToken: ".claude-box/server.token",
+  /**
+   * The server's self-signed TLS certificate, which every client pins. See
+   * `@agentbox/contracts/tls`.
+   */
+  serverCert: ".claude-box/server.crt",
+  /** The private key of `serverCert`, mode 0600. */
+  serverKey: ".claude-box/server.key",
   /** Per-container keeper state: `state/<container>/sessions` and `mounts`. */
   stateDir: ".claude-box/state",
   /** Per-container Claude sessions directory, mounted over `~/.claude/sessions`. */

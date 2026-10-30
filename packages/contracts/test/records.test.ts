@@ -14,6 +14,7 @@ import {
   deriveHostKey,
   parseConfig,
   projectContainerName,
+  proxyPortOf,
 } from "../src/index.js";
 import { box, minimalBoxInput, project, settingsFile, sshRemote } from "./fixtures.js";
 import { roundTrip } from "./helpers.js";
@@ -94,6 +95,13 @@ describe("records", () => {
     expect(parsed.proxyPort).toBeUndefined();
     expect(GlobalSettingsSchema.safeParse({ ...parsed, colour: "blue" }).success).toBe(false);
     expect(GlobalSettingsSchema.safeParse(settingsFile).success).toBe(false);
+  });
+
+  it("puts the proxy on its own port, after the server port by default", () => {
+    expect(proxyPortOf({ serverPort: 21400 })).toBe(21401);
+    expect(proxyPortOf({ serverPort: 21400, proxyPort: 21400 })).toBe(21401);
+    expect(proxyPortOf({ serverPort: 21400, proxyPort: 20500 })).toBe(20500);
+    expect(proxyPortOf({ serverPort: 65535 })).toBe(65534);
   });
 
   it("accepts only editable fields in a settings patch", () => {
