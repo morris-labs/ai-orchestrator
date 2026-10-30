@@ -1,0 +1,56 @@
+import { execFileSync } from "node:child_process";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+import { ExecaRunner } from "../../src/range/exec.js";
+import { Git } from "../../src/range/git.js";
+import { tempDir } from "../tmp.js";
+
+const git = (repo: string, ...args: string[]) =>
+  execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.com", ...args], {
+    cwd: repo,
+    encoding: "utf8",
+  }).trim();
+
+const BODY = Array.from({ length: 50 }, (_, i) => `line_${i + 1} = ${i + 1}`).join("\n") + "\n";
+
+/** A repository whose second commit renames SYNTHETIC_old.py and changes one line. */
+function renamedRepo(): { repo: string; base: string; tip: string } {
+  const repo = tempDir("agentbox-git-");
+  git(repo, "init", "-q", "-b", "main");
+  writeFileSync(join(repo, "SYNTHETIC_old.py"), BODY);
+  writeFileSync(join(repo, "other.py"), "x = 1\n");
+  git(repo, "add", ".");
+  git(repo, "commit", "-q", "-m", "base");
+  const base = git(repo, "rev-parse", "HEAD");
+  git(repo, "mv", "SYNTHETIC_old.py", "SYNTHETIC_new.py");
+  writeFileSync(join(repo, "SYNTHETIC_new.py"), BODY.replace("line_7 = 7", "line_7 = 70"));
+  writeFileSync(join(repo, "other.py"), "x = 2\n");
+  git(repo, "add", ".");
+  git(repo, "commit", "-q", "-m", "rename");
+  return { repo, base, tip: git(repo, "rev-parse", "HEAD") };
+}
+
+describe("Git.diffForPrompt", () => {
+  it("shows a renamed file as a rename when the pathspec names only its new path", async () => {
+    const { repo, base, tip } = renamedRepo();
+    const diff = await new Git(new ExecaRunner(), repo).diffForPrompt(base, tip, [
+      "SYNTHETIC_new.py",
+    ]);
+    expect(diff).toContain("rename from SYNTHETIC_old.py");
+    expect(diff).toContain("rename to SYNTHETIC_new.py");
+    expect(diff).not.toContain("new file mode");
+    expect(diff).toContain("+line_7 = 70");
+    expect(diff.split("\n").filter((l) => /^\+line_/.test(l))).toHaveLength(1);
+    expect(diff).not.toContain("other.py");
+  });
+
+  it("shows a renamed file in the working tree as a rename", async () => {
+    const { repo, base } = renamedRepo();
+    const diff = await new Git(new ExecaRunner(), repo).diffForPrompt(base, null, [
+      "SYNTHETIC_new.py",
+    ]);
+    expect(diff).toContain("rename from SYNTHETIC_old.py");
+    expect(diff).not.toContain("new file mode");
+  });
+});

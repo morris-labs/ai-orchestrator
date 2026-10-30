@@ -87,7 +87,11 @@ export class Git {
     return this.run(args);
   }
 
-  /** The full diff with context, for prompts. */
+  /**
+   * The full diff with context, for prompts. A renamed file in `paths` also
+   * brings its old path into the pathspec, so git pairs the two and shows
+   * the rename instead of an entirely new file.
+   */
   async diffForPrompt(
     from: string,
     to: string | null,
@@ -95,8 +99,43 @@ export class Git {
   ): Promise<string> {
     const args = ["diff", "--no-color", "--no-ext-diff", "--find-renames", "-U3", from];
     if (to !== null) args.push(to);
-    if (paths.length > 0) args.push("--", ...paths);
+    if (paths.length > 0) {
+      args.push("--", ...paths, ...(await this.renameSources(from, to, paths)));
+    }
     return this.run(args);
+  }
+
+  /** The old paths of the files in `paths` that the diff from `from` to `to` renames. */
+  private async renameSources(
+    from: string,
+    to: string | null,
+    paths: readonly string[],
+  ): Promise<string[]> {
+    const args = ["diff", "--no-ext-diff", "--find-renames", "--name-status", "-z", from];
+    if (to !== null) args.push(to);
+    // With -z, each entry is the status, then one path, or two for a rename or copy.
+    const fields = (await this.run(args)).split("\0");
+    const wanted = new Set(paths);
+    const sources: string[] = [];
+    let i = 0;
+    while (i < fields.length) {
+      const status = fields[i] ?? "";
+      if (status === "") {
+        i += 1;
+        continue;
+      }
+      if (/^[RC]/.test(status)) {
+        const oldPath = fields[i + 1] ?? "";
+        const newPath = fields[i + 2] ?? "";
+        if (status.startsWith("R") && wanted.has(newPath) && !wanted.has(oldPath)) {
+          sources.push(oldPath);
+        }
+        i += 3;
+      } else {
+        i += 2;
+      }
+    }
+    return sources;
   }
 
   /** The content of `path` at `rev`, or `null` when it doesn't exist there. */
