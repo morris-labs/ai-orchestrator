@@ -14,7 +14,7 @@ import { RunMirror } from "../events/run-mirror.js";
 import { JobManager } from "../jobs/jobs.js";
 import { NodeProcessRunner, type ProcessRunner } from "../jobs/process.js";
 import { Notifier } from "../notify/notifier.js";
-import { DevServerProxy, cachedResolver } from "../proxy/proxy.js";
+import { DevServerProxy, cachedResolver, proxyPorts } from "../proxy/proxy.js";
 import { Scheduler, VendorHealth } from "../scheduler/scheduler.js";
 import { OpCli, type OpClient } from "../secrets/op.js";
 import { SecretsService } from "../secrets/secrets-service.js";
@@ -212,7 +212,17 @@ export async function startApp(options: AppOptions): Promise<App> {
       const matches = (await core.boxes.list({})).filter((v) => v.box.hostKey === hostKey);
       const view = matches.length === 1 ? matches[0] : undefined;
       const endpoint = view ? engines.get(view.container)?.endpoint : undefined;
-      return endpoint?.hostPort ? { enginePort: endpoint.hostPort, token: endpoint.token } : null;
+      if (!view || !endpoint?.hostPort) return null;
+      const { project } = await core.projects.get(view.box.projectId);
+      return {
+        enginePort: endpoint.hostPort,
+        token: endpoint.token,
+        ...proxyPorts(
+          view.box.id,
+          () => ports.get(view.container) ?? [],
+          project.tcpMaps.map((m) => m.container),
+        ),
+      };
     }),
   );
 
@@ -277,6 +287,7 @@ export async function startApp(options: AppOptions): Promise<App> {
       if (tunnelSync) clearTimeout(tunnelSync);
       // A running image build would otherwise keep the process alive.
       await jobs.stopAll();
+      proxy.close();
       await api.close();
       if (proxyServer) await new Promise<void>((resolve) => proxyServer?.close(() => resolve()));
       await engines.stop();

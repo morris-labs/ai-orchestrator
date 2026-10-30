@@ -68,6 +68,9 @@ keeper script, the container's first process, starts it.
 - The dev-server proxy sends the engine token in its own header,
   `X-Agentbox-Engine-Token`, on HTTP requests and WebSocket upgrades alike,
   so the browser's `Authorization` header reaches the dev server unchanged.
+  It refuses a request whose `Origin` isn't the proxy host itself or whose
+  `Sec-Fetch-Site` is other than `same-origin` or `none`, and forwards only
+  to the ports the box listens on or the project maps.
 - It runs the review pipeline and its vendor adapters, writes each run's
   files, discovers listening ports with `ss`, and proxies HTTP to them.
 - It refuses to start when its version differs from

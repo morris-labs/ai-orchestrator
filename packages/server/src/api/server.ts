@@ -184,6 +184,7 @@ export async function createApiServer(deps: ApiDeps): Promise<ApiServer> {
       return typeof address === "object" && address ? address.port : port;
     },
     async close() {
+      proxy?.close();
       for (const client of app.websocketServer.clients) client.terminate();
       await app.close();
     },

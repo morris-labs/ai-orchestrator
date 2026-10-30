@@ -106,6 +106,11 @@ following:
 - Your browser resolves `*.localhost` names to the loopback address. Most
   browsers do; for a command-line client, pass
   `--resolve PORT.BOX.localhost:21400:127.0.0.1` to `curl`.
+- A `403` response means the proxy refused the request. The proxy forwards
+  only to ports that the box's own processes listen on, or that the project
+  maps as TCP ports. It also refuses requests that a page on another site
+  sends, including a page on another `PORT.BOX.localhost` host: open the
+  link from the app or type it in the address bar.
 
 ## Resume says "No conversation found"
 
