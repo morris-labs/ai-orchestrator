@@ -33,6 +33,9 @@ let execs: string[][];
 beforeEach(async () => {
   server = await startFakeServer(TOKEN);
   home = mkdtempSync(path.join(tmpdir(), "agentbox-cli-"));
+  // The CLI pins the certificate in the data directory, as the server writes it.
+  mkdirSync(path.join(home, ".claude-box"));
+  writeFileSync(path.join(home, ".claude-box", "server.crt"), server.cert);
   out = "";
   err = "";
   execs = [];
@@ -85,7 +88,6 @@ const shellArgv = () => [
 
 describe("settings", () => {
   it("reads the token from ~/.claude-box/server.token and the port from config.json", async () => {
-    mkdirSync(path.join(home, ".claude-box"));
     writeFileSync(path.join(home, ".claude-box", "server.token"), `${TOKEN}\n`);
     const port = new URL(server.url).port;
     writeFileSync(
@@ -105,6 +107,7 @@ describe("settings", () => {
     const dataDir = path.join(home, "data");
     mkdirSync(dataDir);
     writeFileSync(path.join(dataDir, "server.token"), `${TOKEN}\n`);
+    writeFileSync(path.join(dataDir, "server.crt"), server.cert);
     writeFileSync(
       path.join(dataDir, "config.json"),
       JSON.stringify({ serverPort: Number(new URL(server.url).port) }),
@@ -122,7 +125,9 @@ describe("settings", () => {
   it("prefers --server over AGENTBOX_SERVER", async () => {
     server.on("GET /api/v1/boxes", { body: { boxes: [] } });
     expect(
-      await cli(["--server", server.url, "box", "list"], { AGENTBOX_SERVER: "http://127.0.0.1:1" }),
+      await cli(["--server", server.url, "box", "list"], {
+        AGENTBOX_SERVER: "https://127.0.0.1:1",
+      }),
     ).toBe(0);
   });
 
@@ -133,7 +138,7 @@ describe("settings", () => {
   });
 
   it("explains an unreachable server", async () => {
-    const code = await cli(["box", "list"], { AGENTBOX_SERVER: "http://127.0.0.1:1" });
+    const code = await cli(["box", "list"], { AGENTBOX_SERVER: "https://127.0.0.1:1" });
     expect(code).toBe(1);
     expect(err).toContain("Can't reach the Agent Box server");
   });
@@ -540,7 +545,7 @@ describe("migrate, setup, doctor", () => {
   });
 
   it("fails doctor when the server is down", async () => {
-    expect(await cli(["doctor"], { AGENTBOX_SERVER: "http://127.0.0.1:1" })).toBe(1);
+    expect(await cli(["doctor"], { AGENTBOX_SERVER: "https://127.0.0.1:1" })).toBe(1);
     expect(out).toMatch(/server\s+fail/);
   });
 });
@@ -603,13 +608,48 @@ describe("trust in the server", () => {
     expect(server.requests).toHaveLength(0);
   });
 
-  it("allows a remote plain HTTP server with --insecure, and https anywhere", async () => {
+  it("allows plain HTTP only with --insecure, and https anywhere", async () => {
     const { checkServerUrl } = await import("../src/settings.js");
     expect(checkServerUrl("http://203.0.113.5:21400", true)).toBeNull();
     expect(checkServerUrl("https://agentbox.example.com", false)).toBeNull();
-    expect(checkServerUrl("http://localhost:21400", false)).toBeNull();
-    expect(checkServerUrl("http://[::1]:21400", false)).toBeNull();
+    expect(checkServerUrl("http://localhost:21400", false)).toMatch(/use https:\/\/localhost/);
+    expect(checkServerUrl("http://[::1]:21400", false)).toMatch(/serves HTTPS/);
+    expect(checkServerUrl("http://127.0.0.1:21400", true)).toBeNull();
     expect(checkServerUrl("ftp://127.0.0.1", false)).toMatch(/http or https/);
+  });
+
+  it("refuses plain HTTP to this machine, where another program can hold the port", async () => {
+    const code = await cli(["box", "list"], { AGENTBOX_SERVER: "http://127.0.0.1:21400" });
+    expect(code).toBe(2);
+    expect(err).toMatch(/serves HTTPS/);
+  });
+
+  it("sends nothing to a server on this machine with another certificate", async () => {
+    const squatter = await startFakeServer(TOKEN);
+    try {
+      squatter.on("GET /api/v1/boxes", { body: { boxes: [] } });
+      const code = await cli(["box", "list"], { AGENTBOX_SERVER: squatter.url });
+      expect(code).toBe(1);
+      expect(err).toMatch(/certificate other than the one in the data directory's server\.crt/);
+      expect(squatter.requests).toEqual([]);
+      err = "";
+      const events = await cli(["events", "--count", "1"], { AGENTBOX_SERVER: squatter.url });
+      expect(events).toBe(1);
+      expect(err).toMatch(/server\.crt/);
+      expect(squatter.lastEventsQuery).toBeNull();
+    } finally {
+      await squatter.close();
+    }
+  });
+
+  it("reads the certificate again for every call", async () => {
+    server.on("GET /api/v1/boxes", { body: { boxes: [] } });
+    rmSync(path.join(home, ".claude-box", "server.crt"));
+    expect(await cli(["box", "list"])).toBe(1);
+    expect(err).toMatch(/No server certificate at .*server\.crt/);
+    expect(server.requests).toEqual([]);
+    writeFileSync(path.join(home, ".claude-box", "server.crt"), server.cert);
+    expect(await cli(["box", "list"])).toBe(0);
   });
 
   it("runs only docker exec from a server's attach command", async () => {

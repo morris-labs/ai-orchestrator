@@ -1,5 +1,6 @@
 // `agentbox events`: tails the server's event stream as JSON lines.
 import { ServerStreamFrameSchema, serverRoutes } from "@agentbox/contracts";
+import { asIdentityError } from "@agentbox/contracts/tls";
 import WebSocket from "ws";
 
 export type WebSocketCtor = typeof WebSocket;
@@ -12,6 +13,8 @@ export interface TailOptions {
   count?: number;
   write: (line: string) => void;
   WebSocket?: WebSocketCtor;
+  /** TLS options for the connection, such as `pinnedTlsOptions()` for a pinned server. */
+  tls?: object;
   signal?: AbortSignal;
 }
 
@@ -33,6 +36,7 @@ export function tailEvents(options: TailOptions): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     // The token goes in the upgrade's `Authorization` header, out of the URL.
     const socket = new Ctor(eventsUrl(options.baseUrl, options.types), {
+      ...options.tls,
       headers: { authorization: `Bearer ${options.token}` },
     });
     let seen = 0;
@@ -78,7 +82,9 @@ export function tailEvents(options: TailOptions): Promise<void> {
         ),
       );
     });
-    socket.on("error", (err) => finish(err));
+    socket.on("error", (err) =>
+      finish(asIdentityError(err, new URL(options.baseUrl).host) as Error),
+    );
     socket.on("close", () => finish());
   });
 }

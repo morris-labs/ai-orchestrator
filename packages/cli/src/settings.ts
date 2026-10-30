@@ -1,7 +1,13 @@
-// Where the server is and which token to send.
+// Where the server is, which token to send, and which certificate to trust.
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { DEFAULT_SERVER_PORT, HOME_PATHS, parseConfig } from "@agentbox/contracts";
+import {
+  pinnedFetch,
+  pinnedTlsOptions,
+  readServerPin,
+  type ServerPin,
+} from "@agentbox/contracts/tls";
 
 export interface CliSettings {
   baseUrl: string;
@@ -9,6 +15,8 @@ export interface CliSettings {
   /** Where the token came from, for `doctor`. */
   tokenSource: "AGENTBOX_TOKEN" | "file" | "none";
   tokenFile: string;
+  /** The server's certificate, which the CLI pins for a server on this machine. */
+  certFile: string;
 }
 
 function readText(file: string): string | null {
@@ -37,9 +45,10 @@ function inDataDir(dataDir: string, homeRelative: string): string {
  * Resolves the server URL and token. The data directory is
  * `AGENTBOX_DATA_DIR`, else `~/.claude-box`.
  *
- * - URL: `--server`, then `AGENTBOX_SERVER`, then `http://127.0.0.1:<serverPort>`
+ * - URL: `--server`, then `AGENTBOX_SERVER`, then `https://127.0.0.1:<serverPort>`
  *   with the port from `config.json` in the data directory (21400 by default).
  * - Token: `AGENTBOX_TOKEN`, then `server.token` in the data directory.
+ * - Certificate: `server.crt` in the data directory.
  */
 export function resolveSettings(options: {
   env: Record<string, string | undefined>;
@@ -57,13 +66,53 @@ export function resolveSettings(options: {
       // A broken config file leaves the default port; the server reports the problem.
     }
   }
-  const baseUrl = options.server ?? env.AGENTBOX_SERVER ?? `http://127.0.0.1:${port}`;
+  const baseUrl = options.server ?? env.AGENTBOX_SERVER ?? `https://127.0.0.1:${port}`;
   const tokenFile = inDataDir(dataDir, HOME_PATHS.serverToken);
+  const certFile = inDataDir(dataDir, HOME_PATHS.serverCert);
+  const files = { tokenFile, certFile };
   const fromEnv = env.AGENTBOX_TOKEN?.trim();
-  if (fromEnv) return { baseUrl, token: fromEnv, tokenSource: "AGENTBOX_TOKEN", tokenFile };
+  if (fromEnv) return { baseUrl, token: fromEnv, tokenSource: "AGENTBOX_TOKEN", ...files };
   const fromFile = readText(tokenFile)?.trim();
-  if (fromFile) return { baseUrl, token: fromFile, tokenSource: "file", tokenFile };
-  return { baseUrl, token: null, tokenSource: "none", tokenFile };
+  if (fromFile) return { baseUrl, token: fromFile, tokenSource: "file", ...files };
+  return { baseUrl, token: null, tokenSource: "none", ...files };
+}
+
+/**
+ * True when the CLI pins the server's certificate for `baseUrl`: an `https`
+ * server on this machine must be this machine's Agent Box server. For a
+ * server elsewhere, the system's trusted authorities apply.
+ */
+export function pinsServer(baseUrl: string): boolean {
+  const url = new URL(baseUrl);
+  return url.protocol === "https:" && isLoopbackHost(url.hostname);
+}
+
+/** Reads the certificate in `certFile`. Throws when the server has never created it. */
+export function serverPin(settings: Pick<CliSettings, "certFile">): ServerPin {
+  const pin = readServerPin(settings.certFile);
+  if (!pin) {
+    throw new Error(
+      `No server certificate at ${settings.certFile}. The server creates it on its first start.`,
+    );
+  }
+  return pin;
+}
+
+/**
+ * The `fetch` for the server: one that pins `certFile`, read again for
+ * every request, when `pinsServer()` says so, else the global one.
+ */
+export function serverFetch(settings: Pick<CliSettings, "baseUrl" | "certFile">): typeof fetch {
+  return pinsServer(settings.baseUrl)
+    ? pinnedFetch(() => serverPin(settings))
+    : (...args) => globalThis.fetch(...args);
+}
+
+/** The TLS options for a WebSocket to the server; see `serverFetch()`. */
+export function serverTls(
+  settings: Pick<CliSettings, "baseUrl" | "certFile">,
+): ReturnType<typeof pinnedTlsOptions> | Record<string, never> {
+  return pinsServer(settings.baseUrl) ? pinnedTlsOptions(serverPin(settings)) : {};
 }
 
 /** True when `host` is this machine: `localhost`, 127.0.0.0/8, or `::1`. */
@@ -74,8 +123,9 @@ export function isLoopbackHost(host: string): boolean {
 
 /**
  * Checks that the server URL is safe to send the token to: `https`, or
- * plain `http` only to this machine unless `insecure` allows it. Returns an
- * error message, or `null` when the URL is fine.
+ * plain `http` only when `insecure` allows it. On this machine, plain HTTP
+ * would reach whatever program listens on the server port while the server
+ * is down. Returns an error message, or `null` when the URL is fine.
  */
 export function checkServerUrl(baseUrl: string, insecure: boolean): string | null {
   let url: URL;
@@ -88,7 +138,10 @@ export function checkServerUrl(baseUrl: string, insecure: boolean): string | nul
   if (url.protocol !== "http:") {
     return `The server URL must use http or https, not ${url.protocol.replace(/:$/, "")}.`;
   }
-  if (isLoopbackHost(url.hostname) || insecure) return null;
+  if (insecure) return null;
+  if (isLoopbackHost(url.hostname)) {
+    return `The CLI won't send its token over plain HTTP to ${url.host}. The server serves HTTPS: use https://${url.host}.`;
+  }
   return `The CLI won't send its token over plain HTTP to ${url.host}. Use https, or pass --insecure if you trust the network.`;
 }
 

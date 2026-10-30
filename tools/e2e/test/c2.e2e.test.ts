@@ -17,6 +17,7 @@ import {
   type Finding,
   type RunState,
 } from "@agentbox/contracts";
+import { pinFromPem, pinnedFetch } from "@agentbox/contracts/tls";
 import {
   ENGINE_MAIN,
   SAMPLE_BUILD,
@@ -48,7 +49,9 @@ let engineToken = "";
 let cliEnv: NodeJS.ProcessEnv = {};
 
 async function api(method: string, route: string, body?: unknown): Promise<unknown> {
-  const res = await fetch(`${serverUrl}/api/v1${route}`, {
+  // The server serves HTTPS; trust the certificate it wrote and nothing else.
+  const cert = readFileSync(path.join(home, ".claude-box", "server.crt"), "utf8");
+  const res = await pinnedFetch(() => pinFromPem(cert))(`${serverUrl}/api/v1${route}`, {
     method,
     headers: {
       authorization: `Bearer ${serverToken}`,
@@ -147,7 +150,7 @@ beforeAll(async () => {
       AGENTBOX_DEV_ENGINES: `${projectId}=127.0.0.1:${enginePort}:${engineToken}`,
     }),
   );
-  serverUrl = `http://127.0.0.1:${serverPort}`;
+  serverUrl = `https://127.0.0.1:${serverPort}`;
   await waitFor("the server to listen", () =>
     server?.output().includes("listening on") ? true : undefined,
   );
