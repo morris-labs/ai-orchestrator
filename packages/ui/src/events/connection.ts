@@ -102,10 +102,13 @@ export class EventsConnection {
     this.socket = null;
     if (s) {
       // Node's `ws` keeps delivering frames it already buffered after
-      // `close()`, so detach every handler, not only `onclose`.
+      // `close()`, so detach every handler, not only `onclose`. The error
+      // handler becomes a no-op rather than null: on a socket still
+      // connecting, `ws` emits `error` after `close()`, and an `error` with
+      // no listener is thrown as an uncaught exception.
       s.onopen = null;
       s.onmessage = null;
-      s.onerror = null;
+      s.onerror = () => undefined;
       s.onclose = null;
       s.close();
     }
