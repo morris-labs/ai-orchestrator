@@ -150,6 +150,11 @@ RUN test -n "${AGENTBOX_ENGINE_VERSION}" || { echo "AGENTBOX_ENGINE_VERSION is n
     printf '#!/bin/sh\n# Runs the engine on the system Node.js 22, whatever nvm puts first on PATH.\nexec /usr/bin/node %s "$@"\n' \
       "${engine_pkg}/${engine_bin#./}" > /usr/local/bin/agentbox-engine && \
     chmod 0755 /usr/local/bin/agentbox-engine && \
+    secret_bin="$(/usr/bin/node -p "require('${engine_pkg}/package.json').bin['agentbox-secret'] ?? ''")" && \
+    { test -n "${secret_bin}" || { echo "the engine package has no agentbox-secret bin" >&2; exit 1; }; } && \
+    printf '#!/bin/sh\n# Gets secrets from the Agent Box secrets broker, on the system Node.js 22.\nexec /usr/bin/node %s "$@"\n' \
+      "${engine_pkg}/${secret_bin#./}" > /usr/local/bin/agentbox-secret && \
+    chmod 0755 /usr/local/bin/agentbox-secret && \
     rm -rf /tmp/agentbox-dist
 
 # The keeper scripts the server runs: keeper.sh is the container's PID 1

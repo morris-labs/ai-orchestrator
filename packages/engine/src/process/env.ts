@@ -1,18 +1,19 @@
-// Builds the environment for every process the engine starts. The engine's
-// own environment holds its bearer token and, often, credentials for every
-// vendor and for GitHub; a child gets only what its job needs.
+// Builds the environment for every process the engine starts. A child gets
+// only what its job needs: the credentials its profile takes come from the
+// secrets broker (`credentials.ts`), and anything credential-like still in
+// the engine's own environment, such as from a container that an older
+// server started with secrets in it, is filtered by the same profile.
 //
 // A profile controls only what a child inherits through its environment. It
 // isn't isolation. Every process in the container runs as the same user, so
 // repository code that the `untrusted` profile starts (a test command, a
-// reproduction script) can still read, among others:
+// reproduction script) can still, among others:
 //
-// - `/proc/1/environ`: the keeper's environment, which holds every variable
-//   the container started with, `agent.env` secrets included.
-// - `/proc/PID/environ` of a vendor CLI or a `git` process, which hold that
-//   child's credentials.
-// - The engine token file that `AGENTBOX_ENGINE_TOKEN_FILE` names, and the
-//   vendors' sign-in files under the home directory.
+// - Ask the secrets broker's socket for any secret the project lists.
+// - Read `/proc/PID/environ` of a vendor CLI or a `git` process, which hold
+//   that child's credentials.
+// - Read the engine token file that `AGENTBOX_ENGINE_TOKEN_FILE` names, and
+//   the vendors' sign-in files under the home directory.
 //
 // With the engine token, such code can call the engine API, which can push.
 // Only a separate user or a separate container would keep secrets from
@@ -80,6 +81,16 @@ export function looksLikeCredential(name: string): boolean {
   if (SECRET_NAME.test(name)) return true;
   if (GITHUB_CREDENTIALS.some((re) => re.test(name))) return true;
   return Object.values(VENDOR_CREDENTIALS).some((list) => list.some((re) => re.test(name)));
+}
+
+/**
+ * True when the profile's child takes `name` as a credential, so the engine
+ * asks the secrets broker for it: a vendor CLI's sign-in variables, or the
+ * GitHub tokens for `git` and `gh`. Always false for `untrusted`.
+ */
+export function wantsCredential(name: string, profile: EnvProfile): boolean {
+  if (ENGINE_PREFIX.test(name)) return false;
+  return kept(profile).some((re) => re.test(name));
 }
 
 /** True when `name` is a variable the profile must not pass on. */

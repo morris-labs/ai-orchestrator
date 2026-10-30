@@ -16,6 +16,7 @@ import {
   type CliAdapterOptions,
 } from "./base.js";
 import { parseStructured, parseStructuredText } from "./output.js";
+import { credentialsFor } from "../process/credentials.js";
 import { childEnv } from "../process/env.js";
 import { runProcess } from "./process.js";
 import { AdapterError, type CliRequest, type CliResult, type CliLimitInfo } from "./types.js";
@@ -125,12 +126,16 @@ export class ClaudeAdapter extends CliAdapter {
     return ["--version"];
   }
 
-  /** The arguments for one call. The prompt goes on stdin. */
-  buildArgs(req: CliRequest<unknown>): string[] {
+  /**
+   * The arguments for one call. The prompt goes on stdin. `credentials` are
+   * the ones the broker gave for this call: an API key among them means
+   * `--bare`.
+   */
+  buildArgs(req: CliRequest<unknown>, credentials: Record<string, string> = {}): string[] {
     const args = ["-p", "--output-format", "stream-json", "--verbose"];
     const bare =
       this.claudeOptions.bare ??
-      Boolean(childEnv("vendor:claude", this.options.env).ANTHROPIC_API_KEY);
+      Boolean(childEnv("vendor:claude", { ...credentials, ...this.options.env }).ANTHROPIC_API_KEY);
     if (bare) args.push("--bare");
     if (this.claudeOptions.persistSessions === false) args.push("--no-session-persistence");
     if (req.model) args.push("--model", req.model);
@@ -163,9 +168,11 @@ export class ClaudeAdapter extends CliAdapter {
 
   protected async call<T>(req: CliRequest<T>, _ctx: CallContext): Promise<CliResult<T>> {
     const parser = new ClaudeStreamParser(this.account, this.ceiling);
+    const credentials = await credentialsFor(`vendor:${this.vendor}`, this.command);
     const result = await runProcess({
       command: this.command,
-      args: this.buildArgs(req),
+      args: this.buildArgs(req, credentials),
+      credentials,
       cwd: req.cwd,
       input: req.prompt,
       env: this.options.env,

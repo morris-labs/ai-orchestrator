@@ -12,6 +12,7 @@ test unless AGENTBOX_REQUIRE_TOOLS=1 is set, as CI sets it.
 """
 
 import configparser
+import json
 import os
 import pathlib
 import re
@@ -236,6 +237,19 @@ class ImageTest(unittest.TestCase):
         self.assertNotRegex(text, r"> */etc/sudoers")
         self.assertIn("rm -f /etc/sudoers.d/claude-box", text)
         self.assertIn("usermod -p '!' \"${USER_NAME}\"", text)
+
+    def test_secret_client_in_image(self):
+        # The image installs the secrets broker client from the engine's own
+        # package.json bin, on the system Node.js, in a root-owned directory.
+        text = DOCKERFILE.read_text()
+        engine_step = text[text.index("COPY dist/"):text.index("COPY --chmod=0755 keeper/")]
+        self.assertIn("bin['agentbox-secret']", engine_step)
+        self.assertIn("> /usr/local/bin/agentbox-secret", engine_step)
+        self.assertIn("chmod 0755 /usr/local/bin/agentbox-secret", engine_step)
+        self.assertIn("exec /usr/bin/node", engine_step)
+        package = json.loads((ROOT / "packages/engine/package.json").read_text())
+        self.assertEqual(package["bin"]["agentbox-secret"], "./dist/secret-main.js")
+        self.assertTrue((ROOT / "packages/engine/src/secret-main.ts").is_file())
 
     def test_engine_dependencies_are_locked(self):
         # The engine's dependencies must come from pnpm-lock.yaml at pack

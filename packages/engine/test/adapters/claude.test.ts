@@ -317,6 +317,13 @@ describe("ClaudeAdapter.buildArgs", () => {
     expect(new ClaudeAdapter({ bare: true }).buildArgs(req(z.object({})))).toContain("--bare");
   });
 
+  it("adds --bare when the broker gives an API key", () => {
+    const brokered = new ClaudeAdapter({ account: "user@example.com" });
+    expect(brokered.buildArgs(req(z.object({})), { ANTHROPIC_API_KEY: "SYNTHETIC_key" })).toContain(
+      "--bare",
+    );
+  });
+
   it("turns session persistence off only when asked", () => {
     expect(adapter.buildArgs(req(z.object({})))).not.toContain("--no-session-persistence");
     expect(new ClaudeAdapter({ persistSessions: false }).buildArgs(req(z.object({})))).toContain(
