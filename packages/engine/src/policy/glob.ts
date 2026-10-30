@@ -2,7 +2,7 @@
 
 const cache = new Map<string, RegExp>();
 
-/** Converts a glob to an anchored regular expression over `/`-separated paths. */
+/** Converts a glob to an anchored regular expression over `/`-separated paths. Throws on a malformed glob. */
 export function globToRegExp(glob: string): RegExp {
   const cached = cache.get(glob);
   if (cached) return cached;
@@ -48,7 +48,13 @@ export function globToRegExp(glob: string): RegExp {
       }
     } else re += c.replace(/[.+^$()|\\]/g, "\\$&");
   }
-  const result = new RegExp(`^${re}$`);
+  if (braces > 0) throw new Error(`The glob ${glob} has a { without its }.`);
+  let result: RegExp;
+  try {
+    result = new RegExp(`^${re}$`);
+  } catch (error) {
+    throw new Error(`The glob ${glob} is invalid: ${(error as Error).message}`, { cause: error });
+  }
   cache.set(glob, result);
   return result;
 }
@@ -67,6 +73,16 @@ export function matchesGlob(path: string, glob: string): boolean {
   // A directory glob such as `src/auth/` or `src/auth` covers everything under it.
   const dir = glob.replace(/\/+$/, "");
   return !/[*?[{]/.test(dir) && (normalized === dir || normalized.startsWith(`${dir}/`));
+}
+
+/** Why `glob` can't be used, or `null` when it compiles. */
+export function globProblem(glob: string): string | null {
+  try {
+    globToRegExp(glob);
+    return null;
+  } catch (error) {
+    return (error as Error).message;
+  }
 }
 
 export function matchesAny(path: string, globs: readonly string[]): boolean {

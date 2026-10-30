@@ -67,7 +67,9 @@ groupSizeLimit: 300
 
 The policy file has the following fields. Field names are case-sensitive,
 and the engine rejects a file with an unknown field, so a misspelled field
-fails the run's preflight instead of being ignored.
+fails the run's preflight instead of being ignored. The engine also rejects
+a malformed glob, such as `src/{auth,api` without its closing brace, and
+names the field that holds it.
 
 | Field | Type | Default | Description |
 |---|---|---|---|
@@ -92,7 +94,9 @@ fails the run's preflight instead of being ignored.
   the container before the first round to record a baseline, and again
   after each fix. A command that passed at the baseline and fails after a
   fix sends the round back to the fix stage. A command that already failed
-  at the baseline doesn't block the run.
+  at the baseline doesn't block the run. The commands run in your checkout, and
+  the engine never deletes files there: untracked files that appear while
+  they run stay, and the engine log lists them.
 
 When a repository has no `tests` or `lint` commands, the gate has nothing to
 run and passes.
