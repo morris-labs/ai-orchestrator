@@ -146,6 +146,16 @@ export interface Controls {
   steer: boolean;
 }
 
+/**
+ * Reports whether `next` may replace `prev`: it's a different run, or it
+ * isn't older by `updatedAt`. A REST response that started before an event
+ * can arrive after it, and must not roll the run back.
+ */
+export function isNewerRun(prev: RunState | null, next: RunState): boolean {
+  if (!prev || prev.id !== next.id) return true;
+  return Date.parse(next.updatedAt) >= Date.parse(prev.updatedAt);
+}
+
 /** Which controls a run allows in its current state. */
 export function runControls(run: RunState): Controls {
   const active =
