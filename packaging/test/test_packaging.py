@@ -38,6 +38,9 @@ SHELL_SCRIPTS = [
     ROOT / "scripts/lib/common.sh",
     ROOT / "packaging/deb/scripts/postinst",
     ROOT / "packaging/deb/scripts/prerm",
+    ROOT / "image/keeper/keeper.sh",
+    ROOT / "image/keeper/start-session.sh",
+    ROOT / "image/keeper/test-keeper.sh",
 ]
 
 
@@ -154,6 +157,37 @@ class WorkflowTest(unittest.TestCase):
         files = next(s for s in doc["jobs"]["release"]["steps"] if "with" in s and "files" in s["with"])
         self.assertIn("dist/*.deb", files["with"]["files"])
         self.assertIn("dist/*.tgz", files["with"]["files"])
+
+    def test_actions_are_pinned_by_commit(self):
+        # A tag can be moved to other code; a commit SHA can't.
+        for f in sorted(WORKFLOWS.glob("*.yml")):
+            uses = re.findall(r"(?m)^\s*-?\s*uses:\s*(.*)$", f.read_text())
+            self.assertTrue(uses, f.name)
+            for line in uses:
+                self.assertRegex(line, r"^[\w.-]+/[\w.-]+@[0-9a-f]{40} # v\d+\.\d+\.\d+$", f"{f.name}: {line}")
+
+    def test_downloads_are_checksummed(self):
+        # Every tool a workflow downloads is saved to a file and checked with
+        # sha256sum against a pinned *_SHA256 value before it runs.
+        for f in sorted(WORKFLOWS.glob("*.yml")):
+            doc = load_yaml(f)
+            pins = doc.get("env", {})
+            for job in doc["jobs"].values():
+                for step in job["steps"]:
+                    run = step.get("run", "")
+                    if "curl" not in run:
+                        continue
+                    self.assertNotRegex(run, r"curl[^\n]*\|", f"{f.name}: a download is piped before its check")
+                    self.assertIn("sha256sum -c", run, f"{f.name}: {step.get('name')}")
+                    for var in re.findall(r"\$\{?([A-Z_]+_SHA256)\}?", run):
+                        self.assertRegex(pins.get(var, ""), r"^[0-9a-f]{64}$", f"{f.name}: {var}")
+                    downloads = len(re.findall(r"\bcurl\b", run))
+                    self.assertEqual(downloads, len(set(re.findall(r"\$([A-Z_]+_SHA256)", run))), f.name)
+
+    def test_ci_runs_the_keeper_tests(self):
+        doc = load_yaml(WORKFLOWS / "ci.yml")
+        runs = [s.get("run", "") for s in doc["jobs"]["packaging"]["steps"]]
+        self.assertIn("image/keeper/test-keeper.sh", runs)
 
     def test_actionlint(self):
         actionlint = tool("actionlint")
