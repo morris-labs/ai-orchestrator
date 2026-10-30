@@ -2,7 +2,14 @@
 // engine supervisor, the scheduler, the HTTPS API server, and the plain HTTP
 // listener of the dev-server proxy.
 import http from "node:http";
-import { proxyPortOf, type AgentBoxEvent, type Box, type Listener } from "@agentbox/contracts";
+import path from "node:path";
+import {
+  BROKER_SOCKET_NAME,
+  proxyPortOf,
+  type AgentBoxEvent,
+  type Box,
+  type Listener,
+} from "@agentbox/contracts";
 import type { Core, CoreFactory, CoreServices, EngineEndpoint } from "./core-interface.js";
 import type { ApiDeps } from "./deps.js";
 import { createApiServer, type ApiServer } from "./server.js";
@@ -19,7 +26,7 @@ import { Notifier } from "../notify/notifier.js";
 import { DevServerProxy, cachedResolver, proxyPorts } from "../proxy/proxy.js";
 import { Scheduler, VendorHealth } from "../scheduler/scheduler.js";
 import { OpCli, type OpClient } from "../secrets/op.js";
-import { BROKER_SYNC_INTERVAL_MS, SecretsBroker } from "../secrets/broker.js";
+import { BROKER_SYNC_INTERVAL_MS, SecretsBroker, assertSocketPathFits } from "../secrets/broker.js";
 import { SecretsService } from "../secrets/secrets-service.js";
 import { brokerDirFor } from "../records/env.js";
 import { SetupService } from "../setup/setup-service.js";
@@ -77,6 +84,15 @@ export async function startApp(options: AppOptions): Promise<App> {
   const log = options.log ?? ((m: string) => console.error(m));
   const devEngines = options.devEngines ?? [];
   assertDevEnginesAllowed(devEngines, BIND_HOST);
+  // Every container start opens a broker socket. Its directory name has a
+  // fixed length, so a data directory too long for one is too long for all:
+  // refuse it now rather than at the first start.
+  assertSocketPathFits(
+    path.join(
+      brokerDirFor({ home: options.home, dataDir: options.dataDir }, "claude-agent-check"),
+      BROKER_SOCKET_NAME,
+    ),
+  );
   const runner = options.runner ?? new NodeProcessRunner();
   const token = await loadOrCreateToken(options.home, options.dataDir);
   const tls = await loadOrCreateTlsIdentity(options.home, options.dataDir);

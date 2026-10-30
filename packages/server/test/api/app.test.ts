@@ -1,4 +1,5 @@
 // The whole server over the fake core and a fake engine on a real socket.
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
@@ -82,6 +83,28 @@ function plainGet(port: number, host: string, url: string) {
 }
 
 describe("startApp", () => {
+  it("refuses a data directory too long for the broker's sockets before it writes anything", async () => {
+    const dataDir = path.join(tempDir("agentbox-app-long-"), "d".repeat(100));
+    await expect(
+      startApp({
+        home,
+        dataDir,
+        createCore: async () => core,
+        version: "4.0.0-dev",
+        expectedEngineVersion: "4.0.0-dev",
+        execStart: "/usr/bin/agentbox-server",
+        imageContext: "/repo/image",
+        runner,
+        op,
+        exec: new FakeExec(),
+        port: 0,
+        proxyPort: 0,
+        log: () => undefined,
+      }),
+    ).rejects.toThrow(/secrets broker socket path .* Choose a data directory/);
+    expect(existsSync(dataDir)).toBe(false);
+  });
+
   it("serves the API with the token from the token file", async () => {
     const res = await api("GET", "/api/v1/projects");
     expect(res.status).toBe(200);

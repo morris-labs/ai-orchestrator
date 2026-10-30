@@ -170,6 +170,7 @@ describe("SecretsBroker", () => {
     const long = `claude-agent-proj-${"x".repeat(MAX_SOCKET_PATH_BYTES)}`;
     await expect(broker.open({ container: long, projectId: "p-00000000" })).rejects.toMatchObject({
       code: "internal",
+      message: expect.stringMatching(/at most 107\. Choose a data directory .* shorter\.$/),
     });
     await broker.sync([{ container: long, projectId: "p-00000000" }]);
     expect(log.some((l) => l.includes("can't open the socket"))).toBe(true);

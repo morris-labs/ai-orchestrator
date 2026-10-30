@@ -1,6 +1,7 @@
 // The host environment the server core runs against: the home directory, the
 // container user, and the clock. Tests pass a temporary home and a fixed
 // clock; production uses `defaultHostEnv()`.
+import crypto from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { HOME_PATHS } from "@agentbox/contracts";
@@ -89,11 +90,21 @@ export function sessionsDirFor(env: HostEnv, name: string): string {
 }
 
 /**
- * `<data dir>/broker/<container>`: the directory of the container's secrets
- * broker socket, mounted read-only at `BROKER_MOUNT`.
+ * The name of a container's broker directory: the first 16 hex digits of the
+ * SHA-256 of the container name. A Unix socket path holds at most 107 bytes,
+ * and a container name grows with its project directory's name, so the
+ * directory gets a short name of fixed length instead.
+ */
+export function brokerDirName(container: string): string {
+  return crypto.createHash("sha256").update(container).digest("hex").slice(0, 16);
+}
+
+/**
+ * `<data dir>/broker/<hash>`: the directory of the container's secrets broker
+ * socket, mounted read-only at `BROKER_MOUNT`. See `brokerDirName`.
  */
 export function brokerDirFor(env: Pick<HostEnv, "home" | "dataDir">, container: string): string {
-  return path.join(dataPath(env, HOME_PATHS.brokerDir), container);
+  return path.join(dataPath(env, HOME_PATHS.brokerDir), brokerDirName(container));
 }
 
 /**

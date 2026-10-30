@@ -13,7 +13,7 @@ import {
   type LaunchInput,
 } from "../../src/docker/launch.js";
 import { KEEPER_PATH } from "../../src/docker/scripts.js";
-import type { HostEnv } from "../../src/records/env.js";
+import { brokerDirName, type HostEnv } from "../../src/records/env.js";
 import { tempDir } from "../tmp.js";
 
 const env: HostEnv = { home: "/home/tester", user: "tester", now: () => new Date() };
@@ -72,7 +72,7 @@ describe("buildLaunchSpec", () => {
     const home = tempDir("agentbox-launch-");
     const hostEnv: HostEnv = { home, user: "tester", now: () => new Date() };
     prepareLaunchHost(hostEnv, { container: C, root: path.join(home, "app") });
-    const dir = path.join(home, ".claude-box", "broker", C);
+    const dir = path.join(home, ".claude-box", "broker", brokerDirName(C));
     expect(fs.statSync(dir).mode & 0o777).toBe(0o700);
     const spec = buildLaunchSpec(hostEnv, input, {
       projectsSymlinkTarget: null,
@@ -150,7 +150,7 @@ describe("buildLaunchSpec", () => {
         "/data/shared:/shared",
         "/home/tester/Bin/.project_archive:/home/tester/Bin/.project_archive",
         `/home/tester/.claude-box/state/${C}:/run/claude-box`,
-        `/home/tester/.claude-box/broker/${C}:/run/agentbox-broker:ro`,
+        `/home/tester/.claude-box/broker/${brokerDirName(C)}:/run/agentbox-broker:ro`,
       ],
       portBindings: {
         "20411/tcp": [{ hostIp: "127.0.0.1", hostPort: "41000" }],
@@ -245,7 +245,9 @@ describe("buildLaunchSpec", () => {
     expect(args.join(" ")).not.toContain(input.engine.token);
     expect(args).toContain("GITHUB_TOKEN=***");
     expect(args).toContain("AGENTBOX_BROKER_SOCKET=/run/agentbox-broker/broker.sock");
-    expect(args).toContain(`/home/tester/.claude-box/broker/${C}:/run/agentbox-broker:ro`);
+    expect(args).toContain(
+      `/home/tester/.claude-box/broker/${brokerDirName(C)}:/run/agentbox-broker:ro`,
+    );
     expect(args.join(" ")).not.toContain("ghp_value");
     expect(args).toContain("127.0.0.1:41000:20411");
     expect(args).toContain("127.0.0.1:8080:3000");

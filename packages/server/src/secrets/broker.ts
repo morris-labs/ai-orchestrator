@@ -56,6 +56,23 @@ export interface SecretsBrokerOptions {
  */
 export const MAX_SOCKET_PATH_BYTES = 107;
 
+/**
+ * Throws when `socketPath` is too long for a Unix socket. The broker's
+ * directory names have a fixed length (see `brokerDirName`), so only the
+ * data directory's own path can make it too long; the message says so and
+ * how much to cut.
+ */
+export function assertSocketPathFits(socketPath: string): void {
+  const bytes = Buffer.byteLength(socketPath);
+  if (bytes <= MAX_SOCKET_PATH_BYTES) return;
+  throw new ApiError(
+    "internal",
+    `The secrets broker socket path ${socketPath} is ${bytes} bytes, and a Unix socket path ` +
+      `can be at most ${MAX_SOCKET_PATH_BYTES}. Choose a data directory (--data-dir or ` +
+      `AGENTBOX_DATA_DIR) whose path is at least ${bytes - MAX_SOCKET_PATH_BYTES} bytes shorter.`,
+  );
+}
+
 /** How often the server matches the open sockets to the running containers. */
 export const BROKER_SYNC_INTERVAL_MS = 30_000;
 
@@ -119,12 +136,7 @@ export class SecretsBroker {
   private async listen(target: BrokerTarget): Promise<void> {
     const dir = this.opts.dirFor(target.container);
     const socketPath = this.socketPath(target.container);
-    if (Buffer.byteLength(socketPath) > MAX_SOCKET_PATH_BYTES) {
-      throw new ApiError(
-        "internal",
-        `The secrets broker socket path ${socketPath} is longer than ${MAX_SOCKET_PATH_BYTES} bytes. Use a shorter data directory.`,
-      );
-    }
+    assertSocketPathFits(socketPath);
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     fs.chmodSync(dir, 0o700);
     // A socket left by an earlier server, or anything else at the path. Only
