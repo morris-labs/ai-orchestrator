@@ -521,6 +521,39 @@ describe("menus, toasts, and collapsibles", () => {
     removed.mockRestore();
   });
 
+  it("keeps a pane's minimum size whatever fraction was saved", () => {
+    localStorage.setItem("ab.splitter.min-test", JSON.stringify([0.93, 0.07]));
+    const { container } = render(
+      <Splitter
+        direction="vertical"
+        defaultSizes={[1, 1]}
+        storageKey="min-test"
+        minSizes={[100, 260]}
+      >
+        <div>a</div>
+        <div>b</div>
+      </Splitter>,
+    );
+    const panes = container.querySelectorAll<HTMLElement>(".ab-splitter-pane");
+    expect(panes[0]?.style.minHeight).toBe("100px");
+    expect(panes[1]?.style.minHeight).toBe("260px");
+    // The saved fractions stay as they were; only the pixel floor applies.
+    expect(panes[1]?.style.flex).toContain("0.07");
+    localStorage.removeItem("ab.splitter.min-test");
+  });
+
+  it("sets no minimum for a pane without one", () => {
+    const { container } = render(
+      <Splitter direction="horizontal" defaultSizes={[1, 1]} minSizes={[0, 50]}>
+        <div>a</div>
+        <div>b</div>
+      </Splitter>,
+    );
+    const panes = container.querySelectorAll<HTMLElement>(".ab-splitter-pane");
+    expect(panes[0]?.style.minWidth).toBe("");
+    expect(panes[1]?.style.minWidth).toBe("50px");
+  });
+
   it("shows a toast", () => {
     vi.useFakeTimers();
     function T() {
