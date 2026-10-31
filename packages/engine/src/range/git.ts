@@ -132,14 +132,24 @@ export class Git {
   /**
    * The full diff with context, for prompts. A renamed file in `paths` also
    * brings its old path into the pathspec, so git pairs the two and shows
-   * the rename instead of an entirely new file.
+   * the rename instead of an entirely new file. The paths are literal: they
+   * come from diffs and from reviewers, so a `:` or `*` in one names that
+   * file, not pathspec magic or a pattern.
    */
   async diffForPrompt(
     from: string,
     to: string | null,
     paths: readonly string[] = [],
   ): Promise<string> {
-    const args = ["diff", "--no-color", "--no-ext-diff", "--find-renames", "-U3", from];
+    const args = [
+      "--literal-pathspecs",
+      "diff",
+      "--no-color",
+      "--no-ext-diff",
+      "--find-renames",
+      "-U3",
+      from,
+    ];
     if (to !== null) args.push(to);
     if (paths.length > 0) {
       args.push("--", ...paths, ...(await this.renameSources(from, to, paths)));

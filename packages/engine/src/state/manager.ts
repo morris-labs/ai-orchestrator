@@ -383,7 +383,15 @@ export class EngineRunManager implements RunManager {
     const fixCommit = finding.fixCommit;
     const fixDiff = fixCommit
       ? await quiet(() =>
-          git.run(["show", "--no-color", "--format=", fixCommit, ...(file ? ["--", file] : [])]),
+          // The path is reviewer output, so it is a literal path, not a pathspec.
+          git.run([
+            "--literal-pathspecs",
+            "show",
+            "--no-color",
+            "--format=",
+            fixCommit,
+            ...(file ? ["--", file] : []),
+          ]),
         )
       : null;
     return { finding, diff, fixDiff };
