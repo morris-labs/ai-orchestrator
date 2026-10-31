@@ -161,6 +161,7 @@ describe("base checkouts", () => {
     for (let i = 0; i < 400 && scenario.count("verify") < 1; i++) {
       await new Promise((r) => setTimeout(r, 10));
     }
+    expect(scenario.count("verify"), "the run never reached verify").toBeGreaterThanOrEqual(1);
     expect(existsSync(path)).toBe(true);
     await run.cancel();
     expect(existsSync(path)).toBe(false);

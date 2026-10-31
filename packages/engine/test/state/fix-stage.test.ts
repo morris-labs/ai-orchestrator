@@ -204,7 +204,7 @@ describe("a gate_failed decision", () => {
     await run.decide({ option: "resume", waiveFindingIds: [] });
     state = await run.settled();
     expect(state.status).toBe("finished");
-    expect(scenario.count("fix")).toBeGreaterThanOrEqual(fixesBefore);
+    expect(scenario.count("fix")).toBeGreaterThan(fixesBefore);
     expect(existsSync(join(run.runDir, "rounds/1/gate-1-1.json"))).toBe(true);
   });
 });
