@@ -1652,7 +1652,9 @@ static bool sameModel(QString recorded, const QString &live)
 bool DockerBackend::syncRecordFromSession(const QString &boxName)
 {
     BoxRecord rec = BoxRecord::load(boxName);
-    if (!rec.isValid())
+    // A Codex or Copilot box's claude files, if any, are a side session's,
+    // which doesn't own the record.
+    if (!rec.isValid() || !rec.isClaude())
         return false;
     bool changed = false;
 

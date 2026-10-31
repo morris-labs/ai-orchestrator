@@ -130,7 +130,9 @@ void SessionWatcher::scan()
 
     for (const QString &boxName : std::as_const(m_running)) {
         BoxRecord rec = BoxRecord::load(boxName);
-        if (!rec.isValid())
+        // In a Codex or Copilot box, a claude process is a side session from
+        // Start Remote Session; its session id is not the box's.
+        if (!rec.isValid() || !rec.isClaude())
             continue;
 
         Binding &binding = m_bindings[boxName];
