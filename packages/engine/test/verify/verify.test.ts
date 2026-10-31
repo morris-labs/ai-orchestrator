@@ -280,9 +280,7 @@ describe("classifyRun", () => {
   it("counts a failed Python assert as a reproduction", async () => {
     const traceback = (last: string) =>
       `Traceback (most recent call last):\n  File "r.py", line 1, in <module>\n${last}\n`;
-    expect(classifyRun(r({ exitCode: 1, output: traceback("AssertionError") }))).toBe(
-      "reproduced",
-    );
+    expect(classifyRun(r({ exitCode: 1, output: traceback("AssertionError") }))).toBe("reproduced");
     expect(
       classifyRun(r({ exitCode: 1, output: traceback("AssertionError: total is 10, not 9") })),
     ).toBe("reproduced");
