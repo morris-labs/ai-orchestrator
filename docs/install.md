@@ -269,6 +269,13 @@ corepack pnpm -r build
 scripts/install-server-unit.sh
 ```
 
+The checkout's `pnpm-workspace.yaml` file pins the pnpm store to `.pnpm-store` in the
+checkout, so the host and the boxes that work on the checkout share it. If
+`node_modules` came from another store, the first install after you update
+stops with `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`. Run
+`corepack pnpm install --config.confirmModulesPurge=false` once to reinstall
+from the pinned store.
+
 The script does the following:
 
 1. Writes the `~/.config/systemd/user/agentbox-server.service.d/source-checkout.conf`

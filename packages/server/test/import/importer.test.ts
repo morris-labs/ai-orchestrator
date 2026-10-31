@@ -605,6 +605,34 @@ describe("runImport", () => {
     expect(repos.settings.get().setupCompleted).toBe(true);
     expect(repos.boxes.list()).toEqual(first.boxes);
   });
+
+  it("keeps the first import's report file when the import runs again", () => {
+    const mainFile = path.join(fx.home, ".claude-box/import-report.json");
+    const first = runImport({ env: fx.env, repos });
+    expect(first.reportFile).toBe(mainFile);
+    expect(first.previousImport).toBeUndefined();
+    const firstBytes = fs.readFileSync(mainFile, "utf8");
+
+    const dry = runImport({ env: fx.env, repos, dryRun: true });
+    expect(dry.reportFile).toBeUndefined();
+    expect(summarizeImport(dry, true).warnings[0]).toContain("would add only records");
+
+    const second = runImport({ env: fx.env, repos });
+    const stampFile = path.join(fx.home, ".claude-box/import-report-2026-10-28T12-00-00Z.json");
+    expect(second.reportFile).toBe(stampFile);
+    expect(second.previousImport).toEqual({ finishedAt: NOW.toISOString(), reportFile: mainFile });
+    expect(fs.readFileSync(mainFile, "utf8")).toBe(firstBytes);
+    expect(JSON.parse(fs.readFileSync(stampFile, "utf8"))).toEqual(
+      JSON.parse(JSON.stringify(second)),
+    );
+
+    const summary = ImportReportSchema.parse(summarizeImport(second, false));
+    expect(summary.boxes).toBe(0);
+    expect(summary.warnings.slice(0, 2)).toEqual([
+      `The import already ran at ${NOW.toISOString()}, so this run added only records created since then. That import's report stays in ${mainFile}.`,
+      `This run's report is in ${stampFile}.`,
+    ]);
+  });
 });
 
 describe("privateIdentity", () => {

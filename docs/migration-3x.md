@@ -56,6 +56,14 @@ in 3.x. The import reports every record it converts and every value it
 drops or changes, and doesn't change the 3.x files. After the import,
 4.0.0 reads only the database.
 
+The server runs the import by itself on its first start when it finds 3.x
+records. The first import writes its report to
+`~/.claude-box/import-report.json`. A later `agentbox migrate` adds only
+records created since then, says when the first import ran, and writes its
+own report to `~/.claude-box/import-report-TIMESTAMP.json`, where
+`TIMESTAMP` is the time the run started, in UTC. It never replaces the first
+import's report.
+
 ### Ports and mounts
 
 - A box's `port=HOST:CONTAINER` entry that isn't in its project's 10-port

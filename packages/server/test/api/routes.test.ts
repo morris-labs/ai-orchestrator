@@ -441,6 +441,22 @@ describe("errors", () => {
     expect(res.json().error.code).toBe("validation");
   });
 
+  it("names the route that owns a settings field PATCH refuses", async () => {
+    const res = await call("PATCH", `${V1}/settings`, {
+      secretRefs: [{ name: "GH_TOKEN", ref: "op://Vault/item/field" }],
+    });
+    expect(res.statusCode).toBe(400);
+    const { error } = res.json();
+    expect(error.code).toBe("validation");
+    expect(error.message).toContain("Set secretRefs with PUT /api/v1/secrets.");
+  });
+
+  it("adds no route hint for an unknown settings field", async () => {
+    const res = await call("PATCH", `${V1}/settings`, { nope: 1 });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.message).toBe("The body doesn't match its schema.");
+  });
+
   it("maps Fastify's own 4xx errors by status code", () => {
     const fastify = Object.assign(new Error("Body is too large"), {
       statusCode: 413,

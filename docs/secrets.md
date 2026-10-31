@@ -28,6 +28,13 @@ Replace the following:
 Global references apply to every project container. A project reference
 with the same `name` as a global one wins for that project.
 
+Global references have their own API route, not `PATCH /api/v1/settings`,
+which rejects a `secretRefs` field. To replace the global list through the
+API, send `PUT /api/v1/secrets` with the whole list, for example
+`{"refs": [{"name": "GH_TOKEN", "ref": "op://VAULT/ITEM/FIELD"}]}`. A
+project's references go in `PATCH /api/v1/projects/PROJECT_ID` as
+`secretRefs`, where `PROJECT_ID` is the project's ID.
+
 The following example sets two references on a project:
 
 | Name | Reference |

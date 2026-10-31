@@ -244,7 +244,7 @@ function registerHttp(
       const ctx = {
         params: parse(params, request.params, "path"),
         query: def.query ? parse(def.query, request.query ?? {}, "query") : undefined,
-        body: def.body ? parse(def.body, request.body, "body") : undefined,
+        body: def.body ? parse(def.body, request.body, "body", ownRouteHint(key)) : undefined,
         request,
         reply,
       };
@@ -263,12 +263,56 @@ function registerHttp(
   });
 }
 
-function parse(schema: z.ZodTypeAny, value: unknown, where: string): unknown {
+function parse(
+  schema: z.ZodTypeAny,
+  value: unknown,
+  where: string,
+  hint?: (issues: z.ZodIssue[]) => string | undefined,
+): unknown {
   const result = schema.safeParse(value);
   if (!result.success) {
-    throw new ApiError("validation", `The ${where} doesn't match its schema.`, result.error.issues);
+    const extra = hint?.(result.error.issues);
+    throw new ApiError(
+      "validation",
+      `The ${where} doesn't match its schema.${extra ? ` ${extra}` : ""}`,
+      result.error.issues,
+    );
   }
   return result.data;
+}
+
+/**
+ * Settings fields that `PATCH /api/v1/settings` refuses because another route
+ * owns them, with that route. The schema rejects them as unrecognized keys;
+ * the hint tells the caller where to send them instead.
+ */
+export const SETTINGS_KEYS_WITH_OWN_ROUTE: Readonly<Record<string, string>> = {
+  secretRefs: "PUT /api/v1/secrets",
+  globalMounts: "PUT /api/v1/global-mounts",
+  promptTemplates: "PUT /api/v1/prompts",
+};
+
+/** Returns the body hint for a route, or undefined when it has none. */
+function ownRouteHint(
+  key: HttpRouteKey,
+): ((issues: z.ZodIssue[]) => string | undefined) | undefined {
+  return key === "settings.patch" ? settingsPatchHint : undefined;
+}
+
+/**
+ * Names the route to use for each settings field in `issues` that has its own
+ * route, or returns undefined when none of them does.
+ */
+export function settingsPatchHint(issues: z.ZodIssue[]): string | undefined {
+  const hints: string[] = [];
+  for (const issue of issues) {
+    if (issue.code !== "unrecognized_keys" || issue.path.length > 0) continue;
+    for (const k of issue.keys) {
+      const route = SETTINGS_KEYS_WITH_OWN_ROUTE[k];
+      if (route) hints.push(`Set ${k} with ${route}.`);
+    }
+  }
+  return hints.length > 0 ? hints.join(" ") : undefined;
 }
 
 function registerWs(
