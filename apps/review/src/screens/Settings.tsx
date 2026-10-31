@@ -30,14 +30,69 @@ const TOGGLES: Array<{ key: keyof NotificationToggles; label: string }> = [
   { key: "boxEnded", label: "A box session ended unexpectedly" },
 ];
 
+/** Shows a number without float noise: 0.7 * 100 shows as 70, not 70.00000000000001. */
+function formatNumber(n: number): string {
+  return String(Number(n.toFixed(6)));
+}
+
+/**
+ * A number input that keeps the text as typed, so a decimal point or an
+ * empty field survives while the person types. The value changes only for
+ * text that is a number from 0 to `max`; `onValid` reports whether the text
+ * is one. `scale` converts the shown number to the value: 100 shows the
+ * value 0.625 as 62.5.
+ */
+function NumberInput({
+  value,
+  scale = 1,
+  max,
+  onChange,
+  onValid,
+}: {
+  value: number;
+  scale?: number;
+  max?: number;
+  onChange: (value: number) => void;
+  onValid: (valid: boolean) => void;
+}) {
+  const [text, setText] = useState(() => formatNumber(value * scale));
+  // A change from outside, such as a settings.changed event, replaces the
+  // text; the person's own typing doesn't.
+  useEffect(() => {
+    setText((t) =>
+      t.trim() !== "" && Number(t) / scale === value ? t : formatNumber(value * scale),
+    );
+  }, [value, scale]);
+  return (
+    <input
+      type="number"
+      min={0}
+      max={max}
+      step="any"
+      value={text}
+      onChange={(e) => {
+        const raw = e.target.value;
+        setText(raw);
+        const n = Number(raw);
+        const valid =
+          raw.trim() !== "" && Number.isFinite(n) && n >= 0 && (max === undefined || n <= max);
+        onValid(valid);
+        if (valid) onChange(n / scale);
+      }}
+    />
+  );
+}
+
 function CeilingEditor({
   vendor,
   ceiling,
   onChange,
+  onValid,
 }: {
   vendor: Vendor;
   ceiling: Ceiling;
   onChange: (c: Ceiling) => void;
+  onValid: (valid: boolean) => void;
 }) {
   return (
     <fieldset className="ceiling">
@@ -45,7 +100,11 @@ function CeilingEditor({
       <Field label="Measure">
         <select
           value={ceiling.kind}
-          onChange={(e) => onChange(switchCeilingKind(ceiling, e.target.value as Ceiling["kind"]))}
+          onChange={(e) => {
+            // The other kind's field starts from a valid value.
+            onValid(true);
+            onChange(switchCeilingKind(ceiling, e.target.value as Ceiling["kind"]));
+          }}
         >
           <option value="utilization">Share of a rate-limit window</option>
           <option value="spend">Monthly spend</option>
@@ -63,27 +122,21 @@ function CeilingEditor({
             </select>
           </Field>
           <Field label="Ceiling (%)">
-            <input
-              type="number"
-              min={0}
+            <NumberInput
+              value={ceiling.max}
+              scale={100}
               max={100}
-              value={Math.round(ceiling.max * 100)}
-              onChange={(e) =>
-                onChange({
-                  ...ceiling,
-                  max: Math.min(1, Math.max(0, Number(e.target.value) / 100)),
-                })
-              }
+              onValid={onValid}
+              onChange={(max) => onChange({ ...ceiling, max })}
             />
           </Field>
         </>
       ) : (
         <Field label="Ceiling (US dollars per month)">
-          <input
-            type="number"
-            min={0}
+          <NumberInput
             value={ceiling.maxUsd}
-            onChange={(e) => onChange({ ...ceiling, maxUsd: Math.max(0, Number(e.target.value)) })}
+            onValid={onValid}
+            onChange={(maxUsd) => onChange({ ...ceiling, maxUsd })}
           />
         </Field>
       )}
@@ -156,6 +209,17 @@ export function Settings() {
   const [draft, setDraft] = useState<SettingsDraft | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [saved, setSaved] = useState(false);
+  const [generation, setGeneration] = useState(0);
+  // Vendors whose ceiling field holds text that isn't a valid number.
+  const [invalid, setInvalid] = useState<ReadonlySet<Vendor>>(new Set());
+  const markValid = (vendor: Vendor, valid: boolean) =>
+    setInvalid((s) => {
+      if (valid === !s.has(vendor)) return s;
+      const next = new Set(s);
+      if (valid) next.delete(vendor);
+      else next.add(vendor);
+      return next;
+    });
   // The settings the draft was last based on, kept outside state so that two
   // events in one batch each rebase onto the one before.
   const baseRef = useRef<GlobalSettings | null>(null);
@@ -190,9 +254,10 @@ export function Settings() {
     );
   }
   const patch = settingsPatch(settings, draft);
+  const canSave = patch !== null && invalid.size === 0;
 
   async function save() {
-    if (!patch) return;
+    if (!patch || !canSave) return;
     try {
       const next = await api.call("settings.patch", { body: patch });
       baseRef.current = next;
@@ -224,9 +289,10 @@ export function Settings() {
         <div className="ceilings">
           {VENDORS.map((v) => (
             <CeilingEditor
-              key={v}
+              key={`${v}-${generation}`}
               vendor={v}
               ceiling={draft.ceilings[v]}
+              onValid={(valid) => markValid(v, valid)}
               onChange={(c) => {
                 setSaved(false);
                 setDraft({ ...draft, ceilings: { ...draft.ceilings, [v]: c } });
@@ -234,6 +300,12 @@ export function Settings() {
             />
           ))}
         </div>
+        {invalid.size > 0 ? (
+          <p role="alert" className="banner banner-error">
+            Enter a ceiling for {[...invalid].map((v) => VENDOR_LABELS[v]).join(", ")}: a number of
+            0 or more, and at most 100 for a percentage.
+          </p>
+        ) : null}
       </section>
       <section className="card">
         <h3>Desktop notifications</h3>
@@ -269,10 +341,19 @@ export function Settings() {
         />
       </section>
       <div className="actions">
-        <button type="button" className="primary" disabled={!patch} onClick={() => void save()}>
+        <button type="button" className="primary" disabled={!canSave} onClick={() => void save()}>
           Save
         </button>
-        <button type="button" disabled={!patch} onClick={() => setDraft(draftFrom(settings))}>
+        <button
+          type="button"
+          disabled={!patch && invalid.size === 0}
+          onClick={() => {
+            // Remount the fields, so text that isn't a number goes too.
+            setGeneration((g) => g + 1);
+            setInvalid(new Set());
+            setDraft(draftFrom(settings));
+          }}
+        >
           Discard changes
         </button>
       </div>

@@ -1,7 +1,7 @@
 import type { Decision, Finding, RunState } from "@agentbox/contracts";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { DecisionPanel, RunView, StageStepper } from "../src/screens/RunView.js";
+import { DecisionPanel, RunList, RunView, StageStepper } from "../src/screens/RunView.js";
 import { RUN_ID, demoFindings, demoRounds, lastRun, loadDemoEvents } from "./helpers/data.js";
 import { renderWithStore } from "./helpers/render.js";
 
@@ -122,6 +122,27 @@ describe("RunView", () => {
     await screen.findByText(/Running/);
   });
 
+  it("leaves the fixed finding of an oscillation out of Resume and waive", async () => {
+    const base = lastRun();
+    const returned = base.decision!.findingIds[0]!;
+    const fixed = findings.find((f) => f.id !== returned)!.id;
+    // An oscillation names the fixed finding and the one that came back.
+    const run = { ...base, decision: { ...base.decision!, findingIds: [fixed, returned] } };
+    const { server } = renderWithStore(<RunView runId={RUN_ID} />, handlers(run));
+    expect(await screen.findByText(/Needs your decision/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Reason for waiving"), {
+      target: { value: "Accepted" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Resume and waive these findings" }));
+    await waitFor(() => expect(server.callsTo("runs.decide")).toHaveLength(1));
+    const body = server.callsTo("runs.decide")[0]!.body as {
+      option: string;
+      waiveFindingIds: string[];
+    };
+    expect(body.option).toBe("resume_waive");
+    expect(body.waiveFindingIds).toEqual([]);
+  });
+
   it("shows the round table, roles, and the run's agents from the stream", async () => {
     const { store } = renderWithStore(<RunView runId={RUN_ID} />, handlers());
     await screen.findByText("Round summaries");
@@ -188,5 +209,73 @@ describe("RunView", () => {
     await new Promise((res) => setTimeout(res, 20));
     expect(screen.getByRole("button", { name: "Resume" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Pause" })).toBeNull();
+  });
+
+  it("keeps a stage.changed stage when a reload returns the same updatedAt", async () => {
+    const run = {
+      ...lastRun(),
+      status: "running" as const,
+      decision: null,
+      stage: "find" as const,
+    };
+    let calls = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((res) => (release = res));
+    const { store, server } = renderWithStore(<RunView runId={RUN_ID} />, {
+      ...handlers(run),
+      "runs.get": async () => {
+        calls += 1;
+        if (calls > 1) await gate;
+        return run;
+      },
+    });
+    await screen.findByRole("button", { name: "Pause" });
+    store.start();
+    const hello = (streamId: string) =>
+      act(() => {
+        server
+          .socketsFor("/api/v1/events")[0]!
+          .serverSend({ type: "hello", streamId, lastSeq: 0, replaying: false });
+      });
+    await waitFor(() => expect(server.socketsFor("/api/v1/events")).toHaveLength(1));
+    hello("first");
+    hello("second");
+    // The reset reloads the run; that request waits at the gate.
+    await waitFor(() => expect(calls).toBe(2));
+    const base = loadDemoEvents().find((e) => e.type === "stage.changed")!;
+    act(() =>
+      store.ingest({
+        ...base,
+        runId: RUN_ID,
+        stage: "fix",
+        previousStage: "find",
+        time: run.updatedAt,
+      } as typeof base),
+    );
+    expect(screen.getByText("fix").closest("li")).toHaveAttribute("data-state", "current");
+    release();
+    await new Promise((res) => setTimeout(res, 20));
+    expect(screen.getByText("fix").closest("li")).toHaveAttribute("data-state", "current");
+    store.stop();
+  });
+});
+
+describe("RunList", () => {
+  it("keeps a run created while the list loads", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((res) => (release = res));
+    const { store, server } = renderWithStore(<RunList />, {
+      "runs.list": async () => {
+        await gate;
+        return { runs: [] };
+      },
+    });
+    await waitFor(() => expect(server.callsTo("runs.list")).toHaveLength(1));
+    const ev = loadDemoEvents().find((e) => e.type === "run.changed")!;
+    act(() => store.ingest(ev));
+    release();
+    await new Promise((res) => setTimeout(res, 20));
+    expect(screen.queryByText(/No runs yet/)).toBeNull();
+    expect(screen.getByRole("link", { name: ev.run.id.slice(-6) })).toBeInTheDocument();
   });
 });

@@ -107,7 +107,11 @@ export function createFakeCore(): FakeCore {
       },
       restartContainer: async () => (record("projects.restartContainer"), bulk),
       getPolicy: async () => policyResult,
-      putPolicy: async (_id, policy) => ({ ...policyResult, exists: true, policy }),
+      putPolicy: async (_id, policy) => ({
+        ...policyResult,
+        exists: true,
+        ...("text" in policy ? {} : { policy }),
+      }),
     },
     boxes: {
       list: async (q) =>

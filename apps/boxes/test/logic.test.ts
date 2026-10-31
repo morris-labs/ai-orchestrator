@@ -175,6 +175,10 @@ describe("new box form", () => {
     expect(validateForm({ ...base, model: " " }, "new")).toEqual(["Choose a model."]);
     expect(validateForm({ ...base, platform: "codex", model: "" }, "new")).toEqual([]);
     expect(validateForm({ ...base, targetDir: "", layout: "worktree" }, "edit")).toEqual([]);
+    const uuid = "11111111-1111-4111-8111-111111111111";
+    expect(
+      validateForm({ ...base, name: "!!", layout: "worktree", conversation: uuid }, "new"),
+    ).toEqual([]);
   });
   it("picks the remembered layout", () => {
     const repo = makeProject({ root: "/w/site", primaryRepo: "/w/site" });
@@ -185,6 +189,12 @@ describe("new box form", () => {
     expect(defaultLayout("/w/site", makeSettings(), repo)).toBe("worktree");
     expect(defaultLayout("/w/site/", settings, repo)).toBe("workspace");
     expect(defaultLayout("/w/site", makeSettings(), plain)).toBe("root");
+    // An executable new-issue.sh seeds "workspace" until the directory has an answer.
+    expect(defaultLayout("/w/site", makeSettings(), plain, true)).toBe("workspace");
+    const no = makeSettings({
+      newBoxDefaults: { worktreeDirs: {}, workspaceDirs: { "/w/site": false } },
+    });
+    expect(defaultLayout("/w/site", no, plain, true)).toBe("root");
     expect(worktreeAllowed(plain)).toBe(false);
     expect(worktreeAllowed(undefined)).toBe(true);
   });
@@ -224,6 +234,14 @@ describe("new box form", () => {
       mode: "adopt",
       sessionUuid: "11111111-1111-4111-8111-111111111111",
     });
+    // Adopting provisions nothing, so it neither picks nor remembers a layout.
+    const adopt = createBody(
+      { ...base, layout: "worktree", conversation: "11111111-1111-4111-8111-111111111111" },
+      "new",
+    );
+    expect(adopt.layout).toBe("root");
+    expect(adopt.rememberLayout).toBe(false);
+    expect(createBody({ ...base, layout: "workspace" }, "new").rememberLayout).toBe(true);
     const fork = createBody(base, "fork", { forkFrom: "claude-agent-a" });
     expect(fork.conversation).toEqual({ mode: "fork", fromBoxId: "claude-agent-a" });
     expect(fork.rememberLayout).toBe(false);
@@ -398,6 +416,29 @@ describe("store", () => {
       ).boxes,
     ).toEqual([]);
     expect(applyBoxChanged([], changed).unknown).toBe(true);
+  });
+  it("drops the live-session state of a box that stopped", () => {
+    const a = makeBoxView({
+      box: { id: "claude-agent-a", targetDir: "/w/a" },
+      status: "running",
+      stats: { cpuPercent: 5, memBytes: 1, memLimitBytes: 2 },
+      listeners: [{ port: 5173, proto: "tcp", process: "node", boxId: "claude-agent-a" }],
+      proxyUrls: [{ port: 5173, url: "http://5173.a.localhost:21401/" }],
+      sideSessions: ["codex"],
+    });
+    const stopped = applyBoxChanged(
+      [a],
+      makeEvent("box.changed", { boxId: a.box.id, status: "stopped", box: a.box }),
+    ).boxes[0]!;
+    expect(stopped.stats).toBeNull();
+    expect(stopped.listeners).toEqual([]);
+    expect(stopped.proxyUrls).toEqual([]);
+    expect(stopped.sideSessions).toEqual([]);
+    const running = applyBoxChanged(
+      [a],
+      makeEvent("box.changed", { boxId: a.box.id, status: "running", box: a.box }),
+    ).boxes[0]!;
+    expect(running.stats).toEqual(a.stats);
   });
   it("applies stats and ports per container", () => {
     const a = v("a", "running");

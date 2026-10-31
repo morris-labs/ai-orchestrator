@@ -36,8 +36,9 @@ export function actionStates(
   all: readonly BoxView[],
   tabCount: number,
 ): ActionStates {
-  // A Starting or Stopping row counts for nothing (inventory 1.4), so no
-  // single-row action applies to it.
+  // A Starting or Stopping row counts for nothing (inventory 1.4) in the
+  // running and stopped flags and the actions that move or convert a box.
+  // Edit, Fork, and Purge apply to any single row, as in the Qt app.
   const only = selection.length === 1 ? (selection[0] as BoxView) : null;
   const single = only && only.status !== "starting" && only.status !== "stopping" ? only : null;
   const anyRunning = selection.some((b) => b.status === "running");
@@ -48,11 +49,11 @@ export function actionStates(
   const underReview = single?.reviewState.state === "under_review";
 
   return {
-    edit: single !== null,
-    fork: single !== null && single.box.sessionUuid !== null,
+    edit: only !== null,
+    fork: only !== null && only.box.sessionUuid !== null,
     convertToWorktree:
       single !== null && single.box.workspace !== undefined && !hasWorktree && !singleRunning,
-    purge: single !== null && single.box.targetDir !== "",
+    purge: only !== null && only.box.targetDir !== "",
     moveWorkDir: canRelocate && single.box.targetDir !== "",
     changeWorkDir: canRelocate,
     openShell: singleRunning,

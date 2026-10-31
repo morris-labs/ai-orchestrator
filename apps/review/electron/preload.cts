@@ -10,6 +10,15 @@ const { contextBridge, ipcRenderer } = require("electron") as typeof Electron;
 const config = ipcRenderer.sendSync("agentbox:config") as { serverUrl: string | null };
 let tokenTaken = false;
 
+// The page subscribes in an effect, after it renders; a navigation that
+// arrives before then waits here instead of being lost.
+let navigateListener: ((hash: string) => void) | null = null;
+let pendingHash: string | null = null;
+ipcRenderer.on("agentbox:navigate", (_e: unknown, hash: string) => {
+  if (navigateListener) navigateListener(hash);
+  else pendingHash = hash;
+});
+
 contextBridge.exposeInMainWorld("agentbox", {
   // The page takes the token once, trades it for the session cookie, and
   // later calls get `null`.
@@ -20,8 +29,14 @@ contextBridge.exposeInMainWorld("agentbox", {
   },
   serverUrl: config.serverUrl,
   onNavigate(listener: (hash: string) => void) {
-    const handler = (_e: unknown, hash: string) => listener(hash);
-    ipcRenderer.on("agentbox:navigate", handler);
-    return () => ipcRenderer.removeListener("agentbox:navigate", handler);
+    navigateListener = listener;
+    if (pendingHash !== null) {
+      const hash = pendingHash;
+      pendingHash = null;
+      listener(hash);
+    }
+    return () => {
+      if (navigateListener === listener) navigateListener = null;
+    };
   },
 });

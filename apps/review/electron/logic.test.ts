@@ -2,8 +2,12 @@ import type { AgentBoxEvent, RunState } from "@agentbox/contracts";
 import { describe, expect, it } from "vitest";
 import {
   ActiveRuns,
+  ERR_ABORTED,
+  PendingNavigation,
   launcherHash,
+  lostAppPage,
   noticeFor,
+  offlinePageUrl,
   parseDeepLink,
   Reloader,
   rendererUrl,
@@ -217,5 +221,50 @@ describe("tray", () => {
       (i) => busy[i * 4] === 255 && busy[i * 4 + 1] === 255,
     );
     expect(white.length).toBeGreaterThan(10);
+  });
+});
+
+describe("loading the page", () => {
+  const page = "https://127.0.0.1:21400/review/";
+  const isApp = (url: string) => url.startsWith(page);
+  const failed = (url: string, errorCode = -102, isMainFrame = true) => ({
+    url,
+    errorCode,
+    isMainFrame,
+  });
+
+  it("notices when the server's page fails to load", () => {
+    expect(lostAppPage(failed(page), "", isApp)).toBe(true);
+    expect(lostAppPage(failed(`${page}?box=b#/launch`), page, isApp)).toBe(true);
+  });
+
+  it("ignores frames, other pages, and a cancelled load over the app", () => {
+    expect(lostAppPage(failed(page, -102, false), page, isApp)).toBe(false);
+    expect(lostAppPage(failed("https://example.com/"), page, isApp)).toBe(false);
+    expect(lostAppPage(failed(page, ERR_ABORTED), page, isApp)).toBe(false);
+    expect(lostAppPage(failed(page, ERR_ABORTED), "", isApp)).toBe(true);
+  });
+
+  it("says the server isn't reachable on a page of its own", () => {
+    const url = offlinePageUrl("https://127.0.0.1:21400");
+    expect(url.startsWith("data:text/html")).toBe(true);
+    expect(decodeURIComponent(url)).toContain("isn't reachable");
+    expect(isApp(url)).toBe(false);
+  });
+});
+
+describe("PendingNavigation", () => {
+  it("sends at once when the page can take it", () => {
+    const p = new PendingNavigation();
+    expect(p.request("#/runs", true)).toBe("#/runs");
+    expect(p.take()).toBeNull();
+  });
+
+  it("keeps the newest route until the page loads, and gives it once", () => {
+    const p = new PendingNavigation();
+    expect(p.request("#/runs", false)).toBeNull();
+    expect(p.request("#/dashboard", false)).toBeNull();
+    expect(p.take()).toBe("#/dashboard");
+    expect(p.take()).toBeNull();
   });
 });

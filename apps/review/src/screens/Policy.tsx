@@ -1,14 +1,19 @@
 // Policy editor: loads and saves `<project>/.claude-box/policy.yaml` through
 // the server, as a form or as raw YAML, validated with the contract schema.
+// It saves the file's text, so comments in the file survive, and passes the
+// revision it loaded, so a file changed on disk meanwhile isn't overwritten
+// without asking.
 import type { PolicyCommand, PolicyFile, PolicyRule, ProjectSummary } from "@agentbox/contracts";
 import { DEFAULT_POLICY } from "@agentbox/contracts";
 import { useEffect, useRef, useState } from "react";
 import { ErrorBanner, Field } from "../components/common.js";
-import { href, navigate } from "../state/router.js";
+import { href, navigate, setLeaveGuard } from "../state/router.js";
+import { isApiError } from "@agentbox/ui/core";
 import { useApiClient } from "@agentbox/ui/hooks";
 import {
   commaList,
   lines,
+  mergePolicyYaml,
   parsePolicyYaml,
   policyToYaml,
   sameList,
@@ -140,22 +145,39 @@ function RuleList({
   );
 }
 
+/** What a load or a save of the policy returned. */
+interface Loaded {
+  path: string;
+  exists: boolean;
+  policy: PolicyFile;
+  text?: string | null;
+  revision?: string;
+}
+
 export function Policy({ projectId }: { projectId: string | null }) {
   const api = useApiClient();
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [policy, setPolicy] = useState<PolicyFile>(DEFAULT_POLICY);
   const [meta, setMeta] = useState<{ path: string; exists: boolean } | null>(null);
   const [tab, setTab] = useState<"form" | "yaml">("form");
+  // The file's text, comments included. The YAML tab edits it; a save from
+  // the form applies the form's changes to it, so comments survive.
   const [yamlText, setYamlText] = useState("");
   const [riskText, setRiskText] = useState("");
   const [limitsText, setLimitsText] = useState("");
   const [errors, setErrors] = useState<string[]>([]);
   const [error, setError] = useState<unknown>(null);
   const [saved, setSaved] = useState(false);
+  const [dirty, setDirty] = useState(false);
+  // The revision the form was loaded from; a save fails with `conflict` when
+  // the file changed on disk since then.
+  const [revision, setRevision] = useState<string | undefined>(undefined);
+  const [conflict, setConflict] = useState(false);
   // The project whose policy the form holds. Save stays off until the
   // selected project's policy loads, so a failed or late load can't write
   // one project's policy into another.
   const [loadedFor, setLoadedFor] = useState<string | null>(null);
+  const [reloads, setReloads] = useState(0);
 
   useEffect(() => {
     api.call("projects.list").then((r) => setProjects(r.projects), setError);
@@ -164,12 +186,29 @@ export function Policy({ projectId }: { projectId: string | null }) {
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
 
-  function load(p: PolicyFile) {
-    setPolicy(p);
-    setYamlText(policyToYaml(p));
-    setRiskText(p.riskPaths.join("\n"));
-    setLimitsText(p.environmentLimits.join("\n"));
+  // Unsaved edits are lost on a project switch or a route change: ask first.
+  useEffect(() => {
+    if (!dirty) return;
+    return setLeaveGuard(() => window.confirm("Discard the unsaved changes to the policy?"));
+  }, [dirty]);
+
+  /** Marks the form as changed since the last load or save. */
+  function edited() {
+    setDirty(true);
+    setSaved(false);
+    setConflict(false);
+  }
+
+  function load(r: Loaded) {
+    setMeta({ path: r.path, exists: r.exists });
+    setPolicy(r.policy);
+    setYamlText(r.text ?? policyToYaml(r.policy));
+    setRiskText(r.policy.riskPaths.join("\n"));
+    setLimitsText(r.policy.environmentLimits.join("\n"));
+    setRevision(r.revision);
     setErrors([]);
+    setDirty(false);
+    setConflict(false);
   }
 
   useEffect(() => {
@@ -182,8 +221,7 @@ export function Policy({ projectId }: { projectId: string | null }) {
     api.call("projects.policy.get", { params: { projectId: selected } }).then(
       (r) => {
         if (!live) return;
-        setMeta({ path: r.path, exists: r.exists });
-        load(r.policy);
+        load(r);
         setLoadedFor(selected);
       },
       (err: unknown) => {
@@ -193,7 +231,7 @@ export function Policy({ projectId }: { projectId: string | null }) {
     return () => {
       live = false;
     };
-  }, [api, selected]);
+  }, [api, selected, reloads]);
 
   /** The policy as the active tab holds it. */
   function current(): ReturnType<typeof validatePolicy> {
@@ -212,11 +250,17 @@ export function Policy({ projectId }: { projectId: string | null }) {
       setErrors(r.errors);
       return;
     }
-    load(r.policy);
+    // The YAML tab keeps its own text, comments included; the form's
+    // changes go into it key by key.
+    if (next === "yaml") setYamlText(mergePolicyYaml(yamlText, r.policy));
+    setPolicy(r.policy);
+    setRiskText(r.policy.riskPaths.join("\n"));
+    setLimitsText(r.policy.environmentLimits.join("\n"));
+    setErrors([]);
     setTab(next);
   }
 
-  async function save() {
+  async function save(overwrite = false) {
     const target = loadedFor;
     if (!target || target !== selected) return;
     const r = current();
@@ -224,20 +268,29 @@ export function Policy({ projectId }: { projectId: string | null }) {
       setErrors(r.errors);
       return;
     }
+    const text = tab === "yaml" ? yamlText : mergePolicyYaml(yamlText, r.policy);
     try {
       const res = await api.call("projects.policy.put", {
         params: { projectId: target },
-        body: r.policy,
+        ...(revision && !overwrite ? { query: { baseRevision: revision } } : {}),
+        body: { text },
       });
       // The user may have switched projects while the save ran.
       if (selectedRef.current !== target) return;
-      setMeta({ path: res.path, exists: res.exists });
-      load(res.policy);
+      load(res);
       setSaved(true);
       setError(null);
     } catch (err) {
-      if (selectedRef.current === target) setError(err);
+      if (selectedRef.current !== target) return;
+      if (isApiError(err, "conflict")) setConflict(true);
+      else setError(err);
     }
+  }
+
+  function reload() {
+    setDirty(false);
+    setConflict(false);
+    setReloads((n) => n + 1);
   }
 
   return (
@@ -287,21 +340,53 @@ export function Policy({ projectId }: { projectId: string | null }) {
           ))}
         </ul>
       ) : null}
-      {saved ? (
+      {conflict ? (
+        <div role="alert" className="banner banner-warning">
+          The file changed on disk since you opened it. Reload it to see the changes, or overwrite
+          it with yours.
+          <div className="actions">
+            <button type="button" onClick={reload}>
+              Reload
+            </button>
+            <button type="button" className="danger" onClick={() => void save(true)}>
+              Overwrite
+            </button>
+          </div>
+        </div>
+      ) : null}
+      {saved && !dirty ? (
         <p role="status" className="banner banner-good">
           ✓ Saved.
+        </p>
+      ) : dirty ? (
+        <p role="status" className="muted small">
+          Unsaved changes.
         </p>
       ) : null}
       {tab === "form" ? (
         <div className="form-grid" role="tabpanel">
           <Field label="Risk paths" hint="One glob per line. Matching files always count as major.">
-            <textarea rows={4} value={riskText} onChange={(e) => setRiskText(e.target.value)} />
+            <textarea
+              rows={4}
+              value={riskText}
+              onChange={(e) => {
+                edited();
+                setRiskText(e.target.value);
+              }}
+            />
           </Field>
           <Field
             label="Environment limits"
             hint="One fact per line, such as Windows-only code paths under win/."
           >
-            <textarea rows={3} value={limitsText} onChange={(e) => setLimitsText(e.target.value)} />
+            <textarea
+              rows={3}
+              value={limitsText}
+              onChange={(e) => {
+                edited();
+                setLimitsText(e.target.value);
+              }}
+            />
           </Field>
           <Field
             label="Group size limit"
@@ -311,19 +396,34 @@ export function Policy({ projectId }: { projectId: string | null }) {
               type="number"
               min={1}
               value={policy.groupSizeLimit}
-              onChange={(e) => setPolicy({ ...policy, groupSizeLimit: Number(e.target.value) })}
+              onChange={(e) => {
+                edited();
+                setPolicy({ ...policy, groupSizeLimit: Number(e.target.value) });
+              }}
             />
           </Field>
-          <RuleList rules={policy.rules} onChange={(rules) => setPolicy({ ...policy, rules })} />
+          <RuleList
+            rules={policy.rules}
+            onChange={(rules) => {
+              edited();
+              setPolicy({ ...policy, rules });
+            }}
+          />
           <CommandList
             label="Tests"
             items={policy.tests}
-            onChange={(tests) => setPolicy({ ...policy, tests })}
+            onChange={(tests) => {
+              edited();
+              setPolicy({ ...policy, tests });
+            }}
           />
           <CommandList
             label="Lint"
             items={policy.lint}
-            onChange={(lint) => setPolicy({ ...policy, lint })}
+            onChange={(lint) => {
+              edited();
+              setPolicy({ ...policy, lint });
+            }}
           />
         </div>
       ) : (
@@ -334,7 +434,10 @@ export function Policy({ projectId }: { projectId: string | null }) {
             rows={24}
             spellCheck={false}
             value={yamlText}
-            onChange={(e) => setYamlText(e.target.value)}
+            onChange={(e) => {
+              edited();
+              setYamlText(e.target.value);
+            }}
           />
         </div>
       )}

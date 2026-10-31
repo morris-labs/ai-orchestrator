@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   childEnv,
+  closeHidesToTray,
   ERR_ABORTED,
   findTerminal,
   isBoxNotification,
+  needsExtensionList,
   needsLocalPage,
+  permissionAllowed,
   reviewCommand,
   terminalCandidates,
   terminalCommand,
@@ -145,5 +148,48 @@ describe("the local page", () => {
     expect(needsLocalPage(failed(server, ERR_ABORTED), server, local, pages)).toBe(false);
     // With nothing loaded yet, a cancelled first load still needs a page.
     expect(needsLocalPage(failed(server, ERR_ABORTED), server, "", pages)).toBe(true);
+  });
+});
+
+describe("permissions", () => {
+  const pages = ["https://127.0.0.1:21400/boxes/", "file:///app/renderer/index.html"];
+  it("grants the clipboard to app pages and refuses everything else", () => {
+    expect(permissionAllowed("clipboard-sanitized-write", pages[0]!, pages)).toBe(true);
+    expect(permissionAllowed("clipboard-read", "https://127.0.0.1:21400/boxes/#/x", pages)).toBe(
+      true,
+    );
+    for (const p of ["media", "geolocation", "notifications", "openExternal", "fullscreen"]) {
+      expect(permissionAllowed(p, pages[0]!, pages)).toBe(false);
+    }
+    expect(permissionAllowed("clipboard-read", "https://example.com/", pages)).toBe(false);
+  });
+});
+
+describe("closing the window", () => {
+  it("hides to the tray on desktops that have one", () => {
+    expect(closeHidesToTray({ XDG_CURRENT_DESKTOP: "KDE" }, null)).toBe(true);
+    expect(closeHidesToTray({}, null)).toBe(true);
+    expect(closeHidesToTray({ XDG_CURRENT_DESKTOP: "ubuntu:GNOME" }, null)).toBe(true);
+    expect(needsExtensionList({ XDG_CURRENT_DESKTOP: "ubuntu:GNOME" })).toBe(false);
+  });
+
+  it("quits on stock GNOME unless an AppIndicator extension runs", () => {
+    const gnome = { XDG_CURRENT_DESKTOP: "GNOME" };
+    expect(needsExtensionList(gnome)).toBe(true);
+    expect(closeHidesToTray(gnome, null)).toBe(false);
+    expect(closeHidesToTray(gnome, "@as []")).toBe(false);
+    expect(closeHidesToTray(gnome, "['appindicatorsupport@rgcjonas.gmail.com']")).toBe(true);
+  });
+
+  it("follows AGENTBOX_CLOSE_TO_TRAY over the desktop", () => {
+    expect(
+      closeHidesToTray({ XDG_CURRENT_DESKTOP: "GNOME", AGENTBOX_CLOSE_TO_TRAY: "1" }, null),
+    ).toBe(true);
+    expect(
+      closeHidesToTray({ XDG_CURRENT_DESKTOP: "KDE", AGENTBOX_CLOSE_TO_TRAY: "0" }, null),
+    ).toBe(false);
+    expect(needsExtensionList({ XDG_CURRENT_DESKTOP: "GNOME", AGENTBOX_CLOSE_TO_TRAY: "0" })).toBe(
+      false,
+    );
   });
 });

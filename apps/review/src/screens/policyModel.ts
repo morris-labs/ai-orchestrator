@@ -1,11 +1,35 @@
 // Conversion between the policy file, its YAML text, and the editor form.
 import { PolicyFileSchema, type PolicyFile } from "@agentbox/contracts";
-import { parse, stringify } from "yaml";
+import { isMap, parse, parseDocument, stringify } from "yaml";
 
 export type ParseResult = { ok: true; policy: PolicyFile } | { ok: false; errors: string[] };
 
 export function policyToYaml(policy: PolicyFile): string {
   return stringify(policy, { lineWidth: 100 });
+}
+
+/**
+ * The policy file text with `policy` applied: only the top-level keys whose
+ * value changed are rewritten, so comments, key order, and formatting
+ * elsewhere survive. Text that isn't a valid policy is replaced whole.
+ */
+export function mergePolicyYaml(text: string, policy: PolicyFile): string {
+  if (text.trim() === "") return policyToYaml(policy);
+  const doc = parseDocument(text);
+  if (doc.errors.length > 0) return policyToYaml(policy);
+  const before = validatePolicy(doc.toJS() ?? {});
+  if (!before.ok) return policyToYaml(policy);
+  if (!isMap(doc.contents)) return policyToYaml(policy);
+  const oldValues = before.policy as Record<string, unknown>;
+  const newValues = policy as Record<string, unknown>;
+  const keys = new Set([...Object.keys(oldValues), ...Object.keys(newValues)]);
+  for (const key of keys) {
+    const next = newValues[key];
+    if (JSON.stringify(oldValues[key]) === JSON.stringify(next)) continue;
+    if (next === undefined) doc.delete(key);
+    else doc.set(key, doc.createNode(next));
+  }
+  return doc.toString({ lineWidth: 100 });
 }
 
 /** Parses YAML text and validates it with the contract schema. */

@@ -106,14 +106,16 @@ const cases: Case[] = [
     enabled: ["edit", "purge", "moveWorkDir", "changeWorkDir", "start", "remove", "startReview"],
   },
   {
-    name: "a starting box counts for nothing",
+    // Edit, Fork, and Purge stay on for a single transitioning row, as in Qt.
+    name: "a starting box counts for nothing but edit, fork, and purge",
     selection: [starting],
-    enabled: [],
+    enabled: ["edit", "fork", "purge"],
   },
   {
-    name: "a stopping box counts for nothing",
+    // Edit, Fork, and Purge stay on for a single transitioning row, as in Qt.
+    name: "a stopping box counts for nothing but edit, fork, and purge",
     selection: [stopping],
-    enabled: [],
+    enabled: ["edit", "fork", "purge"],
   },
   {
     name: "convert needs a stopped workspace box without a worktree",

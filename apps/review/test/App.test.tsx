@@ -1,7 +1,7 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { App } from "../src/App.js";
-import { demoRounds, lastRun, loadDemoEvents, project, settings } from "./helpers/data.js";
+import { demoBox, demoRounds, lastRun, loadDemoEvents, project, settings } from "./helpers/data.js";
 import { renderWithStore } from "./helpers/render.js";
 
 const events = loadDemoEvents();
@@ -92,5 +92,37 @@ describe("App with the scripted event stream", () => {
   it("opens the launcher prefilled from the deep link", async () => {
     renderWithStore(<App search={`?project=${project.project.id}`} />, handlers());
     await waitFor(() => expect(screen.getByLabelText("Container")).toHaveValue(project.project.id));
+  });
+
+  it("applies the deep link once, not to every later launcher", async () => {
+    const box = demoBox();
+    const { server } = renderWithStore(<App search={`?box=${box.id}`} />, {
+      ...handlers(),
+      "boxes.get": () => ({
+        box,
+        status: "running",
+        container: box.container,
+        tmuxSession: box.session,
+        reviewState: { state: "idle" },
+        stats: null,
+        listeners: [],
+        proxyUrls: [],
+        sideSessions: [],
+        targetDirExists: true,
+      }),
+    });
+    await waitFor(() => expect(server.callsTo("boxes.get")).toHaveLength(1));
+    expect(window.location.hash).toBe(`#/launch?box=${box.id}`);
+    act(() => {
+      window.location.hash = "#/runs";
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    });
+    act(() => {
+      window.location.hash = "#/launch";
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    });
+    await screen.findByLabelText("Container");
+    await new Promise((res) => setTimeout(res, 20));
+    expect(server.callsTo("boxes.get")).toHaveLength(1);
   });
 });

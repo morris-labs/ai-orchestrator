@@ -138,4 +138,45 @@ describe("Findings with out-of-order responses", () => {
     await new Promise((res) => setTimeout(res, 20));
     expect(screen.getByText("0 of 0 findings")).toBeInTheDocument();
   });
+
+  it("keeps a verdict that changes while the findings list loads", async () => {
+    const slow = gate();
+    const r = renderWithStore(<Findings runId={RUN_ID} findingId={null} />, {
+      ...handlers(),
+      "findings.list": async () => {
+        await slow.wait;
+        return { findings };
+      },
+    });
+    await waitFor(() => expect(r.server.callsTo("findings.list")).toHaveLength(1));
+    const pending = findings.find((f) => f.verdict === "pending")!;
+    const ev = loadDemoEvents().find((e) => e.type === "finding.changed")!;
+    act(() =>
+      r.store.ingest({
+        ...ev,
+        runId: RUN_ID,
+        finding: { ...pending, verdict: "fixed" },
+      } as typeof ev),
+    );
+    slow.release();
+    await screen.findByText("6 of 6 findings");
+    fireEvent.change(screen.getByLabelText("Verdict"), { target: { value: "pending" } });
+    // Three are pending in the list; the event fixed one of them.
+    expect(screen.getByText("2 of 6 findings")).toBeInTheDocument();
+  });
+
+  it("follows finding.changed in an open detail and drops Waive for a fixed finding", async () => {
+    const { store } = renderWithStore(<Findings runId={RUN_ID} findingId="F-0007" />, handlers());
+    const detail = await screen.findByRole("article", { name: "Finding F-0007" });
+    expect(within(detail).getByRole("button", { name: "Waive" })).toBeInTheDocument();
+    const ev = loadDemoEvents().find((e) => e.type === "finding.changed")!;
+    act(() =>
+      store.ingest({
+        ...ev,
+        runId: RUN_ID,
+        finding: { ...findings.find((f) => f.id === "F-0007")!, verdict: "fixed" },
+      } as typeof ev),
+    );
+    expect(within(detail).queryByRole("button", { name: "Waive" })).toBeNull();
+  });
 });

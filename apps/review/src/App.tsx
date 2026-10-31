@@ -1,13 +1,13 @@
 // The app shell: navigation, the status line, and the routed screens.
 import { Dashboard, dashboardCss, themeCss } from "@agentbox/ui/dashboard";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { bridge } from "./lib/bridge.js";
 import { Findings } from "./screens/Findings.js";
 import { Launcher } from "./screens/Launcher.js";
 import { Policy } from "./screens/Policy.js";
 import { RunList, RunView } from "./screens/RunView.js";
 import { Settings } from "./screens/Settings.js";
-import { deepLink, href, navigate, useRoute, type RouteName } from "./state/router.js";
+import { href, moveDeepLinkToHash, navigate, useRoute, type RouteName } from "./state/router.js";
 import { useStore } from "./state/store.js";
 
 const NAV: Array<{ name: RouteName; path: string; label: string }> = [
@@ -41,6 +41,9 @@ export function App({
 }: {
   search?: string;
 }) {
+  // The deep link in the page's query applies once: it moves into the hash
+  // before the route is read, and later routes don't see it.
+  useState(() => moveDeepLinkToHash(search));
   const route = useRoute();
   const connection = useStore((s) => s.connection);
   const storeError = useStore((s) => s.error);
@@ -48,7 +51,6 @@ export function App({
     (s) =>
       Object.values(s.dashboard.runs).filter((r) => r.run?.status === "waiting_decision").length,
   );
-  const prefill = deepLink(search);
 
   useEffect(() => bridge()?.onNavigate?.((hash) => navigate(hash)), []);
 
@@ -68,7 +70,7 @@ export function App({
       screen = <DashboardScreen />;
       break;
     case "policy":
-      screen = <Policy projectId={route.query.get("project") ?? prefill.project} />;
+      screen = <Policy projectId={route.query.get("project")} />;
       break;
     case "settings":
       screen = <Settings />;
@@ -77,8 +79,8 @@ export function App({
       screen = (
         <Launcher
           prefill={{
-            project: route.query.get("project") ?? prefill.project,
-            box: route.query.get("box") ?? prefill.box,
+            project: route.query.get("project"),
+            box: route.query.get("box"),
           }}
         />
       );

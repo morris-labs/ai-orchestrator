@@ -27,3 +27,23 @@ describe("the built preload", () => {
     expect(found).toContain("electron");
   });
 });
+
+describe("the built page", () => {
+  it("carries a Content-Security-Policy that limits scripts and requests to its origin", () => {
+    const file = path.join(import.meta.dirname, "../dist/renderer/index.html");
+    let html: string;
+    try {
+      html = readFileSync(file, "utf8");
+    } catch {
+      throw new Error(`No built page at ${file}. Run \`pnpm build\` first.`);
+    }
+    const meta = /<meta http-equiv="Content-Security-Policy" content="([^"]+)"/.exec(
+      html.replace(/&#39;/g, "'"),
+    );
+    expect(meta).not.toBeNull();
+    expect(meta![1]).toContain("script-src 'self'");
+    expect(meta![1]).toContain("connect-src 'self'");
+    // The policy must come before any script, or it doesn't cover them.
+    expect(html.indexOf("Content-Security-Policy")).toBeLessThan(html.indexOf("<script"));
+  });
+});

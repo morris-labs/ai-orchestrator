@@ -18,7 +18,7 @@ import {
   pinnedTransport,
   serverUrl,
 } from "@agentbox/ui/electron-main";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { accessSync, constants, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -40,9 +40,12 @@ import {
 import type { BridgeResult, ExternalTerminalRequest } from "../src/bridge";
 import {
   childEnv,
+  closeHidesToTray,
   findTerminal,
   isBoxNotification,
+  needsExtensionList,
   needsLocalPage,
+  permissionAllowed,
   reviewCommand,
   terminalCommand,
   trayCounts,
@@ -180,13 +183,34 @@ function createWindow() {
     retryServerPage();
   });
   win.on("close", (e) => {
-    if (!quitting && tray) {
+    if (!quitting && tray && hideToTray) {
       e.preventDefault();
       win?.hide();
     }
   });
   void win.loadURL(BOXES_URL);
 }
+
+/**
+ * The GNOME Shell extensions that are on, for `closeHidesToTray`; `null`
+ * when `gsettings` can't tell.
+ */
+function enabledExtensions(): string | null {
+  try {
+    return execFileSync("gsettings", ["get", "org.gnome.shell", "enabled-extensions"], {
+      encoding: "utf8",
+      timeout: 2000,
+    });
+  } catch {
+    return null;
+  }
+}
+
+/** Whether closing the window hides it into the tray; decided once at startup. */
+const hideToTray = closeHidesToTray(
+  process.env,
+  needsExtensionList(process.env) ? enabledExtensions() : null,
+);
 
 let serverRetry: ReturnType<typeof setTimeout> | null = null;
 /** Loads the server's page again once the server answers, while the local copy shows. */
@@ -371,8 +395,12 @@ function registerIpc() {
   ipcMain.handle("agentbox:open-external", async (e, url: string): Promise<BridgeResult> => {
     if (!fromApp(e)) return REFUSED;
     if (!isWebUrl(url)) return { ok: false, error: "Only http and https links open externally." };
-    await shell.openExternal(url);
-    return { ok: true };
+    try {
+      await shell.openExternal(url);
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: errorMessage(err) };
+    }
   });
   ipcMain.on("agentbox:quit", (e) => {
     if (!fromApp(e)) return;
@@ -397,6 +425,14 @@ if (!app.requestSingleInstanceLock()) {
     session.defaultSession.setCertificateVerifyProc((request, callback) =>
       callback(certificateVerdict(request, SERVER_URL, readPin)),
     );
+    // The page needs the clipboard and nothing else: media, geolocation,
+    // notifications, and the rest are refused.
+    session.defaultSession.setPermissionRequestHandler((wc, permission, callback, details) =>
+      callback(permissionAllowed(permission, details.requestingUrl || wc.getURL(), APP_PAGES)),
+    );
+    session.defaultSession.setPermissionCheckHandler((wc, permission, _origin, details) =>
+      permissionAllowed(permission, details.requestingUrl || wc?.getURL() || "", APP_PAGES),
+    );
     createWindow();
     tray = new Tray(trayImage("offline"));
     tray.on("click", showWindow);
@@ -405,6 +441,6 @@ if (!app.requestSingleInstanceLock()) {
     watchEvents();
   });
   app.on("window-all-closed", () => {
-    if (!tray) app.quit();
+    if (!tray || !hideToTray) app.quit();
   });
 }

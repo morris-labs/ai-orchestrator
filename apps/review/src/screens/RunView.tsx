@@ -23,6 +23,7 @@ import {
 } from "@agentbox/ui/dashboard";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ErrorBanner, RunStatusBadge, shortId } from "../components/common.js";
+import { EventBuffer } from "../state/eventBuffer.js";
 import { href } from "../state/router.js";
 import { useApiClient, useAnyEvent } from "@agentbox/ui/hooks";
 import { useStore } from "../state/store.js";
@@ -278,8 +279,13 @@ export function RunView({ runId }: { runId: string }) {
   // The newest run state seen from either REST or the event stream. Kept in
   // a ref so a late response can be compared without a state updater.
   const latest = useRef<RunState | null>(null);
+  // The run as the last stage.changed left it. A run from REST at the same
+  // `updatedAt` but another stage predates that event.
+  const stageEvent = useRef<{ updatedAt: string; stage: RunState["stage"] } | null>(null);
   const applyRun = useCallback((next: RunState): boolean => {
     if (!isNewerRun(latest.current, next)) return false;
+    const s = stageEvent.current;
+    if (s && next.updatedAt === s.updatedAt && next.stage !== s.stage) return false;
     latest.current = next;
     setRun(next);
     return true;
@@ -317,7 +323,11 @@ export function RunView({ runId }: { runId: string }) {
     } else if (e.type === "stage.changed" && e.runId === runId) {
       const prev = latest.current;
       if (prev) {
-        latest.current = { ...prev, stage: e.stage, round: e.round };
+        // The event's time is when the run changed, so it counts as the
+        // run's `updatedAt`, and a REST run from before it is older.
+        const updatedAt = Date.parse(e.time) > Date.parse(prev.updatedAt) ? e.time : prev.updatedAt;
+        latest.current = { ...prev, stage: e.stage, round: e.round, updatedAt };
+        stageEvent.current = { updatedAt, stage: e.stage };
         setRun(latest.current);
       }
     }
@@ -431,7 +441,10 @@ export function RunView({ runId }: { runId: string }) {
                 params,
                 body: {
                   option,
-                  waiveFindingIds: option === "resume_waive" ? run.decision!.findingIds : [],
+                  // An empty list lets the engine waive the decision's
+                  // findings that are not fixed. An oscillation lists the
+                  // fixed finding too, which must keep its verdict.
+                  waiveFindingIds: [],
                   reason: reason || undefined,
                 },
               }),
@@ -544,11 +557,37 @@ export function RunList() {
   const [runs, setRuns] = useState<RunState[]>([]);
   const [error, setError] = useState<unknown>(null);
   const resets = useStore((s) => s.resets);
+  // Runs that change while the list loads keep their newer state.
+  const [buffer] = useState(() => new EventBuffer<RunState>());
   useEffect(() => {
-    api.call("runs.list").then((r) => setRuns(r.runs), setError);
-  }, [api, resets]);
+    let live = true;
+    const during = buffer.start();
+    api.call("runs.list").then(
+      (r) => {
+        if (!live) return;
+        setRuns(
+          buffer.finish(
+            during,
+            r.runs,
+            (x) => x.id,
+            (e, l) => isNewerRun(l, e),
+          ),
+        );
+      },
+      (err: unknown) => {
+        buffer.cancel(during);
+        if (live) setError(err);
+      },
+    );
+    return () => {
+      live = false;
+      buffer.cancel(during);
+    };
+  }, [api, resets, buffer]);
   useAnyEvent((e) => {
-    if (e.type === "run.changed") setRuns((rs) => [e.run, ...rs.filter((r) => r.id !== e.run.id)]);
+    if (e.type !== "run.changed") return;
+    buffer.record(e.run.id, e.run);
+    setRuns((rs) => [e.run, ...rs.filter((r) => r.id !== e.run.id)]);
   });
   const sorted = [...runs].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   return (

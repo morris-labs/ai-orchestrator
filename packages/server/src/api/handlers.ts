@@ -204,8 +204,8 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
     "projects.restartContainer": async ({ params }) =>
       core.projects.restartContainer(params.projectId),
     "projects.policy.get": async ({ params }) => core.projects.getPolicy(params.projectId),
-    "projects.policy.put": async ({ params, body }) =>
-      core.projects.putPolicy(params.projectId, body),
+    "projects.policy.put": async ({ params, query, body }) =>
+      core.projects.putPolicy(params.projectId, body, query.baseRevision),
     "projects.repos.list": async ({ params }) => {
       await core.projects.get(params.projectId);
       return deps.engines.requireProject(params.projectId).call("engine.repos.list") as never;

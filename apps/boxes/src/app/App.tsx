@@ -258,8 +258,16 @@ export function App() {
 
   const openLink = (url: string) => {
     const b = bridge();
-    if (b) void b.openExternal(url);
-    else window.open(url, "_blank", "noopener");
+    if (!b) {
+      window.open(url, "_blank", "noopener");
+      return;
+    }
+    void b
+      .openExternal(url)
+      .then((r) => {
+        if (!r.ok) void inform("Open Link", r.error ?? `${url} didn't open.`);
+      })
+      .catch((err: unknown) => void inform("Open Link", errorMessage(err)));
   };
 
   const reportBulk = (
@@ -874,49 +882,59 @@ export function App() {
     runCreate("Fork Conversation", r.form, "fork", source.box.id, r.project);
 
   const acceptEdit = (view: BoxView) => async (r: BoxDialogResult) => {
-    await saveProjectSettings(view.box.targetDir, r.project);
+    // The box update goes first, so a refused update leaves the project as it
+    // was and a second Save doesn't save it (or offer its restart) again.
     const body = updateBody(view.box, r.form, r.handPicked);
-    if (Object.keys(body).length === 0) {
-      setDialog(null);
-      return null;
-    }
-    let force = false;
-    for (;;) {
-      try {
-        const res = await client.call("boxes.update", {
-          params: { boxId: view.box.id },
-          body: { ...body, ...(force ? { force } : {}) },
-        });
-        data.putBox(res.box);
-        setDialog(null);
-        if (res.restartRequired) {
-          const restart = await confirm(
-            "Edit Box",
-            `${view.box.id} is running, and the model, effort, permission flag, SSH remotes, or linked conversation of a live session can't change. They take effect the next time it starts.\n\nRestart it now to apply them?`,
-          );
-          if (restart) {
-            setTabs((t) => closeBoxTabs(t, view.box.id));
-            try {
-              const v = await client.call("boxes.restart", { params: { boxId: view.box.id } });
-              data.putBox(v);
-              openTerminal(v);
-            } catch (err) {
-              await handleLaunchError("Edit Box", err, view);
-            }
+    let restartRequired = false;
+    if (Object.keys(body).length > 0) {
+      let force = false;
+      for (;;) {
+        try {
+          const res = await client.call("boxes.update", {
+            params: { boxId: view.box.id },
+            body: { ...body, ...(force ? { force } : {}) },
+          });
+          data.putBox(res.box);
+          restartRequired = res.restartRequired;
+          break;
+        } catch (err) {
+          const a = await adoptionAnswer("Edit Box", err);
+          if (a === "force") {
+            force = true;
+            continue;
           }
+          if (a !== null) return a || "Pick another conversation.";
+          return errorMessage(err);
         }
-        loadRemotes();
-        return null;
-      } catch (err) {
-        const a = await adoptionAnswer("Edit Box", err);
-        if (a === "force") {
-          force = true;
-          continue;
-        }
-        if (a !== null) return a || "Pick another conversation.";
-        return errorMessage(err);
       }
     }
+    setDialog(null);
+    try {
+      await saveProjectSettings(view.box.targetDir, r.project);
+    } catch (err) {
+      void inform("Edit Box", `Saving the project settings failed: ${errorMessage(err)}`);
+    }
+    if (restartRequired) {
+      const restart = await confirm(
+        "Edit Box",
+        `${view.box.id} is running, and the model, effort, permission flag, SSH remotes, or linked conversation of a live session can't change. They take effect the next time it starts.\n\nRestart it now to apply them?`,
+      );
+      if (restart) {
+        setTabs((t) => closeBoxTabs(t, view.box.id));
+        try {
+          const v = await client.call("boxes.restart", { params: { boxId: view.box.id } });
+          data.putBox(v);
+          openTerminal(v);
+        } catch (err) {
+          // A restart is a stop and then a start: when the start fails, the
+          // box is stopped, so start it with the usual retry and Start Anyway.
+          if (isApiError(err, "stale_mounts")) await startBox(view, true, "Edit Box");
+          else await handleLaunchError("Edit Box", err, view);
+        }
+      }
+    }
+    if (Object.keys(body).length > 0) loadRemotes();
+    return null;
   };
 
   // -------------------------------------------------------------------------

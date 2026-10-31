@@ -263,7 +263,28 @@ export const PolicyResultSchema = z.object({
   path: z.string().min(1),
   exists: z.boolean(),
   policy: PolicyFileSchema,
+  /**
+   * The file's text, comments included, or `null` when the file doesn't
+   * exist. An editor that saves this text back keeps the comments.
+   */
+  text: z.string().nullable().optional(),
+  /**
+   * Identifies the file's content. Pass it as `baseRevision` on a put so the
+   * put fails with `conflict` when the file changed since it was read.
+   */
+  revision: z.string().min(1).optional(),
 });
+
+/** A put of the policy file's text as written, comments included. */
+export const PolicyTextSchema = z.object({ text: z.string() }).strict();
+
+/**
+ * The `projects.policy.put` body: the policy as an object, which the server
+ * writes as YAML without comments, or the file's text, which it validates
+ * and writes as it is.
+ */
+export const PolicyPutSchema = z.union([PolicyFileSchema, PolicyTextSchema]);
+export type PolicyPut = z.infer<typeof PolicyPutSchema>;
 
 export const BoxStatsSchema = z.object({
   cpuPercent: z.number().nonnegative(),
@@ -612,6 +633,12 @@ export const DirListingSchema = z.object({
   parent: z.string().min(1).nullable(),
   /** Subdirectories, sorted by name. */
   entries: z.array(z.object({ name: z.string().min(1), path: z.string().min(1) })),
+  /**
+   * Whether the directory holds an executable `new-issue.sh`, the marker of a
+   * tree organised into per-issue folders. New Box then defaults to a
+   * workspace folder, as `layout: "auto"` does.
+   */
+  newIssueScript: z.boolean().optional(),
 });
 export type DirListing = z.infer<typeof DirListingSchema>;
 
@@ -997,8 +1024,10 @@ export const serverRoutes = {
     method: "PUT",
     path: `${projects}/:projectId/policy`,
     summary: "Write the policy file.",
-    body: PolicyFileSchema,
+    query: z.object({ baseRevision: z.string().min(1).optional() }),
+    body: PolicyPutSchema,
     response: PolicyResultSchema,
+    errors: ["conflict"],
   }),
   "projects.repos.list": http({
     method: "GET",

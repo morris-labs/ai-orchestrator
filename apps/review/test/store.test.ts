@@ -195,6 +195,40 @@ describe("AppStore snapshot timing and errors", () => {
     expect(store.getState().error).toMatch(/Usage is unavailable/);
   });
 
+  it("clears a usage error once usage loads again", async () => {
+    let fail = true;
+    const store = storeWith({
+      "usage.get": () => {
+        if (fail) throw new Error("Usage is unavailable.");
+        return { vendors: [] };
+      },
+    });
+    await store.loadUsage();
+    expect(store.getState().error).toMatch(/Usage is unavailable/);
+    fail = false;
+    await store.loadUsage();
+    expect(store.getState().error).toBeNull();
+  });
+
+  it("coalesces a burst of usage loads into the running one and one more", async () => {
+    let calls = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const store = storeWith({
+      "usage.get": async () => {
+        calls += 1;
+        if (calls === 1) await gate;
+        return { vendors: [] };
+      },
+    });
+    const first = store.loadUsage();
+    await new Promise((r) => setTimeout(r, 5));
+    const more = [store.loadUsage(), store.loadUsage(), store.loadUsage()];
+    release();
+    await Promise.all([first, ...more]);
+    expect(calls).toBe(2);
+  });
+
   // Finding 32: every open run used to get its two calls at once.
   it("loads at most a few runs' details at a time", async () => {
     let inFlight = 0;

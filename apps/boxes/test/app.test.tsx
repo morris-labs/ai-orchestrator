@@ -448,6 +448,87 @@ describe("main window", () => {
     expect(await screen.findByText(/Restart it now to apply them\?/)).toBeInTheDocument();
   });
 
+  it("starts the box again when an Edit Box restart hits stale mounts", async () => {
+    const user = userEvent.setup();
+    const server = new FakeServer({ boxes: boxes() });
+    const site = server.box("claude-agent-site");
+    server.on("boxes.restart", (req, s) => {
+      // The server stops the box, then its start fails.
+      s.box(req.params.boxId as string).status = "stopped";
+      throw new FakeApiError("stale_mounts", "The container's mounts changed.");
+    });
+    let first = true;
+    server.on("boxes.start", (req, s) => {
+      if (first) {
+        first = false;
+        throw new FakeApiError("stale_mounts", "The container's mounts changed.");
+      }
+      const v = s.box(req.params.boxId as string);
+      v.status = "running";
+      return v;
+    });
+    await renderApp(server);
+    await waitFor(() => expect(rowOf("Site work")).toHaveAttribute("aria-selected", "true"));
+    await user.keyboard("{Control>}{Shift>}E{/Shift}{/Control}");
+    const dialog = await screen.findByRole("dialog", { name: "Edit Box" });
+    await user.click(within(dialog).getByLabelText(/Allow bypassing permission prompts/));
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+    await user.click(await screen.findByRole("button", { name: "Yes" }));
+    const stale = await screen.findByRole("dialog", { name: "Edit Box" });
+    await user.click(within(stale).getByRole("button", { name: "Restart Container" }));
+    await waitFor(() => expect(server.callsTo("boxes.start")).toHaveLength(2));
+    expect(server.callsTo("boxes.start")[0]?.params.boxId).toBe(site.box.id);
+    expect(server.callsTo("projects.restartContainer")).toHaveLength(1);
+    expect(await screen.findByRole("tab", { name: /Site work/ })).toBeInTheDocument();
+  });
+
+  it("leaves the project as it was when Edit Box refuses the box update", async () => {
+    const user = userEvent.setup();
+    const holder = makeBoxView({
+      box: {
+        id: "claude-agent-holder",
+        targetDir: "/w/site",
+        sessionUuid: "22222222-2222-4222-8222-222222222222",
+      },
+      status: "running",
+    });
+    const server = new FakeServer({
+      boxes: [...boxes(), holder],
+      conversations: {
+        "/w/site": [
+          {
+            sessionUuid: "22222222-2222-4222-8222-222222222222",
+            title: "Held work",
+            titleSource: "custom-title",
+            turns: 2,
+            modifiedAt: "2026-10-28T08:00:00Z",
+            sizeBytes: 1,
+            lastPrompt: "",
+            trackedBy: ["claude-agent-holder"],
+          },
+        ],
+      },
+    });
+    server.on("boxes.update", () => {
+      throw new FakeApiError("adoption_refused", "The running box claude-agent-holder holds it.");
+    });
+    await renderApp(server);
+    await waitFor(() => expect(rowOf("Site work")).toHaveAttribute("aria-selected", "true"));
+    await user.keyboard("{Control>}{Shift>}E{/Shift}{/Control}");
+    const dialog = await screen.findByRole("dialog", { name: "Edit Box" });
+    await within(dialog).findByRole("option", { name: /Held work/ }, { timeout: 3000 });
+    await user.selectOptions(
+      within(dialog).getByLabelText("Conversation"),
+      "22222222-2222-4222-8222-222222222222",
+    );
+    await user.click(within(dialog).getByRole("button", { name: /TCP port maps/ }));
+    await user.click(within(dialog).getByRole("button", { name: "Add port" }));
+    await user.type(within(dialog).getByLabelText("Host port 1"), "8080");
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(/holds it/);
+    expect(server.callsTo("projects.update")).toHaveLength(0);
+  });
+
   it("creates a box as a job and opens its terminal", async () => {
     const user = userEvent.setup();
     const server = new FakeServer({ boxes: boxes() });

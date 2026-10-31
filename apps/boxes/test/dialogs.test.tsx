@@ -145,6 +145,85 @@ describe("BoxDialog, new mode", () => {
     expect(screen.getByLabelText("Conversation name")).toHaveValue("Mine");
   });
 
+  it("drops a conversation picked in another directory when the directory changes", async () => {
+    const user = userEvent.setup();
+    const server = new FakeServer({
+      conversations: { "/w/site": [conv(UUID1, "Fix login")] },
+    });
+    const { onAccept } = newDialog(server, { initialDir: "/w/site" });
+    const combo = screen.getByLabelText("Conversation");
+    await screen.findByRole("option", { name: /Fix login/ }, { timeout: 3000 });
+    await user.selectOptions(combo, UUID1);
+    expect(screen.getByLabelText("Conversation name")).toHaveValue("Fix login");
+    const dirInput = screen.getByLabelText("Target directory");
+    await user.clear(dirInput);
+    await user.type(dirInput, "/w/plain");
+    expect(combo).toHaveValue("");
+    expect(screen.getByLabelText("Conversation name")).toHaveValue("");
+    await user.type(screen.getByLabelText("Conversation name"), "Typed");
+    await user.click(screen.getByRole("button", { name: "Create" }));
+    await waitFor(() => expect(onAccept).toHaveBeenCalled());
+    const r = onAccept.mock.calls[0]?.[0] as BoxDialogResult;
+    expect(r.form.conversation).toBe("");
+    expect(r.form.targetDir).toBe("/w/plain");
+  });
+
+  it("keeps a typed name when the directory changes", async () => {
+    const user = userEvent.setup();
+    newDialog(new FakeServer(), { initialDir: "/w/site" });
+    await user.type(screen.getByLabelText("Conversation name"), "Mine");
+    await user.type(screen.getByLabelText("Target directory"), "/sub");
+    expect(screen.getByLabelText("Conversation name")).toHaveValue("Mine");
+  });
+
+  it("defaults to a workspace folder in a tree with an executable new-issue.sh", async () => {
+    const server = new FakeServer();
+    server.state.dirs["/w/issues"] = [];
+    server.state.newIssueScriptDirs.push("/w/issues");
+    newDialog(server, { initialDir: "/w/issues" });
+    await waitFor(() => expect(screen.getByLabelText(/workspace subfolder/)).toBeChecked(), {
+      timeout: 3000,
+    });
+  });
+
+  it("keeps a remembered no over a new-issue.sh marker", async () => {
+    const server = new FakeServer({
+      settings: {
+        newBoxDefaults: { workspaceDirs: { "/w/issues": false }, worktreeDirs: {} },
+      },
+    });
+    server.state.dirs["/w/issues"] = [];
+    server.state.newIssueScriptDirs.push("/w/issues");
+    newDialog(server, { initialDir: "/w/issues", settings: server.state.settings });
+    await waitFor(() => expect(server.callsTo("fs.dirs").length).toBe(1), { timeout: 3000 });
+    expect(screen.getByLabelText("In the directory itself")).toBeChecked();
+  });
+
+  it("turns the layout off while adopting a conversation", async () => {
+    const user = userEvent.setup();
+    const server = new FakeServer({
+      conversations: { "/w/site": [conv(UUID1, "!!")] },
+    });
+    server.state.projects.push(makeProject({ root: "/w/site", primaryRepo: "/w/site" }));
+    const { onAccept } = newDialog(server, {
+      projects: server.state.projects,
+      initialDir: "/w/site",
+    });
+    expect(screen.getByLabelText(/In a git worktree/)).toBeEnabled();
+    const combo = screen.getByLabelText("Conversation");
+    await screen.findByRole("option", { name: /^!!/ }, { timeout: 3000 });
+    await user.selectOptions(combo, UUID1);
+    expect(screen.getByLabelText(/In a git worktree/)).toBeDisabled();
+    expect(
+      screen.getByText(
+        "Resuming an existing conversation: no workspace folder or worktree is created.",
+      ),
+    ).toBeInTheDocument();
+    // The title "!!" has no letters, but no worktree is named after it.
+    await user.click(screen.getByRole("button", { name: "Create" }));
+    await waitFor(() => expect(onAccept).toHaveBeenCalled());
+  });
+
   it("takes the model and effort defaults from the server for the directory", async () => {
     const server = new FakeServer();
     server.on("models.list", () => ({
@@ -296,6 +375,56 @@ describe("BoxDialog, edit and fork modes", () => {
     const r = onAccept.mock.calls[0]![0];
     expect(r.handPicked).toEqual({ model: false, effort: false });
     expect(updateBody(view.box, r.form, r.handPicked)).toEqual({ conversationName: "Renamed" });
+  });
+
+  it("lets a fork follow the settings for a model and effort the source leaves to them", async () => {
+    const server = new FakeServer({ boxes: [view] });
+    server.on("models.list", () => ({
+      models: ["claude-opus-5-5", "claude-sonnet-x"],
+      efforts: ["low", "medium", "high", "xhigh", "max"] as const satisfies Effort[],
+      defaults: { model: "claude-sonnet-x", effort: "low" as const },
+      source: "cache" as const,
+    }));
+    renderWithServer(
+      <BoxDialog
+        mode="fork"
+        source={view}
+        projects={server.state.projects}
+        settings={server.state.settings}
+        initialDir="/w/site"
+        onAccept={async () => null}
+        onCancel={() => undefined}
+        onManageRemotes={() => undefined}
+      />,
+      server,
+    );
+    await waitFor(() => expect(screen.getByLabelText("Model")).toHaveValue("claude-sonnet-x"), {
+      timeout: 3000,
+    });
+    expect(screen.getByLabelText("Effort")).toHaveValue("low");
+  });
+
+  it("keeps the source's own model in a fork", async () => {
+    const pinned = makeBoxView({
+      box: { ...view.box, model: "claude-pinned-9", effort: "max" },
+    });
+    const server = new FakeServer({ boxes: [pinned] });
+    renderWithServer(
+      <BoxDialog
+        mode="fork"
+        source={pinned}
+        projects={server.state.projects}
+        settings={server.state.settings}
+        initialDir="/w/site"
+        onAccept={async () => null}
+        onCancel={() => undefined}
+        onManageRemotes={() => undefined}
+      />,
+      server,
+    );
+    await waitFor(() => expect(server.callsTo("models.list").length).toBe(1), { timeout: 3000 });
+    expect(screen.getByLabelText("Model")).toHaveValue("claude-pinned-9");
+    expect(screen.getByLabelText("Effort")).toHaveValue("max");
   });
 
   it("names a fork after its source and disables the conversation", () => {
@@ -547,6 +676,58 @@ describe("SetupWizard and jobs", () => {
     );
     expect(job.status).toBe("finished");
     expect(n).toBe(3);
+  });
+
+  it("retries a failed poll instead of ending the wait", async () => {
+    let n = 0;
+    const job = await waitForJob(
+      async () => {
+        n += 1;
+        if (n === 1) throw new Error("connection reset");
+        return { status: n < 3 ? "running" : "finished" } as Job;
+      },
+      { intervalMs: 1 },
+    );
+    expect(job.status).toBe("finished");
+    await expect(
+      waitForJob(
+        async () => {
+          throw new Error("gone");
+        },
+        { intervalMs: 1, retries: 2 },
+      ),
+    ).rejects.toThrow("gone");
+  });
+
+  it("stops polling when the signal aborts", async () => {
+    const abort = new AbortController();
+    let n = 0;
+    const wait = waitForJob(
+      async () => {
+        n += 1;
+        if (n === 2) abort.abort(new Error("closed"));
+        return { status: "running" } as Job;
+      },
+      { intervalMs: 1, signal: abort.signal },
+    );
+    await expect(wait).rejects.toThrow("closed");
+    const polls = n;
+    await new Promise((r) => setTimeout(r, 20));
+    expect(n).toBe(polls);
+  });
+
+  it("stops polling a job once its dialog closes", async () => {
+    const server = new FakeServer({ autoFinishJobs: false });
+    const job = server.startJob("image_build", "build image", null, () => null);
+    const { unmount } = renderWithServer(
+      <JobDialog title="Build" job={job} onClose={() => undefined} />,
+      server,
+    );
+    await waitFor(() => expect(server.callsTo("jobs.get").length).toBeGreaterThan(0));
+    unmount();
+    const polls = server.callsTo("jobs.get").length;
+    await new Promise((r) => setTimeout(r, 1300));
+    expect(server.callsTo("jobs.get").length).toBe(polls);
   });
 
   it("shows the job result when it finishes", async () => {

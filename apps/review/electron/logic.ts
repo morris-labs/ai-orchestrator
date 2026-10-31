@@ -278,3 +278,64 @@ export function trayBitmap(count: number, size = 32): Buffer {
   }
   return buf;
 }
+
+// ---------------------------------------------------------------------------
+// Loading the page and navigating it
+
+/** Chromium's error code for a load that was cancelled, as a blocked navigation is. */
+export const ERR_ABORTED = -3;
+
+/** A `did-fail-load` event's details. */
+export interface LoadFailure {
+  url: string;
+  errorCode: number;
+  isMainFrame: boolean;
+}
+
+/**
+ * True when a failed load left the window without the app: the main frame
+ * failed to load an app page. A frame inside the page doesn't count, and
+ * neither does a cancelled load (a redirect the window blocked) while the
+ * window still shows an app page at `currentUrl`.
+ */
+export function lostAppPage(
+  failure: LoadFailure,
+  currentUrl: string,
+  isAppPage: (url: string) => boolean,
+): boolean {
+  if (!failure.isMainFrame || !isAppPage(failure.url)) return false;
+  return failure.errorCode !== ERR_ABORTED || !isAppPage(currentUrl);
+}
+
+/** The page the window shows while the server doesn't answer. */
+export function offlinePageUrl(serverUrl: string): string {
+  const escaped = serverUrl.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Agent Box Review</title><style>body{background:#0d0d0d;color:#ddd;font:15px system-ui,sans-serif;margin:3em}</style></head><body><h1>The Agent Box server isn't reachable</h1><p>The app tries ${escaped} again every few seconds and opens the review page once it answers.</p></body></html>`;
+  return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
+}
+
+/**
+ * Holds the route a tray item, a notification, or a deep link asked for
+ * until the page can take it: before the app is ready, while the page
+ * loads, or while the window shows something other than the app.
+ */
+export class PendingNavigation {
+  private hash: string | null = null;
+
+  /** Returns the hash to send now, or `null` after keeping it for later. */
+  request(hash: string, canSend: boolean): string | null {
+    if (canSend) {
+      this.hash = null;
+      return hash;
+    }
+    this.hash = hash;
+    return null;
+  }
+
+  /** The kept hash, once, for a page that can take it now. */
+  take(): string | null {
+    const h = this.hash;
+    this.hash = null;
+    return h;
+  }
+}
