@@ -64,6 +64,8 @@ export class ContainerMonitor extends EventEmitter {
   private readonly boxStatuses = new Map<string, BoxStatus>();
   private timer: NodeJS.Timeout | undefined;
   private polling: Promise<void> | undefined;
+  /** Whether the poll in flight samples stats. */
+  private pollingSamples = false;
   private firstPoll = true;
   private lastPollAt: number | undefined;
 
@@ -79,9 +81,29 @@ export class ContainerMonitor extends EventEmitter {
       now?: () => number;
       /** Overrides `DISK_SIZE_INTERVAL_MS`. */
       diskSizeIntervalMs?: number;
+      /** Logs a failed routine poll. Default: none. */
+      log?: (message: string) => void;
     },
   ) {
     super();
+  }
+
+  /** The last poll failure logged, so a failure that repeats every poll is logged once. */
+  private lastError: string | undefined;
+
+  /** Runs a routine poll and logs a failure once per distinct message. */
+  private routinePoll(): void {
+    this.poll().then(
+      () => {
+        this.lastError = undefined;
+      },
+      (err: unknown) => {
+        const message = err instanceof Error ? err.message : String(err);
+        if (message === this.lastError) return;
+        this.lastError = message;
+        this.deps.log?.(`Box status poll failed: ${message}`);
+      },
+    );
   }
 
   /** The last stats sample of a container, or `null`. */
@@ -92,9 +114,9 @@ export class ContainerMonitor extends EventEmitter {
   /** Starts polling every `intervalMs`. The first poll skips stats, as 3.3.5 did. */
   start(intervalMs = 3000): void {
     if (this.timer) return;
-    this.timer = setInterval(() => void this.poll().catch(() => undefined), intervalMs);
+    this.timer = setInterval(() => this.routinePoll(), intervalMs);
     this.timer.unref?.();
-    void this.poll().catch(() => undefined);
+    this.routinePoll();
   }
 
   stop(): void {
@@ -102,15 +124,26 @@ export class ContainerMonitor extends EventEmitter {
     this.timer = undefined;
   }
 
-  /** One poll; overlapping calls share the poll in flight. */
+  /**
+   * One poll; overlapping calls share the poll in flight. A call that asks
+   * for stats while a poll without them is in flight runs another poll after
+   * it, so it never returns without a sample.
+   */
   poll(options: { sampleStats?: boolean } = {}): Promise<void> {
-    if (!this.polling) {
-      const sample = options.sampleStats ?? !this.firstPoll;
-      this.firstPoll = false;
-      this.polling = this.pollOnce(sample).finally(() => {
-        this.polling = undefined;
-      });
+    if (this.polling) {
+      if (options.sampleStats !== true || this.pollingSamples) return this.polling;
+      const after = this.polling.then(
+        () => undefined,
+        () => undefined,
+      );
+      return after.then(() => this.poll(options));
     }
+    const sample = options.sampleStats ?? !this.firstPoll;
+    this.firstPoll = false;
+    this.pollingSamples = sample;
+    this.polling = this.pollOnce(sample).finally(() => {
+      this.polling = undefined;
+    });
     return this.polling;
   }
 

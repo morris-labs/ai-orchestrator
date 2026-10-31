@@ -47,6 +47,8 @@ export interface CoreOptions {
   /** Milliseconds to wait for a stopped container or session to go away. */
   removalTimeoutMs?: number;
   sessionGoneTimeoutMs?: number;
+  /** Logs background failures, such as a failed status poll. Default: none. */
+  log?: (message: string) => void;
 }
 
 export interface CoreStartOptions {
@@ -159,6 +161,7 @@ export function createServerCore(options: CoreOptions): ServerCore {
     boxes,
     onRunning: (ids) => watcher.setRunning(ids),
     now: () => env.now().getTime(),
+    log: options.log,
   });
   const models = new ModelCatalog({
     env,
@@ -247,6 +250,7 @@ export async function createCore(
     engineVersion: options.engineVersion,
     env,
     docker: options.docker ?? dockerode,
+    log,
   });
   wireHooks(server, options.services);
   const stopRelay = relayEvents(server, options.services);
