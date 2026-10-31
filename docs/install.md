@@ -335,12 +335,18 @@ store, builds a profile for it from the templates in
 `/etc/apparmor.d/` and load it. Both apps usually share one binary, and
 then they share one profile. Each profile is named `agentbox-dev-HASH`,
 where `HASH` is taken from the binary's path, and carries a comment that
-names the checkout.
+names the checkout. Checkouts and worktrees that share a pnpm store share
+the binary, so its profile names each of them.
 
 - To see the profiles without changing anything, run
   `scripts/install-dev-apparmor.sh --print`.
 - To unload and delete the profiles for this checkout, run
-  `scripts/install-dev-apparmor.sh --remove`.
+  `scripts/install-dev-apparmor.sh --remove`. A profile that another
+  checkout still names stays loaded, without this checkout's comment.
+
+The profiles attach to paths in the pnpm store, which your user can write
+to, so any program that your user puts at those paths can create user
+namespaces.
 
 A profile keeps working when `pnpm install` reinstalls the same Electron
 version, because the binary's path in the store doesn't change. When pnpm

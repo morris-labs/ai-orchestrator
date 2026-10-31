@@ -725,11 +725,19 @@ class DevAppArmorTest(unittest.TestCase):
         bindir = self.tmp / "bin"
         bindir.mkdir()
         self.log = self.tmp / "calls.log"
-        for name in ("sudo", "apparmor_parser"):
+        # The fake sudo runs its command as the current user, so writes land
+        # in the temporary profile directory below.
+        for name, tail in (("sudo", 'exec "$@"\n'), ("apparmor_parser", "")):
             fake = bindir / name
-            fake.write_text(f'#!/bin/sh\nprintf "{name} %s\\n" "$*" >> "{self.log}"\n')
+            fake.write_text(f'#!/bin/sh\nprintf "{name} %s\\n" "$*" >> "{self.log}"\n{tail}')
             fake.chmod(0o755)
-        self.env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"}
+        self.profile_dir = self.tmp / "apparmor.d"
+        self.profile_dir.mkdir()
+        self.env = {
+            **os.environ,
+            "PATH": f"{bindir}:{os.environ['PATH']}",
+            "AGENTBOX_APPARMOR_DIR": str(self.profile_dir),
+        }
 
     def make_checkout(self, dirname):
         """Copies the script, its library, and the templates to a checkout."""
@@ -759,10 +767,46 @@ class DevAppArmorTest(unittest.TestCase):
     def profiles(self, out):
         """Splits --print output into {file: profile text}."""
         result = {}
-        for block in out.split("\n\n# /etc/apparmor.d/"):
-            header, _, body = block.removeprefix("# /etc/apparmor.d/").partition("\n")
+        prefix = f"# {self.profile_dir}/"
+        for block in out.split(f"\n\n{prefix}"):
+            header, _, body = block.removeprefix(prefix).partition("\n")
             result[header] = body
         return result
+
+    def link_electron(self, app, binary):
+        """Links apps/APP/node_modules/electron to the store entry of BINARY."""
+        pkg = binary.parent.parent
+        link = self.root / f"apps/{app}/node_modules/electron"
+        link.parent.mkdir(parents=True, exist_ok=True)
+        link.symlink_to(pkg)
+
+    def test_checkouts_that_share_a_binary_share_its_profile(self):
+        # Two checkouts that use one pnpm store get one profile, which names
+        # both, and removing it from one checkout leaves it for the other.
+        binary = self.add_electron("boxes", "45.1.0")
+        self.add_electron("review", "45.1.0")
+        first = self.root
+        (name, text), = self.profiles(self.run_script("--print").stdout).items()
+        (self.profile_dir / name).write_text(text)
+
+        self.make_checkout("second")
+        second = self.root
+        for app in APPS:
+            self.link_electron(app, binary)
+        shared = self.profiles(self.run_script("--print").stdout)[name]
+        first_mark = f"# agentbox-dev checkout: {os.path.realpath(first)}\n"
+        second_mark = f"# agentbox-dev checkout: {os.path.realpath(second)}\n"
+        self.assertTrue(shared.startswith(second_mark + first_mark), shared)
+        (self.profile_dir / name).write_text(shared)
+
+        self.run_script("--remove")
+        left = (self.profile_dir / name).read_text()
+        self.assertIn(first_mark, left)
+        self.assertNotIn(second_mark, left)
+
+        self.root = first
+        self.run_script("--remove")
+        self.assertFalse((self.profile_dir / name).exists())
 
     def test_print_shares_one_profile_between_the_apps(self):
         binary = self.add_electron("boxes", "45.1.0")
