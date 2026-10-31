@@ -475,11 +475,12 @@ interface MergeCommit {
 }
 
 /**
- * Merges candidates into the run's findings and announces the new ones,
- * once. The merge result and the findings after it are saved in one file
+ * Merges candidates into the run's findings and announces the new ones.
+ * The merge result and the findings after it are saved in one file
  * (`<name>-commit.json`) before the findings file, so a stage that resumes
  * after a crash restores that result instead of merging the same
- * candidates into their own copies.
+ * candidates into their own copies. A stage that stopped before every new
+ * finding was announced announces them all again when it resumes.
  */
 export async function mergeInto(
   ctx: RunContext,
@@ -509,12 +510,15 @@ export async function mergeInto(
   if (!ctx.eng.appliedMerges.includes(file)) {
     ctx.findings = commit.findings;
     ctx.eng.counters.finding = Math.max(ctx.eng.counters.finding, commit.findingCounter);
-    ctx.eng.appliedMerges = [...ctx.eng.appliedMerges, file];
     await ctx.persist();
     for (const id of commit.result.created) {
       const f = ctx.findingById(id);
       if (f) await ctx.announceFinding(f);
     }
+    // Marked as applied only after the announcements, so an engine that stops
+    // between the two applies the same commit again and announces it again.
+    ctx.eng.appliedMerges = [...ctx.eng.appliedMerges, file];
+    await ctx.persist();
   }
   return commit.result;
 }
