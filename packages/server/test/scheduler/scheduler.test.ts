@@ -1,6 +1,11 @@
 import type { AgentBoxEvent, CeilingsOverride, LeaseRequest, Vendor } from "@agentbox/contracts";
 import { describe, expect, it } from "vitest";
-import { Scheduler, VendorHealth, mergeCeilings } from "../../src/scheduler/scheduler.js";
+import {
+  ANNOUNCED_RUN_LIMIT,
+  Scheduler,
+  VendorHealth,
+  mergeCeilings,
+} from "../../src/scheduler/scheduler.js";
 import { MIN, T0, iso, setup } from "../usage/helpers.js";
 
 const RUN = "01JB8Z5K3W6Q2V9X4T7R0M1N2P";
@@ -76,6 +81,22 @@ describe("Scheduler", () => {
       reason: "ceiling",
       effectiveRound: 2,
     });
+  });
+
+  it("remembers announcements for a bounded number of runs", async () => {
+    const t = make();
+    t.sample("codex", { utilization: 0.8 });
+    const decide = (runId: string) =>
+      t.scheduler.decide("e", "p", t.req({ runId, role: "disprover" }));
+    await decide(RUN);
+    await decide(RUN);
+    expect(t.ofType("role.reassigned")).toHaveLength(1);
+    const ulid = (i: number) =>
+      `01JB8Z5K3W6Q2V9X4T${[...i.toString(10).padStart(8, "0")].map((d) => "ABCDEFGHJK"[Number(d)]).join("")}`;
+    for (let i = 0; i < ANNOUNCED_RUN_LIMIT; i += 1) await decide(ulid(i));
+    // The first run was forgotten, so its move is announced again.
+    await decide(RUN);
+    expect(t.ofType("role.reassigned").filter((e) => e.runId === RUN)).toHaveLength(2);
   });
 
   it("redirects a reviewer to copilot first after codex", async () => {

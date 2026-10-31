@@ -29,6 +29,8 @@ export const DEFAULT_GRANT_TTL_MS = 10 * 60 * 1000;
 /** How long a run pauses when the vendor's reset time is unknown. */
 export const UNKNOWN_RESET_PAUSE_MS = 15 * 60 * 1000;
 const CACHE_LIMIT = 10_000;
+/** How many runs' `role.reassigned` announcements the scheduler remembers. */
+export const ANNOUNCED_RUN_LIMIT = 1000;
 
 export interface SchedulerOptions {
   usage: UsageService;
@@ -96,7 +98,8 @@ export function mergeCeilings(global: Ceilings, override: CeilingsOverride | und
 
 export class Scheduler {
   private readonly cache = new Map<string, LeaseResponse>();
-  private readonly announced = new Set<string>();
+  /** Moves announced per run, newest run last; bounded like `VendorHealth`. */
+  private readonly announced = new Map<string, Set<string>>();
 
   constructor(private readonly opts: SchedulerOptions) {}
 
@@ -215,9 +218,18 @@ export class Scheduler {
   /** Emits `role.reassigned` once per run, role, and move. */
   private announce(req: LeaseRequest, to: Vendor): void {
     if (req.role === "sweeper") return;
-    const key = `${req.runId}|${req.role}|${req.vendor}|${to}`;
-    if (this.announced.has(key)) return;
-    this.announced.add(key);
+    const key = `${req.role}|${req.vendor}|${to}`;
+    let moves = this.announced.get(req.runId);
+    if (!moves) {
+      moves = new Set();
+      this.announced.set(req.runId, moves);
+      if (this.announced.size > ANNOUNCED_RUN_LIMIT) {
+        const oldest = this.announced.keys().next().value;
+        if (oldest !== undefined) this.announced.delete(oldest);
+      }
+    }
+    if (moves.has(key)) return;
+    moves.add(key);
     this.opts.emit({
       type: "role.reassigned",
       runId: req.runId,
