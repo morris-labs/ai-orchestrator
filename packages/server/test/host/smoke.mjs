@@ -71,8 +71,25 @@ try {
     path.join(ctx, "Dockerfile"),
     `FROM ${baseImage}\nUSER root\nRUN echo ${engineVersion} > /etc/agentbox-engine-version\nLABEL agentbox.engine-version=${engineVersion}\n`,
   );
+  // The build goes through the docker CLI, as the server's own image build
+  // does; everything else goes through the API client.
   const built = spawnSync("docker", ["build", "-t", testImage, ctx], { stdio: "inherit" });
-  assert.equal(built.status, 0, "docker build failed");
+  assert.equal(
+    built.status,
+    0,
+    built.error
+      ? `docker build didn't start: ${built.error.message}`
+      : `docker build failed with ${built.signal ?? `exit code ${built.status}`}`,
+  );
+  const visible = await core.docker.docker
+    ?.getImage(testImage)
+    .inspect()
+    .then(() => true)
+    .catch(() => false);
+  assert.ok(
+    visible,
+    `The docker CLI built ${testImage}, but the API client can't see it. The CLI's context and the API client's socket reach different daemons; set DOCKER_HOST to point both at the same one.`,
+  );
   core.settings.patch({ engineImage: testImage });
   const status = await core.image.status();
   console.log(status);

@@ -36,6 +36,7 @@ SHELL_SCRIPTS = [
     ROOT / "scripts/build-deb.sh",
     ROOT / "scripts/bump-versions.sh",
     ROOT / "scripts/set-version.sh",
+    ROOT / "scripts/install-server-unit.sh",
     ROOT / "scripts/lib/common.sh",
     ROOT / "packaging/deb/scripts/postinst",
     ROOT / "packaging/deb/scripts/prerm",
@@ -500,6 +501,83 @@ class ScriptsTest(unittest.TestCase):
             )
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("node is not installed", result.stderr)
+
+
+class SourceUnitTest(unittest.TestCase):
+    """scripts/install-server-unit.sh, which installs the unit for a checkout."""
+
+    SCRIPT = ROOT / "scripts/install-server-unit.sh"
+    MAIN = ROOT / "packages/server/dist/main.js"
+
+    def setUp(self):
+        self.node = tool("node")
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.tmp = pathlib.Path(tmp.name)
+        self.home = self.tmp / "home"
+        self.unit_dir = self.home / ".config/systemd/user"
+        self.dropin_dir = self.unit_dir / "agentbox-server.service.d"
+        # systemctl is a fake that logs its arguments, first on PATH, so
+        # nothing reaches the real user manager.
+        bindir = self.tmp / "bin"
+        bindir.mkdir()
+        self.systemctl_log = self.tmp / "systemctl.log"
+        fake = bindir / "systemctl"
+        fake.write_text(f'#!/bin/sh\nprintf "%s\\n" "$*" >> "{self.systemctl_log}"\n')
+        fake.chmod(0o755)
+        self.env = {
+            **{k: v for k, v in os.environ.items() if not k.startswith("AGENTBOX_")},
+            "PATH": f"{bindir}:{os.path.dirname(self.node)}:/usr/bin:/bin",
+            "AGENTBOX_HOME": str(self.home),
+        }
+
+    def run_script(self, *args):
+        return subprocess.run(
+            [str(self.SCRIPT), *args], env=self.env, check=True, capture_output=True, text=True
+        )
+
+    def test_print_changes_nothing(self):
+        out = self.run_script("--print", "--data-dir", "/srv/data").stdout
+        node = subprocess.run(
+            [self.node, "-p", "process.execPath"], check=True, capture_output=True, text=True
+        ).stdout.strip()
+        self.assertIn(f"# {self.dropin_dir}/source-checkout.conf\n", out)
+        self.assertIn(f'Environment="PATH={os.path.dirname(node)}:%h/.local/bin:', out)
+        self.assertIn(f"{self.MAIN} --data-dir /srv/data install-service", out)
+        self.assertFalse(self.home.exists())
+        self.assertFalse(self.systemctl_log.exists())
+
+    def test_install_keeps_an_existing_drop_in(self):
+        # The workspace build makes dist/, and the packaging job doesn't run
+        # it, so this test needs no tool and skips even in CI.
+        if not self.MAIN.exists():
+            self.skipTest("packages/server/dist is missing; run corepack pnpm -r build")
+        self.dropin_dir.mkdir(parents=True)
+        op_conf = "[Service]\nEnvironmentFile=%h/.config/agentbox/op.env\n"
+        (self.dropin_dir / "op.conf").write_text(op_conf)
+
+        self.run_script()
+
+        self.assertEqual((self.dropin_dir / "op.conf").read_text(), op_conf)
+        self.assertEqual(
+            self.systemctl_log.read_text().splitlines(),
+            ["--user daemon-reload", "--user enable --now agentbox-server.service"],
+        )
+        unit = (self.unit_dir / "agentbox-server.service").read_text().splitlines()
+        exec_start = [line.split("=", 1)[1] for line in unit if line.startswith("ExecStart=")]
+        self.assertEqual(len(exec_start), 1)
+        node, main, *rest = exec_start[0].split(" ")
+        self.assertTrue(os.path.samefile(node, self.node), node)
+        self.assertEqual(main, str(self.MAIN))
+        self.assertEqual(rest, [])
+        # The unit sets no environment file and no PATH, so the drop-ins'
+        # settings are the only ones.
+        self.assertFalse([line for line in unit if line.startswith("EnvironmentFile=")])
+        self.assertEqual(
+            [line for line in unit if line.startswith("Environment=")], ["Environment=NODE_ENV=production"]
+        )
+        path_conf = (self.dropin_dir / "source-checkout.conf").read_text()
+        self.assertIn(f'Environment="PATH={os.path.dirname(node)}:', path_conf)
 
 
 class NfpmBuildTest(unittest.TestCase):

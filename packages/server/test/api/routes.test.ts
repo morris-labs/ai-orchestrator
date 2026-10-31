@@ -1,6 +1,7 @@
 import { RunIdSchema, projectContainerName, serverRoutes } from "@agentbox/contracts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { sessionValue } from "../../src/api/auth.js";
+import { failureOf } from "../../src/api/server.js";
 import { HOLD_EDITS_MESSAGE } from "../../src/api/handlers.js";
 import {
   AUTH,
@@ -438,6 +439,16 @@ describe("errors", () => {
     const res = await call("POST", `${V1}/boxes`, { targetDir: "/x", layout: "worktree" });
     expect(res.statusCode).toBe(400);
     expect(res.json().error.code).toBe("validation");
+  });
+
+  it("maps Fastify's own 4xx errors by status code", () => {
+    const fastify = Object.assign(new Error("Body is too large"), {
+      statusCode: 413,
+      code: "FST_ERR_CTP_BODY_TOO_LARGE",
+    });
+    expect(failureOf(fastify)).toMatchObject({ code: "validation", status: 413 });
+    const coded = Object.assign(new Error("gone"), { statusCode: 400, code: "not_found" });
+    expect(failureOf(coded)).toMatchObject({ code: "not_found", status: 404 });
   });
 
   it("rejects relative paths before acting on them", async () => {

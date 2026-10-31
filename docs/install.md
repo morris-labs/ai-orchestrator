@@ -257,6 +257,57 @@ electron-builder comes in as a dev dependency of the two apps.
    scripts/build-image.sh
    ```
 
+### Run the server from the checkout
+
+To run the server as a systemd user service straight from a checkout,
+without the package, build the workspace and install the unit with the
+`scripts/install-server-unit.sh` script:
+
+```sh
+corepack pnpm install --frozen-lockfile
+corepack pnpm -r build
+scripts/install-server-unit.sh
+```
+
+The script does the following:
+
+1. Writes the `~/.config/systemd/user/agentbox-server.service.d/source-checkout.conf`
+   drop-in, which puts the directory of the `node` on your `PATH` first on
+   the service's `PATH`. The setup wizard's image build runs pnpm through
+   corepack, and the systemd user manager's `PATH` might not include the
+   directory that holds them, such as an nvm install.
+1. Runs `agentbox-server install-service` from `packages/server/dist`. It
+   writes `~/.config/systemd/user/agentbox-server.service`, whose
+   `ExecStart=` line names that `node` and the checkout's
+   `packages/server/dist/main.js` file, then reloads systemd and enables and
+   starts the service.
+
+To see the drop-in and the command without changing anything, run
+`scripts/install-server-unit.sh --print`. To use a data directory other than
+`~/.claude-box`, pass `--data-dir PATH` or set `AGENTBOX_DATA_DIR`.
+
+The script replaces only the unit and its own drop-in. Other files in
+`~/.config/systemd/user/agentbox-server.service.d/` stay in place and apply
+to the unit, such as one that loads the 1Password service account token
+with `EnvironmentFile=`; see [Secrets](secrets.md). To see the unit
+with every drop-in it loads, run the following command:
+
+```sh
+systemctl --user cat agentbox-server
+```
+
+The unit runs whatever `packages/server/dist` holds when the service starts:
+
+- After you pull and rebuild, restart the service with
+  `systemctl --user restart agentbox-server`.
+- After you switch Node.js versions, run the script again: the unit names
+  the `node` binary by its full path.
+- The unit in `~/.config/systemd/user` takes precedence over the packaged
+  unit in `/usr/lib/systemd/user`. To go back to the packaged one, run
+  `systemctl --user disable --now agentbox-server`, remove
+  `agentbox-server.service` and `agentbox-server.service.d/source-checkout.conf`
+  from `~/.config/systemd/user`, and run `systemctl --user daemon-reload`.
+
 ### Release scripts
 
 The `scripts/` directory holds the following release tools:

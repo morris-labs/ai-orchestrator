@@ -83,23 +83,18 @@ describe("terminals.open", () => {
   });
 
   it("sends exit and emits terminal.ended, never unexpected, when the session ends", async () => {
-    h.core.views.set(box.id, { ...h.core.views.get(box.id)!, status: "running" });
     const s = await connect(`${base}/terminals?kind=session&boxId=${box.id}`);
     await s.until((x) => x.texts.length === 1);
     h.exec.sessions[0]!.exitCode = 0;
-    h.core.views.set(box.id, { ...h.core.views.get(box.id)!, status: "stopped" });
     h.exec.sessions[0]!.container.end();
     await s.until((x) => x.texts.length === 2);
     expect(s.texts[1]).toEqual({ type: "exit", exitCode: 0 });
     await s.closed;
     await s.until(() => ended().some((e) => e.type === "terminal.ended"));
-    expect(ended().find((e) => e.type === "terminal.ended")).toMatchObject({
-      boxId: box.id,
-      kind: "session",
-      exitCode: 0,
-      // The monitor reports the session end; a second report would notify twice.
-      unexpected: false,
-    });
+    // The monitor reports the session end; a second report would notify twice.
+    expect(ended().filter((e) => e.type === "terminal.ended")).toEqual([
+      expect.objectContaining({ boxId: box.id, kind: "session", exitCode: 0, unexpected: false }),
+    ]);
   });
 
   it("closes the exec when the client leaves; that end is expected", async () => {

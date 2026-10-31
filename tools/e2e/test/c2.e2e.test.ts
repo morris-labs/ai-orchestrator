@@ -335,6 +335,9 @@ describe("C2: server and engine talk", () => {
     const events = runEvents(id);
     const moves = events.filter((e) => e.type === "role.reassigned" && e.reason === "ceiling");
     expect(moves).toEqual([]);
+    const reviewers = events.filter((e) => e.type === "agent.started" && e.role === "reviewer");
+    expect(reviewers.length).toBeGreaterThan(0);
+    expect(new Set(reviewers.map((e) => e.vendor))).toEqual(new Set(["copilot"]));
     const vendors = new Set(events.filter((e) => e.type === "lease.settled").map((e) => e.vendor));
     expect(vendors.has("codex")).toBe(false);
   });

@@ -25,7 +25,39 @@ describe("hangupCmd", () => {
     other.child.kill();
     await other.exited;
   });
+
+  it("spares a process that detached into its own session, and its children", async () => {
+    // A tmux server started from a tab carries the tab's id, and so do its panes.
+    const env = { ...process.env, [TERMINAL_ID_ENV]: "t-2" };
+    const mine = sleeper(env);
+    const server = spawn("sh", ["-c", "sleep 30 & echo $!; wait"], {
+      env,
+      detached: true,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    const pane = Number(
+      await new Promise<string>((resolve) => server.stdout.once("data", (d) => resolve(String(d)))),
+    );
+    const [cmd, ...args] = hangupCmd("t-2");
+    expect(spawnSync(cmd as string, args).status).toBe(0);
+    expect(await mine.exited).toBe("SIGHUP");
+    await new Promise((r) => setTimeout(r, 200));
+    // The shell waits for its child, so it exits as soon as either one is hung up.
+    expect(server.exitCode).toBeNull();
+    expect(server.signalCode).toBeNull();
+    expect(alive(pane)).toBe(true);
+    process.kill(-server.pid!, "SIGKILL");
+  });
 });
+
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 describe("DockerExecBackend", () => {
   it("marks the exec with a terminal id and hangs it up on close", async () => {

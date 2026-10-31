@@ -64,14 +64,4 @@ describe("DockerodeClient errors", () => {
     expect(err).toBeInstanceOf(DockerUnavailableError);
     expect(failureOf(err)).toMatchObject({ code: "docker_unavailable", status: 503 });
   });
-
-  it("maps Fastify's own 4xx errors by status code", () => {
-    const fastify = Object.assign(new Error("Body is too large"), {
-      statusCode: 413,
-      code: "FST_ERR_CTP_BODY_TOO_LARGE",
-    });
-    expect(failureOf(fastify)).toMatchObject({ code: "validation", status: 413 });
-    const coded = Object.assign(new Error("gone"), { statusCode: 400, code: "not_found" });
-    expect(failureOf(coded)).toMatchObject({ code: "not_found", status: 404 });
-  });
 });

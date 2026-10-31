@@ -145,7 +145,11 @@ order:
    `systemctl --user edit agentbox-server` and add an
    `Environment=OP_SERVICE_ACCOUNT_TOKEN=TOKEN` line under `[Service]`,
    where `TOKEN` is the service account token. Keep that file readable only
-   by you.
+   by you. To keep the token out of the drop-in, put the
+   `OP_SERVICE_ACCOUNT_TOKEN=TOKEN` line in a file with mode `0600`, such as
+   `~/.config/agentbox/op.env`, and add
+   `EnvironmentFile=%h/.config/agentbox/op.env` under `[Service]` instead.
+   Drop-ins stay in place when you reinstall the unit.
 1. **Desktop app integration**: when the 1Password desktop app runs with
    **Integrate with 1Password CLI** turned on, `op` asks the app, which can
    prompt you to unlock.
