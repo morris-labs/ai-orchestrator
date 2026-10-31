@@ -21,12 +21,67 @@ interface DataRow {
   data: string;
 }
 
-function parseRows<T>(rows: unknown[], parse: (v: unknown) => T): T[] {
-  return (rows as DataRow[]).map((r) => parse(JSON.parse(r.data)));
+/** Reports a stored row that no longer parses, with its table. */
+export type BadRowReporter = (table: string, message: string) => void;
+
+/** Logs each distinct bad row once, to the server's log or to stderr. */
+function onceReporter(log: (message: string) => void): BadRowReporter {
+  const seen = new Set<string>();
+  return (table, message) => {
+    const line = `Skipped a ${table} record that doesn't parse: ${message}`;
+    if (seen.has(line)) return;
+    seen.add(line);
+    log(line);
+  };
+}
+
+const defaultReporter = onceReporter((m) => console.error(m));
+
+/**
+ * Parses each row's JSON document. A row that fails is skipped and reported,
+ * so one bad record doesn't break every listing.
+ */
+function parseRows<T>(
+  rows: unknown[],
+  parse: (v: unknown) => T,
+  table: string,
+  report: BadRowReporter,
+): T[] {
+  const out: T[] = [];
+  for (const r of rows as DataRow[]) {
+    let value: unknown;
+    try {
+      value = JSON.parse(r.data);
+      out.push(parse(value));
+    } catch (err) {
+      const doc = (typeof value === "object" && value !== null ? value : {}) as {
+        id?: unknown;
+        name?: unknown;
+      };
+      const id =
+        typeof doc.id === "string"
+          ? doc.id
+          : typeof doc.name === "string"
+            ? doc.name
+            : "(unknown id)";
+      const issue = (err as { issues?: { path: (string | number)[]; message: string }[] })
+        .issues?.[0];
+      const reason = issue
+        ? `${issue.path.join(".") || "(record)"}: ${issue.message}`
+        : err instanceof Error
+          ? err.message
+          : String(err);
+      report(table, `${id}: ${reason}`);
+    }
+  }
+  return out;
 }
 
 export class ProjectsRepo {
-  constructor(private readonly db: Sqlite) {}
+  constructor(
+    private readonly db: Sqlite,
+    private readonly report: BadRowReporter = defaultReporter,
+  ) {}
 
   get(id: string): Project | undefined {
     const row = this.db.prepare("SELECT data FROM projects WHERE id = ?").get(id) as
@@ -41,8 +96,11 @@ export class ProjectsRepo {
   }
 
   list(): Project[] {
-    return parseRows(this.db.prepare("SELECT data FROM projects ORDER BY id").all(), (v) =>
-      ProjectSchema.parse(v),
+    return parseRows(
+      this.db.prepare("SELECT data FROM projects ORDER BY id").all(),
+      (v) => ProjectSchema.parse(v),
+      "project",
+      this.report,
     );
   }
 
@@ -65,7 +123,10 @@ export class ProjectsRepo {
 }
 
 export class BoxesRepo {
-  constructor(private readonly db: Sqlite) {}
+  constructor(
+    private readonly db: Sqlite,
+    private readonly report: BadRowReporter = defaultReporter,
+  ) {}
 
   get(id: string): Box | undefined {
     const row = this.db.prepare("SELECT data FROM boxes WHERE id = ?").get(id) as
@@ -73,10 +134,23 @@ export class BoxesRepo {
     return row ? BoxSchema.parse(JSON.parse(row.data)) : undefined;
   }
 
+  /**
+   * Every stored box id, read without parsing the records, so a record that
+   * `list()` skips still holds its name.
+   */
+  ids(): string[] {
+    return (this.db.prepare("SELECT id FROM boxes ORDER BY id").all() as { id: string }[]).map(
+      (r) => r.id,
+    );
+  }
+
   /** Every box, ordered by id (the 3.3.5 `known/` directory order). */
   list(): Box[] {
-    return parseRows(this.db.prepare("SELECT data FROM boxes ORDER BY id").all(), (v) =>
-      BoxSchema.parse(v),
+    return parseRows(
+      this.db.prepare("SELECT data FROM boxes ORDER BY id").all(),
+      (v) => BoxSchema.parse(v),
+      "box",
+      this.report,
     );
   }
 
@@ -84,6 +158,8 @@ export class BoxesRepo {
     return parseRows(
       this.db.prepare("SELECT data FROM boxes WHERE project_id = ? ORDER BY id").all(projectId),
       (v) => BoxSchema.parse(v),
+      "box",
+      this.report,
     );
   }
 
@@ -91,6 +167,8 @@ export class BoxesRepo {
     return parseRows(
       this.db.prepare("SELECT data FROM boxes WHERE session_uuid = ? ORDER BY id").all(sessionUuid),
       (v) => BoxSchema.parse(v),
+      "box",
+      this.report,
     );
   }
 
@@ -98,6 +176,8 @@ export class BoxesRepo {
     return parseRows(
       this.db.prepare("SELECT data FROM boxes WHERE target_dir = ? ORDER BY id").all(targetDir),
       (v) => BoxSchema.parse(v),
+      "box",
+      this.report,
     );
   }
 
@@ -131,7 +211,10 @@ export class BoxesRepo {
 }
 
 export class SshRemotesRepo {
-  constructor(private readonly db: Sqlite) {}
+  constructor(
+    private readonly db: Sqlite,
+    private readonly report: BadRowReporter = defaultReporter,
+  ) {}
 
   get(name: string): SshRemote | undefined {
     const row = this.db.prepare("SELECT data FROM ssh_remotes WHERE name = ?").get(name) as
@@ -140,8 +223,11 @@ export class SshRemotesRepo {
   }
 
   list(): SshRemote[] {
-    return parseRows(this.db.prepare("SELECT data FROM ssh_remotes ORDER BY name").all(), (v) =>
-      SshRemoteSchema.parse(v),
+    return parseRows(
+      this.db.prepare("SELECT data FROM ssh_remotes ORDER BY name").all(),
+      (v) => SshRemoteSchema.parse(v),
+      "SSH remote",
+      this.report,
     );
   }
 
@@ -192,7 +278,10 @@ export class SettingsRepo {
 }
 
 export class AccountsRepo {
-  constructor(private readonly db: Sqlite) {}
+  constructor(
+    private readonly db: Sqlite,
+    private readonly report: BadRowReporter = defaultReporter,
+  ) {}
 
   get(id: string): Account | undefined {
     const row = this.db.prepare("SELECT data FROM accounts WHERE id = ?").get(id) as
@@ -205,6 +294,8 @@ export class AccountsRepo {
     return parseRows(
       this.db.prepare("SELECT data FROM accounts ORDER BY vendor, name").all(),
       (v) => AccountSchema.parse(v),
+      "account",
+      this.report,
     );
   }
 
@@ -346,16 +437,24 @@ export interface Repositories {
   close(): void;
 }
 
-export function repositories(sqlite: Sqlite): Repositories {
+/**
+ * Builds the repositories. `log` gets each record that a listing skips
+ * because it no longer parses, once; the default is stderr.
+ */
+export function repositories(
+  sqlite: Sqlite,
+  options: { log?: (message: string) => void } = {},
+): Repositories {
+  const report = options.log ? onceReporter(options.log) : defaultReporter;
   return {
     sqlite,
-    projects: new ProjectsRepo(sqlite),
-    boxes: new BoxesRepo(sqlite),
-    sshRemotes: new SshRemotesRepo(sqlite),
+    projects: new ProjectsRepo(sqlite, report),
+    boxes: new BoxesRepo(sqlite, report),
+    sshRemotes: new SshRemotesRepo(sqlite, report),
     settings: new SettingsRepo(sqlite),
     engines: new EngineEndpointsRepo(sqlite),
     imports: new ImportsRepo(sqlite),
-    accounts: new AccountsRepo(sqlite),
+    accounts: new AccountsRepo(sqlite, report),
     transaction: <T>(fn: () => T) => sqlite.transaction(fn)(),
     close: () => sqlite.close(),
   };

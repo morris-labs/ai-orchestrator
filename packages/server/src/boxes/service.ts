@@ -379,7 +379,8 @@ export class BoxService {
   private takenNames(containers: string[]): Set<string> {
     return new Set([
       ...containers,
-      ...this.repos.boxes.list().map((b) => b.id),
+      // Every stored id, a record that no longer parses included.
+      ...this.repos.boxes.ids(),
       ...allLiveSessions(this.env),
     ]);
   }

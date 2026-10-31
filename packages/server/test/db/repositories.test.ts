@@ -145,9 +145,66 @@ describe("migration 2", () => {
       ),
     ).toThrow(/UNIQUE/);
   });
+
+  it("never gives a replacement key that a later box in the project holds", () => {
+    const db = new Database(":memory:");
+    db.exec(MIGRATIONS[0] as string);
+    db.pragma("user_version = 1");
+    const r = repositories(db);
+    r.projects.put(project());
+    r.projects.put(project("api-87654321", "/work/api"));
+    const inApi = { projectId: "api-87654321", targetDir: "/work/api" };
+    r.boxes.put(box("claude-agent-api.v2", { hostKey: "api-v2" }));
+    r.boxes.put(
+      box("claude-agent-api-v2", {
+        ...inApi,
+        hostKey: "api-v2",
+        createdAt: "2026-10-29T09:00:00.000Z",
+      }),
+    );
+    r.boxes.put(
+      box("claude-agent-later", {
+        ...inApi,
+        hostKey: "api-v2-2",
+        createdAt: "2026-10-30T09:00:00.000Z",
+      }),
+    );
+    migrate(db);
+    expect(r.boxes.get("claude-agent-api-v2")?.hostKey).toBe("api-v2-3");
+    expect(r.boxes.get("claude-agent-later")?.hostKey).toBe("api-v2-2");
+  });
+});
+
+describe("migrate", () => {
+  it("refuses a database from a newer server", () => {
+    const db = new Database(":memory:");
+    db.pragma("user_version = 99");
+    expect(() => migrate(db)).toThrow(/schema version 99, newer than this server's/);
+  });
 });
 
 describe("repositories", () => {
+  it("skips and reports, once, a record that no longer parses", () => {
+    const db = openDatabase(":memory:");
+    const logged: string[] = [];
+    const r = repositories(db, { log: (m) => logged.push(m) });
+    r.projects.put(project());
+    r.boxes.put(box("claude-agent-good"));
+    r.boxes.put(box("claude-agent-bad"));
+    const bad = { ...box("claude-agent-bad"), platform: "SYNTHETIC" };
+    db.prepare("UPDATE boxes SET data = ? WHERE id = ?").run(
+      JSON.stringify(bad),
+      "claude-agent-bad",
+    );
+    expect(r.boxes.list().map((b) => b.id)).toEqual(["claude-agent-good"]);
+    expect(r.boxes.byProject("app-12345678").map((b) => b.id)).toEqual(["claude-agent-good"]);
+    expect(r.boxes.ids()).toEqual(["claude-agent-bad", "claude-agent-good"]);
+    expect(logged).toHaveLength(1);
+    expect(logged[0]).toMatch(
+      /^Skipped a box record that doesn't parse: claude-agent-bad: platform/,
+    );
+  });
+
   it("round-trips projects and finds them by root", () => {
     const r = repositories(openDatabase(":memory:"));
     r.projects.put(project());

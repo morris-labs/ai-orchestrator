@@ -18,11 +18,14 @@ export function rekeyDuplicateHostKeys(db: Sqlite): void {
     host_key: string;
     data: string;
   }[];
-  const taken = new Set<string>();
+  // Every key any row holds, so a replacement never takes a key that a later
+  // row in the same project already has.
+  const taken = new Set(rows.map((r) => r.host_key));
+  const kept = new Set<string>();
   const update = db.prepare("UPDATE boxes SET host_key = ?, data = ? WHERE id = ?");
   for (const row of rows) {
-    if (!taken.has(row.host_key)) {
-      taken.add(row.host_key);
+    if (!kept.has(row.host_key)) {
+      kept.add(row.host_key);
       continue;
     }
     const key = deriveHostKey(row.id, taken);

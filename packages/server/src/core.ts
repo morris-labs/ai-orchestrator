@@ -104,7 +104,7 @@ export interface ServerCore {
 export function createServerCore(options: CoreOptions): ServerCore {
   const env = options.env ?? defaultHostEnv();
   const dbPath = options.dbPath ?? homePaths(env).database;
-  const db = repositories(openDatabase(dbPath));
+  const db = repositories(openDatabase(dbPath), { log: options.log });
   const docker = options.docker ?? new DockerodeClient();
   const events = new CoreEvents();
   const settings = new SettingsService(
