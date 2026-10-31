@@ -161,11 +161,7 @@ export function displayUrl(baseUrl: string): string {
  * message, or `null` when the URL is fine. The message never holds the
  * URL's user name or password.
  */
-export function checkServerUrl(
-  baseUrl: string,
-  insecure: boolean,
-  hasToken = true,
-): string | null {
+export function checkServerUrl(baseUrl: string, insecure: boolean, hasToken = true): string | null {
   let url: URL;
   try {
     url = new URL(baseUrl);

@@ -782,9 +782,9 @@ describe("trust in the server", () => {
     expect(err).toMatch(/isn't a valid URL/);
     expect(err).not.toContain("hunter2");
     err = "";
-    expect(await cli(["box", "list"], { AGENTBOX_SERVER: "https://user:hunter2@127.0.0.1:1" })).toBe(
-      1,
-    );
+    expect(
+      await cli(["box", "list"], { AGENTBOX_SERVER: "https://user:hunter2@127.0.0.1:1" }),
+    ).toBe(1);
     expect(err).toMatch(/Can't reach the Agent Box server at https:\/\/127\.0\.0\.1:1/);
     expect(err).not.toContain("hunter2");
   });
