@@ -154,6 +154,22 @@ describe("addCodexFileStore", () => {
     expect(await addCodexFileStore(file)).toBe(false);
   });
 
+  it("replaces a symbolic link with a regular file and leaves its target alone", async () => {
+    const dir = tempDir("agentbox-codex-");
+    const dotfile = path.join(dir, "dotfiles", "config.toml");
+    write(dotfile, 'model = "SYNTHETIC"\n', 0o644);
+    const file = path.join(dir, "config.toml");
+    fs.symlinkSync(dotfile, file);
+    expect(await addCodexFileStore(file)).toBe(true);
+    expect(fs.readFileSync(dotfile, "utf8")).toBe('model = "SYNTHETIC"\n');
+    const st = fs.lstatSync(file);
+    expect(st.isFile()).toBe(true);
+    expect(st.mode & 0o777).toBe(0o600);
+    expect(fs.readFileSync(file, "utf8")).toBe(
+      'cli_auth_credentials_store = "file"\nmodel = "SYNTHETIC"\n',
+    );
+  });
+
   it("keeps a store setting the user chose", async () => {
     const file = path.join(tempDir("agentbox-codex-"), "config.toml");
     write(file, 'cli_auth_credentials_store = "keyring"\n');
@@ -223,6 +239,27 @@ describe("AccountService.seed", () => {
     expect(fs.readFileSync(path.join(dir, ".claude.json"), "utf8")).toBe('{"fresh":true}');
   });
 
+  it("leaves the /login API key out of the copied .claude.json", async () => {
+    const { accounts, sources } = setup();
+    write(sources.claudeJson, '{"fresh":true,"primaryApiKey":"SYNTHETIC_KEY"}');
+    await accounts.seed({ vendors: ["claude"] });
+    const copy = path.join(accounts.dirOf("claude", "personal"), ".claude.json");
+    const text = fs.readFileSync(copy, "utf8");
+    expect(text).not.toContain("SYNTHETIC_KEY");
+    expect(JSON.parse(text)).toEqual({ fresh: true });
+    expect(fs.statSync(copy).mode & 0o777).toBe(0o600);
+    // The host's own file keeps its key.
+    expect(fs.readFileSync(sources.claudeJson, "utf8")).toContain("SYNTHETIC_KEY");
+  });
+
+  it("drops a .claude.json that isn't JSON rather than copying it unchecked", async () => {
+    const { accounts, sources } = setup();
+    write(sources.claudeJson, '{"primaryApiKey":"SYNTHETIC_KEY"');
+    await accounts.seed({ vendors: ["claude"] });
+    const copy = path.join(accounts.dirOf("claude", "personal"), ".claude.json");
+    expect(fs.existsSync(copy)).toBe(false);
+  });
+
   it("keeps the projects link as a link to the shared store", async () => {
     const { accounts, sources } = setup();
     await accounts.seed({ vendors: ["claude"] });
@@ -243,6 +280,22 @@ describe("AccountService.seed", () => {
       "utf8",
     );
     expect(toml.startsWith('cli_auth_credentials_store = "file"\nmodel = "o3"\n')).toBe(true);
+  });
+
+  it("never writes through a symlinked Codex config.toml into the host's file", async () => {
+    const { accounts, sources } = setup();
+    const hostToml = path.join(sources.codexDir, "config.toml");
+    const dotfile = path.join(sources.root, "dotfiles", "config.toml");
+    write(dotfile, 'model = "SYNTHETIC"\n', 0o644);
+    fs.rmSync(hostToml);
+    fs.symlinkSync(dotfile, hostToml);
+    await accounts.seed({ vendors: ["codex"] });
+    expect(fs.readFileSync(dotfile, "utf8")).toBe('model = "SYNTHETIC"\n');
+    const copy = path.join(accounts.dirOf("codex", "personal"), "config.toml");
+    expect(fs.lstatSync(copy).isFile()).toBe(true);
+    expect(fs.readFileSync(copy, "utf8")).toBe(
+      'cli_auth_credentials_store = "file"\nmodel = "SYNTHETIC"\n',
+    );
   });
 
   it("records each account as not signed in and makes it the default", async () => {

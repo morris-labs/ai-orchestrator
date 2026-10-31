@@ -47,6 +47,8 @@ export interface CoreOptions {
   /** Milliseconds to wait for a stopped container or session to go away. */
   removalTimeoutMs?: number;
   sessionGoneTimeoutMs?: number;
+  /** Logs background failures, such as a failed status poll. Default: none. */
+  log?: (message: string) => void;
 }
 
 export interface CoreStartOptions {
@@ -102,7 +104,7 @@ export interface ServerCore {
 export function createServerCore(options: CoreOptions): ServerCore {
   const env = options.env ?? defaultHostEnv();
   const dbPath = options.dbPath ?? homePaths(env).database;
-  const db = repositories(openDatabase(dbPath));
+  const db = repositories(openDatabase(dbPath), { log: options.log });
   const docker = options.docker ?? new DockerodeClient();
   const events = new CoreEvents();
   const settings = new SettingsService(
@@ -159,6 +161,7 @@ export function createServerCore(options: CoreOptions): ServerCore {
     boxes,
     onRunning: (ids) => watcher.setRunning(ids),
     now: () => env.now().getTime(),
+    log: options.log,
   });
   const models = new ModelCatalog({
     env,
@@ -247,6 +250,7 @@ export async function createCore(
     engineVersion: options.engineVersion,
     env,
     docker: options.docker ?? dockerode,
+    log,
   });
   wireHooks(server, options.services);
   const stopRelay = relayEvents(server, options.services);

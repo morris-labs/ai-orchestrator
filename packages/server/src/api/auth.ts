@@ -1,6 +1,6 @@
 // The server's bearer token, the session cookie, and the request check.
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { HOME_PATHS } from "@agentbox/contracts";
 import { dataPath } from "../records/env.js";
@@ -26,8 +26,13 @@ export async function loadOrCreateToken(home: string, dataDir?: string): Promise
   }
   await mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
   const token = randomBytes(32).toString("hex");
-  await writeFile(file, `${token}\n`, { mode: 0o600 });
-  await chmod(file, 0o600);
+  // A new 0600 file renamed over the old one: writing in place would keep an
+  // existing file's wider mode until the chmod.
+  const tmp = `${file}.${process.pid}.tmp`;
+  await rm(tmp, { force: true });
+  await writeFile(tmp, `${token}\n`, { mode: 0o600, flag: "wx" });
+  await chmod(tmp, 0o600);
+  await rename(tmp, file);
   return token;
 }
 
@@ -48,7 +53,14 @@ export function readCookie(header: string | undefined, name: string): string | u
   for (const part of header.split(";")) {
     const eq = part.indexOf("=");
     if (eq < 0) continue;
-    if (part.slice(0, eq).trim() === name) return decodeURIComponent(part.slice(eq + 1).trim());
+    if (part.slice(0, eq).trim() !== name) continue;
+    // Any page on the same host can set a cookie, ports aside, so a bad
+    // escape is skipped rather than failing the request.
+    try {
+      return decodeURIComponent(part.slice(eq + 1).trim());
+    } catch {
+      continue;
+    }
   }
   return undefined;
 }

@@ -85,3 +85,12 @@ export function movedMessage(env: HostEnv, box: Box): string {
 export function nameArg(name: string): string {
   return `--name=${name}`;
 }
+
+/**
+ * Appends a claude prompt after `--`, last, so a prompt that starts with `-`
+ * stays the prompt rather than becoming an option. Adds nothing for an empty
+ * prompt.
+ */
+export function pushPrompt(args: string[], prompt: string): void {
+  if (prompt !== "") args.push("--", prompt);
+}

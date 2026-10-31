@@ -67,7 +67,14 @@ import {
   removeWorktree,
   worktreePath,
 } from "../worktrees/worktrees.js";
-import { baseClaudeArgs, movedMessage, nameArg, platformArgs, sideSessionArgs } from "./args.js";
+import {
+  baseClaudeArgs,
+  movedMessage,
+  nameArg,
+  platformArgs,
+  pushPrompt,
+  sideSessionArgs,
+} from "./args.js";
 import { slugifyIssueName, uniqueBoxName } from "./names.js";
 
 export type BoxCreateInput = z.input<typeof BoxCreateSchema>;
@@ -345,7 +352,9 @@ export class BoxService {
    */
   private checkAdoption(sessionUuid: string, exceptBoxId: string | null, force: boolean): void {
     const holders = this.repos.boxes.bySession(sessionUuid).filter((b) => b.id !== exceptBoxId);
-    const running = holders.find((b) => this.isRunning(b));
+    // A starting holder counts as running: the keeper lists a new session
+    // about a second late.
+    const running = holders.find((b) => this.isRunning(b) || this.transitions.has(b.id));
     if (running) {
       throw new ApiError(
         "adoption_refused",
@@ -370,7 +379,8 @@ export class BoxService {
   private takenNames(containers: string[]): Set<string> {
     return new Set([
       ...containers,
-      ...this.repos.boxes.list().map((b) => b.id),
+      // Every stored id, a record that no longer parses included.
+      ...this.repos.boxes.ids(),
       ...allLiveSessions(this.env),
     ]);
   }
@@ -442,8 +452,11 @@ export class BoxService {
 
     // Name, worktree, and record are settled under one lock, so two creates
     // that want the same name (a double-clicked Create) can't both take it,
-    // and the second sees the first one's worktree as existing.
+    // and the second sees the first one's worktree as existing. The adoption
+    // check repeats here for the same reason: the second of two creates that
+    // adopt one conversation sees the first one's record, marked starting.
     const prepared = await this.createLock.run("create", async () => {
+      if (adoptUuid !== null) this.checkAdoption(adoptUuid, null, req.force);
       let conversationName = req.conversationName.trim();
       const provision = !resumeExisting && conversationName !== "" && layout !== "root";
       let slug = "";
@@ -553,6 +566,10 @@ export class BoxService {
       const saved = this.repos.boxes.put(
         req.start ? box : { ...box, sessionUuid: adoptUuid, ...(firstStart ? { firstStart } : {}) },
       );
+      // Counted as starting before the lock opens, so a concurrent adoption
+      // of the same conversation is refused, not run twice.
+      if (req.start)
+        this.transitions.set(saved.id, { status: "starting", until: Date.now() + TRANSITION_MS });
       return { box: saved, openingPrompt, conversationName, createdWorktree };
     });
 
@@ -565,7 +582,6 @@ export class BoxService {
     }
 
     let args = [...baseClaudeArgs(box, project), nameArg(conversationName)];
-    if (openingPrompt !== "") args.push(openingPrompt);
     this.mark(box, "starting");
     try {
       if (forkFrom) {
@@ -574,6 +590,7 @@ export class BoxService {
       } else {
         args.push(resumeExisting ? "--resume" : "--session-id", sessionUuid);
       }
+      pushPrompt(args, openingPrompt);
       if (box.platform !== "claude")
         args = platformArgs(box, project, box.platform, false, openingPrompt);
       await this.startSession(box, box.platform, args);
@@ -690,16 +707,17 @@ export class BoxService {
     let args = baseClaudeArgs(box, project);
     if (box.conversationName !== "") args.push(nameArg(box.conversationName));
     if (first) {
-      if (first.openingPrompt !== "") args.push(first.openingPrompt);
       if (first.forkFrom) {
         args.push("--resume", first.forkFrom.uuid, "--fork-session", "--session-id", sessionUuid);
       } else {
         args.push("--session-id", sessionUuid);
       }
+      pushPrompt(args, first.openingPrompt);
     } else {
       args.push(hasTranscript ? "--resume" : "--session-id", sessionUuid);
     }
-    if (hasTranscript && box.movedFrom && box.worktree) args.push(movedMessage(this.env, box));
+    if (hasTranscript && box.movedFrom && box.worktree)
+      pushPrompt(args, movedMessage(this.env, box));
     if (box.platform !== "claude") {
       args = first
         ? platformArgs(box, project, box.platform, false, first.openingPrompt)
@@ -1187,9 +1205,13 @@ export class BoxService {
   async sendMessage(id: string, text: string): Promise<void> {
     const box = this.get(id);
     if (!this.isRunning(box)) throw new ApiError("conflict", `${id} is not running.`);
-    const target = `=${boxTmuxSession(box)}`;
+    // `send-keys` takes a pane target, and tmux resolves `=NAME` without a
+    // `:` as a pane or window, so it fails. The trailing `:` names the
+    // session's current window and pane. `--` keeps a message that starts
+    // with `-` from being read as flags.
+    const target = `=${boxTmuxSession(box)}:`;
     for (const cmd of [
-      ["tmux", "send-keys", "-t", target, "-l", text],
+      ["tmux", "send-keys", "-t", target, "-l", "--", text],
       ["tmux", "send-keys", "-t", target, "Enter"],
     ]) {
       const r = await this.deps.docker.exec(box.container, {
@@ -1265,7 +1287,9 @@ export class BoxService {
 
   /**
    * `projects.restartContainer`: stops the boxes running in the project
-   * container, replaces the container, and starts those boxes again.
+   * container, replaces the container, and starts those boxes again. When a
+   * box fails to stop, the container stays, since replacing it would end
+   * that box's session too; the boxes that did stop start again in it.
    */
   async restartProjectContainer(projectId: string): Promise<BulkResult> {
     const project = this.deps.projects.get(projectId);
@@ -1274,6 +1298,10 @@ export class BoxService {
       running.map((b) => b.id),
       (id) => this.stop(id),
     );
+    if (stopped.failed.length > 0) {
+      const started = await this.bulk(stopped.done, (id) => this.start(id, { syncTitle: false }));
+      return { done: started.done, failed: [...stopped.failed, ...started.failed] };
+    }
     await this.deps.projects.stopContainer(project.id);
     if (stopped.done.length === 0) await this.deps.projects.ensureContainer(project.id);
     const started = await this.bulk(stopped.done, (id) => this.start(id, { syncTitle: false }));

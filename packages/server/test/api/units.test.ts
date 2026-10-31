@@ -37,6 +37,22 @@ describe("token file", () => {
     expect(await readFile(file, "utf8")).toContain("a");
   });
 
+  it("replaces a short token in a world-readable file with a new 0600 file", async () => {
+    const home = tempDir("agentbox-");
+    await mkdir(path.join(home, ".claude-box"));
+    const file = path.join(home, ".claude-box", "server.token");
+    await writeFile(file, "short\n");
+    await chmod(file, 0o644);
+    const before = (await stat(file)).ino;
+    const token = await loadOrCreateToken(home);
+    expect(token).toMatch(/^[0-9a-f]{64}$/);
+    const after = await stat(file);
+    // A different inode: the token was never written into the 0644 file.
+    expect(after.ino).not.toBe(before);
+    expect(after.mode & 0o777).toBe(0o600);
+    expect((await readFile(file, "utf8")).trim()).toBe(token);
+  });
+
   it("uses the data directory in place of ~/.claude-box when given", async () => {
     const home = tempDir("agentbox-");
     const dataDir = path.join(home, "data");
@@ -61,6 +77,15 @@ describe("auth checks", () => {
   it("reads cookies and builds the session header", () => {
     expect(readCookie("a=1; b=2", "b")).toBe("2");
     expect(readCookie(undefined, "b")).toBeUndefined();
+    // A malformed escape, which any page on the host can set, reads as no cookie.
+    expect(readCookie("agentbox_session=%E0", "agentbox_session")).toBeUndefined();
+    expect(isAuthorized({ cookie: "agentbox_session=%E0" }, token)).toBe(false);
+    expect(
+      isAuthorized(
+        { cookie: `agentbox_session=%E0; agentbox_session=${sessionValue(token)}` },
+        token,
+      ),
+    ).toBe(true);
     expect(sessionCookieHeader(token)).toBe(
       `agentbox_session=${sessionValue(token)}; HttpOnly; SameSite=Strict; Path=/`,
     );

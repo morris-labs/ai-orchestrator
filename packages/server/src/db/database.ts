@@ -48,6 +48,12 @@ export function openDatabase(file: string): Sqlite {
 /** Applies every migration the database lacks, each in its own transaction. */
 export function migrate(db: Sqlite): number {
   const current = db.pragma("user_version", { simple: true }) as number;
+  if (current > MIGRATIONS.length) {
+    throw new Error(
+      `The database has schema version ${current}, newer than this server's ${MIGRATIONS.length}. ` +
+        "A newer Agent Box created it: install that version again, or move the database aside to start over.",
+    );
+  }
   for (let i = current; i < MIGRATIONS.length; i += 1) {
     db.transaction(() => {
       const migration = MIGRATIONS[i];

@@ -283,11 +283,33 @@ export class MemoryDocker implements DockerClient {
       };
     }
     if (cmd[0] === "tmux" && cmd[1] === "send-keys") {
-      const target = (cmd[3] ?? "").replace(/^=/, "");
+      // Like tmux: `send-keys -t` takes a pane, and a target without `:`
+      // resolves as a pane or window, so `=NAME` alone finds nothing.
+      const raw = cmd[3] ?? "";
+      if (!raw.includes(":"))
+        return { exitCode: 1, stdout: "", stderr: `can't find pane: ${raw}\n` };
+      const target = raw.replace(/^=/, "").replace(/:.*$/, "");
       if (!c.sessions.has(target))
         return { exitCode: 1, stdout: "", stderr: `can't find session: ${target}\n` };
+      // Like tmux, read flags until `--` or the first argument without `-`.
+      const rest = cmd.slice(4);
+      let literal = false;
+      let i = 0;
+      for (; i < rest.length && rest[i]!.startsWith("-"); i++) {
+        if (rest[i] === "--") {
+          i++;
+          break;
+        }
+        if (rest[i] !== "-l")
+          return {
+            exitCode: 1,
+            stdout: "",
+            stderr: `command send-keys: unknown flag ${rest[i]}\n`,
+          };
+        literal = true;
+      }
       const list = c.sentKeys.get(target) ?? [];
-      list.push(cmd.slice(4).join(" "));
+      list.push(`${literal ? "-l " : ""}${rest.slice(i).join(" ")}`);
       c.sentKeys.set(target, list);
       return { exitCode: 0, stdout: "", stderr: "" };
     }

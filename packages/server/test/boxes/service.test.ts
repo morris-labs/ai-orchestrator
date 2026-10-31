@@ -60,7 +60,7 @@ describe("create", () => {
     const prompt = expandTemplate(DEFAULT_PROMPT_TEMPLATES.starter, ["Quick look", dir]);
     expect(command).toBe(
       `claude '--remote-control=Quick look' '--permission-mode' 'auto' '--allow-dangerously-skip-permissions' ` +
-        `'--model' 'claude-opus-5-5' '--effort' 'high' '--name=Quick look' '${prompt.replace(/'/g, `'\\''`)}' '--session-id' '${box.sessionUuid}'`,
+        `'--model' 'claude-opus-5-5' '--effort' 'high' '--name=Quick look' '--session-id' '${box.sessionUuid}' '--' '${prompt.replace(/'/g, `'\\''`)}'`,
     );
     expect(h.core.boxes.status(box)).toBe("running");
     const view = h.core.boxes.view(box);
@@ -90,6 +90,30 @@ describe("create", () => {
     const second = await h.core.boxes.create({ targetDir: box.targetDir, layout: "root" });
     expect(second.id).toBe("claude-agent-app.example.com-2");
     expect(second.hostKey).toBe("app-example-com-2");
+  });
+
+  it("passes an opening prompt that starts with - after --, last", async () => {
+    const h = makeHarness();
+    h.core.settings.setPromptTemplates({ ...DEFAULT_PROMPT_TEMPLATES, starter: "%1" });
+    const box = await h.core.boxes.create({
+      targetDir: h.dir("app"),
+      layout: "root",
+      conversationName: "-x",
+    });
+    expect(
+      lastCommand(h).endsWith(`'--name=-x' '--session-id' '${box.sessionUuid}' '--' '-x'`),
+    ).toBe(true);
+    // A box saved without a start passes its prompt the same way on its first start.
+    const later = await h.core.boxes.create({
+      targetDir: h.dir("app"),
+      layout: "root",
+      conversationName: "-y",
+      start: false,
+    });
+    const started = await h.core.boxes.start(later.id);
+    expect(
+      lastCommand(h).endsWith(`'--name=-y' '--session-id' '${started.sessionUuid}' '--' '-y'`),
+    ).toBe(true);
   });
 
   it("adds the secrets hint only when the project has secret references", async () => {
@@ -306,6 +330,66 @@ describe("create", () => {
       conversation: { mode: "adopt", sessionUuid: uuid },
     });
     expect(b.sessionUuid).toBe(uuid);
+  });
+
+  it.each([false, true])(
+    "lets only one of two concurrent creates adopt a conversation (force %s)",
+    async (force) => {
+      const h = makeHarness();
+      const dir = h.dir("app");
+      const uuid = "6f1c3a52-6d8b-4f43-9a51-2d5b7cbd3f10";
+      const req = {
+        targetDir: dir,
+        layout: "root" as const,
+        force,
+        conversation: { mode: "adopt" as const, sessionUuid: uuid },
+      };
+      const results = await Promise.allSettled([
+        h.core.boxes.create(req),
+        h.core.boxes.create(req),
+      ]);
+      expect(results.map((r) => r.status).sort()).toEqual(["fulfilled", "rejected"]);
+      const rejected = results.find((r) => r.status === "rejected");
+      expect(rejected?.reason).toMatchObject({ code: "adoption_refused" });
+      expect(h.core.db.boxes.bySession(uuid)).toHaveLength(1);
+    },
+  );
+
+  it("refuses a forced adoption while the holder is starting", async () => {
+    const h = makeHarness();
+    const dir = h.dir("app");
+    const uuid = "6f1c3a52-6d8b-4f43-9a51-2d5b7cbd3f10";
+    const a = await h.core.boxes.create({
+      targetDir: dir,
+      layout: "root",
+      start: false,
+      conversation: { mode: "adopt", sessionUuid: uuid },
+    });
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    let reached!: () => void;
+    const atStart = new Promise<void>((resolve) => (reached = resolve));
+    let blocked = false;
+    h.docker.beforeExec = async (_c, options) => {
+      // Holds only the first session start: the holder's.
+      if (options.cmd[0] === START_SESSION_PATH && !blocked) {
+        blocked = true;
+        reached();
+        await held;
+      }
+    };
+    const starting = h.core.boxes.start(a.id);
+    await atStart;
+    await expect(
+      h.core.boxes.create({
+        targetDir: dir,
+        layout: "root",
+        force: true,
+        conversation: { mode: "adopt", sessionUuid: uuid },
+      }),
+    ).rejects.toMatchObject({ code: "adoption_refused", details: { holders: [a.id] } });
+    release();
+    await starting;
   });
 
   it("forks into a worktree by copying the source transcript first", async () => {
@@ -586,6 +670,25 @@ describe("start, stop, restart", () => {
     const restarted = await h.core.boxes.restartProjectContainer(a.projectId);
     expect(restarted.done).toEqual([a.id]);
     await expect(h.core.boxes.start(b.id)).resolves.toMatchObject({ wasRunning: true });
+  });
+
+  it("keeps the project container when a box in it fails to stop", async () => {
+    const h = makeHarness();
+    const dir = h.dir("app");
+    const a = await h.core.boxes.create({ targetDir: dir, layout: "root" });
+    const b = await h.core.boxes.create({ targetDir: dir, layout: "root" });
+    const containerId = h.docker.containers.get(a.container)!.id;
+    h.docker.beforeExec = async (_c, options) => {
+      if (options.cmd[1] === "kill-session" && options.cmd[3] === `=${b.session}`)
+        throw new Error("SYNTHETIC kill failure");
+    };
+    const result = await h.core.boxes.restartProjectContainer(a.projectId);
+    expect(result.done).toEqual([a.id]);
+    expect(result.failed.map((f) => f.boxId)).toEqual([b.id]);
+    // Same container, and the box that failed to stop still runs.
+    expect(h.docker.containers.get(a.container)?.id).toBe(containerId);
+    expect(h.core.boxes.isRunning(h.core.boxes.get(b.id))).toBe(true);
+    expect(h.core.boxes.isRunning(h.core.boxes.get(a.id))).toBe(true);
   });
 
   it("refuses to start a box whose conversation a running box holds", async () => {
@@ -899,9 +1002,25 @@ describe("edit, platform, side sessions, messages", () => {
     const h = makeHarness();
     const box = await h.core.boxes.create({ targetDir: h.dir("app"), layout: "root" });
     await h.core.boxes.sendMessage(box.id, "Hold edits, please.");
+    await h.core.boxes.sendMessage(box.id, "- fix the tests");
     expect(h.docker.containers.get(box.container)?.sentKeys.get(box.session)).toEqual([
       "-l Hold edits, please.",
       "Enter",
+      "-l - fix the tests",
+      "Enter",
+    ]);
+    const cmds = h.docker
+      .callsOf("exec")
+      .map((c) => (c.args[1] as { cmd: string[] }).cmd)
+      .filter((cmd) => cmd[1] === "send-keys");
+    expect(cmds[0]).toEqual([
+      "tmux",
+      "send-keys",
+      "-t",
+      `=${box.session}:`,
+      "-l",
+      "--",
+      "Hold edits, please.",
     ]);
   });
 

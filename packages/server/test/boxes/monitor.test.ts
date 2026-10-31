@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  ContainerMonitor,
   DISK_SIZE_INTERVAL_MS,
   looksLikeEngineRestart,
   type BoxEndedEvent,
@@ -180,6 +181,36 @@ describe("ContainerMonitor", () => {
     expect(h.core.boxes.get(box.id).conversationName).toBe("Named live");
     h.docker.available = false;
     await expect(h.core.monitor.poll()).resolves.toBeUndefined();
+  });
+
+  it("samples stats when asked while a poll without stats is in flight", async () => {
+    const h = makeHarness();
+    await h.core.boxes.create({ targetDir: h.dir("app"), layout: "root" });
+    const before = h.docker.callsOf("stats").length;
+    // The first poll after start skips stats.
+    const routine = h.core.monitor.poll();
+    const refresh = h.core.monitor.poll({ sampleStats: true });
+    await Promise.all([routine, refresh]);
+    expect(h.docker.callsOf("stats").length).toBeGreaterThan(before);
+  });
+
+  it("logs a failed routine poll once per distinct message", async () => {
+    const h = makeHarness();
+    const logged: string[] = [];
+    const monitor = new ContainerMonitor({
+      repos: h.core.db,
+      docker: h.docker,
+      events: h.core.events,
+      boxes: h.core.boxes,
+      log: (m) => logged.push(m),
+    });
+    h.docker.listContainers = async () => {
+      throw new Error("SYNTHETIC poll failure");
+    };
+    monitor.start(5);
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    monitor.stop();
+    expect(logged).toEqual(["Box status poll failed: SYNTHETIC poll failure"]);
   });
 });
 
