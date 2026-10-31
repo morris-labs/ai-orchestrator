@@ -115,6 +115,20 @@ export async function rebaseBase(ctx: RunContext): Promise<void> {
 /** Opens a new round: applies pending changes, assigns roles, and groups the diff. */
 export async function startRound(ctx: RunContext): Promise<void> {
   if (ctx.eng.roundOpen) return;
+  // The round reviews HEAD of the checkout, which a person or the box's own
+  // session can move to another branch between rounds.
+  const tipRef = ctx.eng.tipRef;
+  if (tipRef && !ctx.state.request.readOnly) {
+    const current = await ctx.git.currentBranch();
+    if (current !== tipRef) {
+      throw new DecisionNeeded({
+        kind: "push_blocked",
+        findingIds: [],
+        options: ["resume", "cancel"],
+        message: `The run fixes ${tipRef}, but ${current ?? "a detached HEAD"} is checked out in ${ctx.state.request.repoPath}. Check out ${tipRef} and resume, or cancel.`,
+      });
+    }
+  }
   ctx.state.round += 1;
   const round = ctx.state.round;
   ctx.eng.roundStartedAt = ctx.nowIso();

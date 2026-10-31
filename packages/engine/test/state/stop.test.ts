@@ -78,6 +78,29 @@ describe("an oscillation in the last round", () => {
   });
 });
 
+describe("a later round", () => {
+  it("asks a person when another branch is checked out instead of reviewing it", async () => {
+    const { execFileSync } = await import("node:child_process");
+    const { startRound } = await import("../../src/state/prepush.js");
+    const { ctx, repo } = await makeRun();
+    const tipRef = ctx.eng.tipRef;
+    expect(tipRef).toBeTruthy();
+    ctx.state.round = 1;
+    ctx.eng.roundOpen = false;
+    execFileSync("git", ["checkout", "-q", "-b", "SYNTHETIC-other"], { cwd: repo });
+    await expect(startRound(ctx)).rejects.toMatchObject({
+      decision: expect.objectContaining({
+        kind: "push_blocked",
+        message: expect.stringContaining(`but SYNTHETIC-other is checked out`),
+      }),
+    });
+    expect(ctx.state.round).toBe(1);
+    execFileSync("git", ["checkout", "-q", tipRef as string], { cwd: repo });
+    await startRound(ctx);
+    expect(ctx.state.round).toBe(2);
+  });
+});
+
 describe("working-tree inclusion", () => {
   it("follows range resolution, not the request flag", async () => {
     const { execFileSync } = await import("node:child_process");
