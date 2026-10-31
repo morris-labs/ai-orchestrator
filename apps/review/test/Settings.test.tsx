@@ -31,6 +31,35 @@ describe("Settings", () => {
     ).toHaveValue("auto");
   });
 
+  it("takes a fractional percentage and refuses an empty ceiling", async () => {
+    const settings = defaultConfig();
+    const { server } = renderWithStore(<Settings />, { "settings.get": () => settings });
+    const codex = await screen.findByRole("group", { name: "Codex" });
+    const input = within(codex).getByLabelText<HTMLInputElement>("Ceiling (%)");
+    fireEvent.change(input, { target: { value: "62.5" } });
+    expect(input).toHaveValue(62.5);
+    fireEvent.change(input, { target: { value: "" } });
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    expect(screen.getByRole("alert")).toHaveTextContent("Enter a ceiling for Codex");
+    fireEvent.change(input, { target: { value: "62.5" } });
+    expect(screen.queryByRole("alert")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(server.callsTo("settings.patch")).toHaveLength(1));
+    expect(server.callsTo("settings.patch")[0]!.body).toEqual({
+      ceilings: { codex: { kind: "utilization", window: "5h", max: 0.625 } },
+    });
+  });
+
+  it("refuses an empty spend ceiling", async () => {
+    const settings = defaultConfig();
+    renderWithStore(<Settings />, { "settings.get": () => settings });
+    const copilot = await screen.findByRole("group", { name: "Copilot" });
+    const input = within(copilot).getByLabelText("Ceiling (US dollars per month)");
+    fireEvent.change(input, { target: { value: "" } });
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    expect(screen.getByRole("alert")).toHaveTextContent("Enter a ceiling for Copilot");
+  });
+
   it("edits vendor defaults and the ready-to-push toggle", async () => {
     const settings = defaultConfig();
     settings.vendorDefaults.codex = { model: "gpt-6-codex" };
