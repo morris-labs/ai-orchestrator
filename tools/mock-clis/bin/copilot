@@ -29,6 +29,9 @@ const VALUE_FLAGS = new Set([
   "--mode",
   "-n",
   "--name",
+  // The Qt app's interactive start; the mock still runs only -p.
+  "-i",
+  "--interactive",
 ]);
 const BOOL_FLAGS = new Set([
   "--allow-all-tools",
@@ -43,6 +46,8 @@ const BOOL_FLAGS = new Set([
   "--continue",
   "--no-custom-instructions",
   "--autopilot",
+  // Not in `copilot --help` 1.0.105, but the real CLI accepts it.
+  "--remote",
 ]);
 
 const argv = process.argv.slice(2);

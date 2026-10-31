@@ -57,13 +57,20 @@ export function platformArgs(
   return baseClaudeArgs(box, project);
 }
 
-/** A side session's arguments: `codex remote-control`, else the platform's own. */
+/**
+ * A side session's arguments: `codex remote-control --no-daemon`, else the
+ * platform's own. A bare `codex remote-control` manages a background daemon;
+ * `--no-daemon` keeps it in the foreground, so the tmux session lives as long
+ * as remote control does.
+ */
 export function sideSessionArgs(
   box: Box,
   project: Pick<Project, "root" | "primaryRepo">,
   program: Platform,
 ): string[] {
-  return program === "codex" ? ["remote-control"] : platformArgs(box, project, program, false, "");
+  return program === "codex"
+    ? ["remote-control", "--no-daemon"]
+    : platformArgs(box, project, program, false, "");
 }
 
 /** The first message of a resumed session after Convert to Worktree (inventory section 4.5). */

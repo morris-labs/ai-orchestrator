@@ -1487,8 +1487,11 @@ QStringList DockerBackend::runningSideSessions(const BoxRecord &rec) const
 bool DockerBackend::startSideSession(const BoxRecord &rec, const QString &program, QString *errorOut) const
 {
     QStringList args;
+    // A bare `codex remote-control` manages a background daemon; with
+    // --no-daemon it stays in the foreground, so the tmux session lives as
+    // long as remote control does.
     if (program == QLatin1String("codex"))
-        args << "remote-control";
+        args << "remote-control" << "--no-daemon";
     else
         args = platformArgs(rec, program, false, QString());
     QStringList parts{program};

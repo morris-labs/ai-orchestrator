@@ -124,7 +124,7 @@ describe("claude arguments", () => {
       "--allow-all-tools",
     ]);
     expect(platformArgs(box, project, "claude", false, "x")).toEqual(baseClaudeArgs(box, project));
-    expect(sideSessionArgs(box, project, "codex")).toEqual(["remote-control"]);
+    expect(sideSessionArgs(box, project, "codex")).toEqual(["remote-control", "--no-daemon"]);
     expect(sideSessionArgs(box, project, "copilot")).toEqual(["--remote", "--allow-all-tools"]);
   });
 

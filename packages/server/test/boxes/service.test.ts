@@ -879,7 +879,7 @@ describe("edit, platform, side sessions, messages", () => {
     expect(await h.core.boxes.startSideSession(box.id, "codex")).toEqual({
       session: `${box.session}-codex`,
     });
-    expect(lastCommand(h)).toBe("codex 'remote-control'");
+    expect(lastCommand(h)).toBe("codex 'remote-control' '--no-daemon'");
     expect(h.core.boxes.view(h.core.boxes.get(box.id)).sideSessions).toEqual(["codex"]);
     await expect(h.core.boxes.startSideSession(box.id, "codex")).rejects.toMatchObject({
       code: "conflict",
