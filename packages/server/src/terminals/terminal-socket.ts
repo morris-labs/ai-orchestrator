@@ -41,7 +41,7 @@ export async function serveTerminal(
 
   let session;
   try {
-    session = await backend.start(request);
+    session = await backend.start({ ...request, terminalId });
   } catch (err) {
     sendControl(ws, { type: "error", error: toApiError(err).toBody().error });
     ws.close(1011, "exec failed");

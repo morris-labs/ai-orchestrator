@@ -10,6 +10,12 @@ export interface ExecRequest {
   workingDir?: string;
   cols: number;
   rows: number;
+  /**
+   * The value of `AGENTBOX_TERMINAL_ID` for this exec. `serveTerminal` passes
+   * the id it reports in `ready`, so the two match; without one, the backend
+   * makes one up.
+   */
+  terminalId?: string;
 }
 
 /** One running exec: a raw TTY stream in both directions. */
@@ -83,7 +89,7 @@ export class DockerExecBackend implements ExecBackend {
 
   async start(request: ExecRequest): Promise<ExecSession> {
     const container = this.docker.getContainer(request.container);
-    const terminalId = randomUUID();
+    const terminalId = request.terminalId ?? randomUUID();
     const exec = await container.exec({
       Cmd: request.cmd,
       AttachStdin: true,

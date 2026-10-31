@@ -92,4 +92,28 @@ describe("DockerExecBackend", () => {
     expect(execs[1]!.Cmd).toEqual(hangupCmd(id));
     expect(stream.destroyed).toBe(true);
   });
+
+  it("uses the terminal id it is given", async () => {
+    const envs: string[][] = [];
+    const docker = {
+      getContainer: () => ({
+        exec: async (opts: { Env?: string[] }) => {
+          envs.push(opts.Env ?? []);
+          return {
+            start: async () => new PassThrough(),
+            resize: async () => undefined,
+            inspect: async () => ({ ExitCode: null }),
+          };
+        },
+      }),
+    } as unknown as Docker;
+    await new DockerExecBackend(docker).start({
+      container: "c",
+      cmd: ["bash", "-l"],
+      cols: 80,
+      rows: 24,
+      terminalId: "tab-1",
+    });
+    expect(envs[0]).toContain(`${TERMINAL_ID_ENV}=tab-1`);
+  });
 });

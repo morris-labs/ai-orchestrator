@@ -66,6 +66,10 @@ describe("terminals.open", () => {
       cols: 100,
       rows: 30,
     });
+    // The id in `ready` is the one the exec carries as AGENTBOX_TERMINAL_ID.
+    const ready = s.texts[0] as { terminalId: string };
+    expect(ready.terminalId).toBeTruthy();
+    expect(h.exec.requests[0]!.terminalId).toBe(ready.terminalId);
     const container = h.exec.sessions[0]!.container;
     container.write("hello from tmux");
     await s.until((x) => x.binary.length > 0);
