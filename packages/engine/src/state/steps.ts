@@ -915,7 +915,15 @@ export async function runFix(
     let batch = await ctx.store.readJson<FixBatchRecord>(batchFile);
     if (!batch) {
       const findings = ids.flatMap((id) => ctx.findingById(id) ?? []);
-      const before = await ctx.git.head();
+      // HEAD before the fixer runs is saved first. An engine that stops after
+      // the fixer commits, but before the batch file is saved, then still
+      // counts those commits as the batch's when the stage resumes.
+      const startFile = ctx.store.roundFile(ctx.round, `${key}-start`);
+      let before = (await ctx.store.readJson<{ before: string }>(startFile))?.before;
+      if (!before) {
+        before = await ctx.git.head();
+        await ctx.store.writeJson(startFile, { before });
+      }
       const prompt = fixerPrompt({
         range: ctx.range(),
         findings,
