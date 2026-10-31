@@ -13,11 +13,18 @@ export interface Chord {
   key: string;
 }
 
-/** The subset of `KeyboardEvent` that chord matching reads. */
-export type KeyLike = Pick<
-  KeyboardEvent,
-  "ctrlKey" | "shiftKey" | "altKey" | "metaKey" | "key" | "code"
->;
+/**
+ * The subset of `KeyboardEvent` that chord matching reads, spelled out so
+ * that this module type-checks without the DOM library.
+ */
+export interface KeyLike {
+  ctrlKey: boolean;
+  shiftKey: boolean;
+  altKey: boolean;
+  metaKey: boolean;
+  key: string;
+  code: string;
+}
 
 const keyAliases: Record<string, string> = {
   right: "ArrowRight",
