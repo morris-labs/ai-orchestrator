@@ -42,6 +42,23 @@ describe("Scheduler", () => {
     });
   });
 
+  it("treats a vendor as over when any of its accounts is over", async () => {
+    const t = make();
+    // Account A is over its ceiling; account B sampled after it and is not.
+    t.sample("codex", { account: "codex/a", utilization: 0.98 });
+    t.clock.now += MIN;
+    t.sample("codex", { account: "codex/b", utilization: 0.1 });
+    expect(await t.scheduler.decide("e", "p", t.req())).toMatchObject({
+      decision: "granted",
+      vendor: "copilot",
+      redirectedFrom: "codex",
+    });
+    // The same answer when A sampled last.
+    t.clock.now += MIN;
+    t.sample("codex", { account: "codex/a", utilization: 0.98 });
+    expect(await t.scheduler.decide("e", "p", t.req())).toMatchObject({ vendor: "copilot" });
+  });
+
   it("redirects a role to the next vendor and announces it once", async () => {
     const t = make();
     t.sample("codex", { utilization: 0.8 });
