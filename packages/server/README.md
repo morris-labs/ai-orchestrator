@@ -39,7 +39,9 @@ AGENTBOX_DATA_DIR=/tmp/agentbox-data agentbox doctor
 ```
 
 `agentbox-server install-service` writes a non-default data directory into
-the unit's `ExecStart=` line as `--data-dir`.
+the unit's `ExecStart=` line as `--data-dir`. To install the unit for a
+source checkout, run `scripts/install-server-unit.sh`; see "Run the server
+from the checkout" in `docs/install.md`.
 
 ## Environment
 
