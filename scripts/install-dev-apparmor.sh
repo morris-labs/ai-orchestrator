@@ -20,6 +20,10 @@
 # checkouts. The script then only adds or removes its own comment, and a
 # profile is deleted when no checkout's comment is left.
 #
+# It runs scripts/ensure-electron.sh first, which downloads a missing
+# Electron binary and removes group and other write permission from it, so
+# that only your user can replace what the profile trusts.
+#
 # Environment:
 #   AGENTBOX_APPARMOR_DIR  The profile directory. Default: /etc/apparmor.d.
 #                          Tests set it to a temporary directory.
@@ -77,10 +81,10 @@ electron_binary() {
     die "$link is missing. Install the workspace first: corepack pnpm install --frozen-lockfile"
   pkg="$(realpath "$link")"
   [[ -f "$pkg/path.txt" ]] ||
-    die "$pkg/path.txt is missing, so Electron's download didn't finish. Run: corepack pnpm rebuild electron"
+    die "$pkg/path.txt is missing, so Electron's download didn't finish. Run: scripts/ensure-electron.sh"
   rel="$(< "$pkg/path.txt")"
   bin="$(realpath "$pkg/dist/$rel")"
-  [[ -f "$bin" ]] || die "$bin is missing. Run: corepack pnpm rebuild electron"
+  [[ -f "$bin" ]] || die "$bin is missing. Run: scripts/ensure-electron.sh"
   printf '%s\n' "$bin"
 }
 
@@ -185,6 +189,11 @@ if [[ "$MODE" == remove ]]; then
   done
   exit 0
 fi
+
+# pnpm can leave the Electron package without its binary. Download it, and
+# remove group and other write permission from it, before the profiles name
+# its path.
+"$SCRIPT_DIR/ensure-electron.sh" --root "$ROOT"
 
 # Both apps usually run the same Electron binary from the pnpm store. Two
 # profiles that attach to one path conflict, so each binary gets one

@@ -113,6 +113,8 @@ is. A checkout installed with another store needs a one-time reinstall:
 `pnpm install` stops with `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY` when
 it runs without a terminal. To reinstall, delete `node_modules` and run
 `pnpm install` again, or run `pnpm install --config.confirmModulesPurge=false`.
+That reinstall can leave Electron without its binary; run
+`scripts/ensure-electron.sh` to check for that and download it.
 Each git worktree gets its own store, at its own root.
 
 To build the image from a checkout, run `scripts/build-image.sh`. To build

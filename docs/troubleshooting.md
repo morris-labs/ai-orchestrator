@@ -212,8 +212,9 @@ checkout's Electron binary:
 scripts/install-dev-apparmor.sh
 ```
 
-Run the script again after pnpm installs a different Electron version. To
-see the profiles first, add `--print`; to delete them, add `--remove`.
+The script downloads a missing Electron binary first, through
+`scripts/ensure-electron.sh`. Run it again after pnpm installs a different
+Electron version. To see the profiles first, add `--print`; to delete them, add `--remove`.
 Making `chrome-sandbox` setuid root also works, but every reinstall of the
 Electron package undoes it. For more information, see
 [Run the Electron apps from the checkout](install.md#run-the-electron-apps-from-the-checkout).
