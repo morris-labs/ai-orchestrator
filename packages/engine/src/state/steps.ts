@@ -1042,8 +1042,21 @@ export async function runConfirm(
   const file = ctx.store.roundFile(ctx.round, "confirm");
   const saved = await ctx.store.readJson<ConfirmRecord>(file);
   if (saved) return saved;
-  const fixed = ctx.findings.filter((f) => f.verdict === "confirmed" && f.fixCommit);
   const preFixSha = ctx.eng.preFixSha;
+  // The findings to confirm are chosen once and saved before any verdict
+  // changes: a stage that resumes after some verdicts were set would
+  // otherwise find nothing left to confirm and skip the confirmer's
+  // findings.
+  const targetsFile = ctx.store.roundFile(ctx.round, "confirm-targets");
+  let targets = await ctx.store.readJson<{ ids: string[] }>(targetsFile);
+  if (!targets) {
+    const ids = preFixSha
+      ? ctx.findings.filter((f) => f.verdict === "confirmed" && f.fixCommit).map((f) => f.id)
+      : [];
+    targets = { ids };
+    await ctx.store.writeJson(targetsFile, targets);
+  }
+  const fixed = targets.ids.flatMap((id) => ctx.findingById(id) ?? []);
   if (fixed.length === 0 || !preFixSha) {
     const empty: ConfirmRecord = { confirmer: null, fixedIds: [], incomplete: [], created: [] };
     await ctx.store.writeJson(file, empty);
@@ -1076,6 +1089,12 @@ export async function runConfirm(
   const incomplete = new Map(out.output.incomplete.map((i) => [i.id, i.reason]));
   const fixedIds: string[] = [];
   for (const f of fixed) {
+    // A finding whose verdict this stage already set before a restart.
+    if (f.verdict === "fixed") {
+      fixedIds.push(f.id);
+      continue;
+    }
+    if (f.verdict !== "confirmed" || !f.fixCommit) continue;
     const reason = incomplete.get(f.id);
     if (reason !== undefined) {
       await ctx.setVerdict(
