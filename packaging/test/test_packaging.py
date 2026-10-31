@@ -253,6 +253,41 @@ class ImageTest(unittest.TestCase):
         self.assertEqual(package["bin"]["agentbox-secret"], "./dist/secret-main.js")
         self.assertTrue((ROOT / "packages/engine/src/secret-main.ts").is_file())
 
+    def test_engine_wrappers_check_their_bin_entries(self):
+        # Runs the Dockerfile's bin lookups against a package without the
+        # bins: each lookup must fail the build rather than write a wrapper
+        # that runs `.../engine/undefined`.
+        if not os.access("/usr/bin/node", os.X_OK):
+            self.skipTest("/usr/bin/node is missing")
+        text = DOCKERFILE.read_text()
+        engine_step = text[text.index("COPY dist/"):text.index("COPY --chmod=0755 keeper/")]
+        lines = [line.strip() for line in engine_step.splitlines()]
+
+        def lookup(var):
+            start = next(i for i, line in enumerate(lines) if line.startswith(f"{var}="))
+            end = next(i for i in range(start, len(lines)) if lines[i].startswith("printf "))
+            body = [line.removesuffix("\\").strip().removesuffix("&&").strip() for line in lines[start:end]]
+            return " && ".join(body)
+
+        cases = {
+            "engine_bin": [{"bin": {"other": "./x.js"}}, {"bin": {"agentbox-engine": "./missing.js"}}],
+            "secret_bin": [{"bin": {"other": "./x.js"}}, {"bin": {"agentbox-secret": "./missing.js"}}],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            pkg = pathlib.Path(tmp)
+            (pkg / "dist").mkdir()
+            (pkg / "dist/main.js").write_text("")
+            for var, packages in cases.items():
+                script = f"engine_pkg={pkg} && {lookup(var)}"
+                for package in packages:
+                    (pkg / "package.json").write_text(json.dumps(package))
+                    result = subprocess.run(["sh", "-c", script], capture_output=True, text=True)
+                    self.assertNotEqual(result.returncode, 0, f"{var}: {package}")
+                    self.assertIn("bin", result.stderr)
+                good = "agentbox-engine" if var == "engine_bin" else "agentbox-secret"
+                (pkg / "package.json").write_text(json.dumps({"bin": {good: "./dist/main.js"}}))
+                subprocess.run(["sh", "-c", script], check=True, capture_output=True)
+
     def test_engine_dependencies_are_locked(self):
         # The engine's dependencies must come from pnpm-lock.yaml at pack
         # time, never from a fresh registry resolve during the image build.
@@ -466,6 +501,42 @@ class ScriptsTest(unittest.TestCase):
             self.assertIn(str(tmp / "data/server.token"), argv)
             self.assertNotIn(token, argv)
             self.assertIn(f"Authorization: Bearer {token}", (tmp / "headers.log").read_text())
+
+    def test_build_image_removes_its_deploy_directory_on_failure(self):
+        # A pnpm deploy that fails after writing node_modules must not leave
+        # the temporary directory behind.
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = pathlib.Path(tmp)
+            shutil.copytree(ROOT / "scripts", tmp / "scripts")
+            (tmp / "image").mkdir()
+            shutil.copy(DOCKERFILE, tmp / "image")
+            shutil.copy(VERSIONS, tmp / "image")
+            (tmp / "pnpm-workspace.yaml").write_text("packages: []\n")
+            (tmp / "packages/engine").mkdir(parents=True)
+            (tmp / "packages/engine/package.json").write_text("{}\n")
+            (tmp / "bin").mkdir()
+            fake = tmp / "bin/pnpm"
+            fake.write_text(
+                "#!/bin/sh\n"
+                'case " $* " in *" deploy "*) ;; *) exit 0 ;; esac\n'
+                'for a in "$@"; do last=$a; done\n'
+                'mkdir -p "$last/node_modules/left-behind"\n'
+                "exit 1\n"
+            )
+            fake.chmod(0o755)
+            scratch = tmp / "tmpdir"
+            scratch.mkdir()
+            env = {**os.environ, "PATH": f"{tmp / 'bin'}:{os.environ['PATH']}", "TMPDIR": str(scratch)}
+            result = subprocess.run(
+                [str(tmp / "scripts/build-image.sh"), "--pack-only"], env=env, capture_output=True, text=True
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(list(scratch.iterdir()), [])
+
+    def test_bump_versions_keeps_the_registry_token_out_of_argv(self):
+        script = (ROOT / "scripts/bump-versions.sh").read_text()
+        self.assertNotRegex(script, r'-H "Authorization: Bearer')
+        self.assertIn("-H @-", script)
 
     def test_postinst_asks_for_a_restart_on_upgrade(self):
         # PATH holds only cat, so the script skips AppArmor and the desktop

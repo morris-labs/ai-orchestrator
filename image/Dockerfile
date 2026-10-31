@@ -146,12 +146,15 @@ RUN test -n "${AGENTBOX_ENGINE_VERSION}" || { echo "AGENTBOX_ENGINE_VERSION is n
       { echo "dist/agentbox-engine-${AGENTBOX_ENGINE_VERSION}.tgz has no node_modules; pack it with scripts/build-image.sh" >&2; exit 1; }; } && \
     /usr/bin/node -p "require('${engine_pkg}/package.json').version" > /etc/agentbox-engine-version && \
     test "$(cat /etc/agentbox-engine-version)" = "${AGENTBOX_ENGINE_VERSION}" && \
-    engine_bin="$(/usr/bin/node -p "const p=require('${engine_pkg}/package.json'); typeof p.bin === 'string' ? p.bin : p.bin['agentbox-engine']")" && \
+    engine_bin="$(/usr/bin/node -p "const p=require('${engine_pkg}/package.json'); (typeof p.bin === 'string' ? p.bin : p.bin?.['agentbox-engine']) ?? ''")" && \
+    { test -n "${engine_bin}" || { echo "the engine package has no agentbox-engine bin" >&2; exit 1; }; } && \
+    { test -f "${engine_pkg}/${engine_bin#./}" || { echo "the engine bin ${engine_bin} is missing from the package" >&2; exit 1; }; } && \
     printf '#!/bin/sh\n# Runs the engine on the system Node.js 22, whatever nvm puts first on PATH.\nexec /usr/bin/node %s "$@"\n' \
       "${engine_pkg}/${engine_bin#./}" > /usr/local/bin/agentbox-engine && \
     chmod 0755 /usr/local/bin/agentbox-engine && \
     secret_bin="$(/usr/bin/node -p "require('${engine_pkg}/package.json').bin['agentbox-secret'] ?? ''")" && \
     { test -n "${secret_bin}" || { echo "the engine package has no agentbox-secret bin" >&2; exit 1; }; } && \
+    { test -f "${engine_pkg}/${secret_bin#./}" || { echo "the secret bin ${secret_bin} is missing from the package" >&2; exit 1; }; } && \
     printf '#!/bin/sh\n# Gets secrets from the Agent Box secrets broker, on the system Node.js 22.\nexec /usr/bin/node %s "$@"\n' \
       "${engine_pkg}/${secret_bin#./}" > /usr/local/bin/agentbox-secret && \
     chmod 0755 /usr/local/bin/agentbox-secret && \

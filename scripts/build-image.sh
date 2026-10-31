@@ -81,13 +81,17 @@ if [[ "$PACK" == auto && -f "$ROOT/pnpm-workspace.yaml" ]]; then
   rm -rf "$IMAGE_DIR/dist"
   mkdir -p "$IMAGE_DIR/dist"
   DEPLOY="$(mktemp -d)"
+  # A failed deploy or tar under set -e must not leave a node_modules tree
+  # behind in the temporary directory.
+  trap 'rm -rf -- "$DEPLOY"' EXIT
   # pnpm deploy installs from pnpm-lock.yaml and copies workspace packages,
   # such as @agentbox/contracts, into node_modules. Its symlinks are
   # relative, so the tree works wherever the Dockerfile unpacks it.
   (cd "$ROOT" && "${PNPM[@]}" --filter @agentbox/engine deploy --legacy --prod --frozen-lockfile "$DEPLOY/engine" > /dev/null)
   [[ -d "$DEPLOY/engine/node_modules" ]] || die "pnpm deploy left no node_modules in $DEPLOY/engine"
   tar -C "$DEPLOY" --owner=0 --group=0 --numeric-owner -czf "$ENGINE_TARBALL" engine
-  rm -rf "$DEPLOY"
+  rm -rf -- "$DEPLOY"
+  trap - EXIT
 fi
 
 [[ -f "$ENGINE_TARBALL" ]] ||
