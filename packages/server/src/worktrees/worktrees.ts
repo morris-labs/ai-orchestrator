@@ -194,6 +194,12 @@ const BUILD_OUTPUT_NAMES = new Set([
   "out",
 ]);
 
+/** Build-named directories that hold downloaded packages rather than this project's output. */
+const DEPENDENCY_CACHE_NAMES = ["node_modules", ".venv", "venv", ".gradle", ".cache", "__pycache__"];
+
+/** Ignored files that are likely the only copy of a secret, even inside build output. */
+const SECRET_FILE_PATTERNS = [".env", ".env.*", "*.pem", "*.key"];
+
 /**
  * Whether an ignored directory is build output or a dependency cache: large
  * and reproducible, so neither removal nor migration treats it as work.
@@ -231,13 +237,33 @@ export async function checkRemovable(_repo: string, wt: string): Promise<RemoveC
     { trim: false },
   );
   if (!ign.ok) return { safe: false, reason: ign.output };
+  // Only the top-level notes folder is archived; a nested one would be lost.
   const keep = ign.output
     .split("\0")
     .filter((e) => e !== "")
-    .filter((e) => {
-      const leaf = entryLeaf(e);
-      return !isBuildOutputName(leaf) && leaf !== NOTES_DIR_NAME;
-    });
+    .filter((e) => e !== `${NOTES_DIR_NAME}/` && !isBuildOutputName(entryLeaf(e)));
+  // A build-named directory can still hold a secret (`out/.env`), so look
+  // inside it, leaving out dependency caches, whose packages ship key files
+  // of their own as fixtures.
+  const secrets = await git(
+    wt,
+    [
+      "ls-files",
+      "-z",
+      "--others",
+      "--ignored",
+      "--exclude-standard",
+      "--",
+      ...SECRET_FILE_PATTERNS.map((p) => `:(glob)**/${p}`),
+      `:(exclude)${NOTES_DIR_NAME}/`,
+      ...DEPENDENCY_CACHE_NAMES.map((n) => `:(exclude,glob)**/${n}/**`),
+    ],
+    { trim: false },
+  );
+  if (!secrets.ok) return { safe: false, reason: secrets.output };
+  for (const file of secrets.output.split("\0")) {
+    if (file !== "" && !keep.includes(file)) keep.push(file);
+  }
   if (keep.length > 0) {
     return {
       safe: false,
