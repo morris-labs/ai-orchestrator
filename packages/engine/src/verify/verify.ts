@@ -412,8 +412,11 @@ export interface VerifyDeps {
   /** The run's cancel signal; it stops a reproduction script. */
   signal?: AbortSignal;
   /**
-   * Makes the disprover call under a lease. Returns `null` when the call
-   * failed after its retry or the lease was refused for this role.
+   * Makes the disprover call under a lease. Throws when the call failed
+   * after its retry (`AgentFailed`) or the server refused the role a lease
+   * (`RoleDenied`), which fails the verify stage and the run, as any failed
+   * agent call does. `null` means no disprover answered and the finding
+   * stays pending.
    */
   callDisprover: (
     vendor: Vendor,
