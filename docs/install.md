@@ -292,6 +292,14 @@ stops with `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`. Run
 `corepack pnpm install --config.confirmModulesPurge=false` once to reinstall
 from the pinned store.
 
+That reinstall can leave the Electron package without its binary, because
+pnpm doesn't run the package's install script for a module tree that it
+reuses, and `corepack pnpm rebuild electron` then exits 0 without downloading
+anything. The boxes and review apps fail to start. To check for this state
+and fix it, run `scripts/ensure-electron.sh`. It runs the package's own
+`install.js` file when `path.txt` or `dist/` is missing, and it removes group
+and other write permission from `dist/`. To only check, add `--check`.
+
 The script does the following:
 
 1. Writes the `~/.config/systemd/user/agentbox-server.service.d/source-checkout.conf`
@@ -345,7 +353,8 @@ checkout's `node_modules` directory, run the
 scripts/install-dev-apparmor.sh
 ```
 
-The script resolves the real path of each app's Electron binary in the pnpm
+The script first runs `scripts/ensure-electron.sh`, which downloads a missing
+Electron binary. It then resolves the real path of each app's Electron binary in the pnpm
 store, builds a profile for it from the templates in
 `packaging/deb/apparmor/`, and runs `sudo` to write the profile to
 `/etc/apparmor.d/` and load it. Both apps usually share one binary, and
@@ -354,7 +363,7 @@ where `HASH` is taken from the binary's path, and carries a comment that
 names the checkout. Checkouts and worktrees that share a pnpm store share
 the binary, so its profile names each of them.
 
-- To see the profiles without changing anything, run
+- To see the profiles without loading them, run
   `scripts/install-dev-apparmor.sh --print`.
 - To unload and delete the profiles for this checkout, run
   `scripts/install-dev-apparmor.sh --remove`. A profile that another
@@ -362,7 +371,12 @@ the binary, so its profile names each of them.
 
 The profiles attach to paths in the pnpm store, which your user can write
 to, so any program that your user puts at those paths can create user
-namespaces.
+namespaces. Electron's download can extract `dist/electron` and
+`dist/chrome-sandbox` with mode 0777, which would let any local user replace
+the binary. The `scripts/ensure-electron.sh` script removes group and other
+write permission from `dist/`, and the profile script runs it. If you
+download Electron another way, run `chmod -R go-w` on the `dist/` directory
+before you load the profile.
 
 A profile keeps working when `pnpm install` reinstalls the same Electron
 version, because the binary's path in the store doesn't change. When pnpm

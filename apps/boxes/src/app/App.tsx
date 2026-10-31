@@ -66,6 +66,11 @@ import { CHORDS } from "./chords";
 import type { DialogState } from "./dialogs";
 import { useBoxesData } from "./useBoxesData";
 
+/** Pixels the table pane keeps: the filter box and a few rows. */
+const TABLE_MIN_HEIGHT = 120;
+/** Pixels an open terminal pane keeps: the tab strip and about 12 rows. */
+const TERMINAL_MIN_HEIGHT = 260;
+
 function load(key: string): string | null {
   try {
     return localStorage.getItem(`ab.${key}`);
@@ -1388,6 +1393,9 @@ export function App() {
           direction="vertical"
           defaultSizes={[0.48, 0.52]}
           storageKey="outer"
+          // A saved or dragged split can't leave an open terminal too short
+          // to show Claude's input line. The table keeps a few rows.
+          minSizes={[TABLE_MIN_HEIGHT, tabs.tabs.length > 0 ? TERMINAL_MIN_HEIGHT : 0]}
           className="bx-grow"
           style={page === "usage" ? { display: "none" } : undefined}
         >

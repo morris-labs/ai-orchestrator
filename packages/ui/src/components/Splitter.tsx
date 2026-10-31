@@ -50,6 +50,13 @@ export interface SplitterProps {
   /** Starting fractions, one per child. */
   defaultSizes: number[];
   storageKey?: string;
+  /**
+   * Smallest size in pixels for each child, along the split. A saved or
+   * dragged fraction can't push a pane below it, so a pane that needs room
+   * to be usable, such as a terminal, always keeps it. Missing entries and 0
+   * mean no minimum.
+   */
+  minSizes?: number[];
   children: ReactNode;
   className?: string;
   style?: React.CSSProperties;
@@ -59,6 +66,7 @@ export function Splitter({
   direction,
   defaultSizes,
   storageKey,
+  minSizes,
   children,
   className,
   style,
@@ -120,6 +128,7 @@ export function Splitter({
           key={i}
           index={i}
           size={current[i] ?? 0}
+          minSize={minSizes?.[i] ?? 0}
           last={i === panes.length - 1}
           onDrag={startDrag}
           direction={direction}
@@ -134,6 +143,7 @@ export function Splitter({
 function SplitPart({
   index,
   size,
+  minSize,
   last,
   onDrag,
   direction,
@@ -141,6 +151,7 @@ function SplitPart({
 }: {
   index: number;
   size: number;
+  minSize: number;
   last: boolean;
   onDrag: (index: number, e: React.PointerEvent) => void;
   direction: "horizontal" | "vertical";
@@ -148,7 +159,17 @@ function SplitPart({
 }) {
   return (
     <>
-      <div className="ab-splitter-pane" style={{ flex: `${size} 1 0px` }}>
+      <div
+        className="ab-splitter-pane"
+        style={{
+          flex: `${size} 1 0px`,
+          ...(minSize > 0
+            ? direction === "horizontal"
+              ? { minWidth: minSize }
+              : { minHeight: minSize }
+            : {}),
+        }}
+      >
         {children}
       </div>
       {!last && (
