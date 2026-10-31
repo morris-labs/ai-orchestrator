@@ -32,6 +32,13 @@ export interface AppState {
 /** How far back the usage chart starts. */
 export const USAGE_LOOKBACK_MS = 6 * 60 * 60 * 1000;
 
+/** How many open runs the snapshot loads the rounds and findings of at once. */
+export const SNAPSHOT_RUN_CONCURRENCY = 4;
+
+/** The first delay before a failed snapshot load runs again; it doubles up to the maximum. */
+export const SNAPSHOT_RETRY_MS = 1000;
+export const SNAPSHOT_RETRY_MAX_MS = 30_000;
+
 export class AppStore {
   /** Fans the stream's events out to screens; `EventHubProvider` shares it. */
   readonly hub = new EventHub();
@@ -54,6 +61,16 @@ export class AppStore {
    * events, so it must not bring them back.
    */
   private removedDuringLoad: { boxes: Set<string>; containers: Set<string> } | null = null;
+  /**
+   * After a stream reset, the dashboard the next snapshot seeds: the events
+   * since the reset applied to an empty dashboard. Screens keep the old
+   * dashboard until that snapshot applies. `null` when no reset waits.
+   */
+  private rebuilding: DashboardState | null = null;
+  /** The error the last snapshot load reported, so that a later success clears only that. */
+  private snapshotError: string | null = null;
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
+  private retryAttempt = 0;
 
   constructor(
     readonly api: ApiClient,
@@ -80,6 +97,7 @@ export class AppStore {
   /** Applies one event; the stream connection and the tests call it. */
   ingest(event: AgentBoxEvent): void {
     this.trackRemoval(event);
+    if (this.rebuilding) this.rebuilding = applyEvent(this.rebuilding, event);
     this.set({ dashboard: applyEvent(this.state.dashboard, event) });
     this.hub.emit(event);
     if (event.type === "usage.sample" || event.type === "ceiling.crossed") void this.loadUsage();
@@ -127,10 +145,16 @@ export class AppStore {
   /**
    * Loads runs, the open runs' rounds and findings, project containers, and
    * box states through REST, and merges them under the events applied
-   * meanwhile.
+   * meanwhile. After a stream reset, the snapshot replaces the old
+   * dashboard, and only then do screens hear about the reset. A load that
+   * fails while the stream runs is tried again with backoff.
    */
   async loadSnapshot(): Promise<void> {
+    this.clearRetry();
     const load = ++this.loads;
+    const current = () => load === this.loads;
+    // The snapshot shows the server as it was at this time or later.
+    const time = new Date(this.now()).toISOString();
     const removed = { boxes: new Set<string>(), containers: new Set<string>() };
     this.removedDuringLoad = removed;
     try {
@@ -141,57 +165,89 @@ export class AppStore {
       ]);
       const open = runs.filter((r) => OPEN_RUN_STATUSES.includes(r.status));
       // One run's failure, such as a run deleted meanwhile, keeps the rest.
-      const settled = await Promise.allSettled(
-        open.map(async (r) => {
+      const settled = await settleLimited(
+        open,
+        SNAPSHOT_RUN_CONCURRENCY,
+        async (r) => {
           const params = { params: { runId: r.id } };
           const [rounds, findings] = await Promise.all([
             this.api.call("runs.rounds", params),
             this.api.call("findings.list", params),
           ]);
           return [r.id, rounds.rounds, findings.findings] as const;
-        }),
+        },
+        () => !current(),
       );
-      if (load !== this.loads) return;
+      if (!current()) return;
       const details = settled.flatMap((x) => (x.status === "fulfilled" ? [x.value] : []));
       const failed = settled.flatMap((x, i) =>
         x.status === "rejected" ? [`${open[i]!.id}: ${errorText(x.reason)}`] : [],
       );
+      const reset = this.rebuilding !== null;
+      const base = this.rebuilding ?? this.state.dashboard;
+      this.rebuilding = null;
+      this.retryAttempt = 0;
+      const error =
+        failed.length > 0
+          ? `Couldn't load the rounds and findings of ${failed.length} run(s): ${failed.join("; ")}`
+          : null;
+      // A success clears the error an earlier snapshot load left, and no other.
+      const otherError = this.state.error !== null && this.state.error !== this.snapshotError;
+      this.snapshotError = error;
       this.set({
-        dashboard: seedDashboard(this.state.dashboard, {
+        dashboard: seedDashboard(base, {
           runs,
           rounds: Object.fromEntries(details.map(([id, rounds]) => [id, rounds])),
           findings: Object.fromEntries(details.map(([id, , findings]) => [id, findings])),
           projects,
           boxes,
-          time: new Date(this.now()).toISOString(),
+          time,
           removed,
         }),
-        ...(failed.length > 0
-          ? {
-              error: `Couldn't load the rounds and findings of ${failed.length} run(s): ${failed.join("; ")}`,
-            }
-          : {}),
+        ...(reset ? { resets: this.state.resets + 1 } : {}),
+        ...(error !== null || !otherError ? { error } : {}),
       });
       if (failed.length > 0) console.warn("Snapshot load skipped runs:", failed);
+      if (reset) {
+        this.hub.resync();
+        void this.loadUsageHistory();
+        void this.loadUsage();
+      }
     } catch (err) {
-      if (load === this.loads) this.set({ error: (err as Error).message });
+      if (!current()) return;
+      this.snapshotError = errorText(err);
+      this.set({ error: this.snapshotError });
+      this.scheduleRetry();
     } finally {
-      if (load === this.loads) this.removedDuringLoad = null;
+      if (current()) this.removedDuringLoad = null;
     }
+  }
+
+  /** Runs the snapshot load again later, while the stream runs. */
+  private scheduleRetry(): void {
+    if (!this.connection) return;
+    const delay = Math.min(SNAPSHOT_RETRY_MAX_MS, SNAPSHOT_RETRY_MS * 2 ** this.retryAttempt);
+    this.retryAttempt += 1;
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null;
+      void this.loadSnapshot();
+    }, delay);
+  }
+
+  private clearRetry(): void {
+    if (this.retryTimer !== null) clearTimeout(this.retryTimer);
+    this.retryTimer = null;
   }
 
   /**
    * Handles a server hello that couldn't replay, as the contract asks: load
-   * state through REST. After the first one, the old state is dropped first.
+   * state through REST. After the first one, the snapshot replaces the old
+   * state instead of merging into it.
    */
   private resync(): void {
-    if (this.synced) {
-      this.set({ dashboard: emptyDashboard(), resets: this.state.resets + 1 });
-      this.hub.resync();
-      void this.loadUsageHistory();
-      void this.loadUsage();
-    }
+    if (this.synced) this.rebuilding = emptyDashboard();
     this.synced = true;
+    this.retryAttempt = 0;
     void this.loadSnapshot();
   }
 
@@ -215,10 +271,51 @@ export class AppStore {
     this.connection.start();
   }
 
+  /**
+   * Stops the stream and drops a snapshot still loading. The store stays
+   * synced, so the first hello after `start()` replaces the dashboard, which
+   * missed the events while the stream was stopped.
+   */
   stop(): void {
     this.connection?.stop();
     this.connection = null;
+    this.clearRetry();
+    this.loads += 1;
+    this.removedDuringLoad = null;
+    this.rebuilding = null;
   }
+}
+
+/**
+ * Calls `fn` on each item, at most `limit` at a time, and settles each call
+ * like `Promise.allSettled`. Once `cancelled()` returns true, no new call
+ * starts and each remaining item settles as rejected.
+ */
+async function settleLimited<T, R>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+  cancelled: () => boolean,
+): Promise<PromiseSettledResult<R>[]> {
+  const results: PromiseSettledResult<R>[] = new Array<PromiseSettledResult<R>>(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next;
+      next += 1;
+      if (cancelled()) {
+        results[i] = { status: "rejected", reason: new Error("A newer load replaced this one.") };
+        continue;
+      }
+      try {
+        results[i] = { status: "fulfilled", value: await fn(items[i]!) };
+      } catch (reason) {
+        results[i] = { status: "rejected", reason };
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
 }
 
 function errorText(err: unknown): string {

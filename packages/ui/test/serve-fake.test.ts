@@ -50,4 +50,13 @@ describe("serveFake", () => {
     expect((await fetch(`${served.url}/app/missing.js`)).status).toBe(404);
     expect(served.requests[0]).toBe("GET /api/v1/health Bearer t");
   });
+
+  it("answers a redirect path with its location", async () => {
+    served = await serveFake(new FakeServer(), {
+      redirects: { "/app/away": "http://127.0.0.1:9/elsewhere" },
+    });
+    const res = await fetch(`${served.url}/app/away`, { redirect: "manual" });
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe("http://127.0.0.1:9/elsewhere");
+  });
 });

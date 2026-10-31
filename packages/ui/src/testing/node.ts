@@ -22,6 +22,8 @@ const TYPES: Record<string, string> = {
 export interface ServeFakeOptions {
   /** URL prefixes, such as `/boxes/`, mapped to directories to serve files from. */
   static?: Record<string, string>;
+  /** URL paths that answer with a `302` redirect to the given location, for navigation tests. */
+  redirects?: Record<string, string>;
   /** The port to listen on; 0, the default, picks a free one. */
   port?: number;
   /**
@@ -82,6 +84,11 @@ export async function serveFake(
         });
         res.writeHead(answer.status, { "content-type": "application/json" });
         res.end(await answer.text());
+        return;
+      }
+      const location = options.redirects?.[url.pathname];
+      if (location !== undefined) {
+        res.writeHead(302, { location }).end();
         return;
       }
       const file = staticFile(url.pathname, options.static ?? {});

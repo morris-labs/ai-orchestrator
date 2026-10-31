@@ -59,15 +59,40 @@ export function launcherHash(link: DeepLink): string {
 /** Tracks which runs are active, from `runs.list` and `run.changed` events. */
 export class ActiveRuns {
   private readonly active = new Set<string>();
+  /** Counts applied events. */
+  private version = 0;
+  /** The `version` at which an event last changed each run. */
+  private readonly changedAt = new Map<string, number>();
 
-  seed(runs: readonly RunState[]): void {
+  /** The position to pass to `seed` for a `runs.list` call that starts now. */
+  mark(): number {
+    return this.version;
+  }
+
+  /**
+   * Replaces the active set with a `runs.list` result. A run that an event
+   * changed after `since`, the `mark()` taken when the call started, keeps
+   * what the event said, because the list may predate it.
+   */
+  seed(runs: readonly RunState[], since: number = this.version): void {
+    const newer = new Map<string, boolean>();
+    for (const [id, at] of this.changedAt) {
+      if (at > since) newer.set(id, this.active.has(id));
+      else this.changedAt.delete(id);
+    }
     this.active.clear();
     for (const r of runs) if (ACTIVE_STATUSES_FOR_TRAY.includes(r.status)) this.active.add(r.id);
+    for (const [id, isActive] of newer) {
+      if (isActive) this.active.add(id);
+      else this.active.delete(id);
+    }
   }
 
   /** Returns true when the count changed. */
   apply(event: AgentBoxEvent): boolean {
     if (event.type !== "run.changed") return false;
+    this.version += 1;
+    this.changedAt.set(event.run.id, this.version);
     const before = this.active.size;
     if (ACTIVE_STATUSES_FOR_TRAY.includes(event.run.status)) this.active.add(event.run.id);
     else this.active.delete(event.run.id);
@@ -89,15 +114,25 @@ export interface DesktopNotice {
 }
 
 /**
+ * How old a notification can be and still pop up. A reconnect replays every
+ * event the app missed; older notifications stay in the app's list but don't
+ * pop up all at once.
+ */
+export const STALE_NOTICE_MS = 10 * 60 * 1000;
+
+/**
  * The desktop notification for a server `notification` event, or `null` when
- * this app doesn't show its kind or the person turned the kind off. Box
- * notifications belong to the boxes app.
+ * this app doesn't show its kind, the person turned the kind off, or, with
+ * `now`, the event is older than `STALE_NOTICE_MS`. Box notifications belong
+ * to the boxes app.
  */
 export function noticeFor(
   event: AgentBoxEvent,
   toggles: NotificationToggles,
+  now?: number,
 ): DesktopNotice | null {
   if (event.type !== "notification" || event.read) return null;
+  if (now !== undefined && now - Date.parse(event.time) > STALE_NOTICE_MS) return null;
   const toggle: Record<string, keyof NotificationToggles> = {
     decision_needed: "decisionNeeded",
     run_finished: "runFinished",
@@ -113,6 +148,68 @@ export function noticeFor(
     hash: event.runId ? `#/runs/${event.runId}` : "#/runs",
     urgent: event.kind === "decision_needed",
   };
+}
+
+export interface RetryTimers {
+  set: (fn: () => void, ms: number) => unknown;
+  clear: (handle: unknown) => void;
+}
+
+const REAL_TIMERS: RetryTimers = {
+  set: (fn, ms) => setTimeout(fn, ms),
+  clear: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+};
+
+/**
+ * Runs a REST reload, and runs it again with backoff while it fails. A new
+ * `request()` replaces a reload waiting to run again; `stop()` ends it.
+ */
+export class Reloader {
+  private generation = 0;
+  private attempt = 0;
+  private timer: unknown = null;
+  private stopped = false;
+
+  constructor(
+    private readonly load: () => Promise<void>,
+    private readonly timers: RetryTimers = REAL_TIMERS,
+    private readonly initialMs = 2000,
+    private readonly maxMs = 60_000,
+  ) {}
+
+  request(): void {
+    this.stopped = false;
+    this.attempt = 0;
+    this.run();
+  }
+
+  stop(): void {
+    this.stopped = true;
+    this.generation += 1;
+    this.clearTimer();
+  }
+
+  private run(): void {
+    this.clearTimer();
+    const generation = ++this.generation;
+    this.load().then(
+      () => undefined,
+      () => {
+        if (this.stopped || generation !== this.generation) return;
+        const delay = Math.min(this.maxMs, this.initialMs * 2 ** this.attempt);
+        this.attempt += 1;
+        this.timer = this.timers.set(() => {
+          this.timer = null;
+          this.run();
+        }, delay);
+      },
+    );
+  }
+
+  private clearTimer(): void {
+    if (this.timer !== null) this.timers.clear(this.timer);
+    this.timer = null;
+  }
 }
 
 export function trayTooltip(count: number): string {

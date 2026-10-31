@@ -5,7 +5,9 @@ import {
   launcherHash,
   noticeFor,
   parseDeepLink,
+  Reloader,
   rendererUrl,
+  STALE_NOTICE_MS,
   trayBitmap,
   trayTooltip,
 } from "./logic.js";
@@ -52,6 +54,96 @@ describe("ActiveRuns", () => {
     expect(a.apply({ type: "notification" } as AgentBoxEvent)).toBe(false);
     expect(a.count).toBe(1);
   });
+
+  // Finding 21: a list that started before an event used to overwrite it.
+  it("keeps events that arrived while the list loaded", () => {
+    const a = new ActiveRuns();
+    a.seed([run("1", "running")]);
+    const since = a.mark();
+    a.apply(changed(run("1", "finished")));
+    a.apply(changed(run("2", "running")));
+    // The list was taken before both events.
+    a.seed([run("1", "running"), run("3", "running")], since);
+    expect(a.count).toBe(2);
+    expect(a.apply(changed(run("2", "finished")))).toBe(true);
+    expect(a.apply(changed(run("3", "finished")))).toBe(true);
+    expect(a.count).toBe(0);
+  });
+
+  it("takes a list that started after every event as the truth", () => {
+    const a = new ActiveRuns();
+    a.apply(changed(run("1", "running")));
+    a.seed([run("2", "running")], a.mark());
+    expect(a.count).toBe(1);
+    expect(a.apply(changed(run("2", "finished")))).toBe(true);
+  });
+});
+
+describe("Reloader", () => {
+  function fakeTimers() {
+    const pending: { fn: () => void; ms: number }[] = [];
+    return {
+      pending,
+      timers: {
+        set: (fn: () => void, ms: number) => {
+          const t = { fn, ms };
+          pending.push(t);
+          return t;
+        },
+        clear: (h: unknown) => {
+          const i = pending.indexOf(h as (typeof pending)[number]);
+          if (i >= 0) pending.splice(i, 1);
+        },
+      },
+    };
+  }
+  const settle = () => new Promise((r) => setTimeout(r, 0));
+
+  // Finding 20: a failed reload used to be dropped until the next resync.
+  it("runs a failed load again with backoff until it succeeds", async () => {
+    const { pending, timers } = fakeTimers();
+    let calls = 0;
+    const r = new Reloader(
+      async () => {
+        calls += 1;
+        if (calls < 3) throw new Error("starting");
+      },
+      timers,
+      100,
+      1000,
+    );
+    r.request();
+    await settle();
+    expect(pending.map((t) => t.ms)).toEqual([100]);
+    pending.shift()!.fn();
+    await settle();
+    expect(pending.map((t) => t.ms)).toEqual([200]);
+    pending.shift()!.fn();
+    await settle();
+    expect(calls).toBe(3);
+    expect(pending).toEqual([]);
+  });
+
+  it("replaces a waiting retry on request and stops for good on stop", async () => {
+    const { pending, timers } = fakeTimers();
+    let calls = 0;
+    const r = new Reloader(
+      async () => {
+        calls += 1;
+        throw new Error("down");
+      },
+      timers,
+      100,
+    );
+    r.request();
+    await settle();
+    r.request();
+    await settle();
+    expect(pending.map((t) => t.ms)).toEqual([100]);
+    r.stop();
+    expect(pending).toEqual([]);
+    expect(calls).toBe(2);
+  });
 });
 
 describe("noticeFor", () => {
@@ -93,6 +185,15 @@ describe("noticeFor", () => {
   it("skips read notifications and opens the run list without a run", () => {
     expect(noticeFor(notification("run_finished", { read: true }), on)).toBeNull();
     expect(noticeFor(notification("run_finished", { runId: null }), on)?.hash).toBe("#/runs");
+  });
+
+  // Finding 18: a reconnect's replay used to pop up every missed notification.
+  it("skips notifications older than the stale limit", () => {
+    const time = "2026-10-28T10:00:00.000Z";
+    const at = Date.parse(time);
+    const n = notification("run_finished", { time });
+    expect(noticeFor(n, on, at + STALE_NOTICE_MS)).not.toBeNull();
+    expect(noticeFor(n, on, at + STALE_NOTICE_MS + 1)).toBeNull();
   });
 });
 

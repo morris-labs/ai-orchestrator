@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { Launcher } from "../src/screens/Launcher.js";
 import { BOX, PROJECT, boxView, lastRun, project } from "./helpers/data.js";
@@ -94,6 +94,100 @@ describe("Launcher", () => {
     fireEvent.submit(form);
     await waitFor(() => expect(window.location.hash).toBe(`#/runs/${lastRun().id}`));
     expect(server.callsTo("runs.create")).toHaveLength(1);
+  });
+
+  // Finding 24: the form used to re-enable before the route change.
+  it("keeps the form disabled after a start succeeds", async () => {
+    const { server } = renderWithStore(
+      <Launcher prefill={{ project: null, box: BOX }} />,
+      handlers(),
+    );
+    await waitFor(() =>
+      expect(screen.getByLabelText(/^Repository/)).toHaveValue(
+        "/home/user/src/example-app/.worktrees/Emails_not_sending",
+      ),
+    );
+    const form = screen.getByRole("button", { name: "Start" }).closest("form")!;
+    fireEvent.submit(form);
+    await waitFor(() => expect(window.location.hash).toBe(`#/runs/${lastRun().id}`));
+    // This test has no router, so the launcher stays mounted.
+    await new Promise((r) => setTimeout(r, 10));
+    expect(screen.getByRole("button", { name: "Starting…" })).toBeDisabled();
+    fireEvent.submit(form);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(server.callsTo("runs.create")).toHaveLength(1);
+  });
+
+  it("enables the form again after a start fails", async () => {
+    renderWithStore(<Launcher prefill={{ project: null, box: BOX }} />, {
+      ...handlers(),
+      "runs.create": () => {
+        throw new FakeApiError("conflict", "A run is already active for this box.", 409);
+      },
+    });
+    await waitFor(() =>
+      expect(screen.getByLabelText(/^Repository/)).toHaveValue(
+        "/home/user/src/example-app/.worktrees/Emails_not_sending",
+      ),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Start" }));
+    expect(await screen.findByText(/already active/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Start" })).toBeEnabled();
+  });
+
+  // Finding 25: a start during a preview used to vanish without a word.
+  it("says why a start during a preview does nothing", async () => {
+    let release: () => void = () => undefined;
+    const { server } = renderWithStore(<Launcher prefill={{ project: null, box: BOX }} />, {
+      ...handlers(),
+      "runs.preview": () =>
+        new Promise((resolve) => {
+          release = () => resolve(preview);
+        }),
+    });
+    await waitFor(() =>
+      expect(screen.getByLabelText(/^Repository/)).toHaveValue(
+        "/home/user/src/example-app/.worktrees/Emails_not_sending",
+      ),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Preview groups" }));
+    fireEvent.submit(screen.getByRole("button", { name: "Start" }).closest("form")!);
+    expect(await screen.findByText(/The preview is still resolving/)).toBeInTheDocument();
+    release();
+    expect(await screen.findByText(/2 groups, 312 changed lines/)).toBeInTheDocument();
+    expect(server.callsTo("runs.create")).toHaveLength(0);
+  });
+
+  // Finding 26: disabling the fieldset used to leave focus on the page body.
+  it("gives focus back to the field that had it after a preview", async () => {
+    let release: () => void = () => undefined;
+    renderWithStore(<Launcher prefill={{ project: null, box: BOX }} />, {
+      ...handlers(),
+      "runs.preview": () =>
+        new Promise((resolve) => {
+          release = () => resolve(preview);
+        }),
+    });
+    await waitFor(() =>
+      expect(screen.getByLabelText(/^Repository/)).toHaveValue(
+        "/home/user/src/example-app/.worktrees/Emails_not_sending",
+      ),
+    );
+    const roundCap = screen.getByLabelText("Round cap");
+    act(() => roundCap.focus());
+    fireEvent.click(screen.getByRole("button", { name: "Preview groups" }));
+    await waitFor(() => expect(roundCap).toBeDisabled());
+    // A browser moves focus to the body when the focused field becomes
+    // disabled; jsdom doesn't, so the test does.
+    act(() => {
+      const tmp = document.createElement("button");
+      document.body.append(tmp);
+      tmp.focus();
+      tmp.remove();
+    });
+    release();
+    expect(await screen.findByText(/2 groups, 312 changed lines/)).toBeInTheDocument();
+    expect(roundCap).toHaveFocus();
   });
 
   it("uses the server's repositories and refs when it has them", async () => {

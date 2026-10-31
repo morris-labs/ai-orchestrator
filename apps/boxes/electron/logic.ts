@@ -1,6 +1,37 @@
 // Pure logic of the Electron main process, kept apart from `electron` so
 // that tests can run it under Node.
 import type { BoxView, Notification, NotificationKind } from "@agentbox/contracts";
+import { isAppPage } from "@agentbox/ui/core";
+
+// ---------------------------------------------------------------------------
+// The page
+
+/** Chromium's error code for a load that was cancelled, as a blocked navigation is. */
+export const ERR_ABORTED = -3;
+
+/** A `did-fail-load` event's details. */
+export interface LoadFailure {
+  url: string;
+  errorCode: number;
+  isMainFrame: boolean;
+}
+
+/**
+ * True when a failed load must show the copy of the page built into the
+ * app: the main frame failed to load the app's page at `boxesUrl`. A frame
+ * inside the page leaves the page as it is. So does a load that was
+ * cancelled, such as a redirect the window blocked, while `currentUrl`, the
+ * page the window shows, is one of `appPages`.
+ */
+export function needsLocalPage(
+  failure: LoadFailure,
+  boxesUrl: string,
+  currentUrl: string,
+  appPages: readonly string[],
+): boolean {
+  if (!failure.isMainFrame || !isAppPage(failure.url, [boxesUrl])) return false;
+  return failure.errorCode !== ERR_ABORTED || !isAppPage(currentUrl, appPages);
+}
 
 // ---------------------------------------------------------------------------
 // External terminals

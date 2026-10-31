@@ -8,6 +8,7 @@ export * from "./terminal/beep";
 export * from "./terminal/TerminalView";
 export * from "./components/Menu";
 export * from "./components/Dialog";
+export * from "./components/busyFocus";
 export * from "./components/Toast";
 export * from "./components/StatusDot";
 export * from "./components/ProgressBar";

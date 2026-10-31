@@ -10,6 +10,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { useRestoreFocusAfterBusy } from "./busyFocus";
 
 export interface DialogProps {
   title: string;
@@ -129,19 +130,7 @@ export function Dialog({
     };
   }, []);
   // Disabling the fields drops focus; it goes back to the same field after.
-  const focusedBeforeBusy = useRef<HTMLElement | null>(null);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    if (busy) {
-      const active = document.activeElement as HTMLElement | null;
-      focusedBeforeBusy.current = active && el.contains(active) ? active : null;
-      return;
-    }
-    const back = focusedBeforeBusy.current;
-    focusedBeforeBusy.current = null;
-    if (back && back.isConnected && !el.contains(document.activeElement)) back.focus();
-  }, [busy]);
+  useRestoreFocusAfterBusy(ref, busy);
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Escape" && onClose) {
       e.stopPropagation();

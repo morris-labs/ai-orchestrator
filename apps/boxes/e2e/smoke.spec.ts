@@ -150,7 +150,22 @@ test("types into a running box's terminal and sees the echo", async () => {
 });
 
 test("refuses to open a path the server didn't report, or a non-web link", async () => {
-  const results = await page.evaluate(async () => {
+  // Record what reaches the desktop instead of opening it, so that a guard
+  // that lets something through opens nothing on the test host.
+  await app.evaluate(({ shell }) => {
+    const reached: string[] = [];
+    (globalThis as { reached?: string[] }).reached = reached;
+    shell.openPath = async (p: string) => {
+      reached.push(p);
+      return "";
+    };
+    shell.openExternal = async (u: string) => {
+      reached.push(u);
+    };
+  });
+  // A path no server reports, whether the fake or a real host.
+  const path = `/nonexistent-agentbox-e2e-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const results = await page.evaluate(async (p) => {
     const b = (
       window as unknown as {
         agentbox: {
@@ -160,22 +175,36 @@ test("refuses to open a path the server didn't report, or a non-web link", async
       }
     ).agentbox;
     return {
-      path: await b.openPath("/etc"),
-      file: await b.openExternal("file:///tmp/x.desktop"),
+      path: await b.openPath(p),
+      file: await b.openExternal("file:///nonexistent-agentbox-e2e.desktop"),
     };
-  });
+  }, path);
   expect(results.path.ok).toBe(false);
   expect(results.path.error).toContain("not a project or box directory");
   expect(results.file.ok).toBe(false);
+  expect(results.file.error).toContain("Only http and https links");
+  expect(await app.evaluate(() => (globalThis as { reached?: string[] }).reached)).toEqual([]);
 });
 
 // Last, because a failure leaves the window on another page.
 test("keeps the window on the app's page when something navigates it away", async () => {
-  const before = page.url();
-  await page.evaluate(() => {
-    window.location.href = "http://127.0.0.1:9/elsewhere";
+  const target = "http://127.0.0.1:9/elsewhere";
+  // Record each navigation the window attempts and whether the app's own
+  // handler, which runs first, blocked it.
+  await app.evaluate(({ BrowserWindow }) => {
+    const seen: { url: string; blocked: boolean }[] = [];
+    (globalThis as { seen?: typeof seen }).seen = seen;
+    BrowserWindow.getAllWindows()[0]?.webContents.on("will-navigate", (e) => {
+      seen.push({ url: e.url, blocked: e.defaultPrevented });
+    });
   });
-  await page.waitForTimeout(1000);
+  const before = page.url();
+  await page.evaluate((url) => {
+    window.location.href = url;
+  }, target);
+  await expect
+    .poll(() => app.evaluate(() => (globalThis as { seen?: unknown[] }).seen))
+    .toEqual([{ url: target, blocked: true }]);
   expect(page.url()).toBe(before);
   expect(await page.evaluate(() => typeof (window as { agentbox?: unknown }).agentbox)).toBe(
     "object",

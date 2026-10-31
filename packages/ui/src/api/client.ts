@@ -269,12 +269,7 @@ export class ApiClient {
   ): string {
     const route = serverRoutes[key];
     const path = buildPath(route.path, (args.params ?? {}) as never);
-    const origin =
-      this.baseUrl !== ""
-        ? this.baseUrl
-        : typeof location !== "undefined"
-          ? location.origin
-          : "https://127.0.0.1:21400";
+    const origin = this.baseUrl !== "" ? this.baseUrl : (pageOrigin() ?? "https://127.0.0.1:21400");
     const wsOrigin = origin.replace(/^http/, "ws");
     return `${wsOrigin}${path}${queryString(args.query)}`;
   }
@@ -291,4 +286,14 @@ export class ApiClient {
     }
     return new this.wsCtor(url);
   }
+}
+
+/**
+ * The page's origin in a browser, or `null` outside one. It reads
+ * `location` through `globalThis`, so that this module type-checks without
+ * the DOM library for an Electron main process.
+ */
+function pageOrigin(): string | null {
+  const loc = (globalThis as { location?: { origin: string } }).location;
+  return loc ? loc.origin : null;
 }

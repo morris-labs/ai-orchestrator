@@ -16,6 +16,8 @@ import { describeExit, secondInstanceCommand, serveFake } from "@agentbox/ui/tes
 
 const appDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const main = resolve(appDir, "dist/electron/main.cjs");
+/** Where the fake server's `/review/away` redirects to. */
+const AWAY = "http://127.0.0.1:9/redirected";
 
 test("launches, prefills the launcher, and keeps a single instance", async () => {
   const fake = new FakeServer({
@@ -27,6 +29,7 @@ test("launches, prefills the launcher, and keeps a single instance", async () =>
   writeFileSync(join(dataDir, "server.crt"), identity.cert);
   const mock = await serveFake(fake, {
     static: { "/review/": resolve(appDir, "dist/renderer") },
+    redirects: { "/review/away": AWAY },
     tls: identity,
   });
   const env = {
@@ -86,13 +89,40 @@ test("launches, prefills the launcher, and keeps a single instance", async () =>
       .poll(() => app.evaluate(() => (globalThis as { opened?: string[] }).opened))
       .toEqual(["https://example.com/pull/1"]);
 
-    // Navigating away leaves the window on the app's page.
-    const before = page.url();
-    await page.evaluate(() => {
-      window.location.href = "http://127.0.0.1:9/elsewhere";
+    // Navigating away leaves the window on the app's page: to another
+    // origin, to the server's own origin outside /review/, or through a
+    // redirect from inside /review/. The listeners added here run after the
+    // app's own handlers, so they see whether those blocked each attempt.
+    await app.evaluate(({ BrowserWindow }) => {
+      const seen: string[] = [];
+      (globalThis as { seen?: string[] }).seen = seen;
+      const contents = BrowserWindow.getAllWindows()[0]!.webContents;
+      contents.on("will-navigate", (e) => {
+        seen.push(`navigate ${e.url} ${e.defaultPrevented ? "blocked" : "allowed"}`);
+      });
+      contents.on("will-redirect", (e) => {
+        seen.push(`redirect ${e.url} ${e.defaultPrevented ? "blocked" : "allowed"}`);
+      });
     });
-    await page.waitForTimeout(1000);
-    expect(page.url()).toBe(before);
+    const before = page.url();
+    const attempts: [string, string[]][] = [
+      ["http://127.0.0.1:9/elsewhere", ["navigate http://127.0.0.1:9/elsewhere blocked"]],
+      [`${mock.url}/boxes/`, [`navigate ${mock.url}/boxes/ blocked`]],
+      [
+        `${mock.url}/review/away`,
+        [`navigate ${mock.url}/review/away allowed`, `redirect ${AWAY} blocked`],
+      ],
+    ];
+    for (const [url, want] of attempts) {
+      await app.evaluate(() => (globalThis as { seen?: string[] }).seen?.splice(0));
+      await page.evaluate((u) => {
+        window.location.href = u;
+      }, url);
+      await expect
+        .poll(() => app.evaluate(() => (globalThis as { seen?: string[] }).seen))
+        .toEqual(want);
+      expect(page.url()).toBe(before);
+    }
   } finally {
     await app.evaluate(({ app: a }) => a.quit());
     await app.close().catch(() => undefined);
