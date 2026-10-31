@@ -1,5 +1,6 @@
 // Runs each CLI adapter end to end against the stand-ins in tools/mock-clis.
-import { readFileSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { UsageSampleSchema, type Vendor } from "@agentbox/contracts";
@@ -205,6 +206,33 @@ describe.each(["claude", "codex", "copilot"] as const)(
     });
   },
 );
+
+describe("mock CLI state lock", () => {
+  it("breaks a lock that a killed mock left behind", async () => {
+    const { dir, adapters } = setup();
+    // A pid that has exited, as a mock killed while holding the lock leaves.
+    const deadPid = spawnSync("true").pid;
+    const lock = join(dir, "scenario.json.state.json.lock");
+    mkdirSync(lock);
+    writeFileSync(join(lock, "pid"), String(deadPid));
+    const started = Date.now();
+    const result = await adapters.codex.review(request(dir, "FIND bugs"));
+    expect(result.output.findings).toHaveLength(1);
+    expect(Date.now() - started).toBeLessThan(5000);
+    expect(existsSync(lock)).toBe(false);
+  });
+
+  it("breaks an old lock that has no pid file", async () => {
+    const { dir, adapters } = setup();
+    const lock = join(dir, "scenario.json.state.json.lock");
+    mkdirSync(lock);
+    const old = new Date(Date.now() - 60_000);
+    utimesSync(lock, old, old);
+    const result = await adapters.codex.review(request(dir, "FIND bugs"));
+    expect(result.output.findings).toHaveLength(1);
+    expect(existsSync(lock)).toBe(false);
+  });
+});
 
 describe("missing CLI", () => {
   it("reports unavailable", async () => {
