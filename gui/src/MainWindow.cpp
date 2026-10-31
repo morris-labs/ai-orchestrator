@@ -942,7 +942,9 @@ void MainWindow::updateActionStates()
 
     // Single-item actions: require exactly one selection.
     m_editAction->setEnabled(single && rec.isValid());
-    m_forkAction->setEnabled(single && rec.isValid() && !rec.sessionUuid.isEmpty());
+    // Only claude has a transcript to fork; a Codex or Copilot box's uuid
+    // names none.
+    m_forkAction->setEnabled(single && rec.isValid() && rec.isClaude() && !rec.sessionUuid.isEmpty());
     m_convertWorktreeAction->setEnabled(single && rec.isValid() && !rec.workspaceDir.isEmpty()
                                         && rec.worktreeDir.isEmpty()
                                         && single->status != BoxInfo::Status::Running
@@ -2116,6 +2118,12 @@ void MainWindow::onFork()
         QMessageBox::warning(this, QStringLiteral("Fork Conversation"),
                              QStringLiteral("No session recorded for ") + info->name
                              + QStringLiteral(" -- a box started outside this app can't be forked here."));
+        return;
+    }
+    if (!source.isClaude()) {
+        QMessageBox::warning(this, QStringLiteral("Fork Conversation"),
+                             info->name + QStringLiteral(" runs ") + BoxRecord::platformLabel(source.program())
+                             + QStringLiteral(", and only Claude Code conversations can be forked."));
         return;
     }
 
