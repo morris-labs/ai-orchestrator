@@ -31,6 +31,7 @@ import {
   resolveSettings,
   serverFetch,
   serverTls,
+  type CliSettings,
 } from "./settings.js";
 
 export interface CliDeps {
@@ -242,20 +243,25 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
     .configureOutput({ writeOut: deps.out, writeErr: deps.err });
 
   const globals = () => program.opts<{ json?: boolean; server?: string; insecure?: boolean }>();
+  const unchecked = () =>
+    resolveSettings({ env: deps.env, home: deps.home, server: globals().server });
+  /** Why the CLI refuses the server URL in `s`, or `null`. */
+  const urlProblem = (s: CliSettings) =>
+    checkServerUrl(s.baseUrl, globals().insecure ?? false, s.token !== null);
   const settings = () => {
-    const s = resolveSettings({ env: deps.env, home: deps.home, server: globals().server });
-    const problem = checkServerUrl(s.baseUrl, globals().insecure ?? false);
+    const s = unchecked();
+    const problem = urlProblem(s);
     if (problem) throw new UsageError(problem);
     return s;
   };
-  const client = () => {
-    const s = settings();
-    return new ServerClient({
+  /** A client for `s`, which must have passed `urlProblem()`. */
+  const clientFor = (s: CliSettings) =>
+    new ServerClient({
       baseUrl: s.baseUrl,
       token: s.token,
       fetch: deps.fetch ?? serverFetch(s),
     });
-  };
+  const client = () => clientFor(settings());
   /** Prints raw JSON with `--json`, or the text form. */
   const print = (json: unknown, text: () => string) => {
     deps.out(globals().json ? `${jsonText(json, 2)}\n` : terminalText(text()));
@@ -795,23 +801,31 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
       "Check the server, the token, Docker, the image, the engines, and sudo in containers.",
     )
     .action(async () => {
-      const s = settings();
-      const c = client();
+      // A refused URL is a failed check here, not a usage error: doctor
+      // reports what's wrong rather than stopping at the first problem.
+      const s = unchecked();
+      const refused = urlProblem(s);
       type Row = { check: string; status: "ok" | "warn" | "fail"; detail: string };
       const rows: Row[] = [];
       const add = (check: string, status: Row["status"], detail: string) =>
         rows.push({ check, status, detail });
       const describe = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
+      let c: ServerClient | null = null;
       let reachable = false;
-      try {
-        const h = await c.call("health");
-        reachable = true;
-        add("server", "ok", `${displayUrl(s.baseUrl)}, version ${h.version}`);
-      } catch (e) {
-        add("server", "fail", describe(e));
+      if (refused) {
+        add("server", "fail", refused);
+      } else {
+        c = clientFor(s);
+        try {
+          const h = await c.call("health");
+          reachable = true;
+          add("server", "ok", `${displayUrl(s.baseUrl)}, version ${h.version}`);
+        } catch (e) {
+          add("server", "fail", describe(e));
+        }
       }
-      if (reachable) {
+      if (c && reachable) {
         if (s.token === null) {
           add("token", "fail", `No token in AGENTBOX_TOKEN or ${s.tokenFile}.`);
         } else {

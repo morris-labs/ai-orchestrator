@@ -152,13 +152,20 @@ export function displayUrl(baseUrl: string): string {
 }
 
 /**
- * Checks that the server URL is safe to send the token to: `https`, or
- * plain `http` only when `insecure` allows it. On this machine, plain HTTP
- * would reach whatever program listens on the server port while the server
- * is down. Returns an error message, or `null` when the URL is fine. The
- * message never holds the URL's user name or password.
+ * Checks that the server URL is safe to use: `https`, or plain `http` only
+ * when `insecure` allows it. On this machine, plain HTTP would reach
+ * whatever program listens on the server port while the server is down;
+ * elsewhere, anyone on the network can read and change the traffic. The
+ * check applies without a token too, since the CLI acts on what the server
+ * returns, so `hasToken` changes only the message. Returns an error
+ * message, or `null` when the URL is fine. The message never holds the
+ * URL's user name or password.
  */
-export function checkServerUrl(baseUrl: string, insecure: boolean): string | null {
+export function checkServerUrl(
+  baseUrl: string,
+  insecure: boolean,
+  hasToken = true,
+): string | null {
   let url: URL;
   try {
     url = new URL(baseUrl);
@@ -170,10 +177,13 @@ export function checkServerUrl(baseUrl: string, insecure: boolean): string | nul
     return `The server URL must use http or https, not ${url.protocol.replace(/:$/, "")}.`;
   }
   if (insecure) return null;
+  const refusal = hasToken
+    ? `The CLI won't send its token over plain HTTP to ${url.host}.`
+    : `The CLI won't trust answers over plain HTTP from ${url.host}.`;
   if (isLoopbackHost(url.hostname)) {
-    return `The CLI won't send its token over plain HTTP to ${url.host}. The server serves HTTPS: use https://${url.host}.`;
+    return `${refusal} The server serves HTTPS: use https://${url.host}.`;
   }
-  return `The CLI won't send its token over plain HTTP to ${url.host}. Use https, or pass --insecure if you trust the network.`;
+  return `${refusal} Use https, or pass --insecure if you trust the network.`;
 }
 
 /**

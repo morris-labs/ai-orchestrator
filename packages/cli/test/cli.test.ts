@@ -644,6 +644,14 @@ describe("migrate, setup, doctor", () => {
     expect(out).toMatch(/token\s+fail/);
   });
 
+  it("fails doctor's server check on a refused server URL", async () => {
+    const code = await cli(["doctor"], { AGENTBOX_SERVER: "http://203.0.113.5:21400" });
+    expect(code).toBe(1);
+    expect(out).toMatch(/server\s+fail\s+The CLI won't send its token over plain HTTP/);
+    expect(err).toBe("");
+    expect(server.requests).toEqual([]);
+  });
+
   it("fails doctor when the server is down", async () => {
     expect(await cli(["doctor"], { AGENTBOX_SERVER: "https://127.0.0.1:1" })).toBe(1);
     expect(out).toMatch(/server\s+fail/);
@@ -727,6 +735,16 @@ describe("trust in the server", () => {
     expect(checkServerUrl("http://[::1]:21400", false)).toMatch(/serves HTTPS/);
     expect(checkServerUrl("http://127.0.0.1:21400", true)).toBeNull();
     expect(checkServerUrl("ftp://127.0.0.1", false)).toMatch(/http or https/);
+  });
+
+  it("refuses plain HTTP without a token, without mentioning one", async () => {
+    const code = await cli(["box", "list"], {
+      AGENTBOX_SERVER: "http://203.0.113.5:21400",
+      AGENTBOX_TOKEN: undefined,
+    });
+    expect(code).toBe(2);
+    expect(err).toMatch(/won't trust answers over plain HTTP from 203\.0\.113\.5:21400/);
+    expect(err).not.toMatch(/token/);
   });
 
   it("keeps the server URL's credentials out of its messages", async () => {
