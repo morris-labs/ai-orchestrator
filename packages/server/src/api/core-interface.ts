@@ -26,7 +26,7 @@ import type {
   Listener,
   Mount,
   Platform,
-  PolicyFile,
+  PolicyPut,
   Project,
   ProjectSummary,
   PromptTemplates,
@@ -108,7 +108,11 @@ export interface CoreProjects {
   update(projectId: string, patch: ProjectUpdate): Promise<ProjectUpdateResult>;
   restartContainer(projectId: string): Promise<BulkResult>;
   getPolicy(projectId: string): Promise<PolicyResult>;
-  putPolicy(projectId: string, policy: PolicyFile): Promise<PolicyResult>;
+  /**
+   * Writes the policy, as an object or as text. With `baseRevision`, throws
+   * `conflict` when the file changed since that revision.
+   */
+  putPolicy(projectId: string, policy: PolicyPut, baseRevision?: string): Promise<PolicyResult>;
 }
 
 export interface CoreBoxes {
