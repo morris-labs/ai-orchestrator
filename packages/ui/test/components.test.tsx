@@ -319,9 +319,7 @@ describe("useInFlight", () => {
     });
     expect(result).toBe("first");
     await act(async () => {
-      await expect(api!.run(() => Promise.reject(new Error("refused")))).rejects.toThrow(
-        "refused",
-      );
+      await expect(api!.run(() => Promise.reject(new Error("refused")))).rejects.toThrow("refused");
     });
     expect(screen.getByText("idle")).toBeInTheDocument();
     await act(async () => {

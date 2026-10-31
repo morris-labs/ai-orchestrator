@@ -269,10 +269,7 @@ export class ApiClient {
   ): string {
     const route = serverRoutes[key];
     const path = buildPath(route.path, (args.params ?? {}) as never);
-    const origin =
-      this.baseUrl !== ""
-        ? this.baseUrl
-        : (pageOrigin() ?? "https://127.0.0.1:21400");
+    const origin = this.baseUrl !== "" ? this.baseUrl : (pageOrigin() ?? "https://127.0.0.1:21400");
     const wsOrigin = origin.replace(/^http/, "ws");
     return `${wsOrigin}${path}${queryString(args.query)}`;
   }

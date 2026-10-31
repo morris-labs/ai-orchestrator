@@ -199,7 +199,7 @@ describe("AppStore snapshot timing and errors", () => {
   it("loads at most a few runs' details at a time", async () => {
     let inFlight = 0;
     let peak = 0;
-    const slow = async <T,>(value: T) => {
+    const slow = async <T>(value: T) => {
       inFlight += 1;
       peak = Math.max(peak, inFlight);
       await new Promise((r) => setTimeout(r, 1));
