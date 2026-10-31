@@ -1,7 +1,15 @@
 // The merge stage across a crash: the same candidates never merge twice.
+import type { Vendor } from "@agentbox/contracts";
 import { describe, expect, it } from "vitest";
+import type { VendorAdapter } from "../../src/core.js";
 import { RunController } from "../../src/state/controller.js";
-import { mergeInto, runSweep, toCandidates } from "../../src/state/steps.js";
+import {
+  mergeInto,
+  runConfirm,
+  runSweep,
+  toCandidates,
+  verifyPending,
+} from "../../src/state/steps.js";
 import { contextOf, makeRun } from "./harness.js";
 
 const raw = [
@@ -70,6 +78,86 @@ describe("mergeInto", () => {
     );
     expect(announced).toEqual(["F-0001"]);
     expect(reloaded.eng.appliedMerges).toHaveLength(1);
+  });
+});
+
+describe("runConfirm", () => {
+  it("merges the confirmer's findings when the engine stopped after the verdicts", async () => {
+    const confirmed = {
+      severity: "P2" as const,
+      title: "Refund skips the tax",
+      file: "shop/cart.py",
+      lines: [5, 6] as [number, number],
+      failure_case: "A refund returns the net price.",
+      category: "logic",
+      introduced: true,
+      verdict: "pending" as const,
+    };
+    const adapter = (vendor: Vendor): VendorAdapter =>
+      ({
+        vendor,
+        confirm: () =>
+          Promise.resolve({
+            output: { incomplete: [], findings: [confirmed] },
+            model: vendor,
+            sessionId: null,
+            tokens: { in: 1, out: 1 },
+            usage: [],
+            premiumRequests: 0,
+            costEstimate: 0,
+          }),
+        detectLimit: () => null,
+      }) as unknown as VendorAdapter;
+    const { ctx, deps, repo } = await makeRun({
+      adapters: { claude: adapter("claude"), codex: adapter("codex"), copilot: adapter("copilot") },
+    });
+    ctx.state.round = 1;
+    await mergeInto(ctx, await toCandidates(ctx, raw, "reviewer", []), "merge");
+    const head = await ctx.git.head();
+    const target = ctx.findingById("F-0001")!;
+    target.verdict = "confirmed";
+    target.fixCommit = head;
+    ctx.eng.preFixSha = head;
+    await ctx.persist();
+    // The engine stops after the verdicts, before the confirmer's merge.
+    const writeJson = ctx.store.writeJson.bind(ctx.store);
+    ctx.store.writeJson = (name, value) =>
+      name.includes("confirm-commit")
+        ? Promise.reject(new Error("engine stopped"))
+        : writeJson(name, value);
+    await expect(runConfirm(ctx, [])).rejects.toThrow("engine stopped");
+    expect(ctx.findingById("F-0001")?.verdict).toBe("fixed");
+
+    const reloaded = contextOf(await RunController.load(ctx.state.id, { projectRoot: repo }, deps));
+    const record = await runConfirm(reloaded, []);
+    expect(record.fixedIds).toEqual(["F-0001"]);
+    expect(record.created).toHaveLength(1);
+    expect(reloaded.findings.map((f) => f.title)).toContain("Refund skips the tax");
+    // The verdict isn't set twice.
+    const fixedEntries = reloaded
+      .findingById("F-0001")!
+      .history.filter((h) => h.verdict === "fixed");
+    expect(fixedEntries).toHaveLength(1);
+  });
+});
+
+describe("verifyPending", () => {
+  it("keeps the results from before a restart in the stage file", async () => {
+    const { ctx } = await makeRun();
+    ctx.state.round = 1;
+    const file = ctx.store.roundFile(1, "verify");
+    const earlier = {
+      findingId: "F-0001",
+      vendor: "codex",
+      model: "codex",
+      decision: { verdict: "confirmed", evidence: "SYNTHETIC" },
+      tipRun: null,
+      baseRun: null,
+    };
+    await ctx.store.writeJson(file, [earlier]);
+    // F-0001 got its verdict before the restart, so nothing is pending now.
+    expect(await verifyPending(ctx, file)).toEqual([]);
+    expect(await ctx.store.readJson(file)).toEqual([earlier]);
   });
 });
 

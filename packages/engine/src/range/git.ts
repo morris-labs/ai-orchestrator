@@ -1,5 +1,5 @@
 // A thin `git` client over a `CommandRunner`.
-import { appendFile, mkdir, readFile, rm } from "node:fs/promises";
+import { appendFile, copyFile, mkdir, readFile, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import type { CommandRunner } from "../core.js";
 
@@ -17,30 +17,55 @@ export class GitError extends Error {
   }
 }
 
+/**
+ * Placed before every subcommand this client runs, so that no command runs
+ * the repository's hooks. With a relative `core.hooksPath`, such as Husky's
+ * `.husky`, a hook comes from the commit being checked out, which is code
+ * under review.
+ */
+export const NO_HOOKS = ["-c", "core.hooksPath=/dev/null"] as const;
+
 export class Git {
   constructor(
     private readonly runner: CommandRunner,
     readonly cwd: string,
   ) {}
 
+  /**
+   * Runs one git command without the repository's hooks and without
+   * credentials: nothing this client runs talks to a remote.
+   */
+  private exec(
+    args: readonly string[],
+    options: {
+      input?: string;
+      cwd?: string;
+      env?: Record<string, string>;
+      timeoutMs?: number;
+    } = {},
+  ) {
+    return this.runner.run("git", [...NO_HOOKS, ...args], {
+      cwd: options.cwd ?? this.cwd,
+      input: options.input,
+      timeoutMs: options.timeoutMs ?? 120_000,
+      envProfile: "untrusted",
+      ...(options.env ? { env: options.env } : {}),
+    });
+  }
+
   /** Runs git and returns its standard output; throws `GitError` on a non-zero exit. */
   async run(
     args: readonly string[],
     options: { input?: string; cwd?: string; env?: Record<string, string> } = {},
   ): Promise<string> {
-    const result = await this.runner.run("git", args, {
-      cwd: options.cwd ?? this.cwd,
-      input: options.input,
-      timeoutMs: 120_000,
-      ...(options.env ? { env: options.env } : {}),
-    });
+    const result = await this.exec(args, options);
     if (result.exitCode !== 0) throw new GitError(args, result.exitCode, result.stderr);
     return result.stdout;
   }
 
   /** Runs git and reports success instead of throwing. */
   async ok(args: readonly string[]): Promise<boolean> {
-    const result = await this.runner.run("git", args, { cwd: this.cwd, timeoutMs: 120_000 });
+    const result = await this.exec(args);
     return result.exitCode === 0;
   }
 
@@ -49,21 +74,15 @@ export class Git {
   }
 
   async tryRevParse(ref: string): Promise<string | null> {
-    const result = await this.runner.run(
-      "git",
-      ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`],
-      {
-        cwd: this.cwd,
-        timeoutMs: 60_000,
-      },
-    );
+    const result = await this.exec(["rev-parse", "--verify", "--quiet", `${ref}^{commit}`], {
+      timeoutMs: 60_000,
+    });
     return result.exitCode === 0 ? result.stdout.trim() : null;
   }
 
   /** The checked-out branch, or `null` on a detached HEAD. */
   async currentBranch(): Promise<string | null> {
-    const result = await this.runner.run("git", ["symbolic-ref", "--quiet", "--short", "HEAD"], {
-      cwd: this.cwd,
+    const result = await this.exec(["symbolic-ref", "--quiet", "--short", "HEAD"], {
       timeoutMs: 60_000,
     });
     return result.exitCode === 0 ? result.stdout.trim() : null;
@@ -118,14 +137,24 @@ export class Git {
   /**
    * The full diff with context, for prompts. A renamed file in `paths` also
    * brings its old path into the pathspec, so git pairs the two and shows
-   * the rename instead of an entirely new file.
+   * the rename instead of an entirely new file. The paths are literal: they
+   * come from diffs and from reviewers, so a `:` or `*` in one names that
+   * file, not pathspec magic or a pattern.
    */
   async diffForPrompt(
     from: string,
     to: string | null,
     paths: readonly string[] = [],
   ): Promise<string> {
-    const args = ["diff", "--no-color", "--no-ext-diff", "--find-renames", "-U3", from];
+    const args = [
+      "--literal-pathspecs",
+      "diff",
+      "--no-color",
+      "--no-ext-diff",
+      "--find-renames",
+      "-U3",
+      from,
+    ];
     if (to !== null) args.push(to);
     if (paths.length > 0) {
       args.push("--", ...paths, ...(await this.renameSources(from, to, paths)));
@@ -168,10 +197,7 @@ export class Git {
 
   /** The content of `path` at `rev`, or `null` when it doesn't exist there. */
   async show(rev: string, path: string): Promise<string | null> {
-    const result = await this.runner.run("git", ["show", `${rev}:${path}`], {
-      cwd: this.cwd,
-      timeoutMs: 60_000,
-    });
+    const result = await this.exec(["show", `${rev}:${path}`], { timeoutMs: 60_000 });
     return result.exitCode === 0 ? result.stdout : null;
   }
 
@@ -201,13 +227,38 @@ export class Git {
    * is built in a temporary index file, so the checkout's own index, its
    * files, and its refs stay as they are; the commit is reachable from no
    * ref.
+   *
+   * The temporary index starts as a copy of the checkout's own, whose stat
+   * data lets `git add` skip every file that didn't change instead of
+   * hashing the whole tree. Without that index, or when git can't use the
+   * copy, it starts from `HEAD`.
    */
   async snapshotWorktree(indexFile: string): Promise<string> {
     const head = await this.head();
     const env = { GIT_INDEX_FILE: indexFile };
-    try {
+    // `.claude-box/` leaves the index after the `add`: an exclude pathspec
+    // for it makes `git add` fail when `info/exclude` already ignores it.
+    const add = async () => {
+      await this.run(["add", "--all", "--", "."], { env });
+      await this.run(["rm", "-r", "-q", "--cached", "--ignore-unmatch", "--", ".claude-box"], {
+        env,
+      });
+    };
+    const fromHead = async () => {
+      await rm(indexFile, { force: true });
       await this.run(["read-tree", head], { env });
-      await this.run(["add", "--all", "--", ".", ":(exclude).claude-box"], { env });
+      await add();
+    };
+    try {
+      if (await this.copyIndexTo(indexFile)) {
+        try {
+          await add();
+        } catch {
+          await fromHead();
+        }
+      } else {
+        await fromHead();
+      }
       const tree = (await this.run(["write-tree"], { env })).trim();
       const headTree = (await this.revParseTree(head)).trim();
       if (tree === headTree) return head;
@@ -218,6 +269,20 @@ export class Git {
       return commit.trim();
     } finally {
       await rm(indexFile, { force: true });
+    }
+  }
+
+  /** Copies the checkout's index file to `target`; false when there is none. */
+  private async copyIndexTo(target: string): Promise<boolean> {
+    try {
+      const index = resolve(
+        this.cwd,
+        (await this.run(["rev-parse", "--git-path", "index"])).trim(),
+      );
+      await copyFile(index, target);
+      return true;
+    } catch {
+      return false;
     }
   }
 

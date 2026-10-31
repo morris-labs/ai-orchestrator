@@ -145,16 +145,30 @@ export class RunStore {
     await appendJsonLine(this.path("events.jsonl"), event);
   }
 
-  async loadEvents(): Promise<AgentBoxEvent[]> {
+  /**
+   * Every event in `events.jsonl`. A line that doesn't parse, such as an
+   * append that a crash or a full disk cut short, is skipped, so it can't
+   * hide the rest of the run's events. `onBadLine` hears how many it skipped.
+   */
+  async loadEvents(onBadLine?: (skipped: number) => void): Promise<AgentBoxEvent[]> {
+    let text: string;
     try {
-      const text = await readFile(this.path("events.jsonl"), "utf8");
-      return text
-        .split("\n")
-        .filter((line) => line.trim() !== "")
-        .map((line) => JSON.parse(line) as AgentBoxEvent);
+      text = await readFile(this.path("events.jsonl"), "utf8");
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
       throw error;
     }
+    const events: AgentBoxEvent[] = [];
+    let skipped = 0;
+    for (const line of text.split("\n")) {
+      if (line.trim() === "") continue;
+      try {
+        events.push(JSON.parse(line) as AgentBoxEvent);
+      } catch {
+        skipped += 1;
+      }
+    }
+    if (skipped > 0) onBadLine?.(skipped);
+    return events;
   }
 }

@@ -65,6 +65,26 @@ describe("Git.diffForPrompt", () => {
     expect(diff).not.toContain("other.py");
   });
 
+  it("takes the paths literally, not as globs or pathspec magic", async () => {
+    const repo = tempDir("agentbox-git-");
+    git(repo, "init", "-q", "-b", "main");
+    for (const name of ["SYNTHETIC_*.txt", "SYNTHETIC_x.txt", ":(glob)y"]) {
+      writeFileSync(join(repo, name), "a\n");
+    }
+    git(repo, "add", ".");
+    git(repo, "commit", "-q", "-m", "base");
+    const base = git(repo, "rev-parse", "HEAD");
+    for (const name of ["SYNTHETIC_*.txt", "SYNTHETIC_x.txt", ":(glob)y"]) {
+      writeFileSync(join(repo, name), "b\n");
+    }
+    git(repo, "commit", "-q", "-am", "change");
+    const g = new Git(new ExecaRunner(), repo);
+    const star = await g.diffForPrompt(base, "HEAD", ["SYNTHETIC_*.txt"]);
+    expect(star).toContain("b/SYNTHETIC_*.txt");
+    expect(star).not.toContain("SYNTHETIC_x.txt");
+    expect(await g.diffForPrompt(base, "HEAD", [":(glob)y"])).toContain("b/:(glob)y");
+  });
+
   it("shows a renamed file in the working tree as a rename", async () => {
     const { repo, base } = renamedRepo();
     const diff = await new Git(new ExecaRunner(), repo).diffForPrompt(base, null, [

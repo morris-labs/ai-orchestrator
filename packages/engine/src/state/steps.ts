@@ -37,7 +37,6 @@ import {
   sweepPrompt,
 } from "../prompts/templates.js";
 import { parseDiff } from "../range/diff.js";
-import { readRepoFile } from "../range/repo-file.js";
 import {
   BaseWorktree,
   baseWorktreePath,
@@ -52,6 +51,7 @@ import {
   type CheckoutState,
 } from "./checkout.js";
 import { DecisionNeeded, RunCancelled, type RunContext } from "./context.js";
+import { snapshotTree } from "./tree-guard.js";
 import { planReviews, type ReviewTask } from "./profiles.js";
 
 /** Ledger follow-ups per reviewer before the engine accepts missing verdicts. */
@@ -138,9 +138,15 @@ export function reviewsWorktree(ctx: RunContext): boolean {
   return resolved && ctx.round <= 1;
 }
 
-/** The tip the diff ends at: the tip SHA, or the working tree (`null`). */
-function diffTip(ctx: RunContext): string | null {
-  return reviewsWorktree(ctx) ? null : (ctx.state.tipSha ?? "HEAD");
+/**
+ * The commit the diff ends at and files are read from: the tip SHA, or,
+ * when the round reviews the working tree, the snapshot commit of it. The
+ * snapshot holds the untracked files git doesn't ignore, which a diff to
+ * the working tree leaves out.
+ */
+async function diffTip(ctx: RunContext): Promise<string> {
+  if (reviewsWorktree(ctx)) return (await readOnlyState(ctx)).commit;
+  return ctx.state.tipSha ?? "HEAD";
 }
 
 /**
@@ -158,15 +164,17 @@ export function linesVersion(ctx: RunContext): { linesAt?: string } {
 const readOnlyStates = new WeakMap<RunContext, { key: string; state: Promise<CheckoutState> }>();
 
 /**
- * What a read-only call of the current stage looks at: the tip commit, or,
+ * What a read-only call of the current round looks at: the tip commit, or,
  * when the round reviews the working tree, a snapshot commit of it with
  * `HEAD` at the tip, so the uncommitted changes show as uncommitted. The
- * snapshot is taken once per stage, so every parallel call sees the same
- * files.
+ * snapshot is taken once per round and tip, so every stage and every
+ * parallel call sees the same files, and the read-only checkout isn't
+ * rebuilt for each stage. A fix that commits moves the tip, which takes a
+ * new snapshot.
  */
 function readOnlyState(ctx: RunContext): Promise<CheckoutState> {
   const worktree = reviewsWorktree(ctx);
-  const key = `${ctx.round}:${ctx.state.stage}:${ctx.state.tipSha ?? ""}:${worktree}`;
+  const key = `${ctx.round}:${ctx.state.tipSha ?? ""}:${worktree}`;
   const cached = readOnlyStates.get(ctx);
   if (cached?.key === key) return cached.state;
   const state = (async (): Promise<CheckoutState> => {
@@ -200,31 +208,23 @@ export async function readOnlyRepo(ctx: RunContext): Promise<string> {
 /** Computes the file groups for the current tip. */
 export async function computeGroups(ctx: RunContext): Promise<FileGroup[]> {
   const diffBase = ctx.eng.diffBaseSha ?? ctx.state.baseSha ?? "";
-  const text = await ctx.git.diff(diffBase, diffTip(ctx));
-  const files = parseDiff(text);
-  const tip = diffTip(ctx);
+  const tip = await diffTip(ctx);
+  const files = parseDiff(await ctx.git.diff(diffBase, tip));
   return groupFiles(files, {
     policy: ctx.policy,
-    readFile: (path) => (tip === null ? readWorkingFile(ctx, path) : ctx.git.show(tip, path)),
+    readFile: (path) => ctx.git.show(tip, path),
   });
-}
-
-/**
- * A working-tree file by a path from the diff or from a reviewer's finding,
- * confined to the repository (see `readRepoFile`).
- */
-function readWorkingFile(ctx: RunContext, path: string): Promise<string | null> {
-  return readRepoFile(ctx.state.request.repoPath, path);
 }
 
 /** Reads a file at the current tip, with a per-call cache. */
 function tipReader(ctx: RunContext): (path: string) => Promise<string | null> {
   const cache = new Map<string, Promise<string | null>>();
-  const tip = diffTip(ctx);
+  let tip: Promise<string> | null = null;
   return (path) => {
     let p = cache.get(path);
     if (!p) {
-      p = tip === null ? readWorkingFile(ctx, path) : ctx.git.show(tip, path);
+      tip ??= diffTip(ctx);
+      p = tip.then((rev) => ctx.git.show(rev, path));
       cache.set(path, p);
     }
     return p;
@@ -268,7 +268,7 @@ async function runReviewTask(
   const files = group ? group.files : [...new Set(groups.flatMap((g) => g.files))];
   const hunks: Hunk[] = group ? group.hunks : groups.flatMap((g) => g.hunks);
   const diffBase = ctx.eng.diffBaseSha ?? ctx.state.baseSha ?? "";
-  const diff = await ctx.git.diffForPrompt(diffBase, diffTip(ctx), files);
+  const diff = await ctx.git.diffForPrompt(diffBase, await diffTip(ctx), files);
   const repoPath = await readOnlyRepo(ctx);
   const prompt = finderPrompt({
     range: ctx.range(repoPath),
@@ -718,7 +718,14 @@ export async function verifyPending(ctx: RunContext, stageFile: string): Promise
     return result;
   });
   const done = results.filter((r): r is VerifyResult => r !== null);
-  await ctx.store.writeJson(stageFile, done);
+  // A resumed stage verifies only what is still pending, so the results
+  // from before the restart are kept in the stage file.
+  const earlier = (await ctx.store.readJson<VerifyResult[]>(stageFile)) ?? [];
+  const redone = new Set(done.map((r) => r.findingId));
+  await ctx.store.writeJson(stageFile, [
+    ...earlier.filter((r) => !redone.has(r.findingId)),
+    ...done,
+  ]);
   const confirmed = done.filter((r) => r.decision.verdict === "confirmed").length;
   await ctx.handoff(
     { stage: "verify", role: "disprover" },
@@ -755,7 +762,7 @@ export async function runSweep(
   const vendor =
     ctx.state.roles.reviewer.find((v) => v !== "claude") ?? ctx.state.roles.reviewer[0] ?? "codex";
   const diffBase = ctx.eng.diffBaseSha ?? ctx.state.baseSha ?? "";
-  const diff = await ctx.git.diffForPrompt(diffBase, diffTip(ctx));
+  const diff = await ctx.git.diffForPrompt(diffBase, await diffTip(ctx));
   const repoPath = await readOnlyRepo(ctx);
   const prompt = sweepPrompt({
     range: ctx.range(repoPath),
@@ -885,6 +892,14 @@ async function applyBatch(ctx: RunContext, batch: FixBatchRecord): Promise<void>
 }
 
 /**
+ * The uncommitted changes in the checkout under review, as sorted
+ * `git status` entries, without the run directory and Python bytecode.
+ */
+async function uncommittedStatus(ctx: RunContext): Promise<string[]> {
+  return (await snapshotTree(ctx.deps.runner, ctx.state.request.repoPath, [ctx.store.dir])).status;
+}
+
+/**
  * The fix stage: the fixer fixes confirmed findings in batches per group and
  * commits. The batch plan and each batch's outcome are saved as they happen,
  * so a resumed stage keeps the same batches and the commits each one made.
@@ -927,11 +942,12 @@ export async function runFix(
       // the fixer commits, but before the batch file is saved, then still
       // counts those commits as the batch's when the stage resumes.
       const startFile = ctx.store.roundFile(ctx.round, `${key}-start`);
-      let before = (await ctx.store.readJson<{ before: string }>(startFile))?.before;
-      if (!before) {
-        before = await ctx.git.head();
-        await ctx.store.writeJson(startFile, { before });
+      let start = await ctx.store.readJson<{ before: string; status?: string[] }>(startFile);
+      if (!start) {
+        start = { before: await ctx.git.head(), status: await uncommittedStatus(ctx) };
+        await ctx.store.writeJson(startFile, start);
       }
+      const before = start.before;
       const prompt = fixerPrompt({
         range: ctx.range(),
         findings,
@@ -955,6 +971,18 @@ export async function runFix(
       if (!(await ctx.git.ok(["merge-base", "--is-ancestor", before, after]))) {
         throw new Error(
           `The fixer rewrote history on ${branch}: ${before} is no longer an ancestor of ${after}.`,
+        );
+      }
+      // Edits the fixer didn't commit would reach the gate, which tests the
+      // checkout, but not the confirmer's diff or the push.
+      const was = new Set(start.status ?? []);
+      const leftover = (await uncommittedStatus(ctx)).filter((s) => !was.has(s));
+      if (leftover.length > 0) {
+        const shown = leftover.slice(0, 10).map((s) => s.slice(3));
+        throw new Error(
+          `The fixer left changes it didn't commit in ${ctx.state.request.repoPath}: ` +
+            `${shown.join(", ")}${leftover.length > 10 ? ", ..." : ""}. ` +
+            "Commit or discard them, then start the run again.",
         );
       }
       const commits = after === before ? [] : await ctx.git.commitsBetween(before, after);
@@ -1043,8 +1071,21 @@ export async function runConfirm(
   const file = ctx.store.roundFile(ctx.round, "confirm");
   const saved = await ctx.store.readJson<ConfirmRecord>(file);
   if (saved) return saved;
-  const fixed = ctx.findings.filter((f) => f.verdict === "confirmed" && f.fixCommit);
   const preFixSha = ctx.eng.preFixSha;
+  // The findings to confirm are chosen once and saved before any verdict
+  // changes: a stage that resumes after some verdicts were set would
+  // otherwise find nothing left to confirm and skip the confirmer's
+  // findings.
+  const targetsFile = ctx.store.roundFile(ctx.round, "confirm-targets");
+  let targets = await ctx.store.readJson<{ ids: string[] }>(targetsFile);
+  if (!targets) {
+    const ids = preFixSha
+      ? ctx.findings.filter((f) => f.verdict === "confirmed" && f.fixCommit).map((f) => f.id)
+      : [];
+    targets = { ids };
+    await ctx.store.writeJson(targetsFile, targets);
+  }
+  const fixed = targets.ids.flatMap((id) => ctx.findingById(id) ?? []);
   if (fixed.length === 0 || !preFixSha) {
     const empty: ConfirmRecord = { confirmer: null, fixedIds: [], incomplete: [], created: [] };
     await ctx.store.writeJson(file, empty);
@@ -1077,6 +1118,12 @@ export async function runConfirm(
   const incomplete = new Map(out.output.incomplete.map((i) => [i.id, i.reason]));
   const fixedIds: string[] = [];
   for (const f of fixed) {
+    // A finding whose verdict this stage already set before a restart.
+    if (f.verdict === "fixed") {
+      fixedIds.push(f.id);
+      continue;
+    }
+    if (f.verdict !== "confirmed" || !f.fixCommit) continue;
     const reason = incomplete.get(f.id);
     if (reason !== undefined) {
       await ctx.setVerdict(

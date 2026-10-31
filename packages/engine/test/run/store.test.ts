@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { appendFileSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { RoundSummary, RunState } from "@agentbox/contracts";
 import { describe, expect, it } from "vitest";
@@ -98,6 +98,19 @@ describe("RunStore", () => {
     expect(await store.loadEvents()).toEqual([]);
     expect(await listRunIds(root)).toEqual([RUN_ID]);
     expect(await listRunIds(join(root, "nothing"))).toEqual([]);
+  });
+
+  it("skips a torn line in events.jsonl instead of losing every event", async () => {
+    const root = tmp();
+    const store = new RunStore(root, RUN_ID);
+    const file = join(root, ".claude-box", "runs", RUN_ID, "events.jsonl");
+    await appendJsonLine(file, { type: "usage.sample", seq: 1 });
+    await appendJsonLine(file, { type: "usage.sample", seq: 2 });
+    appendFileSync(file, '{"type":"usage.sam');
+    const skipped: number[] = [];
+    const events = await store.loadEvents((n) => skipped.push(n));
+    expect(events.map((e) => (e as unknown as { seq: number }).seq)).toEqual([1, 2]);
+    expect(skipped).toEqual([1]);
   });
 
   it("refuses an invalid state", async () => {

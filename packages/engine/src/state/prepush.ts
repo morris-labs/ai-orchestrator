@@ -115,6 +115,20 @@ export async function rebaseBase(ctx: RunContext): Promise<void> {
 /** Opens a new round: applies pending changes, assigns roles, and groups the diff. */
 export async function startRound(ctx: RunContext): Promise<void> {
   if (ctx.eng.roundOpen) return;
+  // The round reviews HEAD of the checkout, which a person or the box's own
+  // session can move to another branch between rounds.
+  const tipRef = ctx.eng.tipRef;
+  if (tipRef && !ctx.state.request.readOnly) {
+    const current = await ctx.git.currentBranch();
+    if (current !== tipRef) {
+      throw new DecisionNeeded({
+        kind: "push_blocked",
+        findingIds: [],
+        options: ["resume", "cancel"],
+        message: `The run fixes ${tipRef}, but ${current ?? "a detached HEAD"} is checked out in ${ctx.state.request.repoPath}. Check out ${tipRef} and resume, or cancel.`,
+      });
+    }
+  }
   ctx.state.round += 1;
   const round = ctx.state.round;
   ctx.eng.roundStartedAt = ctx.nowIso();
@@ -283,6 +297,17 @@ export async function drivePrePush(ctx: RunContext): Promise<void> {
       case "find": {
         await startRound(ctx);
         const groups = (await ctx.store.loadGroups(ctx.round)) ?? [];
+        // A range with nothing to review, such as a tip equal to its base,
+        // finishes at once instead of spending reviewer calls on an empty diff.
+        if (groups.length === 0 && ctx.round === 1 && ctx.findings.length === 0) {
+          ctx.state.notices = [
+            ...(ctx.state.notices ?? []),
+            "The range has no changes to review, so the run reviewed nothing.",
+          ];
+          await endRound(ctx);
+          await finish(ctx, "clean");
+          return;
+        }
         await runFind(ctx, groups);
         await ctx.setStage("merge");
         break;

@@ -9,6 +9,7 @@ import {
   profileForProgram,
 } from "../../src/process/env.js";
 import { ProcessRunner, ShellRunner } from "../../src/range/exec.js";
+import { Git } from "../../src/range/git.js";
 import { VerifyOutputSchema } from "../../src/core.js";
 
 const BASE = {
@@ -104,9 +105,28 @@ describe("childEnv", () => {
   it("classifies names", () => {
     expect(isWithheld("MY_DB_PASSWORD", "untrusted")).toBe(true);
     expect(isWithheld("TOKENIZER_PATH", "untrusted")).toBe(false);
-    expect(profileForProgram("/usr/bin/git")).toBe("github");
     expect(profileForProgram("gh")).toBe("github");
     expect(profileForProgram("python3")).toBe("untrusted");
+  });
+
+  it("gives the GitHub token only to the git commands that talk to a remote", () => {
+    expect(profileForProgram("/usr/bin/git", ["push", "origin", "main"])).toBe("github");
+    expect(profileForProgram("git", ["-C", "/repo", "-c", "a=b", "fetch", "-q"])).toBe("github");
+    expect(profileForProgram("git", ["ls-remote", "origin"])).toBe("github");
+    expect(profileForProgram("git", ["rev-parse", "HEAD"])).toBe("untrusted");
+    expect(profileForProgram("git", ["-c", "core.hooksPath=/dev/null", "worktree", "add"])).toBe(
+      "untrusted",
+    );
+    // A path that names a network command isn't the subcommand.
+    expect(profileForProgram("git", ["-C", "push", "status"])).toBe("untrusted");
+    expect(profileForProgram("git")).toBe("untrusted");
+  });
+
+  it("passes the SSH agent's socket to git and gh only", () => {
+    const base = { SSH_AUTH_SOCK: "/tmp/ssh-SYNTHETIC/agent.1" };
+    expect(childEnv("github", {}, base).SSH_AUTH_SOCK).toBe(base.SSH_AUTH_SOCK);
+    expect(childEnv("untrusted", {}, base).SSH_AUTH_SOCK).toBeUndefined();
+    expect(childEnv("vendor:claude", {}, base).SSH_AUTH_SOCK).toBeUndefined();
   });
 });
 
@@ -138,6 +158,29 @@ describe("runners", () => {
     const r = await new ProcessRunner().run("env", [], { cwd: "/", envProfile: "github" });
     expect(r.stdout).not.toContain("AGENTBOX_ENGINE_TOKEN");
     expect(r.stdout).toContain("GH_TOKEN=gh-secret");
+  });
+
+  it("keeps the GitHub token from local git commands", async () => {
+    const calls: Array<{ args: readonly string[]; profile: string | undefined }> = [];
+    const recorder = {
+      run: async (_p: string, args: readonly string[], o: { envProfile?: string }) => {
+        calls.push({ args, profile: o.envProfile });
+        return { exitCode: 0, stdout: "abc\n", stderr: "", timedOut: false, notStarted: false };
+      },
+    };
+    const git = new Git(recorder as never, "/");
+    await git.revParse("HEAD");
+    await git.show("HEAD", "a.py");
+    expect(calls.map((c) => c.profile)).toEqual(["untrusted", "untrusted"]);
+    expect(calls.every((c) => c.args.join(" ").startsWith("-c core.hooksPath=/dev/null "))).toBe(
+      true,
+    );
+    // The default for a local command that bypasses `Git` is the same.
+    const env = await new ProcessRunner().run("env", [], {
+      cwd: "/",
+      envProfile: profileForProgram("git", ["status"]),
+    });
+    expect(env.stdout).not.toContain("gh-secret");
   });
 
   it("keeps the engine token from the API's runner", async () => {

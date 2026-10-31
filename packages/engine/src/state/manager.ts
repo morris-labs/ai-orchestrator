@@ -16,6 +16,9 @@ import {
   type TimedUsageSample,
   type Vendor,
 } from "@agentbox/contracts";
+import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   ACTIVE_RUN_STATUSES,
   EngineError,
@@ -34,7 +37,6 @@ import { GhCliClient } from "../postpush/github.js";
 import { parseDiff } from "../range/diff.js";
 import { ExecaRunner } from "../range/exec.js";
 import { Git, GitError } from "../range/git.js";
-import { readRepoFile } from "../range/repo-file.js";
 import { RangeError, resolveRange } from "../range/resolve.js";
 import { RunNotFoundError, RunStore, listRunIds } from "../run/store.js";
 import { RunController } from "./controller.js";
@@ -66,10 +68,6 @@ async function api<T>(work: () => Promise<T>): Promise<T> {
   }
 }
 
-function readWorkingFile(repoPath: string, path: string): Promise<string | null> {
-  return readRepoFile(repoPath, path);
-}
-
 function inWindow(time: string, filter: UsageFilter): boolean {
   const t = Date.parse(time);
   if (filter.since !== undefined && t < Date.parse(filter.since)) return false;
@@ -82,6 +80,8 @@ const SHUTDOWN_WAIT_MS = 5000;
 
 export class EngineRunManager implements RunManager {
   private readonly controllers = new Map<string, RunController>();
+  /** Runs whose torn `events.jsonl` is already logged, so each is logged once. */
+  private readonly tornEventLogs = new Set<string>();
   private readonly loading = new Map<string, Promise<RunController | null>>();
   private readonly engineDeps: EngineDeps;
 
@@ -274,12 +274,17 @@ export class EngineRunManager implements RunManager {
       );
       const withWorktree = request.includeWorktree && range.includeWorktree;
       const git = new Git(runner, request.repoPath);
-      const tip = withWorktree ? null : range.tipSha;
+      // A snapshot commit of the working tree, as the run reviews it, so
+      // untracked files count too.
+      const tip = withWorktree
+        ? await git.snapshotWorktree(
+            join(tmpdir(), `agentbox-index-preview-${process.pid}-${randomUUID()}`),
+          )
+        : range.tipSha;
       const files = parseDiff(await git.diff(range.diffBaseSha, tip));
       const groups = await groupFiles(files, {
         policy: await loadPolicy(this.location.projectRoot, this.location.policyPath),
-        readFile: (path) =>
-          tip === null ? readWorkingFile(request.repoPath, path) : git.show(tip, path),
+        readFile: (path) => git.show(tip, path),
       });
       return {
         baseSha: range.baseSha,
@@ -386,7 +391,15 @@ export class EngineRunManager implements RunManager {
     const fixCommit = finding.fixCommit;
     const fixDiff = fixCommit
       ? await quiet(() =>
-          git.run(["show", "--no-color", "--format=", fixCommit, ...(file ? ["--", file] : [])]),
+          // The path is reviewer output, so it is a literal path, not a pathspec.
+          git.run([
+            "--literal-pathspecs",
+            "show",
+            "--no-color",
+            "--format=",
+            fixCommit,
+            ...(file ? ["--", file] : []),
+          ]),
         )
       : null;
     return { finding, diff, fixDiff };
@@ -406,7 +419,14 @@ export class EngineRunManager implements RunManager {
     for (const id of await listRunIds(this.deps.projectRoot)) {
       let events;
       try {
-        events = await new RunStore(this.deps.projectRoot, id).loadEvents();
+        events = await new RunStore(this.deps.projectRoot, id).loadEvents((skipped) => {
+          if (this.tornEventLogs.has(id)) return;
+          this.tornEventLogs.add(id);
+          this.deps.log.warn("Skipped lines of a run's events.jsonl that aren't JSON", {
+            runId: id,
+            skipped,
+          });
+        });
       } catch (error) {
         this.deps.log.warn("Skipped a run whose events.jsonl can't be read", {
           runId: id,

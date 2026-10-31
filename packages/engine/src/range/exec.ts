@@ -41,7 +41,7 @@ export class ProcessRunner implements CommandRunner {
       args: [...args],
       cwd: options.cwd,
       env: options.env,
-      envProfile: options.envProfile ?? profileForProgram(program),
+      envProfile: options.envProfile ?? profileForProgram(program, args),
       input: options.input,
       timeoutMs: options.timeoutMs,
       signal: options.signal,

@@ -228,6 +228,41 @@ describe("run controls", () => {
     expect(state).toMatchObject({ status: "finished", stopReason: "clean" });
   });
 
+  it("finishes at once, without reviewer calls, when the range has no changes", async () => {
+    const repo = buildSampleRepo();
+    const scenario = new Scenario();
+    const { deps } = setup(scenario);
+    const run = await create(repo, deps, { base: "HEAD", profile: "balanced" });
+    await run.start();
+    const state = await run.settled();
+    expect(state).toMatchObject({ status: "finished", stopReason: "clean", round: 1 });
+    expect(state.notices).toEqual([expect.stringMatching(/^The range has no changes/)]);
+    expect(scenario.count("review")).toBe(0);
+  });
+
+  it("fails the run when the server refuses the disprover role", async () => {
+    const repo = buildSampleRepo();
+    const { deps } = setup(new Scenario());
+    const granting = deps.broker;
+    deps.broker = {
+      settle: granting.settle.bind(granting),
+      acquire: (req: LeaseRequest): Promise<LeaseResponse> =>
+        req.role === "disprover"
+          ? Promise.resolve({
+              decision: "deny",
+              leaseId: req.leaseId,
+              reason: "SYNTHETIC budget",
+              action: "fail_role",
+            })
+          : granting.acquire(req),
+    };
+    const run = await create(repo, deps);
+    await run.start();
+    const state = await run.settled();
+    expect(state).toMatchObject({ status: "failed", stopReason: "error", stage: "verify" });
+    expect(state.error).toMatch(/refused a disprover call .*SYNTHETIC budget/);
+  });
+
   it("stops after one attempt when the adapter says a retry fails the same way", async () => {
     const repo = buildSampleRepo();
     const scenario = new Scenario();

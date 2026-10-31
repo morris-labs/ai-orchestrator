@@ -406,6 +406,9 @@ export class RunController {
       }
     }
     ctx.state.decision = null;
+    // A pause asked for before the run stopped for this decision is
+    // answered by the decision; it must not pause the run right after.
+    ctx.requestResume();
     await ctx.persist();
     this.drive();
     return this.state;

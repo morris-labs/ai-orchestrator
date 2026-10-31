@@ -113,7 +113,10 @@ starts, and gives each program only its own:
 - A vendor CLI gets the names it signs in with, for example
   `ANTHROPIC_API_KEY` for Claude, `OPENAI_API_KEY` for Codex, and
   `COPILOT_GITHUB_TOKEN` for Copilot.
-- `git` and `gh` get `GH_TOKEN`, `GITHUB_TOKEN`, and their enterprise forms.
+- `gh` and the git commands that talk to a remote (`push`, `fetch`,
+  `ls-remote`) get `GH_TOKEN`, `GITHUB_TOKEN`, their enterprise forms, and
+  `SSH_AUTH_SOCK`. Local git commands get nothing, and no git command the
+  engine runs uses the repository's hooks.
 - Test and lint commands and other repository code get nothing. A policy
   test command that needs a secret must ask for it, for example with
   `agentbox-secret run DATABASE_URL -- npm test`.

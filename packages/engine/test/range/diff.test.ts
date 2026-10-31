@@ -115,3 +115,20 @@ describe("parseDiff quoted paths", () => {
     expect(unquote('"a\\\\b"')).toBe("a\\b");
   });
 });
+
+describe("parseDiff paths that hold ` b/`", () => {
+  it("takes the path of a binary or mode-only change from the middle of the line", () => {
+    const text = [
+      "diff --git a/x b/y.png b/x b/y.png",
+      "index 1111111..2222222 100644",
+      "Binary files a/x b/y.png and b/x b/y.png differ",
+      "diff --git a/x b/run.sh b/x b/run.sh",
+      "old mode 100644",
+      "new mode 100755",
+    ].join("\n");
+    expect(parseDiff(text).map((f) => [f.path, f.oldPath, f.binary])).toEqual([
+      ["x b/y.png", "x b/y.png", true],
+      ["x b/run.sh", "x b/run.sh", false],
+    ]);
+  });
+});

@@ -135,4 +135,24 @@ describe("resolveRange", () => {
       code: "no_pr",
     });
   });
+
+  it("refuses a tip or base that gh or git would read as an option", async () => {
+    const selectors: Array<number | string> = [];
+    const gh = {
+      viewPr: async (_repo: string, selector: number | string) => {
+        selectors.push(selector);
+        return null;
+      },
+    } as unknown as GitHubClient;
+    for (const extra of [
+      { base: "pr", tip: "--repo=SYNTHETIC/other" },
+      { base: "pr", tip: "--web" },
+      { base: "--output=x" },
+    ]) {
+      await expect(resolveRange(runner, input(repo, extra), gh)).rejects.toMatchObject({
+        code: "bad_ref",
+      });
+    }
+    expect(selectors).toEqual([]);
+  });
 });

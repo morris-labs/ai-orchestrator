@@ -78,6 +78,29 @@ describe("an oscillation in the last round", () => {
   });
 });
 
+describe("a later round", () => {
+  it("asks a person when another branch is checked out instead of reviewing it", async () => {
+    const { execFileSync } = await import("node:child_process");
+    const { startRound } = await import("../../src/state/prepush.js");
+    const { ctx, repo } = await makeRun();
+    const tipRef = ctx.eng.tipRef;
+    expect(tipRef).toBeTruthy();
+    ctx.state.round = 1;
+    ctx.eng.roundOpen = false;
+    execFileSync("git", ["checkout", "-q", "-b", "SYNTHETIC-other"], { cwd: repo });
+    await expect(startRound(ctx)).rejects.toMatchObject({
+      decision: expect.objectContaining({
+        kind: "push_blocked",
+        message: expect.stringContaining(`but SYNTHETIC-other is checked out`),
+      }),
+    });
+    expect(ctx.state.round).toBe(1);
+    execFileSync("git", ["checkout", "-q", tipRef as string], { cwd: repo });
+    await startRound(ctx);
+    expect(ctx.state.round).toBe(2);
+  });
+});
+
 describe("working-tree inclusion", () => {
   it("follows range resolution, not the request flag", async () => {
     const { execFileSync } = await import("node:child_process");
@@ -97,5 +120,33 @@ describe("working-tree inclusion", () => {
     expect(reviewsWorktree(ctx)).toBe(false);
     const files = (await computeGroups(ctx)).flatMap((g) => g.files);
     expect(files).not.toContain("lint.py");
+  });
+
+  it("reviews untracked files too, from one snapshot per round", async () => {
+    const { writeFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const { vi } = await import("vitest");
+    const { buildSampleRepo } = await import("./scenario.js");
+    const { computeGroups, readOnlyRepo, reviewsWorktree } =
+      await import("../../src/state/steps.js");
+    const repo = buildSampleRepo();
+    writeFileSync(join(repo, "SYNTHETIC_untracked.py"), "def f():\n    return 1\n");
+    const { ctx } = await makeRun({ repo, request: { includeWorktree: true } });
+    ctx.state.round = 1;
+    expect(reviewsWorktree(ctx)).toBe(true);
+    const snapshots = vi.spyOn(ctx.git, "snapshotWorktree");
+    ctx.state.stage = "find";
+    const groups = await computeGroups(ctx);
+    const files = groups.flatMap((g) => g.files);
+    expect(files).toContain("SYNTHETIC_untracked.py");
+    expect(groups.flatMap((g) => g.hunks).some((h) => h.file === "SYNTHETIC_untracked.py")).toBe(
+      true,
+    );
+    const first = await readOnlyRepo(ctx);
+    ctx.state.stage = "verify";
+    expect(await readOnlyRepo(ctx)).toBe(first);
+    ctx.state.stage = "sweep";
+    await computeGroups(ctx);
+    expect(snapshots).toHaveBeenCalledTimes(1);
   });
 });

@@ -78,6 +78,22 @@ function stripPrefix(path: string): string | null {
   return p.replace(/^[ab]\//, "");
 }
 
+/**
+ * The path of a `diff --git a/P b/P` line whose two sides are the same
+ * unquoted path, or `null` when they differ. Splitting such a line in the
+ * middle is right even when `P` itself holds ` b/`, which a pattern can't
+ * tell apart; a rename's real paths come from `rename from` and `rename to`.
+ */
+function samePathOf(line: string): string | null {
+  const rest = line.slice("diff --git ".length);
+  if (!rest.startsWith("a/")) return null;
+  const len = (rest.length - "a/ b/".length) / 2;
+  if (!Number.isInteger(len) || len <= 0) return null;
+  const left = rest.slice(2, 2 + len);
+  if (rest.slice(2 + len, 2 + len + 3) !== " b/") return null;
+  return rest.slice(2 + len + 3) === left ? left : null;
+}
+
 /** Parses a unified diff. Context lines are tolerated but don't count as changes. */
 export function parseDiff(text: string): DiffFile[] {
   const files: DiffFile[] = [];
@@ -87,10 +103,11 @@ export function parseDiff(text: string): DiffFile[] {
   for (const line of text.split("\n")) {
     if (line.startsWith("diff --git ")) {
       // Each side is a plain `a/PATH` or a quoted `"a/PATH"`.
-      const m = DIFF_GIT_RE.exec(line);
+      const same = samePathOf(line);
+      const m = same === null ? DIFF_GIT_RE.exec(line) : null;
       file = {
-        path: (m?.[2] && stripPrefix(m[2])) ?? "",
-        oldPath: (m?.[1] && stripPrefix(m[1])) ?? null,
+        path: same ?? ((m?.[2] && stripPrefix(m[2])) || ""),
+        oldPath: same ?? ((m?.[1] && stripPrefix(m[1])) || null),
         status: "modified",
         binary: false,
         added: 0,

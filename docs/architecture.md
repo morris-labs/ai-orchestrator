@@ -183,7 +183,8 @@ The protocol follows these rules:
    names the requested vendor.
 1. On `pause`, the engine asks again at `resumeAt`. On `deny`, the engine
    pauses the run with a ceiling decision, or fails that role's call when
-   `action` is `fail_role`.
+   `action` is `fail_role`. A failed call fails the run, as a call that
+   fails after its retry does; starting the run again retries the stage.
 1. After the call, the engine emits a `lease.settled` event with the actual
    usage, which the server records against the vendor's account.
 

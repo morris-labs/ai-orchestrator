@@ -26,7 +26,8 @@ import type { Vendor } from "@agentbox/contracts";
  * Who the child is:
  *
  * - `vendor:<name>`: a vendor CLI; keeps that vendor's credentials only.
- * - `github`: `git` and `gh`; keeps the GitHub token for pushes and API calls.
+ * - `github`: `gh` and the git commands that talk to a remote; keeps the
+ *   GitHub token for pushes and API calls, and the SSH agent's socket.
  * - `untrusted`: the policy's test and lint commands, reproduction scripts,
  *   and anything else that runs code from the reviewed repository; inherits
  *   no credentials. It can still read them elsewhere as the same user (see
@@ -97,6 +98,9 @@ export function wantsCredential(name: string, profile: EnvProfile): boolean {
 export function isWithheld(name: string, profile: EnvProfile): boolean {
   if (ENGINE_PREFIX.test(name)) return true;
   if (kept(profile).some((re) => re.test(name))) return false;
+  // The SSH agent's socket isn't a secret, but it lets a process sign in
+  // with the agent's keys, so only `git` and `gh` get it, for an SSH remote.
+  if (profile === "github" && name === "SSH_AUTH_SOCK") return false;
   if (SECRET_NAME.test(name)) return true;
   // Vendor settings that aren't secret, such as `ANTHROPIC_BASE_URL`, still
   // aren't another child's business.
@@ -190,8 +194,44 @@ export function copilotTokenProblem(
   );
 }
 
-/** The profile for a program run without a shell: `git` and `gh` get GitHub access. */
-export function profileForProgram(program: string): EnvProfile {
+/** The git subcommands that talk to a remote and so need the GitHub token. */
+const NETWORK_GIT_COMMANDS = new Set(["push", "fetch", "pull", "ls-remote", "clone"]);
+
+/** The git options before the subcommand that take their value as the next argument. */
+const GIT_OPTIONS_WITH_VALUE = new Set([
+  "-C",
+  "-c",
+  "--git-dir",
+  "--work-tree",
+  "--namespace",
+  "--config-env",
+]);
+
+/** The subcommand of a git command line, or `null` when it has none. */
+export function gitSubcommand(args: readonly string[]): string | null {
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i] ?? "";
+    if (GIT_OPTIONS_WITH_VALUE.has(arg)) {
+      i += 1;
+      continue;
+    }
+    if (arg.startsWith("-")) continue;
+    return arg;
+  }
+  return null;
+}
+
+/**
+ * The profile for a program run without a shell. `gh` and the git commands
+ * that talk to a remote (`push`, `fetch`, `pull`, `ls-remote`, `clone`) get
+ * GitHub access. Every other git command, such as `status`, `show`, or
+ * `worktree add`, gets none: it doesn't need the token, and it can run code
+ * from the repository through hooks and filters.
+ */
+export function profileForProgram(program: string, args: readonly string[] = []): EnvProfile {
   const name = program.split("/").pop() ?? program;
-  return name === "git" || name === "gh" ? "github" : "untrusted";
+  if (name === "gh") return "github";
+  if (name !== "git") return "untrusted";
+  const sub = gitSubcommand(args);
+  return sub !== null && NETWORK_GIT_COMMANDS.has(sub) ? "github" : "untrusted";
 }

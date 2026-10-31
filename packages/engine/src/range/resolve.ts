@@ -58,12 +58,24 @@ function isEngineStatusLine(line: string): boolean {
     .every((p) => /(^|\/)\.claude-box\//.test(p.replace(/^"/, "")));
 }
 
+/**
+ * Refuses a ref that starts with `-`. No branch, tag, or commit name can,
+ * and `gh` or `git` would read one as an option, such as `--web`.
+ */
+function refuseOptionLike(what: "base" | "tip", ref: string): void {
+  if (ref.startsWith("-")) {
+    throw new RangeError("bad_ref", `The ${what} ${ref} starts with "-", so it isn't a ref.`);
+  }
+}
+
 /** Resolves `base` to a ref, reading the pull request's base branch for `pr`. */
 export async function resolveBaseRef(
   git: Git,
   input: Pick<RangeInput, "base" | "tip" | "prNumber" | "repoPath">,
   github?: GitHubClient,
 ): Promise<string> {
+  refuseOptionLike("base", input.base);
+  if (input.tip !== undefined) refuseOptionLike("tip", input.tip);
   if (input.base !== "pr") return input.base;
   if (!github)
     throw new RangeError("no_pr", "The base `pr` needs the gh CLI, which isn't configured.");

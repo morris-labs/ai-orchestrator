@@ -78,6 +78,10 @@ describe("profiles", () => {
     });
   });
 
+  it("plans no review of an empty diff", () => {
+    expect(planReviews(["claude", "codex", "copilot"], [], "balanced")).toEqual([]);
+  });
+
   it("plans a whole-diff Copilot review, two focused reviewers on major groups, and one on minor groups", () => {
     const groups = [group("G01", "major"), group("G02", "minor"), group("G03", "minor")];
     const offload = planReviews(["codex", "copilot"], groups, "offload");

@@ -287,6 +287,22 @@ describe("leases", () => {
     expect(events.ofType("agent.started")[0]?.leaseId).toBe("L-reissued");
   });
 
+  it("saves the lease counter before it asks, so a restart never reuses a lease id", async () => {
+    const asked: string[] = [];
+    const broker: LeaseBroker = {
+      acquire: async (req) => {
+        asked.push(req.leaseId);
+        // The engine stops while the request is out.
+        throw new Error("SYNTHETIC engine stop");
+      },
+      settle: () => undefined,
+    };
+    const { ctx } = await makeRun({ adapters: { codex: answering("codex") }, broker });
+    await expect(ctx.acquireLease("codex", "reviewer", 1)).rejects.toThrow("SYNTHETIC");
+    expect(asked).toEqual([`${ctx.state.id}-L1`]);
+    expect((await ctx.store.loadEngineState()).counters.lease).toBe(1);
+  });
+
   it("lets a run waiting for a lease be cancelled", async () => {
     const log = { debug() {}, info() {}, warn() {}, error() {} };
     const broker = new EngineLeaseBroker({ log });

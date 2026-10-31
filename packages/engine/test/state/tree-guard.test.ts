@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ProcessRunner } from "../../src/range/exec.js";
@@ -193,6 +193,34 @@ describe("TreeGuard", () => {
 });
 
 describe("EngineCheckout", () => {
+  it("never runs the repository's hooks, which can come from the commit under review", async () => {
+    const dir = repo();
+    const marker = join(tempDir("tree-guard-hook-"), "SYNTHETIC_hook_ran");
+    mkdirSync(join(dir, ".husky"));
+    writeFileSync(join(dir, ".husky", "post-checkout"), `#!/bin/sh\nenv > '${marker}'\n`, {
+      mode: 0o755,
+    });
+    const run = (...args: string[]) =>
+      execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.com", ...args], {
+        cwd: dir,
+      });
+    run("add", ".husky");
+    run("commit", "-q", "-m", "hooks");
+    run("config", "core.hooksPath", ".husky");
+    // The hook runs for a plain git checkout, so the test can see it.
+    run("checkout", "-q", "--detach");
+    expect(existsSync(marker)).toBe(true);
+    rmSync(marker);
+
+    const git = new Git(runner, dir);
+    const head = await git.head();
+    const checkout = new EngineCheckout(git, join(tempDir("tree-guard-wt-"), "tip"));
+    await checkout.ensure({ commit: head, head });
+    expect(await checkout.reset()).toBe(true);
+    await checkout.dispose();
+    expect(existsSync(marker)).toBe(false);
+  });
+
   it("shows a snapshot's uncommitted changes as uncommitted and leaves the source alone", async () => {
     const dir = repo();
     writeFileSync(join(dir, "a.py"), "print(2)\n");

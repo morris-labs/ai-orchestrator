@@ -21,7 +21,9 @@ import {
   verifyPending,
 } from "../state/steps.js";
 import { titleSimilarity } from "../merge/fingerprint.js";
+import { NO_HOOKS } from "../range/git.js";
 import {
+  GhError,
   isCopilotLogin,
   type CheckRun,
   type GitHubClient,
@@ -156,13 +158,17 @@ async function stagePush(ctx: RunContext, requestReview = true): Promise<PrInfo>
   }
   // Settled before the push, so nothing after it can fail on the base.
   const base = pr ? null : await prBase(ctx, defaultBranch, branch);
-  // Never force: a rejected push means someone else moved the branch.
+  // Never force: a rejected push means someone else moved the branch. The
+  // push runs without the repository's hooks: a `pre-push` hook can come
+  // from the reviewed commits, and the push holds the GitHub token. The gate
+  // has already run the policy's tests.
   const push = await ctx.deps.runner.run(
     "git",
-    ["push", "origin", `refs/heads/${branch}:refs/heads/${branch}`],
+    [...NO_HOOKS, "push", "origin", `refs/heads/${branch}:refs/heads/${branch}`],
     {
       cwd: repo,
       timeoutMs: 300_000,
+      envProfile: "github",
     },
   );
   if (push.exitCode !== 0)
@@ -184,16 +190,15 @@ async function stagePush(ctx: RunContext, requestReview = true): Promise<PrInfo>
   ctx.eng.pushedHead = head;
   let dropped = false;
   if (requestReview && ctx.eng.reviewRequestedFor !== head) {
-    dropped = !(await requestCopilotReview(ctx, gh, pr.number));
+    const refusal = await requestCopilotReview(ctx, gh, pr.number);
+    dropped = refusal !== null;
     ctx.eng.reviewRequestedFor = head;
     ctx.eng.reviewDroppedFor = dropped ? head : null;
-    if (dropped) {
+    if (refusal !== null) {
       ctx.state.notices = [
         ...(ctx.state.notices ?? []),
         `GitHub didn't take the Copilot review request for pull request #${pr.number} at ${head.slice(0, 12)}: ` +
-          `the response lists no Copilot reviewer, and the timeline has no review_requested or copilot_work_started event ` +
-          `${(REVIEW_CHECK_ATTEMPTS * REVIEW_CHECK_INTERVAL_MS) / 1000} seconds later. ` +
-          "The account's Copilot review allowance might be used up. The loop doesn't wait for a Copilot review of this commit.",
+          `${refusal} The loop doesn't wait for a Copilot review of this commit.`,
       ];
     }
   }
@@ -212,31 +217,48 @@ async function stagePush(ctx: RunContext, requestReview = true): Promise<PrInfo>
 }
 
 /**
- * Requests a Copilot review and resolves to whether GitHub took it. GitHub
- * can answer `201` and still drop the request, such as when the account's
- * Copilot review allowance is used up: the response then lists no Copilot
- * reviewer, and the timeline gets no event. A client that can't read the
- * timeline gets the benefit of the doubt.
+ * Requests a Copilot review and resolves to `null` when GitHub took it, or
+ * to the reason it didn't, as a sentence. GitHub can refuse the request
+ * outright, such as with a 422 for a repository without Copilot code
+ * review. It can also answer `201` and still drop the request, such as when
+ * the account's Copilot review allowance is used up: the response then lists
+ * no Copilot reviewer, and the timeline gets no event. A client that can't
+ * read the timeline gets the benefit of the doubt.
  */
 async function requestCopilotReview(
   ctx: RunContext,
   gh: GitHubClient,
   pr: number,
-): Promise<boolean> {
+): Promise<string | null> {
   const repo = ctx.state.request.repoPath;
   const before = gh.copilotReviewEvents ? await gh.copilotReviewEvents(repo, pr) : null;
-  const result = await gh.requestCopilotReview(repo, pr);
-  if (result.requestedReviewers.some(isCopilotLogin)) return true;
-  if (before === null || !gh.copilotReviewEvents) return true;
+  let result: Awaited<ReturnType<GitHubClient["requestCopilotReview"]>>;
+  try {
+    result = await gh.requestCopilotReview(repo, pr);
+  } catch (error) {
+    if (!(error instanceof GhError)) throw error;
+    ctx.deps.log?.warn("GitHub refused the Copilot review request", {
+      runId: ctx.state.id,
+      pr,
+      error: error.message,
+    });
+    return `the request failed: ${error.stderr.trim() || `gh exited with code ${error.exitCode}`}.`;
+  }
+  if (result.requestedReviewers.some(isCopilotLogin)) return null;
+  if (before === null || !gh.copilotReviewEvents) return null;
   for (let attempt = 0; attempt < REVIEW_CHECK_ATTEMPTS; attempt++) {
     try {
       await ctx.clock.sleep(REVIEW_CHECK_INTERVAL_MS, ctx.signal);
     } catch {
       await ctx.checkpoint();
     }
-    if ((await gh.copilotReviewEvents(repo, pr)) > before) return true;
+    if ((await gh.copilotReviewEvents(repo, pr)) > before) return null;
   }
-  return false;
+  return (
+    "the response lists no Copilot reviewer, and the timeline has no review_requested or copilot_work_started event " +
+    `${(REVIEW_CHECK_ATTEMPTS * REVIEW_CHECK_INTERVAL_MS) / 1000} seconds later. ` +
+    "The account's Copilot review allowance might be used up."
+  );
 }
 
 interface PollResult {
@@ -381,6 +403,68 @@ async function stageImport(ctx: RunContext, poll: PollResult): Promise<ImportRec
   const file = ctx.store.roundFile(ctx.round, "import");
   const saved = await ctx.store.readJson<ImportRecord>(file);
   if (saved) return saved;
+  // The import is saved in one commit file before it changes the run, the
+  // way `mergeInto` saves a merge: a stage that resumes after the findings
+  // were saved, but before `import.json`, applies that file again instead
+  // of finding every thread already known and importing nothing.
+  const commitFile = ctx.store.roundFile(ctx.round, "import-commit");
+  let commit = await ctx.store.readJson<ImportCommit>(commitFile);
+  if (!commit) {
+    commit = await collectImport(ctx, poll);
+    await ctx.store.writeJson(commitFile, commit);
+  }
+  const { imported, oscillations } = commit;
+  if (!ctx.eng.appliedMerges.includes(commitFile)) {
+    const have = new Set(ctx.findings.map((f) => f.id));
+    ctx.findings.push(...imported.filter((f) => !have.has(f.id)));
+    ctx.eng.importedRefs = commit.importedRefs;
+    ctx.eng.counters.finding = Math.max(ctx.eng.counters.finding, commit.findingCounter);
+    await ctx.persist();
+    for (const f of imported) {
+      const live = ctx.findingById(f.id);
+      if (live) await ctx.announceFinding(live);
+    }
+    ctx.eng.appliedMerges = [...ctx.eng.appliedMerges, commitFile];
+    await ctx.persist();
+  }
+  const record: ImportRecord = {
+    imported: imported.map((f) => f.id),
+    nonCode: commit.nonCode,
+    failingCode: commit.failingCode,
+    checksPassed: poll.checks.every((c) => c.bucket !== "fail" && c.bucket !== "pending"),
+  };
+  await ctx.store.writeJson(file, record);
+  await ctx.handoff(
+    { stage: "import", vendor: "copilot", role: "reviewer" },
+    { stage: "verify", role: "disprover" },
+    "findings",
+    imported.length,
+    file,
+  );
+  if (oscillations.length > 0) {
+    await ctx.setStage("verify");
+    throw new DecisionNeeded({
+      kind: "oscillation",
+      findingIds: oscillations.flatMap((o) => [o.fixedId, o.returnedId]),
+      options: ["resume", "resume_waive", "cancel"],
+      message: "A pull request comment raises a finding that an earlier fix closed.",
+    });
+  }
+  return record;
+}
+
+/** One import, as `stageImport` saves it before it changes the run. */
+interface ImportCommit {
+  imported: Finding[];
+  importedRefs: string[];
+  findingCounter: number;
+  nonCode: ImportRecord["nonCode"];
+  failingCode: string[];
+  oscillations: Array<{ fixedId: string; returnedId: string }>;
+}
+
+/** Reads the threads and failing checks to import, without changing the run's findings. */
+async function collectImport(ctx: RunContext, poll: PollResult): Promise<ImportCommit> {
   const gh = github(ctx);
   const repo = ctx.state.request.repoPath;
   const pr = ctx.state.prNumber as number;
@@ -421,7 +505,6 @@ async function stageImport(ctx: RunContext, poll: PollResult): Promise<ImportRec
     known.add(ref);
     imported.push(checkFinding(ctx, check, log, head));
   }
-  ctx.eng.importedRefs = [...known];
 
   // A comment that matches a fixed finding is an oscillation.
   const oscillations: Array<{ fixedId: string; returnedId: string }> = [];
@@ -441,34 +524,15 @@ async function stageImport(ctx: RunContext, poll: PollResult): Promise<ImportRec
       actor: { kind: "engine", role: "import" },
       round: ctx.round,
     });
-    ctx.findings.push(f);
   }
-  await ctx.persist();
-  for (const f of imported) await ctx.announceFinding(f);
-  const record: ImportRecord = {
-    imported: imported.map((f) => f.id),
+  return {
+    imported,
+    importedRefs: [...known],
+    findingCounter: ctx.eng.counters.finding,
     nonCode,
     failingCode,
-    checksPassed: poll.checks.every((c) => c.bucket !== "fail" && c.bucket !== "pending"),
+    oscillations,
   };
-  await ctx.store.writeJson(file, record);
-  await ctx.handoff(
-    { stage: "import", vendor: "copilot", role: "reviewer" },
-    { stage: "verify", role: "disprover" },
-    "findings",
-    imported.length,
-    file,
-  );
-  if (oscillations.length > 0) {
-    await ctx.setStage("verify");
-    throw new DecisionNeeded({
-      kind: "oscillation",
-      findingIds: oscillations.flatMap((o) => [o.fixedId, o.returnedId]),
-      options: ["resume", "resume_waive", "cancel"],
-      message: "A pull request comment raises a finding that an earlier fix closed.",
-    });
-  }
-  return record;
 }
 
 /**
@@ -577,9 +641,26 @@ export async function drivePostPush(ctx: RunContext): Promise<void> {
           (await ctx.store.readJson<PollResult>(ctx.store.roundFile(ctx.round, "poll"))) ??
           (await stagePoll(ctx));
         const record = await stageImport(ctx, poll);
-        const actionable = record.imported.length > 0;
+        // An imported finding still pending, such as from an import that a
+        // restart cut short before it saved its record, needs the round too.
+        const actionable =
+          record.imported.length > 0 ||
+          ctx.findings.some(
+            (f) =>
+              f.verdict === "pending" && (f.origin === "pr_comment" || f.origin === "check_run"),
+          );
         if (!actionable) {
           await closePostPushRound(ctx);
+          // A clean pull request needs the review the poll waited for.
+          if (poll.timedOut && !poll.reviewed && !poll.reviewDropped) {
+            const head = (ctx.state.tipSha ?? "").slice(0, 12);
+            throw new DecisionNeeded({
+              kind: "gate_failed",
+              findingIds: [],
+              options: ["resume", "cancel"],
+              message: `Copilot didn't review ${head || "the pull request's head"} within ${POLL_TIMEOUT_MS / 3_600_000} hours. Resume to poll again, or cancel.`,
+            });
+          }
           if (record.failingCode.length === 0 && record.checksPassed) {
             await finishPostPush(ctx, "pr_clean");
             return;

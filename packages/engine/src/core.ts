@@ -46,8 +46,9 @@ export interface CommandOptions {
   timeoutMs?: number;
   env?: Record<string, string>;
   /**
-   * Which of the engine's variables the process inherits. Absent: `github`
-   * for `git` and `gh`, `untrusted` for everything else.
+   * Which of the engine's variables the process inherits. Absent: the choice
+   * of `profileForProgram`: `github` for `gh` and for the git commands that
+   * talk to a remote, `untrusted` for everything else.
    */
   envProfile?: EnvProfile;
   /** Written to the process's standard input. */
