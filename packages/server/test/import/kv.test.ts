@@ -19,6 +19,13 @@ describe("parseKv", () => {
     expect(kvLast(kv, "missing")).toBeUndefined();
   });
 
+  it("drops a leading byte order mark", () => {
+    expect(parseKv("\uFEFFtarget_dir=/x\nyolo=1\n")).toEqual([
+      ["target_dir", "/x"],
+      ["yolo", "1"],
+    ]);
+  });
+
   it("reads a file", () => {
     const dir = tempDir("kv-");
     const file = path.join(dir, "rec");

@@ -4,11 +4,15 @@ import fs from "node:fs";
 
 /**
  * Parses `key=value` lines in order. Each line splits at its first `=`; a
- * line without one is skipped, as the Qt app did. Keys may repeat.
+ * line without one is skipped, as the Qt app did. Keys may repeat. A
+ * leading byte order mark is dropped.
  */
 export function parseKv(text: string): [string, string][] {
   const out: [string, string][] = [];
-  for (const raw of text.split("\n")) {
+  // Qt's QTextStream skipped a UTF-8 byte order mark; without that, an
+  // editor's BOM would end up in the first key.
+  const body = text.startsWith("\uFEFF") ? text.slice(1) : text;
+  for (const raw of body.split("\n")) {
     const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
     const eq = line.indexOf("=");
     if (eq < 0) continue;
