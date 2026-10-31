@@ -38,4 +38,15 @@ export class CpuTracker {
   forget(id: string): void {
     this.previous.delete(id);
   }
+
+  /** Drops the baselines of every container not in `ids`, such as removed ones. */
+  retain(ids: Iterable<string>): void {
+    const keep = new Set(ids);
+    for (const id of [...this.previous.keys()]) if (!keep.has(id)) this.previous.delete(id);
+  }
+
+  /** How many baselines it holds. */
+  get size(): number {
+    return this.previous.size;
+  }
 }

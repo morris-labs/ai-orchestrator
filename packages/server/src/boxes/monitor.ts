@@ -194,9 +194,12 @@ export class ContainerMonitor extends EventEmitter {
         }
       }
       if (sampleStats) {
-        for (const c of containers.filter((x) => x.state === "running")) {
+        const runningContainers = containers.filter((x) => x.state === "running");
+        for (const c of runningContainers) {
           await this.sample(c);
         }
+        // A container that left the list entirely is never named above.
+        this.cpu.retain(runningContainers.map((c) => c.name));
       }
     }
 

@@ -61,6 +61,8 @@ const DEFAULT_BACKOFF = [500, 1000, 2000, 5000, 10_000, 30_000];
 
 export class EngineClient {
   private ws: WebSocket | null = null;
+  /** Sockets closed after a failed relay; their remaining event frames are dropped. */
+  private readonly broken = new WeakSet<WebSocket>();
   private stopped = true;
   private attempt = 0;
   private timer: NodeJS.Timeout | null = null;
@@ -171,7 +173,18 @@ export class EngineClient {
       );
     }
     const text = await res.text();
-    const json: unknown = text === "" ? undefined : JSON.parse(text);
+    let json: unknown;
+    try {
+      json = text === "" ? undefined : JSON.parse(text);
+    } catch {
+      // A proxy or crash page (HTML, a plain-text 502) is not the engine's API.
+      throw new ApiError(
+        "internal",
+        `The engine answered ${res.status} with a body that isn't JSON.`,
+        undefined,
+        502,
+      );
+    }
     if (!res.ok) {
       const parsed = ApiErrorSchema.safeParse(json);
       if (parsed.success) {
@@ -301,18 +314,36 @@ export class EngineClient {
           );
         }
       } catch (err) {
-        this.options.log?.(`Lease ${request.leaseId} failed: ${(err as Error).message}`);
+        const message = (err as Error).message;
+        this.options.log?.(`Lease ${request.leaseId} failed: ${message}`);
+        // Without an answer the engine's call waits for its own timeout, so
+        // the failure pauses the run instead.
+        if (ws.readyState === WebSocket.OPEN) {
+          const response: LeaseResponse = {
+            decision: "deny",
+            leaseId: request.leaseId,
+            reason: `The server could not decide the lease: ${message}`,
+            action: "pause",
+          };
+          ws.send(
+            JSON.stringify(LeaseResponseFrameSchema.parse({ type: "lease.response", response })),
+          );
+        }
       }
       return;
     }
-    // Relay first: the cursor moves past an event only once the hub has it,
-    // so a reconnect replays an event whose relay failed.
+    if (this.broken.has(ws)) return;
+    // Relay first: the cursor moves past an event only once the hub has it.
+    // After a failed relay, the socket is closed and later events on it are
+    // dropped, so the reconnect replays from the last relayed event.
     try {
       this.options.onEvent(frame);
     } catch (err) {
       this.options.log?.(
         `Engine ${this.options.endpoint.container} event ${frame.seq} failed to relay: ${(err as Error).message}`,
       );
+      this.broken.add(ws);
+      ws.terminate();
       return;
     }
     this.options.cursor.set(frame.streamId, frame.seq);

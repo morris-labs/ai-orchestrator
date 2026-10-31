@@ -21,6 +21,24 @@ import { CpuTracker } from "../../src/docker/stats.js";
 import { tempDir } from "../tmp.js";
 
 describe("CpuTracker", () => {
+  it("drops the baselines of containers that are gone", () => {
+    const t = new CpuTracker();
+    const s = {
+      onlineCpus: 1,
+      memUsage: 1,
+      memInactiveFile: 0,
+      memLimit: 1,
+      cpuTotalUsage: 1,
+      systemCpuUsage: 1,
+    };
+    t.update("a", s);
+    t.update("b", s);
+    t.retain(["b"]);
+    expect(t.size).toBe(1);
+    expect(t.update("a", { ...s, cpuTotalUsage: 2, systemCpuUsage: 2 }).cpuPercent).toBeNull();
+    expect(t.update("b", { ...s, cpuTotalUsage: 2, systemCpuUsage: 2 }).cpuPercent).not.toBeNull();
+  });
+
   it("computes docker's CPU formula across two samples and memory without cache", () => {
     const t = new CpuTracker();
     const base = { onlineCpus: 4, memUsage: 500, memInactiveFile: 100, memLimit: 1000 };

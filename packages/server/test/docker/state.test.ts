@@ -45,6 +45,17 @@ describe("keeper state", () => {
     expect(fs.existsSync(stateFile(e, "c1"))).toBe(false);
   });
 
+  it("removes a directory left at the sessions path without following links", () => {
+    const e = env();
+    const outside = tempDir("agentbox-outside-");
+    fs.writeFileSync(path.join(outside, "keep"), "x");
+    fs.mkdirSync(stateFile(e, "c1"), { recursive: true });
+    fs.symlinkSync(outside, path.join(stateFile(e, "c1"), "link"));
+    prepareStateDir(e, "c1", "/run/claude-box");
+    expect(fs.existsSync(stateFile(e, "c1"))).toBe(false);
+    expect(fs.existsSync(path.join(outside, "keep"))).toBe(true);
+  });
+
   it("records mounts", () => {
     const e = env();
     expect(readMountsFile(e, "c1")).toBeNull();

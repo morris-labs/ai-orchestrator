@@ -129,6 +129,38 @@ describe("own directory", () => {
     expect(await watcher.scan()).toEqual([]);
   });
 
+  it("keeps an edit made while the scan reads the session files", async () => {
+    box("claude-agent-a", { container: "claude-agent-a", session: "main" });
+    entry(sessionsDirFor(env, "claude-agent-a"), "12.json", {
+      pid: 12,
+      sessionId: U2,
+      updatedAt: 2,
+      name: "Renamed",
+      nameSource: "user",
+    });
+    // The first get happens before the scan awaits the directory read; an
+    // Edit Box save then lands while that read is pending.
+    let edited = false;
+    const boxes = Object.create(repos.boxes) as typeof repos.boxes;
+    boxes.get = (id: string) => {
+      const rec = repos.boxes.get(id);
+      if (rec && !edited) {
+        edited = true;
+        queueMicrotask(() => repos.boxes.put({ ...rec, model: "edited-model" }));
+      }
+      return rec;
+    };
+    watcher.stop();
+    watcher = new SessionWatcher({ env, boxes, events });
+    await watcher.setRunning(["claude-agent-a"]);
+    expect(edited).toBe(true);
+    expect(repos.boxes.get("claude-agent-a")).toMatchObject({
+      sessionUuid: U2,
+      conversationName: "Renamed",
+      model: "edited-model",
+    });
+  });
+
   it("ignores an auto-generated name", async () => {
     box("claude-agent-a");
     entry(sessionsDirFor(env, "claude-agent-a"), "11.json", {

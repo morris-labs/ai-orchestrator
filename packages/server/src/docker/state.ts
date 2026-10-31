@@ -89,14 +89,16 @@ export function allLiveSessions(env: HostEnv): string[] {
 }
 
 /**
- * Creates the state directory and removes a sessions file left by an earlier
- * container of the same name, so it cannot pass for a live one. Returns the
+ * Creates the state directory and removes a sessions file (or a directory at
+ * its path) left by an earlier container of the same name, so it cannot pass for a live one. Returns the
  * bind `HOST:/run/claude-box`.
  */
 export function prepareStateDir(env: HostEnv, container: string, mountPoint: string): string {
   const dir = stateDir(env, container);
   fs.mkdirSync(dir, { recursive: true });
-  fs.rmSync(stateFile(env, container), { force: true });
+  // The container can write this directory and might leave a directory at
+  // the file's path; `recursive` removes that too and never follows a link.
+  fs.rmSync(stateFile(env, container), { recursive: true, force: true });
   return `${dir}:${mountPoint}`;
 }
 

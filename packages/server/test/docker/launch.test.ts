@@ -12,7 +12,7 @@ import {
   toDockerRunArgs,
   type LaunchInput,
 } from "../../src/docker/launch.js";
-import { KEEPER_PATH } from "../../src/docker/scripts.js";
+import { GIT_SAFE_DIRECTORY_SETUP, KEEPER_PATH } from "../../src/docker/scripts.js";
 import { brokerDirName, type HostEnv } from "../../src/records/env.js";
 import { tempDir } from "../tmp.js";
 
@@ -121,7 +121,7 @@ describe("buildLaunchSpec", () => {
       cmd: [
         "bash",
         "-c",
-        `git config --global --add safe.directory '*' 2>/dev/null; exec ${KEEPER_PATH} "$1" "$2"`,
+        `${GIT_SAFE_DIRECTORY_SETUP}; exec ${KEEPER_PATH} "$1" "$2"`,
         "_",
         "/run/claude-box",
         "30",

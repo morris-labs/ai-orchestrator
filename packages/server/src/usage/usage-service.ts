@@ -144,8 +144,30 @@ export class UsageService {
     });
   }
 
-  /** Compares the vendor's newest sample in the ceiling's window against the ceiling. */
+  /**
+   * Compares the vendor's newest sample in the ceiling's window against the
+   * ceiling. With no account, the vendor is over when any of its accounts is
+   * over: a lease request doesn't name its account, and the newest sample
+   * across accounts would depend on which account sampled last.
+   */
   isOver(vendor: Vendor, ceilings: Ceilings, account?: string): OverState {
+    if (account === undefined) {
+      const states = this.opts.store.accounts(vendor).map((a) => this.isOver(vendor, ceilings, a));
+      const over = states.filter((s) => s.over);
+      if (over.length > 0) {
+        // The vendor is usable again once every over account has reset; an
+        // unknown reset time keeps the whole answer unknown.
+        const resets = over.map((s) => s.resetAt);
+        const resetAt = resets.includes(null)
+          ? null
+          : (resets as string[]).reduce((a, b) => (Date.parse(a) >= Date.parse(b) ? a : b));
+        const utilization = Math.max(...over.map((s) => s.utilization ?? 0));
+        return { over: true, resetAt, utilization };
+      }
+      if (states.length > 0) {
+        return states.reduce((a, b) => ((b.utilization ?? -1) > (a.utilization ?? -1) ? b : a));
+      }
+    }
     const ceiling = ceilings[vendor];
     const latest = this.opts.store.latest(vendor, ceilingWindow(ceiling), account);
     // With no sample the usage is unknown, which counts as under a ceiling

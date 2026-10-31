@@ -182,6 +182,28 @@ describe("checkRemovable and removeWorktree", () => {
     });
   });
 
+  it("refuses a nested notes folder and a secret inside build output", async () => {
+    const { repo, wt } = await fresh();
+    write(`${wt}/.gitignore`, "out/\nnode_modules/\n.claude-box/\n");
+    write(`${wt}/sub/tracked.txt`, "x");
+    commitAll(wt, "Ignore things");
+    sh(repo, "branch", "keep", "claude/fix");
+    write(`${wt}/sub/.claude-box/PLAN.md`, "nested plan");
+    expect(await checkRemovable(repo, wt)).toEqual({
+      safe: false,
+      reason: "it has ignored files that exist nowhere else (sub/.claude-box/)",
+    });
+    fs.rmSync(`${wt}/sub/.claude-box`, { recursive: true });
+    write(`${wt}/out/bundle.js`, "x");
+    write(`${wt}/node_modules/lib/test/fixture.pem`, "not mine");
+    expect(await checkRemovable(repo, wt)).toEqual({ safe: true });
+    write(`${wt}/out/.env`, "SECRET=1");
+    expect(await checkRemovable(repo, wt)).toEqual({
+      safe: false,
+      reason: "it has ignored files that exist nowhere else (out/.env)",
+    });
+  });
+
   it("refuses a branch with commits found nowhere else", async () => {
     const { repo, wt } = await fresh();
     write(`${wt}/a.txt`, "a");

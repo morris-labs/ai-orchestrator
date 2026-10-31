@@ -158,6 +158,29 @@ describe("Notifier", () => {
     expect(t.ofType("notification")[0]?.title).toBe("Round 1 finished");
   });
 
+  it("doesn't repeat an end or a round summary after a restart", () => {
+    const t = make();
+    t.runChanged(run({ status: "finished", stopReason: "round_cap" }), summary(1));
+    const other = "01JB8Z5K3W6Q2V9X4T7R0M1N2Z";
+    t.runChanged(run({ id: other, status: "failed", error: "The gate crashed." }));
+    expect(t.kinds()).toEqual(["run_finished", "round_summary", "run_finished"]);
+
+    // A new notifier on the same database, as after a server restart.
+    const restarted = new Notifier({
+      db: t.db,
+      settings: () => t.settings.value,
+      emit: (e) => t.hub.emit(e),
+      idFn: () => "N-restarted",
+    });
+    t.hub.subscribe((e) => restarted.ingest(e));
+    const before = t.ofType("notification").length;
+    t.runChanged(run({ status: "finished", stopReason: "round_cap" }), summary(1));
+    t.runChanged(run({ id: other, status: "failed", error: "The gate crashed." }));
+    // Only the original notifier, which still remembers, saw them as repeats;
+    // the restarted one must not add any either.
+    expect(t.ofType("notification").length).toBe(before);
+  });
+
   it("notifies an unexpected session end only", () => {
     const t = make();
     t.terminalEnded(false);
