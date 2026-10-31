@@ -17,30 +17,50 @@ export class GitError extends Error {
   }
 }
 
+/**
+ * Placed before every subcommand this client runs, so that no command runs
+ * the repository's hooks. With a relative `core.hooksPath`, such as Husky's
+ * `.husky`, a hook comes from the commit being checked out, which is code
+ * under review.
+ */
+export const NO_HOOKS = ["-c", "core.hooksPath=/dev/null"] as const;
+
 export class Git {
   constructor(
     private readonly runner: CommandRunner,
     readonly cwd: string,
   ) {}
 
+  /**
+   * Runs one git command without the repository's hooks and without
+   * credentials: nothing this client runs talks to a remote.
+   */
+  private exec(
+    args: readonly string[],
+    options: { input?: string; cwd?: string; env?: Record<string, string>; timeoutMs?: number } = {},
+  ) {
+    return this.runner.run("git", [...NO_HOOKS, ...args], {
+      cwd: options.cwd ?? this.cwd,
+      input: options.input,
+      timeoutMs: options.timeoutMs ?? 120_000,
+      envProfile: "untrusted",
+      ...(options.env ? { env: options.env } : {}),
+    });
+  }
+
   /** Runs git and returns its standard output; throws `GitError` on a non-zero exit. */
   async run(
     args: readonly string[],
     options: { input?: string; cwd?: string; env?: Record<string, string> } = {},
   ): Promise<string> {
-    const result = await this.runner.run("git", args, {
-      cwd: options.cwd ?? this.cwd,
-      input: options.input,
-      timeoutMs: 120_000,
-      ...(options.env ? { env: options.env } : {}),
-    });
+    const result = await this.exec(args, options);
     if (result.exitCode !== 0) throw new GitError(args, result.exitCode, result.stderr);
     return result.stdout;
   }
 
   /** Runs git and reports success instead of throwing. */
   async ok(args: readonly string[]): Promise<boolean> {
-    const result = await this.runner.run("git", args, { cwd: this.cwd, timeoutMs: 120_000 });
+    const result = await this.exec(args);
     return result.exitCode === 0;
   }
 
@@ -49,21 +69,15 @@ export class Git {
   }
 
   async tryRevParse(ref: string): Promise<string | null> {
-    const result = await this.runner.run(
-      "git",
-      ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`],
-      {
-        cwd: this.cwd,
-        timeoutMs: 60_000,
-      },
-    );
+    const result = await this.exec(["rev-parse", "--verify", "--quiet", `${ref}^{commit}`], {
+      timeoutMs: 60_000,
+    });
     return result.exitCode === 0 ? result.stdout.trim() : null;
   }
 
   /** The checked-out branch, or `null` on a detached HEAD. */
   async currentBranch(): Promise<string | null> {
-    const result = await this.runner.run("git", ["symbolic-ref", "--quiet", "--short", "HEAD"], {
-      cwd: this.cwd,
+    const result = await this.exec(["symbolic-ref", "--quiet", "--short", "HEAD"], {
       timeoutMs: 60_000,
     });
     return result.exitCode === 0 ? result.stdout.trim() : null;
@@ -168,10 +182,7 @@ export class Git {
 
   /** The content of `path` at `rev`, or `null` when it doesn't exist there. */
   async show(rev: string, path: string): Promise<string | null> {
-    const result = await this.runner.run("git", ["show", `${rev}:${path}`], {
-      cwd: this.cwd,
-      timeoutMs: 60_000,
-    });
+    const result = await this.exec(["show", `${rev}:${path}`], { timeoutMs: 60_000 });
     return result.exitCode === 0 ? result.stdout : null;
   }
 

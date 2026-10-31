@@ -119,8 +119,8 @@ export class EngineCheckout {
     await removeCheckout(this.git, this.dir);
   }
 
-  /** Runs git in the checkout, without the repository's hooks. */
+  /** Runs git in the checkout; `Git` runs none of the repository's hooks. */
   private async inside(args: readonly string[]): Promise<void> {
-    await this.git.run(["-c", "core.hooksPath=/dev/null", ...args], { cwd: this.dir });
+    await this.git.run(args, { cwd: this.dir });
   }
 }

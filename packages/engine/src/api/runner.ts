@@ -14,7 +14,7 @@ export interface CommandOptions {
   timeoutMs?: number;
   /** Added to the environment the profile allows; `undefined` removes a variable. */
   env?: Record<string, string | undefined>;
-  /** Absent: `github` for `git` and `gh`, `untrusted` for everything else. */
+  /** Absent: `profileForProgram`'s choice for the program and its arguments. */
   envProfile?: EnvProfile;
 }
 
@@ -31,7 +31,7 @@ export const execRunner: CommandRunner = {
       args: [...args],
       cwd: options.cwd ?? process.cwd(),
       env: options.env,
-      envProfile: options.envProfile ?? profileForProgram(program),
+      envProfile: options.envProfile ?? profileForProgram(program, args),
       timeoutMs: options.timeoutMs ?? 15_000,
     });
     let code = result.exitCode ?? 1;
