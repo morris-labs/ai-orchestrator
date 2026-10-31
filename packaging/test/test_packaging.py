@@ -37,6 +37,7 @@ SHELL_SCRIPTS = [
     ROOT / "scripts/bump-versions.sh",
     ROOT / "scripts/set-version.sh",
     ROOT / "scripts/install-server-unit.sh",
+    ROOT / "scripts/install-dev-apparmor.sh",
     ROOT / "scripts/lib/common.sh",
     ROOT / "packaging/deb/scripts/postinst",
     ROOT / "packaging/deb/scripts/prerm",
@@ -578,6 +579,98 @@ class SourceUnitTest(unittest.TestCase):
         )
         path_conf = (self.dropin_dir / "source-checkout.conf").read_text()
         self.assertIn(f'Environment="PATH={os.path.dirname(node)}:', path_conf)
+
+
+class DevAppArmorTest(unittest.TestCase):
+    """scripts/install-dev-apparmor.sh, which writes profiles for a checkout."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        # The space and the @ check the quoting of the attachment path; pnpm
+        # store directories always hold an @.
+        self.tmp = pathlib.Path(tmp.name)
+        self.make_checkout("check out")
+        # sudo and apparmor_parser are fakes that log their arguments, so
+        # nothing reaches the host even if --print runs either.
+        bindir = self.tmp / "bin"
+        bindir.mkdir()
+        self.log = self.tmp / "calls.log"
+        for name in ("sudo", "apparmor_parser"):
+            fake = bindir / name
+            fake.write_text(f'#!/bin/sh\nprintf "{name} %s\\n" "$*" >> "{self.log}"\n')
+            fake.chmod(0o755)
+        self.env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"}
+
+    def make_checkout(self, dirname):
+        """Copies the script, its library, and the templates to a checkout."""
+        self.root = self.tmp / dirname
+        for rel in ("scripts/install-dev-apparmor.sh", "scripts/lib/common.sh"):
+            (self.root / rel).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(ROOT / rel, self.root / rel)
+        shutil.copytree(ROOT / "packaging/deb/apparmor", self.root / "packaging/deb/apparmor")
+
+    def add_electron(self, app, version):
+        """Links apps/APP/node_modules/electron to a fake pnpm store entry."""
+        pkg = self.root / f"node_modules/.pnpm/electron@{version}/node_modules/electron"
+        (pkg / "dist").mkdir(parents=True, exist_ok=True)
+        (pkg / "path.txt").write_text("electron")
+        (pkg / "dist/electron").write_text("placeholder\n")
+        link = self.root / f"apps/{app}/node_modules/electron"
+        link.parent.mkdir(parents=True, exist_ok=True)
+        link.symlink_to(os.path.relpath(pkg, link.parent))
+        return pkg / "dist/electron"
+
+    def run_script(self, *args, check=True):
+        return subprocess.run(
+            [str(self.root / "scripts/install-dev-apparmor.sh"), *args],
+            env=self.env, check=check, capture_output=True, text=True,
+        )
+
+    def profiles(self, out):
+        """Splits --print output into {file: profile text}."""
+        result = {}
+        for block in out.split("\n\n# /etc/apparmor.d/"):
+            header, _, body = block.removeprefix("# /etc/apparmor.d/").partition("\n")
+            result[header] = body
+        return result
+
+    def test_print_shares_one_profile_between_the_apps(self):
+        binary = self.add_electron("boxes", "45.1.0")
+        self.add_electron("review", "45.1.0")
+        out = self.run_script("--print").stdout
+        profiles = self.profiles(out)
+        self.assertEqual(len(profiles), 1, out)
+        (name, text), = profiles.items()
+        self.assertRegex(name, r"^agentbox-dev-[0-9a-f]{12}$")
+        self.assertIn(f"# agentbox-dev checkout: {os.path.realpath(self.root)}\n", text)
+        self.assertIn(f'profile {name} "{binary}" flags=(unconfined) {{\n', text)
+        self.assertIn("  userns,\n", text)
+        self.assertIn(f"include if exists <local/{name}>", text)
+        self.assertIn("abi <abi/4.0>,\n", text)
+        self.assertNotIn("/usr/lib/agentbox", text)
+        self.assertFalse(self.log.exists(), "--print must not run sudo or apparmor_parser")
+
+    def test_print_gives_each_binary_its_own_profile(self):
+        boxes = self.add_electron("boxes", "45.1.0")
+        review = self.add_electron("review", "46.0.0")
+        profiles = self.profiles(self.run_script("--print").stdout)
+        self.assertEqual(len(profiles), 2)
+        attached = sorted(re.search(r'^profile \S+ "([^"]+)"', t, re.M).group(1) for t in profiles.values())
+        self.assertEqual(attached, sorted([str(boxes), str(review)]))
+
+    def test_print_escapes_glob_characters(self):
+        self.make_checkout("check{out}")
+        binary = self.add_electron("boxes", "45.1.0")
+        self.add_electron("review", "45.1.0")
+        text = next(iter(self.profiles(self.run_script("--print").stdout).values()))
+        escaped = str(binary).replace("{", "\\{").replace("}", "\\}")
+        self.assertIn(f'"{escaped}" flags=', text)
+
+    def test_missing_install_fails_clearly(self):
+        result = self.run_script("--print", check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("pnpm install", result.stderr)
 
 
 class NfpmBuildTest(unittest.TestCase):

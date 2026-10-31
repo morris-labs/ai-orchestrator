@@ -308,6 +308,43 @@ The unit runs whatever `packages/server/dist` holds when the service starts:
   `agentbox-server.service` and `agentbox-server.service.d/source-checkout.conf`
   from `~/.config/systemd/user`, and run `systemctl --user daemon-reload`.
 
+### Run the Electron apps from the checkout
+
+On Ubuntu 24.04 and later, the boxes and review apps don't start from a
+checkout: the kernel restricts the unprivileged user namespaces that
+Chromium's sandbox needs, and the `chrome-sandbox` helper that pnpm installs
+isn't owned by root with mode 4755. The package solves this with AppArmor
+profiles. To install the same profiles for the Electron binary in your
+checkout's `node_modules` directory, run the
+`scripts/install-dev-apparmor.sh` script:
+
+```sh
+scripts/install-dev-apparmor.sh
+```
+
+The script resolves the real path of each app's Electron binary in the pnpm
+store, builds a profile for it from the templates in
+`packaging/deb/apparmor/`, and runs `sudo` to write the profile to
+`/etc/apparmor.d/` and load it. Both apps usually share one binary, and
+then they share one profile. Each profile is named `agentbox-dev-HASH`,
+where `HASH` is taken from the binary's path, and carries a comment that
+names the checkout.
+
+- To see the profiles without changing anything, run
+  `scripts/install-dev-apparmor.sh --print`.
+- To unload and delete the profiles for this checkout, run
+  `scripts/install-dev-apparmor.sh --remove`.
+
+A profile keeps working when `pnpm install` reinstalls the same Electron
+version, because the binary's path in the store doesn't change. When pnpm
+installs a different Electron version, run the script again. It replaces
+the profiles that it wrote for this checkout.
+
+The alternative is to make the helper setuid root with
+`sudo chown root:root PATH` and `sudo chmod 4755 PATH`, where `PATH` is the
+`dist/chrome-sandbox` file next to the Electron binary. Every reinstall of
+the Electron package undoes that change, so you have to repeat it.
+
 ### Release scripts
 
 The `scripts/` directory holds the following release tools:

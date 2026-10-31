@@ -186,6 +186,22 @@ the apps still fail with a sandbox error, reload the profiles:
 sudo apparmor_parser -r /etc/apparmor.d/agentbox-boxes /etc/apparmor.d/agentbox-review
 ```
 
+The package's profiles cover only the installed apps in
+`/usr/lib/agentbox`. When you run the apps from a source checkout, they
+fail with an error about the namespace sandbox or about `chrome-sandbox`
+not being owned by root with mode 4755. To fix it, install profiles for the
+checkout's Electron binary:
+
+```sh
+scripts/install-dev-apparmor.sh
+```
+
+Run the script again after pnpm installs a different Electron version. To
+see the profiles first, add `--print`; to delete them, add `--remove`.
+Making `chrome-sandbox` setuid root also works, but every reinstall of the
+Electron package undoes it. For more information, see
+[Run the Electron apps from the checkout](install.md#run-the-electron-apps-from-the-checkout).
+
 ## Collect information for a bug report
 
 Include the output of the following commands:
