@@ -37,7 +37,6 @@ import {
   sweepPrompt,
 } from "../prompts/templates.js";
 import { parseDiff } from "../range/diff.js";
-import { readRepoFile } from "../range/repo-file.js";
 import {
   BaseWorktree,
   baseWorktreePath,
@@ -138,9 +137,15 @@ export function reviewsWorktree(ctx: RunContext): boolean {
   return resolved && ctx.round <= 1;
 }
 
-/** The tip the diff ends at: the tip SHA, or the working tree (`null`). */
-function diffTip(ctx: RunContext): string | null {
-  return reviewsWorktree(ctx) ? null : (ctx.state.tipSha ?? "HEAD");
+/**
+ * The commit the diff ends at and files are read from: the tip SHA, or,
+ * when the round reviews the working tree, the snapshot commit of it. The
+ * snapshot holds the untracked files git doesn't ignore, which a diff to
+ * the working tree leaves out.
+ */
+async function diffTip(ctx: RunContext): Promise<string> {
+  if (reviewsWorktree(ctx)) return (await readOnlyState(ctx)).commit;
+  return ctx.state.tipSha ?? "HEAD";
 }
 
 /**
@@ -158,15 +163,17 @@ export function linesVersion(ctx: RunContext): { linesAt?: string } {
 const readOnlyStates = new WeakMap<RunContext, { key: string; state: Promise<CheckoutState> }>();
 
 /**
- * What a read-only call of the current stage looks at: the tip commit, or,
+ * What a read-only call of the current round looks at: the tip commit, or,
  * when the round reviews the working tree, a snapshot commit of it with
  * `HEAD` at the tip, so the uncommitted changes show as uncommitted. The
- * snapshot is taken once per stage, so every parallel call sees the same
- * files.
+ * snapshot is taken once per round and tip, so every stage and every
+ * parallel call sees the same files, and the read-only checkout isn't
+ * rebuilt for each stage. A fix that commits moves the tip, which takes a
+ * new snapshot.
  */
 function readOnlyState(ctx: RunContext): Promise<CheckoutState> {
   const worktree = reviewsWorktree(ctx);
-  const key = `${ctx.round}:${ctx.state.stage}:${ctx.state.tipSha ?? ""}:${worktree}`;
+  const key = `${ctx.round}:${ctx.state.tipSha ?? ""}:${worktree}`;
   const cached = readOnlyStates.get(ctx);
   if (cached?.key === key) return cached.state;
   const state = (async (): Promise<CheckoutState> => {
@@ -200,31 +207,23 @@ export async function readOnlyRepo(ctx: RunContext): Promise<string> {
 /** Computes the file groups for the current tip. */
 export async function computeGroups(ctx: RunContext): Promise<FileGroup[]> {
   const diffBase = ctx.eng.diffBaseSha ?? ctx.state.baseSha ?? "";
-  const text = await ctx.git.diff(diffBase, diffTip(ctx));
-  const files = parseDiff(text);
-  const tip = diffTip(ctx);
+  const tip = await diffTip(ctx);
+  const files = parseDiff(await ctx.git.diff(diffBase, tip));
   return groupFiles(files, {
     policy: ctx.policy,
-    readFile: (path) => (tip === null ? readWorkingFile(ctx, path) : ctx.git.show(tip, path)),
+    readFile: (path) => ctx.git.show(tip, path),
   });
-}
-
-/**
- * A working-tree file by a path from the diff or from a reviewer's finding,
- * confined to the repository (see `readRepoFile`).
- */
-function readWorkingFile(ctx: RunContext, path: string): Promise<string | null> {
-  return readRepoFile(ctx.state.request.repoPath, path);
 }
 
 /** Reads a file at the current tip, with a per-call cache. */
 function tipReader(ctx: RunContext): (path: string) => Promise<string | null> {
   const cache = new Map<string, Promise<string | null>>();
-  const tip = diffTip(ctx);
+  let tip: Promise<string> | null = null;
   return (path) => {
     let p = cache.get(path);
     if (!p) {
-      p = tip === null ? readWorkingFile(ctx, path) : ctx.git.show(tip, path);
+      tip ??= diffTip(ctx);
+      p = tip.then((rev) => ctx.git.show(rev, path));
       cache.set(path, p);
     }
     return p;
@@ -268,7 +267,7 @@ async function runReviewTask(
   const files = group ? group.files : [...new Set(groups.flatMap((g) => g.files))];
   const hunks: Hunk[] = group ? group.hunks : groups.flatMap((g) => g.hunks);
   const diffBase = ctx.eng.diffBaseSha ?? ctx.state.baseSha ?? "";
-  const diff = await ctx.git.diffForPrompt(diffBase, diffTip(ctx), files);
+  const diff = await ctx.git.diffForPrompt(diffBase, await diffTip(ctx), files);
   const repoPath = await readOnlyRepo(ctx);
   const prompt = finderPrompt({
     range: ctx.range(repoPath),
@@ -755,7 +754,7 @@ export async function runSweep(
   const vendor =
     ctx.state.roles.reviewer.find((v) => v !== "claude") ?? ctx.state.roles.reviewer[0] ?? "codex";
   const diffBase = ctx.eng.diffBaseSha ?? ctx.state.baseSha ?? "";
-  const diff = await ctx.git.diffForPrompt(diffBase, diffTip(ctx));
+  const diff = await ctx.git.diffForPrompt(diffBase, await diffTip(ctx));
   const repoPath = await readOnlyRepo(ctx);
   const prompt = sweepPrompt({
     range: ctx.range(repoPath),

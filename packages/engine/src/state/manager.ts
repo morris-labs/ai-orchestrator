@@ -16,6 +16,9 @@ import {
   type TimedUsageSample,
   type Vendor,
 } from "@agentbox/contracts";
+import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   ACTIVE_RUN_STATUSES,
   EngineError,
@@ -34,7 +37,6 @@ import { GhCliClient } from "../postpush/github.js";
 import { parseDiff } from "../range/diff.js";
 import { ExecaRunner } from "../range/exec.js";
 import { Git, GitError } from "../range/git.js";
-import { readRepoFile } from "../range/repo-file.js";
 import { RangeError, resolveRange } from "../range/resolve.js";
 import { RunNotFoundError, RunStore, listRunIds } from "../run/store.js";
 import { RunController } from "./controller.js";
@@ -64,10 +66,6 @@ async function api<T>(work: () => Promise<T>): Promise<T> {
   } catch (error) {
     throw toApiError(error);
   }
-}
-
-function readWorkingFile(repoPath: string, path: string): Promise<string | null> {
-  return readRepoFile(repoPath, path);
 }
 
 function inWindow(time: string, filter: UsageFilter): boolean {
@@ -273,12 +271,17 @@ export class EngineRunManager implements RunManager {
       );
       const withWorktree = request.includeWorktree && range.includeWorktree;
       const git = new Git(runner, request.repoPath);
-      const tip = withWorktree ? null : range.tipSha;
+      // A snapshot commit of the working tree, as the run reviews it, so
+      // untracked files count too.
+      const tip = withWorktree
+        ? await git.snapshotWorktree(
+            join(tmpdir(), `agentbox-index-preview-${process.pid}-${randomUUID()}`),
+          )
+        : range.tipSha;
       const files = parseDiff(await git.diff(range.diffBaseSha, tip));
       const groups = await groupFiles(files, {
         policy: await loadPolicy(this.location.projectRoot, this.location.policyPath),
-        readFile: (path) =>
-          tip === null ? readWorkingFile(request.repoPath, path) : git.show(tip, path),
+        readFile: (path) => git.show(tip, path),
       });
       return {
         baseSha: range.baseSha,

@@ -1,5 +1,5 @@
 // A thin `git` client over a `CommandRunner`.
-import { appendFile, mkdir, readFile, rm } from "node:fs/promises";
+import { appendFile, copyFile, mkdir, readFile, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import type { CommandRunner } from "../core.js";
 
@@ -222,13 +222,38 @@ export class Git {
    * is built in a temporary index file, so the checkout's own index, its
    * files, and its refs stay as they are; the commit is reachable from no
    * ref.
+   *
+   * The temporary index starts as a copy of the checkout's own, whose stat
+   * data lets `git add` skip every file that didn't change instead of
+   * hashing the whole tree. Without that index, or when git can't use the
+   * copy, it starts from `HEAD`.
    */
   async snapshotWorktree(indexFile: string): Promise<string> {
     const head = await this.head();
     const env = { GIT_INDEX_FILE: indexFile };
-    try {
+    // `.claude-box/` leaves the index after the `add`: an exclude pathspec
+    // for it makes `git add` fail when `info/exclude` already ignores it.
+    const add = async () => {
+      await this.run(["add", "--all", "--", "."], { env });
+      await this.run(["rm", "-r", "-q", "--cached", "--ignore-unmatch", "--", ".claude-box"], {
+        env,
+      });
+    };
+    const fromHead = async () => {
+      await rm(indexFile, { force: true });
       await this.run(["read-tree", head], { env });
-      await this.run(["add", "--all", "--", ".", ":(exclude).claude-box"], { env });
+      await add();
+    };
+    try {
+      if (await this.copyIndexTo(indexFile)) {
+        try {
+          await add();
+        } catch {
+          await fromHead();
+        }
+      } else {
+        await fromHead();
+      }
       const tree = (await this.run(["write-tree"], { env })).trim();
       const headTree = (await this.revParseTree(head)).trim();
       if (tree === headTree) return head;
@@ -239,6 +264,17 @@ export class Git {
       return commit.trim();
     } finally {
       await rm(indexFile, { force: true });
+    }
+  }
+
+  /** Copies the checkout's index file to `target`; false when there is none. */
+  private async copyIndexTo(target: string): Promise<boolean> {
+    try {
+      const index = resolve(this.cwd, (await this.run(["rev-parse", "--git-path", "index"])).trim());
+      await copyFile(index, target);
+      return true;
+    } catch {
+      return false;
     }
   }
 

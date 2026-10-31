@@ -98,4 +98,32 @@ describe("working-tree inclusion", () => {
     const files = (await computeGroups(ctx)).flatMap((g) => g.files);
     expect(files).not.toContain("lint.py");
   });
+
+  it("reviews untracked files too, from one snapshot per round", async () => {
+    const { writeFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const { vi } = await import("vitest");
+    const { buildSampleRepo } = await import("./scenario.js");
+    const { computeGroups, readOnlyRepo, reviewsWorktree } =
+      await import("../../src/state/steps.js");
+    const repo = buildSampleRepo();
+    writeFileSync(join(repo, "SYNTHETIC_untracked.py"), "def f():\n    return 1\n");
+    const { ctx } = await makeRun({ repo, request: { includeWorktree: true } });
+    ctx.state.round = 1;
+    expect(reviewsWorktree(ctx)).toBe(true);
+    const snapshots = vi.spyOn(ctx.git, "snapshotWorktree");
+    ctx.state.stage = "find";
+    const groups = await computeGroups(ctx);
+    const files = groups.flatMap((g) => g.files);
+    expect(files).toContain("SYNTHETIC_untracked.py");
+    expect(groups.flatMap((g) => g.hunks).some((h) => h.file === "SYNTHETIC_untracked.py")).toBe(
+      true,
+    );
+    const first = await readOnlyRepo(ctx);
+    ctx.state.stage = "verify";
+    expect(await readOnlyRepo(ctx)).toBe(first);
+    ctx.state.stage = "sweep";
+    await computeGroups(ctx);
+    expect(snapshots).toHaveBeenCalledTimes(1);
+  });
 });
