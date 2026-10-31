@@ -423,15 +423,17 @@ a {
   background: var(--ab-panel-bg);
   border-radius: 8px 8px 0 0;
 }
+/* The dialog takes focus itself while busy disables every control in it, so
+   a keyboard user still needs to see where focus is. */
 .ab-dialog:focus {
   outline: none;
 }
+.ab-dialog:focus-visible {
+  border-color: var(--ab-accent);
+}
+/* The fieldset only disables the controls; it draws no box of its own. */
 .ab-dialog-fieldset {
   display: contents;
-  border: 0;
-  margin: 0;
-  padding: 0;
-  min-width: 0;
 }
 .ab-dialog-body {
   padding: 12px 14px;

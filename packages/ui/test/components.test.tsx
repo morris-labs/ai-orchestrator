@@ -23,6 +23,17 @@ interface Row {
   id: string;
   n: number;
 }
+
+/**
+ * Moves focus to the page body, as a browser does when the focused control
+ * becomes disabled. jsdom neither does that nor blurs a disabled control.
+ */
+function blurToBody() {
+  const tmp = document.createElement("button");
+  document.body.append(tmp);
+  tmp.focus();
+  tmp.remove();
+}
 const columns: Column<Row>[] = [
   { id: "id", header: "Id", render: (r) => r.id, sortValue: (r) => r.id },
   { id: "n", header: "N", render: (r) => String(r.n), sortValue: (r) => r.n },
@@ -172,7 +183,18 @@ describe("Dialog", () => {
     expect(opener).toHaveFocus();
   });
 
-  it("disables its fields and ignores Enter while busy", async () => {
+  it("submits on Enter in a field", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    render(<Harness onSubmit={onSubmit} />);
+    await user.click(screen.getByRole("button", { name: "Open" }));
+    await user.type(screen.getByLabelText("Name"), "x{Enter}");
+    expect(onSubmit).toHaveBeenCalledOnce();
+  });
+
+  // Enter can't reach a disabled field, so a submit event stands in for any
+  // other way the form might still be submitted.
+  it("disables its fields and submits nothing while busy", async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn();
     render(<Harness busy onSubmit={onSubmit} />);
@@ -181,6 +203,77 @@ describe("Dialog", () => {
     expect(screen.getByRole("button", { name: "OK" })).toBeDisabled();
     fireEvent.submit(screen.getByRole("dialog").querySelector("form")!);
     expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  describe("from busy to idle", () => {
+    function BusyDialog({ busy, onSubmit }: { busy: boolean; onSubmit?: () => void }) {
+      return (
+        <Dialog title="Edit" busy={busy} onSubmit={onSubmit} buttons={<Button primary>OK</Button>}>
+          <input aria-label="Name" />
+          <input aria-label="Path" />
+        </Dialog>
+      );
+    }
+
+    it("enables its fields again and submits on Enter", async () => {
+      const user = userEvent.setup();
+      const onSubmit = vi.fn();
+      const { rerender } = render(<BusyDialog busy onSubmit={onSubmit} />);
+      expect(screen.getByLabelText("Name")).toBeDisabled();
+      rerender(<BusyDialog busy={false} onSubmit={onSubmit} />);
+      expect(screen.getByLabelText("Name")).toBeEnabled();
+      await user.type(screen.getByLabelText("Name"), "{Enter}");
+      expect(onSubmit).toHaveBeenCalledOnce();
+    });
+
+    it("gives focus back to the field that had it", () => {
+      const { rerender } = render(<BusyDialog busy={false} />);
+      const path = screen.getByLabelText("Path");
+      act(() => path.focus());
+      rerender(<BusyDialog busy />);
+      act(() => blurToBody());
+      rerender(<BusyDialog busy={false} />);
+      expect(path).toHaveFocus();
+    });
+
+    it("gives focus back when Tab moved it to the dialog while busy", async () => {
+      const user = userEvent.setup();
+      const { rerender } = render(<BusyDialog busy={false} />);
+      const path = screen.getByLabelText("Path");
+      act(() => path.focus());
+      rerender(<BusyDialog busy />);
+      act(() => blurToBody());
+      // Nothing in the dialog can take focus, so Tab focuses the dialog itself.
+      await user.tab();
+      expect(screen.getByRole("dialog")).toHaveFocus();
+      rerender(<BusyDialog busy={false} />);
+      expect(path).toHaveFocus();
+    });
+
+    it("leaves focus on a control that took it meanwhile", () => {
+      const { rerender } = render(
+        <>
+          <BusyDialog busy={false} />
+          <button type="button">Elsewhere</button>
+        </>,
+      );
+      act(() => screen.getByLabelText("Path").focus());
+      rerender(
+        <>
+          <BusyDialog busy />
+          <button type="button">Elsewhere</button>
+        </>,
+      );
+      const elsewhere = screen.getByRole("button", { name: "Elsewhere" });
+      act(() => elsewhere.focus());
+      rerender(
+        <>
+          <BusyDialog busy={false} />
+          <button type="button">Elsewhere</button>
+        </>,
+      );
+      expect(elsewhere).toHaveFocus();
+    });
   });
 });
 
@@ -211,6 +304,30 @@ describe("useInFlight", () => {
       await first;
     });
     expect(screen.getByText("idle")).toBeInTheDocument();
+  });
+
+  it("accepts a call again after one finishes or fails", async () => {
+    let api: ReturnType<typeof useInFlight> | null = null;
+    function Probe() {
+      api = useInFlight();
+      return <span>{api.busy ? "busy" : "idle"}</span>;
+    }
+    render(<Probe />);
+    let result: unknown;
+    await act(async () => {
+      result = await api!.run(async () => "first");
+    });
+    expect(result).toBe("first");
+    await act(async () => {
+      await expect(api!.run(() => Promise.reject(new Error("refused")))).rejects.toThrow(
+        "refused",
+      );
+    });
+    expect(screen.getByText("idle")).toBeInTheDocument();
+    await act(async () => {
+      result = await api!.run(async () => "third");
+    });
+    expect(result).toBe("third");
   });
 });
 
