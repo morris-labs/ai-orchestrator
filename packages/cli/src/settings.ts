@@ -1,7 +1,7 @@
 // Where the server is, which token to send, and which certificate to trust.
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { DEFAULT_SERVER_PORT, HOME_PATHS, parseConfig } from "@agentbox/contracts";
+import { DEFAULT_SERVER_PORT, HOME_PATHS } from "@agentbox/contracts";
 import {
   pinnedFetch,
   pinnedTlsOptions,
@@ -28,11 +28,16 @@ function readText(file: string): string | null {
 }
 
 /**
- * Returns the server's data directory: `AGENTBOX_DATA_DIR` when set, the same
- * variable `agentbox-server` reads, else `~/.claude-box`.
+ * Returns the server's data directory: `dataDir` (the `--data-dir` option)
+ * when given, else `AGENTBOX_DATA_DIR`, the same order `agentbox-server`
+ * uses, else `~/.claude-box`.
  */
-export function dataDirFor(env: Record<string, string | undefined>, home: string): string {
-  const override = env.AGENTBOX_DATA_DIR;
+export function dataDirFor(
+  env: Record<string, string | undefined>,
+  home: string,
+  dataDir?: string,
+): string {
+  const override = dataDir ?? env.AGENTBOX_DATA_DIR;
   return override ? path.resolve(override) : path.join(home, HOME_PATHS.dataDir);
 }
 
@@ -41,12 +46,43 @@ function inDataDir(dataDir: string, homeRelative: string): string {
   return path.join(dataDir, path.posix.relative(HOME_PATHS.dataDir, homeRelative));
 }
 
+/** `value` as a TCP port, or `null` when it isn't one. */
+function asPort(value: unknown): number | null {
+  const n = typeof value === "string" && /^\d+$/.test(value.trim()) ? Number(value) : value;
+  return typeof n === "number" && Number.isInteger(n) && n >= 1 && n <= 65535 ? n : null;
+}
+
 /**
- * Resolves the server URL and token. The data directory is
- * `AGENTBOX_DATA_DIR`, else `~/.claude-box`.
+ * The port the server listens on: `server.port`, which the running server
+ * writes at every start, then `serverPort` in `config.json`, then 21400.
+ * Only `serverPort` is read from `config.json`, so a key this build
+ * doesn't know, or a problem in another setting, doesn't change the port.
+ */
+export function serverPortIn(dataDir: string): number {
+  const written = asPort(readText(inDataDir(dataDir, HOME_PATHS.serverPort)));
+  if (written !== null) return written;
+  const configText = readText(inDataDir(dataDir, HOME_PATHS.config));
+  if (configText !== null) {
+    try {
+      const config: unknown = JSON.parse(configText);
+      const port =
+        config && typeof config === "object"
+          ? asPort((config as { serverPort?: unknown }).serverPort)
+          : null;
+      if (port !== null) return port;
+    } catch {
+      // A broken config file leaves the default port; the server reports the problem.
+    }
+  }
+  return DEFAULT_SERVER_PORT;
+}
+
+/**
+ * Resolves the server URL and token. The data directory is `--data-dir`,
+ * then `AGENTBOX_DATA_DIR`, else `~/.claude-box`.
  *
- * - URL: `--server`, then `AGENTBOX_SERVER`, then `https://127.0.0.1:<serverPort>`
- *   with the port from `config.json` in the data directory (21400 by default).
+ * - URL: `--server`, then `AGENTBOX_SERVER`, then `https://127.0.0.1:<port>`
+ *   with the port from `serverPortIn()`.
  * - Token: `AGENTBOX_TOKEN`, then `server.token` in the data directory.
  * - Certificate: `server.crt` in the data directory.
  */
@@ -54,18 +90,11 @@ export function resolveSettings(options: {
   env: Record<string, string | undefined>;
   home: string;
   server?: string;
+  dataDir?: string;
 }): CliSettings {
   const { env, home } = options;
-  const dataDir = dataDirFor(env, home);
-  let port = DEFAULT_SERVER_PORT;
-  const configText = readText(inDataDir(dataDir, HOME_PATHS.config));
-  if (configText !== null) {
-    try {
-      port = parseConfig(JSON.parse(configText)).serverPort;
-    } catch {
-      // A broken config file leaves the default port; the server reports the problem.
-    }
-  }
+  const dataDir = dataDirFor(env, home, options.dataDir);
+  const port = serverPortIn(dataDir);
   const baseUrl = options.server ?? env.AGENTBOX_SERVER ?? `https://127.0.0.1:${port}`;
   const tokenFile = inDataDir(dataDir, HOME_PATHS.serverToken);
   const certFile = inDataDir(dataDir, HOME_PATHS.serverCert);
@@ -87,11 +116,27 @@ export function pinsServer(baseUrl: string): boolean {
   return url.protocol === "https:" && isLoopbackHost(url.hostname);
 }
 
-/** Reads the certificate in `certFile`. Throws when the server has never created it. */
+/** The server's certificate file is missing or holds no certificate. */
+export class CertificateFileError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CertificateFileError";
+  }
+}
+
+/**
+ * Reads the certificate in `certFile`. Throws a `CertificateFileError` when
+ * the server has never created it or the file holds something else.
+ */
 export function serverPin(settings: Pick<CliSettings, "certFile">): ServerPin {
-  const pin = readServerPin(settings.certFile);
+  let pin: ServerPin | null;
+  try {
+    pin = readServerPin(settings.certFile);
+  } catch (err) {
+    throw new CertificateFileError((err as Error).message);
+  }
   if (!pin) {
-    throw new Error(
+    throw new CertificateFileError(
       `No server certificate at ${settings.certFile}. The server creates it on its first start.`,
     );
   }

@@ -45,9 +45,15 @@ afterEach(async () => {
   rmSync(home, { recursive: true, force: true });
 });
 
-function cli(args: string[], env: Record<string, string | undefined> = {}, cwd?: string) {
+function cli(
+  args: string[],
+  env: Record<string, string | undefined> = {},
+  cwd?: string,
+  signal?: AbortSignal,
+) {
   return runCli(args, {
     cwd,
+    signal,
     env: { AGENTBOX_SERVER: server.url, AGENTBOX_TOKEN: TOKEN, ...env },
     home,
     out: (t) => (out += t),
@@ -123,6 +129,40 @@ describe("settings", () => {
     expect(last()?.authorization).toBe(`Bearer ${TOKEN}`);
   });
 
+  it("reads only serverPort from config.json, so an unknown key keeps the port", async () => {
+    writeFileSync(
+      path.join(home, ".claude-box", "config.json"),
+      JSON.stringify({ serverPort: Number(new URL(server.url).port), keyFromALaterBuild: true }),
+    );
+    server.on("GET /api/v1/boxes", { body: { boxes: [] } });
+    expect(await cli(["box", "list"], { AGENTBOX_SERVER: undefined })).toBe(0);
+    expect(server.requests).toHaveLength(1);
+  });
+
+  it("prefers the port the server wrote to server.port over config.json", async () => {
+    writeFileSync(path.join(home, ".claude-box", "config.json"), JSON.stringify({ serverPort: 1 }));
+    writeFileSync(path.join(home, ".claude-box", "server.port"), `${new URL(server.url).port}\n`);
+    server.on("GET /api/v1/boxes", { body: { boxes: [] } });
+    expect(await cli(["box", "list"], { AGENTBOX_SERVER: undefined })).toBe(0);
+    expect(server.requests).toHaveLength(1);
+  });
+
+  it("takes the data directory from --data-dir, relative to the working directory", async () => {
+    const dataDir = path.join(home, "service-data");
+    mkdirSync(dataDir);
+    writeFileSync(path.join(dataDir, "server.token"), `${TOKEN}\n`);
+    writeFileSync(path.join(dataDir, "server.crt"), server.cert);
+    writeFileSync(path.join(dataDir, "server.port"), new URL(server.url).port);
+    server.on("GET /api/v1/boxes", { body: { boxes: [] } });
+    const code = await cli(
+      ["--data-dir", "service-data", "box", "list"],
+      { AGENTBOX_SERVER: undefined, AGENTBOX_TOKEN: undefined, AGENTBOX_DATA_DIR: "/nonexistent" },
+      home,
+    );
+    expect(code).toBe(0);
+    expect(last()?.authorization).toBe(`Bearer ${TOKEN}`);
+  });
+
   it("prefers --server over AGENTBOX_SERVER", async () => {
     server.on("GET /api/v1/boxes", { body: { boxes: [] } });
     expect(
@@ -141,7 +181,39 @@ describe("settings", () => {
   it("explains an unreachable server", async () => {
     const code = await cli(["box", "list"], { AGENTBOX_SERVER: "https://127.0.0.1:1" });
     expect(code).toBe(1);
-    expect(err).toContain("Can't reach the Agent Box server");
+    expect(err).toMatch(/^Can't reach the Agent Box server at https:\/\/127\.0\.0\.1:1: \S/);
+    expect(err).toContain("ECONNREFUSED");
+    expect(err).toContain("systemctl --user start agentbox-server");
+  });
+
+  it("names the cause of a failed global fetch", async () => {
+    const failing = (async () => {
+      throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } });
+    }) as unknown as typeof fetch;
+    const code = await runCli(["box", "list"], {
+      env: { AGENTBOX_SERVER: "https://example.com", AGENTBOX_TOKEN: TOKEN },
+      home,
+      out: (t) => (out += t),
+      err: (t) => (err += t),
+      fetch: failing,
+    });
+    expect(code).toBe(1);
+    expect(err).toContain("at https://example.com: fetch failed (ECONNREFUSED)");
+  });
+
+  it("doesn't suggest starting the server when the certificate is the problem", async () => {
+    writeFileSync(
+      path.join(home, ".claude-box", "server.crt"),
+      (await import("@agentbox/contracts/tls")).createServerIdentity().cert,
+    );
+    expect(await cli(["box", "list"])).toBe(1);
+    expect(err).toMatch(/server\.crt/);
+    expect(err).not.toContain("systemctl");
+    err = "";
+    rmSync(path.join(home, ".claude-box", "server.crt"));
+    expect(await cli(["box", "list"])).toBe(1);
+    expect(err).toMatch(/No server certificate/);
+    expect(err).not.toContain("systemctl");
   });
 });
 
@@ -218,9 +290,49 @@ describe("box", () => {
   });
 
   it("validates the body before sending it", async () => {
-    expect(await cli(["box", "new", "/d", "--layout", "worktree", "--no-wait"])).toBe(1);
+    expect(await cli(["box", "new", "/d", "--layout", "worktree", "--no-wait"])).toBe(2);
     expect(server.requests).toHaveLength(0);
     expect(err).toContain("conversation name");
+    expect(err.trim().split("\n")).toHaveLength(1);
+    err = "";
+    expect(await cli(["box", "new", "/d", "--adopt", "notauuid"])).toBe(2);
+    expect(err).toMatch(/^Invalid body: conversation\.sessionUuid: Invalid uuid\.\n$/);
+    expect(server.requests).toHaveLength(0);
+  });
+
+  it("stops polling its job and exits 130 when interrupted", async () => {
+    server.on("POST /api/v1/boxes", { status: 202, body: job("running") });
+    const controller = new AbortController();
+    let polls = 0;
+    server.on("GET /api/v1/jobs/job-1", () => {
+      if (++polls === 2) controller.abort();
+      return { body: job("running") };
+    });
+    expect(await cli(["box", "new", "/d"], {}, undefined, controller.signal)).toBe(130);
+    expect(err).toBe("Interrupted.\n");
+    expect(polls).toBe(2);
+  });
+
+  it("refuses an ID that URL parsing would turn into another route", async () => {
+    for (const id of ["..", "."]) {
+      expect(await cli(["box", "stop", id])).toBe(2);
+    }
+    expect(err).toMatch(/Invalid path parameter "boxId"/);
+    expect(server.requests).toHaveLength(0);
+  });
+
+  it("starts a box with --force, and opens one the same way", async () => {
+    server.on(`POST /api/v1/boxes/${BOX_ID}/start`, { body: boxView("running") });
+    expect(await cli(["box", "start", BOX_ID, "--force"])).toBe(0);
+    expect(last()?.body).toEqual({ force: true });
+    expect(await cli(["box", "start", BOX_ID])).toBe(0);
+    expect(last()?.body).toEqual({ force: false });
+    server.on(`GET /api/v1/boxes/${BOX_ID}`, { body: boxView("stopped") });
+    server.on(`GET /api/v1/boxes/${BOX_ID}/attach-command`, { body: { argv: sessionArgv() } });
+    expect(await cli(["box", "open", BOX_ID, "--force"])).toBe(7);
+    expect(server.requests.filter((r) => r.path.endsWith("/start")).at(-1)?.body).toEqual({
+      force: true,
+    });
   });
 
   it("starts, stops, and restarts a box", async () => {
@@ -396,7 +508,28 @@ describe("project", () => {
   it("refuses an empty or invalid change", async () => {
     expect(await cli(["project", "set", PROJECT_ID])).toBe(2);
     expect(await cli(["project", "set", PROJECT_ID, "--tcp-map", "x:1"])).toBe(2);
+    expect(await cli(["project", "set", PROJECT_ID, "--tcp-map", "80:90:100"])).toBe(2);
+    expect(await cli(["project", "set", PROJECT_ID, "--mount", "/srv", "--clear-mounts"])).toBe(2);
+    expect(await cli(["project", "set", PROJECT_ID, "--tcp-map", "80", "--clear-tcp-maps"])).toBe(
+      2,
+    );
+    expect(
+      await cli(["project", "set", PROJECT_ID, "--primary-repo", "/r", "--clear-primary-repo"]),
+    ).toBe(2);
+    expect(err).toContain("Use --primary-repo or --clear-primary-repo, not both.");
     expect(server.requests).toHaveLength(0);
+  });
+
+  it("restarts a project's container and reports each box", async () => {
+    server.on(`POST /api/v1/projects/${PROJECT_ID}/container/restart`, {
+      body: {
+        done: [BOX_ID],
+        failed: [{ boxId: "claude-agent-other", error: { code: "internal", message: "No." } }],
+      },
+    });
+    expect(await cli(["project", "restart", PROJECT_ID])).toBe(1);
+    expect(out).toContain(`Started again: ${BOX_ID}.`);
+    expect(out).toContain("Failed claude-agent-other: No.");
   });
 });
 
@@ -849,8 +982,17 @@ describe("events", () => {
     expect(server.lastEventsQuery).toEqual({ types: "ports.changed" });
   });
 
-  it("fails on a frame that breaks the contract", async () => {
-    server.events = [{ type: "nonsense" }];
+  it("prints a frame of a type it doesn't know, with a warning, and keeps going", async () => {
+    server.events = [{ type: "nonsense", x: "\u009b" }, event];
+    expect(await cli(["events", "--count", "2"])).toBe(0);
+    const lines = out.trim().split("\n");
+    expect(lines.map((l) => JSON.parse(l).type)).toEqual(["hello", "nonsense", "ports.changed"]);
+    expect(lines[1]).toContain("\\u009b");
+    expect(err).toContain('"nonsense" event doesn\'t match');
+  });
+
+  it("fails on a frame with no type", async () => {
+    server.events = [{ nothing: true }];
     expect(await cli(["events", "--count", "1"])).toBe(1);
     expect(err).toContain("doesn't match the contract");
   });
@@ -1012,6 +1154,16 @@ describe("trust in the server", () => {
     ];
     for (const argv of refused) expect(checkAttachArgv(argv), argv.join(" ")).not.toBeNull();
     expect(checkAttachArgv([])).toMatch(/empty/);
+  });
+
+  it("escapes C1 controls in a refused attach command", async () => {
+    server.on(`GET /api/v1/boxes/${BOX_ID}/attach-command`, {
+      body: { argv: ["docker\u009b2J", "exec"] },
+    });
+    expect(await cli(["box", "attach", BOX_ID])).toBe(2);
+    expect(err).toContain("\\x9b2J");
+    expect(err).not.toContain("\u009b");
+    expect(execs).toEqual([]);
   });
 
   it("keeps its copy of the attach script equal to the server's", async () => {

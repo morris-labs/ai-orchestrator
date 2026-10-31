@@ -3,6 +3,9 @@
 import { homedir } from "node:os";
 import { runCli } from "./program.js";
 
+// A SIGINT listener stops Node.js from exiting on Ctrl+C, so every command
+// honors the signal: `events` ends cleanly, and the others stop their
+// request or job polling and exit 130. A second Ctrl+C exits at once.
 const controller = new AbortController();
 process.once("SIGINT", () => controller.abort());
 
