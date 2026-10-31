@@ -27,13 +27,16 @@ workspace:
 
 ```sh
 corepack pnpm -r build
-packages/engine/test/smoke/smoke.sh SMOKE_DIR
+packages/engine/test/smoke/smoke.sh [SMOKE_DIR]
 ```
 
 Replace `SMOKE_DIR` with an empty or missing directory for the sample
-repository, the state directory, and the logs. `SMOKE_DIR` is optional:
-without it, the script makes a new temporary directory and prints its path
-first. Run `smoke.sh --help` for the usage line.
+repository, the state directory, and the logs; the script refuses a
+directory that isn't empty. `SMOKE_DIR` is optional: without it, the script
+makes a new temporary directory. Either way, the script prints the
+directory's absolute path first and never removes it, so you can read the
+logs afterward; remove it when you're done. Run `smoke.sh --help` for the
+usage line.
 
 The script generates a random engine token and never prints it. The token
 goes only into two files with mode `0600`: the engine's token file,

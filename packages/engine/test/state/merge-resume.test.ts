@@ -52,6 +52,25 @@ describe("mergeInto", () => {
     expect(reloaded.findings.map((f) => f.id)).toEqual(["F-0001"]);
     expect(reloaded.eng.counters.finding).toBe(1);
   });
+
+  // Finding 50: the merge was marked as applied before the announcements,
+  // so an engine that stopped in between never announced the new findings.
+  it("announces the new findings when the engine stopped before announcing them", async () => {
+    const { ctx, deps, repo, events } = await makeRun();
+    ctx.state.round = 1;
+    await ctx.persist();
+    ctx.announceFinding = () => Promise.reject(new Error("engine stopped"));
+    await expect(
+      mergeInto(ctx, await toCandidates(ctx, raw, "reviewer", []), "merge"),
+    ).rejects.toThrow();
+    const reloaded = contextOf(await RunController.load(ctx.state.id, { projectRoot: repo }, deps));
+    await mergeInto(reloaded, () => Promise.reject(new Error("unused")), "merge");
+    const announced = events.events.flatMap((e) =>
+      e.type === "finding.changed" && e.previousVerdict === null ? [e.finding.id] : [],
+    );
+    expect(announced).toEqual(["F-0001"]);
+    expect(reloaded.eng.appliedMerges).toHaveLength(1);
+  });
 });
 
 describe("runSweep", () => {

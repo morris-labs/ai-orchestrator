@@ -5,8 +5,9 @@
 # Usage: smoke.sh [DIR]
 # DIR must not exist yet or must be empty; it receives the sample repository,
 # the state directory, and the logs. Without DIR, the script makes a new
-# temporary directory and prints its path. Needs node, curl, jq, and a built
-# engine (`corepack pnpm -r build`).
+# temporary directory and prints its path. The script never removes the
+# directory, so the logs stay for reading; remove it when you're done. Needs
+# node, curl, jq, and a built engine (`corepack pnpm -r build`).
 # The echo lines print each command as written, so their single quotes are deliberate.
 # shellcheck disable=SC2016
 set -euo pipefail
@@ -17,20 +18,33 @@ case "${1:-}" in
     exit 0
     ;;
 esac
-if [[ $# -gt 1 ]]; then
+if [[ $# -gt 1 ]] || [[ $# -eq 1 && -z $1 ]]; then
   echo "Usage: $0 [DIR]" >&2
   exit 2
 fi
-DIR="${1:-$(mktemp -d "${TMPDIR:-/tmp}/agentbox-smoke-XXXXXX")}"
-echo "Smoke directory: $DIR"
+# Everything the script creates, DIR included, is for this user only.
+umask 077
+if [[ $# -eq 1 ]]; then
+  DIR="$1"
+  if [[ -e $DIR && ! -d $DIR ]]; then
+    echo "$DIR exists and isn't a directory." >&2
+    exit 2
+  fi
+  if [[ -d $DIR && -n "$(ls -A "$DIR")" ]]; then
+    echo "$DIR isn't empty. Give a new or empty directory." >&2
+    exit 2
+  fi
+else
+  DIR="$(mktemp -d "${TMPDIR:-/tmp}/agentbox-smoke-XXXXXX")"
+fi
 S="$(mkdir -p "$DIR" && cd "$DIR" && pwd)"
+echo "Smoke directory: $S"
 mkdir -p "$S/state"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 cd "$ROOT"
 echo '$ tools/sample-repo/build.sh "$S/sample"'
 tools/sample-repo/build.sh "$S/sample"
 R="$S/sample/repo"
-umask 077
 # The token lives only in two 0600 files: the engine's token file and a curl
 # header file. It never reaches an environment or a command line.
 TOKEN_FILE="$S/state/engine.token"
@@ -83,3 +97,4 @@ echo '--- engine log (messages)'
 jq -r '"\(.level) \(.msg)"' "$S/engine.log"
 echo '--- granter log (counts)'
 sed -E 's/^granted .*/granted (lease)/' "$S/granter.log" | sort | uniq -c | sort -rn
+echo "The smoke directory $S is kept; remove it when you're done."

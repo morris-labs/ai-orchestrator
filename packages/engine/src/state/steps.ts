@@ -475,11 +475,12 @@ interface MergeCommit {
 }
 
 /**
- * Merges candidates into the run's findings and announces the new ones,
- * once. The merge result and the findings after it are saved in one file
+ * Merges candidates into the run's findings and announces the new ones.
+ * The merge result and the findings after it are saved in one file
  * (`<name>-commit.json`) before the findings file, so a stage that resumes
  * after a crash restores that result instead of merging the same
- * candidates into their own copies.
+ * candidates into their own copies. A stage that stopped before every new
+ * finding was announced announces them all again when it resumes.
  */
 export async function mergeInto(
   ctx: RunContext,
@@ -509,12 +510,15 @@ export async function mergeInto(
   if (!ctx.eng.appliedMerges.includes(file)) {
     ctx.findings = commit.findings;
     ctx.eng.counters.finding = Math.max(ctx.eng.counters.finding, commit.findingCounter);
-    ctx.eng.appliedMerges = [...ctx.eng.appliedMerges, file];
     await ctx.persist();
     for (const id of commit.result.created) {
       const f = ctx.findingById(id);
       if (f) await ctx.announceFinding(f);
     }
+    // Marked as applied only after the announcements, so an engine that stops
+    // between the two applies the same commit again and announces it again.
+    ctx.eng.appliedMerges = [...ctx.eng.appliedMerges, file];
+    await ctx.persist();
   }
   return commit.result;
 }
@@ -848,7 +852,9 @@ function planBatches(targets: readonly Finding[], gateFailure?: string): string[
 /**
  * Applies one batch's outcome to the findings. Idempotent, so a resumed run
  * can apply a saved batch again. The fixer may mark only the batch's own
- * findings, and may decline one only with a reason, which the finding keeps.
+ * findings. A declined finding keeps the fixer's reason, or a note that it
+ * gave none, and is left to a person: asking again would only repeat the
+ * decline in every round.
  */
 async function applyBatch(ctx: RunContext, batch: FixBatchRecord): Promise<void> {
   const inBatch = new Set(batch.findingIds);
@@ -859,7 +865,7 @@ async function applyBatch(ctx: RunContext, batch: FixBatchRecord): Promise<void>
   }
   for (const nf of batch.output.notFixed) {
     const reason = nf.reason.trim();
-    if (!inBatch.has(nf.id) || fixedIds.has(nf.id) || reason === "") continue;
+    if (!inBatch.has(nf.id) || fixedIds.has(nf.id)) continue;
     if (ctx.eng.declined.includes(nf.id)) continue;
     ctx.eng.declined = [...ctx.eng.declined, nf.id];
     const finding = ctx.findingById(nf.id);
@@ -868,7 +874,9 @@ async function applyBatch(ctx: RunContext, batch: FixBatchRecord): Promise<void>
         finding,
         finding.verdict,
         { kind: "agent", vendor: ctx.state.roles.fixer, role: "fixer" },
-        `The fixer declined to fix it: ${reason}`,
+        reason
+          ? `The fixer declined to fix it: ${reason}`
+          : "The fixer declined to fix it and gave no reason.",
       );
     }
   }
@@ -915,7 +923,15 @@ export async function runFix(
     let batch = await ctx.store.readJson<FixBatchRecord>(batchFile);
     if (!batch) {
       const findings = ids.flatMap((id) => ctx.findingById(id) ?? []);
-      const before = await ctx.git.head();
+      // HEAD before the fixer runs is saved first. An engine that stops after
+      // the fixer commits, but before the batch file is saved, then still
+      // counts those commits as the batch's when the stage resumes.
+      const startFile = ctx.store.roundFile(ctx.round, `${key}-start`);
+      let before = (await ctx.store.readJson<{ before: string }>(startFile))?.before;
+      if (!before) {
+        before = await ctx.git.head();
+        await ctx.store.writeJson(startFile, { before });
+      }
       const prompt = fixerPrompt({
         range: ctx.range(),
         findings,

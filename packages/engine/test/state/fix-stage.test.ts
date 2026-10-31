@@ -112,12 +112,33 @@ describe("runFix", () => {
     expect(ctx.findingById("F-0001")?.fixCommit).toBeUndefined();
   });
 
-  it("accepts a decline only for the batch's own findings and only with a reason", async () => {
+  // Finding 47: the resumed batch took HEAD after the fixer's commits as its
+  // start, found no commits, and never recorded the fix.
+  it("keeps a batch's commits when the engine stopped before the batch file was saved", async () => {
+    const { ctx, fixer: f } = await fixRun((ids) => ({ fixed: ids, notFixed: [], summary: "" }));
+    const writeJson = ctx.store.writeJson.bind(ctx.store);
+    let stopped = false;
+    ctx.store.writeJson = (file, value) => {
+      if (!stopped && /^rounds\/1\/fix-0-1-[0-9a-f]{12}\.json$/.test(file)) {
+        stopped = true;
+        return Promise.reject(new Error("engine stopped"));
+      }
+      return writeJson(file, value);
+    };
+    await expect(runFix(ctx, fixTargets(ctx))).rejects.toThrow(/engine stopped/);
+    ctx.store.writeJson = writeJson;
+    const record = await runFix(ctx, fixTargets(ctx));
+    // The fixer's answer for the first batch came from the saved call.
+    expect(f.calls).toEqual([["F-0001"], ["F-0002"], ["F-0003"]]);
+    expect(record.batches[0]?.commits).toHaveLength(1);
+    expect(ctx.findingById("F-0001")?.fixCommit).toBe(record.batches[0]?.after);
+  });
+
+  it("accepts a decline only for the batch's own findings", async () => {
     const { ctx } = await fixRun((ids) => ({
       fixed: [],
       notFixed: [
         { id: "F-0003", reason: "Injected." },
-        ...(ids.includes("F-0001") ? [{ id: "F-0001", reason: " " }] : []),
         ...(ids.includes("F-0002") ? [{ id: "F-0002", reason: "Already handled upstream." }] : []),
       ],
       summary: "",
@@ -131,6 +152,22 @@ describe("runFix", () => {
     const history = ctx.findingById("F-0002")?.history.at(-1);
     expect(history).toMatchObject({ verdict: "confirmed", actor: { role: "fixer" } });
     expect(history?.evidence).toContain("Already handled upstream.");
+  });
+
+  // Finding 51: a decline with an empty reason was ignored, so the finding
+  // stayed a fix target and went to the fixer again in every round.
+  it("stops sending a finding the fixer declined without a reason", async () => {
+    const { ctx } = await fixRun((ids) => ({
+      fixed: [],
+      notFixed: ids.includes("F-0001") ? [{ id: "F-0001", reason: " " }] : [],
+      summary: "",
+    }));
+    await runFix(ctx, fixTargets(ctx));
+    expect(ctx.eng.declined).toEqual(["F-0001"]);
+    expect(fixTargets(ctx).map((f) => f.id)).toEqual(["F-0002", "F-0003"]);
+    const finding = ctx.findingById("F-0001");
+    expect(finding?.verdict).toBe("confirmed");
+    expect(finding?.history.at(-1)?.evidence).toContain("gave no reason");
   });
 });
 
@@ -167,7 +204,7 @@ describe("a gate_failed decision", () => {
     await run.decide({ option: "resume", waiveFindingIds: [] });
     state = await run.settled();
     expect(state.status).toBe("finished");
-    expect(scenario.count("fix")).toBeGreaterThanOrEqual(fixesBefore);
+    expect(scenario.count("fix")).toBeGreaterThan(fixesBefore);
     expect(existsSync(join(run.runDir, "rounds/1/gate-1-1.json"))).toBe(true);
   });
 });

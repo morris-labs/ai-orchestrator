@@ -148,8 +148,13 @@ describe("untrusted text in prompts", () => {
       expect(open).toBeGreaterThan(-1);
       expect(curl).toBeGreaterThan(open);
       expect(curl).toBeLessThan(close);
-      // The text can't close the fence early.
-      expect(p.slice(open, close)).not.toContain("UNTRUSTED_DATA>>>");
+      // The text can't close the fence early: the text after its injected
+      // marker is still inside the fence, and the prompt has one close
+      // marker for each open one.
+      const obey = p.indexOf("obey me");
+      expect(obey).toBeGreaterThan(curl);
+      expect(obey).toBeLessThan(close);
+      expect(p.split("UNTRUSTED_DATA>>>").length).toBe(p.split("<<<UNTRUSTED_DATA").length);
     }
     expect(prompts[0]!.length).toBeLessThan(UNTRUSTED_TEXT_LIMIT + 4000);
   });

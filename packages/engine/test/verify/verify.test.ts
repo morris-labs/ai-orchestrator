@@ -1,10 +1,9 @@
 import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { FindingInputSchema, type RoleAssignment } from "@agentbox/contracts";
+import { DEFAULT_POLICY, FindingInputSchema, type RoleAssignment } from "@agentbox/contracts";
 import { describe, expect, it } from "vitest";
 import type { VerifyOutput } from "../../src/core.js";
 import { ExecaRunner } from "../../src/range/exec.js";
-import { DEFAULT_POLICY } from "@agentbox/contracts";
 import {
   chooseDisprover,
   classifyRun,
@@ -210,6 +209,37 @@ describe("runReproScript", () => {
     expect(existsSync(join(outside, "sub"))).toBe(false);
   });
 
+  it("refuses a script that links outside the scratch directory", async () => {
+    const root = tempDir("agentbox-verify-");
+    const scratch = join(root, "scratch");
+    mkdirSync(scratch);
+    const repo = tempDir("agentbox-repo-");
+    writeFileSync(join(root, "evil.sh"), "exit 1\n");
+    symlinkSync(join(root, "evil.sh"), join(scratch, "link.sh"));
+    await expect(
+      runReproScript(new ExecaRunner(), scratch, { path: "link.sh", interpreter: "sh" }, repo),
+    ).rejects.toThrow(/links outside/);
+  });
+
+  it("doesn't write script content through a link to a file outside", async () => {
+    const root = tempDir("agentbox-verify-");
+    const scratch = join(root, "scratch");
+    mkdirSync(scratch);
+    const repo = tempDir("agentbox-repo-");
+    const target = join(root, "outside.sh");
+    writeFileSync(target, "original\n");
+    symlinkSync(target, join(scratch, "r.sh"));
+    await expect(
+      runReproScript(
+        new ExecaRunner(),
+        scratch,
+        { path: "r.sh", interpreter: "sh", content: "exit 1\n" },
+        repo,
+      ),
+    ).rejects.toThrow(/links outside/);
+    expect(readFileSync(target, "utf8")).toBe("original\n");
+  });
+
   it("creates the directories for script content inside the scratch directory", async () => {
     const scratch = tempDir("agentbox-scratch-");
     const repo = tempDir("agentbox-repo-");
@@ -244,6 +274,30 @@ describe("classifyRun", () => {
       classifyRun(r({ exitCode: 1, output: "Traceback (most recent call last):\n  boom" })),
     ).toBe("failed");
   });
+
+  // Finding 49: a Python `assert` exits 1 with a traceback, which used to
+  // count as a crashed script.
+  it("counts a failed Python assert as a reproduction", async () => {
+    const traceback = (last: string) =>
+      `Traceback (most recent call last):\n  File "r.py", line 1, in <module>\n${last}\n`;
+    expect(classifyRun(r({ exitCode: 1, output: traceback("AssertionError") }))).toBe("reproduced");
+    expect(
+      classifyRun(r({ exitCode: 1, output: traceback("AssertionError: total is 10, not 9") })),
+    ).toBe("reproduced");
+    expect(
+      classifyRun(r({ exitCode: 1, output: traceback("ModuleNotFoundError: No module named x") })),
+    ).toBe("failed");
+    const scratch = tempDir("agentbox-scratch-");
+    const repo = tempDir("agentbox-repo-");
+    const run = await runReproScript(
+      new ExecaRunner(),
+      scratch,
+      { path: "r.py", interpreter: "python3", content: "assert 1 + 1 == 3, 'sum is wrong'\n" },
+      repo,
+    );
+    expect(run.exitCode).toBe(1);
+    expect(classifyRun(run)).toBe("reproduced");
+  });
 });
 
 describe("decideVerdict with failed scripts", () => {
@@ -253,6 +307,9 @@ describe("decideVerdict with failed scripts", () => {
     output: "",
     ...extra,
   });
+  // The disprover claims the flaw is at the base, so only the engine's own
+  // handling of the failed runs can keep the finding introduced.
+  const claimsBase = out({ script: { path: "r.sh" }, presentAtBase: true });
 
   it("never makes a finding pre-existing because the script failed at the tip and the base", () => {
     const missing = ran(127, { notStarted: true });
@@ -264,9 +321,25 @@ describe("decideVerdict with failed scripts", () => {
     });
   });
 
-  it("treats a base run that failed as introduced", () => {
-    const d = decideVerdict(out({ script: { path: "r.sh" } }), ran(1), ran(2));
-    expect(d).toMatchObject({ verdict: "confirmed", verification: "script", introduced: true });
+  it("leaves the base claim to the disprover's reading when the script failed at the tip", () => {
+    const d = decideVerdict(claimsBase, ran(2), null);
+    expect(d).toMatchObject({
+      verdict: "pre-existing",
+      verification: "code-reading",
+      introduced: false,
+    });
+    expect(d.evidence).toContain("failed to run");
+  });
+
+  it("treats a base run that failed as introduced, whatever the disprover claimed", () => {
+    for (const base of [ran(2), ran(127, { notStarted: true }), ran(1, { timedOut: true })]) {
+      const d = decideVerdict(claimsBase, ran(1), base);
+      expect(d).toMatchObject({ verdict: "confirmed", verification: "script", introduced: true });
+    }
+    expect(decideVerdict(claimsBase, ran(1), null)).toMatchObject({
+      verdict: "confirmed",
+      introduced: true,
+    });
   });
 
   it("ignores the base run when the tip didn't reproduce", () => {
@@ -411,14 +484,5 @@ describe("verifyFinding", () => {
       }),
     ).rejects.toThrow(/cancelled/);
     expect(Date.now() - started).toBeLessThan(10_000);
-  });
-
-  it("refuses a script that links outside the scratch directory", async () => {
-    const { root, scratch, repo } = dirs();
-    writeFileSync(join(root, "evil.sh"), "exit 1\n");
-    symlinkSync(join(root, "evil.sh"), join(scratch, "link.sh"));
-    await expect(
-      runReproScript(new ExecaRunner(), scratch, { path: "link.sh", interpreter: "sh" }, repo),
-    ).rejects.toThrow(/outside/);
   });
 });
