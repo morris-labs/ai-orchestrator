@@ -62,6 +62,22 @@ describe("EventHub", () => {
     expect(errors).toHaveLength(2);
   });
 
+  // Host round 9: a listener that emits in turn (the notifier answering a
+  // run) made later listeners see the new event before the one that caused
+  // it, and a stream socket then dropped the earlier one.
+  it("delivers an event emitted by a listener after the one being delivered", () => {
+    const hub = new EventHub();
+    hub.subscribe((e) => {
+      if (e.type === "box.changed" && e.boxId === "claude-agent-a") hub.emit(box("claude-agent-b"));
+    });
+    const seen: number[] = [];
+    hub.subscribe((e) => seen.push(e.seq));
+    const first = hub.emit(box("claude-agent-a"));
+    expect(first.seq).toBe(1);
+    expect(seen).toEqual([1, 2]);
+    expect(hub.lastSeq).toBe(2);
+  });
+
   it("replays from memory, and refuses a gap or a foreign stream", () => {
     const hub = new EventHub({ bufferSize: 2 });
     for (const id of ["a", "b", "c"]) hub.emit(box(`claude-agent-${id}`));
