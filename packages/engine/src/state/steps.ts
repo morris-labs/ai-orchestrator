@@ -718,7 +718,14 @@ export async function verifyPending(ctx: RunContext, stageFile: string): Promise
     return result;
   });
   const done = results.filter((r): r is VerifyResult => r !== null);
-  await ctx.store.writeJson(stageFile, done);
+  // A resumed stage verifies only what is still pending, so the results
+  // from before the restart are kept in the stage file.
+  const earlier = (await ctx.store.readJson<VerifyResult[]>(stageFile)) ?? [];
+  const redone = new Set(done.map((r) => r.findingId));
+  await ctx.store.writeJson(stageFile, [
+    ...earlier.filter((r) => !redone.has(r.findingId)),
+    ...done,
+  ]);
   const confirmed = done.filter((r) => r.decision.verdict === "confirmed").length;
   await ctx.handoff(
     { stage: "verify", role: "disprover" },

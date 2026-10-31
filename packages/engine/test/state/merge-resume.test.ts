@@ -3,7 +3,13 @@ import type { Vendor } from "@agentbox/contracts";
 import { describe, expect, it } from "vitest";
 import type { VendorAdapter } from "../../src/core.js";
 import { RunController } from "../../src/state/controller.js";
-import { mergeInto, runConfirm, runSweep, toCandidates } from "../../src/state/steps.js";
+import {
+  mergeInto,
+  runConfirm,
+  runSweep,
+  toCandidates,
+  verifyPending,
+} from "../../src/state/steps.js";
 import { contextOf, makeRun } from "./harness.js";
 
 const raw = [
@@ -132,6 +138,26 @@ describe("runConfirm", () => {
       (h) => h.verdict === "fixed",
     );
     expect(fixedEntries).toHaveLength(1);
+  });
+});
+
+describe("verifyPending", () => {
+  it("keeps the results from before a restart in the stage file", async () => {
+    const { ctx } = await makeRun();
+    ctx.state.round = 1;
+    const file = ctx.store.roundFile(1, "verify");
+    const earlier = {
+      findingId: "F-0001",
+      vendor: "codex",
+      model: "codex",
+      decision: { verdict: "confirmed", evidence: "SYNTHETIC" },
+      tipRun: null,
+      baseRun: null,
+    };
+    await ctx.store.writeJson(file, [earlier]);
+    // F-0001 got its verdict before the restart, so nothing is pending now.
+    expect(await verifyPending(ctx, file)).toEqual([]);
+    expect(await ctx.store.readJson(file)).toEqual([earlier]);
   });
 });
 
