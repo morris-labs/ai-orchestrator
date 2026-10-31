@@ -131,6 +131,17 @@ struct BoxRecord {
             return QStringLiteral("GitHub Copilot");
         return QStringLiteral("Claude Code");
     }
+    // The flag that the permission setting (`yolo`) passes to CLI `p`. For
+    // claude it only makes bypass mode available; for Codex and Copilot it
+    // starts the session without approvals.
+    static QString bypassFlag(const QString &p)
+    {
+        if (p == QLatin1String("codex"))
+            return QStringLiteral("--dangerously-bypass-approvals-and-sandbox");
+        if (p == QLatin1String("copilot"))
+            return QStringLiteral("--allow-all-tools");
+        return QStringLiteral("--allow-dangerously-skip-permissions");
+    }
     // The tmux session a secondary CLI runs in, beside the main session.
     QString sideSession(const QString &p) const { return tmuxSession() + QLatin1Char('-') + p; }
     // The directory Claude runs in: the worktree when there is one.

@@ -386,14 +386,17 @@ void BoxDetailsPanel::setBox(const BoxInfo *info, const QList<SshRemote> &sshRem
 
     // --remote-control isn't listed: it's passed to every box
     // unconditionally, so saying so per row is noise.
+    // Model and effort are claude's own; the other CLIs don't get them.
     QStringList flags;
+    if (!rec.isClaude())
+        flags << ("platform " + rec.program());
     if (rec.skipPermissions)
-        flags << "--allow-dangerously-skip-permissions";
-    if (!rec.model.isEmpty())
+        flags << BoxRecord::bypassFlag(rec.program());
+    if (rec.isClaude() && !rec.model.isEmpty())
         flags << ("--model " + rec.model);
     if (!rec.workspaceDir.isEmpty())
         flags << ("workspace " + rec.workspaceDir + "/");
-    if (!rec.effort.isEmpty())
+    if (rec.isClaude() && !rec.effort.isEmpty())
         flags << ("--effort " + rec.effort);
     m_flags->setText(flags.isEmpty() ? QStringLiteral("none") : flags.join(", "));
 

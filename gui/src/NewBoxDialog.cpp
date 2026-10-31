@@ -331,6 +331,17 @@ NewBoxDialog::NewBoxDialog(QWidget *parent)
         const bool claude = platform().isEmpty();
         m_modelCombo->setEnabled(claude);
         m_effortCombo->setEnabled(claude);
+        // The checkbox means something else for each CLI: for claude it only
+        // makes bypass mode available, for the others the session starts
+        // without approvals. A new box therefore leaves it off for them;
+        // edit and fork keep the record's setting.
+        const QString program = m_platformCombo->currentData().toString();
+        m_skipPermsCheck->setText(
+            claude ? QStringLiteral("Allow bypassing permission prompts (%1; starts in auto mode)")
+                         .arg(BoxRecord::bypassFlag(program))
+                   : QStringLiteral("Start without permission prompts (%1)").arg(BoxRecord::bypassFlag(program)));
+        if (!m_editMode && !m_forkMode)
+            m_skipPermsCheck->setChecked(claude);
         // A fork's conversation combo stays disabled. In edit mode the combo
         // holds the box's own session, so it is only disabled, never reset:
         // loadForEdit() selecting a codex box's platform must not read as

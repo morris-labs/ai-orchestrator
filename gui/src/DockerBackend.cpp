@@ -1451,7 +1451,7 @@ QStringList DockerBackend::platformArgs(const BoxRecord &rec, const QString &pro
         if (resume)
             args << "resume" << "--last";
         if (rec.skipPermissions)
-            args << "--dangerously-bypass-approvals-and-sandbox";
+            args << BoxRecord::bypassFlag(program);
         if (!resume && !prompt.isEmpty())
             args << prompt;
     } else if (program == QLatin1String("copilot")) {
@@ -1461,7 +1461,7 @@ QStringList DockerBackend::platformArgs(const BoxRecord &rec, const QString &pro
         if (resume)
             args << "--continue";
         if (rec.skipPermissions)
-            args << "--allow-all-tools";
+            args << BoxRecord::bypassFlag(program);
         if (!resume && !prompt.isEmpty())
             args << "-i" << prompt;
     } else {
