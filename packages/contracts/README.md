@@ -27,6 +27,7 @@ Records and responses follow two rules:
 | `events.ts` | The event union, the sequence-number rules, and the stream frames for both event sockets |
 | `policy.ts` | `PolicyFile` and its default |
 | `config.ts` | `ServerConfig`, `parseConfig()`, home-directory paths, and the engine environment |
+| `accounts.ts` | `Account`, its view, the create, update, and seed bodies, the seed report, and `ACCOUNT_DIR_ENV` |
 | `api.ts` | The route catalog for the server API and the engine API, the authentication rules, and `RouteOf` |
 
 ## Use the package
@@ -75,6 +76,28 @@ corepack pnpm --filter @agentbox/contracts typecheck
 ```
 
 ## Changelog
+
+### Accounts, phase 1
+
+Phase 1 of `docs/v4/design-accounts.md`. Consumers must update for the change
+marked **breaking**.
+
+- **Breaking:** `GlobalSettings` has a required `accountsMode` (`host` or
+  `accounts`) and `accountDefaults` (an account ID per vendor).
+  `GlobalSettingsInputSchema` fills `host` and `{}`, so a stored settings
+  document or a `config.json` without them still parses through it. Launches
+  ignore `accountsMode` until phase 2.
+- `GlobalSettingsPatch` takes `accountsMode`, and `accountDefaults` per
+  vendor, in which `null` clears a default.
+- `common.ts`: `AccountNameSchema`, `AccountIdSchema` (`VENDOR/NAME`),
+  `accountId()`, and `parseAccountId()`.
+- `accounts.ts`: `Account`, `AccountView`, `AccountCreate`, `AccountUpdate`,
+  `AccountSeedRequest`, `AccountSeedReport`, `ACCOUNT_DIR_ENV`, `ACCOUNTS_DIR`,
+  and `DEFAULT_SEED_ACCOUNT_NAME`.
+- Server routes: `accounts.list`, `accounts.create`, `accounts.get`,
+  `accounts.update`, `accounts.remove`, `accounts.check`, and `accounts.seed`,
+  which answers with a job of the new kind `account_seed`, whose result is an
+  `AccountSeedReport`.
 
 ### C2
 

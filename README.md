@@ -66,6 +66,7 @@ For the details, see [Install Agent Box](docs/install.md).
 - [Review pipeline](docs/review-pipeline.md)
 - [Policy file](docs/policy.md)
 - [Secrets](docs/secrets.md)
+- [Accounts](docs/accounts.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [Migrate from Claude Box 3.x](docs/migration-3x.md)
 - [Architecture](docs/architecture.md)
