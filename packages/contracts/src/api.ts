@@ -612,6 +612,12 @@ export const DirListingSchema = z.object({
   parent: z.string().min(1).nullable(),
   /** Subdirectories, sorted by name. */
   entries: z.array(z.object({ name: z.string().min(1), path: z.string().min(1) })),
+  /**
+   * Whether the directory holds an executable `new-issue.sh`, the marker of a
+   * tree organised into per-issue folders. New Box then defaults to a
+   * workspace folder, as `layout: "auto"` does.
+   */
+  newIssueScript: z.boolean().optional(),
 });
 export type DirListing = z.infer<typeof DirListingSchema>;
 

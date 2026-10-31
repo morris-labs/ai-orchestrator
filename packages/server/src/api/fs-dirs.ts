@@ -1,6 +1,7 @@
 // `fs.dirs`: a host folder picker for the apps. It lists subdirectories only,
 // never files, and takes only absolute paths (or `~`), so a caller can't
 // reach anything relative to the server's working directory.
+import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { DirListing } from "@agentbox/contracts";
@@ -50,5 +51,20 @@ export async function listDirs(home: string, requested: string | undefined): Pro
   }
   dirs.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   const parent = path.dirname(dir);
-  return { path: dir, parent: parent === dir ? null : parent, entries: dirs };
+  return {
+    path: dir,
+    parent: parent === dir ? null : parent,
+    entries: dirs,
+    newIssueScript: await isExecutableFile(path.join(dir, "new-issue.sh")),
+  };
+}
+
+/** Whether `p` is a regular file this process may execute. */
+async function isExecutableFile(p: string): Promise<boolean> {
+  try {
+    await fs.access(p, fsConstants.X_OK);
+    return (await fs.stat(p)).isFile();
+  } catch {
+    return false;
+  }
 }

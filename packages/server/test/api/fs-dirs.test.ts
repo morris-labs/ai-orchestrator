@@ -25,6 +25,16 @@ describe("fs.dirs", () => {
     expect(listing.entries[0]?.path).toBe(path.join(home, "a-dir"));
   });
 
+  it("reports an executable new-issue.sh, and only an executable one", async () => {
+    const home = tree();
+    expect((await listDirs(home, undefined)).newIssueScript).toBe(false);
+    const script = path.join(home, "new-issue.sh");
+    fs.writeFileSync(script, "#!/bin/sh\n");
+    expect((await listDirs(home, undefined)).newIssueScript).toBe(false);
+    fs.chmodSync(script, 0o755);
+    expect((await listDirs(home, undefined)).newIssueScript).toBe(true);
+  });
+
   it("resolves ~, normalizes .., and refuses relative paths", () => {
     expect(resolveDirQuery("/home/user", "~")).toBe("/home/user");
     expect(resolveDirQuery("/home/user", "~/work")).toBe("/home/user/work");

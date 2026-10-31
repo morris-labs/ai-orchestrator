@@ -82,6 +82,8 @@ export interface FakeState {
   staleProjects: string[];
   /** Subdirectory names by absolute path, for `fs.dirs`. */
   dirs: Record<string, string[]>;
+  /** Directories that hold an executable `new-issue.sh`, for `fs.dirs`. */
+  newIssueScriptDirs: string[];
 }
 
 export interface FakeServerOptions {
@@ -176,6 +178,7 @@ export class FakeServer {
         "/home/user/src/example-app": [],
         "/home/user/work": [],
       },
+      newIssueScriptDirs: [],
     };
   }
 
@@ -734,6 +737,7 @@ const defaultHandlers: Partial<Record<HttpRouteKey, FakeHandler>> = {
       entries: [...names]
         .sort()
         .map((name) => ({ name, path: `${path === "/" ? "" : path}/${name}` })),
+      newIssueScript: s.state.newIssueScriptDirs.includes(path),
     };
   },
   "projects.repos.list": (r, s) => {
