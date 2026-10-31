@@ -320,7 +320,9 @@ export class DockerodeClient implements DockerClient {
         Entrypoint: options.entrypoint,
         Cmd: options.cmd,
         Tty: false,
-        HostConfig: { AutoRemove: false },
+        ...(options.env ? { Env: options.env } : {}),
+        ...(options.user ? { User: options.user } : {}),
+        HostConfig: { AutoRemove: false, ...(options.binds ? { Binds: options.binds } : {}) },
       }),
     );
     try {

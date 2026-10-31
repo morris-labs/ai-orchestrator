@@ -200,4 +200,16 @@ export const MIGRATIONS: readonly Migration[] = [
     cost_estimate REAL NOT NULL
   );
 `,
+  // 4: accounts (docs/v4/design-accounts.md, phase 1).
+  `
+  CREATE TABLE accounts (
+    id TEXT PRIMARY KEY,
+    vendor TEXT NOT NULL,
+    name TEXT NOT NULL,
+    data TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE (vendor, name)
+  );
+`,
 ];

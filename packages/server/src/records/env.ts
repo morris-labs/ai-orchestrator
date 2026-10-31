@@ -4,7 +4,7 @@
 import crypto from "node:crypto";
 import os from "node:os";
 import path from "node:path";
-import { HOME_PATHS } from "@agentbox/contracts";
+import { ACCOUNTS_DIR, HOME_PATHS, type Platform } from "@agentbox/contracts";
 
 export interface HostEnv {
   /** The host user's home directory. Every `~` path below resolves against it. */
@@ -75,6 +75,8 @@ export function homePaths(env: HostEnv) {
     brokerDir: data(HOME_PATHS.brokerDir),
     backupDir: data(HOME_PATHS.backupDir),
     importReport: data(`${HOME_PATHS.dataDir}/import-report.json`),
+    /** `DATA_DIR/accounts`: one folder per account, `VENDOR/NAME`. */
+    accountsDir: path.join(dataDirOf(env), ACCOUNTS_DIR),
     claudeDir: at(".claude"),
     claudeJson: at(".claude.json"),
     claudeProjects: at(".claude/projects"),
@@ -82,6 +84,15 @@ export function homePaths(env: HostEnv) {
     codexDir: at(".codex"),
     copilotDir: at(".copilot"),
   };
+}
+
+/** `<data dir>/accounts/<vendor>/<name>`: an account's config folder. */
+export function accountDirFor(
+  env: Pick<HostEnv, "home" | "dataDir">,
+  vendor: Platform,
+  name: string,
+): string {
+  return path.join(dataDirOf(env), ACCOUNTS_DIR, vendor, name);
 }
 
 /** `<data dir>/sessions/<name>`: mounted over a container's `~/.claude/sessions`. */

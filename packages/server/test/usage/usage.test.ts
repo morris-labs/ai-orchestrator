@@ -2,6 +2,26 @@ import { describe, expect, it } from "vitest";
 import { UsageService } from "../../src/usage/usage-service.js";
 import { MIN, T0, iso, setup } from "./helpers.js";
 
+describe("account labels", () => {
+  it("stores a legacy label under the vendor's default account", () => {
+    const t = setup();
+    t.sample("claude");
+    t.settings.value = {
+      ...t.settings.value,
+      accountDefaults: { claude: "claude/personal" },
+    };
+    t.sample("claude");
+    t.sample("claude", { account: "claude/work" });
+    t.sample("codex", { account: "codex-default" });
+    expect(t.store.accounts("claude")).toEqual([
+      "claude/personal",
+      "claude/work",
+      "me@example.com",
+    ]);
+    expect(t.store.accounts("codex")).toEqual(["codex-default"]);
+  });
+});
+
 describe("UsageStore", () => {
   it("filters samples by vendor and time, oldest first", () => {
     const t = setup();

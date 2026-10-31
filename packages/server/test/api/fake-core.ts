@@ -3,6 +3,7 @@
 import { openDatabase } from "../../src/db/index.js";
 import {
   parseConfig,
+  type AccountView,
   type Box,
   type BoxView,
   type GlobalSettings,
@@ -28,6 +29,8 @@ export interface FakeCore extends Core {
   remotes: Map<string, SshRemote>;
   endpoints: EngineEndpoint[];
   settingsValue: GlobalSettings;
+  /** Boxes the fake reports as running, for `accounts.validateSeed`. */
+  runningBoxIds: string[];
 }
 
 function notFound(what: string): never {
@@ -38,6 +41,26 @@ export function createFakeCore(): FakeCore {
   const calls: string[] = [];
   const views = new Map<string, BoxView>([[boxFixture.id, viewOf(boxFixture)]]);
   const remotes = new Map<string, SshRemote>([[sshRemote.name, sshRemote]]);
+  const accounts = new Map<string, AccountView>([
+    [
+      "claude/work",
+      {
+        account: {
+          id: "claude/work",
+          vendor: "claude",
+          name: "work",
+          label: "Work",
+          overflow: false,
+          signIn: { state: "unknown" },
+          createdAt: T1,
+          updatedAt: T1,
+        },
+        dir: "/home/u/.claude-box/accounts/claude/work",
+        dirExists: true,
+        isDefault: false,
+      },
+    ],
+  ]);
   const state = { settings: parseConfig({}) };
   const view = (id: string) => views.get(id) ?? notFound(`box ${id}`);
   const record = (name: string) => calls.push(name);
@@ -225,6 +248,59 @@ export function createFakeCore(): FakeCore {
         return { unlinkedBoxes: [boxFixture.id] };
       },
     },
+    accounts: {
+      list: async () => [...accounts.values()],
+      get: async (id) => accounts.get(id) ?? notFound(`account ${id}`),
+      create: async (input) => {
+        record("accounts.create");
+        const id = `${input.vendor}/${input.name}`;
+        if (accounts.has(id)) throw new ApiError("conflict", `The account ${id} exists.`);
+        const v: AccountView = {
+          account: {
+            id,
+            vendor: input.vendor,
+            name: input.name,
+            label: input.label ?? input.name,
+            overflow: input.overflow ?? false,
+            signIn: { state: "not_signed_in" },
+            createdAt: T1,
+            updatedAt: T1,
+          },
+          dir: `/home/u/.claude-box/accounts/${id}`,
+          dirExists: true,
+          isDefault: false,
+        };
+        accounts.set(id, v);
+        return v;
+      },
+      update: async (id, patch) => {
+        const v = accounts.get(id) ?? notFound(`account ${id}`);
+        const next = { ...v, account: { ...v.account, ...(patch.label ? { label: patch.label } : {}) } };
+        accounts.set(id, next);
+        return next;
+      },
+      remove: async (id) => {
+        const v = accounts.get(id) ?? notFound(`account ${id}`);
+        if (v.isDefault) throw new ApiError("conflict", `${id} is a default.`);
+        accounts.delete(id);
+        return { keptDir: v.dir };
+      },
+      check: async (id) => {
+        record(`accounts.check:${id}`);
+        return accounts.get(id) ?? notFound(`account ${id}`);
+      },
+      validateSeed: async (input) => {
+        record("accounts.validateSeed");
+        if (core.runningBoxIds.length > 0 && !input.dryRun)
+          throw new ApiError("box_running", "Stop every box first.");
+      },
+      seed: async (input, log) => {
+        record(`accounts.seed:${input.dryRun ?? false}`);
+        log("Seeded.\r\n");
+        return { dryRun: input.dryRun ?? false, accounts: [] };
+      },
+    },
+    runningBoxIds: [],
     engines: { list: async () => core.endpoints },
     legacyImport: {
       run: async ({ dryRun }) => {

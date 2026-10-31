@@ -15,6 +15,7 @@ import {
   type GlobalSettings,
   type GlobalSettingsPatch,
   type ModelCache,
+  type Platform,
   type Mount,
   type PromptTemplates,
   type SecretRef,
@@ -65,6 +66,8 @@ export class SettingsService {
     private readonly env: HostEnv,
     private readonly repo: SettingsRepo,
     private readonly events: CoreEvents,
+    /** Whether an account record exists; a patch can name only existing accounts as defaults. */
+    private readonly accountExists: (id: string) => boolean = () => false,
   ) {}
 
   /**
@@ -131,6 +134,27 @@ export class SettingsService {
       if (v === null) delete next[key];
       else next[key] = v;
     }
+    if (p.accountsMode !== undefined) next.accountsMode = p.accountsMode;
+    if (p.accountDefaults !== undefined) {
+      for (const vendor of ["claude", "codex", "copilot"] as const) {
+        const id = p.accountDefaults[vendor];
+        if (id === undefined) continue;
+        if (id === null) {
+          delete next.accountDefaults[vendor];
+          continue;
+        }
+        if (!this.accountExists(id)) throw new ApiError("validation", `No account ${id}.`);
+        next.accountDefaults[vendor] = id;
+      }
+    }
+    return this.save(next);
+  }
+
+  /** Sets or, with `undefined`, clears a vendor's default account. Doesn't check the id. */
+  setAccountDefault(vendor: Platform, id: string | undefined): GlobalSettings {
+    const next = structuredClone(this.get());
+    if (id === undefined) delete next.accountDefaults[vendor];
+    else next.accountDefaults[vendor] = id;
     return this.save(next);
   }
 

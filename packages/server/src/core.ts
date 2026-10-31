@@ -7,6 +7,7 @@ import fs from "node:fs";
 import type { ImageStatus, Platform } from "@agentbox/contracts";
 import { apiCoreOf, relayEvents, wireHooks } from "./api/core-adapter.js";
 import type { Core as ApiCore, CoreFactoryOptions } from "./api/core-interface.js";
+import { AccountService } from "./accounts/service.js";
 import { BoxService } from "./boxes/service.js";
 import { ContainerMonitor } from "./boxes/monitor.js";
 import * as conversations from "./catalog/conversations.js";
@@ -71,6 +72,7 @@ export interface ServerCore {
   readonly projects: ProjectService;
   readonly boxes: BoxService;
   readonly sshRemotes: SshRemoteService;
+  readonly accounts: AccountService;
   readonly worktrees: typeof worktrees;
   readonly catalog: {
     conversations: (dir: string) => ReturnType<BoxService["conversations"]>;
@@ -103,7 +105,12 @@ export function createServerCore(options: CoreOptions): ServerCore {
   const db = repositories(openDatabase(dbPath));
   const docker = options.docker ?? new DockerodeClient();
   const events = new CoreEvents();
-  const settings = new SettingsService(env, db.settings, events);
+  const settings = new SettingsService(
+    env,
+    db.settings,
+    events,
+    (id) => db.accounts.get(id) !== undefined,
+  );
   let hooks: CoreHooks = defaultHooks();
   const getHooks = () => hooks;
   const imageVersions = new ImageVersions(docker);
@@ -131,6 +138,18 @@ export function createServerCore(options: CoreOptions): ServerCore {
     projects,
     hooks: getHooks,
     sessionGoneTimeoutMs: options.sessionGoneTimeoutMs,
+  });
+  const accounts = new AccountService({
+    env,
+    repo: db.accounts,
+    db: db.sqlite,
+    settings,
+    docker,
+    runningBoxes: () =>
+      db.boxes
+        .list()
+        .filter((b) => boxes.isRunning(b))
+        .map((b) => b.id),
   });
   const watcher = new SessionWatcher({ env, boxes: db.boxes, events });
   const monitor = new ContainerMonitor({
@@ -164,6 +183,7 @@ export function createServerCore(options: CoreOptions): ServerCore {
     projects,
     boxes,
     sshRemotes: new SshRemoteService(env, db),
+    accounts,
     worktrees,
     catalog: {
       conversations: (dir) => boxes.conversations(dir),

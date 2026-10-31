@@ -100,6 +100,12 @@ export interface RunOnceOptions {
   entrypoint: string[];
   cmd: string[];
   timeoutMs?: number;
+  /** Bind mounts, `HOST:CONTAINER[:OPTIONS]`. */
+  binds?: string[];
+  /** Environment variables, `NAME=VALUE`. */
+  env?: string[];
+  /** The user to run as. Default: the image's. */
+  user?: string;
 }
 
 /** Thrown by a client when the daemon does not answer. */

@@ -169,6 +169,19 @@ export function apiCoreOf(server: ServerCore, dockerApi: Docker): Core {
       delete: async (name) => server.sshRemotes.delete(name),
     },
 
+    accounts: {
+      list: async () => server.accounts.list(),
+      get: async (id) => server.accounts.view(server.accounts.get(id)),
+      create: async (input) => server.accounts.create(input),
+      update: async (id, patch) => server.accounts.update(id, patch),
+      remove: async (id) => server.accounts.remove(id),
+      check: (id) => server.accounts.check(id),
+      validateSeed: async (input) => {
+        server.accounts.validateSeed(input);
+      },
+      seed: (input, log) => server.accounts.seed(input, log),
+    },
+
     engines: {
       // Only containers that run have an engine to talk to.
       list: async () => {

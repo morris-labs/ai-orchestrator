@@ -380,6 +380,27 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
     },
     "sshRemotes.copyId": async ({ params }) =>
       deps.ssh.copyId(await core.sshRemotes.get(params.name)),
+    // Accounts
+    "accounts.list": async () => ({ accounts: await core.accounts.list() }),
+    "accounts.create": async ({ body }) => core.accounts.create(body),
+    "accounts.seed": async ({ body }) => {
+      await core.accounts.validateSeed(body);
+      const what = body.dryRun ? "Plan seeding" : "Seed";
+      return deps.jobs.start(
+        { kind: "account_seed", command: `${what} accounts from the host folders` },
+        async (io) => {
+          const report = await core.accounts.seed(body, (text) => io.write(text));
+          return { exitCode: 0, result: report };
+        },
+      );
+    },
+    "accounts.get": async ({ params }) => core.accounts.get(`${params.vendor}/${params.name}`),
+    "accounts.update": async ({ params, body }) =>
+      core.accounts.update(`${params.vendor}/${params.name}`, body),
+    "accounts.remove": async ({ params }) =>
+      core.accounts.remove(`${params.vendor}/${params.name}`),
+    "accounts.check": async ({ params }) => core.accounts.check(`${params.vendor}/${params.name}`),
+
     "globalMounts.get": async () => ({ mounts: core.settings.get().globalMounts }),
     "globalMounts.put": async ({ body }) => {
       requireAbsoluteMounts(body.mounts);

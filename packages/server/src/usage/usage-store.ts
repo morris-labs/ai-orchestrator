@@ -120,6 +120,34 @@ export class UsageStore {
     );
   }
 
+  /**
+   * How many of a vendor's samples carry a legacy label: anything but an
+   * account id (`VENDOR/NAME`), such as a Claude email or `codex-default`.
+   */
+  countLegacy(vendor: Vendor): number {
+    const row = this.db
+      .prepare(
+        "SELECT COUNT(*) AS n FROM svc_usage_samples WHERE vendor = ? AND instr(account, '/') = 0",
+      )
+      .get(vendor) as { n: number };
+    return row.n;
+  }
+
+  /**
+   * Relabels a vendor's legacy samples (see `countLegacy()`) with an account
+   * id, in the column and in the stored JSON, so usage history carries over
+   * to the account. Returns how many it relabeled.
+   */
+  relabelLegacy(vendor: Vendor, accountId: string): number {
+    const r = this.db
+      .prepare(
+        `UPDATE svc_usage_samples SET account = ?, json = json_set(json, '$.account', ?)
+         WHERE vendor = ? AND instr(account, '/') = 0`,
+      )
+      .run(accountId, accountId, vendor);
+    return Number(r.changes);
+  }
+
   /** The accounts a vendor has samples for, sorted. */
   accounts(vendor: Vendor): string[] {
     return (

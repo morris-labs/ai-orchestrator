@@ -7,6 +7,11 @@
 // error whose `code` property names a contract `ApiErrorCode` (for example an
 // `ApiError` from `./errors.ts`); the API maps it to a status code.
 import type {
+  AccountCreate,
+  AccountSeedReport,
+  AccountSeedRequest,
+  AccountUpdate,
+  AccountView,
   AgentBoxEvent,
   Box,
   BoxCreate,
@@ -200,6 +205,24 @@ export interface CoreSshRemotes {
   delete(name: string): Promise<{ unlinkedBoxes: string[] }>;
 }
 
+/** Accounts: records plus folders under `DATA_DIR/accounts`. */
+export interface CoreAccounts {
+  list(): Promise<AccountView[]>;
+  /** Throws `not_found`. */
+  get(id: string): Promise<AccountView>;
+  /** Throws `conflict` when the record or the folder exists. */
+  create(input: AccountCreate): Promise<AccountView>;
+  update(id: string, patch: AccountUpdate): Promise<AccountView>;
+  /** Deletes the record and keeps the folder; `conflict` for a vendor's default. */
+  remove(id: string): Promise<{ keptDir: string }>;
+  /** Asks the vendor CLI for the sign-in state (`image_missing`). */
+  check(id: string): Promise<AccountView>;
+  /** Checks a seed request before its job starts (`box_running`, `conflict`). */
+  validateSeed(input: AccountSeedRequest): Promise<void>;
+  /** Seeds accounts from the host folders; runs inside an `account_seed` job. */
+  seed(input: AccountSeedRequest, log: JobLog): Promise<AccountSeedReport>;
+}
+
 /** How the server reaches one project container's engine. */
 export interface EngineEndpoint {
   container: string;
@@ -231,6 +254,7 @@ export interface Core {
   models: CoreModels;
   settings: CoreSettings;
   sshRemotes: CoreSshRemotes;
+  accounts: CoreAccounts;
   engines: CoreEngines;
   legacyImport: CoreLegacyImport;
 }

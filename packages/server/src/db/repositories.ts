@@ -2,12 +2,14 @@
 // document validated by its contract schema on the way in and on the way out,
 // with the columns that queries need copied beside it.
 import {
+  AccountSchema,
   BoxSchema,
   GlobalSettingsInputSchema,
   GlobalSettingsSchema,
   ProjectSchema,
   SshRemoteSchema,
   defaultConfig,
+  type Account,
   type Box,
   type GlobalSettings,
   type Project,
@@ -189,6 +191,40 @@ export class SettingsRepo {
   }
 }
 
+export class AccountsRepo {
+  constructor(private readonly db: Sqlite) {}
+
+  get(id: string): Account | undefined {
+    const row = this.db.prepare("SELECT data FROM accounts WHERE id = ?").get(id) as
+      DataRow | undefined;
+    return row ? AccountSchema.parse(JSON.parse(row.data)) : undefined;
+  }
+
+  /** Every account, ordered by vendor, then name. */
+  list(): Account[] {
+    return parseRows(this.db.prepare("SELECT data FROM accounts ORDER BY vendor, name").all(), (v) =>
+      AccountSchema.parse(v),
+    );
+  }
+
+  /** Inserts or replaces an account. */
+  put(account: Account): Account {
+    const a = AccountSchema.parse(account);
+    this.db
+      .prepare(
+        `INSERT INTO accounts (id, vendor, name, data, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at`,
+      )
+      .run(a.id, a.vendor, a.name, JSON.stringify(a), a.createdAt, a.updatedAt);
+    return a;
+  }
+
+  delete(id: string): boolean {
+    return this.db.prepare("DELETE FROM accounts WHERE id = ?").run(id).changes > 0;
+  }
+}
+
 /** A project container's engine: the loopback port that maps to 20411, and its token. */
 export interface EngineEndpoint {
   projectId: string;
@@ -303,6 +339,7 @@ export interface Repositories {
   settings: SettingsRepo;
   engines: EngineEndpointsRepo;
   imports: ImportsRepo;
+  accounts: AccountsRepo;
   /** Runs `fn` in one transaction. */
   transaction<T>(fn: () => T): T;
   close(): void;
@@ -317,6 +354,7 @@ export function repositories(sqlite: Sqlite): Repositories {
     settings: new SettingsRepo(sqlite),
     engines: new EngineEndpointsRepo(sqlite),
     imports: new ImportsRepo(sqlite),
+    accounts: new AccountsRepo(sqlite),
     transaction: <T>(fn: () => T) => sqlite.transaction(fn)(),
     close: () => sqlite.close(),
   };

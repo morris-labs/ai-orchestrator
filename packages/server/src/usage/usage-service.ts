@@ -51,6 +51,22 @@ export function sampleIsOver(sample: TimedUsageSample, ceiling: Ceiling, nowMs: 
   return value >= limit;
 }
 
+/**
+ * The label to store a sample under. An engine that doesn't know accounts
+ * yet labels its samples with a legacy name (the Claude email,
+ * `codex-default`, `copilot-default`); once the vendor has a default
+ * account, such a sample counts against that account, as seeding relabeled
+ * the history. An account id (`VENDOR/NAME`) stays as it is.
+ */
+export function accountLabel(
+  vendor: Vendor,
+  label: string,
+  settings: Pick<GlobalSettings, "accountDefaults">,
+): string {
+  if (label.includes("/")) return label;
+  return settings.accountDefaults[vendor] ?? label;
+}
+
 export interface OverState {
   over: boolean;
   resetAt: string | null;
@@ -94,7 +110,7 @@ export class UsageService {
     if (event.type !== "usage.sample") return;
     const sample: TimedUsageSample = {
       vendor: event.vendor,
-      account: event.account,
+      account: accountLabel(event.vendor, event.account, this.opts.settings()),
       window: event.window,
       utilization: event.utilization,
       spendUsd: event.spendUsd,

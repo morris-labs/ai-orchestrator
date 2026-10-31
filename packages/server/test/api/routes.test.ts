@@ -228,6 +228,31 @@ const cases: Case[] = [
     url: `${V1}/ssh-remotes/staging/copy-id`,
     status: 202,
   },
+  { key: "accounts.list", method: "GET", url: `${V1}/accounts`, status: 200 },
+  {
+    key: "accounts.create",
+    method: "POST",
+    url: `${V1}/accounts`,
+    body: { vendor: "codex", name: "work" },
+    status: 201,
+  },
+  {
+    key: "accounts.seed",
+    method: "POST",
+    url: `${V1}/accounts/seed`,
+    body: { vendors: ["claude"] },
+    status: 202,
+  },
+  { key: "accounts.get", method: "GET", url: `${V1}/accounts/claude/work`, status: 200 },
+  {
+    key: "accounts.update",
+    method: "PATCH",
+    url: `${V1}/accounts/claude/work`,
+    body: { label: "Work (Pro)", ceiling: null },
+    status: 200,
+  },
+  { key: "accounts.remove", method: "DELETE", url: `${V1}/accounts/claude/work`, status: 200 },
+  { key: "accounts.check", method: "POST", url: `${V1}/accounts/claude/work/check`, status: 200 },
   { key: "globalMounts.get", method: "GET", url: `${V1}/global-mounts`, status: 200 },
   {
     key: "globalMounts.put",
@@ -406,6 +431,38 @@ describe("authentication", () => {
       headers: { cookie: `agentbox_session=${sessionValue(TOKEN)}` },
     });
     expect(res.statusCode).toBe(401);
+  });
+});
+
+describe("accounts", () => {
+  const call = (method: Case["method"], url: string, body?: object) =>
+    h.server.app.inject({ method, url, headers: AUTH, ...(body ? { payload: body } : {}) });
+
+  it("refuses to seed while a box runs, before a job starts", async () => {
+    h.core.runningBoxIds.push(box.id);
+    const res = await call("POST", `${V1}/accounts/seed`, {});
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe("box_running");
+    expect(h.core.calls).not.toContain("accounts.seed:false");
+  });
+
+  it("runs seeding as an account_seed job with the report as its result", async () => {
+    const res = await call("POST", `${V1}/accounts/seed`, { dryRun: true });
+    expect(res.statusCode).toBe(202);
+    expect(res.json().kind).toBe("account_seed");
+    const jobId = res.json().id as string;
+    let job = res.json();
+    for (let i = 0; i < 50 && job.status === "running"; i += 1) {
+      await new Promise((r) => setTimeout(r, 5));
+      job = (await call("GET", `${V1}/jobs/${jobId}`)).json();
+    }
+    expect(job.status).toBe("finished");
+    expect(job.result).toEqual({ dryRun: true, accounts: [] });
+  });
+
+  it("rejects a malformed account name", async () => {
+    const res = await call("POST", `${V1}/accounts`, { vendor: "claude", name: "Bad Name" });
+    expect(res.statusCode).toBe(400);
   });
 });
 
