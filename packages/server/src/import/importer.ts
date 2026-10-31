@@ -70,6 +70,28 @@ export interface ImportReport {
   poolPortsDropped: { projectId: string; boxId: string | null; port: string }[];
   mountsSkipped: { projectId: string; from: string; mount: string; reason: string }[];
   warnings: string[];
+  /**
+   * When an earlier import ran: when it finished and where its report is.
+   * This run then writes its own report to `reportFile`.
+   */
+  previousImport?: { finishedAt: string; reportFile: string };
+  /** The file this report is written to; a dry run writes none. */
+  reportFile?: string;
+}
+
+/**
+ * The report file for a run. The first import writes `import-report.json`;
+ * a later run writes `import-report-TIMESTAMP.json` beside it, so a rerun
+ * that finds nothing new never replaces the first import's report.
+ */
+export function importReportFile(env: HostEnv, firstImport: boolean, started: Date): string {
+  const main = homePaths(env).importReport;
+  if (firstImport) return main;
+  const stamp = started
+    .toISOString()
+    .replace(/\.\d+Z$/, "Z")
+    .replace(/:/g, "-");
+  return main.replace(/\.json$/, `-${stamp}.json`);
 }
 
 export interface ImportOptions {
@@ -237,7 +259,16 @@ export function runImport(options: ImportOptions): ImportReport {
     mountsSkipped: [],
     warnings: [],
   };
-  const firstImport = repos.imports.latest(IMPORT_SOURCE) === undefined;
+  const previous = repos.imports.latest(IMPORT_SOURCE);
+  const firstImport = previous === undefined;
+  const reportFile = importReportFile(env, firstImport, started);
+  if (previous) {
+    report.previousImport = {
+      finishedAt: previous.finishedAt,
+      reportFile: homePaths(env).importReport,
+    };
+  }
+  if (!options.dryRun) report.reportFile = reportFile;
 
   try {
     repos.transaction(() => {
@@ -249,7 +280,6 @@ export function runImport(options: ImportOptions): ImportReport {
     return report;
   }
 
-  const reportFile = homePaths(env).importReport;
   fs.mkdirSync(path.dirname(reportFile), { recursive: true });
   fs.writeFileSync(reportFile, `${JSON.stringify(report, null, 2)}\n`);
   return report;
@@ -635,7 +665,17 @@ export function runImport(options: ImportOptions): ImportReport {
  * `dryRun` would be, imported, and one sentence per skipped or changed item.
  */
 export function summarizeImport(report: ImportReport, dryRun: boolean): ContractImportReport {
+  const previous = report.previousImport;
+  const notes: string[] = [];
+  if (previous) {
+    const verb = dryRun ? "would add" : "added";
+    notes.push(
+      `The import already ran at ${previous.finishedAt}, so this run ${verb} only records created since then. That import's report stays in ${previous.reportFile}.`,
+    );
+    if (report.reportFile) notes.push(`This run's report is in ${report.reportFile}.`);
+  }
   const warnings = [
+    ...notes,
     ...report.warnings,
     ...report.boxes.skipped.map((s) => `Skipped box ${s.file}: ${s.reason}.`),
     ...report.mountsSkipped.map(
