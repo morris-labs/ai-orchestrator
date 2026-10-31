@@ -18,6 +18,11 @@ export interface TerminalEnd {
   closedByClient: boolean;
 }
 
+/** Socket bytes waiting to be sent above which terminal output pauses. */
+export const OUTPUT_HIGH_WATER = 1024 * 1024;
+/** Socket bytes waiting to be sent at or below which paused output resumes. */
+export const OUTPUT_LOW_WATER = 256 * 1024;
+
 export function sendControl(ws: WebSocket, message: TerminalServerMessage): void {
   if (ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify(TerminalServerMessageSchema.parse(message)));
@@ -82,8 +87,23 @@ export async function serveTerminal(
   ws.on("message", onMessage);
   sendControl(ws, { type: "ready", terminalId });
   for (const [data, isBinary] of pending) onMessage(data, isBinary);
+  // A box that prints fast to a slow client would otherwise make the server
+  // buffer without limit: pause the exec above the high-water mark and
+  // resume once the socket has drained below the low one.
+  let paused = false;
+  const drained = () => {
+    if (paused && ws.bufferedAmount <= OUTPUT_LOW_WATER) {
+      paused = false;
+      stream.resume();
+    }
+  };
   stream.on("data", (chunk: Buffer) => {
-    if (ws.readyState === WebSocket.OPEN) ws.send(chunk, { binary: true });
+    if (ws.readyState !== WebSocket.OPEN) return;
+    ws.send(chunk, { binary: true }, drained);
+    if (!paused && ws.bufferedAmount > OUTPUT_HIGH_WATER) {
+      paused = true;
+      stream.pause();
+    }
   });
 
   return new Promise((resolve) => {
