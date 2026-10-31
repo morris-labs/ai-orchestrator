@@ -167,6 +167,15 @@ describe("SetupService checks", () => {
     expect(c.service?.status).toBe("warn");
   });
 
+  it("names Claude Box 3.x when the image has no engine", async () => {
+    const c = byId(
+      await make({ image: { engineMatches: false, engineVersion: null } }).svc.checks(),
+    );
+    expect(c.engine).toMatchObject({ status: "fail", fixable: true });
+    expect(c.engine?.message).toContain("has no Agent Box engine");
+    expect(c.engine?.message).toContain("Claude Box 3.x");
+  });
+
   it("warns about the engine when the image is missing, and survives an image error", async () => {
     let c = byId(await make({ image: { exists: false } }).svc.checks());
     expect(c.image?.status).toBe("fail");

@@ -138,6 +138,15 @@ export async function imageStatus(
   };
 }
 
+/**
+ * The error for an engine image without an Agent Box engine. Claude Box 3.x
+ * builds the same `claude-code` tag from the old Dockerfile, so its setup
+ * wizard or its Update Claude Code action can replace the Agent Box image.
+ */
+export function noEngineMessage(image: string): string {
+  return `The image ${image} has no Agent Box engine, so it was probably built by Claude Box 3.x, which uses the same tag. Rebuild the image from Agent Box.`;
+}
+
 /** The build kinds of `image.build`. */
 export type ImageBuildKind = "rebuild" | "packages" | "claude-code";
 
