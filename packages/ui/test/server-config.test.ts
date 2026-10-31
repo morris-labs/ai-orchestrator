@@ -43,6 +43,15 @@ describe("serverUrl", () => {
     expect(serverUrl({ AGENTBOX_DATA_DIR: data })).toBe("https://127.0.0.1:21555");
   });
 
+  it("prefers the port the running server wrote to server.port", () => {
+    const data = tempDir();
+    writeFileSync(path.join(data, "config.json"), JSON.stringify({ serverPort: 21555 }));
+    writeFileSync(path.join(data, "server.port"), "21600\n");
+    expect(serverUrl({ AGENTBOX_DATA_DIR: data })).toBe("https://127.0.0.1:21600");
+    writeFileSync(path.join(data, "server.port"), "garbage");
+    expect(serverUrl({ AGENTBOX_DATA_DIR: data })).toBe("https://127.0.0.1:21555");
+  });
+
   it("reads config.json under the home directory without AGENTBOX_DATA_DIR", () => {
     const home = tempDir();
     const data = path.join(home, ".claude-box");

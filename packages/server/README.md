@@ -30,9 +30,12 @@ cp -a ~/.claude-box /tmp/agentbox-data
 agentbox-server --data-dir /tmp/agentbox-data
 ```
 
+At every start, the server writes the port it listens on to `server.port`.
 The `agentbox` CLI and the two apps read `AGENTBOX_DATA_DIR` too, to find
-`server.token`, `server.crt`, and the server port in `config.json`. Set it in
-their environment when the server runs with another data directory:
+`server.token`, `server.crt`, and the server port in `server.port` (or
+`config.json` before the server's first start). Set it in their environment
+when the server runs with another data directory, or pass the CLI the same
+`--data-dir`:
 
 ```sh
 AGENTBOX_DATA_DIR=/tmp/agentbox-data agentbox doctor
