@@ -34,6 +34,12 @@ export interface EventsConnectionOptions {
   /** First reconnect delay in milliseconds; doubles up to `maxDelayMs`. */
   initialDelayMs?: number;
   maxDelayMs?: number;
+  /**
+   * How long to wait for the server's `hello` after the client's, in
+   * milliseconds, before the socket is closed and reconnected. 10 seconds by
+   * default; 0 turns the timeout off.
+   */
+  helloTimeoutMs?: number;
   setTimer?: (fn: () => void, ms: number) => unknown;
   clearTimer?: (handle: unknown) => void;
   /** A number in [0, 1) that spreads reconnects out; `Math.random` by default. */
@@ -57,6 +63,8 @@ export class EventsConnection {
   private lastSeq: number | null = null;
   private attempt = 0;
   private timer: unknown = null;
+  /** The hello timeout's handle, while the client waits for the server's `hello`. */
+  private helloTimer: { handle: unknown } | null = null;
   private stopped = false;
   /** True between a `hello` the client sent and the server's answer; events are dropped meanwhile. */
   private awaitingHello = false;
@@ -64,7 +72,7 @@ export class EventsConnection {
   private readonly opts: Required<
     Pick<
       EventsConnectionOptions,
-      "initialDelayMs" | "maxDelayMs" | "setTimer" | "clearTimer" | "random"
+      "initialDelayMs" | "maxDelayMs" | "helloTimeoutMs" | "setTimer" | "clearTimer" | "random"
     >
   > &
     EventsConnectionOptions;
@@ -73,6 +81,7 @@ export class EventsConnection {
     this.opts = {
       initialDelayMs: 500,
       maxDelayMs: 10_000,
+      helloTimeoutMs: 10_000,
       setTimer: (fn, ms) => setTimeout(fn, ms),
       clearTimer: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
       random: Math.random,
@@ -89,7 +98,12 @@ export class EventsConnection {
     return this.status;
   }
 
+  /**
+   * Connects, unless the connection is already running: a second `start()`
+   * without a `stop()` in between keeps the socket or pending reconnect it has.
+   */
   start(): void {
+    if (!this.stopped && (this.socket !== null || this.timer !== null)) return;
     this.stopped = false;
     this.connect();
   }
@@ -98,6 +112,7 @@ export class EventsConnection {
     this.stopped = true;
     if (this.timer !== null) this.opts.clearTimer(this.timer);
     this.timer = null;
+    this.clearHelloTimer();
     const s = this.socket;
     this.socket = null;
     if (s) {
@@ -161,6 +176,7 @@ export class EventsConnection {
     socket.onclose = () => {
       if (this.socket !== socket) return;
       this.socket = null;
+      this.clearHelloTimer();
       this.scheduleReconnect();
     };
     socket.onerror = () => {
@@ -184,8 +200,27 @@ export class EventsConnection {
     }, delay);
   }
 
+  private clearHelloTimer() {
+    if (this.helloTimer !== null) this.opts.clearTimer(this.helloTimer.handle);
+    this.helloTimer = null;
+  }
+
   private sendHello() {
     this.awaitingHello = true;
+    this.clearHelloTimer();
+    const socket = this.socket;
+    if (socket && this.opts.helloTimeoutMs > 0) {
+      // A server or proxy that accepts the upgrade and then stalls would
+      // leave the stream connecting forever. Closing the socket lets
+      // `onclose` schedule the reconnect.
+      const timer: { handle: unknown } = { handle: null };
+      timer.handle = this.opts.setTimer(() => {
+        if (this.helloTimer !== timer) return;
+        this.helloTimer = null;
+        if (this.socket === socket && this.awaitingHello) socket.close();
+      }, this.opts.helloTimeoutMs);
+      this.helloTimer = timer;
+    }
     const hello: ClientHello = {
       type: "hello",
       streamId: this.streamId,
@@ -204,6 +239,7 @@ export class EventsConnection {
     const frame = parsed.data;
     if (frame.type === "hello") {
       this.awaitingHello = false;
+      this.clearHelloTimer();
       this.attempt = 0;
       this.setStatus("open");
       const matched = frame.replaying && frame.streamId === this.streamId;

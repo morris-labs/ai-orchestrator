@@ -75,6 +75,21 @@ describe("ApiClient", () => {
     await expect(client.call("boxes.list", {})).rejects.toMatchObject({ code: "bad_response" });
   });
 
+  it("keeps the status of an error response whose body isn't JSON", async () => {
+    const client = new ApiClient({
+      fetch: async () =>
+        new Response("<html>Bad gateway</html>", {
+          status: 502,
+          headers: { "content-type": "text/html" },
+        }),
+    });
+    const err = await client.call("boxes.list", {}).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiRequestError);
+    expect((err as ApiRequestError).status).toBe(502);
+    expect((err as ApiRequestError).message).toMatch(/status 502/);
+    expect((err as ApiRequestError).details).toBe("<html>Bad gateway</html>");
+  });
+
   it("reports an unreachable server", async () => {
     const client = new ApiClient({
       fetch: async () => {

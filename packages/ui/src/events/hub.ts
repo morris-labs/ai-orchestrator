@@ -25,9 +25,19 @@ export class EventHub {
     return () => set.delete(handler);
   }
 
+  /**
+   * Calls every handler for `event`'s type, then every wildcard handler. A
+   * handler that throws is reported and skipped, so it can't keep the event
+   * from the handlers after it.
+   */
   emit(event: AgentBoxEvent): void {
-    for (const h of this.handlers.get(event.type) ?? []) h(event);
-    for (const h of this.handlers.get("*") ?? []) h(event);
+    for (const h of [...(this.handlers.get(event.type) ?? []), ...(this.handlers.get("*") ?? [])]) {
+      try {
+        h(event);
+      } catch (err) {
+        console.error(`An event handler for ${event.type} failed:`, err);
+      }
+    }
   }
 
   /** Subscribes to resyncs: the moments the state must be reloaded through REST. */

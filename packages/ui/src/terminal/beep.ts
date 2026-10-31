@@ -7,6 +7,9 @@ export function beep(): void {
     const Ctor = globalThis.AudioContext;
     if (!Ctor) return;
     ctx ??= new Ctor();
+    // A context made before any user gesture starts suspended under
+    // Chromium's autoplay policy, and stays so until it is resumed.
+    if (ctx.state === "suspended") void ctx.resume().catch(() => undefined);
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
     osc.frequency.value = 880;

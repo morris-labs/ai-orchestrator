@@ -7,6 +7,7 @@ import {
   formatBytes,
   formatCount,
   formatDuration,
+  formatClock,
   formatPercent,
   formatUsd,
   funnel,
@@ -272,5 +273,20 @@ describe("scales and formatting", () => {
     [formatPercent(0.725), "73%"],
   ])("formats %s", (got, want) => {
     expect(got).toBe(want);
+  });
+});
+
+describe("formatClock", () => {
+  // Local times, so the test holds in any time zone.
+  const now = new Date(2026, 9, 31, 9, 30).getTime();
+  it("shows only the time for today", () => {
+    expect(formatClock(new Date(2026, 9, 31, 14, 0).getTime(), now)).toBe("14:00");
+  });
+  it("adds the weekday within a week, so a reset days away doesn't read as today", () => {
+    expect(formatClock(new Date(2026, 10, 3, 14, 0).getTime(), now)).toBe("Tue 14:00");
+    expect(formatClock(new Date(2026, 10, 1, 0, 5).getTime(), now)).toBe("Sun 00:05");
+  });
+  it("adds the date further out", () => {
+    expect(formatClock(new Date(2026, 10, 20, 8, 0).getTime(), now)).toBe("20 Nov 08:00");
   });
 });

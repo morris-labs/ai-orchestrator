@@ -12,16 +12,31 @@ const W = 360;
 const H = 150;
 const M = { top: 12, right: 44, bottom: 22, left: 36 };
 
-export function formatClock(ms: number): string {
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const DAY_MS = 86_400_000;
+
+/**
+ * A local time for a chart label: `14:00` today, `Tue 14:00` within six
+ * days of `now`, else `3 Nov 14:00`. A 7-day window's reset, or a forecast
+ * past midnight, then can't pass for a time later today.
+ */
+export function formatClock(ms: number, now: number = Date.now()): string {
   const d = new Date(ms);
-  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  const clock = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  const today = new Date(now);
+  if (d.toDateString() === today.toDateString()) return clock;
+  const startOf = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const days = Math.round((startOf(d) - startOf(today)) / DAY_MS);
+  if (Math.abs(days) <= 6) return `${WEEKDAYS[d.getDay()]} ${clock}`;
+  return `${d.getDate()} ${MONTHS[d.getMonth()]} ${clock}`;
 }
 
 function windowLabel(s: UsageSeries): string {
   return s.window === "month" ? "monthly spend" : `${s.window} window`;
 }
 
-function UsagePanel({ series }: { series: UsageSeries }) {
+function UsagePanel({ series, now }: { series: UsageSeries; now?: number }) {
   const [hover, setHover] = useState<number | null>(null);
   const pts = series.points;
   const first = pts[0]!;
@@ -95,10 +110,10 @@ function UsagePanel({ series }: { series: UsageSeries }) {
           ))}
           <line x1={M.left} x2={W - M.right} y1={y(0)} y2={y(0)} className="ab-axis" />
           <text x={M.left} y={H - 6} className="ab-tick">
-            {formatClock(first.time)}
+            {formatClock(first.time, now)}
           </text>
           <text x={W - M.right} y={H - 6} textAnchor="end" className="ab-tick">
-            {formatClock(xMax)}
+            {formatClock(xMax, now)}
           </text>
           {ceiling !== null ? (
             <g>
@@ -129,7 +144,7 @@ function UsagePanel({ series }: { series: UsageSeries }) {
                 textAnchor="end"
                 className="ab-ref-label"
               >
-                Resets {formatClock(series.resetAt)}
+                Resets {formatClock(series.resetAt, now)}
               </text>
             </g>
           ) : null}
@@ -200,7 +215,7 @@ function UsagePanel({ series }: { series: UsageSeries }) {
           <Tooltip
             x={`${(x(hp.time) / W) * 100}%`}
             y={0}
-            title={formatClock(hp.time)}
+            title={formatClock(hp.time, now)}
             rows={[
               { key: "u", color, label: "used", value: formatPercent(hp.utilization) },
               {
@@ -223,15 +238,22 @@ function UsagePanel({ series }: { series: UsageSeries }) {
         {ceiling === null
           ? "The ceiling applies to another window."
           : series.forecastAt !== null
-            ? `Reaches the ceiling about ${formatClock(series.forecastAt)}${series.serverForecast ? "" : " (local estimate)"}.`
+            ? `Reaches the ceiling about ${formatClock(series.forecastAt, now)}${series.serverForecast ? "" : " (local estimate)"}.`
             : "Stays under the ceiling at this rate."}{" "}
-        {series.resetAt !== null ? `Window resets ${formatClock(series.resetAt)}.` : ""}
+        {series.resetAt !== null ? `Window resets ${formatClock(series.resetAt, now)}.` : ""}
       </p>
     </figure>
   );
 }
 
-export function UsageChart({ series }: { series: readonly UsageSeries[] }) {
+export function UsageChart({
+  series,
+  now,
+}: {
+  series: readonly UsageSeries[];
+  /** The time labels are relative to; the current time by default. */
+  now?: number;
+}) {
   const table = (
     <div className="ab-table-wrap">
       <table className="ab-table">
@@ -258,9 +280,9 @@ export function UsageChart({ series }: { series: readonly UsageSeries[] }) {
                 <td className="ab-num">{formatPercent(last.utilization)}</td>
                 <td className="ab-num">{s.ceiling === null ? "–" : formatPercent(s.ceiling)}</td>
                 <td className="ab-num">
-                  {s.forecastAt !== null ? formatClock(s.forecastAt) : "–"}
+                  {s.forecastAt !== null ? formatClock(s.forecastAt, now) : "–"}
                 </td>
-                <td className="ab-num">{s.resetAt !== null ? formatClock(s.resetAt) : "–"}</td>
+                <td className="ab-num">{s.resetAt !== null ? formatClock(s.resetAt, now) : "–"}</td>
                 <td>{USAGE_SOURCE_LABELS[last.source]}</td>
               </tr>
             );
@@ -280,7 +302,7 @@ export function UsageChart({ series }: { series: readonly UsageSeries[] }) {
       ) : (
         <div className="ab-multiples">
           {series.map((s) => (
-            <UsagePanel key={s.key} series={s} />
+            <UsagePanel key={s.key} series={s} now={now} />
           ))}
         </div>
       )}

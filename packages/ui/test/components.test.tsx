@@ -12,11 +12,14 @@ import {
   MessageBoxProvider,
   resizePanes,
   sortRows,
+  Splitter,
   ToastProvider,
+  useContextMenu,
   useInFlight,
   useMessageBox,
   useToast,
   type Column,
+  type MenuEntry,
 } from "../src/index";
 
 interface Row {
@@ -441,6 +444,83 @@ describe("menus, toasts, and collapsibles", () => {
     await user.hover(screen.getByText("Main Platform"));
     expect(screen.getByRole("menuitemcheckbox", { name: /Codex/ })).toBeInTheDocument();
   });
+  it("gives focus back to what had it after an item runs or Escape closes the menu", async () => {
+    const paste = vi.fn();
+    function Pane() {
+      const menu = useContextMenu();
+      const entries: MenuEntry[] = [{ label: "Paste", run: paste }];
+      return (
+        <>
+          <textarea
+            aria-label="terminal"
+            onContextMenu={(e) => {
+              e.preventDefault();
+              menu.open(e.clientX, e.clientY, entries);
+            }}
+          />
+          {menu.element}
+        </>
+      );
+    }
+    const user = userEvent.setup();
+    render(<Pane />);
+    const terminal = screen.getByLabelText("terminal");
+    terminal.focus();
+    fireEvent.contextMenu(terminal);
+    expect(screen.getByRole("menuitem", { name: "Paste" })).toHaveFocus();
+    await user.click(screen.getByRole("menuitem", { name: "Paste" }));
+    expect(paste).toHaveBeenCalled();
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(terminal).toHaveFocus();
+    fireEvent.contextMenu(terminal);
+    expect(screen.getByRole("menuitem", { name: "Paste" })).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(terminal).toHaveFocus();
+  });
+
+  it("leaves focus where an item moved it", async () => {
+    function Pane() {
+      const menu = useContextMenu();
+      return (
+        <>
+          <textarea aria-label="terminal" onContextMenu={() => menu.open(0, 0, entries)} />
+          <input aria-label="rename" />
+          {menu.element}
+        </>
+      );
+    }
+    const entries: MenuEntry[] = [
+      { label: "Rename", run: () => screen.getByLabelText("rename").focus() },
+    ];
+    const user = userEvent.setup();
+    render(<Pane />);
+    const terminal = screen.getByLabelText("terminal");
+    terminal.focus();
+    fireEvent.contextMenu(terminal);
+    await user.click(screen.getByRole("menuitem", { name: "Rename" }));
+    expect(screen.getByLabelText("rename")).toHaveFocus();
+  });
+
+  it("ends a splitter drag when the pointer is cancelled", () => {
+    localStorage.removeItem("ab.splitter.cancel-test");
+    const { container } = render(
+      <Splitter direction="horizontal" defaultSizes={[1, 1]} storageKey="cancel-test">
+        <div>a</div>
+        <div>b</div>
+      </Splitter>,
+    );
+    const handle = container.querySelector(".ab-splitter-handle") as HTMLElement;
+    const removed = vi.spyOn(window, "removeEventListener");
+    fireEvent.pointerDown(handle, { pointerId: 1 });
+    fireEvent(window, new Event("pointercancel"));
+    expect(removed.mock.calls.map((c) => c[0])).toEqual(
+      expect.arrayContaining(["pointermove", "pointerup", "pointercancel"]),
+    );
+    expect(localStorage.getItem("ab.splitter.cancel-test")).not.toBeNull();
+    removed.mockRestore();
+  });
+
   it("shows a toast", () => {
     vi.useFakeTimers();
     function T() {

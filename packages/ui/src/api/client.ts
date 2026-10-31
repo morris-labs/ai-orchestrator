@@ -217,6 +217,8 @@ export class ApiClient {
       try {
         json = JSON.parse(text);
       } catch {
+        // An error page from a proxy, such as an HTML 502, keeps its status.
+        if (!res.ok) throw ApiRequestError.fromResponse(res.status, text);
         throw new ApiRequestError(
           "bad_response",
           `The server sent a body that isn't JSON.`,

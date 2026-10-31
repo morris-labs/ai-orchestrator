@@ -74,7 +74,7 @@ export function Dashboard({ state, usageInfo = [], onOpenRun, connection, now }:
       <FleetPanel rows={fleetRows(state)} onOpenRun={onOpenRun} />
       <FlowDiagram edges={flows} activeStage={run?.stage ?? null} />
       <AgentsTable agents={agentRows(state)} now={now} />
-      <UsageChart series={usageSeries(state, usageInfo)} />
+      <UsageChart series={usageSeries(state, usageInfo)} now={now} />
       <RunHealth run={run} />
     </div>
   );

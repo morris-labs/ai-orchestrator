@@ -20,6 +20,7 @@ function setup() {
     client,
     onEvent: (e) => events.push(`${e.type}#${e.seq}`),
     onResync,
+    helloTimeoutMs: 0,
     setTimer: (fn) => timers.push(fn),
     clearTimer: () => undefined,
   });
@@ -51,6 +52,7 @@ describe("EventsConnection", () => {
         }),
       onEvent: () => undefined,
       onResync: () => undefined,
+      helloTimeoutMs: 0,
       setTimer: (fn) => timers.push(fn),
       clearTimer: () => undefined,
     });
@@ -175,6 +177,7 @@ describe("EventsConnection", () => {
       onEvent: () => undefined,
       onResync: () => undefined,
       random: () => 0.5,
+      helloTimeoutMs: 0,
       setTimer: (fn, ms) => {
         delays.push(ms);
         timers.push(fn);
@@ -191,6 +194,64 @@ describe("EventsConnection", () => {
       expect(delays).toEqual([500, 1000, 2000, 4000]);
       conn.stop();
     })();
+  });
+
+  it("keeps one socket when start() runs twice", async () => {
+    const { server, conn } = setup();
+    conn.start();
+    conn.start();
+    await flush();
+    const sockets = server.socketsFor("/api/v1/events") as FakeSocket[];
+    expect(sockets).toHaveLength(1);
+    conn.stop();
+    expect(sockets[0]?.readyState).toBe(3);
+  });
+
+  it("reconnects when the server never answers the hello", async () => {
+    const opened: { close: () => void; onclose: (() => void) | null }[] = [];
+    class SilentSocket {
+      onopen: (() => void) | null = null;
+      onclose: (() => void) | null = null;
+      onmessage: unknown = null;
+      onerror: unknown = null;
+      readyState = 0;
+      constructor(_url: string) {
+        opened.push(this);
+        queueMicrotask(() => {
+          this.readyState = 1;
+          this.onopen?.();
+        });
+      }
+      send() {}
+      close() {
+        this.readyState = 3;
+        this.onclose?.();
+      }
+    }
+    const timers: { fn: () => void; ms: number }[] = [];
+    const conn = new EventsConnection({
+      client: new ApiClient({
+        baseUrl: "http://h",
+        WebSocket: SilentSocket as unknown as new (url: string) => WebSocket,
+      }),
+      onEvent: () => undefined,
+      onResync: () => undefined,
+      random: () => 0.5,
+      helloTimeoutMs: 7_000,
+      setTimer: (fn, ms) => timers.push({ fn, ms }),
+      clearTimer: () => undefined,
+    });
+    conn.start();
+    await flush();
+    expect(conn.currentStatus).toBe("connecting");
+    expect(timers.map((t) => t.ms)).toEqual([7_000]);
+    timers.shift()?.fn();
+    expect(conn.currentStatus).toBe("closed");
+    expect(timers.map((t) => t.ms)).toEqual([500]);
+    timers.shift()?.fn();
+    await flush();
+    expect(opened).toHaveLength(2);
+    conn.stop();
   });
 
   it("stops without reconnecting", async () => {
@@ -228,6 +289,26 @@ describe("EventHub", () => {
     hub.emit(boxEvent());
     expect(typed).toHaveBeenCalledTimes(1);
     expect(any).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps delivering to later handlers when one throws", () => {
+    const hub = new EventHub();
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const later = vi.fn();
+    const any = vi.fn();
+    hub.on("box.changed", () => {
+      throw new Error("boom");
+    });
+    hub.on("box.changed", later);
+    hub.on("*", () => {
+      throw new Error("boom");
+    });
+    hub.on("*", any);
+    expect(() => hub.emit(boxEvent())).not.toThrow();
+    expect(later).toHaveBeenCalledTimes(1);
+    expect(any).toHaveBeenCalledTimes(1);
+    expect(error).toHaveBeenCalledTimes(2);
+    error.mockRestore();
   });
 
   it("tracks status and resyncs", () => {

@@ -84,13 +84,29 @@ export function Splitter({
       latest = resizePanes(base, index, total > 0 ? (pos - start) / total : 0);
       setSizes(latest);
     };
+    // Pointer capture keeps the events coming when the pointer leaves the
+    // window. A cancelled pointer, or a capture lost some other way, ends
+    // the drag too, so the panes never keep following a released pointer.
+    const handle = e.currentTarget as Element;
+    let ended = false;
     const up = () => {
+      if (ended) return;
+      ended = true;
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
+      handle.removeEventListener("lostpointercapture", up);
       saveSizes(storageKey, latest);
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
+    try {
+      handle.setPointerCapture?.(e.pointerId);
+      handle.addEventListener("lostpointercapture", up);
+    } catch {
+      // No capture for this pointer; pointerup and pointercancel still end the drag.
+    }
   };
 
   return (
