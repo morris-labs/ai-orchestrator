@@ -32,6 +32,14 @@ describe("mapError", () => {
     expect(mapError({ code: "ENOENT" }).status).toBe(500);
   });
 
+  it("maps only Fastify's own 4xx errors to validation", () => {
+    expect(
+      mapError({ code: "FST_ERR_CTP_BODY_TOO_LARGE", statusCode: 413, message: "Too large" }),
+    ).toEqual({ status: 413, body: { error: { code: "validation", message: "Too large" } } });
+    expect(mapError({ code: "FST_ERR_SOMETHING", statusCode: 500 }).status).toBe(500);
+    expect(mapError({ code: "ENOTFOUND", statusCode: 404, message: "x" }).status).toBe(500);
+  });
+
   it("gives every code a status", () => {
     expect(statusFor("secrets_locked")).toBe(503);
     expect(statusFor("not_found")).toBe(404);

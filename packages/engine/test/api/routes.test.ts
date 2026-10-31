@@ -290,6 +290,17 @@ describe("engine API behavior", () => {
     expect(res.json()).toMatchObject({ error: { code: "validation" } });
   });
 
+  it("answers validation with 413 for a body over the size limit", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: `${base}/${RUN}/assign`,
+      headers: { ...auth, "content-type": "application/json" },
+      payload: JSON.stringify({ role: "reviewer", padding: "x".repeat(2 * 1024 * 1024) }),
+    });
+    expect(res.statusCode).toBe(413);
+    expect(res.json()).toMatchObject({ error: { code: "validation" } });
+  });
+
   it("accepts an empty JSON body on a route that takes none", async () => {
     const res = await app.inject({
       method: "POST",

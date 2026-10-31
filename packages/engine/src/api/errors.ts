@@ -38,6 +38,9 @@ export interface MappedError {
  *
  * - An error with a `code` from `ApiErrorCode` keeps its code and message.
  * - A `ZodError` becomes `validation` (400) with the issues in `details`.
+ * - A Fastify error about the request (an `FST_` code with a 4xx
+ *   `statusCode`, such as a body over the size limit) becomes `validation`
+ *   with Fastify's status and message.
  * - Anything else becomes `internal` (500) with a generic message; the
  *   cause goes to the log, not to the client.
  */
@@ -63,9 +66,28 @@ export function mapError(err: unknown): MappedError {
       if (e.details !== undefined) body.error.details = e.details;
       return { status: statusFor(parsed.data), body };
     }
+    const fastify = fastifyClientError(err);
+    if (fastify) return fastify;
   }
   return {
     status: 500,
     body: { error: { code: "internal", message: "The engine failed to handle the request." } },
   };
+}
+
+/**
+ * A Fastify error that blames the request, such as
+ * `FST_ERR_CTP_BODY_TOO_LARGE` (413), as `validation` with Fastify's own
+ * status. Only `FST_` codes count: another library's error with a 4xx
+ * status is the engine's failure, not the client's.
+ */
+function fastifyClientError(err: object): MappedError | null {
+  const e = err as { code?: unknown; statusCode?: unknown; message?: unknown };
+  if (typeof e.code !== "string" || !e.code.startsWith("FST_")) return null;
+  const status = e.statusCode;
+  if (typeof status !== "number" || !Number.isInteger(status) || status < 400 || status > 499)
+    return null;
+  const message =
+    typeof e.message === "string" && e.message !== "" ? e.message : "The request is invalid.";
+  return { status, body: { error: { code: "validation", message } } };
 }
