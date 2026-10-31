@@ -27,9 +27,12 @@ import {
 import {
   ActiveRuns,
   PROTOCOL,
+  PendingNavigation,
   Reloader,
   launcherHash,
+  lostAppPage,
   noticeFor,
+  offlinePageUrl,
   parseDeepLink,
   rendererUrl,
   trayBitmap,
@@ -99,13 +102,51 @@ function updateTray() {
   );
 }
 
+/** A route asked for before the page could take it. */
+const pending = new PendingNavigation();
+/** Desktop notifications on screen: a collected one no longer emits `click`. */
+const shownNotices = new Set<Notification>();
+/** The app page the window loads, kept for the retry after a failed load. */
+let pageUrl = "";
+
+function isApp(url: string): boolean {
+  return isAppPage(url, APP_PAGES);
+}
+
+/** True when the window shows the app page and has finished loading it. */
+function pageReady(): boolean {
+  return !!win && !win.webContents.isLoading() && isApp(win.webContents.getURL());
+}
+
 function show(hash?: string) {
+  // `second-instance` and `open-url` can come before the app is ready, and
+  // a window can't exist yet: keep the route for the first page load.
+  if (!app.isReady()) {
+    if (hash) pending.request(hash, false);
+    return;
+  }
   if (!win) createWindow(null);
   if (!win) return;
   if (win.isMinimized()) win.restore();
   win.show();
   win.focus();
-  if (hash) win.webContents.send("agentbox:navigate", hash);
+  if (!hash) return;
+  const now = pending.request(hash, pageReady());
+  if (now) win.webContents.send("agentbox:navigate", now);
+}
+
+let serverRetry: ReturnType<typeof setTimeout> | null = null;
+/** Loads the app page again once the server answers, while the offline page shows. */
+function retryServerPage() {
+  if (serverRetry) return;
+  serverRetry = setTimeout(() => {
+    serverRetry = null;
+    if (!win || isApp(win.webContents.getURL())) return;
+    client()
+      .call("health", {})
+      .then(() => void win?.loadURL(pageUrl))
+      .catch(retryServerPage);
+  }, 5000);
 }
 
 function createWindow(link: ReturnType<typeof parseDeepLink>) {
@@ -142,6 +183,21 @@ function createWindow(link: ReturnType<typeof parseDeepLink>) {
   win.webContents.on("will-prevent-unload", () => {
     quitting = false;
   });
+  // When the server doesn't answer, show a small page that says so, and
+  // load the app page again once the server answers.
+  win.webContents.on("did-fail-load", (_e, errorCode, _desc, url, isMainFrame) => {
+    const current = win?.webContents.getURL() ?? "";
+    if (!lostAppPage({ url, errorCode, isMainFrame }, current, isApp)) return;
+    void win?.loadURL(offlinePageUrl(config.serverUrl));
+    retryServerPage();
+  });
+  // A route asked for while the page loaded goes to it now; the preload
+  // keeps it until the page listens.
+  win.webContents.on("did-finish-load", () => {
+    if (!win || !isApp(win.webContents.getURL())) return;
+    const hash = pending.take();
+    if (hash) win.webContents.send("agentbox:navigate", hash);
+  });
   win.on("close", (e) => {
     // Closing hides the window; the tray keeps counting runs.
     if (!quitting) {
@@ -149,7 +205,8 @@ function createWindow(link: ReturnType<typeof parseDeepLink>) {
       win?.hide();
     }
   });
-  void win.loadURL(DEV_URL ?? rendererUrl(config.serverUrl, link));
+  pageUrl = DEV_URL ?? rendererUrl(config.serverUrl, link);
+  void win.loadURL(pageUrl);
 }
 
 /** Counts `settings.changed` events, so a reload doesn't undo a newer one. */
@@ -200,7 +257,10 @@ function connectEvents() {
           body: notice.body,
           urgency: notice.urgent ? "critical" : "normal",
         });
+        shownNotices.add(n);
+        n.on("close", () => shownNotices.delete(n));
         n.on("click", () => {
+          shownNotices.delete(n);
           show(notice.hash);
           void client()
             .call("notifications.read", { params: { notificationId: notice.notificationId } })
