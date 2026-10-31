@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   childEnv,
+  ERR_ABORTED,
   findTerminal,
   isBoxNotification,
+  needsLocalPage,
   reviewCommand,
   terminalCandidates,
   terminalCommand,
@@ -109,5 +111,39 @@ describe("notifications and review", () => {
     const env = { PATH: "/usr/bin", AGENTBOX_SERVER_TOKEN: "secret", HOME: "/home/dev" };
     expect(childEnv(env)).toEqual({ PATH: "/usr/bin", HOME: "/home/dev" });
     expect(env.AGENTBOX_SERVER_TOKEN).toBe("secret");
+  });
+});
+
+describe("the local page", () => {
+  const server = "https://127.0.0.1:21400/boxes/";
+  const local = "file:///opt/agentbox/renderer/index.html";
+  const pages = [server, local];
+  const failed = (url: string, errorCode = -102, isMainFrame = true) => ({
+    url,
+    errorCode,
+    isMainFrame,
+  });
+
+  it("loads when the server's page fails to load", () => {
+    expect(needsLocalPage(failed(server), server, "", pages)).toBe(true);
+    expect(needsLocalPage(failed(server + "#/boxes"), server, server, pages)).toBe(true);
+  });
+
+  // Finding 6: the check used to read only the server URL and every frame.
+  it("loads for a page URL outside the server URL, and never for a frame", () => {
+    const dev = "http://localhost:5173/";
+    expect(needsLocalPage(failed(dev), dev, "", [dev, local])).toBe(true);
+    expect(needsLocalPage(failed(server, -102, false), server, server, pages)).toBe(false);
+    expect(needsLocalPage(failed("https://127.0.0.1:21400/api/v1/x"), server, "", pages)).toBe(
+      false,
+    );
+  });
+
+  // Finding 4: a redirect the window blocked used to replace the page.
+  it("keeps the app's page when the window cancelled a load", () => {
+    expect(needsLocalPage(failed(server, ERR_ABORTED), server, server, pages)).toBe(false);
+    expect(needsLocalPage(failed(server, ERR_ABORTED), server, local, pages)).toBe(false);
+    // With nothing loaded yet, a cancelled first load still needs a page.
+    expect(needsLocalPage(failed(server, ERR_ABORTED), server, "", pages)).toBe(true);
   });
 });

@@ -42,6 +42,7 @@ import {
   childEnv,
   findTerminal,
   isBoxNotification,
+  needsLocalPage,
   reviewCommand,
   terminalCommand,
   trayCounts,
@@ -172,8 +173,9 @@ function createWindow() {
   // the app loads instead and shows its "server not reachable" state. That
   // copy can't get the session cookie its WebSockets need, so the server's
   // page replaces it once the server answers.
-  win.webContents.on("did-fail-load", (_e, _code, _desc, url) => {
-    if (!url.startsWith(SERVER_URL)) return;
+  win.webContents.on("did-fail-load", (_e, errorCode, _desc, url, isMainFrame) => {
+    const current = win?.webContents.getURL() ?? "";
+    if (!needsLocalPage({ url, errorCode, isMainFrame }, BOXES_URL, current, APP_PAGES)) return;
     void win?.loadFile(LOCAL_PAGE);
     retryServerPage();
   });
