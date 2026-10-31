@@ -134,9 +134,9 @@ describe("runConfirm", () => {
     expect(record.created).toHaveLength(1);
     expect(reloaded.findings.map((f) => f.title)).toContain("Refund skips the tax");
     // The verdict isn't set twice.
-    const fixedEntries = reloaded.findingById("F-0001")!.history.filter(
-      (h) => h.verdict === "fixed",
-    );
+    const fixedEntries = reloaded
+      .findingById("F-0001")!
+      .history.filter((h) => h.verdict === "fixed");
     expect(fixedEntries).toHaveLength(1);
   });
 });

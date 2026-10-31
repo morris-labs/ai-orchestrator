@@ -37,7 +37,12 @@ export class Git {
    */
   private exec(
     args: readonly string[],
-    options: { input?: string; cwd?: string; env?: Record<string, string>; timeoutMs?: number } = {},
+    options: {
+      input?: string;
+      cwd?: string;
+      env?: Record<string, string>;
+      timeoutMs?: number;
+    } = {},
   ) {
     return this.runner.run("git", [...NO_HOOKS, ...args], {
       cwd: options.cwd ?? this.cwd,
@@ -270,7 +275,10 @@ export class Git {
   /** Copies the checkout's index file to `target`; false when there is none. */
   private async copyIndexTo(target: string): Promise<boolean> {
     try {
-      const index = resolve(this.cwd, (await this.run(["rev-parse", "--git-path", "index"])).trim());
+      const index = resolve(
+        this.cwd,
+        (await this.run(["rev-parse", "--git-path", "index"])).trim(),
+      );
       await copyFile(index, target);
       return true;
     } catch {

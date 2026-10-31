@@ -217,7 +217,8 @@ const COPILOT_EVENTS_JQ =
   'startswith("copilot-pull-request-reviewer")))) | .event';
 
 /** Prints each review of a page as one line of JSON, with the fields `listReviews` reads. */
-const REVIEWS_JQ = ".[] | {id, user: {login: .user.login}, state, commit_id, submitted_at} | tojson";
+const REVIEWS_JQ =
+  ".[] | {id, user: {login: .user.login}, state, commit_id, submitted_at} | tojson";
 
 /** `GitHubClient` over the `gh` CLI, run in the repository directory. */
 export class GhCliClient implements GitHubClient {
