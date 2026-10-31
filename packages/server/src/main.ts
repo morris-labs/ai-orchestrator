@@ -13,6 +13,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { startApp } from "./api/app.js";
 import { createCore } from "./core.js";
 import { defaultStaticDir } from "./api/static-dirs.js";
+import { engineIdentityFiles, expectedEngineVersion } from "./docker/engine-identity.js";
 import { defaultImageContext } from "./docker/image.js";
 import { DEV_ENGINES_ENV, parseDevEngines } from "./events/dev-engines.js";
 import { NodeProcessRunner } from "./jobs/process.js";
@@ -120,7 +121,8 @@ export async function main(argv: string[]): Promise<number> {
         "Environment:\n" +
         "  AGENTBOX_DATA_DIR       The data directory, when --data-dir isn't given.\n" +
         "  AGENTBOX_HOME           The home directory to use in place of yours.\n" +
-        "  AGENTBOX_ENGINE_VERSION The engine version to expect. Default: this server's version.\n" +
+        "  AGENTBOX_ENGINE_VERSION The engine version to expect. Default: this server's version plus the\n" +
+        "                          engine's content hash, VERSION+HASH, when the build wrote one.\n" +
         "  AGENTBOX_IMAGE_CONTEXT  The image build context, an image/ directory with scripts/build-image.sh\n" +
         "                          beside it. Default: image/ in the repository, else\n" +
         "                          /usr/share/agentbox/image.\n" +
@@ -139,15 +141,18 @@ export async function main(argv: string[]): Promise<number> {
   const version = serverVersion();
   const devEngines = parseDevEngines(process.env[DEV_ENGINES_ENV]);
   const repoRoot = path.resolve(here, "..", "..", "..");
+  const imageContext = process.env.AGENTBOX_IMAGE_CONTEXT ?? defaultImageContext(repoRoot);
   const app = await startApp({
     home,
     dataDir,
     createCore,
     version,
-    expectedEngineVersion: process.env.AGENTBOX_ENGINE_VERSION ?? version,
+    expectedEngineVersion:
+      process.env.AGENTBOX_ENGINE_VERSION ??
+      expectedEngineVersion(version, engineIdentityFiles(repoRoot, imageContext)),
     execStart: execStartLine(dataDir),
     devEngines,
-    imageContext: process.env.AGENTBOX_IMAGE_CONTEXT ?? defaultImageContext(repoRoot),
+    imageContext,
     staticDirs: {
       boxes: process.env.AGENTBOX_BOXES_DIR ?? defaultStaticDir(repoRoot, "boxes"),
       review: process.env.AGENTBOX_REVIEW_DIR ?? defaultStaticDir(repoRoot, "review"),

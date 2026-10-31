@@ -54,3 +54,21 @@ version_of() {
   [[ -n "$value" ]] || die "$file has no $key"
   printf '%s\n' "$value"
 }
+
+# Replaces the value of KEY in the versions file FILE. Exits when FILE has no
+# KEY line.
+set_pin() {
+  local file="$1" key="$2" value="$3"
+  grep -q "^${key}=" "$file" || die "$file has no $key line"
+  sed -i "s|^${key}=.*|${key}=${value}|" "$file"
+  log "$key=$value"
+}
+
+# Prints the latest version of the npm package PKG. Exits when npm can't
+# resolve it.
+npm_latest() {
+  local pkg="$1" v
+  v="$(npm view "$pkg" version 2> /dev/null)" || die "npm view $pkg failed; check your network and the npm registry"
+  [[ -n "$v" ]] || die "npm returned no version for $pkg"
+  printf '%s\n' "$v"
+}

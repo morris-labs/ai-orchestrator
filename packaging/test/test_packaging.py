@@ -64,8 +64,12 @@ def load_yaml(path):
 
 
 def read_versions():
+    return read_pins(VERSIONS)
+
+
+def read_pins(path):
     pairs = {}
-    for line in VERSIONS.read_text().splitlines():
+    for line in path.read_text().splitlines():
         if not line or line.startswith("#"):
             continue
         key, _, value = line.partition("=")
@@ -577,6 +581,102 @@ class ScriptsTest(unittest.TestCase):
         self.assertNotIn("onlyBuiltDependencies", package.get("pnpm", {}))
         workspace = load_yaml(ROOT / "pnpm-workspace.yaml")
         self.assertIn("better-sqlite3", workspace["onlyBuiltDependencies"])
+
+    def _installed_layout(self, tmp):
+        """Mimics /usr/share/agentbox in TMP and returns the engine version."""
+        shutil.copytree(ROOT / "scripts", tmp / "scripts")
+        (tmp / "image/keeper").mkdir(parents=True)
+        (tmp / "image/dist").mkdir()
+        shutil.copy(DOCKERFILE, tmp / "image")
+        shutil.copy(VERSIONS, tmp / "image")
+        for name in ("keeper.sh", "start-session.sh"):
+            (tmp / "image/keeper" / name).write_text("#!/bin/sh\n")
+        version = read_versions()["AGENTBOX_ENGINE_VERSION"]
+        (tmp / f"image/dist/agentbox-engine-{version}.tgz").write_bytes(b"")
+        return version
+
+    def _fake_npm(self, tmp):
+        bin_dir = tmp / "bin"
+        bin_dir.mkdir()
+        fake = bin_dir / "npm"
+        fake.write_text(
+            "#!/bin/sh\n"
+            'case "$2" in\n'
+            "  @anthropic-ai/claude-code) echo 9.1.0 ;;\n"
+            "  @openai/codex) echo 9.2.0 ;;\n"
+            "  @github/copilot) echo 9.3.0 ;;\n"
+            "  *) exit 1 ;;\n"
+            "esac\n"
+        )
+        fake.chmod(0o755)
+        return {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"}
+
+    def test_build_image_update_cli_writes_the_latest_versions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = pathlib.Path(tmp)
+            self._installed_layout(tmp)
+            env = self._fake_npm(tmp)
+            # Without the flag, the build keeps the pinned versions.
+            plain = subprocess.run(
+                [str(tmp / "scripts/build-image.sh"), "--print"],
+                check=True, capture_output=True, text=True, env=env,
+            ).stdout
+            self.assertIn(f"CLAUDE_CODE_VERSION={read_versions()['CLAUDE_CODE_VERSION']}", plain)
+            self.assertNotIn("9.1.0", plain)
+            # With the flag, the script resolves from npm, writes the pins, and builds with them.
+            out = subprocess.run(
+                [str(tmp / "scripts/build-image.sh"), "--update-cli", "--print"],
+                check=True, capture_output=True, text=True, env=env,
+            ).stdout
+            for arg in ("CLAUDE_CODE_VERSION=9.1.0", "CODEX_VERSION=9.2.0", "COPILOT_VERSION=9.3.0"):
+                self.assertIn(f"--build-arg {arg}", out)
+            self.assertIn("--build-arg CACHEBUST=", out)
+            # --print leaves the pins alone.
+            self.assertEqual((tmp / "image/versions.env").read_text(), VERSIONS.read_text())
+
+    def test_build_image_update_cli_saves_pins_and_survives_a_read_only_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = pathlib.Path(tmp)
+            self._installed_layout(tmp)
+            env = self._fake_npm(tmp)
+            # A fake docker lets the script finish its build step.
+            (tmp / "bin/docker").write_text('#!/bin/sh\nprintf "%s\\n" "$@"\n')
+            (tmp / "bin/docker").chmod(0o755)
+            saved = subprocess.run(
+                [str(tmp / "scripts/build-image.sh"), "--update-cli"],
+                check=True, capture_output=True, text=True, env=env,
+            ).stdout
+            self.assertIn("CODEX_VERSION=9.2.0", saved)
+            pins = read_pins(tmp / "image/versions.env")
+            self.assertEqual(pins["CLAUDE_CODE_VERSION"], "9.1.0")
+            self.assertEqual(pins["COPILOT_VERSION"], "9.3.0")
+            self.assertEqual(pins["NVM_VERSION"], read_versions()["NVM_VERSION"])
+
+            shutil.copy(VERSIONS, tmp / "image/versions.env")
+            (tmp / "image/versions.env").chmod(0o444)
+            if os.access(tmp / "image/versions.env", os.W_OK):
+                self.skipTest("the file stays writable, as for root")
+            result = subprocess.run(
+                [str(tmp / "scripts/build-image.sh"), "--update-cli"],
+                check=True, capture_output=True, text=True, env=env,
+            )
+            self.assertIn("CLAUDE_CODE_VERSION=9.1.0", result.stdout)
+            self.assertIn("isn't writable", result.stderr)
+            self.assertEqual((tmp / "image/versions.env").read_text(), VERSIONS.read_text())
+
+    def test_build_image_update_cli_is_documented_in_help(self):
+        out = subprocess.run(
+            [str(ROOT / "scripts/build-image.sh"), "--help"], check=True, capture_output=True, text=True
+        ).stdout
+        self.assertIn("--update-cli", out)
+        self.assertIn("latest", out)
+        self.assertIn("versions.env", out)
+
+    def test_image_records_the_engine_content_hash(self):
+        text = DOCKERFILE.read_text()
+        self.assertIn("dist/identity", text)
+        self.assertIn("/etc/agentbox-engine-version", text)
+        self.assertIn("engine_ver}\" \"${engine_hash", text)
 
     def test_bump_versions_keeps_the_registry_token_out_of_argv(self):
         script = (ROOT / "scripts/bump-versions.sh").read_text()

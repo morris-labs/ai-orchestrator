@@ -80,6 +80,11 @@ rebuild the image from the setup wizard, or run the following command:
 /usr/share/agentbox/scripts/build-image.sh
 ```
 
+The engine version has the form `VERSION+HASH`, where `HASH` identifies the
+engine code. An image built before the hash existed records only `VERSION` and
+reads as stale. To update the agent CLIs as well, add `--update-cli`, which
+writes the latest npm versions to `image/versions.env` before it builds.
+
 The image records its versions in `/etc/agentbox-engine-version`,
 `/etc/claude-code-version`, `/etc/codex-version`, and `/etc/copilot-version`.
 To read them, run

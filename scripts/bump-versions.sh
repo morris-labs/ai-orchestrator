@@ -42,29 +42,14 @@ require_tool npm "Install Node.js 22, which includes npm."
 require_tool curl "Install curl: sudo apt-get install curl"
 require_tool node "Install Node.js 22."
 
-# Replaces the value of KEY in the versions file.
-set_pin() {
-  local key="$1" value="$2"
-  grep -q "^${key}=" "$VERSIONS" || die "$VERSIONS has no $key line"
-  sed -i "s|^${key}=.*|${key}=${value}|" "$VERSIONS"
-  log "$key=$value"
-}
-
-npm_latest() {
-  local pkg="$1" v
-  v="$(npm view "$pkg" version 2> /dev/null)" || die "npm view $pkg failed; check your network and the npm registry"
-  [[ -n "$v" ]] || die "npm returned no version for $pkg"
-  printf '%s\n' "$v"
-}
-
-set_pin CLAUDE_CODE_VERSION "$(npm_latest @anthropic-ai/claude-code)"
-set_pin CODEX_VERSION "$(npm_latest @openai/codex)"
-set_pin COPILOT_VERSION "$(npm_latest @github/copilot)"
+set_pin "$VERSIONS" CLAUDE_CODE_VERSION "$(npm_latest @anthropic-ai/claude-code)"
+set_pin "$VERSIONS" CODEX_VERSION "$(npm_latest @openai/codex)"
+set_pin "$VERSIONS" COPILOT_VERSION "$(npm_latest @github/copilot)"
 
 nvm_tag="$(curl -fsSL https://api.github.com/repos/nvm-sh/nvm/releases/latest |
   node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).tag_name))')" ||
   die "could not read the latest nvm release from the GitHub API"
-set_pin NVM_VERSION "$nvm_tag"
+set_pin "$VERSIONS" NVM_VERSION "$nvm_tag"
 
 today="$(date +%Y-%m-%d)"
 sed -i "s|^# Recorded [0-9-]*\.|# Recorded $today.|" "$VERSIONS"

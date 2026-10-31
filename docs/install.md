@@ -181,6 +181,22 @@ The server refuses to start a container whose engine version differs from
 its own, and offers a rebuild. After you upgrade the package, rebuild the
 image.
 
+The engine version includes a content hash of the built engine, as in
+`4.0.0-dev+0123456789ab`. A rebuild after any engine change therefore changes
+the version, and an image built from older engine code reads as stale although
+the package version stays the same.
+
+The build uses the agent CLI versions pinned in `image/versions.env`. To
+update Claude Code, Codex, and Copilot, run the script with `--update-cli`.
+The script resolves the latest versions from npm, writes them to
+`image/versions.env`, and builds with them. When that file isn't writable, as
+in the installed package, the build still uses the new versions and the script
+tells you it couldn't save them.
+
+```sh
+/usr/share/agentbox/scripts/build-image.sh --update-cli
+```
+
 ## Sign in to the other CLIs
 
 Every container mounts your host's `~/.codex` and `~/.copilot` directories,
@@ -368,6 +384,9 @@ The `scripts/` directory holds the following release tools:
 - `scripts/bump-versions.sh`: refreshes the Claude Code, Codex, Copilot, and
   nvm pins in `image/versions.env`. With `--base`, it also moves the base
   image digest in `image/Dockerfile`.
+- `scripts/build-image.sh --update-cli`: resolves the latest CLI versions from
+  npm, writes them to `image/versions.env`, and builds the image with them.
+  Without the option, the build uses the pinned versions.
 - `scripts/build-image.sh --print`: prints the `docker build` command
   without running it.
 
