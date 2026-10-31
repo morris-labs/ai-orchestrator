@@ -32,18 +32,52 @@ export function createJobMessage(job: Job, deferredStart = false): string | null
   return job.error?.message ?? `Creating the box failed (exit ${job.exitCode ?? "unknown"}).`;
 }
 
-/** Polls `jobs.get` until the job leaves `running`, or until the deadline passes. */
+/**
+ * Polls `jobs.get` until the job leaves `running`, or until the deadline
+ * passes. A failed poll is retried, up to `retries` failures in a row. When
+ * `signal` aborts, the wait stops polling and rejects with the abort reason.
+ */
 export async function waitForJob(
   get: () => Promise<Job>,
-  options: { intervalMs?: number; timeoutMs?: number } = {},
+  options: { intervalMs?: number; timeoutMs?: number; retries?: number; signal?: AbortSignal } = {},
 ): Promise<Job> {
   const interval = options.intervalMs ?? 500;
+  const retries = options.retries ?? 3;
+  const { signal } = options;
   const deadline = Date.now() + (options.timeoutMs ?? 30 * 60_000);
+  const sleep = () =>
+    new Promise<void>((resolve, reject) => {
+      if (signal?.aborted) {
+        reject(signal.reason);
+        return;
+      }
+      const t = setTimeout(() => {
+        signal?.removeEventListener("abort", onAbort);
+        resolve();
+      }, interval);
+      const onAbort = () => {
+        clearTimeout(t);
+        reject(signal?.reason);
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
+    });
+  let failures = 0;
   for (;;) {
-    const job = await get();
+    signal?.throwIfAborted();
+    let job: Job;
+    try {
+      job = await get();
+      failures = 0;
+    } catch (err) {
+      signal?.throwIfAborted();
+      failures += 1;
+      if (failures > retries || Date.now() > deadline) throw err;
+      await sleep();
+      continue;
+    }
     if (job.status !== "running") return job;
     if (Date.now() > deadline) return job;
-    await new Promise((r) => setTimeout(r, interval));
+    await sleep();
   }
 }
 
@@ -78,8 +112,11 @@ export function JobDialog({
 
   useEffect(() => {
     let live = true;
+    // Closing the dialog stops the polling, not only the state updates.
+    const abort = new AbortController();
     waitForJob(() => client.call("jobs.get", { params: { jobId: initial.id } }), {
       intervalMs: 1000,
+      signal: abort.signal,
     })
       .then((j) => {
         if (!live) return;
@@ -92,6 +129,7 @@ export function JobDialog({
       .catch((err: unknown) => live && setError(errorMessage(err)));
     return () => {
       live = false;
+      abort.abort();
     };
   }, [client, initial.id]);
 

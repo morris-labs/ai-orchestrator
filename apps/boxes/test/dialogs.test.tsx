@@ -549,6 +549,58 @@ describe("SetupWizard and jobs", () => {
     expect(n).toBe(3);
   });
 
+  it("retries a failed poll instead of ending the wait", async () => {
+    let n = 0;
+    const job = await waitForJob(
+      async () => {
+        n += 1;
+        if (n === 1) throw new Error("connection reset");
+        return { status: n < 3 ? "running" : "finished" } as Job;
+      },
+      { intervalMs: 1 },
+    );
+    expect(job.status).toBe("finished");
+    await expect(
+      waitForJob(
+        async () => {
+          throw new Error("gone");
+        },
+        { intervalMs: 1, retries: 2 },
+      ),
+    ).rejects.toThrow("gone");
+  });
+
+  it("stops polling when the signal aborts", async () => {
+    const abort = new AbortController();
+    let n = 0;
+    const wait = waitForJob(
+      async () => {
+        n += 1;
+        if (n === 2) abort.abort(new Error("closed"));
+        return { status: "running" } as Job;
+      },
+      { intervalMs: 1, signal: abort.signal },
+    );
+    await expect(wait).rejects.toThrow("closed");
+    const polls = n;
+    await new Promise((r) => setTimeout(r, 20));
+    expect(n).toBe(polls);
+  });
+
+  it("stops polling a job once its dialog closes", async () => {
+    const server = new FakeServer({ autoFinishJobs: false });
+    const job = server.startJob("image_build", "build image", null, () => null);
+    const { unmount } = renderWithServer(
+      <JobDialog title="Build" job={job} onClose={() => undefined} />,
+      server,
+    );
+    await waitFor(() => expect(server.callsTo("jobs.get").length).toBeGreaterThan(0));
+    unmount();
+    const polls = server.callsTo("jobs.get").length;
+    await new Promise((r) => setTimeout(r, 1300));
+    expect(server.callsTo("jobs.get").length).toBe(polls);
+  });
+
   it("shows the job result when it finishes", async () => {
     const server = new FakeServer({ autoFinishJobs: false });
     const job = server.startJob("convert_to_worktree", "convert x", null, () => ({ ok: 1 }));
