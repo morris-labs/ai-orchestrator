@@ -1187,9 +1187,13 @@ export class BoxService {
   async sendMessage(id: string, text: string): Promise<void> {
     const box = this.get(id);
     if (!this.isRunning(box)) throw new ApiError("conflict", `${id} is not running.`);
-    const target = `=${boxTmuxSession(box)}`;
+    // `send-keys` takes a pane target, and tmux resolves `=NAME` without a
+    // `:` as a pane or window, so it fails. The trailing `:` names the
+    // session's current window and pane. `--` keeps a message that starts
+    // with `-` from being read as flags.
+    const target = `=${boxTmuxSession(box)}:`;
     for (const cmd of [
-      ["tmux", "send-keys", "-t", target, "-l", text],
+      ["tmux", "send-keys", "-t", target, "-l", "--", text],
       ["tmux", "send-keys", "-t", target, "Enter"],
     ]) {
       const r = await this.deps.docker.exec(box.container, {

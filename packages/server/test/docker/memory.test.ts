@@ -39,10 +39,17 @@ describe("MemoryDocker", () => {
       (await d.exec(c, { cmd: sessionStartCmd("s2", "/w", "claude bad-flag") })).exitCode,
     ).toBe(2);
     expect((await d.exec(c, { cmd: ["tmux", "list-sessions", "-F", "#S"] })).stdout).toBe("s1\n");
+    // A session name alone is not a pane target, as in tmux.
     expect(
-      (await d.exec(c, { cmd: ["tmux", "send-keys", "-t", "=s1", "-l", "hi"] })).exitCode,
+      (await d.exec(c, { cmd: ["tmux", "send-keys", "-t", "=s1", "-l", "hi"] })).stderr,
+    ).toContain("can't find pane");
+    expect(
+      (await d.exec(c, { cmd: ["tmux", "send-keys", "-t", "=s1:", "-l", "-x"] })).stderr,
+    ).toContain("unknown flag -x");
+    expect(
+      (await d.exec(c, { cmd: ["tmux", "send-keys", "-t", "=s1:", "-l", "--", "-x"] })).exitCode,
     ).toBe(0);
-    expect(d.containers.get(c)?.sentKeys.get("s1")).toEqual(["-l hi"]);
+    expect(d.containers.get(c)?.sentKeys.get("s1")).toEqual(["-l -x"]);
     expect((await d.exec(c, { cmd: ["tmux", "kill-session", "-t", "=s1"] })).exitCode).toBe(0);
     expect((await d.exec(c, { cmd: ["tmux", "kill-session", "-t", "=s1"] })).stderr).toContain(
       "can't find session",

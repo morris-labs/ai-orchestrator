@@ -899,9 +899,25 @@ describe("edit, platform, side sessions, messages", () => {
     const h = makeHarness();
     const box = await h.core.boxes.create({ targetDir: h.dir("app"), layout: "root" });
     await h.core.boxes.sendMessage(box.id, "Hold edits, please.");
+    await h.core.boxes.sendMessage(box.id, "- fix the tests");
     expect(h.docker.containers.get(box.container)?.sentKeys.get(box.session)).toEqual([
       "-l Hold edits, please.",
       "Enter",
+      "-l - fix the tests",
+      "Enter",
+    ]);
+    const cmds = h.docker
+      .callsOf("exec")
+      .map((c) => (c.args[1] as { cmd: string[] }).cmd)
+      .filter((cmd) => cmd[1] === "send-keys");
+    expect(cmds[0]).toEqual([
+      "tmux",
+      "send-keys",
+      "-t",
+      `=${box.session}:`,
+      "-l",
+      "--",
+      "Hold edits, please.",
     ]);
   });
 
