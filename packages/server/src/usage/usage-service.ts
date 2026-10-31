@@ -152,9 +152,7 @@ export class UsageService {
    */
   isOver(vendor: Vendor, ceilings: Ceilings, account?: string): OverState {
     if (account === undefined) {
-      const states = this.opts.store
-        .accounts(vendor)
-        .map((a) => this.isOver(vendor, ceilings, a));
+      const states = this.opts.store.accounts(vendor).map((a) => this.isOver(vendor, ceilings, a));
       const over = states.filter((s) => s.over);
       if (over.length > 0) {
         // The vendor is usable again once every over account has reset; an

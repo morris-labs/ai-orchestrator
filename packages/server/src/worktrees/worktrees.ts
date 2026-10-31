@@ -195,7 +195,14 @@ const BUILD_OUTPUT_NAMES = new Set([
 ]);
 
 /** Build-named directories that hold downloaded packages rather than this project's output. */
-const DEPENDENCY_CACHE_NAMES = ["node_modules", ".venv", "venv", ".gradle", ".cache", "__pycache__"];
+const DEPENDENCY_CACHE_NAMES = [
+  "node_modules",
+  ".venv",
+  "venv",
+  ".gradle",
+  ".cache",
+  "__pycache__",
+];
 
 /** Ignored files that are likely the only copy of a secret, even inside build output. */
 const SECRET_FILE_PATTERNS = [".env", ".env.*", "*.pem", "*.key"];

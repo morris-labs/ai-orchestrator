@@ -92,7 +92,9 @@ export class Notifier {
       const key = `${summary.runId}|${summary.round}`;
       if (!this.roundsSeen.has(key)) {
         this.roundsSeen.add(key);
-        if (this.stored(summary.runId, ["round_summary"], null, `Round ${summary.round} finished`)) {
+        if (
+          this.stored(summary.runId, ["round_summary"], null, `Round ${summary.round} finished`)
+        ) {
           return;
         }
         if (toggles.roundSummary) {
