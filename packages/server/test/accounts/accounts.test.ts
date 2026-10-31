@@ -321,7 +321,11 @@ describe("AccountService.seed", () => {
     const { accounts, settings, env } = setup();
     const report = await accounts.seed({ dryRun: true });
     expect(report.dryRun).toBe(true);
-    expect(report.accounts.map((a) => a.status)).toEqual(["would_seed", "would_seed", "would_seed"]);
+    expect(report.accounts.map((a) => a.status)).toEqual([
+      "would_seed",
+      "would_seed",
+      "would_seed",
+    ]);
     expect(report.accounts[0]!.madeDefault).toBe(true);
     expect(fs.existsSync(path.join(env.dataDir!, "accounts"))).toBe(false);
     expect(accounts.list()).toEqual([]);
@@ -412,7 +416,11 @@ describe("AccountService records", () => {
 describe("AccountService.check", () => {
   it("runs the status command with the account folder and stores the answer", async () => {
     const { accounts, docker } = setup();
-    docker.images.set("claude-code", { id: "sha256:img", created: "2026-10-31T00:00:00Z", labels: {} });
+    docker.images.set("claude-code", {
+      id: "sha256:img",
+      created: "2026-10-31T00:00:00Z",
+      labels: {},
+    });
     docker.runOnceAnswers.set("claude auth status", {
       exitCode: 0,
       stdout: '{"loggedIn":true,"email":"person@example.com"}',

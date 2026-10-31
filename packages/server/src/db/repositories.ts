@@ -202,8 +202,9 @@ export class AccountsRepo {
 
   /** Every account, ordered by vendor, then name. */
   list(): Account[] {
-    return parseRows(this.db.prepare("SELECT data FROM accounts ORDER BY vendor, name").all(), (v) =>
-      AccountSchema.parse(v),
+    return parseRows(
+      this.db.prepare("SELECT data FROM accounts ORDER BY vendor, name").all(),
+      (v) => AccountSchema.parse(v),
     );
   }
 

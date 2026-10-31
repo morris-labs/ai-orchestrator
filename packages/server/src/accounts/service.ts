@@ -30,12 +30,7 @@ import { ApiError } from "../records/errors.js";
 import type { SettingsService } from "../records/settings.js";
 import type { SqlDatabase } from "../api/core-interface.js";
 import { UsageStore } from "../usage/usage-store.js";
-import {
-  CODEX_STORE_SETTING,
-  seedFolder,
-  sourceDirOf,
-  type SeedSources,
-} from "./seed.js";
+import { CODEX_STORE_SETTING, seedFolder, sourceDirOf, type SeedSources } from "./seed.js";
 
 export interface AccountServiceOptions {
   env: HostEnv;

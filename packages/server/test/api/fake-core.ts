@@ -275,7 +275,10 @@ export function createFakeCore(): FakeCore {
       },
       update: async (id, patch) => {
         const v = accounts.get(id) ?? notFound(`account ${id}`);
-        const next = { ...v, account: { ...v.account, ...(patch.label ? { label: patch.label } : {}) } };
+        const next = {
+          ...v,
+          account: { ...v.account, ...(patch.label ? { label: patch.label } : {}) },
+        };
         accounts.set(id, next);
         return next;
       },

@@ -69,11 +69,7 @@ function emptyStats(): CopyStats {
  * leaves the tree becomes absolute, so it still points where it did, such as
  * a `projects` link to a shared transcript store.
  */
-export function linkTargetForCopy(
-  sourceRoot: string,
-  linkPath: string,
-  target: string,
-): string {
+export function linkTargetForCopy(sourceRoot: string, linkPath: string, target: string): string {
   if (path.isAbsolute(target)) return target;
   const resolved = path.resolve(path.dirname(linkPath), target);
   const rel = path.relative(sourceRoot, resolved);
@@ -113,7 +109,11 @@ export async function copyTree(
       if (!options.dryRun) await fs.mkdir(dst, { mode: 0o700 });
       const entries = (await fs.readdir(src)).sort();
       for (const name of entries) {
-        await walk(path.join(src, name), path.join(dst, name), rel === "" ? name : `${rel}/${name}`);
+        await walk(
+          path.join(src, name),
+          path.join(dst, name),
+          rel === "" ? name : `${rel}/${name}`,
+        );
       }
       if (!options.dryRun) {
         await fs.chmod(dst, st.mode & 0o7777);

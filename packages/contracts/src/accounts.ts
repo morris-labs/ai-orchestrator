@@ -111,7 +111,10 @@ export type AccountUpdate = z.infer<typeof AccountUpdateSchema>;
 export const AccountSeedRequestSchema = z
   .object({
     /** The vendors to seed. Default: every vendor. */
-    vendors: z.array(VendorSchema).min(1).default([...PlatformSchema.options]),
+    vendors: z
+      .array(VendorSchema)
+      .min(1)
+      .default([...PlatformSchema.options]),
     /** The name of each seeded account. */
     name: AccountNameSchema.default(DEFAULT_SEED_ACCOUNT_NAME),
     /** Reports what seeding would copy, and copies nothing. */

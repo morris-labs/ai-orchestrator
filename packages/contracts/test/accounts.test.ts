@@ -65,7 +65,10 @@ describe("account settings", () => {
         accountsMode: "accounts",
         accountDefaults: { claude: "claude/work", codex: null },
       }),
-    ).toEqual({ accountsMode: "accounts", accountDefaults: { claude: "claude/work", codex: null } });
+    ).toEqual({
+      accountsMode: "accounts",
+      accountDefaults: { claude: "claude/work", codex: null },
+    });
     expect(
       GlobalSettingsPatchSchema.safeParse({ accountDefaults: { claude: "codex/work" } }).success,
     ).toBe(false);
