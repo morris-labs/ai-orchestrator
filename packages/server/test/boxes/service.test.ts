@@ -60,7 +60,7 @@ describe("create", () => {
     const prompt = expandTemplate(DEFAULT_PROMPT_TEMPLATES.starter, ["Quick look", dir]);
     expect(command).toBe(
       `claude '--remote-control=Quick look' '--permission-mode' 'auto' '--allow-dangerously-skip-permissions' ` +
-        `'--model' 'claude-opus-5-5' '--effort' 'high' '--name=Quick look' '${prompt.replace(/'/g, `'\\''`)}' '--session-id' '${box.sessionUuid}'`,
+        `'--model' 'claude-opus-5-5' '--effort' 'high' '--name=Quick look' '--session-id' '${box.sessionUuid}' '--' '${prompt.replace(/'/g, `'\\''`)}'`,
     );
     expect(h.core.boxes.status(box)).toBe("running");
     const view = h.core.boxes.view(box);
@@ -90,6 +90,30 @@ describe("create", () => {
     const second = await h.core.boxes.create({ targetDir: box.targetDir, layout: "root" });
     expect(second.id).toBe("claude-agent-app.example.com-2");
     expect(second.hostKey).toBe("app-example-com-2");
+  });
+
+  it("passes an opening prompt that starts with - after --, last", async () => {
+    const h = makeHarness();
+    h.core.settings.setPromptTemplates({ ...DEFAULT_PROMPT_TEMPLATES, starter: "%1" });
+    const box = await h.core.boxes.create({
+      targetDir: h.dir("app"),
+      layout: "root",
+      conversationName: "-x",
+    });
+    expect(
+      lastCommand(h).endsWith(`'--name=-x' '--session-id' '${box.sessionUuid}' '--' '-x'`),
+    ).toBe(true);
+    // A box saved without a start passes its prompt the same way on its first start.
+    const later = await h.core.boxes.create({
+      targetDir: h.dir("app"),
+      layout: "root",
+      conversationName: "-y",
+      start: false,
+    });
+    const started = await h.core.boxes.start(later.id);
+    expect(
+      lastCommand(h).endsWith(`'--name=-y' '--session-id' '${started.sessionUuid}' '--' '-y'`),
+    ).toBe(true);
   });
 
   it("adds the secrets hint only when the project has secret references", async () => {

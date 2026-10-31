@@ -67,7 +67,14 @@ import {
   removeWorktree,
   worktreePath,
 } from "../worktrees/worktrees.js";
-import { baseClaudeArgs, movedMessage, nameArg, platformArgs, sideSessionArgs } from "./args.js";
+import {
+  baseClaudeArgs,
+  movedMessage,
+  nameArg,
+  platformArgs,
+  pushPrompt,
+  sideSessionArgs,
+} from "./args.js";
 import { slugifyIssueName, uniqueBoxName } from "./names.js";
 
 export type BoxCreateInput = z.input<typeof BoxCreateSchema>;
@@ -574,7 +581,6 @@ export class BoxService {
     }
 
     let args = [...baseClaudeArgs(box, project), nameArg(conversationName)];
-    if (openingPrompt !== "") args.push(openingPrompt);
     this.mark(box, "starting");
     try {
       if (forkFrom) {
@@ -583,6 +589,7 @@ export class BoxService {
       } else {
         args.push(resumeExisting ? "--resume" : "--session-id", sessionUuid);
       }
+      pushPrompt(args, openingPrompt);
       if (box.platform !== "claude")
         args = platformArgs(box, project, box.platform, false, openingPrompt);
       await this.startSession(box, box.platform, args);
@@ -699,16 +706,17 @@ export class BoxService {
     let args = baseClaudeArgs(box, project);
     if (box.conversationName !== "") args.push(nameArg(box.conversationName));
     if (first) {
-      if (first.openingPrompt !== "") args.push(first.openingPrompt);
       if (first.forkFrom) {
         args.push("--resume", first.forkFrom.uuid, "--fork-session", "--session-id", sessionUuid);
       } else {
         args.push("--session-id", sessionUuid);
       }
+      pushPrompt(args, first.openingPrompt);
     } else {
       args.push(hasTranscript ? "--resume" : "--session-id", sessionUuid);
     }
-    if (hasTranscript && box.movedFrom && box.worktree) args.push(movedMessage(this.env, box));
+    if (hasTranscript && box.movedFrom && box.worktree)
+      pushPrompt(args, movedMessage(this.env, box));
     if (box.platform !== "claude") {
       args = first
         ? platformArgs(box, project, box.platform, false, first.openingPrompt)
