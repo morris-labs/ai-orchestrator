@@ -104,7 +104,8 @@ export function planReviews(
 ): ReviewTask[] {
   const tasks: ReviewTask[] = [];
   const perGroup = reviewers.filter((v) => v !== "copilot");
-  if (reviewers.includes("copilot")) {
+  // With no groups the diff is empty, and a whole-diff review has nothing to read.
+  if (reviewers.includes("copilot") && groups.length > 0) {
     tasks.push({ key: "all-copilot", vendor: "copilot", groupId: null, focusAreas: null });
   }
   groups.forEach((group, index) => {
