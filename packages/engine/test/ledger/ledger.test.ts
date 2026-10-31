@@ -52,4 +52,28 @@ describe("ledger", () => {
       reviewers: ["codex", "copilot"],
     });
   });
+
+  it("explains a sound-marked hunk that a finding touches with the finding's title", () => {
+    const ledger = recordVerdicts(
+      newLedger("G01", hunks),
+      hunks,
+      "codex",
+      [
+        { hunkId: "G01-H01", verdict: "sound", reason: "Examined; nothing is wrong." },
+        { hunkId: "G01-H03", verdict: "findings", reason: "The loop skips the last item." },
+      ],
+      [
+        { file: "a.py", lines: [12, 12], title: "Off-by-one in the total" },
+        { file: "b.py", lines: [2, 2], title: "Skips the last item" },
+      ],
+    );
+    expect(ledger.entries[0]).toMatchObject({
+      verdict: "findings",
+      reason: "Off-by-one in the total",
+    });
+    expect(ledger.entries[2]).toMatchObject({
+      verdict: "findings",
+      reason: "The loop skips the last item.",
+    });
+  });
 });

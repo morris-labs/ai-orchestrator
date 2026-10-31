@@ -74,7 +74,10 @@ export function recordVerdicts(
     let reason = entry.reason;
     if (touching.length > 0 || stated?.verdict === "findings") {
       verdict = "findings";
-      reason = stated?.reason || touching.map((f) => f.title).join("; ");
+      // A `sound` reason says nothing is wrong, so it never explains a hunk
+      // that one of the reviewer's own findings touches.
+      const statedReason = stated?.verdict === "findings" ? stated.reason : "";
+      reason = statedReason || touching.map((f) => f.title).join("; ");
     } else if (stated?.verdict === "sound" && verdict !== "findings") {
       verdict = "sound";
       reason = stated.reason;
