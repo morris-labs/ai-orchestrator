@@ -28,6 +28,38 @@ export type Platform = z.infer<typeof PlatformSchema>;
 export const VendorSchema = PlatformSchema;
 export type Vendor = z.infer<typeof VendorSchema>;
 
+/**
+ * An account's short name, unique within its vendor: lowercase ASCII
+ * letters, digits, and inner hyphens, at most 32 characters, such as
+ * `personal` or `work`.
+ */
+export const AccountNameSchema = z.string().regex(/^[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/, {
+  message: "use lowercase letters, digits, and inner hyphens, at most 32 characters",
+});
+
+/**
+ * An account id, `VENDOR/NAME`, such as `claude/work`. See
+ * `docs/v4/design-accounts.md`.
+ */
+export const AccountIdSchema = z
+  .string()
+  .regex(/^(?:claude|codex|copilot)\/[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?$/, {
+    message: "must have the form VENDOR/NAME, such as claude/work",
+  });
+export type AccountId = z.infer<typeof AccountIdSchema>;
+
+/** Returns the id of the account `name` of `vendor`: `VENDOR/NAME`. */
+export function accountId(vendor: Platform, name: string): string {
+  return `${vendor}/${name}`;
+}
+
+/** Splits an account id into its vendor and name, or returns `null` for a malformed id. */
+export function parseAccountId(id: string): { vendor: Platform; name: string } | null {
+  if (!AccountIdSchema.safeParse(id).success) return null;
+  const slash = id.indexOf("/");
+  return { vendor: id.slice(0, slash) as Platform, name: id.slice(slash + 1) };
+}
+
 /** The `--effort` values that Claude Code accepts. */
 export const EffortSchema = z.enum(["low", "medium", "high", "xhigh", "max"]);
 export type Effort = z.infer<typeof EffortSchema>;

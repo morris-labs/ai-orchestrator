@@ -50,6 +50,13 @@
 //   describe the JSON frames.
 import { z } from "zod";
 import {
+  AccountCreateSchema,
+  AccountRemoveResultSchema,
+  AccountSeedRequestSchema,
+  AccountUpdateSchema,
+  AccountViewSchema,
+} from "./accounts.js";
+import {
   ApiErrorSchema,
   CommitShaSchema,
   EffortSchema,
@@ -181,7 +188,14 @@ export type ReviewState = z.infer<typeof ReviewStateSchema>;
  */
 export const JobSchema = z.object({
   id: z.string().min(1),
-  kind: z.enum(["image_build", "setup_fix", "ssh_copy_id", "box_create", "convert_to_worktree"]),
+  kind: z.enum([
+    "image_build",
+    "setup_fix",
+    "ssh_copy_id",
+    "box_create",
+    "convert_to_worktree",
+    "account_seed",
+  ]),
   /** The box the job creates or changes, or `null`. */
   boxId: z.string().min(1).nullable(),
   /** The command as a person would type it, for the "Running: ..." label. */
@@ -192,7 +206,8 @@ export const JobSchema = z.object({
   error: ApiErrorSchema.shape.error.nullable(),
   /**
    * The job's result once it finishes, or `null`: a `ConvertToWorktreeResult`
-   * for `convert_to_worktree`, `{ box }` for `box_create`.
+   * for `convert_to_worktree`, `{ box }` for `box_create`, an
+   * `AccountSeedReport` for `account_seed`.
    */
   result: z.unknown().nullable(),
   startedAt: IsoDateTimeSchema,
@@ -919,6 +934,7 @@ function prefixKeys<const P extends string, T extends Record<string, unknown>>(
 const projects = `${V1}/projects`;
 const boxes = `${V1}/boxes`;
 const sshRemotes = `${V1}/ssh-remotes`;
+const accounts = `${V1}/accounts`;
 
 export const serverRoutes = {
   health: http({
@@ -1351,6 +1367,60 @@ export const serverRoutes = {
     summary: "Run ssh-copy-id in a job terminal.",
     response: JobSchema,
     status: 202,
+  }),
+  // Accounts (docs/v4/design-accounts.md, phase 1)
+  "accounts.list": http({
+    method: "GET",
+    path: accounts,
+    summary: "List the accounts of every vendor.",
+    response: z.object({ accounts: z.array(AccountViewSchema) }),
+  }),
+  "accounts.create": http({
+    method: "POST",
+    path: accounts,
+    summary:
+      "Create an account and its empty folder; the first account of a vendor becomes its default.",
+    body: AccountCreateSchema,
+    response: AccountViewSchema,
+    status: 201,
+    errors: ["conflict"],
+  }),
+  "accounts.seed": http({
+    method: "POST",
+    path: `${accounts}/seed`,
+    summary:
+      "Copy the host's agent folders into new accounts, leaving out the sign-in files, in an `account_seed` job.",
+    body: AccountSeedRequestSchema,
+    response: JobSchema,
+    status: 202,
+    errors: ["box_running", "conflict"],
+  }),
+  "accounts.get": http({
+    method: "GET",
+    path: `${accounts}/:vendor/:name`,
+    summary: "Get an account.",
+    response: AccountViewSchema,
+  }),
+  "accounts.update": http({
+    method: "PATCH",
+    path: `${accounts}/:vendor/:name`,
+    summary: "Change an account's label, ceiling, or overflow.",
+    body: AccountUpdateSchema,
+    response: AccountViewSchema,
+  }),
+  "accounts.remove": http({
+    method: "DELETE",
+    path: `${accounts}/:vendor/:name`,
+    summary: "Delete an account record, never its folder; refused for a vendor's default.",
+    response: AccountRemoveResultSchema,
+    errors: ["conflict"],
+  }),
+  "accounts.check": http({
+    method: "POST",
+    path: `${accounts}/:vendor/:name/check`,
+    summary: "Ask the vendor CLI, in a throwaway container, whether the account is signed in.",
+    response: AccountViewSchema,
+    errors: ["image_missing"],
   }),
   "globalMounts.get": http({
     method: "GET",

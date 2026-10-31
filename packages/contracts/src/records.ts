@@ -88,12 +88,14 @@
 // | `ui/*`, `updateChecker/*`, `portAllocator/*`       | (not imported; app state) |
 import { z } from "zod";
 import {
+  AccountIdSchema,
   EffortSchema,
   EnvVarNameSchema,
   FractionSchema,
   IsoDateTimeSchema,
   PlatformSchema,
   PortSchema,
+  type Platform,
 } from "./common.js";
 import { DEFAULT_PROMPT_TEMPLATES } from "./prompts.js";
 
@@ -517,6 +519,27 @@ export const VendorDefaultsSchema = z.object({
 });
 export type VendorDefaults = z.infer<typeof VendorDefaultsSchema>;
 
+/** See `GlobalSettings.accountsMode`. */
+export const AccountsModeSchema = z.enum(["host", "accounts"]);
+export type AccountsMode = z.infer<typeof AccountsModeSchema>;
+
+/** An account id of one vendor: `VENDOR/NAME` with that `VENDOR`. */
+function vendorAccountId(vendor: Platform) {
+  return AccountIdSchema.refine((id) => id.startsWith(`${vendor}/`), {
+    message: `must be a ${vendor} account id, such as ${vendor}/personal`,
+  });
+}
+
+/** The default account of each vendor. An absent vendor has no default yet. */
+export const AccountDefaultsSchema = z
+  .object({
+    claude: vendorAccountId("claude").optional(),
+    codex: vendorAccountId("codex").optional(),
+    copilot: vendorAccountId("copilot").optional(),
+  })
+  .strict();
+export type AccountDefaults = z.infer<typeof AccountDefaultsSchema>;
+
 /** The Copilot model when the settings name none. */
 export const DEFAULT_COPILOT_MODEL = "auto";
 
@@ -564,6 +587,16 @@ export const GlobalSettingsSchema = z
      * of the value; see docs/secrets.md.
      */
     sudoPasswordRef: OpReferenceSchema.optional(),
+    /**
+     * Where boxes get the agent CLIs' config folders: `host` mounts the
+     * host's `~/.claude`, `~/.claude.json`, `~/.codex`, and `~/.copilot`;
+     * `accounts` uses the account folders. Phase 1 of
+     * `docs/v4/design-accounts.md` stores the setting, but every launch still
+     * uses the host folders.
+     */
+    accountsMode: AccountsModeSchema,
+    /** The default account of each vendor, by account id. */
+    accountDefaults: AccountDefaultsSchema,
   })
   .strict();
 export type GlobalSettings = z.infer<typeof GlobalSettingsSchema>;
@@ -625,6 +658,8 @@ export const GlobalSettingsInputSchema = z
       .default({}),
     globalMounts: z.array(MountSchema).default([]),
     secretRefs: z.array(SecretRefSchema).default([]),
+    accountsMode: AccountsModeSchema.default("host"),
+    accountDefaults: AccountDefaultsSchema.default({}),
   })
   .strict();
 
@@ -665,6 +700,19 @@ export const GlobalSettingsPatchSchema = z
     defaultTargetDir: z.string().min(1).nullable(),
     sshIdentity: z.string().min(1).nullable(),
     sudoPasswordRef: OpReferenceSchema.nullable(),
+    accountsMode: AccountsModeSchema,
+    /**
+     * Only the vendors it names change; `null` clears a default. The server
+     * refuses an id that names no account.
+     */
+    accountDefaults: z
+      .object({
+        claude: vendorAccountId("claude").nullable(),
+        codex: vendorAccountId("codex").nullable(),
+        copilot: vendorAccountId("copilot").nullable(),
+      })
+      .partial()
+      .strict(),
   })
   .partial()
   .strict();
