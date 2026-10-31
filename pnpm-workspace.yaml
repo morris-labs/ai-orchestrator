@@ -3,6 +3,12 @@ packages:
   - "apps/*"
   - "tools/*"
 
+# One store for the host and every box that mounts the checkout. pnpm
+# resolves this path against the workspace root. Without it, pnpm picks a
+# store at the root of the checkout's file system, which differs between the
+# host and a container.
+storeDir: .pnpm-store
+
 onlyBuiltDependencies:
   - better-sqlite3
   - electron

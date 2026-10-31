@@ -104,7 +104,7 @@ pnpm typecheck
 pnpm test
 ```
 
-The repository's `.npmrc` file pins the pnpm store to `.pnpm-store` at the
+The `pnpm-workspace.yaml` file pins the pnpm store to `.pnpm-store` at the
 workspace root, so pnpm on the host and pnpm in a box that mounts the
 checkout use one store. Without the setting, pnpm picks a store on the
 checkout's file system, and the host and a box can disagree about where that

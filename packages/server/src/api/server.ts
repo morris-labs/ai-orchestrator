@@ -293,7 +293,9 @@ export const SETTINGS_KEYS_WITH_OWN_ROUTE: Readonly<Record<string, string>> = {
 };
 
 /** Returns the body hint for a route, or undefined when it has none. */
-function ownRouteHint(key: HttpRouteKey): ((issues: z.ZodIssue[]) => string | undefined) | undefined {
+function ownRouteHint(
+  key: HttpRouteKey,
+): ((issues: z.ZodIssue[]) => string | undefined) | undefined {
   return key === "settings.patch" ? settingsPatchHint : undefined;
 }
 

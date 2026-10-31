@@ -269,7 +269,7 @@ corepack pnpm -r build
 scripts/install-server-unit.sh
 ```
 
-The checkout's `.npmrc` file pins the pnpm store to `.pnpm-store` in the
+The checkout's `pnpm-workspace.yaml` file pins the pnpm store to `.pnpm-store` in the
 checkout, so the host and the boxes that work on the checkout share it. If
 `node_modules` came from another store, the first install after you update
 stops with `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`. Run
