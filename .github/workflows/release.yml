@@ -7,7 +7,8 @@ name: Build and release
 # The release carries the .deb and the engine tarballs. The container image
 # isn't pushed to a registry: each host builds it with
 # scripts/build-image.sh, or with the setup wizard from the installed
-# package. macOS and Windows packages are deferred.
+# package. macOS and Windows packages are deferred. The .deb is built only
+# after the CI workflow passes for the tagged commit.
 on:
   push:
     tags:
@@ -26,11 +27,18 @@ env:
   NFPM_SHA256: "6d7f9a28b2f397934403950fcbba83f598b08d02edbe79a0815b3b4897341750"
 
 jobs:
+  ci:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+
   deb:
     name: Build the .deb
+    needs: [ci]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:

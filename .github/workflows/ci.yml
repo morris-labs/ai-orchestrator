@@ -2,16 +2,20 @@ name: CI
 
 # Runs on every push and pull request: the workspace checks, then the
 # packaging checks (version agreement, YAML and shell lint, Dockerfile lint,
-# an nfpm dry run, and the keeper script tests).
+# an nfpm dry run, and the keeper script tests). The release workflow calls
+# it too, and builds the .deb only when it passes.
 on:
   push:
   pull_request:
+  workflow_call:
 
 permissions:
   contents: read
 
+# In a call from the release workflow, github.workflow names the caller, so
+# the release's run and the tag push's own CI run don't cancel each other.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 # Each downloaded tool is checked against the SHA-256 checksum published
@@ -35,6 +39,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
@@ -63,6 +69,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:

@@ -160,9 +160,14 @@ class WorkflowTest(unittest.TestCase):
     def test_release_builds_the_deb_only_on_linux(self):
         doc = load_yaml(WORKFLOWS / "release.yml")
         self.assertEqual(workflow_triggers(doc)["push"]["tags"], ["v[0-9]*.[0-9]*.[0-9]*"])
-        self.assertEqual(set(doc["jobs"]), {"deb", "release"})
-        for job in doc["jobs"].values():
-            self.assertTrue(job["runs-on"].startswith("ubuntu"), job["runs-on"])
+        self.assertEqual(set(doc["jobs"]), {"ci", "deb", "release"})
+        # The .deb is built only after the CI workflow passes.
+        self.assertEqual(doc["jobs"]["ci"]["uses"], "./.github/workflows/ci.yml")
+        self.assertIn("workflow_call", workflow_triggers(load_yaml(WORKFLOWS / "ci.yml")))
+        self.assertIn("ci", doc["jobs"]["deb"]["needs"])
+        for name in ("deb", "release"):
+            runs_on = doc["jobs"][name]["runs-on"]
+            self.assertTrue(runs_on.startswith("ubuntu"), runs_on)
         runs = " ".join(s.get("run", "") for s in doc["jobs"]["deb"]["steps"])
         self.assertIn("scripts/build-deb.sh", runs)
         self.assertNotIn("docker push", runs)
@@ -170,12 +175,22 @@ class WorkflowTest(unittest.TestCase):
         self.assertIn("dist/*.deb", files["with"]["files"])
         self.assertIn("dist/*.tgz", files["with"]["files"])
 
+    def test_checkouts_do_not_persist_credentials(self):
+        for f in sorted(WORKFLOWS.glob("*.yml")):
+            for job in load_yaml(f)["jobs"].values():
+                for step in job.get("steps", []):
+                    if step.get("uses", "").startswith("actions/checkout@"):
+                        self.assertIs(step.get("with", {}).get("persist-credentials"), False, f.name)
+
     def test_actions_are_pinned_by_commit(self):
-        # A tag can be moved to other code; a commit SHA can't.
+        # A tag can be moved to other code; a commit SHA can't. A workflow in
+        # this repository is called by its path at the same commit.
         for f in sorted(WORKFLOWS.glob("*.yml")):
             uses = re.findall(r"(?m)^\s*-?\s*uses:\s*(.*)$", f.read_text())
             self.assertTrue(uses, f.name)
             for line in uses:
+                if line.startswith("./.github/workflows/"):
+                    continue
                 self.assertRegex(line, r"^[\w.-]+/[\w.-]+@[0-9a-f]{40} # v\d+\.\d+\.\d+$", f"{f.name}: {line}")
 
     def test_downloads_are_checksummed(self):
@@ -185,7 +200,7 @@ class WorkflowTest(unittest.TestCase):
             doc = load_yaml(f)
             pins = doc.get("env", {})
             for job in doc["jobs"].values():
-                for step in job["steps"]:
+                for step in job.get("steps", []):
                     run = step.get("run", "")
                     if "curl" not in run:
                         continue
