@@ -34,6 +34,41 @@ describe("gate", () => {
     expect(extractFailures(out)).toEqual(["Error: boom at 0x", "FAIL src/a.test.ts"]);
   });
 
+  it("doesn't count fewer failures than the baseline as a regression", () => {
+    const vitest = (failing: string[], passed: number) =>
+      [
+        ...failing.map((name) => ` FAIL  test/${name}.test.ts > ${name}`),
+        ` Test Files  ${failing.length} failed | 3 passed (${failing.length + 3})`,
+        `      Tests  ${failing.length} failed | ${passed} passed (${failing.length + passed})`,
+      ].join("\n");
+    const jest = (failing: string[], passed: number) =>
+      [
+        ...failing.map((name) => `FAIL test/${name}.test.js`),
+        `Test Suites: ${failing.length} failed, 3 passed, ${failing.length + 3} total`,
+        `Tests:       ${failing.length} failed, ${passed} passed, ${failing.length + passed} total`,
+      ].join("\n");
+    for (const output of [vitest, jest]) {
+      const baseline = run({
+        command: "test",
+        passed: false,
+        failures: extractFailures(output(["a", "b"], 40)),
+      });
+      const better = run({
+        command: "test",
+        passed: false,
+        failures: extractFailures(output(["a"], 41)),
+      });
+      expect(compareGate(baseline, better).regressed).toBe(false);
+      const worse = compareGate(
+        baseline,
+        run({ command: "test", passed: false, failures: extractFailures(output(["a", "c"], 40)) }),
+      );
+      expect(worse.regressed).toBe(true);
+      expect(worse.regressions[0]?.newFailures).toHaveLength(1);
+      expect(worse.regressions[0]?.newFailures[0]).toContain("c.test");
+    }
+  });
+
   it("flags a passing command that fails, and new failures in a failing one", () => {
     const baseline = run(
       { command: "test", passed: true },

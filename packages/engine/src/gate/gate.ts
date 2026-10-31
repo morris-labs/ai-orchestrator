@@ -51,17 +51,27 @@ export interface GateComparison {
 const FAILURE_RE = /\b(FAIL(?:ED|URE)?|ERROR|Error|failed|AssertionError|Traceback|not ok)\b|✗|✖|×/;
 // eslint-disable-next-line no-control-regex
 const ANSI_RE = /\u001b\[[0-9;]*[A-Za-z]/g;
+// A runner's count line, such as vitest's `Tests  2 failed | 40 passed (42)`,
+// jest's `Tests: 1 failed, 5 passed, 6 total`, or eslint's `3 problems`.
+const SUMMARY_RE =
+  /\b\d+\s+(failed|failing|failures?|passed|passing|errors?|skipped|pending|todo|total|tests?|warnings?|problems?)\b/i;
 
-/** Failure lines from a command's output, with timings, addresses, and colors removed. */
+/**
+ * Failure lines from a command's output, with timings, addresses, and colors
+ * removed. Count lines keep their words but not their numbers, so a run with
+ * fewer failures than the baseline doesn't look like it has a new failure;
+ * per-test lines still tell the failures apart.
+ */
 export function extractFailures(output: string): string[] {
   const seen = new Set<string>();
   for (const raw of output.replace(ANSI_RE, "").split("\n")) {
     if (!FAILURE_RE.test(raw)) continue;
-    const line = raw
+    let line = raw
       .replace(/\(?\b\d+(\.\d+)?\s?(ms|s|sec|seconds)\b\)?/g, "")
       .replace(/0x[0-9a-f]+/gi, "0x")
       .replace(/\s+/g, " ")
       .trim();
+    if (SUMMARY_RE.test(line)) line = line.replace(/\d+/g, "N");
     if (line) seen.add(line);
   }
   return [...seen].sort();
