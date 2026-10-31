@@ -278,8 +278,13 @@ export function RunView({ runId }: { runId: string }) {
   // The newest run state seen from either REST or the event stream. Kept in
   // a ref so a late response can be compared without a state updater.
   const latest = useRef<RunState | null>(null);
+  // The run as the last stage.changed left it. A run from REST at the same
+  // `updatedAt` but another stage predates that event.
+  const stageEvent = useRef<{ updatedAt: string; stage: RunState["stage"] } | null>(null);
   const applyRun = useCallback((next: RunState): boolean => {
     if (!isNewerRun(latest.current, next)) return false;
+    const s = stageEvent.current;
+    if (s && next.updatedAt === s.updatedAt && next.stage !== s.stage) return false;
     latest.current = next;
     setRun(next);
     return true;
@@ -317,7 +322,12 @@ export function RunView({ runId }: { runId: string }) {
     } else if (e.type === "stage.changed" && e.runId === runId) {
       const prev = latest.current;
       if (prev) {
-        latest.current = { ...prev, stage: e.stage, round: e.round };
+        // The event's time is when the run changed, so it counts as the
+        // run's `updatedAt`, and a REST run from before it is older.
+        const updatedAt =
+          Date.parse(e.time) > Date.parse(prev.updatedAt) ? e.time : prev.updatedAt;
+        latest.current = { ...prev, stage: e.stage, round: e.round, updatedAt };
+        stageEvent.current = { updatedAt, stage: e.stage };
         setRun(latest.current);
       }
     }

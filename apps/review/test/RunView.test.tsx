@@ -210,4 +210,47 @@ describe("RunView", () => {
     expect(screen.getByRole("button", { name: "Resume" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Pause" })).toBeNull();
   });
+
+  it("keeps a stage.changed stage when a reload returns the same updatedAt", async () => {
+    const run = { ...lastRun(), status: "running" as const, decision: null, stage: "find" as const };
+    let calls = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((res) => (release = res));
+    const { store, server } = renderWithStore(<RunView runId={RUN_ID} />, {
+      ...handlers(run),
+      "runs.get": async () => {
+        calls += 1;
+        if (calls > 1) await gate;
+        return run;
+      },
+    });
+    await screen.findByRole("button", { name: "Pause" });
+    store.start();
+    const hello = (streamId: string) =>
+      act(() => {
+        server
+          .socketsFor("/api/v1/events")[0]!
+          .serverSend({ type: "hello", streamId, lastSeq: 0, replaying: false });
+      });
+    await waitFor(() => expect(server.socketsFor("/api/v1/events")).toHaveLength(1));
+    hello("first");
+    hello("second");
+    // The reset reloads the run; that request waits at the gate.
+    await waitFor(() => expect(calls).toBe(2));
+    const base = loadDemoEvents().find((e) => e.type === "stage.changed")!;
+    act(() =>
+      store.ingest({
+        ...base,
+        runId: RUN_ID,
+        stage: "fix",
+        previousStage: "find",
+        time: run.updatedAt,
+      } as typeof base),
+    );
+    expect(screen.getByText("fix").closest("li")).toHaveAttribute("data-state", "current");
+    release();
+    await new Promise((res) => setTimeout(res, 20));
+    expect(screen.getByText("fix").closest("li")).toHaveAttribute("data-state", "current");
+    store.stop();
+  });
 });
