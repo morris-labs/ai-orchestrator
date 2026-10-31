@@ -313,8 +313,14 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
     },
 
     // Catalog, models, image, updates, setup, settings, prompts
-    "conversations.list": async ({ query }) => core.catalog.list(query.dir),
-    "models.list": async ({ query }) => core.models.list(query.dir),
+    "conversations.list": async ({ query }) => {
+      requireAbsolute(query.dir, "The directory");
+      return core.catalog.list(query.dir);
+    },
+    "models.list": async ({ query }) => {
+      requireAbsolute(query.dir, "The directory");
+      return core.models.list(query.dir);
+    },
     "models.rescan": async () => core.models.rescan(),
     "image.status": async () => core.image.status(),
     "image.build": async ({ body }) => deps.setup.buildImage(body.kind),

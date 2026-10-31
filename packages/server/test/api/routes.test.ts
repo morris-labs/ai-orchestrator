@@ -525,7 +525,9 @@ describe("errors", () => {
   });
 
   it("rejects relative paths before acting on them", async () => {
-    const relative: [Case["method"], string, object][] = [
+    const relative: [Case["method"], string, object | undefined][] = [
+      ["GET", `${V1}/conversations?dir=work/app`, undefined],
+      ["GET", `${V1}/models?dir=work/app`, undefined],
       ["POST", `${V1}/projects`, { root: "work/other" }],
       ["PATCH", P, { primaryRepo: "./repo" }],
       ["PATCH", P, { mounts: [{ host: "data", container: "/data" }] }],
