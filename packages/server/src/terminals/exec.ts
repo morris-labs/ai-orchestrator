@@ -55,7 +55,7 @@ export const HANGUP_SCRIPT = [
   "  while :; do",
   '    st=$(cat "/proc/$q/stat" 2>/dev/null) || return 1',
   "    # The fields after the command name: state, ppid, pgrp, session, tty.",
-  '    set -- ${st##*) }',
+  "    set -- ${st##*) }",
   '    if [ "$2" -gt 1 ] && has_id "$2"; then q=$2; continue; fi',
   '    [ "$4" = "$q" ] && [ "$5" = 0 ]',
   "    return",
