@@ -345,7 +345,9 @@ export class BoxService {
    */
   private checkAdoption(sessionUuid: string, exceptBoxId: string | null, force: boolean): void {
     const holders = this.repos.boxes.bySession(sessionUuid).filter((b) => b.id !== exceptBoxId);
-    const running = holders.find((b) => this.isRunning(b));
+    // A starting holder counts as running: the keeper lists a new session
+    // about a second late.
+    const running = holders.find((b) => this.isRunning(b) || this.transitions.has(b.id));
     if (running) {
       throw new ApiError(
         "adoption_refused",
@@ -442,8 +444,11 @@ export class BoxService {
 
     // Name, worktree, and record are settled under one lock, so two creates
     // that want the same name (a double-clicked Create) can't both take it,
-    // and the second sees the first one's worktree as existing.
+    // and the second sees the first one's worktree as existing. The adoption
+    // check repeats here for the same reason: the second of two creates that
+    // adopt one conversation sees the first one's record, marked starting.
     const prepared = await this.createLock.run("create", async () => {
+      if (adoptUuid !== null) this.checkAdoption(adoptUuid, null, req.force);
       let conversationName = req.conversationName.trim();
       const provision = !resumeExisting && conversationName !== "" && layout !== "root";
       let slug = "";
@@ -553,6 +558,10 @@ export class BoxService {
       const saved = this.repos.boxes.put(
         req.start ? box : { ...box, sessionUuid: adoptUuid, ...(firstStart ? { firstStart } : {}) },
       );
+      // Counted as starting before the lock opens, so a concurrent adoption
+      // of the same conversation is refused, not run twice.
+      if (req.start)
+        this.transitions.set(saved.id, { status: "starting", until: Date.now() + TRANSITION_MS });
       return { box: saved, openingPrompt, conversationName, createdWorktree };
     });
 

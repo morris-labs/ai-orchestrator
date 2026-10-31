@@ -308,6 +308,66 @@ describe("create", () => {
     expect(b.sessionUuid).toBe(uuid);
   });
 
+  it.each([false, true])(
+    "lets only one of two concurrent creates adopt a conversation (force %s)",
+    async (force) => {
+      const h = makeHarness();
+      const dir = h.dir("app");
+      const uuid = "6f1c3a52-6d8b-4f43-9a51-2d5b7cbd3f10";
+      const req = {
+        targetDir: dir,
+        layout: "root" as const,
+        force,
+        conversation: { mode: "adopt" as const, sessionUuid: uuid },
+      };
+      const results = await Promise.allSettled([
+        h.core.boxes.create(req),
+        h.core.boxes.create(req),
+      ]);
+      expect(results.map((r) => r.status).sort()).toEqual(["fulfilled", "rejected"]);
+      const rejected = results.find((r) => r.status === "rejected");
+      expect(rejected?.reason).toMatchObject({ code: "adoption_refused" });
+      expect(h.core.db.boxes.bySession(uuid)).toHaveLength(1);
+    },
+  );
+
+  it("refuses a forced adoption while the holder is starting", async () => {
+    const h = makeHarness();
+    const dir = h.dir("app");
+    const uuid = "6f1c3a52-6d8b-4f43-9a51-2d5b7cbd3f10";
+    const a = await h.core.boxes.create({
+      targetDir: dir,
+      layout: "root",
+      start: false,
+      conversation: { mode: "adopt", sessionUuid: uuid },
+    });
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    let reached!: () => void;
+    const atStart = new Promise<void>((resolve) => (reached = resolve));
+    let blocked = false;
+    h.docker.beforeExec = async (_c, options) => {
+      // Holds only the first session start: the holder's.
+      if (options.cmd[0] === START_SESSION_PATH && !blocked) {
+        blocked = true;
+        reached();
+        await held;
+      }
+    };
+    const starting = h.core.boxes.start(a.id);
+    await atStart;
+    await expect(
+      h.core.boxes.create({
+        targetDir: dir,
+        layout: "root",
+        force: true,
+        conversation: { mode: "adopt", sessionUuid: uuid },
+      }),
+    ).rejects.toMatchObject({ code: "adoption_refused", details: { holders: [a.id] } });
+    release();
+    await starting;
+  });
+
   it("forks into a worktree by copying the source transcript first", async () => {
     const h = makeHarness();
     const repo = initRepo(h.dir("repo"));
