@@ -1712,6 +1712,17 @@ void DockerBackend::stopMany(const QStringList &names, QHash<QString, QString> *
                 // A session that was not there is as stopped as one just killed.
                 if (!ok && error.contains(QStringLiteral("can't find session")))
                     ok = true;
+                // Side sessions from Start Remote Session end with the box;
+                // otherwise they would keep the shared container up for good.
+                // Most boxes have none, so errors here are ignored. One exec
+                // kills them all; the names go in as positional arguments.
+                QStringList sideArgs{"exec", shared.containerName(), "sh", "-c",
+                                     "for s; do tmux kill-session -t \"=$s\" 2>/dev/null; done; true", "_"};
+                for (const QString &p : BoxRecord::platforms()) {
+                    if (p != shared.program())
+                        sideArgs << shared.sideSession(p);
+                }
+                runDocker(sideArgs, nullptr, nullptr, 15000);
             }
         } else if (DockerApi::isAvailable()) {
             DockerApi::post(QStringLiteral("/") + DockerApi::kApiVersion + "/containers/" + name + "/stop",
