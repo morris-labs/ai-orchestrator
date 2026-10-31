@@ -5,7 +5,41 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import react from "@vitejs/plugin-react";
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
+
+/**
+ * The built page's Content-Security-Policy. The page holds the server token
+ * for a moment and shows text from models and pull requests, so scripts load
+ * only from the page's own origin, and requests (WebSockets included) go
+ * only there. Styles allow inline `style` attributes and elements, which
+ * React and the shared theme use. The dev server doesn't get it: its React
+ * refresh preamble is an inline script.
+ */
+export const CONTENT_SECURITY_POLICY = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data:",
+  "connect-src 'self'",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "form-action 'none'",
+  "frame-src 'none'",
+].join("; ");
+
+function contentSecurityPolicy(): Plugin {
+  return {
+    name: "agentbox-csp",
+    apply: "build",
+    transformIndexHtml: () => [
+      {
+        tag: "meta",
+        attrs: { "http-equiv": "Content-Security-Policy", content: CONTENT_SECURITY_POLICY },
+        injectTo: "head-prepend",
+      },
+    ],
+  };
+}
 
 const SERVER = "https://127.0.0.1:21400";
 
@@ -21,7 +55,7 @@ function serverCert(): string | undefined {
 
 export default defineConfig({
   base: "./",
-  plugins: [react()],
+  plugins: [react(), contentSecurityPolicy()],
   // The app loads from loopback, so one bundle is fine.
   build: { outDir: "dist/renderer", emptyOutDir: true, chunkSizeWarningLimit: 900 },
   server: {
