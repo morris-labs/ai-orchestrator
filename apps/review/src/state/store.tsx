@@ -71,6 +71,12 @@ export class AppStore {
   private snapshotError: string | null = null;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private retryAttempt = 0;
+  /** The errors the last usage and usage history loads reported, so a success clears only those. */
+  private usageError: string | null = null;
+  private usageHistoryError: string | null = null;
+  /** The usage load in flight, and whether another must follow it. */
+  private usageLoad: Promise<void> | null = null;
+  private usageAgain = false;
 
   constructor(
     readonly api: ApiClient,
@@ -115,9 +121,43 @@ export class AppStore {
     }
   }
 
-  async loadUsage(): Promise<void> {
+  /**
+   * Replaces an error this store reported (`previous`) with `next`: a new
+   * error shows, and `null` clears `previous` only when it still shows.
+   */
+  private replaceError(previous: string | null, next: string | null): void {
+    if (next !== null) this.set({ error: next });
+    else if (previous !== null && this.state.error === previous) this.set({ error: null });
+  }
+
+  /**
+   * Loads the usage. A call while a load runs doesn't start another one at
+   * once: one more load follows the running one, so a burst of samples
+   * makes at most two calls and the newest answer wins.
+   */
+  loadUsage(): Promise<void> {
+    if (this.usageLoad) {
+      this.usageAgain = true;
+      return this.usageLoad;
+    }
+    this.usageLoad = (async () => {
+      try {
+        do {
+          this.usageAgain = false;
+          await this.fetchUsage();
+        } while (this.usageAgain);
+      } finally {
+        this.usageLoad = null;
+      }
+    })();
+    return this.usageLoad;
+  }
+
+  private async fetchUsage(): Promise<void> {
+    const previous = this.usageError;
     try {
       const { vendors } = await this.api.call("usage.get");
+      this.usageError = null;
       this.set({
         usageInfo: vendors.map((v) => ({
           vendor: v.vendor,
@@ -127,18 +167,24 @@ export class AppStore {
           resetAt: v.resetAt,
         })),
       });
+      this.replaceError(previous, null);
     } catch (err) {
-      this.set({ error: (err as Error).message });
+      this.usageError = (err as Error).message;
+      this.replaceError(previous, this.usageError);
     }
   }
 
   async loadUsageHistory(): Promise<void> {
+    const previous = this.usageHistoryError;
     try {
       const since = new Date(this.now() - USAGE_LOOKBACK_MS).toISOString();
       const { samples } = await this.api.call("usage.samples", { query: { since } });
+      this.usageHistoryError = null;
       this.set({ dashboard: addUsageSamples(this.state.dashboard, samples) });
+      this.replaceError(previous, null);
     } catch (err) {
-      this.set({ error: (err as Error).message });
+      this.usageHistoryError = (err as Error).message;
+      this.replaceError(previous, this.usageHistoryError);
     }
   }
 
