@@ -1475,15 +1475,17 @@ QStringList DockerBackend::platformArgs(const BoxRecord &rec, const QString &pro
     return args;
 }
 
+// Called when the context menu opens, on the GUI thread, so it never runs
+// docker: a shared container's keeper lists its sessions in the state file
+// every second. A classic box has no such file and reports none; starting a
+// side session that already runs then fails with a clear message from
+// SharedContainer::sessionStartScript().
 QStringList DockerBackend::runningSideSessions(const BoxRecord &rec) const
 {
-    QString out;
-    if (!runDocker({QStringLiteral("exec"), QStringLiteral("--user"), containerUsername(), rec.containerName(),
-                    QStringLiteral("tmux"), QStringLiteral("list-sessions"), QStringLiteral("-F"), QStringLiteral("#S")},
-                   &out, nullptr, 10000))
+    if (!rec.isShared())
         return {};
     QStringList running;
-    const QStringList sessions = out.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+    const QStringList sessions = SharedContainer::liveSessions(rec.containerName());
     for (const QString &p : BoxRecord::platforms()) {
         if (sessions.contains(rec.sideSession(p)))
             running << p;
