@@ -64,6 +64,9 @@ export class EventHub implements EventSink {
   private readonly bufferSize: number;
   private readonly keep: number;
   private insertsSincePrune = 0;
+  /** Events numbered while listeners were running, waiting their turn. */
+  private readonly undelivered: AgentBoxEvent[] = [];
+  private delivering = false;
 
   constructor(private readonly options: EventHubOptions = {}) {
     this.bufferSize = options.bufferSize ?? 5000;
@@ -182,14 +185,36 @@ export class EventHub implements EventSink {
     this.buffer.push(event);
     if (this.buffer.length > this.bufferSize) this.buffer.shift();
     this.persist(event);
-    for (const listener of [...this.listeners]) {
-      try {
-        listener(event);
-      } catch (err) {
-        this.options.onListenerError?.(err, event);
-      }
-    }
+    this.deliver(event);
     return event;
+  }
+
+  /**
+   * Hands `event` to every listener, in `seq` order across all events. A
+   * listener can emit in turn (the notifier answers a finished run with a
+   * notification), and delivering that event at once would reach the
+   * listeners after it before the event that caused it. A stream socket then
+   * sees a higher `seq` first and drops the lower one as already sent. So an
+   * event emitted during delivery waits until every listener has the one
+   * before it.
+   */
+  private deliver(event: AgentBoxEvent): void {
+    this.undelivered.push(event);
+    if (this.delivering) return;
+    this.delivering = true;
+    try {
+      for (let next = this.undelivered.shift(); next; next = this.undelivered.shift()) {
+        for (const listener of [...this.listeners]) {
+          try {
+            listener(next);
+          } catch (err) {
+            this.options.onListenerError?.(err, next);
+          }
+        }
+      }
+    } finally {
+      this.delivering = false;
+    }
   }
 
   private persist(event: AgentBoxEvent): void {

@@ -331,6 +331,14 @@ function serveEvents(deps: ApiDeps, socket: WebSocket, request: FastifyRequest):
   };
   const unsubscribe = deps.hub.subscribe((event) => {
     if (sentUpTo === null || event.seq <= sentUpTo) return;
+    if (event.seq !== sentUpTo + 1) {
+      // The hub delivers every event in order, so this socket missed one. A
+      // filtered socket counts its own positions and would hide the loss, so
+      // close instead: the client reconnects and the replay fills it in.
+      sentUpTo = null;
+      socket.close(1011, "The event stream skipped an event; reconnect to resume.");
+      return;
+    }
     sentUpTo = event.seq;
     if (types === null) {
       send(event);

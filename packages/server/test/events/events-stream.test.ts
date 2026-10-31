@@ -1,6 +1,7 @@
-import { ServerStreamFrameSchema } from "@agentbox/contracts";
+import { ServerStreamFrameSchema, type AgentBoxEvent } from "@agentbox/contracts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parseTypes } from "../../src/api/server.js";
+import { runState } from "../api/fixtures.js";
 import { TOKEN, createHarness, type Harness } from "../api/harness.js";
 import { connect } from "../api/ws-client.js";
 
@@ -156,6 +157,88 @@ describe("events.stream", () => {
     await r.until((x) => x.texts.length === 4);
     expect(r.texts[3]).toMatchObject({ notificationId: "n5", seq: 5 });
     r.ws.close();
+  });
+
+  // Host round 9: the notifier emits a notification from inside the hub's
+  // delivery of a `run.changed`. A socket subscribed after the notifier got
+  // the notification first, took its `seq` as sent, and dropped the
+  // `run.changed`, so the live stream lost it and numbered the rest without
+  // a gap. Live and replay must carry the same events with the same numbers.
+  it("sends what a replay sends when a listener emits during delivery", async () => {
+    let n = 0;
+    h.hub.subscribe((e) => {
+      if (e.type !== "run.changed" || e.run.status === "running") return;
+      n += 1;
+      h.hub.emit({
+        type: "notification",
+        notificationId: `n${n}`,
+        kind: "run_finished",
+        title: "Run finished",
+        body: "",
+        runId: e.run.id,
+        boxId: null,
+        severity: "info",
+        read: false,
+      });
+    });
+    const urls = [`${base}`, `${base}?types=run.changed,notification`];
+    h.hub.emit(boxEvent("claude-agent-a"));
+    const live = await Promise.all(urls.map((url) => connect(url)));
+    for (const s of live) {
+      s.ws.send(JSON.stringify({ type: "hello", streamId: null, lastSeq: null }));
+    }
+    await Promise.all(live.map((s) => s.until((x) => x.texts.length === 1)));
+    const hellos = live.map((s) => s.texts[0] as { streamId: string; lastSeq: number });
+
+    const run = (status: "running" | "finished") =>
+      ({ type: "run.changed", run: { ...runState, status }, roundSummary: null }) as const;
+    for (let i = 0; i < 3; i += 1) {
+      h.hub.emit(run("running"));
+      h.hub.emit(boxEvent("claude-agent-b"));
+      h.hub.emit(run("finished"));
+    }
+    // Unfiltered: 9 events and 3 notifications. Filtered: 6 runs and 3.
+    await live[0]!.until((x) => x.texts.length === 13);
+    await live[1]!.until((x) => x.texts.length === 10);
+
+    const strip = (frames: unknown[]) =>
+      (frames as { type: string; seq: number; streamId: string }[]).map((f) => ({
+        type: f.type,
+        seq: f.seq,
+        streamId: f.streamId,
+      }));
+    for (const [i, url] of urls.entries()) {
+      const hello = hellos[i]!;
+      const want = live[i]!.texts.length;
+      const r = await connect(url);
+      r.ws.send(JSON.stringify({ type: "hello", streamId: hello.streamId, lastSeq: hello.lastSeq }));
+      await r.until((x) => x.texts.length === want);
+      const sent = strip(live[i]!.texts.slice(1));
+      expect(sent).toEqual(strip(r.texts.slice(1)));
+      expect(sent.map((f) => f.seq)).toEqual(
+        Array.from({ length: want - 1 }, (_, k) => hello.lastSeq + 1 + k),
+      );
+      expect(sent.filter((f) => f.type === "run.changed")).toHaveLength(6);
+      r.ws.close();
+    }
+    for (const s of live) s.ws.close();
+  });
+
+  it("closes a filtered socket that the hub hands an event out of order", async () => {
+    const listeners: ((e: AgentBoxEvent) => void)[] = [];
+    const subscribe = h.hub.subscribe.bind(h.hub);
+    h.hub.subscribe = (listener) => {
+      listeners.push(listener);
+      return subscribe(listener);
+    };
+    const s = await connect(`${base}?types=box.changed`);
+    s.ws.send(JSON.stringify({ type: "hello", streamId: null, lastSeq: null }));
+    await s.until((x) => x.texts.length === 1);
+    const event = h.hub.emit(boxEvent("claude-agent-a"));
+    await s.until((x) => x.texts.length === 2);
+    listeners.at(-1)!({ ...event, seq: event.seq + 2 });
+    await s.until((x) => x.ws.readyState === x.ws.CLOSED);
+    expect((await s.closed).code).toBe(1011);
   });
 
   it("closes on a frame that is not a hello", async () => {
