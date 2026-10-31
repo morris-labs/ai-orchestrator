@@ -51,6 +51,7 @@ import {
   type CheckoutState,
 } from "./checkout.js";
 import { DecisionNeeded, RunCancelled, type RunContext } from "./context.js";
+import { snapshotTree } from "./tree-guard.js";
 import { planReviews, type ReviewTask } from "./profiles.js";
 
 /** Ledger follow-ups per reviewer before the engine accepts missing verdicts. */
@@ -884,6 +885,14 @@ async function applyBatch(ctx: RunContext, batch: FixBatchRecord): Promise<void>
 }
 
 /**
+ * The uncommitted changes in the checkout under review, as sorted
+ * `git status` entries, without the run directory and Python bytecode.
+ */
+async function uncommittedStatus(ctx: RunContext): Promise<string[]> {
+  return (await snapshotTree(ctx.deps.runner, ctx.state.request.repoPath, [ctx.store.dir])).status;
+}
+
+/**
  * The fix stage: the fixer fixes confirmed findings in batches per group and
  * commits. The batch plan and each batch's outcome are saved as they happen,
  * so a resumed stage keeps the same batches and the commits each one made.
@@ -926,11 +935,12 @@ export async function runFix(
       // the fixer commits, but before the batch file is saved, then still
       // counts those commits as the batch's when the stage resumes.
       const startFile = ctx.store.roundFile(ctx.round, `${key}-start`);
-      let before = (await ctx.store.readJson<{ before: string }>(startFile))?.before;
-      if (!before) {
-        before = await ctx.git.head();
-        await ctx.store.writeJson(startFile, { before });
+      let start = await ctx.store.readJson<{ before: string; status?: string[] }>(startFile);
+      if (!start) {
+        start = { before: await ctx.git.head(), status: await uncommittedStatus(ctx) };
+        await ctx.store.writeJson(startFile, start);
       }
+      const before = start.before;
       const prompt = fixerPrompt({
         range: ctx.range(),
         findings,
@@ -954,6 +964,18 @@ export async function runFix(
       if (!(await ctx.git.ok(["merge-base", "--is-ancestor", before, after]))) {
         throw new Error(
           `The fixer rewrote history on ${branch}: ${before} is no longer an ancestor of ${after}.`,
+        );
+      }
+      // Edits the fixer didn't commit would reach the gate, which tests the
+      // checkout, but not the confirmer's diff or the push.
+      const was = new Set(start.status ?? []);
+      const leftover = (await uncommittedStatus(ctx)).filter((s) => !was.has(s));
+      if (leftover.length > 0) {
+        const shown = leftover.slice(0, 10).map((s) => s.slice(3));
+        throw new Error(
+          `The fixer left changes it didn't commit in ${ctx.state.request.repoPath}: ` +
+            `${shown.join(", ")}${leftover.length > 10 ? ", ..." : ""}. ` +
+            "Commit or discard them, then start the run again.",
         );
       }
       const commits = after === before ? [] : await ctx.git.commitsBetween(before, after);

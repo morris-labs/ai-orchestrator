@@ -90,6 +90,20 @@ async function fixRun(plan: FixPlan) {
 }
 
 describe("runFix", () => {
+  it("stops before the gate when the fixer leaves edits it didn't commit", async () => {
+    const { ctx, repo } = await fixRun((ids, call) => {
+      if (call === 1) writeFileSync(join(repo, "SYNTHETIC_uncommitted.py"), "x = 1\n");
+      return { fixed: ids, notFixed: [], summary: "" };
+    });
+    await expect(runFix(ctx, fixTargets(ctx))).rejects.toThrow(
+      /The fixer left changes it didn't commit .*SYNTHETIC_uncommitted\.py/,
+    );
+    // Once a person cleans up, the stage goes on without calling the fixer again.
+    rmSync(join(repo, "SYNTHETIC_uncommitted.py"));
+    const record = await runFix(ctx, fixTargets(ctx));
+    expect(record.batches).toHaveLength(3);
+  });
+
   it("keeps each batch's commits and the batch plan across a restart", async () => {
     // Batch 1 declines F-0001; batch 2 fails twice, which stops the stage.
     let crashes = 0;
