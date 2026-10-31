@@ -31,6 +31,25 @@ for classic boxes, and what 4.0.0 drops or defers.
 1. Install Agent Box 4 and start its server. For more information, see
    [Install Agent Box](install.md).
 
+## Keep the two apps' images apart
+
+Agent Box and the 3.x app both build their container image as
+`claude-code`, so each build replaces the other's image:
+
+- A build from the 3.x setup wizard, or its **Update Claude Code** action,
+  makes an image without the Agent Box engine. Agent Box then refuses to
+  start project containers, and its setup wizard reports that the image has
+  no Agent Box engine. Rebuild the image from Agent Box to fix it.
+- A build from Agent Box removes the passwordless sudo that 3.x boxes had,
+  and the 3.x app replaces its shared containers because their image
+  changed.
+
+After the import, build images only from Agent Box. To keep the 3.x app
+working beside Agent Box, give Agent Box its own tag: set the `engineImage`
+setting to `IMAGE` with `PATCH /api/v1/settings`, where `IMAGE` is a tag
+such as `agentbox`, and then rebuild the image from the setup wizard, which
+builds the tag that the setting names.
+
 ## Run the import
 
 The import runs once. Start it from the setup wizard, which offers it when it

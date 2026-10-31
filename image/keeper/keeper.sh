@@ -20,7 +20,7 @@
 #   AGENTBOX_ACTIVE_RUNS_STALE     Age in seconds after which active-runs counts as zero.
 #   AGENTBOX_ENGINE_STOP_TIMEOUT   Seconds to wait for the engine after SIGTERM. Default: 10.
 
-STATE="$1"; GRACE="$2"; IDLE=$SECONDS
+STATE="${1-}"; GRACE="${2-}"; IDLE=$SECONDS
 
 ENGINE_CMD=${AGENTBOX_ENGINE_CMD:-agentbox-engine}
 ENGINE_RESTART_DELAY=${AGENTBOX_ENGINE_RESTART_DELAY:-5}
@@ -35,6 +35,16 @@ log() {
   printf 'keeper: %s\n' "$*" >&2
 }
 
+# A bad GRACE would keep the container up forever with an error each second,
+# and an empty STATE would write to /sessions, so both are checked first.
+case $GRACE in
+  '' | *[!0-9]*) log "GRACE must be a whole number of seconds, got '$GRACE'"; exit 2 ;;
+esac
+if [ ! -d "$STATE" ]; then
+  log "STATE must be an existing directory, got '$STATE'"
+  exit 2
+fi
+
 # Starts the engine unless it runs, waiting ENGINE_RESTART_DELAY seconds
 # between starts so a crashing engine can't spin.
 ensure_engine() {
@@ -43,7 +53,7 @@ ensure_engine() {
       return
     fi
     wait "$ENGINE_PID" 2>/dev/null
-    log "agentbox-engine exited with status $?; restarting it"
+    log "$ENGINE_CMD exited with status $?; restarting it"
     ENGINE_PID=
   fi
   if ! command -v "$ENGINE_CMD" >/dev/null 2>&1; then

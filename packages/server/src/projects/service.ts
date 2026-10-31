@@ -18,7 +18,7 @@ import {
 } from "@agentbox/contracts";
 import type { z } from "zod";
 import type { EngineEndpoint, Repositories } from "../db/repositories.js";
-import type { ImageVersions } from "../docker/image.js";
+import { noEngineMessage, type ImageVersions } from "../docker/image.js";
 import {
   LABELS,
   SECRETS_LABEL_BROKER,
@@ -398,7 +398,9 @@ export class ProjectService {
     if (have !== this.deps.engineVersion) {
       throw new ApiError(
         "engine_mismatch",
-        `The image ${image} carries engine ${have ?? "(none)"}, but this server needs ${this.deps.engineVersion}. Rebuild the image.`,
+        have === null
+          ? noEngineMessage(image)
+          : `The image ${image} carries engine ${have}, but this server needs ${this.deps.engineVersion}. Rebuild the image.`,
         { image, imageEngineVersion: have, expected: this.deps.engineVersion },
       );
     }

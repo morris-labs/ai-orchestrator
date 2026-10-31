@@ -73,8 +73,9 @@ if ((BUMP_BASE)); then
   token="$(curl -fsSL "https://auth.docker.io/token?service=registry.docker.io&scope=repository:library/ubuntu:pull" |
     node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).token))')" ||
     die "could not get a Docker Hub registry token"
-  digest="$(curl -fsSI \
-    -H "Authorization: Bearer $token" \
+  # The header goes through stdin so the token stays out of curl's argv.
+  digest="$(printf 'Authorization: Bearer %s\n' "$token" | curl -fsSI \
+    -H @- \
     -H "Accept: application/vnd.oci.image.index.v1+json" \
     -H "Accept: application/vnd.docker.distribution.manifest.list.v2+json" \
     "https://registry-1.docker.io/v2/library/ubuntu/manifests/$BASE_TAG" |

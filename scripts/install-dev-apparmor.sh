@@ -13,6 +13,16 @@
 # replaces the profiles it wrote for this checkout before, so a profile for
 # an Electron version that pnpm has since replaced doesn't linger, and
 # --remove unloads and deletes all of them.
+#
+# A profile is named after the binary's path, because two profiles that
+# attach to one path conflict. Checkouts and worktrees that share a pnpm
+# store share that binary, so one profile can carry the comments of several
+# checkouts. The script then only adds or removes its own comment, and a
+# profile is deleted when no checkout's comment is left.
+#
+# Environment:
+#   AGENTBOX_APPARMOR_DIR  The profile directory. Default: /etc/apparmor.d.
+#                          Tests set it to a temporary directory.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -21,9 +31,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 TEMPLATE_DIR="$ROOT/packaging/deb/apparmor"
-PROFILE_DIR=/etc/apparmor.d
+PROFILE_DIR="${AGENTBOX_APPARMOR_DIR:-/etc/apparmor.d}"
+MARK_PREFIX="# agentbox-dev checkout: "
 APPS=(boxes review)
-MARK="# agentbox-dev checkout: $ROOT"
+MARK="$MARK_PREFIX$ROOT"
 MODE=install
 
 usage() {
@@ -36,6 +47,10 @@ create user namespaces, so that the boxes and review apps start from this
 checkout on Ubuntu 24.04 and later. Runs sudo to write to $PROFILE_DIR.
 
 Run it again after pnpm installs a different Electron version.
+
+The profiles attach to binaries in the pnpm store, which your user can
+write to. Any program your user puts at those paths can create user
+namespaces, which is what the apps need and what the profiles allow.
 
 Options:
   --print       Print the profiles instead of installing them.
@@ -84,9 +99,17 @@ apparmor_quote() {
   printf '"%s"' "$out"
 }
 
+# Prints the checkout comments in profile FILE other than this checkout's.
+other_marks() {
+  local file="$1"
+  [[ -f "$file" ]] || return 0
+  grep -F -- "$MARK_PREFIX" "$file" | grep -vxF -- "$MARK" || true
+}
+
 # Prints the profile NAME for BINARY, built from the .deb profile of app
 # APP: the profile line and the local include name the dev profile, and the
-# comments say where it came from.
+# comments say where it came from. The comments of other checkouts that
+# already share the profile file stay in it.
 profile_text() {
   local app="$1" name="$2" bin="$3" template line deb_name deb_path in_header=1
   template="$TEMPLATE_DIR/agentbox-$app"
@@ -94,6 +117,7 @@ profile_text() {
   deb_name="agentbox-$app"
   deb_path="/usr/lib/agentbox/$app/agentbox-$app"
   printf '%s\n' "$MARK"
+  other_marks "$PROFILE_DIR/$name"
   printf '# Written by scripts/install-dev-apparmor.sh from packaging/deb/apparmor/%s.\n' "$deb_name"
   printf '# To delete it, run that script with --remove.\n#\n'
   while IFS= read -r line || [[ -n "$line" ]]; do
@@ -130,9 +154,19 @@ apparmor_enabled() {
   [[ -d /sys/kernel/security/apparmor ]] && command -v apparmor_parser > /dev/null 2>&1
 }
 
-# Unloads and deletes the profile FILE.
+# Takes this checkout's comment out of profile FILE. When no other
+# checkout's comment is left, unloads and deletes the file; otherwise the
+# file stays loaded for the checkouts that still use it.
 remove_profile() {
-  local file="$1"
+  local file="$1" rest
+  if [[ -n "$(other_marks "$file")" ]]; then
+    rest="$(mktemp)"
+    grep -vxF -- "$MARK" "$file" > "$rest" || true
+    "${SUDO[@]}" install -m 0644 "$rest" "$file"
+    rm -f -- "$rest"
+    log "Left $file in place for the other checkouts it names"
+    return
+  fi
   if apparmor_enabled; then
     "${SUDO[@]}" apparmor_parser -R "$file" > /dev/null 2>&1 || true
   fi

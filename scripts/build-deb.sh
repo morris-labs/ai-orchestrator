@@ -147,7 +147,8 @@ mkdir -p "$R/usr/share/agentbox/scripts/lib"
 install -m 0755 "$SCRIPT_DIR/build-image.sh" "$R/usr/share/agentbox/scripts/"
 install -m 0644 "$SCRIPT_DIR/lib/common.sh" "$R/usr/share/agentbox/scripts/lib/"
 
-install -m 0755 "$ROOT/packaging/deb/scripts/postinst" "$ROOT/packaging/deb/scripts/prerm" "$STAGE/maint/"
+install -m 0755 "$ROOT/packaging/deb/scripts/postinst" "$ROOT/packaging/deb/scripts/prerm" \
+  "$ROOT/packaging/deb/scripts/postrm" "$STAGE/maint/"
 
 mkdir -p "$OUT_DIR"
 DEB="$OUT_DIR/agentbox_${VERSION}_amd64.deb"

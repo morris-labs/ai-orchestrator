@@ -331,9 +331,26 @@ NewBoxDialog::NewBoxDialog(QWidget *parent)
         const bool claude = platform().isEmpty();
         m_modelCombo->setEnabled(claude);
         m_effortCombo->setEnabled(claude);
+        // The checkbox means something else for each CLI: for claude it only
+        // makes bypass mode available, for the others the session starts
+        // without approvals. A new box therefore leaves it off for them;
+        // edit and fork keep the record's setting.
+        const QString program = m_platformCombo->currentData().toString();
+        m_skipPermsCheck->setText(
+            claude ? QStringLiteral("Allow bypassing permission prompts (%1; starts in auto mode)")
+                         .arg(BoxRecord::bypassFlag(program))
+                   : QStringLiteral("Start without permission prompts (%1)").arg(BoxRecord::bypassFlag(program)));
         if (!m_editMode && !m_forkMode)
-            m_sessionCombo->setEnabled(claude);
-        if (!claude)
+            m_skipPermsCheck->setChecked(claude);
+        // A fork's conversation combo stays disabled. In edit mode the combo
+        // holds the box's own session, so it is only disabled, never reset:
+        // loadForEdit() selecting a codex box's platform must not read as
+        // "start a new conversation", and switching to Codex and back to
+        // Claude in one dialog must keep the link to the transcript.
+        if (m_forkMode)
+            return;
+        m_sessionCombo->setEnabled(claude);
+        if (!claude && !m_editMode)
             m_sessionCombo->setCurrentIndex(0);
     });
 
@@ -478,10 +495,18 @@ void NewBoxDialog::loadForEdit(const BoxRecord &rec)
     m_workspaceCheck->setEnabled(false);
     m_worktreeCheck->setChecked(!rec.worktreeDir.isEmpty());
     m_worktreeCheck->setEnabled(false);
-    if (!rec.worktreeDir.isEmpty())
+    // In edit mode the hint is the only place that names the folder.
+    if (!rec.worktreeDir.isEmpty()) {
         m_workspaceHint->setText(rec.worktreeDir + " (branch " + rec.branch + ") -- set when this box was created; not editable here.");
-    else if (!rec.workspaceDir.isEmpty())
+        m_workspaceHint->show();
+    } else if (!rec.workspaceDir.isEmpty()) {
         m_workspaceHint->setText(rec.workspaceDir + "/ -- set when this box was created; not editable here.");
+        m_workspaceHint->show();
+    }
+
+    // The ports section follows the box, not the project: a classic box in
+    // a project that shares a container still has its own ports.
+    m_portsSection->setVisible(!rec.isShared());
 
     m_skipPermsCheck->setChecked(rec.skipPermissions);
     selectValue(m_platformCombo, rec.program());
@@ -691,10 +716,11 @@ void NewBoxDialog::reloadForDirectory()
     // like the subfolder choice above, and exclusive with it.
     const ProjectRecord project = absDir.isEmpty() ? ProjectRecord() : ProjectRecord::forRoot(absDir);
     m_primaryRepo = project.primaryRepo;
-    // A shared container takes its ports from the project's pool and its
-    // mounts from the project, so the per-box settings would be ignored.
+    // A shared container takes its ports from the project's pool, so the
+    // per-box ports would be ignored. Its mounts are the project's: the
+    // folders section stays, and MainWindow::onNew and onEdit save its
+    // folders to the project.
     m_portsSection->setVisible(!project.sharedContainer);
-    m_dirsSection->setVisible(!project.sharedContainer);
     if (!m_editMode) {
         const QStringList rememberedTrees = QSettings().value(kWorktreeDirsKey).toStringList();
         const bool wantTree = !m_primaryRepo.isEmpty() && !rememberedTrees.contains(kNoWorkspaceMarker + absDir);

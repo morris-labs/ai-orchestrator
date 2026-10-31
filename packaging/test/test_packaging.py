@@ -41,6 +41,7 @@ SHELL_SCRIPTS = [
     ROOT / "scripts/lib/common.sh",
     ROOT / "packaging/deb/scripts/postinst",
     ROOT / "packaging/deb/scripts/prerm",
+    ROOT / "packaging/deb/scripts/postrm",
     ROOT / "image/keeper/keeper.sh",
     ROOT / "image/keeper/start-session.sh",
     ROOT / "image/keeper/test-keeper.sh",
@@ -119,6 +120,14 @@ class NfpmConfigTest(unittest.TestCase):
             }
         self.assertLessEqual(expected, dsts)
 
+    def test_unit_is_hardened(self):
+        parser = configparser.ConfigParser(interpolation=None, strict=False)
+        parser.optionxform = str
+        parser.read(ROOT / "packaging/systemd/agentbox-server.service")
+        self.assertEqual(parser["Service"]["UMask"], "0077")
+        self.assertEqual(parser["Service"]["NoNewPrivileges"], "yes")
+        self.assertEqual(parser["Unit"]["StartLimitIntervalSec"], "0")
+
     def test_maintainer_scripts_exist(self):
         for key, src in self.config["scripts"].items():
             name = pathlib.Path(src).name
@@ -151,9 +160,14 @@ class WorkflowTest(unittest.TestCase):
     def test_release_builds_the_deb_only_on_linux(self):
         doc = load_yaml(WORKFLOWS / "release.yml")
         self.assertEqual(workflow_triggers(doc)["push"]["tags"], ["v[0-9]*.[0-9]*.[0-9]*"])
-        self.assertEqual(set(doc["jobs"]), {"deb", "release"})
-        for job in doc["jobs"].values():
-            self.assertTrue(job["runs-on"].startswith("ubuntu"), job["runs-on"])
+        self.assertEqual(set(doc["jobs"]), {"ci", "deb", "release"})
+        # The .deb is built only after the CI workflow passes.
+        self.assertEqual(doc["jobs"]["ci"]["uses"], "./.github/workflows/ci.yml")
+        self.assertIn("workflow_call", workflow_triggers(load_yaml(WORKFLOWS / "ci.yml")))
+        self.assertIn("ci", doc["jobs"]["deb"]["needs"])
+        for name in ("deb", "release"):
+            runs_on = doc["jobs"][name]["runs-on"]
+            self.assertTrue(runs_on.startswith("ubuntu"), runs_on)
         runs = " ".join(s.get("run", "") for s in doc["jobs"]["deb"]["steps"])
         self.assertIn("scripts/build-deb.sh", runs)
         self.assertNotIn("docker push", runs)
@@ -161,12 +175,22 @@ class WorkflowTest(unittest.TestCase):
         self.assertIn("dist/*.deb", files["with"]["files"])
         self.assertIn("dist/*.tgz", files["with"]["files"])
 
+    def test_checkouts_do_not_persist_credentials(self):
+        for f in sorted(WORKFLOWS.glob("*.yml")):
+            for job in load_yaml(f)["jobs"].values():
+                for step in job.get("steps", []):
+                    if step.get("uses", "").startswith("actions/checkout@"):
+                        self.assertIs(step.get("with", {}).get("persist-credentials"), False, f.name)
+
     def test_actions_are_pinned_by_commit(self):
-        # A tag can be moved to other code; a commit SHA can't.
+        # A tag can be moved to other code; a commit SHA can't. A workflow in
+        # this repository is called by its path at the same commit.
         for f in sorted(WORKFLOWS.glob("*.yml")):
             uses = re.findall(r"(?m)^\s*-?\s*uses:\s*(.*)$", f.read_text())
             self.assertTrue(uses, f.name)
             for line in uses:
+                if line.startswith("./.github/workflows/"):
+                    continue
                 self.assertRegex(line, r"^[\w.-]+/[\w.-]+@[0-9a-f]{40} # v\d+\.\d+\.\d+$", f"{f.name}: {line}")
 
     def test_downloads_are_checksummed(self):
@@ -176,7 +200,7 @@ class WorkflowTest(unittest.TestCase):
             doc = load_yaml(f)
             pins = doc.get("env", {})
             for job in doc["jobs"].values():
-                for step in job["steps"]:
+                for step in job.get("steps", []):
                     run = step.get("run", "")
                     if "curl" not in run:
                         continue
@@ -252,6 +276,41 @@ class ImageTest(unittest.TestCase):
         package = json.loads((ROOT / "packages/engine/package.json").read_text())
         self.assertEqual(package["bin"]["agentbox-secret"], "./dist/secret-main.js")
         self.assertTrue((ROOT / "packages/engine/src/secret-main.ts").is_file())
+
+    def test_engine_wrappers_check_their_bin_entries(self):
+        # Runs the Dockerfile's bin lookups against a package without the
+        # bins: each lookup must fail the build rather than write a wrapper
+        # that runs `.../engine/undefined`.
+        if not os.access("/usr/bin/node", os.X_OK):
+            self.skipTest("/usr/bin/node is missing")
+        text = DOCKERFILE.read_text()
+        engine_step = text[text.index("COPY dist/"):text.index("COPY --chmod=0755 keeper/")]
+        lines = [line.strip() for line in engine_step.splitlines()]
+
+        def lookup(var):
+            start = next(i for i, line in enumerate(lines) if line.startswith(f"{var}="))
+            end = next(i for i in range(start, len(lines)) if lines[i].startswith("printf "))
+            body = [line.removesuffix("\\").strip().removesuffix("&&").strip() for line in lines[start:end]]
+            return " && ".join(body)
+
+        cases = {
+            "engine_bin": [{"bin": {"other": "./x.js"}}, {"bin": {"agentbox-engine": "./missing.js"}}],
+            "secret_bin": [{"bin": {"other": "./x.js"}}, {"bin": {"agentbox-secret": "./missing.js"}}],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            pkg = pathlib.Path(tmp)
+            (pkg / "dist").mkdir()
+            (pkg / "dist/main.js").write_text("")
+            for var, packages in cases.items():
+                script = f"engine_pkg={pkg} && {lookup(var)}"
+                for package in packages:
+                    (pkg / "package.json").write_text(json.dumps(package))
+                    result = subprocess.run(["sh", "-c", script], capture_output=True, text=True)
+                    self.assertNotEqual(result.returncode, 0, f"{var}: {package}")
+                    self.assertIn("bin", result.stderr)
+                good = "agentbox-engine" if var == "engine_bin" else "agentbox-secret"
+                (pkg / "package.json").write_text(json.dumps({"bin": {good: "./dist/main.js"}}))
+                subprocess.run(["sh", "-c", script], check=True, capture_output=True)
 
     def test_engine_dependencies_are_locked(self):
         # The engine's dependencies must come from pnpm-lock.yaml at pack
@@ -354,6 +413,19 @@ class DocsTest(unittest.TestCase):
             for target in re.findall(r"\]\(([^)#]+\.md)(?:#[^)]*)?\)", page.read_text()):
                 self.assertTrue((page.parent / target).is_file(), f"{page.name} links to missing {target}")
         self.assertIn("## Migrating from 3.x", (ROOT / "README.md").read_text())
+
+    def test_committed_logs_hold_no_host_paths(self):
+        # A log copied from a real host lists its home directory and real
+        # project names. Commit redacted excerpts with /home/USER instead.
+        if not (ROOT / ".git").exists():
+            self.skipTest("not a git checkout")
+        files = subprocess.run(
+            ["git", "-C", str(ROOT), "ls-files", "-z", "--", "*.log"],
+            check=True, capture_output=True, text=True,
+        ).stdout.split("\0")
+        for name in filter(None, files):
+            text = (ROOT / name).read_text(errors="replace")
+            self.assertNotRegex(text, r"/home/(?!USER/)[A-Za-z_][\w.-]*/", name)
 
     def test_policy_example_parses(self):
         text = (ROOT / "docs/policy.md").read_text()
@@ -467,6 +539,50 @@ class ScriptsTest(unittest.TestCase):
             self.assertNotIn(token, argv)
             self.assertIn(f"Authorization: Bearer {token}", (tmp / "headers.log").read_text())
 
+    def test_build_image_removes_its_deploy_directory_on_failure(self):
+        # A pnpm deploy that fails after writing node_modules must not leave
+        # the temporary directory behind.
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = pathlib.Path(tmp)
+            shutil.copytree(ROOT / "scripts", tmp / "scripts")
+            (tmp / "image").mkdir()
+            shutil.copy(DOCKERFILE, tmp / "image")
+            shutil.copy(VERSIONS, tmp / "image")
+            (tmp / "pnpm-workspace.yaml").write_text("packages: []\n")
+            (tmp / "packages/engine").mkdir(parents=True)
+            (tmp / "packages/engine/package.json").write_text("{}\n")
+            (tmp / "bin").mkdir()
+            fake = tmp / "bin/pnpm"
+            fake.write_text(
+                "#!/bin/sh\n"
+                'case " $* " in *" deploy "*) ;; *) exit 0 ;; esac\n'
+                'for a in "$@"; do last=$a; done\n'
+                'mkdir -p "$last/node_modules/left-behind"\n'
+                "exit 1\n"
+            )
+            fake.chmod(0o755)
+            scratch = tmp / "tmpdir"
+            scratch.mkdir()
+            env = {**os.environ, "PATH": f"{tmp / 'bin'}:{os.environ['PATH']}", "TMPDIR": str(scratch)}
+            result = subprocess.run(
+                [str(tmp / "scripts/build-image.sh"), "--pack-only"], env=env, capture_output=True, text=True
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(list(scratch.iterdir()), [])
+
+    def test_pnpm_build_allowlist_is_in_one_place(self):
+        # pnpm 10 reads onlyBuiltDependencies from pnpm-workspace.yaml; a copy
+        # in package.json could drift from it unnoticed.
+        package = json.loads((ROOT / "package.json").read_text())
+        self.assertNotIn("onlyBuiltDependencies", package.get("pnpm", {}))
+        workspace = load_yaml(ROOT / "pnpm-workspace.yaml")
+        self.assertIn("better-sqlite3", workspace["onlyBuiltDependencies"])
+
+    def test_bump_versions_keeps_the_registry_token_out_of_argv(self):
+        script = (ROOT / "scripts/bump-versions.sh").read_text()
+        self.assertNotRegex(script, r'-H "Authorization: Bearer')
+        self.assertIn("-H @-", script)
+
     def test_postinst_asks_for_a_restart_on_upgrade(self):
         # PATH holds only cat, so the script skips AppArmor and the desktop
         # caches; no chrome-sandbox helper exists outside an installed host.
@@ -487,6 +603,32 @@ class ScriptsTest(unittest.TestCase):
             ).stdout
             self.assertIn("systemctl --user enable --now agentbox-server", fresh)
             self.assertNotIn(restart, fresh)
+
+    def test_postrm_clears_the_apparmor_cache_on_purge(self):
+        config = load_yaml(NFPM)
+        self.assertEqual(config["scripts"]["postremove"], "maint/postrm")
+        self.assertIn('"$ROOT/packaging/deb/scripts/postrm"', (ROOT / "scripts/build-deb.sh").read_text())
+        text = (ROOT / "packaging/deb/scripts/postrm").read_text()
+        purge = text[text.index("purge)"):text.index(";;")]
+        self.assertIn('rm -f /var/cache/apparmor/*/"agentbox-$app"', purge)
+        if pathlib.Path("/usr/lib/agentbox").exists():
+            self.skipTest("agentbox is installed on this host")
+        with tempfile.TemporaryDirectory() as tmp:
+            for name in ("rm",):
+                (pathlib.Path(tmp) / name).symlink_to(shutil.which(name))
+            for action in ("remove", "purge", "upgrade"):
+                subprocess.run(
+                    [str(ROOT / "packaging/deb/scripts/postrm"), action], env={"PATH": tmp}, check=True
+                )
+
+    def test_postinst_sets_the_setuid_bit_only_without_a_profile(self):
+        text = (ROOT / "packaging/deb/scripts/postinst").read_text()
+        self.assertEqual(text.count("chmod 4755"), 1)
+        setuid = text.index("chmod 4755")
+        branch = text.rindex("if ", 0, setuid)
+        self.assertIn('"$loaded" = 1', text[branch:setuid])
+        self.assertIn('"$userns_off" = 0', text[branch:setuid])
+        self.assertNotIn("apparmor_parser -r -T -W \"/etc/apparmor.d/agentbox-$app\" || true", text)
 
     def test_build_deb_fails_clearly_without_tools(self):
         # With an empty PATH apart from bash and coreutils, the script must
@@ -596,11 +738,19 @@ class DevAppArmorTest(unittest.TestCase):
         bindir = self.tmp / "bin"
         bindir.mkdir()
         self.log = self.tmp / "calls.log"
-        for name in ("sudo", "apparmor_parser"):
+        # The fake sudo runs its command as the current user, so writes land
+        # in the temporary profile directory below.
+        for name, tail in (("sudo", 'exec "$@"\n'), ("apparmor_parser", "")):
             fake = bindir / name
-            fake.write_text(f'#!/bin/sh\nprintf "{name} %s\\n" "$*" >> "{self.log}"\n')
+            fake.write_text(f'#!/bin/sh\nprintf "{name} %s\\n" "$*" >> "{self.log}"\n{tail}')
             fake.chmod(0o755)
-        self.env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"}
+        self.profile_dir = self.tmp / "apparmor.d"
+        self.profile_dir.mkdir()
+        self.env = {
+            **os.environ,
+            "PATH": f"{bindir}:{os.environ['PATH']}",
+            "AGENTBOX_APPARMOR_DIR": str(self.profile_dir),
+        }
 
     def make_checkout(self, dirname):
         """Copies the script, its library, and the templates to a checkout."""
@@ -630,10 +780,46 @@ class DevAppArmorTest(unittest.TestCase):
     def profiles(self, out):
         """Splits --print output into {file: profile text}."""
         result = {}
-        for block in out.split("\n\n# /etc/apparmor.d/"):
-            header, _, body = block.removeprefix("# /etc/apparmor.d/").partition("\n")
+        prefix = f"# {self.profile_dir}/"
+        for block in out.split(f"\n\n{prefix}"):
+            header, _, body = block.removeprefix(prefix).partition("\n")
             result[header] = body
         return result
+
+    def link_electron(self, app, binary):
+        """Links apps/APP/node_modules/electron to the store entry of BINARY."""
+        pkg = binary.parent.parent
+        link = self.root / f"apps/{app}/node_modules/electron"
+        link.parent.mkdir(parents=True, exist_ok=True)
+        link.symlink_to(pkg)
+
+    def test_checkouts_that_share_a_binary_share_its_profile(self):
+        # Two checkouts that use one pnpm store get one profile, which names
+        # both, and removing it from one checkout leaves it for the other.
+        binary = self.add_electron("boxes", "45.1.0")
+        self.add_electron("review", "45.1.0")
+        first = self.root
+        (name, text), = self.profiles(self.run_script("--print").stdout).items()
+        (self.profile_dir / name).write_text(text)
+
+        self.make_checkout("second")
+        second = self.root
+        for app in APPS:
+            self.link_electron(app, binary)
+        shared = self.profiles(self.run_script("--print").stdout)[name]
+        first_mark = f"# agentbox-dev checkout: {os.path.realpath(first)}\n"
+        second_mark = f"# agentbox-dev checkout: {os.path.realpath(second)}\n"
+        self.assertTrue(shared.startswith(second_mark + first_mark), shared)
+        (self.profile_dir / name).write_text(shared)
+
+        self.run_script("--remove")
+        left = (self.profile_dir / name).read_text()
+        self.assertIn(first_mark, left)
+        self.assertNotIn(second_mark, left)
+
+        self.root = first
+        self.run_script("--remove")
+        self.assertFalse((self.profile_dir / name).exists())
 
     def test_print_shares_one_profile_between_the_apps(self):
         binary = self.add_electron("boxes", "45.1.0")
@@ -695,7 +881,7 @@ class NfpmBuildTest(unittest.TestCase):
                     src.parent.mkdir(parents=True, exist_ok=True)
                     src.write_text("placeholder\n")
             (stage / "maint").mkdir()
-            for name in ("postinst", "prerm"):
+            for name in ("postinst", "prerm", "postrm"):
                 shutil.copy(ROOT / "packaging/deb/scripts" / name, stage / "maint")
             deb = pathlib.Path(tmp) / "agentbox_4.0.0-test_amd64.deb"
             subprocess.run(

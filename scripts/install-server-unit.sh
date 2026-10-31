@@ -63,8 +63,6 @@ require_tool node "Install Node.js 22 or later."
 NODE="$(node -p process.execPath)"
 NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]')"
 ((NODE_MAJOR >= 22)) || die "Node.js 22 or later is required; $NODE is version $NODE_MAJOR."
-[[ -f "$MAIN" ]] ||
-  die "$MAIN is missing. Build the workspace first: corepack pnpm install --frozen-lockfile && corepack pnpm -r build"
 
 # Quotes VALUE for a double-quoted systemd setting: backslashes and quotes
 # are escaped, and % is doubled so systemd doesn't read it as a specifier.
@@ -90,6 +88,10 @@ if ((PRINT)); then
   printf '\n'
   exit 0
 fi
+
+# --print only shows the paths, so it works before the workspace is built.
+[[ -f "$MAIN" ]] ||
+  die "$MAIN is missing. Build the workspace first: corepack pnpm install --frozen-lockfile && corepack pnpm -r build"
 
 mkdir -p "$DROPIN_DIR"
 printf '%s' "$DROPIN_TEXT" > "$DROPIN"

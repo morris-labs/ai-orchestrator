@@ -55,6 +55,11 @@ struct BoxRecord {
     // the box must not overwrite it with what the session was using.
     QString launchedModel;
     QString launchedEffort;
+    // The CLI the box last started ("claude", "codex", or "copilot"); empty
+    // in records from before the key existed. A reopen resumes a Codex
+    // session only when Codex ran last, so a box switched to Codex starts
+    // fresh rather than resuming another box's session.
+    QString launchedPlatform;
     // `claude --allow-dangerously-skip-permissions` (every box starts in
     // `--permission-mode auto`; this only allows bypass mode). Still stored under the old
     // `yolo=` key so existing records keep working; only the name here
@@ -130,6 +135,17 @@ struct BoxRecord {
         if (p == QLatin1String("copilot"))
             return QStringLiteral("GitHub Copilot");
         return QStringLiteral("Claude Code");
+    }
+    // The flag that the permission setting (`yolo`) passes to CLI `p`. For
+    // claude it only makes bypass mode available; for Codex and Copilot it
+    // starts the session without approvals.
+    static QString bypassFlag(const QString &p)
+    {
+        if (p == QLatin1String("codex"))
+            return QStringLiteral("--dangerously-bypass-approvals-and-sandbox");
+        if (p == QLatin1String("copilot"))
+            return QStringLiteral("--allow-all-tools");
+        return QStringLiteral("--allow-dangerously-skip-permissions");
     }
     // The tmux session a secondary CLI runs in, beside the main session.
     QString sideSession(const QString &p) const { return tmuxSession() + QLatin1Char('-') + p; }

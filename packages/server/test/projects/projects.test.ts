@@ -295,6 +295,20 @@ describe("ProjectService", () => {
     });
   });
 
+  it("names Claude Box 3.x for an image without an engine", async () => {
+    // Claude Box 3.x builds the same tag from the old Dockerfile, which has
+    // no engine and no version label.
+    const h = makeHarness();
+    h.docker.addImage("claude-code", {});
+    const p = h.core.projects.ensureForRoot(h.dir("app"));
+    await expect(h.core.projects.ensureContainer(p.id)).rejects.toMatchObject({
+      code: "engine_mismatch",
+      message: expect.stringContaining("Claude Box 3.x"),
+      details: { imageEngineVersion: null },
+    });
+    expect(h.docker.callsOf("createContainer")).toHaveLength(0);
+  });
+
   it("reports stale mounts, maps, and secrets and replaces an idle stale container", async () => {
     const h = makeHarness();
     const p = h.core.projects.ensureForRoot(h.dir("app"));

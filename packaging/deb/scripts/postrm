@@ -1,0 +1,16 @@
+#!/bin/sh
+# postrm for the agentbox package.
+set -e
+
+case "$1" in
+  purge)
+    # apparmor_parser -W in postinst cached the compiled profiles. The
+    # profiles themselves are conffiles that dpkg removes on purge, so their
+    # cache entries go too.
+    for app in boxes review; do
+      rm -f /var/cache/apparmor/*/"agentbox-$app" || true
+    done
+    ;;
+esac
+
+exit 0

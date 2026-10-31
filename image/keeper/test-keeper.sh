@@ -162,6 +162,22 @@ status=$?
 check "start-session refuses a missing work directory" [ "$status" -eq 4 ]
 check "start-session starts no session in a missing work directory" [ ! -s "$FAKE_LOG" ]
 
+# 9. A bad GRACE or STATE stops the keeper at once with status 2.
+new_case badargs
+for args in "$CASE/state|" "$CASE/state|soon" "$CASE/state|-1" "|1" "$CASE/SYNTHETIC_missing_dir|1"; do
+  "$HERE/keeper.sh" "${args%%|*}" "${args#*|}" 2>/dev/null &
+  pid=$!
+  if wait_exit "$pid" 3; then
+    wait "$pid"
+    status=$?
+    check "the keeper rejects the arguments '$args'" [ "$status" -eq 2 ]
+  else
+    fail "the keeper rejects the arguments '$args'"
+    kill "$pid"
+  fi
+done
+check "a rejected keeper starts no engine" [ "$(count start)" -eq 0 ]
+
 if [ "$FAILURES" -gt 0 ]; then
   printf '%d failed\n' "$FAILURES"
   exit 1

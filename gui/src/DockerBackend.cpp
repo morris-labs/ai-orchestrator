@@ -178,11 +178,15 @@ static QString buildContainerCmd(const QString &gitSetup, const QString &program
     // (which is in the bind-mounted workspace and persists after --rm removes
     // the container). This is the only trace a fast startup failure leaves,
     // since --rm discards the container's own log on exit.
+    //
+    // The keeper loop uses the exact target =main: a bare `-t main` also
+    // matches a side session such as main-codex by prefix, which would keep
+    // the container up after claude exits. Side sessions end with the box.
     return QStringLiteral("TSTART=$SECONDS; ")
          + gitSetup
          + QStringLiteral(" && tmux new-session -d -s main -- ") + claudeCmd
          + QStringLiteral(" && LAUNCH_OK=1;"
-                          " while tmux has-session -t main 2>/dev/null; do sleep 1; done;"
+                          " while tmux has-session -t =main 2>/dev/null; do sleep 1; done;"
                           " RUNTIME=$((SECONDS-TSTART));"
                           " [ \"${LAUNCH_OK:-0}\" -eq 1 ] && [ \"$RUNTIME\" -le 15 ]"
                           " && echo \"[$(date -u '+%Y-%m-%dT%H:%M:%SZ')]"
@@ -1391,6 +1395,7 @@ bool DockerBackend::createNew(BoxRecord &rec, bool workspaceSubdir, QString *err
     rec.wasRunning = true;
     rec.launchedModel = rec.model;
     rec.launchedEffort = rec.effort;
+    rec.launchedPlatform = rec.program();
     rec.save();
     return true;
 }
@@ -1436,9 +1441,11 @@ QStringList DockerBackend::baseClaudeArgs(const BoxRecord &rec)
     return args;
 }
 
-// Arguments for a CLI other than the box's claude session. `resume` picks
-// up the CLI's most recent session in the working directory, since neither
-// keeps a session id that claude-box records.
+// Arguments for a CLI other than the box's claude session. Copilot takes the
+// box's session uuid with --session-id, which creates a session with that id
+// or resumes it, so each box keeps its own. Codex can't be given an id, so
+// `resume` picks up its most recent session in the working directory, which
+// is ambiguous when two Codex boxes share one.
 QStringList DockerBackend::platformArgs(const BoxRecord &rec, const QString &program, bool resume,
                                         const QString &prompt)
 {
@@ -1447,17 +1454,19 @@ QStringList DockerBackend::platformArgs(const BoxRecord &rec, const QString &pro
         if (resume)
             args << "resume" << "--last";
         if (rec.skipPermissions)
-            args << "--dangerously-bypass-approvals-and-sandbox";
+            args << BoxRecord::bypassFlag(program);
         if (!resume && !prompt.isEmpty())
             args << prompt;
     } else if (program == QLatin1String("copilot")) {
         // Remote control, like claude's: the session can be steered from
         // GitHub.com or GitHub Mobile.
         args << "--remote";
-        if (resume)
+        if (!rec.sessionUuid.isEmpty())
+            args << "--session-id" << rec.sessionUuid;
+        else if (resume)
             args << "--continue";
         if (rec.skipPermissions)
-            args << "--allow-all-tools";
+            args << BoxRecord::bypassFlag(program);
         if (!resume && !prompt.isEmpty())
             args << "-i" << prompt;
     } else {
@@ -1466,15 +1475,17 @@ QStringList DockerBackend::platformArgs(const BoxRecord &rec, const QString &pro
     return args;
 }
 
+// Called when the context menu opens, on the GUI thread, so it never runs
+// docker: a shared container's keeper lists its sessions in the state file
+// every second. A classic box has no such file and reports none; starting a
+// side session that already runs then fails with a clear message from
+// SharedContainer::sessionStartScript().
 QStringList DockerBackend::runningSideSessions(const BoxRecord &rec) const
 {
-    QString out;
-    if (!runDocker({QStringLiteral("exec"), QStringLiteral("--user"), containerUsername(), rec.containerName(),
-                    QStringLiteral("tmux"), QStringLiteral("list-sessions"), QStringLiteral("-F"), QStringLiteral("#S")},
-                   &out, nullptr, 10000))
+    if (!rec.isShared())
         return {};
     QStringList running;
-    const QStringList sessions = out.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+    const QStringList sessions = SharedContainer::liveSessions(rec.containerName());
     for (const QString &p : BoxRecord::platforms()) {
         if (sessions.contains(rec.sideSession(p)))
             running << p;
@@ -1487,8 +1498,11 @@ QStringList DockerBackend::runningSideSessions(const BoxRecord &rec) const
 bool DockerBackend::startSideSession(const BoxRecord &rec, const QString &program, QString *errorOut) const
 {
     QStringList args;
+    // A bare `codex remote-control` manages a background daemon; with
+    // --no-daemon it stays in the foreground, so the tmux session lives as
+    // long as remote control does.
     if (program == QLatin1String("codex"))
-        args << "remote-control";
+        args << "remote-control" << "--no-daemon";
     else
         args = platformArgs(rec, program, false, QString());
     QStringList parts{program};
@@ -1527,7 +1541,9 @@ bool DockerBackend::reopen(const BoxRecord &rec, QString *errorOut) const
     const bool hasTranscript = !updated.sessionUuid.isEmpty()
                                && QFile::exists(transcriptPath);
 
-    if (!hasTranscript)
+    // Another CLI never has a claude transcript, so its uuid is kept: Copilot
+    // resumes by it, and minting one on every start would only churn the record.
+    if (!hasTranscript && (updated.isClaude() || updated.sessionUuid.isEmpty()))
         updated.sessionUuid = QUuid::createUuid().toString(QUuid::WithoutBraces);
 
     claudeArgs << (hasTranscript ? QStringLiteral("--resume")
@@ -1550,9 +1566,19 @@ bool DockerBackend::reopen(const BoxRecord &rec, QString *errorOut) const
                  promptPath(Worktrees::worktreeNotesDir(updated.worktreeDir)),
                  promptPath(Worktrees::infraFile(updated.targetDir)));
     }
-    if (!updated.isClaude())
-        claudeArgs = platformArgs(updated, updated.program(), true, QString());
-    updated.movedFrom.clear(); // told, or nothing to tell (a fresh session has no old paths)
+    if (!updated.isClaude()) {
+        // Codex can only resume its most recent session in the directory, so
+        // a box that ran another CLI last (switched with Main Platform) has
+        // none of its own and starts fresh. An empty launchedPlatform is a
+        // record from before the key, which resumes as it always did.
+        const bool resume = updated.launchedPlatform.isEmpty()
+                            || updated.launchedPlatform == updated.program();
+        claudeArgs = platformArgs(updated, updated.program(), resume, QString());
+        // The move notice above went only into claude's arguments, so it is
+        // still owed; it stays recorded until claude runs again.
+    } else {
+        updated.movedFrom.clear(); // told, or nothing to tell (a fresh session has no old paths)
+    }
 
     if (!(updated.isShared() ? startShared(updated, claudeArgs, errorOut)
                              : runContainer(updated, claudeArgs, errorOut)))
@@ -1561,6 +1587,7 @@ bool DockerBackend::reopen(const BoxRecord &rec, QString *errorOut) const
     updated.wasRunning = true;
     updated.launchedModel = updated.model;
     updated.launchedEffort = updated.effort;
+    updated.launchedPlatform = updated.program();
     updated.save();
     return true;
 }
@@ -1627,7 +1654,9 @@ static bool sameModel(QString recorded, const QString &live)
 bool DockerBackend::syncRecordFromSession(const QString &boxName)
 {
     BoxRecord rec = BoxRecord::load(boxName);
-    if (!rec.isValid())
+    // A Codex or Copilot box's claude files, if any, are a side session's,
+    // which doesn't own the record.
+    if (!rec.isValid() || !rec.isClaude())
         return false;
     bool changed = false;
 
@@ -1705,6 +1734,17 @@ void DockerBackend::stopMany(const QStringList &names, QHash<QString, QString> *
                 // A session that was not there is as stopped as one just killed.
                 if (!ok && error.contains(QStringLiteral("can't find session")))
                     ok = true;
+                // Side sessions from Start Remote Session end with the box;
+                // otherwise they would keep the shared container up for good.
+                // Most boxes have none, so errors here are ignored. One exec
+                // kills them all; the names go in as positional arguments.
+                QStringList sideArgs{"exec", shared.containerName(), "sh", "-c",
+                                     "for s; do tmux kill-session -t \"=$s\" 2>/dev/null; done; true", "_"};
+                for (const QString &p : BoxRecord::platforms()) {
+                    if (p != shared.program())
+                        sideArgs << shared.sideSession(p);
+                }
+                runDocker(sideArgs, nullptr, nullptr, 15000);
             }
         } else if (DockerApi::isAvailable()) {
             DockerApi::post(QStringLiteral("/") + DockerApi::kApiVersion + "/containers/" + name + "/stop",

@@ -9,7 +9,8 @@ import {
   mkdirSync,
   readFileSync,
   renameSync,
-  rmdirSync,
+  rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
@@ -93,7 +94,39 @@ function statePathFor(scenarioPath) {
   return scenarioPath ? `${scenarioPath}.state.json` : null;
 }
 
+// How long a lock without an owner pid file may stand before it counts as
+// left behind: the owner writes the file right after mkdir.
+const LOCK_PIDLESS_STALE_MS = 2_000;
+
+// Whether process PID is gone. EPERM means it exists under another user.
+function processGone(pid) {
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch (err) {
+    return err?.code === "ESRCH";
+  }
+}
+
+// Whether LOCK was left by a mock that died while holding it: its pid file
+// names a process that is gone, or it has no pid file and is old.
+function lockIsStale(lock) {
+  try {
+    const pid = Number.parseInt(readFileSync(join(lock, "pid"), "utf8"), 10);
+    if (Number.isInteger(pid) && pid > 0) return processGone(pid);
+  } catch {
+    // No pid file yet, or the lock is already gone: fall back to its age.
+  }
+  try {
+    return Date.now() - statSync(lock).mtimeMs > LOCK_PIDLESS_STALE_MS;
+  } catch {
+    return false;
+  }
+}
+
 // A directory lock: mkdir is atomic, so parallel invocations take turns.
+// The holder writes its pid into the directory, so a later invocation can
+// break a lock that a killed mock left behind instead of waiting it out.
 function withLock(scenarioPath, fn) {
   const statePath = statePathFor(scenarioPath);
   if (!statePath) return fn();
@@ -102,15 +135,30 @@ function withLock(scenarioPath, fn) {
   for (;;) {
     try {
       mkdirSync(lock);
+      writeFileSync(join(lock, "pid"), String(process.pid));
       break;
-    } catch {
-      if (Date.now() > deadline) throw new Error(`mock CLI: timed out waiting for ${lock}`);
+    } catch (err) {
+      if (err?.code !== "EEXIST") throw err;
+      if (lockIsStale(lock)) {
+        // Renaming first means only one waiter breaks a given stale lock.
+        const aside = `${lock}.stale-${process.pid}-${randomUUID()}`;
+        try {
+          renameSync(lock, aside);
+          rmSync(aside, { recursive: true, force: true });
+        } catch {
+          // Another waiter broke it first.
+        }
+        continue;
+      }
+      if (Date.now() > deadline) {
+        throw new Error(`mock CLI: timed out waiting for ${lock}`, { cause: err });
+      }
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
     }
   }
   try {
     return fn();
   } finally {
-    rmdirSync(lock);
+    rmSync(lock, { recursive: true, force: true });
   }
 }

@@ -7,7 +7,12 @@ import type { Job, SetupCheck, SetupStatusSchema } from "@agentbox/contracts";
 import type { z } from "zod";
 import type { Core } from "../api/core-interface.js";
 import { ApiError, toApiError } from "../api/errors.js";
-import { imageBuildScript, imageBuildScriptArgs, type ImageBuildKind } from "../docker/image.js";
+import {
+  imageBuildScript,
+  imageBuildScriptArgs,
+  noEngineMessage,
+  type ImageBuildKind,
+} from "../docker/image.js";
 import { processJob, type JobIO, type JobManager, type JobOutcome } from "../jobs/jobs.js";
 import { commandLine, type ProcessRunner } from "../jobs/process.js";
 import type { OpClient } from "../secrets/op.js";
@@ -136,7 +141,10 @@ export class SetupService {
       engine = {
         id: "engine",
         status: "fail",
-        message: `The image carries engine ${status.engineVersion ?? "of an unknown version"}, but this server needs ${status.expectedEngineVersion}. Rebuild the image.`,
+        message:
+          status.engineVersion === null
+            ? noEngineMessage(status.name)
+            : `The image carries engine ${status.engineVersion}, but this server needs ${status.expectedEngineVersion}. Rebuild the image.`,
         fixable: true,
       };
     }

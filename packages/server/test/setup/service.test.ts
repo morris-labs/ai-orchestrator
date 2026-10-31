@@ -16,6 +16,10 @@ describe("systemd user service", () => {
     const unit = unitFile({ execStart: "/usr/bin/node /opt/agentbox/main.js" });
     expect(unit).toContain("ExecStart=/usr/bin/node /opt/agentbox/main.js\n");
     expect(unit).toContain("Restart=on-failure\n");
+    expect(unit).toContain("RestartSec=5\n");
+    expect(unit).toContain("StartLimitIntervalSec=0\n");
+    expect(unit).toContain("UMask=0077\n");
+    expect(unit).toContain("NoNewPrivileges=yes\n");
     expect(unit).toContain("WantedBy=default.target\n");
     expect(unit.startsWith("[Unit]\nDescription=Agent Box server\n")).toBe(true);
   });
