@@ -59,16 +59,59 @@ describe("Dashboard", () => {
       sample("2026-10-28T09:00:00.000Z", 0.55),
       sample("2026-10-28T09:30:00.000Z", 0.65),
     ]);
-    const { container } = render(<Dashboard state={state} now={NOW} />);
+    // The server forecasts this window, but the ceiling doesn't govern it.
+    const usageInfo = [
+      {
+        vendor: "claude" as const,
+        account: "a@example.com",
+        window: "7d" as const,
+        forecastAt: "2026-10-28T11:00:00.000Z",
+        resetAt: null,
+      },
+    ];
+    const { container } = render(<Dashboard state={state} usageInfo={usageInfo} now={NOW} />);
     const usage = screen.getByRole("region", { name: "Usage against ceilings" });
     expect(within(usage).queryByText(/Over ceiling/)).not.toBeInTheDocument();
     expect(within(usage).getByText("No ceiling for this window")).toBeInTheDocument();
     expect(within(usage).getByRole("img", { name: /no ceiling/ })).toBeInTheDocument();
     expect(container.querySelector(".ab-ceiling")).toBeNull();
+    expect(within(usage).queryByText("Ceiling")).not.toBeInTheDocument();
+    expect(within(usage).queryByText(/Reaches the ceiling/)).not.toBeInTheDocument();
+    // The forecast marker is the faint line from the last point to the ceiling.
+    expect(container.querySelector('line[stroke-opacity="0.4"]')).toBeNull();
     expect(container.querySelector("[data-estimated]")).not.toBeNull();
     fireEvent.click(within(usage).getByRole("button", { name: "Table" }));
     expect(within(usage).getByRole("columnheader", { name: "Source" })).toBeInTheDocument();
     expect(within(usage).getByRole("cell", { name: "estimate" })).toBeInTheDocument();
+    const cells = within(usage).getAllByRole("cell");
+    const headers = within(usage)
+      .getAllByRole("columnheader")
+      .map((h) => h.textContent);
+    expect(cells[headers.indexOf("Ceiling")]).toHaveTextContent("–");
+    expect(cells[headers.indexOf("Forecast")]).toHaveTextContent("–");
+  });
+
+  it("draws the forecast marker and the ceiling label when the ceiling governs the window", () => {
+    const sample = (time: string, utilization: number) => ({
+      vendor: "claude" as const,
+      account: "a@example.com",
+      window: "5h" as const,
+      utilization,
+      spendUsd: null,
+      ceiling: { kind: "utilization" as const, window: "5h" as const, max: 0.6 },
+      resetAt: null,
+      sampleSource: "rate_limit_event" as const,
+      time,
+    });
+    const state = addUsageSamples(emptyDashboard(), [
+      sample("2026-10-28T09:00:00.000Z", 0.4),
+      sample("2026-10-28T09:30:00.000Z", 0.5),
+    ]);
+    const { container } = render(<Dashboard state={state} now={NOW} />);
+    const usage = screen.getByRole("region", { name: "Usage against ceilings" });
+    expect(within(usage).getByText("Ceiling")).toBeInTheDocument();
+    expect(within(usage).getByText(/Reaches the ceiling/)).toBeInTheDocument();
+    expect(container.querySelector('line[stroke-opacity="0.4"]')).not.toBeNull();
   });
 
   it("switches a chart to its table view", () => {
