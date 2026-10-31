@@ -1287,7 +1287,9 @@ export class BoxService {
 
   /**
    * `projects.restartContainer`: stops the boxes running in the project
-   * container, replaces the container, and starts those boxes again.
+   * container, replaces the container, and starts those boxes again. When a
+   * box fails to stop, the container stays, since replacing it would end
+   * that box's session too; the boxes that did stop start again in it.
    */
   async restartProjectContainer(projectId: string): Promise<BulkResult> {
     const project = this.deps.projects.get(projectId);
@@ -1296,6 +1298,10 @@ export class BoxService {
       running.map((b) => b.id),
       (id) => this.stop(id),
     );
+    if (stopped.failed.length > 0) {
+      const started = await this.bulk(stopped.done, (id) => this.start(id, { syncTitle: false }));
+      return { done: started.done, failed: [...stopped.failed, ...started.failed] };
+    }
     await this.deps.projects.stopContainer(project.id);
     if (stopped.done.length === 0) await this.deps.projects.ensureContainer(project.id);
     const started = await this.bulk(stopped.done, (id) => this.start(id, { syncTitle: false }));

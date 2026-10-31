@@ -672,6 +672,25 @@ describe("start, stop, restart", () => {
     await expect(h.core.boxes.start(b.id)).resolves.toMatchObject({ wasRunning: true });
   });
 
+  it("keeps the project container when a box in it fails to stop", async () => {
+    const h = makeHarness();
+    const dir = h.dir("app");
+    const a = await h.core.boxes.create({ targetDir: dir, layout: "root" });
+    const b = await h.core.boxes.create({ targetDir: dir, layout: "root" });
+    const containerId = h.docker.containers.get(a.container)!.id;
+    h.docker.beforeExec = async (_c, options) => {
+      if (options.cmd[1] === "kill-session" && options.cmd[3] === `=${b.session}`)
+        throw new Error("SYNTHETIC kill failure");
+    };
+    const result = await h.core.boxes.restartProjectContainer(a.projectId);
+    expect(result.done).toEqual([a.id]);
+    expect(result.failed.map((f) => f.boxId)).toEqual([b.id]);
+    // Same container, and the box that failed to stop still runs.
+    expect(h.docker.containers.get(a.container)?.id).toBe(containerId);
+    expect(h.core.boxes.isRunning(h.core.boxes.get(b.id))).toBe(true);
+    expect(h.core.boxes.isRunning(h.core.boxes.get(a.id))).toBe(true);
+  });
+
   it("refuses to start a box whose conversation a running box holds", async () => {
     const h = makeHarness();
     const a = await stopped(h);
