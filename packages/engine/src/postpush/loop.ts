@@ -21,7 +21,9 @@ import {
   verifyPending,
 } from "../state/steps.js";
 import { titleSimilarity } from "../merge/fingerprint.js";
+import { NO_HOOKS } from "../range/git.js";
 import {
+  GhError,
   isCopilotLogin,
   type CheckRun,
   type GitHubClient,
@@ -156,13 +158,17 @@ async function stagePush(ctx: RunContext, requestReview = true): Promise<PrInfo>
   }
   // Settled before the push, so nothing after it can fail on the base.
   const base = pr ? null : await prBase(ctx, defaultBranch, branch);
-  // Never force: a rejected push means someone else moved the branch.
+  // Never force: a rejected push means someone else moved the branch. The
+  // push runs without the repository's hooks: a `pre-push` hook can come
+  // from the reviewed commits, and the push holds the GitHub token. The gate
+  // has already run the policy's tests.
   const push = await ctx.deps.runner.run(
     "git",
-    ["push", "origin", `refs/heads/${branch}:refs/heads/${branch}`],
+    [...NO_HOOKS, "push", "origin", `refs/heads/${branch}:refs/heads/${branch}`],
     {
       cwd: repo,
       timeoutMs: 300_000,
+      envProfile: "github",
     },
   );
   if (push.exitCode !== 0)
@@ -184,16 +190,15 @@ async function stagePush(ctx: RunContext, requestReview = true): Promise<PrInfo>
   ctx.eng.pushedHead = head;
   let dropped = false;
   if (requestReview && ctx.eng.reviewRequestedFor !== head) {
-    dropped = !(await requestCopilotReview(ctx, gh, pr.number));
+    const refusal = await requestCopilotReview(ctx, gh, pr.number);
+    dropped = refusal !== null;
     ctx.eng.reviewRequestedFor = head;
     ctx.eng.reviewDroppedFor = dropped ? head : null;
-    if (dropped) {
+    if (refusal !== null) {
       ctx.state.notices = [
         ...(ctx.state.notices ?? []),
         `GitHub didn't take the Copilot review request for pull request #${pr.number} at ${head.slice(0, 12)}: ` +
-          `the response lists no Copilot reviewer, and the timeline has no review_requested or copilot_work_started event ` +
-          `${(REVIEW_CHECK_ATTEMPTS * REVIEW_CHECK_INTERVAL_MS) / 1000} seconds later. ` +
-          "The account's Copilot review allowance might be used up. The loop doesn't wait for a Copilot review of this commit.",
+          `${refusal} The loop doesn't wait for a Copilot review of this commit.`,
       ];
     }
   }
@@ -212,31 +217,48 @@ async function stagePush(ctx: RunContext, requestReview = true): Promise<PrInfo>
 }
 
 /**
- * Requests a Copilot review and resolves to whether GitHub took it. GitHub
- * can answer `201` and still drop the request, such as when the account's
- * Copilot review allowance is used up: the response then lists no Copilot
- * reviewer, and the timeline gets no event. A client that can't read the
- * timeline gets the benefit of the doubt.
+ * Requests a Copilot review and resolves to `null` when GitHub took it, or
+ * to the reason it didn't, as a sentence. GitHub can refuse the request
+ * outright, such as with a 422 for a repository without Copilot code
+ * review. It can also answer `201` and still drop the request, such as when
+ * the account's Copilot review allowance is used up: the response then lists
+ * no Copilot reviewer, and the timeline gets no event. A client that can't
+ * read the timeline gets the benefit of the doubt.
  */
 async function requestCopilotReview(
   ctx: RunContext,
   gh: GitHubClient,
   pr: number,
-): Promise<boolean> {
+): Promise<string | null> {
   const repo = ctx.state.request.repoPath;
   const before = gh.copilotReviewEvents ? await gh.copilotReviewEvents(repo, pr) : null;
-  const result = await gh.requestCopilotReview(repo, pr);
-  if (result.requestedReviewers.some(isCopilotLogin)) return true;
-  if (before === null || !gh.copilotReviewEvents) return true;
+  let result: Awaited<ReturnType<GitHubClient["requestCopilotReview"]>>;
+  try {
+    result = await gh.requestCopilotReview(repo, pr);
+  } catch (error) {
+    if (!(error instanceof GhError)) throw error;
+    ctx.deps.log?.warn("GitHub refused the Copilot review request", {
+      runId: ctx.state.id,
+      pr,
+      error: error.message,
+    });
+    return `the request failed: ${error.stderr.trim() || `gh exited with code ${error.exitCode}`}.`;
+  }
+  if (result.requestedReviewers.some(isCopilotLogin)) return null;
+  if (before === null || !gh.copilotReviewEvents) return null;
   for (let attempt = 0; attempt < REVIEW_CHECK_ATTEMPTS; attempt++) {
     try {
       await ctx.clock.sleep(REVIEW_CHECK_INTERVAL_MS, ctx.signal);
     } catch {
       await ctx.checkpoint();
     }
-    if ((await gh.copilotReviewEvents(repo, pr)) > before) return true;
+    if ((await gh.copilotReviewEvents(repo, pr)) > before) return null;
   }
-  return false;
+  return (
+    "the response lists no Copilot reviewer, and the timeline has no review_requested or copilot_work_started event " +
+    `${(REVIEW_CHECK_ATTEMPTS * REVIEW_CHECK_INTERVAL_MS) / 1000} seconds later. ` +
+    "The account's Copilot review allowance might be used up."
+  );
 }
 
 interface PollResult {
@@ -580,6 +602,16 @@ export async function drivePostPush(ctx: RunContext): Promise<void> {
         const actionable = record.imported.length > 0;
         if (!actionable) {
           await closePostPushRound(ctx);
+          // A clean pull request needs the review the poll waited for.
+          if (poll.timedOut && !poll.reviewed && !poll.reviewDropped) {
+            const head = (ctx.state.tipSha ?? "").slice(0, 12);
+            throw new DecisionNeeded({
+              kind: "gate_failed",
+              findingIds: [],
+              options: ["resume", "cancel"],
+              message: `Copilot didn't review ${head || "the pull request's head"} within ${POLL_TIMEOUT_MS / 3_600_000} hours. Resume to poll again, or cancel.`,
+            });
+          }
           if (record.failingCode.length === 0 && record.checksPassed) {
             await finishPostPush(ctx, "pr_clean");
             return;

@@ -11,6 +11,7 @@ import {
 } from "../../src/core.js";
 import {
   GhCliClient,
+  GhError,
   isCopilotLogin,
   type CheckRun,
   type CreatePrInput,
@@ -39,6 +40,12 @@ class FakeGitHub implements GitHubClient {
   /** GitHub answers 201 to a review request but drops it, as in host round 4. */
   dropReviewRequests = false;
   droppedRequests: string[] = [];
+  /** GitHub refuses the review request, as for a repository without Copilot code review. */
+  refuseReviewRequests = false;
+  /** Copilot takes the request but never posts a review. */
+  neverReview = false;
+  /** Called when the import stage lists the review threads. */
+  onListThreads: (() => void) | null = null;
   confirmOnTimelineOnly = false;
   timelineEvents = 0;
   timelineReads = 0;
@@ -84,6 +91,13 @@ class FakeGitHub implements GitHubClient {
   }
   async requestCopilotReview(): Promise<ReviewRequestResult> {
     const head = this.head(this.pr?.headRefName ?? "feature");
+    if (this.refuseReviewRequests) {
+      throw new GhError(
+        ["api", "--method"],
+        1,
+        "gh: Reviews may only be requested from collaborators. (HTTP 422)",
+      );
+    }
     if (this.dropReviewRequests) {
       this.droppedRequests.push(head);
       return { requestedReviewers: [] };
@@ -101,6 +115,7 @@ class FakeGitHub implements GitHubClient {
     return this.timelineEvents;
   }
   async listReviews(): Promise<PrReview[]> {
+    if (this.neverReview) return [];
     return this.reviewRequests.map((sha, i) => ({
       id: String(i),
       author: "copilot-pull-request-reviewer[bot]",
@@ -110,6 +125,7 @@ class FakeGitHub implements GitHubClient {
     }));
   }
   async listReviewThreads(): Promise<ReviewThread[]> {
+    this.onListThreads?.();
     return this.threads.map((t) => ({ ...t, isResolved: this.resolved.has(t.id) }));
   }
   async listChecks(): Promise<CheckRun[]> {
@@ -259,6 +275,71 @@ describe("post-push loop", () => {
     expect(
       d.events.events.some((e) => e.type === "run.changed" && (e.run.notices ?? []).length === 1),
     ).toBe(true);
+  });
+
+  it("polls for the checks only when GitHub refuses the review request, and says why", async () => {
+    const repo = buildSampleRepo();
+    const gh = new FakeGitHub(join(dirname(repo), "origin.git"));
+    gh.checks = [{ name: "tests", bucket: "pass", link: null, workflow: "ci" }];
+    gh.refuseReviewRequests = true;
+    const run = await RunController.create(
+      { runId: nextRunId(), projectId: "sample", repoPath: repo, pipeline: "post-push" },
+      { projectRoot: repo },
+      deps(new Scenario(), gh),
+    );
+    await run.start();
+    const state = await run.settled();
+    expect(state).toMatchObject({ status: "finished", stopReason: "pr_clean" });
+    expect(state.notices).toEqual([
+      expect.stringMatching(
+        /^GitHub didn't take the Copilot review request for pull request #7 at [0-9a-f]{12}: the request failed: .*HTTP 422/,
+      ),
+    ]);
+  });
+
+  it("asks a person when Copilot never reviews the head, instead of finishing clean", async () => {
+    const repo = buildSampleRepo();
+    const gh = new FakeGitHub(join(dirname(repo), "origin.git"));
+    gh.checks = [];
+    gh.neverReview = true;
+    const run = await RunController.create(
+      { runId: nextRunId(), projectId: "sample", repoPath: repo, pipeline: "post-push" },
+      { projectRoot: repo },
+      deps(new Scenario(), gh),
+    );
+    await run.start();
+    const state = await run.settled();
+    expect(state.status).toBe("waiting_decision");
+    expect(state.stopReason ?? null).toBeNull();
+    expect(state.decision?.message).toMatch(/^Copilot didn't review [0-9a-f]{12} within 2 hours/);
+  });
+
+  it("doesn't pause again after a decision that came before a requested pause", async () => {
+    const repo = buildSampleRepo();
+    const gh = new FakeGitHub(join(dirname(repo), "origin.git"));
+    gh.checks = [];
+    gh.neverReview = true;
+    const ref: { run?: RunController } = {};
+    gh.onListThreads = () => {
+      if (ref.run?.state.status === "running") void ref.run.pause();
+    };
+    const run = await RunController.create(
+      { runId: nextRunId(), projectId: "sample", repoPath: repo, pipeline: "post-push" },
+      { projectRoot: repo },
+      deps(new Scenario(), gh),
+    );
+    ref.run = run;
+    await run.start();
+    expect((await run.settled()).status).toBe("waiting_decision");
+    gh.onListThreads = null;
+    await run.decide({ option: "resume", waiveFindingIds: [] });
+    // Without a pause left over, the run polls again and asks again.
+    for (let i = 0; i < 400; i++) {
+      const { status, decision } = run.state;
+      if (status === "paused" || (status === "waiting_decision" && decision)) break;
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    expect(run.state.status).toBe("waiting_decision");
   });
 
   it("trusts a review request that only the timeline confirms", async () => {
