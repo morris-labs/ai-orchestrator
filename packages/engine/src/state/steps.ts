@@ -852,7 +852,9 @@ function planBatches(targets: readonly Finding[], gateFailure?: string): string[
 /**
  * Applies one batch's outcome to the findings. Idempotent, so a resumed run
  * can apply a saved batch again. The fixer may mark only the batch's own
- * findings, and may decline one only with a reason, which the finding keeps.
+ * findings. A declined finding keeps the fixer's reason, or a note that it
+ * gave none, and is left to a person: asking again would only repeat the
+ * decline in every round.
  */
 async function applyBatch(ctx: RunContext, batch: FixBatchRecord): Promise<void> {
   const inBatch = new Set(batch.findingIds);
@@ -863,7 +865,7 @@ async function applyBatch(ctx: RunContext, batch: FixBatchRecord): Promise<void>
   }
   for (const nf of batch.output.notFixed) {
     const reason = nf.reason.trim();
-    if (!inBatch.has(nf.id) || fixedIds.has(nf.id) || reason === "") continue;
+    if (!inBatch.has(nf.id) || fixedIds.has(nf.id)) continue;
     if (ctx.eng.declined.includes(nf.id)) continue;
     ctx.eng.declined = [...ctx.eng.declined, nf.id];
     const finding = ctx.findingById(nf.id);
@@ -872,7 +874,9 @@ async function applyBatch(ctx: RunContext, batch: FixBatchRecord): Promise<void>
         finding,
         finding.verdict,
         { kind: "agent", vendor: ctx.state.roles.fixer, role: "fixer" },
-        `The fixer declined to fix it: ${reason}`,
+        reason
+          ? `The fixer declined to fix it: ${reason}`
+          : "The fixer declined to fix it and gave no reason.",
       );
     }
   }

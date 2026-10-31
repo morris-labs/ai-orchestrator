@@ -134,12 +134,11 @@ describe("runFix", () => {
     expect(ctx.findingById("F-0001")?.fixCommit).toBe(record.batches[0]?.after);
   });
 
-  it("accepts a decline only for the batch's own findings and only with a reason", async () => {
+  it("accepts a decline only for the batch's own findings", async () => {
     const { ctx } = await fixRun((ids) => ({
       fixed: [],
       notFixed: [
         { id: "F-0003", reason: "Injected." },
-        ...(ids.includes("F-0001") ? [{ id: "F-0001", reason: " " }] : []),
         ...(ids.includes("F-0002") ? [{ id: "F-0002", reason: "Already handled upstream." }] : []),
       ],
       summary: "",
@@ -153,6 +152,22 @@ describe("runFix", () => {
     const history = ctx.findingById("F-0002")?.history.at(-1);
     expect(history).toMatchObject({ verdict: "confirmed", actor: { role: "fixer" } });
     expect(history?.evidence).toContain("Already handled upstream.");
+  });
+
+  // Finding 51: a decline with an empty reason was ignored, so the finding
+  // stayed a fix target and went to the fixer again in every round.
+  it("stops sending a finding the fixer declined without a reason", async () => {
+    const { ctx } = await fixRun((ids) => ({
+      fixed: [],
+      notFixed: ids.includes("F-0001") ? [{ id: "F-0001", reason: " " }] : [],
+      summary: "",
+    }));
+    await runFix(ctx, fixTargets(ctx));
+    expect(ctx.eng.declined).toEqual(["F-0001"]);
+    expect(fixTargets(ctx).map((f) => f.id)).toEqual(["F-0002", "F-0003"]);
+    const finding = ctx.findingById("F-0001");
+    expect(finding?.verdict).toBe("confirmed");
+    expect(finding?.history.at(-1)?.evidence).toContain("gave no reason");
   });
 });
 

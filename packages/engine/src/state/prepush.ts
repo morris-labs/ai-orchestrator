@@ -218,7 +218,7 @@ export async function endRound(ctx: RunContext): Promise<StopReason | null> {
  * Findings that keep a run from stopping clean: any finding still waiting
  * for its disprover, and, in a run that fixes, any confirmed finding above
  * `nit` that the fixer still has to work on, such as one whose fix the
- * confirmer found incomplete. A finding the fixer declined with a reason is
+ * confirmer found incomplete. A finding the fixer declined is
  * left to a person.
  */
 export function openFindings(ctx: RunContext): Finding[] {
