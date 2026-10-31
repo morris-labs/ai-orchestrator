@@ -1,4 +1,4 @@
-import { ServerStreamFrameSchema } from "@agentbox/contracts";
+import { ServerStreamFrameSchema, type AgentBoxEvent } from "@agentbox/contracts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parseTypes } from "../../src/api/server.js";
 import { runState } from "../api/fixtures.js";
@@ -222,6 +222,23 @@ describe("events.stream", () => {
       r.ws.close();
     }
     for (const s of live) s.ws.close();
+  });
+
+  it("closes a filtered socket that the hub hands an event out of order", async () => {
+    const listeners: ((e: AgentBoxEvent) => void)[] = [];
+    const subscribe = h.hub.subscribe.bind(h.hub);
+    h.hub.subscribe = (listener) => {
+      listeners.push(listener);
+      return subscribe(listener);
+    };
+    const s = await connect(`${base}?types=box.changed`);
+    s.ws.send(JSON.stringify({ type: "hello", streamId: null, lastSeq: null }));
+    await s.until((x) => x.texts.length === 1);
+    const event = h.hub.emit(boxEvent("claude-agent-a"));
+    await s.until((x) => x.texts.length === 2);
+    listeners.at(-1)!({ ...event, seq: event.seq + 2 });
+    await s.until((x) => x.ws.readyState === x.ws.CLOSED);
+    expect((await s.closed).code).toBe(1011);
   });
 
   it("closes on a frame that is not a hello", async () => {
