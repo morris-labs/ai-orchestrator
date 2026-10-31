@@ -3,9 +3,12 @@
 //
 // The copy treats every file as opaque bytes: it never opens a file to read
 // its content, except `config.toml` for Codex, which holds settings, not a
-// sign-in. Symbolic links stay links and are never followed. Sign-in files
-// are left out by name, so each account signs in on its own and no two
-// folders hold one refresh token.
+// sign-in, and Claude's `.claude.json`, which can hold the `/login` API key.
+// Symbolic links stay links and are never followed, except that a linked
+// Codex `config.toml` becomes a regular file before seeding changes it.
+// Sign-in files are left out by name, and the `/login` API key is removed
+// from the copied `.claude.json`, so each account signs in on its own and no
+// two folders hold one credential.
 import { constants as fsc } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -184,8 +187,8 @@ async function isRealDirectory(p: string): Promise<boolean> {
  * end, so a failure leaves no half-made account folder behind.
  *
  * - Claude: leaves out `.credentials.json`, copies `~/.claude.json` over the
- *   copy's own (stale) `.claude.json`, or drops the stale one when the host
- *   has none. A `projects` that is a plain directory isn't copied: the
+ *   copy's own (stale) `.claude.json` without its `primaryApiKey`, or drops
+ *   the stale one when the host has none. A `projects` that is a plain directory isn't copied: the
  *   account gets a link to it, so the host and every Claude account share
  *   one transcript store (owner decision 1).
  * - Codex: leaves out `auth.json`, and adds
@@ -225,6 +228,13 @@ export async function seedFolder(
       if (await exists(sources.claudeJson)) {
         await fs.copyFile(sources.claudeJson, stale, fsc.COPYFILE_FICLONE);
         await fs.chmod(stale, 0o600);
+        if (await dropClaudeApiKey(stale)) {
+          notes.push("Left out the /login API key (primaryApiKey) from .claude.json.");
+        } else if (!(await exists(stale))) {
+          notes.push(
+            `${sources.claudeJson} isn't valid JSON, so it wasn't copied; Claude Code creates a new .claude.json.`,
+          );
+        }
       } else {
         notes.push(`${sources.claudeJson} doesn't exist; Claude Code creates a new .claude.json.`);
       }
@@ -251,10 +261,40 @@ export async function seedFolder(
 }
 
 /**
+ * Removes `primaryApiKey`, the API key that Claude Code's `/login` saves, from
+ * a copied `.claude.json`, so the account holds no sign-in until someone
+ * signs in to it. Returns whether it changed the file. A file that isn't a
+ * JSON object is deleted, since it can't be checked for the key. Never logs
+ * the content.
+ */
+export async function dropClaudeApiKey(claudeJson: string): Promise<boolean> {
+  const text = await fs.readFile(claudeJson, "utf8");
+  let config: unknown;
+  try {
+    config = JSON.parse(text);
+  } catch {
+    config = undefined;
+  }
+  if (typeof config !== "object" || config === null || Array.isArray(config)) {
+    await fs.rm(claudeJson, { force: true });
+    return false;
+  }
+  if (!Object.hasOwn(config, "primaryApiKey")) return false;
+  delete (config as Record<string, unknown>).primaryApiKey;
+  await fs.writeFile(claudeJson, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+  await fs.chmod(claudeJson, 0o600);
+  return true;
+}
+
+/**
  * Puts `cli_auth_credentials_store = "file"` at the top of a Codex
  * `config.toml` that sets no store, or creates the file with it. A TOML key
  * after a `[table]` header belongs to that table, so the line goes first.
  * Returns whether it changed the file.
+ *
+ * A `config.toml` that is a symbolic link, as dotfile managers make it, is
+ * read through and replaced by a regular file, so the write never reaches
+ * the file the link points at.
  */
 export async function addCodexFileStore(configToml: string): Promise<boolean> {
   let text = "";
@@ -264,6 +304,15 @@ export async function addCodexFileStore(configToml: string): Promise<boolean> {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
   }
   if (/^\s*cli_auth_credentials_store\s*=/m.test(text)) return false;
-  await fs.writeFile(configToml, `${CODEX_STORE_SETTING}\n${text}`, { mode: 0o600 });
+  const isLink = await fs.lstat(configToml).then(
+    (s) => s.isSymbolicLink(),
+    () => false,
+  );
+  if (isLink) await fs.unlink(configToml);
+  // `wx` refuses to write through a link that appears in between.
+  await fs.writeFile(configToml, `${CODEX_STORE_SETTING}\n${text}`, {
+    mode: 0o600,
+    flag: isLink ? "wx" : "w",
+  });
   return true;
 }
