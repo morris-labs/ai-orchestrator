@@ -27,6 +27,7 @@ import {
 import {
   ActiveRuns,
   PROTOCOL,
+  Reloader,
   launcherHash,
   noticeFor,
   parseDeepLink,
@@ -136,6 +137,11 @@ function createWindow(link: ReturnType<typeof parseDeepLink>) {
     if (!isAppPage(e.url, APP_PAGES)) e.preventDefault();
   });
   win.webContents.on("will-attach-webview", (e) => e.preventDefault());
+  // A page that cancels its unload cancels the quit as well, so closing the
+  // window afterward must hide it again.
+  win.webContents.on("will-prevent-unload", () => {
+    quitting = false;
+  });
   win.on("close", (e) => {
     // Closing hides the window; the tray keeps counting runs.
     if (!quitting) {
@@ -146,16 +152,28 @@ function createWindow(link: ReturnType<typeof parseDeepLink>) {
   void win.loadURL(DEV_URL ?? rendererUrl(config.serverUrl, link));
 }
 
+/** Counts `settings.changed` events, so a reload doesn't undo a newer one. */
+let settingsVersion = 0;
+
+/**
+ * Loads the active runs and the notification toggles through REST. Events
+ * that arrive meanwhile are newer than the result, so they keep their say.
+ * Throws when the server can't answer, so that `reloader` tries again.
+ */
 async function loadInitialState() {
-  try {
-    const { runs } = await client().call("runs.list", {});
-    active.seed(runs);
-    toggles = (await client().call("settings.get", {})).notifications;
-  } catch {
-    // The server may be starting; the event stream retries and the counts catch up.
-  }
+  const since = active.mark();
+  const settingsSince = settingsVersion;
+  const [{ runs }, settings] = await Promise.all([
+    client().call("runs.list", {}),
+    client().call("settings.get", {}),
+  ]);
+  active.seed(runs, since);
+  if (settingsVersion === settingsSince) toggles = settings.notifications;
   updateTray();
 }
+
+/** Runs `loadInitialState` until it succeeds, since the server may still be starting. */
+const reloader = new Reloader(loadInitialState);
 
 /**
  * Follows the event stream with the shared connection, which resumes from
@@ -168,11 +186,14 @@ function connectEvents() {
     // A factory, so a reconnect reads the token and the certificate again.
     client,
     types: ["run.changed", "notification", "settings.changed"],
-    onResync: () => void loadInitialState(),
+    onResync: () => reloader.request(),
     onEvent: (event) => {
-      if (event.type === "settings.changed") toggles = event.settings.notifications;
+      if (event.type === "settings.changed") {
+        settingsVersion += 1;
+        toggles = event.settings.notifications;
+      }
       if (active.apply(event)) updateTray();
-      const notice = noticeFor(event, toggles);
+      const notice = noticeFor(event, toggles, Date.now());
       if (notice && Notification.isSupported()) {
         const n = new Notification({
           title: notice.title,
@@ -190,7 +211,12 @@ function connectEvents() {
     },
   });
   conn.start();
-  app.on("before-quit", () => conn.stop());
+  // `will-quit` comes once the quit can no longer be cancelled; a quit that
+  // a page cancels after `before-quit` keeps the stream.
+  app.on("will-quit", () => {
+    conn.stop();
+    reloader.stop();
+  });
 }
 
 let quitting = false;
