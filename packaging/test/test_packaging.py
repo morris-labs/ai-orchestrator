@@ -414,6 +414,19 @@ class DocsTest(unittest.TestCase):
                 self.assertTrue((page.parent / target).is_file(), f"{page.name} links to missing {target}")
         self.assertIn("## Migrating from 3.x", (ROOT / "README.md").read_text())
 
+    def test_committed_logs_hold_no_host_paths(self):
+        # A log copied from a real host lists its home directory and real
+        # project names. Commit redacted excerpts with /home/USER instead.
+        if not (ROOT / ".git").exists():
+            self.skipTest("not a git checkout")
+        files = subprocess.run(
+            ["git", "-C", str(ROOT), "ls-files", "-z", "--", "*.log"],
+            check=True, capture_output=True, text=True,
+        ).stdout.split("\0")
+        for name in filter(None, files):
+            text = (ROOT / name).read_text(errors="replace")
+            self.assertNotRegex(text, r"/home/(?!USER/)[A-Za-z_][\w.-]*/", name)
+
     def test_policy_example_parses(self):
         text = (ROOT / "docs/policy.md").read_text()
         example = re.search(r"```yaml\n(.*?)```", text, re.S).group(1)
