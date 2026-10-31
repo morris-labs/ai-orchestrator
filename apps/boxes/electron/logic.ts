@@ -211,3 +211,61 @@ export function childEnv(
   for (const name of SECRET_ENV) delete copy[name];
   return copy;
 }
+
+// ---------------------------------------------------------------------------
+// Permissions and the tray
+
+/**
+ * The web permissions the page may use: writing and reading the clipboard,
+ * for Copy and Paste in the terminal. Everything else, such as media,
+ * geolocation, and notifications, is refused.
+ */
+export const ALLOWED_PERMISSIONS: readonly string[] = [
+  "clipboard-sanitized-write",
+  "clipboard-read",
+];
+
+/** True when the page at `url` may have `permission`: only app pages, only the allowed ones. */
+export function permissionAllowed(
+  permission: string,
+  url: string,
+  appPages: readonly string[],
+): boolean {
+  return ALLOWED_PERMISSIONS.includes(permission) && isAppPage(url, appPages);
+}
+
+function desktopNames(env: Record<string, string | undefined>): string[] {
+  return (env.XDG_CURRENT_DESKTOP ?? "").toLowerCase().split(":");
+}
+
+/** True when `closeHidesToTray` needs the GNOME Shell extension list to decide. */
+export function needsExtensionList(env: Record<string, string | undefined>): boolean {
+  const override = env.AGENTBOX_CLOSE_TO_TRAY;
+  if (override === "1" || override === "0") return false;
+  const desktop = desktopNames(env);
+  return desktop.includes("gnome") && !desktop.includes("ubuntu");
+}
+
+/**
+ * Whether closing the window hides the app into the tray rather than
+ * quitting. Stock GNOME has no status-icon area unless an AppIndicator
+ * extension runs, so a hidden window would leave a process with no visible
+ * way back. Quitting the app never stops a box: the server runs them.
+ *
+ * - `AGENTBOX_CLOSE_TO_TRAY=1` or `0` decides outright.
+ * - A GNOME session hides to the tray only in the Ubuntu session, which
+ *   ships the AppIndicator extension, or when `enabledExtensions` (the
+ *   `org.gnome.shell enabled-extensions` value, or `null` when unknown)
+ *   names an AppIndicator extension.
+ * - Every other desktop has a tray, so the window hides to it.
+ */
+export function closeHidesToTray(
+  env: Record<string, string | undefined>,
+  enabledExtensions: string | null,
+): boolean {
+  const override = env.AGENTBOX_CLOSE_TO_TRAY;
+  if (override === "1") return true;
+  if (override === "0") return false;
+  if (!needsExtensionList(env)) return true;
+  return /appindicator/i.test(enabledExtensions ?? "");
+}

@@ -258,8 +258,16 @@ export function App() {
 
   const openLink = (url: string) => {
     const b = bridge();
-    if (b) void b.openExternal(url);
-    else window.open(url, "_blank", "noopener");
+    if (!b) {
+      window.open(url, "_blank", "noopener");
+      return;
+    }
+    void b
+      .openExternal(url)
+      .then((r) => {
+        if (!r.ok) void inform("Open Link", r.error ?? `${url} didn't open.`);
+      })
+      .catch((err: unknown) => void inform("Open Link", errorMessage(err)));
   };
 
   const reportBulk = (
