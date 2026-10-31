@@ -66,6 +66,8 @@ BoxRecord BoxRecord::load(const QString &name)
             rec.launchedModel = value;
         else if (key == "launched_effort")
             rec.launchedEffort = value;
+        else if (key == "launched_platform")
+            rec.launchedPlatform = value;
         else if (key == "transcript_synced_name")
             rec.transcriptSyncedName = value;
         else if (key == "platform")
@@ -144,6 +146,8 @@ bool BoxRecord::save() const
         out << "launched_model=" << launchedModel << '\n';
     if (!launchedEffort.isEmpty())
         out << "launched_effort=" << launchedEffort << '\n';
+    if (!launchedPlatform.isEmpty())
+        out << "launched_platform=" << launchedPlatform << '\n';
     if (!isClaude())
         out << "platform=" << platform << '\n';
     out << "yolo=" << (skipPermissions ? "1" : "0") << '\n';

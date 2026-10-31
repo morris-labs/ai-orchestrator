@@ -1395,6 +1395,7 @@ bool DockerBackend::createNew(BoxRecord &rec, bool workspaceSubdir, QString *err
     rec.wasRunning = true;
     rec.launchedModel = rec.model;
     rec.launchedEffort = rec.effort;
+    rec.launchedPlatform = rec.program();
     rec.save();
     return true;
 }
@@ -1440,9 +1441,11 @@ QStringList DockerBackend::baseClaudeArgs(const BoxRecord &rec)
     return args;
 }
 
-// Arguments for a CLI other than the box's claude session. `resume` picks
-// up the CLI's most recent session in the working directory, since neither
-// keeps a session id that claude-box records.
+// Arguments for a CLI other than the box's claude session. Copilot takes the
+// box's session uuid with --session-id, which creates a session with that id
+// or resumes it, so each box keeps its own. Codex can't be given an id, so
+// `resume` picks up its most recent session in the working directory, which
+// is ambiguous when two Codex boxes share one.
 QStringList DockerBackend::platformArgs(const BoxRecord &rec, const QString &program, bool resume,
                                         const QString &prompt)
 {
@@ -1458,7 +1461,9 @@ QStringList DockerBackend::platformArgs(const BoxRecord &rec, const QString &pro
         // Remote control, like claude's: the session can be steered from
         // GitHub.com or GitHub Mobile.
         args << "--remote";
-        if (resume)
+        if (!rec.sessionUuid.isEmpty())
+            args << "--session-id" << rec.sessionUuid;
+        else if (resume)
             args << "--continue";
         if (rec.skipPermissions)
             args << BoxRecord::bypassFlag(program);
@@ -1534,7 +1539,9 @@ bool DockerBackend::reopen(const BoxRecord &rec, QString *errorOut) const
     const bool hasTranscript = !updated.sessionUuid.isEmpty()
                                && QFile::exists(transcriptPath);
 
-    if (!hasTranscript)
+    // Another CLI never has a claude transcript, so its uuid is kept: Copilot
+    // resumes by it, and minting one on every start would only churn the record.
+    if (!hasTranscript && (updated.isClaude() || updated.sessionUuid.isEmpty()))
         updated.sessionUuid = QUuid::createUuid().toString(QUuid::WithoutBraces);
 
     claudeArgs << (hasTranscript ? QStringLiteral("--resume")
@@ -1557,9 +1564,19 @@ bool DockerBackend::reopen(const BoxRecord &rec, QString *errorOut) const
                  promptPath(Worktrees::worktreeNotesDir(updated.worktreeDir)),
                  promptPath(Worktrees::infraFile(updated.targetDir)));
     }
-    if (!updated.isClaude())
-        claudeArgs = platformArgs(updated, updated.program(), true, QString());
-    updated.movedFrom.clear(); // told, or nothing to tell (a fresh session has no old paths)
+    if (!updated.isClaude()) {
+        // Codex can only resume its most recent session in the directory, so
+        // a box that ran another CLI last (switched with Main Platform) has
+        // none of its own and starts fresh. An empty launchedPlatform is a
+        // record from before the key, which resumes as it always did.
+        const bool resume = updated.launchedPlatform.isEmpty()
+                            || updated.launchedPlatform == updated.program();
+        claudeArgs = platformArgs(updated, updated.program(), resume, QString());
+        // The move notice above went only into claude's arguments, so it is
+        // still owed; it stays recorded until claude runs again.
+    } else {
+        updated.movedFrom.clear(); // told, or nothing to tell (a fresh session has no old paths)
+    }
 
     if (!(updated.isShared() ? startShared(updated, claudeArgs, errorOut)
                              : runContainer(updated, claudeArgs, errorOut)))
@@ -1568,6 +1585,7 @@ bool DockerBackend::reopen(const BoxRecord &rec, QString *errorOut) const
     updated.wasRunning = true;
     updated.launchedModel = updated.model;
     updated.launchedEffort = updated.effort;
+    updated.launchedPlatform = updated.program();
     updated.save();
     return true;
 }

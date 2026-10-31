@@ -55,6 +55,11 @@ struct BoxRecord {
     // the box must not overwrite it with what the session was using.
     QString launchedModel;
     QString launchedEffort;
+    // The CLI the box last started ("claude", "codex", or "copilot"); empty
+    // in records from before the key existed. A reopen resumes a Codex
+    // session only when Codex ran last, so a box switched to Codex starts
+    // fresh rather than resuming another box's session.
+    QString launchedPlatform;
     // `claude --allow-dangerously-skip-permissions` (every box starts in
     // `--permission-mode auto`; this only allows bypass mode). Still stored under the old
     // `yolo=` key so existing records keep working; only the name here
