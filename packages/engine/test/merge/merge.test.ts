@@ -74,6 +74,17 @@ describe("fingerprint", () => {
     expect(titleSimilarity("divide by zero on empty list", "empty list divide by zero")).toBe(1);
   });
 
+  it("tells apart titles with no Latin words", () => {
+    expect(normalizeTitle("Деление на ноль в `total`")).toBe("деление на ноль total");
+    expect(titleSimilarity("Деление на ноль", "Утечка памяти")).toBe(0);
+    expect(titleSimilarity("404", "500")).toBe(0);
+    expect(fingerprint("a.py", "f", "Деление на ноль")).not.toBe(
+      fingerprint("a.py", "f", "Утечка памяти"),
+    );
+    expect(fingerprint("a.py", "f", "404")).not.toBe(fingerprint("a.py", "f", "500"));
+    expect(fingerprint("a.py", "f", "404 !")).toBe(fingerprint("a.py", "f", "404  !"));
+  });
+
   it("finds the enclosing symbol", () => {
     const py = "class Cart:\n    def total(self):\n        x = 1\n        return x\n";
     expect(enclosingSymbol(py, 4)).toBe("total");
@@ -101,6 +112,21 @@ describe("merge", () => {
     expect(result.findings[0]?.alsoReportedBy).toEqual(["codex-gpt"]);
     expect(result.duplicates).toHaveLength(2);
     expect(result.overlapRate).toBe(0.5);
+  });
+
+  it("keeps two findings on the same lines whose titles have no Latin words apart", () => {
+    const result = mergeCandidates(
+      [],
+      [
+        cand(raw("Деление на ноль при пустом списке"), "codex-gpt"),
+        cand(raw("Утечка памяти в обработчике", "a.py", [11, 11]), "claude-opus"),
+        cand(raw("123"), "codex-gpt"),
+        cand(raw("456", "a.py", [11, 11]), "claude-opus"),
+      ],
+      ctx(),
+    );
+    expect(result.created).toHaveLength(4);
+    expect(result.duplicates).toHaveLength(0);
   });
 
   it("drops candidates that match a closed verdict and flags a fixed finding that returns", () => {

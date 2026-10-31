@@ -34,12 +34,16 @@ const STOPWORDS = new Set([
   "no",
 ]);
 
-/** Lowercase words of the title, without punctuation, digits, or stopwords. */
+/**
+ * Lowercase words of the title, without punctuation, digits, or stopwords.
+ * Letters of every script count, so a title that isn't in English still has
+ * words.
+ */
 export function titleTokens(title: string): string[] {
   return title
     .toLowerCase()
     .replace(/`[^`]*`/g, (m) => m.slice(1, -1))
-    .replace(/[^a-z_\s]+/g, " ")
+    .replace(/[^\p{L}\p{M}_\s]+/gu, " ")
     .split(/\s+/)
     .filter((w) => w.length > 1 && !STOPWORDS.has(w));
 }
@@ -48,11 +52,14 @@ export function normalizeTitle(title: string): string {
   return titleTokens(title).join(" ");
 }
 
-/** Jaccard similarity of two titles' token sets, from 0 to 1. */
+/**
+ * Jaccard similarity of two titles' token sets, from 0 to 1. A title with no
+ * words, such as one made only of numbers or symbols, matches nothing.
+ */
 export function titleSimilarity(a: string, b: string): number {
   const ta = new Set(titleTokens(a));
   const tb = new Set(titleTokens(b));
-  if (ta.size === 0 && tb.size === 0) return 1;
+  if (ta.size === 0 || tb.size === 0) return 0;
   let common = 0;
   for (const t of ta) if (tb.has(t)) common += 1;
   return common / (ta.size + tb.size - common);
@@ -106,8 +113,14 @@ export function enclosingSymbol(content: string | null, line: number): string {
   return "";
 }
 
+/**
+ * The fingerprint of a finding. A title that normalizes to nothing counts
+ * as itself, lowercased with its spacing collapsed, so two such titles in
+ * one symbol don't share a fingerprint.
+ */
 export function fingerprint(file: string | null, symbol: string, title: string): string {
+  const normalized = normalizeTitle(title) || title.toLowerCase().replace(/\s+/g, " ").trim();
   return createHash("sha1")
-    .update(`${file ?? ""}\n${symbol}\n${normalizeTitle(title)}`)
+    .update(`${file ?? ""}\n${symbol}\n${normalized}`)
     .digest("hex");
 }
