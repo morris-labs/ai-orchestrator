@@ -209,6 +209,19 @@ describe("main window", () => {
     expect(server.socketsFor("/api/v1/terminals")[0]?.query.get("boxId")).toBe("claude-agent-site");
   });
 
+  it("keeps the terminal pane at a minimum height whatever split was saved", async () => {
+    localStorage.setItem("ab.splitter.outer", JSON.stringify([0.95, 0.05]));
+    const server = new FakeServer({ boxes: boxes() });
+    await renderApp(server);
+    const pane = () => document.querySelectorAll(".bx-grow > .ab-splitter-pane")[1];
+    // Without an open terminal the pane may shrink to nothing.
+    expect((pane() as HTMLElement).style.minHeight).toBe("");
+    fireEvent.doubleClick(rowOf("Site work"));
+    await screen.findByRole("tablist", { name: "Terminals" });
+    expect((pane() as HTMLElement).style.minHeight).toBe("260px");
+    localStorage.removeItem("ab.splitter.outer");
+  });
+
   it("marks a tab ended with its exit code, and Ctrl+Shift+W closes it", async () => {
     const user = userEvent.setup();
     const server = new FakeServer({ boxes: boxes() });

@@ -5,6 +5,11 @@
 // fake server from `@agentbox/ui/testing`, which serves the built renderer
 // at /boxes/ over HTTPS with a certificate in a temporary data directory.
 // Without a display, run it under `xvfb-run`.
+//
+// The app starts with a temporary `--user-data-dir`, so it neither reads nor
+// writes the saved settings (project selection, split sizes) of the Agent
+// Box that you use, and it doesn't collide with that app's single-instance
+// lock. The terminal test also selects "All projects" itself.
 import {
   _electron as electron,
   expect,
@@ -32,6 +37,8 @@ let app: ElectronApplication;
 let page: Page;
 let fake: ServedFake | null = null;
 let dataDir: string | null = null;
+let userDataDir: string | null = null;
+let appArgs: string[] = [];
 const env: Record<string, string> = { ...(process.env as Record<string, string>) };
 
 test.beforeAll(async () => {
@@ -58,7 +65,9 @@ test.beforeAll(async () => {
     env.AGENTBOX_DATA_DIR = dataDir;
     env.AGENTBOX_SERVER_TOKEN = "smoke-token";
   }
-  app = await electron.launch({ args: [appDir], env });
+  userDataDir = mkdtempSync(join(tmpdir(), "agentbox-e2e-profile-"));
+  appArgs = [appDir, `--user-data-dir=${userDataDir}`];
+  app = await electron.launch({ args: appArgs, env });
   page = await app.firstWindow();
   await page.waitForLoadState("domcontentloaded");
 });
@@ -68,6 +77,7 @@ test.afterAll(async () => {
   await app?.close().catch(() => undefined);
   await fake?.close();
   if (dataDir) rmSync(dataDir, { recursive: true, force: true });
+  if (userDataDir) rmSync(userDataDir, { recursive: true, force: true });
 });
 
 test("opens the main window from the server", async () => {
@@ -103,7 +113,7 @@ test("keeps the single-instance lock", () => {
   // The second instance hands over to the first and quits at once. It is
   // spawned directly, with the switches Playwright gave the first; see
   // `secondInstanceCommand`.
-  const command = secondInstanceCommand([appDir], env);
+  const command = secondInstanceCommand(appArgs, env);
   const second = spawnSync(String(app.process().spawnfile), command.args, {
     env: command.env,
     cwd: appDir,
@@ -133,11 +143,23 @@ test("toggles the details panel with Ctrl+Shift+D", async () => {
 test("types into a running box's terminal and sees the echo", async () => {
   const boxId = process.env.AGENTBOX_E2E_BOX;
   test.skip(!boxId, "Set AGENTBOX_E2E_BOX to a running box id to run this test.");
+  // The box can sit in any project, so look at all of them. The app
+  // restores its saved selection, which this test mustn't depend on.
+  await page.getByRole("option", { name: /^All projects/ }).click();
+  await expect(page.getByRole("option", { name: /^All projects/ })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
   await page.getByLabel("Filter boxes").fill(boxId as string);
   const row = page.getByRole("row").filter({ hasText: boxId as string });
   await row.dblclick();
   const terminal = page.locator(".bx-terminal-pane:not([hidden]) .xterm");
   await expect(terminal).toBeVisible({ timeout: 30_000 });
+  // The terminal must be tall enough for Claude's input line, whatever
+  // split the window has.
+  await expect
+    .poll(() => page.locator(".bx-terminal-pane:not([hidden]) .xterm-rows > div").count())
+    .toBeGreaterThanOrEqual(10);
   await terminal.click();
   const marker = `agentbox-e2e-${Date.now()}`;
   await page.keyboard.type(marker);
