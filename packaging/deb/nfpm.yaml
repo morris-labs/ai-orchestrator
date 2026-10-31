@@ -125,3 +125,4 @@ contents:
 scripts:
   postinstall: maint/postinst
   preremove: maint/prerm
+  postremove: maint/postrm

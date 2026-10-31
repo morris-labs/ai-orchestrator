@@ -6,19 +6,33 @@ case "$1" in
   configure)
     # Load the AppArmor profiles that let the Electron apps use their
     # sandbox on Ubuntu 24.04 and later. A host without AppArmor skips this.
+    # Without a loaded profile, Chromium falls back to its setuid sandbox
+    # helper, which must be owned by root with mode 4755. An app whose
+    # profile loaded uses user namespaces instead, so its helper doesn't
+    # get the setuid bit, unless the kernel turns user namespaces off for
+    # unprivileged users, where only the helper works.
+    have_apparmor=0
     if command -v apparmor_parser > /dev/null 2>&1 && [ -d /sys/kernel/security/apparmor ]; then
-      for app in boxes review; do
-        apparmor_parser -r -T -W "/etc/apparmor.d/agentbox-$app" || true
-      done
+      have_apparmor=1
     fi
-
-    # Without AppArmor, Chromium falls back to its setuid sandbox helper,
-    # which must be owned by root with mode 4755.
+    userns_off=0
+    if [ "$(cat /proc/sys/kernel/unprivileged_userns_clone 2> /dev/null || echo 1)" = 0 ] ||
+      [ "$(cat /proc/sys/user/max_user_namespaces 2> /dev/null || echo 1)" = 0 ]; then
+      userns_off=1
+    fi
     for app in boxes review; do
+      loaded=0
+      if [ "$have_apparmor" = 1 ] && apparmor_parser -r -T -W "/etc/apparmor.d/agentbox-$app"; then
+        loaded=1
+      fi
       helper="/usr/lib/agentbox/$app/chrome-sandbox"
       if [ -f "$helper" ]; then
         chown root:root "$helper"
-        chmod 4755 "$helper"
+        if [ "$loaded" = 1 ] && [ "$userns_off" = 0 ]; then
+          chmod 0755 "$helper"
+        else
+          chmod 4755 "$helper"
+        fi
       fi
     done
 

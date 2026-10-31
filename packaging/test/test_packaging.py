@@ -41,6 +41,7 @@ SHELL_SCRIPTS = [
     ROOT / "scripts/lib/common.sh",
     ROOT / "packaging/deb/scripts/postinst",
     ROOT / "packaging/deb/scripts/prerm",
+    ROOT / "packaging/deb/scripts/postrm",
     ROOT / "image/keeper/keeper.sh",
     ROOT / "image/keeper/start-session.sh",
     ROOT / "image/keeper/test-keeper.sh",
@@ -567,6 +568,32 @@ class ScriptsTest(unittest.TestCase):
             self.assertIn("systemctl --user enable --now agentbox-server", fresh)
             self.assertNotIn(restart, fresh)
 
+    def test_postrm_clears_the_apparmor_cache_on_purge(self):
+        config = load_yaml(NFPM)
+        self.assertEqual(config["scripts"]["postremove"], "maint/postrm")
+        self.assertIn('"$ROOT/packaging/deb/scripts/postrm"', (ROOT / "scripts/build-deb.sh").read_text())
+        text = (ROOT / "packaging/deb/scripts/postrm").read_text()
+        purge = text[text.index("purge)"):text.index(";;")]
+        self.assertIn('rm -f /var/cache/apparmor/*/"agentbox-$app"', purge)
+        if pathlib.Path("/usr/lib/agentbox").exists():
+            self.skipTest("agentbox is installed on this host")
+        with tempfile.TemporaryDirectory() as tmp:
+            for name in ("rm",):
+                (pathlib.Path(tmp) / name).symlink_to(shutil.which(name))
+            for action in ("remove", "purge", "upgrade"):
+                subprocess.run(
+                    [str(ROOT / "packaging/deb/scripts/postrm"), action], env={"PATH": tmp}, check=True
+                )
+
+    def test_postinst_sets_the_setuid_bit_only_without_a_profile(self):
+        text = (ROOT / "packaging/deb/scripts/postinst").read_text()
+        self.assertEqual(text.count("chmod 4755"), 1)
+        setuid = text.index("chmod 4755")
+        branch = text.rindex("if ", 0, setuid)
+        self.assertIn('"$loaded" = 1', text[branch:setuid])
+        self.assertIn('"$userns_off" = 0', text[branch:setuid])
+        self.assertNotIn("apparmor_parser -r -T -W \"/etc/apparmor.d/agentbox-$app\" || true", text)
+
     def test_build_deb_fails_clearly_without_tools(self):
         # With an empty PATH apart from bash and coreutils, the script must
         # stop at the first missing tool with a message that names it.
@@ -774,7 +801,7 @@ class NfpmBuildTest(unittest.TestCase):
                     src.parent.mkdir(parents=True, exist_ok=True)
                     src.write_text("placeholder\n")
             (stage / "maint").mkdir()
-            for name in ("postinst", "prerm"):
+            for name in ("postinst", "prerm", "postrm"):
                 shutil.copy(ROOT / "packaging/deb/scripts" / name, stage / "maint")
             deb = pathlib.Path(tmp) / "agentbox_4.0.0-test_amd64.deb"
             subprocess.run(
