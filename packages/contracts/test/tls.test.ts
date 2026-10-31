@@ -8,7 +8,9 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   SERVER_CERT_NAME,
+  ServerCertificateDateError,
   ServerIdentityError,
+  asIdentityError,
   createServerIdentity,
   matchesPin,
   pinFromPem,
@@ -151,6 +153,27 @@ describe("pinnedFetch", () => {
   it("refuses plain http", async () => {
     const fetchPinned = pinnedFetch(() => pinFromPem(createServerIdentity().cert));
     await expect(fetchPinned("http://127.0.0.1:1/")).rejects.toThrow(/nothing over http:/);
+  });
+
+  it("blames the clock, not another program, for a certificate that isn't valid yet", async () => {
+    const id = createServerIdentity({ now: new Date(Date.now() + 2 * 3600_000) });
+    const server = await httpsServer(id);
+    const fetchPinned = pinnedFetch(() => pinFromPem(id.cert));
+    const err: unknown = await fetchPinned(`${server.url}/`).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ServerCertificateDateError);
+    expect((err as Error).message).toMatch(/isn't valid yet/);
+    expect((err as Error).message).toContain(new X509Certificate(id.cert).validFrom);
+    expect((err as Error).message).not.toMatch(/Another program/);
+    expect(server.seen).toEqual([]);
+  });
+
+  it("reports an expired certificate as expired", () => {
+    const err = asIdentityError(Object.assign(new Error("x"), { code: "CERT_HAS_EXPIRED" }), "h");
+    expect(err).toBeInstanceOf(ServerCertificateDateError);
+    expect((err as Error).message).toMatch(/has expired/);
+    expect(
+      asIdentityError(Object.assign(new Error("x"), { code: "DEPTH_ZERO_SELF_SIGNED_CERT" }), "h"),
+    ).toBeInstanceOf(ServerIdentityError);
   });
 
   it("names the data directory's certificate when the identity check fails", () => {

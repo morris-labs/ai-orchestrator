@@ -1605,12 +1605,19 @@ export function pathParamsSchema(path: string): z.ZodObject<Record<string, z.Zod
   return z.object(Object.fromEntries(pathParamNames(path).map((n) => [n, z.string().min(1)])));
 }
 
-/** Fills the `:params` in `path` with URL-encoded values. Throws on a missing param. */
+/**
+ * Fills the `:params` in `path` with URL-encoded values. Throws on a missing
+ * param, and on an empty, `.`, or `..` value: URL parsing would resolve
+ * those segments and send the call to another route.
+ */
 export function buildPath<P extends string>(path: P, params: PathParams<P>): string {
   const values = params as Record<string, string | undefined>;
   return path.replace(/:([A-Za-z0-9_]+)/g, (_match, name: string) => {
     const value = values[name];
     if (value === undefined) throw new Error(`Missing path parameter "${name}" for ${path}.`);
+    if (value === "" || value === "." || value === "..") {
+      throw new Error(`Invalid path parameter "${name}": ${JSON.stringify(value)} isn't an ID.`);
+    }
     return encodeURIComponent(value);
   });
 }
