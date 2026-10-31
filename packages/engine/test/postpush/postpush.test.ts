@@ -24,6 +24,7 @@ import {
 import { POLL_TIMEOUT_MS, isNonCodeFailure, severityFromText } from "../../src/postpush/loop.js";
 import { ExecaRunner } from "../../src/range/exec.js";
 import { RunController } from "../../src/state/controller.js";
+import { contextOf } from "../state/harness.js";
 import { Scenario, buildSampleRepo } from "../state/scenario.js";
 import { tempDir } from "../tmp.js";
 
@@ -229,6 +230,47 @@ describe("post-push loop", () => {
     expect(git(origin, "rev-parse", "refs/heads/feature")).toBe(git(repo, "rev-parse", "HEAD"));
     expect(git(origin, "rev-parse", "refs/heads/main")).toBe(git(repo, "rev-parse", "main"));
     expect(scenario.count("fix")).toBe(1);
+  });
+
+  it("verifies an imported comment when the engine stopped before the import record", async () => {
+    const repo = buildSampleRepo();
+    const gh = new FakeGitHub(join(dirname(repo), "origin.git"));
+    gh.checks = [{ name: "tests", bucket: "pass", link: null, workflow: "ci" }];
+    const scenario = new Scenario();
+    const fp = scenario.bugs.find((b) => b.id === "FP1")!;
+    gh.threads = [
+      {
+        id: "T2",
+        isResolved: false,
+        path: "shop/pricing.py",
+        line: 11,
+        startLine: null,
+        comments: [{ id: "c2", author: "Copilot", body: fp.title, url: null }],
+      },
+    ];
+    const run = await RunController.create(
+      { runId: nextRunId(), projectId: "sample", repoPath: repo, pipeline: "post-push" },
+      { projectRoot: repo },
+      deps(scenario, gh),
+    );
+    const ctx = contextOf(run);
+    const writeJson = ctx.store.writeJson.bind(ctx.store);
+    let stopped = false;
+    ctx.store.writeJson = (name, value) => {
+      if (!stopped && name === "rounds/1/import.json") {
+        stopped = true;
+        return Promise.reject(new Error("engine stopped"));
+      }
+      return writeJson(name, value);
+    };
+    await run.start();
+    expect(await run.settled()).toMatchObject({ status: "failed" });
+    await run.start();
+    const state = await run.settled();
+    expect(state.status).toBe("finished");
+    const t2 = run.findings.find((f) => f.externalRef?.id === "T2");
+    expect(t2?.verdict).not.toBe("pending");
+    expect(run.findings.filter((f) => f.externalRef?.id === "T2")).toHaveLength(1);
   });
 
   it("stops at a clean pull request when nothing is new and the checks pass", async () => {

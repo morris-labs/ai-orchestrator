@@ -403,6 +403,68 @@ async function stageImport(ctx: RunContext, poll: PollResult): Promise<ImportRec
   const file = ctx.store.roundFile(ctx.round, "import");
   const saved = await ctx.store.readJson<ImportRecord>(file);
   if (saved) return saved;
+  // The import is saved in one commit file before it changes the run, the
+  // way `mergeInto` saves a merge: a stage that resumes after the findings
+  // were saved, but before `import.json`, applies that file again instead
+  // of finding every thread already known and importing nothing.
+  const commitFile = ctx.store.roundFile(ctx.round, "import-commit");
+  let commit = await ctx.store.readJson<ImportCommit>(commitFile);
+  if (!commit) {
+    commit = await collectImport(ctx, poll);
+    await ctx.store.writeJson(commitFile, commit);
+  }
+  const { imported, oscillations } = commit;
+  if (!ctx.eng.appliedMerges.includes(commitFile)) {
+    const have = new Set(ctx.findings.map((f) => f.id));
+    ctx.findings.push(...imported.filter((f) => !have.has(f.id)));
+    ctx.eng.importedRefs = commit.importedRefs;
+    ctx.eng.counters.finding = Math.max(ctx.eng.counters.finding, commit.findingCounter);
+    await ctx.persist();
+    for (const f of imported) {
+      const live = ctx.findingById(f.id);
+      if (live) await ctx.announceFinding(live);
+    }
+    ctx.eng.appliedMerges = [...ctx.eng.appliedMerges, commitFile];
+    await ctx.persist();
+  }
+  const record: ImportRecord = {
+    imported: imported.map((f) => f.id),
+    nonCode: commit.nonCode,
+    failingCode: commit.failingCode,
+    checksPassed: poll.checks.every((c) => c.bucket !== "fail" && c.bucket !== "pending"),
+  };
+  await ctx.store.writeJson(file, record);
+  await ctx.handoff(
+    { stage: "import", vendor: "copilot", role: "reviewer" },
+    { stage: "verify", role: "disprover" },
+    "findings",
+    imported.length,
+    file,
+  );
+  if (oscillations.length > 0) {
+    await ctx.setStage("verify");
+    throw new DecisionNeeded({
+      kind: "oscillation",
+      findingIds: oscillations.flatMap((o) => [o.fixedId, o.returnedId]),
+      options: ["resume", "resume_waive", "cancel"],
+      message: "A pull request comment raises a finding that an earlier fix closed.",
+    });
+  }
+  return record;
+}
+
+/** One import, as `stageImport` saves it before it changes the run. */
+interface ImportCommit {
+  imported: Finding[];
+  importedRefs: string[];
+  findingCounter: number;
+  nonCode: ImportRecord["nonCode"];
+  failingCode: string[];
+  oscillations: Array<{ fixedId: string; returnedId: string }>;
+}
+
+/** Reads the threads and failing checks to import, without changing the run's findings. */
+async function collectImport(ctx: RunContext, poll: PollResult): Promise<ImportCommit> {
   const gh = github(ctx);
   const repo = ctx.state.request.repoPath;
   const pr = ctx.state.prNumber as number;
@@ -443,7 +505,6 @@ async function stageImport(ctx: RunContext, poll: PollResult): Promise<ImportRec
     known.add(ref);
     imported.push(checkFinding(ctx, check, log, head));
   }
-  ctx.eng.importedRefs = [...known];
 
   // A comment that matches a fixed finding is an oscillation.
   const oscillations: Array<{ fixedId: string; returnedId: string }> = [];
@@ -463,34 +524,15 @@ async function stageImport(ctx: RunContext, poll: PollResult): Promise<ImportRec
       actor: { kind: "engine", role: "import" },
       round: ctx.round,
     });
-    ctx.findings.push(f);
   }
-  await ctx.persist();
-  for (const f of imported) await ctx.announceFinding(f);
-  const record: ImportRecord = {
-    imported: imported.map((f) => f.id),
+  return {
+    imported,
+    importedRefs: [...known],
+    findingCounter: ctx.eng.counters.finding,
     nonCode,
     failingCode,
-    checksPassed: poll.checks.every((c) => c.bucket !== "fail" && c.bucket !== "pending"),
+    oscillations,
   };
-  await ctx.store.writeJson(file, record);
-  await ctx.handoff(
-    { stage: "import", vendor: "copilot", role: "reviewer" },
-    { stage: "verify", role: "disprover" },
-    "findings",
-    imported.length,
-    file,
-  );
-  if (oscillations.length > 0) {
-    await ctx.setStage("verify");
-    throw new DecisionNeeded({
-      kind: "oscillation",
-      findingIds: oscillations.flatMap((o) => [o.fixedId, o.returnedId]),
-      options: ["resume", "resume_waive", "cancel"],
-      message: "A pull request comment raises a finding that an earlier fix closed.",
-    });
-  }
-  return record;
 }
 
 /**
@@ -599,7 +641,14 @@ export async function drivePostPush(ctx: RunContext): Promise<void> {
           (await ctx.store.readJson<PollResult>(ctx.store.roundFile(ctx.round, "poll"))) ??
           (await stagePoll(ctx));
         const record = await stageImport(ctx, poll);
-        const actionable = record.imported.length > 0;
+        // An imported finding still pending, such as from an import that a
+        // restart cut short before it saved its record, needs the round too.
+        const actionable =
+          record.imported.length > 0 ||
+          ctx.findings.some(
+            (f) =>
+              f.verdict === "pending" && (f.origin === "pr_comment" || f.origin === "check_run"),
+          );
         if (!actionable) {
           await closePostPushRound(ctx);
           // A clean pull request needs the review the poll waited for.
