@@ -10,6 +10,15 @@
 # the npm registry. In an installed package (/usr/share/agentbox), the
 # engine tarball ships in image/dist/ already, so the script skips packing.
 #
+# The CLI versions come from the pins in image/versions.env. With
+# --update-cli, the script first resolves the latest versions from npm,
+# writes them to that file, and builds with them.
+#
+# The engine build writes a content hash to dist/identity. The image records
+# VERSION+HASH in /etc/agentbox-engine-version, and the server expects the
+# same, so an image built from older engine code reads as stale although the
+# package version never changes.
+#
 # Environment:
 #   IMAGE_TAG   The image tag. Default: claude-code. The --tag option
 #               overrides it. Set it to build a test image, such as
@@ -27,7 +36,9 @@ TAG="${IMAGE_TAG:-claude-code}"
 PACK=auto
 PRINT=0
 PACK_ONLY=0
+UPDATE_CLI=0
 BUILD_ARGS=()
+VERSIONS="$IMAGE_DIR/versions.env"
 
 usage() {
   cat <<USAGE
@@ -37,8 +48,13 @@ Builds the Agent Box image from $IMAGE_DIR.
 
 Options:
   --tag TAG              Tag the image TAG. Default: the IMAGE_TAG variable, else claude-code.
-  --update-cli           Rebuild the agent CLI and engine layers
-                         (--build-arg CACHEBUST=<now>).
+  --update-cli           Update the agent CLIs to their latest versions. Resolves
+                         the latest Claude Code, Codex, and Copilot versions from
+                         npm, writes them to $VERSIONS
+                         (when the file is writable), and builds with them. Also
+                         rebuilds the CLI and engine layers
+                         (--build-arg CACHEBUST=<now>). Without this option, the
+                         build uses the versions pinned in that file.
   --update-packages      Rebuild every layer after the base image
                          (--build-arg CACHEBUST_PACKAGES=<now>).
   --no-cache             Pass --no-cache --pull to docker build.
@@ -52,7 +68,7 @@ USAGE
 while (($#)); do
   case "$1" in
     --tag) TAG="${2:?--tag needs a value}"; shift ;;
-    --update-cli) BUILD_ARGS+=(--build-arg "CACHEBUST=$(date +%s)") ;;
+    --update-cli) UPDATE_CLI=1; BUILD_ARGS+=(--build-arg "CACHEBUST=$(date +%s)") ;;
     --update-packages) BUILD_ARGS+=(--build-arg "CACHEBUST_PACKAGES=$(date +%s)") ;;
     --no-cache) BUILD_ARGS+=(--no-cache --pull) ;;
     --no-pack) PACK=no ;;
@@ -65,7 +81,29 @@ while (($#)); do
 done
 
 [[ -f "$IMAGE_DIR/Dockerfile" ]] || die "no Dockerfile in $IMAGE_DIR"
-VERSIONS="$IMAGE_DIR/versions.env"
+
+# --update-cli: resolve the latest CLI versions from npm. OVERRIDES holds
+# them for this build; the pins file records them when it's writable. In an
+# installed package the file belongs to root, so the build still uses the
+# new versions and the script says it can't save them.
+declare -A OVERRIDES=()
+if ((UPDATE_CLI && !PACK_ONLY)); then
+  require_tool npm "Install Node.js 22, which includes npm."
+  OVERRIDES[CLAUDE_CODE_VERSION]="$(npm_latest @anthropic-ai/claude-code)"
+  OVERRIDES[CODEX_VERSION]="$(npm_latest @openai/codex)"
+  OVERRIDES[COPILOT_VERSION]="$(npm_latest @github/copilot)"
+  if ((PRINT)); then
+    log "Not saving the versions to $VERSIONS because of --print"
+  elif [[ -w "$VERSIONS" ]]; then
+    for key in "${!OVERRIDES[@]}"; do
+      set_pin "$VERSIONS" "$key" "${OVERRIDES[$key]}"
+    done
+    sed -i "s|^# Recorded [0-9-]*\.|# Recorded $(date +%Y-%m-%d).|" "$VERSIONS"
+  else
+    for key in "${!OVERRIDES[@]}"; do log "$key=${OVERRIDES[$key]}"; done
+    log "warning: $VERSIONS isn't writable, so these versions apply to this build only"
+  fi
+fi
 ENGINE_VERSION="$(version_of "$VERSIONS" AGENTBOX_ENGINE_VERSION)"
 ENGINE_TARBALL="$IMAGE_DIR/dist/agentbox-engine-$ENGINE_VERSION.tgz"
 
@@ -90,6 +128,11 @@ if [[ "$PACK" == auto && -f "$ROOT/pnpm-workspace.yaml" ]]; then
   (cd "$ROOT" && "${PNPM[@]}" --filter @agentbox/engine deploy --legacy --prod --frozen-lockfile "$DEPLOY/engine" > /dev/null)
   [[ -d "$DEPLOY/engine/node_modules" ]] || die "pnpm deploy left no node_modules in $DEPLOY/engine"
   tar -C "$DEPLOY" --owner=0 --group=0 --numeric-owner -czf "$ENGINE_TARBALL" engine
+  # The server in an installed package expects the engine's content hash, and
+  # reads it from here. The Dockerfile reads the same hash from the tarball.
+  [[ -s "$DEPLOY/engine/dist/identity" ]] ||
+    die "the engine build wrote no dist/identity; check the build script of packages/engine"
+  cp "$DEPLOY/engine/dist/identity" "$IMAGE_DIR/dist/engine-identity"
   rm -rf -- "$DEPLOY"
   trap - EXIT
 fi
@@ -104,6 +147,7 @@ done
 USER_NAME="$(id -un)"
 CMD=(docker build -t "$TAG" --build-arg "USER_NAME=$USER_NAME")
 while IFS= read -r pair; do
+  [[ -n "${OVERRIDES[${pair%%=*}]:-}" ]] && pair="${pair%%=*}=${OVERRIDES[${pair%%=*}]}"
   CMD+=(--build-arg "$pair")
 done < <(read_versions "$VERSIONS")
 CMD+=("${BUILD_ARGS[@]}" "$IMAGE_DIR")
