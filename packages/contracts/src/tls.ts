@@ -208,13 +208,47 @@ export class ServerIdentityError extends Error {
 }
 
 /**
+ * The error a client reports when the pinned certificate is outside its
+ * validity period by this machine's clock. That points at the clock or an
+ * old certificate, not at another program on the port.
+ */
+export class ServerCertificateDateError extends Error {
+  constructor(
+    host: string,
+    readonly reason: "expired" | "not_yet_valid",
+    pin?: ServerPin,
+  ) {
+    const state = reason === "expired" ? "has expired" : "isn't valid yet";
+    let dates = "";
+    if (pin) {
+      try {
+        const cert = new X509Certificate(pin.pem);
+        dates = ` It is valid from ${cert.validFrom} to ${cert.validTo}.`;
+      } catch {
+        // No dates to give.
+      }
+    }
+    super(
+      `The certificate in the data directory's server.crt ${state} by this machine's clock, so the token wasn't sent to ${host}.${dates} Check the system clock. The server replaces an expired certificate when it starts.`,
+    );
+    this.name = "ServerCertificateDateError";
+  }
+}
+
+/**
  * Turns a certificate failure of a pinned connection into a
  * `ServerIdentityError`, which says what happened in terms of the data
- * directory. Any other error passes unchanged.
+ * directory, or a `ServerCertificateDateError` when the certificate is
+ * outside its validity period. `pin`, when given, supplies the dates for
+ * that message. Any other error passes unchanged.
  */
-export function asIdentityError(err: unknown, host: string): unknown {
-  if (err instanceof ServerIdentityError) return err;
+export function asIdentityError(err: unknown, host: string, pin?: ServerPin): unknown {
+  if (err instanceof ServerIdentityError || err instanceof ServerCertificateDateError) return err;
   const code = String((err as { code?: unknown })?.code ?? "");
+  if (code === "CERT_HAS_EXPIRED") return new ServerCertificateDateError(host, "expired", pin);
+  if (code === "CERT_NOT_YET_VALID") {
+    return new ServerCertificateDateError(host, "not_yet_valid", pin);
+  }
   return /CERT|SELF_SIGNED|UNABLE_TO_|ALTNAME/.test(code) ? new ServerIdentityError(host) : err;
 }
 
@@ -256,7 +290,8 @@ export function pinnedFetch(pin: () => ServerPin): typeof fetch {
     if (url.protocol !== "https:") {
       throw new TypeError(`The pinned fetch sends nothing over ${url.protocol}`);
     }
-    const tls = pinnedTlsOptions(pin());
+    const current = pin();
+    const tls = pinnedTlsOptions(current);
     const headers: Record<string, string> = {};
     new Headers(init.headers).forEach((value, name) => {
       headers[name] = value;
@@ -289,7 +324,7 @@ export function pinnedFetch(pin: () => ServerPin): typeof fetch {
           });
         },
       );
-      req.on("error", (err) => reject(asIdentityError(err, url.host)));
+      req.on("error", (err) => reject(asIdentityError(err, url.host, current)));
       req.end(body);
     });
   };

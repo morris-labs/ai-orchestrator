@@ -85,6 +85,8 @@ export function TerminalView(props: TerminalViewProps) {
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
+    // A new target is a new session, so the previous one's banner goes.
+    setEnded(null);
     const term = new Terminal({
       scrollback: propsRef.current.scrollback ?? 10_000,
       theme: terminalTheme,

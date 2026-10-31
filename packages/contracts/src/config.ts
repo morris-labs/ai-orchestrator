@@ -20,6 +20,12 @@ export const HOME_PATHS = {
   serverCert: ".claude-box/server.crt",
   /** The private key of `serverCert`, mode 0600. */
   serverKey: ".claude-box/server.key",
+  /**
+   * The port the running server listens on, which the server writes at
+   * every start. The CLI reads it before `config.json`, since the server
+   * takes its port from its database after the first start.
+   */
+  serverPort: ".claude-box/server.port",
   /** Per-container keeper state: `state/<container>/sessions` and `mounts`. */
   stateDir: ".claude-box/state",
   /** Per-container Claude sessions directory, mounted over `~/.claude/sessions`. */

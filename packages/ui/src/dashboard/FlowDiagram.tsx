@@ -1,7 +1,7 @@
 // The data-flow diagram: pipeline stages as columns and a lane per vendor.
 // Each `handoff` event restarts a pulse along its edge, labeled with the
 // item count. Motion stops for readers who ask for reduced motion.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Stage } from "@agentbox/contracts";
 import { ChartCard } from "./ChartCard.js";
 import {
@@ -38,6 +38,44 @@ export function useReducedMotion(): boolean {
     return () => mq.removeEventListener?.("change", on);
   }, []);
   return reduced;
+}
+
+/**
+ * One handoff's pulse along an edge. SMIL resolves a plain `begin="0"`
+ * against the `<svg>`'s timeline, which started when the diagram mounted,
+ * so a pulse added later would already be over. The animations wait for
+ * `begin="indefinite"` and start when the pulse mounts; the caller keys it
+ * on the handoff's event id, so each handoff mounts a new one.
+ */
+function Pulse({ path, color }: { path: string; color: string }) {
+  const motion = useRef<SVGAnimateMotionElement>(null);
+  const fade = useRef<SVGAnimateElement>(null);
+  useEffect(() => {
+    for (const anim of [motion.current, fade.current]) {
+      // jsdom, for one, has no SMIL.
+      if (typeof anim?.beginElement === "function") anim.beginElement();
+    }
+  }, []);
+  return (
+    <circle r={4} fill={color} className="ab-flow-pulse" opacity={0}>
+      <animateMotion
+        ref={motion}
+        begin="indefinite"
+        dur="1.2s"
+        repeatCount="1"
+        fill="freeze"
+        path={path}
+      />
+      <animate
+        ref={fade}
+        attributeName="opacity"
+        begin="indefinite"
+        values="1;1;0"
+        dur="1.6s"
+        fill="freeze"
+      />
+    </circle>
+  );
 }
 
 export function FlowDiagram({
@@ -158,12 +196,7 @@ export function FlowDiagram({
                   {`${e.last} ${e.artifact} from ${e.from.stage} (${laneLabel(laneOf(e.from))}) to ${e.to.stage} (${laneLabel(laneOf(e.to))}); ${e.total} in total`}
                 </title>
                 <path d={d} fill="none" stroke={color} strokeWidth={2} strokeOpacity={0.55} />
-                {reduced ? null : (
-                  <circle key={e.lastEventId} r={4} fill={color} className="ab-flow-pulse">
-                    <animateMotion dur="1.2s" repeatCount="1" fill="freeze" path={d} />
-                    <animate attributeName="opacity" values="1;1;0" dur="1.6s" fill="freeze" />
-                  </circle>
-                )}
+                {reduced ? null : <Pulse key={e.lastEventId} path={d} color={color} />}
                 <text x={label.x} y={label.y} textAnchor="middle" className="ab-flow-count">
                   {e.last} {e.artifact}
                 </text>

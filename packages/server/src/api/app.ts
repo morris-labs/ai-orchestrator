@@ -1,10 +1,12 @@
 // Builds the whole server from a core: the event hub and its listeners, the
 // engine supervisor, the scheduler, the HTTPS API server, and the plain HTTP
 // listener of the dev-server proxy.
+import { writeFile } from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
 import {
   BROKER_SOCKET_NAME,
+  HOME_PATHS,
   proxyPortOf,
   type AgentBoxEvent,
   type Box,
@@ -28,7 +30,7 @@ import { Scheduler, VendorHealth } from "../scheduler/scheduler.js";
 import { OpCli, type OpClient } from "../secrets/op.js";
 import { BROKER_SYNC_INTERVAL_MS, SecretsBroker, assertSocketPathFits } from "../secrets/broker.js";
 import { SecretsService } from "../secrets/secrets-service.js";
-import { brokerDirFor } from "../records/env.js";
+import { brokerDirFor, dataPath } from "../records/env.js";
 import { SetupService } from "../setup/setup-service.js";
 import { UpdateChecker } from "../setup/updates.js";
 import { SshTunnelManager, startCopyIdJob, testConnection } from "../ssh/tunnels.js";
@@ -332,6 +334,17 @@ export async function startApp(options: AppOptions): Promise<App> {
   });
   const config = settings();
   const port = await api.listen(options.port ?? config.serverPort, BIND_HOST);
+  // The CLI reads the port from here: after the first start, the server
+  // takes it from its database, not from config.json.
+  try {
+    await writeFile(
+      dataPath({ home: options.home, dataDir: options.dataDir }, HOME_PATHS.serverPort),
+      `${port}\n`,
+      { mode: 0o644 },
+    );
+  } catch (err) {
+    log(`Couldn't write server.port: ${(err as Error).message}`);
+  }
   for (const e of devEngines) {
     log(`Development engine for project ${e.projectId} on port ${e.hostPort}.`);
   }

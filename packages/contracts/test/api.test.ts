@@ -338,6 +338,14 @@ describe("path helpers", () => {
     });
     expect(() => buildPath("/a/:b" as string, {} as never)).toThrow(/Missing path parameter/);
   });
+
+  it("refuses a value that URL parsing would resolve to another route", () => {
+    for (const id of ["..", ".", ""]) {
+      expect(() => buildPath("/a/:id", { id })).toThrow(/Invalid path parameter/);
+    }
+    expect(buildPath("/a/:id", { id: "..." })).toBe("/a/...");
+    expect(buildPath("/a/:id", { id: "a.b" })).toBe("/a/a.b");
+  });
 });
 
 describe("RouteOf", () => {

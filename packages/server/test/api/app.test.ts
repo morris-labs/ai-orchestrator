@@ -110,6 +110,11 @@ describe("startApp", () => {
     expect(res.status).toBe(200);
   });
 
+  it("writes the port it listens on to server.port for the CLI", async () => {
+    const written = await readFile(path.join(home, ".claude-box", "server.port"), "utf8");
+    expect(written).toBe(`${app.port}\n`);
+  });
+
   it("serves the API over HTTPS only, with the certificate in server.crt", async () => {
     await expect(plainGet(app.port, `127.0.0.1:${app.port}`, "/api/v1/health")).rejects.toThrow();
     const other = pinnedFetch(() => pinFromPem(createServerIdentity().cert));

@@ -1,6 +1,12 @@
-import { addUsageSamples, Dashboard, replay, emptyDashboard } from "../../src/dashboard";
+import {
+  addUsageSamples,
+  Dashboard,
+  FlowDiagram,
+  replay,
+  emptyDashboard,
+} from "../../src/dashboard";
 import { render, screen, within, fireEvent } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { buildDemoEvents, DEMO_CONTAINER as CONTAINER } from "../../src/testing/demoRun";
 
 const events = buildDemoEvents();
@@ -138,5 +144,31 @@ describe("Dashboard", () => {
     const chart = screen.getAllByRole("img", { name: /Claude usage/ })[0]!;
     fireEvent.keyDown(chart, { key: "ArrowRight" });
     expect(screen.getByRole("status")).toHaveTextContent(/used/);
+  });
+});
+
+describe("FlowDiagram", () => {
+  it("starts a pulse's animations when a handoff arrives after the diagram mounted", () => {
+    // jsdom has no SMIL; record the calls a browser would act on.
+    const begin = vi.fn();
+    Object.defineProperty(SVGElement.prototype, "beginElement", {
+      value: begin,
+      configurable: true,
+    });
+    try {
+      const edges = Object.values(replay(events).flows);
+      expect(edges.length).toBeGreaterThan(1);
+      const { container, rerender } = render(<FlowDiagram edges={edges} activeStage={null} />);
+      const animations = container.querySelectorAll("animateMotion, animate");
+      expect(animations.length).toBe(edges.length * 2);
+      for (const a of animations) expect(a.getAttribute("begin")).toBe("indefinite");
+      expect(begin).toHaveBeenCalledTimes(edges.length * 2);
+      begin.mockClear();
+      const later = edges.map((e, i) => (i === 0 ? { ...e, lastEventId: "SYNTHETIC_later" } : e));
+      rerender(<FlowDiagram edges={later} activeStage={null} />);
+      expect(begin).toHaveBeenCalledTimes(2);
+    } finally {
+      delete (SVGElement.prototype as { beginElement?: unknown }).beginElement;
+    }
   });
 });

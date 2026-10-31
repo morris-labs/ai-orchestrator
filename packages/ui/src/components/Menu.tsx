@@ -33,6 +33,24 @@ export function MenuList({ entries, x, y, onClose, label, nested }: MenuListProp
   const [pos, setPos] = useState({ x, y });
   const [openSub, setOpenSub] = useState<number | null>(null);
 
+  // A top-level menu gives focus back to what had it when the menu opened,
+  // such as a terminal, as Qt's QMenu does. It does so only when focus
+  // would otherwise be lost: on the page body or inside the closing menu.
+  // An item that moved focus somewhere on purpose keeps that. This effect
+  // runs before the one below moves focus to the first item.
+  useLayoutEffect(() => {
+    if (nested) return;
+    const previous = document.activeElement as HTMLElement | null;
+    const menu = ref.current;
+    return () => {
+      if (!previous || previous === document.body || !previous.isConnected) return;
+      const now = document.activeElement;
+      if (now === null || now === document.body || (menu?.contains(now) ?? false)) {
+        previous.focus();
+      }
+    };
+  }, [nested]);
+
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;

@@ -27,7 +27,13 @@ import {
   type SetupCheck,
 } from "@agentbox/contracts";
 import { Command, CommanderError, InvalidArgumentError, Option } from "commander";
-import { ApiCallError, ServerClient, ServerUnreachableError } from "./client.js";
+import {
+  ApiCallError,
+  InterruptedError,
+  RequestInputError,
+  ServerClient,
+  ServerUnreachableError,
+} from "./client.js";
 import { tailEvents, type WebSocketCtor } from "./events.js";
 import { jsonText, keyValues, percent, table, terminalText } from "./format.js";
 import {
@@ -49,9 +55,12 @@ export interface CliDeps {
   /** Runs an attach command with the terminal; resolves with its exit code. */
   exec?: (argv: string[]) => Promise<number>;
   WebSocket?: WebSocketCtor;
-  /** How often `box new` polls its job. */
+  /** How often `box new` and `accounts seed` poll their job. */
   pollMs?: number;
-  /** Stops `events`; Ctrl+C by default. */
+  /**
+   * Stops the running command: `events` ends cleanly, and any other command
+   * stops its request or job polling and exits 130. Ctrl+C by default.
+   */
   signal?: AbortSignal;
   /** The directory relative paths resolve against; the process's own by default. */
   cwd?: string;
@@ -95,7 +104,9 @@ function collect(value: string, previous: string[] = []): string[] {
 }
 
 function parsePortPair(spec: string): { host: number; container: number } {
-  const [h, c = h] = spec.split(":");
+  const parts = spec.split(":");
+  if (parts.length > 2) throw new UsageError(`Invalid TCP map ${spec}; use HOST:CONTAINER.`);
+  const [h, c = h] = parts;
   const host = Number(h);
   const container = Number(c);
   const ok = (n: number) => Number.isInteger(n) && n >= 1 && n <= 65535;
@@ -292,13 +303,29 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
       "--insecure",
       "Allow a plain http server URL. The token then travels unencrypted to whatever answers.",
     )
+    .option(
+      "--data-dir <path>",
+      "The server's data directory, as passed to agentbox-server. Default: $AGENTBOX_DATA_DIR or ~/.claude-box.",
+    )
     .showHelpAfterError()
     .exitOverride()
     .configureOutput({ writeOut: deps.out, writeErr: deps.err });
 
-  const globals = () => program.opts<{ json?: boolean; server?: string; insecure?: boolean }>();
-  const unchecked = () =>
-    resolveSettings({ env: deps.env, home: deps.home, server: globals().server });
+  const globals = () =>
+    program.opts<{ json?: boolean; server?: string; insecure?: boolean; dataDir?: string }>();
+  // The server resolves nothing against its own working directory, so every
+  // path leaves the CLI absolute.
+  const cwd = deps.cwd ?? process.cwd();
+  const absolute = (p: string) => path.resolve(cwd, p);
+  const unchecked = () => {
+    const dataDir = globals().dataDir;
+    return resolveSettings({
+      env: deps.env,
+      home: deps.home,
+      server: globals().server,
+      dataDir: dataDir === undefined ? undefined : absolute(dataDir),
+    });
+  };
   /** Why the CLI refuses the server URL in `s`, or `null`. */
   const urlProblem = (s: CliSettings) =>
     checkServerUrl(s.baseUrl, globals().insecure ?? false, s.token !== null);
@@ -314,6 +341,7 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
       baseUrl: s.baseUrl,
       token: s.token,
       fetch: deps.fetch ?? serverFetch(s),
+      signal: deps.signal,
     });
   const client = () => clientFor(settings());
   /** Prints raw JSON with `--json`, or the text form. */
@@ -321,10 +349,29 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
     deps.out(globals().json ? `${jsonText(json, 2)}\n` : terminalText(text()));
   };
   const exec = deps.exec ?? defaultExec;
-  // The server resolves nothing against its own working directory, so every
-  // path leaves the CLI absolute.
-  const cwd = deps.cwd ?? process.cwd();
-  const absolute = (p: string) => path.resolve(cwd, p);
+  /** Waits `pollMs`, or throws `InterruptedError` when `deps.signal` aborts first. */
+  const pause = () =>
+    new Promise<void>((resolve, reject) => {
+      const signal = deps.signal;
+      if (signal?.aborted) return reject(new InterruptedError());
+      const onAbort = () => {
+        clearTimeout(timer);
+        reject(new InterruptedError());
+      };
+      const timer = setTimeout(() => {
+        signal?.removeEventListener("abort", onAbort);
+        resolve();
+      }, deps.pollMs ?? 1_000);
+      signal?.addEventListener("abort", onAbort, { once: true });
+    });
+  /** Polls `job` until it ends, or returns it at once when `wait` is false. */
+  const waitForJob = async (c: ServerClient, job: Job, wait: boolean): Promise<Job> => {
+    while (wait && job.status === "running") {
+      await pause();
+      job = await c.call("jobs.get", { params: { jobId: job.id } });
+    }
+    return job;
+  };
 
   // -------------------------------------------------------------------------
   // box
@@ -370,7 +417,7 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
         : o.fork
           ? { mode: "fork" as const, fromBoxId: o.fork as string }
           : { mode: "new" as const };
-      let job: Job = await c.call("boxes.create", {
+      const created: Job = await c.call("boxes.create", {
         body: {
           targetDir: absolute(dir),
           platform: o.platform,
@@ -386,10 +433,7 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
           force: o.force ?? false,
         },
       });
-      while (o.wait && job.status === "running") {
-        await new Promise((r) => setTimeout(r, deps.pollMs ?? 1_000));
-        job = await c.call("jobs.get", { params: { jobId: job.id } });
-      }
+      const job = await waitForJob(c, created, o.wait);
       if (job.status === "failed") {
         state.code = 1;
         deps.err(
@@ -407,8 +451,20 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
       );
     });
 
+  box
+    .command("start")
+    .description("Start a box's session.")
+    .argument("<boxId>")
+    .option("--force", "Start it even when its container runs with stale mounts.")
+    .action(async (boxId: string, o: { force?: boolean }) => {
+      const v = await client().call("boxes.start", {
+        params: { boxId },
+        body: { force: o.force ?? false },
+      });
+      print(v, () => `${v.box.id} is ${v.status}.\n`);
+    });
+
   for (const [name, key, verb] of [
-    ["start", "boxes.start", "Start"],
     ["stop", "boxes.stop", "Stop"],
     ["restart", "boxes.restart", "Restart"],
   ] as const) {
@@ -483,7 +539,8 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
     .command("open")
     .description("Start a box when it's stopped, then attach to its session.")
     .argument("<boxId>")
-    .action(async (boxId: string) => {
+    .option("--force", "Start it even when its container runs with stale mounts.")
+    .action(async (boxId: string, o: { force?: boolean }) => {
       const c = client();
       const v = await c.call("boxes.get", { params: { boxId } });
       if (v.status === "stopped") {
@@ -491,7 +548,7 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
         // behind a box this command started. The start can change the
         // container, so the command is fetched and checked again after it.
         await attachArgv(boxId, "session");
-        await c.call("boxes.start", { params: { boxId } });
+        await c.call("boxes.start", { params: { boxId }, body: { force: o.force ?? false } });
       }
       await attach(boxId, "session");
     });
@@ -576,6 +633,15 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
     .option("--clear-mounts", "Remove every mount.")
     .option("--clear-ceilings", "Remove the project's ceilings override.")
     .action(async (projectId: string, o) => {
+      for (const [set, clear, setFlag, clearFlag] of [
+        [o.primaryRepo, o.clearPrimaryRepo, "--primary-repo", "--clear-primary-repo"],
+        [o.tcpMap, o.clearTcpMaps, "--tcp-map", "--clear-tcp-maps"],
+        [o.mount, o.clearMounts, "--mount", "--clear-mounts"],
+      ] as const) {
+        if (set !== undefined && clear) {
+          throw new UsageError(`Use ${setFlag} or ${clearFlag}, not both.`);
+        }
+      }
       const body: Record<string, unknown> = {};
       if (o.name !== undefined) body.name = o.name;
       if (o.primaryRepo !== undefined) body.primaryRepo = absolute(o.primaryRepo as string);
@@ -596,6 +662,24 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
           (r.staleBoxes.length > 0
             ? `Restart the container to apply the change to: ${r.staleBoxes.join(", ")}.\n`
             : ""),
+      );
+    });
+
+  project
+    .command("restart")
+    .description("Restart the project's container and every box that was running in it.")
+    .argument("<projectId>")
+    .action(async (projectId: string) => {
+      const r = await client().call("projects.restartContainer", { params: { projectId } });
+      if (r.failed.length > 0) state.code = 1;
+      print(
+        r,
+        () =>
+          [
+            `Restarted the container of ${projectId}.`,
+            ...(r.done.length > 0 ? [`Started again: ${r.done.join(", ")}.`] : []),
+            ...r.failed.map((f) => `Failed ${f.boxId}: ${f.error.message}`),
+          ].join("\n") + "\n",
       );
     });
 
@@ -944,17 +1028,14 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
     .option("--no-wait", "Print the job and return without waiting for it.")
     .action(async (o: { vendor?: string[]; name: string; dryRun?: boolean; wait: boolean }) => {
       const c = client();
-      let job: Job = await c.call("accounts.seed", {
+      const started: Job = await c.call("accounts.seed", {
         body: {
           ...(o.vendor ? { vendors: o.vendor as "claude"[] } : {}),
           name: o.name,
           dryRun: o.dryRun ?? false,
         },
       });
-      while (o.wait && job.status === "running") {
-        await new Promise((r) => setTimeout(r, deps.pollMs ?? 1_000));
-        job = await c.call("jobs.get", { params: { jobId: job.id } });
-      }
+      const job = await waitForJob(c, started, o.wait);
       if (job.status === "failed") {
         state.code = 1;
         deps.err(
@@ -967,7 +1048,14 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
         print(job, () => `Seeding accounts (job ${job.id}).\n`);
         return;
       }
-      const report = AccountSeedReportSchema.parse(job.result);
+      const parsed = AccountSeedReportSchema.safeParse(job.result);
+      if (!parsed.success) {
+        state.code = 1;
+        deps.err("The seed job's result doesn't match the contract.\n");
+        if (globals().json) deps.out(`${jsonText(job, 2)}\n`);
+        return;
+      }
+      const report = parsed.data;
       print(report, () => seedText(report));
     });
 
@@ -1097,6 +1185,7 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
         types: o.types,
         count: o.count,
         write: deps.out,
+        warn: deps.err,
         WebSocket: deps.WebSocket,
         tls: serverTls(s),
         signal: deps.signal,
@@ -1122,9 +1211,13 @@ export async function runCli(argv: string[], deps: CliDeps): Promise<number> {
         ? 0
         : 2;
     }
-    if (err instanceof UsageError) {
-      deps.err(`${err.message}\n`);
+    if (err instanceof UsageError || err instanceof RequestInputError) {
+      deps.err(terminalText(`${err.message}\n`));
       return 2;
+    }
+    if (err instanceof InterruptedError) {
+      deps.err(`${err.message}\n`);
+      return 130;
     }
     if (err instanceof ApiCallError) {
       deps.err(terminalText(`Error (${err.code}): ${err.message}\n`));
@@ -1134,7 +1227,8 @@ export async function runCli(argv: string[], deps: CliDeps): Promise<number> {
       return 1;
     }
     if (err instanceof ServerUnreachableError) {
-      deps.err(`${err.message}\nStart it with: systemctl --user start agentbox-server\n`);
+      deps.err(terminalText(`${err.message}\n`));
+      if (err.suggestStart) deps.err("Start it with: systemctl --user start agentbox-server\n");
       return 1;
     }
     deps.err(terminalText(`${err instanceof Error ? err.message : String(err)}\n`));
