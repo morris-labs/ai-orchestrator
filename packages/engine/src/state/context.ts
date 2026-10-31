@@ -492,6 +492,10 @@ export class RunContext {
       await this.checkpoint();
       this.eng.counters.lease += 1;
       const requested = `${this.state.id}-L${this.eng.counters.lease}`;
+      // Saved before the request: the server answers a repeated lease id
+      // with its first response, so an engine that stops while this request
+      // is out must not send the same id for its next call.
+      await this.persist();
       let response;
       try {
         response = await this.deps.broker.acquire(
