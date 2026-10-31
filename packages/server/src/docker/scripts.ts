@@ -82,7 +82,8 @@ export const SUDOERS_FILE = "/etc/sudoers.d/claude-box";
  * ("Temp directory /tmp/claude-1000 is owned by uid 0"). For each mount
  * path, the script walks up its parents and, for a root-owned one under
  * `/tmp` or the home directory, changes its owner to the user. It never
- * touches `/tmp`, the home directory, or the mount point itself, never
+ * touches `/tmp`, the home directory or any of its parents (which matters
+ * when the home sits under `/tmp`), or the mount point itself, never
  * recurses, skips any path with a symbolic link in it, and ignores every
  * failure.
  *
@@ -100,10 +101,14 @@ for p in "$@"; do
   while [ "$d" != / ] && [ "$d" != . ]; do
     case "$d" in
       /tmp/*|"$H"/*)
-        if [ -d "$d" ] && [ "$(realpath -e -- "$d" 2>/dev/null)" = "$d" ] &&
-           [ "$(stat -c %u -- "$d" 2>/dev/null)" = 0 ]; then
-          chown -h -- "$U:" "$d" 2>/dev/null
-        fi ;;
+        case "$H/" in
+          "$d"/*) ;;
+          *)
+            if [ -d "$d" ] && [ "$(realpath -e -- "$d" 2>/dev/null)" = "$d" ] &&
+               [ "$(stat -c %u -- "$d" 2>/dev/null)" = 0 ]; then
+              chown -h -- "$U:" "$d" 2>/dev/null
+            fi ;;
+        esac ;;
     esac
     d=$(dirname -- "$d")
   done
@@ -160,8 +165,18 @@ export function rootSetupExec(
 }
 
 /**
+ * Trusts every directory for git, writing the rule only when the global
+ * config lacks it. With a project `gitconfig`, `GIT_CONFIG_GLOBAL` points
+ * `--global` at that host file, and an unconditional `--add` appended
+ * another `directory = *` line to it at every container start.
+ */
+export const GIT_SAFE_DIRECTORY_SETUP =
+  "git config --global --get-all safe.directory 2>/dev/null | grep -qxF '*' || " +
+  "git config --global --add safe.directory '*' 2>/dev/null";
+
+/**
  * The container command: trust every directory for git (worktree boxes need
- * it), then replace the shell with the keeper, which stays PID 1 so that
+ * it, see `GIT_SAFE_DIRECTORY_SETUP`), then replace the shell with the keeper, which stays PID 1 so that
  * `docker stop` reaches its SIGTERM trap and stops the engine cleanly. The
  * root-owned mount parents are the root setup step's job
  * (`ROOT_SETUP_SCRIPT`), since the container user has no passwordless sudo.
@@ -170,7 +185,7 @@ export function sharedKeeperCommand(graceSec: number = STARTUP_GRACE_SEC): strin
   return [
     "bash",
     "-c",
-    `git config --global --add safe.directory '*' 2>/dev/null; exec ${KEEPER_PATH} "$1" "$2"`,
+    `${GIT_SAFE_DIRECTORY_SETUP}; exec ${KEEPER_PATH} "$1" "$2"`,
     "_",
     STATE_MOUNT,
     String(graceSec),

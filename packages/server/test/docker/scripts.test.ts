@@ -9,6 +9,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
+  GIT_SAFE_DIRECTORY_SETUP,
   KEEPER_PATH,
   KEEPER_SCRIPT,
   ROOT_SETUP_SCRIPT,
@@ -93,13 +94,34 @@ describe("scripts", () => {
     expect(sharedKeeperCommand()).toEqual([
       "bash",
       "-c",
-      `git config --global --add safe.directory '*' 2>/dev/null; exec ${KEEPER_PATH} "$1" "$2"`,
+      `${GIT_SAFE_DIRECTORY_SETUP}; exec ${KEEPER_PATH} "$1" "$2"`,
       "_",
       STATE_MOUNT,
       "30",
     ]);
     expect(sharedKeeperCommand(2).at(-1)).toBe("2");
     expect(sharedKeeperCommand().join(" ")).not.toContain("sudo");
+  });
+
+  it("adds safe.directory to a project gitconfig once, however often the container starts", () => {
+    const dir = mkdtempSync(join(tmpdir(), "safe-dir-"));
+    try {
+      const gitconfig = join(dir, "gitconfig");
+      writeFileSync(gitconfig, "[user]\n\tname = Example\n");
+      const run = () =>
+        execFileSync("/bin/sh", ["-c", GIT_SAFE_DIRECTORY_SETUP], {
+          env: { PATH: process.env.PATH ?? "", HOME: dir, GIT_CONFIG_GLOBAL: gitconfig },
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+      run();
+      run();
+      run();
+      const text = readFileSync(gitconfig, "utf8");
+      expect(text.match(/directory = \*/g)).toHaveLength(1);
+      expect(text).toContain("name = Example");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("runs the root setup step as root with system tools and the hash on standard input", () => {
@@ -172,6 +194,26 @@ describe("scripts", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
       rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("never changes the owner of the home directory or its parents, even under /tmp", () => {
+    const dir = mkdtempSync(join(tmpdir(), "own-home-"));
+    try {
+      const { bin, log } = fakeRootTools(dir);
+      // A home under /tmp: the /tmp rule alone would also reach the home
+      // and every parent of it.
+      const home = join(dir, "home", "tester");
+      mkdirSync(join(home, "deep", "mount"), { recursive: true });
+      runRootSetup(bin, join(dir, "sudoers"), home, "", [join(home, "deep", "mount", "x")]);
+      const owned = readFileSync(log, "utf8")
+        .trim()
+        .split("\n")
+        .filter((c) => c.startsWith("chown "))
+        .map((c) => c.replace("chown -h -- tester: ", ""));
+      expect(owned).toEqual([join(home, "deep", "mount"), join(home, "deep")]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 
