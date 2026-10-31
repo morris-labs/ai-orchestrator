@@ -144,8 +144,11 @@ RUN test -n "${AGENTBOX_ENGINE_VERSION}" || { echo "AGENTBOX_ENGINE_VERSION is n
     engine_pkg=/usr/local/lib/agentbox/engine && \
     { test -d "${engine_pkg}/node_modules" || \
       { echo "dist/agentbox-engine-${AGENTBOX_ENGINE_VERSION}.tgz has no node_modules; pack it with scripts/build-image.sh" >&2; exit 1; }; } && \
-    /usr/bin/node -p "require('${engine_pkg}/package.json').version" > /etc/agentbox-engine-version && \
-    test "$(cat /etc/agentbox-engine-version)" = "${AGENTBOX_ENGINE_VERSION}" && \
+    engine_ver="$(/usr/bin/node -p "require('${engine_pkg}/package.json').version")" && \
+    test "${engine_ver}" = "${AGENTBOX_ENGINE_VERSION}" && \
+    engine_hash="$(tr -d '[:space:]' < "${engine_pkg}/dist/identity")" && \
+    { test -n "${engine_hash}" || { echo "the engine package has no dist/identity; build it with scripts/build-image.sh" >&2; exit 1; }; } && \
+    printf '%s+%s\n' "${engine_ver}" "${engine_hash}" > /etc/agentbox-engine-version && \
     engine_bin="$(/usr/bin/node -p "const p=require('${engine_pkg}/package.json'); (typeof p.bin === 'string' ? p.bin : p.bin?.['agentbox-engine']) ?? ''")" && \
     { test -n "${engine_bin}" || { echo "the engine package has no agentbox-engine bin" >&2; exit 1; }; } && \
     { test -f "${engine_pkg}/${engine_bin#./}" || { echo "the engine bin ${engine_bin} is missing from the package" >&2; exit 1; }; } && \
