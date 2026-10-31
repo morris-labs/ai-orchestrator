@@ -244,6 +244,32 @@ describe("classifyRun", () => {
       classifyRun(r({ exitCode: 1, output: "Traceback (most recent call last):\n  boom" })),
     ).toBe("failed");
   });
+
+  // Finding 49: a Python `assert` exits 1 with a traceback, which used to
+  // count as a crashed script.
+  it("counts a failed Python assert as a reproduction", async () => {
+    const traceback = (last: string) =>
+      `Traceback (most recent call last):\n  File "r.py", line 1, in <module>\n${last}\n`;
+    expect(classifyRun(r({ exitCode: 1, output: traceback("AssertionError") }))).toBe(
+      "reproduced",
+    );
+    expect(
+      classifyRun(r({ exitCode: 1, output: traceback("AssertionError: total is 10, not 9") })),
+    ).toBe("reproduced");
+    expect(
+      classifyRun(r({ exitCode: 1, output: traceback("ModuleNotFoundError: No module named x") })),
+    ).toBe("failed");
+    const scratch = tempDir("agentbox-scratch-");
+    const repo = tempDir("agentbox-repo-");
+    const run = await runReproScript(
+      new ExecaRunner(),
+      scratch,
+      { path: "r.py", interpreter: "python3", content: "assert 1 + 1 == 3, 'sum is wrong'\n" },
+      repo,
+    );
+    expect(run.exitCode).toBe(1);
+    expect(classifyRun(run)).toBe("reproduced");
+  });
 });
 
 describe("decideVerdict with failed scripts", () => {

@@ -119,16 +119,24 @@ const SCRIPT_FAILURE_PATTERN =
   /Traceback \(most recent call last\)|SyntaxError|can't open file|No such file or directory|command not found|cannot find module|ModuleNotFoundError|ImportError|Permission denied|Uncaught |ReferenceError|TypeError: .* is not a function|bad interpreter/i;
 
 /**
+ * The last line of a Python traceback for a failed `assert`: the script ran
+ * and its own check found the flaw, so the traceback isn't a crash.
+ */
+const PYTHON_ASSERTION = /(?:^|\n)AssertionError(?::[^\n]*)?$/;
+
+/**
  * What one run of a reproduction script shows: the flaw `reproduced`, the
  * run was `clean`, or the script `failed` to run at all (missing, not
  * executable, timed out, killed by a signal, crashed, or exited with a code
- * other than 0 or 1). A failed run proves nothing either way.
+ * other than 0 or 1). A failed run proves nothing either way. A Python
+ * script that exits 1 on a failed `assert` reproduced the flaw.
  */
 export function classifyRun(run: ScriptRun): "reproduced" | "clean" | "failed" {
   if (run.notStarted || run.timedOut || run.signal) return "failed";
   if (run.exitCode === 126 || run.exitCode === 127) return "failed";
   if (run.exitCode === 0) return "clean";
   if (run.exitCode !== REPRODUCED_EXIT_CODE) return "failed";
+  if (PYTHON_ASSERTION.test(run.output.trimEnd())) return "reproduced";
   return SCRIPT_FAILURE_PATTERN.test(run.output) ? "failed" : "reproduced";
 }
 
