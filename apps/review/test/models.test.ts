@@ -197,4 +197,10 @@ describe("router", () => {
     expect(deepLink("?project=p&box=b")).toEqual({ project: "p", box: "b" });
     expect(deepLink("")).toEqual({ project: null, box: null });
   });
+
+  it("keeps a malformed percent-escape in the hash instead of throwing", () => {
+    expect(() => parseHash("#/runs/%E0%A4")).not.toThrow();
+    expect(parseHash("#/runs/%E0%A4").params.runId).toBe("%E0%A4");
+    expect(parseHash("#/runs/a%20b").params.runId).toBe("a b");
+  });
 });

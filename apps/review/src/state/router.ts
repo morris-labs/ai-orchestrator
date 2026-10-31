@@ -11,11 +11,20 @@ export interface Route {
   query: URLSearchParams;
 }
 
+/** Decodes a path segment; a malformed escape such as `%E0%A4` stays as typed. */
+function decodeSegment(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+}
+
 /** Parses `#/runs/ID?x=1` into a route. Unknown paths go to the launcher. */
 export function parseHash(hash: string): Route {
   const raw = hash.replace(/^#/, "");
   const [pathPart = "", queryPart = ""] = raw.split("?", 2);
-  const parts = pathPart.split("/").filter(Boolean).map(decodeURIComponent);
+  const parts = pathPart.split("/").filter(Boolean).map(decodeSegment);
   const query = new URLSearchParams(queryPart);
   const [head, id] = parts;
   switch (head) {
@@ -78,6 +87,23 @@ export function useRoute(): Route {
     return () => window.removeEventListener("hashchange", on);
   }, []);
   return parseHash(hash);
+}
+
+/**
+ * Moves a deep link in the page's own query string (`search`) into the
+ * hash, so it applies once: to the Policy screen when the hash shows it,
+ * else to the launcher. The page's URL loses the query, so later routes
+ * don't see it. Does nothing without a deep link.
+ */
+export function moveDeepLinkToHash(search: string): void {
+  const link = deepLink(search);
+  if (!link.project && !link.box) return;
+  const route = parseHash(window.location.hash);
+  const hash =
+    route.name === "policy"
+      ? href("/policy", { project: route.query.get("project") ?? link.project ?? undefined })
+      : href("/launch", { project: link.project ?? undefined, box: link.box ?? undefined });
+  history.replaceState(history.state, "", `${window.location.pathname}${hash}`);
 }
 
 /** The deep link `?project=&box=` in the page's own query string. */
