@@ -62,6 +62,68 @@ describe("runProcess", () => {
     expect(Date.now() - started).toBeLessThan(5000);
   });
 
+  it("times out when the child exits and a grandchild keeps its output open", async () => {
+    const started = Date.now();
+    const result = await runProcess({
+      command: "sh",
+      args: ["-c", "sleep 30 & exit 0"],
+      cwd: process.cwd(),
+      timeoutMs: 300,
+      killGraceMs: 200,
+      exitDrainMs: 60_000,
+    });
+    expect(result.timedOut).toBe(true);
+    expect(result.exitCode).toBe(0);
+    expect(Date.now() - started).toBeLessThan(5000);
+  });
+
+  it("cancels when the child exits and a grandchild keeps its output open", async () => {
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 300);
+    const started = Date.now();
+    const result = await runProcess({
+      command: "sh",
+      args: ["-c", "sleep 30 & exit 0"],
+      cwd: process.cwd(),
+      signal: controller.signal,
+      killGraceMs: 200,
+      exitDrainMs: 60_000,
+    });
+    expect(result.cancelled).toBe(true);
+    expect(Date.now() - started).toBeLessThan(5000);
+  });
+
+  it("stops a leftover grandchild soon after the child exits", async () => {
+    const started = Date.now();
+    const result = await runProcess({
+      command: "sh",
+      args: ["-c", "echo out; sleep 30 & exit 4"],
+      cwd: process.cwd(),
+      timeoutMs: 60_000,
+      killGraceMs: 200,
+      exitDrainMs: 200,
+    });
+    expect(result.timedOut).toBe(false);
+    expect(result.exitCode).toBe(4);
+    expect(result.stdout).toBe("out\n");
+    expect(Date.now() - started).toBeLessThan(5000);
+  });
+
+  it("returns when a leftover process left the group and SIGKILL can't reach it", async () => {
+    const started = Date.now();
+    const result = await runProcess({
+      command: "sh",
+      args: ["-c", "setsid sleep 5 & exit 0"],
+      cwd: process.cwd(),
+      timeoutMs: 200,
+      killGraceMs: 200,
+      exitDrainMs: 60_000,
+    });
+    expect(result.timedOut).toBe(true);
+    expect(result.exitCode).toBe(0);
+    expect(Date.now() - started).toBeLessThan(4000);
+  });
+
   it("escalates to SIGKILL when SIGTERM is ignored", async () => {
     const result = await runProcess({
       command: node,

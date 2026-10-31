@@ -34,6 +34,13 @@ export interface RunProcessOptions {
   onLine?: (line: string) => void;
   /** Time between SIGTERM and SIGKILL. Default 3000 ms. */
   killGraceMs?: number;
+  /**
+   * How long the call waits, after the child itself exits, for the processes
+   * it left behind to close its output. When `timeoutMs` or `signal` is set
+   * and they don't close it in time, `runProcess` kills the process group.
+   * Default 2000 ms.
+   */
+  exitDrainMs?: number;
 }
 
 export interface ProcessResult {
@@ -94,10 +101,37 @@ export async function runProcess(opts: RunProcessOptions): Promise<ProcessResult
         ? trackChild(child.pid)
         : () => undefined;
 
+    let leaderExit: { code: number | null; signal: NodeJS.Signals | null } | undefined;
+    let killing = false;
+    const grace = opts.killGraceMs ?? 3000;
+
+    // Ends the call without waiting for `close`. It runs only after SIGKILL
+    // has gone to the group: whatever still holds the pipes then left the
+    // group, and must not keep the call open.
+    const abandonPipes = () => {
+      if (settled) return;
+      if (leaderExit === undefined) {
+        killTimer = setTimeout(abandonPipes, grace);
+        killTimer.unref();
+        return;
+      }
+      child.stdout.destroy();
+      child.stderr.destroy();
+      finish(leaderExit.code, leaderExit.signal);
+    };
+
+    // Signals the whole group, even after the child itself has exited: a
+    // grandchild that still holds stdout or stderr keeps `close` from firing.
     const kill = () => {
-      if (child.exitCode !== null || child.signalCode !== null) return;
-      signalTree(child.pid, "SIGTERM");
-      killTimer = setTimeout(() => signalTree(child.pid, "SIGKILL"), opts.killGraceMs ?? 3000);
+      if (settled || killing) return;
+      if (process.platform === "win32" && leaderExit !== undefined) return;
+      killing = true;
+      signalTree(child.pid, "SIGTERM", leaderExit === undefined);
+      killTimer = setTimeout(() => {
+        signalTree(child.pid, "SIGKILL", leaderExit === undefined);
+        killTimer = setTimeout(abandonPipes, grace);
+        killTimer.unref();
+      }, grace);
       killTimer.unref();
     };
 
@@ -165,18 +199,34 @@ export async function runProcess(opts: RunProcessOptions): Promise<ProcessResult
       finish(null, null);
     });
     child.on("close", (code, signal) => finish(code, signal));
+    child.on("exit", (code, signal) => {
+      leaderExit = { code, signal };
+      // A call with a time limit or a cancel signal must not stay open for a
+      // process that the child left running with its output pipes.
+      if (killing || (limit <= 0 && !opts.signal)) return;
+      const drain = setTimeout(kill, opts.exitDrainMs ?? 2000);
+      drain.unref();
+      child.once("close", () => clearTimeout(drain));
+    });
 
     if (opts.input !== undefined) child.stdin.end(opts.input);
     else child.stdin.end();
   });
 }
 
-function signalTree(pid: number | undefined, signal: NodeJS.Signals): void {
+/**
+ * Signals the process group that `pid` leads. `leaderAlive` allows a fallback
+ * to `pid` alone. Once the leader has exited, its pid can belong to another
+ * process, so only the group is signalled: the kernel doesn't reuse a group
+ * id while any member lives.
+ */
+function signalTree(pid: number | undefined, signal: NodeJS.Signals, leaderAlive: boolean): void {
   if (pid === undefined) return;
   try {
     if (process.platform === "win32") process.kill(pid, signal);
     else process.kill(-pid, signal);
   } catch {
+    if (!leaderAlive) return;
     try {
       process.kill(pid, signal);
     } catch {
