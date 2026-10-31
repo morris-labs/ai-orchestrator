@@ -5,7 +5,9 @@ import type { BoxView, EventOf, Listener, ProjectSummary } from "@agentbox/contr
 
 /**
  * Applies `box.changed`. Returns the new list and whether the box is unknown
- * here, in which case the caller fetches its full view.
+ * here, in which case the caller fetches its full view. A box that stopped
+ * loses what only a live session has: its stats, its dev-server listeners
+ * and links, and its side sessions.
  */
 export function applyBoxChanged(
   boxes: readonly BoxView[],
@@ -16,7 +18,15 @@ export function applyBoxChanged(
   if (i < 0) return { boxes: [...boxes], unknown: true };
   const next = [...boxes];
   const old = next[i] as BoxView;
-  next[i] = { ...old, box: ev.box, status: ev.status, container: ev.box.container };
+  next[i] = {
+    ...old,
+    box: ev.box,
+    status: ev.status,
+    container: ev.box.container,
+    ...(ev.status === "stopped"
+      ? { stats: null, listeners: [], proxyUrls: [], sideSessions: [] }
+      : {}),
+  };
   return { boxes: next, unknown: false };
 }
 

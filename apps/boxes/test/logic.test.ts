@@ -417,6 +417,29 @@ describe("store", () => {
     ).toEqual([]);
     expect(applyBoxChanged([], changed).unknown).toBe(true);
   });
+  it("drops the live-session state of a box that stopped", () => {
+    const a = makeBoxView({
+      box: { id: "claude-agent-a", targetDir: "/w/a" },
+      status: "running",
+      stats: { cpuPercent: 5, memBytes: 1, memLimitBytes: 2 },
+      listeners: [{ port: 5173, proto: "tcp", process: "node", boxId: "claude-agent-a" }],
+      proxyUrls: [{ port: 5173, url: "http://5173.a.localhost:21401/" }],
+      sideSessions: ["codex"],
+    });
+    const stopped = applyBoxChanged(
+      [a],
+      makeEvent("box.changed", { boxId: a.box.id, status: "stopped", box: a.box }),
+    ).boxes[0]!;
+    expect(stopped.stats).toBeNull();
+    expect(stopped.listeners).toEqual([]);
+    expect(stopped.proxyUrls).toEqual([]);
+    expect(stopped.sideSessions).toEqual([]);
+    const running = applyBoxChanged(
+      [a],
+      makeEvent("box.changed", { boxId: a.box.id, status: "running", box: a.box }),
+    ).boxes[0]!;
+    expect(running.stats).toEqual(a.stats);
+  });
   it("applies stats and ports per container", () => {
     const a = v("a", "running");
     const b = v("b", "running", { projectId: a.box.projectId });
