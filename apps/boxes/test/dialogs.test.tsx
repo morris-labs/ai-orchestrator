@@ -181,10 +181,9 @@ describe("BoxDialog, new mode", () => {
     server.state.dirs["/w/issues"] = [];
     server.state.newIssueScriptDirs.push("/w/issues");
     newDialog(server, { initialDir: "/w/issues" });
-    await waitFor(
-      () => expect(screen.getByLabelText(/workspace subfolder/)).toBeChecked(),
-      { timeout: 3000 },
-    );
+    await waitFor(() => expect(screen.getByLabelText(/workspace subfolder/)).toBeChecked(), {
+      timeout: 3000,
+    });
   });
 
   it("keeps a remembered no over a new-issue.sh marker", async () => {

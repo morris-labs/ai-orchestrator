@@ -63,7 +63,9 @@ describe("policy file", () => {
     ).toThrow(expect.objectContaining({ code: "conflict" }));
     expect(fs.readFileSync(file, "utf8")).toBe("version: 1\nriskPaths: [src/**]\n");
     // Without a base revision, the put overwrites.
-    expect(writePolicy(file, { ...DEFAULT_POLICY, groupSizeLimit: 9 }).policy.groupSizeLimit).toBe(9);
+    expect(writePolicy(file, { ...DEFAULT_POLICY, groupSizeLimit: 9 }).policy.groupSizeLimit).toBe(
+      9,
+    );
     // A put against a missing file's revision fails once the file exists.
     const other = tempFile();
     const missing = readPolicy(other).revision;
@@ -76,7 +78,8 @@ describe("policy file", () => {
 
   it("writes policy text as it is, comments and key order included", () => {
     const file = tempFile();
-    const text = "# keep in sync with CI\nversion: 1\ntests:\n  - command: npm test # the fast suite\nriskPaths: []\n";
+    const text =
+      "# keep in sync with CI\nversion: 1\ntests:\n  - command: npm test # the fast suite\nriskPaths: []\n";
     const r = writePolicy(file, { text });
     expect(fs.readFileSync(file, "utf8")).toBe(text);
     expect(r.policy.tests).toEqual([{ command: "npm test" }]);

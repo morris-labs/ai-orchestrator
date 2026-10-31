@@ -182,12 +182,12 @@ describe("closing the window", () => {
   });
 
   it("follows AGENTBOX_CLOSE_TO_TRAY over the desktop", () => {
-    expect(closeHidesToTray({ XDG_CURRENT_DESKTOP: "GNOME", AGENTBOX_CLOSE_TO_TRAY: "1" }, null)).toBe(
-      true,
-    );
-    expect(closeHidesToTray({ XDG_CURRENT_DESKTOP: "KDE", AGENTBOX_CLOSE_TO_TRAY: "0" }, null)).toBe(
-      false,
-    );
+    expect(
+      closeHidesToTray({ XDG_CURRENT_DESKTOP: "GNOME", AGENTBOX_CLOSE_TO_TRAY: "1" }, null),
+    ).toBe(true);
+    expect(
+      closeHidesToTray({ XDG_CURRENT_DESKTOP: "KDE", AGENTBOX_CLOSE_TO_TRAY: "0" }, null),
+    ).toBe(false);
     expect(needsExtensionList({ XDG_CURRENT_DESKTOP: "GNOME", AGENTBOX_CLOSE_TO_TRAY: "0" })).toBe(
       false,
     );

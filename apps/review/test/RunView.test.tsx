@@ -212,7 +212,12 @@ describe("RunView", () => {
   });
 
   it("keeps a stage.changed stage when a reload returns the same updatedAt", async () => {
-    const run = { ...lastRun(), status: "running" as const, decision: null, stage: "find" as const };
+    const run = {
+      ...lastRun(),
+      status: "running" as const,
+      decision: null,
+      stage: "find" as const,
+    };
     let calls = 0;
     let release!: () => void;
     const gate = new Promise<void>((res) => (release = res));

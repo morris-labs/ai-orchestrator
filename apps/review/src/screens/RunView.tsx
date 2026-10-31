@@ -325,8 +325,7 @@ export function RunView({ runId }: { runId: string }) {
       if (prev) {
         // The event's time is when the run changed, so it counts as the
         // run's `updatedAt`, and a REST run from before it is older.
-        const updatedAt =
-          Date.parse(e.time) > Date.parse(prev.updatedAt) ? e.time : prev.updatedAt;
+        const updatedAt = Date.parse(e.time) > Date.parse(prev.updatedAt) ? e.time : prev.updatedAt;
         latest.current = { ...prev, stage: e.stage, round: e.round, updatedAt };
         stageEvent.current = { updatedAt, stage: e.stage };
         setRun(latest.current);
@@ -566,7 +565,14 @@ export function RunList() {
     api.call("runs.list").then(
       (r) => {
         if (!live) return;
-        setRuns(buffer.finish(during, r.runs, (x) => x.id, (e, l) => isNewerRun(l, e)));
+        setRuns(
+          buffer.finish(
+            during,
+            r.runs,
+            (x) => x.id,
+            (e, l) => isNewerRun(l, e),
+          ),
+        );
       },
       (err: unknown) => {
         buffer.cancel(during);

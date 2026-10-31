@@ -128,7 +128,13 @@ describe("Policy", () => {
           throw new FakeApiError("conflict", "The policy file changed on disk.", 409);
         }
         const t = (c.body as { text: string }).text;
-        return { path: "/p/policy.yaml", exists: true, policy: DEFAULT_POLICY, text: t, revision: "sha256:three" };
+        return {
+          path: "/p/policy.yaml",
+          exists: true,
+          policy: DEFAULT_POLICY,
+          text: t,
+          revision: "sha256:three",
+        };
       },
     });
     await waitFor(() => expect(screen.getByLabelText(/^Risk paths/)).toHaveValue("src/auth/**"));

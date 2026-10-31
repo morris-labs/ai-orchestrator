@@ -176,9 +176,9 @@ describe("new box form", () => {
     expect(validateForm({ ...base, platform: "codex", model: "" }, "new")).toEqual([]);
     expect(validateForm({ ...base, targetDir: "", layout: "worktree" }, "edit")).toEqual([]);
     const uuid = "11111111-1111-4111-8111-111111111111";
-    expect(validateForm({ ...base, name: "!!", layout: "worktree", conversation: uuid }, "new")).toEqual(
-      [],
-    );
+    expect(
+      validateForm({ ...base, name: "!!", layout: "worktree", conversation: uuid }, "new"),
+    ).toEqual([]);
   });
   it("picks the remembered layout", () => {
     const repo = makeProject({ root: "/w/site", primaryRepo: "/w/site" });

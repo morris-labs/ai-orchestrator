@@ -1,14 +1,7 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { App } from "../src/App.js";
-import {
-  demoBox,
-  demoRounds,
-  lastRun,
-  loadDemoEvents,
-  project,
-  settings,
-} from "./helpers/data.js";
+import { demoBox, demoRounds, lastRun, loadDemoEvents, project, settings } from "./helpers/data.js";
 import { renderWithStore } from "./helpers/render.js";
 
 const events = loadDemoEvents();

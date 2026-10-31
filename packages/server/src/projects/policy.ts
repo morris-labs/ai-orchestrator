@@ -90,11 +90,9 @@ export function writePolicy(
   if (baseRevision !== undefined) {
     const current = revisionOf(readText(file));
     if (current !== baseRevision) {
-      throw new ApiError(
-        "conflict",
-        `The policy file ${file} changed on disk since it was read.`,
-        { revision: current },
-      );
+      throw new ApiError("conflict", `The policy file ${file} changed on disk since it was read.`, {
+        revision: current,
+      });
     }
   }
   let text: string;

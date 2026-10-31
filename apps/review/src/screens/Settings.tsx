@@ -59,7 +59,9 @@ function NumberInput({
   // A change from outside, such as a settings.changed event, replaces the
   // text; the person's own typing doesn't.
   useEffect(() => {
-    setText((t) => (t.trim() !== "" && Number(t) / scale === value ? t : formatNumber(value * scale)));
+    setText((t) =>
+      t.trim() !== "" && Number(t) / scale === value ? t : formatNumber(value * scale),
+    );
   }, [value, scale]);
   return (
     <input
@@ -72,7 +74,8 @@ function NumberInput({
         const raw = e.target.value;
         setText(raw);
         const n = Number(raw);
-        const valid = raw.trim() !== "" && Number.isFinite(n) && n >= 0 && (max === undefined || n <= max);
+        const valid =
+          raw.trim() !== "" && Number.isFinite(n) && n >= 0 && (max === undefined || n <= max);
         onValid(valid);
         if (valid) onChange(n / scale);
       }}
