@@ -100,6 +100,20 @@ describe("EngineClient", () => {
     });
   });
 
+  it("turns a body that isn't JSON into an ApiError", async () => {
+    const c = build({
+      fetch: async () =>
+        new Response("<html>502 Bad Gateway</html>", {
+          status: 502,
+          headers: { "content-type": "text/html" },
+        }),
+    });
+    await expect(c.call("engine.runs.list")).rejects.toMatchObject({
+      code: "internal",
+      message: "The engine answered 502 with a body that isn't JSON.",
+    });
+  });
+
   it("reports an unreachable engine", async () => {
     const c = build();
     await engine.stop();
@@ -188,6 +202,51 @@ describe("EngineClient", () => {
     engine.emit(runEvent);
     await waitFor(() => logs.some((l) => l.includes("failed to relay")));
     expect(cursor.get()?.lastSeq).toBe(0);
+  });
+
+  it("replays an event whose relay failed even when a later one relays", async () => {
+    let failures = 1;
+    const c = build({
+      onEvent: (e) => {
+        if (failures > 0) {
+          failures -= 1;
+          throw new Error("SQLITE_BUSY");
+        }
+        received.push(e);
+      },
+    });
+    c.start();
+    await waitFor(() => engine.sockets.length === 1 && cursor.get() !== null);
+    engine.emit(runEvent);
+    engine.emit(runEvent);
+    await waitFor(() => received.length === 2);
+    expect(received.map((e) => e.seq)).toEqual([1, 2]);
+    expect(cursor.get()?.lastSeq).toBe(2);
+  });
+
+  it("pauses the run when deciding a lease fails", async () => {
+    const c = build({
+      onLease: async () => {
+        throw new Error("no ceilings");
+      },
+    });
+    c.start();
+    await waitFor(() => engine.sockets.length === 1);
+    engine.sendRaw({
+      type: "lease.request",
+      leaseId: "L-1",
+      runId: RUN,
+      vendor: "claude",
+      role: "fixer",
+      estimate: { tokens: 10 },
+    });
+    await waitFor(() => engine.leaseResponses.length === 1);
+    expect(engine.leaseResponses[0]).toEqual({
+      decision: "deny",
+      leaseId: "L-1",
+      reason: "The server could not decide the lease: no ceilings",
+      action: "pause",
+    });
   });
 
   it("ignores an invalid frame", async () => {
