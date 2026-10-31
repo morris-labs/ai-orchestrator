@@ -23,6 +23,7 @@ import {
 } from "@agentbox/ui/dashboard";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ErrorBanner, RunStatusBadge, shortId } from "../components/common.js";
+import { EventBuffer } from "../state/eventBuffer.js";
 import { href } from "../state/router.js";
 import { useApiClient, useAnyEvent } from "@agentbox/ui/hooks";
 import { useStore } from "../state/store.js";
@@ -557,11 +558,30 @@ export function RunList() {
   const [runs, setRuns] = useState<RunState[]>([]);
   const [error, setError] = useState<unknown>(null);
   const resets = useStore((s) => s.resets);
+  // Runs that change while the list loads keep their newer state.
+  const [buffer] = useState(() => new EventBuffer<RunState>());
   useEffect(() => {
-    api.call("runs.list").then((r) => setRuns(r.runs), setError);
-  }, [api, resets]);
+    let live = true;
+    const during = buffer.start();
+    api.call("runs.list").then(
+      (r) => {
+        if (!live) return;
+        setRuns(buffer.finish(during, r.runs, (x) => x.id, (e, l) => isNewerRun(l, e)));
+      },
+      (err: unknown) => {
+        buffer.cancel(during);
+        if (live) setError(err);
+      },
+    );
+    return () => {
+      live = false;
+      buffer.cancel(during);
+    };
+  }, [api, resets, buffer]);
   useAnyEvent((e) => {
-    if (e.type === "run.changed") setRuns((rs) => [e.run, ...rs.filter((r) => r.id !== e.run.id)]);
+    if (e.type !== "run.changed") return;
+    buffer.record(e.run.id, e.run);
+    setRuns((rs) => [e.run, ...rs.filter((r) => r.id !== e.run.id)]);
   });
   const sorted = [...runs].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   return (

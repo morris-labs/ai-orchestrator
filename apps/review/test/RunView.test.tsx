@@ -1,7 +1,7 @@
 import type { Decision, Finding, RunState } from "@agentbox/contracts";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { DecisionPanel, RunView, StageStepper } from "../src/screens/RunView.js";
+import { DecisionPanel, RunList, RunView, StageStepper } from "../src/screens/RunView.js";
 import { RUN_ID, demoFindings, demoRounds, lastRun, loadDemoEvents } from "./helpers/data.js";
 import { renderWithStore } from "./helpers/render.js";
 
@@ -252,5 +252,25 @@ describe("RunView", () => {
     await new Promise((res) => setTimeout(res, 20));
     expect(screen.getByText("fix").closest("li")).toHaveAttribute("data-state", "current");
     store.stop();
+  });
+});
+
+describe("RunList", () => {
+  it("keeps a run created while the list loads", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((res) => (release = res));
+    const { store, server } = renderWithStore(<RunList />, {
+      "runs.list": async () => {
+        await gate;
+        return { runs: [] };
+      },
+    });
+    await waitFor(() => expect(server.callsTo("runs.list")).toHaveLength(1));
+    const ev = loadDemoEvents().find((e) => e.type === "run.changed")!;
+    act(() => store.ingest(ev));
+    release();
+    await new Promise((res) => setTimeout(res, 20));
+    expect(screen.queryByText(/No runs yet/)).toBeNull();
+    expect(screen.getByRole("link", { name: ev.run.id.slice(-6) })).toBeInTheDocument();
   });
 });

@@ -14,6 +14,7 @@ import {
 import { VENDOR_LABELS, VENDORS } from "@agentbox/ui/dashboard";
 import { useEffect, useMemo, useState } from "react";
 import { DiffView, ErrorBanner, Field, shortId } from "../components/common.js";
+import { EventBuffer } from "../state/eventBuffer.js";
 import { href, navigate } from "../state/router.js";
 import { useApiClient, useAnyEvent } from "@agentbox/ui/hooks";
 import { useStore } from "../state/store.js";
@@ -44,24 +45,37 @@ function FindingDetail({
   const [error, setError] = useState<unknown>(null);
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
+  // A change to this finding while its detail loads wins over the answer.
+  const [buffer] = useState(() => new EventBuffer<Finding>());
   useEffect(() => {
     // A response for a finding the user has since left must not replace the
     // detail, or Waive acts on a finding other than the one shown.
     let live = true;
+    const during = buffer.start();
     setDetail(null);
     setError(null);
     api.call("findings.get", { params: { runId, findingId } }).then(
       (d) => {
-        if (live) setDetail(d);
+        const [finding] = buffer.finish(during, [d.finding], (f) => f.id);
+        if (live) setDetail({ ...d, finding: finding ?? d.finding });
       },
       (err: unknown) => {
+        buffer.cancel(during);
         if (live) setError(err);
       },
     );
     return () => {
       live = false;
+      buffer.cancel(during);
     };
-  }, [api, runId, findingId]);
+  }, [api, runId, findingId, buffer]);
+  // The verdict on screen follows the stream, so Waive isn't offered for a
+  // finding that a fix has closed since.
+  useAnyEvent((e) => {
+    if (e.type !== "finding.changed" || e.runId !== runId || e.finding.id !== findingId) return;
+    buffer.record(e.finding.id, e.finding);
+    setDetail((d) => (d ? { ...d, finding: e.finding } : d));
+  });
   if (!detail) return error ? <ErrorBanner error={error} /> : <p className="muted">Loading…</p>;
   const f = detail.finding;
   const link = f.fixCommit ? commitUrl(run?.prUrl, f.fixCommit) : null;
@@ -205,22 +219,28 @@ export function Findings({ runId, findingId }: { runId: string | null; findingId
   }, [api, resets]);
 
   const selectedRun = runId ?? runs[0]?.id ?? null;
+  // Findings that change while the list loads keep their newer state.
+  const [buffer] = useState(() => new EventBuffer<Finding>());
   useEffect(() => {
     if (!selectedRun) return;
     // Drop a late list for a run the user has since left.
     let live = true;
+    const during = buffer.start();
     api.call("findings.list", { params: { runId: selectedRun } }).then(
       (r) => {
-        if (live) setFindings(r.findings);
+        const merged = buffer.finish(during, r.findings, (f) => f.id);
+        if (live) setFindings(merged);
       },
       (err: unknown) => {
+        buffer.cancel(during);
         if (live) setError(err);
       },
     );
     return () => {
       live = false;
+      buffer.cancel(during);
     };
-  }, [api, selectedRun, resets]);
+  }, [api, selectedRun, resets, buffer]);
 
   // Another run's findings never show under this run while its list loads.
   const [listedRun, setListedRun] = useState(selectedRun);
@@ -231,6 +251,7 @@ export function Findings({ runId, findingId }: { runId: string | null; findingId
 
   useAnyEvent((e) => {
     if (e.type === "finding.changed" && e.runId === selectedRun) {
+      buffer.record(e.finding.id, e.finding);
       setFindings((fs) => [...fs.filter((f) => f.id !== e.finding.id), e.finding]);
     }
   });
