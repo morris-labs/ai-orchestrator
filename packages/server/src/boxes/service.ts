@@ -642,6 +642,11 @@ export class BoxService {
         `${id} is being converted to a worktree; start it when that finishes.`,
       );
     }
+    // The keeper lists a killed session until its next write, about a second
+    // later, so a start right after a stop waits for the session to leave.
+    if (this.isRunning(box) && this.transitions.get(id)?.status === "stopping") {
+      await this.waitSessionGone(box);
+    }
     if (this.isRunning(box)) throw new ApiError("box_running", `${id} is already running.`);
     if (box.sessionUuid) {
       // `force` lets a stopped box share a conversation; two running ones

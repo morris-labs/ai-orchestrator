@@ -64,6 +64,11 @@ export class MemoryDocker implements DockerClient {
    * treats the daemon's 409 "already in progress" as done.
    */
   readonly removing = new Map<string, number>();
+  /**
+   * True makes `tmux kill-session` leave the sessions file alone until the
+   * next `tick()`, as the real keeper rewrites it only once a second.
+   */
+  keeperLags = false;
   private nextId = 1;
   private cpuTick = 0;
 
@@ -267,7 +272,7 @@ export class MemoryDocker implements DockerClient {
       if (!c.sessions.delete(target)) {
         return { exitCode: 1, stdout: "", stderr: `can't find session: ${target}\n` };
       }
-      this.writeState(c);
+      if (!this.keeperLags) this.writeState(c);
       return { exitCode: 0, stdout: "", stderr: "" };
     }
     if (cmd[0] === "tmux" && cmd[1] === "list-sessions") {

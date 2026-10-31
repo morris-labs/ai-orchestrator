@@ -478,6 +478,25 @@ describe("start, stop, restart", () => {
     );
   });
 
+  it("starts right after a stop while the keeper still lists the session", async () => {
+    const h = makeHarness();
+    const box = await h.core.boxes.create({ targetDir: h.dir("app"), layout: "root" });
+    h.docker.keeperLags = true;
+    await h.core.boxes.stop(box.id);
+    expect(h.core.boxes.isRunning(box)).toBe(true);
+    setTimeout(() => h.docker.tick(), 100);
+    await expect(h.core.boxes.start(box.id)).resolves.toMatchObject({ wasRunning: true });
+    expect(h.core.boxes.status(h.core.boxes.get(box.id))).toBe("running");
+  });
+
+  it("refuses a start when a stopped session never leaves the keeper's list", async () => {
+    const h = makeHarness();
+    const box = await h.core.boxes.create({ targetDir: h.dir("app"), layout: "root" });
+    h.docker.keeperLags = true;
+    await h.core.boxes.stop(box.id);
+    await expect(h.core.boxes.start(box.id)).rejects.toMatchObject({ code: "box_running" });
+  });
+
   it("stops by killing the session and syncs name, model, and effort", async () => {
     const h = makeHarness();
     const box = await h.core.boxes.create({
