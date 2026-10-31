@@ -9,6 +9,7 @@ import {
   ApiError,
   CoreEvents,
   KeyedMutex,
+  RESERVED_ENV_NAMES,
   SettingsService,
   SshRemoteService,
   allocateHostKey,
@@ -244,17 +245,25 @@ describe("SettingsService", () => {
     expect(settings.get().secretRefs).toEqual([ref]);
   });
 
-  it("refuses a secret named like a variable the server sets", () => {
+  it("refuses a secret named like a variable the server sets, and saves nothing", () => {
     const { settings } = setup();
-    for (const name of [
-      "AGENTBOX_ENGINE_TOKEN",
-      "AGENTBOX_ENGINE_TOKEN_FILE",
-      "IS_SANDBOX",
-      "GIT_CONFIG_GLOBAL",
-    ]) {
-      expect(() => settings.setSecretRefs([{ name, ref: "op://Vault/Item/field" }])).toThrow(
-        /reserved/,
-      );
+    const kept = [{ name: "TOKEN", ref: "op://Vault/Item/field" }];
+    settings.setSecretRefs(kept);
+    expect([...RESERVED_ENV_NAMES]).toEqual(
+      expect.arrayContaining([
+        "AGENTBOX_ENGINE_TOKEN",
+        "AGENTBOX_ENGINE_TOKEN_FILE",
+        "AGENTBOX_BROKER_SOCKET",
+        "IS_SANDBOX",
+        "DISABLE_AUTOUPDATER",
+        "GIT_CONFIG_GLOBAL",
+      ]),
+    );
+    for (const name of RESERVED_ENV_NAMES) {
+      expect(() =>
+        settings.setSecretRefs([...kept, { name, ref: "op://Vault/Item/other" }]),
+      ).toThrow(/reserved/);
+      expect(settings.get().secretRefs).toEqual(kept);
     }
   });
 
