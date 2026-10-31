@@ -2,6 +2,8 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
 import {
+  AccountSeedReportSchema,
+  DEFAULT_SEED_ACCOUNT_NAME,
   DecisionOptionSchema,
   EffortSchema,
   PlatformSchema,
@@ -11,6 +13,10 @@ import {
   SeveritySchema,
   VerdictSchema,
   isReadOnlyPostPush,
+  parseAccountId,
+  type AccountSeedReport,
+  type AccountSignIn,
+  type AccountView,
   type BoxView,
   type Ceiling,
   type ContainerInfo,
@@ -114,6 +120,54 @@ function parseMount(spec: string, cwd: string): { host: string; container: strin
 
 function ceilingText(c: Ceiling): string {
   return c.kind === "utilization" ? `${percent(c.max)} of ${c.window}` : `$${c.maxUsd}/${c.period}`;
+}
+
+function signInText(s: AccountSignIn): string {
+  const state =
+    s.state === "signed_in"
+      ? "signed in"
+      : s.state === "not_signed_in"
+        ? "not signed in"
+        : "sign-in unknown";
+  return s.identity ? `${state} as ${s.identity}` : state;
+}
+
+function accountRows(views: AccountView[]) {
+  return table(
+    ["ACCOUNT", "LABEL", "DEFAULT", "SIGN-IN", "FOLDER"],
+    views.map((v) => [
+      v.account.id,
+      v.account.label,
+      v.isDefault ? "yes" : "",
+      signInText(v.account.signIn),
+      v.dirExists ? v.dir : `${v.dir} (missing)`,
+    ]),
+  );
+}
+
+function seedText(report: AccountSeedReport): string {
+  const lines: string[] = [];
+  for (const a of report.accounts) {
+    if (a.status === "skipped") {
+      lines.push(`Skipped ${a.id}: ${a.reason ?? "no host folder"}`);
+      continue;
+    }
+    const verb = a.status === "would_seed" ? "Would seed" : "Seeded";
+    const mib = (a.bytes / (1024 * 1024)).toFixed(1);
+    lines.push(
+      `${verb} ${a.id} from ${a.source}: ${a.files} files (${mib} MiB), ${a.symlinks} links.`,
+    );
+    if (a.leftOut.length > 0) lines.push(`  Left out the sign-in files: ${a.leftOut.join(", ")}.`);
+    if (a.skippedSpecial.length > 0) {
+      lines.push(`  Skipped sockets and pipes: ${a.skippedSpecial.join(", ")}.`);
+    }
+    if (a.madeDefault) lines.push(`  Default ${a.vendor} account.`);
+    if (a.usageRelabeled > 0) lines.push(`  Relabeled ${a.usageRelabeled} usage samples.`);
+  }
+  if (!report.dryRun && report.accounts.some((a) => a.status === "seeded")) {
+    lines.push("Each account is not signed in. Sign in to it once from a box.");
+  }
+  return `${lines.join("\n")}\n`;
 }
 
 function boxRows(boxes: BoxView[]) {
@@ -780,6 +834,141 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
         body: { option: option as "resume", waiveFindingIds: o.waive, reason: o.reason },
       });
       print(r, () => `Run ${r.id} is ${r.status}.\n`);
+    });
+
+  // -------------------------------------------------------------------------
+  // accounts
+  const accounts = program
+    .command("accounts")
+    .description("List, add, and seed the agent CLI accounts.");
+
+  const accountParams = (id: string) => {
+    const parsed = parseAccountId(id);
+    if (!parsed)
+      throw new UsageError(`Invalid account ${id}; use VENDOR/NAME, such as claude/work.`);
+    return parsed;
+  };
+
+  accounts
+    .command("list")
+    .description("List the accounts of every vendor.")
+    .action(async () => {
+      const r = await client().call("accounts.list");
+      print(r, () => accountRows(r.accounts));
+    });
+
+  accounts
+    .command("add")
+    .description("Create an account with an empty folder; sign in to it from a box.")
+    .argument("<vendor>", `One of ${PLATFORMS.join(", ")}.`, choice(PLATFORMS))
+    .argument("<name>", "Lowercase letters, digits, and hyphens, such as work.")
+    .option("--label <text>", "A display name. Default: the name.")
+    .action(async (vendor: string, name: string, o: { label?: string }) => {
+      const r = await client().call("accounts.create", {
+        body: { vendor: vendor as "claude", name, label: o.label },
+      });
+      print(r, () => `Created ${r.account.id} in ${r.dir}${r.isDefault ? " (default)" : ""}.\n`);
+    });
+
+  accounts
+    .command("set")
+    .description("Change an account, or make it its vendor's default.")
+    .argument("<id>", "The account, VENDOR/NAME.")
+    .option("--label <text>", "A display name.")
+    .addOption(
+      new Option("--overflow <state>", "Whether runs can overflow to this account.").choices([
+        "on",
+        "off",
+      ]),
+    )
+    .option("--default", "Make it its vendor's default account.")
+    .action(async (id: string, o: { label?: string; overflow?: string; default?: boolean }) => {
+      const params = accountParams(id);
+      const c = client();
+      if (o.label === undefined && o.overflow === undefined && !o.default) {
+        throw new UsageError("Name something to change: --label, --overflow, or --default.");
+      }
+      let view =
+        o.label !== undefined || o.overflow !== undefined
+          ? await c.call("accounts.update", {
+              params,
+              body: {
+                ...(o.label !== undefined ? { label: o.label } : {}),
+                ...(o.overflow !== undefined ? { overflow: o.overflow === "on" } : {}),
+              },
+            })
+          : null;
+      if (o.default) {
+        await c.call("settings.patch", { body: { accountDefaults: { [params.vendor]: id } } });
+        view = await c.call("accounts.get", { params });
+      }
+      print(view, () => `Updated ${id}.\n`);
+    });
+
+  accounts
+    .command("remove")
+    .description("Delete an account record. Its folder stays on disk.")
+    .argument("<id>", "The account, VENDOR/NAME.")
+    .action(async (id: string) => {
+      const r = await client().call("accounts.remove", { params: accountParams(id) });
+      print(r, () => `Removed ${id}. Its folder stays at ${r.keptDir}.\n`);
+    });
+
+  accounts
+    .command("check")
+    .description("Ask the vendor CLI whether an account is signed in.")
+    .argument("<id>", "The account, VENDOR/NAME.")
+    .action(async (id: string) => {
+      const r = await client().call("accounts.check", { params: accountParams(id) });
+      print(r, () => `${id}: ${signInText(r.account.signIn)}.\n`);
+    });
+
+  accounts
+    .command("seed")
+    .description(
+      "Copy the host's ~/.claude, ~/.codex, and ~/.copilot into new accounts, without their sign-ins.",
+    )
+    .addOption(
+      new Option(
+        "--vendor <vendor>",
+        `Seed only this vendor (repeatable): ${PLATFORMS.join(", ")}.`,
+      ).argParser((value: string, previous: string[] = []) => {
+        if (!PLATFORMS.includes(value)) {
+          throw new InvalidArgumentError(`Use one of: ${PLATFORMS.join(", ")}.`);
+        }
+        return [...previous, value];
+      }),
+    )
+    .option("--name <name>", "The name of each new account.", DEFAULT_SEED_ACCOUNT_NAME)
+    .option("--dry-run", "Report what seeding would copy, and copy nothing.")
+    .option("--no-wait", "Print the job and return without waiting for it.")
+    .action(async (o: { vendor?: string[]; name: string; dryRun?: boolean; wait: boolean }) => {
+      const c = client();
+      let job: Job = await c.call("accounts.seed", {
+        body: {
+          ...(o.vendor ? { vendors: o.vendor as "claude"[] } : {}),
+          name: o.name,
+          dryRun: o.dryRun ?? false,
+        },
+      });
+      while (o.wait && job.status === "running") {
+        await new Promise((r) => setTimeout(r, deps.pollMs ?? 1_000));
+        job = await c.call("jobs.get", { params: { jobId: job.id } });
+      }
+      if (job.status === "failed") {
+        state.code = 1;
+        deps.err(
+          terminalText(`Seeding failed: ${job.error?.message ?? `exit code ${job.exitCode}`}\n`),
+        );
+        if (globals().json) deps.out(`${jsonText(job, 2)}\n`);
+        return;
+      }
+      if (job.status === "running") {
+        print(job, () => `Seeding accounts (job ${job.id}).\n`);
+        return;
+      }
+      const report = AccountSeedReportSchema.parse(job.result);
+      print(report, () => seedText(report));
     });
 
   // -------------------------------------------------------------------------

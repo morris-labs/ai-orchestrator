@@ -581,6 +581,143 @@ describe("relative paths", () => {
   });
 });
 
+describe("accounts", () => {
+  const T = "2026-10-31T09:00:00Z";
+  const view = (id: string, isDefault = false) => {
+    const [vendor, name] = id.split("/") as [string, string];
+    return {
+      account: {
+        id,
+        vendor,
+        name,
+        label: name,
+        overflow: false,
+        signIn: { state: "not_signed_in" },
+        createdAt: T,
+        updatedAt: T,
+      },
+      dir: `/home/user/.claude-box/accounts/${id}`,
+      dirExists: true,
+      isDefault,
+    };
+  };
+  const seedJob = (status: "running" | "finished", result: unknown = null) => ({
+    ...job(status),
+    kind: "account_seed",
+    boxId: null,
+    result,
+  });
+  const entry = {
+    vendor: "claude",
+    reason: null,
+    files: 10,
+    bytes: 2 * 1024 * 1024,
+    symlinks: 1,
+    leftOut: [".credentials.json"],
+    skippedSpecial: [],
+    madeDefault: true,
+    usageRelabeled: 4,
+  };
+  const report = {
+    dryRun: false,
+    accounts: [
+      {
+        ...entry,
+        id: "claude/personal",
+        source: "/home/user/.claude",
+        dir: "/home/user/.claude-box/accounts/claude/personal",
+        status: "seeded",
+      },
+      {
+        ...entry,
+        id: "copilot/personal",
+        vendor: "copilot",
+        source: "/home/user/.copilot",
+        dir: "/home/user/.claude-box/accounts/copilot/personal",
+        status: "skipped",
+        reason: "/home/user/.copilot isn't a folder.",
+        files: 0,
+        bytes: 0,
+        symlinks: 0,
+        leftOut: [],
+        madeDefault: false,
+        usageRelabeled: 0,
+      },
+    ],
+  };
+
+  it("lists accounts as a table", async () => {
+    server.on("GET /api/v1/accounts", {
+      body: { accounts: [view("claude/personal", true), view("codex/work")] },
+    });
+    expect(await cli(["accounts", "list"])).toBe(0);
+    expect(out.split("\n")[0]).toMatch(/^ACCOUNT\s+LABEL\s+DEFAULT\s+SIGN-IN\s+FOLDER/);
+    expect(out).toContain("claude/personal");
+    expect(out).toContain("not signed in");
+  });
+
+  it("adds an account and checks its vendor", async () => {
+    server.on("POST /api/v1/accounts", { status: 201, body: view("codex/work", true) });
+    expect(await cli(["accounts", "add", "codex", "work", "--label", "Work"])).toBe(0);
+    expect(last()?.body).toEqual({ vendor: "codex", name: "work", label: "Work", overflow: false });
+    expect(out).toContain("Created codex/work");
+    expect(await cli(["accounts", "add", "gemini", "work"])).toBe(2);
+  });
+
+  it("makes an account the default through the settings", async () => {
+    let patched: unknown;
+    server.on("PATCH /api/v1/settings", (req) => {
+      patched = req.body;
+      return { status: 400, body: { error: { code: "validation", message: "stop here" } } };
+    });
+    await cli(["accounts", "set", "claude/work", "--default"]);
+    expect(patched).toEqual({ accountDefaults: { claude: "claude/work" } });
+    expect(await cli(["accounts", "set", "claude/work"])).toBe(2);
+    expect(await cli(["accounts", "set", "work", "--default"])).toBe(2);
+  });
+
+  it("removes an account and says the folder stays", async () => {
+    server.on("DELETE /api/v1/accounts/codex/work", {
+      body: { keptDir: "/home/user/.claude-box/accounts/codex/work" },
+    });
+    expect(await cli(["accounts", "remove", "codex/work"])).toBe(0);
+    expect(out).toContain("Its folder stays at /home/user/.claude-box/accounts/codex/work");
+  });
+
+  it("seeds accounts, waits for the job, and prints the report", async () => {
+    server.on("POST /api/v1/accounts/seed", { status: 202, body: seedJob("running") });
+    let polls = 0;
+    server.on("GET /api/v1/jobs/job-1", () => ({
+      body: ++polls < 2 ? seedJob("running") : seedJob("finished", report),
+    }));
+    expect(await cli(["accounts", "seed", "--vendor", "claude", "--vendor", "copilot"])).toBe(0);
+    expect(server.requests.find((r) => r.method === "POST")?.body).toEqual({
+      vendors: ["claude", "copilot"],
+      name: "personal",
+      dryRun: false,
+    });
+    expect(out).toContain("Seeded claude/personal from /home/user/.claude: 10 files (2.0 MiB)");
+    expect(out).toContain("Left out the sign-in files: .credentials.json.");
+    expect(out).toContain("Skipped copilot/personal");
+    expect(out).toContain("Sign in to it once from a box.");
+  });
+
+  it("passes a refusal through", async () => {
+    server.on("POST /api/v1/accounts/seed", {
+      status: 409,
+      body: { error: { code: "box_running", message: "Stop every box before you seed accounts." } },
+    });
+    expect(await cli(["accounts", "seed", "--dry-run"])).toBe(1);
+    expect(last()?.body).toMatchObject({ dryRun: true });
+    expect(err).toContain("Stop every box");
+  });
+
+  it("refuses an unknown vendor without calling the server", async () => {
+    expect(await cli(["accounts", "seed", "--vendor", "gemini"])).toBe(2);
+    expect(server.requests).toHaveLength(0);
+  });
+});
+
 describe("migrate, setup, doctor", () => {
   it("calls the import route", async () => {
     const report = {
