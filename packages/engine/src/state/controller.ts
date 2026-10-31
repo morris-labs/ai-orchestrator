@@ -56,6 +56,8 @@ export interface RunLocation {
 
 export class RunController {
   private active: Promise<void> | null = null;
+  /** Set when the engine shuts down; see `stopForShutdown()`. */
+  private shuttingDown = false;
 
   private constructor(
     private readonly ctx: RunContext,
@@ -240,9 +242,43 @@ export class RunController {
     });
   }
 
+  /**
+   * Marks the run as stopping with the engine. The driver then fails no
+   * stage for the errors that shutting down causes, such as the lease
+   * broker rejecting a pending request: the run stays `running` in its run
+   * directory, and the next engine continues it, as after a crash. Returns
+   * once the driver has stopped or after `waitMs`, whichever comes first.
+   */
+  async stopForShutdown(waitMs: number): Promise<void> {
+    this.shuttingDown = true;
+    if (!this.active) return;
+    let timer: NodeJS.Timeout | undefined;
+    await Promise.race([
+      this.settled(),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, waitMs);
+        timer.unref();
+      }),
+    ]);
+    clearTimeout(timer);
+  }
+
   /** Records why the driver stopped. Never rejects, even when the run directory can't be written. */
   private async stopOn(error: unknown): Promise<void> {
     const ctx = this.ctx;
+    if (
+      this.shuttingDown &&
+      !(error instanceof DecisionNeeded) &&
+      !(error instanceof RunCancelled) &&
+      !ctx.cancelled
+    ) {
+      ctx.deps.log?.warn("The run stopped with the engine; the next engine continues it", {
+        runId: ctx.state.id,
+        stage: ctx.state.stage,
+        error: (error as Error)?.message ?? String(error),
+      });
+      return;
+    }
     await disposeCheckouts(ctx).catch(() => undefined);
     if (error instanceof DecisionNeeded) {
       await ctx.settleStatus("waiting_decision", { decision: error.decision });

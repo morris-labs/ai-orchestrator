@@ -7,6 +7,7 @@ import type { RunState } from "@agentbox/contracts";
 import { describe, expect, it } from "vitest";
 import { bridgeAdapters } from "../../src/adapters/bridge.js";
 import { GrantingBroker, MemoryEventSink } from "../../src/core.js";
+import { EngineLeaseBroker } from "../../src/events/leases.js";
 import { createMockAdapters } from "../../src/main/adapters.js";
 import { silentLogger } from "../../src/main/logger.js";
 import { Git } from "../../src/range/git.js";
@@ -165,6 +166,45 @@ describe("base checkouts", () => {
     expect(existsSync(path)).toBe(true);
     await run.cancel();
     expect(existsSync(path)).toBe(false);
+  });
+});
+
+describe("engine shutdown", () => {
+  it("leaves a run that waits for a lease running, and the next engine finishes it", async () => {
+    const repo = buildSampleRepo();
+    const broker = new EngineLeaseBroker({ log: silentLogger });
+    const id = runId();
+    const runs = await createRunManager({ ...deps(repo), leases: broker });
+    await runs.start({
+      runId: id,
+      projectId: "sample",
+      repoPath: repo,
+      base: "origin/main",
+      readOnly: true,
+    } as never);
+    for (let i = 0; i < 400 && broker.pendingIds().length === 0; i++) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    expect(broker.pendingIds().length, "the run never asked for a lease").toBeGreaterThan(0);
+
+    // The order that `startEngine`'s close uses.
+    const closed = runs.close();
+    broker.close();
+    await closed;
+    // Let the old driver finish whatever it does with the closed broker.
+    const controllers = (
+      runs as unknown as { controllers: Map<string, { settled(): Promise<unknown> }> }
+    ).controllers;
+    await controllers.get(id)?.settled();
+    const file = join(repo, ".claude-box/runs", id, "state.json");
+    const left = JSON.parse(readFileSync(file, "utf8")) as RunState;
+    expect(left.status).toBe("running");
+    expect(left.error).toBeUndefined();
+
+    const next = await createRunManager(deps(repo));
+    const state = await settle(next, id);
+    expect(state.status).toBe("finished");
+    await next.close();
   });
 });
 

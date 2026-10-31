@@ -205,8 +205,12 @@ export async function startEngine(options: StartOptions): Promise<EngineHandle> 
       log.info("The engine is shutting down");
       await ports.stop();
       await app.close();
+      // The runs learn that the engine is stopping before the broker rejects
+      // their pending lease requests, so those runs stay `running` and the
+      // next engine continues them instead of finding them failed.
+      const runsClosed = runs.close?.();
       leases.close();
-      await runs.close?.();
+      await runsClosed;
       activeRuns.stop(0);
       log.info("The engine stopped");
     })();

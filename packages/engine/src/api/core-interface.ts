@@ -112,7 +112,11 @@ export interface RunManager {
    * paused, or waiting for a decision.
    */
   activeRunCount(): number;
-  /** Stops work and flushes run files; called once on shutdown. */
+  /**
+   * Stops work and flushes run files; called once on shutdown, just before
+   * the lease broker closes. It must mark the runs as stopping before its
+   * first `await`, so a closed broker doesn't fail them.
+   */
   close?(): Promise<void>;
 }
 

@@ -77,6 +77,9 @@ function inWindow(time: string, filter: UsageFilter): boolean {
   return true;
 }
 
+/** How long `close()` waits for a run driver to stop. */
+const SHUTDOWN_WAIT_MS = 5000;
+
 export class EngineRunManager implements RunManager {
   private readonly controllers = new Map<string, RunController>();
   private readonly loading = new Map<string, Promise<RunController | null>>();
@@ -439,11 +442,19 @@ export class EngineRunManager implements RunManager {
   /**
    * Leaves every run where it is. A run in progress stays `running` in its
    * run directory, and the next engine continues it from its stage.
+   *
+   * Marks the runs as stopping before its first `await`, so the caller can
+   * close the lease broker right after calling this without failing the
+   * runs that wait for a lease. Resolves when their drivers have stopped,
+   * or after a few seconds for a driver still inside an agent call.
    */
   async close(): Promise<void> {
     for (const timer of this.resumeTimers.values()) clearTimeout(timer);
     this.resumeTimers.clear();
-    await Promise.resolve();
+    const stopping = [...this.controllers.values()].map((run) =>
+      run.stopForShutdown(SHUTDOWN_WAIT_MS),
+    );
+    await Promise.all(stopping);
   }
 }
 
