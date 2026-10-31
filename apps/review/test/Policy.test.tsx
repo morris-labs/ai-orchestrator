@@ -1,8 +1,11 @@
 import { DEFAULT_POLICY } from "@agentbox/contracts";
+import { act } from "@testing-library/react";
+import { parse } from "yaml";
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { FakeApiError } from "@agentbox/ui/testing";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { Policy } from "../src/screens/Policy.js";
+import { useRoute } from "../src/state/router.js";
 import { StoreProvider } from "../src/state/store.js";
 import { PROJECT, project } from "./helpers/data.js";
 import { renderWithStore } from "./helpers/render.js";
@@ -14,19 +17,34 @@ const stored = {
   tests: [{ command: "npm test" }],
 };
 
-function handlers() {
+function RouteProbe() {
+  return <span data-testid="route">{useRoute().name}</span>;
+}
+
+/** The policy a put sends: the text, parsed. */
+function sent(body: unknown): unknown {
+  return parse((body as { text: string }).text);
+}
+
+function handlers(text?: string) {
   return {
     "projects.list": () => ({ projects: [project] }),
     "projects.policy.get": () => ({
       path: "/home/user/src/example-app/.claude-box/policy.yaml",
       exists: true,
       policy: stored,
+      ...(text !== undefined ? { text, revision: "sha256:one" } : {}),
     }),
-    "projects.policy.put": (c: { body: unknown }) => ({
-      path: "/p/policy.yaml",
-      exists: true,
-      policy: c.body,
-    }),
+    "projects.policy.put": (c: { body: unknown }) => {
+      const t = (c.body as { text: string }).text;
+      return {
+        path: "/p/policy.yaml",
+        exists: true,
+        policy: { ...DEFAULT_POLICY, ...(parse(t) as object) },
+        text: t,
+        revision: "sha256:two",
+      };
+    },
   };
 }
 
@@ -41,7 +59,7 @@ describe("Policy", () => {
     fireEvent.change(screen.getByLabelText(/^Group size limit/), { target: { value: "250" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(server.callsTo("projects.policy.put")).toHaveLength(1));
-    expect(server.callsTo("projects.policy.put")[0]!.body).toMatchObject({
+    expect(sent(server.callsTo("projects.policy.put")[0]!.body)).toMatchObject({
       version: 1,
       riskPaths: ["src/auth/**", "src/billing/**"],
       groupSizeLimit: 250,
@@ -75,9 +93,86 @@ describe("Policy", () => {
     expect(input).toHaveValue("src/**, lib/**");
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(server.callsTo("projects.policy.put")).toHaveLength(1));
-    expect(server.callsTo("projects.policy.put")[0]!.body).toMatchObject({
+    expect(sent(server.callsTo("projects.policy.put")[0]!.body)).toMatchObject({
       rules: [{ id: "no-phi", appliesTo: ["src/**", "lib/**"] }],
     });
+  });
+
+  it("keeps the file's comments through a form save and a YAML edit", async () => {
+    const file =
+      "# keep in sync with CI\nversion: 1\nriskPaths:\n  - src/auth/** # the login code\nrules:\n  - id: no-phi\n    text: Never log patient data.\ntests:\n  - command: npm test\n";
+    const { server } = renderWithStore(<Policy projectId={PROJECT} />, handlers(file));
+    await waitFor(() => expect(screen.getByLabelText(/^Risk paths/)).toHaveValue("src/auth/**"));
+    fireEvent.click(screen.getByRole("tab", { name: "YAML" }));
+    const yaml = screen.getByLabelText<HTMLTextAreaElement>("Policy YAML");
+    expect(yaml.value).toBe(file);
+    fireEvent.change(yaml, { target: { value: `${yaml.value}# typed here\n` } });
+    fireEvent.click(screen.getByRole("tab", { name: "Form" }));
+    fireEvent.change(screen.getByLabelText(/^Group size limit/), { target: { value: "250" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(server.callsTo("projects.policy.put")).toHaveLength(1));
+    const put = server.callsTo("projects.policy.put")[0]!;
+    const text = (put.body as { text: string }).text;
+    expect(text).toContain("# keep in sync with CI");
+    expect(text).toContain("# the login code");
+    expect(text).toContain("# typed here");
+    expect(sent(put.body)).toMatchObject({ groupSizeLimit: 250, riskPaths: ["src/auth/**"] });
+    expect(put.query.baseRevision).toBe("sha256:one");
+  });
+
+  it("asks to reload or overwrite when the file changed on disk", async () => {
+    const { server } = renderWithStore(<Policy projectId={PROJECT} />, {
+      ...handlers("version: 1\n"),
+      "projects.policy.put": (c: { query: Record<string, unknown>; body: unknown }) => {
+        if (c.query.baseRevision) {
+          throw new FakeApiError("conflict", "The policy file changed on disk.", 409);
+        }
+        const t = (c.body as { text: string }).text;
+        return { path: "/p/policy.yaml", exists: true, policy: DEFAULT_POLICY, text: t, revision: "sha256:three" };
+      },
+    });
+    await waitFor(() => expect(screen.getByLabelText(/^Risk paths/)).toHaveValue("src/auth/**"));
+    fireEvent.change(screen.getByLabelText(/^Group size limit/), { target: { value: "250" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText(/changed on disk since you opened it/)).toBeInTheDocument();
+    expect(screen.queryByText(/Saved/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Overwrite" }));
+    await waitFor(() => expect(server.callsTo("projects.policy.put")).toHaveLength(2));
+    expect(server.callsTo("projects.policy.put")[1]!.query.baseRevision).toBeUndefined();
+    expect(await screen.findByText(/Saved/)).toBeInTheDocument();
+  });
+
+  it("hides Saved after a further edit and asks before leaving unsaved edits", async () => {
+    window.location.hash = "#/policy";
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const { server } = renderWithStore(
+      <>
+        <RouteProbe />
+        <Policy projectId={PROJECT} />
+      </>,
+      handlers(),
+    );
+    await waitFor(() => expect(screen.getByLabelText(/^Risk paths/)).toHaveValue("src/auth/**"));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(server.callsTo("projects.policy.put")).toHaveLength(1));
+    expect(await screen.findByText(/Saved/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(/^Group size limit/), { target: { value: "250" } });
+    expect(screen.queryByText(/Saved/)).toBeNull();
+    expect(screen.getByText("Unsaved changes.")).toBeInTheDocument();
+    await act(async () => {
+      window.location.hash = "#/runs";
+      await new Promise((res) => setTimeout(res, 20));
+    });
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("route")).toHaveTextContent("policy");
+    expect(window.location.hash).toBe("#/policy");
+    confirm.mockReturnValue(true);
+    await act(async () => {
+      window.location.hash = "#/runs";
+      await new Promise((res) => setTimeout(res, 20));
+    });
+    expect(screen.getByTestId("route")).toHaveTextContent("runs");
+    confirm.mockRestore();
   });
 });
 
@@ -146,6 +241,6 @@ describe("Policy project switch", () => {
     await waitFor(() => expect(r.server.callsTo("projects.policy.put")).toHaveLength(1));
     const put = r.server.callsTo("projects.policy.put")[0]!;
     expect(put.params.projectId).toBe(PROJECT);
-    expect(put.body).toMatchObject({ riskPaths: ["SYNTHETIC_A/**"] });
+    expect(sent(put.body)).toMatchObject({ riskPaths: ["SYNTHETIC_A/**"] });
   });
 });

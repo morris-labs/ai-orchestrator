@@ -1,6 +1,6 @@
 // Hash routing, so the app works under `/review/` on the server, in Vite's
 // dev server, and in Electron without server-side rewrites.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export type RouteName =
   "launch" | "runs" | "run" | "findings" | "dashboard" | "policy" | "settings";
@@ -45,10 +45,35 @@ export function navigate(to: string): void {
   window.location.hash = to.replace(/^#/, "");
 }
 
+let leaveGuard: (() => boolean) | null = null;
+
+/**
+ * Installs a check that runs before the route changes, such as "discard
+ * unsaved changes?". It returns false to keep the current route. Returns a
+ * function that removes the check.
+ */
+export function setLeaveGuard(guard: () => boolean): () => void {
+  leaveGuard = guard;
+  return () => {
+    if (leaveGuard === guard) leaveGuard = null;
+  };
+}
+
 export function useRoute(): Route {
   const [hash, setHash] = useState(() => window.location.hash);
+  const current = useRef(hash);
   useEffect(() => {
-    const on = () => setHash(window.location.hash);
+    const on = () => {
+      const next = window.location.hash;
+      if (next === current.current) return;
+      if (leaveGuard && !leaveGuard()) {
+        // Put the old hash back without another hashchange.
+        history.replaceState(history.state, "", current.current || "#");
+        return;
+      }
+      current.current = next;
+      setHash(next);
+    };
     window.addEventListener("hashchange", on);
     return () => window.removeEventListener("hashchange", on);
   }, []);
