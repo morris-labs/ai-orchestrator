@@ -164,6 +164,22 @@ not the project root's. Purging or moving the worktree by hand breaks the
 link between the box and its transcript; use **Remove** or **Purge** in the
 app instead.
 
+## A box waits at the folder trust dialog
+
+Claude Code asks whether you trust a folder the first time it runs there,
+and a resumed box asks too when its folder was never trusted. Answer the
+dialog once in the box's terminal. Claude Code records the answer as
+`projects["DIRECTORY"].hasTrustDialogAccepted` in `~/.claude.json`, where
+`DIRECTORY` is the box's working directory, and every later box in that
+folder starts without the dialog. A worktree box works in its own folder,
+so a new worktree can ask once more.
+
+Agent Box doesn't answer the dialog for you. Every box mounts the host's
+`~/.claude.json` as a single file, and the host's and every box's Claude
+Code write it while they run. A rewrite by the server could race those
+writes and lose settings, and an atomic replace swaps the file for a new
+one, which running boxes no longer see.
+
 ## A review run doesn't start
 
 The following errors can stop a run before its first stage:

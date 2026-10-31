@@ -104,6 +104,16 @@ pnpm typecheck
 pnpm test
 ```
 
+The repository's `.npmrc` file pins the pnpm store to `.pnpm-store` at the
+workspace root, so pnpm on the host and pnpm in a box that mounts the
+checkout use one store. Without the setting, pnpm picks a store on the
+checkout's file system, and the host and a box can disagree about where that
+is. A checkout installed with another store needs a one-time reinstall:
+`pnpm install` stops with `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY` when
+it runs without a terminal. To reinstall, delete `node_modules` and run
+`pnpm install` again, or run `pnpm install --config.confirmModulesPurge=false`.
+Each git worktree gets its own store, at its own root.
+
 To build the image from a checkout, run `scripts/build-image.sh`. To build
 the `.deb`, run `scripts/build-deb.sh`. For the layout of the repository,
 see [Architecture](docs/architecture.md#repository-layout).
