@@ -150,7 +150,9 @@ function withLock(scenarioPath, fn) {
         }
         continue;
       }
-      if (Date.now() > deadline) throw new Error(`mock CLI: timed out waiting for ${lock}`);
+      if (Date.now() > deadline) {
+        throw new Error(`mock CLI: timed out waiting for ${lock}`, { cause: err });
+      }
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
     }
   }
