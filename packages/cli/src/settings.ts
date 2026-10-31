@@ -115,10 +115,24 @@ export function serverTls(
   return pinsServer(settings.baseUrl) ? pinnedTlsOptions(serverPin(settings)) : {};
 }
 
-/** True when `host` is this machine: `localhost`, 127.0.0.0/8, or `::1`. */
+/**
+ * True when `host` is this machine: `localhost`, 127.0.0.0/8, `::1`, or
+ * 127.0.0.0/8 mapped into IPv6. A trailing dot, as in `localhost.`, names
+ * the same host. `URL` writes a mapped address such as `::ffff:127.0.0.1`
+ * in hex, as `::ffff:7f00:1`, so both forms count.
+ */
 export function isLoopbackHost(host: string): boolean {
-  const h = host.replace(/^\[|\]$/g, "").toLowerCase();
-  return h === "localhost" || h === "::1" || /^127(?:\.\d{1,3}){3}$/.test(h);
+  const h = host
+    .replace(/^\[|\]$/g, "")
+    .toLowerCase()
+    .replace(/\.$/, "");
+  return (
+    h === "localhost" ||
+    h === "::1" ||
+    /^127(?:\.\d{1,3}){3}$/.test(h) ||
+    /^::ffff:127(?:\.\d{1,3}){3}$/.test(h) ||
+    /^::ffff:7f[0-9a-f]{2}:[0-9a-f]{1,4}$/.test(h)
+  );
 }
 
 /**

@@ -729,6 +729,20 @@ describe("trust in the server", () => {
     expect(checkServerUrl("ftp://127.0.0.1", false)).toMatch(/http or https/);
   });
 
+  it("treats every form of a loopback host as this machine", async () => {
+    const { isLoopbackHost, pinsServer } = await import("../src/settings.js");
+    for (const url of [
+      "https://localhost.:21400",
+      "https://[::ffff:127.0.0.1]:21400",
+      "https://[::ffff:7f00:1]:21400",
+      "https://127.1.2.3:21400",
+    ]) {
+      expect(pinsServer(url), url).toBe(true);
+    }
+    expect(isLoopbackHost("[::ffff:c000:201]")).toBe(false);
+    expect(isLoopbackHost("localhost.example.com")).toBe(false);
+  });
+
   it("refuses plain HTTP to this machine, where another program can hold the port", async () => {
     const code = await cli(["box", "list"], { AGENTBOX_SERVER: "http://127.0.0.1:21400" });
     expect(code).toBe(2);
