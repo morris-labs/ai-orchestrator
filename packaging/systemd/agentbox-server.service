@@ -1,12 +1,15 @@
 [Unit]
 Description=Agent Box server
 After=default.target
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 ExecStart=/usr/bin/agentbox-server
 Restart=on-failure
-RestartSec=2
+RestartSec=5
+UMask=0077
+NoNewPrivileges=yes
 Environment=NODE_ENV=production
 
 [Install]

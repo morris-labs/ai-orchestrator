@@ -11,18 +11,28 @@ export function unitPath(home: string): string {
   return join(home, ".config", "systemd", "user", SERVICE_NAME);
 }
 
-/** The content of the user unit. */
+/**
+ * The content of the user unit. `StartLimitIntervalSec=0` keeps systemd
+ * restarting a server that fails at start, for example while Docker is
+ * down at login, instead of giving up after five tries. `UMask=0077` keeps
+ * the files the server creates without an explicit mode private to the
+ * user, and `NoNewPrivileges=yes` stops its children from gaining
+ * privileges through setuid programs.
+ */
 export function unitFile(opts: { execStart: string; description?: string }): string {
   return [
     "[Unit]",
     `Description=${opts.description ?? "Agent Box server"}`,
     "After=default.target",
+    "StartLimitIntervalSec=0",
     "",
     "[Service]",
     "Type=simple",
     `ExecStart=${opts.execStart}`,
     "Restart=on-failure",
-    "RestartSec=2",
+    "RestartSec=5",
+    "UMask=0077",
+    "NoNewPrivileges=yes",
     "Environment=NODE_ENV=production",
     "",
     "[Install]",

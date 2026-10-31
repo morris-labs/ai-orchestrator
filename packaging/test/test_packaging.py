@@ -119,6 +119,14 @@ class NfpmConfigTest(unittest.TestCase):
             }
         self.assertLessEqual(expected, dsts)
 
+    def test_unit_is_hardened(self):
+        parser = configparser.ConfigParser(interpolation=None, strict=False)
+        parser.optionxform = str
+        parser.read(ROOT / "packaging/systemd/agentbox-server.service")
+        self.assertEqual(parser["Service"]["UMask"], "0077")
+        self.assertEqual(parser["Service"]["NoNewPrivileges"], "yes")
+        self.assertEqual(parser["Unit"]["StartLimitIntervalSec"], "0")
+
     def test_maintainer_scripts_exist(self):
         for key, src in self.config["scripts"].items():
             name = pathlib.Path(src).name
