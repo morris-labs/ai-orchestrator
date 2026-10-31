@@ -431,7 +431,10 @@ export function RunView({ runId }: { runId: string }) {
                 params,
                 body: {
                   option,
-                  waiveFindingIds: option === "resume_waive" ? run.decision!.findingIds : [],
+                  // An empty list lets the engine waive the decision's
+                  // findings that are not fixed. An oscillation lists the
+                  // fixed finding too, which must keep its verdict.
+                  waiveFindingIds: [],
                   reason: reason || undefined,
                 },
               }),

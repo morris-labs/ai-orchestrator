@@ -122,6 +122,27 @@ describe("RunView", () => {
     await screen.findByText(/Running/);
   });
 
+  it("leaves the fixed finding of an oscillation out of Resume and waive", async () => {
+    const base = lastRun();
+    const returned = base.decision!.findingIds[0]!;
+    const fixed = findings.find((f) => f.id !== returned)!.id;
+    // An oscillation names the fixed finding and the one that came back.
+    const run = { ...base, decision: { ...base.decision!, findingIds: [fixed, returned] } };
+    const { server } = renderWithStore(<RunView runId={RUN_ID} />, handlers(run));
+    expect(await screen.findByText(/Needs your decision/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Reason for waiving"), {
+      target: { value: "Accepted" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Resume and waive these findings" }));
+    await waitFor(() => expect(server.callsTo("runs.decide")).toHaveLength(1));
+    const body = server.callsTo("runs.decide")[0]!.body as {
+      option: string;
+      waiveFindingIds: string[];
+    };
+    expect(body.option).toBe("resume_waive");
+    expect(body.waiveFindingIds).toEqual([]);
+  });
+
   it("shows the round table, roles, and the run's agents from the stream", async () => {
     const { store } = renderWithStore(<RunView runId={RUN_ID} />, handlers());
     await screen.findByText("Round summaries");
