@@ -557,6 +557,14 @@ class ScriptsTest(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertEqual(list(scratch.iterdir()), [])
 
+    def test_pnpm_build_allowlist_is_in_one_place(self):
+        # pnpm 10 reads onlyBuiltDependencies from pnpm-workspace.yaml; a copy
+        # in package.json could drift from it unnoticed.
+        package = json.loads((ROOT / "package.json").read_text())
+        self.assertNotIn("onlyBuiltDependencies", package.get("pnpm", {}))
+        workspace = load_yaml(ROOT / "pnpm-workspace.yaml")
+        self.assertIn("better-sqlite3", workspace["onlyBuiltDependencies"])
+
     def test_bump_versions_keeps_the_registry_token_out_of_argv(self):
         script = (ROOT / "scripts/bump-versions.sh").read_text()
         self.assertNotRegex(script, r'-H "Authorization: Bearer')
