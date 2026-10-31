@@ -407,14 +407,22 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
       );
     });
 
-  const attach = async (boxId: string, kind: "session" | "side" | "shell", platform?: string) => {
+  /** Gets the attach command and checks it; throws a `UsageError` when the CLI won't run it. */
+  const attachArgv = async (
+    boxId: string,
+    kind: "session" | "side" | "shell",
+    platform?: string,
+  ) => {
     const r = await client().call("boxes.attachCommand", {
       params: { boxId },
       query: { kind, platform: platform as "claude" | undefined },
     });
     const problem = checkAttachArgv(r.argv);
     if (problem) throw new UsageError(problem);
-    state.code = await exec(r.argv);
+    return r.argv;
+  };
+  const attach = async (boxId: string, kind: "session" | "side" | "shell", platform?: string) => {
+    state.code = await exec(await attachArgv(boxId, kind, platform));
   };
 
   box
@@ -424,7 +432,13 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
     .action(async (boxId: string) => {
       const c = client();
       const v = await c.call("boxes.get", { params: { boxId } });
-      if (v.status === "stopped") await c.call("boxes.start", { params: { boxId } });
+      if (v.status === "stopped") {
+        // Check the attach command first, so a refused one doesn't leave
+        // behind a box this command started. The start can change the
+        // container, so the command is fetched and checked again after it.
+        await attachArgv(boxId, "session");
+        await c.call("boxes.start", { params: { boxId } });
+      }
       await attach(boxId, "session");
     });
 

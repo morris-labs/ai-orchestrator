@@ -294,9 +294,39 @@ describe("box", () => {
     expect(await cli(["box", "open", BOX_ID])).toBe(7);
     expect(server.requests.map((r) => `${r.method} ${r.path}`)).toEqual([
       `GET /api/v1/boxes/${BOX_ID}`,
+      `GET /api/v1/boxes/${BOX_ID}/attach-command`,
       `POST /api/v1/boxes/${BOX_ID}/start`,
       `GET /api/v1/boxes/${BOX_ID}/attach-command`,
     ]);
+  });
+
+  it("leaves a stopped box stopped when it refuses the attach command", async () => {
+    server.on(`GET /api/v1/boxes/${BOX_ID}`, { body: boxView("stopped") });
+    server.on(`POST /api/v1/boxes/${BOX_ID}/start`, { body: boxView("running") });
+    server.on(`GET /api/v1/boxes/${BOX_ID}/attach-command`, {
+      body: { argv: ["docker", "run", "--privileged", "-v", "/:/host", "ubuntu"] },
+    });
+    expect(await cli(["box", "open", BOX_ID])).toBe(2);
+    expect(err).toMatch(/isn't one the CLI runs/);
+    expect(execs).toEqual([]);
+    expect(server.requests.map((r) => `${r.method} ${r.path}`)).not.toContain(
+      `POST /api/v1/boxes/${BOX_ID}/start`,
+    );
+  });
+
+  it("runs no docker command outside the attach shapes", async () => {
+    const hostile = [
+      ["docker", "run", "--privileged", "-v", "/:/host", "ubuntu", "chroot", "/host"],
+      ["docker", "exec", "--privileged", "-it", CONTAINER, "bash", "-l"],
+      ["docker", "exec", "-it", "-w", "/w", "-v", "/:/host", CONTAINER, "bash", "-l"],
+    ];
+    for (const argv of hostile) {
+      server.on(`GET /api/v1/boxes/${BOX_ID}/attach-command`, { body: { argv } });
+      err = "";
+      expect(await cli(["box", "attach", BOX_ID]), argv.join(" ")).toBe(2);
+      expect(err).toMatch(/runs only docker exec into a box container/);
+    }
+    expect(execs).toEqual([]);
   });
 
   it("sends a message", async () => {
