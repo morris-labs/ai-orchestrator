@@ -79,6 +79,8 @@ function inWindow(time: string, filter: UsageFilter): boolean {
 
 export class EngineRunManager implements RunManager {
   private readonly controllers = new Map<string, RunController>();
+  /** Runs whose torn `events.jsonl` is already logged, so each is logged once. */
+  private readonly tornEventLogs = new Set<string>();
   private readonly loading = new Map<string, Promise<RunController | null>>();
   private readonly engineDeps: EngineDeps;
 
@@ -411,7 +413,14 @@ export class EngineRunManager implements RunManager {
     for (const id of await listRunIds(this.deps.projectRoot)) {
       let events;
       try {
-        events = await new RunStore(this.deps.projectRoot, id).loadEvents();
+        events = await new RunStore(this.deps.projectRoot, id).loadEvents((skipped) => {
+          if (this.tornEventLogs.has(id)) return;
+          this.tornEventLogs.add(id);
+          this.deps.log.warn("Skipped lines of a run's events.jsonl that aren't JSON", {
+            runId: id,
+            skipped,
+          });
+        });
       } catch (error) {
         this.deps.log.warn("Skipped a run whose events.jsonl can't be read", {
           runId: id,
