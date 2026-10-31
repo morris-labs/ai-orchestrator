@@ -32,7 +32,6 @@
   },
   "dependencies": {
     "@agentbox/contracts": "workspace:*",
-    "execa": "^9.6.0",
     "fastify": "^5.6.0",
     "ws": "^8.18.3",
     "yaml": "^2.8.1",
