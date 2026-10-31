@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ErrorBanner, Field } from "../components/common.js";
 import { listRefs, listRepos, EMPTY_REFS, type RepoInfo, type RepoRefs } from "../lib/repos.js";
 import { href, navigate } from "../state/router.js";
-import { useApiClient } from "@agentbox/ui/hooks";
+import { useApiClient, useRestoreFocusAfterBusy } from "@agentbox/ui/hooks";
 import { DEFAULT_FORM, buildRunRequest, formFromBox, type LauncherForm } from "./launcherModel.js";
 
 type Preview = RouteOf<"runs.preview">["response"];
@@ -26,8 +26,11 @@ export function Launcher({ prefill }: { prefill: { project: string | null; box: 
   const [busy, setBusy] = useState<"preview" | "start" | null>(null);
   // Set before React renders the disabled form, so a second Enter in the same
   // tick can't start a second request.
-  const inFlight = useRef(false);
+  const inFlight = useRef<"preview" | "start" | null>(null);
   const [customBase, setCustomBase] = useState(false);
+  const formRef = useRef<HTMLFormElement>(null);
+  // Disabling the fieldset drops focus; it goes back to the same control after.
+  useRestoreFocusAfterBusy(formRef, busy !== null);
 
   const update = (patch: Partial<LauncherForm>) => {
     setForm((f) => ({ ...f, ...patch }));
@@ -120,7 +123,7 @@ export function Launcher({ prefill }: { prefill: { project: string | null; box: 
     const built = buildRunRequest(form);
     setErrors(built.ok ? [] : built.errors);
     if (!built.ok) return;
-    inFlight.current = true;
+    inFlight.current = "preview";
     setBusy("preview");
     setError(null);
     try {
@@ -128,28 +131,35 @@ export function Launcher({ prefill }: { prefill: { project: string | null; box: 
     } catch (err) {
       setError(err);
     } finally {
-      inFlight.current = false;
+      inFlight.current = null;
       setBusy(null);
     }
   }
 
   async function doStart() {
+    if (inFlight.current === "preview") {
+      setErrors(["The preview is still resolving. Start the run when it finishes."]);
+      return;
+    }
     if (inFlight.current) return;
     const built = buildRunRequest(form);
     setErrors(built.ok ? [] : built.errors);
     if (!built.ok) return;
-    inFlight.current = true;
+    inFlight.current = "start";
     setBusy("start");
     setError(null);
+    let run;
     try {
-      const run = await api.call("runs.create", { body: built.request });
-      navigate(href(`/runs/${run.id}`));
+      run = await api.call("runs.create", { body: built.request });
     } catch (err) {
       setError(err);
-    } finally {
-      inFlight.current = false;
+      inFlight.current = null;
       setBusy(null);
+      return;
     }
+    // The form stays disabled until the route change unmounts it, so the
+    // same run can't start twice.
+    navigate(href(`/runs/${run.id}`));
   }
 
   return (
@@ -164,6 +174,7 @@ export function Launcher({ prefill }: { prefill: { project: string | null; box: 
         </ul>
       ) : null}
       <form
+        ref={formRef}
         className="form-grid"
         aria-busy={busy !== null || undefined}
         onSubmit={(e) => {
