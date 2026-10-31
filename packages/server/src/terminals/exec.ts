@@ -37,13 +37,38 @@ export const TERMINAL_ID_ENV = "AGENTBOX_TERMINAL_ID";
  * environment carries `AGENTBOX_TERMINAL_ID=$1`. Docker doesn't signal an
  * exec's process when its attach connection closes, so a closed tab would
  * otherwise leave its shell or tmux client running.
+ *
+ * The script spares a process that detached from the tab and everything it
+ * started: one whose topmost ancestor with the same id leads its own session
+ * and has no controlling terminal. A tmux server started from a tab is such a
+ * process, and its panes inherit the id, so without that check closing the tab
+ * would end every pane. The script collects the targets before it signals any,
+ * because a child whose shell exits first would otherwise look detached.
  */
 export const HANGUP_SCRIPT = [
-  "for p in /proc/[0-9]*; do",
-  `  if tr '\\0' '\\n' < "$p/environ" 2>/dev/null | grep -qx "${TERMINAL_ID_ENV}=$1"; then`,
-  '    kill -HUP "${p#/proc/}" 2>/dev/null',
-  "  fi",
+  "id=$1",
+  "has_id() {",
+  `  tr '\\0' '\\n' < "/proc/$1/environ" 2>/dev/null | grep -qx "${TERMINAL_ID_ENV}=$id"`,
+  "}",
+  "detached() {",
+  "  q=$1",
+  "  while :; do",
+  '    st=$(cat "/proc/$q/stat" 2>/dev/null) || return 1',
+  "    # The fields after the command name: state, ppid, pgrp, session, tty.",
+  '    set -- ${st##*) }',
+  '    if [ "$2" -gt 1 ] && has_id "$2"; then q=$2; continue; fi',
+  '    [ "$4" = "$q" ] && [ "$5" = 0 ]',
+  "    return",
+  "  done",
+  "}",
+  "targets=",
+  "for d in /proc/[0-9]*; do",
+  "  pid=${d#/proc/}",
+  '  has_id "$pid" || continue',
+  '  detached "$pid" && continue',
+  '  targets="$targets $pid"',
   "done",
+  '[ -n "$targets" ] && kill -HUP $targets 2>/dev/null',
   "exit 0",
 ].join("\n");
 
