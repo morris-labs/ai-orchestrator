@@ -178,11 +178,15 @@ static QString buildContainerCmd(const QString &gitSetup, const QString &program
     // (which is in the bind-mounted workspace and persists after --rm removes
     // the container). This is the only trace a fast startup failure leaves,
     // since --rm discards the container's own log on exit.
+    //
+    // The keeper loop uses the exact target =main: a bare `-t main` also
+    // matches a side session such as main-codex by prefix, which would keep
+    // the container up after claude exits. Side sessions end with the box.
     return QStringLiteral("TSTART=$SECONDS; ")
          + gitSetup
          + QStringLiteral(" && tmux new-session -d -s main -- ") + claudeCmd
          + QStringLiteral(" && LAUNCH_OK=1;"
-                          " while tmux has-session -t main 2>/dev/null; do sleep 1; done;"
+                          " while tmux has-session -t =main 2>/dev/null; do sleep 1; done;"
                           " RUNTIME=$((SECONDS-TSTART));"
                           " [ \"${LAUNCH_OK:-0}\" -eq 1 ] && [ \"$RUNTIME\" -le 15 ]"
                           " && echo \"[$(date -u '+%Y-%m-%dT%H:%M:%SZ')]"
