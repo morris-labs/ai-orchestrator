@@ -247,9 +247,20 @@ export class SessionWatcher {
 
       let saved: Box | undefined;
       if (changed) {
+        // The reads above await, so an edit can land between the first get
+        // and this put. Apply only the fields the watcher owns on top of the
+        // record as it stands now, so that edit survives.
+        const fresh = this.boxes.get(boxId);
+        if (!fresh) continue;
+        const update: Box = { ...fresh };
+        if (next.sessionUuid !== rec.sessionUuid) update.sessionUuid = next.sessionUuid;
+        if (next.conversationName !== rec.conversationName) {
+          update.conversationName = next.conversationName;
+          update.transcriptSyncedName = next.transcriptSyncedName;
+        }
         try {
           saved = this.boxes.put(
-            BoxSchema.parse({ ...next, updatedAt: this.env.now().toISOString() }),
+            BoxSchema.parse({ ...update, updatedAt: this.env.now().toISOString() }),
           );
         } catch {
           continue; // keep the old state so the next scan retries
