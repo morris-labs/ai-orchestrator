@@ -607,16 +607,25 @@ describe("GhCliClient", () => {
         ]),
         exitCode: 1,
       },
+      // One line per review, as `--jq` prints them across two pages.
       "gh api --paginate": {
-        stdout: JSON.stringify([
-          {
+        stdout:
+          JSON.stringify({
             id: 1,
             user: { login: "Copilot" },
             state: "COMMENTED",
             commit_id: "abc",
             submitted_at: null,
-          },
-        ]),
+          }) +
+          "\n" +
+          JSON.stringify({
+            id: 31,
+            user: { login: null },
+            state: "APPROVED",
+            commit_id: "def",
+            submitted_at: null,
+          }) +
+          "\n",
       },
       "gh api graphql -f query=query": {
         stdout: JSON.stringify({
@@ -649,10 +658,18 @@ describe("GhCliClient", () => {
     const checks = await gh.listChecks("/r", 3);
     expect(checks[0]).toMatchObject({ name: "ci", bucket: "fail" });
     await gh.failedCheckLog("/r", checks[0]!);
-    expect((await gh.listReviews("/r", 3))[0]).toMatchObject({
-      author: "Copilot",
-      commitId: "abc",
-    });
+    const reviews = await gh.listReviews("/r", 3);
+    expect(reviews).toHaveLength(2);
+    expect(reviews[0]).toMatchObject({ author: "Copilot", commitId: "abc" });
+    expect(reviews[1]).toMatchObject({ id: "31", author: "", commitId: "def" });
+    expect(calls.find((c) => c.some((a) => a.includes("/reviews")))).toEqual([
+      "gh",
+      "api",
+      "--paginate",
+      "repos/{owner}/{repo}/pulls/3/reviews?per_page=100",
+      "--jq",
+      expect.stringContaining("tojson"),
+    ]);
     expect((await gh.listReviewThreads("/r", 3))[0]?.comments[0]?.author).toBe("Copilot");
     await gh.requestCopilotReview("/r", 3);
     await gh.replyToThread("/r", "T", "hi");

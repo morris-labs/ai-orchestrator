@@ -216,6 +216,9 @@ const COPILOT_EVENTS_JQ =
   '((.requested_reviewer.login // "") | ascii_downcase | . == "copilot" or ' +
   'startswith("copilot-pull-request-reviewer")))) | .event';
 
+/** Prints each review of a page as one line of JSON, with the fields `listReviews` reads. */
+const REVIEWS_JQ = ".[] | {id, user: {login: .user.login}, state, commit_id, submitted_at} | tojson";
+
 /** `GitHubClient` over the `gh` CLI, run in the repository directory. */
 export class GhCliClient implements GitHubClient {
   constructor(private readonly runner: CommandRunner) {}
@@ -328,18 +331,29 @@ export class GhCliClient implements GitHubClient {
   }
 
   async listReviews(repoPath: string, pr: number): Promise<PrReview[]> {
+    // Without `--jq`, `--paginate` prints each page's array one after the
+    // other (`[...][...]`), which isn't one JSON text. `--jq` prints one
+    // review per line, on every page.
     const out = await this.gh(repoPath, [
       "api",
       "--paginate",
-      `repos/{owner}/{repo}/pulls/${pr}/reviews`,
+      `repos/{owner}/{repo}/pulls/${pr}/reviews?per_page=100`,
+      "--jq",
+      REVIEWS_JQ,
     ]);
-    const list = JSON.parse(out || "[]") as Array<{
-      id: number;
-      user?: { login?: string } | null;
-      state: string;
-      commit_id?: string | null;
-      submitted_at?: string | null;
-    }>;
+    const list = out
+      .split("\n")
+      .filter((line) => line.trim() !== "")
+      .map(
+        (line) =>
+          JSON.parse(line) as {
+            id: number;
+            user?: { login?: string } | null;
+            state: string;
+            commit_id?: string | null;
+            submitted_at?: string | null;
+          },
+      );
     return list.map((r) => ({
       id: String(r.id),
       author: r.user?.login ?? "",
