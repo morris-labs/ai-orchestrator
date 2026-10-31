@@ -51,12 +51,15 @@ export function projectForDir(projects: readonly Project[], dir: string): Projec
 /**
  * The remembered layout for a directory, as 3.3.5 chose it: a worktree when
  * the project has a primary repository and the directory isn't marked "no";
- * else a workspace when the directory is marked "yes"; else the root.
+ * else a workspace when the directory is marked "yes", or carries an
+ * executable `new-issue.sh` (`newIssueScript`) and has no remembered answer;
+ * else the root. The server's `resolveLayout` applies the same rule.
  */
 export function defaultLayout(
   dir: string,
   settings: GlobalSettings | null,
   project: Project | undefined,
+  newIssueScript = false,
 ): Layout {
   const d = normalizeDir(dir);
   const worktree = settings?.newBoxDefaults.worktreeDirs[d];
@@ -64,6 +67,7 @@ export function defaultLayout(
   if (project?.primaryRepo && worktree !== false) return "worktree";
   if (worktree === true) return "worktree";
   if (workspace === true) return "workspace";
+  if (workspace === undefined && newIssueScript) return "workspace";
   return "root";
 }
 
@@ -109,7 +113,12 @@ export function validateForm(form: BoxForm, mode: DialogMode): string[] {
       // The server doesn't expand `~`.
       out.push("The target directory must be an absolute path, such as /home/you/project.");
     }
-    if ((form.layout === "worktree" || form.layout === "workspace") && slugify(form.name) === "") {
+    // Adopting a conversation creates no worktree or folder, so needs no slug.
+    if (
+      !adopting(form, mode) &&
+      (form.layout === "worktree" || form.layout === "workspace") &&
+      slugify(form.name) === ""
+    ) {
       out.push(
         `A ${form.layout} is named after the conversation: type a conversation name with at least one letter or digit.`,
       );
@@ -117,6 +126,14 @@ export function validateForm(form: BoxForm, mode: DialogMode): string[] {
   }
   if (form.platform === "claude" && form.model.trim() === "") out.push("Choose a model.");
   return out;
+}
+
+/**
+ * Whether the form adopts an existing conversation. The server then skips
+ * the worktree and the workspace folder, so the layout doesn't apply.
+ */
+export function adopting(form: BoxForm, mode: DialogMode): boolean {
+  return mode === "new" && form.platform === "claude" && form.conversation !== "";
 }
 
 /** The `boxes.create` body for the new and fork modes. */
@@ -131,6 +148,9 @@ export function createBody(
     conversation = { mode: "fork", fromBoxId: options.forkFrom };
   else if (claude && form.conversation !== "")
     conversation = { mode: "adopt", sessionUuid: form.conversation };
+  // An adopted conversation runs in the directory itself, and the layout
+  // picked for it isn't a choice to remember for the directory.
+  const adopt = conversation.mode === "adopt";
   return {
     targetDir: normalizeDir(form.targetDir),
     platform: form.platform,
@@ -138,8 +158,8 @@ export function createBody(
     conversation,
     ...(claude ? { model: form.model.trim(), effort: form.effort } : {}),
     skipPermissions: form.skipPermissions,
-    layout: form.layout,
-    rememberLayout: options.rememberLayout ?? mode === "new",
+    layout: adopt ? "root" : form.layout,
+    rememberLayout: adopt ? false : (options.rememberLayout ?? mode === "new"),
     sshRemoteRefs: form.sshRemoteRefs,
     start: options.start ?? true,
     force: options.force ?? false,

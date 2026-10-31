@@ -15,6 +15,7 @@ import { Button, Collapsible, Dialog, errorMessage, useApiClient, useInFlight } 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { mountProblems, tcpMapProblems, toTcpMaps } from "../logic/mounts";
 import {
+  adopting,
   autoFillName,
   conversationLabel,
   conversationTooltip,
@@ -89,17 +90,18 @@ export function BoxDialog(props: BoxDialogProps) {
           sshRemoteRefs: [],
         },
   );
-  const [lastAuto, setLastAuto] = useState<string | null>(null);
+  // The name the dialog filled in last; a ref, so the directory effect sees it.
+  const lastAuto = useRef<string | null>(null);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [models, setModels] = useState<string[]>([]);
   const [remotes, setRemotes] = useState<SshRemote[]>([]);
   const [errors, setErrors] = useState<string[]>([]);
   const { busy, run } = useInFlight();
-  // In edit mode, a model or effort the record leaves to the settings files
-  // follows them, as in New Box, until the person picks one.
+  // In edit and fork mode, a model or effort the record leaves to the
+  // settings files follows them, as in New Box, until the person picks one.
   const touched = useRef({
-    model: mode === "fork" || (mode === "edit" && source?.box.model !== undefined),
-    effort: mode === "fork" || (mode === "edit" && source?.box.effort !== undefined),
+    model: mode !== "new" && source?.box.model !== undefined,
+    effort: mode !== "new" && source?.box.effort !== undefined,
     layout: mode === "edit",
   });
   const handPicked = useRef({ model: false, effort: false });
@@ -122,11 +124,27 @@ export function BoxDialog(props: BoxDialogProps) {
   const set = <K extends keyof BoxForm>(key: K, value: BoxForm[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
 
+  // Whether the target directory holds an executable new-issue.sh.
+  const [newIssueScript, setNewIssueScript] = useState(false);
+
   // The directory the conversation list and the settings files come from.
   const catalogDir = source && mode === "edit" ? boxWorkDir(source.box) : dir;
+  const lastCatalogDir = useRef(catalogDir);
   useEffect(() => {
+    // A conversation picked in another directory has no transcript in this
+    // one: drop it, and the name filled in from it, so the combo and the
+    // form agree. Edit mode never changes the directory.
+    if (lastCatalogDir.current !== catalogDir) {
+      lastCatalogDir.current = catalogDir;
+      if (mode !== "edit") {
+        const r = autoFillName(form.name, lastAuto.current, null);
+        lastAuto.current = r.lastAuto;
+        setForm((f) => ({ ...f, conversation: "", name: r.name }));
+      }
+    }
     if (!catalogDir.startsWith("/")) {
       setConversations([]);
+      setNewIssueScript(false);
       return;
     }
     let live = true;
@@ -148,12 +166,18 @@ export function BoxDialog(props: BoxDialogProps) {
           }));
         })
         .catch(() => undefined);
+      if (mode === "new") {
+        client
+          .call("fs.dirs", { query: { path: catalogDir } })
+          .then((r) => live && setNewIssueScript(r.newIssueScript === true))
+          .catch(() => live && setNewIssueScript(false));
+      }
     }, 250);
     return () => {
       live = false;
       clearTimeout(t);
     };
-  }, [client, catalogDir]);
+  }, [client, catalogDir, mode]);
 
   useEffect(() => {
     client
@@ -165,9 +189,12 @@ export function BoxDialog(props: BoxDialogProps) {
   // A new directory brings its remembered layout and its project's settings.
   const lastDir = useRef(dir);
   useEffect(() => {
+    if (!touched.current.layout) {
+      const layout = defaultLayout(dir, settings, project, newIssueScript);
+      setForm((f) => (f.layout === layout ? f : { ...f, layout }));
+    }
     if (lastDir.current === dir) return;
     lastDir.current = dir;
-    if (!touched.current.layout) set("layout", defaultLayout(dir, settings, project));
     if (!projectTouched) {
       setPorts(
         (project?.tcpMaps ?? []).map((m) => ({
@@ -182,7 +209,7 @@ export function BoxDialog(props: BoxDialogProps) {
         })),
       );
     }
-  }, [dir, settings, project, projectTouched]);
+  }, [dir, settings, project, projectTouched, newIssueScript]);
 
   const claude = form.platform === "claude";
   const conversationDisabled = !claude || mode === "fork";
@@ -199,8 +226,8 @@ export function BoxDialog(props: BoxDialogProps) {
       set("conversation", uuid);
       return;
     }
-    const r = autoFillName(form.name, lastAuto, c);
-    setLastAuto(r.lastAuto);
+    const r = autoFillName(form.name, lastAuto.current, c);
+    lastAuto.current = r.lastAuto;
     setForm((f) => ({ ...f, conversation: uuid, name: r.name }));
   };
 
@@ -229,8 +256,10 @@ export function BoxDialog(props: BoxDialogProps) {
     });
 
   const slug = slugify(form.name);
-  const layoutHint =
-    form.layout === "worktree"
+  const adopt = adopting(form, mode);
+  const layoutHint = adopt
+    ? "Resuming an existing conversation: no workspace folder or worktree is created."
+    : form.layout === "worktree"
       ? slug
         ? `Worktree .worktrees/${slug} on branch claude/${slug}.`
         : "Type a conversation name to name the worktree."
@@ -391,7 +420,7 @@ export function BoxDialog(props: BoxDialogProps) {
           ))}
         </select>
       </div>
-      <fieldset className="ab-group bx-layout" disabled={mode === "edit"}>
+      <fieldset className="ab-group bx-layout" disabled={mode === "edit" || adopt}>
         <legend className="bx-dim">Where the agent works</legend>
         {(
           [
