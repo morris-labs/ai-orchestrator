@@ -27,6 +27,7 @@ import { jsonText, keyValues, percent, table, terminalText } from "./format.js";
 import {
   checkAttachArgv,
   checkServerUrl,
+  displayUrl,
   resolveSettings,
   serverFetch,
   serverTls,
@@ -806,7 +807,7 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
       try {
         const h = await c.call("health");
         reachable = true;
-        add("server", "ok", `${s.baseUrl}, version ${h.version}`);
+        add("server", "ok", `${displayUrl(s.baseUrl)}, version ${h.version}`);
       } catch (e) {
         add("server", "fail", describe(e));
       }

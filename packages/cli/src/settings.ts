@@ -136,17 +136,34 @@ export function isLoopbackHost(host: string): boolean {
 }
 
 /**
+ * `baseUrl` for a message, without the user name and password it might
+ * carry. An invalid URL gives a placeholder rather than the raw text, which
+ * can hold credentials too.
+ */
+export function displayUrl(baseUrl: string): string {
+  try {
+    const url = new URL(baseUrl);
+    url.username = "";
+    url.password = "";
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    return "(an invalid URL)";
+  }
+}
+
+/**
  * Checks that the server URL is safe to send the token to: `https`, or
  * plain `http` only when `insecure` allows it. On this machine, plain HTTP
  * would reach whatever program listens on the server port while the server
- * is down. Returns an error message, or `null` when the URL is fine.
+ * is down. Returns an error message, or `null` when the URL is fine. The
+ * message never holds the URL's user name or password.
  */
 export function checkServerUrl(baseUrl: string, insecure: boolean): string | null {
   let url: URL;
   try {
     url = new URL(baseUrl);
   } catch {
-    return `The server URL ${baseUrl} isn't a valid URL.`;
+    return "The server URL isn't a valid URL. Check --server and AGENTBOX_SERVER.";
   }
   if (url.protocol === "https:") return null;
   if (url.protocol !== "http:") {

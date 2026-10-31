@@ -11,6 +11,7 @@ import {
   type ServerRouteKey,
   type ServerRoutes,
 } from "@agentbox/contracts";
+import { displayUrl } from "./settings.js";
 
 /** The server routes served over plain HTTP. */
 export type ServerHttpKey = {
@@ -46,7 +47,7 @@ export class ServerUnreachableError extends Error {
     cause: unknown,
   ) {
     super(
-      `Can't reach the Agent Box server at ${baseUrl}: ${String((cause as Error)?.message ?? cause)}`,
+      `Can't reach the Agent Box server at ${displayUrl(baseUrl)}:${String((cause as Error)?.message ?? cause)}`,
     );
     this.name = "ServerUnreachableError";
   }
