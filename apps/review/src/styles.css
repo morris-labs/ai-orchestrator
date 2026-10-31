@@ -172,13 +172,23 @@ textarea {
   grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
   align-items: start;
 }
+/* A fieldset defaults to `min-width: min-content`, so a select with a long
+   option widens it past its grid track and over its neighbors. */
 fieldset {
   border: 1px solid var(--ab-border);
   border-radius: 8px;
   padding: 8px 12px 12px;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
   margin: 0;
+  min-width: 0;
+}
+/* A select's intrinsic width is its longest option; fill the fieldset instead. */
+.form-grid select {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
 }
 legend {
   color: var(--ab-text-2);
