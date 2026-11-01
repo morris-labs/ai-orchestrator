@@ -164,9 +164,9 @@ export function containerPathProblem(p: string): string | null {
   return null;
 }
 
-/** Why a mount can't be bound, or `null` when it can. */
-export function mountProblem(m: Mount): string | null {
-  return hostPathProblem(m.host) ?? containerPathProblem(m.container);
+/** Why a mount can't be bound, or `null` when it can; `os` as for `hostPathProblem()`. */
+export function mountProblem(m: Mount, os?: HostOs): string | null {
+  return hostPathProblem(m.host, os) ?? containerPathProblem(m.container);
 }
 
 /**

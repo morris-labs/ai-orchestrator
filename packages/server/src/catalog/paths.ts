@@ -1,7 +1,8 @@
 // Where Claude Code keeps a working directory's transcripts.
 import path from "node:path";
+import type { HostOs } from "@aio/contracts";
 import type { HostEnv } from "../records/env.js";
-import { claudeProjectsDir, hostToContainer } from "../records/env.js";
+import { claudeProjectsDir, hostOsOf, hostToContainer } from "../records/env.js";
 
 /** The longest encoded name Claude Code uses before it truncates and hashes. */
 const MAX_ENCODED_LENGTH = 200;
@@ -22,9 +23,13 @@ export function claudePathHash(s: string): number {
  * `[0-9A-Za-z]` replaced by `-`. A name longer than 200 characters is cut
  * to 200 and gets `-` plus the base-36 hash of the unencoded path, as Claude
  * Code 2.1 does.
+ *
+ * `workDir` is a host path. Claude Code runs in the container, so the name
+ * comes from the container path: on Windows, `C:\Users\dev\app` is encoded
+ * as `/mnt/host/c/Users/dev/app`, `-mnt-host-c-Users-dev-app`.
  */
-export function encodeProjectDir(workDir: string): string {
-  const dir = hostToContainer(workDir);
+export function encodeProjectDir(workDir: string, hostOs: HostOs = "linux"): string {
+  const dir = hostToContainer(workDir, hostOs);
   const encoded = dir.replace(/[^0-9A-Za-z]/g, "-");
   if (encoded.length <= MAX_ENCODED_LENGTH) return encoded;
   return `${encoded.slice(0, MAX_ENCODED_LENGTH)}-${Math.abs(claudePathHash(dir)).toString(36)}`;
@@ -33,7 +38,7 @@ export function encodeProjectDir(workDir: string): string {
 /** `<projects store>/<encoded>` for a working directory, or `""` for an empty one. */
 export function projectDirFor(env: HostEnv, workDir: string): string {
   if (workDir === "") return "";
-  return path.join(claudeProjectsDir(env), encodeProjectDir(workDir));
+  return path.join(claudeProjectsDir(env), encodeProjectDir(workDir, hostOsOf(env)));
 }
 
 /** The transcript file of one session in a working directory. */

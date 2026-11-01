@@ -319,6 +319,13 @@ export const BoxViewSchema = z.object({
   sideSessions: z.array(PlatformSchema),
   /** False when `box.targetDir` is missing on the host, such as after a manual move. */
   targetDirExists: z.boolean(),
+  /**
+   * The directory the box's session works in, as its container sees it: the
+   * worktree or target directory through the host-to-container path mapping.
+   * The same as the host path on Linux and macOS; `/mnt/host/c/...` on
+   * Windows. Absent from older servers, and when the path can't be mapped.
+   */
+  containerWorkDir: z.string().min(1).optional(),
 });
 export type BoxView = z.infer<typeof BoxViewSchema>;
 

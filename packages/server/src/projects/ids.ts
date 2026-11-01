@@ -3,15 +3,31 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { ContainerPathError, normalizeWindowsPath, type HostOs } from "@aio/contracts";
 
 /**
  * Normalizes a project root the way 3.3.5 did (`QDir::cleanPath` of the
  * trimmed string): collapses `//`, resolves `.` and `..`, and drops a trailing
  * slash. Returns `""` for a blank input.
+ *
+ * On Windows the root gets the stored form, `C:/Users/dev/project`: an
+ * uppercase drive letter and forward slashes, so `c:\Users\dev\project\`
+ * names the same project. The rest of the path keeps its case, so two
+ * spellings that differ in case are two projects. A path that has no
+ * Windows form, such as a UNC path, is returned trimmed, for the caller's
+ * `hostPathProblem()` check to refuse.
  */
-export function normalizeRoot(dir: string): string {
+export function normalizeRoot(dir: string, hostOs: HostOs = "linux"): string {
   const trimmed = dir.trim();
   if (trimmed === "") return "";
+  if (hostOs === "win32") {
+    try {
+      return normalizeWindowsPath(trimmed);
+    } catch (err) {
+      if (err instanceof ContainerPathError) return trimmed;
+      throw err;
+    }
+  }
   const cleaned = path.posix.normalize(trimmed);
   return cleaned.length > 1 && cleaned.endsWith("/") ? cleaned.slice(0, -1) : cleaned;
 }

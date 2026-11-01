@@ -15,6 +15,7 @@ import {
   type ContainerState,
   type Project,
   type ProjectSummary,
+  type HostOs,
 } from "@aio/contracts";
 import type { z } from "zod";
 import type { EngineEndpoint, Repositories } from "../db/repositories.js";
@@ -45,6 +46,7 @@ import {
   accountDirFor,
   containerHome,
   homePaths,
+  hostOsOf,
   hostToContainer,
   type HostEnv,
 } from "../records/env.js";
@@ -137,11 +139,16 @@ export class ProjectService {
     return this.deps.env.now().toISOString();
   }
 
+  /** The host OS, which decides how host paths map to container paths. */
+  private get hostOs(): HostOs {
+    return hostOsOf(this.deps.env);
+  }
+
   /** The project for a directory, created implicitly (as 3.3.5 did) when missing. */
   ensureForRoot(rootIn: string): Project {
-    const root = normalizeRoot(rootIn);
+    const root = normalizeRoot(rootIn, this.hostOs);
     if (root === "") throw new ApiError("validation", "A project needs a directory.");
-    const problem = hostPathProblem(root);
+    const problem = hostPathProblem(root, this.hostOs);
     if (problem)
       throw new ApiError("validation", `The project directory can't be used: ${problem}`);
     const existing = this.repos.projects.byRoot(root);
@@ -160,8 +167,8 @@ export class ProjectService {
 
   /** `projects.create`: registers an existing directory. */
   create(input: { root: string; name?: string }): Project {
-    const root = normalizeRoot(input.root);
-    const problem = hostPathProblem(root);
+    const root = normalizeRoot(input.root, this.hostOs);
+    const problem = hostPathProblem(root, this.hostOs);
     if (problem)
       throw new ApiError("validation", `The project directory can't be used: ${problem}`);
     if (!isDirectory(root)) throw new ApiError("validation", `${input.root} is not a directory.`);
@@ -268,7 +275,9 @@ export class ProjectService {
       if (u.primaryRepo === null) delete next.primaryRepo;
       else if (!isDirectory(u.primaryRepo))
         throw new ApiError("validation", `${u.primaryRepo} is not a directory.`);
-      else next.primaryRepo = u.primaryRepo;
+      else
+        next.primaryRepo =
+          this.hostOs === "win32" ? normalizeRoot(u.primaryRepo, this.hostOs) : u.primaryRepo;
     }
     if (u.tcpMaps !== undefined) {
       const hosts = new Set<number>();
@@ -289,7 +298,7 @@ export class ProjectService {
       next.tcpMaps = u.tcpMaps;
     }
     if (u.mounts !== undefined) {
-      assertMountable(u.mounts);
+      assertMountable(u.mounts, this.hostOs);
       const missing = u.mounts.filter((m) => !isDirectory(m.host)).map((m) => m.host);
       if (missing.length > 0) {
         throw new ApiError(
@@ -325,7 +334,9 @@ export class ProjectService {
 
   /** The mounts the container gets: the project's, then the global ones it does not shadow. */
   wantedBinds(project: Project): string[] {
-    return mergeMounts(project.mounts, this.deps.settings.get().globalMounts).map(mountBind);
+    return mergeMounts(project.mounts, this.deps.settings.get().globalMounts).map((m) =>
+      mountBind(m, this.hostOs),
+    );
   }
 
   /**
@@ -425,7 +436,10 @@ export class ProjectService {
       const id = defaults[vendor];
       return id === undefined
         ? undefined
-        : hostToContainer(accountDirFor(this.deps.env, vendor, id.slice(vendor.length + 1)));
+        : hostToContainer(
+            accountDirFor(this.deps.env, vendor, id.slice(vendor.length + 1)),
+            this.hostOs,
+          );
     };
     const claude = dirOf("claude");
     if (claude !== undefined)
@@ -553,6 +567,7 @@ export class ProjectService {
           globalMounts: this.deps.settings.get().globalMounts,
         },
         this.accountsLaunch() ? homePaths(this.deps.env).accountsDir : undefined,
+        this.hostOs,
       ),
       passwordHash,
     );

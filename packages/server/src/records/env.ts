@@ -4,7 +4,18 @@
 import crypto from "node:crypto";
 import os from "node:os";
 import path from "node:path";
-import { ACCOUNTS_DIR, HOME_PATHS, type Platform } from "@aio/contracts";
+import {
+  ACCOUNTS_DIR,
+  HOME_PATHS,
+  hostOsFrom,
+  hostToContainer as mapHostToContainer,
+  joinMountSpec,
+  normalizeWindowsPath,
+  splitMountSpec as splitSpec,
+  type HostOs,
+  type MountSpecParts,
+  type Platform,
+} from "@aio/contracts";
 
 export interface HostEnv {
   /** The host user's home directory. Every `~` path below resolves against it. */
@@ -25,6 +36,18 @@ export interface HostEnv {
    * `~/.claude/projects`. `createServerCore()` sets it from `accountsMode`.
    */
   claudeProjectsRoot?: () => string | undefined;
+  /**
+   * The host's operating system, which decides how host paths map to
+   * container paths (see `hostToContainer()`). Absent means `linux`.
+   * `defaultHostEnv()` sets it from `process.platform`; tests set it to
+   * exercise another platform's mapping.
+   */
+  hostOs?: HostOs;
+}
+
+/** The host OS of `env`: its `hostOs`, else `linux`. */
+export function hostOsOf(env: Pick<HostEnv, "hostOs">): HostOs {
+  return env.hostOs ?? "linux";
 }
 
 /**
@@ -37,9 +60,18 @@ export function containerUsername(env: NodeJS.ProcessEnv = process.env): string 
   return /[\s:/]/.test(name) ? "user" : name;
 }
 
-/** The environment of the running process. */
-export function defaultHostEnv(): HostEnv {
-  return { home: os.homedir(), user: containerUsername(), now: () => new Date() };
+/**
+ * The environment of the running process. `platform` is a Node.js
+ * `process.platform` value, injectable for callers that decide it
+ * themselves.
+ */
+export function defaultHostEnv(platform: string = process.platform): HostEnv {
+  return {
+    home: os.homedir(),
+    user: containerUsername(),
+    now: () => new Date(),
+    hostOs: hostOsFrom(platform),
+  };
 }
 
 /** The user's home directory inside the container. */
@@ -130,22 +162,52 @@ export function brokerDirFor(env: Pick<HostEnv, "home" | "dataDir">, container: 
 }
 
 /**
- * Maps a host path to the path the container sees. On Linux the project is
- * mounted at its own host path, so this is the absolute, cleaned path.
+ * Maps a host path to the path the container sees. On Linux and macOS the
+ * project is mounted at its own host path, so this is the absolute, cleaned
+ * path. On Windows it is `/mnt/host/<drive>/...`; see the contracts'
+ * `hostToContainer()`, which throws `ContainerPathError` for a UNC path.
  */
-export function hostToContainer(hostPath: string): string {
-  return path.resolve(hostPath);
+export function hostToContainer(hostPath: string, hostOs: HostOs = "linux"): string {
+  if (hostOs !== "win32") return path.resolve(hostPath);
+  return mapHostToContainer(hostPath, hostOs);
 }
 
 /**
- * Splits a `HOST[:CONTAINER]` mount string at its first colon. The container
- * part is empty when absent.
+ * A host path as a bind source: the absolute, cleaned path on Linux and
+ * macOS, and the stored form (`C:/Users/dev/project`) on Windows.
  */
-export function splitMountSpec(spec: string): { host: string; container: string } {
-  const colon = spec.indexOf(":");
-  return colon < 0
-    ? { host: spec, container: "" }
-    : { host: spec.slice(0, colon), container: spec.slice(colon + 1) };
+export function bindSource(hostPath: string, hostOs: HostOs = "linux"): string {
+  return hostOs === "win32" ? normalizeWindowsPath(hostPath) : path.resolve(hostPath);
+}
+
+/**
+ * The Docker bind string that mounts `hostPath` at `containerPath`, with
+ * optional bind options such as `ro`. The host path is used as given, so a
+ * bind compares equal to the one an older server recorded.
+ */
+export function bindOf(hostPath: string, containerPath: string, options?: string): string {
+  return joinMountSpec({
+    host: hostPath,
+    container: containerPath,
+    ...(options ? { options } : {}),
+  });
+}
+
+/**
+ * The Docker bind string that mounts `hostPath` at its own container path,
+ * `hostToContainer(hostPath)`.
+ */
+export function mirrorBind(hostPath: string, hostOs: HostOs = "linux"): string {
+  return bindOf(hostPath, hostToContainer(hostPath, hostOs));
+}
+
+/**
+ * Splits a `HOST[:CONTAINER[:OPTIONS]]` mount string at its first colon,
+ * skipping a Windows drive letter's colon on Windows. The container part is
+ * empty when absent.
+ */
+export function splitMountSpec(spec: string, hostOs: HostOs = "linux"): MountSpecParts {
+  return splitSpec(spec, hostOs);
 }
 
 /** Writes a container path with the container user's home as `~`. */
@@ -157,7 +219,7 @@ export function displayPath(containerPath: string, home: string): string {
 
 /** A host path as an agent is told about it: the container path with `~` for its home. */
 export function promptPath(env: HostEnv, hostPath: string): string {
-  return displayPath(hostToContainer(hostPath), containerHome(env));
+  return displayPath(hostToContainer(hostPath, hostOsOf(env)), containerHome(env));
 }
 
 /** `yyyyMMddHHmmss` in local time, as the 3.3.5 backups and archives name themselves. */

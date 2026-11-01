@@ -2,8 +2,8 @@
 // `HttpHandlers` type makes a missing or extra route a compile error.
 import {
   DEFAULT_PROMPT_TEMPLATES,
-  READ_ONLY_POST_PUSH_MESSAGE,
   boxWorkDir,
+  READ_ONLY_POST_PUSH_MESSAGE,
   isReadOnlyPostPush,
   type EngineRouteKey,
   type PathParams,
@@ -279,7 +279,7 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
           kind: query.kind,
           session: view.tmuxSession,
           platform: query.platform,
-          workDir: boxWorkDir(view.box),
+          workDir: view.containerWorkDir ?? boxWorkDir(view.box),
         }),
       };
     },

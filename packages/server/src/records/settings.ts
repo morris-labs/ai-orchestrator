@@ -20,11 +20,12 @@ import {
   type Mount,
   type PromptTemplates,
   type SecretRef,
+  type HostOs,
 } from "@aio/contracts";
 import { z } from "zod";
 import type { SettingsRepo } from "../db/repositories.js";
 import type { HostEnv } from "./env.js";
-import { homePaths } from "./env.js";
+import { homePaths, hostOsOf } from "./env.js";
 import { ApiError } from "./errors.js";
 import type { CoreEvents } from "./events.js";
 
@@ -55,9 +56,9 @@ function changedKeys(before: GlobalSettings, after: GlobalSettings): string[] {
  * Throws `validation` for the first mount docker can't bind: a relative or
  * colon-bearing host path, or a container path that isn't absolute.
  */
-export function assertMountable(mounts: readonly Mount[]): void {
+export function assertMountable(mounts: readonly Mount[], hostOs?: HostOs): void {
   for (const m of mounts) {
-    const problem = mountProblem(m);
+    const problem = mountProblem(m, hostOs);
     if (problem) throw new ApiError("validation", problem, { mount: m });
   }
 }
@@ -193,7 +194,7 @@ export class SettingsService {
   /** Replaces the global mounts. Every host directory must exist. */
   setGlobalMounts(mounts: Mount[]): GlobalSettings {
     const list = parseOrThrow(z.array(MountSchema), mounts);
-    assertMountable(list);
+    assertMountable(list, hostOsOf(this.env));
     const missing = list.filter((m) => !isDirectory(m.host)).map((m) => m.host);
     if (missing.length > 0) {
       throw new ApiError(

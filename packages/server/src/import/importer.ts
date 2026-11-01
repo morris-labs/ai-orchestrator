@@ -22,10 +22,17 @@ import {
   type SshRemote,
   type TcpMap,
   type ImportReport as ContractImportReport,
+  type HostOs,
 } from "@aio/contracts";
 import type { Repositories } from "../db/repositories.js";
 import { allocateHostKey } from "../records/box.js";
-import { homePaths, hostToContainer, splitMountSpec, type HostEnv } from "../records/env.js";
+import {
+  homePaths,
+  hostOsOf,
+  hostToContainer,
+  splitMountSpec,
+  type HostEnv,
+} from "../records/env.js";
 import {
   defaultProjectName,
   detectPrimaryRepo,
@@ -189,12 +196,22 @@ export function needsImport(env: HostEnv, repos: Repositories): boolean {
   return any && repos.imports.latest(IMPORT_SOURCE) === undefined;
 }
 
-/** Parses a `HOST[:CONTAINER]` mount; the container side defaults to the host path. */
-function parseMount(spec: string): Mount | undefined {
-  const { host, container } = splitMountSpec(spec);
+/**
+ * Parses a `HOST[:CONTAINER]` mount; the container side defaults to the host
+ * path's container path.
+ */
+function parseMount(spec: string, hostOs: HostOs): Mount | undefined {
+  const { host, container } = splitMountSpec(spec, hostOs);
   if (host.trim() === "") return undefined;
   const hostAbs = path.resolve(host);
-  return { host: hostAbs, container: path.posix.normalize(container || hostToContainer(hostAbs)) };
+  let mapped: string;
+  try {
+    mapped = container || hostToContainer(hostAbs, hostOs);
+  } catch {
+    // A path with no container path, such as a UNC path: skipped.
+    return undefined;
+  }
+  return { host: hostAbs, container: path.posix.normalize(mapped) };
 }
 
 function parsePort(spec: string): TcpMap | undefined {
@@ -254,6 +271,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
  */
 export function runImport(options: ImportOptions): ImportReport {
   const { env, repos } = options;
+  const hostOs = hostOsOf(env);
   const d = sourceDirs(env);
   const confPath =
     options.confPath ?? path.join(env.home, ".config", "claude-box", "claude-box.conf");
@@ -341,7 +359,7 @@ export function runImport(options: ImportOptions): ImportReport {
       report.filesRead.push(full);
       const kv = readKvFile(full);
       const rootRaw = kvLast(kv, "root") ?? "";
-      const root = normalizeRoot(rootRaw);
+      const root = normalizeRoot(rootRaw, hostOs);
       if (root === "" || projectIdForRoot(root) !== file) {
         report.warnings.push(
           `Skipped project file ${file}: its root ${rootRaw || "(none)"} does not match its name.`,
@@ -367,7 +385,7 @@ export function runImport(options: ImportOptions): ImportReport {
         report.poolPortsDropped.push({ projectId: file, boxId: null, port: p });
       }
       for (const spec of kvAll(kv, "dir")) {
-        const mount = parseMount(spec);
+        const mount = parseMount(spec, hostOs);
         if (!mount) {
           report.warnings.push(`Skipped an empty mount in project ${file}.`);
           continue;
@@ -378,7 +396,7 @@ export function runImport(options: ImportOptions): ImportReport {
     }
 
     const projectFor = (targetDir: string): ProjectDraft => {
-      const root = normalizeRoot(targetDir);
+      const root = normalizeRoot(targetDir, hostOs);
       const id = projectIdForRoot(root);
       let draft = drafts.get(id);
       if (!draft) {
@@ -492,7 +510,7 @@ export function runImport(options: ImportOptions): ImportReport {
         report.tcpMapsAdded.push({ projectId: draft.id, boxId: id, ...map });
       }
       for (const spec of kvAll(kv, "dir")) {
-        const mount = parseMount(spec);
+        const mount = parseMount(spec, hostOs);
         if (!mount) {
           warn("skipped an empty mount.");
           continue;
@@ -667,7 +685,7 @@ export function runImport(options: ImportOptions): ImportReport {
 
     // Settings, once.
     if (firstImport || options.force) {
-      const settings = importSettings(d.global, confPath, repos.settings.get(), report);
+      const settings = importSettings(d.global, confPath, repos.settings.get(), report, hostOs);
       repos.settings.put(settings, env.now());
     }
     report.finishedAt = env.now().toISOString();
@@ -716,6 +734,7 @@ function importSettings(
   confPath: string,
   base: GlobalSettings,
   report: ImportReport,
+  hostOs: HostOs,
 ): GlobalSettings {
   const s: GlobalSettings = structuredClone(base);
   const applied = new Set<string>();
@@ -726,7 +745,7 @@ function importSettings(
     for (const raw of fs.readFileSync(globalFile, "utf8").split("\n")) {
       const line = raw.trim();
       if (!line.startsWith("dir=") || line.length <= 4) continue;
-      const mount = parseMount(line.slice(4));
+      const mount = parseMount(line.slice(4), hostOs);
       if (mount) mounts.push(mount);
     }
     s.globalMounts = mounts;

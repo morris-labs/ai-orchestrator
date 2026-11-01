@@ -154,14 +154,25 @@ export async function ensureExcluded(repo: string): Promise<{ ok: boolean; error
   return { ok: true };
 }
 
+/** The first git version whose `git worktree add` takes `--relative-paths`. */
+export const RELATIVE_WORKTREE_GIT = "2.48";
+
 /**
  * `git worktree add` for `<repo>/.worktrees/<slug>` on `claude/<slug>`,
  * creating the branch when it does not exist. Reuses a worktree that is
  * already there and refuses a path that exists but is not a worktree.
+ *
+ * With `relativePaths`, git links the worktree and the repository with
+ * relative paths (`--relative-paths`, git 2.48 or later). The server sets it
+ * on Windows: there the absolute host path git would write into the
+ * worktree's `.git` file, such as `C:/Users/dev/app/.git/worktrees/fix`,
+ * means nothing in the container, which sees the repository under
+ * `/mnt/host/c/...`. A relative link resolves on both sides.
  */
 export async function addWorktree(
   repo: string,
   slug: string,
+  options: { relativePaths?: boolean } = {},
 ): Promise<{ ok: true; path: string } | { ok: false; error: string }> {
   const wt = worktreePath(repo, slug);
   const branch = branchFor(slug);
@@ -172,11 +183,18 @@ export async function addWorktree(
   const branchExists = (
     await git(repo, ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`])
   ).ok;
-  const args = branchExists
-    ? ["worktree", "add", wt, branch]
-    : ["worktree", "add", "-b", branch, wt];
+  const add = options.relativePaths ? ["worktree", "add", "--relative-paths"] : ["worktree", "add"];
+  const args = branchExists ? [...add, wt, branch] : [...add, "-b", branch, wt];
   const r = await git(repo, args, { timeoutMs: 120000 });
-  if (!r.ok) return { ok: false, error: r.output };
+  if (!r.ok) {
+    if (options.relativePaths && /relative-paths/.test(r.output)) {
+      return {
+        ok: false,
+        error: `git ${RELATIVE_WORKTREE_GIT} or later is needed for worktrees on Windows: ${r.output}`,
+      };
+    }
+    return { ok: false, error: r.output };
+  }
   return { ok: true, path: wt };
 }
 

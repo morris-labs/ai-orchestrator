@@ -1,6 +1,6 @@
 // The command lines a box's sessions run (inventory section 4.3), kept in one
 // place so creating and reopening a box can't drift apart.
-import type { Box, Platform, Project } from "@aio/contracts";
+import type { Box, HostOs, Platform, Project } from "@aio/contracts";
 import { hostToContainer, promptPath, type HostEnv } from "../records/env.js";
 import { normalizeRoot } from "../projects/ids.js";
 import { infraFile, worktreeNotesDir } from "../worktrees/worktrees.js";
@@ -9,9 +9,14 @@ import { infraFile, worktreeNotesDir } from "../worktrees/worktrees.js";
  * The `claude` flags shared by creating and reopening a box: remote control
  * (named after the conversation), auto permission mode, the bypass option,
  * the model and effort, and `--add-dir` for the project root when a worktree
- * box's repository is a subdirectory of it.
+ * box's repository is a subdirectory of it. `hostOs` decides how that root
+ * maps to its container path.
  */
-export function baseClaudeArgs(box: Box, project: Pick<Project, "root" | "primaryRepo">): string[] {
+export function baseClaudeArgs(
+  box: Box,
+  project: Pick<Project, "root" | "primaryRepo">,
+  hostOs: HostOs = "linux",
+): string[] {
   // `--flag=value` keeps a name that starts with "-" a value: claude reads
   // `--remote-control -x` as the flag with no name, followed by `-x`.
   const args = [
@@ -21,8 +26,12 @@ export function baseClaudeArgs(box: Box, project: Pick<Project, "root" | "primar
   if (box.skipPermissions) args.push("--allow-dangerously-skip-permissions");
   if (box.model) args.push("--model", box.model);
   if (box.effort) args.push("--effort", box.effort);
-  if (box.worktree && project.primaryRepo && normalizeRoot(project.primaryRepo) !== project.root) {
-    args.push("--add-dir", hostToContainer(box.targetDir));
+  if (
+    box.worktree &&
+    project.primaryRepo &&
+    normalizeRoot(project.primaryRepo, hostOs) !== project.root
+  ) {
+    args.push("--add-dir", hostToContainer(box.targetDir, hostOs));
   }
   return args;
 }
@@ -38,6 +47,7 @@ export function platformArgs(
   program: Platform,
   resume: boolean,
   prompt: string,
+  hostOs: HostOs = "linux",
 ): string[] {
   const args: string[] = [];
   if (program === "codex") {
@@ -54,7 +64,7 @@ export function platformArgs(
     if (!resume && prompt !== "") args.push("-i", prompt);
     return args;
   }
-  return baseClaudeArgs(box, project);
+  return baseClaudeArgs(box, project, hostOs);
 }
 
 /**
@@ -67,10 +77,11 @@ export function sideSessionArgs(
   box: Box,
   project: Pick<Project, "root" | "primaryRepo">,
   program: Platform,
+  hostOs: HostOs = "linux",
 ): string[] {
   return program === "codex"
     ? ["remote-control", "--no-daemon"]
-    : platformArgs(box, project, program, false, "");
+    : platformArgs(box, project, program, false, "", hostOs);
 }
 
 /** The first message of a resumed session after Convert to Worktree (inventory section 4.5). */

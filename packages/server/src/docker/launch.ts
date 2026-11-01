@@ -6,6 +6,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import {
+  ContainerPathError,
   BROKER_ENV,
   BROKER_MOUNT,
   BROKER_SOCKET_PATH,
@@ -13,16 +14,21 @@ import {
   ENGINE_ENV,
   hostPathProblem,
   mountProblem,
+  type HostOs,
   type Mount,
   type TcpMap,
 } from "@aio/contracts";
 import { ApiError } from "../records/errors.js";
 import { RESERVED_ENV_NAMES } from "../records/settings.js";
 import {
+  bindOf,
+  bindSource,
   brokerDirFor,
   containerHome,
   homePaths,
+  hostOsOf,
   hostToContainer,
+  mirrorBind,
   sessionsDirFor,
   type HostEnv,
 } from "../records/env.js";
@@ -129,9 +135,12 @@ export function mergeMounts(own: readonly Mount[], global: readonly Mount[]): Mo
   return out;
 }
 
-/** A mount as a docker bind string, with the host side made absolute. */
-export function mountBind(m: Mount): string {
-  return `${path.resolve(m.host)}:${m.container}`;
+/**
+ * A mount as a docker bind string, with the host side made absolute (and,
+ * on Windows, put in the stored `C:/...` form).
+ */
+export function mountBind(m: Mount, hostOs: HostOs = "linux"): string {
+  return bindOf(bindSource(m.host, hostOs), m.container);
 }
 
 /**
@@ -141,11 +150,12 @@ export function mountBind(m: Mount): string {
 export function mountContainerPaths(
   input: Pick<LaunchInput, "root" | "mounts" | "globalMounts">,
   accountsDir?: string,
+  hostOs: HostOs = "linux",
 ): string[] {
   return [
-    hostToContainer(input.root),
+    hostToContainer(input.root, hostOs),
     ...mergeMounts(input.mounts, input.globalMounts).map((m) => m.container),
-    ...(accountsDir === undefined ? [] : [hostToContainer(accountsDir)]),
+    ...(accountsDir === undefined ? [] : [hostToContainer(accountsDir, hostOs)]),
   ];
 }
 
@@ -171,7 +181,7 @@ export function projectsLinkMounts(env: HostEnv): string[] {
     resolvedClaude = claudeDir;
   }
   const insideClaude = (p: string): boolean =>
-    [claudeDir, resolvedClaude].some((c) => p === c || p.startsWith(`${c}/`));
+    [claudeDir, resolvedClaude].some((c) => p === c || p.startsWith(`${c}${path.sep}`));
   const out: string[] = [];
   const add = (p: string): void => {
     if (!insideClaude(p) && !out.includes(p)) out.push(p);
@@ -220,8 +230,8 @@ export function linkTargetsOutside(accountDir: string): string[] {
     try {
       if (!fs.lstatSync(link).isSymbolicLink()) continue;
       const target = path.resolve(path.dirname(link), fs.readlinkSync(link));
-      if (target === realDir || target.startsWith(`${realDir}/`)) continue;
-      if (target === accountDir || target.startsWith(`${accountDir}/`)) continue;
+      if (target === realDir || target.startsWith(`${realDir}${path.sep}`)) continue;
+      if (target === accountDir || target.startsWith(`${accountDir}${path.sep}`)) continue;
       fs.statSync(target);
       if (!out.includes(target)) out.push(target);
     } catch {
@@ -301,52 +311,66 @@ export function buildLaunchSpec(
 ): ContainerCreateSpec {
   const home = containerHome(env);
   const paths = homePaths(env);
+  const hostOs = hostOsOf(env);
   // A bad path otherwise reaches docker as a bind it refuses with a 400, or
   // a relative one that it takes for a named volume.
-  const rootProblem = hostPathProblem(input.root);
+  const rootProblem = hostPathProblem(input.root, hostOs);
   if (rootProblem)
     throw new ApiError("validation", `The project root can't be mounted: ${rootProblem}`);
   const merged = mergeMounts(input.mounts, input.globalMounts);
   for (const m of merged) {
-    const problem = mountProblem(m);
+    const problem = mountProblem(m, hostOs);
     if (problem) throw new ApiError("validation", `The mount ${m.host} can't be used: ${problem}`);
   }
-  const containerDir = hostToContainer(input.root);
+  let containerDir: string;
+  try {
+    containerDir = hostToContainer(input.root, hostOs);
+  } catch (err) {
+    if (err instanceof ContainerPathError)
+      throw new ApiError("validation", `The project root can't be mounted: ${err.message}`);
+    throw err;
+  }
 
-  const binds = [`${input.root}:${containerDir}`];
+  // Every host path becomes a container path through `hostToContainer()`:
+  // the identity on Linux and macOS, `/mnt/host/<drive>/...` on Windows.
+  const binds = [bindOf(input.root, containerDir)];
   if (input.accounts) {
     // One mount for every account, at its host path, so an account added
     // later appears without a restart. Each Claude account's `sessions`
     // folder is this container's own directory, so containers never share
     // `PID.json` files.
-    const accountsDir = hostToContainer(paths.accountsDir);
-    binds.push(`${paths.accountsDir}:${accountsDir}`);
+    binds.push(mirrorBind(paths.accountsDir, hostOs));
     for (const dir of input.accounts.claudeDirs) {
-      binds.push(`${sessionsDirFor(env, input.container)}:${hostToContainer(dir)}/sessions`);
+      binds.push(
+        bindOf(sessionsDirFor(env, input.container), `${hostToContainer(dir, hostOs)}/sessions`),
+      );
     }
+    // Each link target at its container path, which is its own path except
+    // on Windows. The container reads the link literally, so on Windows a
+    // link to a Windows path still dangles there; see docs/windows.md.
     for (const target of facts.accountLinkTargets ?? []) {
-      const b = `${target}:${target}`;
+      const b = mirrorBind(target, hostOs);
       if (!binds.includes(b)) binds.push(b);
     }
   } else {
     binds.push(
-      `${paths.claudeDir}:${home}/.claude`,
-      `${paths.claudeJson}:${home}/.claude.json`,
-      `${paths.codexDir}:${home}/.codex`,
-      `${paths.copilotDir}:${home}/.copilot`,
+      bindOf(paths.claudeDir, `${home}/.claude`),
+      bindOf(paths.claudeJson, `${home}/.claude.json`),
+      bindOf(paths.codexDir, `${home}/.codex`),
+      bindOf(paths.copilotDir, `${home}/.copilot`),
     );
     for (const p of facts.projectsLinkMounts) {
-      const b = `${p}:${p}`;
+      const b = mirrorBind(p, hostOs);
       if (!binds.includes(b)) binds.push(b);
     }
-    binds.push(`${sessionsDirFor(env, input.container)}:${home}/.claude/sessions`);
+    binds.push(bindOf(sessionsDirFor(env, input.container), `${home}/.claude/sessions`));
   }
-  for (const m of merged) binds.push(mountBind(m));
-  binds.push(`${path.join(paths.stateDir, input.container)}:${STATE_MOUNT}`);
+  for (const m of merged) binds.push(mountBind(m, hostOs));
+  binds.push(bindOf(path.join(paths.stateDir, input.container), STATE_MOUNT));
   // Read-only, so the container can't remove or replace the socket;
   // connecting to it needs no write access. The directory, not the socket,
   // is mounted, so a socket the server recreates stays reachable.
-  binds.push(`${brokerDirFor(env, input.container)}:${BROKER_MOUNT}:ro`);
+  binds.push(bindOf(brokerDirFor(env, input.container), BROKER_MOUNT, "ro"));
 
   const envList = ["IS_SANDBOX=1", "DISABLE_AUTOUPDATER=1"];
   if (facts.hasGitconfig) envList.push(`GIT_CONFIG_GLOBAL=${containerDir}/gitconfig`);

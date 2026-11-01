@@ -10,6 +10,7 @@ import {
   BoxCreateSchema,
   BoxInputSchema,
   BoxUpdateSchema,
+  ContainerPathError,
   boxWorkDir,
   expandTemplate,
   projectContainerName,
@@ -47,8 +48,10 @@ import type { ProjectService } from "../projects/service.js";
 import { PLATFORMS, allocateHostKey, boxTmuxSession, sideSessionName } from "../records/box.js";
 import {
   accountDirFor,
+  bindOf,
   claudeProjectsDir,
   homePaths,
+  hostOsOf,
   hostToContainer,
   promptPath,
   sessionsDirFor,
@@ -175,6 +178,11 @@ export class BoxService {
     return this.deps.env;
   }
 
+  /** The host OS, which decides how host paths map to container paths. */
+  private get hostOs() {
+    return hostOsOf(this.deps.env);
+  }
+
   private now(): string {
     return this.env.now().toISOString();
   }
@@ -250,7 +258,31 @@ export class BoxService {
         (p) => p !== box.platform && live.has(sideSessionName(box, p)),
       ),
       targetDirExists: isDirectory(box.targetDir),
+      ...this.containerWorkDirField(box),
     };
+  }
+
+  /**
+   * The directory the box's session works in, as its container sees it:
+   * `boxWorkDir()` through `hostToContainer()`. Throws `validation` for a
+   * host path that has no container path, such as a UNC path on Windows.
+   */
+  containerWorkDir(box: Box): string {
+    try {
+      return hostToContainer(boxWorkDir(box), this.hostOs);
+    } catch (err) {
+      if (err instanceof ContainerPathError) throw new ApiError("validation", err.message);
+      throw err;
+    }
+  }
+
+  /** `{ containerWorkDir }` for the view, or nothing when the path has no container path. */
+  private containerWorkDirField(box: Box): { containerWorkDir?: string } {
+    try {
+      return { containerWorkDir: this.containerWorkDir(box) };
+    } catch {
+      return {};
+    }
   }
 
   list(projectId?: string): Box[] {
@@ -322,7 +354,7 @@ export class BoxService {
       args,
       account ? { [ACCOUNT_DIR_ENV[program]]: account.containerDir } : {},
     );
-    const workDir = hostToContainer(boxWorkDir(box));
+    const workDir = hostToContainer(boxWorkDir(box), this.hostOs);
     if (account?.claude) {
       // Claude Code deletes transcripts older than `cleanupPeriodDays` (30 by
       // default) from the shared store. Fail the start rather than risk it.
@@ -333,7 +365,7 @@ export class BoxService {
       // the account's files, for the folders the session works in.
       try {
         preacceptClaudeAccount(account.dir, {
-          trustDirs: [workDir, hostToContainer(box.targetDir)],
+          trustDirs: [workDir, hostToContainer(box.targetDir, this.hostOs)],
         });
       } catch {
         // The box still starts; it waits at the prompts, as it would without this step.
@@ -342,7 +374,7 @@ export class BoxService {
       // Host mode shares the host's live `~/.claude.json`. Add only the
       // folder trust entries, and never block the start.
       try {
-        preacceptHostTrust(this.env.home, [workDir, hostToContainer(box.targetDir)]);
+        preacceptHostTrust(this.env.home, [workDir, hostToContainer(box.targetDir, this.hostOs)]);
       } catch {
         // The box waits at the trust prompt, as it would without this step.
       }
@@ -362,7 +394,10 @@ export class BoxService {
         // mount in it, so its `PID.json` files would collide with other
         // containers'. Stale for this box only; the other sessions run on.
         const inspect = await this.deps.docker.inspectContainer(box.container);
-        const want = `${sessionsDirFor(this.env, box.container)}:${account.containerDir}/sessions`;
+        const want = bindOf(
+          sessionsDirFor(this.env, box.container),
+          `${account.containerDir}/sessions`,
+        );
         if (inspect?.running && !inspect.binds.includes(want)) {
           throw new ApiError(
             "stale_mounts",
@@ -422,7 +457,7 @@ export class BoxService {
       id,
       vendor: platform,
       dir,
-      containerDir: hostToContainer(dir),
+      containerDir: hostToContainer(dir, this.hostOs),
       claude: platform === "claude",
     };
   }
@@ -532,7 +567,7 @@ export class BoxService {
    */
   async validateCreate(input: BoxCreateInput): Promise<void> {
     const req: BoxCreate = parseInput(BoxCreateSchema, input);
-    if (!isDirectory(normalizeRoot(path.resolve(req.targetDir))))
+    if (!isDirectory(normalizeRoot(path.resolve(req.targetDir), this.hostOs)))
       throw new ApiError("validation", `${req.targetDir} is not a directory.`);
     if (req.conversation.mode === "adopt") {
       this.checkAdoption(req.conversation.sessionUuid, null, req.force);
@@ -552,7 +587,7 @@ export class BoxService {
    */
   async create(input: BoxCreateInput): Promise<Box> {
     const req: BoxCreate = parseInput(BoxCreateSchema, input);
-    const targetDir = normalizeRoot(path.resolve(req.targetDir));
+    const targetDir = normalizeRoot(path.resolve(req.targetDir), this.hostOs);
     if (!isDirectory(targetDir))
       throw new ApiError("validation", `${req.targetDir} is not a directory.`);
     const project = this.deps.projects.ensureForRoot(targetDir);
@@ -618,7 +653,9 @@ export class BoxService {
         if (layout === "worktree") {
           const repo = project.primaryRepo as string;
           const existed = fs.existsSync(worktreePath(repo, slug));
-          const added = await addWorktree(repo, slug);
+          const added = await addWorktree(repo, slug, {
+            relativePaths: this.hostOs === "win32",
+          });
           if (!added.ok)
             throw new ApiError("conflict", `Could not create the worktree: ${added.error}`);
           workPath = added.path;
@@ -726,7 +763,7 @@ export class BoxService {
       return box;
     }
 
-    let args = [...baseClaudeArgs(box, project), nameArg(conversationName)];
+    let args = [...baseClaudeArgs(box, project, this.hostOs), nameArg(conversationName)];
     this.mark(box, "starting");
     try {
       if (forkFrom) {
@@ -737,7 +774,7 @@ export class BoxService {
       }
       pushPrompt(args, openingPrompt);
       if (box.platform !== "claude")
-        args = platformArgs(box, project, box.platform, false, openingPrompt);
+        args = platformArgs(box, project, box.platform, false, openingPrompt, this.hostOs);
       await this.startSession(box, box.platform, args);
     } catch (err) {
       this.transitions.delete(box.id);
@@ -849,7 +886,7 @@ export class BoxService {
     // A box created without a start opens its conversation now, the way
     // create() would have: with the opening prompt, or as a fork.
     const first = hasTranscript ? undefined : box.firstStart;
-    let args = baseClaudeArgs(box, project);
+    let args = baseClaudeArgs(box, project, this.hostOs);
     if (box.conversationName !== "") args.push(nameArg(box.conversationName));
     if (first) {
       if (first.forkFrom) {
@@ -865,8 +902,8 @@ export class BoxService {
       pushPrompt(args, movedMessage(this.env, box));
     if (box.platform !== "claude") {
       args = first
-        ? platformArgs(box, project, box.platform, false, first.openingPrompt)
-        : platformArgs(box, project, box.platform, true, "");
+        ? platformArgs(box, project, box.platform, false, first.openingPrompt, this.hostOs)
+        : platformArgs(box, project, box.platform, true, "", this.hostOs);
     }
 
     this.mark(box, "starting");
@@ -1111,7 +1148,7 @@ export class BoxService {
     this.requireSiblingsStopped(siblings);
     // A worktree's record and its git metadata hold absolute paths under the
     // root, so renaming the root would strand every worktree box there.
-    const root = normalizeRoot(currentDir);
+    const root = normalizeRoot(currentDir, this.hostOs);
     const worktreeBox = this.repos.boxes
       .list()
       .find((b) => b.worktree && (b.worktree === root || b.worktree.startsWith(`${root}/`)));
@@ -1127,8 +1164,8 @@ export class BoxService {
         `${root} holds git worktrees in .worktrees; a directory with worktrees cannot be moved.`,
       );
     }
-    const newDir = normalizeRoot(path.resolve(newDirIn));
-    if (newDir === normalizeRoot(currentDir)) return { movedBoxes: [] };
+    const newDir = normalizeRoot(path.resolve(newDirIn), this.hostOs);
+    if (newDir === normalizeRoot(currentDir, this.hostOs)) return { movedBoxes: [] };
     if (fs.existsSync(newDir)) throw new ApiError("conflict", `${newDir} already exists.`);
     try {
       fs.renameSync(currentDir, newDir);
@@ -1155,7 +1192,7 @@ export class BoxService {
     const oldProject = this.project(box);
     const hadNew = this.repos.projects.byRoot(newDir) !== undefined;
     const newProject = this.deps.projects.ensureForRoot(newDir);
-    if (!hadNew && oldProject.root === normalizeRoot(currentDir)) {
+    if (!hadNew && oldProject.root === normalizeRoot(currentDir, this.hostOs)) {
       const carried: Project = {
         ...newProject,
         name:
@@ -1198,7 +1235,7 @@ export class BoxService {
     const box = this.get(id);
     this.requireStopped(box, "change its directory");
     if (box.worktree) throw new ApiError("conflict", "A worktree box cannot be re-pointed.");
-    const targetDir = normalizeRoot(path.resolve(targetDirIn));
+    const targetDir = normalizeRoot(path.resolve(targetDirIn), this.hostOs);
     if (!isDirectory(targetDir))
       throw new ApiError("validation", `${targetDirIn} is not a directory.`);
     const saved = this.repos.boxes.put(this.repoint(box, targetDir));
@@ -1354,7 +1391,7 @@ export class BoxService {
       await this.startSession(
         box,
         platform,
-        sideSessionArgs(box, this.project(box), platform),
+        sideSessionArgs(box, this.project(box), platform, this.hostOs),
         session,
       );
     } catch (err) {
