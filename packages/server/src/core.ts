@@ -28,6 +28,7 @@ import { KeyedMutex } from "./records/mutex.js";
 import { SettingsService } from "./records/settings.js";
 import { SshRemoteService } from "./records/sshRemotes.js";
 import { removeUnusedBrokerDirs } from "./secrets/broker-dirs.js";
+import type { BrokerTransportDecision } from "./secrets/transport.js";
 import { SessionWatcher } from "./watcher/sessionWatcher.js";
 import * as worktrees from "./worktrees/index.js";
 
@@ -51,6 +52,8 @@ export interface CoreOptions {
   sessionGoneTimeoutMs?: number;
   /** Logs background failures, such as a failed status poll. Default: none. */
   log?: (message: string) => void;
+  /** Decides the secrets broker transport; tests replace it. See `ProjectServiceDeps`. */
+  brokerTransport?: () => Promise<BrokerTransportDecision>;
 }
 
 export interface CoreStartOptions {
@@ -141,6 +144,8 @@ export function createServerCore(options: CoreOptions): ServerCore {
     portFree: options.portFree,
     graceSec: options.graceSec,
     removalTimeoutMs: options.removalTimeoutMs,
+    brokerTransport: options.brokerTransport,
+    log: options.log,
   });
   const boxes = new BoxService({
     env,

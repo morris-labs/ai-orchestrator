@@ -7,7 +7,13 @@
 //
 // The socket identifies the container and nothing finer: every process in
 // the container runs as the same user and can ask for any listed secret.
-// See `docs/secrets.md`.
+//
+// Under Docker Desktop a host socket can't be mounted into a container, so
+// the broker listens on 127.0.0.1 instead, on one port per container, and
+// requires the bearer token it writes to `broker.token` in the same mounted
+// directory. Any process on the host can connect to a loopback port, so the
+// token, not the port, identifies the container. See `docs/secrets.md`.
+import crypto from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
@@ -15,7 +21,11 @@ import {
   BROKER_MAX_BODY_BYTES,
   BROKER_ROUTES,
   BROKER_SOCKET_NAME,
+  BROKER_TCP_BIND,
+  BROKER_TOKEN_NAME,
+  BROKER_URL_NAME,
   BrokerErrorCodeSchema,
+  brokerTcpUrl,
   BrokerReadRequestSchema,
   type BrokerErrorCode,
 } from "@aio/contracts";
@@ -33,6 +43,21 @@ export interface BrokerSource {
 export interface BrokerTarget {
   container: string;
   projectId: string;
+  /**
+   * The host port of the TCP transport. Absent means the Unix socket. The
+   * broker binds it on `BROKER_TCP_BIND` only.
+   */
+  tcpPort?: number;
+}
+
+export interface BrokerOpenOptions {
+  /**
+   * Writes a new token for a TCP target even when one exists. The server
+   * asks for it each time it creates the container, so a token never
+   * outlives its container. Without it, a restarted server keeps the token
+   * that the running container already reads.
+   */
+  rotateToken?: boolean;
 }
 
 export interface SecretsBrokerOptions {
@@ -76,11 +101,56 @@ export function assertSocketPathFits(socketPath: string): void {
 /** How often the server matches the open sockets to the running containers. */
 export const BROKER_SYNC_INTERVAL_MS = 30_000;
 
+/** The bearer token check of a TCP listener; `null` for a Unix socket. */
+interface TokenCheck {
+  /** The SHA-256 of the token, so the comparison takes the same time for any input. */
+  digest: Buffer;
+}
+
 interface OpenSocket {
   projectId: string;
   server: http.Server;
   openedAt: number;
-  socketPath: string;
+  /** The socket path, or `null` for TCP. */
+  socketPath: string | null;
+  /** The TCP port, or `null` for the Unix socket. */
+  tcpPort: number | null;
+  auth: TokenCheck | null;
+}
+
+/** A new random token: 32 bytes as hex. */
+export function newBrokerToken(): string {
+  return crypto.randomBytes(32).toString("hex");
+}
+
+const TOKEN_PATTERN = /^[0-9a-f]{64}$/;
+
+function digestOf(text: string): Buffer {
+  return crypto.createHash("sha256").update(text, "utf8").digest();
+}
+
+/**
+ * Whether an `Authorization` header carries `expected`'s token. Hashes both
+ * sides and compares the digests with `timingSafeEqual`, so neither the
+ * length nor the content of a wrong token changes how long it takes.
+ */
+export function bearerMatches(header: string | undefined, expected: Buffer): boolean {
+  const m = /^Bearer[ \t]+(\S+)[ \t]*$/i.exec(header ?? "");
+  const given = digestOf(m?.[1] ?? "");
+  // Compared even without a token, so a missing header costs the same.
+  return crypto.timingSafeEqual(given, expected) && m !== null;
+}
+
+/** Writes `content` to `file` with mode 0600, replacing it atomically. */
+function writePrivate(file: string, content: string): void {
+  const tmp = `${file}.${crypto.randomBytes(6).toString("hex")}.tmp`;
+  try {
+    fs.writeFileSync(tmp, content, { mode: 0o600, flag: "wx" });
+    fs.chmodSync(tmp, 0o600);
+    fs.renameSync(tmp, file);
+  } finally {
+    fs.rmSync(tmp, { force: true });
+  }
 }
 
 /** Makes caller text safe for one log line: no control characters, at most 200 characters. */
@@ -102,6 +172,16 @@ export class SecretsBroker {
     return path.join(this.opts.dirFor(container), BROKER_SOCKET_NAME);
   }
 
+  /** The token file path on the host for a container. */
+  tokenPath(container: string): string {
+    return path.join(this.opts.dirFor(container), BROKER_TOKEN_NAME);
+  }
+
+  /** The TCP port the broker listens on for a container, or `null`. */
+  tcpPort(container: string): number | null {
+    return this.sockets.get(container)?.tcpPort ?? null;
+  }
+
   /** The containers with an open socket. */
   openContainers(): string[] {
     return [...this.sockets.keys()].sort();
@@ -109,21 +189,31 @@ export class SecretsBroker {
 
   /**
    * Listens on the container's socket, replacing whatever file is at its
-   * path. Does nothing when the socket is already open for the same
-   * project. Throws `internal` when the path is too long for a Unix socket.
+   * path, or with `tcpPort`, on that port of 127.0.0.1. Does nothing when
+   * the same listener is already open for the same project, except that
+   * `rotateToken` still writes a new token. Throws `internal` when the path
+   * is too long for a Unix socket or the port is taken.
    */
-  async open(target: BrokerTarget): Promise<void> {
+  async open(target: BrokerTarget, options: BrokerOpenOptions = {}): Promise<void> {
     const pending = this.opening.get(target.container);
     if (pending) await pending.catch(() => undefined);
     const current = this.sockets.get(target.container);
-    if (current?.projectId === target.projectId && current.server.listening) {
+    if (
+      current?.projectId === target.projectId &&
+      current.tcpPort === (target.tcpPort ?? null) &&
+      current.server.listening
+    ) {
       // A container about to be created again gets the full grace period.
       current.openedAt = this.now();
+      if (options.rotateToken && current.auth) {
+        current.auth.digest = this.writeToken(target.container, true);
+      }
       return;
     }
     const work = (async () => {
       if (current) await this.close(target.container);
-      await this.listen(target);
+      if (target.tcpPort === undefined) await this.listen(target);
+      else await this.listenTcp(target, target.tcpPort, options.rotateToken ?? false);
     })();
     this.opening.set(target.container, work);
     try {
@@ -142,6 +232,10 @@ export class SecretsBroker {
     // A socket left by an earlier server, or anything else at the path. Only
     // the host user can write here: the container mounts it read-only.
     fs.rmSync(socketPath, { recursive: true, force: true });
+    // A container once created with TCP left these. The client prefers the
+    // URL file to the default socket, so it must go.
+    fs.rmSync(path.join(dir, BROKER_URL_NAME), { force: true });
+    fs.rmSync(path.join(dir, BROKER_TOKEN_NAME), { force: true });
     const server = http.createServer((req, res) => {
       void this.handle(target, req, res);
     });
@@ -160,11 +254,80 @@ export class SecretsBroker {
       projectId: target.projectId,
       server,
       socketPath,
+      tcpPort: null,
+      auth: null,
       openedAt: this.now(),
     });
   }
 
-  /** Stops listening for a container and removes its socket file; the directory stays. */
+  /**
+   * Returns the digest of the container's token, writing a new one when
+   * `rotate` is set or the file holds no valid token.
+   */
+  private writeToken(container: string, rotate: boolean): Buffer {
+    const file = this.tokenPath(container);
+    if (!rotate) {
+      let existing = "";
+      try {
+        existing = fs.readFileSync(file, "utf8").trim();
+      } catch {
+        // None yet.
+      }
+      if (TOKEN_PATTERN.test(existing)) {
+        fs.chmodSync(file, 0o600);
+        return digestOf(existing);
+      }
+    }
+    const token = newBrokerToken();
+    writePrivate(file, `${token}\n`);
+    return digestOf(token);
+  }
+
+  private async listenTcp(target: BrokerTarget, port: number, rotate: boolean): Promise<void> {
+    const dir = this.opts.dirFor(target.container);
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    fs.chmodSync(dir, 0o700);
+    // A socket from when the container used the Unix transport.
+    fs.rmSync(this.socketPath(target.container), { recursive: true, force: true });
+    const auth: TokenCheck = { digest: this.writeToken(target.container, rotate) };
+    writePrivate(path.join(dir, BROKER_URL_NAME), `${brokerTcpUrl(port)}\n`);
+    const server = http.createServer((req, res) => {
+      void this.handle(target, req, res, auth);
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen({ port, host: BROKER_TCP_BIND, exclusive: true }, () => {
+          server.off("error", reject);
+          resolve();
+        });
+      });
+    } catch (err) {
+      throw new ApiError(
+        "internal",
+        `The secrets broker can't listen on ${BROKER_TCP_BIND}:${port} for ${target.container}: ` +
+          `${(err as Error).message}`,
+      );
+    }
+    server.on("error", (err) =>
+      this.opts.log(`Secrets broker: ${target.container} listener failed: ${err.message}`),
+    );
+    this.sockets.set(target.container, {
+      projectId: target.projectId,
+      server,
+      socketPath: null,
+      tcpPort: port,
+      auth,
+      openedAt: this.now(),
+    });
+  }
+
+  /**
+   * Stops listening for a container and removes its socket file; the
+   * directory stays. A TCP listener's token and URL files stay too, so a
+   * restarted server opens the same port with the token the running
+   * container already reads.
+   */
   async close(container: string): Promise<void> {
     const open = this.sockets.get(container);
     if (!open) return;
@@ -173,7 +336,7 @@ export class SecretsBroker {
       open.server.close(() => resolve());
       open.server.closeAllConnections();
     });
-    fs.rmSync(open.socketPath, { force: true });
+    if (open.socketPath !== null) fs.rmSync(open.socketPath, { force: true });
   }
 
   private now(): number {
@@ -197,8 +360,9 @@ export class SecretsBroker {
       try {
         await this.open(target);
       } catch (err) {
+        const what = target.tcpPort === undefined ? "socket" : "TCP listener";
         this.opts.log(
-          `Secrets broker: can't open the socket for ${target.container}: ${(err as Error).message}`,
+          `Secrets broker: can't open the ${what} for ${target.container}: ${(err as Error).message}`,
         );
       }
     }
@@ -212,11 +376,23 @@ export class SecretsBroker {
     target: BrokerTarget,
     req: http.IncomingMessage,
     res: http.ServerResponse,
+    auth: TokenCheck | null = null,
   ): Promise<void> {
     const route = (req.url ?? "").split("?")[0];
     let kind = `${req.method ?? "?"} ${route}`;
     let names: string[] = [];
     let caller = "";
+    if (auth && !bearerMatches(req.headers.authorization, auth.digest)) {
+      // Neither the header nor the body is read or logged: either could hold
+      // a secret that a wrong client sent here.
+      const why = req.headers.authorization === undefined ? "missing token" : "wrong token";
+      this.opts.log(`Secrets broker: ${target.container} ${logSafe(kind)}: unauthorized (${why})`);
+      req.resume();
+      send(res, STATUS_BY_CODE.unauthorized, {
+        error: { code: "unauthorized", message: "The secrets broker needs the container's token." },
+      });
+      return;
+    }
     try {
       if (req.method === "GET" && route === BROKER_ROUTES.names) {
         kind = "list";

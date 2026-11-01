@@ -98,6 +98,7 @@ import {
   type Platform,
 } from "./common.js";
 import { DEFAULT_PROMPT_TEMPLATES } from "./prompts.js";
+import { BrokerTransportSettingSchema } from "./broker.js";
 
 /** Every shared container name and box id starts with this prefix. */
 export const CONTAINER_PREFIX = "aio-agent-";
@@ -645,6 +646,11 @@ export const GlobalSettingsSchema = z
      * `DATA_DIR/backup/transcripts`. Absent means 7; 0 turns snapshots off.
      */
     transcriptBackupKeep: z.number().int().nonnegative().optional(),
+    /**
+     * How the secrets broker reaches containers; see
+     * `BrokerTransportSettingSchema`. Absent means `auto`.
+     */
+    brokerTransport: BrokerTransportSettingSchema.optional(),
   })
   .strict();
 export type GlobalSettings = z.infer<typeof GlobalSettingsSchema>;

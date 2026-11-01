@@ -30,7 +30,12 @@ export function reviewStateOf(services: CoreServices, boxId: string): ReviewStat
  */
 export function wireHooks(server: ServerCore, services: CoreServices): void {
   server.setHooks({
-    prepareSecrets: (projectId, container) => services.prepareSecrets(projectId, container),
+    // Two arguments for the Unix socket, as before the TCP transport.
+    prepareSecrets: (projectId, container, broker) =>
+      broker
+        ? services.prepareSecrets(projectId, container, broker)
+        : services.prepareSecrets(projectId, container),
+    brokerTcpPort: (container) => services.brokerTcpPort?.(container) ?? null,
     sudoPasswordHash: async () => (services.sudoPasswordHash ? services.sudoPasswordHash() : null),
     reviewState: (boxId) => reviewStateOf(services, boxId),
     listeners: (container) => services.listeners?.(container) ?? [],
@@ -198,6 +203,7 @@ export function apiCoreOf(server: ServerCore, dockerApi: Docker): Core {
             projectId: e.projectId,
             hostPort: e.hostPort,
             token: e.token,
+            ...(e.brokerPort !== undefined ? { brokerPort: e.brokerPort } : {}),
           });
         }
         return endpoints;

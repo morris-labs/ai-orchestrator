@@ -51,6 +51,8 @@ export interface ContainerCreateSpec {
   labels: Record<string, string>;
   /** Linux capabilities removed from the container's default set. */
   capDrop?: string[];
+  /** Extra hosts file entries, `NAME:ADDRESS`, such as `host.docker.internal:host-gateway`. */
+  extraHosts?: string[];
   tty: boolean;
   openStdin: boolean;
   autoRemove: boolean;
@@ -75,6 +77,17 @@ export interface ExecResult {
   exitCode: number | null;
   stdout: string;
   stderr: string;
+}
+
+/** The parts of `GET /info` the core reads. */
+export interface DockerEngineInfo {
+  /** Such as `Ubuntu 24.04 LTS`, or `Docker Desktop`. */
+  operatingSystem: string;
+  /** `linux` or `windows`. */
+  osType: string;
+  /** The engine's host name, `docker-desktop` under Docker Desktop. */
+  name: string;
+  labels: string[];
 }
 
 /** A one-shot stats sample: the raw counters the CPU delta needs. */
@@ -148,6 +161,11 @@ export function isContainerGone(err: unknown): boolean {
 export interface DockerClient {
   /** Whether the daemon answers. */
   ping(): Promise<boolean>;
+  /**
+   * The engine's `/info`. Optional, so a test double can leave it out; the
+   * core then treats the engine as native Linux.
+   */
+  info?(): Promise<DockerEngineInfo>;
   /** Containers whose name matches `nameRegex` (default `^aio-agent-`). */
   listContainers(options?: {
     all?: boolean;

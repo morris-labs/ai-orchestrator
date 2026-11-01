@@ -21,6 +21,7 @@ import type { EngineEndpoint, Repositories } from "../db/repositories.js";
 import { noEngineMessage, type ImageVersions } from "../docker/image.js";
 import {
   LABELS,
+  type BrokerLaunch,
   type LaunchInput,
   SECRETS_LABEL_BROKER,
   buildLaunchSpec,
@@ -54,6 +55,7 @@ import type { CoreHooks, EngineHealth } from "../records/hooks.js";
 import type { KeyedMutex } from "../records/mutex.js";
 import { assertMountable, assertUniqueNames, type SettingsService } from "../records/settings.js";
 import { SHA512_CRYPT_PATTERN } from "../secrets/crypt.js";
+import { BrokerTransportResolver, type BrokerTransportDecision } from "../secrets/transport.js";
 import { defaultProjectName, detectPrimaryRepo, normalizeRoot, projectIdForRoot } from "./ids.js";
 
 export type ProjectUpdate = z.input<typeof ProjectUpdateSchema>;
@@ -98,6 +100,14 @@ export interface ProjectServiceDeps {
   allocatePort?: (exclude: ReadonlySet<number>) => Promise<number>;
   /** Whether a stored engine port is still free; tests replace it. */
   portFree?: (port: number) => Promise<boolean>;
+  /**
+   * Decides the secrets broker transport for a new container. Default: the
+   * `brokerTransport` setting resolved against the engine's `/info` and this
+   * process's platform; see `decideBrokerTransport()`.
+   */
+  brokerTransport?: () => Promise<BrokerTransportDecision>;
+  /** Logs the broker transport decision. Default: none. */
+  log?: (message: string) => void;
   /** Seconds the keeper lingers; 30 unless a test shortens it. */
   graceSec?: number;
   /** Milliseconds to wait for a stopped container to go away. */
@@ -127,7 +137,26 @@ function isDirectory(p: string): boolean {
 }
 
 export class ProjectService {
-  constructor(private readonly deps: ProjectServiceDeps) {}
+  private readonly resolver: BrokerTransportResolver;
+  /** The last transport decision, for the stale check; `null` until one is made. */
+  private lastBroker: BrokerTransportDecision | null = null;
+
+  constructor(private readonly deps: ProjectServiceDeps) {
+    const docker = deps.docker;
+    this.resolver = new BrokerTransportResolver({
+      info: docker.info ? () => docker.info!() : undefined,
+      setting: () => deps.settings.get().brokerTransport,
+      dockerHost: process.env.DOCKER_HOST,
+      log: deps.log,
+    });
+  }
+
+  /** The broker transport a container created now gets. */
+  async brokerTransport(): Promise<BrokerTransportDecision> {
+    const decision = await (this.deps.brokerTransport ?? (() => this.resolver.resolve()))();
+    this.lastBroker = decision;
+    return decision;
+  }
 
   private get repos() {
     return this.deps.repos;
@@ -338,6 +367,7 @@ export class ProjectService {
    */
   async staleDifferences(project: Project): Promise<string[]> {
     const inspect = await this.deps.docker.inspectContainer(this.containerName(project));
+    if (inspect?.running) await this.brokerTransport().catch(() => undefined);
     return this.staleFromInspect(project, inspect, await this.currentImageId(inspect));
   }
 
@@ -385,6 +415,13 @@ export class ProjectService {
     // environment, where `docker inspect` shows them.
     if (inspect.labels[LABELS.secrets] !== SECRETS_LABEL_BROKER)
       diffs.push("secrets environment -> broker");
+    // The broker transport is fixed in the container's environment. Absent
+    // means the Unix socket, so nothing changes for a native Linux engine.
+    else if (this.lastBroker) {
+      const haveBroker = inspect.labels[LABELS.brokerTransport] ?? "unix";
+      if (haveBroker !== this.lastBroker.transport)
+        diffs.push(`broker ${haveBroker} -> ${this.lastBroker.transport}`);
+    }
     // A container from before the label has the old image's passwordless sudo.
     const haveSudo = inspect.labels[LABELS.sudo] ?? "passwordless";
     const wantSudo = sudoLabel(this.deps.settings.get().sudoPasswordRef !== undefined);
@@ -516,6 +553,26 @@ export class ProjectService {
     });
   }
 
+  /**
+   * The host port of the container's TCP broker: the stored one when no
+   * other project uses it and it is free or the broker already holds it for
+   * this container, else a new one. Never an engine port.
+   */
+  private async brokerPort(projectId: string, container: string): Promise<number> {
+    const taken = new Set<number>();
+    for (const e of this.repos.engines.list()) {
+      taken.add(e.hostPort);
+      if (e.projectId !== projectId && e.brokerPort !== undefined) taken.add(e.brokerPort);
+    }
+    const stored = this.repos.engines.get(projectId)?.brokerPort;
+    const portFree = this.deps.portFree ?? loopbackPortFree;
+    if (stored !== undefined && !taken.has(stored)) {
+      if (this.deps.hooks().brokerTcpPort?.(container) === stored) return stored;
+      if (await portFree(stored)) return stored;
+    }
+    return (this.deps.allocatePort ?? freeLoopbackPort)(taken);
+  }
+
   /** Reuses the stored engine port when it is still free, else picks a new one. */
   private async enginePort(projectId: string): Promise<number> {
     const others = new Set(
@@ -606,8 +663,21 @@ export class ProjectService {
 
       // The pre-start check: every reference must resolve now, so a locked
       // 1Password blocks the launch instead of failing later inside a tool.
-      // It also opens the broker socket that the container asks for values.
-      const secretNames = await this.deps.hooks().prepareSecrets(projectId, name);
+      // It also opens the broker socket that the container asks for values,
+      // or under Docker Desktop, the broker's TCP listener and a new token.
+      const decision = await this.brokerTransport();
+      let broker: BrokerLaunch = { transport: "unix" };
+      let secretNames: string[];
+      if (decision.transport === "tcp") {
+        const port = await this.brokerPort(projectId, name);
+        broker = { transport: "tcp", port, hostGateway: decision.hostGateway };
+        secretNames = await this.deps.hooks().prepareSecrets(projectId, name, {
+          transport: "tcp",
+          port,
+        });
+      } else {
+        secretNames = await this.deps.hooks().prepareSecrets(projectId, name);
+      }
       // So is the sudo password: only its hash reaches the container.
       const passwordHash = await this.deps.hooks().sudoPasswordHash();
       if (passwordHash !== null && !SHA512_CRYPT_PATTERN.test(passwordHash)) {
@@ -637,6 +707,8 @@ export class ProjectService {
           graceSec: this.deps.graceSec,
           sudoPassword: passwordHash !== null,
           accounts,
+          // Absent for the Unix socket, so that launch is what it always was.
+          ...(broker.transport === "tcp" ? { broker } : {}),
         },
         facts,
       );
@@ -659,7 +731,16 @@ export class ProjectService {
         // Without the file, staleDifferences() compares the container's binds.
         fs.rmSync(mountsFile(this.deps.env, name), { recursive: true, force: true });
       }
-      this.repos.engines.put({ projectId, container: name, hostPort, token }, this.deps.env.now());
+      this.repos.engines.put(
+        {
+          projectId,
+          container: name,
+          hostPort,
+          token,
+          ...(broker.transport === "tcp" ? { brokerPort: broker.port } : {}),
+        },
+        this.deps.env.now(),
+      );
       this.publishContainer(projectId, name, "running");
       return { container: name, created: true, stale: [] };
     });

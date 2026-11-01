@@ -8,6 +8,7 @@ import {
   type ContainerInspect,
   type ContainerSummary,
   type DockerClient,
+  type DockerEngineInfo,
   type ExecOptions,
   type ExecResult,
   type ImageInspect,
@@ -81,6 +82,40 @@ function mapBindings(
   return out;
 }
 
+/**
+ * The `POST /containers/create` body for a spec. Docker Desktop takes the
+ * same body: it publishes a `127.0.0.1` port binding on the host's own
+ * loopback address, and resolves `host.docker.internal` without an
+ * `ExtraHosts` entry.
+ */
+export function createBody(spec: ContainerCreateSpec): Docker.ContainerCreateOptions {
+  const exposed: Record<string, object> = {};
+  const bindings: Record<string, { HostIp: string; HostPort: string }[]> = {};
+  for (const [port, list] of Object.entries(spec.portBindings)) {
+    exposed[port] = {};
+    bindings[port] = list.map((b) => ({ HostIp: b.hostIp, HostPort: b.hostPort }));
+  }
+  return {
+    name: spec.name,
+    Image: spec.image,
+    Cmd: spec.cmd,
+    Env: spec.env,
+    User: spec.user,
+    WorkingDir: spec.workingDir,
+    Labels: spec.labels,
+    Tty: spec.tty,
+    OpenStdin: spec.openStdin,
+    ExposedPorts: exposed,
+    HostConfig: {
+      Binds: spec.binds,
+      AutoRemove: spec.autoRemove,
+      PortBindings: bindings,
+      ...(spec.capDrop ? { CapDrop: spec.capDrop } : {}),
+      ...(spec.extraHosts && spec.extraHosts.length > 0 ? { ExtraHosts: spec.extraHosts } : {}),
+    },
+  };
+}
+
 export class DockerodeClient implements DockerClient {
   readonly docker: Docker;
 
@@ -95,6 +130,21 @@ export class DockerodeClient implements DockerClient {
     } catch {
       return false;
     }
+  }
+
+  async info(): Promise<DockerEngineInfo> {
+    const raw = (await call(() => this.docker.info())) as {
+      OperatingSystem?: string;
+      OSType?: string;
+      Name?: string;
+      Labels?: string[] | null;
+    };
+    return {
+      operatingSystem: raw.OperatingSystem ?? "",
+      osType: raw.OSType ?? "",
+      name: raw.Name ?? "",
+      labels: raw.Labels ?? [],
+    };
   }
 
   async listContainers(
@@ -152,32 +202,7 @@ export class DockerodeClient implements DockerClient {
   }
 
   async createContainer(spec: ContainerCreateSpec): Promise<string> {
-    const exposed: Record<string, object> = {};
-    const bindings: Record<string, { HostIp: string; HostPort: string }[]> = {};
-    for (const [port, list] of Object.entries(spec.portBindings)) {
-      exposed[port] = {};
-      bindings[port] = list.map((b) => ({ HostIp: b.hostIp, HostPort: b.hostPort }));
-    }
-    const c = await call(() =>
-      this.docker.createContainer({
-        name: spec.name,
-        Image: spec.image,
-        Cmd: spec.cmd,
-        Env: spec.env,
-        User: spec.user,
-        WorkingDir: spec.workingDir,
-        Labels: spec.labels,
-        Tty: spec.tty,
-        OpenStdin: spec.openStdin,
-        ExposedPorts: exposed,
-        HostConfig: {
-          Binds: spec.binds,
-          AutoRemove: spec.autoRemove,
-          PortBindings: bindings,
-          ...(spec.capDrop ? { CapDrop: spec.capDrop } : {}),
-        },
-      }),
-    );
+    const c = await call(() => this.docker.createContainer(createBody(spec)));
     return c.id;
   }
 

@@ -15,6 +15,12 @@ export interface EngineHealth {
   versionMatches?: boolean | null;
 }
 
+/** The TCP broker a container is about to be created with. */
+export interface PrepareBrokerTcp {
+  transport: "tcp";
+  port: number;
+}
+
 export interface CoreHooks {
   /** Whether a run holds the box. Default: idle. */
   reviewState(boxId: string): ReviewState;
@@ -28,14 +34,27 @@ export interface CoreHooks {
    * names the container may request. Throw an `ApiError` (`secrets_locked`,
    * `secrets_unavailable`) to block the launch. Default: no secrets and no
    * socket.
+   *
+   * `broker` is present only for the TCP transport: the broker then listens
+   * on `127.0.0.1:port` with a token it writes fresh for the new container.
    */
-  prepareSecrets(projectId: string, container: string): Promise<string[]>;
+  prepareSecrets(
+    projectId: string,
+    container: string,
+    broker?: PrepareBrokerTcp,
+  ): Promise<string[]>;
   /**
    * The SHA-512 crypt hash of the container user's sudo password, installed
    * in a project container at creation, or `null` to turn sudo off. Throws
    * like `prepareSecrets` to block the launch. Default: `null`.
    */
   sudoPasswordHash(): Promise<string | null>;
+  /**
+   * The port the broker listens on for `container` over TCP, or `null`. A
+   * port the broker itself holds counts as free when the container is
+   * created again. Default: `null`.
+   */
+  brokerTcpPort?(container: string): number | null;
 }
 
 export function defaultHooks(): CoreHooks {
@@ -45,5 +64,6 @@ export function defaultHooks(): CoreHooks {
     engineHealth: () => ({ version: null, healthy: false }),
     prepareSecrets: async () => [],
     sudoPasswordHash: async () => null,
+    brokerTcpPort: () => null,
   };
 }
