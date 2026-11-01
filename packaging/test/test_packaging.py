@@ -853,9 +853,13 @@ class DevAppArmorTest(unittest.TestCase):
         }
 
     def make_checkout(self, dirname):
-        """Copies the script, its library, and the templates to a checkout."""
+        """Copies the script, its helpers, and the templates to a checkout."""
         self.root = self.tmp / dirname
-        for rel in ("scripts/install-dev-apparmor.sh", "scripts/lib/common.sh"):
+        for rel in (
+            "scripts/install-dev-apparmor.sh",
+            "scripts/ensure-electron.sh",
+            "scripts/lib/common.sh",
+        ):
             (self.root / rel).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / rel, self.root / rel)
         shutil.copytree(ROOT / "packaging/deb/apparmor", self.root / "packaging/deb/apparmor")
