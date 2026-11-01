@@ -6,8 +6,8 @@ every other machine keeps open to it. Each other machine runs a *node*,
 which owns its own Docker, containers, transcripts, and accounts. The apps
 and the CLI on any machine talk only to the server on that machine.
 
-This page describes roles, how to add a machine to a hub, the hub's link
-port, and what crosses the link.
+This page describes roles, how to set up a hub and add a machine to it,
+the hub's link port, and what crosses the link.
 
 ## Roles
 
@@ -29,12 +29,55 @@ To see a machine's role and its link, run the following command:
 aio node status
 ```
 
+## Set up a hub
+
+Multi-host is tested on Linux machines. For macOS and Windows, see
+[macOS and Windows](platforms.md#multi-host).
+
+To set up the hub, do the following on the machine that hosts it:
+
+1.  Install the package and start the server, as
+    [Install AI Orchestrator](install.md) describes. Run the setup wizard
+    and keep **Single machine** selected. A single machine has the role
+    `both`, so it runs its own boxes and acts as the hub.
+
+1.  Optional: To make the machine a hub only, with no boxes of its own,
+    store the role `hub`:
+
+    ```bash
+    curl --cacert ~/.ai-orchestrator/server.crt \
+        -H "Authorization: Bearer $(cat ~/.ai-orchestrator/server.token)" \
+        -H "Content-Type: application/json" \
+        -X PATCH -d '{"role": "hub"}' \
+        https://127.0.0.1:21400/api/v1/settings
+    systemctl --user restart aio-server
+
+    ```
+
+    A role change in the settings applies at the next server start. To pin
+    the role in the service instead, run `systemctl --user edit aio-server`,
+    add the following lines, and restart the server:
+
+    ```ini
+    [Service]
+    Environment=AIO_ROLE=hub
+    ```
+
+1.  If nodes reach the hub by another name than its host name, such as a
+    Tailscale name, set the `linkAddress` setting. For more information,
+    see [Add a machine to a hub](#add-a-machine-to-a-hub).
+
+1.  If the hub runs a firewall, allow the link port. For more information,
+    see [Open the link port in a firewall](#open-the-link-port-in-a-firewall).
+
 ## Add a machine to a hub
 
 To add a machine, issue a one-time code on the hub and use it on the
 machine:
 
-1.  On the hub, issue an enrollment code:
+1.  On the hub, issue an enrollment code. In AI Orchestrator, open the
+    **Machines** tab (Ctrl+Shift+M) and click **Add Machine**, or run the
+    following command:
 
     ```bash
     aio machines enroll
@@ -52,11 +95,20 @@ machine:
     The code works once and expires after 10 minutes. Issuing the first code
     creates the hub's certificate authority and starts the link listener.
 
-1.  On the machine to add, join the hub:
+1.  On the machine to add, install the package and start the server, as
+    [Install AI Orchestrator](install.md) describes. Then join the hub in
+    one of the following ways:
 
-    ```bash
-    aio node join HUB_URL CODE --name NAME
-    ```
+    - In the setup wizard, choose **Node: join a hub with an enrollment
+      code**. Paste the `aio node join` command from the hub into **Hub
+      URL**, which fills in **Enrollment code** too. Optionally, enter a
+      **Machine name**, then click **Done**.
+    - In a terminal, run the following command:
+
+      ```bash
+      aio node join HUB_URL CODE --name NAME
+
+      ```
 
     Replace the following:
 
@@ -127,6 +179,30 @@ applies the next time the listener starts.
 
 **Warning**: Keep the hub on your LAN or on a VPN such as Tailscale. Don't
 expose the link port to the internet.
+
+### Open the link port in a firewall
+
+The packages don't change a firewall, because most machines never become a
+hub. Nodes need no inbound rule. On a hub that runs a firewall, allow TCP
+port `21402` only from the networks your nodes are on.
+
+With `ufw` on Ubuntu, run one of the following commands:
+
+- To allow a LAN, where `192.0.2.0/24` stands for your LAN's range:
+
+  ```bash
+  sudo ufw allow from 192.0.2.0/24 to any port 21402 proto tcp
+
+  ```
+
+- To allow Tailscale only:
+
+  ```bash
+  sudo ufw allow in on tailscale0 to any port 21402 proto tcp
+
+  ```
+
+If you set the `linkPort` setting, use that port instead.
 
 The link uses mutual TLS. The hub serves a certificate that its authority
 signs, and every node pins that exact certificate. Each node presents a
