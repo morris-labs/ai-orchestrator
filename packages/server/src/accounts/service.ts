@@ -47,13 +47,14 @@ import {
   type SeedSources,
 } from "./seed.js";
 import { adoptTranscripts } from "./adopt.js";
-import { preacceptClaudeAccount } from "./preaccept.js";
+import { BYPASS_ACCEPTED_KEY, preacceptClaudeAccount } from "./preaccept.js";
 import {
   RetentionError,
   ensureRetention,
   protectedRetentionDays,
   retentionWarnings,
 } from "./retention.js";
+import { linkUserConfig, userConfigWarnings } from "./userConfig.js";
 import {
   hostProjectsRoot,
   linkProjectsToStore,
@@ -192,6 +193,27 @@ export class AccountService {
     }
   }
 
+  /**
+   * Links the shared user-config entries of the host's `~/.claude` into a
+   * Claude account folder. Returns a note when it linked or couldn't link
+   * something, for the caller's report.
+   */
+  private linkConfig(dir: string): string | undefined {
+    const r = linkUserConfig(dir, homePaths(this.env).claudeDir);
+    const linked = Object.entries(r.entries)
+      .filter(([, o]) => o === "linked" || o === "replaced-identical")
+      .map(([n]) => n);
+    const local = Object.entries(r.entries)
+      .filter(([, o]) => o === "local")
+      .map(([n]) => n);
+    const failed = Object.entries(r.errors).map(([n, m]) => `${n} (${m})`);
+    const parts: string[] = [];
+    if (linked.length > 0) parts.push(`Linked ${linked.join(", ")} to the host's ~/.claude.`);
+    if (local.length > 0) parts.push(`Kept the local ${local.join(", ")}.`);
+    if (failed.length > 0) parts.push(`Couldn't link ${failed.join(", ")}.`);
+    return parts.length > 0 ? parts.join(" ") : undefined;
+  }
+
   /** The least `cleanupPeriodDays` an account keeps. See `retention.ts`. */
   private retentionDays(): number {
     return protectedRetentionDays(
@@ -274,7 +296,9 @@ export class AccountService {
       const dir = this.dirOf("claude", a.name);
       if (!isDirectory(dir)) continue;
       const before = projectsLinkState(dir, store.root);
-      accounts.push({ id: a.id, before, outcome: linkProjectsToStore(dir, store.root) });
+      const outcome = linkProjectsToStore(dir, store.root);
+      const config = linkUserConfig(dir, homePaths(this.env).claudeDir);
+      accounts.push({ id: a.id, before, outcome, config });
     }
     return { store: store.root, source: store.source, accounts };
   }
@@ -327,6 +351,15 @@ export class AccountService {
       const warning = projectsLinkWarning(projectsLinkState(dir, store), dir, store);
       if (warning) warnings.push(warning);
       warnings.push(...retentionWarnings(dir, this.retentionDays()));
+      warnings.push(...userConfigWarnings(dir, homePaths(this.env).claudeDir));
+      if (
+        preacceptClaudeAccount(dir, { trustDirs: [], installMethod: false, dryRun: true })
+          .linkedMissing.length > 0
+      ) {
+        warnings.push(
+          `settings.json is the host's file and lacks ${BYPASS_ACCEPTED_KEY}, so a box that enters bypass permissions mode shows Claude's warning once. Agent Box doesn't write the host's file. Add the key there, or replace the link with a file of the account's own.`,
+        );
+      }
     }
     return {
       account,
@@ -375,8 +408,11 @@ export class AccountService {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     if (c.vendor === "claude") {
       linkProjectsToStore(dir, this.storeRoot());
+      // Link first: a linked settings.json is the host's, which the next two
+      // steps check and never write.
+      this.linkConfig(dir);
       preacceptClaudeAccount(dir);
-      ensureRetention(dir, this.retentionDays());
+      this.keepTranscripts(dir);
     }
     if (c.vendor === "codex") {
       fs.writeFileSync(path.join(dir, "config.toml"), `${CODEX_STORE_SETTING}\n`, { mode: 0o600 });
@@ -466,6 +502,8 @@ export class AccountService {
       const store = this.storeRoot();
       const note = this.linkNote(linkProjectsToStore(dest, store), store);
       if (note) warnings.push(note);
+      const linked = this.linkConfig(dest);
+      if (linked) warnings.push(linked);
       const pre = preacceptClaudeAccount(dest);
       if (pre.changed.length > 0) {
         warnings.push(`Set ${pre.changed.join(", ")} for the first start.`);
@@ -645,6 +683,8 @@ export class AccountService {
           const store = this.storeRoot();
           const note = this.linkNote(linkProjectsToStore(dir, store), store);
           if (note) log(`  ${note}\r\n`);
+          const linked = this.linkConfig(dir);
+          if (linked) log(`  ${linked}\r\n`);
           const pre = preacceptClaudeAccount(dir);
           if (pre.changed.length > 0) {
             log(`  Set ${pre.changed.join(", ")} for the first start.\r\n`);

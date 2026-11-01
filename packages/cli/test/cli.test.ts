@@ -860,12 +860,21 @@ describe("accounts", () => {
       body: {
         store: "/home/me/.claude-box/transcripts/claude",
         source: "data",
-        accounts: [{ id: "claude/work", before: "dangling", outcome: "replaced" }],
+        accounts: [
+          {
+            id: "claude/work",
+            before: "dangling",
+            outcome: "replaced",
+            config: { entries: { "settings.json": "linked", skills: "local" }, errors: {} },
+          },
+        ],
       },
     });
     expect(await cli(["accounts", "relink"])).toBe(0);
     expect(out).toContain("/home/me/.claude-box/transcripts/claude (data)");
     expect(out).toContain("claude/work: dangling -> replaced.");
+    expect(out).toContain("Linked to the host: settings.json.");
+    expect(out).toContain("Local overrides, left alone: skills.");
   });
 
   it("adopts the host's transcripts, with a dry run and a blocked exit code", async () => {

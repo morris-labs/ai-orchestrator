@@ -32,6 +32,8 @@ export interface PreacceptOptions {
   installMethod?: boolean;
   /** Accept the bypass permissions warning. Default: true. */
   bypassWarning?: boolean;
+  /** Write nothing; only report `linkedMissing`. */
+  dryRun?: boolean;
 }
 
 export interface PreacceptResult {
@@ -39,6 +41,12 @@ export interface PreacceptResult {
   changed: string[];
   /** Files that weren't touched because they aren't valid JSON objects. */
   skipped: string[];
+  /**
+   * Files that are links, so the bypass acceptance wasn't written through
+   * them, and that lack it. A link to the host's `settings.json` is the case:
+   * writing would change the host's file.
+   */
+  linkedMissing: string[];
 }
 
 type JsonObject = Record<string, unknown>;
@@ -53,7 +61,10 @@ function isObject(v: unknown): v is JsonObject {
  * a file that isn't a JSON object. A symbolic link is replaced by a regular
  * file, so the write never reaches the file the link points at.
  */
-export function editJsonObject(file: string, edit: (obj: JsonObject) => boolean): boolean | "invalid" {
+export function editJsonObject(
+  file: string,
+  edit: (obj: JsonObject) => boolean,
+): boolean | "invalid" {
   let obj: JsonObject = {};
   try {
     const parsed: unknown = JSON.parse(fs.readFileSync(file, "utf8"));
@@ -75,6 +86,16 @@ export function editJsonObject(file: string, edit: (obj: JsonObject) => boolean)
   return true;
 }
 
+/** Whether the file that a link leads to has the bypass acceptance. */
+export function linkedAccepts(file: string): boolean {
+  try {
+    const parsed: unknown = JSON.parse(fs.readFileSync(file, "utf8"));
+    return isObject(parsed) && parsed[BYPASS_ACCEPTED_KEY] === true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Pre-accepts the first-start questions in a Claude account folder. See the
  * file comment. Safe to call before every start.
@@ -83,9 +104,16 @@ export function preacceptClaudeAccount(
   accountDir: string,
   options: PreacceptOptions = {},
 ): PreacceptResult {
-  const result: PreacceptResult = { changed: [], skipped: [] };
+  const result: PreacceptResult = { changed: [], skipped: [], linkedMissing: [] };
   const trustDirs = [...new Set(options.trustDirs ?? [])].filter((d) => d !== "");
   const wantInstall = options.installMethod ?? true;
+  if (options.dryRun) {
+    const file = path.join(accountDir, "settings.json");
+    if (fs.lstatSync(file, { throwIfNoEntry: false })?.isSymbolicLink() && !linkedAccepts(file)) {
+      result.linkedMissing.push(file);
+    }
+    return result;
+  }
 
   if (trustDirs.length > 0 || wantInstall) {
     const file = path.join(accountDir, ".claude.json");
@@ -114,6 +142,10 @@ export function preacceptClaudeAccount(
 
   if (options.bypassWarning ?? true) {
     const file = path.join(accountDir, "settings.json");
+    if (fs.lstatSync(file, { throwIfNoEntry: false })?.isSymbolicLink()) {
+      if (!linkedAccepts(file)) result.linkedMissing.push(file);
+      return result;
+    }
     const r = editJsonObject(file, (obj) => {
       if (obj[BYPASS_ACCEPTED_KEY] === true) return false;
       obj[BYPASS_ACCEPTED_KEY] = true;

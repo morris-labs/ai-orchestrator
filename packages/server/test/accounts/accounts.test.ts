@@ -411,7 +411,9 @@ describe("AccountService records", () => {
     const { accounts, settings } = setup();
     const v = accounts.create({ vendor: "claude", name: "work", label: "Work (Pro)" });
     expect(v).toMatchObject({ isDefault: true, dirExists: true });
-    expect(fs.readdirSync(v.dir).sort()).toEqual([".claude.json", "projects", "settings.json"]);
+    expect(fs.readdirSync(v.dir)).toEqual(
+      expect.arrayContaining([".claude.json", "projects", "settings.json"]),
+    );
     expect(fs.statSync(v.dir).mode & 0o777).toBe(0o700);
     const second = accounts.create({ vendor: "claude", name: "home" });
     expect(second.isDefault).toBe(false);

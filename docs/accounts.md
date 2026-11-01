@@ -175,6 +175,65 @@ Replace the following:
 The server refuses an accounts folder under `/tmp`, `/var/tmp`, or `/dev/shm`,
 because Codex won't run from a temporary directory.
 
+## Share your Claude configuration
+
+A new Claude account starts without your global `CLAUDE.md`, skills, or
+settings. Agent Box links these entries of the host's `~/.claude` into every
+Claude account folder, so an edit on the host reaches every account:
+
+- `CLAUDE.md`, `settings.json`, `keybindings.json`, `loop.md`
+- `skills/`, `agents/`, `commands/`, `hooks/`, `output-styles/`, `rules/`,
+  `plugins/`
+- statusline scripts, such as `statusline.sh`
+
+The server links only the entries that exist on the host. It never links
+sign-in or per-account state: `.credentials.json`, `.claude.json`,
+`policy-limits.json`, `remote-settings.json`, `sessions/`, `projects/` (which
+links to the transcript store), `todos/`, `statsig/`, `history.jsonl`, and
+`shell-snapshots/`. An entry that a later Claude Code version adds stays
+per-account until the list in `accounts/userConfig.ts` names it.
+
+The server links at account create, import, and seed, and in
+`agentbox accounts relink`. To give the accounts that exist already their
+links, run `agentbox accounts relink`.
+
+To opt an account out of an entry, replace the link with a real file or
+folder of the account's own. Relink and check leave it alone, and
+`agentbox accounts check` reports it as a local override. A copy that is
+identical to the host's is replaced by the link, because that loses nothing.
+To use the host's entry again, move the account's copy away and run relink:
+
+```sh
+mv ~/.claude-box/accounts/claude/work/settings.json ~/settings.work.json
+agentbox accounts relink
+```
+
+Containers see the links because the server mounts each linked host entry at
+its own path, read-write, the way it mounts the transcript store. It does not
+mount the whole `~/.claude`, because that folder holds the host's sign-in
+(`.credentials.json`), and a refresh token that two sign-ins share can be
+revoked. A container made before the links needs a restart to see them. A
+mounted file such as `settings.json` is bound by its inode, so an editor that
+replaces the file with a new one on save (rather than writing in place)
+leaves running containers on the old content until they restart.
+
+### Settings that you share
+
+When `settings.json` is a link to the host's file, the server never writes to
+it, because that would change your host file:
+
+- **Retention**: the protected `cleanupPeriodDays` comes from the host's file
+  itself. If the file lacks a value that is at least the
+  `transcriptRetentionDays` setting (3650 by default), the start fails with a
+  message that names the file. Add the key there, or replace the link with a
+  file of the account's own.
+- **Bypass warning**: the server doesn't write
+  `skipDangerousModePermissionPrompt`. Claude Code reads it only from user
+  settings, so there is no account-local place for it. If the host's file
+  lacks it, `agentbox accounts check` warns, and a box that enters bypass
+  permissions mode shows Claude's warning once. Add the key to the host's file
+  to silence it. Boxes start in auto mode, which doesn't show the warning.
+
 ## Run boxes on accounts
 
 To switch boxes from the host's folders to accounts, do the following:
@@ -207,7 +266,8 @@ In accounts mode, a box behaves as follows:
   `env CLAUDE_CONFIG_DIR=ACCOUNT_DIR claude ...` (or `CODEX_HOME`,
   `COPILOT_HOME`), so one container hosts sessions of several accounts.
 - **Mounts**: the container mounts `DATA_DIR/accounts` at its host path and
-  nothing from `~/.claude`, `~/.codex`, or `~/.copilot`. Each Claude account's
+  nothing from `~/.claude`, `~/.codex`, or `~/.copilot` except the entries
+  that Claude accounts link to (see "Share your Claude configuration"). Each Claude account's
   `sessions` folder is the container's own directory, and the target of any
   link at the top of a Claude account folder (such as `projects`) is mounted
   at its own path. In the container, `~/.claude`, `~/.claude.json`, `~/.codex`,

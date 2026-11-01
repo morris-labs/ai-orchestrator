@@ -220,6 +220,15 @@ export const AccountRelinkEntrySchema = z.object({
   before: z.enum(["ok", "missing", "dangling", "foreign", "directory"]),
   /** `unchanged`, `created`, `replaced`, or `kept-directory` (a real folder with transcripts). */
   outcome: z.enum(["unchanged", "created", "replaced", "kept-directory"]),
+  /**
+   * What happened to each shared user-config entry of the host's `~/.claude`:
+   * `unchanged`, `linked`, `replaced-identical`, or `local` (an override that
+   * was left alone).
+   */
+  config: z.object({
+    entries: z.record(z.string(), z.enum(["unchanged", "linked", "replaced-identical", "local"])),
+    errors: z.record(z.string(), z.string()),
+  }),
 });
 export type AccountRelinkEntry = z.infer<typeof AccountRelinkEntrySchema>;
 

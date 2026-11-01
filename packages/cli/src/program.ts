@@ -1181,7 +1181,21 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
         r,
         () =>
           `Transcript store: ${r.store} (${r.source}).\n${r.accounts
-            .map((a) => `${a.id}: ${a.before} -> ${a.outcome}.\n`)
+            .map((a) => {
+              const local = Object.entries(a.config.entries)
+                .filter(([, o]) => o === "local")
+                .map(([n]) => n);
+              const linked = Object.entries(a.config.entries)
+                .filter(([, o]) => o === "linked" || o === "replaced-identical")
+                .map(([n]) => n);
+              return (
+                `${a.id}: ${a.before} -> ${a.outcome}.\n` +
+                (linked.length > 0 ? `  Linked to the host: ${linked.join(", ")}.\n` : "") +
+                (local.length > 0
+                  ? `  Local overrides, left alone: ${local.join(", ")}. Move one away and run relink again to use the host's.\n`
+                  : "")
+              );
+            })
             .join("")}`,
       );
     });

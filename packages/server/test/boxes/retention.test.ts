@@ -205,6 +205,34 @@ describe("starting a Claude session on an account", () => {
     expect(sessionStarts(h)).toBe(0);
   });
 
+  it("refuses to start on a settings.json linked to a host file without the key, and leaves that file alone", async () => {
+    const h = makeHarness();
+    const dir = addAccount(h, "personal");
+    const hostFile = path.join(h.home, ".claude", "settings.json");
+    fs.mkdirSync(path.dirname(hostFile), { recursive: true });
+    fs.writeFileSync(hostFile, JSON.stringify({ model: "opus" }));
+    const r = h.core.accounts.relink();
+    expect(r.accounts[0]?.config.entries["settings.json"]).toBe("linked");
+    await expect(
+      h.core.boxes.create({ targetDir: h.dir("a"), layout: "root" }),
+    ).rejects.toMatchObject({ code: "invalid_state", message: /doesn't rewrite your host file/ });
+    expect(sessionStarts(h)).toBe(0);
+    expect(readJson(hostFile)).toEqual({ model: "opus" });
+    expect(fs.lstatSync(path.join(dir, "settings.json")).isSymbolicLink()).toBe(true);
+  });
+
+  it("starts on a linked settings.json whose host file keeps transcripts long enough", async () => {
+    const h = makeHarness();
+    addAccount(h, "personal");
+    const hostFile = path.join(h.home, ".claude", "settings.json");
+    fs.mkdirSync(path.dirname(hostFile), { recursive: true });
+    fs.writeFileSync(hostFile, JSON.stringify({ cleanupPeriodDays: 3650 }));
+    h.core.accounts.relink();
+    await h.core.boxes.create({ targetDir: h.dir("a"), layout: "root" });
+    expect(sessionStarts(h)).toBe(1);
+    expect(readJson(hostFile)).toEqual({ cleanupPeriodDays: 3650 });
+  });
+
   it.skipIf(process.getuid?.() === 0)(
     "refuses to start when settings.json can't be written",
     async () => {
@@ -214,7 +242,10 @@ describe("starting a Claude session on an account", () => {
       try {
         await expect(
           h.core.boxes.create({ targetDir: h.dir("a"), layout: "root" }),
-        ).rejects.toMatchObject({ code: "invalid_state", message: /Can't write cleanupPeriodDays/ });
+        ).rejects.toMatchObject({
+          code: "invalid_state",
+          message: /Can't write cleanupPeriodDays/,
+        });
         expect(sessionStarts(h)).toBe(0);
       } finally {
         fs.chmodSync(dir, 0o700);
@@ -322,9 +353,9 @@ describe("removing a project", () => {
       code: "conflict",
     });
     // Running boxes are refused even with force, and nothing is removed.
-    await expect(
-      h.core.boxes.removeProject(box.projectId, { force: true }),
-    ).rejects.toMatchObject({ code: "box_running" });
+    await expect(h.core.boxes.removeProject(box.projectId, { force: true })).rejects.toMatchObject({
+      code: "box_running",
+    });
     expect(h.core.db.boxes.get(box.id)).toBeDefined();
     await h.core.boxes.stop(box.id);
     const r = await h.core.boxes.removeProject(box.projectId, { force: true });

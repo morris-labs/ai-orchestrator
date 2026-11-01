@@ -92,17 +92,14 @@ describe("preacceptClaudeAccount", () => {
     expect(fs.readFileSync(path.join(dir, "settings.json"), "utf8")).toBe("[1]");
   });
 
-  it("replaces a symbolic link instead of writing through it", () => {
+  it("never writes through a symbolic link, and reports that it lacks the key", () => {
     const dir = tempDir("agentbox-pre-");
     const hostFile = path.join(tempDir("agentbox-host-"), "settings.json");
     fs.writeFileSync(hostFile, JSON.stringify({ model: "opus" }));
     fs.symlinkSync(hostFile, path.join(dir, "settings.json"));
-    preacceptClaudeAccount(dir);
-    expect(fs.lstatSync(path.join(dir, "settings.json")).isSymbolicLink()).toBe(false);
-    expect(readJson(path.join(dir, "settings.json"))).toMatchObject({
-      model: "opus",
-      skipDangerousModePermissionPrompt: true,
-    });
+    const r = preacceptClaudeAccount(dir);
+    expect(r.linkedMissing).toEqual([path.join(dir, "settings.json")]);
+    expect(fs.lstatSync(path.join(dir, "settings.json")).isSymbolicLink()).toBe(true);
     expect(readJson(hostFile)).toEqual({ model: "opus" });
   });
 });

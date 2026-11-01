@@ -207,7 +207,11 @@ describe("check warning and relink", () => {
     expect(view.warnings?.join(" ")).toMatch(/accounts relink/);
     const r = s.accounts.relink();
     expect(r.source).toBe("data");
-    expect(r.accounts).toEqual([{ id: "claude/work", before: "dangling", outcome: "replaced" }]);
+    expect(r.accounts[0]).toMatchObject({
+      id: "claude/work",
+      before: "dangling",
+      outcome: "replaced",
+    });
     expect(s.accounts.view(s.accounts.get("claude/work")).warnings).toBeUndefined();
     expect(s.accounts.relink().accounts[0]).toMatchObject({ before: "ok", outcome: "unchanged" });
   });

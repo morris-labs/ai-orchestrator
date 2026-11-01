@@ -67,6 +67,50 @@ export function protectedRetentionDays(home: string, setting: number | undefined
   return hostRetentionDays(home) ?? setting ?? DEFAULT_RETENTION_DAYS;
 }
 
+function isLink(file: string): boolean {
+  try {
+    return fs.lstatSync(file).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
+/** The `cleanupPeriodDays` of the file that a link leads to, or why it can't be read. */
+function linkedValue(file: string): { value: unknown } | { problem: string } {
+  try {
+    const parsed: unknown = JSON.parse(fs.readFileSync(file, "utf8"));
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      return { problem: "isn't a JSON object" };
+    }
+    return { value: (parsed as Record<string, unknown>)[RETENTION_KEY] };
+  } catch (err) {
+    return { problem: `can't be read (${(err as Error).message})` };
+  }
+}
+
+/**
+ * For a `settings.json` that is a link (to the host's file): never writes
+ * through it, because that would rewrite the host's file. Passes when the
+ * target already keeps transcripts long enough; otherwise throws.
+ */
+function checkLinked(file: string, days: number): false {
+  const target = fs.existsSync(file) ? fs.realpathSync(file) : file;
+  const r = linkedValue(file);
+  if ("problem" in r) {
+    throw new RetentionError(
+      `${file} is a link to ${target}, which ${r.problem}, so ${RETENTION_KEY} can't be checked. Without it, Claude Code deletes transcripts older than 30 days. Fix ${target}, or replace the link with a file of the account's own.`,
+      file,
+    );
+  }
+  if (!validDays(r.value) || r.value < days) {
+    throw new RetentionError(
+      `${file} is a link to ${target}, which sets ${RETENTION_KEY} to ${JSON.stringify(r.value) ?? "nothing"}, below ${days}. Claude Code would delete transcripts older than that from the shared store. Agent Box doesn't rewrite your host file: set ${RETENTION_KEY} to at least ${days} in ${target}, or replace the link with a file of the account's own, then start again.`,
+      file,
+    );
+  }
+  return false;
+}
+
 /**
  * Makes sure that `accountDir/settings.json` sets `cleanupPeriodDays` to at
  * least `days`. Returns whether it wrote the file. Throws `RetentionError`
@@ -74,6 +118,7 @@ export function protectedRetentionDays(home: string, setting: number | undefined
  */
 export function ensureRetention(accountDir: string, days: number): boolean {
   const file = path.join(accountDir, "settings.json");
+  if (isLink(file)) return checkLinked(file, days);
   let changed: boolean | "invalid";
   try {
     changed = editJsonObject(file, (obj) => {
@@ -103,6 +148,15 @@ export function ensureRetention(accountDir: string, days: number): boolean {
  */
 export function retentionWarnings(accountDir: string, days: number): string[] {
   const file = path.join(accountDir, "settings.json");
+  if (isLink(file)) {
+    try {
+      checkLinked(file, days);
+      return [];
+    } catch (err) {
+      if (!(err instanceof RetentionError)) throw err;
+      return [`${err.message} Boxes on this account won't start until then.`];
+    }
+  }
   let obj: Record<string, unknown> = {};
   try {
     const parsed: unknown = JSON.parse(fs.readFileSync(file, "utf8"));
