@@ -26,7 +26,10 @@ import {
 } from "electron";
 import {
   ActiveRuns,
-  PROTOCOL,
+  APP_USER_MODEL_ID,
+  hostOsOf,
+  protocolClientArgs,
+  usesWindowClass,
   PendingNavigation,
   Reloader,
   launcherHash,
@@ -284,12 +287,20 @@ let quitting = false;
 // Sets the X11 window class and the Wayland app_id to the name of the
 // desktop entry (aio-review.desktop), so the shell ties the window to
 // its entry and icon. app.setName changes only the display name.
-app.commandLine.appendSwitch("class", "aio-review");
+const HOST_OS = hostOsOf(process.platform);
+if (usesWindowClass(HOST_OS)) app.commandLine.appendSwitch("class", "aio-review");
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  app.setAsDefaultProtocolClient(PROTOCOL);
+  const [scheme, exe, exeArgs] = protocolClientArgs(
+    HOST_OS,
+    process.defaultApp === true,
+    process.execPath,
+    process.argv[1],
+  );
+  if (exe === undefined) app.setAsDefaultProtocolClient(scheme);
+  else app.setAsDefaultProtocolClient(scheme, exe, exeArgs);
   app.on("second-instance", (_e, argv) => {
     const link = parseDeepLink(argv);
     show(link ? launcherHash(link) : undefined);
@@ -315,7 +326,8 @@ if (!app.requestSingleInstanceLock()) {
     e.returnValue = trusted ? readToken() : null;
   });
   void app.whenReady().then(() => {
-    app.setAppUserModelId("aio-review");
+    // Windows only: ties notifications to the installer's Start menu shortcut.
+    if (HOST_OS === "win32") app.setAppUserModelId(APP_USER_MODEL_ID);
     // Pages and their sockets on the server's host load only from a server
     // that presents the pinned certificate.
     session.defaultSession.setCertificateVerifyProc((request, callback) =>

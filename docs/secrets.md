@@ -159,7 +159,9 @@ server logs a warning when it resolves to that combination.
 
 The server logs every request to its journal with the container, the
 secret names, the asking program's name, and the outcome. A log line never
-holds a value. To read the log, run `journalctl --user -u aio-server`.
+holds a value. To read the log, run `journalctl --user -u aio-server`. On
+macOS the log is `~/Library/Logs/aio-server.log`, and on Windows
+`~\.ai-orchestrator\server.log`.
 
 Values never appear in a record, an API response, an event, a log, the
 review app, or the container's configuration. `docker inspect` shows only
@@ -258,7 +260,11 @@ order:
    `OP_SERVICE_ACCOUNT_TOKEN=TOKEN` line in a file with mode `0600`, such as
    `~/.config/aio/op.env`, and add
    `EnvironmentFile=%h/.config/aio/op.env` under `[Service]` instead.
-   Drop-ins stay in place when you reinstall the unit.
+   Drop-ins stay in place when you reinstall the unit. On macOS and
+   Windows, put the line in `op.env` in the configuration directory
+   instead (`~/.config/aio` on macOS, `%APPDATA%\aio` on Windows); the
+   server reads it at start. For more information, see
+   [macOS and Windows](platforms.md#1password-service-account-token).
 1. **Desktop app integration**: when the 1Password desktop app runs with
    **Integrate with 1Password CLI** turned on, `op` asks the app, which can
    prompt you to unlock.

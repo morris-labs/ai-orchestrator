@@ -54,9 +54,21 @@ export function hostOsOf(env: Pick<HostEnv, "hostOs">): HostOs {
  * Returns the container user name: the first of `USER`, `LOGNAME`, and
  * `USERNAME` that is set, else `user`. A name with whitespace, `:`, or `/`
  * breaks `--user` and bind paths, so it also falls back to `user`.
+ *
+ * On macOS and Windows the host name isn't a Linux account name, so it's
+ * lowercased (Windows names such as `Alex` are common, and `useradd`
+ * refuses capitals) and must then be a valid Linux user name, else `user`.
+ * The image build gets the same name; see `scripts/build-image.sh --user`.
  */
-export function containerUsername(env: NodeJS.ProcessEnv = process.env): string {
+export function containerUsername(
+  env: NodeJS.ProcessEnv = process.env,
+  hostOs: HostOs = hostOsFrom(process.platform),
+): string {
   const name = env.USER || env.LOGNAME || env.USERNAME || "user";
+  if (hostOs !== "linux") {
+    const lower = name.toLowerCase();
+    return /^[a-z_][a-z0-9_-]{0,31}$/.test(lower) ? lower : "user";
+  }
   return /[\s:/]/.test(name) ? "user" : name;
 }
 

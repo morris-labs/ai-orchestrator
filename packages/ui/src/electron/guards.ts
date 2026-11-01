@@ -43,13 +43,45 @@ function trimSlash(p: string): string {
   return p.length > 1 ? p.replace(/\/+$/, "") : p;
 }
 
+/** The host the Electron main process runs on, or Linux where `process` doesn't exist. */
+function processOs(): "linux" | "darwin" | "win32" {
+  const platform = typeof process === "undefined" ? "linux" : process.platform;
+  return platform === "darwin" || platform === "win32" ? platform : "linux";
+}
+
+/** A Windows drive path, `C:\...` or `C:/...`. UNC (`\\server\share`) and `\\?\` paths don't match. */
+const WINDOWS_DRIVE_PATH = /^[A-Za-z]:[\\/]/;
+
+/** A Windows path compared case-insensitively, with one kind of separator and no trailing one. */
+function windowsKey(p: string): string {
+  const forward = p.replace(/\\/g, "/").toLowerCase();
+  return forward.length > 3 ? forward.replace(/\/+$/, "") : forward;
+}
+
 /**
  * True when `path` is an absolute path equal to one of `allowed`, the
  * directories the server reported (project roots and box directories).
  * Trailing slashes don't count; `..` segments never match.
+ *
+ * On Windows (`os` is `win32`), the path must be a drive path such as
+ * `C:\src\app` or `C:/src/app`; UNC paths are refused, since opening one
+ * can reach another machine. Windows paths compare without regard to case
+ * or separator, as NTFS and Explorer treat them.
  */
-export function isAllowedOpenPath(path: string, allowed: readonly string[]): boolean {
-  if (typeof path !== "string" || !path.startsWith("/")) return false;
+export function isAllowedOpenPath(
+  path: string,
+  allowed: readonly string[],
+  os: "linux" | "darwin" | "win32" = processOs(),
+): boolean {
+  if (typeof path !== "string") return false;
+  if (os === "win32") {
+    if (!WINDOWS_DRIVE_PATH.test(path)) return false;
+    if (path.split(/[\\/]/).some((seg) => seg === "..")) return false;
+    const p = windowsKey(path);
+    if (/^[a-z]:\/?$/.test(p)) return false;
+    return allowed.some((a) => a !== "" && WINDOWS_DRIVE_PATH.test(a) && windowsKey(a) === p);
+  }
+  if (!path.startsWith("/")) return false;
   if (path.split("/").some((seg) => seg === "..")) return false;
   const p = trimSlash(path);
   return allowed.some((a) => a !== "" && trimSlash(a) === p);

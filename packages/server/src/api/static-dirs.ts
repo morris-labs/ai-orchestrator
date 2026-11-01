@@ -11,17 +11,22 @@ export const INSTALLED_WEB_ROOT = "/usr/share/ai-orchestrator/web";
 /**
  * The web bundle of `app` when no environment variable names one:
  * `apps/APP/dist/renderer` in the source checkout at `repoRoot` when it has
- * an `index.html`, else the installed package's copy. The installed
- * Electron app can't serve here, because its bundle sits inside `app.asar`.
+ * an `index.html`, else the installed package's copy, else the copy in
+ * `shareDir`. The installed Electron app can't serve here, because its
+ * bundle sits inside `app.asar`.
  */
 export function defaultStaticDir(
   repoRoot: string,
   app: WebApp,
   exists: (p: string) => boolean = existsSync,
+  shareDir?: string,
 ): string {
   const checkout = path.join(repoRoot, "apps", app, "dist", "renderer");
   if (exists(path.join(checkout, "index.html"))) return checkout;
   const installed = path.join(INSTALLED_WEB_ROOT, app);
   if (exists(path.join(installed, "index.html"))) return installed;
+  // The macOS and Windows packages put the bundles in `share/web` beside the server.
+  const bundled = shareDir ? path.join(shareDir, "web", app) : null;
+  if (bundled && exists(path.join(bundled, "index.html"))) return bundled;
   return checkout;
 }

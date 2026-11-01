@@ -180,14 +180,19 @@ export const INSTALLED_IMAGE_CONTEXT = "/usr/share/ai-orchestrator/image";
 /**
  * The image build context when `AIO_IMAGE_CONTEXT` isn't set: `image/`
  * in the source checkout at `repoRoot` when it has a Dockerfile, else the
- * installed package's context.
+ * installed package's context, else `image/` in `shareDir`, where the
+ * macOS and Windows packages put it beside the server.
  */
 export function defaultImageContext(
   repoRoot: string,
   exists: (p: string) => boolean = existsSync,
+  shareDir?: string,
 ): string {
   const checkout = path.join(repoRoot, "image");
   if (exists(path.join(checkout, "Dockerfile"))) return checkout;
   if (exists(path.join(INSTALLED_IMAGE_CONTEXT, "Dockerfile"))) return INSTALLED_IMAGE_CONTEXT;
+  if (shareDir && exists(path.join(shareDir, "image", "Dockerfile"))) {
+    return path.join(shareDir, "image");
+  }
   return checkout;
 }

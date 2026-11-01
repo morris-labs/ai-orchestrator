@@ -4,6 +4,7 @@
 // a program: hooks, the fsmonitor, filter drivers, and transports other
 // than local paths.
 import { execFile } from "node:child_process";
+import { hostOsFrom, type HostOs } from "../platform/host.js";
 
 export interface GitResult {
   ok: boolean;
@@ -12,9 +13,24 @@ export interface GitResult {
 }
 
 /**
- * Settings every host git call runs with. They are passed as command-line
- * configuration, which wins over any file a box can write.
+ * The hooks directory that can hold no hooks: `/dev/null` on Linux and
+ * macOS, and the reserved device name `NUL` on Windows, which can never be
+ * a directory. Git for Windows would read `/dev/null` as `\dev\null` on
+ * the current drive, a directory that someone could create.
  */
+export function emptyHooksPath(hostOs: HostOs): string {
+  return hostOs === "win32" ? "NUL" : "/dev/null";
+}
+
+/**
+ * Settings every host git call runs with on `hostOs`. They are passed as
+ * command-line configuration, which wins over any file a box can write.
+ */
+export function safeGitConfig(hostOs: HostOs): readonly (readonly [string, string])[] {
+  return [["core.hooksPath", emptyHooksPath(hostOs)], ...SAFE_GIT_CONFIG.slice(1)];
+}
+
+/** `safeGitConfig` for Linux and macOS. */
 export const SAFE_GIT_CONFIG: readonly (readonly [string, string])[] = [
   ["core.hooksPath", "/dev/null"],
   ["core.fsmonitor", "false"],
@@ -39,7 +55,14 @@ function run(
     execFile(
       "git",
       full,
-      { env, timeout: timeoutMs, maxBuffer: 256 * 1024 * 1024, encoding: "utf8" },
+      // windowsHide: no console window per git call under a windowless server.
+      {
+        env,
+        timeout: timeoutMs,
+        maxBuffer: 256 * 1024 * 1024,
+        encoding: "utf8",
+        windowsHide: true,
+      },
       (error, stdout, stderr) => resolve({ error, stdout, stderr }),
     );
   });
@@ -95,7 +118,7 @@ async function filterOverrides(dir: string, base: NodeJS.ProcessEnv): Promise<[s
 }
 
 /**
- * Runs `git -C dir args...` with `SAFE_GIT_CONFIG` and every filter driver
+ * Runs `git -C dir args...` with `safeGitConfig` and every filter driver
  * turned off. Set `trim` to false for formats where leading spaces matter,
  * such as `status --porcelain -z`.
  */
@@ -106,8 +129,9 @@ export async function git(
 ): Promise<GitResult> {
   const { timeoutMs = 30000, trim = true } = options;
   const full = dir === "" ? [...args] : ["-C", dir, ...args];
-  const base = configEnv(SAFE_GIT_CONFIG);
-  const env = configEnv([...SAFE_GIT_CONFIG, ...(await filterOverrides(dir, base))]);
+  const safe = safeGitConfig(hostOsFrom(process.platform));
+  const base = configEnv(safe);
+  const env = configEnv([...safe, ...(await filterOverrides(dir, base))]);
   const { error, stdout, stderr } = await run(full, env, timeoutMs);
   if (error && (error as NodeJS.ErrnoException).code === "ENOENT") {
     return { ok: false, output: "could not run git" };

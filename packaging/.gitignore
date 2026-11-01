@@ -1,3 +1,5 @@
 # Staging tree that scripts/build-deb.sh assembles.
 deb/build/
+# Runtime trees that scripts/stage-runtime.mjs assembles for macOS and Windows.
+build/
 __pycache__/

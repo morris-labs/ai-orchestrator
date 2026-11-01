@@ -35,6 +35,8 @@ import { MultiHost, type MachineRole, type MultiHostOptions } from "../hub/multi
 import { SetupService } from "../setup/setup-service.js";
 import { UpdateChecker } from "../setup/updates.js";
 import { SshTunnelManager, startCopyIdJob, testConnection } from "../ssh/tunnels.js";
+import { currentPlatform, serviceManagerOf, type HostPlatform } from "../platform/host.js";
+import { installServerService, serverServiceInstalled } from "../service/index.js";
 import { installService, serviceInstalled } from "../systemd/service.js";
 import { DockerExecBackend, type ExecBackend } from "../terminals/exec.js";
 import { UsageService } from "../usage/usage-service.js";
@@ -49,6 +51,13 @@ export interface AppOptions {
   expectedEngineVersion: string;
   /** The command the systemd unit runs. */
   execStart: string;
+  /**
+   * The argv that starts the server, for the launchd agent on macOS and
+   * the logon task on Windows. Linux uses `execStart`.
+   */
+  serverCommand?: string[];
+  /** The host operating system. Default: the one the process runs on. */
+  platform?: HostPlatform;
   imageContext: string;
   staticDirs?: ApiDeps["staticDirs"];
   runner?: ProcessRunner;
@@ -112,6 +121,7 @@ export async function startApp(options: AppOptions): Promise<App> {
     ),
   );
   const runner = options.runner ?? new NodeProcessRunner();
+  const platform = options.platform ?? currentPlatform(options.home);
   const token = await loadOrCreateToken(options.home, options.dataDir);
   const tls = await loadOrCreateTlsIdentity(options.home, options.dataDir);
   const sink = new LateSink();
@@ -235,11 +245,26 @@ export async function startApp(options: AppOptions): Promise<App> {
     op,
     home: options.home,
     imageContext: options.imageContext,
-    serviceInstalled: () => serviceInstalled(options.home),
+    platform,
+    serviceInstalled: () =>
+      serviceManagerOf(platform) === "systemd"
+        ? serviceInstalled(options.home)
+        : serverServiceInstalled(platform, runner),
     installService: async (io) => {
-      await installService({
-        home: options.home,
-        execStart: options.execStart,
+      if (serviceManagerOf(platform) === "systemd") {
+        await installService({
+          home: options.home,
+          execStart: options.execStart,
+          runner,
+          log: (s) => io.write(s),
+        });
+        return;
+      }
+      if (!options.serverCommand) throw new Error("The server command is unknown.");
+      await installServerService({
+        platform,
+        command: options.serverCommand,
+        dataDir: options.dataDir,
         runner,
         log: (s) => io.write(s),
       });

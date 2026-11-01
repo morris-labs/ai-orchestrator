@@ -1,0 +1,4 @@
+# The Node.js release that the macOS and Windows packages bundle to run the
+# server and the CLI. Keep it on major version 22, which the server's native
+# SQLite module and the .deb target. scripts/stage-runtime.mjs reads it.
+22.22.1

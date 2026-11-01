@@ -4,8 +4,8 @@ This page describes how to install AI Orchestrator on Ubuntu from the `.deb`
 package, start its server, and build the container image. To build the
 package yourself, see [Build from source](#build-from-source).
 
-AI Orchestrator supports Linux on x86-64. macOS and Windows packages are
-deferred.
+AI Orchestrator supports Linux on x86-64. macOS and Windows builds exist but
+are untested; for more information, see [macOS and Windows](platforms.md).
 
 ## Before you begin
 
