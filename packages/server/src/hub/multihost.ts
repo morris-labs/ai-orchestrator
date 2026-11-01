@@ -17,7 +17,8 @@ import type { FastifyInstance } from "fastify";
 import { ApiError } from "../api/errors.js";
 import type { SqlDatabase } from "../api/core-interface.js";
 import type { OpClient } from "../secrets/op.js";
-import type { InternalHandler } from "./dispatch.js";
+import { CREDENTIAL_PATHS, CredentialStore, isCredentialKey } from "./credentials.js";
+import { jsonBody, jsonResponse, safely, type InternalHandler } from "./dispatch.js";
 import { Hub, type LinkTiming } from "./hub.js";
 import type { LinkRegistry, NodeLink } from "./link.js";
 import { HUB_LINK_ID, NodeAgent } from "./node.js";
@@ -56,8 +57,12 @@ export function defaultAllowNodeRequest(req: { method: string; path: string }): 
 }
 
 export interface MultiHostOptions {
+  /** The home directory, for the host agent folders whose sign-ins are synced. */
+  home: string;
   /** The absolute data directory. */
   dataDir: string;
+  /** Milliseconds between checks of the synced sign-in files. Default 30 seconds; 0 turns the timer off. */
+  credentialPollMs?: number;
   db: SqlDatabase;
   settings: () => GlobalSettings;
   patchSettings: (patch: GlobalSettingsPatch) => Promise<unknown>;
@@ -100,7 +105,10 @@ export class MultiHost {
   readonly links: LinkRegistry;
   /** The op client the secrets service uses: the hub's while this machine is a plain node. */
   readonly op: OpClient;
+  readonly credentials: CredentialStore;
   private lastHubList: Machine[] = [];
+  private credentialTimer: NodeJS.Timeout | null = null;
+  private credentialSync: Promise<void> = Promise.resolve();
 
   constructor(private readonly opts: MultiHostOptions) {
     const hello = (): LinkHello => ({
@@ -112,8 +120,14 @@ export class MultiHost {
       name: this.name(),
       role: this.role(),
     });
+    this.credentials = new CredentialStore({ home: opts.home, dataDir: opts.dataDir });
     const hubInternal = new Map<string, InternalHandler>([
       ...opRelayHandlers(() => opts.op),
+      ...this.hubCredentialHandlers(),
+      ...(opts.internal ?? new Map()),
+    ]);
+    const nodeInternal = new Map<string, InternalHandler>([
+      ...this.nodeCredentialHandlers(),
       ...(opts.internal ?? new Map()),
     ]);
     this.hub = new Hub({
@@ -138,12 +152,15 @@ export class MultiHost {
       hello,
       token: opts.token,
       api: opts.api,
-      internal: opts.internal ?? new Map(),
+      internal: nodeInternal,
       timing: opts.timing,
       log: opts.log,
-      // Keep the hub's list at hand for while the hub is unreachable.
       onChange: () => {
-        if (this.node.link) void this.machines().catch(() => undefined);
+        if (!this.node.link) return;
+        // Keep the hub's list at hand for while the hub is unreachable.
+        void this.machines().catch(() => undefined);
+        // Send what changed here while the link was down, then take the hub's.
+        void this.syncCredentials().then(() => this.pullCredentials());
       },
     });
     const hub = this.hub;
@@ -190,13 +207,137 @@ export class MultiHost {
   }
 
   async start(): Promise<void> {
+    await this.credentials.prime();
     await this.node.start();
     await this.hub.start();
+    const pollMs = this.opts.credentialPollMs ?? 30_000;
+    if (pollMs > 0) {
+      this.credentialTimer = setInterval(() => void this.syncCredentials(), pollMs);
+      this.credentialTimer.unref();
+    }
   }
 
   async close(): Promise<void> {
+    if (this.credentialTimer) clearInterval(this.credentialTimer);
+    await this.credentialSync;
     await this.node.close();
     await this.hub.close();
+  }
+
+  // -------------------------------------------------------------------------
+  // Sign-in sync; see `credentials.ts`.
+
+  private hubCredentialHandlers(): Map<string, InternalHandler> {
+    return new Map<string, InternalHandler>([
+      [
+        `POST ${CREDENTIAL_PATHS.pull}`,
+        safely(async () => jsonResponse(200, { entries: await this.credentials.list() })),
+      ],
+      [
+        `POST ${CREDENTIAL_PATHS.push}`,
+        safely(async (req, caller) => {
+          const entry = parseEntry(jsonBody(req));
+          if (await this.credentials.write(entry)) {
+            this.opts.log(`Took a refreshed sign-in, ${entry.key}, from ${caller}.`);
+          }
+          await this.broadcastCredential(entry, caller);
+          return jsonResponse(200, { ok: true });
+        }),
+      ],
+    ]);
+  }
+
+  private nodeCredentialHandlers(): Map<string, InternalHandler> {
+    return new Map<string, InternalHandler>([
+      [
+        `POST ${CREDENTIAL_PATHS.update}`,
+        safely(async (req, caller) => {
+          if (caller !== HUB_LINK_ID) {
+            throw new ApiError("unauthorized", "Only the hub sends sign-ins.");
+          }
+          await this.credentials.write(parseEntry(jsonBody(req)));
+          return jsonResponse(200, { ok: true });
+        }),
+      ],
+    ]);
+  }
+
+  /** Sends one sign-in file to every linked node that syncs, except `except`. */
+  private async broadcastCredential(
+    entry: { key: string; content: string },
+    except?: string,
+  ): Promise<void> {
+    for (const id of this.hub.list()) {
+      if (id === except || !this.hub.helloOf(id)?.capabilities.includes("credentials.v1")) continue;
+      try {
+        await this.hub.get(id)?.request({
+          method: "POST",
+          path: CREDENTIAL_PATHS.update,
+          headers: { "content-type": "application/json" },
+          body: Buffer.from(JSON.stringify({ key: entry.key, content: entry.content })),
+        });
+      } catch (err) {
+        this.opts.log(`Couldn't send ${entry.key} to ${id}: ${(err as Error).message}`);
+      }
+    }
+  }
+
+  /** Copies every sign-in file from the hub, which is the source of truth. */
+  private pullCredentials(): Promise<void> {
+    this.credentialSync = this.credentialSync.then(async () => {
+      const link = this.node.link;
+      if (!link || !link.can("credentials.v1")) return;
+      try {
+        const res = await link.request({ method: "POST", path: CREDENTIAL_PATHS.pull, headers: {} });
+        if (res.status !== 200) return;
+        const { entries } = JSON.parse(res.body.toString()) as { entries: unknown[] };
+        let wrote = 0;
+        for (const raw of entries) {
+          try {
+            if (await this.credentials.write(parseEntry(raw))) wrote += 1;
+          } catch {
+            // A key this machine doesn't allow; skip it.
+          }
+        }
+        if (wrote > 0) this.opts.log(`Copied ${wrote} sign-in file(s) from the hub.`);
+      } catch (err) {
+        this.opts.log(`Couldn't copy the sign-ins from the hub: ${(err as Error).message}`);
+      }
+    });
+    return this.credentialSync;
+  }
+
+  /**
+   * Checks the sign-in files once: a node sends what changed to the hub, and
+   * a hub sends what changed to its nodes.
+   */
+  syncCredentials(): Promise<void> {
+    this.credentialSync = this.credentialSync.then(async () => {
+      // A machine that joined a hub syncs with it; a hub syncs with its nodes.
+      const link = this.node.joined ? this.node.link : undefined;
+      if (this.node.joined && !link) return;
+      if (!link && (this.role() === "node" || this.hub.list().length === 0)) return;
+      const changes = await this.credentials.changes();
+      for (const entry of changes) {
+        if (!link) {
+          await this.broadcastCredential(entry);
+          continue;
+        }
+        if (!link?.can("credentials.v1")) continue;
+        try {
+          await link.request({
+            method: "POST",
+            path: CREDENTIAL_PATHS.push,
+            headers: { "content-type": "application/json" },
+            body: Buffer.from(JSON.stringify({ key: entry.key, content: entry.content })),
+          });
+          this.opts.log(`Sent a refreshed sign-in, ${entry.key}, to the hub.`);
+        } catch (err) {
+          this.opts.log(`Couldn't send ${entry.key} to the hub: ${(err as Error).message}`);
+        }
+      }
+    });
+    return this.credentialSync;
   }
 
   private localMachine(): Machine {
@@ -323,4 +464,13 @@ export class MultiHost {
     }
     return this.status();
   }
+}
+
+/** Checks a synced file from the other end. */
+function parseEntry(raw: unknown): { key: string; content: string } {
+  const { key, content } = (raw ?? {}) as { key?: unknown; content?: unknown };
+  if (typeof key !== "string" || !isCredentialKey(key) || typeof content !== "string") {
+    throw new ApiError("validation", "The sign-in entry names no file the sync allows.");
+  }
+  return { key, content };
 }

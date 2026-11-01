@@ -22,6 +22,7 @@ import {
   sameHex,
 } from "../../src/hub/registry.js";
 import { HubOpClient, RoleOpClient } from "../../src/hub/secrets-relay.js";
+import { CredentialStore, isCredentialKey } from "../../src/hub/credentials.js";
 import type { OpClient } from "../../src/secrets/op.js";
 import { tempDir } from "../tmp.js";
 
@@ -138,6 +139,25 @@ describe("hub certificates", () => {
     const again = await loadOrCreateHubIdentity(dir);
     expect(again.linkFingerprint).toBe(identity.linkFingerprint);
     expect(again.ca.cert).toBe(identity.ca.cert);
+  });
+});
+
+describe("sign-in sync keys", () => {
+  it("allows only the known sign-in files, with no way out of their folders", async () => {
+    expect(isCredentialKey("host/claude/.credentials.json")).toBe(true);
+    expect(isCredentialKey("account/codex/work/auth.json")).toBe(true);
+    expect(isCredentialKey("account/codex/work/.credentials.json")).toBe(false);
+    expect(isCredentialKey("account/claude/../x/.credentials.json")).toBe(false);
+    expect(isCredentialKey("account/copilot/me/config.json")).toBe(false);
+    expect(isCredentialKey("host/claude/settings.json")).toBe(false);
+    const home = tempDir("aio-cred-");
+    const store = new CredentialStore({ home, dataDir: path.join(home, "data") });
+    expect(store.pathFor("account/claude/work/.credentials.json")).toBe(
+      path.join(home, "data", "accounts", "claude", "work", ".credentials.json"),
+    );
+    // No folder, no file.
+    expect(await store.write({ key: "host/codex/auth.json", content: "e30=" })).toBe(false);
+    await expect(store.write({ key: "host/../../etc/passwd", content: "" })).rejects.toThrow();
   });
 });
 

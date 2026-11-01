@@ -29,7 +29,7 @@ export const NODE_CERT_PREFIX = "aio-node:";
 const CERT_DAYS = 3650;
 
 /** Writes `text` to `file` with `mode` through a temporary file, so a reader never sees half. */
-export async function writeAtomic(file: string, text: string, mode: number): Promise<void> {
+export async function writeAtomic(file: string, text: string | Buffer, mode: number): Promise<void> {
   const tmp = `${file}.${process.pid}.tmp`;
   await rm(tmp, { force: true });
   await writeFile(tmp, text, { mode, flag: "wx" });

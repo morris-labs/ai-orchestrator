@@ -79,6 +79,8 @@ export interface AppOptions {
   linkAddress?: string;
   /** Overrides the link protocol version (tests). */
   linkProtocol?: number;
+  /** Milliseconds between checks of the synced sign-in files; 0 turns the timer off (tests). */
+  credentialPollMs?: number;
   /** Link pings, timeouts, and reconnect delays (tests). */
   linkTiming?: MultiHostOptions["timing"];
 }
@@ -180,6 +182,8 @@ export async function startApp(options: AppOptions): Promise<App> {
   const notifier = new Notifier({ db: core.db, settings, emit: (e) => hub.emit(e) });
   let apiServer: ApiServer | null = null;
   const multiHost = new MultiHost({
+    home: options.home,
+    credentialPollMs: options.credentialPollMs,
     dataDir: dataDirOf({ home: options.home, dataDir: options.dataDir }),
     db: core.db,
     settings,

@@ -55,9 +55,10 @@ interface Server {
 
 async function startServer(
   name: string,
-  options: { signedIn?: boolean; linkProtocol?: number } = {},
+  options: { signedIn?: boolean; linkProtocol?: number; before?: (home: string) => void } = {},
 ): Promise<Server> {
   const home = fs.realpathSync(tempDir(`aio-mh-${name}-`));
+  options.before?.(home);
   const dataDir = path.join(home, "data");
   const op = fakeOp(options.signedIn ?? false);
   const docker = new MemoryDocker();
@@ -77,6 +78,7 @@ async function startServer(
     linkHost: "127.0.0.1",
     linkAddress: "127.0.0.1",
     linkProtocol: options.linkProtocol,
+    credentialPollMs: 0,
     linkTiming: { pingMs: 1000, timeoutMs: 5000, backoffMinMs: 50, backoffMaxMs: 200 },
     log: (m) => process.env.MH_DEBUG && console.error(`[${name}] ${m}`),
   });
@@ -293,5 +295,46 @@ describe("multi-host", () => {
     });
     expect(taken.status).toBe(409);
     expect(taken.json.error.code).toBe("conflict");
+  });
+
+  it("copies sign-ins from the hub and sends a node's refresh to the other nodes", async () => {
+    const claudeDir = (home: string) => path.join(home, ".claude");
+    const credFile = (home: string) => path.join(claudeDir(home), ".credentials.json");
+    const hub = await startServer("hub", {
+      signedIn: true,
+      before: (home) => {
+        fs.mkdirSync(claudeDir(home));
+        fs.writeFileSync(credFile(home), '{"token":"synthetic-1"}');
+      },
+    });
+    const withDir = (home: string) => fs.mkdirSync(claudeDir(home));
+    const one = await startServer("one", { before: withDir });
+    const two = await startServer("two", { before: withDir });
+    const ids: string[] = [];
+    for (const [node, name] of [
+      [one, "node-one"],
+      [two, "node-two"],
+    ] as const) {
+      const code = (await hub.api("POST", "/api/v1/machines/enrollment-codes")).json;
+      const joined = await node.api("POST", "/api/v1/node/join", {
+        hubUrl: code.hubUrl,
+        code: code.code,
+        name,
+      });
+      ids.push(joined.json.machineId as string);
+    }
+    const read = (s: Server) => (fs.existsSync(credFile(s.home)) ? fs.readFileSync(credFile(s.home), "utf8") : null);
+    await waitFor(() => read(one) === '{"token":"synthetic-1"}' && read(two) === read(one), 5000);
+    expect(fs.statSync(credFile(one.home)).mode & 0o777).toBe(0o600);
+
+    // Node one's CLI refreshes its token.
+    fs.writeFileSync(credFile(one.home), '{"token":"synthetic-2"}');
+    await one.app.multiHost.syncCredentials();
+    await waitFor(() => read(hub) === '{"token":"synthetic-2"}' && read(two) === read(hub), 5000);
+
+    // The hub refreshes its own.
+    fs.writeFileSync(credFile(hub.home), '{"token":"synthetic-3"}');
+    await hub.app.multiHost.syncCredentials();
+    await waitFor(() => read(one) === '{"token":"synthetic-3"}' && read(two) === read(one), 5000);
   });
 });
