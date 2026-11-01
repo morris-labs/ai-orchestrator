@@ -162,6 +162,30 @@ describe("link peers", () => {
     expect(stream.out.queuedBytes).toBe(0);
   });
 
+  it("holds the other end's source back while the opener's sink has a backlog", async () => {
+    const source = new FakeSink();
+    const { hubSide } = await pair({
+      request: async () => ({ status: 200, headers: {}, body: Buffer.alloc(0) }),
+      openStream: async () => source,
+    });
+    const stream = await hubSide.openStream({ path: "/s", headers: {} });
+    let backlog = STREAM_WINDOW;
+    stream.setSinkBacklog?.(() => backlog);
+    let received = 0;
+    stream.onMessage((data) => {
+      received += data.length;
+    });
+    const chunk = Buffer.alloc(256 * 1024, 7);
+    for (let i = 0; i < 12; i++) source.emit(chunk);
+    // The node sends one window, then pauses its source for want of credit.
+    await waitFor(() => received >= STREAM_WINDOW && source.paused, 5000);
+    await new Promise((r) => setTimeout(r, 100));
+    expect(received).toBe(STREAM_WINDOW);
+    // The sink drains, so the credit goes back and the rest arrives.
+    backlog = 0;
+    await waitFor(() => received === 12 * chunk.length && !source.paused, 5000);
+  });
+
   it("pauses a local source while the other end grants no credit, and sends freely without flow.v1", () => {
     const sent: number[] = [];
     let paused = false;

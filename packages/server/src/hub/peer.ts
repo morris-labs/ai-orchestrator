@@ -131,6 +131,10 @@ class PeerStream implements LinkStream {
   private closeCbs: ((code: number, reason: string) => void)[] = [];
   private queued: { data: Buffer; binary: boolean }[] = [];
   private ended: { code: number; reason: string } | null = null;
+  private backlog: (() => number) | null = null;
+  /** Bytes the callbacks took that this end hasn't granted back yet. */
+  private owed = 0;
+  private settleTimer: NodeJS.Timeout | null = null;
   readonly out: CreditSender;
 
   constructor(
@@ -154,8 +158,34 @@ class PeerStream implements LinkStream {
     const queued = this.queued;
     this.queued = [];
     for (const m of queued) cb(m.data, m.binary);
-    const bytes = queued.reduce((n, m) => n + m.data.length, 0);
-    if (bytes > 0 && !this.ended) this.peer.grant(this.id, bytes);
+    this.ack(queued.reduce((n, m) => n + m.data.length, 0));
+  }
+
+  setSinkBacklog(backlog: () => number): void {
+    this.backlog = backlog;
+  }
+
+  /**
+   * Grants credit for bytes the callbacks took, once the sink's backlog is
+   * under half a window. Without a sink backlog, the credit goes back at once.
+   */
+  private ack(bytes: number): void {
+    if (bytes <= 0 || this.ended) return;
+    this.owed += bytes;
+    if (!this.settleTimer) this.settle();
+  }
+
+  private settle(): void {
+    this.settleTimer = null;
+    if (this.ended || this.owed === 0) return;
+    if (this.peer.flow && this.backlog && this.backlog() > STREAM_WINDOW / 2) {
+      this.settleTimer = setTimeout(() => this.settle(), 20);
+      this.settleTimer.unref();
+      return;
+    }
+    const owed = this.owed;
+    this.owed = 0;
+    this.peer.grant(this.id, owed);
   }
 
   close(code?: number, reason?: string): void {
@@ -180,14 +210,15 @@ class PeerStream implements LinkStream {
       return;
     }
     for (const cb of this.messageCbs) cb(data, binary);
-    // The callback took the bytes; whatever buffering it does is its own.
-    this.peer.grant(this.id, data.length);
+    this.ack(data.length);
   }
 
   /** Ends the stream without telling the other end, which ended it or is gone. */
   finish(code: number, reason: string): void {
     if (this.ended) return;
     this.ended = { code, reason };
+    if (this.settleTimer) clearTimeout(this.settleTimer);
+    this.settleTimer = null;
     this.peer.forgetStream(this.id);
     const cbs = this.closeCbs;
     this.closeCbs = [];
