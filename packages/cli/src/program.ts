@@ -8,6 +8,7 @@ import {
   DEFAULT_SEED_ACCOUNT_NAME,
   DecisionOptionSchema,
   EffortSchema,
+  LOCAL_MACHINE_ID,
   PlatformSchema,
   ProfileSchema,
   READ_ONLY_POST_PUSH_MESSAGE,
@@ -26,6 +27,7 @@ import {
   type Finding,
   type HostOs,
   type Job,
+  type Machine,
   type NodeStatus,
   type ProjectSummary,
   type RunState,
@@ -151,6 +153,7 @@ function parseMount(
   spec: string,
   cwd: string,
   hostOs: HostOs = "linux",
+  remote?: string,
 ): { host: string; container: string } {
   const from = hostOs === "win32" && /^[A-Za-z]:/.test(spec) ? 2 : 0;
   const i = spec.indexOf(":", from);
@@ -158,6 +161,7 @@ function parseMount(
   const container = i < 0 ? spec : spec.slice(i + 1);
   if (host === "" || container === "")
     throw new UsageError(`Invalid mount ${spec}; use HOST[:CONTAINER].`);
+  if (remote !== undefined && !isAbsoluteOn(host, hostOs)) throw relativeOnRemote(host, remote);
   const resolved = hostOs === "win32" ? path.win32.resolve(cwd, host) : path.resolve(cwd, host);
   if (i >= 0) return { host: resolved, container };
   try {
@@ -168,6 +172,64 @@ function parseMount(
   } catch (err) {
     throw new UsageError((err as Error).message);
   }
+}
+
+/** True when `p` is an absolute path on a host that runs `hostOs`. */
+function isAbsoluteOn(p: string, hostOs: HostOs): boolean {
+  return hostOs === "win32" ? /^[A-Za-z]:[\\/]/.test(p) : p.startsWith("/");
+}
+
+/** The error for a relative path given for another machine, `machine`. */
+function relativeOnRemote(p: string, machine: string): UsageError {
+  return new UsageError(
+    `${p} is a relative path. A path on ${machine} doesn't resolve against this directory, so give the absolute path on ${machine}.`,
+  );
+}
+
+/** The machine a command goes to when it isn't this server's own. */
+interface MachineTarget {
+  id: string;
+  name: string;
+  /** The machine's host OS, which decides how its paths look; `null` when unknown. */
+  platform: HostOs | null;
+}
+
+/** One machine's part of `aio box list --all-machines`. */
+interface FleetPart {
+  id: string;
+  name: string;
+  isLocal: boolean;
+  status: Machine["status"];
+  /** The machine's boxes, or `null` when it is offline or its call failed. */
+  boxes: BoxView[] | null;
+  error: { code: string; message: string } | null;
+}
+
+/** A box ID as fleet views show it: `MACHINE/BOX` for another machine's box. */
+function fleetBoxId(part: FleetPart, boxId: string): string {
+  return part.isLocal ? boxId : `${part.name}/${boxId}`;
+}
+
+function fleetRows(parts: FleetPart[]) {
+  return table(
+    ["MACHINE", "BOX", "STATUS", "REVIEW", "PLATFORM", "CONVERSATION", "PROJECT"],
+    parts.flatMap((part) =>
+      (part.boxes ?? []).map((b) => [
+        part.name,
+        fleetBoxId(part, b.box.id),
+        b.status,
+        b.reviewState.state === "under_review" ? `run ${b.reviewState.runId}` : "",
+        b.box.platform,
+        b.box.conversationName,
+        b.box.projectId,
+      ]),
+    ),
+  );
+}
+
+/** True when an error means the server has no machine routes, as an older server doesn't. */
+function noMachineRoutes(err: unknown): boolean {
+  return err instanceof ApiCallError && [404, 405, 501].includes(err.status);
 }
 
 function ceilingText(c: Ceiling): string {
@@ -345,12 +407,22 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
       "--data-dir <path>",
       "The server's data directory, as passed to aio-server. Default: $AIO_DATA_DIR or ~/.ai-orchestrator.",
     )
+    .option(
+      "--machine <machine>",
+      "Send the command to another machine of a multi-host setup, by its ID or name from aio machines list. The server relays it through the hub. Default: this machine.",
+    )
     .showHelpAfterError()
     .exitOverride()
     .configureOutput({ writeOut: deps.out, writeErr: deps.err });
 
   const globals = () =>
-    program.opts<{ json?: boolean; server?: string; insecure?: boolean; dataDir?: string }>();
+    program.opts<{
+      json?: boolean;
+      server?: string;
+      insecure?: boolean;
+      dataDir?: string;
+      machine?: string;
+    }>();
   // The server resolves nothing against its own working directory, so every
   // path leaves the CLI absolute.
   const cwd = deps.cwd ?? process.cwd();
@@ -376,15 +448,109 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
     if (problem) throw new UsageError(problem);
     return s;
   };
-  /** A client for `s`, which must have passed `urlProblem()`. */
-  const clientFor = (s: CliSettings) =>
+  /**
+   * A client for `s`, which must have passed `urlProblem()`. Its calls go to
+   * `machine`: by default the machine the command names, if any.
+   */
+  const clientFor = (
+    s: CliSettings,
+    machine: () => Promise<string | null> = async () => (await target())?.id ?? null,
+  ) =>
     new ServerClient({
       baseUrl: s.baseUrl,
       token: s.token,
       fetch: deps.fetch ?? serverFetch(s),
       signal: deps.signal,
+      machine,
     });
   const client = () => clientFor(settings());
+  const thisServer = async () => null;
+
+  // A command names another machine with `--machine`, or with a box argument
+  // of the form `MACHINE/BOX`, as fleet views show it.
+  let namedByBox: string | undefined;
+  let resolved: Promise<MachineTarget | null> | null = null;
+  /** The machine the command goes to, or `null` for this server. Resolved once. */
+  const target = () => (resolved ??= resolveTarget());
+  const resolveTarget = async (): Promise<MachineTarget | null> => {
+    const want = namedByBox ?? globals().machine;
+    if (want === undefined || want === LOCAL_MACHINE_ID) return null;
+    let machines: Machine[];
+    try {
+      machines = (await clientFor(settings(), thisServer).call("machines.list")).machines;
+    } catch (err) {
+      if (noMachineRoutes(err)) {
+        throw new UsageError(
+          `The server has no machine routes, so it can't reach ${want}. Only ${LOCAL_MACHINE_ID} names a machine there.`,
+        );
+      }
+      throw err;
+    }
+    const m = machines.find((x) => x.id === want) ?? machines.find((x) => x.name === want);
+    if (!m) {
+      throw new UsageError(
+        `No machine has the ID or name ${want}. List the machines with: aio machines list`,
+      );
+    }
+    return m.isLocal ? null : { id: m.id, name: m.name, platform: m.platform };
+  };
+  /**
+   * Reads a box argument, `BOX` or `MACHINE/BOX`, and returns the box ID.
+   * Call it before the command's first request, so the machine applies.
+   */
+  const boxRef = (raw: string): string => {
+    const i = raw.indexOf("/");
+    if (i < 0) return raw;
+    const machine = raw.slice(0, i);
+    const boxId = raw.slice(i + 1);
+    if (machine === "" || boxId === "" || boxId.includes("/")) {
+      throw new UsageError(`Invalid box ${raw}; use BOX or MACHINE/BOX.`);
+    }
+    const flag = globals().machine;
+    if (flag !== undefined && flag !== machine) {
+      throw new UsageError(`The box ${raw} names ${machine}, but --machine names ${flag}.`);
+    }
+    if (namedByBox !== undefined && namedByBox !== machine) {
+      throw new UsageError(`The boxes name two machines, ${namedByBox} and ${machine}.`);
+    }
+    namedByBox = machine;
+    return boxId;
+  };
+  /** The host OS of the machine the command goes to. */
+  const targetOs = async (): Promise<HostOs> => {
+    const t = await target();
+    return t ? (t.platform ?? "linux") : (deps.hostOs ?? "linux");
+  };
+  /**
+   * A host path for the machine the command goes to: resolved against the
+   * current directory on this machine, and required to be absolute on
+   * another, where this directory means nothing.
+   */
+  const hostPath = async (p: string): Promise<string> => {
+    const t = await target();
+    if (!t) return absolute(p);
+    const os = t.platform ?? "linux";
+    if (!isAbsoluteOn(p, os)) throw relativeOnRemote(p, t.name);
+    return os === "win32" ? path.win32.normalize(p) : path.posix.normalize(p);
+  };
+  /** Refuses a command that runs a terminal on this machine for another machine's box. */
+  const refuseRemoteTerminal = async (command: string) => {
+    const t = await target();
+    if (!t) return;
+    throw new UsageError(
+      `aio box ${command} runs the terminal on this machine, so it can't reach a box on ${t.name}. Open the box's terminal in the Boxes app, or run the command on ${t.name}.`,
+    );
+  };
+  /** Refuses `--machine` for a command about this machine itself. */
+  const thisMachineOnly = (command: Command) =>
+    command.hook("preAction", () => {
+      const machine = globals().machine;
+      if (machine !== undefined && machine !== LOCAL_MACHINE_ID) {
+        throw new UsageError(
+          `aio ${command.name()} works on this machine only. Run it on ${machine} instead of passing --machine.`,
+        );
+      }
+    });
   /** Prints raw JSON with `--json`, or the text form. */
   const print = (json: unknown, text: () => string) => {
     deps.out(globals().json ? `${jsonText(json, 2)}\n` : terminalText(text()));
@@ -414,6 +580,54 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
     return job;
   };
 
+  /** This server's machine list, or an empty list from a server without machine routes. */
+  const machineList = async (): Promise<Machine[]> => {
+    try {
+      return (await clientFor(settings(), thisServer).call("machines.list")).machines;
+    } catch (err) {
+      if (noMachineRoutes(err)) return [];
+      throw err;
+    }
+  };
+  /** This server's machine, then every other machine that is online or offline. */
+  const fleet = async (): Promise<Pick<Machine, "id" | "name" | "isLocal" | "status">[]> => {
+    const machines = await machineList();
+    const self = machines.find((m) => m.isLocal) ?? {
+      id: LOCAL_MACHINE_ID,
+      name: LOCAL_MACHINE_ID,
+      isLocal: true,
+      status: "online" as const,
+    };
+    return [
+      self,
+      ...machines.filter((m) => !m.isLocal && (m.status === "online" || m.status === "offline")),
+    ];
+  };
+  /**
+   * Lists the boxes of this machine and every other online one, each
+   * through the machine proxy route. An offline machine lists no boxes, and
+   * a machine whose call fails gets the error instead.
+   */
+  const listFleet = async (projectId: string | undefined): Promise<FleetPart[]> => {
+    const s = settings();
+    return Promise.all(
+      (await fleet()).map(async (m): Promise<FleetPart> => {
+        const part = { id: m.id, name: m.name, isLocal: m.isLocal, status: m.status };
+        if (!m.isLocal && m.status !== "online") return { ...part, boxes: null, error: null };
+        const c = clientFor(s, async () => (m.isLocal ? null : m.id));
+        try {
+          const r = await c.call("boxes.list", { query: { projectId } });
+          return { ...part, boxes: r.boxes, error: null };
+        } catch (err) {
+          // This server's own list must work; another machine's failure is
+          // reported with the rest of the fleet.
+          if (m.isLocal || !(err instanceof ApiCallError)) throw err;
+          return { ...part, boxes: null, error: { code: err.code, message: err.message } };
+        }
+      }),
+    );
+  };
+
   // -------------------------------------------------------------------------
   // box
   const box = program.command("box").description("Create, start, stop, and attach to boxes.");
@@ -422,9 +636,31 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
     .command("list")
     .description("List boxes.")
     .option("--project <id>", "Only boxes in this project.")
-    .action(async (o: { project?: string }) => {
-      const r = await client().call("boxes.list", { query: { projectId: o.project } });
-      print(r, () => boxRows(r.boxes));
+    .option(
+      "--all-machines",
+      "List the boxes of every machine of a multi-host setup. Another machine's box IDs have the form MACHINE/BOX.",
+    )
+    .action(async (o: { project?: string; allMachines?: boolean }) => {
+      if (!o.allMachines) {
+        const r = await client().call("boxes.list", { query: { projectId: o.project } });
+        print(r, () => boxRows(r.boxes));
+        return;
+      }
+      if (globals().machine !== undefined) {
+        throw new UsageError("Use --all-machines or --machine, not both.");
+      }
+      const parts = await listFleet(o.project);
+      for (const p of parts) {
+        if (p.error) state.code = 1;
+        if (p.boxes === null) {
+          deps.err(
+            terminalText(
+              `Warning: no boxes from ${p.name}: ${p.error ? p.error.message : `it is ${p.status}.`}\n`,
+            ),
+          );
+        }
+      }
+      print({ machines: parts }, () => fleetRows(parts));
     });
 
   box
@@ -459,15 +695,17 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
     .action(async (dir: string, o) => {
       if (o.adopt && o.fork) throw new UsageError("Use --adopt or --fork, not both.");
       const accountChoice = accountsOf(o.account as string[]);
+      const fork = o.fork === undefined ? undefined : boxRef(o.fork as string);
+      const targetDir = await hostPath(dir);
       const c = client();
       const conversation = o.adopt
         ? { mode: "adopt" as const, sessionUuid: o.adopt as string }
-        : o.fork
-          ? { mode: "fork" as const, fromBoxId: o.fork as string }
+        : fork
+          ? { mode: "fork" as const, fromBoxId: fork }
           : { mode: "new" as const };
       const created: Job = await c.call("boxes.create", {
         body: {
-          targetDir: absolute(dir),
+          targetDir,
           platform: o.platform,
           conversationName: o.name,
           conversation,
@@ -505,7 +743,8 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
     .description("Start a box's session.")
     .argument("<boxId>")
     .option("--force", "Start it even when its container runs with stale mounts.")
-    .action(async (boxId: string, o: { force?: boolean }) => {
+    .action(async (ref: string, o: { force?: boolean }) => {
+      const boxId = boxRef(ref);
       const v = await client().call("boxes.start", {
         params: { boxId },
         body: { force: o.force ?? false },
@@ -521,8 +760,8 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
       .command(name)
       .description(`${verb} a box's session.`)
       .argument("<boxId>")
-      .action(async (boxId: string) => {
-        const v = await client().call(key, { params: { boxId } });
+      .action(async (ref: string) => {
+        const v = await client().call(key, { params: { boxId: boxRef(ref) } });
         print(v, () => `${v.box.id} is ${v.status}.\n`);
       });
   }
@@ -532,7 +771,8 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
     .description("Set a box's account for a vendor, or use the default again with a bare vendor.")
     .argument("<boxId>")
     .argument("<account>", "VENDOR/NAME to set; VENDOR alone to use the default again.")
-    .action(async (boxId: string, account: string) => {
+    .action(async (ref: string, account: string) => {
+      const boxId = boxRef(ref);
       const vendor = account.split("/")[0] ?? "";
       if (!PLATFORMS.includes(vendor)) {
         throw new UsageError(`Unknown vendor ${vendor}; use ${PLATFORMS.join(", ")}.`);
@@ -559,7 +799,8 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
     .description("Remove a stopped box from the dashboard; the conversation stays.")
     .argument("<boxId>")
     .option("--remove-worktree", "Also remove the box's worktree when it's clean.")
-    .action(async (boxId: string, o: { removeWorktree?: boolean }) => {
+    .action(async (ref: string, o: { removeWorktree?: boolean }) => {
+      const boxId = boxRef(ref);
       const r = await client().call("boxes.remove", {
         params: { boxId },
         query: { removeWorktree: o.removeWorktree ? "true" : "false" },
@@ -579,7 +820,8 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
     .argument("<boxId>")
     .option("--yes", "Confirm the purge.")
     .option("--dry-run", "Report what the purge would delete without deleting it.")
-    .action(async (boxId: string, o: { yes?: boolean; dryRun?: boolean }) => {
+    .action(async (ref: string, o: { yes?: boolean; dryRun?: boolean }) => {
+      const boxId = boxRef(ref);
       if (!o.yes && !o.dryRun)
         throw new UsageError("Purge deletes transcripts. Run it again with --yes to confirm.");
       const r = await client().call("boxes.purge", {
@@ -616,7 +858,9 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
     .description("Start a box when it's stopped, then attach to its session.")
     .argument("<boxId>")
     .option("--force", "Start it even when its container runs with stale mounts.")
-    .action(async (boxId: string, o: { force?: boolean }) => {
+    .action(async (ref: string, o: { force?: boolean }) => {
+      const boxId = boxRef(ref);
+      await refuseRemoteTerminal("open");
       const c = client();
       const v = await c.call("boxes.get", { params: { boxId } });
       if (v.status === "stopped") {
@@ -636,24 +880,30 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
     .addOption(
       new Option("--side <platform>", "Attach to a side session instead.").choices(PLATFORMS),
     )
-    .action((boxId: string, o: { side?: string }) =>
-      attach(boxId, o.side ? "side" : "session", o.side),
-    );
+    .action(async (ref: string, o: { side?: string }) => {
+      const boxId = boxRef(ref);
+      await refuseRemoteTerminal("attach");
+      await attach(boxId, o.side ? "side" : "session", o.side);
+    });
 
   box
     .command("shell")
     .description("Open a shell in the box's container.")
     .argument("<boxId>")
-    .action((boxId: string) => attach(boxId, "shell"));
+    .action(async (ref: string) => {
+      const boxId = boxRef(ref);
+      await refuseRemoteTerminal("shell");
+      await attach(boxId, "shell");
+    });
 
   box
     .command("message")
     .description("Send one message to the box's interactive session.")
     .argument("<boxId>")
     .argument("<text...>")
-    .action(async (boxId: string, text: string[]) => {
+    .action(async (ref: string, text: string[]) => {
       const r = await client().call("boxes.message", {
-        params: { boxId },
+        params: { boxId: boxRef(ref) },
         body: { text: text.join(" ") },
       });
       print(r, () => `Sent.\n`);
@@ -720,12 +970,16 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
       }
       const body: Record<string, unknown> = {};
       if (o.name !== undefined) body.name = o.name;
-      if (o.primaryRepo !== undefined) body.primaryRepo = absolute(o.primaryRepo as string);
+      if (o.primaryRepo !== undefined) body.primaryRepo = await hostPath(o.primaryRepo as string);
       if (o.clearPrimaryRepo) body.primaryRepo = null;
       if (o.policyPath !== undefined) body.policyPath = o.policyPath;
       if (o.tcpMap) body.tcpMaps = (o.tcpMap as string[]).map(parsePortPair);
       if (o.clearTcpMaps) body.tcpMaps = [];
-      if (o.mount) body.mounts = (o.mount as string[]).map((m) => parseMount(m, cwd, deps.hostOs));
+      if (o.mount) {
+        const t = await target();
+        const os = await targetOs();
+        body.mounts = (o.mount as string[]).map((m) => parseMount(m, cwd, os, t?.name));
+      }
       if (o.clearMounts) body.mounts = [];
       if (o.clearCeilings) body.ceilingsOverride = null;
       if (Object.keys(body).length === 0)
@@ -814,13 +1068,15 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
       if (isReadOnlyPostPush({ readOnly: o.readOnly ?? false, pipeline: o.pipeline })) {
         throw new UsageError(READ_ONLY_POST_PUSH_MESSAGE);
       }
+      const boxId = o.box === undefined ? undefined : boxRef(o.box as string);
       const c = client();
       let projectId: string | undefined = o.project;
+      const hostOs = await targetOs();
       // The engine runs in the container, so it gets the container path:
       // the same as the host path except on Windows.
       const toContainer = (p: string) => {
         try {
-          return hostToContainer(p, deps.hostOs ?? "linux");
+          return hostToContainer(p, hostOs);
         } catch (err) {
           throw new UsageError((err as Error).message);
         }
@@ -830,12 +1086,12 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
       let repoPath: string | undefined =
         repoArg === undefined
           ? undefined
-          : deps.hostOs === "win32" && repoArg.startsWith("/")
+          : hostOs === "win32" && repoArg.startsWith("/")
             ? repoArg
-            : toContainer(absolute(repoArg));
+            : toContainer(await hostPath(repoArg));
       let tip: string | undefined = o.tip;
-      if (o.box) {
-        const v = await c.call("boxes.get", { params: { boxId: o.box } });
+      if (boxId) {
+        const v = await c.call("boxes.get", { params: { boxId } });
         projectId ??= v.box.projectId;
         repoPath ??= v.containerWorkDir ?? toContainer(v.box.worktree ?? v.box.targetDir);
         tip ??= v.box.branch;
@@ -846,7 +1102,7 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
       const run = await c.call("runs.create", {
         body: {
           projectId,
-          boxId: o.box,
+          boxId,
           repoPath,
           base: o.base,
           tip,
@@ -871,9 +1127,10 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
     .option("--project <projectId>", "Only runs in this project.")
     .option("--box <boxId>", "Only runs for this box.")
     .action(async (runId: string | undefined, o: { project?: string; box?: string }) => {
+      const boxId = o.box === undefined ? undefined : boxRef(o.box);
       const c = client();
       if (!runId) {
-        const r = await c.call("runs.list", { query: { projectId: o.project, boxId: o.box } });
+        const r = await c.call("runs.list", { query: { projectId: o.project, boxId } });
         print(r, () => runRows(r.runs));
         return;
       }
@@ -1136,7 +1393,7 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
           body: {
             vendor: vendor as "claude",
             name,
-            from: absolute(o.from),
+            from: await hostPath(o.from),
             copy: o.copy ?? false,
             label: o.label,
           },
@@ -1317,9 +1574,11 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
 
   // -------------------------------------------------------------------------
   // machines and node (multi-host)
-  const machines = program
-    .command("machines")
-    .description("List, enroll, and revoke the machines of a multi-host setup.");
+  const machines = thisMachineOnly(
+    program
+      .command("machines")
+      .description("List, enroll, and revoke the machines of a multi-host setup."),
+  );
 
   machines
     .command("list")
@@ -1365,9 +1624,9 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
       print(r, () => `Revoked ${id}.\n`);
     });
 
-  const node = program
-    .command("node")
-    .description("Show this machine's link to a hub, or join a hub.");
+  const node = thisMachineOnly(
+    program.command("node").description("Show this machine's link to a hub, or join a hub."),
+  );
 
   const nodeText = (s: NodeStatus) =>
     keyValues([
@@ -1429,8 +1688,7 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
       print(r, () => checkRows(r.checks));
     });
 
-  program
-    .command("doctor")
+  thisMachineOnly(program.command("doctor"))
     .description(
       "Check the server, the token, Docker, the image, the engines, and sudo in containers.",
     )
@@ -1511,24 +1769,76 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
 
   program
     .command("events")
-    .description("Print the server's event stream as JSON lines until interrupted.")
+    .description(
+      "Print the server's event stream as JSON lines until interrupted. Another machine's events carry its ID in the machine field.",
+    )
     .option("--types <types>", "Comma-separated event types to receive.")
     .option("--count <n>", "Exit after this many events.", positiveInt)
-    .action(async (o: { types?: string; count?: number }) => {
+    .option(
+      "--all-machines",
+      "Print the events of every online machine of a multi-host setup, merged in arrival order.",
+    )
+    .action(async (o: { types?: string; count?: number; allMachines?: boolean }) => {
       const s = settings();
       if (s.token === null)
         throw new ApiCallError(401, "unauthorized", `No token in AIO_TOKEN or ${s.tokenFile}.`);
-      await tailEvents({
-        baseUrl: s.baseUrl,
-        token: s.token,
-        types: o.types,
-        count: o.count,
-        write: deps.out,
-        warn: deps.err,
-        WebSocket: deps.WebSocket,
-        tls: serverTls(s),
-        signal: deps.signal,
-      });
+      const token = s.token;
+      const tail = (
+        machine: string | null,
+        write: (line: string) => void,
+        signal?: AbortSignal,
+        onEvent?: () => void,
+      ) =>
+        tailEvents({
+          baseUrl: s.baseUrl,
+          token,
+          types: o.types,
+          machine,
+          write,
+          onEvent,
+          warn: deps.err,
+          WebSocket: deps.WebSocket,
+          tls: serverTls(s),
+          signal,
+          ...(o.allMachines ? {} : { count: o.count }),
+        });
+      if (!o.allMachines) {
+        await tail((await target())?.id ?? null, deps.out, deps.signal);
+        return;
+      }
+      if (globals().machine !== undefined) {
+        throw new UsageError("Use --all-machines or --machine, not both.");
+      }
+      // One stream per online machine. `--count` counts every stream's
+      // events together, and ends them all.
+      const machines = (await fleet()).filter((m) => m.isLocal || m.status === "online");
+      const done = new AbortController();
+      const signal = deps.signal ? AbortSignal.any([deps.signal, done.signal]) : done.signal;
+      let seen = 0;
+      const write = (line: string) => {
+        if (!done.signal.aborted) deps.out(line);
+      };
+      const onEvent = () => {
+        seen += 1;
+        if (o.count !== undefined && seen >= o.count) done.abort();
+      };
+      await Promise.all(
+        machines.map((m) =>
+          tail(m.isLocal ? null : m.id, write, signal, onEvent).catch((err: unknown) => {
+            // This server's own stream must work; another machine's failure
+            // ends only its own stream.
+            if (m.isLocal) {
+              done.abort();
+              throw err;
+            }
+            deps.err(
+              terminalText(
+                `Warning: no more events from ${m.name}: ${err instanceof Error ? err.message : String(err)}\n`,
+              ),
+            );
+          }),
+        ),
+      );
     });
 
   return program;

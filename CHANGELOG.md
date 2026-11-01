@@ -25,6 +25,9 @@ section's heading must have the form `## [X.Y.Z]`.
 - Machine health on the **Machines** page: each machine's engine version,
   image state, and free disk space, from `GET /api/v1/node/health` and the
   `health.v1` link capability.
+- The CLI's `--machine` option and `MACHINE/BOX` box arguments send a
+  command to another machine. `aio box list --all-machines` and
+  `aio events --all-machines` show every online machine's boxes and events.
 - A **Paste** button beside each **Browse** button for paths in the Boxes
   app.
 - Windows host paths: the server maps a path such as

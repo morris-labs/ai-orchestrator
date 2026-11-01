@@ -4,6 +4,7 @@
 import {
   ApiErrorSchema,
   buildPath,
+  machinePath,
   serverRoutes,
   type ApiErrorCode,
   type HttpRouteDef,
@@ -102,6 +103,12 @@ export interface ClientOptions {
   fetch?: typeof fetch;
   /** Aborts every call, such as on Ctrl+C. */
   signal?: AbortSignal;
+  /**
+   * Resolves the ID of the machine that serves each call, or `null` for the
+   * server at `baseUrl`. A call to another machine goes through the machine
+   * proxy route, `/api/v1/machines/MACHINE_ID/proxy/`.
+   */
+  machine?: () => Promise<string | null>;
 }
 
 function stringifyQuery(query: Record<string, unknown> | undefined): Record<string, string> {
@@ -135,6 +142,8 @@ export class ServerClient {
     } catch (err) {
       throw new RequestInputError((err as Error).message);
     }
+    const machineId = this.options.machine ? await this.options.machine() : null;
+    path = machinePath(path, machineId);
     const query = stringifyQuery(input.query as Record<string, unknown> | undefined);
     if (route.query) {
       const checked = route.query.safeParse(query);
