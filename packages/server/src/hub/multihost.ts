@@ -9,6 +9,7 @@ import {
   HUB_MACHINE_ID,
   LOCAL_MACHINE_ID,
   MachineListSchema,
+  serverRoutes,
   type EnrollmentCode,
   type GlobalSettings,
   type GlobalSettingsPatch,
@@ -44,9 +45,55 @@ export function parseRole(value: string | undefined): MachineRole | undefined {
 export const LOCAL_ID = "local";
 
 /**
+ * The routes a node may call on a hub whose role is `both`, so that it can
+ * show the hub's boxes in a machine tab and operate them: list, get, start,
+ * stop, and restart boxes, their terminals and the event stream, and the
+ * project list and directory browser that the tab uses. Settings, secrets,
+ * accounts, machine enrollment and revocation, node routes, and every
+ * route that creates, edits, or removes something stay refused.
+ */
+export const HUB_BOX_ROUTES = [
+  "boxes.list",
+  "boxes.get",
+  "boxes.start",
+  "boxes.stop",
+  "boxes.restart",
+  "events.stream",
+  "terminals.open",
+  "projects.list",
+  "fs.dirs",
+] as const satisfies readonly (keyof typeof serverRoutes)[];
+
+/**
+ * A route's method and a pattern for its path. Each `:param` matches one
+ * segment with no query, fragment, or leading dot, so that no dot segment
+ * can turn an allowed path into another route.
+ */
+function routeMatcher(name: (typeof HUB_BOX_ROUTES)[number]): { method: string; path: RegExp } {
+  const route = serverRoutes[name];
+  const source = route.path
+    .split("/")
+    .map((part) =>
+      part.startsWith(":") ? "(?![.]|%2[eE])[^/?#]+" : part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+    )
+    .join("/");
+  return { method: route.method, path: new RegExp(`^${source}$`) };
+}
+
+const hubBoxMatchers = HUB_BOX_ROUTES.map(routeMatcher);
+
+/** True when a node may call `req` on a hub whose role is `both`. */
+export function isHubBoxRoute(req: { method: string; path: string }): boolean {
+  const method = req.method.toUpperCase();
+  return hubBoxMatchers.some((m) => m.method === method && m.path.test(req.path));
+}
+
+/**
  * The API paths a node may call on its hub over the link: the machine list,
  * the health route, and the per-machine routes under `/api/v1/machines/ID/`
- * that relay to other machines. Everything else on the hub stays local.
+ * that relay to other machines. When the hub runs boxes itself (`sharesBoxes`,
+ * role `both`), also the `HUB_BOX_ROUTES`. Everything else on the hub stays
+ * local.
  *
  * A per-machine route that names the hub itself (`local`, `hub`, or
  * whatever `isHub` accepts) is served by the hub, so the path after the
@@ -57,15 +104,22 @@ export function defaultAllowNodeRequest(
   req: { method: string; path: string },
   caller?: string,
   isHub: (id: string) => boolean = (id) => id === LOCAL_MACHINE_ID || id === HUB_MACHINE_ID,
+  sharesBoxes = false,
 ): boolean {
   const method = req.method.toUpperCase();
   if (method === "GET" && (req.path === "/api/v1/machines" || req.path === "/api/v1/health")) {
     return true;
   }
+  if (sharesBoxes && isHubBoxRoute({ method, path: req.path })) return true;
   const target = parseProxyUrl(req.path);
   if (!target) return false;
   if (!isHub(target.machineId)) return true;
-  return defaultAllowNodeRequest({ method, path: `${API_PREFIX}/${target.rest}` }, caller, isHub);
+  return defaultAllowNodeRequest(
+    { method, path: `${API_PREFIX}/${target.rest}` },
+    caller,
+    isHub,
+    sharesBoxes,
+  );
 }
 
 export interface MultiHostOptions {
@@ -172,6 +226,7 @@ export class MultiHost {
               id === LOCAL_MACHINE_ID ||
               id === HUB_MACHINE_ID ||
               isThisMachine(id, { role: this.role(), machineId: this.machineId() }),
+            this.role() === "both",
           )),
       timing: opts.timing,
       log: opts.log,

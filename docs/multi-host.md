@@ -15,8 +15,8 @@ Every `aio-server` has one of the following roles:
 
 | Role | Does | Use it on |
 |---|---|---|
-| `both` | Runs boxes and can act as a hub. The default, which behaves like a single machine until you issue an enrollment code. | A single machine, or the machine that hosts the hub |
-| `hub` | Acts as a hub and never joins another hub. | An always-on machine that serves only as the hub |
+| `both` | Runs boxes and can act as a hub, whose nodes can see and operate its boxes. The default, which behaves like a single machine until you issue an enrollment code. | A single machine, or the machine that hosts the hub |
+| `hub` | Acts as a hub and never joins another hub. Nodes can't see or reach boxes on it. | An always-on machine that serves only as the hub |
 | `node` | Runs boxes and links to a hub. | Every other machine |
 
 The server stores the role in its settings. To change it for one run, start
@@ -260,9 +260,15 @@ Each machine keeps its own database, transcripts, accounts, image, and
 secrets broker. The following data crosses the link:
 
 - **Machine information**: names, versions, platforms, and capabilities.
-- **Requests between machines**: the hub can call a node's API, and a node
-  can call only the hub's machine list and the routes that relay to other
-  machines.
+- **Requests between machines**: the hub can call a node's API. A node can
+  call the hub's machine list, its health, and the routes that relay to
+  other machines. When the hub's role is `both`, a node can also list,
+  get, start, stop, and restart the hub's boxes, open their terminals and
+  the hub's event stream, and list the hub's projects and directories, so
+  the hub's tab in the Boxes app works. A node can't reach the hub's
+  settings, secrets, accounts, machine enrollment or revocation, or node
+  routes, and can't create, edit, or remove anything on the hub. With the
+  role `hub`, a node can reach only the machine list and health.
 - **Secret values**: only the hub holds the 1Password service account
   token. A node's secrets broker asks the hub for each value and keeps it in
   memory for the same 5 minutes as on a hub. While the hub is unreachable, a

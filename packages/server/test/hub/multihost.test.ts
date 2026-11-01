@@ -332,6 +332,68 @@ describe("multi-host", () => {
     expect(refused.status).toBe(403);
   });
 
+  it("lets a node reach the boxes of a hub whose role is both, and not of a hub-only one", async () => {
+    const { hub, node } = await linkedPair();
+    await waitFor(() => node.app.multiHost.status().link === "connected", 5000);
+    const root = fs.realpathSync(tempDir("aio-mh-project-"));
+    expect((await hub.api("POST", "/api/v1/projects", { root })).status).toBe(201);
+    const via = (rest: string) => `/api/v1/machines/hub/proxy/${rest}`;
+
+    // Role both: the box routes, projects, directories, and streams pass.
+    const boxes = await node.api("GET", via("boxes"));
+    expect(boxes.status).toBe(200);
+    expect(boxes.json.boxes).toEqual([]);
+    const projects = await node.api("GET", via("projects"));
+    expect(projects.status).toBe(200);
+    expect(
+      projects.json.projects.map((p: { project: { root: string } }) => p.project.root),
+    ).toEqual([root]);
+    expect(
+      (await node.api("GET", `${via("fs/dirs")}?path=${encodeURIComponent(root)}`)).status,
+    ).toBe(200);
+    for (const action of ["start", "stop", "restart"]) {
+      const res = await node.api("POST", via(`boxes/no-such-box/${action}`));
+      expect([res.status, res.json.error.code]).toEqual([404, "not_found"]);
+    }
+    expect((await node.api("GET", via("boxes/no-such-box"))).status).toBe(404);
+    const hello = { type: "hello", streamId: null, lastSeq: null };
+    const hubStream = await hub.firstFrame("/api/v1/events", hello);
+    const relayed = await node.firstFrame(via("events"), hello);
+    expect(relayed).toMatchObject({ type: "hello", streamId: hubStream.streamId });
+    const toHub = node.app.multiHost.links.get("hub")!;
+    // The hub serves the terminal upgrade; the terminal itself answers
+    // the attach message, which this test doesn't send.
+    const terminal = await toHub.openStream({ path: "/api/v1/terminals", headers: {} });
+    terminal.close(1000, "done");
+
+    // Everything else stays refused.
+    for (const [method, rest, body] of [
+      ["GET", "settings"],
+      ["PATCH", "settings", { linkPort: 1 }],
+      ["GET", "secrets/available"],
+      ["GET", "accounts"],
+      ["POST", "machines/enrollment-codes"],
+      ["GET", "node"],
+      ["POST", "boxes", {}],
+      ["DELETE", "boxes/no-such-box"],
+      ["POST", "projects", { root }],
+    ] as [string, string, unknown?][]) {
+      expect((await node.api(method, via(rest), body)).status, `${method} ${rest}`).toBe(403);
+    }
+
+    // Role hub: back to the machine list and health only.
+    expect((await hub.api("PATCH", "/api/v1/settings", { role: "hub" })).status).toBe(200);
+    expect((await node.api("GET", via("boxes"))).status).toBe(403);
+    expect((await node.api("GET", via("projects"))).status).toBe(403);
+    expect((await node.api("POST", via("boxes/no-such-box/start"))).status).toBe(403);
+    await expect(node.firstFrame(via("events"), hello)).rejects.toThrow();
+    await expect(toHub.openStream({ path: "/api/v1/terminals", headers: {} })).rejects.toThrow(
+      /doesn't serve/,
+    );
+    expect((await node.api("GET", via("health"))).status).toBe(200);
+    expect((await node.api("GET", via("machines"))).status).toBe(200);
+  });
+
   it("resolves a node's secrets through the hub", async () => {
     const { hub, node } = await linkedPair();
     await waitFor(() => node.app.multiHost.links.get("hub") !== undefined, 5000);

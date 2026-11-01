@@ -6,7 +6,13 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { openDatabase } from "../../src/db/index.js";
 import { issueNodeCertificate, loadOrCreateHubIdentity, newNodeKey } from "../../src/hub/ca.js";
-import { defaultAllowNodeRequest, nameFromHost, parseRole } from "../../src/hub/multihost.js";
+import {
+  HUB_BOX_ROUTES,
+  defaultAllowNodeRequest,
+  isHubBoxRoute,
+  nameFromHost,
+  parseRole,
+} from "../../src/hub/multihost.js";
 import {
   isCgnatIpv4,
   isPrivateIpv4,
@@ -136,6 +142,72 @@ describe("protocol helpers", () => {
         (id) => id === "hub-id",
       ),
     ).toBe(false);
+  });
+});
+
+describe("what a node may call on a hub that runs boxes", () => {
+  const isHub = (id: string) => id === "local" || id === "hub";
+  const allowed: [string, string][] = [
+    ["GET", "/api/v1/boxes"],
+    ["GET", "/api/v1/boxes/b-1"],
+    ["POST", "/api/v1/boxes/b-1/start"],
+    ["POST", "/api/v1/boxes/b-1/stop"],
+    ["POST", "/api/v1/boxes/b-1/restart"],
+    ["GET", "/api/v1/events"],
+    ["GET", "/api/v1/terminals"],
+    ["GET", "/api/v1/projects"],
+    ["GET", "/api/v1/fs/dirs"],
+  ];
+  const refused: [string, string][] = [
+    ["GET", "/api/v1/settings"],
+    ["PATCH", "/api/v1/settings"],
+    ["GET", "/api/v1/secrets/available"],
+    ["GET", "/api/v1/accounts"],
+    ["POST", "/api/v1/machines/enrollment-codes"],
+    ["DELETE", "/api/v1/machines/m1"],
+    ["GET", "/api/v1/node"],
+    ["POST", "/api/v1/node/join"],
+    ["POST", "/api/v1/boxes"],
+    ["PATCH", "/api/v1/boxes/b-1"],
+    ["DELETE", "/api/v1/boxes/b-1"],
+    ["POST", "/api/v1/boxes/b-1/purge"],
+    ["POST", "/api/v1/projects"],
+    ["GET", "/api/v1/boxes/b-1/start"],
+    ["POST", "/api/v1/boxes/../settings"],
+    ["GET", "/api/v1/boxes/.."],
+    ["GET", "/api/v1/boxes/%2e%2e"],
+    ["POST", "/api/v1/boxes/b-1/start/extra"],
+    ["GET", "/api/v1/boxes/b-1/sub"],
+  ];
+
+  it("allows the box, terminal, and event routes only when the role is both", () => {
+    for (const [method, path] of allowed) {
+      expect(defaultAllowNodeRequest({ method, path }, "m1", isHub, true), path).toBe(true);
+      expect(defaultAllowNodeRequest({ method, path }, "m1", isHub, false), path).toBe(false);
+      expect(isHubBoxRoute({ method: method.toLowerCase(), path }), path).toBe(true);
+    }
+  });
+
+  it("keeps settings, secrets, accounts, machines, node, and edit routes refused", () => {
+    for (const [method, path] of refused) {
+      expect(defaultAllowNodeRequest({ method, path }, "m1", isHub, true), path).toBe(false);
+    }
+  });
+
+  it("holds the per-machine route that names the hub to the same list", () => {
+    for (const id of ["local", "hub"]) {
+      const via = (rest: string) => `/api/v1/machines/${id}/proxy/${rest}`;
+      expect(
+        defaultAllowNodeRequest({ method: "GET", path: via("boxes") }, "m1", isHub, true),
+      ).toBe(true);
+      expect(
+        defaultAllowNodeRequest({ method: "GET", path: via("boxes") }, "m1", isHub, false),
+      ).toBe(false);
+      expect(
+        defaultAllowNodeRequest({ method: "GET", path: via("settings") }, "m1", isHub, true),
+      ).toBe(false);
+    }
+    expect(HUB_BOX_ROUTES).toContain("terminals.open");
   });
 });
 
