@@ -401,6 +401,7 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
       );
     },
     "accounts.relink": async () => core.accounts.relink(),
+    "transcripts.adopt": async ({ body }) => core.accounts.adoptTranscripts(body),
     "accounts.import": async ({ body }) => core.accounts.importFolder(body),
     "accounts.get": async ({ params }) => core.accounts.get(`${params.vendor}/${params.name}`),
     "accounts.update": async ({ params, body }) =>

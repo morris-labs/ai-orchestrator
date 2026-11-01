@@ -44,7 +44,7 @@ function accountsMode(h: Harness, defaults: Record<string, string>): void {
 describe("session command", () => {
   it("prefixes CLAUDE_CONFIG_DIR with the box's account, and the default otherwise", async () => {
     const h = makeHarness();
-    const store = h.dir("store");
+    const store = h.dir(".claude-box", "transcripts", "claude");
     const personal = addAccount(h, "claude/personal", store);
     const work = addAccount(h, "claude/work", store);
     accountsMode(h, { claude: "claude/personal" });
@@ -62,7 +62,7 @@ describe("session command", () => {
 
   it("pre-accepts the trust prompt for the box's folders in its account before it starts", async () => {
     const h = makeHarness();
-    const personal = addAccount(h, "claude/personal", h.dir("store"));
+    const personal = addAccount(h, "claude/personal", h.dir(".claude-box", "transcripts", "claude"));
     accountsMode(h, { claude: "claude/personal" });
     const dir = h.dir("a");
     await h.core.boxes.create({ targetDir: dir, layout: "root" });
@@ -79,7 +79,7 @@ describe("session command", () => {
   it("uses each platform's variable and starts no prefix in host mode", async () => {
     const h = makeHarness();
     const codex = addAccount(h, "codex/main");
-    addAccount(h, "claude/personal", h.dir("store"));
+    addAccount(h, "claude/personal", h.dir(".claude-box", "transcripts", "claude"));
     const host = await h.core.boxes.create({
       targetDir: h.dir("host"),
       layout: "root",
@@ -115,7 +115,7 @@ describe("session command", () => {
 describe("container layout", () => {
   it("mounts the accounts folder and each sessions folder, and not the host folders", async () => {
     const h = makeHarness();
-    const store = h.dir("store");
+    const store = h.dir(".claude-box", "transcripts", "claude");
     const personal = addAccount(h, "claude/personal", store);
     accountsMode(h, { claude: "claude/personal" });
     const box = await h.core.boxes.create({ targetDir: h.dir("a"), layout: "root" });
@@ -139,7 +139,7 @@ describe("container layout", () => {
 
   it("makes a container from host mode stale for the mode switch", async () => {
     const h = makeHarness();
-    addAccount(h, "claude/personal", h.dir("store"));
+    addAccount(h, "claude/personal", h.dir(".claude-box", "transcripts", "claude"));
     const box = await h.core.boxes.create({ targetDir: h.dir("a"), layout: "root" });
     accountsMode(h, { claude: "claude/personal" });
     const project = h.core.projects.get(box.projectId);
@@ -150,7 +150,7 @@ describe("container layout", () => {
 
   it("flags a box whose account was added after the container started", async () => {
     const h = makeHarness();
-    const store = h.dir("store");
+    const store = h.dir(".claude-box", "transcripts", "claude");
     addAccount(h, "claude/personal", store);
     accountsMode(h, { claude: "claude/personal" });
     await h.core.boxes.create({ targetDir: h.dir("a"), layout: "root" });
@@ -166,7 +166,7 @@ describe("container layout", () => {
 
   it("finds links out of an account folder and skips dangling and inside links", () => {
     const h = makeHarness();
-    const store = h.dir("store");
+    const store = h.dir(".claude-box", "transcripts", "claude");
     const dir = addAccount(h, "claude/personal", store);
     fs.mkdirSync(path.join(dir, "skills"));
     fs.symlinkSync("skills", path.join(dir, "inside"));
@@ -178,7 +178,7 @@ describe("container layout", () => {
 describe("shared transcript store", () => {
   it("resolves transcripts in the store, and resumes after a move between accounts", async () => {
     const h = makeHarness();
-    const store = h.dir("store");
+    const store = h.dir(".claude-box", "transcripts", "claude");
     addAccount(h, "claude/personal", store);
     addAccount(h, "claude/work", store);
     accountsMode(h, { claude: "claude/personal" });
@@ -209,8 +209,8 @@ describe("shared transcript store", () => {
 describe("model catalog", () => {
   it("reads models and defaults from the chosen account's folder", async () => {
     const h = makeHarness();
-    const work = addAccount(h, "claude/work", h.dir("store"));
-    addAccount(h, "claude/personal", h.dir("store"));
+    const work = addAccount(h, "claude/work", h.dir(".claude-box", "transcripts", "claude"));
+    addAccount(h, "claude/personal", h.dir(".claude-box", "transcripts", "claude"));
     fs.writeFileSync(
       path.join(work, ".claude.json"),
       JSON.stringify({ additionalModelOptionsCache: [{ value: "claude-work-only-9-9" }] }),
@@ -230,7 +230,7 @@ describe("moving a box between accounts", () => {
     const h = makeHarness();
     addAccount(h, "codex/one");
     addAccount(h, "codex/two");
-    addAccount(h, "claude/personal", h.dir("store"));
+    addAccount(h, "claude/personal", h.dir(".claude-box", "transcripts", "claude"));
     accountsMode(h, { claude: "claude/personal", codex: "codex/one" });
     const box = await h.core.boxes.create({
       targetDir: h.dir("a"),
@@ -249,7 +249,7 @@ describe("moving a box between accounts", () => {
 
   it("asks for a restart when a running box changes account", async () => {
     const h = makeHarness();
-    const store = h.dir("store");
+    const store = h.dir(".claude-box", "transcripts", "claude");
     addAccount(h, "claude/personal", store);
     addAccount(h, "claude/work", store);
     accountsMode(h, { claude: "claude/personal" });

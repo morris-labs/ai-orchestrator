@@ -255,6 +255,13 @@ const cases: Case[] = [
   { key: "accounts.check", method: "POST", url: `${V1}/accounts/claude/work/check`, status: 200 },
   { key: "accounts.relink", method: "POST", url: `${V1}/accounts/relink`, status: 200 },
   {
+    key: "transcripts.adopt",
+    method: "POST",
+    url: `${V1}/transcripts/adopt`,
+    body: { dryRun: true },
+    status: 200,
+  },
+  {
     key: "accounts.import",
     method: "POST",
     url: `${V1}/accounts/import`,

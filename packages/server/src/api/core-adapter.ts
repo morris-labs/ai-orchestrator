@@ -177,6 +177,7 @@ export function apiCoreOf(server: ServerCore, dockerApi: Docker): Core {
       remove: async (id) => server.accounts.remove(id),
       check: (id) => server.accounts.check(id),
       relink: async () => server.accounts.relink(),
+      adoptTranscripts: async (input) => server.accounts.adoptTranscripts(input),
       importFolder: (input) => server.accounts.importFolder(input),
       validateSeed: async (input) => {
         server.accounts.validateSeed(input);

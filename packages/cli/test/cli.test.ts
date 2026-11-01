@@ -858,14 +858,46 @@ describe("accounts", () => {
     server.on("POST /api/v1/accounts/relink", {
       status: 200,
       body: {
-        store: "/home/me/.claude-projects-shared",
-        source: "host",
+        store: "/home/me/.claude-box/transcripts/claude",
+        source: "data",
         accounts: [{ id: "claude/work", before: "dangling", outcome: "replaced" }],
       },
     });
     expect(await cli(["accounts", "relink"])).toBe(0);
-    expect(out).toContain("/home/me/.claude-projects-shared (host)");
+    expect(out).toContain("/home/me/.claude-box/transcripts/claude (data)");
     expect(out).toContain("claude/work: dangling -> replaced.");
+  });
+
+  it("adopts the host's transcripts, with a dry run and a blocked exit code", async () => {
+    server.on("POST /api/v1/transcripts/adopt", {
+      status: 200,
+      body: {
+        store: "/home/me/.claude-box/transcripts/claude",
+        dryRun: true,
+        status: "adopted",
+        moved: 3,
+        duplicates: 1,
+        clashes: [],
+        actions: ["Would repoint the link /home/me/.claude/projects at the store."],
+      },
+    });
+    expect(await cli(["transcripts", "adopt", "--dry-run"])).toBe(0);
+    expect(last()?.body).toEqual({ dryRun: true });
+    expect(out).toContain("3 file(s) moved, 1 already in the store (dry run)");
+    server.on("POST /api/v1/transcripts/adopt", {
+      status: 200,
+      body: {
+        store: "/s",
+        dryRun: false,
+        status: "blocked",
+        moved: 0,
+        duplicates: 0,
+        clashes: ["-a/u.jsonl"],
+        actions: ["1 file(s) exist in both places."],
+      },
+    });
+    expect(await cli(["transcripts", "adopt"])).toBe(1);
+    expect(out).toContain("Clash: -a/u.jsonl");
   });
 
   it("passes --account choices to box new, one per vendor", async () => {

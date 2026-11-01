@@ -11,8 +11,15 @@ for classic boxes, and what 4.0.0 drops or defers.
   container is still `claude-agent-proj-PROJECT_ID`.
 - Your data stays in `~/.claude-box`. The import reads the 3.x files and
   leaves them in place.
-- Transcripts stay in `~/.claude/projects`. Each box keeps its session ID, so
-  it resumes the same conversation.
+- Each box keeps its session ID, so it resumes the same conversation.
+  Transcripts move from `~/.claude/projects` to `~/.claude-box/transcripts/claude`,
+  so that `~/.claude-box` is the only folder in your home directory that
+  Agent Box uses. Stop every box and run `agentbox transcripts adopt`
+  (`--dry-run` shows the plan first). The command moves the files, merges
+  without overwriting, reports clashes, and points `~/.claude/projects` at the
+  new folder. If `~/.claude/projects` is already a link to a folder elsewhere,
+  the command moves that folder's contents. Until you run it, boxes in host
+  mode keep working through whatever link `~/.claude/projects` is.
 - Worktrees stay at `PRIMARY_REPO/.worktrees/SLUG` on `claude/SLUG`
   branches, with their notes in `WORKTREE/.claude-box/`.
 - Mounts work as before: the project root at the same path, `~/.claude`,

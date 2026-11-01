@@ -7,7 +7,7 @@ import {
   mergeMounts,
   mountContainerPaths,
   prepareLaunchHost,
-  projectsSymlinkTarget,
+  projectsLinkMounts,
   tcpMapsLabel,
   toDockerRunArgs,
   type LaunchInput,
@@ -42,7 +42,7 @@ describe("buildLaunchSpec", () => {
     const spec = buildLaunchSpec(
       env,
       { ...input, secretNames: ["AGENTBOX_ENGINE_TOKEN", "AGENTBOX_BROKER_SOCKET", "API_KEY"] },
-      { projectsSymlinkTarget: null, hasGitconfig: false },
+      { projectsLinkMounts: [], hasGitconfig: false },
     );
     expect(spec.env.filter((e) => e.startsWith("AGENTBOX_ENGINE_TOKEN="))).toEqual([]);
     expect(spec.env.some((e) => e.startsWith("API_KEY"))).toBe(false);
@@ -60,7 +60,7 @@ describe("buildLaunchSpec", () => {
         ...input,
         extraEnv: { AGENTBOX_MOCK_VENDORS: "1", AGENTBOX_ENGINE_TOKEN_FILE: "/tmp/evil" },
       },
-      { projectsSymlinkTarget: null, hasGitconfig: false },
+      { projectsLinkMounts: [], hasGitconfig: false },
     );
     expect(spec.env).toContain("AGENTBOX_MOCK_VENDORS=1");
     expect(spec.env.filter((e) => e.startsWith("AGENTBOX_ENGINE_TOKEN_FILE="))).toEqual([
@@ -75,14 +75,14 @@ describe("buildLaunchSpec", () => {
     const dir = path.join(home, ".claude-box", "broker", brokerDirName(C));
     expect(fs.statSync(dir).mode & 0o777).toBe(0o700);
     const spec = buildLaunchSpec(hostEnv, input, {
-      projectsSymlinkTarget: null,
+      projectsLinkMounts: [],
       hasGitconfig: false,
     });
     expect(spec.binds).toContain(`${dir}:/run/agentbox-broker:ro`);
   });
 
   it("labels whether the container's sudo asks for a password, and lists the mount paths", () => {
-    const facts = { projectsSymlinkTarget: null, hasGitconfig: false };
+    const facts = { projectsLinkMounts: [], hasGitconfig: false };
     expect(buildLaunchSpec(env, input, facts).labels["agentbox.sudo"]).toBe("off");
     const on = buildLaunchSpec(env, { ...input, sudoPassword: true }, facts);
     expect(on.labels["agentbox.sudo"]).toBe("password");
@@ -98,7 +98,7 @@ describe("buildLaunchSpec", () => {
   });
 
   it("keeps the engine token out of the container's environment", () => {
-    const spec = buildLaunchSpec(env, input, { projectsSymlinkTarget: null, hasGitconfig: false });
+    const spec = buildLaunchSpec(env, input, { projectsLinkMounts: [], hasGitconfig: false });
     expect(spec.env.join("\n")).not.toContain(input.engine.token);
   });
 
@@ -110,7 +110,7 @@ describe("buildLaunchSpec", () => {
   // engine token is a file in that directory, not a variable.
   it("matches the inventoried 3.3.5 launch, minus the pool, plus the engine", () => {
     const spec = buildLaunchSpec(env, input, {
-      projectsSymlinkTarget: "/home/tester/.claude-projects-shared",
+      projectsLinkMounts: ["/home/tester/.claude-box/transcripts/claude"],
       hasGitconfig: true,
     });
     expect(spec).toEqual({
@@ -144,7 +144,7 @@ describe("buildLaunchSpec", () => {
         "/home/tester/.claude.json:/home/tester/.claude.json",
         "/home/tester/.codex:/home/tester/.codex",
         "/home/tester/.copilot:/home/tester/.copilot",
-        "/home/tester/.claude-projects-shared:/home/tester/.claude-projects-shared",
+        "/home/tester/.claude-box/transcripts/claude:/home/tester/.claude-box/transcripts/claude",
         `/home/tester/.claude-box/sessions/${C}:/home/tester/.claude/sessions`,
         "/data/ref:/data/ref",
         "/data/shared:/shared",
@@ -175,7 +175,7 @@ describe("buildLaunchSpec", () => {
     const spec = buildLaunchSpec(
       env,
       { ...input, secretNames: [], tcpMaps: [] },
-      { projectsSymlinkTarget: null, hasGitconfig: false },
+      { projectsLinkMounts: [], hasGitconfig: false },
     );
     expect(spec.env.some((e) => e.startsWith("GIT_CONFIG_GLOBAL="))).toBe(false);
     expect(spec.binds).toHaveLength(11);
@@ -193,7 +193,7 @@ describe("buildLaunchSpec", () => {
           { host: 9090, container: 4000, allInterfaces: true },
         ],
       },
-      { projectsSymlinkTarget: null, hasGitconfig: false },
+      { projectsLinkMounts: [], hasGitconfig: false },
     );
     expect(spec.portBindings["3000/tcp"]).toEqual([{ hostIp: "127.0.0.1", hostPort: "8080" }]);
     expect(spec.portBindings["4000/tcp"]).toEqual([{ hostIp: "", hostPort: "9090" }]);
@@ -202,7 +202,7 @@ describe("buildLaunchSpec", () => {
   });
 
   it("refuses a relative root or a mount docker can't bind", () => {
-    const facts = { projectsSymlinkTarget: null, hasGitconfig: false };
+    const facts = { projectsLinkMounts: [], hasGitconfig: false };
     expect(() => buildLaunchSpec(env, { ...input, root: "work/app" }, facts)).toThrow(
       expect.objectContaining({ code: "validation" }),
     );
@@ -220,7 +220,7 @@ describe("buildLaunchSpec", () => {
   });
 
   it("prints a docker run line with secrets masked", () => {
-    const built = buildLaunchSpec(env, input, { projectsSymlinkTarget: null, hasGitconfig: false });
+    const built = buildLaunchSpec(env, input, { projectsLinkMounts: [], hasGitconfig: false });
     // A spec carries no secret value, but a masked line stays safe if one ever does.
     const spec = { ...built, env: [...built.env, "GITHUB_TOKEN=ghp_value"] };
     const args = toDockerRunArgs(spec);
@@ -282,7 +282,7 @@ describe("mergeMounts", () => {
 });
 
 describe("host preparation", () => {
-  it("creates the host directories, empties the sessions dir, and finds the symlink target", () => {
+  it("creates the host directories, empties the sessions dir, and finds the link mounts", () => {
     const home = tempDir("agentbox-launch-");
     const e = { ...env, home };
     const root = path.join(home, "work");
@@ -291,13 +291,13 @@ describe("host preparation", () => {
     const sessions = path.join(home, ".claude-box", "sessions", C);
     fs.mkdirSync(sessions, { recursive: true });
     fs.writeFileSync(path.join(sessions, "11.json"), "{}");
-    const shared = path.join(home, "shared-projects");
-    fs.mkdirSync(shared);
+    const shared = path.join(home, ".claude-box", "transcripts", "claude");
+    fs.mkdirSync(shared, { recursive: true });
     fs.mkdirSync(path.join(home, ".claude"), { recursive: true });
     fs.symlinkSync(shared, path.join(home, ".claude", "projects"));
 
     const facts = prepareLaunchHost(e, { container: C, root });
-    expect(facts).toEqual({ projectsSymlinkTarget: shared, hasGitconfig: true });
+    expect(facts).toEqual({ projectsLinkMounts: [shared], hasGitconfig: true });
     for (const d of [".claude/sessions", ".codex", ".copilot"])
       expect(fs.statSync(path.join(home, d)).isDirectory()).toBe(true);
     expect(fs.readdirSync(sessions)).toEqual([]);
@@ -322,9 +322,59 @@ describe("host preparation", () => {
     const home = tempDir("agentbox-launch-");
     fs.mkdirSync(path.join(home, ".claude", "real"), { recursive: true });
     fs.symlinkSync(path.join(home, ".claude", "real"), path.join(home, ".claude", "projects"));
-    expect(projectsSymlinkTarget({ ...env, home })).toBeNull();
+    expect(projectsLinkMounts({ ...env, home })).toEqual([]);
     fs.rmSync(path.join(home, ".claude", "projects"));
     fs.mkdirSync(path.join(home, ".claude", "projects"));
-    expect(projectsSymlinkTarget({ ...env, home })).toBeNull();
+    expect(projectsLinkMounts({ ...env, home })).toEqual([]);
+  });
+
+  describe("projects link chains", () => {
+    function chainHome(): { home: string; store: string; shared: string } {
+      const home = fs.realpathSync(tempDir("agentbox-launch-"));
+      const store = path.join(home, ".claude-box", "transcripts", "claude");
+      fs.mkdirSync(store, { recursive: true });
+      fs.mkdirSync(path.join(home, ".claude"), { recursive: true });
+      return { home, store, shared: path.join(home, "intermediate-link") };
+    }
+
+    it("follows a chain: projects -> intermediate link -> store", () => {
+      const { home, store, shared } = chainHome();
+      fs.symlinkSync(store, shared);
+      fs.symlinkSync(shared, path.join(home, ".claude", "projects"));
+      // The link path binds at its own path (docker follows it to the store),
+      // and the store binds at its own path, so the chain resolves inside.
+      expect(projectsLinkMounts({ ...env, home })).toEqual([shared, store]);
+    });
+
+    it("follows a relative link in the chain", () => {
+      const { home, store, shared } = chainHome();
+      fs.symlinkSync(path.relative(home, store), shared);
+      fs.symlinkSync("../intermediate-link", path.join(home, ".claude", "projects"));
+      expect(projectsLinkMounts({ ...env, home })).toEqual([shared, store]);
+    });
+
+    it("mounts the store once for the final direct link", () => {
+      const { home, store } = chainHome();
+      fs.symlinkSync(store, path.join(home, ".claude", "projects"));
+      expect(projectsLinkMounts({ ...env, home })).toEqual([store]);
+    });
+
+    it("mounts nothing for a dangling link", () => {
+      const { home, store } = chainHome();
+      fs.rmSync(store, { recursive: true });
+      fs.symlinkSync(store, path.join(home, ".claude", "projects"));
+      expect(projectsLinkMounts({ ...env, home })).toEqual([]);
+    });
+
+    it("turns the chain into binds in the launch spec", () => {
+      const { home, store, shared } = chainHome();
+      const spec = buildLaunchSpec({ ...env, home }, input, {
+        projectsLinkMounts: [shared, store],
+        hasGitconfig: false,
+      });
+      expect(spec.binds).toEqual(
+        expect.arrayContaining([`${shared}:${shared}`, `${store}:${store}`]),
+      );
+    });
   });
 });

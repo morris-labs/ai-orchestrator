@@ -1165,6 +1165,30 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
       );
     });
 
+  program
+    .command("transcripts")
+    .description("Manage the Claude transcript store, DATA_DIR/transcripts/claude.")
+    .command("adopt")
+    .description(
+      "Move the host's ~/.claude/projects transcripts into the store and point ~/.claude/projects at it. Run it when no box runs.",
+    )
+    .option("--dry-run", "Show what would change and change nothing.")
+    .action(async (opts: { dryRun?: boolean }) => {
+      const r = await client().call("transcripts.adopt", {
+        body: { dryRun: opts.dryRun === true },
+      });
+      print(
+        r,
+        () =>
+          `Transcript store: ${r.store}.\n${r.actions.map((a) => `${a}\n`).join("")}${r.clashes
+            .map((c) => `Clash: ${c}\n`)
+            .join(
+              "",
+            )}${r.status}: ${r.moved} file(s) moved, ${r.duplicates} already in the store${r.dryRun ? " (dry run)" : ""}.\n`,
+      );
+      if (r.status === "blocked") state.code = 1;
+    });
+
   accounts
     .command("seed")
     .description(

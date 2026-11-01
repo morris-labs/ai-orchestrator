@@ -11,6 +11,9 @@ import {
   AccountImportRequestSchema,
   AccountSeedRequestSchema,
   AccountUpdateSchema,
+  TranscriptsAdoptRequestSchema,
+  type TranscriptsAdoptRequest,
+  type TranscriptsAdoptResult,
   accountId,
   parseAccountId,
   type Account,
@@ -43,13 +46,15 @@ import {
   sourceDirOf,
   type SeedSources,
 } from "./seed.js";
+import { adoptTranscripts } from "./adopt.js";
 import { preacceptClaudeAccount } from "./preaccept.js";
 import {
-  hostStoreRoot,
+  hostProjectsRoot,
   linkProjectsToStore,
   projectsLinkState,
   projectsLinkWarning,
   resolveStore,
+  sameLocation,
   storeEntryCount,
   type LinkOutcome,
 } from "./store.js";
@@ -187,22 +192,24 @@ export class AccountService {
   }
 
   private resolvedStore(settings: GlobalSettings = this.options.settings.get()) {
-    return resolveStore(this.env, settings.accountDefaults.claude, settings.transcriptStore);
+    return resolveStore(this.env, settings.transcriptStore);
   }
 
   /**
    * Refuses to switch to accounts mode when the boxes would lose their
-   * conversations: the transcript store is empty while the host's has
-   * transcripts, or a Claude account's `projects` doesn't lead to the store.
+   * conversations: the host's `~/.claude/projects` holds transcripts outside
+   * the store, or a Claude account's `projects` doesn't lead to the store.
+   * Both folders are compared by real path, so a chain of links that ends at
+   * the store counts as the store.
    * Throws `conflict` and names the fix.
    */
   assertCanUseAccounts(next: GlobalSettings): void {
     const store = this.resolvedStore(next);
-    const host = hostStoreRoot(this.env);
-    if (host !== undefined && storeEntryCount(store.root) === 0 && storeEntryCount(host) > 0) {
+    const host = hostProjectsRoot(this.env);
+    if (host !== undefined && !sameLocation(host, store.root) && storeEntryCount(host) > 0) {
       throw new ApiError(
         "conflict",
-        `The transcript store ${store.root} is empty, but the host's store ${host} holds conversations. Boxes in accounts mode wouldn't find them. Clear the transcriptStore setting, or copy the transcripts into the store.`,
+        `The host's ~/.claude/projects leads to ${host}, which holds conversations outside the transcript store ${store.root}. Boxes in accounts mode wouldn't find them. Run "agentbox transcripts adopt" first.`,
         { store: store.root, host },
       );
     }
@@ -240,6 +247,28 @@ export class AccountService {
       accounts.push({ id: a.id, before, outcome: linkProjectsToStore(dir, store.root) });
     }
     return { store: store.root, source: store.source, accounts };
+  }
+
+  /**
+   * `transcripts.adopt`: moves the host's `~/.claude/projects` transcripts
+   * into the store and points `~/.claude/projects` at it. Refuses while any
+   * box runs, because a running box can hold the old folder open, and the
+   * record doesn't say which boxes mount the host's `~/.claude`. `dryRun`
+   * changes nothing and runs whatever the boxes do.
+   */
+  adoptTranscripts(input: TranscriptsAdoptRequest): TranscriptsAdoptResult {
+    const req = parseOrThrow(TranscriptsAdoptRequestSchema, input);
+    if (!req.dryRun) {
+      const running = this.options.runningBoxes();
+      if (running.length > 0) {
+        throw new ApiError(
+          "box_running",
+          `Stop every box before moving the transcripts. These run: ${running.join(", ")}.`,
+          { boxes: running },
+        );
+      }
+    }
+    return adoptTranscripts({ home: this.env.home, store: this.storeRoot(), dryRun: req.dryRun });
   }
 
   /** The note for a link that `linkProjectsToStore` made or changed, else `undefined`. */
