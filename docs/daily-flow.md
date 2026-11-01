@@ -67,7 +67,12 @@ session receives one message that asks it to hold edits until the run ends.
 The run refuses to start when the worktree has uncommitted changes. Ask the
 agent to commit, or start the run with **Include uncommitted changes**.
 
-From a terminal, run `aio review start`.
+To give a role to other vendors than the profile does, change it in the
+**Profile and roles** section before you click **Start**. For details, see
+`docs/review-pipeline.md`.
+
+From a terminal, run `aio review start`. To choose a role there, add
+`--role ROLE=VENDOR[,VENDOR]`.
 
 ## Watch or leave
 
