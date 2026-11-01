@@ -6,17 +6,22 @@ import type { AioEvent, NotificationToggles, RunState } from "@aio/contracts";
 
 export { ACTIVE_STATUSES_FOR_TRAY, type DeepLink };
 
-/** The URL scheme the app registers, as in `aio-review://launch?project=ID&box=ID`. */
+/**
+ * The URL scheme the app registers, as in
+ * `aio-review://launch?project=ID&box=ID&machine=ID`.
+ */
 export const PROTOCOL = "aio-review";
 
 /**
  * Finds a deep link in a command line: an `aio-review://` URL, a bare
- * query such as `?project=ID&box=ID`, or `--project=ID` and `--box=ID`
- * flags. Returns `null` when there is none.
+ * query such as `?project=ID&box=ID`, or `--project=ID`, `--box=ID`, and
+ * `--machine=ID` flags. Returns `null` when there is none; a machine alone
+ * isn't a link.
  */
 export function parseDeepLink(argv: readonly string[]): DeepLink | null {
   let project: string | null = null;
   let box: string | null = null;
+  let machine: string | null = null;
   for (const arg of argv) {
     let query: string | null = null;
     if (arg.startsWith(`${PROTOCOL}:`)) {
@@ -28,32 +33,38 @@ export function parseDeepLink(argv: readonly string[]): DeepLink | null {
       project = arg.slice("--project=".length) || null;
     } else if (arg.startsWith("--box=")) {
       box = arg.slice("--box=".length) || null;
+    } else if (arg.startsWith("--machine=")) {
+      machine = arg.slice("--machine=".length) || null;
     }
     if (query !== null) {
       const q = new URLSearchParams(query);
       project = q.get("project") ?? project;
       box = q.get("box") ?? box;
+      machine = q.get("machine") || machine;
     }
   }
-  return project || box ? { project, box } : null;
+  return project || box ? { project, box, machine } : null;
+}
+
+/** The deep link's query: `project`, `box`, and `machine`, each when set. */
+function linkQuery(link: DeepLink): string {
+  const q = new URLSearchParams();
+  if (link.project) q.set("project", link.project);
+  if (link.box) q.set("box", link.box);
+  if (link.machine) q.set("machine", link.machine);
+  return q.toString();
 }
 
 /** The renderer's URL on the server, with the deep link as its query. */
 export function rendererUrl(serverUrl: string, link: DeepLink | null): string {
   const base = `${serverUrl.replace(/\/$/, "")}/review/`;
   if (!link) return base;
-  const q = new URLSearchParams();
-  if (link.project) q.set("project", link.project);
-  if (link.box) q.set("box", link.box);
-  return `${base}?${q.toString()}#/launch`;
+  return `${base}?${linkQuery(link)}#/launch`;
 }
 
 /** The hash that opens the launcher prefilled, for a window that is already open. */
 export function launcherHash(link: DeepLink): string {
-  const q = new URLSearchParams();
-  if (link.project) q.set("project", link.project);
-  if (link.box) q.set("box", link.box);
-  return `#/launch?${q.toString()}`;
+  return `#/launch?${linkQuery(link)}`;
 }
 
 /** Tracks which runs are active, from `runs.list` and `run.changed` events. */

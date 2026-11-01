@@ -25,8 +25,15 @@ export interface AioBridge {
   serverUrl: string;
   /** Opens a host terminal attached to a box, through the attach-command route. */
   openExternalTerminal: (req: ExternalTerminalRequest) => Promise<BridgeResult>;
-  /** Launches `aio-review` with the launcher prefilled. */
-  launchReview: (req: { projectId: string; boxId: string }) => Promise<BridgeResult>;
+  /**
+   * Launches `aio-review` with the launcher prefilled. `machineId` names
+   * the machine that holds the box; absent means this one.
+   */
+  launchReview: (req: {
+    projectId: string;
+    boxId: string;
+    machineId?: string;
+  }) => Promise<BridgeResult>;
   pickDirectory: (defaultPath?: string) => Promise<string | null>;
   /** Returns the plain text on the system clipboard, or an empty string. */
   readClipboardText: () => Promise<string>;

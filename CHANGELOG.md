@@ -31,8 +31,15 @@ section's heading must have the form `## [X.Y.Z]`.
   image state, and free disk space, from `GET /api/v1/node/health` and the
   `health.v1` link capability.
 - The CLI's `--machine` option and `MACHINE/BOX` box arguments send a
-  command to another machine. `aio box list --all-machines` and
-  `aio events --all-machines` show every online machine's boxes and events.
+  command, including every `aio review` command, to another machine.
+  `aio box list --all-machines`, `aio events --all-machines`, and
+  `aio review status --all-machines` show every machine's boxes, events,
+  and runs.
+- Review runs across machines. The Review app has a **Machine** list that
+  shows another machine's runs, findings, launcher, and policy, and the
+  dashboard lists every machine's runs with the machine named and an
+  offline machine marked. **Start Review** on another machine's tab in the
+  Boxes app opens the Review app on that machine.
 - A **Paste** button beside each **Browse** button for paths in the Boxes
   app.
 - Windows host paths: the server maps a path such as

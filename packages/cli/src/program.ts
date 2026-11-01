@@ -42,6 +42,7 @@ import {
   ServerUnreachableError,
 } from "./client.js";
 import { tailEvents, type WebSocketCtor } from "./events.js";
+import { fleetRunText, listFleetRuns } from "./fleet.js";
 import { jsonText, keyValues, percent, table, terminalText } from "./format.js";
 import { attachRemote, type TerminalIo } from "./terminal.js";
 import {
@@ -190,6 +191,11 @@ function relativeOnRemote(p: string, machine: string): UsageError {
   return new UsageError(
     `${p} is a relative path. A path on ${machine} doesn't resolve against this directory, so give the absolute path on ${machine}.`,
   );
+}
+
+/** The error for a relative `--repo` given for another machine, `machine`. */
+function remoteRepoMessage(machine: string): string {
+  return `With --machine, give --repo as an absolute path on ${machine}, or give --box.`;
 }
 
 /** The machine a command goes to when it isn't this server's own. */
@@ -1062,7 +1068,9 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
 
   // -------------------------------------------------------------------------
   // review
-  const review = program.command("review").description("Start and control code review runs.");
+  const review = program
+    .command("review")
+    .description("Start and control code review runs.");
 
   review
     .command("start")
@@ -1071,7 +1079,7 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
     .option("--project <projectId>", "The project; implied by --box.")
     .option(
       "--repo <path>",
-      "The repository, relative to the current directory; implied by --box. On Windows, give the host path or the container path under /mnt/host.",
+      "The repository, relative to the current directory; implied by --box. On Windows, give the host path or the container path under /mnt/host. With --machine, give the absolute path on that machine.",
     )
     .option("--base <ref>", "The base ref, or `pr` for the pull request's base.", "origin/main")
     .option("--tip <branch>", "The branch to review; default the checked-out branch.")
@@ -1096,25 +1104,40 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
       }
       const boxId = o.box === undefined ? undefined : boxRef(o.box as string);
       const c = client();
+      const remote = await target();
       let projectId: string | undefined = o.project;
       const hostOs = await targetOs();
       // The engine runs in the container, so it gets the container path:
       // the same as the host path except on Windows.
-      const toContainer = (p: string) => {
+      const toContainer = (p: string, os: HostOs = hostOs) => {
         try {
-          return hostToContainer(p, hostOs);
+          return hostToContainer(p, os);
         } catch (err) {
           throw new UsageError((err as Error).message);
         }
       };
-      // On Windows a POSIX path is already a container path.
       const repoArg = o.repo as string | undefined;
-      let repoPath: string | undefined =
-        repoArg === undefined
-          ? undefined
-          : hostOs === "win32" && repoArg.startsWith("/")
+      let repoPath: string | undefined;
+      if (repoArg === undefined) {
+        repoPath = undefined;
+      } else if (remote) {
+        // Another machine's path can't resolve against this directory. A
+        // machine that reports no platform gets it from the path's form.
+        const os = remote.platform ?? (isAbsoluteOn(repoArg, "win32") ? "win32" : "linux");
+        if (os === "win32" && repoArg.startsWith("/")) repoPath = repoArg;
+        else if (isAbsoluteOn(repoArg, os))
+          repoPath = toContainer(
+            os === "win32" ? path.win32.normalize(repoArg) : path.posix.normalize(repoArg),
+            os,
+          );
+        else throw new UsageError(remoteRepoMessage(remote.name));
+      } else {
+        // On Windows a POSIX path is already a container path.
+        repoPath =
+          hostOs === "win32" && repoArg.startsWith("/")
             ? repoArg
             : toContainer(await hostPath(repoArg));
+      }
       let tip: string | undefined = o.tip;
       if (boxId) {
         const v = await c.call("boxes.get", { params: { boxId } });
@@ -1152,39 +1175,62 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
     .argument("[runId]")
     .option("--project <projectId>", "Only runs in this project.")
     .option("--box <boxId>", "Only runs for this box.")
-    .action(async (runId: string | undefined, o: { project?: string; box?: string }) => {
-      const boxId = o.box === undefined ? undefined : boxRef(o.box);
-      const c = client();
-      if (!runId) {
-        const r = await c.call("runs.list", { query: { projectId: o.project, boxId } });
-        print(r, () => runRows(r.runs));
-        return;
-      }
-      const [run, rounds] = await Promise.all([
-        c.call("runs.get", { params: { runId } }),
-        c.call("runs.rounds", { params: { runId } }),
-      ]);
-      print({ run, rounds: rounds.rounds }, () => {
-        const text = runDetail(run);
-        if (rounds.rounds.length === 0) return text;
-        return (
-          text +
-          "\n" +
-          table(
-            ["ROUND", "FIXED", "OVERLAP", "COST", "VENDORS"],
-            rounds.rounds.map((r) => [
-              r.round,
-              r.fixed,
-              percent(r.overlapRate),
-              `$${r.costUsd.toFixed(2)}`,
-              Object.entries(r.perVendor)
-                .map(([v, s]) => `${v} ${s?.confirmed ?? 0}/${s?.raised ?? 0}`)
-                .join(", "),
-            ]),
-          )
-        );
-      });
-    });
+    .option(
+      "--all-machines",
+      "List the runs of every machine, with a MACHINE column. An offline machine shows as offline.",
+    )
+    .action(
+      async (
+        runId: string | undefined,
+        o: { project?: string; box?: string; allMachines?: boolean },
+      ) => {
+        if (o.allMachines) {
+          if (runId) throw new UsageError("--all-machines lists runs; leave out the run ID.");
+          if (globals().machine !== undefined) {
+            throw new UsageError("Use --all-machines or --machine, not both.");
+          }
+          const s = settings();
+          const runs = await listFleetRuns(
+            await fleet(),
+            (m) => clientFor(s, async () => (m.isLocal ? null : m.id)),
+            { projectId: o.project, boxId: o.box },
+          );
+          print({ machines: runs }, () => fleetRunText(runs));
+          return;
+        }
+        const boxId = o.box === undefined ? undefined : boxRef(o.box);
+        const c = client();
+        if (!runId) {
+          const r = await c.call("runs.list", { query: { projectId: o.project, boxId } });
+          print(r, () => runRows(r.runs));
+          return;
+        }
+        const [run, rounds] = await Promise.all([
+          c.call("runs.get", { params: { runId } }),
+          c.call("runs.rounds", { params: { runId } }),
+        ]);
+        print({ run, rounds: rounds.rounds }, () => {
+          const text = runDetail(run);
+          if (rounds.rounds.length === 0) return text;
+          return (
+            text +
+            "\n" +
+            table(
+              ["ROUND", "FIXED", "OVERLAP", "COST", "VENDORS"],
+              rounds.rounds.map((r) => [
+                r.round,
+                r.fixed,
+                percent(r.overlapRate),
+                `$${r.costUsd.toFixed(2)}`,
+                Object.entries(r.perVendor)
+                  .map(([v, s]) => `${v} ${s?.confirmed ?? 0}/${s?.raised ?? 0}`)
+                  .join(", "),
+              ]),
+            )
+          );
+        });
+      },
+    );
 
   for (const [name, key, done] of [
     ["pause", "runs.pause", "Pausing"],

@@ -11,6 +11,11 @@ writes its output as JSON under `PROJECT/.aio/runs/RUN_ID/`, so a run
 can resume from any stage. Replace `PROJECT` with the project root and
 `RUN_ID` with the run's ID.
 
+In a multi-host setup, a run executes on the machine that holds its
+project, and the Review app and the CLI reach it from any machine. For
+more information, see
+[Review runs on other machines](multi-host.md#review-runs-on-other-machines).
+
 ## Vendors and roles
 
 Claude writes and fixes all code. The other roles move between vendors

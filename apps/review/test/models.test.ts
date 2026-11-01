@@ -202,8 +202,9 @@ describe("router", () => {
   it("builds hrefs and reads the deep link", () => {
     expect(href("/findings", { run: "R", finding: undefined })).toBe("#/findings?run=R");
     expect(parseHash("#/findings?run=R&finding=F-0001").query.get("finding")).toBe("F-0001");
-    expect(deepLink("?project=p&box=b")).toEqual({ project: "p", box: "b" });
-    expect(deepLink("")).toEqual({ project: null, box: null });
+    expect(deepLink("?project=p&box=b")).toEqual({ project: "p", box: "b", machine: null });
+    expect(deepLink("")).toEqual({ project: null, box: null, machine: null });
+    expect(deepLink("?box=b&machine=m1")).toEqual({ project: null, box: "b", machine: "m1" });
   });
 
   it("keeps a malformed percent-escape in the hash instead of throwing", () => {

@@ -53,6 +53,7 @@ import {
   needsLocalPage,
   permissionAllowed,
   reviewLaunch,
+  isMachineIdArg,
   terminalCommand,
   usesWindowClass,
   windowsTerminalCommand,
@@ -224,7 +225,11 @@ const hideToTray = closeHidesToTray(
 );
 
 /** Starts the review app, prefilled with a project and box when given. */
-async function launchReview(link: { projectId?: string; boxId?: string }): Promise<BridgeResult> {
+async function launchReview(link: {
+  projectId?: string;
+  boxId?: string;
+  machineId?: string;
+}): Promise<BridgeResult> {
   const how = reviewLaunch(HOST_OS, link, process.env.AIO_REVIEW_BIN);
   if ("file" in how) return detached(how.file, how.args);
   try {
@@ -427,9 +432,20 @@ function registerIpc() {
   );
   ipcMain.handle(
     "aio:launch-review",
-    async (e, req: { projectId: string; boxId: string }): Promise<BridgeResult> => {
+    async (
+      e,
+      req: { projectId: string; boxId: string; machineId?: unknown },
+    ): Promise<BridgeResult> => {
       if (!fromApp(e)) return REFUSED;
-      return launchReview({ projectId: req.projectId, boxId: req.boxId });
+      // The ID ends up in an argv or a URL, so only the plain form passes.
+      if (req.machineId !== undefined && !isMachineIdArg(req.machineId)) {
+        return { ok: false, error: "The machine ID isn't valid." };
+      }
+      return launchReview({
+        projectId: req.projectId,
+        boxId: req.boxId,
+        machineId: req.machineId,
+      });
     },
   );
   ipcMain.handle("aio:pick-directory", async (e, defaultPath?: string) => {
