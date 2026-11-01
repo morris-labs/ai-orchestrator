@@ -62,7 +62,11 @@ describe("session command", () => {
 
   it("pre-accepts the trust prompt for the box's folders in its account before it starts", async () => {
     const h = makeHarness();
-    const personal = addAccount(h, "claude/personal", h.dir(".claude-box", "transcripts", "claude"));
+    const personal = addAccount(
+      h,
+      "claude/personal",
+      h.dir(".claude-box", "transcripts", "claude"),
+    );
     accountsMode(h, { claude: "claude/personal" });
     const dir = h.dir("a");
     await h.core.boxes.create({ targetDir: dir, layout: "root" });
