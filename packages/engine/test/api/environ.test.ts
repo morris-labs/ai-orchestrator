@@ -7,12 +7,20 @@ import { describe, expect, it } from "vitest";
 import { looksLikeCredential } from "../../src/process/env.js";
 import { tempDir } from "../tmp.js";
 
-const environModule = fileURLToPath(new URL("../../src/main/environ.ts", import.meta.url));
+// The child process imports the built module. Node.js 22 can't run a
+// TypeScript source file, and the source imports use `.js` specifiers that
+// only a bundler or a TypeScript-aware loader resolves. `pnpm test` builds
+// every package first; run `pnpm --filter @agentbox/engine build` before a
+// bare `vitest run`.
+const environModule = fileURLToPath(new URL("../../dist/main/environ.js", import.meta.url));
 
 describe("moveSecretsOutOfEnviron", () => {
   it.runIf(process.platform === "linux")(
     "re-executes the process so its environ drops the token, and restores process.env",
     () => {
+      expect(existsSync(environModule), `${environModule} is missing; build the engine first`).toBe(
+        true,
+      );
       const dir = tempDir("engine-environ-");
       const script = path.join(dir, "child.mjs");
       writeFileSync(
