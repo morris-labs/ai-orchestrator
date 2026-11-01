@@ -78,11 +78,12 @@ export function containerUsername(
  * themselves.
  */
 export function defaultHostEnv(platform: string = process.platform): HostEnv {
+  const hostOs = hostOsFrom(platform);
   return {
     home: os.homedir(),
-    user: containerUsername(),
+    user: containerUsername(process.env, hostOs),
     now: () => new Date(),
-    hostOs: hostOsFrom(platform),
+    hostOs,
   };
 }
 
