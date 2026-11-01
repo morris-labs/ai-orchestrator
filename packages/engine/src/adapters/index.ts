@@ -16,6 +16,7 @@ export * from "./codex.js";
 export * from "./copilot.js";
 export * from "./mock.js";
 export * from "./bridge.js";
+export * from "./account-dirs.js";
 
 export interface AdapterOptionsByVendor {
   claude?: ClaudeAdapterOptions;

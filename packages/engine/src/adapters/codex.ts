@@ -27,7 +27,11 @@ export interface CodexAdapterOptions extends CliAdapterOptions {
    * and for a read-only call with a scratch directory.
    */
   sandbox?: "container" | "codex";
-  /** `CODEX_HOME`, where the session rollout files live. Default `$CODEX_HOME` or `~/.codex`. */
+  /**
+   * `CODEX_HOME`, where the session rollout files live. Default: the
+   * `CODEX_HOME` the child gets (from `env`, `accountDir`, or the engine's
+   * environment), or `~/.codex`.
+   */
   codexHome?: string;
 }
 
@@ -62,12 +66,7 @@ export class CodexAdapter extends CliAdapter {
   }
 
   private get codexHome(): string {
-    return (
-      this.codexOptions.codexHome ??
-      this.options.env?.CODEX_HOME ??
-      process.env.CODEX_HOME ??
-      join(homedir(), ".codex")
-    );
+    return this.codexOptions.codexHome ?? this.configDir() ?? join(homedir(), ".codex");
   }
 
   /**

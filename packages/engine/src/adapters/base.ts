@@ -1,6 +1,13 @@
 // Shared plumbing for the CLI adapters: the method-to-role mapping, common
 // options, process failures, and limit detection from text.
-import { DEFAULT_CEILINGS, type AgentRole, type Ceiling, type Vendor } from "@aio/contracts";
+import {
+  ACCOUNT_DIR_ENV,
+  DEFAULT_CEILINGS,
+  type AgentRole,
+  type Ceiling,
+  type Vendor,
+} from "@aio/contracts";
+import type { AccountDirSource } from "./account-dirs.js";
 import { toJsonSchema } from "./output.js";
 import type { ProcessResult } from "./process.js";
 import {
@@ -20,6 +27,14 @@ export interface CliAdapterOptions {
   command?: string;
   /** Account label for usage samples, such as an email address. */
   account?: string;
+  /**
+   * The account folder the CLI uses, as a folder or a source that the
+   * adapter asks on every call. The adapter sets the vendor's variable from
+   * it (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, or `COPILOT_HOME`); `env` wins
+   * over it. Absent, or a source that returns `undefined`, leaves the CLI on
+   * its home folder.
+   */
+  accountDir?: string | AccountDirSource;
   /** The ceiling to stamp on usage samples. Defaults to the contract default. */
   ceiling?: Ceiling;
   /** Extra environment for the child; `undefined` removes a variable. */
@@ -50,13 +65,38 @@ export abstract class CliAdapter implements CliVendorAdapter {
   abstract detectLimit(error: unknown): CliLimitInfo | null;
 
   /**
-   * The extra environment for every call: `options.env` over the engine's
-   * defaults. Python skips its `__pycache__` directories, as for the gate
-   * (`GATE_ENV`), so a vendor that runs the repository's Python doesn't
-   * leave bytecode in a worktree that the read-only guard checks.
+   * The extra environment for every call: `options.env` over the account
+   * folder's variable over the engine's defaults. Python skips its
+   * `__pycache__` directories, as for the gate (`GATE_ENV`), so a vendor
+   * that runs the repository's Python doesn't leave bytecode in a worktree
+   * that the read-only guard checks.
    */
   protected get env(): Record<string, string | undefined> {
-    return { ...VENDOR_ENV, ...this.options.env };
+    const dir = this.accountDir();
+    return {
+      ...VENDOR_ENV,
+      ...(dir === undefined ? {} : { [ACCOUNT_DIR_ENV[this.vendor]]: dir }),
+      ...this.options.env,
+    };
+  }
+
+  /** The account folder from `options.accountDir`, or `undefined`. */
+  protected accountDir(): string | undefined {
+    const source = this.options.accountDir;
+    const dir = typeof source === "function" ? source() : source;
+    return dir === undefined || dir === "" ? undefined : dir;
+  }
+
+  /**
+   * The folder the CLI keeps its configuration in for a call made now: the
+   * vendor's variable as the child gets it, or `undefined` when the CLI
+   * falls back to its home folder.
+   */
+  protected configDir(): string | undefined {
+    const name = ACCOUNT_DIR_ENV[this.vendor];
+    const env = this.env;
+    if (name in env) return env[name] || undefined;
+    return process.env[name] || undefined;
   }
 
   protected get command(): string {

@@ -118,8 +118,14 @@ export class ClaudeAdapter extends CliAdapter {
     this.claudeOptions = options;
   }
 
+  /**
+   * The usage label: `options.account`, else the email in `.claude.json`
+   * of the folder the call uses (`CLAUDE_CONFIG_DIR`, else the home folder).
+   */
   protected override get account(): string {
-    return this.options.account ?? claudeAccount() ?? "claude-default";
+    if (this.options.account !== undefined) return this.options.account;
+    const dir = this.configDir();
+    return (dir ? claudeAccount(join(dir, ".claude.json")) : claudeAccount()) ?? "claude-default";
   }
 
   protected versionArgs(): string[] {
@@ -488,7 +494,9 @@ function num(value: unknown): number {
 const lastAccount = new Map<string, string>();
 
 /**
- * The signed-in account's email from `~/.claude.json`, or `null`. Every
+ * The signed-in account's email from `file`, by default `~/.claude.json`,
+ * or `null`. With `CLAUDE_CONFIG_DIR` set, Claude Code keeps the file in
+ * that folder instead. Every
  * running `claude` rewrites that file, so a read can catch it half written;
  * a read that fails returns the last email this file gave, which keeps one
  * account's usage samples from splitting under a fallback name.
