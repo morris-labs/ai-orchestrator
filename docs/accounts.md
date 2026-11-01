@@ -5,11 +5,11 @@ Copilot. Each account has its own config folder, so you can keep several
 accounts of one vendor, such as a personal Claude Max account and a work
 Claude Pro account.
 
-This page describes phase 1 of the design in
-[Per-account agent config folders](v4/design-accounts.md). In phase 1, you
-can create, seed, and check accounts, but boxes still mount the host's own
-folders. The `accountsMode` setting stays `host` until phase 2 makes boxes
-use accounts.
+This page describes phases 1 and 2 of the design in
+[Per-account agent config folders](v4/design-accounts.md). You can create,
+import, seed, and check accounts. Boxes use them when the `accountsMode`
+setting is `accounts`; while it is `host`, the default, boxes still mount the
+host's own folders. See [Run boxes on accounts](#run-boxes-on-accounts).
 
 ## How accounts work
 
@@ -164,6 +164,50 @@ Replace the following:
 
 The server refuses an accounts folder under `/tmp`, `/var/tmp`, or `/dev/shm`,
 because Codex won't run from a temporary directory.
+
+## Run boxes on accounts
+
+To switch boxes from the host's folders to accounts, do the following:
+
+1. Make sure each vendor you use has an account and a default. Seed, import,
+   or add one, then run `agentbox accounts check VENDOR/NAME`.
+1. Run `agentbox accounts mode accounts`.
+1. Restart each project container. A container made before the switch is
+   stale ("accounts mode host -> accounts") and the server restarts it only
+   when it has no sessions or you ask.
+
+To go back, run `agentbox accounts mode host` and restart the containers.
+
+In accounts mode, a box behaves as follows:
+
+- **Account choice**: each box uses one account per vendor. The main session
+  uses the account of the box's platform; side sessions use the account of
+  their own vendor. A vendor without a choice uses its default account.
+  To choose, pass `--account VENDOR/NAME` to `agentbox box new` (repeat it
+  for several vendors), use the Account field in the New Box, Edit Box, and
+  Fork Conversation dialogs, or run `agentbox box account BOX ACCOUNT`. A
+  fork keeps the source box's accounts unless you choose others.
+- **Session command**: the server starts each session as
+  `env CLAUDE_CONFIG_DIR=ACCOUNT_DIR claude ...` (or `CODEX_HOME`,
+  `COPILOT_HOME`), so one container hosts sessions of several accounts.
+- **Mounts**: the container mounts `DATA_DIR/accounts` at its host path and
+  nothing from `~/.claude`, `~/.codex`, or `~/.copilot`. Each Claude account's
+  `sessions` folder is the container's own directory, and the target of any
+  link at the top of a Claude account folder (such as `projects`) is mounted
+  at its own path. In the container, `~/.claude`, `~/.claude.json`, `~/.codex`,
+  and `~/.copilot` link to each vendor's default account.
+- **Transcripts**: every Claude account's `projects` link leads to one shared
+  store, so a conversation resumes under any Claude account. The `/resume`
+  picker lists conversations that other accounts started, and accounts share
+  each folder's auto memory.
+- **New account**: a container that started before you added a Claude account
+  has no `sessions` mount for it. Starting a box on that account fails with
+  `stale_mounts` until you restart the container.
+- **Change of account**: a change applies when the box restarts. A Claude box
+  resumes its conversation. A Codex or Copilot box starts a new session,
+  because the old one stays in the old account's folder.
+- **Models**: the model list and the defaults come from the chosen Claude
+  account's `.claude.json` and `settings.json`.
 
 ## Back up accounts
 
