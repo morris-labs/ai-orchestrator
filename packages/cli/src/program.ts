@@ -41,6 +41,7 @@ import {
 } from "./client.js";
 import { tailEvents, type WebSocketCtor } from "./events.js";
 import { jsonText, keyValues, percent, table, terminalText } from "./format.js";
+import { attachRemote, type TerminalIo } from "./terminal.js";
 import {
   checkAttachArgv,
   checkServerUrl,
@@ -60,6 +61,8 @@ export interface CliDeps {
   /** Runs an attach command with the terminal; resolves with its exit code. */
   exec?: (argv: string[]) => Promise<number>;
   WebSocket?: WebSocketCtor;
+  /** The terminal that `box attach MACHINE/BOX` attaches. Default: standard input and output. */
+  terminal?: TerminalIo;
   /** How often `box new` and `accounts seed` poll their job. */
   pollMs?: number;
   /**
@@ -78,6 +81,24 @@ export interface CliDeps {
 
 /** A usage problem the CLI reports with exit code 2. */
 export class UsageError extends Error {}
+
+const BOX_TARGET_HELP =
+  "The box ID, or MACHINE/BOX for a box on another machine, where MACHINE is a machine ID or name from aio machines list.";
+
+/**
+ * Splits a `MACHINE/BOX` target at its first slash. A plain box ID names a
+ * box on this machine, and has no machine.
+ */
+export function splitBoxTarget(target: string): { machine: string | null; boxId: string } {
+  const slash = target.indexOf("/");
+  if (slash < 0) return { machine: null, boxId: target };
+  const machine = target.slice(0, slash);
+  const boxId = target.slice(slash + 1);
+  if (machine === "" || boxId === "") {
+    throw new UsageError(`Invalid box ${target}; use BOX or MACHINE/BOX.`);
+  }
+  return { machine, boxId };
+}
 
 const PLATFORMS: string[] = PlatformSchema.options;
 
@@ -607,8 +628,45 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
     if (problem) throw new UsageError(problem);
     return r.argv;
   };
-  const attach = async (boxId: string, kind: "session" | "side" | "shell", platform?: string) => {
-    state.code = await exec(await attachArgv(boxId, kind, platform));
+  /**
+   * The machine ID of a `MACHINE/BOX` target, where `MACHINE` is a machine's
+   * ID or name, or `null` for this machine.
+   */
+  const machineOf = async (machine: string): Promise<string | null> => {
+    const { machines } = await client().call("machines.list");
+    const found =
+      machines.find((m) => m.id === machine) ?? machines.find((m) => m.name === machine);
+    if (!found) {
+      throw new UsageError(
+        `No machine has the ID or name ${machine}. Run aio machines list to see them.`,
+      );
+    }
+    return found.isLocal ? null : found.id;
+  };
+  const attach = async (target: string, kind: "session" | "side" | "shell", platform?: string) => {
+    const { machine, boxId } = splitBoxTarget(target);
+    const machineId = machine === null ? null : await machineOf(machine);
+    if (machineId === null) {
+      state.code = await exec(await attachArgv(boxId, kind, platform));
+      return;
+    }
+    // A box on another machine: a host terminal here can't reach its
+    // container, so the terminal goes through the server and the hub.
+    const s = settings();
+    if (s.token === null)
+      throw new ApiCallError(401, "unauthorized", `No token in AIO_TOKEN or ${s.tokenFile}.`);
+    state.code = await attachRemote({
+      baseUrl: s.baseUrl,
+      token: s.token,
+      machineId,
+      boxId,
+      kind,
+      ...(platform ? { platform: platform as "claude" } : {}),
+      io: deps.terminal ?? { input: process.stdin, output: process.stdout },
+      note: deps.err,
+      WebSocket: deps.WebSocket,
+      tls: serverTls(s),
+    });
   };
 
   box
@@ -617,6 +675,11 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
     .argument("<boxId>")
     .option("--force", "Start it even when its container runs with stale mounts.")
     .action(async (boxId: string, o: { force?: boolean }) => {
+      if (splitBoxTarget(boxId).machine !== null) {
+        throw new UsageError(
+          "aio box open works on this machine's boxes. To attach to a running box on another machine, run aio box attach MACHINE/BOX.",
+        );
+      }
       const c = client();
       const v = await c.call("boxes.get", { params: { boxId } });
       if (v.status === "stopped") {
@@ -631,8 +694,10 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
 
   box
     .command("attach")
-    .description("Attach this terminal to a box's session.")
-    .argument("<boxId>")
+    .description(
+      "Attach this terminal to a box's session. For a box on another machine, press Ctrl+] twice to detach.",
+    )
+    .argument("<boxId>", BOX_TARGET_HELP)
     .addOption(
       new Option("--side <platform>", "Attach to a side session instead.").choices(PLATFORMS),
     )
@@ -643,7 +708,7 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
   box
     .command("shell")
     .description("Open a shell in the box's container.")
-    .argument("<boxId>")
+    .argument("<boxId>", BOX_TARGET_HELP)
     .action((boxId: string) => attach(boxId, "shell"));
 
   box

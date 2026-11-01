@@ -3,7 +3,7 @@
 import https from "node:https";
 import type { AddressInfo } from "node:net";
 import { createServerIdentity, type TlsIdentity } from "@aio/contracts/tls";
-import { WebSocketServer } from "ws";
+import WebSocket, { WebSocketServer } from "ws";
 
 export interface Recorded {
   method: string;
@@ -29,6 +29,13 @@ export interface FakeServer {
   lastEventsQuery: Record<string, string> | null;
   /** Closes each event socket at once with this code and reason, like a refused query. */
   closeEventsWith: { code: number; reason: string } | null;
+  /**
+   * Serves terminal sockets, at `/api/v1/terminals` and under the machine
+   * proxy prefix; `null` refuses them. `refuseTerminal` refuses them with
+   * this status and JSON body instead.
+   */
+  onTerminal: ((ws: WebSocket, url: URL) => void) | null;
+  refuseTerminal: { status: number; body: unknown } | null;
   close(): Promise<void>;
 }
 
@@ -76,6 +83,8 @@ export async function startFakeServer(
     events: [],
     lastEventsQuery: null,
     closeEventsWith: null,
+    onTerminal: null,
+    refuseTerminal: null,
     on: (route, answer) => void answers.set(route, answer),
     close: () =>
       new Promise((r) => {
@@ -88,6 +97,21 @@ export async function startFakeServer(
   const wss = new WebSocketServer({ noServer: true });
   server.on("upgrade", (req, socket, head) => {
     const url = new URL(req.url ?? "/", "http://fake");
+    const terminal = /^\/api\/v1(\/machines\/[^/]+\/proxy)?\/terminals$/.test(url.pathname);
+    if (terminal && req.headers.authorization === `Bearer ${token}`) {
+      if (fake.refuseTerminal) {
+        const body = JSON.stringify(fake.refuseTerminal.body);
+        socket.end(
+          `HTTP/1.1 ${fake.refuseTerminal.status} Refused\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`,
+        );
+        return;
+      }
+      const serve = fake.onTerminal;
+      if (serve) {
+        wss.handleUpgrade(req, socket, head, (ws) => serve(ws, url));
+        return;
+      }
+    }
     // Like the server: the bearer header only, never a query token.
     if (
       url.pathname !== "/api/v1/events" ||
