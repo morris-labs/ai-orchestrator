@@ -10,6 +10,7 @@ import type {
   AccountCreate,
   AccountImportRequest,
   AccountImportResult,
+  AccountRelinkResult,
   AccountSeedReport,
   AccountSeedRequest,
   AccountUpdate,
@@ -225,6 +226,8 @@ export interface CoreAccounts {
   importFolder(input: AccountImportRequest): Promise<AccountImportResult>;
   /** Asks the vendor CLI for the sign-in state (`image_missing`). */
   check(id: string): Promise<AccountView>;
+  /** Points every Claude account's `projects` entry at the shared transcript store. */
+  relink(): Promise<AccountRelinkResult>;
   /** Checks a seed request before its job starts (`box_running`, `conflict`). */
   validateSeed(input: AccountSeedRequest): Promise<void>;
   /** Seeds accounts from the host folders; runs inside an `account_seed` job. */

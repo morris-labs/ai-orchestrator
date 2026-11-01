@@ -35,6 +35,7 @@ import {
   sameModel,
 } from "../catalog/sessions.js";
 import type { Repositories } from "../db/repositories.js";
+import { preacceptClaudeAccount } from "../accounts/preaccept.js";
 import { buildSessionCommand, sessionStartCmd } from "../docker/scripts.js";
 import { allLiveSessions, liveSessions } from "../docker/state.js";
 import { isContainerGone, type DockerClient, type ExecResult } from "../docker/types.js";
@@ -272,6 +273,18 @@ export class BoxService {
       account ? { [ACCOUNT_DIR_ENV[program]]: account.containerDir } : {},
     );
     const workDir = hostToContainer(boxWorkDir(box));
+    if (account?.claude) {
+      // A fresh account asks about folder trust and the bypass warning on its
+      // first start, and the app can't show those questions. Answer them in
+      // the account's files, for the folders the session works in.
+      try {
+        preacceptClaudeAccount(account.dir, {
+          trustDirs: [workDir, hostToContainer(box.targetDir)],
+        });
+      } catch {
+        // The box still starts; it waits at the prompts, as it would without this step.
+      }
+    }
     let lastError = "";
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const ensured = await this.deps.projects.ensureContainer(box.projectId);

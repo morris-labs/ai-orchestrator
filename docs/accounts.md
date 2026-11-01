@@ -144,6 +144,13 @@ The following commands manage accounts. Each one calls the server's
   container from the engine image, with the account folder mounted, and
   stores the answer. Copilot has no status command outside an interactive
   session, so its state stays unknown.
+  The command also warns when a Claude account's `projects` entry doesn't
+  lead to the transcript store.
+- To repair the transcript links, run `agentbox accounts relink`. The command
+  points every Claude account's `projects` entry at the store, and replaces a
+  link that dangles or leads elsewhere. It removes only the link, never the
+  folder it pointed to, and it keeps a real `projects` folder that holds
+  transcripts.
 - To install a folder that already holds a sign-in, run
   `agentbox accounts import VENDOR NAME --from DIR`. By default, the command
   moves the folder into `DATA_DIR/accounts/VENDOR/NAME`. Pass `--copy` to copy
@@ -171,6 +178,10 @@ To switch boxes from the host's folders to accounts, do the following:
 
 1. Make sure each vendor you use has an account and a default. Seed, import,
    or add one, then run `agentbox accounts check VENDOR/NAME`.
+1. Run `agentbox accounts check VENDOR/NAME` for each Claude account and fix
+   any warning about the transcript store with `agentbox accounts relink`.
+   The server refuses the switch when the store is empty but the host's store
+   isn't, and when a Claude account's `projects` doesn't lead to the store.
 1. Run `agentbox accounts mode accounts`.
 1. Restart each project container. A container made before the switch is
    stale ("accounts mode host -> accounts") and the server restarts it only
@@ -197,9 +208,23 @@ In accounts mode, a box behaves as follows:
   at its own path. In the container, `~/.claude`, `~/.claude.json`, `~/.codex`,
   and `~/.copilot` link to each vendor's default account.
 - **Transcripts**: every Claude account's `projects` link leads to one shared
-  store, so a conversation resumes under any Claude account. The `/resume`
+  store, so a conversation resumes under any Claude account. The server picks
+  the store in this order: the `transcriptStore` setting, the folder that
+  `~/.claude/projects` leads to (or that folder itself, when it is a real
+  folder), the folder the default Claude account's `projects` already leads
+  to, and only then `DATA_DIR/transcripts/claude`. Import, seed, and add
+  replace a `projects` link that dangles or leads elsewhere with a link to
+  the store. The `/resume`
   picker lists conversations that other accounts started, and accounts share
   each folder's auto memory.
+- **First start**: before a box starts on a Claude account, the server sets
+  `projects[FOLDER].hasTrustDialogAccepted` in the account's `.claude.json`
+  for the box's folders, sets `installMethod` to `global` when it is missing,
+  and sets `skipDangerousModePermissionPrompt` in the account's
+  `settings.json` (the setting that Claude Code 2.1.316 reads for the bypass
+  permissions warning). The box then doesn't wait at the folder trust prompt
+  or the bypass warning. The server changes only those keys, and leaves a file
+  that isn't a JSON object alone.
 - **New account**: a container that started before you added a Claude account
   has no `sessions` mount for it. Starting a box on that account fails with
   `stale_mounts` until you restart the container.

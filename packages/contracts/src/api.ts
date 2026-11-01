@@ -56,6 +56,7 @@ import {
   AccountRemoveResultSchema,
   AccountSeedRequestSchema,
   AccountUpdateSchema,
+  AccountRelinkResultSchema,
   AccountViewSchema,
 } from "./accounts.js";
 import {
@@ -1477,6 +1478,13 @@ export const serverRoutes = {
     response: AccountImportResultSchema,
     status: 201,
     errors: ["conflict", "validation"],
+  }),
+  "accounts.relink": http({
+    method: "POST",
+    path: `${accounts}/relink`,
+    summary:
+      "Point every Claude account's `projects` entry at the shared transcript store, replacing a link that dangles or leads elsewhere.",
+    response: AccountRelinkResultSchema,
   }),
   "accounts.get": http({
     method: "GET",

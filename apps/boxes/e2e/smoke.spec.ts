@@ -26,7 +26,7 @@ import {
 } from "@agentbox/ui/testing/node";
 import { spawnSync } from "node:child_process";
 import { createServerIdentity } from "@agentbox/contracts/tls";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -140,9 +140,46 @@ test("toggles the details panel with Ctrl+Shift+D", async () => {
   await expect(details).toBeVisible({ visible: before });
 });
 
+/**
+ * Takes a lock on a box's terminal across processes. The embedded terminal
+ * attaches with `tmux attach -d`, so that one window owns a session and its
+ * size wins. A second window on the same box, such as another worker that
+ * runs this test at once, therefore detaches the first one. The lock makes
+ * those runs take turns. A lock older than three minutes is stale.
+ */
+async function lockBox(boxId: string): Promise<() => void> {
+  const lock = join(tmpdir(), `agentbox-e2e-terminal-${boxId.replace(/[^\w.-]/g, "_")}.lock`);
+  const until = Date.now() + 120_000;
+  for (;;) {
+    try {
+      mkdirSync(lock);
+      return () => rmSync(lock, { recursive: true, force: true });
+    } catch {
+      try {
+        if (Date.now() - statSync(lock).mtimeMs > 180_000)
+          rmSync(lock, { recursive: true, force: true });
+      } catch {
+        // The holder released it between the checks.
+      }
+      if (Date.now() > until) throw new Error(`Another run holds the terminal of ${boxId}.`);
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  }
+}
+
 test("types into a running box's terminal and sees the echo", async () => {
+  test.setTimeout(240_000);
   const boxId = process.env.AGENTBOX_E2E_BOX;
   test.skip(!boxId, "Set AGENTBOX_E2E_BOX to a running box id to run this test.");
+  const unlock = await lockBox(boxId as string);
+  try {
+    await typeIntoTerminal(boxId as string);
+  } finally {
+    unlock();
+  }
+});
+
+async function typeIntoTerminal(boxId: string): Promise<void> {
   // The box can sit in any project, so look at all of them. The app
   // restores its saved selection, which this test mustn't depend on.
   await page.getByRole("option", { name: /^All projects/ }).click();
@@ -150,12 +187,12 @@ test("types into a running box's terminal and sees the echo", async () => {
     "aria-selected",
     "true",
   );
-  await page.getByLabel("Filter boxes").fill(boxId as string);
+  await page.getByLabel("Filter boxes").fill(boxId);
   // Find the row by its key, not its text. A live update can replace the
   // row between Playwright's checks and its click, so retry the double-click
   // until the terminal opens. Opening a box that is already open only
   // selects its tab, so a repeat is safe.
-  const row = page.locator(`tr[data-key="${boxId as string}"]`);
+  const row = page.locator(`tr[data-key="${boxId}"]`);
   const terminal = page.locator(".bx-terminal-pane:not([hidden]) .xterm");
   await expect(async () => {
     await row.dblclick({ timeout: 5_000 });
@@ -175,7 +212,7 @@ test("types into a running box's terminal and sees the echo", async () => {
   // Erase the marker so the session's prompt is left as it was.
   for (let i = 0; i < marker.length; i += 1) await page.keyboard.press("Backspace");
   await page.getByLabel("Filter boxes").fill("");
-});
+}
 
 test("refuses to open a path the server didn't report, or a non-web link", async () => {
   // Record what reaches the desktop instead of opening it, so that a guard

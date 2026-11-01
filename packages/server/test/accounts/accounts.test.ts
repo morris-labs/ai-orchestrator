@@ -84,7 +84,10 @@ function holdsSecret(dir: string): boolean {
 }
 
 function setup(options: { running?: string[]; projectsDir?: boolean } = {}) {
-  const home = tempDir("agentbox-acct-home-");
+  // The synthetic host is the env's home, so the host's transcript store is
+  // the one that the synthetic `~/.claude/projects` leads to.
+  const sources = hostFolders({ projectsDir: options.projectsDir });
+  const home = sources.root;
   const env: HostEnv = {
     home,
     dataDir: path.join(home, "data"),
@@ -99,7 +102,6 @@ function setup(options: { running?: string[]; projectsDir?: boolean } = {}) {
     (id) => repos.accounts.get(id) !== undefined,
   );
   const docker = new MemoryDocker();
-  const sources = hostFolders({ projectsDir: options.projectsDir });
   const accounts = new AccountService({
     env,
     repo: repos.accounts,
@@ -259,7 +261,9 @@ describe("AccountService.seed", () => {
     write(sources.claudeJson, '{"primaryApiKey":"SYNTHETIC_KEY"');
     await accounts.seed({ vendors: ["claude"] });
     const copy = path.join(accounts.dirOf("claude", "personal"), ".claude.json");
-    expect(fs.existsSync(copy)).toBe(false);
+    // The unchecked file is gone; the first-start step writes a fresh one.
+    expect(fs.readFileSync(copy, "utf8")).not.toContain("SYNTHETIC_KEY");
+    expect(JSON.parse(fs.readFileSync(copy, "utf8"))).toEqual({ installMethod: "global" });
   });
 
   it("keeps the projects link as a link to the shared store", async () => {
@@ -409,7 +413,7 @@ describe("AccountService records", () => {
     const { accounts, settings } = setup();
     const v = accounts.create({ vendor: "claude", name: "work", label: "Work (Pro)" });
     expect(v).toMatchObject({ isDefault: true, dirExists: true });
-    expect(fs.readdirSync(v.dir)).toEqual(["projects"]);
+    expect(fs.readdirSync(v.dir).sort()).toEqual([".claude.json", "projects", "settings.json"]);
     expect(fs.statSync(v.dir).mode & 0o777).toBe(0o700);
     const second = accounts.create({ vendor: "claude", name: "home" });
     expect(second.isDefault).toBe(false);

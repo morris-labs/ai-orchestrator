@@ -60,6 +60,22 @@ describe("session command", () => {
     expect(a.accounts).toBeUndefined();
   });
 
+  it("pre-accepts the trust prompt for the box's folders in its account before it starts", async () => {
+    const h = makeHarness();
+    const personal = addAccount(h, "claude/personal", h.dir("store"));
+    accountsMode(h, { claude: "claude/personal" });
+    const dir = h.dir("a");
+    await h.core.boxes.create({ targetDir: dir, layout: "root" });
+    const config = JSON.parse(fs.readFileSync(path.join(personal, ".claude.json"), "utf8")) as {
+      installMethod: string;
+      projects: Record<string, { hasTrustDialogAccepted: boolean }>;
+    };
+    expect(config.installMethod).toBe("global");
+    expect(config.projects[dir]).toEqual({ hasTrustDialogAccepted: true });
+    const settings = JSON.parse(fs.readFileSync(path.join(personal, "settings.json"), "utf8"));
+    expect(settings.skipDangerousModePermissionPrompt).toBe(true);
+  });
+
   it("uses each platform's variable and starts no prefix in host mode", async () => {
     const h = makeHarness();
     const codex = addAccount(h, "codex/main");

@@ -1142,7 +1142,27 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
     .argument("<id>", "The account, VENDOR/NAME.")
     .action(async (id: string) => {
       const r = await client().call("accounts.check", { params: accountParams(id) });
-      print(r, () => `${id}: ${signInText(r.account.signIn)}.\n`);
+      print(
+        r,
+        () =>
+          `${id}: ${signInText(r.account.signIn)}.\n${(r.warnings ?? []).map((w) => `Warning: ${w}\n`).join("")}`,
+      );
+    });
+
+  accounts
+    .command("relink")
+    .description(
+      "Point every Claude account's projects folder at the shared transcript store, replacing a link that dangles or leads elsewhere.",
+    )
+    .action(async () => {
+      const r = await client().call("accounts.relink");
+      print(
+        r,
+        () =>
+          `Transcript store: ${r.store} (${r.source}).\n${r.accounts
+            .map((a) => `${a.id}: ${a.before} -> ${a.outcome}.\n`)
+            .join("")}`,
+      );
     });
 
   accounts
