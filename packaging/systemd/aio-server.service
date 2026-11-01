@@ -11,10 +11,6 @@ RestartSec=5
 UMask=0077
 NoNewPrivileges=yes
 Environment=NODE_ENV=production
-# The server takes its multi-host role from its settings, else both. To pin
-# one, add Environment=AIO_ROLE=hub (or node) in a drop-in, through
-# `systemctl --user edit aio-server`. A hub accepts node links on TCP port
-# 21402, on every interface; see docs/multi-host.md.
 
 [Install]
 WantedBy=default.target

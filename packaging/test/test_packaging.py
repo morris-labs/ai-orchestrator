@@ -1075,7 +1075,6 @@ class LinkPortTest(unittest.TestCase):
         port = match.group(1)
         for rel in (
             "packaging/deb/scripts/postinst",
-            "packaging/systemd/aio-server.service",
             "docs/multi-host.md",
             "docs/install.md",
             "docs/platforms.md",
@@ -1083,14 +1082,11 @@ class LinkPortTest(unittest.TestCase):
             with self.subTest(file=rel):
                 self.assertIn(port, (ROOT / rel).read_text())
 
-    def test_the_unit_names_the_role_variable(self):
-        unit = (ROOT / "packaging/systemd/aio-server.service").read_text()
-        self.assertIn("AIO_ROLE", unit)
-        # A comment only: the packaged unit pins no role, so the default stays both.
-        parser = configparser.ConfigParser(interpolation=None, strict=False)
-        parser.optionxform = str
-        parser.read_string(unit)
-        self.assertNotIn("AIO_ROLE", parser["Service"].get("Environment", ""))
+    def test_the_packaged_unit_pins_no_role(self):
+        # The packaged unit must match the one install-service writes, so it
+        # carries no role; docs/multi-host.md shows the drop-in that pins one.
+        self.assertNotIn("AIO_ROLE", (ROOT / "packaging/systemd/aio-server.service").read_text())
+        self.assertIn("Environment=AIO_ROLE=hub", (ROOT / "docs/multi-host.md").read_text())
 
 
 if __name__ == "__main__":
