@@ -19,15 +19,25 @@ import {
 describe("parseDeepLink", () => {
   it.each([
     [["electron", "."], null],
-    [["app", "aio-review://launch?project=p1&box=b1"], { project: "p1", box: "b1" }],
-    [["app", "?project=p1"], { project: "p1", box: null }],
-    [["app", "--box=aio-agent-x"], { project: null, box: "aio-agent-x" }],
+    [["app", "aio-review://launch?project=p1&box=b1"], { project: "p1", box: "b1", machine: null }],
+    [["app", "?project=p1"], { project: "p1", box: null, machine: null }],
+    [["app", "--box=aio-agent-x"], { project: null, box: "aio-agent-x", machine: null }],
     // What the boxes app passes for Start Review.
     [
       ["aio-review", "--project=example-app-1a2b3c4d", "--box=aio-agent-x"],
-      { project: "example-app-1a2b3c4d", box: "aio-agent-x" },
+      { project: "example-app-1a2b3c4d", box: "aio-agent-x", machine: null },
+    ],
+    // And for a box on another machine.
+    [
+      ["aio-review", "--project=p1", "--box=aio-agent-x", "--machine=node-b"],
+      { project: "p1", box: "aio-agent-x", machine: "node-b" },
+    ],
+    [
+      ["app", "aio-review://launch?project=p1&box=b1&machine=node-b"],
+      { project: "p1", box: "b1", machine: "node-b" },
     ],
     [["app", "--project=", "--box="], null],
+    [["app", "--machine=node-b"], null],
     [["app", "aio-review://launch"], null],
   ])("%j", (argv, want) => {
     expect(parseDeepLink(argv)).toEqual(want);
@@ -36,11 +46,19 @@ describe("parseDeepLink", () => {
 
 describe("renderer URLs", () => {
   it("opens the launcher with the deep link", () => {
-    expect(rendererUrl("http://127.0.0.1:21400/", { project: "p", box: null })).toBe(
+    expect(rendererUrl("http://127.0.0.1:21400/", { project: "p", box: null, machine: null })).toBe(
       "http://127.0.0.1:21400/review/?project=p#/launch",
     );
     expect(rendererUrl("http://127.0.0.1:21400", null)).toBe("http://127.0.0.1:21400/review/");
-    expect(launcherHash({ project: "p", box: "b" })).toBe("#/launch?project=p&box=b");
+    expect(launcherHash({ project: "p", box: "b", machine: null })).toBe(
+      "#/launch?project=p&box=b",
+    );
+    expect(launcherHash({ project: "p", box: "b", machine: "node-b" })).toBe(
+      "#/launch?project=p&box=b&machine=node-b",
+    );
+    expect(rendererUrl("http://127.0.0.1:21400", { project: "p", box: "b", machine: "m1" })).toBe(
+      "http://127.0.0.1:21400/review/?project=p&box=b&machine=m1#/launch",
+    );
   });
 });
 
