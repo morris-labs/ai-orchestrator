@@ -39,7 +39,9 @@ section's heading must have the form `## [X.Y.Z]`.
   shows another machine's runs, findings, launcher, and policy, and the
   dashboard lists every online machine's runs with the machine named. An
   offline machine shows as offline with no runs, unless you select **Show
-  offline machines' last runs**. **Start Review** on another machine's tab in the
+  offline machines' last runs**. The Review app's tray count and desktop
+  notifications cover every online machine, and each notification names
+  its machine. **Start Review** on another machine's tab in the
   Boxes app opens the Review app on that machine.
 - A machine role step in the setup wizard: keep a single machine, or join a
   hub as a node with its URL and a one-time enrollment code. The `.deb`

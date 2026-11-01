@@ -1,8 +1,10 @@
-import type { AioEvent, RunState } from "@aio/contracts";
+import type { AioEvent, Machine, RunState } from "@aio/contracts";
 import { describe, expect, it } from "vitest";
 import {
   ActiveRuns,
   ERR_ABORTED,
+  FleetActiveRuns,
+  type MachineStreamHandlers,
   PendingNavigation,
   launcherHash,
   lostAppPage,
@@ -216,6 +218,195 @@ describe("noticeFor", () => {
     const n = notification("run_finished", { time });
     expect(noticeFor(n, on, at + STALE_NOTICE_MS)).not.toBeNull();
     expect(noticeFor(n, on, at + STALE_NOTICE_MS + 1)).toBeNull();
+  });
+});
+
+describe("noticeFor on several machines", () => {
+  const on = {
+    decisionNeeded: true,
+    runFinished: true,
+    readyToPush: true,
+    boxEnded: true,
+    roundSummary: true,
+  };
+  const decision = {
+    type: "notification",
+    notificationId: "n",
+    kind: "decision_needed",
+    title: "Decision needed",
+    body: "B",
+    runId: "01JB8Z5K3W6Q2V9X4T7R0M1N2P",
+    boxId: null,
+    severity: "warning",
+    read: false,
+  } as unknown as AioEvent;
+
+  it("names another machine and opens the run on it", () => {
+    expect(
+      noticeFor(decision, on, undefined, { id: "m 1", name: "build-server", isLocal: false }),
+    ).toMatchObject({
+      title: "build-server: Decision needed",
+      hash: "#/runs/01JB8Z5K3W6Q2V9X4T7R0M1N2P?machine=m%201",
+      urgent: true,
+    });
+  });
+
+  it("names this machine and opens the run here", () => {
+    expect(
+      noticeFor(decision, on, undefined, { id: "local", name: "main-pc", isLocal: true }),
+    ).toMatchObject({
+      title: "main-pc: Decision needed",
+      hash: "#/runs/01JB8Z5K3W6Q2V9X4T7R0M1N2P",
+    });
+  });
+});
+
+describe("FleetActiveRuns", () => {
+  const machine = (over: Partial<Machine>) =>
+    ({
+      role: "node",
+      status: "online",
+      isLocal: false,
+      serverVersion: "1.0.0",
+      protocol: 1,
+      capabilities: [],
+      lastSeen: null,
+      platform: "linux",
+      ...over,
+    }) as Machine;
+  const LOCAL = machine({ id: "local", name: "main-pc", role: "both", isLocal: true });
+  const BUILD = machine({ id: "m1", name: "build-server" });
+  const LAPTOP = machine({ id: "m2", name: "laptop", status: "offline" });
+  const OLD = machine({ id: "m3", name: "old-pc", status: "revoked" });
+
+  /** Waits for the promises the fleet started to settle. */
+  const settle = () => new Promise((r) => setTimeout(r, 0));
+
+  function setup(machines: Machine[] | Error, runs: Record<string, RunState[]>) {
+    const streams = new Map<string, { handlers: MachineStreamHandlers; stopped: boolean }>();
+    const notices: [string, AioEvent][] = [];
+    const listed: string[] = [];
+    let counts = 0;
+    const intervals: { fn: () => void; cleared: boolean }[] = [];
+    const state = { machines };
+    const fleet = new FleetActiveRuns({
+      listMachines: async () => {
+        if (state.machines instanceof Error) throw state.machines;
+        return state.machines;
+      },
+      listRuns: async (id) => {
+        listed.push(id);
+        return runs[id] ?? [];
+      },
+      connect: (id, handlers) => {
+        const s = { handlers, stopped: false };
+        streams.set(id, s);
+        return { stop: () => void (s.stopped = true) };
+      },
+      onCount: () => void (counts += 1),
+      onNotification: (m, e) => void notices.push([m.name, e]),
+      setInterval: (fn) => {
+        const t = { fn, cleared: false };
+        intervals.push(t);
+        return t;
+      },
+      clearInterval: (t) => void ((t as { cleared: boolean }).cleared = true),
+    });
+    return { fleet, streams, notices, listed, intervals, state, counts: () => counts };
+  }
+
+  it("counts the active runs of this machine and every online machine", async () => {
+    const { fleet, streams, listed, counts } = setup([LOCAL, BUILD, LAPTOP, OLD], {
+      m1: [run("r1", "running"), run("r2", "waiting_decision"), run("r3", "finished")],
+    });
+    fleet.local.seed([run("a", "running")]);
+    await fleet.refresh();
+    await settle();
+    // No stream or list for an offline or a revoked machine.
+    expect(fleet.machineIds).toEqual(["m1"]);
+    expect([...streams.keys()]).toEqual(["m1"]);
+    expect(listed).toEqual(["m1"]);
+    expect(fleet.count).toBe(3);
+    expect(counts()).toBe(1);
+
+    // The machine's event stream keeps its count current.
+    streams.get("m1")!.handlers.onEvent(changed(run("r2", "finished")));
+    expect(fleet.count).toBe(2);
+    expect(counts()).toBe(2);
+
+    // A resync reloads that machine's runs.
+    streams.get("m1")!.handlers.onResync();
+    await settle();
+    expect(listed).toEqual(["m1", "m1"]);
+  });
+
+  it("passes on another machine's notifications with the machine", async () => {
+    const { fleet, streams, notices } = setup([LOCAL, BUILD], {});
+    expect(fleet.localNoticeMachine()).toBeUndefined();
+    await fleet.refresh();
+    const event = { type: "notification", kind: "decision_needed" } as unknown as AioEvent;
+    streams.get("m1")!.handlers.onEvent(event);
+    expect(notices).toEqual([["build-server", event]]);
+    // With another machine followed, this machine's notices name it too.
+    expect(fleet.localNoticeMachine()).toEqual({ id: "local", name: "main-pc", isLocal: true });
+  });
+
+  it("stops counting a machine as soon as it goes offline or is revoked", async () => {
+    const { fleet, streams, state, counts } = setup([LOCAL, BUILD], {
+      m1: [run("r1", "running")],
+    });
+    await fleet.refresh();
+    await settle();
+    expect(fleet.count).toBe(1);
+    const stream = streams.get("m1")!;
+
+    state.machines = [LOCAL, { ...BUILD, status: "offline" }];
+    const before = counts();
+    await fleet.refresh();
+    expect(stream.stopped).toBe(true);
+    expect(fleet.count).toBe(0);
+    expect(counts()).toBe(before + 1);
+    expect(fleet.localNoticeMachine()).toBeUndefined();
+    // A late event from the old stream changes nothing.
+    stream.handlers.onEvent(changed(run("r9", "running")));
+    expect(fleet.count).toBe(0);
+
+    // Back online, it gets a fresh stream and list.
+    state.machines = [LOCAL, BUILD];
+    await fleet.refresh();
+    await settle();
+    expect(streams.get("m1")).not.toBe(stream);
+    expect(fleet.count).toBe(1);
+
+    state.machines = [LOCAL, { ...BUILD, status: "revoked" }];
+    await fleet.refresh();
+    expect(fleet.count).toBe(0);
+    expect(fleet.machineIds).toEqual([]);
+  });
+
+  it("keeps the machines it follows while the machine list fails", async () => {
+    const { fleet, state, intervals } = setup([LOCAL, BUILD], { m1: [run("r1", "running")] });
+    fleet.start();
+    await settle();
+    expect(fleet.count).toBe(1);
+    state.machines = new Error("The server is restarting.");
+    await fleet.refresh();
+    expect(fleet.machineIds).toEqual(["m1"]);
+    expect(intervals[0]!.cleared).toBe(false);
+    fleet.stop();
+    expect(intervals[0]!.cleared).toBe(true);
+    expect(fleet.machineIds).toEqual([]);
+  });
+
+  it("stops polling a server without machine routes", async () => {
+    const { fleet, intervals, streams } = setup(
+      Object.assign(new Error("Not found."), { status: 404 }),
+      {},
+    );
+    fleet.start();
+    await settle();
+    expect(intervals[0]!.cleared).toBe(true);
+    expect(streams.size).toBe(0);
   });
 });
 

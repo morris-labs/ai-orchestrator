@@ -258,6 +258,11 @@ In the Review app:
   listed, select **Show offline machines' last runs**. The app keeps the
   choice for you, and it's off by default. Click a run to open it on its
   machine.
+- The tray icon counts the active runs on this machine and on every other
+  online machine. Desktop notifications, such as **Decision needed**, also
+  come from every online machine, and each one names its machine. Click
+  one to open the run on its machine. A machine that goes offline drops
+  out of the count until it's back.
 - In the Boxes app, **Start Review** on another machine's tab opens the
   Review app on that machine, with the box filled in.
 

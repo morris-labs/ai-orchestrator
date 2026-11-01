@@ -1,8 +1,8 @@
 // The Electron main process's decisions, kept free of Electron so the tests
-// run in Node: deep links, the renderer URL, the active-run count, which
-// notifications to show, and the tray bitmap.
+// run in Node: deep links, the renderer URL, the active-run count on every
+// machine, which notifications to show, and the tray bitmap.
 import { ACTIVE_STATUSES_FOR_TRAY, type DeepLink } from "./types.js";
-import type { AioEvent, NotificationToggles, RunState } from "@aio/contracts";
+import type { AioEvent, Machine, NotificationToggles, RunState } from "@aio/contracts";
 
 export { ACTIVE_STATUSES_FOR_TRAY, type DeepLink };
 
@@ -131,16 +131,25 @@ export interface DesktopNotice {
  */
 export const STALE_NOTICE_MS = 10 * 60 * 1000;
 
+/** The machine a notification comes from, for its title and its link. */
+export interface NoticeMachine {
+  id: string;
+  name: string;
+  isLocal: boolean;
+}
+
 /**
  * The desktop notification for a server `notification` event, or `null` when
  * this app doesn't show its kind, the person turned the kind off, or, with
  * `now`, the event is older than `STALE_NOTICE_MS`. Box notifications belong
- * to the boxes app.
+ * to the boxes app. With `machine`, the title names the machine, and for
+ * another machine the link opens the run on it.
  */
 export function noticeFor(
   event: AioEvent,
   toggles: NotificationToggles,
   now?: number,
+  machine?: NoticeMachine,
 ): DesktopNotice | null {
   if (event.type !== "notification" || event.read) return null;
   if (now !== undefined && now - Date.parse(event.time) > STALE_NOTICE_MS) return null;
@@ -152,13 +161,191 @@ export function noticeFor(
   };
   const key = toggle[event.kind];
   if (!key || !toggles[key]) return null;
+  const hash = event.runId ? `#/runs/${event.runId}` : "#/runs";
   return {
     notificationId: event.notificationId,
-    title: event.title,
+    title: machine ? `${machine.name}: ${event.title}` : event.title,
     body: event.body,
-    hash: event.runId ? `#/runs/${event.runId}` : "#/runs",
+    hash: machine && !machine.isLocal ? `${hash}?machine=${encodeURIComponent(machine.id)}` : hash,
     urgent: event.kind === "decision_needed",
   };
+}
+
+/** How often the app reloads the machine list. */
+export const MACHINE_POLL_MS = 10_000;
+
+/** The handlers a machine's event stream calls. */
+export interface MachineStreamHandlers {
+  onEvent: (event: AioEvent) => void;
+  /** The machine can't replay what the stream missed: reload its runs. */
+  onResync: () => void;
+}
+
+/** What `FleetActiveRuns` needs from the outside world, so tests can fake it. */
+export interface FleetDeps {
+  /** This server's machine list; rejects with a 404 on a server without machine routes. */
+  listMachines: () => Promise<Machine[]>;
+  /** `runs.list` on another machine, through the hub. */
+  listRuns: (machineId: string) => Promise<RunState[]>;
+  /** Opens another machine's event stream through the hub. */
+  connect: (machineId: string, handlers: MachineStreamHandlers) => { stop: () => void };
+  /** The active-run count changed. */
+  onCount: () => void;
+  /** Another machine sent a `notification` event. */
+  onNotification: (machine: NoticeMachine, event: AioEvent) => void;
+  timers?: RetryTimers;
+  setInterval?: (fn: () => void, ms: number) => unknown;
+  clearInterval?: (handle: unknown) => void;
+  pollMs?: number;
+}
+
+/** One other machine that the app follows while it's online. */
+interface Followed {
+  machine: NoticeMachine;
+  runs: ActiveRuns;
+  stream: { stop: () => void };
+  reloader: Reloader;
+}
+
+/** True when an error is an HTTP status that means the server has no machine routes. */
+function noMachineRoutes(err: unknown): boolean {
+  const status = (err as { status?: unknown } | null)?.status;
+  return typeof status === "number" && [404, 405, 501].includes(status);
+}
+
+/**
+ * The active runs of this machine and of every other online machine, for
+ * the tray, and the notifications of the other machines. It polls the
+ * machine list, and follows each online machine's event stream through the
+ * hub while the machine stays online. A machine that goes offline or is
+ * revoked stops counting at once: its runs show only while it's online.
+ */
+export class FleetActiveRuns {
+  /** This machine's runs, which the app's own event stream keeps current. */
+  readonly local = new ActiveRuns();
+  private localMachine: NoticeMachine | null = null;
+  private readonly followed = new Map<string, Followed>();
+  private timer: unknown = null;
+  private polls = 0;
+  private stopped = false;
+
+  constructor(private readonly deps: FleetDeps) {}
+
+  /** The active runs on every followed machine, this one included. */
+  get count(): number {
+    let n = this.local.count;
+    for (const f of this.followed.values()) n += f.runs.count;
+    return n;
+  }
+
+  /** The IDs of the other machines the app follows. */
+  get machineIds(): string[] {
+    return [...this.followed.keys()];
+  }
+
+  /**
+   * This machine, for a notice's title, while the app follows another
+   * machine; `undefined` on a single machine, whose notices stay as they were.
+   */
+  localNoticeMachine(): NoticeMachine | undefined {
+    return this.followed.size > 0 && this.localMachine ? this.localMachine : undefined;
+  }
+
+  /** Reloads the machine list, then follows the online machines and drops the rest. */
+  async refresh(): Promise<void> {
+    const poll = ++this.polls;
+    let machines: Machine[];
+    try {
+      machines = await this.deps.listMachines();
+    } catch (err) {
+      if (poll !== this.polls || this.stopped) return;
+      // A server without machine routes is a single machine: stop asking.
+      if (noMachineRoutes(err)) this.stopPolling();
+      // Otherwise keep the machines as they are until a list comes back.
+      return;
+    }
+    if (poll !== this.polls || this.stopped) return;
+    const local = machines.find((m) => m.isLocal);
+    this.localMachine = local ? { id: local.id, name: local.name, isLocal: true } : null;
+    const online = new Map(
+      machines.filter((m) => !m.isLocal && m.status === "online").map((m) => [m.id, m]),
+    );
+    let changed = false;
+    for (const [id, f] of this.followed) {
+      if (online.has(id)) {
+        f.machine = { ...f.machine, name: online.get(id)!.name };
+        continue;
+      }
+      changed ||= f.runs.count > 0;
+      this.unfollow(id);
+    }
+    for (const m of online.values()) {
+      if (!this.followed.has(m.id)) this.follow(m);
+    }
+    if (changed) this.deps.onCount();
+  }
+
+  private follow(m: Machine): void {
+    const runs = new ActiveRuns();
+    const machine: NoticeMachine = { id: m.id, name: m.name, isLocal: false };
+    const reloader = new Reloader(async () => {
+      const since = runs.mark();
+      const list = await this.deps.listRuns(m.id);
+      if (this.followed.get(m.id)?.runs !== runs) return;
+      const before = runs.count;
+      runs.seed(list, since);
+      if (runs.count !== before) this.deps.onCount();
+    }, this.deps.timers);
+    const entry: Followed = {
+      machine,
+      runs,
+      reloader,
+      stream: { stop: () => undefined },
+    };
+    this.followed.set(m.id, entry);
+    entry.stream = this.deps.connect(m.id, {
+      onEvent: (event) => {
+        if (this.followed.get(m.id) !== entry) return;
+        if (runs.apply(event)) this.deps.onCount();
+        if (event.type === "notification") this.deps.onNotification(entry.machine, event);
+      },
+      onResync: () => reloader.request(),
+    });
+    reloader.request();
+  }
+
+  private unfollow(id: string): void {
+    const f = this.followed.get(id);
+    if (!f) return;
+    this.followed.delete(id);
+    f.stream.stop();
+    f.reloader.stop();
+  }
+
+  /** Loads the machine list now and every `pollMs`. */
+  start(): void {
+    if (this.timer !== null) return;
+    this.stopped = false;
+    void this.refresh();
+    const every = this.deps.setInterval ?? ((fn, ms) => setInterval(fn, ms));
+    this.timer = every(() => void this.refresh(), this.deps.pollMs ?? MACHINE_POLL_MS);
+  }
+
+  private stopPolling(): void {
+    if (this.timer === null) return;
+    const clear =
+      this.deps.clearInterval ?? ((h) => clearInterval(h as ReturnType<typeof setInterval>));
+    clear(this.timer);
+    this.timer = null;
+  }
+
+  /** Stops polling and every other machine's stream. */
+  stop(): void {
+    this.stopped = true;
+    this.polls += 1;
+    this.stopPolling();
+    for (const id of [...this.followed.keys()]) this.unfollow(id);
+  }
 }
 
 export interface RetryTimers {
