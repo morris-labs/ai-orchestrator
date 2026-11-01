@@ -269,3 +269,154 @@ export function closeHidesToTray(
   if (!needsExtensionList(env)) return true;
   return /appindicator/i.test(enabledExtensions ?? "");
 }
+
+// ---------------------------------------------------------------------------
+// macOS and Windows
+
+/** The host operating systems the app runs on, as `process.platform` names them. */
+export type HostOs = "linux" | "darwin" | "win32";
+
+/** Narrows `process.platform`, treating any other Unix as Linux. */
+export function hostOsOf(platform: string): HostOs {
+  return platform === "darwin" || platform === "win32" ? platform : "linux";
+}
+
+/** The app's id, which Windows uses to tie notifications to the installer's Start menu shortcut. */
+export const APP_USER_MODEL_ID = "dev.aio.boxes";
+
+/**
+ * Whether the app sets the X11 window class and Wayland app_id with
+ * Chromium's `--class` switch, so the desktop ties the window to
+ * `aio-boxes.desktop`. Only Linux desktops read it.
+ */
+export function usesWindowClass(os: HostOs): boolean {
+  return os === "linux";
+}
+
+/** Whether `closeHidesToTray` may ask `gsettings` for the GNOME Shell extensions. */
+export function mayAskGsettings(os: HostOs, env: Record<string, string | undefined>): boolean {
+  return os === "linux" && needsExtensionList(env);
+}
+
+/** A menu item that Electron fills in from its role. */
+export interface RoleItem {
+  role: "appMenu" | "editMenu" | "windowMenu";
+}
+
+/**
+ * The application menu: none on Linux and Windows, where every shortcut is
+ * a `Ctrl+Shift` chord the page handles. macOS has a menu bar whether the
+ * app sets one or not, and without the Edit menu's roles Cmd+C, Cmd+V, and
+ * Cmd+Q do nothing, so it gets the standard app, Edit, and Window menus.
+ */
+export function applicationMenuTemplate(os: HostOs): RoleItem[] | null {
+  return os === "darwin"
+    ? [{ role: "appMenu" }, { role: "editMenu" }, { role: "windowMenu" }]
+    : null;
+}
+
+/** Quotes one argument for a POSIX shell. */
+function posixQuote(arg: string): string {
+  return /^[A-Za-z0-9_@%+=:,./-]+$/.test(arg) ? arg : `'${arg.replace(/'/g, `'\\''`)}'`;
+}
+
+/** Escapes text for a double-quoted AppleScript string. */
+function appleScriptString(text: string): string {
+  return `"${text.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
+
+/**
+ * The command that runs `argv` in a new Terminal.app window on macOS:
+ * `osascript` tells Terminal to run the POSIX-quoted command line.
+ */
+export function macTerminalCommand(argv: readonly string[]): { file: string; args: string[] } {
+  const line = argv.map(posixQuote).join(" ");
+  return {
+    file: "osascript",
+    args: [
+      "-e",
+      'tell application "Terminal"',
+      "-e",
+      "activate",
+      "-e",
+      `do script ${appleScriptString(line)}`,
+      "-e",
+      "end tell",
+    ],
+  };
+}
+
+/** The `aio` arguments that attach to a box the way an external terminal request asks. */
+export function cliAttachArgs(req: {
+  boxId: string;
+  kind: "session" | "side" | "shell";
+  platform?: string;
+}): string[] {
+  if (req.kind === "shell") return ["box", "shell", req.boxId];
+  if (req.kind === "side" && req.platform) {
+    return ["box", "attach", req.boxId, "--side", req.platform];
+  }
+  return ["box", "attach", req.boxId];
+}
+
+/** Characters that pass through `cmd.exe` and Windows Terminal unchanged. */
+const WINDOWS_SAFE = /^[A-Za-z0-9._:\\/ -]+$/;
+
+/**
+ * The command that opens a box in a new console on Windows. The server's
+ * attach argv holds a bash script with `&&`, quotes, and `;`, which
+ * `cmd.exe` and Windows Terminal would both parse, so the console runs the
+ * `aio` CLI instead, whose arguments are plain words. Windows Terminal
+ * (`wt.exe`) opens it when it's installed; otherwise `cmd.exe start` opens
+ * a console window. `verbatim` means the caller must pass the arguments
+ * without Node.js quoting them (`windowsVerbatimArguments`).
+ *
+ * Returns `null` when an argument has a character either one would parse.
+ */
+export function windowsTerminalCommand(
+  cli: string,
+  args: readonly string[],
+  title: string,
+  hasWindowsTerminal: boolean,
+): { file: string; args: string[]; verbatim: boolean } | null {
+  if (![cli, title, ...args].every((a) => WINDOWS_SAFE.test(a))) return null;
+  if (hasWindowsTerminal) {
+    return {
+      file: "wt.exe",
+      args: ["-w", "new", "new-tab", "--title", title, cli, ...args],
+      verbatim: false,
+    };
+  }
+  // cmd /s /c "start "TITLE" "CLI" ARGS": /s strips the outer quotes, and
+  // start reads the first quoted word as the window title.
+  const quoted = (s: string) => `"${s}"`;
+  return {
+    file: "cmd.exe",
+    args: ["/d", "/s", "/c", quoted(`start ${quoted(title)} ${quoted(cli)} ${args.join(" ")}`)],
+    verbatim: true,
+  };
+}
+
+/**
+ * How the Boxes app starts the review app: `AIO_REVIEW_BIN` when it's set,
+ * the `aio-review` command on Linux, and the `aio-review://` link on macOS
+ * and Windows, where the app is an app bundle or an installed program
+ * rather than a command on PATH. The review app registers the link scheme.
+ */
+export function reviewLaunch(
+  os: HostOs,
+  link: { projectId?: string; boxId?: string },
+  binary: string | undefined,
+): { file: string; args: string[] } | { url: string } {
+  if (binary || os === "linux") {
+    if (link.projectId !== undefined || link.boxId !== undefined) {
+      return reviewCommand(link.projectId ?? "", link.boxId ?? "", binary);
+    }
+    return { file: binary || "aio-review", args: [] };
+  }
+  const query = new URLSearchParams();
+  if (link.projectId) query.set("project", link.projectId);
+  if (link.boxId) query.set("box", link.boxId);
+  const q = query.toString();
+  return { url: `aio-review://launch${q ? `?${q}` : ""}` };
+}

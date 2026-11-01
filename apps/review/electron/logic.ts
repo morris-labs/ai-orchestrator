@@ -339,3 +339,38 @@ export class PendingNavigation {
     return h;
   }
 }
+
+/** The host operating systems the app runs on, as `process.platform` names them. */
+export type HostOs = "linux" | "darwin" | "win32";
+
+/** Narrows `process.platform`, treating any other Unix as Linux. */
+export function hostOsOf(platform: string): HostOs {
+  return platform === "darwin" || platform === "win32" ? platform : "linux";
+}
+
+/**
+ * The app's id for Windows, which ties notifications to the Start menu
+ * shortcut the installer creates. It must match `appId` in
+ * `electron-builder.yml`.
+ */
+export const APP_USER_MODEL_ID = "dev.aio.review";
+
+/** Whether the app sets the X11 window class and Wayland app_id; only Linux desktops read it. */
+export function usesWindowClass(os: HostOs): boolean {
+  return os === "linux";
+}
+
+/**
+ * The arguments for `app.setAsDefaultProtocolClient`. A packaged app
+ * registers itself. On Windows, an app run with `electron .` must also
+ * name Electron and the app path, or the link starts bare Electron; the
+ * other hosts ignore both.
+ */
+export function protocolClientArgs(
+  os: HostOs,
+  defaultApp: boolean,
+  execPath: string,
+  appPath: string | undefined,
+): [string] | [string, string, string[]] {
+  return os === "win32" && defaultApp && appPath ? [PROTOCOL, execPath, [appPath]] : [PROTOCOL];
+}

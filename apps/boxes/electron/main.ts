@@ -39,21 +39,29 @@ import {
 } from "electron";
 import type { BridgeResult, ExternalTerminalRequest } from "../src/bridge";
 import {
+  APP_USER_MODEL_ID,
+  applicationMenuTemplate,
   childEnv,
+  cliAttachArgs,
   closeHidesToTray,
   findTerminal,
+  hostOsOf,
   isBoxNotification,
-  needsExtensionList,
+  macTerminalCommand,
+  mayAskGsettings,
   needsLocalPage,
   permissionAllowed,
-  reviewCommand,
+  reviewLaunch,
   terminalCommand,
+  usesWindowClass,
+  windowsTerminalCommand,
   trayCounts,
   trayIconBitmap,
   trayText,
   type TrayCounts,
 } from "./logic";
 
+const HOST_OS = hostOsOf(process.platform);
 const SERVER_URL = serverUrl();
 const BOXES_URL = process.env.AIO_BOXES_URL ?? `${SERVER_URL}/boxes/`;
 /** The copy of the page built into the app, shown when the server doesn't answer. */
@@ -115,7 +123,7 @@ function executable(path: string): boolean {
   }
 }
 
-function detached(file: string, args: string[]): Promise<BridgeResult> {
+function detached(file: string, args: string[], verbatim = false): Promise<BridgeResult> {
   return new Promise((resolve) => {
     try {
       // The token stays in this process: a terminal, its shell, and the
@@ -124,6 +132,8 @@ function detached(file: string, args: string[]): Promise<BridgeResult> {
         detached: true,
         stdio: "ignore",
         env: childEnv(process.env),
+        // Windows only: `windowsTerminalCommand` quotes for cmd.exe itself.
+        windowsVerbatimArguments: verbatim,
       });
       child.once("error", (err) => resolve({ ok: false, error: `${file}: ${err.message}` }));
       child.once("spawn", () => {
@@ -209,8 +219,62 @@ function enabledExtensions(): string | null {
 /** Whether closing the window hides it into the tray; decided once at startup. */
 const hideToTray = closeHidesToTray(
   process.env,
-  needsExtensionList(process.env) ? enabledExtensions() : null,
+  mayAskGsettings(HOST_OS, process.env) ? enabledExtensions() : null,
 );
+
+/** Starts the review app, prefilled with a project and box when given. */
+async function launchReview(link: { projectId?: string; boxId?: string }): Promise<BridgeResult> {
+  const how = reviewLaunch(HOST_OS, link, process.env.AIO_REVIEW_BIN);
+  if ("file" in how) return detached(how.file, how.args);
+  try {
+    await shell.openExternal(how.url);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: errorMessage(err) };
+  }
+}
+
+/**
+ * The `aio` CLI for consoles on Windows: the one in the package's runtime,
+ * else `aio` on PATH.
+ */
+function windowsCli(): string {
+  const bundled = join(process.resourcesPath, "runtime", "bin", "aio.cmd");
+  try {
+    statSync(bundled);
+    return bundled;
+  } catch {
+    return "aio.cmd";
+  }
+}
+
+/** Whether Windows Terminal's `wt.exe` alias exists. */
+function hasWindowsTerminal(): boolean {
+  const local = process.env.LOCALAPPDATA;
+  if (!local) return false;
+  try {
+    statSync(join(local, "Microsoft", "WindowsApps", "wt.exe"));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Opens a box in an external terminal on macOS or Windows. */
+async function openTerminalElsewhere(req: ExternalTerminalRequest, argv: string[]) {
+  if (HOST_OS === "darwin") {
+    const cmd = macTerminalCommand(argv);
+    return detached(cmd.file, cmd.args);
+  }
+  const cmd = windowsTerminalCommand(
+    windowsCli(),
+    cliAttachArgs(req),
+    req.boxId,
+    hasWindowsTerminal(),
+  );
+  if (!cmd) return { ok: false, error: `Can't open ${req.boxId} in a console on Windows.` };
+  return detached(cmd.file, cmd.args, cmd.verbatim);
+}
 
 let serverRetry: ReturnType<typeof setTimeout> | null = null;
 /** Loads the server's page again once the server answers, while the local copy shows. */
@@ -244,7 +308,7 @@ function updateTray() {
       {
         label: "Review",
         click: () => {
-          void detached(process.env.AIO_REVIEW_BIN || "aio-review", []);
+          void launchReview({});
         },
       },
       { type: "separator" },
@@ -344,6 +408,7 @@ function registerIpc() {
           params: { boxId: req.boxId },
           query: { kind: req.kind, ...(req.platform ? { platform: req.platform } : {}) },
         });
+        if (HOST_OS !== "linux") return await openTerminalElsewhere(req, argv);
         const terminal = findTerminal(process.env, executable);
         if (!terminal) {
           return {
@@ -363,8 +428,7 @@ function registerIpc() {
     "aio:launch-review",
     async (e, req: { projectId: string; boxId: string }): Promise<BridgeResult> => {
       if (!fromApp(e)) return REFUSED;
-      const cmd = reviewCommand(req.projectId, req.boxId, process.env.AIO_REVIEW_BIN);
-      return detached(cmd.file, cmd.args);
+      return launchReview({ projectId: req.projectId, boxId: req.boxId });
     },
   );
   ipcMain.handle("aio:pick-directory", async (e, defaultPath?: string) => {
@@ -412,18 +476,23 @@ function registerIpc() {
 // Sets the X11 window class and the Wayland app_id to the name of the
 // desktop entry (aio-boxes.desktop), so the shell ties the window to
 // its entry and icon. app.setName changes only the display name.
-app.commandLine.appendSwitch("class", "aio-boxes");
+if (usesWindowClass(HOST_OS)) app.commandLine.appendSwitch("class", "aio-boxes");
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.setName("AI Orchestrator");
   app.on("second-instance", showWindow);
+  // macOS: a click on the Dock icon of a running app with no visible window.
+  app.on("activate", showWindow);
   app.on("before-quit", () => {
     quitting = true;
   });
   void app.whenReady().then(() => {
-    Menu.setApplicationMenu(null);
+    const menu = applicationMenuTemplate(HOST_OS);
+    Menu.setApplicationMenu(menu ? Menu.buildFromTemplate(menu) : null);
+    // Windows ties notifications to the Start menu shortcut with this id.
+    if (HOST_OS === "win32") app.setAppUserModelId(APP_USER_MODEL_ID);
     registerIpc();
     // Pages and their sockets on the server's host load only from a server
     // that presents the pinned certificate.
