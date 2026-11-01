@@ -1,5 +1,5 @@
 # Build output
-gui/build/
+/gui/
 
 # Release packages (AppImage, .deb, Windows installer) -- built artifacts, not source.
 /dist/
@@ -18,7 +18,7 @@ gui/build/
 /Mac_Release/
 
 # Legacy bash launcher/manager -- kept on disk as a working fallback while
-# the C++/Qt6 app in gui/ is being built out, but not tracked here.
+# Agent Box 4 replaced them, but not tracked here.
 /claude-box.bash
 /claude-box-manager.bash
 /claude-box-lib.bash

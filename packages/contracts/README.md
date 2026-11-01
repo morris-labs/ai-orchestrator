@@ -59,7 +59,7 @@ its own contract tests before the change counts as done. Don't change a
 contract from inside another package's branch.
 
 The prompt template defaults must stay byte for byte equal to the 3.3.5
-templates in `gui/src/PromptTemplates.cpp`. The `test/prompts.test.ts` file holds
+templates in `gui/src/PromptTemplates.cpp` at tag `v3.3.5`. The `test/prompts.test.ts` file holds
 the expected text and fails on any difference. The secrets hint isn't a
 template: the server adds it after the opening prompt, so the templates
 stay unchanged.

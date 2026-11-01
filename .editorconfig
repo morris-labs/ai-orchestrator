@@ -14,5 +14,3 @@ trim_trailing_whitespace = false
 [{Makefile,*.mk}]
 indent_style = tab
 
-[gui/**]
-indent_size = 4

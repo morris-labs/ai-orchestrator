@@ -1,5 +1,5 @@
 // The expected template text below is the source of truth for the defaults.
-// It matches `gui/src/PromptTemplates.cpp` at 3.3.5 byte for byte. Do not
+// It matches `gui/src/PromptTemplates.cpp` at tag `v3.3.5` byte for byte. Do not
 // reformat it.
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";

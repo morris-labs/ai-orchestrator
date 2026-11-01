@@ -10,7 +10,6 @@ export default tseslint.config(
       "**/dist/**",
       "**/coverage/**",
       "**/test-results/**",
-      "gui/**",
       "TestBox/**",
       ".worktrees/**",
       ".pnpm-store/**",

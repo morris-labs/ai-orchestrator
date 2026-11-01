@@ -1,5 +1,5 @@
 // Default prompt templates, copied byte for byte from the 3.3.5
-// `gui/src/PromptTemplates.cpp`.
+// `gui/src/PromptTemplates.cpp` (tag `v3.3.5`).
 // `expandTemplate()` substitutes `%1` to `%9` in one pass, as the Qt app did.
 // The Starter text keeps its original em dash: it is data, not prose.
 

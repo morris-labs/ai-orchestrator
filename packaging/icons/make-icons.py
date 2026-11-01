@@ -4,7 +4,7 @@
 Writes two SVG files next to this script:
 
 - agentbox-boxes.svg: the Claude mark behind bars, ported from the 3.x
-  gui/packaging/make-jail-icon.py. A box is a cell you put an agent in.
+  the `make-jail-icon.py` script of Claude Box 3.3.5. A box is a cell you put an agent in.
 - agentbox-review.svg: the same cell with a magnifying glass badge in the
   lower-right corner, for the review app.
 
