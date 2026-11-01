@@ -125,6 +125,7 @@ export const ApiErrorCodeSchema = z.enum([
   "run_not_found",
   "invalid_state",
   "unauthorized",
+  "hub_unreachable",
   "internal",
 ]);
 export type ApiErrorCode = z.infer<typeof ApiErrorCodeSchema>;

@@ -158,7 +158,8 @@ export async function createApiServer(deps: ApiDeps & { tls?: TlsIdentity }): Pr
 
   app.addHook("onRequest", async (request, reply) => {
     const config = request.routeOptions.config.aio;
-    const port = request.socket.localPort ?? 0;
+    // An in-process upgrade from a link (`injectWS`) has no socket.
+    const port = request.socket?.localPort ?? 0;
     if (config?.ws && !isOwnOrigin(request.headers.origin, tls !== undefined, port)) {
       reply.header("connection", "close");
       return sendFailure(

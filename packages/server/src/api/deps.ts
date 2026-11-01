@@ -19,6 +19,10 @@ import type {
   VendorUsageSchema,
   SshRemote,
   ImageBuildSchema,
+  EnrollmentCode,
+  Machine,
+  NodeJoin,
+  NodeStatus,
 } from "@aio/contracts";
 import type { z } from "zod";
 import type { Core, EventInput } from "./core-interface.js";
@@ -27,6 +31,16 @@ import type { ReplayPlan } from "../events/hub.js";
 import type { JobManager } from "../jobs/jobs.js";
 import type { ExecBackend } from "../terminals/exec.js";
 import type { DevServerProxy } from "../proxy/proxy.js";
+import type { LinkRegistry } from "../hub/link.js";
+
+/** Multi-host as the machine and node routes use it. */
+export interface ApiMultiHost {
+  machines(): Promise<Machine[]>;
+  enroll(): Promise<EnrollmentCode>;
+  revoke(id: string): Promise<void>;
+  status(): NodeStatus;
+  join(input: NodeJoin): Promise<NodeStatus>;
+}
 
 /** One engine, as the API uses it. */
 export interface ApiEngine {
@@ -101,6 +115,23 @@ export interface ApiDeps {
   };
   exec: ExecBackend;
   proxy?: DevServerProxy;
+  /**
+   * The links to other machines: on a hub, its connected nodes by machine
+   * id; on a plain node, the hub under `hub`. Absent in a server built
+   * without multi-host support.
+   */
+  links?: LinkRegistry;
+  /** What request routing needs to know about this machine; see `startApp`. */
+  machines?: {
+    role?: "hub" | "node" | "both";
+    /** The id this machine's hub gave it, which resolves to this machine. */
+    machineId?: string;
+    /** True when the hub enrolled `id` and didn't revoke it, connected or not. */
+    isKnown?(id: string): boolean;
+    timeouts?: { readMs?: number; writeMs?: number; openMs?: number };
+  };
+  /** The machine list, enrollment, revocation, and joining a hub. */
+  multiHost?: ApiMultiHost;
   /** Directories of the built single-page apps, served when present. */
   staticDirs?: { boxes?: string; review?: string };
   log?: (message: string) => void;

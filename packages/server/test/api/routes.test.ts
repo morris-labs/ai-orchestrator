@@ -344,6 +344,17 @@ const cases: Case[] = [
   { key: "usage.get", method: "GET", url: `${V1}/usage`, status: 200 },
   { key: "notifications.list", method: "GET", url: `${V1}/notifications?unread=true`, status: 200 },
   { key: "notifications.read", method: "POST", url: `${V1}/notifications/n1/read`, status: 200 },
+  { key: "machines.list", method: "GET", url: `${V1}/machines`, status: 200 },
+  { key: "machines.enroll", method: "POST", url: `${V1}/machines/enrollment-codes`, status: 201 },
+  { key: "machines.revoke", method: "DELETE", url: `${V1}/machines/m1`, status: 200 },
+  { key: "node.get", method: "GET", url: `${V1}/node`, status: 200 },
+  {
+    key: "node.join",
+    method: "POST",
+    url: `${V1}/node/join`,
+    body: { hubUrl: "https://hub.example.com:21402", code: "7K2Q-M9XD-4HPA-R3TB" },
+    status: 200,
+  },
 ];
 
 let h: Harness;

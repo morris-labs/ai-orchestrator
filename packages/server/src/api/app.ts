@@ -30,7 +30,8 @@ import { Scheduler, VendorHealth } from "../scheduler/scheduler.js";
 import { OpCli, type OpClient } from "../secrets/op.js";
 import { BROKER_SYNC_INTERVAL_MS, SecretsBroker, assertSocketPathFits } from "../secrets/broker.js";
 import { SecretsService } from "../secrets/secrets-service.js";
-import { brokerDirFor, dataPath } from "../records/env.js";
+import { brokerDirFor, dataDirOf, dataPath } from "../records/env.js";
+import { MultiHost, type MachineRole, type MultiHostOptions } from "../hub/multihost.js";
 import { SetupService } from "../setup/setup-service.js";
 import { UpdateChecker } from "../setup/updates.js";
 import { SshTunnelManager, startCopyIdJob, testConnection } from "../ssh/tunnels.js";
@@ -68,6 +69,18 @@ export interface AppOptions {
    */
   devEngines?: EngineEndpoint[];
   log?: (message: string) => void;
+  /** The role from `--role` or `AIO_ROLE`; wins over the stored setting. */
+  role?: MachineRole;
+  /** Overrides the hub's link port; 0 picks a free one (tests). */
+  linkPort?: number;
+  /** The address the hub's link listener binds. Default: every interface. */
+  linkHost?: string;
+  /** Overrides the host name in hub URLs (tests). */
+  linkAddress?: string;
+  /** Overrides the link protocol version (tests). */
+  linkProtocol?: number;
+  /** Link pings, timeouts, and reconnect delays (tests). */
+  linkTiming?: MultiHostOptions["timing"];
 }
 
 /** The address the API server binds to. */
@@ -75,6 +88,7 @@ export const BIND_HOST = "127.0.0.1";
 
 export interface App {
   core: Core & { close?(): Promise<void> };
+  multiHost: MultiHost;
   hub: EventHub;
   api: ApiServer;
   port: number;
@@ -164,7 +178,26 @@ export async function startApp(options: AppOptions): Promise<App> {
     emit: (e) => hub.emit(e),
   });
   const notifier = new Notifier({ db: core.db, settings, emit: (e) => hub.emit(e) });
-  const op = options.op ?? new OpCli(runner);
+  let apiServer: ApiServer | null = null;
+  const multiHost = new MultiHost({
+    dataDir: dataDirOf({ home: options.home, dataDir: options.dataDir }),
+    db: core.db,
+    settings,
+    patchSettings: (patch) => core.settings.patch(patch),
+    roleOverride: options.role,
+    version: options.version,
+    token,
+    api: () => apiServer?.app ?? null,
+    op: options.op ?? new OpCli(runner),
+    linkHost: options.linkHost,
+    linkPort: options.linkPort,
+    linkAddress: options.linkAddress,
+    protocol: options.linkProtocol,
+    timing: options.linkTiming,
+    log,
+  });
+  // A plain node asks its hub for secrets; see `hub/secrets-relay.ts`.
+  const op = multiHost.op;
   secrets = new SecretsService({
     op,
     settings,
@@ -330,8 +363,20 @@ export async function startApp(options: AppOptions): Promise<App> {
     proxy,
     tls,
     staticDirs: options.staticDirs,
+    links: multiHost.links,
+    machines: {
+      get role() {
+        return multiHost.role();
+      },
+      get machineId() {
+        return multiHost.machineId();
+      },
+      isKnown: (id) => multiHost.isKnown(id),
+    },
+    multiHost,
     log,
   });
+  apiServer = api;
   const config = settings();
   const port = await api.listen(options.port ?? config.serverPort, BIND_HOST);
   // The CLI reads the port from here: after the first start, the server
@@ -378,9 +423,15 @@ export async function startApp(options: AppOptions): Promise<App> {
   engines.start();
   syncTunnels();
   syncBroker();
+  try {
+    await multiHost.start();
+  } catch (err) {
+    log(`Multi-host failed to start: ${(err as Error).message}`);
+  }
 
   return {
     core,
+    multiHost,
     hub,
     api,
     port,
@@ -389,6 +440,7 @@ export async function startApp(options: AppOptions): Promise<App> {
       if (tunnelSync) clearTimeout(tunnelSync);
       // A running image build would otherwise keep the process alive.
       await jobs.stopAll();
+      await multiHost.close();
       proxy.close();
       await api.close();
       if (proxyServer) await new Promise<void>((resolve) => proxyServer?.close(() => resolve()));

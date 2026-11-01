@@ -153,6 +153,13 @@ export class SettingsService {
       if (v === null) delete next[key];
       else next[key] = v;
     }
+    for (const key of ["machineName", "linkPort", "linkAddress"] as const) {
+      const v = p[key];
+      if (v === undefined) continue;
+      if (v === null) delete next[key];
+      else (next as Record<string, unknown>)[key] = v;
+    }
+    if (p.role !== undefined) next.role = p.role;
     if (p.accountsMode !== undefined) next.accountsMode = p.accountsMode;
     if (p.accountDefaults !== undefined) {
       for (const vendor of ["claude", "codex", "copilot"] as const) {
