@@ -5,6 +5,7 @@ import { LOCAL_MACHINE_ID } from "@aio/contracts";
 import { createContext, useContext, useSyncExternalStore, type ReactNode } from "react";
 import {
   fleetRuns,
+  isCurrent,
   isMulti,
   type FleetMachine,
   type FleetState,
@@ -29,6 +30,7 @@ const NO_FLEET: FleetState = {
   machines: [],
   selected: LOCAL_MACHINE_ID,
   error: null,
+  showOfflineRuns: false,
 };
 const noSubscribe = () => () => undefined;
 
@@ -99,18 +101,28 @@ export function openRun(fleet: MachineFleet | null, machineId: string, runId: st
 }
 
 /**
- * Every machine's runs in one table with a Machine column, and a note for
- * each machine that can't answer. Renders nothing on a single machine.
+ * Every online machine's runs in one table with a Machine column, and a note
+ * for each machine that can't answer. An offline machine's last runs show,
+ * with the time they were listed, only when the viewer turns on **Show
+ * offline machines' last runs**. Renders nothing on a single machine.
  */
 export function FleetRuns() {
   const fleet = useFleet();
   const state = useFleetState();
   if (!fleet || !isMulti(state)) return null;
   const runs = fleetRuns(state);
-  const away = state.machines.filter((m) => m.reach === "offline" || m.reach === "error");
+  const away = state.machines.filter((m) => !isCurrent(m));
   return (
     <section className="card fleet-runs" aria-label="Runs on every machine">
       <h3>Runs on every machine</h3>
+      <label className="small">
+        <input
+          type="checkbox"
+          checked={state.showOfflineRuns}
+          onChange={(e) => fleet.setShowOfflineRuns(e.target.checked)}
+        />{" "}
+        Show offline machines' last runs
+      </label>
       {away.length > 0 ? (
         <ul className="machine-notes" aria-label="Machines without a current list">
           {away.map((m) => (
@@ -122,7 +134,7 @@ export function FleetRuns() {
               </span>{" "}
               <span className="muted small">
                 {m.error}
-                {m.runs.length > 0 && m.loadedAt
+                {state.showOfflineRuns && m.runs.length > 0 && m.loadedAt
                   ? ` Its runs are as of ${new Date(m.loadedAt).toLocaleString()}.`
                   : ""}
               </span>

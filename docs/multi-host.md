@@ -251,10 +251,13 @@ In the Review app:
 - The **Machine** list in the navigation picks the machine that the
   screens show: its runs, findings, launcher, policy, and settings. A run's
   view follows the run live over that machine's event stream.
-- The **Dashboard** lists the runs of every machine, with a **Machine**
-  column. A machine that the hub reports offline, or that doesn't answer,
-  shows as offline with the runs it last listed; the other machines'
-  runs still show. Click a run to open it on its machine.
+- The **Dashboard** lists the runs of every online machine, with a
+  **Machine** column. A machine that the hub reports offline, or that
+  doesn't answer, shows as offline with no runs; the other machines' runs
+  still show. To see an offline machine's last runs and the time they were
+  listed, select **Show offline machines' last runs**. The app keeps the
+  choice for you, and it's off by default. Click a run to open it on its
+  machine.
 - In the Boxes app, **Start Review** on another machine's tab opens the
   Review app on that machine, with the box filled in.
 

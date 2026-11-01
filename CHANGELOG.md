@@ -37,8 +37,9 @@ section's heading must have the form `## [X.Y.Z]`.
   and runs.
 - Review runs across machines. The Review app has a **Machine** list that
   shows another machine's runs, findings, launcher, and policy, and the
-  dashboard lists every machine's runs with the machine named and an
-  offline machine marked. **Start Review** on another machine's tab in the
+  dashboard lists every online machine's runs with the machine named. An
+  offline machine shows as offline with no runs, unless you select **Show
+  offline machines' last runs**. **Start Review** on another machine's tab in the
   Boxes app opens the Review app on that machine.
 - A machine role step in the setup wizard: keep a single machine, or join a
   hub as a node with its URL and a one-time enrollment code. The `.deb`

@@ -1,11 +1,27 @@
 // The machines of a multi-host setup, for the Review app. The fleet keeps
 // one `AppStore` per machine that the user opens, so the screens show that
 // machine's runs live, and a run list from every machine for the
-// dashboard. A machine that can't answer shows as offline with the runs it
-// last listed; it never fails the whole view.
+// dashboard. A machine that can't answer shows as offline; it never fails
+// the whole view. Its last runs show only when the viewer turns on
+// `showOfflineRuns`, with the time they were listed.
 import { LOCAL_MACHINE_ID, type Machine, type RunState } from "@aio/contracts";
 import { isApiError, type ApiClient, type ClientErrorCode } from "@aio/ui/core";
 import { AppStore } from "./store.js";
+
+/** The `localStorage` key of the viewer's `showOfflineRuns` choice. */
+export const SHOW_OFFLINE_RUNS_KEY = "aio.review.showOfflineRuns";
+
+/** The part of `Storage` the fleet uses to keep the viewer's choices. */
+export type PrefStorage = Pick<Storage, "getItem" | "setItem">;
+
+/** The browser's `localStorage`, or `null` where it can't be used. */
+function defaultStorage(): PrefStorage | null {
+  try {
+    return globalThis.localStorage ?? null;
+  } catch {
+    return null;
+  }
+}
 
 /** How often the fleet reloads the machine list and each machine's runs. */
 export const FLEET_POLL_MS = 10_000;
@@ -26,7 +42,10 @@ export interface FleetMachine {
   reach: MachineReach;
   /** Why the last run list failed, or `null`. */
   error: string | null;
-  /** The runs the machine last listed; kept while it's offline. */
+  /**
+   * The runs the machine last listed; kept while it's offline, though
+   * `fleetRuns()` shows them then only with `showOfflineRuns`.
+   */
   runs: RunState[];
   /** When `runs` last loaded, or `null` before the first list. */
   loadedAt: string | null;
@@ -41,6 +60,12 @@ export interface FleetState {
   selected: string;
   /** Why the last machine list failed, or `null`. The last good list stays in place. */
   error: string | null;
+  /**
+   * The viewer's choice to show the last runs of a machine without a
+   * current list. Off by default: such a machine shows as offline with no
+   * runs.
+   */
+  showOfflineRuns: boolean;
 }
 
 /** One run with the machine it runs on, for the all-machines view. */
@@ -56,11 +81,24 @@ export function isMulti(state: FleetState): boolean {
   return state.supported === true && state.machines.length > 1;
 }
 
-/** Every machine's runs, most recently updated first. */
+/** True unless the machine failed its last run list, so its runs are current. */
+export function isCurrent(m: FleetMachine): boolean {
+  return m.reach === "online" || m.reach === "loading";
+}
+
+/**
+ * The runs a machine shows: all of them while it's current, and its last
+ * runs otherwise only with `showOfflineRuns`.
+ */
+export function shownRuns(state: FleetState, m: FleetMachine): RunState[] {
+  return isCurrent(m) || state.showOfflineRuns ? m.runs : [];
+}
+
+/** Every shown machine's runs, most recently updated first. */
 export function fleetRuns(state: FleetState): FleetRun[] {
   return state.machines
     .flatMap((m) =>
-      m.runs.map((run) => ({
+      shownRuns(state, m).map((run) => ({
         machineId: m.machine.id,
         machineName: m.machine.name,
         reach: m.reach,
@@ -118,6 +156,7 @@ export class MachineFleet {
     machines: [],
     selected: LOCAL_MACHINE_ID,
     error: null,
+    showOfflineRuns: false,
   };
   private readonly listeners = new Set<() => void>();
   /** The store of each machine the user opened; `local` is the root store. */
@@ -131,15 +170,36 @@ export class MachineFleet {
 
   /**
    * `root` is this server's store. `makeClient` makes the API client of a
-   * machine, such as with `createMachineClient()`.
+   * machine, such as with `createMachineClient()`. `storage` keeps the
+   * viewer's choices, such as `showOfflineRuns`; `null` keeps them in memory.
    */
   constructor(
     readonly root: AppStore,
     private readonly makeClient: (machineId: string) => ApiClient,
     private readonly pollMs = FLEET_POLL_MS,
     private readonly now: () => number = Date.now,
+    private readonly storage: PrefStorage | null = defaultStorage(),
   ) {
     this.stores.set(LOCAL_MACHINE_ID, root);
+    this.state.showOfflineRuns = this.readPref(SHOW_OFFLINE_RUNS_KEY);
+  }
+
+  private readPref(key: string): boolean {
+    try {
+      return this.storage?.getItem(key) === "true";
+    } catch {
+      return false;
+    }
+  }
+
+  /** Shows or hides the last runs of machines without a current list, and keeps the choice. */
+  setShowOfflineRuns(show: boolean): void {
+    try {
+      this.storage?.setItem(SHOW_OFFLINE_RUNS_KEY, String(show));
+    } catch {
+      // A storage that refuses the write keeps the choice for this session.
+    }
+    if (this.state.showOfflineRuns !== show) this.set({ showOfflineRuns: show });
   }
 
   getState = (): FleetState => this.state;

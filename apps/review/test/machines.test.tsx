@@ -7,7 +7,12 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { afterEach, describe, expect, it } from "vitest";
 import { App } from "../src/App.js";
 import { FleetProvider } from "../src/components/machines.js";
-import { fleetRuns, MachineFleet, mergeRuns } from "../src/state/fleet.js";
+import {
+  fleetRuns,
+  MachineFleet,
+  mergeRuns,
+  SHOW_OFFLINE_RUNS_KEY,
+} from "../src/state/fleet.js";
 import { AppStore, StoreProvider } from "../src/state/store.js";
 import { lastRun, loadDemoEvents, project } from "./helpers/data.js";
 import { fakeHub, machine } from "./helpers/hub.js";
@@ -47,6 +52,7 @@ const cleanups: Array<() => void> = [];
 afterEach(() => {
   for (const c of cleanups.splice(0)) c();
   window.location.hash = "";
+  localStorage.clear();
 });
 
 function setup(machines = [LOCAL, BUILD, LAPTOP, OLD]) {
@@ -83,7 +89,7 @@ describe("the machine fleet", () => {
     ]);
   });
 
-  it("keeps a machine's last runs and marks it offline when it stops answering", async () => {
+  it("marks a machine offline when it stops answering and hides its last runs", async () => {
     const { hub, fleet } = setup();
     await fleet.refresh();
     hub.failing.m1 = { status: 504, code: "machine_timeout", message: "No answer in time." };
@@ -91,9 +97,44 @@ describe("the machine fleet", () => {
     const build = fleet.getState().machines.find((m) => m.machine.id === "m1")!;
     expect(build.reach).toBe("offline");
     expect(build.error).toBe("No answer in time.");
+    // The fleet keeps the last runs, but by default shows none of them.
+    expect(fleet.getState().showOfflineRuns).toBe(false);
     expect(build.runs.map((r) => r.id)).toEqual([REMOTE_RUN_ID]);
+    expect(fleetRuns(fleet.getState()).map((r) => r.machineName)).toEqual(["main-pc"]);
     // The other machines still list.
     expect(fleet.getState().machines[0]!.reach).toBe("online");
+
+    // With the viewer's choice on, the last runs show, marked offline.
+    fleet.setShowOfflineRuns(true);
+    expect(fleetRuns(fleet.getState()).map((r) => [r.machineName, r.reach])).toEqual([
+      ["build-server", "offline"],
+      ["main-pc", "online"],
+    ]);
+
+    // Back online, its runs show whatever the choice.
+    fleet.setShowOfflineRuns(false);
+    delete hub.failing.m1;
+    await fleet.refresh();
+    expect(fleetRuns(fleet.getState()).map((r) => [r.machineName, r.reach])).toEqual([
+      ["build-server", "online"],
+      ["main-pc", "online"],
+    ]);
+  });
+
+  it("keeps the viewer's choice to show offline machines' last runs", () => {
+    const { store, hub, fleet } = setup();
+    expect(fleet.getState().showOfflineRuns).toBe(false);
+    fleet.setShowOfflineRuns(true);
+    expect(localStorage.getItem(SHOW_OFFLINE_RUNS_KEY)).toBe("true");
+    const again = new MachineFleet(store, hub.makeClient, 60_000);
+    expect(again.getState().showOfflineRuns).toBe(true);
+    again.setShowOfflineRuns(false);
+    expect(new MachineFleet(store, hub.makeClient, 60_000).getState().showOfflineRuns).toBe(false);
+    // Without storage, the choice lasts only as long as the fleet.
+    const memory = new MachineFleet(store, hub.makeClient, 60_000, Date.now, null);
+    memory.setShowOfflineRuns(true);
+    expect(memory.getState().showOfflineRuns).toBe(true);
+    expect(localStorage.getItem(SHOW_OFFLINE_RUNS_KEY)).toBe("false");
   });
 
   it("shows one machine on a server without machine routes", async () => {
@@ -191,6 +232,37 @@ describe("the Review app on several machines", () => {
     expect(rows[1]).toHaveTextContent("main-pc");
     expect(rows[1]).toHaveTextContent(lastRun().id.slice(-6));
     expect(screen.getByRole("heading", { name: "On main-pc" })).toBeInTheDocument();
+  });
+
+  it("shows an offline machine's last runs with their time only when the viewer asks", async () => {
+    const { store, fleet, hub } = setup();
+    store.start();
+    fleet.start();
+    go("#/dashboard");
+    renderApp(fleet, store);
+    const table = await screen.findByRole("region", { name: "Runs on every machine" });
+    await within(table).findByRole("link", { name: REMOTE_RUN_ID.slice(-6) });
+
+    // build-server goes offline: by default it shows as offline with no runs.
+    hub.failing.m1 = { status: 504, code: "machine_timeout", message: "No answer in time." };
+    await act(() => fleet.refresh());
+    expect(within(table).getByText("build-server: Offline")).toBeInTheDocument();
+    expect(within(table).queryByRole("link", { name: REMOTE_RUN_ID.slice(-6) })).toBeNull();
+    expect(within(table).queryByText(/as of/)).toBeNull();
+    const toggle = within(table).getByRole("checkbox", { name: "Show offline machines' last runs" });
+    expect(toggle).not.toBeChecked();
+
+    // Turned on, its last runs show, named offline, with the time they were listed.
+    fireEvent.click(toggle);
+    expect(toggle).toBeChecked();
+    const link = within(table).getByRole("link", { name: REMOTE_RUN_ID.slice(-6) });
+    expect(link.closest("tr")).toHaveTextContent("build-server (offline)");
+    expect(within(table).getByText(/Its runs are as of/)).toBeInTheDocument();
+    expect(localStorage.getItem(SHOW_OFFLINE_RUNS_KEY)).toBe("true");
+
+    // Turned off again, they go.
+    fireEvent.click(toggle);
+    expect(within(table).queryByRole("link", { name: REMOTE_RUN_ID.slice(-6) })).toBeNull();
   });
 
   it("opens another machine's run from the dashboard and reads it through the hub", async () => {
