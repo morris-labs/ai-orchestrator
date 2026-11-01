@@ -1,5 +1,5 @@
 // `aio events`: tails the server's event stream as JSON lines.
-import { ServerStreamFrameSchema, serverRoutes } from "@aio/contracts";
+import { ServerStreamFrameSchema, machinePath, serverRoutes } from "@aio/contracts";
 import { asIdentityError } from "@aio/contracts/tls";
 import WebSocket from "ws";
 import { jsonText } from "./format.js";
@@ -10,9 +10,13 @@ export interface TailOptions {
   baseUrl: string;
   token: string;
   types?: string;
+  /** The machine whose stream to tail, through the machine proxy route; this server by default. */
+  machine?: string | null;
   /** Stop after this many events (not counting `hello`). */
   count?: number;
   write: (line: string) => void;
+  /** Called after each event that `write` received, not counting `hello`. */
+  onEvent?: () => void;
   /** Receives warnings, such as a skipped frame that doesn't match the contract. */
   warn?: (line: string) => void;
   WebSocket?: WebSocketCtor;
@@ -24,11 +28,16 @@ export interface TailOptions {
 /** Close codes that end a stream without an error: normal, going away, and no status. */
 const NORMAL_CLOSE_CODES = new Set([1000, 1001, 1005]);
 
-/** Builds the `events.stream` WebSocket URL. The token never goes in it. */
-export function eventsUrl(baseUrl: string, types?: string): string {
+/**
+ * Builds the `events.stream` WebSocket URL, for `machine` when given. The
+ * token never goes in it.
+ */
+export function eventsUrl(baseUrl: string, types?: string, machine?: string | null): string {
   // Appended, not resolved, so a path prefix in `baseUrl` stays, as it does
   // for the REST calls.
-  const url = new URL(baseUrl.replace(/\/$/, "") + serverRoutes["events.stream"].path);
+  const url = new URL(
+    baseUrl.replace(/\/$/, "") + machinePath(serverRoutes["events.stream"].path, machine),
+  );
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   if (types) url.searchParams.set("types", types);
   return url.toString();
@@ -46,7 +55,7 @@ export function tailEvents(options: TailOptions): Promise<void> {
   const Ctor = options.WebSocket ?? WebSocket;
   return new Promise<void>((resolve, reject) => {
     // The token goes in the upgrade's `Authorization` header, out of the URL.
-    const socket = new Ctor(eventsUrl(options.baseUrl, options.types), {
+    const socket = new Ctor(eventsUrl(options.baseUrl, options.types, options.machine), {
       ...options.tls,
       headers: { authorization: `Bearer ${options.token}` },
     });
@@ -96,7 +105,10 @@ export function tailEvents(options: TailOptions): Promise<void> {
         );
       }
       options.write(`${jsonText(frame)}\n`);
-      if (type !== "hello") seen += 1;
+      if (type !== "hello") {
+        seen += 1;
+        options.onEvent?.();
+      }
       if (options.count !== undefined && seen >= options.count) finish();
     });
     socket.on("unexpected-response", (_req, res) => {
