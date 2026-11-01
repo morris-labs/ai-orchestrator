@@ -36,7 +36,7 @@ import {
 } from "../catalog/sessions.js";
 import type { Repositories } from "../db/repositories.js";
 import { DEFAULT_BACKUP_KEEP, snapshotTranscripts } from "../accounts/backup.js";
-import { preacceptClaudeAccount } from "../accounts/preaccept.js";
+import { preacceptClaudeAccount, preacceptHostTrust } from "../accounts/preaccept.js";
 import { RetentionError, ensureRetention, protectedRetentionDays } from "../accounts/retention.js";
 import { claudeStoreRoot } from "../accounts/store.js";
 import { buildSessionCommand, sessionStartCmd } from "../docker/scripts.js";
@@ -337,6 +337,14 @@ export class BoxService {
         });
       } catch {
         // The box still starts; it waits at the prompts, as it would without this step.
+      }
+    } else if (program === "claude" && this.deps.settings.get().accountsMode === "host") {
+      // Host mode shares the host's live `~/.claude.json`. Add only the
+      // folder trust entries, and never block the start.
+      try {
+        preacceptHostTrust(this.env.home, [workDir, hostToContainer(box.targetDir)]);
+      } catch {
+        // The box waits at the trust prompt, as it would without this step.
       }
     }
     let lastError = "";

@@ -26,7 +26,15 @@ import {
 } from "@agentbox/ui/testing/node";
 import { spawnSync } from "node:child_process";
 import { createServerIdentity } from "@agentbox/contracts/tls";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -145,30 +153,56 @@ test("toggles the details panel with Ctrl+Shift+D", async () => {
  * attaches with `tmux attach -d`, so that one window owns a session and its
  * size wins. A second window on the same box, such as another worker that
  * runs this test at once, therefore detaches the first one. The lock makes
- * those runs take turns. A lock older than three minutes is stale.
+ * those runs take turns.
+ *
+ * The lock is a directory in `/tmp`, not in `os.tmpdir()`: shells with
+ * different `TMPDIR` values would otherwise compute different paths and
+ * never see each other. The holder touches the directory every 30 seconds,
+ * and a lock untouched for 90 seconds is stale. The function logs a line
+ * when it waits.
  */
 async function lockBox(boxId: string): Promise<() => void> {
-  const lock = join(tmpdir(), `agentbox-e2e-terminal-${boxId.replace(/[^\w.-]/g, "_")}.lock`);
-  const until = Date.now() + 120_000;
+  const base = process.platform === "win32" ? tmpdir() : "/tmp";
+  const lock = join(base, `agentbox-e2e-terminal-${boxId.replace(/[^\w.-]/g, "_")}.lock`);
+  const until = Date.now() + 180_000;
+  let announced = false;
   for (;;) {
     try {
       mkdirSync(lock);
-      return () => rmSync(lock, { recursive: true, force: true });
-    } catch {
+      const beat = setInterval(() => {
+        const now = new Date();
+        try {
+          utimesSync(lock, now, now);
+        } catch {
+          // The lock was removed; the run goes on.
+        }
+      }, 30_000);
+      console.log(`Took the terminal lock ${lock} (pid ${process.pid}).`);
+      return () => {
+        clearInterval(beat);
+        rmSync(lock, { recursive: true, force: true });
+      };
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
       try {
-        if (Date.now() - statSync(lock).mtimeMs > 180_000)
+        if (Date.now() - statSync(lock).mtimeMs > 90_000)
           rmSync(lock, { recursive: true, force: true });
       } catch {
         // The holder released it between the checks.
       }
-      if (Date.now() > until) throw new Error(`Another run holds the terminal of ${boxId}.`);
+      if (!announced) {
+        console.log(`Waiting for another run to release the terminal lock ${lock}.`);
+        announced = true;
+      }
+      if (Date.now() > until)
+        throw new Error(`Another run holds the terminal of ${boxId}.`, { cause: err });
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
   }
 }
 
 test("types into a running box's terminal and sees the echo", async () => {
-  test.setTimeout(240_000);
+  test.setTimeout(300_000);
   const boxId = process.env.AGENTBOX_E2E_BOX;
   test.skip(!boxId, "Set AGENTBOX_E2E_BOX to a running box id to run this test.");
   const unlock = await lockBox(boxId as string);

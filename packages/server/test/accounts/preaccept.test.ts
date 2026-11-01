@@ -2,7 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { preacceptClaudeAccount } from "../../src/accounts/preaccept.js";
+import { preacceptClaudeAccount, preacceptHostTrust } from "../../src/accounts/preaccept.js";
 import { tempDir } from "../tmp.js";
 
 function readJson(file: string): Record<string, unknown> {
@@ -101,5 +101,48 @@ describe("preacceptClaudeAccount", () => {
     expect(r.linkedMissing).toEqual([path.join(dir, "settings.json")]);
     expect(fs.lstatSync(path.join(dir, "settings.json")).isSymbolicLink()).toBe(true);
     expect(readJson(hostFile)).toEqual({ model: "opus" });
+  });
+});
+
+describe("preacceptHostTrust", () => {
+  it("adds only the missing trust entries and keeps other keys", () => {
+    const home = tempDir("agentbox-host-");
+    const file = path.join(home, ".claude.json");
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        numStartups: 3,
+        projects: { "/a": { hasTrustDialogAccepted: true, x: 1 } },
+      }),
+    );
+    expect(preacceptHostTrust(home, ["/a", "/b"])).toEqual(["projects[/b].hasTrustDialogAccepted"]);
+    expect(readJson(file)).toEqual({
+      numStartups: 3,
+      projects: {
+        "/a": { hasTrustDialogAccepted: true, x: 1 },
+        "/b": { hasTrustDialogAccepted: true },
+      },
+    });
+    expect(preacceptHostTrust(home, ["/a", "/b"])).toEqual([]);
+  });
+
+  it("writes through a link, keeps the link, and adds no installMethod", () => {
+    const home = tempDir("agentbox-host-");
+    fs.mkdirSync(path.join(home, ".claude"));
+    const real = path.join(home, ".claude", ".claude.json");
+    fs.writeFileSync(real, "{}");
+    fs.symlinkSync(real, path.join(home, ".claude.json"));
+    preacceptHostTrust(home, ["/w"]);
+    expect(fs.lstatSync(path.join(home, ".claude.json")).isSymbolicLink()).toBe(true);
+    expect(readJson(real)).toEqual({ projects: { "/w": { hasTrustDialogAccepted: true } } });
+  });
+
+  it("leaves a missing or invalid file alone", () => {
+    const home = tempDir("agentbox-host-");
+    expect(preacceptHostTrust(home, ["/w"])).toEqual([]);
+    expect(fs.existsSync(path.join(home, ".claude.json"))).toBe(false);
+    fs.writeFileSync(path.join(home, ".claude.json"), "[1]");
+    expect(preacceptHostTrust(home, ["/w"])).toEqual([]);
+    expect(fs.readFileSync(path.join(home, ".claude.json"), "utf8")).toBe("[1]");
   });
 });

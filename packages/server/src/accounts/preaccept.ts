@@ -156,3 +156,40 @@ export function preacceptClaudeAccount(
   }
   return result;
 }
+
+/**
+ * Marks folders as trusted in the host's live `~/.claude.json`, for a box in
+ * host mode. Running Claude processes rewrite that file, so this writes only
+ * `projects[PATH].hasTrustDialogAccepted`, and only for a folder that lacks
+ * it. It follows a link to the real file and writes there, reads the file
+ * again just before the atomic write, and keeps every other key. It writes
+ * nothing when the file is missing or isn't a JSON object, and it never
+ * writes `installMethod` or any other key.
+ *
+ * @returns The keys that changed.
+ */
+export function preacceptHostTrust(home: string, trustDirs: readonly string[]): string[] {
+  const dirs = [...new Set(trustDirs)].filter((d) => d !== "");
+  if (dirs.length === 0) return [];
+  let file: string;
+  try {
+    file = fs.realpathSync(path.join(home, ".claude.json"));
+  } catch {
+    return [];
+  }
+  const changed: string[] = [];
+  const r = editJsonObject(file, (obj) => {
+    changed.length = 0;
+    const projects = isObject(obj.projects) ? obj.projects : {};
+    for (const dir of dirs) {
+      const entry = isObject(projects[dir]) ? (projects[dir] as JsonObject) : {};
+      if (entry.hasTrustDialogAccepted === true) continue;
+      entry.hasTrustDialogAccepted = true;
+      projects[dir] = entry;
+      changed.push(`projects[${dir}].hasTrustDialogAccepted`);
+    }
+    if (changed.length > 0) obj.projects = projects;
+    return changed.length > 0;
+  });
+  return r === true ? changed : [];
+}
