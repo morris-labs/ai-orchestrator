@@ -9,6 +9,7 @@ import {
   needsLocalPage,
   permissionAllowed,
   reviewCommand,
+  isMachineIdArg,
   terminalCandidates,
   terminalCommand,
   trayCounts,
@@ -109,6 +110,19 @@ describe("notifications and review", () => {
       args: ["--project=p", "--box=b"],
     });
     expect(reviewCommand("p", "b", "").file).toBe("aio-review");
+    expect(reviewCommand("p", "b", undefined, "node-b").args).toEqual([
+      "--project=p",
+      "--box=b",
+      "--machine=node-b",
+    ]);
+  });
+  it("passes only plain machine IDs to the review app", () => {
+    for (const ok of ["local", "hub", "node-b", "01JB8Z5K3W6Q2V9X4T7R0M1N2Q", "pc.lan_2"]) {
+      expect(isMachineIdArg(ok)).toBe(true);
+    }
+    for (const bad of ["", "-x", "a b", "a&b", "a/b", "a\nb", 7, null, "x".repeat(200)]) {
+      expect(isMachineIdArg(bad)).toBe(false);
+    }
   });
   it("keeps the server token out of a spawned process's environment", () => {
     const env = { PATH: "/usr/bin", AIO_SERVER_TOKEN: "secret", HOME: "/home/dev" };

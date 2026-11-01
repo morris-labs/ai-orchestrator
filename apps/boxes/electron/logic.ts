@@ -181,19 +181,33 @@ export function isBoxNotification(n: Pick<Notification, "kind" | "runId" | "boxI
 
 /**
  * The argv that launches the review app with the launcher prefilled. The
- * review app also takes an `aio-review://launch?project=&box=` URL or a
- * bare `?project=&box=` query; the flags are the form this app uses.
- * `binary` comes from `AIO_REVIEW_BIN` when it is set.
+ * review app also takes an `aio-review://launch?project=&box=&machine=` URL
+ * or a bare `?project=&box=` query; the flags are the form this app uses.
+ * `binary` comes from `AIO_REVIEW_BIN` when it is set. `machineId` names
+ * the machine that holds the box; absent means this one.
  */
 export function reviewCommand(
   projectId: string,
   boxId: string,
   binary: string | undefined = undefined,
+  machineId: string | undefined = undefined,
 ): { file: string; args: string[] } {
   return {
     file: binary || "aio-review",
-    args: [`--project=${projectId}`, `--box=${boxId}`],
+    args: [
+      `--project=${projectId}`,
+      `--box=${boxId}`,
+      ...(machineId ? [`--machine=${machineId}`] : []),
+    ],
   };
+}
+
+/**
+ * True for a machine ID the Boxes app passes to the review app: the
+ * characters the hub's machine IDs and the `local` and `hub` names use.
+ */
+export function isMachineIdArg(id: unknown): id is string {
+  return typeof id === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(id);
 }
 
 /** Environment variables that hold a secret and never reach a spawned process. */
@@ -405,18 +419,19 @@ export function windowsTerminalCommand(
  */
 export function reviewLaunch(
   os: HostOs,
-  link: { projectId?: string; boxId?: string },
+  link: { projectId?: string; boxId?: string; machineId?: string },
   binary: string | undefined,
 ): { file: string; args: string[] } | { url: string } {
   if (binary || os === "linux") {
     if (link.projectId !== undefined || link.boxId !== undefined) {
-      return reviewCommand(link.projectId ?? "", link.boxId ?? "", binary);
+      return reviewCommand(link.projectId ?? "", link.boxId ?? "", binary, link.machineId);
     }
     return { file: binary || "aio-review", args: [] };
   }
   const query = new URLSearchParams();
   if (link.projectId) query.set("project", link.projectId);
   if (link.boxId) query.set("box", link.boxId);
+  if (link.machineId) query.set("machine", link.machineId);
   const q = query.toString();
   return { url: `aio-review://launch${q ? `?${q}` : ""}` };
 }

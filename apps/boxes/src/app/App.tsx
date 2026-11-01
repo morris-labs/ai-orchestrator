@@ -692,22 +692,21 @@ export function App() {
 
   const onStartReview = async () => {
     if (!single) return;
-    if (!machine.isLocal) {
-      void inform(
-        "Start Review",
-        `The review app reviews boxes on this PC only. To review ${single.box.id}, start the review on ${machine.name}.`,
-      );
-      return;
-    }
+    // The run executes on the machine that holds the box; the review app
+    // reaches it through this server.
+    const machineId = machine.isLocal ? undefined : machine.id;
     const b = bridge();
     if (b) {
-      const r = await b.launchReview({ projectId: single.box.projectId, boxId: single.box.id });
+      const r = await b.launchReview({
+        projectId: single.box.projectId,
+        boxId: single.box.id,
+        ...(machineId ? { machineId } : {}),
+      });
       if (!r.ok) void inform("Start Review", r.error ?? "The review app didn't start.");
     } else {
-      window.open(
-        `/review/?${new URLSearchParams({ project: single.box.projectId, box: single.box.id }).toString()}`,
-        "_blank",
-      );
+      const q = new URLSearchParams({ project: single.box.projectId, box: single.box.id });
+      if (machineId) q.set("machine", machineId);
+      window.open(`/review/?${q.toString()}`, "_blank");
     }
   };
 

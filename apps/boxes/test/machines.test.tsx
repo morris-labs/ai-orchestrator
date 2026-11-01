@@ -330,6 +330,41 @@ describe("machine tabs", () => {
     expect(pickDirectory).not.toHaveBeenCalled();
   });
 
+  it("starts a review of a remote box on the machine that holds it", async () => {
+    const user = userEvent.setup();
+    const launchReview = vi.fn(async () => ({ ok: true }));
+    window.aio = {
+      takeToken: () => null,
+      serverUrl: "http://127.0.0.1:21400",
+      openExternalTerminal: async () => ({ ok: true }),
+      launchReview,
+      pickDirectory: async () => null,
+      readClipboardText: async () => "",
+      openPath: async () => ({ ok: true }),
+      openExternal: async () => ({ ok: true }),
+      onSelectBox: () => () => undefined,
+      quit: () => undefined,
+    };
+    renderHub({
+      local: siteServer(),
+      servers: { "node-b": nodeServer() },
+      machines: [LOCAL, machine({ id: "node-b", name: "node-b" })],
+    });
+    await user.click(
+      await within(await screen.findByRole("tablist", { name: "Machines" })).findByRole("tab", {
+        name: "node-b",
+      }),
+    );
+    await screen.findByRole("cell", { name: "Node site" });
+    fireEvent.mouseDown(rowOf("Node site"), { button: 0 });
+    fireEvent.mouseDown(screen.getByRole("menuitem", { name: "Box" }));
+    await user.click(await screen.findByRole("menuitem", { name: /^Start Review/ }));
+    await waitFor(() => expect(launchReview).toHaveBeenCalledTimes(1));
+    expect(launchReview).toHaveBeenCalledWith(
+      expect.objectContaining({ boxId: "aio-agent-site", machineId: "node-b" }),
+    );
+  });
+
   it("says a machine is offline when the hub can't reach it", async () => {
     const user = userEvent.setup();
     // The hub lists node-d as online, but its link answers machine_offline.
