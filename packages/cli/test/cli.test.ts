@@ -845,6 +845,49 @@ describe("accounts", () => {
     expect(await cli(["accounts", "import", "claude", "work"])).toBe(2);
   });
 
+  it("passes --account choices to box new, one per vendor", async () => {
+    server.on("POST /api/v1/boxes", { status: 202, body: job("running") });
+    await cli([
+      "box",
+      "new",
+      "/d",
+      "--account",
+      "claude/work",
+      "--account",
+      "codex/main",
+      "--no-wait",
+    ]);
+    expect(last()?.body).toMatchObject({
+      accounts: { claude: "claude/work", codex: "codex/main" },
+    });
+    expect(await cli(["box", "new", "/d", "--account", "claude/a", "--account", "claude/b"])).toBe(
+      2,
+    );
+    expect(await cli(["box", "new", "/d", "--account", "work"])).toBe(2);
+  });
+
+  it("sets and clears a box's account", async () => {
+    server.on(`PATCH /api/v1/boxes/${BOX_ID}`, {
+      status: 400,
+      body: { error: { code: "validation", message: "stop here" } },
+    });
+    await cli(["box", "account", BOX_ID, "claude/work"]);
+    expect(last()?.body).toEqual({ accounts: { claude: "claude/work" } });
+    await cli(["box", "account", BOX_ID, "codex"]);
+    expect(last()?.body).toEqual({ accounts: { codex: null } });
+    expect(await cli(["box", "account", BOX_ID, "gemini"])).toBe(2);
+  });
+
+  it("sets the accounts mode through the settings", async () => {
+    server.on("PATCH /api/v1/settings", {
+      status: 400,
+      body: { error: { code: "validation", message: "stop here" } },
+    });
+    await cli(["accounts", "mode", "accounts"]);
+    expect(last()?.body).toEqual({ accountsMode: "accounts" });
+    expect(await cli(["accounts", "mode", "both"])).toBe(2);
+  });
+
   it("prints a Copilot sign-in with --device-code", async () => {
     server.on("GET /api/v1/accounts/copilot/work", { body: view("copilot/work") });
     expect(await cli(["accounts", "login", "copilot/work"])).toBe(0);

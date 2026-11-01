@@ -72,6 +72,22 @@ export interface CliDeps {
 export class UsageError extends Error {}
 
 const PLATFORMS: string[] = PlatformSchema.options;
+
+/** Turns repeated `--account VENDOR/NAME` options into the `accounts` body field. */
+function accountsOf(ids: readonly string[]): Record<string, string> | undefined {
+  const out: Record<string, string> = {};
+  for (const id of ids) {
+    const parsed = parseAccountId(id);
+    if (!parsed) {
+      throw new UsageError(`Invalid account ${id}; use VENDOR/NAME, such as claude/work.`);
+    }
+    if (out[parsed.vendor] !== undefined) {
+      throw new UsageError(`Two ${parsed.vendor} accounts given; a box uses one per vendor.`);
+    }
+    out[parsed.vendor] = id;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
 const EFFORTS: string[] = EffortSchema.options;
 const PROFILES: string[] = ProfileSchema.options;
 const ROLES: string[] = RoleSchema.options;
@@ -410,9 +426,16 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
     .option("--no-start", "Save the box without starting it.")
     .option("--force", "Adopt a conversation that a stopped box holds.")
     .option("--ssh-remote <name>", "An SSH remote to forward (repeatable).", collect, [])
+    .option(
+      "--account <id>",
+      "The account for a vendor, VENDOR/NAME (repeatable). Default: the vendor's default.",
+      collect,
+      [],
+    )
     .option("--no-wait", "Print the job and return without waiting for it.")
     .action(async (dir: string, o) => {
       if (o.adopt && o.fork) throw new UsageError("Use --adopt or --fork, not both.");
+      const accountChoice = accountsOf(o.account as string[]);
       const c = client();
       const conversation = o.adopt
         ? { mode: "adopt" as const, sessionUuid: o.adopt as string }
@@ -428,6 +451,7 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
           model: o.model,
           effort: o.effort,
           skipPermissions: o.skipPermissions,
+          ...(accountChoice ? { accounts: accountChoice } : {}),
           layout: o.layout,
           rememberLayout: o.rememberLayout ?? false,
           sshRemoteRefs: o.sshRemote,
@@ -479,6 +503,33 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
         print(v, () => `${v.box.id} is ${v.status}.\n`);
       });
   }
+
+  box
+    .command("account")
+    .description("Set a box's account for a vendor, or use the default again with a bare vendor.")
+    .argument("<boxId>")
+    .argument("<account>", "VENDOR/NAME to set; VENDOR alone to use the default again.")
+    .action(async (boxId: string, account: string) => {
+      const vendor = account.split("/")[0] ?? "";
+      if (!PLATFORMS.includes(vendor)) {
+        throw new UsageError(`Unknown vendor ${vendor}; use ${PLATFORMS.join(", ")}.`);
+      }
+      const set = account.includes("/");
+      if (set && !parseAccountId(account)) {
+        throw new UsageError(`Invalid account ${account}; use VENDOR/NAME, such as claude/work.`);
+      }
+      const r = await client().call("boxes.update", {
+        params: { boxId },
+        body: { accounts: { [vendor]: set ? account : null } },
+      });
+      print(
+        r,
+        () =>
+          `${boxId} now uses ${set ? account : `the default ${vendor} account`}.${
+            r.restartRequired ? " Restart the box to apply it." : ""
+          }\n`,
+      );
+    });
 
   box
     .command("remove")
@@ -973,6 +1024,28 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
         body: { vendor: vendor as "claude", name, label: o.label },
       });
       print(r, () => `Created ${r.account.id} in ${r.dir}${r.isDefault ? " (default)" : ""}.\n`);
+    });
+
+  accounts
+    .command("mode")
+    .description("Show or set where boxes get their agent folders: host or accounts.")
+    .argument("[mode]", "host or accounts. Omit it to show the current mode.")
+    .action(async (mode: string | undefined) => {
+      const c = client();
+      if (mode !== undefined && mode !== "host" && mode !== "accounts") {
+        throw new UsageError("Use host or accounts.");
+      }
+      const settings =
+        mode === undefined
+          ? await c.call("settings.get")
+          : await c.call("settings.patch", { body: { accountsMode: mode } });
+      print(
+        { accountsMode: settings.accountsMode },
+        () =>
+          `Boxes use ${settings.accountsMode === "accounts" ? "account folders" : "the host's agent folders"} (${settings.accountsMode}).${
+            mode === undefined ? "" : " Restart each project container for it to take effect."
+          }\n`,
+      );
     });
 
   accounts
