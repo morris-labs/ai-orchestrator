@@ -25,14 +25,25 @@ import { useMachines } from "./useMachines";
 /** The view key of the Machines page; machine views use the machine id. */
 export const MACHINES_VIEW = "@machines";
 
-export function Shell({ pollMs }: { pollMs?: number }) {
+export interface ShellProps {
+  /**
+   * Makes the API client of a machine, with `createMachineClient()` and the
+   * options of this server's client. Without it, the window shows this PC
+   * alone.
+   */
+  machineClient?: (machineId: string) => ApiClient;
+  /** How often the machine list reloads, in milliseconds. */
+  pollMs?: number;
+}
+
+export function Shell({ machineClient, pollMs }: ShellProps) {
   const root = useApiClient();
   const { supported, machines, error, reload } = useMachines(root, pollMs);
   const [view, setView] = useState<string>(LOCAL_MACHINE_ID);
   const messageOpen = useMessageBoxOpen();
 
   const local = machines.find((m) => m.isLocal);
-  const remotes = machines.filter(hasTab);
+  const remotes = machineClient ? machines.filter(hasTab) : [];
   const multi = remotes.length > 0;
   const showStrip = supported === true && (multi || view === MACHINES_VIEW);
   const views = [LOCAL_MACHINE_ID, ...remotes.map((m) => m.id), MACHINES_VIEW];
@@ -46,15 +57,15 @@ export function Shell({ pollMs }: { pollMs?: number }) {
   // One client per machine, kept across reloads so a view never reconnects
   // just because the list was polled.
   const clients = useRef(new Map<string, ApiClient>());
-  const clientRoot = useRef(root);
-  if (clientRoot.current !== root) {
-    clientRoot.current = root;
+  const factory = useRef(machineClient);
+  if (factory.current !== machineClient) {
+    factory.current = machineClient;
     clients.current.clear();
   }
   const clientFor = (id: string): ApiClient => {
     let c = clients.current.get(id);
     if (!c) {
-      c = root.forMachine(id);
+      c = machineClient ? machineClient(id) : root;
       clients.current.set(id, c);
     }
     return c;

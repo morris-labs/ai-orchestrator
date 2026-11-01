@@ -8,7 +8,7 @@
 // server is the hub of more than one.
 import "@aio/ui/theme.css";
 import "./app.css";
-import { ApiClient } from "@aio/ui";
+import { ApiClient, createMachineClient } from "@aio/ui";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { Root } from "./app/Root";
@@ -31,13 +31,22 @@ async function makeClient(): Promise<ApiClient> {
   return new ApiClient();
 }
 
+/**
+ * Makes another machine's client. Like this server's client after
+ * `startSession()`, it authenticates with the session cookie.
+ */
+function machineClient(machineId: string): ApiClient {
+  const b = bridge();
+  return createMachineClient(b ? { baseUrl: b.serverUrl } : {}, machineId);
+}
+
 void makeClient().then((client) => {
   const el = document.getElementById("root");
   if (!el) return;
   createRoot(el).render(
     <StrictMode>
       <Root client={client}>
-        <Shell />
+        <Shell machineClient={machineClient} />
       </Root>
     </StrictMode>,
   );

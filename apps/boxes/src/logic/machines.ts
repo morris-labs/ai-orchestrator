@@ -9,8 +9,7 @@ import {
 import { isApiError, type ApiClient } from "@aio/ui";
 import { z } from "zod";
 
-/** The id the hub gives this server's own machine. */
-export const LOCAL_MACHINE_ID = "local";
+export { LOCAL_MACHINE_ID } from "@aio/contracts";
 
 const MACHINES_PATH = "/api/v1/machines";
 

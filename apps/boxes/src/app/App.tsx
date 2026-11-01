@@ -1377,11 +1377,15 @@ export function App() {
 
   const serverError =
     data.error && data.error.code !== "docker_unavailable"
-      ? data.error.code === "unreachable"
-        ? machine.isLocal
-          ? `The AI Orchestrator server is not reachable. Check that aio-server runs (systemctl --user status aio-server). ${data.error.message}`
-          : `${machine.name} is not reachable through the hub. ${data.error.message}`
-        : data.error.message
+      ? data.error.code === "machine_offline"
+        ? `${machine.name} is offline: the hub can't reach it. ${data.error.message}`
+        : data.error.code === "machine_timeout"
+          ? `${machine.name} timed out: it didn't answer the hub in time. ${data.error.message}`
+          : data.error.code === "unreachable"
+            ? machine.isLocal
+              ? `The AI Orchestrator server is not reachable. Check that aio-server runs (systemctl --user status aio-server). ${data.error.message}`
+              : `${machine.name} is not reachable through the hub. ${data.error.message}`
+            : data.error.message
       : null;
   const selectedRemotes = single
     ? remotes
