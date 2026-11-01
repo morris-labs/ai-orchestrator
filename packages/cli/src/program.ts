@@ -719,6 +719,27 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
     });
 
   project
+    .command("remove")
+    .description(
+      "Delete a project's record. Never deletes the folder, worktrees, or transcripts. Refused when the project has boxes.",
+    )
+    .argument("<projectId>")
+    .option("--force", "Also remove the project's box records. The boxes must be stopped.")
+    .action(async (projectId: string, o: { force?: boolean }) => {
+      const r = await client().call("projects.remove", {
+        params: { projectId },
+        query: { force: o.force ? "true" : "false" },
+      });
+      print(
+        r,
+        () =>
+          `Removed the project ${projectId}.${
+            r.boxes.length > 0 ? ` Removed the box records: ${r.boxes.join(", ")}.` : ""
+          } The folder and the transcripts are untouched.\n`,
+      );
+    });
+
+  project
     .command("restart")
     .description("Restart the project's container and every box that was running in it.")
     .argument("<projectId>")

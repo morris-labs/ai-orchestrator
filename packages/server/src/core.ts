@@ -151,6 +151,7 @@ export function createServerCore(options: CoreOptions): ServerCore {
     projects,
     hooks: getHooks,
     sessionGoneTimeoutMs: options.sessionGoneTimeoutMs,
+    log: options.log,
   });
   const accounts = new AccountService({
     env,

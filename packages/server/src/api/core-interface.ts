@@ -112,6 +112,8 @@ export interface CoreProjects {
   get(projectId: string): Promise<ProjectSummary>;
   update(projectId: string, patch: ProjectUpdate): Promise<ProjectUpdateResult>;
   restartContainer(projectId: string): Promise<BulkResult>;
+  /** Throws `conflict` for a project with boxes unless `force`, and `box_running` while one runs. */
+  remove(projectId: string, force: boolean): Promise<{ removed: boolean; boxes: string[] }>;
   getPolicy(projectId: string): Promise<PolicyResult>;
   /**
    * Writes the policy, as an object or as text. With `baseRevision`, throws

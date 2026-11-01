@@ -91,6 +91,7 @@ export function apiCoreOf(server: ServerCore, dockerApi: Docker): Core {
       get: async (projectId) => projects.summary(projects.get(projectId)),
       update: (projectId, patch) => projects.update(projectId, patch),
       restartContainer: (projectId) => boxes.restartProjectContainer(projectId),
+      remove: (projectId, force) => boxes.removeProject(projectId, { force }),
       getPolicy: async (projectId) => readPolicy(projects.policyFile(projects.get(projectId))),
       putPolicy: async (projectId, policy, baseRevision) =>
         writePolicy(projects.policyFile(projects.get(projectId)), policy, baseRevision),

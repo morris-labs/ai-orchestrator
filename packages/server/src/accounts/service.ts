@@ -49,6 +49,12 @@ import {
 import { adoptTranscripts } from "./adopt.js";
 import { preacceptClaudeAccount } from "./preaccept.js";
 import {
+  RetentionError,
+  ensureRetention,
+  protectedRetentionDays,
+  retentionWarnings,
+} from "./retention.js";
+import {
   hostProjectsRoot,
   linkProjectsToStore,
   projectsLinkState,
@@ -186,6 +192,30 @@ export class AccountService {
     }
   }
 
+  /** The least `cleanupPeriodDays` an account keeps. See `retention.ts`. */
+  private retentionDays(): number {
+    return protectedRetentionDays(
+      this.env.home,
+      this.options.settings.get().transcriptRetentionDays,
+    );
+  }
+
+  /**
+   * Sets `cleanupPeriodDays` in a Claude account folder. Returns a note for
+   * the caller's report, or `undefined` when nothing needs saying. A file it
+   * can't change isn't fatal here; the first start refuses until it is fixed.
+   */
+  private keepTranscripts(dir: string): string | undefined {
+    try {
+      return ensureRetention(dir, this.retentionDays())
+        ? `Set cleanupPeriodDays to keep transcripts at least ${this.retentionDays()} days.`
+        : undefined;
+    } catch (err) {
+      if (err instanceof RetentionError) return err.message;
+      throw err;
+    }
+  }
+
   /** The transcript store that every Claude account links to. */
   storeRoot(): string {
     return this.resolvedStore().root;
@@ -296,6 +326,7 @@ export class AccountService {
       const store = this.storeRoot();
       const warning = projectsLinkWarning(projectsLinkState(dir, store), dir, store);
       if (warning) warnings.push(warning);
+      warnings.push(...retentionWarnings(dir, this.retentionDays()));
     }
     return {
       account,
@@ -345,6 +376,7 @@ export class AccountService {
     if (c.vendor === "claude") {
       linkProjectsToStore(dir, this.storeRoot());
       preacceptClaudeAccount(dir);
+      ensureRetention(dir, this.retentionDays());
     }
     if (c.vendor === "codex") {
       fs.writeFileSync(path.join(dir, "config.toml"), `${CODEX_STORE_SETTING}\n`, { mode: 0o600 });
@@ -440,6 +472,8 @@ export class AccountService {
       }
       for (const f of pre.skipped)
         warnings.push(`${f} isn't a JSON object, so it was left as it is.`);
+      const kept = this.keepTranscripts(dest);
+      if (kept) warnings.push(kept);
     }
     if (req.vendor === "codex" && (await addCodexFileStore(path.join(dest, "config.toml")))) {
       warnings.push(`Added ${CODEX_STORE_SETTING} to config.toml.`);
@@ -615,6 +649,8 @@ export class AccountService {
           if (pre.changed.length > 0) {
             log(`  Set ${pre.changed.join(", ")} for the first start.\r\n`);
           }
+          const kept = this.keepTranscripts(dir);
+          if (kept) log(`  ${kept}\r\n`);
         }
         if (copied.leftOut.length > 0) {
           log(`  Left out the sign-in files: ${copied.leftOut.join(", ")}.\r\n`);

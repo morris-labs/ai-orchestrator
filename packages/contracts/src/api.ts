@@ -1050,6 +1050,15 @@ export const serverRoutes = {
     body: ProjectUpdateSchema,
     response: ProjectUpdateResultSchema,
   }),
+  "projects.remove": http({
+    method: "DELETE",
+    path: `${projects}/:projectId`,
+    summary:
+      "Delete a project's record. Refused when it has boxes, unless `force` removes their records too. Never deletes the folder, worktrees, or transcripts.",
+    query: z.object({ force: QueryBooleanSchema.default("false") }),
+    response: z.object({ removed: z.boolean(), boxes: z.array(z.string()) }),
+    errors: ["conflict", "box_running"],
+  }),
   "projects.restartContainer": http({
     method: "POST",
     path: `${projects}/:projectId/container/restart`,

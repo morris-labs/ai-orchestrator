@@ -53,7 +53,7 @@ function isObject(v: unknown): v is JsonObject {
  * a file that isn't a JSON object. A symbolic link is replaced by a regular
  * file, so the write never reaches the file the link points at.
  */
-function editJsonObject(file: string, edit: (obj: JsonObject) => boolean): boolean | "invalid" {
+export function editJsonObject(file: string, edit: (obj: JsonObject) => boolean): boolean | "invalid" {
   let obj: JsonObject = {};
   try {
     const parsed: unknown = JSON.parse(fs.readFileSync(file, "utf8"));

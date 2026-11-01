@@ -44,6 +44,7 @@ const cases: Case[] = [
   },
   { key: "projects.get", method: "GET", url: P, status: 200 },
   { key: "projects.update", method: "PATCH", url: P, body: { name: "Renamed" }, status: 200 },
+  { key: "projects.remove", method: "DELETE", url: `${P}?force=true`, status: 200 },
   { key: "projects.restartContainer", method: "POST", url: `${P}/container/restart`, status: 200 },
   { key: "projects.policy.get", method: "GET", url: `${P}/policy`, status: 200 },
   { key: "projects.policy.put", method: "PUT", url: `${P}/policy`, body: policy, status: 200 },

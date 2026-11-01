@@ -106,6 +106,10 @@ export function createFakeCore(): FakeCore {
         return { project: { ...project, name: patch.name ?? project.name }, staleBoxes: [] };
       },
       restartContainer: async () => (record("projects.restartContainer"), bulk),
+      remove: async (id, force) => {
+        record(`projects.remove:${id}:${String(force)}`);
+        return { removed: true, boxes: [] };
+      },
       getPolicy: async () => policyResult,
       putPolicy: async (_id, policy) => ({
         ...policyResult,

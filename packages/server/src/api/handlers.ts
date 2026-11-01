@@ -201,6 +201,8 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
       requireAbsoluteMounts(body.mounts);
       return core.projects.update(params.projectId, body);
     },
+    "projects.remove": async ({ params, query }) =>
+      core.projects.remove(params.projectId, query.force),
     "projects.restartContainer": async ({ params }) =>
       core.projects.restartContainer(params.projectId),
     "projects.policy.get": async ({ params }) => core.projects.getPolicy(params.projectId),

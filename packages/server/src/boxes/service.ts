@@ -35,7 +35,10 @@ import {
   sameModel,
 } from "../catalog/sessions.js";
 import type { Repositories } from "../db/repositories.js";
+import { DEFAULT_BACKUP_KEEP, snapshotTranscripts } from "../accounts/backup.js";
 import { preacceptClaudeAccount } from "../accounts/preaccept.js";
+import { RetentionError, ensureRetention, protectedRetentionDays } from "../accounts/retention.js";
+import { claudeStoreRoot } from "../accounts/store.js";
 import { buildSessionCommand, sessionStartCmd } from "../docker/scripts.js";
 import { allLiveSessions, liveSessions } from "../docker/state.js";
 import { isContainerGone, type DockerClient, type ExecResult } from "../docker/types.js";
@@ -103,6 +106,8 @@ export interface BoxServiceDeps {
   hooks: () => CoreHooks;
   /** Milliseconds a stopped session may take to leave the keeper's list. */
   sessionGoneTimeoutMs?: number;
+  /** Receives notes about the transcript snapshot. */
+  log?: (message: string) => void;
 }
 
 /** How long a `starting` or `stopping` mark lasts without confirmation. */
@@ -156,6 +161,9 @@ export class BoxService {
   private readonly converting = new Set<string>();
   /** Serializes the part of `create()` that picks a name and saves the record. */
   private readonly createLock = new KeyedMutex();
+
+  /** The snapshot taken at the first Claude start after the server started. */
+  private snapshot: Promise<void> | undefined;
 
   constructor(private readonly deps: BoxServiceDeps) {}
 
@@ -255,6 +263,48 @@ export class BoxService {
   // Sessions
 
   /**
+   * Makes sure that the account's `settings.json` keeps transcripts long
+   * enough. Throws `invalid_state` when it can't, so the session doesn't start.
+   */
+  private protectTranscripts(accountDir: string): void {
+    const days = protectedRetentionDays(
+      this.env.home,
+      this.deps.settings.get().transcriptRetentionDays,
+    );
+    try {
+      ensureRetention(accountDir, days);
+    } catch (err) {
+      if (err instanceof RetentionError) {
+        throw new ApiError("invalid_state", err.message, { file: err.file });
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * Takes a hard-link snapshot of the transcript store before the first
+   * Claude start in accounts mode after the server started. A failure is
+   * logged and doesn't block the start.
+   */
+  private snapshotOnce(): Promise<void> {
+    this.snapshot ??= (async () => {
+      const settings = this.deps.settings.get();
+      try {
+        const r = await snapshotTranscripts({
+          storeRoot: claudeStoreRoot(this.env, settings.transcriptStore),
+          backupRoot: path.join(homePaths(this.env).dataDir, "backup", "transcripts"),
+          keep: settings.transcriptBackupKeep ?? DEFAULT_BACKUP_KEEP,
+          now: this.env.now(),
+        });
+        if (r.dir) this.deps.log?.(`Snapshot of the transcripts: ${r.dir} (${r.files} files).`);
+      } catch (err) {
+        this.deps.log?.(`Transcript snapshot failed: ${messageOf(err)}`);
+      }
+    })();
+    return this.snapshot;
+  }
+
+  /**
    * Starts `program args` as tmux session `session` in the box's container,
    * creating the container when needed (twice, for a container that is on its
    * way out just as it is reached).
@@ -274,6 +324,10 @@ export class BoxService {
     );
     const workDir = hostToContainer(boxWorkDir(box));
     if (account?.claude) {
+      // Claude Code deletes transcripts older than `cleanupPeriodDays` (30 by
+      // default) from the shared store. Fail the start rather than risk it.
+      this.protectTranscripts(account.dir);
+      await this.snapshotOnce();
       // A fresh account asks about folder trust and the bypass warning on its
       // first start, and the app can't show those questions. Answer them in
       // the account's files, for the folders the session works in.
@@ -1416,6 +1470,38 @@ export class BoxService {
     if (stopped.done.length === 0) await this.deps.projects.ensureContainer(project.id);
     const started = await this.bulk(stopped.done, (id) => this.start(id, { syncTitle: false }));
     return { done: started.done, failed: [...stopped.failed, ...started.failed] };
+  }
+
+  /**
+   * `projects.remove`: deletes the project's record. Refuses a project that
+   * has boxes (`conflict`); with `force`, removes the box records first and
+   * refuses while one of them runs (`box_running`). Never deletes the
+   * project folder, a worktree, or a transcript. Stops the project's idle
+   * container, which would otherwise linger until its keeper times out.
+   */
+  async removeProject(
+    projectId: string,
+    options: { force?: boolean } = {},
+  ): Promise<{ removed: boolean; boxes: string[] }> {
+    const project = this.deps.projects.get(projectId);
+    const boxes = this.repos.boxes.byProject(project.id);
+    if (boxes.length > 0 && !options.force) {
+      throw new ApiError(
+        "conflict",
+        `The project ${project.id} has ${boxes.length} box${boxes.length === 1 ? "" : "es"}: ${boxes.map((b) => b.id).join(", ")}. Remove them first, or force the removal of their records.`,
+        { boxes: boxes.map((b) => b.id) },
+      );
+    }
+    // Check all before removing any, so a refusal leaves everything as it was.
+    for (const b of boxes) this.requireStopped(b, "remove its project");
+    for (const b of boxes) await this.remove(b.id);
+    try {
+      await this.deps.projects.stopContainer(project.id);
+    } catch {
+      // No container, or Docker is away; the record goes either way.
+    }
+    this.repos.projects.delete(project.id);
+    return { removed: true, boxes: boxes.map((b) => b.id) };
   }
 
   /**

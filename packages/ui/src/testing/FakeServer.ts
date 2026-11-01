@@ -479,6 +479,19 @@ const defaultHandlers: Partial<Record<HttpRouteKey, FakeHandler>> = {
         : [],
     };
   },
+  "projects.remove": (r, s) => {
+    const id = r.params.projectId as string;
+    const boxes = s.state.boxes.filter((b) => b.box.projectId === id);
+    if (boxes.length > 0 && !r.query.force) {
+      throw new FakeApiError("conflict", `The project ${id} has boxes.`);
+    }
+    if (boxes.some((b) => b.status === "running")) {
+      throw new FakeApiError("box_running", "Stop the boxes first.");
+    }
+    s.state.boxes = s.state.boxes.filter((b) => b.box.projectId !== id);
+    s.state.projects = s.state.projects.filter((p) => p.id !== id);
+    return { removed: true, boxes: boxes.map((b) => b.box.id) };
+  },
   "projects.restartContainer": (r, s) =>
     bulk(
       s,

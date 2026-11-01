@@ -147,6 +147,12 @@ export class SettingsService {
         throw new ApiError("validation", `${p.transcriptStore} isn't an absolute path.`);
       } else next.transcriptStore = p.transcriptStore;
     }
+    for (const key of ["transcriptRetentionDays", "transcriptBackupKeep"] as const) {
+      const v = p[key];
+      if (v === undefined) continue;
+      if (v === null) delete next[key];
+      else next[key] = v;
+    }
     if (p.accountsMode !== undefined) next.accountsMode = p.accountsMode;
     if (p.accountDefaults !== undefined) {
       for (const vendor of ["claude", "codex", "copilot"] as const) {

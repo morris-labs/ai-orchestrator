@@ -238,6 +238,66 @@ In accounts mode, a box behaves as follows:
 - **Models**: the model list and the defaults come from the chosen Claude
   account's `.claude.json` and `settings.json`.
 
+## Transcript retention
+
+> **Warning:** Claude Code deletes transcripts older than `cleanupPeriodDays`
+> (30 by default) from its `projects` folder. Every Claude account's
+> `projects` link leads to the shared store, so one account whose
+> `settings.json` lacks the key deletes old conversations for every account
+> and for the host. This happened once: the host's `settings.json` set 3650,
+> imported accounts didn't, and the first box starts in accounts mode removed
+> every transcript older than 30 days.
+
+Agent Box makes this impossible in the following ways:
+
+- **Before every Claude session start** on an account, the server makes sure
+  that the account's `settings.json` sets `cleanupPeriodDays` to at least the
+  protected value. It never lowers a larger value. When it can't make sure,
+  because the file isn't a JSON object or isn't writable, the start fails with
+  `invalid_state` and a message that names the file.
+- **At account create, import, and seed**, the server sets the same key.
+- **The protected value** is `cleanupPeriodDays` from the host's
+  `~/.claude/settings.json` when it sets one. Otherwise it is the
+  `transcriptRetentionDays` setting, which defaults to 3650 days.
+- **`agentbox accounts check`** warns about an account whose `settings.json`
+  lacks the key or sets a lower value. It also warns when
+  `desktopSessionCleanupPeriodDays` is above 0.
+
+Claude Code 2.1.316 has one other key with "cleanup" in its name,
+`desktopSessionCleanupPeriodDays`. It sets a deletion ceiling for transcripts
+of the desktop app and Cowork only, and its default of 0 means no ceiling.
+Agent Box doesn't write it. Claude Code ignores both keys when an
+organization's managed settings set `cleanupPeriodDays`, and project-level
+`.claude/settings.json` files can also set the key; check those if
+transcripts disappear.
+
+### Transcript snapshots
+
+Before the first Claude start in accounts mode after the server starts, the
+server takes a snapshot of the transcript store: a copy of the folder tree in
+which every file is a hard link to the store's file, like `cp -al`. It lives
+in `DATA_DIR/backup/transcripts/TIMESTAMP`, costs one directory entry per file
+and no file content, and the server keeps the newest 7.
+
+A snapshot protects against a file that another process deletes or replaces,
+such as Claude Code's cleanup. It doesn't protect against an edit in place:
+a transcript that a conversation appends to is the same file in the snapshot.
+It can't cross file systems, so a `transcriptStore` setting on another
+file system logs a failure and takes no snapshot. A failed snapshot never
+blocks a start.
+
+To change the number of snapshots, send `PATCH /api/v1/settings` with
+`{"transcriptBackupKeep": 14}`; `0` turns snapshots off and `null` restores
+7. The same call sets the protected retention with `transcriptRetentionDays`.
+
+## Remove a project
+
+To delete a project's record, run `agentbox project remove PROJECT_ID`, or
+send `DELETE /api/v1/projects/PROJECT_ID`. The server refuses a project that
+has boxes. With `--force` (`?force=true`), it removes the box records first,
+and refuses while any of those boxes runs. It never deletes the project's
+folder, a worktree, or a transcript.
+
 ## Back up accounts
 
 The account folders hold settings, history, and sign-ins that exist nowhere

@@ -635,6 +635,17 @@ export const GlobalSettingsSchema = z
      * `DATA_DIR/transcripts/claude`.
      */
     transcriptStore: z.string().min(1).optional(),
+    /**
+     * The least `cleanupPeriodDays` that Agent Box keeps in every Claude
+     * account's `settings.json`, unless the host's `~/.claude/settings.json`
+     * sets one, which wins. Absent means 3650.
+     */
+    transcriptRetentionDays: z.number().int().positive().optional(),
+    /**
+     * How many hard-link snapshots of the transcript store to keep under
+     * `DATA_DIR/backup/transcripts`. Absent means 7; 0 turns snapshots off.
+     */
+    transcriptBackupKeep: z.number().int().nonnegative().optional(),
   })
   .strict();
 export type GlobalSettings = z.infer<typeof GlobalSettingsSchema>;
@@ -700,6 +711,8 @@ export const GlobalSettingsInputSchema = z
     accountsMode: AccountsModeSchema.default("host"),
     accountDefaults: AccountDefaultsSchema.default({}),
     transcriptStore: z.string().min(1).optional(),
+    transcriptRetentionDays: z.number().int().positive().optional(),
+    transcriptBackupKeep: z.number().int().nonnegative().optional(),
   })
   .strict();
 
@@ -744,6 +757,10 @@ export const GlobalSettingsPatchSchema = z
     accountsMode: AccountsModeSchema,
     /** An absolute folder; `null` goes back to the host's store. */
     transcriptStore: z.string().min(1).nullable(),
+    /** `null` goes back to the default, 3650 days. */
+    transcriptRetentionDays: z.number().int().positive().nullable(),
+    /** `0` turns snapshots off; `null` goes back to the default, 7. */
+    transcriptBackupKeep: z.number().int().nonnegative().nullable(),
     /**
      * Only the vendors it names change; `null` clears a default. The server
      * refuses an id that names no account.
