@@ -458,6 +458,22 @@ class DesktopTest(unittest.TestCase):
             self.assertEqual(entry["StartupWMClass"], f"agentbox-{app}")
             self.assertEqual(entry["Type"], "Application")
 
+    def test_window_class_matches_entry_and_desktop_name(self):
+        for app in APPS:
+            name = f"agentbox-{app}"
+            parser = configparser.ConfigParser(interpolation=None)
+            parser.optionxform = str
+            parser.read(ROOT / f"packaging/desktop/{name}.desktop")
+            wm_class = parser["Desktop Entry"]["StartupWMClass"]
+            package = json.loads((ROOT / f"apps/{app}/package.json").read_text())
+            self.assertEqual(package["desktopName"], f"{wm_class}.desktop")
+            main = (ROOT / f"apps/{app}/electron/main.ts").read_text()
+            match = re.search(r'commandLine\.appendSwitch\("class", "([^"]+)"\)', main)
+            self.assertIsNotNone(match, f"apps/{app}/electron/main.ts must set the class switch")
+            self.assertEqual(match.group(1), wm_class)
+            builder = load_yaml(ROOT / f"apps/{app}/electron-builder.yml")
+            self.assertEqual(builder["linux"].get("executableName", wm_class), wm_class)
+
     def test_icons_are_well_formed(self):
         for app in APPS:
             path = ROOT / f"packaging/icons/agentbox-{app}.svg"
@@ -961,6 +977,45 @@ class DevAppArmorTest(unittest.TestCase):
         result = self.run_script("--print", check=False)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("pnpm install", result.stderr)
+
+
+class FileModeTest(unittest.TestCase):
+    def test_build_script_clears_write_bits_before_nfpm(self):
+        text = (ROOT / "scripts/build-deb.sh").read_text()
+        chmod = text.index('chmod -R go-w "$R"')
+        self.assertLess(chmod, text.index("nfpm package"))
+        # Every file staged under $R must exist before the chmod runs.
+        self.assertGreater(chmod, text.rindex('"$R/usr/share/agentbox/scripts/'))
+
+    def test_sandbox_helper_policy_is_consistent(self):
+        # The package ships chrome-sandbox as 0755 root-owned, and postinst
+        # adds the setuid bit only when the AppArmor profile isn't in use.
+        postinst = (ROOT / "packaging/deb/scripts/postinst").read_text()
+        self.assertIn("chmod 4755", postinst)
+        self.assertIn("chmod 0755", postinst)
+        for app in APPS:
+            profile = (ROOT / f"packaging/deb/apparmor/agentbox-{app}").read_text()
+            self.assertIn(f"/usr/lib/agentbox/{app}/agentbox-{app}", profile)
+
+    def test_no_group_or_other_writable_entries_after_normalizing(self):
+        # Mirrors the build script: a tree made under umask 002 has no
+        # group- or other-writable entries after chmod -R go-w.
+        old = os.umask(0o002)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = pathlib.Path(tmp)
+                (root / "a/b").mkdir(parents=True)
+                (root / "a/b/f").write_text("x")
+                (root / "a/chrome-sandbox").write_text("x")
+                os.chmod(root / "a/chrome-sandbox", 0o775)
+                subprocess.run(["chmod", "-R", "go-w", str(root)], check=True)
+                bad = [
+                    str(p) for p in [root, *root.rglob("*")]
+                    if not p.is_symlink() and p.stat().st_mode & 0o022
+                ]
+                self.assertEqual(bad, [])
+        finally:
+            os.umask(old)
 
 
 class NfpmBuildTest(unittest.TestCase):

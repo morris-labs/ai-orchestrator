@@ -281,6 +281,11 @@ function connectEvents() {
 
 let quitting = false;
 
+// Sets the X11 window class and the Wayland app_id to the name of the
+// desktop entry (agentbox-review.desktop), so the shell ties the window to
+// its entry and icon. app.setName changes only the display name.
+app.commandLine.appendSwitch("class", "agentbox-review");
+
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {

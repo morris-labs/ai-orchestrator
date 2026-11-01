@@ -147,6 +147,12 @@ mkdir -p "$R/usr/share/agentbox/scripts/lib"
 install -m 0755 "$SCRIPT_DIR/build-image.sh" "$R/usr/share/agentbox/scripts/"
 install -m 0644 "$SCRIPT_DIR/lib/common.sh" "$R/usr/share/agentbox/scripts/lib/"
 
+# The build's umask can leave staged files group-writable. Remove group and
+# other write permission so that only root can write the installed files.
+# chrome-sandbox keeps mode 0755 here; postinst adds the setuid bit only on
+# hosts where the app can't use user namespaces.
+chmod -R go-w "$R"
+
 install -m 0755 "$ROOT/packaging/deb/scripts/postinst" "$ROOT/packaging/deb/scripts/prerm" \
   "$ROOT/packaging/deb/scripts/postrm" "$STAGE/maint/"
 
