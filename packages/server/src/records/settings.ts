@@ -134,6 +134,7 @@ export class SettingsService {
       if (v === null) delete next[key];
       else next[key] = v;
     }
+    if (p.secretVaults !== undefined) next.secretVaults = [...new Set(p.secretVaults)];
     if (p.accountsMode !== undefined) next.accountsMode = p.accountsMode;
     if (p.accountDefaults !== undefined) {
       for (const vendor of ["claude", "codex", "copilot"] as const) {

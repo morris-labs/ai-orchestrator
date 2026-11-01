@@ -54,6 +54,7 @@ function make(overrides: {
     status: async () =>
       overrides.op ?? { installed: true, version: "2.30.0", signedIn: true, mode: "desktop" },
     read: overrides.opRead ?? (async () => ""),
+    listItems: async () => [],
   };
   const core = {
     docker: { ping: async () => overrides.ping ?? true },

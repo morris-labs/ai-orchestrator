@@ -6,14 +6,16 @@
 // never enters the cache.
 import type {
   GlobalSettings,
+  SecretCandidate,
   SecretRef,
+  SecretsAvailable,
   SecretsCheckResultSchema,
   SecretsViewSchema,
 } from "@agentbox/contracts";
 import type { z } from "zod";
 import { ApiError, toApiError } from "../api/errors.js";
 import { hashSudoPassword } from "./crypt.js";
-import type { OpClient } from "./op.js";
+import type { OpClient, OpItemInfo } from "./op.js";
 
 export type SecretsCheckResult = z.infer<typeof SecretsCheckResultSchema>;
 export type SecretsView = z.infer<typeof SecretsViewSchema>;
@@ -50,8 +52,79 @@ export class SecretsService {
 
   constructor(private readonly opts: SecretsServiceOptions) {}
 
+  /** The available-fields list by vault set, each until its expiry time. Metadata only. */
+  private availableCache = new Map<
+    string,
+    { value: Promise<SecretsAvailable>; expiresAt: number }
+  >();
+
   clearCache(): void {
     this.cache = new Map();
+    this.availableCache = new Map();
+  }
+
+  /**
+   * The vaults to search: the `secretVaults` setting, else the vaults that
+   * global and project references name, else `AgentBox`.
+   */
+  async searchedVaults(): Promise<string[]> {
+    const configured = this.opts.settings().secretVaults;
+    if (configured.length > 0) return [...new Set(configured)];
+    const refs = [
+      ...this.opts.settings().secretRefs,
+      ...(await this.opts.listProjects()).flatMap((p) => p.refs),
+    ];
+    const used = new Set<string>();
+    for (const r of refs) {
+      const v = vaultOf(r.ref);
+      if (v) used.add(v);
+    }
+    return used.size > 0 ? [...used].sort() : [DEFAULT_SECRET_VAULT];
+  }
+
+  /**
+   * Lists the 1Password fields a project can reference, with a proposed
+   * variable name each. Never holds a value. The list stays cached for 30
+   * seconds; `refresh` bypasses the cache. Throws `secrets_locked` or
+   * `secrets_unavailable` when `op` is signed out or missing, or when every
+   * vault fails; a vault that fails alone is reported in `vaultErrors`.
+   */
+  async available(refresh = false): Promise<SecretsAvailable> {
+    const vaults = await this.searchedVaults();
+    const key = vaults.join("\n");
+    const now = (this.opts.now ?? Date.now)();
+    const hit = this.availableCache.get(key);
+    if (!refresh && hit && hit.expiresAt > now) return hit.value;
+    const value = this.listAvailable(vaults, now);
+    const entry = { value, expiresAt: now + AVAILABLE_CACHE_TTL_MS };
+    this.availableCache.set(key, entry);
+    // A failure isn't cached: the next request asks 1Password again.
+    value.catch(() => {
+      if (this.availableCache.get(key) === entry) this.availableCache.delete(key);
+    });
+    return value;
+  }
+
+  private async listAvailable(vaults: string[], now: number): Promise<SecretsAvailable> {
+    await this.requireSignedIn();
+    const candidates: SecretCandidate[] = [];
+    const vaultErrors: SecretsAvailable["vaultErrors"] = [];
+    for (const vault of vaults) {
+      let items: OpItemInfo[];
+      try {
+        items = await this.opts.op.listItems(vault);
+      } catch (err) {
+        const e = toApiError(err);
+        if (e.code === "secrets_locked") throw e;
+        vaultErrors.push({ vault, message: e.message });
+        continue;
+      }
+      candidates.push(...candidatesFor(vault, items));
+    }
+    if (vaultErrors.length === vaults.length) {
+      throw new ApiError("secrets_unavailable", vaultErrors.map((e) => e.message).join(" "));
+    }
+    return { vaults, candidates, vaultErrors, fetchedAt: new Date(now).toISOString() };
   }
 
   /** The global and the project's references, merged. Throws `not_found` for an unknown project. */
@@ -202,4 +275,51 @@ export class SecretsService {
       op: await this.opts.op.status(),
     };
   }
+}
+
+/** The vault used when neither the setting nor an existing reference names one. */
+export const DEFAULT_SECRET_VAULT = "AgentBox";
+
+/** How long the list of available fields stays cached: 30 seconds. */
+export const AVAILABLE_CACHE_TTL_MS = 30_000;
+
+/** Proposes an environment variable name: the item and the field in upper snake case. */
+export function suggestSecretName(item: string, field: string): string {
+  const snake = `${item}_${field}`
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  if (snake === "") return "SECRET";
+  return /^[0-9]/.test(snake) ? `_${snake}` : snake;
+}
+
+/** The vault of an `op://VAULT/...` reference, or `null`. */
+function vaultOf(ref: string): string | null {
+  const m = /^op:\/\/([^/]+)\//.exec(ref);
+  return m ? m[1]! : null;
+}
+
+/** Turns the items of a vault into candidates, skipping any whose reference can't be written. */
+export function candidatesFor(vault: string, items: OpItemInfo[]): SecretCandidate[] {
+  if (vault.includes("/")) return [];
+  const out: SecretCandidate[] = [];
+  for (const item of items) {
+    const itemSeg = item.title.includes("/") ? item.id : item.title;
+    for (const f of item.fields) {
+      // A label or section with a slash can't sit in a reference; the field id can.
+      const plain = !f.label.includes("/") && !(f.section?.includes("/") ?? false);
+      const fieldSeg = plain ? (f.section ? `${f.section}/${f.label}` : f.label) : f.id;
+      out.push({
+        vault,
+        item: item.title,
+        itemId: item.id,
+        field: f.label,
+        ...(f.section ? { section: f.section } : {}),
+        type: f.type,
+        ref: `op://${vault}/${itemSeg}/${fieldSeg}`,
+        suggestedName: suggestSecretName(item.title, f.label),
+      });
+    }
+  }
+  return out;
 }

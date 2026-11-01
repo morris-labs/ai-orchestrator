@@ -582,6 +582,11 @@ export const GlobalSettingsSchema = z
     /** Secrets every container gets. A project's reference of the same name wins. */
     secretRefs: z.array(SecretRefSchema),
     /**
+     * The 1Password vaults the secrets picker lists. Empty means the vaults
+     * that existing references name, else `AgentBox`.
+     */
+    secretVaults: z.array(z.string().min(1)),
+    /**
      * The 1Password reference of the container user's sudo password. Absent
      * means sudo is off in every container. The server installs only a hash
      * of the value; see docs/secrets.md.
@@ -658,6 +663,7 @@ export const GlobalSettingsInputSchema = z
       .default({}),
     globalMounts: z.array(MountSchema).default([]),
     secretRefs: z.array(SecretRefSchema).default([]),
+    secretVaults: z.array(z.string().min(1)).default([]),
     accountsMode: AccountsModeSchema.default("host"),
     accountDefaults: AccountDefaultsSchema.default({}),
   })
@@ -700,6 +706,7 @@ export const GlobalSettingsPatchSchema = z
     defaultTargetDir: z.string().min(1).nullable(),
     sshIdentity: z.string().min(1).nullable(),
     sudoPasswordRef: OpReferenceSchema.nullable(),
+    secretVaults: z.array(z.string().min(1)),
     accountsMode: AccountsModeSchema,
     /**
      * Only the vendors it names change; `null` clears a default. The server

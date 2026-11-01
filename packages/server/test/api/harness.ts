@@ -259,6 +259,12 @@ export async function createHarness(overrides: { proxy?: DevServerProxy } = {}):
         projects: [],
         op: { installed: false, version: null, signedIn: false, mode: "none" },
       }),
+      available: async () => ({
+        vaults: ["AgentBox"],
+        candidates: [],
+        vaultErrors: [],
+        fetchedAt: "2026-10-28T09:00:00Z",
+      }),
       check: async () => ({
         op: { installed: true, version: "2.30.0", signedIn: true, mode: "desktop" },
         results: [],

@@ -7,7 +7,7 @@ import {
 import { describe, expect, it } from "vitest";
 import { ApiError } from "../../src/api/errors.js";
 import { SHA512_CRYPT_PATTERN, sha512Crypt } from "../../src/secrets/crypt.js";
-import { OpCli, type OpClient } from "../../src/secrets/op.js";
+import { OpCli, type OpClient, type OpItemInfo } from "../../src/secrets/op.js";
 import { mergeSecretRefs, SecretsService } from "../../src/secrets/secrets-service.js";
 import { FakeRunner } from "../setup/fake-runner.js";
 
@@ -66,6 +66,14 @@ describe("OpCli", () => {
 
 class FakeOp implements OpClient {
   reads: string[] = [];
+  listed: string[] = [];
+  items: Record<string, OpItemInfo[]> = {};
+  async listItems(vault: string) {
+    this.listed.push(vault);
+    const found = this.items[vault];
+    if (!found) throw new ApiError("secrets_unavailable", `Can't list vault ${vault}: missing`);
+    return found;
+  }
   constructor(
     private state: OpStatus = { installed: true, version: "2", signedIn: true, mode: "desktop" },
     private values: Record<string, string> = {},

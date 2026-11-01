@@ -418,6 +418,7 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
       return { refs: settings.secretRefs };
     },
     "secrets.check": async ({ body }) => deps.secrets.check(body.projectId),
+    "secrets.available": async ({ query }) => deps.secrets.available(query.refresh),
 
     // Review
     "runs.list": async ({ query }) => {

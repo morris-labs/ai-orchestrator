@@ -11,6 +11,7 @@ import type {
   TimedUsageSample,
   Updates,
   Vendor,
+  SecretsAvailable,
   SecretsCheckResultSchema,
   SecretsViewSchema,
   SetupStatusSchema,
@@ -84,6 +85,7 @@ export interface ApiDeps {
   secrets: {
     view(): Promise<z.infer<typeof SecretsViewSchema>>;
     check(projectId?: string): Promise<z.infer<typeof SecretsCheckResultSchema>>;
+    available(refresh: boolean): Promise<SecretsAvailable>;
   };
   setup: {
     status(): Promise<z.infer<typeof SetupStatusSchema>>;

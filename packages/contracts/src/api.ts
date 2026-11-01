@@ -60,6 +60,7 @@ import {
   ApiErrorSchema,
   CommitShaSchema,
   EffortSchema,
+  EnvVarNameSchema,
   IsoDateTimeSchema,
   OkSchema,
   PlatformSchema,
@@ -90,6 +91,7 @@ import {
   GlobalSettingsPatchSchema,
   GlobalSettingsSchema,
   MountSchema,
+  OpReferenceSchema,
   ProjectSchema,
   PromptTemplatesSchema,
   SecretRefSchema,
@@ -668,6 +670,36 @@ export const SecretsViewSchema = z.object({
   projects: z.array(z.object({ projectId: z.string(), refs: z.array(SecretRefSchema) })),
   op: OpStatusSchema,
 });
+
+/**
+ * One 1Password field a project can reference. It holds the field's label,
+ * section and type, and never its value.
+ */
+export const SecretCandidateSchema = z.object({
+  vault: z.string(),
+  item: z.string(),
+  itemId: z.string(),
+  /** The field's label. */
+  field: z.string(),
+  section: z.string().optional(),
+  /** The field's type in 1Password, for example `CONCEALED` or `STRING`. */
+  type: z.string(),
+  ref: OpReferenceSchema,
+  /** A proposed environment variable name, for example `TOKEN_GITHUB_CREDENTIAL`. */
+  suggestedName: EnvVarNameSchema,
+});
+export type SecretCandidate = z.infer<typeof SecretCandidateSchema>;
+
+export const SecretsAvailableSchema = z.object({
+  /** The vaults that were searched. */
+  vaults: z.array(z.string()),
+  candidates: z.array(SecretCandidateSchema),
+  /** Vaults that couldn't be read, with the reason; the others are in `candidates`. */
+  vaultErrors: z.array(z.object({ vault: z.string(), message: z.string() })),
+  /** When the server read the list from 1Password. */
+  fetchedAt: IsoDateTimeSchema,
+});
+export type SecretsAvailable = z.infer<typeof SecretsAvailableSchema>;
 
 /** The result of resolving references. Values never leave the server. */
 export const SecretsCheckResultSchema = z.object({
@@ -1476,6 +1508,15 @@ export const serverRoutes = {
     summary: "Replace the global secret references.",
     body: z.object({ refs: z.array(SecretRefSchema) }),
     response: z.object({ refs: z.array(SecretRefSchema) }),
+  }),
+  "secrets.available": http({
+    method: "GET",
+    path: `${V1}/secrets/available`,
+    summary:
+      "List the 1Password fields a project can reference, with a proposed variable name. Never values. Cached for 30 seconds; refresh=true bypasses the cache.",
+    query: z.object({ refresh: QueryBooleanSchema.default("false") }),
+    response: SecretsAvailableSchema,
+    errors: ["secrets_locked", "secrets_unavailable"],
   }),
   "secrets.check": http({
     method: "POST",

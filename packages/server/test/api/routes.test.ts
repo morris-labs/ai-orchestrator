@@ -269,6 +269,7 @@ const cases: Case[] = [
     body: { refs: [{ name: "X", ref: "op://V/I/F" }] },
     status: 200,
   },
+  { key: "secrets.available", method: "GET", url: `${V1}/secrets/available`, status: 200 },
   { key: "secrets.check", method: "POST", url: `${V1}/secrets/check`, body: {}, status: 200 },
   { key: "runs.list", method: "GET", url: `${V1}/runs?boxId=${box.id}`, status: 200 },
   {

@@ -23,6 +23,7 @@ let runner: FakeRunner;
 const op: OpClient = {
   status: async () => ({ installed: true, version: "2.30.0", signedIn: true, mode: "desktop" }),
   read: async () => "value",
+  listItems: async () => [],
 };
 
 beforeEach(async () => {

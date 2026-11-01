@@ -47,6 +47,7 @@ async function start(docker: MemoryDocker, before?: (home: string) => void) {
     op: {
       status: async () => ({ installed: false, version: null, signedIn: false, mode: "none" }),
       read: async () => "",
+      listItems: async () => [],
     },
     exec: new FakeExec(),
     port: 0,
