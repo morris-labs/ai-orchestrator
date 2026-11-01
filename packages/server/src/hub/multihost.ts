@@ -4,7 +4,10 @@
 import os from "node:os";
 import path from "node:path";
 import {
+  API_PREFIX,
   DEFAULT_LINK_PORT,
+  HUB_MACHINE_ID,
+  LOCAL_MACHINE_ID,
   MachineListSchema,
   type EnrollmentCode,
   type GlobalSettings,
@@ -15,6 +18,7 @@ import {
 } from "@aio/contracts";
 import type { FastifyInstance } from "fastify";
 import { ApiError } from "../api/errors.js";
+import { isThisMachine, parseProxyUrl } from "../api/machines.js";
 import type { SqlDatabase } from "../api/core-interface.js";
 import type { OpClient } from "../secrets/op.js";
 import { CREDENTIAL_PATHS, CredentialStore, isCredentialKey } from "./credentials.js";
@@ -47,13 +51,25 @@ export const LOCAL_ID = "local";
  * The API paths a node may call on its hub over the link: the machine list,
  * the health route, and the per-machine routes under `/api/v1/machines/ID/`
  * that relay to other machines. Everything else on the hub stays local.
+ *
+ * A per-machine route that names the hub itself (`local`, `hub`, or
+ * whatever `isHub` accepts) is served by the hub, so the path after the
+ * prefix must pass the same check. Without that, a node could reach every
+ * hub route as `/api/v1/machines/local/proxy/<rest>`.
  */
-export function defaultAllowNodeRequest(req: { method: string; path: string }): boolean {
+export function defaultAllowNodeRequest(
+  req: { method: string; path: string },
+  caller?: string,
+  isHub: (id: string) => boolean = (id) => id === LOCAL_MACHINE_ID || id === HUB_MACHINE_ID,
+): boolean {
   const method = req.method.toUpperCase();
   if (method === "GET" && (req.path === "/api/v1/machines" || req.path === "/api/v1/health")) {
     return true;
   }
-  return /^\/api\/v1\/machines\/[^/]+\/proxy(\/|$)/.test(req.path);
+  const target = parseProxyUrl(req.path);
+  if (!target) return false;
+  if (!isHub(target.machineId)) return true;
+  return defaultAllowNodeRequest({ method, path: `${API_PREFIX}/${target.rest}` }, caller, isHub);
 }
 
 export interface MultiHostOptions {
@@ -142,7 +158,17 @@ export class MultiHost {
       token: opts.token,
       api: opts.api,
       internal: hubInternal,
-      allowNodeRequest: opts.allowNodeRequest ?? defaultAllowNodeRequest,
+      allowNodeRequest:
+        opts.allowNodeRequest ??
+        ((req, caller) =>
+          defaultAllowNodeRequest(
+            req,
+            caller,
+            (id) =>
+              id === LOCAL_MACHINE_ID ||
+              id === HUB_MACHINE_ID ||
+              isThisMachine(id, { role: this.role(), machineId: this.machineId() }),
+          )),
       timing: opts.timing,
       log: opts.log,
     });

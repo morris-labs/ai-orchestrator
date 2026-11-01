@@ -8,12 +8,19 @@
 // - On a hub, any other ID is a connected node; the hub forwards the call
 //   over that node's link as `/api/v1/<rest>`.
 // - On a plain node, any other ID goes to the hub unchanged, and the hub
-//   routes it on.
+//   routes it on. `hub` names the hub, which serves the call itself.
 //
 // WebSocket routes work the same way: the server relays the frames.
 
 /** The machine ID that always names the server receiving the request. */
 export const LOCAL_MACHINE_ID = "local";
+
+/**
+ * The machine ID a node gives its hub. On a hub that hasn't joined another
+ * hub, it names the hub itself, so a node's call to `hub` that arrives over
+ * its link is served locally.
+ */
+export const HUB_MACHINE_ID = "hub";
 
 /** The prefix of every server route. */
 export const API_PREFIX = "/api/v1";

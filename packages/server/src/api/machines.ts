@@ -1,7 +1,8 @@
 // The machine proxy route, `/api/v1/machines/:machineId/proxy/*`: sends any
 // server API call, HTTP or WebSocket, to the machine it names.
 //
-// - `local`, or this server's own machine ID, never reaches the route:
+// - `local`, this server's own machine ID, and `hub` on a hub that hasn't
+//   joined another hub never reach the route:
 //   `localMachineRewrite` turns the URL back into `/api/v1/<rest>` before
 //   routing, so the call meets the real route, its schemas and its auth.
 // - On a hub (role `hub` or `both`), the call goes over the named node's
@@ -13,6 +14,7 @@
 import {
   API_PREFIX,
   FORWARDED_BY_HEADER,
+  HUB_MACHINE_ID,
   LOCAL_MACHINE_ID,
   MACHINE_PROXY_PATH,
 } from "@aio/contracts";
@@ -115,6 +117,22 @@ export function parseProxyUrl(url: string): ProxyTarget | null {
 }
 
 /**
+ * True when `machineId` names this server: `local`, the ID its hub gave it,
+ * or `hub` on a hub (role `hub` or `both`) that hasn't joined another hub.
+ * A hub's own machine list calls it `local`, so it has no enrolled ID; the
+ * `hub` case serves a node's call to `/api/v1/machines/hub/proxy/...`,
+ * which arrives over the link unchanged.
+ */
+export function isThisMachine(
+  machineId: string,
+  options: MachineRoutingOptions | undefined,
+): boolean {
+  if (machineId === LOCAL_MACHINE_ID) return true;
+  if (options?.machineId !== undefined) return machineId === options.machineId;
+  return machineId === HUB_MACHINE_ID && (options?.role ?? "both") !== "node";
+}
+
+/**
  * Fastify's `rewriteUrl`: turns a machine proxy URL that names this server
  * into the plain route URL, and leaves every other URL as it is.
  */
@@ -122,9 +140,7 @@ export function localMachineRewrite(options: MachineRoutingOptions | undefined) 
   return (url: string): string => {
     const target = parseProxyUrl(url);
     if (!target) return url;
-    if (target.machineId !== LOCAL_MACHINE_ID && target.machineId !== options?.machineId) {
-      return url;
-    }
+    if (!isThisMachine(target.machineId, options)) return url;
     return `${API_PREFIX}/${target.rest}${target.query === undefined ? "" : `?${target.query}`}`;
   };
 }

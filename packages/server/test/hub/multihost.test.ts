@@ -6,7 +6,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { MachineListSchema, NodeStatusSchema, type OpStatus } from "@aio/contracts";
-import { pinFromPem, pinnedFetch } from "@aio/contracts/tls";
+import { pinFromPem, pinnedFetch, pinnedTlsOptions } from "@aio/contracts/tls";
+import WebSocket from "ws";
 import { startApp, type App } from "../../src/api/app.js";
 import { createCore } from "../../src/core.js";
 import { MemoryDocker } from "../../src/docker/memory.js";
@@ -53,6 +54,8 @@ interface Server {
   home: string;
   dataDir: string;
   op: ReturnType<typeof fakeOp>;
+  /** Opens a WebSocket to `url` on this server and resolves with its first text frame. */
+  firstFrame(url: string, send: unknown): Promise<Json>;
   api(method: string, url: string, body?: unknown): Promise<{ status: number; json: Json }>;
 }
 
@@ -87,14 +90,30 @@ async function startServer(
   });
   apps.push(app);
   const token = fs.readFileSync(path.join(dataDir, "server.token"), "utf8").trim();
-  const fetchPinned = pinnedFetch(() =>
-    pinFromPem(fs.readFileSync(path.join(dataDir, "server.crt"), "utf8")),
-  );
+  const pin = () => pinFromPem(fs.readFileSync(path.join(dataDir, "server.crt"), "utf8"));
+  const fetchPinned = pinnedFetch(pin);
   return {
     app,
     home,
     dataDir,
     op,
+    firstFrame(url, send) {
+      const ws = new WebSocket(`wss://127.0.0.1:${app.port}${url}`, {
+        ...pinnedTlsOptions(pin()),
+        headers: { authorization: `Bearer ${token}` },
+      });
+      return new Promise((resolve, reject) => {
+        ws.once("open", () => ws.send(JSON.stringify(send)));
+        ws.once("message", (data) => {
+          resolve(JSON.parse(data.toString()));
+          ws.close(1000);
+        });
+        ws.once("error", reject);
+        ws.once("unexpected-response", (_req, res) =>
+          reject(new Error(`The upgrade got HTTP ${res.statusCode}.`)),
+        );
+      });
+    },
     async api(method, url, body) {
       const res = await fetchPinned(`https://127.0.0.1:${app.port}${url}`, {
         method,
@@ -231,6 +250,57 @@ describe("multi-host", () => {
     await expect(
       hub.app.multiHost.links.get(machineId)!.openStream({ path: "/api/v1/nowhere", headers: {} }),
     ).rejects.toThrow(/refused the stream/);
+  });
+
+  it("routes the machine proxy route over the real link in both directions", async () => {
+    const { hub, node, joined } = await linkedPair();
+    const machineId = joined.json.machineId as string;
+    await waitFor(() => hub.app.multiHost.links.get(machineId) !== undefined, 5000);
+    await waitFor(() => node.app.multiHost.links.get("hub") !== undefined, 5000);
+
+    // The hub's own machine resolves locally, by "local" and by "hub".
+    for (const id of ["local", "hub"]) {
+      const own = await hub.api("GET", `/api/v1/machines/${id}/proxy/settings`);
+      expect(own.status).toBe(200);
+      expect(own.json.role ?? "both").toBe("both");
+    }
+
+    // (a) HTTP from the hub to the node.
+    const health = await hub.api("GET", `/api/v1/machines/${machineId}/proxy/health`);
+    expect(health.status).toBe(200);
+    expect(health.json).toMatchObject({ version: VERSION });
+    const settings = await hub.api("GET", `/api/v1/machines/${machineId}/proxy/settings`);
+    expect(settings.status).toBe(200);
+    expect(settings.json.role).toBe("node");
+
+    // (b) A WebSocket from the hub to the node's event stream: its hello
+    // carries the node's stream id, not the hub's.
+    const hello = { type: "hello", streamId: null, lastSeq: null };
+    const direct = await node.firstFrame("/api/v1/events", hello);
+    const relayed = await hub.firstFrame(`/api/v1/machines/${machineId}/proxy/events`, hello);
+    expect(relayed).toMatchObject({ type: "hello", streamId: direct.streamId });
+    const hubOwn = await hub.firstFrame("/api/v1/events", hello);
+    expect(hubOwn.streamId).not.toBe(direct.streamId);
+
+    // (c) From the node, the hub's health and machine list through the hub's ID.
+    const hubHealth = await node.api("GET", "/api/v1/machines/hub/proxy/health");
+    expect(hubHealth.status).toBe(200);
+    expect(hubHealth.json).toMatchObject({ version: VERSION });
+    const viaHub = await node.api("GET", "/api/v1/machines/hub/proxy/machines");
+    expect(viaHub.status).toBe(200);
+    expect(MachineListSchema.parse(viaHub.json).machines.map((m) => m.id)).toEqual([
+      "local",
+      machineId,
+    ]);
+    // The node's own enrolled ID and "local" stay on the node.
+    for (const id of ["local", machineId]) {
+      const own = await node.api("GET", `/api/v1/machines/${id}/proxy/settings`);
+      expect(own.status).toBe(200);
+      expect(own.json.role).toBe("node");
+    }
+    // The hub still refuses a path that defaultAllowNodeRequest doesn't allow.
+    const refused = await node.api("GET", "/api/v1/machines/hub/proxy/settings");
+    expect(refused.status).toBe(403);
   });
 
   it("resolves a node's secrets through the hub", async () => {

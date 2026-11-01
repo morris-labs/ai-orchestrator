@@ -5,7 +5,7 @@
 import { X509Certificate, createPrivateKey, randomBytes } from "node:crypto";
 import http from "node:http";
 import tls from "node:tls";
-import type { NodeLinkState } from "@aio/contracts";
+import { HUB_MACHINE_ID, type NodeLinkState } from "@aio/contracts";
 import WebSocket from "ws";
 import type { FastifyInstance } from "fastify";
 import { ApiError } from "../api/errors.js";
@@ -22,7 +22,7 @@ import { LINK_CLOSE, LINK_PATHS, protocolMismatch, type LinkHello } from "./prot
 import { codeKey, hubProof, nodeProof, sameHex } from "./registry.js";
 
 /** The id a plain node's registry gives its hub. */
-export const HUB_LINK_ID = "hub";
+export const HUB_LINK_ID = HUB_MACHINE_ID;
 
 export interface NodeAgentOptions {
   /** `DATA_DIR/link`, where the client certificate and the hub's pin live. */

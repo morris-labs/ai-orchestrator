@@ -110,6 +110,28 @@ describe("protocol helpers", () => {
     expect(
       defaultAllowNodeRequest({ method: "POST", path: "/api/v1/machines/m1/proxy/api/v1/boxes" }),
     ).toBe(true);
+    // A per-machine route that names the hub is held to the same list.
+    for (const id of ["local", "hub", "%6Cocal"]) {
+      expect(
+        defaultAllowNodeRequest({ method: "GET", path: `/api/v1/machines/${id}/proxy/settings` }),
+      ).toBe(false);
+      expect(
+        defaultAllowNodeRequest({ method: "GET", path: `/api/v1/machines/${id}/proxy/health` }),
+      ).toBe(true);
+      expect(
+        defaultAllowNodeRequest({
+          method: "GET",
+          path: `/api/v1/machines/${id}/proxy/machines/${id}/proxy/settings`,
+        }),
+      ).toBe(false);
+    }
+    expect(
+      defaultAllowNodeRequest(
+        { method: "GET", path: "/api/v1/machines/hub-id/proxy/settings" },
+        "m1",
+        (id) => id === "hub-id",
+      ),
+    ).toBe(false);
   });
 });
 
