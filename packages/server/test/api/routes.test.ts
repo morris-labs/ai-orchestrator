@@ -253,6 +253,13 @@ const cases: Case[] = [
   },
   { key: "accounts.remove", method: "DELETE", url: `${V1}/accounts/claude/work`, status: 200 },
   { key: "accounts.check", method: "POST", url: `${V1}/accounts/claude/work/check`, status: 200 },
+  {
+    key: "accounts.import",
+    method: "POST",
+    url: `${V1}/accounts/import`,
+    body: { vendor: "codex", name: "main", from: "/data/ready" },
+    status: 201,
+  },
   { key: "globalMounts.get", method: "GET", url: `${V1}/global-mounts`, status: 200 },
   {
     key: "globalMounts.put",

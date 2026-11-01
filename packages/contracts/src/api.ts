@@ -51,6 +51,8 @@
 import { z } from "zod";
 import {
   AccountCreateSchema,
+  AccountImportRequestSchema,
+  AccountImportResultSchema,
   AccountRemoveResultSchema,
   AccountSeedRequestSchema,
   AccountUpdateSchema,
@@ -1455,6 +1457,16 @@ export const serverRoutes = {
     response: JobSchema,
     status: 202,
     errors: ["box_running", "conflict"],
+  }),
+  "accounts.import": http({
+    method: "POST",
+    path: `${accounts}/import`,
+    summary:
+      "Install a ready, signed-in config folder as an account: move it, or with `copy` copy it. Never reads the sign-in files.",
+    body: AccountImportRequestSchema,
+    response: AccountImportResultSchema,
+    status: 201,
+    errors: ["conflict", "validation"],
   }),
   "accounts.get": http({
     method: "GET",

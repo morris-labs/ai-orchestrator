@@ -292,6 +292,32 @@ export function createFakeCore(): FakeCore {
         accounts.delete(id);
         return { keptDir: v.dir };
       },
+      importFolder: async (input) => {
+        record("accounts.importFolder");
+        const id = `${input.vendor}/${input.name}`;
+        if (accounts.has(id)) throw new ApiError("conflict", `The account ${id} exists.`);
+        const v: AccountView = {
+          account: {
+            id,
+            vendor: input.vendor,
+            name: input.name,
+            label: input.label ?? input.name,
+            overflow: false,
+            signIn: { state: "unknown" },
+            createdAt: T1,
+            updatedAt: T1,
+          },
+          dir: `/home/u/.claude-box/accounts/${id}`,
+          dirExists: true,
+          isDefault: false,
+        };
+        accounts.set(id, v);
+        return {
+          ...v,
+          mode: input.copy ? ("copied" as const) : ("moved" as const),
+          warnings: [],
+        };
+      },
       check: async (id) => {
         record(`accounts.check:${id}`);
         return accounts.get(id) ?? notFound(`account ${id}`);

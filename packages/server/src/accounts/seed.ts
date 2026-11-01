@@ -21,15 +21,14 @@ export const CLAUDE_SIGN_IN_FILES = [".credentials.json"] as const;
 export const CODEX_SIGN_IN_FILES = ["auth.json"] as const;
 
 /**
- * Files that might hold Copilot's stored sign-in, relative to `COPILOT_HOME`.
- * UNVERIFIED: Copilot keeps its token in the system keychain and falls back
- * to a plaintext file when `storeTokenPlaintext` allows it. The installed CLI
- * (1.0.105) handles the token in native code, so the names below come from
- * strings in that code, not from a confirmed sign-in. Phase 0 of the design
- * (`docs/v4/host-accounts-phase0.md`, check 5) confirms the real names;
- * replace this list then.
+ * Copilot's sign-in, relative to `COPILOT_HOME`. Phase 0 (check 5) found that
+ * without a keychain Copilot stores the token in plain text in `config.json`
+ * under `authTokens`, next to settings. Seeding leaves the file out whole,
+ * which costs the copied settings but never copies a token. The other names
+ * are older candidates, kept in the deny-list.
  */
-export const COPILOT_SIGN_IN_FILES_UNVERIFIED = [
+export const COPILOT_SIGN_IN_FILES = [
+  "config.json",
   "hosts.yml",
   "credentials.toml",
   "registered.tokens.json",
@@ -39,8 +38,31 @@ export const COPILOT_SIGN_IN_FILES_UNVERIFIED = [
 export const SIGN_IN_FILES: Record<Platform, readonly string[]> = {
   claude: CLAUDE_SIGN_IN_FILES,
   codex: CODEX_SIGN_IN_FILES,
-  copilot: COPILOT_SIGN_IN_FILES_UNVERIFIED,
+  copilot: COPILOT_SIGN_IN_FILES,
 };
+
+/**
+ * Files that hold a token, matched by base name at any depth: `agent.env`
+ * (the maintainer's GitHub token sits in `~/.claude`), any `.env` or `*.env`
+ * file, and the sign-in file names of every vendor.
+ */
+const DENIED_BASE_NAMES = new Set([
+  ".credentials.json",
+  "auth.json",
+  "agent.env",
+  ".env",
+  "hosts.yml",
+  "credentials.toml",
+  "registered.tokens.json",
+]);
+
+/** Whether seeding leaves out a file of this base name, at any depth. */
+export function isDeniedName(name: string): boolean {
+  return DENIED_BASE_NAMES.has(name) || name.endsWith(".env");
+}
+
+/** The `installMethod` of the image's Claude Code, which installs with `npm install -g`. */
+export const CLAUDE_INSTALL_METHOD = "global";
 
 /** The Codex setting that keeps its sign-in in a file, which a container needs. */
 export const CODEX_STORE_SETTING = 'cli_auth_credentials_store = "file"';
@@ -58,6 +80,8 @@ export interface CopyStats {
 export interface CopyOptions {
   /** Relative paths (with `/`) to leave out. */
   leaveOut?: ReadonlySet<string>;
+  /** Leaves out every file whose base name `isDeniedName` matches. Default: true. */
+  denyNames?: boolean;
   /** Counts what a copy would hold and writes nothing. */
   dryRun?: boolean;
 }
@@ -93,11 +117,12 @@ export async function copyTree(
 ): Promise<CopyStats> {
   const stats = emptyStats();
   const leaveOut = options.leaveOut ?? new Set<string>();
+  const denyNames = options.denyNames ?? true;
   const root = await fs.realpath(source);
 
   async function walk(src: string, dst: string, rel: string): Promise<void> {
     const st = rel === "" ? await fs.stat(src) : await fs.lstat(src);
-    if (rel !== "" && leaveOut.has(rel)) {
+    if (rel !== "" && (leaveOut.has(rel) || (denyNames && isDeniedName(path.basename(rel))))) {
       stats.leftOut.push(rel);
       return;
     }
@@ -194,7 +219,7 @@ async function isRealDirectory(p: string): Promise<boolean> {
  * - Codex: leaves out `auth.json`, and adds
  *   `cli_auth_credentials_store = "file"` when `config.toml` sets no store,
  *   because a container has no keyring.
- * - Copilot: leaves out `COPILOT_SIGN_IN_FILES_UNVERIFIED`.
+ * - Copilot: leaves out `COPILOT_SIGN_IN_FILES`.
  */
 export async function seedFolder(
   vendor: Platform,
@@ -225,8 +250,11 @@ export async function seedFolder(
     if (vendor === "claude") {
       const stale = path.join(temp, ".claude.json");
       await fs.rm(stale, { force: true });
-      if (await exists(sources.claudeJson)) {
-        await fs.copyFile(sources.claudeJson, stale, fsc.COPYFILE_FICLONE);
+      // `~/.claude.json` is a link to `~/.claude/.claude.json` on some hosts:
+      // resolve it, so the copy holds the file's bytes, not a link.
+      const claudeJson = await fs.realpath(sources.claudeJson).catch(() => sources.claudeJson);
+      if (await exists(claudeJson)) {
+        await fs.copyFile(claudeJson, stale, fsc.COPYFILE_FICLONE);
         await fs.chmod(stale, 0o600);
         if (await dropClaudeApiKey(stale)) {
           notes.push("Left out the /login API key (primaryApiKey) from .claude.json.");
@@ -234,6 +262,9 @@ export async function seedFolder(
           notes.push(
             `${sources.claudeJson} isn't valid JSON, so it wasn't copied; Claude Code creates a new .claude.json.`,
           );
+        }
+        if (await setInstallMethod(stale, CLAUDE_INSTALL_METHOD)) {
+          notes.push(`Set installMethod to ${CLAUDE_INSTALL_METHOD} in .claude.json.`);
         }
       } else {
         notes.push(`${sources.claudeJson} doesn't exist; Claude Code creates a new .claude.json.`);
@@ -282,6 +313,28 @@ export async function dropClaudeApiKey(claudeJson: string): Promise<boolean> {
   if (!Object.hasOwn(config, "primaryApiKey")) return false;
   delete (config as Record<string, unknown>).primaryApiKey;
   await fs.writeFile(claudeJson, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+  await fs.chmod(claudeJson, 0o600);
+  return true;
+}
+
+/**
+ * Sets `installMethod` in a copied `.claude.json`, so that Claude Code in the
+ * image doesn't warn that `~/.local/bin/claude` is missing (the host records
+ * a native install). Returns whether it changed the file. Leaves a file that
+ * isn't a JSON object alone. Never logs the content.
+ */
+export async function setInstallMethod(claudeJson: string, method: string): Promise<boolean> {
+  let config: unknown;
+  try {
+    config = JSON.parse(await fs.readFile(claudeJson, "utf8"));
+  } catch {
+    return false;
+  }
+  if (typeof config !== "object" || config === null || Array.isArray(config)) return false;
+  const obj = config as Record<string, unknown>;
+  if (obj.installMethod === method) return false;
+  obj.installMethod = method;
+  await fs.writeFile(claudeJson, `${JSON.stringify(obj, null, 2)}\n`, { mode: 0o600 });
   await fs.chmod(claudeJson, 0o600);
   return true;
 }

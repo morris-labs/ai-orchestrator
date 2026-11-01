@@ -825,6 +825,34 @@ describe("accounts", () => {
     expect(await cli(["accounts", "add", "gemini", "work"])).toBe(2);
   });
 
+  it("imports a folder as an account and prints the copy warning", async () => {
+    server.on("POST /api/v1/accounts/import", {
+      status: 201,
+      body: { ...view("claude/work"), mode: "copied", warnings: ["Keep only one copy in use."] },
+    });
+    expect(
+      await cli(["accounts", "import", "claude", "work", "--from", "/data/acct", "--copy"]),
+    ).toBe(0);
+    expect(last()?.body).toMatchObject({
+      vendor: "claude",
+      name: "work",
+      from: "/data/acct",
+      copy: true,
+    });
+    expect(out).toContain("Copied the folder");
+    expect(out).toContain("Warning: Keep only one copy in use.");
+    expect(out).toContain("accounts check claude/work");
+    expect(await cli(["accounts", "import", "claude", "work"])).toBe(2);
+  });
+
+  it("prints a Copilot sign-in with --device-code", async () => {
+    server.on("GET /api/v1/accounts/copilot/work", { body: view("copilot/work") });
+    expect(await cli(["accounts", "login", "copilot/work"])).toBe(0);
+    expect(out).toContain(
+      "COPILOT_HOME=/home/user/.claude-box/accounts/copilot/work copilot login --device-code",
+    );
+  });
+
   it("makes an account the default through the settings", async () => {
     let patched: unknown;
     server.on("PATCH /api/v1/settings", (req) => {

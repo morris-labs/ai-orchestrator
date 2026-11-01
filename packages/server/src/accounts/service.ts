@@ -8,12 +8,15 @@ import path from "node:path";
 import {
   ACCOUNT_DIR_ENV,
   AccountCreateSchema,
+  AccountImportRequestSchema,
   AccountSeedRequestSchema,
   AccountUpdateSchema,
   accountId,
   parseAccountId,
   type Account,
   type AccountCreate,
+  type AccountImportRequest,
+  type AccountImportResult,
   type AccountSeedEntry,
   type AccountSeedReport,
   type AccountSeedRequest,
@@ -30,7 +33,22 @@ import { ApiError } from "../records/errors.js";
 import type { SettingsService } from "../records/settings.js";
 import type { SqlDatabase } from "../api/core-interface.js";
 import { UsageStore } from "../usage/usage-store.js";
-import { CODEX_STORE_SETTING, seedFolder, sourceDirOf, type SeedSources } from "./seed.js";
+import {
+  CODEX_STORE_SETTING,
+  addCodexFileStore,
+  copyTree,
+  seedFolder,
+  sourceDirOf,
+  type SeedSources,
+} from "./seed.js";
+import { claudeStoreRoot, linkProjectsToStore } from "./store.js";
+
+/**
+ * Directories whose contents may vanish or that tools treat as scratch space.
+ * Codex refuses a `CODEX_HOME` under `/tmp` (phase 0, check 4), so no account
+ * folder may live in one.
+ */
+export const DEFAULT_TEMP_DIRS: readonly string[] = ["/tmp", "/var/tmp", "/dev/shm"];
 
 export interface AccountServiceOptions {
   env: HostEnv;
@@ -43,6 +61,8 @@ export interface AccountServiceOptions {
   runningBoxes: () => string[];
   /** The host folders seeding copies. Default: the host user's, from `env.home`. */
   sources?: SeedSources;
+  /** Directories that can't hold the accounts folder. Default: `DEFAULT_TEMP_DIRS`. */
+  tempDirs?: readonly string[];
 }
 
 /** The host folders seeding copies by default. */
@@ -133,6 +153,28 @@ export class AccountService {
     return this.options.env;
   }
 
+  /**
+   * Throws `validation` when `dir` lies in a temporary directory, where Codex
+   * refuses to run and a reboot can delete a sign-in.
+   */
+  assertNotTemporary(dir: string): void {
+    const resolved = path.resolve(dir);
+    for (const t of this.options.tempDirs ?? DEFAULT_TEMP_DIRS) {
+      if (resolved === t || resolved.startsWith(`${t}/`)) {
+        throw new ApiError(
+          "validation",
+          `The accounts folder ${dir} is under ${t}, a temporary directory. Codex won't run there. Set the data directory (--data-dir or AGENTBOX_DATA_DIR) outside ${t}.`,
+          { dir, tempDir: t },
+        );
+      }
+    }
+  }
+
+  /** The transcript store that every Claude account links to. */
+  storeRoot(): string {
+    return claudeStoreRoot(this.env, this.options.settings.get().accountDefaults.claude);
+  }
+
   /** The account folder of `vendor/name`. */
   dirOf(vendor: Platform, name: string): string {
     return accountDirFor(this.env, vendor, name);
@@ -174,6 +216,7 @@ export class AccountService {
     const c = parseOrThrow(AccountCreateSchema, input);
     const id = accountId(c.vendor, c.name);
     const dir = this.dirOf(c.vendor, c.name);
+    this.assertNotTemporary(dir);
     if (this.exists(id)) throw new ApiError("conflict", `The account ${id} exists.`);
     if (present(dir)) {
       throw new ApiError(
@@ -183,6 +226,7 @@ export class AccountService {
       );
     }
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    if (c.vendor === "claude") linkProjectsToStore(dir, this.storeRoot());
     if (c.vendor === "codex") {
       fs.writeFileSync(path.join(dir, "config.toml"), `${CODEX_STORE_SETTING}\n`, { mode: 0o600 });
     }
@@ -201,6 +245,92 @@ export class AccountService {
     this.options.repo.put(account);
     this.defaultIfNone(c.vendor, id);
     return this.view(account);
+  }
+
+  /**
+   * `accounts.import`: installs a ready, signed-in config folder as the
+   * account `vendor/name`. Moves the folder (a rename, or a copy and delete
+   * across file systems), or with `copy` copies it and warns. Never opens a
+   * sign-in file: the folder travels as opaque bytes, and the only file read
+   * or written afterwards is a Codex `config.toml`. A Claude account gets the
+   * `projects` link to the shared store when it has no `projects` entry.
+   * The signed-in state is `unknown` until `accounts.check` asks the CLI.
+   */
+  async importFolder(input: AccountImportRequest): Promise<AccountImportResult> {
+    const req = parseOrThrow(AccountImportRequestSchema, input);
+    const id = accountId(req.vendor, req.name);
+    const dest = this.dirOf(req.vendor, req.name);
+    this.assertNotTemporary(dest);
+    if (!path.isAbsolute(req.from)) {
+      throw new ApiError("validation", `${req.from} isn't an absolute path.`);
+    }
+    if (!isDirectory(req.from)) {
+      throw new ApiError("validation", `${req.from} isn't a folder.`);
+    }
+    const from = fs.realpathSync(req.from);
+    const accountsRoot = path.dirname(path.dirname(dest));
+    if (from === accountsRoot || from.startsWith(`${accountsRoot}/`)) {
+      throw new ApiError("validation", `${req.from} is already inside the accounts folder.`);
+    }
+    if (this.exists(id)) throw new ApiError("conflict", `The account ${id} exists.`);
+    if (present(dest)) {
+      throw new ApiError(
+        "conflict",
+        `The folder ${dest} exists. Move it away, or pick another name.`,
+        { dest },
+      );
+    }
+    fs.mkdirSync(path.dirname(dest), { recursive: true, mode: 0o700 });
+    const warnings: string[] = [];
+    const mode: "moved" | "copied" = req.copy ? "copied" : "moved";
+    const copyInto = async (): Promise<void> => {
+      const temp = `${dest}.importing-${process.pid}-${Date.now()}`;
+      try {
+        await copyTree(from, temp, { denyNames: false });
+        fs.renameSync(temp, dest);
+      } catch (err) {
+        fs.rmSync(temp, { recursive: true, force: true });
+        throw err;
+      }
+    };
+    if (req.copy) {
+      await copyInto();
+      warnings.push(
+        req.vendor === "claude"
+          ? "A Claude refresh token rotates each time it is used. Only one copy may stay in use: delete the original, or one of the two is signed out."
+          : "The original folder still holds the same sign-in. Keep only one copy in use.",
+      );
+    } else {
+      try {
+        fs.renameSync(from, dest);
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "EXDEV") throw err;
+        // Another file system: copy, then delete the original.
+        await copyInto();
+        fs.rmSync(from, { recursive: true, force: true });
+      }
+    }
+    fs.chmodSync(dest, 0o700);
+    if (req.vendor === "claude" && linkProjectsToStore(dest, this.storeRoot())) {
+      warnings.push(`Linked projects to the shared transcript store ${this.storeRoot()}.`);
+    }
+    if (req.vendor === "codex" && (await addCodexFileStore(path.join(dest, "config.toml")))) {
+      warnings.push(`Added ${CODEX_STORE_SETTING} to config.toml.`);
+    }
+    const now = this.env.now().toISOString();
+    const account: Account = {
+      id,
+      vendor: req.vendor,
+      name: req.name,
+      label: req.label ?? req.name,
+      overflow: false,
+      signIn: { state: "unknown" },
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.options.repo.put(account);
+    this.defaultIfNone(req.vendor, id);
+    return { ...this.view(account), mode, warnings };
   }
 
   /** Changes the label, the ceiling (`null` clears it), or `overflow`. */
@@ -286,6 +416,9 @@ export class AccountService {
         `Stop every box before you seed accounts. Running: ${running.join(", ")}.`,
         { running },
       );
+    }
+    for (const vendor of new Set(req.vendors)) {
+      this.assertNotTemporary(this.dirOf(vendor, req.name));
     }
     const taken = [...new Set(req.vendors)]
       .map((vendor) => ({ id: accountId(vendor, req.name), dir: this.dirOf(vendor, req.name) }))

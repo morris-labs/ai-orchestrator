@@ -5,7 +5,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { AccountService } from "../../src/accounts/service.js";
 import {
-  COPILOT_SIGN_IN_FILES_UNVERIFIED,
+  COPILOT_SIGN_IN_FILES,
   addCodexFileStore,
   copyTree,
   linkTargetForCopy,
@@ -54,7 +54,7 @@ function hostFolders(options: { projectsDir?: boolean } = {}): SeedSources & { r
   const copilotDir = path.join(root, ".copilot");
   write(path.join(copilotDir, "config.json"), "{}");
   write(path.join(copilotDir, "session-store.db"), "db");
-  for (const name of COPILOT_SIGN_IN_FILES_UNVERIFIED) {
+  for (const name of COPILOT_SIGN_IN_FILES) {
     write(path.join(copilotDir, name), SECRET);
   }
   return { root, claudeDir, claudeJson, codexDir, copilotDir };
@@ -108,6 +108,7 @@ function setup(options: { running?: string[]; projectsDir?: boolean } = {}) {
     docker,
     runningBoxes: () => options.running ?? [],
     sources,
+    tempDirs: [],
   });
   return { env, repos, settings, docker, sources, accounts };
 }
@@ -218,14 +219,12 @@ describe("AccountService.seed", () => {
     }
     expect(fs.existsSync(path.join(claude, ".credentials.json"))).toBe(false);
     expect(fs.existsSync(path.join(codex, "auth.json"))).toBe(false);
-    for (const name of COPILOT_SIGN_IN_FILES_UNVERIFIED) {
+    for (const name of COPILOT_SIGN_IN_FILES) {
       expect(fs.existsSync(path.join(copilot, name))).toBe(false);
     }
     expect(report.accounts[0]!.leftOut).toEqual([".credentials.json"]);
     expect(report.accounts[1]!.leftOut).toEqual(["auth.json"]);
-    expect([...report.accounts[2]!.leftOut].sort()).toEqual(
-      [...COPILOT_SIGN_IN_FILES_UNVERIFIED].sort(),
-    );
+    expect([...report.accounts[2]!.leftOut].sort()).toEqual([...COPILOT_SIGN_IN_FILES].sort());
     // Settings, skills, and sessions came across.
     expect(fs.readFileSync(path.join(claude, "skills", "one", "SKILL.md"), "utf8")).toBe("skill\n");
     expect(fs.existsSync(path.join(codex, "sessions", "2026", "r.jsonl"))).toBe(true);
@@ -236,7 +235,10 @@ describe("AccountService.seed", () => {
     const { accounts } = setup();
     await accounts.seed({ vendors: ["claude"] });
     const dir = accounts.dirOf("claude", "personal");
-    expect(fs.readFileSync(path.join(dir, ".claude.json"), "utf8")).toBe('{"fresh":true}');
+    expect(JSON.parse(fs.readFileSync(path.join(dir, ".claude.json"), "utf8"))).toEqual({
+      fresh: true,
+      installMethod: "global",
+    });
   });
 
   it("leaves the /login API key out of the copied .claude.json", async () => {
@@ -246,7 +248,7 @@ describe("AccountService.seed", () => {
     const copy = path.join(accounts.dirOf("claude", "personal"), ".claude.json");
     const text = fs.readFileSync(copy, "utf8");
     expect(text).not.toContain("SYNTHETIC_KEY");
-    expect(JSON.parse(text)).toEqual({ fresh: true });
+    expect(JSON.parse(text)).toEqual({ fresh: true, installMethod: "global" });
     expect(fs.statSync(copy).mode & 0o777).toBe(0o600);
     // The host's own file keeps its key.
     expect(fs.readFileSync(sources.claudeJson, "utf8")).toContain("SYNTHETIC_KEY");
@@ -407,7 +409,7 @@ describe("AccountService records", () => {
     const { accounts, settings } = setup();
     const v = accounts.create({ vendor: "claude", name: "work", label: "Work (Pro)" });
     expect(v).toMatchObject({ isDefault: true, dirExists: true });
-    expect(fs.readdirSync(v.dir)).toEqual([]);
+    expect(fs.readdirSync(v.dir)).toEqual(["projects"]);
     expect(fs.statSync(v.dir).mode & 0o777).toBe(0o700);
     const second = accounts.create({ vendor: "claude", name: "home" });
     expect(second.isDefault).toBe(false);

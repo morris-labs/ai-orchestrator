@@ -8,6 +8,8 @@
 // `ApiError` from `./errors.ts`); the API maps it to a status code.
 import type {
   AccountCreate,
+  AccountImportRequest,
+  AccountImportResult,
   AccountSeedReport,
   AccountSeedRequest,
   AccountUpdate,
@@ -219,6 +221,8 @@ export interface CoreAccounts {
   update(id: string, patch: AccountUpdate): Promise<AccountView>;
   /** Deletes the record and keeps the folder; `conflict` for a vendor's default. */
   remove(id: string): Promise<{ keptDir: string }>;
+  /** Installs a signed-in folder as an account (`conflict`, `validation`). */
+  importFolder(input: AccountImportRequest): Promise<AccountImportResult>;
   /** Asks the vendor CLI for the sign-in state (`image_missing`). */
   check(id: string): Promise<AccountView>;
   /** Checks a seed request before its job starts (`box_running`, `conflict`). */

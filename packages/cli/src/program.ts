@@ -2,6 +2,8 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
 import {
+  ACCOUNT_DIR_ENV,
+  ACCOUNT_SIGN_IN_COMMAND,
   AccountSeedReportSchema,
   DEFAULT_SEED_ACCOUNT_NAME,
   DecisionOptionSchema,
@@ -972,6 +974,50 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
       });
       print(r, () => `Created ${r.account.id} in ${r.dir}${r.isDefault ? " (default)" : ""}.\n`);
     });
+
+  accounts
+    .command("login")
+    .description("Print the command that signs an account in; run it in a box shell.")
+    .argument("<id>", "The account, VENDOR/NAME.")
+    .action(async (id: string) => {
+      const params = accountParams(id);
+      const r = await client().call("accounts.get", { params });
+      const env = `${ACCOUNT_DIR_ENV[r.account.vendor]}=${r.dir}`;
+      const command = `${env} ${ACCOUNT_SIGN_IN_COMMAND[r.account.vendor].join(" ")}`;
+      print({ command }, () => `${command}\n`);
+    });
+
+  accounts
+    .command("import")
+    .description(
+      "Install a ready, signed-in config folder as an account. Moves the folder unless you pass --copy.",
+    )
+    .argument("<vendor>", `One of ${PLATFORMS.join(", ")}.`, choice(PLATFORMS))
+    .argument("<name>", "Lowercase letters, digits, and hyphens, such as work.")
+    .requiredOption("--from <dir>", "The vendor's config folder, such as a CLAUDE_CONFIG_DIR.")
+    .option("--copy", "Copy the folder and keep the original. A Claude refresh token rotates.")
+    .option("--label <text>", "A display name. Default: the name.")
+    .action(
+      async (vendor: string, name: string, o: { from: string; copy?: boolean; label?: string }) => {
+        const r = await client().call("accounts.import", {
+          body: {
+            vendor: vendor as "claude",
+            name,
+            from: absolute(o.from),
+            copy: o.copy ?? false,
+            label: o.label,
+          },
+        });
+        print(r, () => {
+          const lines = [
+            `${r.mode === "moved" ? "Moved" : "Copied"} the folder to ${r.dir} as ${r.account.id}${r.isDefault ? " (default)" : ""}.`,
+            ...r.warnings.map((w) => `Warning: ${w}`),
+            `Run "agentbox accounts check ${r.account.id}" to confirm it is signed in.`,
+          ];
+          return `${lines.join("\n")}\n`;
+        });
+      },
+    );
 
   accounts
     .command("set")

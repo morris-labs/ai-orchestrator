@@ -176,6 +176,7 @@ export function apiCoreOf(server: ServerCore, dockerApi: Docker): Core {
       update: async (id, patch) => server.accounts.update(id, patch),
       remove: async (id) => server.accounts.remove(id),
       check: (id) => server.accounts.check(id),
+      importFolder: (input) => server.accounts.importFolder(input),
       validateSeed: async (input) => {
         server.accounts.validateSeed(input);
       },

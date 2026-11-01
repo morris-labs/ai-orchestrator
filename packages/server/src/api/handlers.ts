@@ -400,6 +400,7 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
         },
       );
     },
+    "accounts.import": async ({ body }) => core.accounts.importFolder(body),
     "accounts.get": async ({ params }) => core.accounts.get(`${params.vendor}/${params.name}`),
     "accounts.update": async ({ params, body }) =>
       core.accounts.update(`${params.vendor}/${params.name}`, body),
