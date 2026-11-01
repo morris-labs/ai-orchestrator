@@ -11,6 +11,7 @@
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
+import { hostOsOf, maxSocketPathBytes, type HostOs } from "../platform/host.js";
 import {
   BROKER_MAX_BODY_BYTES,
   BROKER_ROUTES,
@@ -62,14 +63,18 @@ export const MAX_SOCKET_PATH_BYTES = 107;
  * data directory's own path can make it too long; the message says so and
  * how much to cut.
  */
-export function assertSocketPathFits(socketPath: string): void {
+export function assertSocketPathFits(
+  socketPath: string,
+  hostOs: HostOs = hostOsOf(process.platform),
+): void {
+  const max = maxSocketPathBytes(hostOs);
   const bytes = Buffer.byteLength(socketPath);
-  if (bytes <= MAX_SOCKET_PATH_BYTES) return;
+  if (bytes <= max) return;
   throw new ApiError(
     "internal",
     `The secrets broker socket path ${socketPath} is ${bytes} bytes, and a Unix socket path ` +
-      `can be at most ${MAX_SOCKET_PATH_BYTES}. Choose a data directory (--data-dir or ` +
-      `AIO_DATA_DIR) whose path is at least ${bytes - MAX_SOCKET_PATH_BYTES} bytes shorter.`,
+      `can be at most ${max}. Choose a data directory (--data-dir or ` +
+      `AIO_DATA_DIR) whose path is at least ${bytes - max} bytes shorter.`,
   );
 }
 

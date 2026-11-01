@@ -86,8 +86,11 @@ describe("SetupService on each host", () => {
     );
   });
 
-  it("runs the image build script directly on macOS", async () => {
-    const { svc, runner } = make(hostPlatform("darwin", { home }), await context());
+  it("runs the image build script directly on macOS and names the image user", async () => {
+    const { svc, runner } = make(
+      hostPlatform("darwin", { home, env: { USER: "alex" } }),
+      await context(),
+    );
     svc.buildImage("rebuild");
     await waitFor(() => runner.spawned.length === 1);
     expect(runner.spawned[0]?.argv).toEqual([
@@ -95,6 +98,8 @@ describe("SetupService on each host", () => {
       "--tag",
       "aio-agent",
       "--no-cache",
+      "--user",
+      "alex",
     ]);
   });
 

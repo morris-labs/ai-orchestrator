@@ -252,3 +252,24 @@ export function installHint(p: Pick<HostPlatform, "os">, tool: "docker" | "ssh")
   }
   return "Install the ssh client with sudo apt install openssh-client.";
 }
+
+/**
+ * The longest Unix socket path, in bytes without the terminating null:
+ * `sun_path` holds 108 bytes on Linux and Windows and 104 on macOS.
+ */
+export function maxSocketPathBytes(hostOs: HostOs): number {
+  return hostOs === "darwin" ? 103 : 107;
+}
+
+/**
+ * The one user name the container image is built with and every container
+ * runs as (`docker exec --user`, the image's `USER_NAME` build argument):
+ * see `containerUsername` in `records/env.ts`, which this calls. On Linux
+ * it's the host name as before; on macOS and Windows it's lowercased and
+ * must be a valid Linux user name, else `user`. The server passes it to
+ * `scripts/build-image.sh --user` on macOS and Windows, so the build never
+ * falls back to `id -un` there.
+ */
+export function imageUserArgs(p: Pick<HostPlatform, "os" | "env">, name: string): string[] {
+  return p.os === "linux" ? [] : ["--user", name];
+}

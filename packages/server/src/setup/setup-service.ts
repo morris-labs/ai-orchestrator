@@ -19,6 +19,7 @@ import {
   bashScriptArgv,
   currentPlatform,
   hasPosixModes,
+  imageUserArgs,
   installHint,
   type HostPlatform,
 } from "../platform/host.js";
@@ -485,12 +486,12 @@ export class SetupService {
       );
     }
     const built = this.buildArgv(kind);
-    // On Windows the image's user name can't come from `id -un`, so the
-    // server names the one it runs `docker exec --user` with.
-    const scriptArgs =
-      this.platform.os === "win32"
-        ? [...built.slice(1), "--user", containerUsername(this.platform.env, "win32")]
-        : built.slice(1);
+    // On macOS and Windows the image's user name can't come from `id -un`,
+    // so the server names the one it runs `docker exec --user` with.
+    const scriptArgs = [
+      ...built.slice(1),
+      ...imageUserArgs(this.platform, containerUsername(this.platform.env, this.platform.os)),
+    ];
     const argv = bashScriptArgv(this.platform, built[0] as string, scriptArgs);
     if (!argv) {
       throw new ApiError(
