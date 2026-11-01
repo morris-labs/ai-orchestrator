@@ -4,6 +4,42 @@ This file lists the notable changes in each AI Orchestrator release. The release
 workflow copies a version's section into its GitHub release, so each
 section's heading must have the form `## [X.Y.Z]`.
 
+## [Unreleased]
+
+### Added
+
+- Multi-host support. A machine runs as a `hub`, a `node`, or `both`, set
+  with the `role` setting, `aio-server --role`, or `AIO_ROLE`. A hub has its
+  own certificate authority, issues one-time enrollment codes, and links to
+  each node over mutual TLS. The hub keeps a machine registry, relays
+  1Password reads to its nodes, and syncs agent sign-ins between machines.
+  Use `aio machines` on a hub and `aio node` on a node. See
+  `docs/multi-host.md`.
+- Machine routing: every server route also answers under
+  `/api/v1/machines/MACHINE_ID/proxy/`, for HTTP and WebSocket calls, with
+  the `machine_offline`, `machine_timeout`, and `hub_unreachable` error
+  codes. `MACHINE_ID` is an enrolled machine's ID, `local` for the server
+  that gets the call, or `hub` for a node's hub.
+- Machine tabs and a **Machines** page in the Boxes app. On another
+  machine, **Browse** lists that machine's directories.
+- A **Paste** button beside each **Browse** button for paths in the Boxes
+  app.
+- Windows host paths: the server maps a path such as
+  `C:\Users\user\project` to `/mnt/host/c/Users/user/project` in the
+  container. See `docs/host-paths.md`.
+- A TCP transport for the secrets broker, for Docker Desktop, which can't
+  share a Unix socket with its virtual machine. The `brokerTransport`
+  setting chooses `auto`, `unix`, or `tcp`.
+- macOS and Windows support: a launchd agent or a Task Scheduler logon task
+  for the server, a bundled Node.js runtime, and macOS and Windows builds
+  of the apps. See `docs/platforms.md`.
+
+### Changed
+
+- The database schema is at version 6. Migration 5 adds the broker port to
+  `engine_endpoints`, and migration 6 adds the `machines` and
+  `enrollment_codes` tables. The server applies both at its next start.
+
 ## [1.0.0] - Unreleased
 
 AI Orchestrator 1.0.0 replaces Claude Box 3.x, the Qt app, with a TypeScript host
