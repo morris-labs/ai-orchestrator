@@ -22,6 +22,13 @@ section's heading must have the form `## [X.Y.Z]`.
   that gets the call, or `hub` for a node's hub.
 - Machine tabs and a **Machines** page in the Boxes app. On another
   machine, **Browse** lists that machine's directories.
+- Review runs across machines. The Review app has a **Machine** list that
+  shows another machine's runs, findings, launcher, and policy, and the
+  dashboard lists every machine's runs with the machine named and an
+  offline machine marked. The `aio review` commands and `aio events` take
+  `--machine MACHINE_ID`, and `aio review status --all-machines` lists every
+  machine's runs. **Start Review** on another machine's tab in the Boxes
+  app opens the Review app on that machine.
 - A **Paste** button beside each **Browse** button for paths in the Boxes
   app.
 - Windows host paths: the server maps a path such as

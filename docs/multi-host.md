@@ -6,8 +6,8 @@ every other machine keeps open to it. Each other machine runs a *node*,
 which owns its own Docker, containers, transcripts, and accounts. The apps
 and the CLI on any machine talk only to the server on that machine.
 
-This page describes roles, how to add a machine to a hub, the hub's link
-port, and what crosses the link.
+This page describes roles, how to add a machine to a hub, review runs on
+other machines, the hub's link port, and what crosses the link.
 
 ## Roles
 
@@ -113,6 +113,49 @@ Replace `MACHINE_ID` with the machine's ID from `aio machines list`.
 The hub closes the machine's link and refuses its certificate from then on.
 The node shows the link as `revoked` and stops reconnecting. To add the
 machine again, issue a code and join again.
+
+## Review runs on other machines
+
+A review run executes on the machine that holds the box or repository it
+reviews, and stays in that machine's records. From any machine, the Review
+app and the CLI reach another machine's runs through the hub.
+
+In the Review app:
+
+- The **Machine** list in the navigation picks the machine that the
+  screens show: its runs, findings, launcher, policy, and settings. A run's
+  view follows the run live over that machine's event stream.
+- The **Dashboard** lists the runs of every machine, with a **Machine**
+  column. A machine that the hub reports offline, or that doesn't answer,
+  shows as offline with the runs it last listed; the other machines'
+  runs still show. Click a run to open it on its machine.
+- In the Boxes app, **Start Review** on another machine's tab opens the
+  Review app on that machine, with the box filled in.
+
+In the CLI, give `--machine MACHINE_ID` to any `aio review` command, and
+to `aio events`, to send it to that machine. Replace `MACHINE_ID` with the
+machine's ID from `aio machines list`. For example, to start a review of a
+box on another machine and follow its events, run the following commands:
+
+```bash
+aio review start --machine MACHINE_ID --box BOX_ID
+aio events --machine MACHINE_ID --types run.changed,stage.changed
+
+```
+
+Replace `BOX_ID` with the box's ID on that machine. With `--machine`, give
+`--repo` as an absolute path on that machine, or give `--box`.
+
+To list the runs of every machine, run the following command:
+
+```bash
+aio review status --all-machines
+
+```
+
+The output is a table with a `MACHINE` column, followed by a line for each
+machine that has no current list, such as `laptop: offline`. The command
+succeeds while any machine is offline.
 
 ## The link port
 
