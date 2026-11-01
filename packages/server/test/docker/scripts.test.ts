@@ -1,6 +1,7 @@
-// The 3.3.5 keeper and session start scripts stay verbatim from inventory
-// section 4.2 as the reference for the image's keeper.sh and
-// start-session.sh; this test reads the inventory itself.
+// The 3.3.5 keeper and session start scripts stay verbatim as the reference
+// for the image's keeper.sh and start-session.sh. This test pins each one to
+// the SHA-256 hash of its 3.3.5 text.
+import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import fs, { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -23,14 +24,6 @@ import {
   sharedKeeperCommand,
   shellQuote,
 } from "../../src/docker/scripts.js";
-
-const inventory = fs.readFileSync(
-  path.resolve(
-    path.dirname(fileURLToPath(import.meta.url)),
-    "../../../../docs/v4/inventory-gui.md",
-  ),
-  "utf8",
-);
 
 /**
  * Fake root tools in `dir/bin`: every directory reads as root-owned, and
@@ -72,20 +65,21 @@ function runRootSetup(
   });
 }
 
-function codeBlockAfter(marker: string): string {
-  const at = inventory.indexOf(marker);
-  expect(at).toBeGreaterThanOrEqual(0);
-  const start = inventory.indexOf("```\n", at) + 4;
-  return inventory.slice(start, inventory.indexOf("```", start));
+function sha256(text: string): string {
+  return createHash("sha256").update(text).digest("hex");
 }
 
 describe("scripts", () => {
   it("keeps the keeper script verbatim", () => {
-    expect(KEEPER_SCRIPT).toBe(codeBlockAfter("Keeper:\n```"));
+    expect(sha256(KEEPER_SCRIPT)).toBe(
+      "e973df18b9190f808633177aa6e5da3dd378c5714cf2c2a36b11e2052fd17d11",
+    );
   });
 
   it("keeps the session start script verbatim", () => {
-    expect(SESSION_START_SCRIPT).toBe(codeBlockAfter("Session start (via"));
+    expect(sha256(SESSION_START_SCRIPT)).toBe(
+      "341a118d6d994acc3467f338dcd040a33af7cf0ade696710f6af779f7e72daa6",
+    );
   });
 
   // 4.0.0 runs the image's keeper.sh, which does what the 3.3.5 keeper did

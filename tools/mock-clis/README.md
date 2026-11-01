@@ -6,12 +6,8 @@ output in the real CLI's shape, and answers from a scenario file instead of a
 model. Use them to run the review pipeline end to end where a real CLI is
 missing, not signed in, or too costly for a test.
 
-The output shapes follow these references:
-
-- `codex`: `docs/v4/codex-cli-assumptions.md`
-- `copilot`: `docs/v4/copilot-cli-assumptions.md`
-- `claude`: `docs/v4/claude-headless.md` and the recorded runs in
-  `packages/engine/test/adapters/fixtures/`
+The output shapes follow what the vendor adapters in `packages/engine/src/adapters/`
+parse, and the sample output in `packages/engine/test/adapters/fixtures/`.
 
 The scripts need Node.js 22 or later and have no dependencies.
 

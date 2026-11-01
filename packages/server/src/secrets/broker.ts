@@ -7,7 +7,7 @@
 //
 // The socket identifies the container and nothing finer: every process in
 // the container runs as the same user and can ask for any listed secret.
-// See docs/v4/design-secrets-broker.md.
+// See `docs/secrets.md`.
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";

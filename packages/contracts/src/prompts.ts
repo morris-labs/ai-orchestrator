@@ -1,5 +1,5 @@
-// Default prompt templates, copied byte for byte from
-// `docs/v4/inventory-gui.md` section 4.7 (the 3.3.5 `PromptTemplates.cpp`).
+// Default prompt templates, copied byte for byte from the 3.3.5
+// `gui/src/PromptTemplates.cpp`.
 // `expandTemplate()` substitutes `%1` to `%9` in one pass, as the Qt app did.
 // The Starter text keeps its original em dash: it is data, not prose.
 

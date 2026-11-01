@@ -39,7 +39,7 @@ export const AccountNameSchema = z.string().regex(/^[a-z0-9](?:[a-z0-9-]{0,30}[a
 
 /**
  * An account id, `VENDOR/NAME`, such as `claude/work`. See
- * `docs/v4/design-accounts.md`.
+ * `docs/accounts.md`.
  */
 export const AccountIdSchema = z
   .string()

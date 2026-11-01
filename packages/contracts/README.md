@@ -54,13 +54,12 @@ client and server messages. Fill path parameters with `buildPath()`.
 
 Contracts freeze at integration checkpoint C1. After that, any change to a
 schema, a default, a route, or an event is a plan change: it goes through an
-integration checkpoint, as `plan-agentbox-v4.md` describes, and every
-consuming workstream must pull it and pass its own contract tests before the
-change counts as done. Don't change a contract from inside another
-workstream's branch.
+integration checkpoint, and every consuming package must pull it and pass
+its own contract tests before the change counts as done. Don't change a
+contract from inside another package's branch.
 
-The prompt template defaults must stay byte for byte equal to
-`docs/v4/inventory-gui.md` section 4.7. The `test/prompts.test.ts` file holds
+The prompt template defaults must stay byte for byte equal to the 3.3.5
+templates in `gui/src/PromptTemplates.cpp`. The `test/prompts.test.ts` file holds
 the expected text and fails on any difference. The secrets hint isn't a
 template: the server adds it after the opening prompt, so the templates
 stay unchanged.
@@ -79,7 +78,7 @@ corepack pnpm --filter @agentbox/contracts typecheck
 
 ### Accounts, phase 1
 
-Phase 1 of `docs/v4/design-accounts.md`. Consumers must update for the change
+Phase 1 of the accounts feature, described in `docs/accounts.md`. Consumers must update for the change
 marked **breaking**.
 
 - **Breaking:** `GlobalSettings` has a required `accountsMode` (`host` or

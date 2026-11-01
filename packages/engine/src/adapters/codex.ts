@@ -1,6 +1,6 @@
 // The Codex adapter: `codex exec --json`. The Codex CLI isn't installed where
-// this was written; every flag and event shape it relies on is listed, with
-// its source, in docs/v4/codex-cli-assumptions.md.
+// this was written; the flags and event shapes it relies on come from the
+// Codex CLI's documentation and are checked against the sample fixtures.
 import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";

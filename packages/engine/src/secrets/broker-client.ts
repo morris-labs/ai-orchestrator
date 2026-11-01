@@ -1,5 +1,5 @@
 // A client of the secrets broker: the Unix socket the server mounts into
-// each project container (docs/v4/design-secrets-broker.md). The engine uses
+// each project container (see `docs/secrets.md`). The engine uses
 // it to get the credentials it hands vendor CLIs and `git`, and the
 // `agentbox-secret` command wraps it for everything else in the container.
 //

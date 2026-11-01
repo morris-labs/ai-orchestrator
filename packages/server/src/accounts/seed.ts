@@ -1,5 +1,5 @@
-// Seeding: copies a host agent folder into a new account folder, as owner
-// decision 2 of `docs/v4/design-accounts.md` chose (copy, never move).
+// Seeding: copies a host agent folder into a new account folder, and
+// never moves it: seeding copies.
 //
 // The copy treats every file as opaque bytes: it never opens a file to read
 // its content, except `config.toml` for Codex, which holds settings, not a

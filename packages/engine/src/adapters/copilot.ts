@@ -1,6 +1,7 @@
 // The Copilot adapter: `copilot -p` in headless mode. The Copilot CLI isn't
-// installed where this was written; every flag and output shape it relies on
-// is listed, with its source, in docs/v4/copilot-cli-assumptions.md.
+// installed where this was written; the flags and output shapes it relies on
+// come from the Copilot CLI's documentation and are checked against the
+// sample fixtures.
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

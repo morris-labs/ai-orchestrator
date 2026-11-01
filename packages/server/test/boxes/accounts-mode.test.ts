@@ -1,4 +1,4 @@
-// Boxes on accounts (phase 2 of docs/v4/design-accounts.md): the env prefix
+// Boxes on accounts (phase 2 of the accounts feature): the env prefix
 // on the session command, the account mounts, the mode label, the shared
 // transcript store, and moving a box between accounts.
 import fs from "node:fs";

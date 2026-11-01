@@ -20,8 +20,8 @@ export interface HostEnv {
   /** The current time. */
   now: () => Date;
   /**
-   * The Claude transcript store root when boxes run on accounts (option S of
-   * `docs/v4/design-accounts.md`), else `undefined` and the host's
+   * The Claude transcript store root when boxes run on accounts (the
+   * shared store described in `docs/accounts.md`), else `undefined` and the host's
    * `~/.claude/projects`. `createServerCore()` sets it from `accountsMode`.
    */
   claudeProjectsRoot?: () => string | undefined;

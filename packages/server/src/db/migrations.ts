@@ -203,7 +203,7 @@ export const MIGRATIONS: readonly Migration[] = [
     cost_estimate REAL NOT NULL
   );
 `,
-  // 4: accounts (docs/v4/design-accounts.md, phase 1).
+  // 4: accounts (phase 1).
   `
   CREATE TABLE accounts (
     id TEXT PRIMARY KEY,
