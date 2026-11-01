@@ -71,3 +71,16 @@ export function toTcpMaps(rows: readonly { host: string; container: string }[]):
       return { host, container: r.container.trim() === "" ? host : Number(r.container) };
     });
 }
+
+/**
+ * Cleans clipboard text for a path field: keeps the first non-blank line,
+ * trims whitespace, and drops one pair of matching surrounding quotes. A
+ * leading `~` stays, as it does when typed, so the same validation reports it.
+ */
+export function cleanPastedPath(text: string): string {
+  const line = text.split(/\r?\n/).find((l) => l.trim() !== "") ?? "";
+  let t = line.trim();
+  const q = t[0];
+  if (t.length >= 2 && (q === '"' || q === "'") && t.endsWith(q)) t = t.slice(1, -1).trim();
+  return t;
+}

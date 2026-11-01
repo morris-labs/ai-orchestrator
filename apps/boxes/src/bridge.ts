@@ -28,6 +28,8 @@ export interface AioBridge {
   /** Launches `aio-review` with the launcher prefilled. */
   launchReview: (req: { projectId: string; boxId: string }) => Promise<BridgeResult>;
   pickDirectory: (defaultPath?: string) => Promise<string | null>;
+  /** Returns the plain text on the system clipboard, or an empty string. */
+  readClipboardText: () => Promise<string>;
   openPath: (path: string) => Promise<BridgeResult>;
   openExternal: (url: string) => Promise<BridgeResult>;
   /** Calls `listener` with the box id when a notification is clicked. */
