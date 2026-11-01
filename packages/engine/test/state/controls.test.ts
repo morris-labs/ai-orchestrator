@@ -88,6 +88,79 @@ describe("run controls", () => {
     ).toBe(true);
   });
 
+  it("starts with the request's roles over the profile's defaults", async () => {
+    const repo = buildSampleRepo();
+    const { deps, events } = setup(new Scenario());
+    const run = await create(repo, deps, {
+      roles: { reviewer: ["codex", "codex"], disprover: "copilot" },
+    });
+    // Roles the request leaves out follow the profile; a repeated reviewer counts once.
+    expect(run.state.roles).toEqual({
+      reviewer: ["codex"],
+      disprover: "copilot",
+      confirmer: "codex",
+      fixer: "claude",
+    });
+    expect(run.state.request.roles).toEqual({
+      reviewer: ["codex", "codex"],
+      disprover: "copilot",
+    });
+    await run.start();
+    const state = await run.settled();
+    expect(state.status).toBe("finished");
+    const round1 = events.ofType("agent.started").filter((e) => e.round === 1);
+    expect(new Set(round1.filter((e) => e.role === "reviewer").map((e) => e.vendor))).toEqual(
+      new Set(["codex"]),
+    );
+    expect(round1.filter((e) => e.role === "disprover").map((e) => e.vendor)).toContain("copilot");
+    expect(round1.some((e) => e.role === "disprover" && e.vendor === "codex")).toBe(false);
+    // The roles held into later rounds, so no round reassigned them.
+    expect(events.ofType("role.reassigned")).toEqual([]);
+  });
+
+  it("drops the request's roles on a profile switch, as it drops assigned roles", async () => {
+    const repo = buildSampleRepo();
+    const ref: { run?: RunController } = {};
+    let done = false;
+    const { deps, events } = setup(new Scenario(), (req) => {
+      if (req.role === "fixer" && !done) {
+        done = true;
+        void ref.run?.setProfile("fast");
+      }
+    });
+    const run = await create(repo, deps, { roles: { disprover: "copilot" } });
+    ref.run = run;
+    await run.start();
+    const state = await run.settled();
+    expect(state.status).toBe("finished");
+    const changes = events.ofType("role.reassigned").filter((e) => e.effectiveRound === 2);
+    expect(changes.find((e) => e.role === "disprover")).toMatchObject({
+      from: ["copilot"],
+      to: ["claude"],
+      reason: "profile",
+    });
+  });
+
+  it("refuses request roles for a vendor with no adapter", async () => {
+    const repo = buildSampleRepo();
+    const scenario = new Scenario();
+    const { deps } = setup(scenario, undefined, scenario.adapters(["claude", "codex"]));
+    await expect(create(repo, deps, { roles: { confirmer: "copilot" } })).rejects.toMatchObject({
+      code: "validation",
+      message: "No adapter is configured for copilot.",
+    });
+    await expect(
+      create(repo, deps, { roles: { reviewer: ["codex", "copilot"] } }),
+    ).rejects.toMatchObject({ code: "validation" });
+  });
+
+  it("refuses request roles that give a single-vendor role two vendors", async () => {
+    const repo = buildSampleRepo();
+    const { deps } = setup(new Scenario());
+    await expect(create(repo, deps, { roles: { fixer: ["claude", "codex"] } })).rejects.toThrow();
+    await expect(create(repo, deps, { roles: { reviewer: [] } })).rejects.toThrow();
+  });
+
   it("pauses after the current call and resumes", async () => {
     const repo = buildSampleRepo();
     const ref: { run?: RunController } = {};

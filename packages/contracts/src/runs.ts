@@ -53,6 +53,60 @@ export const StageSchema = z.enum([
 ]);
 export type Stage = z.infer<typeof StageSchema>;
 
+/** The vendor for each role. Several reviewers can run in one round. */
+export const RoleAssignmentSchema = z.object({
+  reviewer: z.array(VendorSchema).min(1),
+  disprover: VendorSchema,
+  confirmer: VendorSchema,
+  fixer: VendorSchema,
+});
+export type RoleAssignment = z.infer<typeof RoleAssignmentSchema>;
+
+/**
+ * Roles a run starts with in place of the profile's defaults. Each role it
+ * names holds from round 1 until a profile switch, like a role a person
+ * assigns with `runs.assign`; the roles it leaves out follow the profile.
+ */
+export const RoleOverridesSchema = RoleAssignmentSchema.partial();
+export type RoleOverrides = z.infer<typeof RoleOverridesSchema>;
+
+/** Rounds in which the `balanced` profile has Claude review. */
+export const BALANCED_CLAUDE_ROUNDS = 2;
+
+/** The roles a profile gives in a round, before availability and manual changes. */
+export function profileRoles(profile: Profile, round: number): RoleAssignment {
+  switch (profile) {
+    case "offload":
+      return {
+        reviewer: ["codex", "copilot"],
+        disprover: "codex",
+        confirmer: "codex",
+        fixer: "claude",
+      };
+    case "balanced":
+      return round <= BALANCED_CLAUDE_ROUNDS
+        ? {
+            reviewer: ["claude", "codex", "copilot"],
+            disprover: "codex",
+            confirmer: "codex",
+            fixer: "claude",
+          }
+        : {
+            reviewer: ["codex", "copilot"],
+            disprover: "codex",
+            confirmer: "codex",
+            fixer: "claude",
+          };
+    case "fast":
+      return {
+        reviewer: ["claude", "codex"],
+        disprover: "claude",
+        confirmer: "codex",
+        fixer: "claude",
+      };
+  }
+}
+
 /** A run request with every default resolved, as `RunState.request` stores it. */
 export const ResolvedRunRequestSchema = z.object({
   projectId: z.string().min(1),
@@ -82,6 +136,11 @@ export const ResolvedRunRequestSchema = z.object({
   roundCap: z.number().int().positive(),
   overlapThreshold: FractionSchema,
   continuationCap: z.number().int().nonnegative(),
+  /**
+   * Roles that replace the profile's defaults from round 1. Absent in
+   * requests from clients and runs that predate it.
+   */
+  roles: RoleOverridesSchema.optional(),
 });
 export type ResolvedRunRequest = z.infer<typeof ResolvedRunRequestSchema>;
 
@@ -144,15 +203,6 @@ export const EngineRunCreateSchema = RunRequestFieldsSchema.extend({
   .superRefine(refuseReadOnlyPostPush)
   .transform(foldExactBase);
 export type EngineRunCreate = z.infer<typeof EngineRunCreateSchema>;
-
-/** The vendor for each role. Several reviewers can run in one round. */
-export const RoleAssignmentSchema = z.object({
-  reviewer: z.array(VendorSchema).min(1),
-  disprover: VendorSchema,
-  confirmer: VendorSchema,
-  fixer: VendorSchema,
-});
-export type RoleAssignment = z.infer<typeof RoleAssignmentSchema>;
 
 export const StopReasonSchema = z.enum([
   "clean",

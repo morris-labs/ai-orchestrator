@@ -1,43 +1,10 @@
 // Profiles and role assignment (design.md, "Profiles" and "Vendor roles").
+import { BALANCED_CLAUDE_ROUNDS, profileRoles } from "@aio/contracts";
 import type { FileGroup, Profile, RoleAssignment, Vendor } from "@aio/contracts";
 import { FOCUS_AREAS } from "../prompts/templates.js";
 
-/** Rounds in which the `balanced` profile has Claude review. */
-export const BALANCED_CLAUDE_ROUNDS = 2;
-
-/** The roles a profile gives in a round, before availability and manual changes. */
-export function profileRoles(profile: Profile, round: number): RoleAssignment {
-  switch (profile) {
-    case "offload":
-      return {
-        reviewer: ["codex", "copilot"],
-        disprover: "codex",
-        confirmer: "codex",
-        fixer: "claude",
-      };
-    case "balanced":
-      return round <= BALANCED_CLAUDE_ROUNDS
-        ? {
-            reviewer: ["claude", "codex", "copilot"],
-            disprover: "codex",
-            confirmer: "codex",
-            fixer: "claude",
-          }
-        : {
-            reviewer: ["codex", "copilot"],
-            disprover: "codex",
-            confirmer: "codex",
-            fixer: "claude",
-          };
-    case "fast":
-      return {
-        reviewer: ["claude", "codex"],
-        disprover: "claude",
-        confirmer: "codex",
-        fixer: "claude",
-      };
-  }
-}
+// The profile defaults live in the contracts, so the Review app can show them.
+export { BALANCED_CLAUDE_ROUNDS, profileRoles };
 
 export interface RoleOptions {
   profile: Profile;

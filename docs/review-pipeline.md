@@ -43,6 +43,32 @@ run view, or run `aio review profile RUN_ID PROFILE`. To move a role to
 another vendor from the next round, run
 `aio review assign RUN_ID ROLE VENDOR`.
 
+### Choose roles when a run starts
+
+To start a run with other vendors than the profile gives, change the roles
+in the **Profile and roles** section of the run launcher. The role table
+starts from the selected profile's round 1 roles and follows the profile
+when you switch it, until you change a role. After that, a profile switch
+keeps your changes; to drop them, click **Reset to profile defaults**. The
+`reviewer` row takes one or more vendors, and every other row takes one.
+
+From a terminal, pass `--role` to `aio review start` once for each role:
+
+```bash
+aio review start --box BOX_ID --role reviewer=codex,copilot --role confirmer=copilot
+```
+
+Replace `BOX_ID` with the box whose branch you want to review.
+
+A run request carries only the roles that differ from the profile's
+defaults, in its `roles` field. Those roles hold from round 1, like roles you
+assign with `aio review assign`; the roles you leave alone follow the
+profile from round to round. The engine refuses a role for a vendor with no
+adapter in the container, and the request schema refuses more than one
+vendor for any role but `reviewer`. Switching the profile of the running
+run drops the starting roles and every assigned role, and the run takes the
+new profile's roles from the next round.
+
 ## Accounts
 
 In accounts mode, each model call of a run uses its vendor's default

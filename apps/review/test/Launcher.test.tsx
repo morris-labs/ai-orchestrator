@@ -1,4 +1,4 @@
-import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { Launcher } from "../src/screens/Launcher.js";
 import { BOX, PROJECT, boxView, lastRun, project } from "./helpers/data.js";
@@ -77,6 +77,81 @@ describe("Launcher", () => {
       pipeline: "pre-push",
     });
     await waitFor(() => expect(window.location.hash).toBe(`#/runs/${lastRun().id}`));
+  });
+
+  it("shows the profile's roles and follows a profile switch", async () => {
+    const { server } = renderWithStore(
+      <Launcher prefill={{ project: null, box: BOX }} />,
+      handlers(),
+    );
+    await waitFor(() =>
+      expect(screen.getByLabelText("Tip branch")).toHaveValue("claude/Emails_not_sending"),
+    );
+    const table = screen.getByRole("table", { name: "Roles" });
+    expect(within(table).getByRole("checkbox", { name: "reviewer: Codex" })).toBeChecked();
+    expect(within(table).getByRole("checkbox", { name: "reviewer: Claude" })).not.toBeChecked();
+    expect(within(table).getByRole("radio", { name: "disprover: Codex" })).toBeChecked();
+    expect(screen.getByRole("button", { name: "Reset to profile defaults" })).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText("Profile"), { target: { value: "fast" } });
+    expect(within(table).getByRole("checkbox", { name: "reviewer: Claude" })).toBeChecked();
+    expect(within(table).getByRole("checkbox", { name: "reviewer: Copilot" })).not.toBeChecked();
+    expect(within(table).getByRole("radio", { name: "disprover: Claude" })).toBeChecked();
+
+    fireEvent.click(screen.getByRole("button", { name: "Start" }));
+    await waitFor(() => expect(server.callsTo("runs.create")).toHaveLength(1));
+    const body = server.callsTo("runs.create")[0]!.body as Record<string, unknown>;
+    expect(body.profile).toBe("fast");
+    expect(body).not.toHaveProperty("roles");
+  });
+
+  it("keeps edited roles over a profile switch, resets them, and sends only changes", async () => {
+    const { server } = renderWithStore(
+      <Launcher prefill={{ project: null, box: BOX }} />,
+      handlers(),
+    );
+    await waitFor(() =>
+      expect(screen.getByLabelText("Tip branch")).toHaveValue("claude/Emails_not_sending"),
+    );
+    const table = screen.getByRole("table", { name: "Roles" });
+    fireEvent.click(within(table).getByRole("radio", { name: "confirmer: Copilot" }));
+    fireEvent.click(within(table).getByRole("checkbox", { name: "reviewer: Copilot" }));
+    expect(screen.getByText("Changed from the profile's defaults.")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Profile"), { target: { value: "balanced" } });
+    expect(within(table).getByRole("radio", { name: "confirmer: Copilot" })).toBeChecked();
+    expect(within(table).getByRole("checkbox", { name: "reviewer: Copilot" })).not.toBeChecked();
+    expect(within(table).getByRole("checkbox", { name: "reviewer: Claude" })).not.toBeChecked();
+
+    const reset = screen.getByRole("button", { name: "Reset to profile defaults" });
+    fireEvent.click(reset);
+    expect(reset).toBeDisabled();
+    expect(within(table).getByRole("checkbox", { name: "reviewer: Claude" })).toBeChecked();
+    expect(within(table).getByRole("radio", { name: "confirmer: Codex" })).toBeChecked();
+
+    fireEvent.click(within(table).getByRole("radio", { name: "fixer: Codex" }));
+    fireEvent.click(screen.getByRole("button", { name: "Start" }));
+    await waitFor(() => expect(server.callsTo("runs.create")).toHaveLength(1));
+    expect(server.callsTo("runs.create")[0]!.body).toMatchObject({
+      profile: "balanced",
+      roles: { fixer: "codex" },
+    });
+  });
+
+  it("refuses to start with no reviewer", async () => {
+    const { server } = renderWithStore(
+      <Launcher prefill={{ project: null, box: BOX }} />,
+      handlers(),
+    );
+    await waitFor(() =>
+      expect(screen.getByLabelText("Tip branch")).toHaveValue("claude/Emails_not_sending"),
+    );
+    const table = screen.getByRole("table", { name: "Roles" });
+    fireEvent.click(within(table).getByRole("checkbox", { name: "reviewer: Codex" }));
+    fireEvent.click(within(table).getByRole("checkbox", { name: "reviewer: Copilot" }));
+    fireEvent.click(screen.getByRole("button", { name: "Start" }));
+    expect(await screen.findByText("Choose at least one reviewer.")).toBeInTheDocument();
+    expect(server.callsTo("runs.create")).toHaveLength(0);
   });
 
   it("starts one run when the form is submitted twice", async () => {

@@ -25,8 +25,11 @@ import {
   type Finding,
   type Job,
   type ProjectSummary,
+  type Role,
+  type RoleOverrides,
   type RunState,
   type SetupCheck,
+  type Vendor,
 } from "@aio/contracts";
 import { Command, CommanderError, InvalidArgumentError, Option } from "commander";
 import {
@@ -119,6 +122,32 @@ function nonNegativeInt(value: string): number {
 
 function collect(value: string, previous: string[] = []): string[] {
   return [...previous, value];
+}
+
+/**
+ * Turns repeated `--role ROLE=VENDOR[,VENDOR]` options into the `roles`
+ * body field. Only `reviewer` takes more than one vendor.
+ */
+function rolesOf(specs: readonly string[]): RoleOverrides | undefined {
+  const out: RoleOverrides = {};
+  for (const spec of specs) {
+    const [role = "", list = "", ...rest] = spec.split("=");
+    const vendors = list.split(",").filter((v) => v !== "");
+    if (rest.length > 0 || !ROLES.includes(role) || vendors.length === 0) {
+      throw new UsageError(
+        `Invalid role ${spec}; use ROLE=VENDOR[,VENDOR], with a role of ${ROLES.join(", ")}.`,
+      );
+    }
+    const unknown = vendors.filter((v) => !PLATFORMS.includes(v));
+    if (unknown.length > 0) {
+      throw new UsageError(`Unknown vendor ${unknown.join(", ")}; use ${PLATFORMS.join(", ")}.`);
+    }
+    if (role in out) throw new UsageError(`The ${role} role is given twice.`);
+    if (role === "reviewer") out.reviewer = vendors as Vendor[];
+    else if (vendors.length > 1) throw new UsageError(`The ${role} role takes one vendor.`);
+    else out[role as Exclude<Role, "reviewer">] = vendors[0] as Vendor;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 function parsePortPair(spec: string): { host: number; container: number } {
@@ -777,6 +806,12 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
       new Option("--pipeline <pipeline>").choices(["pre-push", "post-push"]).default("pre-push"),
     )
     .option("--pr <number>", "The pull request, for post-push.", positiveInt)
+    .option(
+      "--role <role=vendors>",
+      "Give a role to vendors from round 1 over the profile's default, such as reviewer=codex,copilot (repeatable).",
+      collect,
+      [],
+    )
     .option("--no-cross-vendor", "Let the same vendor disprove and confirm its own work.")
     .option("--round-cap <n>", "Stop after this many rounds.", positiveInt)
     .option(
@@ -788,6 +823,7 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
       if (isReadOnlyPostPush({ readOnly: o.readOnly ?? false, pipeline: o.pipeline })) {
         throw new UsageError(READ_ONLY_POST_PUSH_MESSAGE);
       }
+      const roles = rolesOf(o.role);
       const c = client();
       let projectId: string | undefined = o.project;
       let repoPath: string | undefined = o.repo === undefined ? undefined : absolute(o.repo);
@@ -812,6 +848,7 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
           readOnly: o.readOnly ?? false,
           includeWorktree: o.includeWorktree ?? false,
           profile: o.profile,
+          roles,
           pipeline: o.pipeline,
           prNumber: o.pr,
           crossVendor: o.crossVendor,

@@ -595,6 +595,31 @@ describe("review", () => {
     expect(await cli([...args, "--continuation-cap", "-1"])).not.toBe(0);
   });
 
+  it("passes starting roles and refuses a bad role", async () => {
+    server.on("POST /api/v1/runs", { status: 201, body: runState });
+    const args = ["review", "start", "--project", PROJECT_ID, "--repo", "/r"];
+    expect(await cli([...args, "--role", "reviewer=codex,copilot", "--role", "fixer=codex"])).toBe(
+      0,
+    );
+    expect(last()?.body).toMatchObject({
+      roles: { reviewer: ["codex", "copilot"], fixer: "codex" },
+    });
+    expect(await cli(args)).toBe(0);
+    expect(last()?.body).not.toHaveProperty("roles");
+    const calls = server.requests.length;
+    for (const bad of [
+      ["--role", "disprover=codex,copilot"],
+      ["--role", "tester=codex"],
+      ["--role", "fixer=gemini"],
+      ["--role", "fixer"],
+      ["--role", "fixer=codex", "--role", "fixer=claude"],
+    ]) {
+      expect(await cli([...args, ...bad])).toBe(2);
+    }
+    expect(server.requests.length).toBe(calls);
+    expect(err).toContain("The disprover role takes one vendor.");
+  });
+
   it("refuses a read-only post-push run without calling the server", async () => {
     server.on("POST /api/v1/runs", { status: 201, body: runState });
     const args = ["review", "start", "--project", PROJECT_ID, "--repo", "/r", "--read-only"];

@@ -32,6 +32,10 @@ the upgrade steps, see `docs/migration-3x.md`.
   broker socket and the `aio-secret` command in the image, never put
   in a container's environment. When a project has secret references, the
   opening prompt tells the agent how to use `aio-secret`.
+- Starting roles for a review run: the run launcher's **Profile and roles**
+  section and `aio review start --role ROLE=VENDOR[,VENDOR]` give roles to
+  vendors from round 1 over the profile's defaults, through the run
+  request's optional `roles` field.
 - A repository policy file, `.aio/policy.yaml`.
 - Tray icons and desktop notifications.
 - A one-time import of 3.x records and settings into SQLite.
