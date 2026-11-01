@@ -39,9 +39,9 @@ function replay(name: string) {
   return { summary: parser.summary(), raw };
 }
 
-describe("ClaudeStreamParser on recorded output", () => {
+describe("ClaudeStreamParser on sample output", () => {
   it("reads the session, model, and both rate-limit windows", () => {
-    const { summary } = replay("claude-real-review.jsonl");
+    const { summary } = replay("claude-sample-review.jsonl");
     expect(summary.sessionId).toMatch(/^[0-9a-f-]{36}$/);
     expect(summary.model).toBe("claude-haiku-5-5");
     expect(summary.samples.map((s) => s.window).sort()).toEqual(["5h", "7d"]);
@@ -55,7 +55,7 @@ describe("ClaudeStreamParser on recorded output", () => {
   });
 
   it("records the API error of a not-logged-in run", () => {
-    const { summary } = replay("claude-real-not-logged-in.jsonl");
+    const { summary } = replay("claude-sample-not-logged-in.jsonl");
     expect(summary.apiError).toBe("authentication_failed");
     expect(summary.apiErrorText).toMatch(/Not logged in/);
   });
@@ -115,8 +115,8 @@ describe("ClaudeStreamParser on recorded output", () => {
 });
 
 describe("ClaudeAdapter.interpret", () => {
-  it("returns structured findings, tokens, cost, and usage from a real review", () => {
-    const { summary, raw } = replay("claude-real-review.jsonl");
+  it("returns structured findings, tokens, cost, and usage from a sample review", () => {
+    const { summary, raw } = replay("claude-sample-review.jsonl");
     const result = adapter.interpret(req(VendorFindingsOutputSchema), summary, raw, "", 0, 10);
     expect(result.output.findings[0]).toMatchObject({
       file: "a.ts",
@@ -131,8 +131,8 @@ describe("ClaudeAdapter.interpret", () => {
     expect(result.usage).toHaveLength(2);
   });
 
-  it("parses a real fix run", () => {
-    const { summary, raw } = replay("claude-real-fix.jsonl");
+  it("parses a sample fix run", () => {
+    const { summary, raw } = replay("claude-sample-fix.jsonl");
     const result = adapter.interpret(
       req(z.object({ done: z.boolean() }), { tools: "write" }),
       summary,
@@ -145,7 +145,7 @@ describe("ClaudeAdapter.interpret", () => {
   });
 
   it("rejects structured output that misses the schema", () => {
-    const { summary, raw } = replay("claude-real-structured.jsonl");
+    const { summary, raw } = replay("claude-sample-structured.jsonl");
     try {
       adapter.interpret(req(VendorFindingsOutputSchema), summary, raw, "", 0, 10);
       expect.unreachable();
@@ -156,7 +156,7 @@ describe("ClaudeAdapter.interpret", () => {
   });
 
   it("reports max turns as a process error", () => {
-    const { summary, raw } = replay("claude-real-max-turns.jsonl");
+    const { summary, raw } = replay("claude-sample-max-turns.jsonl");
     expect(() =>
       adapter.interpret(req(VendorFindingsOutputSchema), summary, raw, "", 1, 10),
     ).toThrow(/error_max_turns/);
@@ -183,7 +183,7 @@ describe("ClaudeAdapter.interpret", () => {
   });
 
   it("reports a missing sign-in as an auth error", () => {
-    const { summary, raw } = replay("claude-real-not-logged-in.jsonl");
+    const { summary, raw } = replay("claude-sample-not-logged-in.jsonl");
     try {
       adapter.interpret(req(VendorFindingsOutputSchema), summary, raw, "", 1, 10);
       expect.unreachable();
