@@ -630,6 +630,12 @@ export const GlobalSettingsSchema = z
     accountsMode: AccountsModeSchema,
     /** The default account of each vendor, by account id. */
     accountDefaults: AccountDefaultsSchema,
+    /**
+     * The folder of the shared Claude transcript store. Absent means the
+     * host's own store (the target of `~/.claude/projects`), else
+     * `DATA_DIR/transcripts/claude`.
+     */
+    transcriptStore: z.string().min(1).optional(),
   })
   .strict();
 export type GlobalSettings = z.infer<typeof GlobalSettingsSchema>;
@@ -694,6 +700,7 @@ export const GlobalSettingsInputSchema = z
     secretVaults: z.array(z.string().min(1)).default([]),
     accountsMode: AccountsModeSchema.default("host"),
     accountDefaults: AccountDefaultsSchema.default({}),
+    transcriptStore: z.string().min(1).optional(),
   })
   .strict();
 
@@ -736,6 +743,8 @@ export const GlobalSettingsPatchSchema = z
     sudoPasswordRef: OpReferenceSchema.nullable(),
     secretVaults: z.array(z.string().min(1)),
     accountsMode: AccountsModeSchema,
+    /** An absolute folder; `null` goes back to the host's store. */
+    transcriptStore: z.string().min(1).nullable(),
     /**
      * Only the vendors it names change; `null` clears a default. The server
      * refuses an id that names no account.

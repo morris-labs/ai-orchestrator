@@ -93,6 +93,12 @@ export const AccountViewSchema = z.object({
   dirExists: z.boolean(),
   /** Whether the account is its vendor's default. */
   isDefault: z.boolean(),
+  /**
+   * Problems with the folder that a person can fix, such as a Claude
+   * `projects` link that doesn't lead to the transcript store. Absent or
+   * empty when there are none.
+   */
+  warnings: z.array(z.string()).optional(),
 });
 export type AccountView = z.infer<typeof AccountViewSchema>;
 
@@ -206,3 +212,23 @@ export const AccountImportResultSchema = AccountViewSchema.extend({
   warnings: z.array(z.string()),
 });
 export type AccountImportResult = z.infer<typeof AccountImportResultSchema>;
+
+/** What `accounts.relink` did to one Claude account. */
+export const AccountRelinkEntrySchema = z.object({
+  id: AccountIdSchema,
+  /** The `projects` entry before: `ok`, `missing`, `dangling`, `foreign`, or `directory`. */
+  before: z.enum(["ok", "missing", "dangling", "foreign", "directory"]),
+  /** `unchanged`, `created`, `replaced`, or `kept-directory` (a real folder with transcripts). */
+  outcome: z.enum(["unchanged", "created", "replaced", "kept-directory"]),
+});
+export type AccountRelinkEntry = z.infer<typeof AccountRelinkEntrySchema>;
+
+/** The result of `accounts.relink`. */
+export const AccountRelinkResultSchema = z.object({
+  /** The transcript store every Claude account links to. */
+  store: z.string().min(1),
+  /** Where the store came from: `setting`, `host`, `account`, or `data`. */
+  source: z.enum(["setting", "host", "account", "data"]),
+  accounts: z.array(AccountRelinkEntrySchema),
+});
+export type AccountRelinkResult = z.infer<typeof AccountRelinkResultSchema>;

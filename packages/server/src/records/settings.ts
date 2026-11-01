@@ -1,6 +1,7 @@
 // Global settings: stored in the database, validated by `GlobalSettingsSchema`,
 // and published as `settings.changed` on every change.
 import fs from "node:fs";
+import path from "node:path";
 import {
   DEFAULT_PROMPT_TEMPLATES,
   BROKER_ENV,
@@ -68,6 +69,11 @@ export class SettingsService {
     private readonly events: CoreEvents,
     /** Whether an account record exists; a patch can name only existing accounts as defaults. */
     private readonly accountExists: (id: string) => boolean = () => false,
+    /**
+     * Runs before the mode changes to `accounts`, with the settings that
+     * would result. Throws to refuse the change.
+     */
+    private readonly beforeAccountsMode: (next: GlobalSettings) => void = () => undefined,
   ) {}
 
   /**
@@ -135,6 +141,12 @@ export class SettingsService {
       else next[key] = v;
     }
     if (p.secretVaults !== undefined) next.secretVaults = [...new Set(p.secretVaults)];
+    if (p.transcriptStore !== undefined) {
+      if (p.transcriptStore === null) delete next.transcriptStore;
+      else if (!path.isAbsolute(p.transcriptStore)) {
+        throw new ApiError("validation", `${p.transcriptStore} isn't an absolute path.`);
+      } else next.transcriptStore = p.transcriptStore;
+    }
     if (p.accountsMode !== undefined) next.accountsMode = p.accountsMode;
     if (p.accountDefaults !== undefined) {
       for (const vendor of ["claude", "codex", "copilot"] as const) {
@@ -147,6 +159,9 @@ export class SettingsService {
         if (!this.accountExists(id)) throw new ApiError("validation", `No account ${id}.`);
         next.accountDefaults[vendor] = id;
       }
+    }
+    if (next.accountsMode === "accounts" && this.get().accountsMode !== "accounts") {
+      this.beforeAccountsMode(next);
     }
     return this.save(next);
   }

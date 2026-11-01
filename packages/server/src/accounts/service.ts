@@ -17,6 +17,8 @@ import {
   type AccountCreate,
   type AccountImportRequest,
   type AccountImportResult,
+  type AccountRelinkResult,
+  type GlobalSettings,
   type AccountSeedEntry,
   type AccountSeedReport,
   type AccountSeedRequest,
@@ -41,7 +43,16 @@ import {
   sourceDirOf,
   type SeedSources,
 } from "./seed.js";
-import { claudeStoreRoot, linkProjectsToStore } from "./store.js";
+import { preacceptClaudeAccount } from "./preaccept.js";
+import {
+  hostStoreRoot,
+  linkProjectsToStore,
+  projectsLinkState,
+  projectsLinkWarning,
+  resolveStore,
+  storeEntryCount,
+  type LinkOutcome,
+} from "./store.js";
 
 /**
  * Directories whose contents may vanish or that tools treat as scratch space.
@@ -172,7 +183,75 @@ export class AccountService {
 
   /** The transcript store that every Claude account links to. */
   storeRoot(): string {
-    return claudeStoreRoot(this.env, this.options.settings.get().accountDefaults.claude);
+    return this.resolvedStore().root;
+  }
+
+  private resolvedStore(settings: GlobalSettings = this.options.settings.get()) {
+    return resolveStore(this.env, settings.accountDefaults.claude, settings.transcriptStore);
+  }
+
+  /**
+   * Refuses to switch to accounts mode when the boxes would lose their
+   * conversations: the transcript store is empty while the host's has
+   * transcripts, or a Claude account's `projects` doesn't lead to the store.
+   * Throws `conflict` and names the fix.
+   */
+  assertCanUseAccounts(next: GlobalSettings): void {
+    const store = this.resolvedStore(next);
+    const host = hostStoreRoot(this.env);
+    if (host !== undefined && storeEntryCount(store.root) === 0 && storeEntryCount(host) > 0) {
+      throw new ApiError(
+        "conflict",
+        `The transcript store ${store.root} is empty, but the host's store ${host} holds conversations. Boxes in accounts mode wouldn't find them. Clear the transcriptStore setting, or copy the transcripts into the store.`,
+        { store: store.root, host },
+      );
+    }
+    const bad = this.options.repo
+      .list()
+      .filter((a) => a.vendor === "claude")
+      .map((a) => ({
+        id: a.id,
+        state: projectsLinkState(this.dirOf("claude", a.name), store.root),
+      }))
+      .filter((a) => a.state !== "ok" && a.state !== "missing");
+    if (bad.length > 0) {
+      throw new ApiError(
+        "conflict",
+        `The projects link of ${bad.map((b) => `${b.id} (${b.state})`).join(", ")} doesn't lead to the transcript store ${store.root}. Run "agentbox accounts relink" first.`,
+        { store: store.root, accounts: bad },
+      );
+    }
+  }
+
+  /**
+   * `accounts.relink`: points every Claude account's `projects` entry at the
+   * transcript store, replacing a link that dangles or leads elsewhere. Never
+   * deletes a real `projects` folder that holds transcripts; the result says
+   * `kept-directory` for it.
+   */
+  relink(): AccountRelinkResult {
+    const store = this.resolvedStore();
+    const accounts: AccountRelinkResult["accounts"] = [];
+    for (const a of this.options.repo.list()) {
+      if (a.vendor !== "claude") continue;
+      const dir = this.dirOf("claude", a.name);
+      if (!isDirectory(dir)) continue;
+      const before = projectsLinkState(dir, store.root);
+      accounts.push({ id: a.id, before, outcome: linkProjectsToStore(dir, store.root) });
+    }
+    return { store: store.root, source: store.source, accounts };
+  }
+
+  /** The note for a link that `linkProjectsToStore` made or changed, else `undefined`. */
+  private linkNote(outcome: LinkOutcome, store: string): string | undefined {
+    if (outcome === "created") return `Linked projects to the shared transcript store ${store}.`;
+    if (outcome === "replaced") {
+      return `Replaced the projects link with a link to the shared transcript store ${store}.`;
+    }
+    if (outcome === "kept-directory") {
+      return `projects is a real folder that holds transcripts, so it wasn't replaced. Move its transcripts into ${store}, then run "agentbox accounts relink".`;
+    }
+    return undefined;
   }
 
   /** The account folder of `vendor/name`. */
@@ -182,11 +261,19 @@ export class AccountService {
 
   view(account: Account): AccountView {
     const dir = this.dirOf(account.vendor, account.name);
+    const dirExists = isDirectory(dir);
+    const warnings: string[] = [];
+    if (account.vendor === "claude" && dirExists) {
+      const store = this.storeRoot();
+      const warning = projectsLinkWarning(projectsLinkState(dir, store), dir, store);
+      if (warning) warnings.push(warning);
+    }
     return {
       account,
       dir,
-      dirExists: isDirectory(dir),
+      dirExists,
       isDefault: this.options.settings.get().accountDefaults[account.vendor] === account.id,
+      ...(warnings.length > 0 ? { warnings } : {}),
     };
   }
 
@@ -226,7 +313,10 @@ export class AccountService {
       );
     }
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-    if (c.vendor === "claude") linkProjectsToStore(dir, this.storeRoot());
+    if (c.vendor === "claude") {
+      linkProjectsToStore(dir, this.storeRoot());
+      preacceptClaudeAccount(dir);
+    }
     if (c.vendor === "codex") {
       fs.writeFileSync(path.join(dir, "config.toml"), `${CODEX_STORE_SETTING}\n`, { mode: 0o600 });
     }
@@ -311,8 +401,16 @@ export class AccountService {
       }
     }
     fs.chmodSync(dest, 0o700);
-    if (req.vendor === "claude" && linkProjectsToStore(dest, this.storeRoot())) {
-      warnings.push(`Linked projects to the shared transcript store ${this.storeRoot()}.`);
+    if (req.vendor === "claude") {
+      const store = this.storeRoot();
+      const note = this.linkNote(linkProjectsToStore(dest, store), store);
+      if (note) warnings.push(note);
+      const pre = preacceptClaudeAccount(dest);
+      if (pre.changed.length > 0) {
+        warnings.push(`Set ${pre.changed.join(", ")} for the first start.`);
+      }
+      for (const f of pre.skipped)
+        warnings.push(`${f} isn't a JSON object, so it was left as it is.`);
     }
     if (req.vendor === "codex" && (await addCodexFileStore(path.join(dest, "config.toml")))) {
       warnings.push(`Added ${CODEX_STORE_SETTING} to config.toml.`);
@@ -480,6 +578,15 @@ export class AccountService {
         log(`${req.dryRun ? "Would copy" : "Copying"} ${source} to ${dir}.\r\n`);
         const copied = await seedFolder(vendor, sources, dir, { dryRun: req.dryRun });
         for (const note of copied.notes) log(`  ${note}\r\n`);
+        if (vendor === "claude" && !req.dryRun) {
+          const store = this.storeRoot();
+          const note = this.linkNote(linkProjectsToStore(dir, store), store);
+          if (note) log(`  ${note}\r\n`);
+          const pre = preacceptClaudeAccount(dir);
+          if (pre.changed.length > 0) {
+            log(`  Set ${pre.changed.join(", ")} for the first start.\r\n`);
+          }
+        }
         if (copied.leftOut.length > 0) {
           log(`  Left out the sign-in files: ${copied.leftOut.join(", ")}.\r\n`);
         }

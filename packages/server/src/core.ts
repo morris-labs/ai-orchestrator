@@ -115,12 +115,13 @@ export function createServerCore(options: CoreOptions): ServerCore {
     db.settings,
     events,
     (id) => db.accounts.get(id) !== undefined,
+    (next) => accounts.assertCanUseAccounts(next),
   );
   // Option S: in accounts mode, transcripts live in the store that the
   // default Claude account's `projects` link leads to.
   env.claudeProjectsRoot = () =>
     settings.get().accountsMode === "accounts"
-      ? claudeStoreRoot(env, settings.get().accountDefaults.claude)
+      ? claudeStoreRoot(env, settings.get().accountDefaults.claude, settings.get().transcriptStore)
       : undefined;
   let hooks: CoreHooks = defaultHooks();
   const getHooks = () => hooks;

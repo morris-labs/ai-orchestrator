@@ -845,6 +845,29 @@ describe("accounts", () => {
     expect(await cli(["accounts", "import", "claude", "work"])).toBe(2);
   });
 
+  it("prints the transcript link warnings of accounts check, and the relink result", async () => {
+    server.on("POST /api/v1/accounts/claude/work/check", {
+      status: 200,
+      body: {
+        ...view("claude/work"),
+        warnings: ["projects is a link to a folder that doesn't exist."],
+      },
+    });
+    expect(await cli(["accounts", "check", "claude/work"])).toBe(0);
+    expect(out).toContain("Warning: projects is a link to a folder that doesn't exist.");
+    server.on("POST /api/v1/accounts/relink", {
+      status: 200,
+      body: {
+        store: "/home/me/.claude-projects-shared",
+        source: "host",
+        accounts: [{ id: "claude/work", before: "dangling", outcome: "replaced" }],
+      },
+    });
+    expect(await cli(["accounts", "relink"])).toBe(0);
+    expect(out).toContain("/home/me/.claude-projects-shared (host)");
+    expect(out).toContain("claude/work: dangling -> replaced.");
+  });
+
   it("passes --account choices to box new, one per vendor", async () => {
     server.on("POST /api/v1/boxes", { status: 202, body: job("running") });
     await cli([

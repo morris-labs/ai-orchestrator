@@ -322,6 +322,10 @@ export function createFakeCore(): FakeCore {
         record(`accounts.check:${id}`);
         return accounts.get(id) ?? notFound(`account ${id}`);
       },
+      relink: async () => {
+        record("accounts.relink");
+        return { store: "/store", source: "host" as const, accounts: [] };
+      },
       validateSeed: async (input) => {
         record("accounts.validateSeed");
         if (core.runningBoxIds.length > 0 && !input.dryRun)
