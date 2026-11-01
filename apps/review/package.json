@@ -1,7 +1,7 @@
 {
   "name": "@agentbox/review",
   "productName": "Agent Box Review",
-  "version": "4.0.0-dev",
+  "version": "4.0.0",
   "description": "The agentbox-review app: review runs, findings, policy, and the infrastructure dashboard.",
   "private": true,
   "type": "module",

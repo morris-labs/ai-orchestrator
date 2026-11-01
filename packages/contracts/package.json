@@ -1,6 +1,6 @@
 {
   "name": "@agentbox/contracts",
-  "version": "4.0.0-dev",
+  "version": "4.0.0",
   "description": "Zod schemas and TypeScript types shared by every Agent Box package.",
   "private": true,
   "type": "module",

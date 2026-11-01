@@ -1,6 +1,6 @@
 {
   "name": "@agentbox/engine",
-  "version": "4.0.0-dev",
+  "version": "4.0.0",
   "description": "The Agent Box engine: the review pipeline service inside each project container.",
   "private": true,
   "type": "module",

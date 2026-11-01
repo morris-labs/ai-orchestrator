@@ -1,6 +1,6 @@
 {
   "name": "@agentbox/cli",
-  "version": "4.0.0-dev",
+  "version": "4.0.0",
   "description": "The agentbox command-line client for the Agent Box server.",
   "private": true,
   "type": "module",

@@ -1,6 +1,6 @@
 {
   "name": "@agentbox/server",
-  "version": "4.0.0-dev",
+  "version": "4.0.0",
   "description": "The Agent Box host server: Docker, boxes, projects, worktrees, the REST and WebSocket API, terminals, proxy, scheduler, and services.",
   "private": true,
   "type": "module",

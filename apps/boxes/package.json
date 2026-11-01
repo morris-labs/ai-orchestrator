@@ -1,7 +1,7 @@
 {
   "name": "@agentbox/boxes",
   "productName": "Agent Box",
-  "version": "4.0.0-dev",
+  "version": "4.0.0",
   "description": "The agentbox app: manage boxes, conversations, and their terminals.",
   "private": true,
   "type": "module",

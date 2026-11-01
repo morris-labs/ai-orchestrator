@@ -1,6 +1,6 @@
 {
   "name": "@agentbox/e2e",
-  "version": "4.0.0-dev",
+  "version": "4.0.0",
   "description": "End-to-end tests that run the built server, engine, and CLI together as local processes.",
   "private": true,
   "type": "module",
