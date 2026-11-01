@@ -6,6 +6,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import {
+  ACCOUNT_DIR_ENV,
   BoxCreateSchema,
   BoxInputSchema,
   BoxUpdateSchema,
@@ -15,6 +16,7 @@ import {
   proxyPortOf,
   withSecretsHint,
   type Box,
+  type BoxAccounts,
   type BoxCreate,
   type BoxStatus,
   type BoxView,
@@ -40,6 +42,8 @@ import { detectPrimaryRepo, normalizeRoot } from "../projects/ids.js";
 import type { ProjectService } from "../projects/service.js";
 import { PLATFORMS, allocateHostKey, boxTmuxSession, sideSessionName } from "../records/box.js";
 import {
+  accountDirFor,
+  claudeProjectsDir,
   homePaths,
   hostToContainer,
   promptPath,
@@ -256,12 +260,17 @@ export class BoxService {
    */
   private async startSession(
     box: Box,
-    program: string,
+    program: Platform,
     args: string[],
     session = boxTmuxSession(box),
     options: { force?: boolean } = {},
   ): Promise<void> {
-    const command = buildSessionCommand(program, args);
+    const account = this.accountFor(box, program);
+    const command = buildSessionCommand(
+      program,
+      args,
+      account ? { [ACCOUNT_DIR_ENV[program]]: account.containerDir } : {},
+    );
     const workDir = hostToContainer(boxWorkDir(box));
     let lastError = "";
     for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -272,6 +281,20 @@ export class BoxService {
           `The container ${ensured.container} runs with old settings (${ensured.stale.join(", ")}). Restart it first.`,
           { container: ensured.container, differences: ensured.stale },
         );
+      }
+      if (account?.claude && !options.force) {
+        // An account added after the container started has no `sessions`
+        // mount in it, so its `PID.json` files would collide with other
+        // containers'. Stale for this box only; the other sessions run on.
+        const inspect = await this.deps.docker.inspectContainer(box.container);
+        const want = `${sessionsDirFor(this.env, box.container)}:${account.containerDir}/sessions`;
+        if (inspect?.running && !inspect.binds.includes(want)) {
+          throw new ApiError(
+            "stale_mounts",
+            `The container ${box.container} was made before the account ${account.id} existed, so it has no sessions mount for it. Restart the container first.`,
+            { container: box.container, differences: [`${want} (account ${account.id})`] },
+          );
+        }
       }
       let r: ExecResult;
       try {
@@ -295,6 +318,47 @@ export class BoxService {
       if (inspect?.running) break;
     }
     throw new ApiError("conflict", `Could not start the session: ${lastError || "unknown error"}.`);
+  }
+
+  /**
+   * The account a session of `platform` runs on, in accounts mode: the box's
+   * own choice, else the vendor's default. `undefined` in host mode, where
+   * the host's folders apply. Throws `conflict` when there is none.
+   */
+  private accountFor(
+    box: Box,
+    platform: Platform,
+  ):
+    | { id: string; vendor: Platform; dir: string; containerDir: string; claude: boolean }
+    | undefined {
+    const settings = this.deps.settings.get();
+    if (settings.accountsMode !== "accounts") return undefined;
+    const id = box.accounts?.[platform] ?? settings.accountDefaults[platform];
+    if (id === undefined) {
+      throw new ApiError(
+        "conflict",
+        `No ${platform} account is set for ${box.id}, and ${platform} has no default. Add one with "agentbox accounts add ${platform} NAME", or import or seed one.`,
+      );
+    }
+    const record = this.repos.accounts.get(id);
+    if (!record) throw new ApiError("conflict", `The account ${id} doesn't exist.`);
+    const dir = accountDirFor(this.env, platform, record.name);
+    return {
+      id,
+      vendor: platform,
+      dir,
+      containerDir: hostToContainer(dir),
+      claude: platform === "claude",
+    };
+  }
+
+  /** Throws `validation` for an account id that has no record. */
+  private requireAccounts(accounts: Partial<Record<Platform, string | null>> | undefined): void {
+    for (const id of Object.values(accounts ?? {})) {
+      if (typeof id === "string" && !this.repos.accounts.get(id)) {
+        throw new ApiError("validation", `No account ${id}.`);
+      }
+    }
   }
 
   private async killSession(container: string, session: string): Promise<void> {
@@ -402,6 +466,7 @@ export class BoxService {
       if (!source.sessionUuid)
         throw new ApiError("conflict", `The box ${source.id} has no conversation to fork.`);
     }
+    this.requireAccounts(req.accounts);
     if (req.start) await this.deps.projects.checkImage();
   }
 
@@ -421,6 +486,8 @@ export class BoxService {
 
     let adoptUuid: string | null = null;
     let forkFrom: { uuid: string; workDir: string } | null = null;
+    let accounts: BoxAccounts | undefined = req.accounts;
+    this.requireAccounts(req.accounts);
     if (req.conversation.mode === "adopt") {
       adoptUuid = req.conversation.sessionUuid;
       this.checkAdoption(adoptUuid, null, req.force);
@@ -430,6 +497,8 @@ export class BoxService {
         throw new ApiError("conflict", `The box ${source.id} has no conversation to fork.`);
       }
       forkFrom = { uuid: source.sessionUuid, workDir: boxWorkDir(source) };
+      // A fork stays on the source's accounts unless the request names others.
+      accounts ??= source.accounts;
     }
     const resumeExisting = adoptUuid !== null;
 
@@ -546,6 +615,7 @@ export class BoxService {
         model: req.platform === "claude" ? req.model : undefined,
         effort: req.platform === "claude" ? req.effort : undefined,
         skipPermissions: req.skipPermissions,
+        ...(accounts && Object.keys(accounts).length > 0 ? { accounts } : {}),
         workspace,
         worktree,
         branch,
@@ -904,7 +974,11 @@ export class BoxService {
     this.requireSiblingsStopped(siblings);
 
     const paths = homePaths(this.env);
-    const allowed = [`${paths.claudeProjects}/`, `${paths.dataDir}/`];
+    const allowed = [
+      `${paths.claudeProjects}/`,
+      `${claudeProjectsDir(this.env)}/`,
+      `${paths.dataDir}/`,
+    ];
     const safe = (p: string) => allowed.some((a) => p.startsWith(a));
     const transcriptDirs = new Set<string>();
     const projectDir = projectDirFor(this.env, dir);
@@ -1082,7 +1156,30 @@ export class BoxService {
       else (next as Record<string, unknown>)[key] = v;
     }
     if (u.sshRemoteRefs !== undefined) next.sshRemoteRefs = u.sshRemoteRefs;
+    if (u.accounts !== undefined) {
+      this.requireAccounts(u.accounts);
+      const merged: BoxAccounts = { ...box.accounts };
+      for (const vendor of PLATFORMS) {
+        const id = u.accounts[vendor];
+        if (id === undefined) continue;
+        if (id === null) delete merged[vendor];
+        else merged[vendor] = id;
+      }
+      if (Object.keys(merged).length > 0) next.accounts = merged;
+      else delete next.accounts;
+      // Codex and Copilot keep sessions inside the account's folder, and
+      // copying one between folders isn't verified (owner decision 8): the
+      // next start opens a fresh session. Claude shares one transcript
+      // store, so it resumes whichever account runs it.
+      if (next.platform !== "claude") {
+        const defaults = this.deps.settings.get().accountDefaults;
+        const was = box.accounts?.[box.platform] ?? defaults[box.platform];
+        const will = next.accounts?.[box.platform] ?? defaults[box.platform];
+        if (was !== will) next.firstStart = { openingPrompt: "" };
+      }
+    }
     const needsRestart =
+      JSON.stringify(next.accounts ?? null) !== JSON.stringify(box.accounts ?? null) ||
       next.sessionUuid !== box.sessionUuid ||
       next.skipPermissions !== box.skipPermissions ||
       next.model !== box.model ||

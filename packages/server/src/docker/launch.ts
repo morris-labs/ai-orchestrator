@@ -43,6 +43,8 @@ export const LABELS = {
    * the label has its secret values in its environment.
    */
   secrets: "agentbox.secrets",
+  /** `accounts` when the container mounts the account folders; absent or `host` otherwise. */
+  accountsMode: "agentbox.accounts-mode",
 } as const;
 
 /** The `agentbox.secrets` label value of a container that gets secrets from the broker. */
@@ -81,6 +83,12 @@ export interface LaunchInput {
   graceSec?: number;
   /** Whether the root setup step installs a sudo password; false means sudo is off. */
   sudoPassword?: boolean;
+  /**
+   * Present when boxes run on accounts (`accountsMode: "accounts"`): the host
+   * folders of the Claude accounts. The launch then mounts `DATA_DIR/accounts`
+   * and not the host's agent folders.
+   */
+  accounts?: { claudeDirs: readonly string[] };
 }
 
 /** What the launch needs to know about the host, gathered by `prepareLaunchHost()`. */
@@ -89,6 +97,12 @@ export interface LaunchHostFacts {
   projectsSymlinkTarget: string | null;
   /** Whether `<root>/gitconfig` exists. */
   hasGitconfig: boolean;
+  /**
+   * Accounts mode: the targets of symbolic links at the top of each Claude
+   * account folder that point outside it, such as a `projects` link to the
+   * shared transcript store. Each is bound at its own path.
+   */
+  accountLinkTargets?: string[];
 }
 
 /**
@@ -122,10 +136,12 @@ export function mountBind(m: Mount): string {
  */
 export function mountContainerPaths(
   input: Pick<LaunchInput, "root" | "mounts" | "globalMounts">,
+  accountsDir?: string,
 ): string[] {
   return [
     hostToContainer(input.root),
     ...mergeMounts(input.mounts, input.globalMounts).map((m) => m.container),
+    ...(accountsDir === undefined ? [] : [hostToContainer(accountsDir)]),
   ];
 }
 
@@ -156,6 +172,38 @@ export function projectsSymlinkTarget(env: HostEnv): string | null {
 }
 
 /**
+ * The existing targets of the symbolic links directly inside an account
+ * folder that lead outside it. Generalizes `projectsSymlinkTarget()`: only
+ * the account folders are mounted, so such a link would dangle in the
+ * container and `claude --resume` would find no transcript.
+ */
+export function linkTargetsOutside(accountDir: string): string[] {
+  let realDir: string;
+  let names: string[];
+  try {
+    realDir = fs.realpathSync(accountDir);
+    names = fs.readdirSync(accountDir);
+  } catch {
+    return [];
+  }
+  const out: string[] = [];
+  for (const name of names) {
+    const link = path.join(accountDir, name);
+    try {
+      if (!fs.lstatSync(link).isSymbolicLink()) continue;
+      const target = path.resolve(path.dirname(link), fs.readlinkSync(link));
+      if (target === realDir || target.startsWith(`${realDir}/`)) continue;
+      if (target === accountDir || target.startsWith(`${accountDir}/`)) continue;
+      fs.statSync(target);
+      if (!out.includes(target)) out.push(target);
+    } catch {
+      // A dangling link has nothing to mount.
+    }
+  }
+  return out;
+}
+
+/**
  * Capabilities every project container drops. Neither is one `sudo` needs
  * (it needs `SETUID`, `SETGID`, and a setuid binary, which stay), and each
  * would let container root leave something on a host bind mount that
@@ -175,29 +223,45 @@ export const DROPPED_CAPABILITIES = ["MKNOD", "SETFCAP"] as const;
  */
 export function prepareLaunchHost(
   env: HostEnv,
-  input: Pick<LaunchInput, "container" | "root">,
+  input: Pick<LaunchInput, "container" | "root" | "accounts">,
 ): LaunchHostFacts {
   const paths = homePaths(env);
-  for (const dir of [paths.claudeSessions, paths.codexDir, paths.copilotDir]) {
-    fs.mkdirSync(dir, { recursive: true });
+  const accountsMode = input.accounts !== undefined;
+  if (accountsMode) {
+    fs.mkdirSync(paths.accountsDir, { recursive: true, mode: 0o700 });
+  } else {
+    for (const dir of [paths.claudeSessions, paths.codexDir, paths.copilotDir]) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+  }
+  const accountLinkTargets: string[] = [];
+  for (const dir of input.accounts?.claudeDirs ?? []) {
+    // The mount point of the per-container sessions directory.
+    fs.mkdirSync(path.join(dir, "sessions"), { recursive: true, mode: 0o700 });
+    for (const target of linkTargetsOutside(dir)) {
+      if (!accountLinkTargets.includes(target)) accountLinkTargets.push(target);
+    }
   }
   // The broker listens here; created now so docker doesn't create it as root.
   const broker = brokerDirFor(env, input.container);
   fs.mkdirSync(broker, { recursive: true, mode: 0o700 });
   fs.chmodSync(broker, 0o700);
-  try {
-    fs.writeFileSync(paths.claudeJson, "{}\n", { mode: 0o600, flag: "wx" });
-  } catch (err) {
-    // An existing file, or a link to one, is the user's own: leave it.
-    if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+  if (!accountsMode) {
+    try {
+      fs.writeFileSync(paths.claudeJson, "{}\n", { mode: 0o600, flag: "wx" });
+    } catch (err) {
+      // An existing file, or a link to one, is the user's own: leave it.
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+    }
   }
   const sessions = sessionsDirFor(env, input.container);
   fs.rmSync(sessions, { recursive: true, force: true });
   fs.mkdirSync(sessions, { recursive: true });
   prepareStateDir(env, input.container, STATE_MOUNT);
   return {
-    projectsSymlinkTarget: projectsSymlinkTarget(env),
+    projectsSymlinkTarget: accountsMode ? null : projectsSymlinkTarget(env),
     hasGitconfig: fs.existsSync(path.join(input.root, "gitconfig")),
+    ...(accountsMode ? { accountLinkTargets } : {}),
   };
 }
 
@@ -221,18 +285,34 @@ export function buildLaunchSpec(
   }
   const containerDir = hostToContainer(input.root);
 
-  const binds = [
-    `${input.root}:${containerDir}`,
-    `${paths.claudeDir}:${home}/.claude`,
-    `${paths.claudeJson}:${home}/.claude.json`,
-    `${paths.codexDir}:${home}/.codex`,
-    `${paths.copilotDir}:${home}/.copilot`,
-  ];
-  if (facts.projectsSymlinkTarget) {
-    const b = `${facts.projectsSymlinkTarget}:${facts.projectsSymlinkTarget}`;
-    if (!binds.includes(b)) binds.push(b);
+  const binds = [`${input.root}:${containerDir}`];
+  if (input.accounts) {
+    // One mount for every account, at its host path, so an account added
+    // later appears without a restart. Each Claude account's `sessions`
+    // folder is this container's own directory, so containers never share
+    // `PID.json` files.
+    const accountsDir = hostToContainer(paths.accountsDir);
+    binds.push(`${paths.accountsDir}:${accountsDir}`);
+    for (const dir of input.accounts.claudeDirs) {
+      binds.push(`${sessionsDirFor(env, input.container)}:${hostToContainer(dir)}/sessions`);
+    }
+    for (const target of facts.accountLinkTargets ?? []) {
+      const b = `${target}:${target}`;
+      if (!binds.includes(b)) binds.push(b);
+    }
+  } else {
+    binds.push(
+      `${paths.claudeDir}:${home}/.claude`,
+      `${paths.claudeJson}:${home}/.claude.json`,
+      `${paths.codexDir}:${home}/.codex`,
+      `${paths.copilotDir}:${home}/.copilot`,
+    );
+    if (facts.projectsSymlinkTarget) {
+      const b = `${facts.projectsSymlinkTarget}:${facts.projectsSymlinkTarget}`;
+      if (!binds.includes(b)) binds.push(b);
+    }
+    binds.push(`${sessionsDirFor(env, input.container)}:${home}/.claude/sessions`);
   }
-  binds.push(`${sessionsDirFor(env, input.container)}:${home}/.claude/sessions`);
   for (const m of merged) binds.push(mountBind(m));
   binds.push(`${path.join(paths.stateDir, input.container)}:${STATE_MOUNT}`);
   // Read-only, so the container can't remove or replace the socket;
@@ -292,6 +372,8 @@ export function buildLaunchSpec(
       [LABELS.engineVersion]: input.engine.version,
       [LABELS.sudo]: sudoLabel(input.sudoPassword ?? false),
       [LABELS.secrets]: SECRETS_LABEL_BROKER,
+      // Absent means `host`: a host-mode launch is what it always was.
+      ...(input.accounts ? { [LABELS.accountsMode]: "accounts" } : {}),
     },
     capDrop: [...DROPPED_CAPABILITIES],
     tty: true,

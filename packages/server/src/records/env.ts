@@ -19,6 +19,12 @@ export interface HostEnv {
   user: string;
   /** The current time. */
   now: () => Date;
+  /**
+   * The Claude transcript store root when boxes run on accounts (option S of
+   * `docs/v4/design-accounts.md`), else `undefined` and the host's
+   * `~/.claude/projects`. `createServerCore()` sets it from `accountsMode`.
+   */
+  claudeProjectsRoot?: () => string | undefined;
 }
 
 /**
@@ -84,6 +90,11 @@ export function homePaths(env: HostEnv) {
     codexDir: at(".codex"),
     copilotDir: at(".copilot"),
   };
+}
+
+/** The folder that holds the Claude transcripts: the shared store in accounts mode, else `~/.claude/projects`. */
+export function claudeProjectsDir(env: HostEnv): string {
+  return env.claudeProjectsRoot?.() ?? homePaths(env).claudeProjects;
 }
 
 /** `<data dir>/accounts/<vendor>/<name>`: an account's config folder. */

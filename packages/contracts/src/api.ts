@@ -100,6 +100,8 @@ import {
   SshRemoteInputSchema,
   SshRemoteSchema,
   TcpMapSchema,
+  BoxAccountsPatchSchema,
+  BoxAccountsSchema,
 } from "./records.js";
 import {
   DecisionAnswerSchema,
@@ -352,6 +354,8 @@ export const BoxCreateSchema = z
     model: z.string().min(1).optional(),
     effort: EffortSchema.optional(),
     skipPermissions: z.boolean().default(true),
+    /** The account of each vendor for this box; absent leaves the defaults. */
+    accounts: BoxAccountsSchema.optional(),
     layout: z.enum(["worktree", "workspace", "root", "auto"]),
     rememberLayout: z.boolean().default(false),
     sshRemoteRefs: z.array(z.string().min(1)).default([]),
@@ -399,6 +403,8 @@ export const BoxUpdateSchema = z.object({
   model: z.string().min(1).nullable().optional(),
   effort: EffortSchema.nullable().optional(),
   skipPermissions: z.boolean().optional(),
+  /** Only the vendors it names change; `null` clears one. A restart applies it. */
+  accounts: BoxAccountsPatchSchema.optional(),
   sessionUuid: z.string().uuid().nullable().optional(),
   sshRemoteRefs: z.array(z.string().min(1)).optional(),
   force: z.boolean().optional(),
@@ -1290,7 +1296,11 @@ export const serverRoutes = {
     method: "GET",
     path: `${V1}/models`,
     summary: "List models and the defaults for a directory.",
-    query: z.object({ dir: z.string().optional() }),
+    query: z.object({
+      dir: z.string().optional(),
+      /** A Claude account id; absent means the default account. */
+      account: z.string().optional(),
+    }),
     response: ModelsResultSchema,
   }),
   "models.rescan": http({

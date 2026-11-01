@@ -192,10 +192,34 @@ export function sharedKeeperCommand(graceSec: number = STARTUP_GRACE_SEC): strin
   ];
 }
 
-/** A program and its arguments as one shell-quoted string; the program stays bare. */
-export function buildSessionCommand(program: string, args: readonly string[]): string {
-  return [program, ...args.map(shellQuote)].join(" ");
+/**
+ * A program and its arguments as one shell-quoted string; the program stays
+ * bare. `vars` become an `env NAME=VALUE` prefix, which is how a session
+ * gets its account's config folder (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, or
+ * `COPILOT_HOME`): a pane takes its environment from the tmux server, which
+ * the container's first session started, so only the command line is per
+ * session.
+ */
+export function buildSessionCommand(
+  program: string,
+  args: readonly string[],
+  vars: Readonly<Record<string, string>> = {},
+): string {
+  const prefix = Object.entries(vars).map(([k, v]) => `${k}=${shellQuote(v)}`);
+  return [...(prefix.length > 0 ? ["env", ...prefix] : []), program, ...args.map(shellQuote)].join(
+    " ",
+  );
 }
+
+/**
+ * The script that links the container user's home to the default accounts,
+ * so a bare `claude` typed in a shell works and absolute paths in user files
+ * resolve. Arguments are pairs of TARGET and LINK. It leaves a LINK that is a
+ * real file or folder alone.
+ */
+export const HOME_LINKS_SCRIPT =
+  'while [ "$#" -ge 2 ]; do t="$1"; l="$2"; shift 2; ' +
+  'if [ -e "$l" ] && [ ! -L "$l" ]; then continue; fi; ln -sfn -- "$t" "$l"; done';
 
 /** The `docker exec` argv that starts session `session` in `workDir` with the image's script. */
 export function sessionStartCmd(session: string, workDir: string, command: string): string[] {

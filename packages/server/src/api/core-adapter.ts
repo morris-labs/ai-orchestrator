@@ -140,7 +140,7 @@ export function apiCoreOf(server: ServerCore, dockerApi: Docker): Core {
       }),
     },
     models: {
-      list: (dir) => server.models.list(dir),
+      list: (dir, account) => server.models.list(dir, account),
       rescan: () => server.models.rescan(),
     },
 

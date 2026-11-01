@@ -118,8 +118,8 @@ function readJsonObject(file: string): Record<string, unknown> | undefined {
 }
 
 /** The account's extra model options, from `~/.claude.json` `additionalModelOptionsCache[].value`. */
-export function accountModels(env: HostEnv): string[] {
-  const root = readJsonObject(homePaths(env).claudeJson);
+export function accountModels(env: HostEnv, claudeJson?: string): string[] {
+  const root = readJsonObject(claudeJson ?? homePaths(env).claudeJson);
   const list = root?.additionalModelOptionsCache;
   if (!Array.isArray(list)) return [];
   const out: string[] = [];
@@ -137,13 +137,17 @@ export function accountModels(env: HostEnv): string[] {
  * `<dir>/.claude/settings.local.json`, `<dir>/.claude/settings.json`, then
  * `~/.claude/settings.json`, the precedence Claude Code applies.
  */
-export function settingsDefaults(env: HostEnv, dir?: string): { model: string; effort: Effort } {
+export function settingsDefaults(
+  env: HostEnv,
+  dir?: string,
+  claudeDir?: string,
+): { model: string; effort: Effort } {
   const files: string[] = [];
   if (dir) {
     files.push(path.join(dir, ".claude", "settings.local.json"));
     files.push(path.join(dir, ".claude", "settings.json"));
   }
-  files.push(path.join(homePaths(env).claudeDir, "settings.json"));
+  files.push(path.join(claudeDir ?? homePaths(env).claudeDir, "settings.json"));
   let model: string | undefined;
   let effort: Effort | undefined;
   for (const file of files) {
@@ -165,30 +169,43 @@ export interface ModelCatalogOptions {
   image: () => string;
   getCache: () => ModelCache | undefined;
   setCache: (cache: ModelCache) => void;
+  /**
+   * The Claude config folder and `.claude.json` of an account (`account` is
+   * its id; absent means the default account), or `undefined` in `host`
+   * mode, where the host's own files apply.
+   */
+  claudeHome?: (account?: string) => { dir: string; json: string } | undefined;
 }
 
 export class ModelCatalog {
   constructor(private readonly options: ModelCatalogOptions) {}
 
   /** The cached scan (or the baseline) plus the account's extra models, sorted. */
-  known(): string[] {
+  known(account?: string): string[] {
     const cache = this.options.getCache();
     const ids = cache && cache.models.length > 0 ? [...cache.models] : [...MODEL_BASELINE];
-    for (const id of accountModels(this.options.env)) if (!ids.includes(id)) ids.push(id);
+    const home = this.options.claudeHome?.(account);
+    for (const id of accountModels(this.options.env, home?.json)) {
+      if (!ids.includes(id)) ids.push(id);
+    }
     return sortNewestFirst(ids);
   }
 
   /** The model list, the efforts, and what `claude` would use in `dir`. */
-  async list(dir?: string): Promise<ModelsResult> {
+  async list(dir?: string, account?: string): Promise<ModelsResult> {
     const cache = this.options.getCache();
-    return this.result(dir, cache && cache.models.length > 0 ? "cache" : "baseline");
+    return this.result(dir, cache && cache.models.length > 0 ? "cache" : "baseline", account);
   }
 
-  private result(dir: string | undefined, source: ModelsResult["source"]): ModelsResult {
+  private result(
+    dir: string | undefined,
+    source: ModelsResult["source"],
+    account?: string,
+  ): ModelsResult {
     return {
-      models: this.known(),
+      models: this.known(account),
       efforts: [...EFFORTS],
-      defaults: settingsDefaults(this.options.env, dir),
+      defaults: settingsDefaults(this.options.env, dir, this.options.claudeHome?.(account)?.dir),
       source,
     };
   }

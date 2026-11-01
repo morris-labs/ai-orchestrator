@@ -21,6 +21,7 @@ import type { EngineEndpoint, Repositories } from "../db/repositories.js";
 import { noEngineMessage, type ImageVersions } from "../docker/image.js";
 import {
   LABELS,
+  type LaunchInput,
   SECRETS_LABEL_BROKER,
   buildLaunchSpec,
   mergeMounts,
@@ -30,7 +31,7 @@ import {
   sudoLabel,
   tcpMapsLabel,
 } from "../docker/launch.js";
-import { rootSetupExec } from "../docker/scripts.js";
+import { HOME_LINKS_SCRIPT, rootSetupExec } from "../docker/scripts.js";
 import {
   liveSessions,
   mountsFile,
@@ -40,7 +41,13 @@ import {
 } from "../docker/state.js";
 import type { ContainerInspect, DockerClient } from "../docker/types.js";
 import { boxTmuxSession } from "../records/box.js";
-import { containerHome, type HostEnv } from "../records/env.js";
+import {
+  accountDirFor,
+  containerHome,
+  homePaths,
+  hostToContainer,
+  type HostEnv,
+} from "../records/env.js";
 import { ApiError, notFound } from "../records/errors.js";
 import type { CoreEvents } from "../records/events.js";
 import type { CoreHooks, EngineHealth } from "../records/hooks.js";
@@ -366,6 +373,10 @@ export class ProjectService {
     } else {
       for (const d of wanted) if (!inspect.binds.includes(d)) diffs.push(d);
     }
+    // A container made before the mode changed mounts the other layout.
+    const haveMode = inspect.labels[LABELS.accountsMode] ?? "host";
+    const wantMode = this.accountsLaunch() ? "accounts" : "host";
+    if (haveMode !== wantMode) diffs.push(`accounts mode ${haveMode} -> ${wantMode}`);
     const haveMaps = inspect.labels[LABELS.tcpMaps] ?? "";
     const wantMaps = tcpMapsLabel(project.tcpMaps);
     if (haveMaps !== wantMaps)
@@ -382,6 +393,55 @@ export class ProjectService {
     // id shows a container that runs an image from before a rebuild.
     if (imageId !== undefined && inspect.imageId !== imageId) diffs.push("image -> rebuilt");
     return diffs;
+  }
+
+  /**
+   * The accounts part of the launch, or `undefined` in `host` mode: the host
+   * folders of the Claude accounts, whose `sessions` folders get this
+   * container's own directory.
+   */
+  private accountsLaunch(): LaunchInput["accounts"] {
+    if (this.deps.settings.get().accountsMode !== "accounts") return undefined;
+    return {
+      claudeDirs: this.repos.accounts
+        .list()
+        .filter((a) => a.vendor === "claude")
+        .map((a) => accountDirFor(this.deps.env, "claude", a.name)),
+    };
+  }
+
+  /**
+   * Links the container user's home to the default account of each vendor:
+   * `~/.claude`, `~/.claude.json`, `~/.codex`, and `~/.copilot`. Keeps a bare
+   * `claude` in a shell working and keeps absolute paths in user files, such
+   * as the global `CLAUDE.md`, resolving. Failures are ignored: the sessions
+   * name their account's folder themselves.
+   */
+  private async linkHome(container: string): Promise<void> {
+    const defaults = this.deps.settings.get().accountDefaults;
+    const home = containerHome(this.deps.env);
+    const args: string[] = [];
+    const dirOf = (vendor: "claude" | "codex" | "copilot") => {
+      const id = defaults[vendor];
+      return id === undefined
+        ? undefined
+        : hostToContainer(accountDirFor(this.deps.env, vendor, id.slice(vendor.length + 1)));
+    };
+    const claude = dirOf("claude");
+    if (claude !== undefined)
+      args.push(claude, `${home}/.claude`, `${claude}/.claude.json`, `${home}/.claude.json`);
+    const codex = dirOf("codex");
+    if (codex !== undefined) args.push(codex, `${home}/.codex`);
+    const copilot = dirOf("copilot");
+    if (copilot !== undefined) args.push(copilot, `${home}/.copilot`);
+    if (args.length === 0) return;
+    await this.deps.docker
+      .exec(container, {
+        cmd: ["/bin/sh", "-c", HOME_LINKS_SCRIPT, "_", ...args],
+        user: this.deps.env.user,
+        timeoutMs: 15_000,
+      })
+      .catch(() => undefined);
   }
 
   /** Checks the engine image: it must exist and carry the expected engine version. */
@@ -486,11 +546,14 @@ export class ProjectService {
     const exec = rootSetupExec(
       this.deps.env.user,
       containerHome(this.deps.env),
-      mountContainerPaths({
-        root: project.root,
-        mounts: project.mounts,
-        globalMounts: this.deps.settings.get().globalMounts,
-      }),
+      mountContainerPaths(
+        {
+          root: project.root,
+          mounts: project.mounts,
+          globalMounts: this.deps.settings.get().globalMounts,
+        },
+        this.accountsLaunch() ? homePaths(this.deps.env).accountsDir : undefined,
+      ),
       passwordHash,
     );
     const r = await this.deps.docker.exec(container, { ...exec, timeoutMs: 60_000 });
@@ -552,7 +615,12 @@ export class ProjectService {
       }
       const hostPort = await this.enginePort(projectId);
       const token = crypto.randomBytes(32).toString("hex");
-      const facts = prepareLaunchHost(this.deps.env, { container: name, root: project.root });
+      const accounts = this.accountsLaunch();
+      const facts = prepareLaunchHost(this.deps.env, {
+        container: name,
+        root: project.root,
+        accounts,
+      });
       const spec = buildLaunchSpec(
         this.deps.env,
         {
@@ -568,6 +636,7 @@ export class ProjectService {
           extraEnv: options.extraEnv,
           graceSec: this.deps.graceSec,
           sudoPassword: passwordHash !== null,
+          accounts,
         },
         facts,
       );
@@ -576,6 +645,7 @@ export class ProjectService {
       try {
         await docker.startContainer(id);
         await this.runRootSetup(id, project, passwordHash);
+        if (accounts) await this.linkHome(id);
       } catch (err) {
         await docker.removeContainer(id, { force: true }).catch(() => undefined);
         throw err;

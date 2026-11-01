@@ -4,10 +4,12 @@
 // the server's services in as hooks, and starts polling. The core never
 // listens on a port itself.
 import fs from "node:fs";
+import path from "node:path";
 import type { ImageStatus, Platform } from "@agentbox/contracts";
 import { apiCoreOf, relayEvents, wireHooks } from "./api/core-adapter.js";
 import type { Core as ApiCore, CoreFactoryOptions } from "./api/core-interface.js";
 import { AccountService } from "./accounts/service.js";
+import { claudeStoreRoot } from "./accounts/store.js";
 import { BoxService } from "./boxes/service.js";
 import { ContainerMonitor } from "./boxes/monitor.js";
 import * as conversations from "./catalog/conversations.js";
@@ -19,7 +21,7 @@ import { ImageVersions, imageStatus } from "./docker/image.js";
 import type { DockerClient } from "./docker/types.js";
 import { needsImport, runImport, type ImportReport } from "./import/importer.js";
 import { ProjectService } from "./projects/service.js";
-import { defaultHostEnv, homePaths, type HostEnv } from "./records/env.js";
+import { accountDirFor, defaultHostEnv, homePaths, type HostEnv } from "./records/env.js";
 import { CoreEvents } from "./records/events.js";
 import { defaultHooks, type CoreHooks } from "./records/hooks.js";
 import { KeyedMutex } from "./records/mutex.js";
@@ -102,7 +104,8 @@ export interface ServerCore {
 }
 
 export function createServerCore(options: CoreOptions): ServerCore {
-  const env = options.env ?? defaultHostEnv();
+  // The hook below is set on this object, which the caller may keep using.
+  const env: HostEnv = options.env ?? defaultHostEnv();
   const dbPath = options.dbPath ?? homePaths(env).database;
   const db = repositories(openDatabase(dbPath), { log: options.log });
   const docker = options.docker ?? new DockerodeClient();
@@ -113,6 +116,12 @@ export function createServerCore(options: CoreOptions): ServerCore {
     events,
     (id) => db.accounts.get(id) !== undefined,
   );
+  // Option S: in accounts mode, transcripts live in the store that the
+  // default Claude account's `projects` link leads to.
+  env.claudeProjectsRoot = () =>
+    settings.get().accountsMode === "accounts"
+      ? claudeStoreRoot(env, settings.get().accountDefaults.claude)
+      : undefined;
   let hooks: CoreHooks = defaultHooks();
   const getHooks = () => hooks;
   const imageVersions = new ImageVersions(docker);
@@ -167,6 +176,13 @@ export function createServerCore(options: CoreOptions): ServerCore {
     env,
     docker,
     image: () => settings.get().engineImage,
+    claudeHome: (account) => {
+      if (settings.get().accountsMode !== "accounts") return undefined;
+      const id = account ?? settings.get().accountDefaults.claude;
+      if (!id?.startsWith("claude/")) return undefined;
+      const dir = accountDirFor(env, "claude", id.slice("claude/".length));
+      return { dir, json: path.join(dir, ".claude.json") };
+    },
     getCache: () => settings.get().modelCache,
     setCache: (cache) => {
       settings.setModelCache(cache);
