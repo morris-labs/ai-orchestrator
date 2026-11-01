@@ -9,7 +9,14 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Root } from "../src/app/Root";
 import { Shell } from "../src/app/Shell";
-import { lastSeenText, relativeTime, skewNotes, sortMachines } from "../src/logic/machines";
+import {
+  diskText,
+  imageText,
+  lastSeenText,
+  relativeTime,
+  skewNotes,
+  sortMachines,
+} from "../src/logic/machines";
 
 const T_SEEN = "2026-10-31T08:00:00.000Z";
 
@@ -388,6 +395,34 @@ describe("Machines page", () => {
     expect(row).toHaveTextContent("1.1.0");
     expect(row).toHaveTextContent("boxes, terminals");
     expect(within(table).getByText("this PC")).toBeInTheDocument();
+  });
+
+  it("shows each machine's engine version, image, and free disk", async () => {
+    const health = {
+      engineVersion: "1.0.0",
+      expectedEngineVersion: "1.1.0",
+      image: "mismatch" as const,
+      diskFreeBytes: 120 * 1024 ** 3,
+      diskTotalBytes: 2 * 1024 ** 4,
+      checkedAt: T_SEEN,
+    };
+    await openPage([
+      LOCAL,
+      machine({ id: "node-b", name: "node-b", health }),
+      machine({ id: "node-c", name: "node-c", status: "offline", health: null }),
+    ]);
+    const row = machineRow("node-b");
+    expect(row).toHaveTextContent("1.0.0");
+    expect(row).toHaveTextContent("Engine mismatch");
+    expect(row).toHaveTextContent("120 GiB of 2.0 TiB");
+    expect(within(row).getByText("Engine mismatch")).toHaveAttribute(
+      "title",
+      "Engine in the image: 1.0.0. Expected: 1.1.0.",
+    );
+    expect(diskText(machine({ id: "x", name: "x" }))).toBe("-");
+    expect(imageText(machine({ id: "x", name: "x", health: { ...health, image: "ready" } }))).toBe(
+      "Ready",
+    );
   });
 
   it("opens from the File menu on a single-machine install, and goes back", async () => {

@@ -1,6 +1,7 @@
 // The Machines page: the controller view of a multi-machine install. It
-// lists every machine the hub knows, enrolls a new one with a one-time
-// code, and revokes one.
+// lists every machine the hub knows with its health (status, versions,
+// image, and free disk), enrolls a new one with a one-time code, and
+// revokes one.
 import type { EnrollmentCode, Machine } from "@aio/contracts";
 import {
   Button,
@@ -18,7 +19,10 @@ import {
 import { useMemo, useState } from "react";
 import {
   createEnrollmentCode,
+  diskText,
   hasTab,
+  imageText,
+  imageTitle,
   joinCommand,
   lastSeenText,
   machineDot,
@@ -94,6 +98,27 @@ export function MachinesPage(props: MachinesPageProps) {
         width: 110,
         sortValue: (m) => m.serverVersion ?? "",
         render: (m) => m.serverVersion ?? "-",
+      },
+      {
+        id: "engine",
+        header: "Engine version",
+        width: 110,
+        sortValue: (m) => m.health?.engineVersion ?? "",
+        render: (m) => m.health?.engineVersion ?? "-",
+      },
+      {
+        id: "image",
+        header: "Image",
+        width: 120,
+        sortValue: (m) => m.health?.image ?? "",
+        render: (m) => <span title={imageTitle(m)}>{imageText(m)}</span>,
+      },
+      {
+        id: "disk",
+        header: "Disk free",
+        width: 140,
+        sortValue: (m) => m.health?.diskFreeBytes ?? -1,
+        render: (m) => diskText(m),
       },
       {
         id: "protocol",

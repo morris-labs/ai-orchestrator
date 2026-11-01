@@ -5,9 +5,11 @@ import {
   MachineListSchema,
   type EnrollmentCode,
   type Machine,
+  type MachineHealth,
 } from "@aio/contracts";
 import { isApiError, type ApiClient } from "@aio/ui";
 import { z } from "zod";
+import { formatBytes } from "./format";
 
 export { LOCAL_MACHINE_ID } from "@aio/contracts";
 
@@ -128,6 +130,35 @@ export function skewNotes(m: Machine, local: Machine | undefined): string[] {
     );
   }
   return notes;
+}
+
+export const machineImageLabel: Record<MachineHealth["image"], string> = {
+  ready: "Ready",
+  missing: "Not built",
+  mismatch: "Engine mismatch",
+  unknown: "Unknown",
+};
+
+/** The image cell of a machine: its state, or `-` without health. */
+export function imageText(m: Machine): string {
+  return m.health ? machineImageLabel[m.health.image] : "-";
+}
+
+/** The image cell's tooltip: the engine versions behind the state. */
+export function imageTitle(m: Machine): string {
+  const h = m.health;
+  if (!h) return "The hub hasn't heard this machine's health.";
+  const has = h.engineVersion ?? "none";
+  return `Engine in the image: ${has}. Expected: ${h.expectedEngineVersion}.`;
+}
+
+/** The free disk space of a machine, such as `120 GiB of 1.8 TiB`, or `-`. */
+export function diskText(m: Machine): string {
+  const h = m.health;
+  if (!h || h.diskFreeBytes === null) return "-";
+  return h.diskTotalBytes === null
+    ? formatBytes(h.diskFreeBytes)
+    : `${formatBytes(h.diskFreeBytes)} of ${formatBytes(h.diskTotalBytes)}`;
 }
 
 /** The command that enrolls a machine with a code. */
