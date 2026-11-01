@@ -24,6 +24,7 @@ import {
   type ContainerInfo,
   type Finding,
   type Job,
+  type NodeStatus,
   type ProjectSummary,
   type RunState,
   type SetupCheck,
@@ -1271,6 +1272,88 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
       }
       const report = parsed.data;
       print(report, () => seedText(report));
+    });
+
+  // -------------------------------------------------------------------------
+  // machines and node (multi-host)
+  const machines = program
+    .command("machines")
+    .description("List, enroll, and revoke the machines of a multi-host setup.");
+
+  machines
+    .command("list")
+    .description("List the machines: this one first, then the hub's other machines.")
+    .action(async () => {
+      const r = await client().call("machines.list");
+      print(r, () =>
+        table(
+          ["ID", "NAME", "ROLE", "STATUS", "VERSION", "PLATFORM", "LAST SEEN"],
+          r.machines.map((m) => [
+            m.isLocal ? `${m.id} (this machine)` : m.id,
+            m.name,
+            m.role,
+            m.status,
+            m.serverVersion,
+            m.platform,
+            m.lastSeen,
+          ]),
+        ),
+      );
+    });
+
+  machines
+    .command("enroll")
+    .description("Issue a one-time enrollment code on the hub. Run aio node join on the new machine with it.")
+    .action(async () => {
+      const r = await client().call("machines.enroll");
+      print(
+        r,
+        () =>
+          `Enrollment code: ${r.code}\nIt works once, until ${r.expiresAt}. On the machine to add, run:\n\n  aio node join ${r.hubUrl} ${r.code}\n`,
+      );
+    });
+
+  machines
+    .command("revoke")
+    .description("Revoke a machine's certificate on the hub and close its link.")
+    .argument("<id>", "The machine id, from aio machines list.")
+    .action(async (id: string) => {
+      const r = await client().call("machines.revoke", { params: { id } });
+      print(r, () => `Revoked ${id}.\n`);
+    });
+
+  const node = program
+    .command("node")
+    .description("Show this machine's link to a hub, or join a hub.");
+
+  const nodeText = (s: NodeStatus) =>
+    keyValues([
+      ["Role", s.role],
+      ["Name", s.name],
+      ["Machine ID", s.machineId],
+      ["Hub", s.hubUrl],
+      ["Link", s.link],
+      ["Error", s.error],
+      ["Link port", s.linkPort],
+    ]);
+
+  node
+    .command("status")
+    .description("Show this machine's role and its link to a hub.")
+    .action(async () => {
+      const r = await client().call("node.get");
+      print(r, () => nodeText(r));
+    });
+
+  node
+    .command("join")
+    .description("Join a hub with a one-time enrollment code from aio machines enroll.")
+    .argument("<hub-url>", "The hub URL that came with the code, such as https://hub.example.com:21402.")
+    .argument("<code>", "The enrollment code.")
+    .option("--name <name>", "The name to enroll under. Default: this machine's host name.")
+    .action(async (hubUrl: string, code: string, o: { name?: string }) => {
+      const r = await client().call("node.join", { body: { hubUrl, code, name: o.name } });
+      print(r, () => `Joined ${r.hubUrl} as ${r.name} (${r.machineId}).\n${nodeText(r)}`);
     });
 
   // -------------------------------------------------------------------------
