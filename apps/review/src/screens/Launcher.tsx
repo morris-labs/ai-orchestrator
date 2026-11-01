@@ -1,12 +1,21 @@
-// Run launcher: container, repository, base, tip, pipeline, profile, options,
-// a group preview, and Start. A deep link `?project=&box=` prefills it.
+// Run launcher: container, repository, base, tip, pipeline, profile and
+// roles, options, a group preview, and Start. A deep link `?project=&box=` prefills it.
 import type { ProjectSummary, RouteOf } from "@aio/contracts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ErrorBanner, Field } from "../components/common.js";
 import { listRefs, listRepos, EMPTY_REFS, type RepoInfo, type RepoRefs } from "../lib/repos.js";
 import { href, navigate } from "../state/router.js";
 import { useApiClient, useRestoreFocusAfterBusy } from "@aio/ui/hooks";
-import { DEFAULT_FORM, buildRunRequest, formFromBox, type LauncherForm } from "./launcherModel.js";
+import { ProfileSelect, RoleTable } from "../components/roles.js";
+import {
+  DEFAULT_FORM,
+  buildRunRequest,
+  formFromBox,
+  formRoles,
+  setFormProfile,
+  setFormRole,
+  type LauncherForm,
+} from "./launcherModel.js";
 
 type Preview = RouteOf<"runs.preview">["response"];
 
@@ -372,16 +381,40 @@ export function Launcher({ prefill }: { prefill: { project: string | null; box: 
                 </datalist>
               </Field>
             ) : null}
+          </fieldset>
+
+          <fieldset>
+            <legend>Profile and roles</legend>
             <Field label="Profile">
-              <select
+              <ProfileSelect
                 value={form.profile}
-                onChange={(e) => update({ profile: e.target.value as LauncherForm["profile"] })}
-              >
-                <option value="offload">offload: Claude fixes only</option>
-                <option value="balanced">balanced: Claude reviews rounds 1 and 2</option>
-                <option value="fast">fast: Claude reviews every round</option>
-              </select>
+                onChange={(profile) => {
+                  setForm((f) => setFormProfile(f, profile));
+                  setPreview(null);
+                }}
+              />
             </Field>
+            <p className="muted small">
+              The table shows the roles of round 1. A role you change holds for the whole run; the
+              others follow the profile.
+            </p>
+            <RoleTable
+              name="launcher-role"
+              value={formRoles(form)}
+              onChange={(role, vendors) => setForm((f) => setFormRole(f, role, vendors))}
+            />
+            <div className="row">
+              <button
+                type="button"
+                disabled={form.roles === null}
+                onClick={() => setForm((f) => ({ ...f, roles: null }))}
+              >
+                Reset to profile defaults
+              </button>
+              {form.roles !== null ? (
+                <span className="muted small">Changed from the profile&apos;s defaults.</span>
+              ) : null}
+            </div>
           </fieldset>
 
           <fieldset>

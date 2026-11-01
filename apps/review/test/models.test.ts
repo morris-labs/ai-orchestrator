@@ -6,7 +6,14 @@ import {
   findingVendors,
   NO_FILTER,
 } from "../src/screens/findingsModel.js";
-import { DEFAULT_FORM, buildRunRequest, formFromBox } from "../src/screens/launcherModel.js";
+import {
+  DEFAULT_FORM,
+  buildRunRequest,
+  formFromBox,
+  formRoles,
+  setFormProfile,
+  setFormRole,
+} from "../src/screens/launcherModel.js";
 import { commaList, lines, parsePolicyYaml, policyToYaml } from "../src/screens/policyModel.js";
 import {
   draftFrom,
@@ -59,6 +66,38 @@ describe("buildRunRequest", () => {
       ok: true,
       request: { mergeBase: false, exactBase: true, prNumber: 42, tip: "x" },
     });
+  });
+
+  it("follows the profile's roles until a person changes one", () => {
+    expect(formRoles(ok).reviewer).toEqual(["codex", "copilot"]);
+    const fast = setFormProfile(ok, "fast");
+    expect(fast.roles).toBeNull();
+    expect(formRoles(fast).disprover).toEqual(["claude"]);
+    const edited = setFormRole(ok, "disprover", ["copilot"]);
+    expect(edited.roles?.disprover).toEqual(["copilot"]);
+    const switched = setFormProfile(edited, "fast");
+    expect(formRoles(switched).disprover).toEqual(["copilot"]);
+    expect(formRoles(switched).reviewer).toEqual(["codex", "copilot"]);
+    // Choosing the defaults again drops the draft.
+    expect(setFormRole(edited, "disprover", ["codex"]).roles).toBeNull();
+  });
+
+  it("sends only the roles that differ from the profile's defaults", () => {
+    const r0 = buildRunRequest(ok);
+    expect(r0.ok && r0.request).not.toHaveProperty("roles");
+    const form = setFormRole(setFormRole(ok, "confirmer", ["copilot"]), "reviewer", ["codex"]);
+    const r = buildRunRequest(form);
+    expect(r.ok && r.request.roles).toEqual({ reviewer: ["codex"], confirmer: "copilot" });
+    // The same vendors in another order are no change.
+    const reordered = { ...ok, roles: { ...formRoles(ok), reviewer: ["copilot", "codex"] } };
+    const r2 = buildRunRequest(reordered as typeof ok);
+    expect(r2.ok && r2.request).not.toHaveProperty("roles");
+  });
+
+  it("refuses a run with no reviewer", () => {
+    const r = buildRunRequest(setFormRole(ok, "reviewer", []));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors).toContain("Choose at least one reviewer.");
   });
 
   it("prefills from a box", () => {
