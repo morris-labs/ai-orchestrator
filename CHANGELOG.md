@@ -25,6 +25,9 @@ section's heading must have the form `## [X.Y.Z]`.
 - A machine role step in the setup wizard: keep a single machine, or join a
   hub as a node with its URL and a one-time enrollment code. The `.deb`
   package's install message names the hub's link port, TCP `21402`.
+- A `ufw` application profile, `aio-hub`, for the hub's link port in the
+  `.deb` package. The package doesn't enable it; run
+  `sudo ufw allow from LAN_CIDR to any app aio-hub`.
 - A **Paste** button beside each **Browse** button for paths in the Boxes
   app.
 - Windows host paths: the server maps a path such as

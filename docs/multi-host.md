@@ -218,23 +218,27 @@ The packages don't change a firewall, because most machines never become a
 hub. Nodes need no inbound rule. On a hub that runs a firewall, allow TCP
 port `21402` only from the networks your nodes are on.
 
-With `ufw` on Ubuntu, run one of the following commands:
+The `.deb` package installs a `ufw` application profile, `aio-hub`, for TCP
+port `21402` in `/etc/ufw/applications.d/aio-hub`. It doesn't enable the
+profile or open the port. To allow your LAN with `ufw` on Ubuntu, run the
+following command:
 
-- To allow a LAN, where `192.0.2.0/24` stands for your LAN's range:
+```bash
+sudo ufw allow from LAN_CIDR to any app aio-hub
 
-  ```bash
-  sudo ufw allow from 192.0.2.0/24 to any port 21402 proto tcp
+```
 
-  ```
+Replace `LAN_CIDR` with your LAN's range, such as `192.0.2.0/24`.
 
-- To allow Tailscale only:
+To see the profile, run `sudo ufw app info aio-hub`. If you set the
+`linkPort` setting, the profile doesn't match; allow that port instead:
 
-  ```bash
-  sudo ufw allow in on tailscale0 to any port 21402 proto tcp
+```bash
+sudo ufw allow from LAN_CIDR to any port PORT proto tcp
 
-  ```
+```
 
-If you set the `linkPort` setting, use that port instead.
+Replace `PORT` with the `linkPort` value.
 
 The link uses mutual TLS. The hub serves a certificate that its authority
 signs, and every node pins that exact certificate. Each node presents a

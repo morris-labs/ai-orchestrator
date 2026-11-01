@@ -1,0 +1,9 @@
+# ufw application profile for the AI Orchestrator hub's node link.
+# The package installs it to /etc/ufw/applications.d/ but opens nothing.
+# To allow the link from your LAN, run:
+#   sudo ufw allow from LAN_CIDR to any app aio-hub
+# The port matches DEFAULT_LINK_PORT in packages/contracts/src/records.ts.
+[aio-hub]
+title=AI Orchestrator hub link
+description=The mutual TLS link that AI Orchestrator nodes open to their hub.
+ports=21402/tcp
