@@ -29,13 +29,18 @@ import { isAuthorized } from "./auth.js";
 import type { ApiDeps } from "./deps.js";
 import { ApiError, toApiError } from "./errors.js";
 import { createHandlers, type HttpHandlers, type HttpRouteKey } from "./handlers.js";
+import { localMachineRewrite, registerMachineProxy } from "./machines.js";
 import { attachCmd, shellCmd, sideSessionName } from "../terminals/attach.js";
 import type { ExecRequest } from "../terminals/exec.js";
 import { sendControl, serveTerminal } from "../terminals/terminal-socket.js";
 
 interface RouteConfig {
   auth: boolean;
-  ws: boolean;
+  /**
+   * True for a WebSocket-only route; `upgrade` for a route that serves both
+   * plain HTTP and upgrades, where only an upgrade gets the origin check.
+   */
+  ws: boolean | "upgrade";
 }
 
 declare module "fastify" {
@@ -109,9 +114,12 @@ export function isOwnOrigin(origin: string | undefined, secure: boolean, port: n
 export async function createApiServer(deps: ApiDeps & { tls?: TlsIdentity }): Promise<ApiServer> {
   const tls = deps.tls;
   const proxy = tls ? undefined : deps.proxy;
+  const rewrite = localMachineRewrite(deps.machines);
   const app = Fastify({
     logger: false,
     forceCloseConnections: true,
+    // `/api/v1/machines/local/proxy/<rest>` is `/api/v1/<rest>`.
+    rewriteUrl: (req) => rewrite(req.url ?? "/"),
     serverFactory: (handler) => {
       const listener: http.RequestListener = (req, res) => {
         if (proxy?.matches(req)) void proxy.handleRequest(req, res);
@@ -159,7 +167,9 @@ export async function createApiServer(deps: ApiDeps & { tls?: TlsIdentity }): Pr
   app.addHook("onRequest", async (request, reply) => {
     const config = request.routeOptions.config.aio;
     const port = request.socket.localPort ?? 0;
-    if (config?.ws && !isOwnOrigin(request.headers.origin, tls !== undefined, port)) {
+    const upgrade = (request.headers.upgrade ?? "").toLowerCase() === "websocket";
+    const ws = config?.ws === true || (config?.ws === "upgrade" && upgrade);
+    if (ws && !isOwnOrigin(request.headers.origin, tls !== undefined, port)) {
       reply.header("connection", "close");
       return sendFailure(
         reply,
@@ -169,7 +179,7 @@ export async function createApiServer(deps: ApiDeps & { tls?: TlsIdentity }): Pr
     if (!config?.auth) return;
     if (!isAuthorized(authInput(request), deps.token)) {
       // A refused upgrade leaves no HTTP connection worth keeping.
-      if (config.ws) reply.header("connection", "close");
+      if (ws) reply.header("connection", "close");
       return sendFailure(reply, new ApiError("unauthorized", "Missing or wrong bearer token."));
     }
   });
@@ -195,6 +205,7 @@ export async function createApiServer(deps: ApiDeps & { tls?: TlsIdentity }): Pr
   registerWs(app, serverRoutes["jobs.stream"], (socket, request) =>
     serveJob(deps, socket, request),
   );
+  await registerMachineProxy(app, deps);
 
   const dirs = deps.staticDirs ?? {};
   let decorated = false;

@@ -56,6 +56,20 @@ usage scheduler, and terminals.
   own origin, `https://127.0.0.1:21400` or the same port on `localhost` or
   `[::1]`, so a page on another port can't open a terminal with the
   user's cookie. Clients without a browser send no `Origin`.
+- Every route also answers under `/api/v1/machines/MACHINE/proxy/`, where
+  `MACHINE` names the machine that serves the call. `local` always means
+  the server that receives it, so `/api/v1/machines/local/proxy/boxes` is
+  `/api/v1/boxes`, with the same token check. On a hub, any other name is a
+  connected node: the hub forwards the call over that node's link as
+  `/api/v1/REST`, keeps the query, drops the hop-by-hop headers and the
+  client's credentials, and adds `x-aio-forwarded-by`. On a plain node, the
+  call goes to the hub unchanged, and the hub routes it on. WebSocket routes
+  work the same way: the server relays frames, binary flags, and close codes
+  in both directions, and on an event stream it tags each event with
+  `machine`. An unknown machine answers `not_found` (404), an enrolled one
+  without a link `machine_offline` (503), and one that doesn't answer in
+  time `machine_timeout` (504). Without links, as on a single PC, only
+  `local` resolves.
 - It stores its state in SQLite at `~/.ai-orchestrator/aio.db` and its
   settings in `~/.ai-orchestrator/config.json`.
 - It runs the secrets broker: one Unix socket per project container, in
