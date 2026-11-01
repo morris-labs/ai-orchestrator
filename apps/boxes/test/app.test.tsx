@@ -209,6 +209,38 @@ describe("main window", () => {
     expect(server.socketsFor("/api/v1/terminals")[0]?.query.get("boxId")).toBe("claude-agent-site");
   });
 
+  it("keeps the table's row nodes across events, and a double-click still opens the box", async () => {
+    const server = new FakeServer({ boxes: boxes() });
+    await renderApp(server);
+    await waitFor(() => expect(server.socketsFor("/api/v1/events")).toHaveLength(1));
+    const row = rowOf("Site work");
+    const site = server.state.boxes[0]!;
+    const update = (box: typeof site.box) =>
+      act(() => {
+        server.emit(
+          makeEvent("box.changed", { boxId: box.id, status: "running", box: { ...box } }),
+        );
+        server.emit(
+          makeEvent("container.stats", {
+            container: site.container,
+            projectId: site.box.projectId,
+            cpuPercent: 3,
+            memBytes: 1,
+            memLimitBytes: 2,
+            diskBytes: 1,
+          }),
+        );
+      });
+    fireEvent.mouseDown(row, { button: 0 });
+    update(site.box);
+    fireEvent.mouseDown(row, { button: 0 });
+    update(site.box);
+    expect(rowOf("Site work")).toBe(row);
+    expect(row.isConnected).toBe(true);
+    fireEvent.doubleClick(row);
+    await waitFor(() => expect(server.socketsFor("/api/v1/terminals")).toHaveLength(1));
+  });
+
   it("keeps the terminal pane at a minimum height whatever split was saved", async () => {
     localStorage.setItem("ab.splitter.outer", JSON.stringify([0.95, 0.05]));
     const server = new FakeServer({ boxes: boxes() });
