@@ -28,6 +28,19 @@ export const ACCOUNT_DIR_ENV = {
   copilot: "COPILOT_HOME",
 } as const satisfies Record<Platform, string>;
 
+/**
+ * The command that signs an account in, run inside a container with the
+ * account's variable set. Copilot must use `--device-code`: plain
+ * `copilot login` starts a browser flow whose callback on `127.0.0.1` the host
+ * browser can't reach (phase 0, check 5). Codex uses its device flow for the
+ * same reason.
+ */
+export const ACCOUNT_SIGN_IN_COMMAND = {
+  claude: ["claude", "auth", "login"],
+  codex: ["codex", "login", "--device-auth"],
+  copilot: ["copilot", "login", "--device-code"],
+} as const satisfies Record<Platform, readonly string[]>;
+
 /** The account name that seeding gives each vendor's first account. */
 export const DEFAULT_SEED_ACCOUNT_NAME = "personal";
 
@@ -165,3 +178,31 @@ export const AccountRemoveResultSchema = z.object({
   /** The account folder, which stays on disk. */
   keptDir: z.string().min(1),
 });
+
+/**
+ * The body of `accounts.import`: installs a ready, signed-in folder as an
+ * account. `from` is the vendor's config folder itself (a `CLAUDE_CONFIG_DIR`,
+ * a `CODEX_HOME`, or a `COPILOT_HOME`). The server moves the folder, or with
+ * `copy` copies it. It never reads the sign-in files.
+ */
+export const AccountImportRequestSchema = z
+  .object({
+    vendor: VendorSchema,
+    name: AccountNameSchema,
+    /** An absolute host path. */
+    from: z.string().min(1),
+    /** Default: the name. */
+    label: z.string().min(1).optional(),
+    /** Copies the folder and leaves the original. Default: move. */
+    copy: z.boolean().default(false),
+  })
+  .strict();
+export type AccountImportRequest = z.input<typeof AccountImportRequestSchema>;
+
+/** The result of `accounts.import`: the new account plus what to tell the person. */
+export const AccountImportResultSchema = AccountViewSchema.extend({
+  mode: z.enum(["moved", "copied"]),
+  /** Notes for a person to read, such as the refresh-token warning for a copy. */
+  warnings: z.array(z.string()),
+});
+export type AccountImportResult = z.infer<typeof AccountImportResultSchema>;

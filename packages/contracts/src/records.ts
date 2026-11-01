@@ -387,6 +387,32 @@ export function deriveHostKey(boxId: string, taken: ReadonlySet<string> = new Se
 }
 
 /**
+ * The account each CLI uses for a box, by vendor. An absent vendor means the
+ * global default (`GlobalSettings.accountDefaults`). The entry for
+ * `box.platform` is the main session's account; the others serve its side
+ * sessions.
+ */
+export const BoxAccountsSchema = z
+  .object({
+    claude: vendorAccountId("claude").optional(),
+    codex: vendorAccountId("codex").optional(),
+    copilot: vendorAccountId("copilot").optional(),
+  })
+  .strict();
+export type BoxAccounts = z.infer<typeof BoxAccountsSchema>;
+
+/** Changes to `BoxAccounts`: `null` clears a vendor's entry. */
+export const BoxAccountsPatchSchema = z
+  .object({
+    claude: vendorAccountId("claude").nullable(),
+    codex: vendorAccountId("codex").nullable(),
+    copilot: vendorAccountId("copilot").nullable(),
+  })
+  .partial()
+  .strict();
+export type BoxAccountsPatch = z.infer<typeof BoxAccountsPatchSchema>;
+
+/**
  * A box: one conversation, run as a tmux session in its project's container.
  *
  * A box's working directory is `worktree` when set, else `targetDir` (see
@@ -413,6 +439,8 @@ export const BoxSchema = z.object({
   effort: EffortSchema.optional(),
   /** Passes `--allow-dangerously-skip-permissions`. 3.3.5 key `yolo`. */
   skipPermissions: z.boolean(),
+  /** The account of each vendor; see `BoxAccountsSchema`. Absent: the defaults. */
+  accounts: BoxAccountsSchema.optional(),
   /** Workspace subfolder the opening prompt names. */
   workspace: z.string().min(1).optional(),
   /** Git worktree path. When set, the box runs there. */
@@ -524,7 +552,7 @@ export const AccountsModeSchema = z.enum(["host", "accounts"]);
 export type AccountsMode = z.infer<typeof AccountsModeSchema>;
 
 /** An account id of one vendor: `VENDOR/NAME` with that `VENDOR`. */
-function vendorAccountId(vendor: Platform) {
+export function vendorAccountId(vendor: Platform) {
   return AccountIdSchema.refine((id) => id.startsWith(`${vendor}/`), {
     message: `must be a ${vendor} account id, such as ${vendor}/personal`,
   });

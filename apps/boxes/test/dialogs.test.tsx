@@ -49,6 +49,47 @@ function newDialog(server: FakeServer, overrides: Partial<Parameters<typeof BoxD
   return { onAccept, onCancel, ...utils };
 }
 
+describe("BoxDialog, account picker", () => {
+  const view = (id: string, label = id.split("/")[1]!) => ({
+    account: {
+      id,
+      vendor: id.split("/")[0] as "claude" | "codex" | "copilot",
+      name: id.split("/")[1]!,
+      label,
+      overflow: false,
+      signIn: { state: "signed_in" as const },
+      createdAt: "2026-10-31T09:00:00Z",
+      updatedAt: "2026-10-31T09:00:00Z",
+    },
+    dir: `/home/user/.claude-box/accounts/${id}`,
+    dirExists: true,
+    isDefault: false,
+  });
+
+  it("lists the accounts of the platform and sends the choice", async () => {
+    const user = userEvent.setup();
+    const server = new FakeServer({
+      accounts: [view("claude/personal"), view("claude/work", "Work"), view("codex/main")],
+      settings: { accountsMode: "accounts", accountDefaults: { claude: "claude/personal" } },
+    });
+    const { onAccept } = newDialog(server, { initialDir: "/w/site" });
+    const select = await screen.findByLabelText("Account");
+    await waitFor(() => expect(within(select).getAllByRole("option")).toHaveLength(3));
+    expect(within(select).getByRole("option", { name: "Default (claude/personal)" })).toBeTruthy();
+    expect(within(select).queryByRole("option", { name: "codex/main" })).toBeNull();
+    await user.selectOptions(select, "claude/work");
+    await user.click(screen.getByRole("button", { name: "Create" }));
+    await waitFor(() => expect(onAccept).toHaveBeenCalled());
+    expect(onAccept.mock.calls[0]![0].form.account).toBe("claude/work");
+  });
+
+  it("says the choice is ignored while accounts mode is off", async () => {
+    const server = new FakeServer();
+    newDialog(server, { initialDir: "/w/site" });
+    expect(await screen.findByText(/Accounts mode is off/)).toBeInTheDocument();
+  });
+});
+
 describe("BoxDialog, new mode", () => {
   it("browses the host's directories through fs.dirs without Electron", async () => {
     const user = userEvent.setup();

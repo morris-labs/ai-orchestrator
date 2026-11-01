@@ -24,6 +24,8 @@ export interface BoxForm {
   effort: Effort;
   layout: Layout;
   skipPermissions: boolean;
+  /** The account (`VENDOR/NAME`) of the platform's CLI; `""` uses the vendor's default. */
+  account: string;
   sshRemoteRefs: string[];
 }
 
@@ -158,6 +160,7 @@ export function createBody(
     conversation,
     ...(claude ? { model: form.model.trim(), effort: form.effort } : {}),
     skipPermissions: form.skipPermissions,
+    ...(form.account !== "" ? { accounts: { [form.platform]: form.account } } : {}),
     layout: adopt ? "root" : form.layout,
     rememberLayout: adopt ? false : (options.rememberLayout ?? mode === "new"),
     sshRemoteRefs: form.sshRemoteRefs,
@@ -181,6 +184,7 @@ export function formFromBox(
     effort: box.effort ?? defaults.effort,
     layout: box.worktree ? "worktree" : box.workspace ? "workspace" : "root",
     skipPermissions: box.skipPermissions,
+    account: box.accounts?.[box.platform] ?? "",
     sshRemoteRefs: [...box.sshRemoteRefs],
   };
 }
@@ -208,6 +212,10 @@ export function updateBody(
     }
   }
   if (form.skipPermissions !== box.skipPermissions) out.skipPermissions = form.skipPermissions;
+  const account = box.accounts?.[box.platform] ?? "";
+  if (form.account !== account) {
+    out.accounts = { [box.platform]: form.account === "" ? null : form.account };
+  }
   const uuid = form.conversation === "" ? null : form.conversation;
   if (uuid !== box.sessionUuid) out.sessionUuid = uuid;
   const refs = [...form.sshRemoteRefs].sort();

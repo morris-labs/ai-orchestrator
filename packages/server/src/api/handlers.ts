@@ -319,7 +319,7 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
     },
     "models.list": async ({ query }) => {
       requireAbsolute(query.dir, "The directory");
-      return core.models.list(query.dir);
+      return core.models.list(query.dir, query.account);
     },
     "models.rescan": async () => core.models.rescan(),
     "image.status": async () => core.image.status(),
@@ -400,6 +400,7 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
         },
       );
     },
+    "accounts.import": async ({ body }) => core.accounts.importFolder(body),
     "accounts.get": async ({ params }) => core.accounts.get(`${params.vendor}/${params.name}`),
     "accounts.update": async ({ params, body }) =>
       core.accounts.update(`${params.vendor}/${params.name}`, body),

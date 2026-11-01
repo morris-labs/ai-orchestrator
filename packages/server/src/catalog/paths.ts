@@ -1,7 +1,7 @@
 // Where Claude Code keeps a working directory's transcripts.
 import path from "node:path";
 import type { HostEnv } from "../records/env.js";
-import { homePaths, hostToContainer } from "../records/env.js";
+import { claudeProjectsDir, hostToContainer } from "../records/env.js";
 
 /** The longest encoded name Claude Code uses before it truncates and hashes. */
 const MAX_ENCODED_LENGTH = 200;
@@ -30,10 +30,10 @@ export function encodeProjectDir(workDir: string): string {
   return `${encoded.slice(0, MAX_ENCODED_LENGTH)}-${Math.abs(claudePathHash(dir)).toString(36)}`;
 }
 
-/** `~/.claude/projects/<encoded>` for a working directory, or `""` for an empty one. */
+/** `<projects store>/<encoded>` for a working directory, or `""` for an empty one. */
 export function projectDirFor(env: HostEnv, workDir: string): string {
   if (workDir === "") return "";
-  return path.join(homePaths(env).claudeProjects, encodeProjectDir(workDir));
+  return path.join(claudeProjectsDir(env), encodeProjectDir(workDir));
 }
 
 /** The transcript file of one session in a working directory. */

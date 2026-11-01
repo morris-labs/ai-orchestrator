@@ -5,11 +5,11 @@ Copilot. Each account has its own config folder, so you can keep several
 accounts of one vendor, such as a personal Claude Max account and a work
 Claude Pro account.
 
-This page describes phase 1 of the design in
-[Per-account agent config folders](v4/design-accounts.md). In phase 1, you
-can create, seed, and check accounts, but boxes still mount the host's own
-folders. The `accountsMode` setting stays `host` until phase 2 makes boxes
-use accounts.
+This page describes phases 1 and 2 of the design in
+[Per-account agent config folders](v4/design-accounts.md). You can create,
+import, seed, and check accounts. Boxes use them when the `accountsMode`
+setting is `accounts`; while it is `host`, the default, boxes still mount the
+host's own folders. See [Run boxes on accounts](#run-boxes-on-accounts).
 
 ## How accounts work
 
@@ -103,17 +103,23 @@ Seeding also does the following for each vendor:
   `config.toml` file when the file sets no store, because a container has no
   keyring.
 
-### Sign-in files that seeding leaves out
+### Files that seeding leaves out
 
-Seeding leaves out the following files, relative to each host folder:
+Seeding uses a deny-list. It leaves out a file when its base name matches, at
+any depth in the host folder:
 
-- Claude Code: `.credentials.json`
-- Codex: `auth.json`
-- Copilot: `hosts.yml`, `credentials.toml`, and `registered.tokens.json`
+- Sign-in files: `.credentials.json` (Claude Code), `auth.json` (Codex), and
+  `config.json` (Copilot, which keeps its token there in plain text, next to
+  its settings), plus the older candidates `hosts.yml`, `credentials.toml`,
+  and `registered.tokens.json`
+- Files that hold a token for other tools: `agent.env`, `.env`, and any
+  file whose name ends in `.env`
 
-The Copilot list isn't verified. Copilot keeps its token in the system
-keychain, and the file it falls back to isn't confirmed. Phase 0 of the design
-confirms the file names.
+In the copied Claude `.claude.json`, seeding also drops the `/login` API key
+(`primaryApiKey`) and sets `installMethod` to `global`, so Claude Code in the
+image doesn't warn that `~/.local/bin/claude` is missing. When `~/.claude.json`
+is a link into `~/.claude/.claude.json`, seeding resolves the link and copies
+the file.
 
 Because the sign-in files stay behind, the host and each account don't share
 a refresh token, and signing in or out on the host never affects a box. You
@@ -138,12 +144,70 @@ The following commands manage accounts. Each one calls the server's
   container from the engine image, with the account folder mounted, and
   stores the answer. Copilot has no status command outside an interactive
   session, so its state stays unknown.
+- To install a folder that already holds a sign-in, run
+  `agentbox accounts import VENDOR NAME --from DIR`. By default, the command
+  moves the folder into `DATA_DIR/accounts/VENDOR/NAME`. Pass `--copy` to copy
+  it instead; a Claude refresh token rotates each time it is used, so only
+  one of the two copies may stay in use. The command never reads the sign-in
+  files. Run `agentbox accounts check VENDOR/NAME` afterward to confirm that
+  the account is signed in.
 - To remove an account, run `agentbox accounts remove VENDOR/NAME`. The
   server deletes the record and keeps the folder, which can hold your only
   copy of its settings and history. Delete the folder yourself when you no
   longer need it. The server refuses to remove a vendor's default account.
 
-Replace `TEXT` with the account's display name.
+Replace the following:
+
+- `TEXT`: the account's display name
+- `DIR`: the absolute path of the vendor's config folder, such as a
+  `CLAUDE_CONFIG_DIR`
+
+The server refuses an accounts folder under `/tmp`, `/var/tmp`, or `/dev/shm`,
+because Codex won't run from a temporary directory.
+
+## Run boxes on accounts
+
+To switch boxes from the host's folders to accounts, do the following:
+
+1. Make sure each vendor you use has an account and a default. Seed, import,
+   or add one, then run `agentbox accounts check VENDOR/NAME`.
+1. Run `agentbox accounts mode accounts`.
+1. Restart each project container. A container made before the switch is
+   stale ("accounts mode host -> accounts") and the server restarts it only
+   when it has no sessions or you ask.
+
+To go back, run `agentbox accounts mode host` and restart the containers.
+
+In accounts mode, a box behaves as follows:
+
+- **Account choice**: each box uses one account per vendor. The main session
+  uses the account of the box's platform; side sessions use the account of
+  their own vendor. A vendor without a choice uses its default account.
+  To choose, pass `--account VENDOR/NAME` to `agentbox box new` (repeat it
+  for several vendors), use the Account field in the New Box, Edit Box, and
+  Fork Conversation dialogs, or run `agentbox box account BOX ACCOUNT`. A
+  fork keeps the source box's accounts unless you choose others.
+- **Session command**: the server starts each session as
+  `env CLAUDE_CONFIG_DIR=ACCOUNT_DIR claude ...` (or `CODEX_HOME`,
+  `COPILOT_HOME`), so one container hosts sessions of several accounts.
+- **Mounts**: the container mounts `DATA_DIR/accounts` at its host path and
+  nothing from `~/.claude`, `~/.codex`, or `~/.copilot`. Each Claude account's
+  `sessions` folder is the container's own directory, and the target of any
+  link at the top of a Claude account folder (such as `projects`) is mounted
+  at its own path. In the container, `~/.claude`, `~/.claude.json`, `~/.codex`,
+  and `~/.copilot` link to each vendor's default account.
+- **Transcripts**: every Claude account's `projects` link leads to one shared
+  store, so a conversation resumes under any Claude account. The `/resume`
+  picker lists conversations that other accounts started, and accounts share
+  each folder's auto memory.
+- **New account**: a container that started before you added a Claude account
+  has no `sessions` mount for it. Starting a box on that account fails with
+  `stale_mounts` until you restart the container.
+- **Change of account**: a change applies when the box restarts. A Claude box
+  resumes its conversation. A Codex or Copilot box starts a new session,
+  because the old one stays in the old account's folder.
+- **Models**: the model list and the defaults come from the chosen Claude
+  account's `.claude.json` and `settings.json`.
 
 ## Back up accounts
 
