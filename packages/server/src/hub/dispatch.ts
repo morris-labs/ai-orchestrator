@@ -1,12 +1,13 @@
 // Serves the requests and streams that arrive over a link by dispatching
 // them into this machine's own API: HTTP through Fastify's `inject`, and
-// WebSocket routes through `injectWS`, both in-process and authenticated as
+// WebSocket routes through `injectWebSocket`, both in-process and authenticated as
 // a trusted internal caller with the server's own token. Paths under
 // `/link/v1/` reach the link's own handlers instead and never the API, so a
 // local API client can't call them.
 import type { FastifyInstance } from "fastify";
 import type WebSocket from "ws";
 import { ApiError, toApiError } from "../api/errors.js";
+import { injectWebSocket } from "./inject.js";
 import type { LinkRequest, LinkResponse, LinkStream } from "./link.js";
 import { LinkError, errorResponse, type LinkServer } from "./peer.js";
 import { LINK_INTERNAL_PREFIX, closeReason, sendableCloseCode } from "./protocol.js";
@@ -202,9 +203,7 @@ export function createDispatcher(opts: DispatcherOptions): LinkServer {
       if (!api) throw new LinkError("This machine's API isn't ready yet.");
       let ws: WebSocket;
       try {
-        ws = await api.injectWS(linkUrl(req), {
-          headers: forwardHeaders(req.headers, opts.token),
-        } as never);
+        ws = await injectWebSocket(api, linkUrl(req), forwardHeaders(req.headers, opts.token));
       } catch (err) {
         const m = /response: (\d+)/.exec((err as Error).message);
         throw new LinkError(
@@ -212,7 +211,9 @@ export function createDispatcher(opts: DispatcherOptions): LinkServer {
           m ? Number(m[1]) : 502,
         );
       }
-      return new WsStream(ws);
+      const stream = new WsStream(ws);
+      ws.resume();
+      return stream;
     },
   };
 }

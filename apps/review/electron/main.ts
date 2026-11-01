@@ -1,10 +1,17 @@
 // The aio-review Electron shell: one window on the server's `/review/`
-// page, a tray icon with the active run count, desktop notifications for the
-// review kinds, a single instance, and `aio-review://` deep links.
+// page, a tray icon with the active run count on every online machine,
+// desktop notifications for the review kinds from those machines, a single
+// instance, and `aio-review://` deep links.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { HOME_PATHS, type NotificationToggles } from "@aio/contracts";
-import { ApiClient, EventsConnection, isAppPage, isWebUrl } from "@aio/ui/core";
+import {
+  ApiClient,
+  EventsConnection,
+  createMachineClient,
+  isAppPage,
+  isWebUrl,
+} from "@aio/ui/core";
 import {
   certificateVerdict,
   dataFile,
@@ -25,8 +32,9 @@ import {
   shell,
 } from "electron";
 import {
-  ActiveRuns,
   APP_USER_MODEL_ID,
+  FleetActiveRuns,
+  type NoticeMachine,
   hostOsOf,
   protocolClientArgs,
   usesWindowClass,
@@ -65,20 +73,47 @@ const DEV_URL = process.env.AIO_REVIEW_DEV_URL;
 /** The pages that get the token; anything else is foreign. */
 const APP_PAGES = [rendererUrl(config.serverUrl, null), ...(DEV_URL ? [DEV_URL] : [])];
 
-/** A client with the current token. Call it for every use, so a new token is picked up. */
-function client(): ApiClient {
+/** The client options with the current token. */
+function clientOptions() {
   // The `ws` package sends the token in the upgrade's `Authorization` header,
   // which keeps it out of the event stream's URL.
-  return new ApiClient({
+  return {
     baseUrl: config.serverUrl,
     token: readToken(),
     ...pinnedTransport(WebSocket, readPin),
-    socketAuth: "header",
-  });
+    socketAuth: "header" as const,
+  };
+}
+
+/** A client with the current token. Call it for every use, so a new token is picked up. */
+function client(): ApiClient {
+  return new ApiClient(clientOptions());
+}
+
+/** A client for another machine, through this server and the hub. */
+function machineClient(machineId: string): ApiClient {
+  return createMachineClient(clientOptions(), machineId);
 }
 let win: BrowserWindow | null = null;
 let tray: Tray | null = null;
-const active = new ActiveRuns();
+/** The active runs on this machine and on every other online one. */
+const fleet = new FleetActiveRuns({
+  listMachines: async () => (await client().call("machines.list", {})).machines,
+  listRuns: async (machineId) => (await machineClient(machineId).call("runs.list", {})).runs,
+  connect: (machineId, handlers) => {
+    const conn = new EventsConnection({
+      // A factory, so a reconnect reads the token and the certificate again.
+      client: () => machineClient(machineId),
+      types: ["run.changed", "notification"],
+      ...handlers,
+    });
+    conn.start();
+    return conn;
+  },
+  onCount: () => updateTray(),
+  onNotification: (machine, event) => notify(event, machine),
+});
+const active = fleet.local;
 let toggles: NotificationToggles = {
   decisionNeeded: true,
   runFinished: true,
@@ -89,12 +124,13 @@ let toggles: NotificationToggles = {
 
 function updateTray() {
   if (!tray) return;
-  tray.setImage(nativeImage.createFromBitmap(trayBitmap(active.count), { width: 32, height: 32 }));
-  tray.setToolTip(trayTooltip(active.count));
-  tray.setTitle(active.count > 0 ? String(active.count) : "");
+  const count = fleet.count;
+  tray.setImage(nativeImage.createFromBitmap(trayBitmap(count), { width: 32, height: 32 }));
+  tray.setToolTip(trayTooltip(count));
+  tray.setTitle(count > 0 ? String(count) : "");
   tray.setContextMenu(
     Menu.buildFromTemplate([
-      { label: trayTooltip(active.count), enabled: false },
+      { label: trayTooltip(count), enabled: false },
       { type: "separator" },
       { label: "Open", click: () => show() },
       { label: "Dashboard", click: () => show("#/dashboard") },
@@ -253,33 +289,44 @@ function connectEvents() {
         toggles = event.settings.notifications;
       }
       if (active.apply(event)) updateTray();
-      const notice = noticeFor(event, toggles, Date.now());
-      if (notice && Notification.isSupported()) {
-        const n = new Notification({
-          title: notice.title,
-          body: notice.body,
-          urgency: notice.urgent ? "critical" : "normal",
-        });
-        shownNotices.add(n);
-        n.on("close", () => shownNotices.delete(n));
-        n.on("click", () => {
-          shownNotices.delete(n);
-          show(notice.hash);
-          void client()
-            .call("notifications.read", { params: { notificationId: notice.notificationId } })
-            .catch(() => undefined);
-        });
-        n.show();
-      }
+      notify(event, fleet.localNoticeMachine());
     },
   });
   conn.start();
+  fleet.start();
   // `will-quit` comes once the quit can no longer be cancelled; a quit that
   // a page cancels after `before-quit` keeps the stream.
   app.on("will-quit", () => {
     conn.stop();
     reloader.stop();
+    fleet.stop();
   });
+}
+
+/**
+ * Shows the desktop notification for `event`, if any. With `machine`, the
+ * title names it, and for another machine a click opens the run there and
+ * marks the notification read on that machine.
+ */
+function notify(event: Parameters<typeof noticeFor>[0], machine?: NoticeMachine) {
+  const notice = noticeFor(event, toggles, Date.now(), machine);
+  if (!notice || !Notification.isSupported()) return;
+  const n = new Notification({
+    title: notice.title,
+    body: notice.body,
+    urgency: notice.urgent ? "critical" : "normal",
+  });
+  shownNotices.add(n);
+  n.on("close", () => shownNotices.delete(n));
+  n.on("click", () => {
+    shownNotices.delete(n);
+    show(notice.hash);
+    const c = machine && !machine.isLocal ? machineClient(machine.id) : client();
+    void c
+      .call("notifications.read", { params: { notificationId: notice.notificationId } })
+      .catch(() => undefined);
+  });
+  n.show();
 }
 
 let quitting = false;

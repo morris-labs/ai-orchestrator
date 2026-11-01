@@ -61,7 +61,13 @@ interface Server {
 
 async function startServer(
   name: string,
-  options: { signedIn?: boolean; linkProtocol?: number; before?: (home: string) => void } = {},
+  options: {
+    signedIn?: boolean;
+    linkProtocol?: number;
+    before?: (home: string) => void;
+    /** Replaces the fixed loopback link address of the other tests. */
+    link?: { linkHost?: string; linkAddress?: string; lanAddress?: () => string | undefined };
+  } = {},
 ): Promise<Server> {
   const home = fs.realpathSync(tempDir(`aio-mh-${name}-`));
   options.before?.(home);
@@ -81,8 +87,7 @@ async function startServer(
     exec: new FakeExec(),
     port: 0,
     linkPort: 0,
-    linkHost: "127.0.0.1",
-    linkAddress: "127.0.0.1",
+    ...(options.link ?? { linkHost: "127.0.0.1", linkAddress: "127.0.0.1" }),
     linkProtocol: options.linkProtocol,
     credentialPollMs: 0,
     linkTiming: { pingMs: 1000, timeoutMs: 5000, backoffMinMs: 50, backoffMaxMs: 200 },
@@ -199,6 +204,60 @@ describe("multi-host", () => {
     expect(reuse.json.error.code).toBe("unauthorized");
   });
 
+  it("shows each machine's health on both ends", async () => {
+    const { hub, node, joined } = await linkedPair();
+    const machineId = joined.json.machineId as string;
+    await waitFor(() => node.app.multiHost.status().link === "connected", 5000);
+    await waitFor(() => hub.app.multiHost.links.get(machineId) !== undefined, 5000);
+
+    const own = (await node.api("GET", "/api/v1/node/health")).json;
+    expect(own).toMatchObject({ expectedEngineVersion: VERSION, image: "missing" });
+    expect(own.diskTotalBytes).toBeGreaterThan(0);
+
+    const onHub = MachineListSchema.parse((await hub.api("GET", "/api/v1/machines")).json);
+    expect(onHub.machines.map((m) => [m.id, m.health?.image])).toEqual([
+      ["local", "missing"],
+      [machineId, "missing"],
+    ]);
+    expect(onHub.machines[1]?.health?.diskTotalBytes).toBe(own.diskTotalBytes);
+
+    // The node shows the hub's health as the hub measured it.
+    const onNode = MachineListSchema.parse((await node.api("GET", "/api/v1/machines")).json);
+    expect(onNode.machines.find((m) => m.id === "hub")?.health).toMatchObject({
+      image: "missing",
+      expectedEngineVersion: VERSION,
+    });
+
+    // A revoked machine shows no health.
+    await hub.api("DELETE", `/api/v1/machines/${machineId}`);
+    const after = MachineListSchema.parse((await hub.api("GET", "/api/v1/machines")).json);
+    expect(after.machines.find((m) => m.id === machineId)?.health).toBeNull();
+  });
+
+  it("binds the LAN address, refuses to listen without one, and lets linkHost win", async () => {
+    // No LAN address: the hub refuses to listen rather than bind every interface.
+    const bare = await startServer("bare", { link: { lanAddress: () => undefined } });
+    const refused = await bare.api("POST", "/api/v1/machines/enrollment-codes");
+    expect(refused.status).toBe(409);
+    expect(refused.json.error.message).toMatch(/no LAN IPv4 address.*linkHost/);
+    expect(bare.app.multiHost.hub.port).toBeNull();
+
+    // An explicit linkHost setting wins, and the hub URL names the bound address.
+    const patched = await bare.api("PATCH", "/api/v1/settings", { linkHost: "127.0.0.1" });
+    expect(patched.status).toBe(200);
+    const code = await bare.api("POST", "/api/v1/machines/enrollment-codes");
+    expect(code.status).toBe(201);
+    expect(code.json.hubUrl).toBe(`https://127.0.0.1:${bare.app.multiHost.hub.port}`);
+
+    // The detected LAN address is the default bind, and linkAddress still names the hub.
+    const lan = await startServer("lan", {
+      link: { lanAddress: () => "127.0.0.1", linkAddress: "hub.example.com" },
+    });
+    const named = await lan.api("POST", "/api/v1/machines/enrollment-codes");
+    expect(named.status).toBe(201);
+    expect(named.json.hubUrl).toBe(`https://hub.example.com:${lan.app.multiHost.hub.port}`);
+  });
+
   it("round-trips requests both ways and limits what a node may call on the hub", async () => {
     const { hub, node, joined } = await linkedPair();
     const machineId = joined.json.machineId as string;
@@ -301,6 +360,68 @@ describe("multi-host", () => {
     // The hub still refuses a path that defaultAllowNodeRequest doesn't allow.
     const refused = await node.api("GET", "/api/v1/machines/hub/proxy/settings");
     expect(refused.status).toBe(403);
+  });
+
+  it("lets a node reach the boxes of a hub whose role is both, and not of a hub-only one", async () => {
+    const { hub, node } = await linkedPair();
+    await waitFor(() => node.app.multiHost.status().link === "connected", 5000);
+    const root = fs.realpathSync(tempDir("aio-mh-project-"));
+    expect((await hub.api("POST", "/api/v1/projects", { root })).status).toBe(201);
+    const via = (rest: string) => `/api/v1/machines/hub/proxy/${rest}`;
+
+    // Role both: the box routes, projects, directories, and streams pass.
+    const boxes = await node.api("GET", via("boxes"));
+    expect(boxes.status).toBe(200);
+    expect(boxes.json.boxes).toEqual([]);
+    const projects = await node.api("GET", via("projects"));
+    expect(projects.status).toBe(200);
+    expect(
+      projects.json.projects.map((p: { project: { root: string } }) => p.project.root),
+    ).toEqual([root]);
+    expect(
+      (await node.api("GET", `${via("fs/dirs")}?path=${encodeURIComponent(root)}`)).status,
+    ).toBe(200);
+    for (const action of ["start", "stop", "restart"]) {
+      const res = await node.api("POST", via(`boxes/no-such-box/${action}`));
+      expect([res.status, res.json.error.code]).toEqual([404, "not_found"]);
+    }
+    expect((await node.api("GET", via("boxes/no-such-box"))).status).toBe(404);
+    const hello = { type: "hello", streamId: null, lastSeq: null };
+    const hubStream = await hub.firstFrame("/api/v1/events", hello);
+    const relayed = await node.firstFrame(via("events"), hello);
+    expect(relayed).toMatchObject({ type: "hello", streamId: hubStream.streamId });
+    const toHub = node.app.multiHost.links.get("hub")!;
+    // The hub serves the terminal upgrade; the terminal itself answers
+    // the attach message, which this test doesn't send.
+    const terminal = await toHub.openStream({ path: "/api/v1/terminals", headers: {} });
+    terminal.close(1000, "done");
+
+    // Everything else stays refused.
+    for (const [method, rest, body] of [
+      ["GET", "settings"],
+      ["PATCH", "settings", { linkPort: 1 }],
+      ["GET", "secrets/available"],
+      ["GET", "accounts"],
+      ["POST", "machines/enrollment-codes"],
+      ["GET", "node"],
+      ["POST", "boxes", {}],
+      ["DELETE", "boxes/no-such-box"],
+      ["POST", "projects", { root }],
+    ] as [string, string, unknown?][]) {
+      expect((await node.api(method, via(rest), body)).status, `${method} ${rest}`).toBe(403);
+    }
+
+    // Role hub: back to the machine list and health only.
+    expect((await hub.api("PATCH", "/api/v1/settings", { role: "hub" })).status).toBe(200);
+    expect((await node.api("GET", via("boxes"))).status).toBe(403);
+    expect((await node.api("GET", via("projects"))).status).toBe(403);
+    expect((await node.api("POST", via("boxes/no-such-box/start"))).status).toBe(403);
+    await expect(node.firstFrame(via("events"), hello)).rejects.toThrow();
+    await expect(toHub.openStream({ path: "/api/v1/terminals", headers: {} })).rejects.toThrow(
+      /doesn't serve/,
+    );
+    expect((await node.api("GET", via("health"))).status).toBe(200);
+    expect((await node.api("GET", via("machines"))).status).toBe(200);
   });
 
   it("resolves a node's secrets through the hub", async () => {

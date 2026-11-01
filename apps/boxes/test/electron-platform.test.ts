@@ -109,6 +109,13 @@ describe("the Boxes app on each host", () => {
       url: "aio-review://launch?project=p1&box=b1",
     });
     expect(reviewLaunch("win32", {}, undefined)).toEqual({ url: "aio-review://launch" });
+    const remote = { ...link, machineId: "node-b" };
+    expect(reviewLaunch("darwin", remote, undefined)).toEqual({
+      url: "aio-review://launch?project=p1&box=b1&machine=node-b",
+    });
+    expect(reviewLaunch("linux", remote, undefined)).toEqual(
+      reviewCommand("p1", "b1", undefined, "node-b"),
+    );
     expect(reviewLaunch("darwin", link, "/opt/review")).toEqual(
       reviewCommand("p1", "b1", "/opt/review"),
     );

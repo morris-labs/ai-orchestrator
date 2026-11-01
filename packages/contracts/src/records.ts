@@ -680,13 +680,20 @@ export const GlobalSettingsSchema = z
     /** The name this machine shows and enrolls under. Absent means the host name. */
     machineName: MachineNameSchema.optional(),
     /**
-     * The port a hub listens on for node links, on every interface. Absent
-     * means `DEFAULT_LINK_PORT`, 21402.
+     * The port a hub listens on for node links. Absent means
+     * `DEFAULT_LINK_PORT`, 21402.
      */
     linkPort: PortSchema.optional(),
     /**
+     * The address a hub's link listener binds. Absent means the primary LAN
+     * IPv4 address: the private address of the interface that holds the
+     * default route. With no such address, the listener doesn't start.
+     */
+    linkHost: z.string().min(1).optional(),
+    /**
      * The host name or address that nodes use to reach this hub, for the
-     * hub URL in enrollment codes. Absent means the host name.
+     * hub URL in enrollment codes. Absent means the address the listener
+     * binds.
      */
     linkAddress: z.string().min(1).optional(),
   })
@@ -813,7 +820,9 @@ export const GlobalSettingsPatchSchema = z
     machineName: MachineNameSchema.nullable(),
     /** `null` goes back to 21402. Takes effect when the link listener next starts. */
     linkPort: PortSchema.nullable(),
-    /** `null` goes back to the host name. */
+    /** `null` goes back to the LAN address. Takes effect when the link listener next starts. */
+    linkHost: z.string().min(1).nullable(),
+    /** `null` goes back to the address the link listener binds. */
     linkAddress: z.string().min(1).nullable(),
     /**
      * Applies to containers created afterward; `null` goes back to `auto`.

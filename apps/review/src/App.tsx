@@ -1,14 +1,32 @@
 // The app shell: navigation, the status line, and the routed screens.
+import { LOCAL_MACHINE_ID } from "@aio/contracts";
 import { Dashboard, dashboardCss, themeCss } from "@aio/ui/dashboard";
 import { useEffect, useState } from "react";
+import {
+  FleetRuns,
+  MachinePicker,
+  machineName,
+  useFleet,
+  useFleetState,
+} from "./components/machines.js";
 import { bridge } from "./lib/bridge.js";
 import { Findings } from "./screens/Findings.js";
 import { Launcher } from "./screens/Launcher.js";
 import { Policy } from "./screens/Policy.js";
 import { RunList, RunView } from "./screens/RunView.js";
 import { Settings } from "./screens/Settings.js";
-import { href, moveDeepLinkToHash, navigate, useRoute, type RouteName } from "./state/router.js";
-import { useStore } from "./state/store.js";
+import { isMulti } from "./state/fleet.js";
+import {
+  href,
+  linkedMachine,
+  moveDeepLinkToHash,
+  navigate,
+  parseHash,
+  useRoute,
+  type Route,
+  type RouteName,
+} from "./state/router.js";
+import { StoreProvider, useAppStore, useStore } from "./state/store.js";
 
 const NAV: Array<{ name: RouteName; path: string; label: string }> = [
   { name: "launch", path: "/launch", label: "Start run" },
@@ -23,9 +41,14 @@ function DashboardScreen() {
   const dashboard = useStore((s) => s.dashboard);
   const usageInfo = useStore((s) => s.usageInfo);
   const connection = useStore((s) => s.connection);
+  const fleet = useFleetState();
   return (
     <div className="screen wide">
       <h2>Infrastructure</h2>
+      <FleetRuns />
+      {isMulti(fleet) ? (
+        <h3 className="machine-heading">On {machineName(fleet, fleet.selected)}</h3>
+      ) : null}
       <Dashboard
         state={dashboard}
         usageInfo={usageInfo}
@@ -36,6 +59,11 @@ function DashboardScreen() {
   );
 }
 
+/** The same screen without the params and query that name one machine's run, project, or box. */
+function screenPath(route: Route): string {
+  return route.name === "run" ? "/runs" : `/${route.name}`;
+}
+
 export function App({
   search = typeof location !== "undefined" ? location.search : "",
 }: {
@@ -43,7 +71,25 @@ export function App({
 }) {
   // The deep link in the page's query applies once: it moves into the hash
   // before the route is read, and later routes don't see it.
-  useState(() => moveDeepLinkToHash(search));
+  const fleet = useFleet();
+  useState(() => {
+    moveDeepLinkToHash(search);
+    // A link to a box on another machine opens that machine first.
+    const machine = linkedMachine(parseHash(window.location.hash));
+    if (fleet && machine) fleet.select(machine);
+  });
+  const { selected } = useFleetState();
+  const root = useAppStore();
+  // Each machine has its own store; a switch remounts the screens on it.
+  const store = fleet ? fleet.storeFor(selected) : root;
+  return (
+    <StoreProvider key={selected} store={store}>
+      <AppShell />
+    </StoreProvider>
+  );
+}
+
+function AppShell() {
   const route = useRoute();
   const connection = useStore((s) => s.connection);
   const storeError = useStore((s) => s.error);
@@ -52,7 +98,23 @@ export function App({
       Object.values(s.dashboard.runs).filter((r) => r.run?.status === "waiting_decision").length,
   );
 
-  useEffect(() => bridge()?.onNavigate?.((hash) => navigate(hash)), []);
+  const fleet = useFleet();
+  // A link that the window gets while it's open, such as from the Boxes
+  // app, can name another machine. Links without one, such as from a
+  // notification of this server, show this machine.
+  const linked = linkedMachine(route);
+  useEffect(() => {
+    if (fleet && linked) fleet.select(linked);
+  }, [fleet, linked]);
+  useEffect(
+    () =>
+      bridge()?.onNavigate?.((hash) => {
+        const machine = linkedMachine(parseHash(hash));
+        fleet?.select(machine ?? LOCAL_MACHINE_ID);
+        navigate(hash);
+      }),
+    [fleet],
+  );
 
   const active = route.name === "run" ? "runs" : route.name;
   let screen;
@@ -93,6 +155,13 @@ export function App({
       <div className="app">
         <nav className="nav" aria-label="Main">
           <div className="brand">AI Orchestrator Review</div>
+          <MachinePicker
+            onSwitch={() => {
+              if (route.name === "run" || [...route.query].length > 0) {
+                navigate(href(screenPath(route)));
+              }
+            }}
+          />
           <ul>
             {NAV.map((n) => (
               <li key={n.name}>

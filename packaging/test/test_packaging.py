@@ -132,6 +132,32 @@ class NfpmConfigTest(unittest.TestCase):
         self.assertEqual(parser["Service"]["NoNewPrivileges"], "yes")
         self.assertEqual(parser["Unit"]["StartLimitIntervalSec"], "0")
 
+    def test_ufw_profile_matches_the_link_port(self):
+        records = (ROOT / "packages/contracts/src/records.ts").read_text()
+        port = re.search(r"export const DEFAULT_LINK_PORT = (\d+);", records).group(1)
+        profile = configparser.ConfigParser(interpolation=None, comment_prefixes=("#",))
+        profile.read(ROOT / "packaging/ufw/aio-hub")
+        self.assertEqual(profile.sections(), ["aio-hub"])
+        self.assertEqual(profile["aio-hub"]["ports"], f"{port}/tcp")
+        self.assertTrue(profile["aio-hub"]["title"])
+        self.assertTrue(profile["aio-hub"]["description"])
+
+    def test_nfpm_installs_the_ufw_profile(self):
+        entry = next(
+            (c for c in self.config["contents"] if c["dst"] == "/etc/ufw/applications.d/aio-hub"),
+            None,
+        )
+        self.assertIsNotNone(entry, "the nfpm config doesn't install the ufw profile")
+        self.assertEqual(entry["src"], "root/etc/ufw/applications.d/aio-hub")
+        self.assertEqual(entry.get("type"), "config")
+        self.assertEqual(entry["file_info"]["mode"], 0o644)
+        build = (ROOT / "scripts/build-deb.sh").read_text()
+        self.assertIn('"$ROOT/packaging/ufw/aio-hub" "$R/etc/ufw/applications.d/"', build)
+        # The package opens nothing on its own.
+        for script in ("postinst", "prerm", "postrm"):
+            text = (ROOT / "packaging/deb/scripts" / script).read_text()
+            self.assertNotRegex(text, r"^\s*ufw ", script)
+
     def test_maintainer_scripts_exist(self):
         for key, src in self.config["scripts"].items():
             name = pathlib.Path(src).name
@@ -732,6 +758,11 @@ class ScriptsTest(unittest.TestCase):
             ).stdout
             self.assertIn("systemctl --user enable --now aio-server", fresh)
             self.assertNotIn(restart, fresh)
+            # A fresh install says how to join a hub and which port a hub needs.
+            self.assertIn("aio node join", fresh)
+            self.assertIn("TCP port 21402", fresh)
+            self.assertIn("sudo ufw allow from LAN_CIDR to any app aio-hub", fresh)
+            self.assertIn("docs/multi-host.md", fresh)
 
     def test_postrm_clears_the_apparmor_cache_on_purge(self):
         config = load_yaml(NFPM)
@@ -1072,6 +1103,30 @@ class NfpmBuildTest(unittest.TestCase):
             control = subprocess.run([dpkg_deb, "--ctrl-tarfile", str(deb)], check=True, capture_output=True).stdout
             self.assertIn(b"postinst", control)
             self.assertIn(b"conffiles", control)
+
+
+class LinkPortTest(unittest.TestCase):
+    """The hub's link port in the packaging and docs matches the server's."""
+
+    def test_the_link_port_agrees_everywhere(self):
+        records = (ROOT / "packages/contracts/src/records.ts").read_text()
+        match = re.search(r"export const DEFAULT_LINK_PORT = (\d+);", records)
+        self.assertIsNotNone(match)
+        port = match.group(1)
+        for rel in (
+            "packaging/deb/scripts/postinst",
+            "docs/multi-host.md",
+            "docs/install.md",
+            "docs/platforms.md",
+        ):
+            with self.subTest(file=rel):
+                self.assertIn(port, (ROOT / rel).read_text())
+
+    def test_the_packaged_unit_pins_no_role(self):
+        # The packaged unit must match the one install-service writes, so it
+        # carries no role; docs/multi-host.md shows the drop-in that pins one.
+        self.assertNotIn("AIO_ROLE", (ROOT / "packaging/systemd/aio-server.service").read_text())
+        self.assertIn("Environment=AIO_ROLE=hub", (ROOT / "docs/multi-host.md").read_text())
 
 
 if __name__ == "__main__":

@@ -204,6 +204,37 @@ so one sign-in on the host serves every box. To use Codex or Copilot as a
 box's platform or as a reviewer, sign in to each on the host. Until you do,
 the review pipeline uses only the vendors that are signed in.
 
+## Add machines to a hub
+
+One install manages the boxes on its own machine. To manage boxes on
+several Linux machines from one place, make one machine the hub and join
+the others to it as nodes. Install the package and start the server on each
+machine as this page describes, then do the following:
+
+1. On the hub, open AI Orchestrator, open the **Machines** tab
+   (Ctrl+Shift+M), and click **Add Machine**, or run the following command:
+
+   ```sh
+   aio machines enroll
+   ```
+
+   The first code starts the hub's link listener on TCP port `21402`, on the
+   hub's LAN address. The package doesn't open the port. If the hub runs
+   `ufw`, allow your LAN through the package's `aio-hub` application
+   profile, where `LAN_CIDR` is your LAN's range, such as `192.0.2.0/24`:
+
+   ```sh
+   sudo ufw allow from LAN_CIDR to any app aio-hub
+
+   ```
+
+1. On the machine to add, open the setup wizard, choose **Node: join a hub
+   with an enrollment code**, paste the `aio node join` command from the hub
+   into **Hub URL**, and click **Done**. Or run that command in a terminal.
+
+For the roles, the firewall rules, and what crosses the link, see
+[Multi-host](multi-host.md).
+
 ## Upgrade
 
 1. Install the new package with `sudo apt install ./ai-orchestrator_VERSION_amd64.deb`.

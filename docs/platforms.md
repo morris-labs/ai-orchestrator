@@ -18,6 +18,7 @@ The following table summarizes each part on each host:
 | Image build | `build-image.sh` | `build-image.sh` with the system bash 3.2 | `build-image.sh` under Git for Windows' bash |
 | Secrets broker | Unix socket | TCP (other branch) | TCP (other branch) |
 | Host paths in containers | Same path | Same path | Mapped (other branch) |
+| Multi-host hub or node | Yes | Untested | Untested |
 | Tested on the host | Yes | No | No |
 
 ## How AI Orchestrator runs on each host
@@ -152,6 +153,30 @@ Windows:
   macOS and Windows.
 - The open-path guard accepts Windows drive paths, such as `C:\src\app`,
   and refuses UNC paths.
+
+### Multi-host
+
+A hub on any host listens for node links on TCP port `21402`; for the
+roles and the enrollment steps, see [Multi-host](multi-host.md). No package
+opens the port in a firewall:
+
+- **Linux**: the `.deb` package changes no firewall. It installs the `ufw`
+  application profile `aio-hub` for the port, which you enable with
+  `sudo ufw allow from LAN_CIDR to any app aio-hub`, or use your firewall's
+  own tool, as
+  [Multi-host](multi-host.md#open-the-link-port-in-a-firewall) describes.
+- **macOS**: when the application firewall is on, macOS asks the first time
+  the hub listens whether the bundled `node` may accept incoming
+  connections. Allow it.
+- **Windows**: Windows Defender Firewall asks the first time the hub
+  listens whether `aio-serverw.exe` may communicate on your networks.
+  Allowing it needs administrator rights, because the per-user installer
+  runs without them. Allow private networks only.
+
+A node dials out to the hub, so it needs no inbound rule on any host. A
+node on macOS or Windows runs boxes the same way as a single machine on
+that host, with the secrets broker's TCP transport and, on Windows, the
+host path mapping.
 
 ### Packages
 
@@ -319,6 +344,8 @@ None of the following ran on a real Mac or Windows PC:
   Windows. It ran on Linux.
 - Terminal.app and Windows Terminal launches, and the `aio-review://` link.
 - `core.hooksPath=NUL` with Git for Windows.
+- A hub or a node on either host, and the firewall prompts for the link
+  port.
 
 ## Signing and notarization
 

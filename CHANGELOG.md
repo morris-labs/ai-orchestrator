@@ -20,8 +20,36 @@ section's heading must have the form `## [X.Y.Z]`.
   the `machine_offline`, `machine_timeout`, and `hub_unreachable` error
   codes. `MACHINE_ID` is an enrolled machine's ID, `local` for the server
   that gets the call, or `hub` for a node's hub.
+- Terminal attach to a box on another machine, through the hub: in a
+  machine tab of the Boxes app, and with `aio box attach MACHINE/BOX` and
+  `aio box shell MACHINE/BOX` in the CLI, where **Ctrl+]** twice detaches.
+  A terminal that reads slowly holds the box's output back over the link
+  instead of being closed.
 - Machine tabs and a **Machines** page in the Boxes app. On another
   machine, **Browse** lists that machine's directories.
+- Machine health on the **Machines** page: each machine's engine version,
+  image state, and free disk space, from `GET /api/v1/node/health` and the
+  `health.v1` link capability.
+- The CLI's `--machine` option and `MACHINE/BOX` box arguments send a
+  command, including every `aio review` command, to another machine.
+  `aio box list --all-machines`, `aio events --all-machines`, and
+  `aio review status --all-machines` show every machine's boxes, events,
+  and runs.
+- Review runs across machines. The Review app has a **Machine** list that
+  shows another machine's runs, findings, launcher, and policy, and the
+  dashboard lists every online machine's runs with the machine named. An
+  offline machine shows as offline with no runs, unless you select **Show
+  offline machines' last runs**. The Review app's tray count and desktop
+  notifications cover every online machine, and each notification names
+  its machine. **Start Review** on another machine's tab in the
+  Boxes app opens the Review app on that machine.
+- A machine role step in the setup wizard: keep a single machine, make the
+  machine a hub only, or join a hub as a node with its URL and a one-time
+  enrollment code. The `.deb`
+  package's install message names the hub's link port, TCP `21402`.
+- A `ufw` application profile, `aio-hub`, for the hub's link port in the
+  `.deb` package. The package doesn't enable it; run
+  `sudo ufw allow from LAN_CIDR to any app aio-hub`.
 - A **Paste** button beside each **Browse** button for paths in the Boxes
   app.
 - Windows host paths: the server maps a path such as

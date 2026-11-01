@@ -4,6 +4,8 @@ import type { RunStatus } from "@aio/contracts";
 export interface DeepLink {
   project: string | null;
   box: string | null;
+  /** The machine that holds the box, from `aio machines list`; `null` for this one. */
+  machine: string | null;
 }
 
 /** Run statuses the tray counts as active. */

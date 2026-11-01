@@ -99,15 +99,35 @@ export function moveDeepLinkToHash(search: string): void {
   const link = deepLink(search);
   if (!link.project && !link.box) return;
   const route = parseHash(window.location.hash);
+  const machine = link.machine ?? undefined;
   const hash =
     route.name === "policy"
-      ? href("/policy", { project: route.query.get("project") ?? link.project ?? undefined })
-      : href("/launch", { project: link.project ?? undefined, box: link.box ?? undefined });
+      ? href("/policy", {
+          project: route.query.get("project") ?? link.project ?? undefined,
+          machine,
+        })
+      : href("/launch", {
+          project: link.project ?? undefined,
+          box: link.box ?? undefined,
+          machine,
+        });
   history.replaceState(history.state, "", `${window.location.pathname}${hash}`);
 }
 
-/** The deep link `?project=&box=` in the page's own query string. */
-export function deepLink(search: string): { project: string | null; box: string | null } {
+/**
+ * The deep link `?project=&box=&machine=` in the page's own query string.
+ * `machine` names the machine that holds the box; `null` means this one.
+ */
+export function deepLink(search: string): {
+  project: string | null;
+  box: string | null;
+  machine: string | null;
+} {
   const q = new URLSearchParams(search);
-  return { project: q.get("project"), box: q.get("box") };
+  return { project: q.get("project"), box: q.get("box"), machine: q.get("machine") || null };
+}
+
+/** The machine a route's `machine` query names, or `null`. */
+export function linkedMachine(route: Route): string | null {
+  return route.query.get("machine") || null;
 }

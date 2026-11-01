@@ -418,6 +418,19 @@ describe("node to hub to node", () => {
     await s.until(() => fleet.nodeA.exec.sessions[0]!.closed);
   });
 
+  it("tags another node's events, which reach a node's client through the hub", async () => {
+    const ws = fleet.nodeBUrl.replace(/^http/, "ws");
+    const s = await connect(`${ws}/machines/node-a/proxy/events`, AUTH_B);
+    s.ws.send(JSON.stringify({ type: "hello", streamId: null, lastSeq: null }));
+    await s.until((x) => x.texts.length === 1);
+    expect(s.texts[0]).toMatchObject({ type: "hello", streamId: fleet.nodeA.hub.streamId });
+    fleet.nodeA.hub.emit({ type: "box.changed", boxId: box.id, status: "stopped", box: null });
+    await s.until((x) => x.texts.length === 2);
+    // The hub tags the frame once; node B relays it unchanged.
+    expect(s.texts[1]).toMatchObject({ type: "box.changed", seq: 1, machine: "node-a" });
+    s.ws.close();
+  });
+
   it("answers 503 on a plain node without a hub link", async () => {
     const lonely = await createHarness({ links: new FakeRegistry(), machines: { role: "node" } });
     const port = await lonely.server.listen(0);

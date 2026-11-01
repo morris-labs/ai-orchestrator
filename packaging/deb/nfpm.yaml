@@ -122,6 +122,14 @@ contents:
     file_info:
       mode: 0644
 
+  # The ufw application profile for the hub's link port
+  # (packaging/ufw/aio-hub). The package never enables a rule.
+  - src: root/etc/ufw/applications.d/aio-hub
+    dst: /etc/ufw/applications.d/aio-hub
+    type: config
+    file_info:
+      mode: 0644
+
 scripts:
   postinstall: maint/postinst
   preremove: maint/prerm

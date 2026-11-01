@@ -54,9 +54,10 @@ export const DEFAULT_WRITE_TIMEOUT_MS = 570_000;
 export const DEFAULT_OPEN_TIMEOUT_MS = 15_000;
 
 /**
- * Bytes a relayed socket can hold unsent before the relay closes it. The
- * link has no flow control, so a client that stops reading would otherwise
- * make the server buffer without limit.
+ * Bytes a relayed socket can hold unsent before the relay closes it. With
+ * `flow.v1`, the relay holds the node back long before this, so the limit
+ * applies to a link without flow control, where a client that stops reading
+ * would otherwise make the server buffer without limit.
  */
 export const RELAY_MAX_BUFFERED = 8 * 1024 * 1024;
 
@@ -326,6 +327,9 @@ export class PendingRelay {
   ) {
     stream.onMessage((data, binary) => this.fromRemote(data, binary));
     stream.onClose((code, reason) => this.onRemoteClose(code, reason));
+    // A client that reads slowly holds the node back through the link's
+    // credit, so a busy terminal pauses instead of filling the relay.
+    stream.setSinkBacklog?.(() => (this.socket ? this.socket.bufferedAmount : this.queued));
   }
 
   private fromRemote(data: Buffer, binary: boolean): void {
@@ -353,7 +357,7 @@ export class PendingRelay {
       const linkLost = code === 1006 || code === 1005 ? null : code;
       socket.close(
         sendableCode(linkLost ?? 1014),
-        closeReason(linkLost ? reason : reason || `The link to machine ${this.machineId} closed.`),
+        closeReason(linkLost ? reason : `The link to machine ${this.machineId} closed.`),
       );
     }
   }

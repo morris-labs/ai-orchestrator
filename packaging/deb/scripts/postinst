@@ -80,6 +80,17 @@ applications menu; its setup wizard builds the container image from
 /usr/share/ai-orchestrator/image. For more information, see
 https://github.com/morris-labs/ai-orchestrator/blob/main/docs/install.md
 
+To join this machine to a hub, choose Node in the setup wizard, or run
+aio node join. A hub accepts node links on TCP port 21402 on its LAN
+address. The package installs the ufw application profile aio-hub for that
+port but opens nothing. On a hub that runs ufw, allow your LAN, where
+LAN_CIDR is its range, such as 192.0.2.0/24:
+
+  sudo ufw allow from LAN_CIDR to any app aio-hub
+
+For more information, see
+https://github.com/morris-labs/ai-orchestrator/blob/main/docs/multi-host.md
+
 MSG
     ;;
 esac

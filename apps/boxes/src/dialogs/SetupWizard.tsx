@@ -1,10 +1,23 @@
 // The setup wizard: the host checks with their fixes, the image builds as
-// streamed jobs, the default directory for New Box, and the 1Password
-// reference of the containers' sudo password.
-import type { Job, SetupCheck } from "@aio/contracts";
+// streamed jobs, this machine's multi-host role (a single machine, a hub, or
+// a node that joins a hub with an enrollment code), the default directory for New
+// Box, and the 1Password reference of the containers' sudo password.
+import type { Job, NodeStatus, SetupCheck } from "@aio/contracts";
 import { Button, Dialog, StatusDot, errorMessage, useApiClient } from "@aio/ui";
 import { useCallback, useEffect, useState } from "react";
+import { parseJoinInput } from "../logic/machines";
 import { JobDialog } from "./JobDialog";
+
+/**
+ * What the user picks for this machine: on its own (role `both`), a hub that
+ * only coordinates nodes (role `hub`), or a node of a hub.
+ */
+type MachineChoice = "single" | "hub" | "join";
+
+/** The choice that matches a role. */
+function choiceFor(role: NodeStatus["role"]): MachineChoice {
+  return role === "node" ? "join" : role === "hub" ? "hub" : "single";
+}
 
 const checkTitles: Record<SetupCheck["id"], string> = {
   docker: "Docker reachable",
@@ -43,6 +56,13 @@ export function SetupWizard({ onClose, onDone, stacked }: SetupWizardProps) {
   const [savedSudoRef, setSavedSudoRef] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [job, setJob] = useState<{ title: string; job: Job } | null>(null);
+  // `null` while loading or when the server has no multi-host routes; the
+  // wizard then hides the role section.
+  const [node, setNode] = useState<NodeStatus | null>(null);
+  const [choice, setChoice] = useState<MachineChoice>("single");
+  const [hubUrl, setHubUrl] = useState("");
+  const [code, setCode] = useState("");
+  const [machineName, setMachineName] = useState("");
 
   const recheck = useCallback(() => {
     setChecks(null);
@@ -69,6 +89,65 @@ export function SetupWizard({ onClose, onDone, stacked }: SetupWizardProps) {
       .catch((err: unknown) => setError(errorMessage(err)));
   }, [client]);
 
+  useEffect(() => {
+    client
+      .call("node.get", {})
+      .then((s) => {
+        setNode(s);
+        setChoice(choiceFor(s.role));
+      })
+      .catch(() => setNode(null));
+  }, [client]);
+
+  /** True when the wizard offers the role choice: this machine hasn't joined a hub. */
+  const canChoose = node !== null && node.hubUrl === null;
+
+  /** Stores the chosen role, or joins the hub. */
+  const applyRole = async (): Promise<void> => {
+    if (!canChoose || node === null) return;
+    if (choice !== "join") {
+      const role = choice === "hub" ? "hub" : "both";
+      if (node.role !== role) {
+        await client.call("settings.patch", { body: { role } });
+        setNode({ ...node, role });
+      }
+      return;
+    }
+    const target = parseJoinInput(hubUrl);
+    if (!target) {
+      throw new Error(
+        "Enter the hub URL that came with the enrollment code, such as https://hub.example.com:21402.",
+      );
+    }
+    const joinCode = code.trim() || target.code;
+    if (!joinCode) throw new Error("Enter the enrollment code from the hub.");
+    const name = machineName.trim();
+    // A hub can't join another hub, so it becomes a single machine first,
+    // and goes back to a hub when the join fails.
+    if (node.role === "hub") await client.call("settings.patch", { body: { role: "both" } });
+    try {
+      setNode(
+        await client.call("node.join", {
+          body: { hubUrl: target.hubUrl, code: joinCode, ...(name ? { name } : {}) },
+        }),
+      );
+    } catch (err) {
+      if (node.role === "hub") await client.call("settings.patch", { body: { role: "hub" } });
+      throw err;
+    }
+  };
+
+  /** Splits a pasted `aio node join HUB_URL CODE` command into its two fields. */
+  const changeHubUrl = (value: string) => {
+    const parsed = parseJoinInput(value);
+    if (parsed?.code) {
+      setHubUrl(parsed.hubUrl);
+      setCode(parsed.code);
+    } else {
+      setHubUrl(value);
+    }
+  };
+
   const run = async (title: string, start: () => Promise<Job>) => {
     try {
       setJob({ title, job: await start() });
@@ -82,6 +161,7 @@ export function SetupWizard({ onClose, onDone, stacked }: SetupWizardProps) {
 
   const done = async () => {
     try {
+      await applyRole();
       const ref = sudoRef?.trim();
       if (ref !== undefined && ref !== savedSudoRef) {
         await client.call("settings.patch", { body: { sudoPasswordRef: ref || null } });
@@ -172,6 +252,20 @@ export function SetupWizard({ onClose, onDone, stacked }: SetupWizardProps) {
           )}
         </div>
       ))}
+      {node !== null && (
+        <MachineRoleSection
+          node={node}
+          canChoose={canChoose}
+          choice={choice}
+          setChoice={setChoice}
+          hubUrl={hubUrl}
+          setHubUrl={changeHubUrl}
+          code={code}
+          setCode={setCode}
+          machineName={machineName}
+          setMachineName={setMachineName}
+        />
+      )}
       <div className="ab-field">
         <label htmlFor="bx-default-dir">Default directory for New Box</label>
         <input
@@ -204,5 +298,118 @@ export function SetupWizard({ onClose, onDone, stacked }: SetupWizardProps) {
         </div>
       )}
     </Dialog>
+  );
+}
+
+interface MachineRoleSectionProps {
+  node: NodeStatus;
+  canChoose: boolean;
+  choice: MachineChoice;
+  setChoice: (c: MachineChoice) => void;
+  hubUrl: string;
+  setHubUrl: (v: string) => void;
+  code: string;
+  setCode: (v: string) => void;
+  machineName: string;
+  setMachineName: (v: string) => void;
+}
+
+/** This machine's role: a summary once it joined a hub, else the choice. */
+function MachineRoleSection(p: MachineRoleSectionProps) {
+  const { node } = p;
+  if (node.hubUrl !== null) {
+    return (
+      <div className="ab-field" aria-label="This machine">
+        <div>This machine</div>
+        <div className="bx-dim">
+          {`A node of the hub at ${node.hubUrl}, as ${node.name}. Link: ${node.link}.`}
+          {node.error ? ` ${node.error}` : ""}
+        </div>
+      </div>
+    );
+  }
+  if (!p.canChoose) return null;
+  return (
+    <div className="ab-field" role="group" aria-label="This machine">
+      <div>This machine</div>
+      <label className="ab-checkbox">
+        <input
+          type="radio"
+          name="bx-machine-role"
+          value="single"
+          checked={p.choice === "single"}
+          onChange={() => p.setChoice("single")}
+        />
+        Single machine: run boxes on this computer, and share them as the hub when you add machines
+      </label>
+      <label className="ab-checkbox">
+        <input
+          type="radio"
+          name="bx-machine-role"
+          value="hub"
+          checked={p.choice === "hub"}
+          onChange={() => p.setChoice("hub")}
+        />
+        Hub: coordinate other machines, and keep this computer&apos;s boxes to itself
+      </label>
+      <label className="ab-checkbox">
+        <input
+          type="radio"
+          name="bx-machine-role"
+          value="join"
+          checked={p.choice === "join"}
+          onChange={() => p.setChoice("join")}
+        />
+        Node: join a hub with an enrollment code
+      </label>
+      {p.choice === "single" && node.role !== "both" && (
+        <div className="bx-dim">
+          This server runs as a {node.role}. Done sets its role to both, which applies at the next
+          server start.
+        </div>
+      )}
+      {p.choice === "hub" && (
+        <div className="bx-dim">
+          A hub enrolls nodes and relays between them, and never joins another hub. Nodes can&apos;t
+          see or reach boxes on a hub; to share this computer&apos;s boxes with them, choose Single
+          machine. To add a machine, issue an enrollment code on the Machines page.
+          {node.role !== "hub" &&
+            " Done sets the role to hub, which applies at the next server start."}
+        </div>
+      )}
+      {p.choice === "join" && (
+        <>
+          <label htmlFor="bx-hub-url">Hub URL</label>
+          <input
+            id="bx-hub-url"
+            className="ab-input"
+            value={p.hubUrl}
+            placeholder="https://hub.example.com:21402"
+            onChange={(e) => p.setHubUrl(e.target.value)}
+          />
+          <label htmlFor="bx-enroll-code">Enrollment code</label>
+          <input
+            id="bx-enroll-code"
+            className="ab-input"
+            value={p.code}
+            autoComplete="off"
+            spellCheck={false}
+            onChange={(e) => p.setCode(e.target.value)}
+          />
+          <label htmlFor="bx-machine-name">Machine name (optional)</label>
+          <input
+            id="bx-machine-name"
+            className="ab-input"
+            value={p.machineName}
+            placeholder={node.name}
+            onChange={(e) => p.setMachineName(e.target.value)}
+          />
+          <div className="bx-dim">
+            On the hub, issue a code on the Machines page or with aio machines enroll. You can paste
+            the whole aio node join command into Hub URL. Done joins the hub; the code works once.
+          </div>
+        </>
+      )}
+    </div>
   );
 }

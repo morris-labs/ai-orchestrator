@@ -1,9 +1,12 @@
 // The aio CLI against a fake server.
+import { EventEmitter } from "node:events";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { PassThrough } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { childEnv, runCli } from "../src/program.js";
+import type WebSocket from "ws";
 import { startFakeServer, type FakeServer } from "./fake-server.js";
 import {
   BOX_ID,
@@ -571,6 +574,172 @@ describe("machines and node", () => {
   });
 });
 
+describe("box attach on another machine", () => {
+  const machine = (id: string, name: string, isLocal: boolean) => ({
+    id,
+    name,
+    role: isLocal ? "both" : "node",
+    status: "online",
+    isLocal,
+    serverVersion: "1.0.0",
+    protocol: 1,
+    capabilities: [],
+    lastSeen: null,
+    platform: "linux",
+  });
+
+  /** A terminal double: keys the test types, a screen it reads, and a size it changes. */
+  function fakeTerminal() {
+    const input = Object.assign(new PassThrough(), {
+      isTTY: true,
+      rawModes: [] as boolean[],
+      setRawMode(raw: boolean) {
+        input.rawModes.push(raw);
+      },
+    });
+    const output = Object.assign(new EventEmitter(), {
+      columns: 100,
+      rows: 30,
+      screen: [] as Buffer[],
+      write(data: Uint8Array | string) {
+        output.screen.push(Buffer.from(data));
+      },
+    });
+    return { input, output };
+  }
+
+  /** Records what a terminal socket receives. */
+  function serveTerminal(script: (ws: WebSocket, got: (Buffer | string)[]) => void) {
+    const seen: { path: string; query: Record<string, string>; got: (Buffer | string)[] } = {
+      path: "",
+      query: {},
+      got: [],
+    };
+    const closes: { code: number; reason: string }[] = [];
+    server.onTerminal = (ws, url) => {
+      seen.path = url.pathname;
+      seen.query = Object.fromEntries(url.searchParams);
+      ws.on("message", (data, isBinary) =>
+        seen.got.push(isBinary ? Buffer.from(data as Buffer) : data.toString()),
+      );
+      ws.on("close", (code, reason) => closes.push({ code, reason: reason.toString() }));
+      script(ws, seen.got);
+    };
+    return { seen, closes };
+  }
+
+  function attachCli(args: string[], terminal: ReturnType<typeof fakeTerminal>) {
+    return runCli(args, {
+      env: { AIO_SERVER: server.url, AIO_TOKEN: TOKEN },
+      home,
+      out: (t) => (out += t),
+      err: (t) => (err += t),
+      exec: async (argv) => {
+        execs.push(argv);
+        return 7;
+      },
+      terminal,
+    });
+  }
+
+  const until = async (predicate: () => boolean) => {
+    for (let i = 0; i < 400 && !predicate(); i += 1) await new Promise((r) => setTimeout(r, 5));
+    expect(predicate()).toBe(true);
+  };
+
+  beforeEach(() => {
+    server.on("GET /api/v1/machines", {
+      body: { machines: [machine("local", "desk", true), machine("m1", "node-one", false)] },
+    });
+  });
+
+  it("relays keys, output, and resizes, and exits with the box's exit code", async () => {
+    const terminal = fakeTerminal();
+    const { seen } = serveTerminal((ws, got) => {
+      ws.send(JSON.stringify({ type: "ready", terminalId: "t1" }));
+      ws.send(Buffer.from([0x1b, 0x5b, 0x48, 0xff]), { binary: true });
+      const timer = setInterval(() => {
+        if (got.some((g) => typeof g === "string" && g.includes("resize"))) {
+          clearInterval(timer);
+          ws.send(JSON.stringify({ type: "exit", exitCode: 3 }));
+          ws.close(1000, "ended");
+        }
+      }, 5);
+    });
+    const done = attachCli(["box", "attach", "node-one/" + BOX_ID], terminal);
+    await until(() => terminal.output.screen.length > 0);
+    terminal.input.write(Buffer.from("ls\r"));
+    await until(() => seen.got.length === 1);
+    terminal.output.columns = 120;
+    terminal.output.rows = 40;
+    terminal.output.emit("resize");
+    expect(await done).toBe(3);
+
+    expect(seen.path).toBe("/api/v1/machines/m1/proxy/terminals");
+    expect(seen.query).toEqual({ kind: "session", boxId: BOX_ID, cols: "100", rows: "30" });
+    expect(seen.got[0]).toEqual(Buffer.from("ls\r"));
+    expect(JSON.parse(seen.got[1] as string)).toEqual({ type: "resize", cols: 120, rows: 40 });
+    expect([...Buffer.concat(terminal.output.screen)]).toEqual([0x1b, 0x5b, 0x48, 0xff]);
+    expect(terminal.input.rawModes).toEqual([true, false]);
+    expect(err).toContain("Ctrl+] twice");
+    expect(execs).toEqual([]);
+  });
+
+  it("detaches on Ctrl+] twice and leaves the box running", async () => {
+    const terminal = fakeTerminal();
+    const { seen, closes } = serveTerminal((ws) =>
+      ws.send(JSON.stringify({ type: "ready", terminalId: "t1" })),
+    );
+    const done = attachCli(["box", "shell", "m1/" + BOX_ID], terminal);
+    await until(() => err.includes("Attached"));
+    // One Ctrl+] alone passes through with the next key.
+    terminal.input.write(Buffer.from([0x1d, 0x61]));
+    await until(() => seen.got.length === 1);
+    terminal.input.write(Buffer.from([0x1d]));
+    terminal.input.write(Buffer.from([0x1d]));
+    expect(await done).toBe(0);
+    await until(() => closes.length === 1);
+    expect(seen.query).toMatchObject({ kind: "shell", boxId: BOX_ID });
+    expect(seen.got).toEqual([Buffer.from([0x1d, 0x61])]);
+    expect(closes[0]).toEqual({ code: 1000, reason: "detached" });
+    expect(err).toContain("Detached. The box keeps running.");
+    expect(terminal.input.rawModes).toEqual([true, false]);
+  });
+
+  it("reports the server's refusal and a dropped connection", async () => {
+    const terminal = fakeTerminal();
+    server.refuseTerminal = {
+      status: 503,
+      body: { error: { code: "machine_offline", message: "Machine m1 is offline." } },
+    };
+    expect(await attachCli(["box", "attach", "m1/" + BOX_ID, "--side", "codex"], terminal)).toBe(1);
+    expect(err).toContain("Error (machine_offline): Machine m1 is offline.");
+
+    server.refuseTerminal = null;
+    err = "";
+    const { seen } = serveTerminal((ws) => {
+      ws.send(JSON.stringify({ type: "ready", terminalId: "t1" }));
+      setTimeout(() => ws.close(1014, "The link to machine m1 closed."), 20);
+    });
+    expect(await attachCli(["box", "attach", "m1/" + BOX_ID, "--side", "codex"], terminal)).toBe(1);
+    expect(seen.query).toMatchObject({ kind: "side", platform: "codex" });
+    expect(err).toContain("The link to machine m1 closed.");
+    expect(terminal.input.rawModes).toEqual([true, false]);
+  });
+
+  it("attaches locally for this machine and refuses an unknown one", async () => {
+    server.on(`GET /api/v1/boxes/${BOX_ID}/attach-command`, { body: { argv: sessionArgv() } });
+    const terminal = fakeTerminal();
+    expect(await attachCli(["box", "attach", "desk/" + BOX_ID], terminal)).toBe(7);
+    expect(execs).toHaveLength(1);
+    expect(await attachCli(["box", "attach", "nowhere/" + BOX_ID], terminal)).toBe(2);
+    expect(err).toContain("No machine has the ID or name nowhere.");
+    expect(await attachCli(["box", "attach", "m1/"], terminal)).toBe(2);
+    expect(await attachCli(["box", "open", "m1/" + BOX_ID], terminal)).toBe(2);
+    expect(err).toContain("aio box attach MACHINE/BOX");
+  });
+});
+
 describe("project", () => {
   it("lists and shows projects", async () => {
     server.on("GET /api/v1/projects", { body: { projects: [projectSummary] } });
@@ -794,6 +963,195 @@ describe("review", () => {
       waiveFindingIds: ["F-0001"],
       reason: "Accepted",
     });
+  });
+});
+
+describe("review on other machines", () => {
+  const machine = (over: Record<string, unknown>) => ({
+    role: "node",
+    status: "online",
+    isLocal: false,
+    serverVersion: "1.0.0",
+    protocol: 1,
+    capabilities: [],
+    lastSeen: "2026-11-01T10:00:00Z",
+    platform: "linux",
+    ...over,
+  });
+  const machines = [
+    machine({ id: "local", name: "desk", role: "both", isLocal: true }),
+    machine({ id: "m1", name: "build-server" }),
+    machine({ id: "m2", name: "laptop", status: "offline" }),
+    machine({ id: "m3", name: "old-pc", status: "revoked" }),
+    machine({ id: "m4", name: "far-pc" }),
+    machine({ id: "m5", name: "win-pc", platform: "win32" }),
+    machine({ id: "m6", name: "old-node", platform: null }),
+  ];
+  const proxy = (id: string, rest: string) => `/api/v1/machines/${id}/proxy${rest}`;
+  /** Every request path except the machine list that resolves `--machine`. */
+  const routed = () => server.requests.map((r) => r.path).filter((p) => p !== "/api/v1/machines");
+
+  beforeEach(() => {
+    server.on("GET /api/v1/machines", { body: { machines } });
+  });
+
+  it("sends every review command to the machine that --machine names", async () => {
+    server.on(`GET ${proxy("m1", "/runs")}`, { body: { runs: [runState] } });
+    expect(await cli(["review", "status", "--machine", "m1"])).toBe(0);
+    expect(last()?.path).toBe(proxy("m1", "/runs"));
+    expect(out).toMatch(/^RUN\s+STATUS/);
+
+    // The option also works before the subcommand.
+    server.on(`POST ${proxy("m1", `/runs/${RUN}/pause`)}`, { body: runState });
+    expect(await cli(["review", "--machine", "m1", "pause", RUN])).toBe(0);
+    expect(last()?.path).toBe(proxy("m1", `/runs/${RUN}/pause`));
+
+    server.on(`GET ${proxy("m1", `/runs/${RUN}/findings`)}`, { body: { findings: [finding] } });
+    expect(await cli(["review", "findings", RUN, "--machine", "m1"])).toBe(0);
+    expect(last()?.path).toBe(proxy("m1", `/runs/${RUN}/findings`));
+
+    // A machine name works as well as its ID.
+    server.on(`GET ${proxy("m1", `/runs/${RUN}`)}`, { body: runState });
+    server.on(`GET ${proxy("m1", `/runs/${RUN}/rounds`)}`, { body: { rounds: [] } });
+    expect(await cli(["--machine", "build-server", "review", "status", RUN])).toBe(0);
+    expect(routed().slice(-2).sort()).toEqual(
+      [proxy("m1", `/runs/${RUN}`), proxy("m1", `/runs/${RUN}/rounds`)].sort(),
+    );
+
+    // `local` is this machine, with the plain routes.
+    server.on("GET /api/v1/runs", { body: { runs: [] } });
+    expect(await cli(["review", "status", "--machine", "local"])).toBe(0);
+    expect(last()?.path).toBe("/api/v1/runs");
+
+    // The local machine's own name also means the plain routes.
+    expect(await cli(["review", "status", "--machine", "desk"])).toBe(0);
+    expect(last()?.path).toBe("/api/v1/runs");
+  });
+
+  it("refuses a machine that no record names", async () => {
+    expect(await cli(["review", "status", "--machine", "nowhere"])).toBe(2);
+    expect(err).toContain("No machine has the ID or name nowhere");
+    expect(routed()).toEqual([]);
+  });
+
+  it("starts a run on another machine from one of its boxes", async () => {
+    server.on(`GET ${proxy("m1", `/boxes/${BOX_ID}`)}`, { body: boxView() });
+    server.on(`POST ${proxy("m1", "/runs")}`, { status: 201, body: runState });
+    expect(await cli(["review", "start", "--machine", "m1", "--box", BOX_ID])).toBe(0);
+    expect(routed()).toEqual([proxy("m1", `/boxes/${BOX_ID}`), proxy("m1", "/runs")]);
+    expect(last()?.body).toMatchObject({ projectId: PROJECT_ID, boxId: BOX_ID });
+
+    // A MACHINE/BOX argument names the machine too.
+    expect(await cli(["review", "start", "--box", `build-server/${BOX_ID}`])).toBe(0);
+    expect(routed().slice(-2)).toEqual([proxy("m1", `/boxes/${BOX_ID}`), proxy("m1", "/runs")]);
+  });
+
+  it("takes another machine's repository path as given, and maps a Windows one", async () => {
+    server.on(`POST ${proxy("m1", "/runs")}`, { status: 201, body: runState });
+    const start = (m: string) => ["review", "start", "--machine", m, "--project", PROJECT_ID];
+    expect(await cli([...start("m1"), "--repo", "/srv/src/example"], {}, "/home/user")).toBe(0);
+    expect(last()?.body).toMatchObject({ repoPath: "/srv/src/example" });
+
+    // A Windows machine's host path maps to its container path, and a
+    // container path under /mnt/host passes as given.
+    server.on(`POST ${proxy("m5", "/runs")}`, { status: 201, body: runState });
+    expect(await cli([...start("m5"), "--repo", "C:\\Users\\user\\example"])).toBe(0);
+    expect(last()?.path).toBe(proxy("m5", "/runs"));
+    expect(last()?.body).toMatchObject({ repoPath: "/mnt/host/c/Users/user/example" });
+    expect(await cli([...start("m5"), "--repo", "/mnt/host/c/src/example"])).toBe(0);
+    expect(last()?.body).toMatchObject({ repoPath: "/mnt/host/c/src/example" });
+
+    // A machine that reports no platform gets it from the path's form.
+    server.on(`POST ${proxy("m6", "/runs")}`, { status: 201, body: runState });
+    expect(await cli([...start("m6"), "--repo", "C:\\Users\\user\\example"])).toBe(0);
+    expect(last()?.body).toMatchObject({ repoPath: "/mnt/host/c/Users/user/example" });
+    expect(await cli([...start("m6"), "--repo", "/srv/src/example"])).toBe(0);
+    expect(last()?.body).toMatchObject({ repoPath: "/srv/src/example" });
+
+    const before = routed().length;
+    expect(await cli([...start("m1"), "--repo", "example"])).toBe(2);
+    expect(err).toContain("absolute path on build-server");
+    // A Linux machine has no drive letters.
+    expect(await cli([...start("m1"), "--repo", "C:\\src\\example"])).toBe(2);
+    expect(routed()).toHaveLength(before);
+  });
+
+  it("reports a machine that can't be reached", async () => {
+    server.on(`GET ${proxy("m2", "/runs")}`, {
+      status: 503,
+      body: { error: { code: "machine_offline", message: "The machine laptop is offline." } },
+    });
+    expect(await cli(["review", "status", "--machine", "m2"])).toBe(1);
+    expect(err).toContain("Error (machine_offline): The machine laptop is offline.");
+  });
+
+  it("lists the runs of every machine and shows the unreachable ones as offline", async () => {
+    // Only the first five machines, so every online one has an answer.
+    server.on("GET /api/v1/machines", { body: { machines: machines.slice(0, 5) } });
+    server.on("GET /api/v1/runs", { body: { runs: [runState] } });
+    const remoteRun = {
+      ...runState,
+      id: "01JB8Z5K3W6Q2V9X4T7R0M1N2Q",
+      updatedAt: "2026-12-01T00:00:00.000Z",
+    };
+    server.on(`GET ${proxy("m1", "/runs")}`, { body: { runs: [remoteRun] } });
+    server.on(`GET ${proxy("m4", "/runs")}`, {
+      status: 504,
+      body: { error: { code: "machine_timeout", message: "far-pc didn't answer in time." } },
+    });
+
+    expect(await cli(["review", "status", "--all-machines", "--project", PROJECT_ID])).toBe(0);
+    const paths = server.requests.map((r) => r.path);
+    // No call to the offline or the revoked machine.
+    expect(paths).not.toContain(proxy("m2", "/runs"));
+    expect(paths).not.toContain(proxy("m3", "/runs"));
+    expect(server.requests.find((r) => r.path === proxy("m1", "/runs"))?.query).toEqual({
+      projectId: PROJECT_ID,
+    });
+    const lines = out.split("\n");
+    expect(lines[0]).toMatch(/^MACHINE\s+RUN\s+STATUS/);
+    // Newest first, each with its machine's name.
+    expect(lines[1]).toMatch(/^build-server\s+01JB8Z5K3W6Q2V9X4T7R0M1N2Q/);
+    expect(lines[2]).toMatch(new RegExp(`^desk\\s+${RUN}`));
+    expect(out).toContain("laptop: offline. The hub reports it offline.");
+    expect(out).toContain("far-pc: offline. far-pc didn't answer in time.");
+
+    out = "";
+    expect(await cli(["--json", "review", "status", "--all-machines"])).toBe(0);
+    const json = JSON.parse(out) as { machines: { id: string; status: string; runs: unknown[] }[] };
+    expect(json.machines.map((m) => [m.id, m.status, m.runs.length])).toEqual([
+      ["local", "online", 1],
+      ["m1", "online", 1],
+      ["m2", "offline", 0],
+      ["m4", "offline", 0],
+    ]);
+  });
+
+  it("refuses --all-machines with a run ID or with --machine", async () => {
+    expect(await cli(["review", "status", RUN, "--all-machines"])).toBe(2);
+    expect(await cli(["review", "status", "--all-machines", "--machine", "m1"])).toBe(2);
+    expect(await cli(["--machine", "m1", "review", "status", "--all-machines"])).toBe(2);
+    expect(server.requests).toHaveLength(0);
+  });
+
+  it("tails another machine's event stream", async () => {
+    server.events = [
+      {
+        id: "e1",
+        time: "2026-10-28T09:00:00.000Z",
+        source: `engine:${CONTAINER}`,
+        streamId: "srv-1",
+        seq: 1,
+        sourceSeq: 4,
+        type: "ports.changed",
+        container: CONTAINER,
+        listeners: [],
+        machine: "m1",
+      },
+    ];
+    expect(await cli(["events", "--machine", "m1", "--count", "1"])).toBe(0);
+    expect(out).toContain('"machine":"m1"');
+    expect(server.eventPaths).toEqual([proxy("m1", "/events")]);
   });
 });
 

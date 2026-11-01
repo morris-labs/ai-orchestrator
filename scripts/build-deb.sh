@@ -93,7 +93,7 @@ rm -rf "$STAGE"
 R="$STAGE/root"
 mkdir -p "$R/usr/bin" "$R/usr/lib/ai-orchestrator" "$R/usr/share/ai-orchestrator" \
   "$R/usr/share/applications" "$R/usr/share/icons/hicolor/scalable/apps" \
-  "$R/usr/lib/systemd/user" "$R/etc/apparmor.d" "$STAGE/maint"
+  "$R/usr/lib/systemd/user" "$R/etc/apparmor.d" "$R/etc/ufw/applications.d" "$STAGE/maint"
 
 # Writes /usr/bin/NAME, a launcher that runs the package's bin entry NAME
 # from /usr/lib/ai-orchestrator/DIR on the system Node.js.
@@ -135,6 +135,7 @@ for app in boxes review; do
 done
 
 install -m 0644 "$UNIT" "$R/usr/lib/systemd/user/"
+install -m 0644 "$ROOT/packaging/ufw/aio-hub" "$R/etc/ufw/applications.d/"
 
 log "Staging the image build context"
 "$SCRIPT_DIR/build-image.sh" --pack-only

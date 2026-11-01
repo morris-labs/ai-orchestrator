@@ -9,10 +9,13 @@ import {
   HUB_MACHINE_ID,
   LOCAL_MACHINE_ID,
   MachineListSchema,
+  serverRoutes,
   type EnrollmentCode,
   type GlobalSettings,
   type GlobalSettingsPatch,
+  type ImageStatus,
   type Machine,
+  type MachineHealth,
   type NodeJoin,
   type NodeStatus,
 } from "@aio/contracts";
@@ -23,7 +26,9 @@ import type { SqlDatabase } from "../api/core-interface.js";
 import type { OpClient } from "../secrets/op.js";
 import { CREDENTIAL_PATHS, CredentialStore, isCredentialKey } from "./credentials.js";
 import { jsonBody, jsonResponse, safely, type InternalHandler } from "./dispatch.js";
+import { HealthCache, fetchHealth, measureHealth } from "./health.js";
 import { Hub, type LinkTiming } from "./hub.js";
+import { detectLanAddress } from "./lan.js";
 import type { LinkRegistry, NodeLink } from "./link.js";
 import { HUB_LINK_ID, NodeAgent } from "./node.js";
 import { LINK_CAPABILITIES, LINK_PROTOCOL, machinePlatform, type LinkHello } from "./protocol.js";
@@ -43,9 +48,55 @@ export function parseRole(value: string | undefined): MachineRole | undefined {
 export const LOCAL_ID = "local";
 
 /**
+ * The routes a node may call on a hub whose role is `both`, so that it can
+ * show the hub's boxes in a machine tab and operate them: list, get, start,
+ * stop, and restart boxes, their terminals and the event stream, and the
+ * project list and directory browser that the tab uses. Settings, secrets,
+ * accounts, machine enrollment and revocation, node routes, and every
+ * route that creates, edits, or removes something stay refused.
+ */
+export const HUB_BOX_ROUTES = [
+  "boxes.list",
+  "boxes.get",
+  "boxes.start",
+  "boxes.stop",
+  "boxes.restart",
+  "events.stream",
+  "terminals.open",
+  "projects.list",
+  "fs.dirs",
+] as const satisfies readonly (keyof typeof serverRoutes)[];
+
+/**
+ * A route's method and a pattern for its path. Each `:param` matches one
+ * segment with no query, fragment, or leading dot, so that no dot segment
+ * can turn an allowed path into another route.
+ */
+function routeMatcher(name: (typeof HUB_BOX_ROUTES)[number]): { method: string; path: RegExp } {
+  const route = serverRoutes[name];
+  const source = route.path
+    .split("/")
+    .map((part) =>
+      part.startsWith(":") ? "(?![.]|%2[eE])[^/?#]+" : part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+    )
+    .join("/");
+  return { method: route.method, path: new RegExp(`^${source}$`) };
+}
+
+const hubBoxMatchers = HUB_BOX_ROUTES.map(routeMatcher);
+
+/** True when a node may call `req` on a hub whose role is `both`. */
+export function isHubBoxRoute(req: { method: string; path: string }): boolean {
+  const method = req.method.toUpperCase();
+  return hubBoxMatchers.some((m) => m.method === method && m.path.test(req.path));
+}
+
+/**
  * The API paths a node may call on its hub over the link: the machine list,
  * the health route, and the per-machine routes under `/api/v1/machines/ID/`
- * that relay to other machines. Everything else on the hub stays local.
+ * that relay to other machines. When the hub runs boxes itself (`sharesBoxes`,
+ * role `both`), also the `HUB_BOX_ROUTES`. Everything else on the hub stays
+ * local.
  *
  * A per-machine route that names the hub itself (`local`, `hub`, or
  * whatever `isHub` accepts) is served by the hub, so the path after the
@@ -56,15 +107,22 @@ export function defaultAllowNodeRequest(
   req: { method: string; path: string },
   caller?: string,
   isHub: (id: string) => boolean = (id) => id === LOCAL_MACHINE_ID || id === HUB_MACHINE_ID,
+  sharesBoxes = false,
 ): boolean {
   const method = req.method.toUpperCase();
   if (method === "GET" && (req.path === "/api/v1/machines" || req.path === "/api/v1/health")) {
     return true;
   }
+  if (sharesBoxes && isHubBoxRoute({ method, path: req.path })) return true;
   const target = parseProxyUrl(req.path);
   if (!target) return false;
   if (!isHub(target.machineId)) return true;
-  return defaultAllowNodeRequest({ method, path: `${API_PREFIX}/${target.rest}` }, caller, isHub);
+  return defaultAllowNodeRequest(
+    { method, path: `${API_PREFIX}/${target.rest}` },
+    caller,
+    isHub,
+    sharesBoxes,
+  );
 }
 
 export interface MultiHostOptions {
@@ -80,16 +138,27 @@ export interface MultiHostOptions {
   /** The role from `--role` or `AIO_ROLE`, which wins over the stored one. */
   roleOverride?: MachineRole;
   version: string;
+  /** The engine version this server expects in its image. */
+  expectedEngineVersion?: string;
+  /** The image's status, for this machine's health. Without it, the image reads as unknown. */
+  imageStatus?: () => Promise<ImageStatus>;
+  /** Milliseconds a machine list waits for a stale health to refresh. Default 3 seconds. */
+  healthWaitMs?: number;
   token: string;
   /** This machine's API, once it exists. */
   api: () => FastifyInstance | null;
   /** The local 1Password client, which a hub uses and serves to its nodes. */
   op: OpClient;
-  /** The address the link listener binds. Default: every interface. */
+  /**
+   * The address the link listener binds, which wins over the `linkHost`
+   * setting. Default: the primary LAN IPv4 address from `lanAddress`.
+   */
   linkHost?: string;
+  /** Finds the primary LAN IPv4 address; tests replace it. Default `detectLanAddress`. */
+  lanAddress?: () => string | undefined;
   /** The link port, which wins over the setting; 0 picks a free one. */
   linkPort?: number;
-  /** The host name in hub URLs, which wins over the setting. */
+  /** The host name in hub URLs, which wins over the setting. Default: the bound address. */
   linkAddress?: string;
   /** The protocol version to speak; tests change it. Default `LINK_PROTOCOL`. */
   protocol?: number;
@@ -120,6 +189,8 @@ export class MultiHost {
   /** The op client the secrets service uses: the hub's while this machine is a plain node. */
   readonly op: OpClient;
   readonly credentials: CredentialStore;
+  /** The health of this machine and of the hub's linked nodes. */
+  private readonly healthCache = new HealthCache();
   private lastHubList: Machine[] = [];
   private credentialTimer: NodeJS.Timeout | null = null;
   private credentialSync: Promise<void> = Promise.resolve();
@@ -150,9 +221,9 @@ export class MultiHost {
       isHub: () => this.role() !== "node",
       hello,
       port: () => opts.linkPort ?? opts.settings().linkPort ?? DEFAULT_LINK_PORT,
-      bindHost: opts.linkHost,
-      address: () =>
-        opts.linkAddress ?? opts.settings().linkAddress ?? opts.hostname ?? os.hostname(),
+      bindHost: () =>
+        opts.linkHost ?? opts.settings().linkHost ?? (opts.lanAddress ?? detectLanAddress)(),
+      address: () => opts.linkAddress ?? opts.settings().linkAddress,
       token: opts.token,
       api: opts.api,
       internal: hubInternal,
@@ -166,6 +237,7 @@ export class MultiHost {
               id === LOCAL_MACHINE_ID ||
               id === HUB_MACHINE_ID ||
               isThisMachine(id, { role: this.role(), machineId: this.machineId() }),
+            this.role() === "both",
           )),
       timing: opts.timing,
       log: opts.log,
@@ -393,6 +465,7 @@ export class MultiHost {
     const local = this.localMachine();
     const out: Machine[] = [local];
     if (this.role() !== "node") out.push(...this.hub.machines());
+    await this.addHealth(out);
     const joined = this.node.joined;
     if (!joined || this.role() === "hub") return out;
     const link = this.node.link;
@@ -438,6 +511,42 @@ export class MultiHost {
         status: m.status === "revoked" ? m.status : ("offline" as const),
       })),
     ];
+  }
+
+  /** Measures this machine's health now. */
+  health(): Promise<MachineHealth> {
+    return measureHealth({
+      dataDir: this.opts.dataDir,
+      expectedEngineVersion: this.opts.expectedEngineVersion ?? this.opts.version,
+      imageStatus: this.opts.imageStatus,
+    });
+  }
+
+  /**
+   * Sets `health` on this machine's entry and on each enrolled machine's. A
+   * linked node with `health.v1` is asked when its cached value is stale;
+   * any other machine shows its last known health, or `null`.
+   */
+  private async addHealth(list: Machine[]): Promise<void> {
+    const wait = this.opts.healthWaitMs;
+    await Promise.all(
+      list.map(async (m) => {
+        if (m.isLocal) {
+          m.health = await this.healthCache.get(LOCAL_ID, () => this.health(), wait);
+          return;
+        }
+        if (m.status === "revoked") {
+          this.healthCache.delete(m.id);
+          m.health = null;
+          return;
+        }
+        const link = this.hub.get(m.id);
+        m.health =
+          link && this.hub.helloOf(m.id)?.capabilities.includes("health.v1")
+            ? await this.healthCache.get(m.id, () => fetchHealth(link), wait)
+            : this.healthCache.peek(m.id);
+      }),
+    );
   }
 
   enroll(): Promise<EnrollmentCode> {

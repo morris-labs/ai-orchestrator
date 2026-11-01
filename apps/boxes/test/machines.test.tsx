@@ -3,13 +3,20 @@
 // to machine ID's /api/v1/REST.
 import type { EnrollmentCode, Machine } from "@aio/contracts";
 import { ApiClient, createMachineClient } from "@aio/ui";
-import { FakeServer, makeBoxView } from "@aio/ui/testing";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { FakeServer, makeBoxView, makeEvent } from "@aio/ui/testing";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Root } from "../src/app/Root";
 import { Shell } from "../src/app/Shell";
-import { lastSeenText, relativeTime, skewNotes, sortMachines } from "../src/logic/machines";
+import {
+  diskText,
+  imageText,
+  lastSeenText,
+  relativeTime,
+  skewNotes,
+  sortMachines,
+} from "../src/logic/machines";
 
 const T_SEEN = "2026-10-31T08:00:00.000Z";
 
@@ -330,6 +337,119 @@ describe("machine tabs", () => {
     expect(pickDirectory).not.toHaveBeenCalled();
   });
 
+  it("creates, edits, stops, and removes boxes on a remote machine with its own projects", async () => {
+    const user = userEvent.setup();
+    const local = siteServer();
+    const node = nodeServer();
+    // The node's project has a mount and this PC has no such project, so
+    // the edit dialog can show it only from the node's project list.
+    const nodeProject = node.state.projects.find((p) => p.root === "/srv/site");
+    if (!nodeProject) throw new Error("The node has no /srv/site project.");
+    nodeProject.mounts = [{ host: "/srv/data", container: "/data" }];
+    const { hub } = renderHub({
+      local,
+      servers: { "node-b": node },
+      machines: [LOCAL, machine({ id: "node-b", name: "node-b" })],
+    });
+    await user.click(
+      await within(await screen.findByRole("tablist", { name: "Machines" })).findByRole("tab", {
+        name: "node-b",
+      }),
+    );
+    await screen.findByRole("cell", { name: "Node site" });
+    await waitFor(() => expect(node.socketsFor("/api/v1/events")).toHaveLength(1));
+    const toolbar = screen.getByRole("toolbar", { name: "Box actions" });
+
+    // An event from the node changes its row.
+    const batch = node.state.boxes.find((b) => b.box.id === "aio-agent-batch")!;
+    act(() => {
+      node.emit(
+        makeEvent("box.changed", {
+          boxId: batch.box.id,
+          status: "stopped",
+          box: { ...batch.box, conversationName: "Batch renamed" },
+        }),
+      );
+    });
+    expect(await screen.findByRole("cell", { name: "Batch renamed" })).toBeInTheDocument();
+
+    // Edit: the dialog shows the node's project, and the save goes to the node.
+    fireEvent.mouseDown(rowOf("Node site"), { button: 0 });
+    await user.keyboard("{Control>}{Shift>}E{/Shift}{/Control}");
+    const edit = await screen.findByRole("dialog", { name: "Edit Box" });
+    await user.click(within(edit).getByRole("button", { name: /Add folders to sandbox/ }));
+    expect(within(edit).getByLabelText("Host folder 1")).toHaveValue("/srv/data");
+    await user.clear(within(edit).getByLabelText("Conversation name"));
+    await user.type(within(edit).getByLabelText("Conversation name"), "Node site 2");
+    await user.click(within(edit).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(node.callsTo("boxes.update")).toHaveLength(1));
+    expect(hub.paths).toContain("PATCH /api/v1/machines/node-b/proxy/boxes/aio-agent-site");
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Edit Box" })).toBeNull());
+
+    // Stop the running box.
+    fireEvent.mouseDown(rowOf("Node site 2"), { button: 0 });
+    await user.click(within(toolbar).getByRole("button", { name: "Stop" }));
+    await waitFor(() => expect(node.callsTo("boxes.stop")).toHaveLength(1));
+    expect(hub.paths).toContain("POST /api/v1/machines/node-b/proxy/boxes/aio-agent-site/stop");
+
+    // Remove the stopped one.
+    fireEvent.mouseDown(rowOf("Batch renamed"), { button: 0 });
+    await user.click(within(toolbar).getByRole("button", { name: "Remove" }));
+    const remove = await screen.findByRole("dialog", { name: "Remove" });
+    await user.click(within(remove).getByRole("button", { name: "Yes" }));
+    await waitFor(() => expect(node.callsTo("boxes.remove")).toHaveLength(1));
+
+    // Create a box on the node.
+    await user.click(within(toolbar).getByRole("button", { name: "New" }));
+    const create = await screen.findByRole("dialog", { name: "New Box" });
+    await user.clear(within(create).getByLabelText("Target directory"));
+    await user.type(within(create).getByLabelText("Target directory"), "/srv/new");
+    await user.click(within(create).getByRole("button", { name: "Create" }));
+    await waitFor(() => expect(node.callsTo("boxes.create")).toHaveLength(1));
+    expect(node.callsTo("boxes.create")[0]?.body).toMatchObject({ targetDir: "/srv/new" });
+
+    // Nothing reached this PC's server.
+    for (const key of ["boxes.update", "boxes.stop", "boxes.remove", "boxes.create"] as const) {
+      expect(local.callsTo(key)).toHaveLength(0);
+    }
+    expect(node.contractViolations).toEqual([]);
+  });
+
+  it("starts a review of a remote box on the machine that holds it", async () => {
+    const user = userEvent.setup();
+    const launchReview = vi.fn(async () => ({ ok: true }));
+    window.aio = {
+      takeToken: () => null,
+      serverUrl: "http://127.0.0.1:21400",
+      openExternalTerminal: async () => ({ ok: true }),
+      launchReview,
+      pickDirectory: async () => null,
+      readClipboardText: async () => "",
+      openPath: async () => ({ ok: true }),
+      openExternal: async () => ({ ok: true }),
+      onSelectBox: () => () => undefined,
+      quit: () => undefined,
+    };
+    renderHub({
+      local: siteServer(),
+      servers: { "node-b": nodeServer() },
+      machines: [LOCAL, machine({ id: "node-b", name: "node-b" })],
+    });
+    await user.click(
+      await within(await screen.findByRole("tablist", { name: "Machines" })).findByRole("tab", {
+        name: "node-b",
+      }),
+    );
+    await screen.findByRole("cell", { name: "Node site" });
+    fireEvent.mouseDown(rowOf("Node site"), { button: 0 });
+    fireEvent.mouseDown(screen.getByRole("menuitem", { name: "Box" }));
+    await user.click(await screen.findByRole("menuitem", { name: /^Start Review/ }));
+    await waitFor(() => expect(launchReview).toHaveBeenCalledTimes(1));
+    expect(launchReview).toHaveBeenCalledWith(
+      expect.objectContaining({ boxId: "aio-agent-site", machineId: "node-b" }),
+    );
+  });
+
   it("says a machine is offline when the hub can't reach it", async () => {
     const user = userEvent.setup();
     // The hub lists node-d as online, but its link answers machine_offline.
@@ -388,6 +508,34 @@ describe("Machines page", () => {
     expect(row).toHaveTextContent("1.1.0");
     expect(row).toHaveTextContent("boxes, terminals");
     expect(within(table).getByText("this PC")).toBeInTheDocument();
+  });
+
+  it("shows each machine's engine version, image, and free disk", async () => {
+    const health = {
+      engineVersion: "1.0.0",
+      expectedEngineVersion: "1.1.0",
+      image: "mismatch" as const,
+      diskFreeBytes: 120 * 1024 ** 3,
+      diskTotalBytes: 2 * 1024 ** 4,
+      checkedAt: T_SEEN,
+    };
+    await openPage([
+      LOCAL,
+      machine({ id: "node-b", name: "node-b", health }),
+      machine({ id: "node-c", name: "node-c", status: "offline", health: null }),
+    ]);
+    const row = machineRow("node-b");
+    expect(row).toHaveTextContent("1.0.0");
+    expect(row).toHaveTextContent("Engine mismatch");
+    expect(row).toHaveTextContent("120 GiB of 2.0 TiB");
+    expect(within(row).getByText("Engine mismatch")).toHaveAttribute(
+      "title",
+      "Engine in the image: 1.0.0. Expected: 1.1.0.",
+    );
+    expect(diskText(machine({ id: "x", name: "x" }))).toBe("-");
+    expect(imageText(machine({ id: "x", name: "x", health: { ...health, image: "ready" } }))).toBe(
+      "Ready",
+    );
   });
 
   it("opens from the File menu on a single-machine install, and goes back", async () => {

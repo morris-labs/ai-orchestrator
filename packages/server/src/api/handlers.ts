@@ -511,6 +511,7 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
       return { ok: true };
     },
     "node.get": async () => multiHost().status(),
+    "node.health": async () => multiHost().health(),
     "node.join": async ({ body }) => multiHost().join(body),
   };
 }

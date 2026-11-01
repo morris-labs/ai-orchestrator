@@ -91,7 +91,12 @@ import {
   UsageWindowSchema,
 } from "./events.js";
 import { FindingSchema, SeveritySchema, VerdictSchema } from "./findings.js";
-import { EnrollmentCodeSchema, MachineListSchema, MachineRoleSchema } from "./machines.js";
+import {
+  EnrollmentCodeSchema,
+  MachineHealthSchema,
+  MachineListSchema,
+  MachineRoleSchema,
+} from "./machines.js";
 import { PolicyFileSchema } from "./policy.js";
 import {
   BoxSchema,
@@ -1673,6 +1678,13 @@ export const serverRoutes = {
     path: `${V1}/node`,
     summary: "This machine's role and its link to a hub.",
     response: NodeStatusSchema,
+  }),
+  "node.health": http({
+    method: "GET",
+    path: `${V1}/node/health`,
+    summary:
+      "This machine's health for the Machines page: the image's engine version and the free disk space.",
+    response: MachineHealthSchema,
   }),
   "node.join": http({
     method: "POST",

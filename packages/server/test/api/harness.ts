@@ -333,6 +333,14 @@ export async function createHarness(
         if (id !== "m1") throw new ApiError("not_found", `No machine has the id ${id}.`);
       },
       status: () => ({ ...NODE_STATUS }),
+      health: async () => ({
+        engineVersion: "1.0.0-dev",
+        expectedEngineVersion: "1.0.0-dev",
+        image: "ready",
+        diskFreeBytes: 1_000_000,
+        diskTotalBytes: 4_000_000,
+        checkedAt: T1,
+      }),
       join: async (input) => ({
         ...NODE_STATUS,
         role: "node",
