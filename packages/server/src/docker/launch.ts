@@ -93,8 +93,12 @@ export interface LaunchInput {
 
 /** What the launch needs to know about the host, gathered by `prepareLaunchHost()`. */
 export interface LaunchHostFacts {
-  /** The target of `~/.claude/projects` when it is a symlink out of `~/.claude`. */
-  projectsSymlinkTarget: string | null;
+  /**
+   * Host mode: the host paths to bind at their own paths so that
+   * `~/.claude/projects` resolves in the container. Empty when it is not a
+   * link, or leads only inside `~/.claude`.
+   */
+  projectsLinkMounts: string[];
   /** Whether `<root>/gitconfig` exists. */
   hasGitconfig: boolean;
   /**
@@ -146,34 +150,58 @@ export function mountContainerPaths(
 }
 
 /**
- * The extra bind needed when `~/.claude/projects` is a symlink to a place
- * outside `~/.claude`: only `~/.claude` is mounted, so the link would dangle
- * in the container and `claude --resume` would find no transcript. Returns
- * the link target, or `null`.
+ * The extra binds needed when `~/.claude/projects` is a link that leaves
+ * `~/.claude`: only `~/.claude` is mounted, so the link would dangle in the
+ * container and `claude --resume` would find no transcript.
+ *
+ * Follows the whole chain. The container reads the link literally, so each
+ * hop's target path must exist there. Returns every hop target outside
+ * `~/.claude` that exists, then the final real path, each to bind at its own
+ * path. Docker follows a link used as a bind source, so a hop's path ends up
+ * showing the final folder, and the chain resolves in the container whether
+ * the link leads straight to the store or through other links. Empty when
+ * `projects` is not a link, dangles, or stays inside `~/.claude`.
  */
-export function projectsSymlinkTarget(env: HostEnv): string | null {
+export function projectsLinkMounts(env: HostEnv): string[] {
   const { claudeProjects, claudeDir } = homePaths(env);
-  let st: fs.Stats;
-  try {
-    st = fs.lstatSync(claudeProjects);
-  } catch {
-    return null;
-  }
-  if (!st.isSymbolicLink()) return null;
-  const target = path.resolve(path.dirname(claudeProjects), fs.readlinkSync(claudeProjects));
   let resolvedClaude: string;
   try {
     resolvedClaude = fs.realpathSync(claudeDir);
   } catch {
     resolvedClaude = claudeDir;
   }
-  if (target === resolvedClaude || target.startsWith(`${resolvedClaude}/`)) return null;
-  return target;
+  const insideClaude = (p: string): boolean =>
+    [claudeDir, resolvedClaude].some((c) => p === c || p.startsWith(`${c}/`));
+  const out: string[] = [];
+  const add = (p: string): void => {
+    if (!insideClaude(p) && !out.includes(p)) out.push(p);
+  };
+  let current = claudeProjects;
+  for (let hops = 0; hops < 40; hops += 1) {
+    let st: fs.Stats;
+    try {
+      st = fs.lstatSync(current);
+    } catch {
+      return [];
+    }
+    if (!st.isSymbolicLink()) break;
+    const target = path.resolve(path.dirname(current), fs.readlinkSync(current));
+    add(target);
+    current = target;
+  }
+  let real: string;
+  try {
+    real = fs.realpathSync(claudeProjects);
+  } catch {
+    return [];
+  }
+  add(real);
+  return out;
 }
 
 /**
  * The existing targets of the symbolic links directly inside an account
- * folder that lead outside it. Generalizes `projectsSymlinkTarget()`: only
+ * folder that lead outside it. Generalizes `projectsLinkMounts()`: only
  * the account folders are mounted, so such a link would dangle in the
  * container and `claude --resume` would find no transcript.
  */
@@ -259,7 +287,7 @@ export function prepareLaunchHost(
   fs.mkdirSync(sessions, { recursive: true });
   prepareStateDir(env, input.container, STATE_MOUNT);
   return {
-    projectsSymlinkTarget: accountsMode ? null : projectsSymlinkTarget(env),
+    projectsLinkMounts: accountsMode ? [] : projectsLinkMounts(env),
     hasGitconfig: fs.existsSync(path.join(input.root, "gitconfig")),
     ...(accountsMode ? { accountLinkTargets } : {}),
   };
@@ -307,8 +335,8 @@ export function buildLaunchSpec(
       `${paths.codexDir}:${home}/.codex`,
       `${paths.copilotDir}:${home}/.copilot`,
     );
-    if (facts.projectsSymlinkTarget) {
-      const b = `${facts.projectsSymlinkTarget}:${facts.projectsSymlinkTarget}`;
+    for (const p of facts.projectsLinkMounts) {
+      const b = `${p}:${p}`;
       if (!binds.includes(b)) binds.push(b);
     }
     binds.push(`${sessionsDirFor(env, input.container)}:${home}/.claude/sessions`);

@@ -227,8 +227,37 @@ export type AccountRelinkEntry = z.infer<typeof AccountRelinkEntrySchema>;
 export const AccountRelinkResultSchema = z.object({
   /** The transcript store every Claude account links to. */
   store: z.string().min(1),
-  /** Where the store came from: `setting`, `host`, `account`, or `data`. */
-  source: z.enum(["setting", "host", "account", "data"]),
+  /** Where the store came from: `setting` (the override) or `data` (`DATA_DIR/transcripts/claude`). */
+  source: z.enum(["setting", "data"]),
   accounts: z.array(AccountRelinkEntrySchema),
 });
 export type AccountRelinkResult = z.infer<typeof AccountRelinkResultSchema>;
+
+/** The body of `transcripts.adopt`. */
+export const TranscriptsAdoptRequestSchema = z
+  .object({
+    /** Reports what would happen and changes nothing. Default: false. */
+    dryRun: z.boolean().default(false),
+  })
+  .strict();
+export type TranscriptsAdoptRequest = z.input<typeof TranscriptsAdoptRequestSchema>;
+
+/** The result of `transcripts.adopt`. */
+export const TranscriptsAdoptResultSchema = z.object({
+  /** The transcript store, `DATA_DIR/transcripts/claude` unless overridden. */
+  store: z.string().min(1),
+  dryRun: z.boolean(),
+  /** `adopted`, `unchanged`, or `blocked` (clashes, or a layout the command leaves alone). */
+  status: z.enum(["adopted", "unchanged", "blocked"]),
+  /** The real folder that held the host's transcripts, when there was one to move. */
+  source: z.string().min(1).optional(),
+  /** Files moved, or with `dryRun` that would be moved, into the store. */
+  moved: z.number().int().nonnegative(),
+  /** Files already in the store with the same content. */
+  duplicates: z.number().int().nonnegative(),
+  /** Paths that exist in both places with different content. Nothing is moved while any exist. */
+  clashes: z.array(z.string()),
+  /** What was done, or with `dryRun` what would be done. */
+  actions: z.array(z.string()),
+});
+export type TranscriptsAdoptResult = z.infer<typeof TranscriptsAdoptResultSchema>;

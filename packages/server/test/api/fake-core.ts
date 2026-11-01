@@ -324,7 +324,19 @@ export function createFakeCore(): FakeCore {
       },
       relink: async () => {
         record("accounts.relink");
-        return { store: "/store", source: "host" as const, accounts: [] };
+        return { store: "/store", source: "data" as const, accounts: [] };
+      },
+      adoptTranscripts: async () => {
+        record("transcripts.adopt");
+        return {
+          store: "/store",
+          dryRun: false,
+          status: "unchanged" as const,
+          moved: 0,
+          duplicates: 0,
+          clashes: [],
+          actions: [],
+        };
       },
       validateSeed: async (input) => {
         record("accounts.validateSeed");

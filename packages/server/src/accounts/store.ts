@@ -1,25 +1,24 @@
 // The shared Claude transcript store (option S of `docs/v4/design-accounts.md`,
-// owner decision 1): every Claude account's `projects` entry is a symbolic
-// link to one store, so resume, fork, the conversation picker, Purge, and
-// Move work whichever account a box uses.
-//
-// The store is the host's own transcript store when the host has one. A
-// store that the data directory invents while the host has transcripts hides
-// every earlier conversation from the boxes, so the data directory's store is
-// the last choice.
+// decision S): one folder, `DATA_DIR/transcripts/claude`, so that
+// `~/.claude-box` is the only folder in the home directory that Agent Box
+// uses for its own data. Every Claude account's `projects` entry is a
+// symbolic link to it, and in host mode the host's `~/.claude/projects`
+// leads to it, possibly through other links (`agentbox transcripts adopt`
+// sets that up). Resume, fork, the conversation picker, Purge, and Move work
+// whichever account a box uses.
 import fs from "node:fs";
 import path from "node:path";
-import { accountDirFor, dataDirOf, type HostEnv } from "../records/env.js";
+import { dataDirOf, type HostEnv } from "../records/env.js";
 
 type StoreEnv = Pick<HostEnv, "home" | "dataDir">;
 
-/** `DATA_DIR/transcripts/claude`: the store for a host that has none. */
+/** `DATA_DIR/transcripts/claude`: the transcript store. */
 export function defaultStoreRoot(env: StoreEnv): string {
   return path.join(dataDirOf(env), "transcripts", "claude");
 }
 
 /** Where a resolved store root came from. */
-export type StoreSource = "setting" | "host" | "account" | "data";
+export type StoreSource = "setting" | "data";
 
 export interface ResolvedStore {
   root: string;
@@ -36,57 +35,42 @@ function realDirectory(p: string): string | undefined {
 }
 
 /**
- * The host's own transcript store: the folder that `~/.claude/projects` leads
- * to (a link's target), or that folder itself when it is a real directory.
- * `undefined` when the host has none, or the link dangles.
+ * The folder that the host's `~/.claude/projects` leads to (the end of the
+ * link chain), or that folder itself when it is a real directory.
+ * `undefined` when there is none or the link dangles. Agent Box doesn't use
+ * it as the store; it only compares it with the store.
  */
-export function hostStoreRoot(env: StoreEnv): string | undefined {
+export function hostProjectsRoot(env: StoreEnv): string | undefined {
   return realDirectory(path.join(env.home, ".claude", "projects"));
 }
 
-/** The folder that an account's `projects` entry leads to, when it resolves. */
-function accountStoreRoot(env: StoreEnv, defaultAccount: string | undefined): string | undefined {
-  const name = defaultAccount?.startsWith("claude/") ? defaultAccount.slice("claude/".length) : "";
-  if (name === "") return undefined;
-  return realDirectory(path.join(accountDirFor(env, "claude", name), "projects"));
-}
-
 /**
- * Resolves the transcript store root, in this order:
- *
- * 1. `explicit`, the `transcriptStore` setting.
- * 2. The host's store: the target of `~/.claude/projects`, or that folder
- *    itself when it is a real directory.
- * 3. Where the default Claude account's `projects` entry leads, when it
- *    resolves. A host without a store can still have an account that has one.
- * 4. `DATA_DIR/transcripts/claude`, only when the host has none.
- *
- * An account's own `projects` link never outranks the host's store, because a
- * link that dangles or leads to a scratch store is what this order guards
- * against.
+ * Resolves the transcript store root: the `transcriptStore` setting when set
+ * (an override), else `DATA_DIR/transcripts/claude`. The host's
+ * `~/.claude/projects` doesn't influence the result.
  */
-export function resolveStore(
-  env: StoreEnv,
-  defaultAccount: string | undefined,
-  explicit?: string,
-): ResolvedStore {
+export function resolveStore(env: StoreEnv, explicit?: string): ResolvedStore {
   if (explicit !== undefined && explicit !== "") {
     return { root: path.resolve(explicit), source: "setting" };
   }
-  const host = hostStoreRoot(env);
-  if (host !== undefined) return { root: host, source: "host" };
-  const account = accountStoreRoot(env, defaultAccount);
-  if (account !== undefined) return { root: account, source: "account" };
   return { root: defaultStoreRoot(env), source: "data" };
 }
 
 /** The transcript store root. See `resolveStore()`. */
-export function claudeStoreRoot(
-  env: StoreEnv,
-  defaultAccount: string | undefined,
-  explicit?: string,
-): string {
-  return resolveStore(env, defaultAccount, explicit).root;
+export function claudeStoreRoot(env: StoreEnv, explicit?: string): string {
+  return resolveStore(env, explicit).root;
+}
+
+/** Whether two paths lead to the same place, comparing real paths (links followed). */
+export function sameLocation(a: string, b: string): boolean {
+  const real = (p: string): string => {
+    try {
+      return fs.realpathSync(p);
+    } catch {
+      return path.resolve(p);
+    }
+  };
+  return real(a) === real(b);
 }
 
 /** How an account's `projects` entry relates to the store. */
@@ -101,17 +85,6 @@ export type ProjectsLinkState =
   | "foreign"
   /** A real directory, which may hold transcripts of its own. */
   | "directory";
-
-function sameLocation(a: string, b: string): boolean {
-  const real = (p: string): string => {
-    try {
-      return fs.realpathSync(p);
-    } catch {
-      return path.resolve(p);
-    }
-  };
-  return real(a) === real(b);
-}
 
 /** Classifies the `projects` entry of an account folder against the store. */
 export function projectsLinkState(accountDir: string, storeRoot: string): ProjectsLinkState {

@@ -82,10 +82,11 @@ Seeding does the following for each vendor:
    and renames it into place when the copy is complete. A failed copy leaves no
    account folder behind.
 1. Copies every file as opaque bytes, with its mode and times. Symbolic links
-   stay links and aren't followed, so a `projects` link to a shared transcript
-   store, such as `~/.claude-projects-shared`, stays a link and duplicates
-   nothing. A relative link that points outside the folder becomes absolute,
-   so that it still points at the same place. Sockets and pipes are skipped.
+   stay links and aren't followed. A relative link that points outside the
+   folder becomes absolute, so that it still points at the same place.
+   Sockets and pipes are skipped. The copy leaves out `projects` and links the
+   account's `projects` to the transcript store instead (see the
+   **Transcripts** item later in this page).
 1. Leaves out the sign-in files. The copy never opens them.
 1. Records the account as not signed in, and makes it the vendor's default
    when the vendor has none.
@@ -96,9 +97,10 @@ Seeding does the following for each vendor:
 Seeding also does the following for each vendor:
 
 - **Claude Code**: copies `~/.claude.json` over the copy's own
-  `.claude.json`, which is a stale file in `~/.claude`. When `~/.claude/projects`
-  is a plain folder rather than a link, the account gets a link to it, so the
-  host and every Claude account share one transcript store.
+  `.claude.json`, which is a stale file in `~/.claude`. The account gets a
+  `projects` link to the transcript store, `DATA_DIR/transcripts/claude`. The
+  copy never includes the host's transcripts. To bring them into the store,
+  run `agentbox transcripts adopt` first.
 - **Codex**: adds `cli_auth_credentials_store = "file"` to the top of the
   `config.toml` file when the file sets no store, because a container has no
   keyring.
@@ -145,7 +147,8 @@ The following commands manage accounts. Each one calls the server's
   stores the answer. Copilot has no status command outside an interactive
   session, so its state stays unknown.
   The command also warns when a Claude account's `projects` entry doesn't
-  lead to the transcript store.
+  lead to the transcript store. The comparison follows links to their real
+  paths, so a chain of links that ends at the store counts as the store.
 - To repair the transcript links, run `agentbox accounts relink`. The command
   points every Claude account's `projects` entry at the store, and replaces a
   link that dangles or leads elsewhere. It removes only the link, never the
@@ -180,8 +183,10 @@ To switch boxes from the host's folders to accounts, do the following:
    or add one, then run `agentbox accounts check VENDOR/NAME`.
 1. Run `agentbox accounts check VENDOR/NAME` for each Claude account and fix
    any warning about the transcript store with `agentbox accounts relink`.
-   The server refuses the switch when the store is empty but the host's store
-   isn't, and when a Claude account's `projects` doesn't lead to the store.
+   The server refuses the switch when the host's `~/.claude/projects` leads
+   to a folder other than the store and holds conversations (run
+   `agentbox transcripts adopt`), and when a Claude account's `projects`
+   doesn't lead to the store.
 1. Run `agentbox accounts mode accounts`.
 1. Restart each project container. A container made before the switch is
    stale ("accounts mode host -> accounts") and the server restarts it only
@@ -208,11 +213,10 @@ In accounts mode, a box behaves as follows:
   at its own path. In the container, `~/.claude`, `~/.claude.json`, `~/.codex`,
   and `~/.copilot` link to each vendor's default account.
 - **Transcripts**: every Claude account's `projects` link leads to one shared
-  store, so a conversation resumes under any Claude account. The server picks
-  the store in this order: the `transcriptStore` setting, the folder that
-  `~/.claude/projects` leads to (or that folder itself, when it is a real
-  folder), the folder the default Claude account's `projects` already leads
-  to, and only then `DATA_DIR/transcripts/claude`. Import, seed, and add
+  store, `DATA_DIR/transcripts/claude` (`~/.claude-box/transcripts/claude`
+  by default), so a conversation resumes under any Claude account. The store
+  doesn't follow the host's `~/.claude/projects`: the optional
+  `transcriptStore` setting is the only override. Import, seed, and add
   replace a `projects` link that dangles or leads elsewhere with a link to
   the store. The `/resume`
   picker lists conversations that other accounts started, and accounts share
@@ -239,3 +243,36 @@ In accounts mode, a box behaves as follows:
 The account folders hold settings, history, and sign-ins that exist nowhere
 else once you use them. Include `DATA_DIR/accounts` in your backups, and
 don't delete it when you reinstall Agent Box.
+
+## Move the host's transcripts into the store
+
+`~/.claude-box` is the only folder in your home directory that Agent Box uses
+for its own data, so the transcript store lives there. In host mode, the
+containers mount the host's `~/.claude`, and its `projects` entry must lead to
+the store. A chain of links works, for example
+`~/.claude/projects` to another link to `~/.claude-box/transcripts/claude`.
+The server follows the whole chain to its real path and mounts each link
+path outside `~/.claude`, and the final folder, at the same path in the
+container. A link inside `~/.claude` needs no extra mount.
+
+To move an existing `~/.claude/projects` folder, or the folder its link leads
+to, into the store, do the following:
+
+1. Stop every box. The command refuses to run while a box runs.
+1. Run `agentbox transcripts adopt --dry-run` and read the plan.
+1. Run `agentbox transcripts adopt`.
+
+The command does the following:
+
+- Moves the files into `DATA_DIR/transcripts/claude`. It never overwrites a
+  file. A file that exists in both places with the same content counts as a
+  duplicate. If any file exists in both places with different content, the
+  command reports the clashes, exits with code 1, and changes nothing. Resolve
+  the clashes by hand and run the command again.
+- Points `~/.claude/projects` at the store. It replaces a real folder only
+  after the move leaves it empty.
+- Removes an intermediate link in the old chain only when that link points at
+  the store. Other links and the emptied old folder stay; remove them by hand.
+
+If `~/.claude/projects` already leads to the store through other links, the
+command only repoints it at the store directly.

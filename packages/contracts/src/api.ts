@@ -57,6 +57,8 @@ import {
   AccountSeedRequestSchema,
   AccountUpdateSchema,
   AccountRelinkResultSchema,
+  TranscriptsAdoptRequestSchema,
+  TranscriptsAdoptResultSchema,
   AccountViewSchema,
 } from "./accounts.js";
 import {
@@ -1485,6 +1487,15 @@ export const serverRoutes = {
     summary:
       "Point every Claude account's `projects` entry at the shared transcript store, replacing a link that dangles or leads elsewhere.",
     response: AccountRelinkResultSchema,
+  }),
+  "transcripts.adopt": http({
+    method: "POST",
+    path: `${V1}/transcripts/adopt`,
+    summary:
+      "Move the host's `~/.claude/projects` transcripts into the store and point `~/.claude/projects` at it. Refuses while a box runs. `dryRun` changes nothing.",
+    body: TranscriptsAdoptRequestSchema,
+    response: TranscriptsAdoptResultSchema,
+    errors: ["box_running"],
   }),
   "accounts.get": http({
     method: "GET",

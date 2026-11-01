@@ -11,6 +11,8 @@ import type {
   AccountImportRequest,
   AccountImportResult,
   AccountRelinkResult,
+  TranscriptsAdoptRequest,
+  TranscriptsAdoptResult,
   AccountSeedReport,
   AccountSeedRequest,
   AccountUpdate,
@@ -228,6 +230,8 @@ export interface CoreAccounts {
   check(id: string): Promise<AccountView>;
   /** Points every Claude account's `projects` entry at the shared transcript store. */
   relink(): Promise<AccountRelinkResult>;
+  /** Moves the host's transcripts into the store (`box_running`). */
+  adoptTranscripts(input: TranscriptsAdoptRequest): Promise<TranscriptsAdoptResult>;
   /** Checks a seed request before its job starts (`box_running`, `conflict`). */
   validateSeed(input: AccountSeedRequest): Promise<void>;
   /** Seeds accounts from the host folders; runs inside an `account_seed` job. */

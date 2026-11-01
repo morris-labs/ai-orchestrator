@@ -38,12 +38,12 @@ function hostFolders(options: { projectsDir?: boolean } = {}): SeedSources & { r
   write(path.join(claudeDir, "CLAUDE.md"), "# Global\n");
   write(path.join(claudeDir, "skills", "one", "SKILL.md"), "skill\n", 0o644);
   fs.symlinkSync("skills/one", path.join(claudeDir, "current-skill"));
-  const store = path.join(root, ".claude-projects-shared");
+  const store = path.join(root, "legacy-projects");
   write(path.join(store, "-work-app", "u1.jsonl"), "{}\n");
   if (options.projectsDir) {
     write(path.join(claudeDir, "projects", "-work-app", "u2.jsonl"), "{}\n");
   } else {
-    fs.symlinkSync("../.claude-projects-shared", path.join(claudeDir, "projects"));
+    fs.symlinkSync("../legacy-projects", path.join(claudeDir, "projects"));
   }
   const claudeJson = path.join(root, ".claude.json");
   write(claudeJson, '{"fresh":true}');
@@ -181,13 +181,12 @@ describe("addCodexFileStore", () => {
 });
 
 describe("seedFolder", () => {
-  it("links a plain projects directory instead of copying transcripts", async () => {
+  it("leaves projects out instead of copying transcripts or linking to the host's folder", async () => {
     const sources = hostFolders({ projectsDir: true });
     const dest = path.join(tempDir("agentbox-seed-"), "claude", "personal");
     const r = await seedFolder("claude", sources, dest);
-    const link = path.join(dest, "projects");
-    expect(fs.lstatSync(link).isSymbolicLink()).toBe(true);
-    expect(fs.readlinkSync(link)).toBe(path.join(sources.claudeDir, "projects"));
+    expect(fs.existsSync(path.join(dest, "projects"))).toBe(false);
+    expect(fs.lstatSync(path.join(dest, "projects"), { throwIfNoEntry: false })).toBeUndefined();
     expect(r.leftOut).toEqual([".credentials.json"]);
   });
 
@@ -266,13 +265,12 @@ describe("AccountService.seed", () => {
     expect(JSON.parse(fs.readFileSync(copy, "utf8"))).toEqual({ installMethod: "global" });
   });
 
-  it("keeps the projects link as a link to the shared store", async () => {
-    const { accounts, sources } = setup();
+  it("links projects to the shared store", async () => {
+    const { accounts, env } = setup();
     await accounts.seed({ vendors: ["claude"] });
     const link = path.join(accounts.dirOf("claude", "personal"), "projects");
     expect(fs.lstatSync(link).isSymbolicLink()).toBe(true);
-    expect(fs.readlinkSync(link)).toBe(path.join(sources.root, ".claude-projects-shared"));
-    expect(fs.existsSync(path.join(link, "-work-app", "u1.jsonl"))).toBe(true);
+    expect(fs.readlinkSync(link)).toBe(path.join(env.dataDir!, "transcripts", "claude"));
     // An inner relative link still points inside the copy.
     const inner = path.join(accounts.dirOf("claude", "personal"), "current-skill");
     expect(fs.readlinkSync(inner)).toBe("skills/one");

@@ -13,7 +13,10 @@ describe("expectedEngineVersion", () => {
   const files = engineIdentityFiles("/repo", "/repo/image");
 
   it("looks in the engine's dist first, then the image context", () => {
-    expect(files).toEqual(["/repo/packages/engine/dist/identity", "/repo/image/dist/engine-identity"]);
+    expect(files).toEqual([
+      "/repo/packages/engine/dist/identity",
+      "/repo/image/dist/engine-identity",
+    ]);
   });
 
   it("appends the content hash to the version", () => {
@@ -27,9 +30,9 @@ describe("expectedEngineVersion", () => {
   });
 
   it("falls back to the packed context, then to the plain version", () => {
-    expect(expectedEngineVersion("4.0.0-dev", files, readFrom({ [files[1]!]: "bbbbbbbbbbbb" }))).toBe(
-      "4.0.0-dev+bbbbbbbbbbbb",
-    );
+    expect(
+      expectedEngineVersion("4.0.0-dev", files, readFrom({ [files[1]!]: "bbbbbbbbbbbb" })),
+    ).toBe("4.0.0-dev+bbbbbbbbbbbb");
     expect(expectedEngineVersion("4.0.0-dev", files, readFrom({}))).toBe("4.0.0-dev");
     expect(expectedEngineVersion("4.0.0-dev", files, readFrom({ [files[0]!]: "not a hash" }))).toBe(
       "4.0.0-dev",
@@ -51,10 +54,14 @@ describe("a stale engine image", () => {
   });
 
   it("reads as stale when the hash differs", async () => {
-    expect((await status("4.0.0-dev+aaaaaaaaaaaa", "4.0.0-dev+bbbbbbbbbbbb")).engineMatches).toBe(false);
+    expect((await status("4.0.0-dev+aaaaaaaaaaaa", "4.0.0-dev+bbbbbbbbbbbb")).engineMatches).toBe(
+      false,
+    );
   });
 
   it("matches when the hash is the same", async () => {
-    expect((await status("4.0.0-dev+aaaaaaaaaaaa", "4.0.0-dev+aaaaaaaaaaaa")).engineMatches).toBe(true);
+    expect((await status("4.0.0-dev+aaaaaaaaaaaa", "4.0.0-dev+aaaaaaaaaaaa")).engineMatches).toBe(
+      true,
+    );
   });
 });

@@ -631,8 +631,7 @@ export const GlobalSettingsSchema = z
     /** The default account of each vendor, by account id. */
     accountDefaults: AccountDefaultsSchema,
     /**
-     * The folder of the shared Claude transcript store. Absent means the
-     * host's own store (the target of `~/.claude/projects`), else
+     * An override for the shared Claude transcript store. Absent means
      * `DATA_DIR/transcripts/claude`.
      */
     transcriptStore: z.string().min(1).optional(),

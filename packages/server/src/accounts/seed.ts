@@ -198,14 +198,6 @@ async function exists(p: string): Promise<boolean> {
   }
 }
 
-async function isRealDirectory(p: string): Promise<boolean> {
-  try {
-    return (await fs.lstat(p)).isDirectory();
-  } catch {
-    return false;
-  }
-}
-
 /**
  * Builds one vendor's account folder at `dest` from the host folder. It
  * copies into a sibling temporary folder and renames it into place at the
@@ -230,15 +222,16 @@ export async function seedFolder(
   const source = sourceDirOf(sources, vendor);
   const leaveOut = new Set(SIGN_IN_FILES[vendor]);
   const notes: string[] = [];
-  const projects = path.join(source, "projects");
-  const linkProjects = vendor === "claude" && (await isRealDirectory(projects));
-  if (linkProjects) leaveOut.add("projects");
+  // The transcripts aren't copied. The caller links the account's `projects`
+  // to the transcript store afterwards.
+  const leaveProjects = vendor === "claude";
+  if (leaveProjects) leaveOut.add("projects");
 
   if (options.dryRun) {
     const stats = await copyTree(source, dest, { leaveOut, dryRun: true });
-    if (linkProjects) {
+    if (leaveProjects) {
       stats.leftOut = stats.leftOut.filter((p) => p !== "projects");
-      notes.push(`projects would link to ${projects}; transcripts aren't copied.`);
+      notes.push("projects would link to the transcript store; transcripts aren't copied.");
     }
     return { ...stats, notes };
   }
@@ -269,12 +262,7 @@ export async function seedFolder(
       } else {
         notes.push(`${sources.claudeJson} doesn't exist; Claude Code creates a new .claude.json.`);
       }
-      if (linkProjects) {
-        stats.leftOut = stats.leftOut.filter((p) => p !== "projects");
-        await fs.symlink(projects, path.join(temp, "projects"));
-        stats.symlinks += 1;
-        notes.push(`projects links to ${projects}; transcripts aren't copied.`);
-      }
+      stats.leftOut = stats.leftOut.filter((p) => p !== "projects");
     }
     if (vendor === "codex") {
       if (await addCodexFileStore(path.join(temp, "config.toml"))) {
