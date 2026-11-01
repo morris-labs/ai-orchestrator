@@ -409,6 +409,11 @@ function registerIpc() {
   });
 }
 
+// Sets the X11 window class and the Wayland app_id to the name of the
+// desktop entry (agentbox-boxes.desktop), so the shell ties the window to
+// its entry and icon. app.setName changes only the display name.
+app.commandLine.appendSwitch("class", "agentbox-boxes");
+
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
