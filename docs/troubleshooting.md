@@ -26,6 +26,10 @@ If the service isn't enabled, enable and start it:
 systemctl --user enable --now aio-server
 ```
 
+On macOS the server runs as a launchd agent, and on Windows as a Task
+Scheduler task. For the commands that check, restart, and read the log of
+each, see [The server service](platforms.md#the-server-service).
+
 If the log says the port is in use, another process holds `127.0.0.1:21400`.
 Stop that process, or change `serverPort` in `~/.ai-orchestrator/config.json`
 and restart the service.
@@ -105,12 +109,14 @@ The `aio-secret` command exits with a status that names the cause:
 
 | Status | Cause | What to do |
 |---|---|---|
-| 3 | The secrets broker socket doesn't answer. | Check that the server runs with `systemctl --user status aio-server`. The server recreates the socket within 30 seconds of starting. |
+| 3 | The secrets broker socket doesn't answer. | Check that the server runs with `systemctl --user status aio-server`, or the macOS or Windows equivalent in [The server service](platforms.md#the-server-service). The server recreates the socket within 30 seconds of starting. |
 | 4 | The project doesn't list the name. | Add a reference with that name in the project or global settings. No restart is needed. |
 | 5 | 1Password is locked, or the reference doesn't resolve. | Unlock 1Password or fix the reference, then try again. |
 
-The server's journal, `journalctl --user -u aio-server`, logs each
-request with the container, the names, and the outcome.
+The server logs each request with the container, the names, and the
+outcome. To read the log, run `journalctl --user -u aio-server` on Linux, or
+open `~/Library/Logs/aio-server.log` on macOS or
+`~\.ai-orchestrator\server.log` on Windows.
 
 ## sudo fails in a container
 
@@ -235,5 +241,7 @@ journalctl --user -u aio-server -n 200
 docker ps --filter name=^aio-agent-
 ```
 
+On macOS or Windows, replace the two service commands with that host's
+commands from [The server service](platforms.md#the-server-service).
 Check the output for secrets before you share it. AI Orchestrator never logs
 secret values, but your own commands might.

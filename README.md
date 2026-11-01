@@ -42,7 +42,8 @@ clean. You decide when to push and when to merge.
 - Claude Code signed in on the host. Codex, Copilot, and the 1Password CLI
   are optional.
 
-macOS and Windows packages are deferred.
+macOS and Windows builds exist but are untested. For more information, see
+[macOS and Windows](docs/platforms.md).
 
 ## Install
 
@@ -62,6 +63,7 @@ For the details, see [Install AI Orchestrator](docs/install.md).
 ## Documentation
 
 - [Install AI Orchestrator](docs/install.md)
+- [macOS and Windows](docs/platforms.md)
 - [Daily flow](docs/daily-flow.md)
 - [Review pipeline](docs/review-pipeline.md)
 - [Policy file](docs/policy.md)
