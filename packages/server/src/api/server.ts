@@ -166,7 +166,7 @@ export async function createApiServer(deps: ApiDeps & { tls?: TlsIdentity }): Pr
 
   app.addHook("onRequest", async (request, reply) => {
     const config = request.routeOptions.config.aio;
-    // An in-process upgrade from a link (`injectWS`) has no socket.
+    // An in-process upgrade from a link (`injectWebSocket`) has no socket.
     const port = request.socket?.localPort ?? 0;
     const upgrade = (request.headers.upgrade ?? "").toLowerCase() === "websocket";
     const ws = config?.ws === true || (config?.ws === "upgrade" && upgrade);
