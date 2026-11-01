@@ -10,11 +10,13 @@ import {
   type Finding,
   type Profile,
   type Role,
+  type RoleOverrides,
   type RoundSummary,
   type RunState,
   type Vendor,
 } from "@aio/contracts";
 import type { z } from "zod";
+import { EngineError } from "../api/core-interface.js";
 import type { EngineDeps } from "../core.js";
 import { systemClock } from "../core.js";
 import { DEFAULT_POLICY } from "@aio/contracts";
@@ -47,6 +49,27 @@ export class InvalidStateError extends Error {
   }
 }
 
+/**
+ * Checks the roles a run request starts with, as `assign()` checks a role
+ * change, and returns them as manual roles. The request schema already
+ * holds every role but `reviewer` to one vendor and `reviewer` to at least
+ * one. A vendor with no adapter is a `validation` error.
+ */
+export function startingRoles(
+  roles: RoleOverrides | undefined,
+  available: readonly Vendor[],
+): RoleOverrides {
+  if (!roles) return {};
+  const named = new Set<Vendor>([
+    ...(roles.reviewer ?? []),
+    ...(["disprover", "confirmer", "fixer"] as const).flatMap((r) => roles[r] ?? []),
+  ]);
+  const missing = [...named].filter((v) => !available.includes(v));
+  if (missing.length > 0)
+    throw new EngineError("validation", `No adapter is configured for ${missing.join(", ")}.`);
+  return { ...roles, ...(roles.reviewer ? { reviewer: [...new Set(roles.reviewer)] } : {}) };
+}
+
 export interface RunLocation {
   /** The project root; run files go under `<projectRoot>/.aio/runs/<run id>/`. */
   projectRoot: string;
@@ -76,6 +99,8 @@ export class RunController {
   ): Promise<RunController> {
     const create = EngineRunCreateSchema.parse(input);
     const { runId, ...request } = create;
+    const available = (["claude", "codex", "copilot"] as const).filter((v) => deps.adapters[v]);
+    const manual = startingRoles(request.roles, available);
     const clock = deps.clock ?? systemClock;
     const policy = await loadPolicy(location.projectRoot, location.policyPath);
     // The run directory goes under `.aio/`, which is inside the
@@ -97,7 +122,6 @@ export class RunController {
       deps.github,
     );
     const now = new Date(clock.now()).toISOString();
-    const available = (["claude", "codex", "copilot"] as const).filter((v) => deps.adapters[v]);
     const state: RunState = {
       id: runId,
       projectId: request.projectId,
@@ -114,6 +138,7 @@ export class RunController {
         profile: request.profile,
         round: 1,
         available,
+        manual,
         crossVendor: request.crossVendor,
       }),
       stopReason: null,
@@ -123,6 +148,8 @@ export class RunController {
       updatedAt: now,
     };
     const eng = newEngineState();
+    // The request's roles hold like roles a person assigns, until a profile switch.
+    eng.manualRoles = manual;
     eng.tipRef = range.tipRef;
     eng.diffBaseSha = range.diffBaseSha;
     eng.includeWorktree = range.includeWorktree;
