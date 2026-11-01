@@ -391,3 +391,72 @@ describe("loopback ports", () => {
     expect(await loopbackPortFree(port)).toBe(true);
   });
 });
+
+describe("ProjectService broker transport", () => {
+  it("creates a Docker Desktop container with the TCP broker and records its port", async () => {
+    const h = makeHarness();
+    h.docker.engineInfo = {
+      operatingSystem: "Docker Desktop",
+      osType: "linux",
+      name: "docker-desktop",
+      labels: [],
+    };
+    const p = h.core.projects.ensureForRoot(h.dir("app"));
+    const prepared: unknown[][] = [];
+    h.core.setHooks({
+      prepareSecrets: async (...args) => {
+        prepared.push(args);
+        return [];
+      },
+    });
+    const r = await h.core.projects.ensureContainer(p.id);
+    const endpoint = h.core.projects.engineEndpoint(p.id)!;
+    expect(endpoint.brokerPort).toBeTypeOf("number");
+    expect(endpoint.brokerPort).not.toBe(endpoint.hostPort);
+    expect(prepared).toEqual([
+      [p.id, r.container, { transport: "tcp", port: endpoint.brokerPort }],
+    ]);
+    const spec = h.docker.containers.get(r.container)!.spec;
+    expect(spec.env).toContain(`AIO_BROKER_URL=http://host.docker.internal:${endpoint.brokerPort}`);
+    expect(spec.env.some((e) => e.startsWith("AIO_BROKER_SOCKET="))).toBe(false);
+    expect(spec.labels["aio.broker-transport"]).toBe("tcp");
+    expect(spec.extraHosts).toBeUndefined();
+    expect(await h.core.projects.staleDifferences(p)).toEqual([]);
+
+    // Created again, the container keeps its port while the broker holds it.
+    await h.core.projects.stopContainer(p.id);
+    h.core.setHooks({
+      prepareSecrets: async (...args) => {
+        prepared.push(args);
+        return [];
+      },
+      brokerTcpPort: () => endpoint.brokerPort!,
+    });
+    await h.core.projects.ensureContainer(p.id);
+    expect(h.core.projects.engineEndpoint(p.id)!.brokerPort).toBe(endpoint.brokerPort);
+  });
+
+  it("follows the brokerTransport setting, and flags a container made with the other one", async () => {
+    const h = makeHarness();
+    const p = h.core.projects.ensureForRoot(h.dir("app"));
+    const r = await h.core.projects.ensureContainer(p.id);
+    expect(h.core.projects.engineEndpoint(p.id)!.brokerPort).toBeUndefined();
+    expect(h.docker.containers.get(r.container)!.spec.env).toContain(
+      "AIO_BROKER_SOCKET=/run/aio-broker/broker.sock",
+    );
+
+    h.core.settings.patch({ brokerTransport: "tcp" });
+    expect(h.core.settings.get().brokerTransport).toBe("tcp");
+    expect(await h.core.projects.staleDifferences(p)).toEqual(["broker unix -> tcp"]);
+    await h.core.projects.stopContainer(p.id);
+    await h.core.projects.ensureContainer(p.id);
+    const spec = h.docker.containers.get(r.container)!.spec;
+    // A native Linux engine doesn't define host.docker.internal.
+    expect(spec.extraHosts).toEqual(["host.docker.internal:host-gateway"]);
+    expect(h.core.projects.engineEndpoint(p.id)!.brokerPort).toBeTypeOf("number");
+
+    h.core.settings.patch({ brokerTransport: null });
+    expect(h.core.settings.get()).not.toHaveProperty("brokerTransport");
+    expect(await h.core.projects.staleDifferences(p)).toEqual(["broker tcp -> unix"]);
+  });
+});

@@ -96,7 +96,7 @@ export function parseBrokerUrl(
   url: string,
   tokenFile: string = BROKER_TOKEN_PATH,
 ): BrokerEndpoint & { transport: "tcp" } {
-  let parsed: URL | null = null;
+  let parsed: URL | null;
   try {
     parsed = new URL(url);
   } catch {

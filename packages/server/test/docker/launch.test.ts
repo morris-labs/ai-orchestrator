@@ -378,3 +378,48 @@ describe("host preparation", () => {
     });
   });
 });
+
+describe("buildLaunchSpec broker transport", () => {
+  const facts = { projectsLinkMounts: [], hasGitconfig: false };
+
+  it("leaves a Unix socket launch exactly as it was without a transport", () => {
+    const plain = buildLaunchSpec(env, input, facts);
+    const unix = buildLaunchSpec(env, { ...input, broker: { transport: "unix" } }, facts);
+    expect(unix).toEqual(plain);
+    expect(plain).not.toHaveProperty("extraHosts");
+    expect(plain.labels).not.toHaveProperty("aio.broker-transport");
+    expect(plain.env.some((e) => e.startsWith("AIO_BROKER_URL="))).toBe(false);
+  });
+
+  it("sets the URL in place of the socket for TCP, and keeps the mount", () => {
+    const spec = buildLaunchSpec(
+      env,
+      { ...input, broker: { transport: "tcp", port: 41500, hostGateway: false } },
+      facts,
+    );
+    expect(spec.env).toContain("AIO_BROKER_URL=http://host.docker.internal:41500");
+    expect(spec.env.some((e) => e.startsWith("AIO_BROKER_SOCKET="))).toBe(false);
+    expect(spec.binds).toContain(
+      `/home/tester/.ai-orchestrator/broker/${brokerDirName(C)}:/run/aio-broker:ro`,
+    );
+    expect(spec.labels["aio.broker-transport"]).toBe("tcp");
+    // Docker Desktop resolves host.docker.internal itself.
+    expect(spec).not.toHaveProperty("extraHosts");
+    // The broker port is a host port the server listens on, not a published one.
+    expect(Object.keys(spec.portBindings).sort()).toEqual(["20411/tcp", "3000/tcp"]);
+    // No token in the environment: the client reads it from the mounted file.
+    expect(spec.env.join("\n")).not.toMatch(/TOKEN=/);
+  });
+
+  it("adds host-gateway for TCP on a native Linux engine, and shows it as --add-host", () => {
+    const spec = buildLaunchSpec(
+      env,
+      { ...input, broker: { transport: "tcp", port: 41500, hostGateway: true } },
+      facts,
+    );
+    expect(spec.extraHosts).toEqual(["host.docker.internal:host-gateway"]);
+    const args = toDockerRunArgs(spec);
+    expect(args.join(" ")).toContain("--add-host host.docker.internal:host-gateway");
+    expect(args).toContain("AIO_BROKER_URL=http://host.docker.internal:41500");
+  });
+});

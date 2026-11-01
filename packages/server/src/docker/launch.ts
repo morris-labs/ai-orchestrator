@@ -62,8 +62,7 @@ export const SECRETS_LABEL_BROKER = "broker";
  * engine that doesn't define the name.
  */
 export type BrokerLaunch =
-  | { transport: "unix" }
-  | { transport: "tcp"; port: number; hostGateway: boolean };
+  { transport: "unix" } | { transport: "tcp"; port: number; hostGateway: boolean };
 
 /** The hosts file entry that makes `host.docker.internal` resolve on a native Linux engine. */
 export const HOST_GATEWAY_ENTRY = `${BROKER_TCP_HOST}:host-gateway`;

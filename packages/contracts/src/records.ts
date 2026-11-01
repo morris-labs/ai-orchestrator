@@ -767,6 +767,10 @@ export const GlobalSettingsPatchSchema = z
     /** `0` turns snapshots off; `null` goes back to the default, 7. */
     transcriptBackupKeep: z.number().int().nonnegative().nullable(),
     /**
+     * Applies to containers created afterward; `null` goes back to `auto`.
+     */
+    brokerTransport: BrokerTransportSettingSchema.nullable(),
+    /**
      * Only the vendors it names change; `null` clears a default. The server
      * refuses an id that names no account.
      */

@@ -122,7 +122,8 @@ export async function startApp(options: AppOptions): Promise<App> {
       if (!secrets) throw new Error("The secrets service is not ready.");
       const names = await secrets.preflight(projectId);
       // A container created with TCP gets a token no earlier container had.
-      if (tcp) await broker.open({ container, projectId, tcpPort: tcp.port }, { rotateToken: true });
+      if (tcp)
+        await broker.open({ container, projectId, tcpPort: tcp.port }, { rotateToken: true });
       else await broker.open({ container, projectId });
       return names;
     },

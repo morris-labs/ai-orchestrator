@@ -153,6 +153,10 @@ export class SettingsService {
       if (v === null) delete next[key];
       else next[key] = v;
     }
+    if (p.brokerTransport !== undefined) {
+      if (p.brokerTransport === null || p.brokerTransport === "auto") delete next.brokerTransport;
+      else next.brokerTransport = p.brokerTransport;
+    }
     if (p.accountsMode !== undefined) next.accountsMode = p.accountsMode;
     if (p.accountDefaults !== undefined) {
       for (const vendor of ["claude", "codex", "copilot"] as const) {

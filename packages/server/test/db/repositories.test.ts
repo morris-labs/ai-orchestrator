@@ -292,3 +292,23 @@ describe("repositories", () => {
     expect(r.projects.list()).toEqual([]);
   });
 });
+
+describe("engine endpoints broker port", () => {
+  it("stores the TCP broker's port and leaves it out for the Unix socket", () => {
+    const r = repositories(openDatabase(":memory:"));
+    r.projects.put(project());
+    const base = {
+      projectId: "app-12345678",
+      container: "aio-agent-proj-app-12345678",
+      hostPort: 41000,
+      token: "a".repeat(64),
+    };
+    r.engines.put(base, new Date(T));
+    expect(r.engines.get(base.projectId)).toEqual(base);
+    expect(r.engines.get(base.projectId)).not.toHaveProperty("brokerPort");
+    r.engines.put({ ...base, brokerPort: 41500 }, new Date(T));
+    expect(r.engines.get(base.projectId)).toEqual({ ...base, brokerPort: 41500 });
+    r.engines.put(base, new Date(T));
+    expect(r.engines.list()).toEqual([base]);
+  });
+});
