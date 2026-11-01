@@ -15,12 +15,14 @@
 // result with OpenSSL through a real TLS handshake.
 import {
   X509Certificate,
+  createHash,
   generateKeyPairSync,
   randomBytes,
   sign,
   type KeyObject,
 } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { isIPv4, isIPv6 } from "node:net";
 import https from "node:https";
 import type { PeerCertificate } from "node:tls";
 
@@ -77,9 +79,14 @@ function time(date: Date): Buffer {
 const OID = {
   ecdsaWithSha256: "1.2.840.10045.4.3.2",
   commonName: "2.5.4.3",
+  subjectKeyIdentifier: "2.5.29.14",
+  keyUsage: "2.5.29.15",
   subjectAltName: "2.5.29.17",
+  basicConstraints: "2.5.29.19",
+  authorityKeyIdentifier: "2.5.29.35",
   extKeyUsage: "2.5.29.37",
   serverAuth: "1.3.6.1.5.5.7.3.1",
+  clientAuth: "1.3.6.1.5.5.7.3.2",
 } as const;
 
 /** A PEM block of `label` around DER bytes. */
@@ -88,8 +95,145 @@ function pem(label: string, der: Buffer): string {
   return `-----BEGIN ${label}-----\n${lines.join("\n")}\n-----END ${label}-----\n`;
 }
 
+/** An extension; a critical one carries the BOOLEAN TRUE between its OID and value. */
+function extension(id: string, value: Buffer, critical = false): Buffer {
+  return critical
+    ? sequence(oid(id), tlv(0x01, Buffer.from([0xff])), octetString(value))
+    : sequence(oid(id), octetString(value));
+}
+
+/** The key usage BIT STRING for the named bits, with the unused bits counted as DER wants. */
+function keyUsageBits(bits: readonly number[]): Buffer {
+  let value = 0;
+  for (const bit of bits) value |= 0x80 >> bit;
+  let unused = 0;
+  while (unused < 7 && !(value & (1 << unused))) unused++;
+  return tlv(0x03, Buffer.from([unused, value]));
+}
+
+/** A key identifier: the SHA-1 hash of the key's DER encoding (RFC 7093, method 4 style). */
+function keyIdentifier(publicKey: KeyObject): Buffer {
+  return createHash("sha1")
+    .update(publicKey.export({ type: "spki", format: "der" }))
+    .digest();
+}
+
+/** An X.509 name with one common name. */
+function x509Name(commonName: string): Buffer {
+  return sequence(set(sequence(oid(OID.commonName), utf8String(commonName))));
+}
+
+/** The DER bytes of an IP address, or `null` when `text` isn't one. */
+function ipBytes(text: string): Buffer | null {
+  if (isIPv4(text)) return Buffer.from(text.split(".").map(Number));
+  if (!isIPv6(text)) return null;
+  const [head = "", tail = ""] = text.split("::") as [string, string?];
+  const parts = (s: string) => (s === "" ? [] : s.split(":"));
+  const left = parts(head);
+  const right = text.includes("::") ? parts(tail) : [];
+  const fill = Array<string>(8 - left.length - right.length).fill("0");
+  const groups = text.includes("::") ? [...left, ...fill, ...right] : left;
+  const out = Buffer.alloc(16);
+  groups.forEach((g, i) => out.writeUInt16BE(parseInt(g, 16), i * 2));
+  return out;
+}
+
 // ---------------------------------------------------------------------------
-// The certificate.
+// Certificates.
+
+/** What a certificate's key may authenticate. */
+export type CertificateUsage = "serverAuth" | "clientAuth";
+
+export interface CertificateOptions {
+  /** The subject's common name. */
+  commonName: string;
+  /** The subject's public key. */
+  publicKey: KeyObject;
+  /** The key that signs: the subject's own private key for a self-signed certificate. */
+  signingKey: KeyObject;
+  /**
+   * The issuer: its common name and public key. Absent means self-signed,
+   * with the subject as its own issuer.
+   */
+  issuer?: { commonName: string; publicKey: KeyObject };
+  /**
+   * `true` makes a certificate authority that may sign others; `false` marks
+   * an end-entity certificate. Absent adds neither basic constraints nor key
+   * usage, as the server's own self-signed certificate has always done.
+   */
+  ca?: boolean;
+  /** The extended key usages. Default: none listed. */
+  usages?: readonly CertificateUsage[];
+  /** DNS names and IP addresses for the subject alternative name. */
+  altNames?: readonly string[];
+  /** The start of the validity period. Default: now. */
+  now?: Date;
+  /** The validity period in days. Default: `SERVER_CERT_DAYS`. */
+  days?: number;
+  /** Adds the subject and authority key identifiers. Default: true when `ca` is set. */
+  keyIdentifiers?: boolean;
+}
+
+/**
+ * Builds and signs an X.509 v3 certificate with an ECDSA P-256 key and
+ * SHA-256, and returns it as PEM. It covers the certificates AI Orchestrator
+ * makes: the server's self-signed one, and the hub's certificate authority
+ * with the link certificates it signs.
+ */
+export function createCertificate(options: CertificateOptions): string {
+  const now = options.now ?? new Date();
+  // An hour of slack covers a client clock slightly behind the server's.
+  const notBefore = new Date(now.getTime() - 3600_000);
+  const notAfter = new Date(now.getTime() + (options.days ?? SERVER_CERT_DAYS) * 86400_000);
+  const subject = x509Name(options.commonName);
+  const issuer = options.issuer ? x509Name(options.issuer.commonName) : subject;
+  const issuerKey = options.issuer?.publicKey ?? options.publicKey;
+  const algorithm = sequence(oid(OID.ecdsaWithSha256));
+  const serial = randomBytes(16);
+  serial[0] = (serial[0] as number) & 0x7f;
+
+  const extensions: Buffer[] = [];
+  if (options.ca !== undefined) {
+    extensions.push(
+      extension(
+        OID.basicConstraints,
+        options.ca ? sequence(tlv(0x01, Buffer.from([0xff]))) : sequence(),
+        true,
+      ),
+      // keyCertSign (5) and cRLSign (6) for an authority, digitalSignature (0) otherwise.
+      extension(OID.keyUsage, keyUsageBits(options.ca ? [5, 6] : [0]), true),
+    );
+  }
+  if (options.keyIdentifiers ?? options.ca !== undefined) {
+    extensions.push(
+      extension(OID.subjectKeyIdentifier, octetString(keyIdentifier(options.publicKey))),
+      extension(OID.authorityKeyIdentifier, sequence(tlv(0x80, keyIdentifier(issuerKey)))),
+    );
+  }
+  const altNames = (options.altNames ?? []).map((name) => {
+    const ip = ipBytes(name);
+    return ip ? tlv(0x87, ip) : tlv(0x82, Buffer.from(name, "ascii"));
+  });
+  if (altNames.length > 0) extensions.push(extension(OID.subjectAltName, sequence(...altNames)));
+  if (options.usages && options.usages.length > 0) {
+    extensions.push(
+      extension(OID.extKeyUsage, sequence(...options.usages.map((u) => oid(OID[u])))),
+    );
+  }
+
+  const tbs = sequence(
+    explicit(0, integer(Buffer.from([2]))),
+    integer(serial),
+    algorithm,
+    issuer,
+    sequence(time(notBefore), time(notAfter)),
+    subject,
+    options.publicKey.export({ type: "spki", format: "der" }),
+    ...(extensions.length > 0 ? [explicit(3, sequence(...extensions))] : []),
+  );
+  const signature = sign("sha256", tbs, options.signingKey);
+  return pem("CERTIFICATE", sequence(tbs, algorithm, bitString(signature)));
+}
 
 /** The common name of the server's certificate. */
 export const SERVER_CERT_NAME = "AI Orchestrator server";
@@ -116,39 +260,16 @@ export interface CreateIdentityOptions {
  */
 export function createServerIdentity(options: CreateIdentityOptions = {}): TlsIdentity {
   const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
-  const now = options.now ?? new Date();
-  // An hour of slack covers a client clock slightly behind the server's.
-  const notBefore = new Date(now.getTime() - 3600_000);
-  const notAfter = new Date(now.getTime() + (options.days ?? SERVER_CERT_DAYS) * 86400_000);
-  const name = sequence(set(sequence(oid(OID.commonName), utf8String(SERVER_CERT_NAME))));
-  const algorithm = sequence(oid(OID.ecdsaWithSha256));
-  const serial = randomBytes(16);
-  serial[0] = (serial[0] as number) & 0x7f;
-  const altNames = sequence(
-    tlv(0x82, Buffer.from("localhost", "ascii")),
-    tlv(0x87, Buffer.from([127, 0, 0, 1])),
-    tlv(0x87, Buffer.from([...Array(15).fill(0), 1])),
-  );
-  const extensions = sequence(
-    sequence(oid(OID.subjectAltName), octetString(altNames)),
-    sequence(oid(OID.extKeyUsage), octetString(sequence(oid(OID.serverAuth)))),
-  );
-  const tbs = sequence(
-    explicit(0, integer(Buffer.from([2]))),
-    integer(serial),
-    algorithm,
-    name,
-    sequence(time(notBefore), time(notAfter)),
-    name,
-    publicKey.export({ type: "spki", format: "der" }),
-    explicit(3, extensions),
-  );
-  const signature = sign("sha256", tbs, privateKey as KeyObject);
-  const der = sequence(tbs, algorithm, bitString(signature));
-  return {
-    key: privateKey.export({ type: "pkcs8", format: "pem" }) as string,
-    cert: pem("CERTIFICATE", der),
-  };
+  const cert = createCertificate({
+    commonName: SERVER_CERT_NAME,
+    publicKey,
+    signingKey: privateKey,
+    usages: ["serverAuth"],
+    altNames: ["localhost", "127.0.0.1", "::1"],
+    now: options.now,
+    days: options.days,
+  });
+  return { key: privateKey.export({ type: "pkcs8", format: "pem" }) as string, cert };
 }
 
 // ---------------------------------------------------------------------------

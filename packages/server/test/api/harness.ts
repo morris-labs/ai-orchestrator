@@ -172,6 +172,16 @@ export class FakeExec implements ExecBackend {
   }
 }
 
+const NODE_STATUS = {
+  role: "both" as const,
+  name: "desk",
+  machineId: null,
+  hubUrl: null,
+  link: "none" as const,
+  error: null,
+  linkPort: null,
+};
+
 export interface Harness {
   core: FakeCore;
   deps: ApiDeps;
@@ -299,6 +309,38 @@ export async function createHarness(
     proxy: overrides.proxy,
     links: overrides.links,
     machines: overrides.machines,
+    multiHost: {
+      machines: async () => [
+        {
+          id: "local",
+          name: "desk",
+          role: "both",
+          status: "online",
+          isLocal: true,
+          serverVersion: "1.0.0-dev",
+          protocol: 1,
+          capabilities: ["http.v1"],
+          lastSeen: T1,
+          platform: "linux",
+        },
+      ],
+      enroll: async () => ({
+        code: "7K2Q-M9XD-4HPA-R3TB",
+        expiresAt: T1,
+        hubUrl: "https://hub.example.com:21402",
+      }),
+      revoke: async (id) => {
+        if (id !== "m1") throw new ApiError("not_found", `No machine has the id ${id}.`);
+      },
+      status: () => ({ ...NODE_STATUS }),
+      join: async (input) => ({
+        ...NODE_STATUS,
+        role: "node",
+        machineId: "m1",
+        hubUrl: input.hubUrl,
+        link: "connecting",
+      }),
+    },
   };
   const server = await createApiServer(deps);
   return { core, deps, server, hub, jobs, engine, exec, runs };

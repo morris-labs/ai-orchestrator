@@ -21,6 +21,7 @@ export const API_ERROR_STATUS: Record<ApiErrorCode, number> = {
   run_not_found: 404,
   invalid_state: 409,
   unauthorized: 401,
+  hub_unreachable: 503,
   internal: 500,
   machine_offline: 503,
   machine_timeout: 504,

@@ -91,6 +91,7 @@ import {
   UsageWindowSchema,
 } from "./events.js";
 import { FindingSchema, SeveritySchema, VerdictSchema } from "./findings.js";
+import { EnrollmentCodeSchema, MachineListSchema, MachineRoleSchema } from "./machines.js";
 import { PolicyFileSchema } from "./policy.js";
 import {
   BoxSchema,
@@ -98,6 +99,7 @@ import {
   CeilingsOverrideSchema,
   GlobalSettingsPatchSchema,
   GlobalSettingsSchema,
+  MachineNameSchema,
   MountSchema,
   OpReferenceSchema,
   ProjectSchema,
@@ -1009,6 +1011,50 @@ function prefixKeys<const P extends string, T extends Record<string, unknown>>(
 }
 
 // ---------------------------------------------------------------------------
+// Multi-host: this machine's link to a hub
+
+/** The state of a node's link to its hub; `none` when the machine hasn't joined one. */
+export const NodeLinkStateSchema = z.enum([
+  "none",
+  "connecting",
+  "connected",
+  "disconnected",
+  "refused",
+  "revoked",
+]);
+export type NodeLinkState = z.infer<typeof NodeLinkStateSchema>;
+
+/** This machine's multi-host state, from `GET /api/v1/node`. */
+export const NodeStatusSchema = z.object({
+  role: MachineRoleSchema,
+  /** The name this machine shows and enrolls under. */
+  name: z.string(),
+  /** The id the hub gave this machine, or `null` before it joins one. */
+  machineId: z.string().nullable(),
+  /** The hub's link URL, or `null` before this machine joins one. */
+  hubUrl: z.string().nullable(),
+  link: NodeLinkStateSchema,
+  /** Why the link is down, refused, or revoked; never holds a secret. */
+  error: z.string().nullable(),
+  /** The port the hub listens on for node links, or `null` while it doesn't. */
+  linkPort: PortSchema.nullable(),
+});
+export type NodeStatus = z.infer<typeof NodeStatusSchema>;
+
+/** The body of `POST /api/v1/node/join`. */
+export const NodeJoinSchema = z
+  .object({
+    /** The hub URL from the enrollment code, such as `https://hub.example.com:21402`. */
+    hubUrl: z.string().url(),
+    /** The one-time enrollment code the hub issued. */
+    code: z.string().trim().min(1),
+    /** The name to enroll under. Default: the `machineName` setting, else the host name. */
+    name: MachineNameSchema.optional(),
+  })
+  .strict();
+export type NodeJoin = z.infer<typeof NodeJoinSchema>;
+
+// ---------------------------------------------------------------------------
 // Server API
 
 const projects = `${V1}/projects`;
@@ -1597,6 +1643,45 @@ export const serverRoutes = {
     path: `${V1}/usage`,
     summary: "Usage per vendor account against its ceiling.",
     response: z.object({ vendors: z.array(VendorUsageSchema) }),
+  }),
+
+  // Machines (multi-host)
+  "machines.list": http({
+    method: "GET",
+    path: `${V1}/machines`,
+    summary:
+      "List the machines: this one first, as id local. On a node, the rest comes from the hub, and shows offline while the hub is unreachable.",
+    response: MachineListSchema,
+  }),
+  "machines.enroll": http({
+    method: "POST",
+    path: `${V1}/machines/enrollment-codes`,
+    summary: "Issue a one-time enrollment code for a node to join this hub. Hub only.",
+    response: EnrollmentCodeSchema,
+    status: 201,
+    errors: ["invalid_state"],
+  }),
+  "machines.revoke": http({
+    method: "DELETE",
+    path: `${V1}/machines/:id`,
+    summary: "Revoke a machine's certificate and close its link. Hub only.",
+    response: OkSchema,
+    errors: ["invalid_state"],
+  }),
+  "node.get": http({
+    method: "GET",
+    path: `${V1}/node`,
+    summary: "This machine's role and its link to a hub.",
+    response: NodeStatusSchema,
+  }),
+  "node.join": http({
+    method: "POST",
+    path: `${V1}/node/join`,
+    summary:
+      "Join a hub with a one-time enrollment code: get a client certificate, pin the hub's certificate, and connect.",
+    body: NodeJoinSchema,
+    response: NodeStatusSchema,
+    errors: ["hub_unreachable", "invalid_state", "conflict", "unauthorized"],
   }),
 
   // Notifications and events

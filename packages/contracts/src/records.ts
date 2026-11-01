@@ -87,6 +87,7 @@
 // | `newBox/workspaceDirs`, `newBox/worktreeDirs`      | `newBoxDefaults` |
 // | `ui/*`, `updateChecker/*`, `portAllocator/*`       | (not imported; app state) |
 import { z } from "zod";
+import { MachineRoleSchema } from "./machines.js";
 import {
   AccountIdSchema,
   EffortSchema,
@@ -587,6 +588,15 @@ export const DEFAULT_ENGINE_PORT = 20411;
 export const DEFAULT_ENGINE_IMAGE = "aio-agent";
 
 /**
+ * A machine name: what a node enrolls under, and the `MACHINE` in
+ * machine-qualified box IDs. Letters, digits, dots, and hyphens, starting
+ * with a letter or digit.
+ */
+export const MachineNameSchema = z
+  .string()
+  .regex(/^[A-Za-z0-9][A-Za-z0-9.-]{0,62}$/, "Use letters, digits, dots, and hyphens.");
+
+/**
  * Global settings. The server stores them in its database. On the first
  * start, when the database holds no settings yet, the server seeds them from
  * `~/.ai-orchestrator/config.json` through `GlobalSettingsInputSchema`, and reads
@@ -661,9 +671,30 @@ export const GlobalSettingsSchema = z
      * `BrokerTransportSettingSchema`. Absent means `auto`.
      */
     brokerTransport: BrokerTransportSettingSchema.optional(),
+    /**
+     * This machine's role in a multi-host setup: `hub`, `node`, or `both`.
+     * Absent means `both`, a single machine. `aio-server --role` and
+     * `AIO_ROLE` override it for one run. See docs/multi-host.md.
+     */
+    role: MachineRoleSchema.optional(),
+    /** The name this machine shows and enrolls under. Absent means the host name. */
+    machineName: MachineNameSchema.optional(),
+    /**
+     * The port a hub listens on for node links, on every interface. Absent
+     * means `DEFAULT_LINK_PORT`, 21402.
+     */
+    linkPort: PortSchema.optional(),
+    /**
+     * The host name or address that nodes use to reach this hub, for the
+     * hub URL in enrollment codes. Absent means the host name.
+     */
+    linkAddress: z.string().min(1).optional(),
   })
   .strict();
 export type GlobalSettings = z.infer<typeof GlobalSettingsSchema>;
+
+/** The port a hub listens on for node links when the settings name none. */
+export const DEFAULT_LINK_PORT = 21402;
 
 /**
  * The dev-server proxy's port: `proxyPort`, else the port after
@@ -776,6 +807,14 @@ export const GlobalSettingsPatchSchema = z
     transcriptRetentionDays: z.number().int().positive().nullable(),
     /** `0` turns snapshots off; `null` goes back to the default, 7. */
     transcriptBackupKeep: z.number().int().nonnegative().nullable(),
+    /** Takes effect at the next server start, except for the node link. */
+    role: MachineRoleSchema,
+    /** `null` goes back to the host name. */
+    machineName: MachineNameSchema.nullable(),
+    /** `null` goes back to 21402. Takes effect when the link listener next starts. */
+    linkPort: PortSchema.nullable(),
+    /** `null` goes back to the host name. */
+    linkAddress: z.string().min(1).nullable(),
     /**
      * Applies to containers created afterward; `null` goes back to `auto`.
      */

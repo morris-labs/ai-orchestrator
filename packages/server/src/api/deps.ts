@@ -19,6 +19,10 @@ import type {
   VendorUsageSchema,
   SshRemote,
   ImageBuildSchema,
+  EnrollmentCode,
+  Machine,
+  NodeJoin,
+  NodeStatus,
 } from "@aio/contracts";
 import type { z } from "zod";
 import type { Core, EventInput } from "./core-interface.js";
@@ -29,6 +33,15 @@ import type { ExecBackend } from "../terminals/exec.js";
 import type { DevServerProxy } from "../proxy/proxy.js";
 import type { LinkRegistry } from "../hub/link.js";
 import type { MachineRoutingOptions } from "./machines.js";
+
+/** Multi-host as the machine and node routes use it. */
+export interface ApiMultiHost {
+  machines(): Promise<Machine[]>;
+  enroll(): Promise<EnrollmentCode>;
+  revoke(id: string): Promise<void>;
+  status(): NodeStatus;
+  join(input: NodeJoin): Promise<NodeStatus>;
+}
 
 /** One engine, as the API uses it. */
 export interface ApiEngine {
@@ -108,8 +121,13 @@ export interface ApiDeps {
    * plain node. Absent on a single-PC install, where only `local` resolves.
    */
   links?: LinkRegistry;
-  /** The role and timeouts of the machine proxy route. */
+  /**
+   * The role, own machine ID and timeouts of the machine proxy route; see
+   * `startApp`.
+   */
   machines?: MachineRoutingOptions;
+  /** The machine list, enrollment, revocation, and joining a hub. */
+  multiHost?: ApiMultiHost;
   /** Directories of the built single-page apps, served when present. */
   staticDirs?: { boxes?: string; review?: string };
   log?: (message: string) => void;

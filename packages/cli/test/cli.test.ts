@@ -482,6 +482,88 @@ describe("secrets", () => {
   });
 });
 
+describe("machines and node", () => {
+  const nodeStatus = {
+    role: "node",
+    name: "node-one",
+    machineId: "m1",
+    hubUrl: "https://hub.example.com:21402",
+    link: "connecting",
+    error: null,
+    linkPort: null,
+  };
+
+  it("lists, enrolls, and revokes machines", async () => {
+    server.on("GET /api/v1/machines", {
+      body: {
+        machines: [
+          {
+            id: "local",
+            name: "desk",
+            role: "both",
+            status: "online",
+            isLocal: true,
+            serverVersion: "1.0.0",
+            protocol: 1,
+            capabilities: [],
+            lastSeen: "2026-11-01T10:00:00Z",
+            platform: "linux",
+          },
+          {
+            id: "m1",
+            name: "node-one",
+            role: "node",
+            status: "offline",
+            isLocal: false,
+            serverVersion: null,
+            protocol: null,
+            capabilities: [],
+            lastSeen: null,
+            platform: null,
+          },
+        ],
+      },
+    });
+    await cli(["machines", "list"]);
+    expect(out.split("\n")[0]).toMatch(/^ID\s+NAME\s+ROLE\s+STATUS/);
+    expect(out).toContain("local (this machine)");
+    expect(out).toMatch(/m1\s+node-one\s+node\s+offline/);
+
+    out = "";
+    server.on("POST /api/v1/machines/enrollment-codes", {
+      status: 201,
+      body: {
+        code: "7K2Q-M9XD-4HPA-R3TB",
+        expiresAt: "2026-11-01T10:10:00Z",
+        hubUrl: "https://hub.example.com:21402",
+      },
+    });
+    await cli(["machines", "enroll"]);
+    expect(out).toContain("aio node join https://hub.example.com:21402 7K2Q-M9XD-4HPA-R3TB");
+
+    server.on("DELETE /api/v1/machines/m1", { body: { ok: true } });
+    await cli(["machines", "revoke", "m1"]);
+    expect(last()?.method).toBe("DELETE");
+    expect(out).toContain("Revoked m1.");
+  });
+
+  it("joins a hub and shows the link", async () => {
+    server.on("POST /api/v1/node/join", { body: nodeStatus });
+    await cli(["node", "join", "https://hub.example.com:21402", "7K2Q-M9XD-4HPA-R3TB", "--name", "node-one"]);
+    expect(last()?.body).toEqual({
+      hubUrl: "https://hub.example.com:21402",
+      code: "7K2Q-M9XD-4HPA-R3TB",
+      name: "node-one",
+    });
+    expect(out).toContain("Joined https://hub.example.com:21402 as node-one (m1).");
+
+    out = "";
+    server.on("GET /api/v1/node", { body: nodeStatus });
+    await cli(["node", "status"]);
+    expect(out).toMatch(/Link:\s+connecting/);
+  });
+});
+
 describe("project", () => {
   it("lists and shows projects", async () => {
     server.on("GET /api/v1/projects", { body: { projects: [projectSummary] } });

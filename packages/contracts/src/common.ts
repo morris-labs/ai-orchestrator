@@ -129,6 +129,7 @@ export const ApiErrorCodeSchema = z.enum([
   "run_not_found",
   "invalid_state",
   "unauthorized",
+  "hub_unreachable",
   "internal",
   "machine_offline",
   "machine_timeout",

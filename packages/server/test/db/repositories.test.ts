@@ -175,6 +175,28 @@ describe("migration 2", () => {
   });
 });
 
+describe("migrations 5 and 6", () => {
+  it("brings a version 4 database to the broker port column and the multi-host tables", () => {
+    const db = new Database(":memory:");
+    for (const m of MIGRATIONS.slice(0, 4)) {
+      if (typeof m === "function") m(db);
+      else db.exec(m as string);
+    }
+    db.pragma("user_version = 4");
+    expect(MIGRATIONS).toHaveLength(6);
+    expect(migrate(db)).toBe(6);
+    expect(db.pragma("user_version", { simple: true })).toBe(6);
+    const columns = (
+      db.prepare("PRAGMA table_info(engine_endpoints)").all() as { name: string }[]
+    ).map((c) => c.name);
+    expect(columns).toContain("broker_port");
+    const tables = (
+      db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[]
+    ).map((t) => t.name);
+    expect(tables).toEqual(expect.arrayContaining(["machines", "enrollment_codes"]));
+  });
+});
+
 describe("migrate", () => {
   it("refuses a database from a newer server", () => {
     const db = new Database(":memory:");

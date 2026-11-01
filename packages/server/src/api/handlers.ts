@@ -99,6 +99,14 @@ function requireAbsoluteMounts(mounts: { host: string; container: string }[] | u
 export function createHandlers(deps: ApiDeps): HttpHandlers {
   const { core } = deps;
 
+  /** The multi-host service; a server built without one serves no machine routes. */
+  const multiHost = () => {
+    if (!deps.multiHost) {
+      throw new ApiError("invalid_state", "This server runs without multi-host support.");
+    }
+    return deps.multiHost;
+  };
+
   /**
    * Refuses a run whose box is in another project: the run would hold that
    * box, and the hold-edits message would go to it.
@@ -495,6 +503,15 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
       }
       return { ok: true };
     },
+
+    "machines.list": async () => ({ machines: await multiHost().machines() }),
+    "machines.enroll": async () => multiHost().enroll(),
+    "machines.revoke": async ({ params }) => {
+      await multiHost().revoke(params.id);
+      return { ok: true };
+    },
+    "node.get": async () => multiHost().status(),
+    "node.join": async ({ body }) => multiHost().join(body),
   };
 }
 

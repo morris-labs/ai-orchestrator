@@ -67,6 +67,7 @@ For the details, see [Install AI Orchestrator](docs/install.md).
 - [Policy file](docs/policy.md)
 - [Secrets](docs/secrets.md)
 - [Accounts](docs/accounts.md)
+- [Multi-host](docs/multi-host.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [Migrate from Claude Box 3.x](docs/migration-3x.md)
 - [Architecture](docs/architecture.md)

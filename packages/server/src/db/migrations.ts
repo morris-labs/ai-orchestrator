@@ -218,4 +218,30 @@ export const MIGRATIONS: readonly Migration[] = [
   // 5: the host port of a container's TCP secrets broker, for Docker
   // Desktop; NULL for a container that uses the Unix socket.
   "ALTER TABLE engine_endpoints ADD COLUMN broker_port INTEGER",
+  // 6: multi-host. On a hub, the enrolled machines and the one-time
+  // enrollment codes. A code is kept only as the key derived from it.
+  `
+  CREATE TABLE machines (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    role TEXT NOT NULL,
+    cert_fingerprint TEXT NOT NULL UNIQUE,
+    revoked_at TEXT,
+    server_version TEXT,
+    protocol INTEGER,
+    capabilities TEXT NOT NULL DEFAULT '[]',
+    platform TEXT,
+    last_seen TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE UNIQUE INDEX machines_live_name ON machines (name) WHERE revoked_at IS NULL;
+
+  CREATE TABLE enrollment_codes (
+    code_key TEXT PRIMARY KEY,
+    expires_at TEXT NOT NULL,
+    used_at TEXT,
+    created_at TEXT NOT NULL
+  );
+`,
 ];
