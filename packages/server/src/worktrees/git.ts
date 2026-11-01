@@ -39,7 +39,14 @@ function run(
     execFile(
       "git",
       full,
-      { env, timeout: timeoutMs, maxBuffer: 256 * 1024 * 1024, encoding: "utf8" },
+      // windowsHide: no console window per git call under a windowless server.
+      {
+        env,
+        timeout: timeoutMs,
+        maxBuffer: 256 * 1024 * 1024,
+        encoding: "utf8",
+        windowsHide: true,
+      },
       (error, stdout, stderr) => resolve({ error, stdout, stderr }),
     );
   });

@@ -15,6 +15,14 @@ import {
 } from "../docker/image.js";
 import { processJob, type JobIO, type JobManager, type JobOutcome } from "../jobs/jobs.js";
 import { commandLine, type ProcessRunner } from "../jobs/process.js";
+import {
+  bashScriptArgv,
+  currentPlatform,
+  hasPosixModes,
+  installHint,
+  type HostPlatform,
+} from "../platform/host.js";
+import { containerUsername } from "../records/env.js";
 import type { OpClient } from "../secrets/op.js";
 
 export type SetupStatus = z.infer<typeof SetupStatusSchema>;
@@ -33,6 +41,8 @@ export interface SetupServiceOptions {
   imageContext: string;
   serviceInstalled: () => Promise<boolean>;
   installService: (io: JobIO) => Promise<void>;
+  /** The host operating system. Default: the one the process runs on. */
+  platform?: HostPlatform;
 }
 
 type CheckId = SetupCheck["id"];
@@ -48,7 +58,11 @@ async function modeOf(path: string): Promise<number | null> {
 const octal = (mode: number) => mode.toString(8).padStart(3, "0");
 
 export class SetupService {
-  constructor(private readonly opts: SetupServiceOptions) {}
+  private readonly platform: HostPlatform;
+
+  constructor(private readonly opts: SetupServiceOptions) {
+    this.platform = opts.platform ?? currentPlatform(opts.home);
+  }
 
   private identity(): string {
     return this.opts.core.settings.get().sshIdentity ?? join(this.opts.home, ".ssh", "id_ed25519");
@@ -192,6 +206,16 @@ export class SetupService {
   private async checkSshPermissions(): Promise<SetupCheck> {
     const sshDir = join(this.opts.home, ".ssh");
     const identity = this.identity();
+    if (!hasPosixModes(this.platform)) {
+      // Windows reports every file as mode 666 or 444; the folder's ACL,
+      // which inherits from the user profile, is what protects the key.
+      return {
+        id: "ssh_permissions",
+        status: "ok",
+        message: `Windows protects ${sshDir} with the user profile's access control list; aio doesn't check it.`,
+        fixable: false,
+      };
+    }
     const problems: string[] = [];
     const dirMode = await modeOf(sshDir);
     if (dirMode === null) {
@@ -381,6 +405,12 @@ export class SetupService {
         );
       }
       case "ssh_permissions": {
+        if (!hasPosixModes(this.platform)) {
+          throw new ApiError(
+            "conflict",
+            "Windows has no file modes to fix; aio doesn't change ACLs.",
+          );
+        }
         const sshDir = join(this.opts.home, ".ssh");
         const identity = this.identity();
         return this.opts.jobs.start(
@@ -405,15 +435,9 @@ export class SetupService {
           },
         );
       case "docker":
-        throw new ApiError(
-          "conflict",
-          "Install Docker, start the daemon, and add your user to the docker group, then check again.",
-        );
+        throw new ApiError("conflict", installHint(this.platform, "docker"));
       case "ssh_client":
-        throw new ApiError(
-          "conflict",
-          "Install the ssh client with sudo apt install openssh-client.",
-        );
+        throw new ApiError("conflict", installHint(this.platform, "ssh"));
       case "op":
         throw new ApiError(
           "conflict",
@@ -460,7 +484,20 @@ export class SetupService {
         `The image build needs ${script} beside the build context ${context}, and the context directory must be named image. Set AIO_IMAGE_CONTEXT to the image directory of a source checkout or of the installed package.`,
       );
     }
-    const argv = this.buildArgv(kind);
+    const built = this.buildArgv(kind);
+    // On Windows the image's user name can't come from `id -un`, so the
+    // server names the one it runs `docker exec --user` with.
+    const scriptArgs =
+      this.platform.os === "win32"
+        ? [...built.slice(1), "--user", containerUsername(this.platform.env, "win32")]
+        : built.slice(1);
+    const argv = bashScriptArgv(this.platform, built[0] as string, scriptArgs);
+    if (!argv) {
+      throw new ApiError(
+        "image_missing",
+        "The image build runs a bash script, and Windows has no bash. Install Git for Windows, or set AIO_BASH to a bash.exe.",
+      );
+    }
     // The script's `docker build` prints one line per step instead of
     // redrawing the terminal, which reads better in the job log.
     const env = { ...process.env, BUILDKIT_PROGRESS: "plain" };

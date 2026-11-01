@@ -1,6 +1,7 @@
 // `DockerClient` over the Docker Engine API through dockerode.
 import { PassThrough } from "node:stream";
 import Docker from "dockerode";
+import { currentPlatform, dockerEndpoint, dockerodeOptions } from "../platform/host.js";
 import {
   DockerApiError,
   DockerUnavailableError,
@@ -84,7 +85,12 @@ function mapBindings(
 export class DockerodeClient implements DockerClient {
   readonly docker: Docker;
 
-  constructor(docker: Docker = new Docker()) {
+  /**
+   * `docker` defaults to a client for the host's endpoint: `DOCKER_HOST` or
+   * the default socket on Linux, the Docker Desktop pipe on Windows, and
+   * the first Docker socket found on macOS. See `dockerEndpoint`.
+   */
+  constructor(docker: Docker = new Docker(dockerodeOptions(dockerEndpoint(currentPlatform())))) {
     this.docker = docker;
   }
 

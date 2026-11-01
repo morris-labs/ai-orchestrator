@@ -1,5 +1,6 @@
 // Child processes behind an interface, so tests replace them with a double.
 import { spawn } from "node:child_process";
+import { hostOsOf, ptyArgv, type HostOs } from "../platform/host.js";
 
 export interface RunResult {
   /** The exit code, or `null` when a signal or the timeout ended the process. */
@@ -24,7 +25,8 @@ export interface SpawnOptions {
   cwd?: string;
   /**
    * Runs the program under a pseudo-terminal with `script(1)`, for programs
-   * that prompt on a terminal, such as `ssh-copy-id`.
+   * that prompt on a terminal, such as `ssh-copy-id`. On Windows, which has
+   * no `script`, the program runs without one; see `ptyArgv`.
    */
   pty?: boolean;
 }
@@ -58,6 +60,21 @@ export function commandLine(argv: readonly string[]): string {
 
 /** The `ProcessRunner` that starts real processes. */
 export class NodeProcessRunner implements ProcessRunner {
+  /** `hostOs` picks the pseudo-terminal wrapper; tests pass another host's. */
+  constructor(private readonly hostOs: HostOs = hostOsOf(process.platform)) {}
+
+  /** The program and arguments `spawn` starts for `command`. */
+  spawnArgv(
+    command: string,
+    args: readonly string[],
+    options: SpawnOptions = {},
+  ): [string, string[]] {
+    const wrapped = options.pty
+      ? ptyArgv({ os: this.hostOs }, [command, ...args], commandLine([command, ...args]))
+      : null;
+    return wrapped ? [wrapped[0] as string, wrapped.slice(1)] : [command, [...args]];
+  }
+
   run(command: string, args: readonly string[], options: RunOptions = {}): Promise<RunResult> {
     return new Promise((resolve) => {
       let stdout = "";
@@ -68,6 +85,9 @@ export class NodeProcessRunner implements ProcessRunner {
         env: options.env ?? process.env,
         cwd: options.cwd,
         stdio: ["pipe", "pipe", "pipe"],
+        // A server without a console, as the Windows logon task runs it,
+        // would open a console window for each child. Ignored elsewhere.
+        windowsHide: true,
       });
       const finish = (result: Omit<RunResult, "stdout" | "stderr" | "timedOut">) => {
         if (settled) return;
@@ -94,13 +114,12 @@ export class NodeProcessRunner implements ProcessRunner {
   }
 
   spawn(command: string, args: readonly string[], options: SpawnOptions = {}): SpawnedProcess {
-    const [cmd, argv] = options.pty
-      ? ["script", ["-q", "-f", "-e", "-c", commandLine([command, ...args]), "/dev/null"]]
-      : [command, [...args]];
+    const [cmd, argv] = this.spawnArgv(command, args, options);
     const child = spawn(cmd, argv, {
       env: options.env ?? process.env,
       cwd: options.cwd,
       stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true,
     });
     const dataListeners: ((chunk: Buffer) => void)[] = [];
     let exitListener: ((code: number | null, error: string | null) => void) | null = null;
