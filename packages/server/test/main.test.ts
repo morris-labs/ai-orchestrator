@@ -33,6 +33,16 @@ describe("main", () => {
     expect(await main(["--data-dir"])).toBe(2);
   });
 
+  it("takes the role from --role, else AIO_ROLE, and refuses an unknown one", () => {
+    expect(parseServerArgs([], {}).role).toBeUndefined();
+    expect(parseServerArgs([], { AIO_ROLE: "hub" }).role).toBe("hub");
+    expect(parseServerArgs(["--role", "node"], { AIO_ROLE: "hub" }).role).toBe("node");
+    expect(parseServerArgs(["--role=both"], {}).role).toBe("both");
+    expect(parseServerArgs(["--role", "boss"], {}).error).toMatch(/--role must be hub, node, or both/);
+    expect(parseServerArgs([], { AIO_ROLE: "x" }).error).toMatch(/AIO_ROLE must be/);
+    expect(parseServerArgs(["--role"], {}).error).toMatch(/needs hub, node, or both/);
+  });
+
   it("passes the data directory on to the systemd unit, quoted when needed", () => {
     expect(execStartLine()).not.toContain("--data-dir");
     expect(execStartLine("/srv/data")).toMatch(/ --data-dir \/srv\/data$/);

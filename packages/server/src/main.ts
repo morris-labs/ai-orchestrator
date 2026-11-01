@@ -19,6 +19,7 @@ import { DEV_ENGINES_ENV, parseDevEngines } from "./events/dev-engines.js";
 import { NodeProcessRunner } from "./jobs/process.js";
 import { DATA_DIR_ENV } from "./records/env.js";
 import { installService } from "./systemd/service.js";
+import { ROLE_ENV, parseRole, type MachineRole } from "./hub/multihost.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -51,6 +52,8 @@ export interface ServerArgs {
   command?: string;
   /** The absolute data directory, or `undefined` for `~/.ai-orchestrator`. */
   dataDir?: string;
+  /** The role for this run, from `--role` or `AIO_ROLE`; `undefined` uses the stored one. */
+  role?: MachineRole;
   /** Set when the arguments are invalid; the caller prints it and exits 2. */
   error?: string;
 }
@@ -66,19 +69,30 @@ export function parseServerArgs(
 ): ServerArgs {
   let command: string | undefined;
   let dataDir: string | undefined = env[DATA_DIR_ENV] || undefined;
+  let roleText: string | undefined = env[ROLE_ENV] || undefined;
+  let roleSource = ROLE_ENV;
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i] as string;
     if (arg === "--data-dir" || arg.startsWith("--data-dir=")) {
       const value = arg === "--data-dir" ? argv[++i] : arg.slice("--data-dir=".length);
       if (!value) return { error: "--data-dir needs a directory." };
       dataDir = value;
+    } else if (arg === "--role" || arg.startsWith("--role=")) {
+      const value = arg === "--role" ? argv[++i] : arg.slice("--role=".length);
+      if (!value) return { error: "--role needs hub, node, or both." };
+      roleText = value;
+      roleSource = "--role";
     } else if (command === undefined) {
       command = arg;
     } else {
       return { error: `Unexpected argument: ${arg}.` };
     }
   }
-  return { command, dataDir: dataDir ? path.resolve(dataDir) : undefined };
+  const role = parseRole(roleText);
+  if (roleText !== undefined && role === undefined) {
+    return { error: `${roleSource} must be hub, node, or both, not ${roleText}.` };
+  }
+  return { command, dataDir: dataDir ? path.resolve(dataDir) : undefined, role };
 }
 
 /**
@@ -93,7 +107,7 @@ export function serverHome(env: NodeJS.ProcessEnv = process.env): string {
 
 export async function main(argv: string[]): Promise<number> {
   const home = serverHome();
-  const { command, dataDir, error } = parseServerArgs(argv);
+  const { command, dataDir, role, error } = parseServerArgs(argv);
   if (error) {
     process.stderr.write(`${error} Run aio-server --help.\n`);
     return 2;
@@ -110,16 +124,20 @@ export async function main(argv: string[]): Promise<number> {
   }
   if (command === "--help" || command === "-h") {
     process.stdout.write(
-      "Usage: aio-server [--data-dir PATH] [install-service]\n\n" +
+      "Usage: aio-server [--data-dir PATH] [--role ROLE] [install-service]\n\n" +
         "Without a command, starts the AI Orchestrator server: the API over HTTPS on 127.0.0.1,\n" +
         "with the certificate in server.crt, and the dev-server proxy over HTTP.\n" +
         "install-service writes ~/.config/systemd/user/aio-server.service and enables it.\n\n" +
         "Options:\n" +
         "  --data-dir PATH         The directory for aio.db, server.token, server.crt, server.key,\n" +
         "                          state/, sessions/, and the 3.x records to import.\n" +
-        "                          Default: ~/.ai-orchestrator.\n\n" +
+        "                          Default: ~/.ai-orchestrator.\n" +
+        "  --role ROLE             This run's multi-host role: hub, node, or both. Default: the role\n" +
+        "                          in the settings, else both. A hub listens for node links on port\n" +
+        "                          21402 on every interface once it has issued an enrollment code.\n\n" +
         "Environment:\n" +
         "  AIO_DATA_DIR       The data directory, when --data-dir isn't given.\n" +
+        "  AIO_ROLE           The role, when --role isn't given.\n" +
         "  AIO_HOME           The home directory to use in place of yours.\n" +
         "  AIO_ENGINE_VERSION The engine version to expect. Default: this server's version plus the\n" +
         "                          engine's content hash, VERSION+HASH, when the build wrote one.\n" +
@@ -147,6 +165,7 @@ export async function main(argv: string[]): Promise<number> {
     dataDir,
     createCore,
     version,
+    role,
     expectedEngineVersion:
       process.env.AIO_ENGINE_VERSION ??
       expectedEngineVersion(version, engineIdentityFiles(repoRoot, imageContext)),
@@ -163,6 +182,9 @@ export async function main(argv: string[]): Promise<number> {
     process.stderr.write(`Dev-server proxy on http://*.localhost:${app.proxyPort}\n`);
   }
   if (dataDir) process.stderr.write(`Using the data directory ${dataDir}.\n`);
+  if (role) process.stderr.write(`Running with the role ${role}.\n`);
+  const linkPort = app.multiHost.hub.port;
+  if (linkPort !== null) process.stderr.write(`Hub listening for node links on port ${linkPort}.\n`);
 
   await new Promise<void>((resolve) => {
     let closing = false;
