@@ -123,6 +123,62 @@ describe("DataTable", () => {
     const first = screen.getAllByRole("row")[1] as HTMLElement;
     expect(within(first).getByText("c")).toBeInTheDocument();
   });
+  it("keeps each row's DOM node when fresh but equal data arrives", () => {
+    const onActivate = vi.fn();
+    const fresh = () => [
+      { id: "a", n: 1 },
+      { id: "b", n: 2 },
+      { id: "c", n: 3 },
+    ];
+    const table = (rows: Row[], onAct: (r: Row) => void) => (
+      <DataTable
+        rows={rows}
+        rowKey={(r) => r.id}
+        columns={columns}
+        selected={new Set()}
+        onSelectionChange={() => undefined}
+        onActivate={onAct}
+      />
+    );
+    const { rerender } = render(table(fresh(), onActivate));
+    const before = screen.getAllByRole("row").slice(1);
+    // New row objects, a new callback, and a reordered, changed row.
+    rerender(table(fresh().reverse(), vi.fn()));
+    const after = screen.getAllByRole("row").slice(1);
+    expect(after).toHaveLength(3);
+    for (const row of before) expect(after).toContain(row);
+    rerender(table(fresh(), onActivate));
+    expect(screen.getAllByRole("row").slice(1)).toEqual(before);
+  });
+  it("opens the row on a double-click that spans an update", () => {
+    const onActivate = vi.fn();
+    const rows = () => [
+      { id: "a", n: 1 },
+      { id: "b", n: 2 },
+    ];
+    const table = (data: Row[]) => (
+      <DataTable
+        rows={data}
+        rowKey={(r) => r.id}
+        columns={columns}
+        selected={new Set()}
+        onSelectionChange={() => undefined}
+        onActivate={onActivate}
+      />
+    );
+    const { rerender } = render(table(rows()));
+    const row = screen.getAllByRole("row")[2] as HTMLElement;
+    fireEvent.mouseDown(row, { button: 0 });
+    fireEvent.mouseUp(row);
+    rerender(table(rows()));
+    fireEvent.mouseDown(row, { button: 0 });
+    fireEvent.mouseUp(row);
+    rerender(table(rows()));
+    expect(row.isConnected).toBe(true);
+    fireEvent.doubleClick(row);
+    expect(onActivate).toHaveBeenCalledTimes(1);
+    expect(onActivate).toHaveBeenCalledWith({ id: "b", n: 2 });
+  });
   it("shows the empty text", () => {
     render(
       <DataTable

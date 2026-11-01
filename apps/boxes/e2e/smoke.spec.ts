@@ -151,10 +151,16 @@ test("types into a running box's terminal and sees the echo", async () => {
     "true",
   );
   await page.getByLabel("Filter boxes").fill(boxId as string);
-  const row = page.getByRole("row").filter({ hasText: boxId as string });
-  await row.dblclick();
+  // Find the row by its key, not its text. A live update can replace the
+  // row between Playwright's checks and its click, so retry the double-click
+  // until the terminal opens. Opening a box that is already open only
+  // selects its tab, so a repeat is safe.
+  const row = page.locator(`tr[data-key="${boxId as string}"]`);
   const terminal = page.locator(".bx-terminal-pane:not([hidden]) .xterm");
-  await expect(terminal).toBeVisible({ timeout: 30_000 });
+  await expect(async () => {
+    await row.dblclick({ timeout: 5_000 });
+    await expect(terminal).toBeVisible({ timeout: 5_000 });
+  }).toPass({ timeout: 45_000 });
   // The terminal must be tall enough for Claude's input line, whatever
   // split the window has.
   await expect
