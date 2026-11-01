@@ -509,7 +509,10 @@ export class LinkPeer implements NodeLink {
       this.pending.delete(id);
       p.reject(err);
     }
-    for (const stream of [...this.outgoing.values()]) stream.finish(1001, "The link closed.");
+    // 1006, the code for a connection lost without a close frame, tells the
+    // stream's owner that the link died rather than the other end closing
+    // the stream, so a relay can say which machine went away.
+    for (const stream of [...this.outgoing.values()]) stream.finish(1006, "The link closed.");
     for (const [id, entry] of this.incoming) {
       this.incoming.delete(id);
       if (entry.timer) clearTimeout(entry.timer);

@@ -353,7 +353,7 @@ export class PendingRelay {
       const linkLost = code === 1006 || code === 1005 ? null : code;
       socket.close(
         sendableCode(linkLost ?? 1014),
-        closeReason(linkLost ? reason : reason || `The link to machine ${this.machineId} closed.`),
+        closeReason(linkLost ? reason : `The link to machine ${this.machineId} closed.`),
       );
     }
   }
