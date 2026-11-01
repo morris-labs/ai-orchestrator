@@ -1,4 +1,9 @@
-import { defaultConfig, type GlobalSettings, type OpStatus, type SecretRef } from "@agentbox/contracts";
+import {
+  defaultConfig,
+  type GlobalSettings,
+  type OpStatus,
+  type SecretRef,
+} from "@agentbox/contracts";
 import { describe, expect, it } from "vitest";
 import { ApiError } from "../../src/api/errors.js";
 import { OpCli, type OpClient, type OpItemInfo } from "../../src/secrets/op.js";
@@ -18,7 +23,13 @@ const ITEM_JSON = JSON.stringify({
     { id: "credential", label: "credential", type: "CONCEALED", value: SECRET },
     { id: "empty", label: "notes", type: "STRING", value: "" },
     { id: "otp1", label: "one-time password", type: "OTP", value: "otpauth://totp/x" },
-    { id: "f2", label: "host", type: "STRING", value: "api.example.com", section: { label: "Net" } },
+    {
+      id: "f2",
+      label: "host",
+      type: "STRING",
+      value: "api.example.com",
+      section: { label: "Net" },
+    },
   ],
 });
 
@@ -119,7 +130,12 @@ describe("SecretsService.available", () => {
     ],
   };
 
-  function make(op: FakeOp, vaults: string[] = [], global: SecretRef[] = [], project: SecretRef[] = []) {
+  function make(
+    op: FakeOp,
+    vaults: string[] = [],
+    global: SecretRef[] = [],
+    project: SecretRef[] = [],
+  ) {
     let t = 1_000;
     const settings: GlobalSettings = {
       ...defaultConfig(),
@@ -155,9 +171,12 @@ describe("SecretsService.available", () => {
     op.items["Ops"] = [];
     op.items["AgentBox"] = [];
     expect((await make(op, ["Mine"]).svc.available()).vaults).toEqual(["Mine"]);
-    const fromRefs = make(op, [], [{ name: "Y", ref: "op://Ops/y/z" }], [
-      { name: "X", ref: "op://Dev/x/y" },
-    ]);
+    const fromRefs = make(
+      op,
+      [],
+      [{ name: "Y", ref: "op://Ops/y/z" }],
+      [{ name: "X", ref: "op://Dev/x/y" }],
+    );
     expect((await fromRefs.svc.available()).vaults).toEqual(["Dev", "Ops"]);
     expect((await make(op).svc.available()).vaults).toEqual(["AgentBox"]);
   });
@@ -203,7 +222,8 @@ describe("SecretsService.available", () => {
     const runner = new FakeRunner((argv) => {
       if (argv[1] === "--version") return { stdout: "2.30.0" };
       if (argv[1] === "whoami") return { stdout: "{}" };
-      if (argv[2] === "list") return { stdout: JSON.stringify([{ id: "i1", title: "Token GitHub" }]) };
+      if (argv[2] === "list")
+        return { stdout: JSON.stringify([{ id: "i1", title: "Token GitHub" }]) };
       return { stdout: ITEM_JSON };
     });
     const settings: GlobalSettings = { ...defaultConfig(), secretVaults: ["Mine"] };

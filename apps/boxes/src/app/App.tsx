@@ -6,8 +6,10 @@ import {
   type ConvertToWorktreeResult,
   type ImageStatus,
   type Job,
+  type Mount,
   type Platform,
   type ProjectSummary,
+  type SecretRef,
   type SshRemote,
   type Updates,
 } from "@agentbox/contracts";
@@ -70,6 +72,22 @@ import { useBoxesData } from "./useBoxesData";
 const TABLE_MIN_HEIGHT = 120;
 /** Pixels an open terminal pane keeps: the tab strip and about 12 rows. */
 const TERMINAL_MIN_HEIGHT = 260;
+
+/** The project settings a box dialog edited: only the parts that changed. */
+interface ProjectEdits {
+  tcpMaps?: { host: number; container: number }[];
+  mounts?: Mount[];
+  secretRefs?: SecretRef[];
+}
+
+/** The project edits of a dialog result, or `null` when it changed none. */
+function projectEdits(r: BoxDialogResult): ProjectEdits | null {
+  if (!r.project && !r.secretRefs) return null;
+  return {
+    ...(r.project ?? {}),
+    ...(r.secretRefs ? { secretRefs: r.secretRefs } : {}),
+  };
+}
 
 function load(key: string): string | null {
   try {
@@ -718,7 +736,7 @@ export function App() {
   /** Saves project settings edited in the box dialog; returns an error or null. */
   const saveProjectSettings = async (
     dir: string,
-    project: BoxDialogResult["project"],
+    project: ProjectEdits | null,
   ): Promise<string | null> => {
     if (!project) return null;
     // A box created just now may have created the project on the server.
@@ -731,7 +749,7 @@ export function App() {
     if (!p) p = await client.call("projects.create", { body: { root: normalizeDir(dir) } });
     const res = await client.call("projects.update", {
       params: { projectId: p.id },
-      body: { tcpMaps: project.tcpMaps, mounts: project.mounts },
+      body: project,
     });
     if (res.staleBoxes.length > 0) {
       const summary = data.projects.find((x) => x.project.id === p.id) ?? null;
@@ -787,7 +805,7 @@ export function App() {
     form: BoxForm,
     mode: "new" | "fork",
     forkFrom: string | undefined,
-    project: BoxDialogResult["project"],
+    project: ProjectEdits | null,
   ): Promise<string | null> => {
     // Project settings edited in the dialog are saved only once the server
     // has accepted the box, so a refused create leaves the project as it
@@ -881,10 +899,10 @@ export function App() {
   };
 
   const acceptNew = (r: BoxDialogResult) =>
-    runCreate("New Box", r.form, "new", undefined, r.project);
+    runCreate("New Box", r.form, "new", undefined, projectEdits(r));
 
   const acceptFork = (source: BoxView) => (r: BoxDialogResult) =>
-    runCreate("Fork Conversation", r.form, "fork", source.box.id, r.project);
+    runCreate("Fork Conversation", r.form, "fork", source.box.id, projectEdits(r));
 
   const acceptEdit = (view: BoxView) => async (r: BoxDialogResult) => {
     // The box update goes first, so a refused update leaves the project as it
@@ -915,7 +933,7 @@ export function App() {
     }
     setDialog(null);
     try {
-      await saveProjectSettings(view.box.targetDir, r.project);
+      await saveProjectSettings(view.box.targetDir, projectEdits(r));
     } catch (err) {
       void inform("Edit Box", `Saving the project settings failed: ${errorMessage(err)}`);
     }

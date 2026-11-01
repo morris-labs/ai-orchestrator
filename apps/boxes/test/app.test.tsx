@@ -542,6 +542,36 @@ describe("main window", () => {
     expect(server.callsTo("projects.update")).toHaveLength(0);
   });
 
+  it("saves the ticked secrets to the project without offering a restart", async () => {
+    const user = userEvent.setup();
+    const server = new FakeServer({ boxes: boxes() });
+    server.state.secretCandidates = [
+      {
+        vault: "AgentBox",
+        item: "Token GitHub",
+        itemId: "i1",
+        field: "credential",
+        type: "CONCEALED",
+        ref: "op://AgentBox/Token GitHub/credential",
+        suggestedName: "TOKEN_GITHUB_CREDENTIAL",
+      },
+    ];
+    await renderApp(server);
+    await waitFor(() => expect(rowOf("Site work")).toHaveAttribute("aria-selected", "true"));
+    await user.keyboard("{Control>}{Shift>}E{/Shift}{/Control}");
+    const dialog = await screen.findByRole("dialog", { name: "Edit Box" });
+    await user.click(within(dialog).getByRole("button", { name: /Secrets \(project\)/ }));
+    await user.click(await within(dialog).findByLabelText("Token GitHub credential"));
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(server.callsTo("projects.update")).toHaveLength(1));
+    expect(server.callsTo("projects.update")[0]?.body).toEqual({
+      secretRefs: [
+        { name: "TOKEN_GITHUB_CREDENTIAL", ref: "op://AgentBox/Token GitHub/credential" },
+      ],
+    });
+    expect(screen.queryByText(/keeps its old mounts/)).toBeNull();
+  });
+
   it("creates a box as a job and opens its terminal", async () => {
     const user = userEvent.setup();
     const server = new FakeServer({ boxes: boxes() });

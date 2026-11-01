@@ -933,11 +933,7 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
         query: { refresh: o.refresh ? "true" : "false" },
       });
       print(r, () => {
-        const rows = r.candidates.map((c) => [
-          c.suggestedName,
-          c.ref,
-          c.type,
-        ]);
+        const rows = r.candidates.map((c) => [c.suggestedName, c.ref, c.type]);
         const errors = r.vaultErrors.map((e) => `${e.vault}: ${e.message}\n`).join("");
         return `${table(["NAME", "REFERENCE", "TYPE"], rows)}${errors}`;
       });

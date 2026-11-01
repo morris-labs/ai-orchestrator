@@ -17,6 +17,7 @@ import {
   type Notification,
   type Project,
   type PromptTemplates,
+  type SecretCandidate,
   type ServerRouteKey,
   type SetupCheck,
   type ImageStatus,
@@ -84,6 +85,10 @@ export interface FakeState {
   dirs: Record<string, string[]>;
   /** Directories that hold an executable `new-issue.sh`, for `fs.dirs`. */
   newIssueScriptDirs: string[];
+  /** The 1Password fields `secrets.available` lists. */
+  secretCandidates: SecretCandidate[];
+  /** When set, `secrets.available` fails with this code. */
+  secretsError: "secrets_locked" | "secrets_unavailable" | null;
 }
 
 export interface FakeServerOptions {
@@ -179,6 +184,8 @@ export class FakeServer {
         "/home/user/work": [],
       },
       newIssueScriptDirs: [],
+      secretCandidates: [],
+      secretsError: null,
     };
   }
 
@@ -450,7 +457,8 @@ const defaultHandlers: Partial<Record<HttpRouteKey, FakeHandler>> = {
     if (body.mounts) p.mounts = body.mounts;
     if (body.tcpMaps) p.tcpMaps = body.tcpMaps;
     if (body.secretRefs) p.secretRefs = body.secretRefs;
-    const stale = body.mounts || body.tcpMaps || body.secretRefs;
+    // Secret names are not stale: the broker reads them on every request.
+    const stale = body.mounts || body.tcpMaps;
     return {
       project: p,
       staleBoxes: stale
@@ -720,6 +728,17 @@ const defaultHandlers: Partial<Record<HttpRouteKey, FakeHandler>> = {
     const dir = (r.body as { defaultTargetDir?: string }).defaultTargetDir;
     if (dir) s.state.settings.defaultTargetDir = dir;
     return { ok: true };
+  },
+  "secrets.available": (_r, s) => {
+    if (s.state.secretsError) {
+      throw new FakeApiError(s.state.secretsError, "1Password is not available.", 503);
+    }
+    return {
+      vaults: ["AgentBox"],
+      candidates: s.state.secretCandidates,
+      vaultErrors: [],
+      fetchedAt: T0,
+    };
   },
   "settings.get": (_r, s) => s.state.settings,
   "settings.patch": (r, s) => {

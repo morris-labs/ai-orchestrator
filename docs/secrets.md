@@ -42,6 +42,55 @@ The following example sets two references on a project:
 | `DATABASE_URL` | `op://Development/orders-db/connection-string` |
 | `STRIPE_API_KEY` | `op://Development/stripe-test/credential` |
 
+### Pick secrets from 1Password
+
+You can pick the references from a list instead of typing them. The list
+comes from your 1Password vaults, and it never holds a value.
+
+To pick secrets in the Boxes app, follow these steps:
+
+1. Open the New Box, Edit Box, or Fork Conversation dialog, and expand
+   **Secrets (project)**.
+1. Filter the list, and tick the fields the project needs. The list groups
+   fields by 1Password item. Each ticked field gets an environment variable
+   name, which you can edit. The app proposes an upper snake case name from
+   the item and the field, for example `TOKEN_GITHUB_CREDENTIAL`.
+1. Click **Create**, **Save**, or **Fork**. The app saves the ticked list as
+   the project's references.
+
+The ticks edit the project's references, not the box's. A project's boxes
+share one container and one secrets broker, so the server can't limit a
+secret to one box. The section says that it applies to every box in the
+project. A box with its own classic container has a project too, and the
+section edits that project's list. Global references show as ticked and
+locked, because you edit them in the global settings. A reference that
+1Password no longer lists stays in the project, marked missing, until you
+untick it. A change takes effect at once, without a container restart.
+
+The server builds the list with the `op` CLI, using
+`op item list --vault VAULT` and `op item get ITEM`. It keeps only each
+field's label, section, and type, and the `op://VAULT/ITEM/FIELD`
+reference. It drops every value before the data leaves the `op` wrapper,
+and skips empty fields and one-time password fields. The server caches the
+list for 30 seconds. The **Refresh** button, and the `--refresh` flag of the
+CLI, skip the cache.
+
+The server searches these vaults, in this order:
+
+1. The vaults in the `secretVaults` setting, set with
+   `PATCH /api/v1/settings` and `{"secretVaults": ["VAULT"]}`.
+1. The vaults that existing global and project references name.
+1. The `AgentBox` vault.
+
+A service account reads only its own vaults, whatever the setting says. A
+vault that can't be read appears as a note under the list, and the other
+vaults still show. When 1Password is locked or `op` is missing, the section
+shows the same `secrets_locked` or `secrets_unavailable` message as a launch.
+
+To list the candidates from a terminal, run `agentbox secrets available`.
+The API route is `GET /api/v1/secrets/available`, with `refresh=true` to
+skip the cache.
+
 ### The secrets broker
 
 For each project container, the server listens on a Unix socket,

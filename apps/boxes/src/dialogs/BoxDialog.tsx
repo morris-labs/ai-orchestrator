@@ -9,11 +9,19 @@ import {
   type Mount,
   type Platform,
   type Project,
+  type SecretRef,
   type SshRemote,
 } from "@agentbox/contracts";
 import { Button, Collapsible, Dialog, errorMessage, useApiClient, useInFlight } from "@agentbox/ui";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { SecretsPicker } from "../components/SecretsPicker";
 import { mountProblems, tcpMapProblems, toTcpMaps } from "../logic/mounts";
+import {
+  refsToSave,
+  secretProblems,
+  selectionFromRefs,
+  type SecretSelection,
+} from "../logic/secrets";
 import {
   adopting,
   autoFillName,
@@ -39,6 +47,8 @@ export interface BoxDialogResult {
   project: { tcpMaps: { host: number; container: number }[]; mounts: Mount[] } | null;
   /** Whether the person chose the model and the effort by hand. */
   handPicked: { model: boolean; effort: boolean };
+  /** The project's secret references to save, or `null` when the ticks did not change. */
+  secretRefs: SecretRef[] | null;
 }
 
 export interface BoxDialogProps {
@@ -120,6 +130,16 @@ export function BoxDialog(props: BoxDialogProps) {
     })),
   );
   const [projectTouched, setProjectTouched] = useState(false);
+  // The project's secret references the person ticked. They follow the
+  // project of the target directory until the person changes a tick.
+  const [secretSel, setSecretSel] = useState<SecretSelection>(() =>
+    selectionFromRefs(project?.secretRefs ?? []),
+  );
+  const [secretsTouched, setSecretsTouched] = useState(false);
+  const projectSecretsKey = JSON.stringify(project?.secretRefs ?? []);
+  useEffect(() => {
+    if (!secretsTouched) setSecretSel(selectionFromRefs(project?.secretRefs ?? []));
+  }, [projectSecretsKey, secretsTouched]);
 
   const set = <K extends keyof BoxForm>(key: K, value: BoxForm[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
@@ -241,10 +261,12 @@ export function BoxDialog(props: BoxDialogProps) {
       if (projectTouched) {
         problems.push(...tcpMapProblems(portRows), ...mountProblems(mountList));
       }
+      if (secretsTouched) problems.push(...secretProblems(secretSel));
       setErrors(problems);
       if (problems.length > 0) return;
       try {
         const err = await props.onAccept({
+          secretRefs: secretsTouched ? refsToSave(secretSel, project?.secretRefs ?? []) : null,
           form,
           project: projectTouched ? { tcpMaps: toTcpMaps(portRows), mounts: mountList } : null,
           handPicked: { ...handPicked.current },
@@ -590,6 +612,17 @@ export function BoxDialog(props: BoxDialogProps) {
             Add folder
           </Button>
         </div>
+      </Collapsible>
+      <Collapsible title="Secrets (project)">
+        <SecretsPicker
+          selection={secretSel}
+          globalRefs={settings?.secretRefs ?? []}
+          projectName={project?.name ?? null}
+          onChange={(next) => {
+            setSecretsTouched(true);
+            setSecretSel(next);
+          }}
+        />
       </Collapsible>
       {errors.length > 0 && (
         <div role="alert" className="ab-error-text">
