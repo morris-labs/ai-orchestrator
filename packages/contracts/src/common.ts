@@ -106,6 +106,10 @@ export type RunId = z.infer<typeof RunIdSchema>;
  * - `docker_unavailable`: the Docker daemon is unreachable (503).
  * - `image_missing`: the engine image doesn't exist (409).
  * - `invalid_state`: the run's status doesn't allow the action (409).
+ * - `machine_offline`: the machine a request names is enrolled but not
+ *   connected, or the link to the hub is down (503).
+ * - `machine_timeout`: the machine a request names didn't answer in time
+ *   (504).
  */
 export const ApiErrorCodeSchema = z.enum([
   "adoption_refused",
@@ -126,6 +130,8 @@ export const ApiErrorCodeSchema = z.enum([
   "invalid_state",
   "unauthorized",
   "internal",
+  "machine_offline",
+  "machine_timeout",
 ]);
 export type ApiErrorCode = z.infer<typeof ApiErrorCodeSchema>;
 
