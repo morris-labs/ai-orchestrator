@@ -7,6 +7,7 @@ import http from "node:http";
 import tls from "node:tls";
 import type { NodeLinkState } from "@aio/contracts";
 import WebSocket from "ws";
+import type { FastifyInstance } from "fastify";
 import { ApiError } from "../api/errors.js";
 import {
   newNodeKey,
@@ -31,7 +32,7 @@ export interface NodeAgentOptions {
   /** The hello this node sends; `name` is replaced by the enrolled name. */
   hello: () => LinkHello;
   token: string;
-  api: () => import("fastify").FastifyInstance | null;
+  api: () => FastifyInstance | null;
   /** The link handlers the hub may call, by `METHOD /path`. */
   internal: ReadonlyMap<string, InternalHandler>;
   timing?: LinkTiming & {

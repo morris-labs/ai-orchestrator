@@ -16,6 +16,7 @@ import { X509Certificate } from "node:crypto";
 import { MachineNameSchema, type EnrollmentCode, type Machine } from "@aio/contracts";
 import { WebSocketServer, type WebSocket } from "ws";
 import { z } from "zod";
+import type { FastifyInstance } from "fastify";
 import { ApiError } from "../api/errors.js";
 import { issueNodeCertificate, loadOrCreateHubIdentity, type HubIdentity } from "./ca.js";
 import { createDispatcher, type InternalHandler } from "./dispatch.js";
@@ -87,7 +88,7 @@ export interface HubOptions {
   address: () => string;
   /** The server token, for requests that nodes send into this machine's API. */
   token: string;
-  api: () => import("fastify").FastifyInstance | null;
+  api: () => FastifyInstance | null;
   /** The link handlers nodes may call, by `METHOD /path`. */
   internal: ReadonlyMap<string, InternalHandler>;
   /** Whether a node may call this API path over its link. */

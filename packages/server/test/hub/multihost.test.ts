@@ -19,6 +19,9 @@ import { tempDir } from "../tmp.js";
 const VERSION = "1.0.0-test";
 const SECRET = "synthetic-secret-value";
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- response bodies the tests index freely
+type Json = any;
+
 const apps: App[] = [];
 
 afterEach(async () => {
@@ -50,7 +53,7 @@ interface Server {
   home: string;
   dataDir: string;
   op: ReturnType<typeof fakeOp>;
-  api(method: string, url: string, body?: unknown): Promise<{ status: number; json: any }>;
+  api(method: string, url: string, body?: unknown): Promise<{ status: number; json: Json }>;
 }
 
 async function startServer(

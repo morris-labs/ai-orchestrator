@@ -82,12 +82,9 @@ export class CredentialStore {
       ["claude", ".credentials.json"],
       ["codex", "auth.json"],
     ] as const) {
-      let names: string[] = [];
-      try {
-        names = await fs.readdir(path.join(this.opts.dataDir, "accounts", vendor));
-      } catch {
-        names = [];
-      }
+      const names = await fs
+        .readdir(path.join(this.opts.dataDir, "accounts", vendor))
+        .catch(() => [] as string[]);
       for (const name of names) {
         const key = `account/${vendor}/${name}/${file}`;
         if (isCredentialKey(key)) keys.push(key);
