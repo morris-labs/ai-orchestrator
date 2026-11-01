@@ -14,6 +14,7 @@ import {
   RoleSchema,
   SeveritySchema,
   VerdictSchema,
+  hostToContainer,
   isReadOnlyPostPush,
   parseAccountId,
   type AccountSeedReport,
@@ -23,6 +24,7 @@ import {
   type Ceiling,
   type ContainerInfo,
   type Finding,
+  type HostOs,
   type Job,
   type ProjectSummary,
   type RunState,
@@ -66,6 +68,11 @@ export interface CliDeps {
   signal?: AbortSignal;
   /** The directory relative paths resolve against; the process's own by default. */
   cwd?: string;
+  /**
+   * The host OS, which decides how a host path maps to the path a box's
+   * container sees. Default `linux`; `main.ts` passes the real one.
+   */
+  hostOs?: HostOs;
 }
 
 /** A usage problem the CLI reports with exit code 2. */
@@ -135,16 +142,31 @@ function parsePortPair(spec: string): { host: number; container: number } {
 
 /**
  * Parses `HOST[:CONTAINER]`. A relative host path resolves against `cwd`,
- * and a missing container path mirrors the resolved host path.
+ * and a missing container path is the resolved host path's container path:
+ * the host path itself, except on Windows, where the colon of a drive
+ * letter also belongs to the host path.
  */
-function parseMount(spec: string, cwd: string): { host: string; container: string } {
-  const i = spec.indexOf(":");
+function parseMount(
+  spec: string,
+  cwd: string,
+  hostOs: HostOs = "linux",
+): { host: string; container: string } {
+  const from = hostOs === "win32" && /^[A-Za-z]:/.test(spec) ? 2 : 0;
+  const i = spec.indexOf(":", from);
   const host = i < 0 ? spec : spec.slice(0, i);
   const container = i < 0 ? spec : spec.slice(i + 1);
   if (host === "" || container === "")
     throw new UsageError(`Invalid mount ${spec}; use HOST[:CONTAINER].`);
-  const resolved = path.resolve(cwd, host);
-  return { host: resolved, container: i < 0 ? resolved : container };
+  const resolved = hostOs === "win32" ? path.win32.resolve(cwd, host) : path.resolve(cwd, host);
+  if (i >= 0) return { host: resolved, container };
+  try {
+    return {
+      host: resolved,
+      container: hostOs === "win32" ? hostToContainer(resolved, hostOs) : resolved,
+    };
+  } catch (err) {
+    throw new UsageError((err as Error).message);
+  }
 }
 
 function ceilingText(c: Ceiling): string {
@@ -331,7 +353,10 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
   // The server resolves nothing against its own working directory, so every
   // path leaves the CLI absolute.
   const cwd = deps.cwd ?? process.cwd();
-  const absolute = (p: string) => path.resolve(cwd, p);
+  // `path.win32` is what `path` is on Windows; naming it keeps an injected
+  // `hostOs` testable on any host.
+  const absolute = (p: string) =>
+    deps.hostOs === "win32" ? path.win32.resolve(cwd, p) : path.resolve(cwd, p);
   const unchecked = () => {
     const dataDir = globals().dataDir;
     return resolveSettings({
@@ -699,7 +724,7 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
       if (o.policyPath !== undefined) body.policyPath = o.policyPath;
       if (o.tcpMap) body.tcpMaps = (o.tcpMap as string[]).map(parsePortPair);
       if (o.clearTcpMaps) body.tcpMaps = [];
-      if (o.mount) body.mounts = (o.mount as string[]).map((m) => parseMount(m, cwd));
+      if (o.mount) body.mounts = (o.mount as string[]).map((m) => parseMount(m, cwd, deps.hostOs));
       if (o.clearMounts) body.mounts = [];
       if (o.clearCeilings) body.ceilingsOverride = null;
       if (Object.keys(body).length === 0)
@@ -765,7 +790,7 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
     .option("--project <projectId>", "The project; implied by --box.")
     .option(
       "--repo <path>",
-      "The repository as the container sees it, relative to the current directory; implied by --box.",
+      "The repository, relative to the current directory; implied by --box. On Windows, give the host path or the container path under /mnt/host.",
     )
     .option("--base <ref>", "The base ref, or `pr` for the pull request's base.", "origin/main")
     .option("--tip <branch>", "The branch to review; default the checked-out branch.")
@@ -790,12 +815,28 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
       }
       const c = client();
       let projectId: string | undefined = o.project;
-      let repoPath: string | undefined = o.repo === undefined ? undefined : absolute(o.repo);
+      // The engine runs in the container, so it gets the container path:
+      // the same as the host path except on Windows.
+      const toContainer = (p: string) => {
+        try {
+          return hostToContainer(p, deps.hostOs ?? "linux");
+        } catch (err) {
+          throw new UsageError((err as Error).message);
+        }
+      };
+      // On Windows a POSIX path is already a container path.
+      const repoArg = o.repo as string | undefined;
+      let repoPath: string | undefined =
+        repoArg === undefined
+          ? undefined
+          : deps.hostOs === "win32" && repoArg.startsWith("/")
+            ? repoArg
+            : toContainer(absolute(repoArg));
       let tip: string | undefined = o.tip;
       if (o.box) {
         const v = await c.call("boxes.get", { params: { boxId: o.box } });
         projectId ??= v.box.projectId;
-        repoPath ??= v.box.worktree ?? v.box.targetDir;
+        repoPath ??= v.containerWorkDir ?? toContainer(v.box.worktree ?? v.box.targetDir);
         tip ??= v.box.branch;
       }
       if (!projectId || !repoPath) {

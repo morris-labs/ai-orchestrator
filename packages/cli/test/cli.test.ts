@@ -1377,3 +1377,70 @@ describe("child environment", () => {
     expect(env).toEqual({ PATH: "/usr/bin" });
   });
 });
+
+describe("Windows paths", () => {
+  const WIN_CWD = "C:\\Users\\tester\\src\\app";
+  const winCli = (args: string[]) =>
+    runCli(args, {
+      cwd: WIN_CWD,
+      env: { AIO_SERVER: server.url, AIO_TOKEN: TOKEN },
+      home,
+      out: (t) => (out += t),
+      err: (t) => (err += t),
+      pollMs: 5,
+      hostOs: "win32",
+    });
+
+  it("sends a review the container path of a host repository", async () => {
+    server.on("POST /api/v1/runs", { status: 201, body: runState });
+    expect(await winCli(["review", "start", "--project", PROJECT_ID, "--repo", "."])).toBe(0);
+    expect(last()?.body).toMatchObject({ repoPath: "/mnt/host/c/Users/tester/src/app" });
+    expect(
+      await winCli(["review", "start", "--project", PROJECT_ID, "--repo", "/mnt/host/c/x"]),
+    ).toBe(0);
+    expect(last()?.body).toMatchObject({ repoPath: "/mnt/host/c/x" });
+  });
+
+  it("prefers the box view's container working directory", async () => {
+    server.on(`GET /api/v1/boxes/${BOX_ID}`, {
+      body: { ...boxView(), containerWorkDir: "/mnt/host/c/Users/tester/src/app" },
+    });
+    server.on("POST /api/v1/runs", { status: 201, body: runState });
+    expect(await winCli(["review", "start", "--box", BOX_ID])).toBe(0);
+    expect(last()?.body).toMatchObject({ repoPath: "/mnt/host/c/Users/tester/src/app" });
+  });
+
+  it("maps a mount's default container path and keeps the drive colon", async () => {
+    server.on(`PATCH /api/v1/projects/${PROJECT_ID}`, {
+      body: { project, staleBoxes: [] },
+    });
+    await winCli([
+      "project",
+      "set",
+      PROJECT_ID,
+      "--mount",
+      "data",
+      "--mount",
+      "D:\\cache:/cache",
+      "--mount",
+      "E:\\ref",
+    ]);
+    expect(last()?.body).toEqual({
+      mounts: [
+        {
+          host: "C:\\Users\\tester\\src\\app\\data",
+          container: "/mnt/host/c/Users/tester/src/app/data",
+        },
+        { host: "D:\\cache", container: "/cache" },
+        { host: "E:\\ref", container: "/mnt/host/e/ref" },
+      ],
+    });
+  });
+
+  it("refuses a UNC repository", async () => {
+    expect(
+      await winCli(["review", "start", "--project", PROJECT_ID, "--repo", "\\\\server\\share"]),
+    ).toBe(2);
+    expect(err).toMatch(/UNC/);
+  });
+});
