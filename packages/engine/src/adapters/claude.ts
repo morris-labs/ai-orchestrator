@@ -1,6 +1,6 @@
 // The Claude adapter: `claude -p` with `--output-format stream-json`. Flags
-// and output shapes follow docs/v4/claude-headless.md, checked against
-// Claude Code 2.1.310.
+// and output shapes follow the Claude Code headless documentation, checked
+// against Claude Code 2.1.310.
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";

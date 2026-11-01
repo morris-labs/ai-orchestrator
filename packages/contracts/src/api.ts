@@ -1453,7 +1453,7 @@ export const serverRoutes = {
     response: JobSchema,
     status: 202,
   }),
-  // Accounts (docs/v4/design-accounts.md, phase 1)
+  // Accounts (phase 1)
   "accounts.list": http({
     method: "GET",
     path: accounts,

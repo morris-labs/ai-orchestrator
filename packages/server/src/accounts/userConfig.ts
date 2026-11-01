@@ -1,4 +1,4 @@
-// Shared user configuration (owner decision 7 of docs/v4/design-accounts.md).
+// Shared user configuration (see `docs/accounts.md`).
 //
 // The user-level entries of `~/.claude` describe the person, not the
 // subscription: the global `CLAUDE.md`, `settings.json`, skills, agents, and

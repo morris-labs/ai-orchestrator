@@ -5,7 +5,7 @@
 
 // The pieces of a shared (one per project) container that are plain text and
 // files, kept apart from DockerBackend so they can be run and tested without
-// Docker. See plan-projects.md, stage 3.
+// Docker.
 //
 // A shared container's PID 1 is the keeper script. Each conversation is a
 // tmux session started with `docker exec`. The keeper publishes the names of

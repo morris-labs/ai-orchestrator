@@ -1,8 +1,10 @@
 // Runs the Claude adapter against the real `claude` CLI. It costs a few
 // cents, so it runs only with AGENTBOX_REAL_CLAUDE=1. Each run saves the raw
-// stream under fixtures/ for the fixture tests.
+// stream to a temporary directory. The stream holds your paths, session IDs
+// and tool lists, so don't commit it. Replace it with a synthetic fixture
+// under fixtures/ before you use it in a test.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { UsageSampleSchema } from "@agentbox/contracts";
 import { describe, expect, it } from "vitest";
@@ -12,11 +14,12 @@ import { VendorFindingsOutputSchema } from "../../src/adapters/output.js";
 import { tempDir } from "../tmp.js";
 
 const enabled = process.env.AGENTBOX_REAL_CLAUDE === "1";
-const fixtures = join(import.meta.dirname, "fixtures");
+const recorded = join(tmpdir(), "agentbox-recorded");
 
-/** Saves a raw stream as a fixture, with the home directory replaced. */
+/** Saves a raw stream to the temporary directory, with the home directory replaced. */
 function save(name: string, raw: string): void {
-  writeFileSync(join(fixtures, name), raw.split(homedir()).join("/home/user"));
+  mkdirSync(recorded, { recursive: true });
+  writeFileSync(join(recorded, name), raw.split(homedir()).join("/home/user"));
 }
 
 describe.skipIf(!enabled)("Claude adapter against the real CLI", () => {
@@ -51,7 +54,7 @@ describe.skipIf(!enabled)("Claude adapter against the real CLI", () => {
       outputSchema: VendorFindingsOutputSchema,
       onUsage: (sample) => seen.push(sample),
     });
-    save("claude-real-review.jsonl", result.raw);
+    save("claude-review.jsonl", result.raw);
 
     expect(result.output.findings.length).toBeGreaterThanOrEqual(1);
     expect(result.output.findings[0]?.file).toBe("a.ts");
@@ -78,7 +81,7 @@ describe.skipIf(!enabled)("Claude adapter against the real CLI", () => {
       timeoutMs: 120_000,
       outputSchema: z.object({ done: z.boolean() }),
     });
-    save("claude-real-fix.jsonl", result.raw);
+    save("claude-fix.jsonl", result.raw);
     expect(result.output.done).toBe(true);
     expect(readFileSync(join(cwd, "done.txt"), "utf8")).toContain("fixed");
   }, 150_000);

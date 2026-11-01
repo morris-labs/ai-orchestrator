@@ -1,5 +1,5 @@
 // Gets the credentials a child needs from the secrets broker, which replaces
-// the container environment as their source (docs/v4/design-secrets-broker.md).
+// the container environment as their source (see `docs/secrets.md`).
 // The engine asks only for the names a profile takes (`wantsCredential()`)
 // and that the project lists, and hands the values to that one child.
 //

@@ -1,5 +1,5 @@
 // Accounts: records in the `accounts` table plus one folder each under
-// `DATA_DIR/accounts/VENDOR/NAME`. Phase 1 of `docs/v4/design-accounts.md`:
+// `DATA_DIR/accounts/VENDOR/NAME`. See `docs/accounts.md`:
 // the records, their folders, seeding, and the sign-in check. Box launches
 // don't use accounts yet; they mount the host folders whatever
 // `accountsMode` says.

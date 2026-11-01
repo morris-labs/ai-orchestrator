@@ -20,7 +20,7 @@ struct ProjectRecord {
     // the root is not a repository and none has been chosen.
     QString primaryRepo;
     // One container for every conversation in the project (stage 3 of
-    // plan-projects.md). On unless the project opted out, in which case each
+    // the project layer). On unless the project opted out, in which case each
     // box has a container of its own.
     bool sharedContainer = true;
     // The shared container's published ports ("HOST:CONTAINER", the pool new

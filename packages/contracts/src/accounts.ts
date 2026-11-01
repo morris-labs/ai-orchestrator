@@ -1,6 +1,6 @@
 // Accounts: one config folder per vendor sign-in, so that boxes and review
 // runs can use several accounts of one vendor side by side. See
-// `docs/v4/design-accounts.md` and `docs/accounts.md`.
+// `docs/accounts.md`.
 //
 // An account is a database record plus its folder,
 // `DATA_DIR/accounts/VENDOR/NAME/`. The folder holds everything the CLI keeps

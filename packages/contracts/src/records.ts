@@ -2,7 +2,7 @@
 //
 // The server stores these in SQLite (`~/.claude-box/agentbox.db`). The
 // one-time import reads the 3.3.5 key-value files, so every field below maps
-// to a key from `docs/v4/inventory-gui.md` section 3.
+// to a key of the 3.3.5 record files.
 //
 // Each record has two schemas. The read schema (`BoxSchema`, `ProjectSchema`,
 // `SshRemoteSchema`, `GlobalSettingsSchema`) has no defaults: a stored or
@@ -623,9 +623,8 @@ export const GlobalSettingsSchema = z
     /**
      * Where boxes get the agent CLIs' config folders: `host` mounts the
      * host's `~/.claude`, `~/.claude.json`, `~/.codex`, and `~/.copilot`;
-     * `accounts` uses the account folders. Phase 1 of
-     * `docs/v4/design-accounts.md` stores the setting, but every launch still
-     * uses the host folders.
+     * `accounts` uses the account folders. Phase 1
+     * stores the setting, but every launch still uses the host folders.
      */
     accountsMode: AccountsModeSchema,
     /** The default account of each vendor, by account id. */

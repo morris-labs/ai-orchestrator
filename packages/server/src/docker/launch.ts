@@ -2,7 +2,7 @@
 // `DockerBackend::launchSpec`, inventory sections 4.1 and 4.2), minus the
 // port pool, plus the engine port, the engine environment, project TCP maps,
 // and the secrets broker mount. Secret values never reach the spec: the
-// container asks the broker for them (docs/v4/design-secrets-broker.md).
+// container asks the broker for them (see `docs/secrets.md`).
 import fs from "node:fs";
 import path from "node:path";
 import {

@@ -1,6 +1,6 @@
 // The expected template text below is the source of truth for the defaults.
-// It is copied byte for byte from `docs/v4/inventory-gui.md` section 4.7,
-// which matches `gui/src/PromptTemplates.cpp` at 3.3.5. Do not reformat it.
+// It matches `gui/src/PromptTemplates.cpp` at 3.3.5 byte for byte. Do not
+// reformat it.
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
@@ -81,7 +81,7 @@ describe("prompt template defaults", () => {
       EXPECTED_STARTER,
       "cff596918124f9a5d6fe7fb21c888fe06072e4c504bcf0e1e00b3f2a1de057ab",
     ],
-  ])("%s matches the inventory byte for byte", (_name, actual, expected, hash) => {
+  ])("%s matches the 3.3.5 text byte for byte", (_name, actual, expected, hash) => {
     expect(Buffer.from(actual, "utf8").equals(Buffer.from(expected, "utf8"))).toBe(true);
     // Guards against an editor reformatting both copies the same way.
     expect(sha256(expected)).toBe(hash);

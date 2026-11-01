@@ -5,8 +5,7 @@ Copilot. Each account has its own config folder, so you can keep several
 accounts of one vendor, such as a personal Claude Max account and a work
 Claude Pro account.
 
-This page describes phases 1 and 2 of the design in
-[Per-account agent config folders](v4/design-accounts.md). You can create,
+This page describes phases 1 and 2 of per-account agent config folders. You can create,
 import, seed, and check accounts. Boxes use them when the `accountsMode`
 setting is `accounts`; while it is `host`, the default, boxes still mount the
 host's own folders. See [Run boxes on accounts](#run-boxes-on-accounts).

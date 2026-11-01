@@ -34,3 +34,12 @@ dist/
 coverage/
 test-results/
 .pnpm-store/
+
+# Developer notes and plans -- kept locally, not published.
+docs/v4/
+STATUS.md
+PLAN.md
+INFRA.md
+plan-*.md
+CLAUDE.md
+*.log

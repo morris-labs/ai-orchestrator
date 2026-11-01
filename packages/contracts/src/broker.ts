@@ -1,7 +1,7 @@
 // The secrets broker's protocol: HTTP/1.1 with JSON bodies over a Unix
 // socket that the server opens for each project container and mounts into
 // it. The engine and the `agentbox-secret` client in the image speak it.
-// See docs/v4/design-secrets-broker.md.
+// See `docs/secrets.md`.
 import { z } from "zod";
 import { ApiErrorCodeSchema, EnvVarNameSchema } from "./common.js";
 

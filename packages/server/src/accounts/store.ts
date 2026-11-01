@@ -1,5 +1,4 @@
-// The shared Claude transcript store (option S of `docs/v4/design-accounts.md`,
-// decision S): one folder, `DATA_DIR/transcripts/claude`, so that
+// The shared Claude transcript store (see `docs/accounts.md`): one folder, `DATA_DIR/transcripts/claude`, so that
 // `~/.claude-box` is the only folder in the home directory that Agent Box
 // uses for its own data. Every Claude account's `projects` entry is a
 // symbolic link to it, and in host mode the host's `~/.claude/projects`
