@@ -70,6 +70,7 @@ For the details, see [Install AI Orchestrator](docs/install.md).
 - [Troubleshooting](docs/troubleshooting.md)
 - [Migrate from Claude Box 3.x](docs/migration-3x.md)
 - [Architecture](docs/architecture.md)
+- [Host paths in containers](docs/host-paths.md)
 - [Changelog](CHANGELOG.md)
 
 ## Migrating from 3.x

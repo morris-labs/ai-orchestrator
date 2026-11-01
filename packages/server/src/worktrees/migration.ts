@@ -15,7 +15,7 @@ import path from "node:path";
 import type { Box, ConvertToWorktreeResult } from "@aio/contracts";
 import { projectDirFor } from "../catalog/paths.js";
 import { ApiError, messageOf } from "../records/errors.js";
-import { homePaths, stamp, type HostEnv } from "../records/env.js";
+import { homePaths, hostOsOf, stamp, type HostEnv } from "../records/env.js";
 import { git } from "./git.js";
 import {
   addWorktree,
@@ -547,7 +547,9 @@ export async function executeMigration(input: {
   await mergeExcludeRules(plan.repo, `${plan.oldDir}/.git/info/exclude`);
 
   // 3. The worktree on that branch.
-  const added = await addWorktree(plan.repo, plan.slug);
+  const added = await addWorktree(plan.repo, plan.slug, {
+    relativePaths: hostOsOf(env) === "win32",
+  });
   if (!added.ok) await failAfter(`could not create the worktree: ${added.error}`);
   createdWorktree = true;
 

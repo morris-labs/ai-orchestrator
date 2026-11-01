@@ -5,7 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { HOME_PATHS } from "@aio/contracts";
 import type { DockerClient } from "../docker/types.js";
-import { brokerDirName, dataPath, type HostEnv } from "../records/env.js";
+import { brokerDirName, dataPath, hostOsOf, splitMountSpec, type HostEnv } from "../records/env.js";
 
 /**
  * Removes each directory directly under `<data dir>/broker/` that no
@@ -19,7 +19,7 @@ import { brokerDirName, dataPath, type HostEnv } from "../records/env.js";
  * containers, since it then can't tell which directories are in use.
  */
 export async function removeUnusedBrokerDirs(
-  env: Pick<HostEnv, "home" | "dataDir">,
+  env: Pick<HostEnv, "home" | "dataDir" | "hostOs">,
   docker: Pick<DockerClient, "listContainers" | "inspectContainer">,
 ): Promise<string[]> {
   const root = dataPath(env, HOME_PATHS.brokerDir);
@@ -40,7 +40,8 @@ export async function removeUnusedBrokerDirs(
     // mounts it; without inspect data, keep it, since nothing tells.
     if (!inspect) used.add(c.name);
     for (const bind of inspect?.binds ?? []) {
-      const host = bind.split(":")[0] ?? "";
+      // A Windows bind's host part holds the drive letter's colon.
+      const { host } = splitMountSpec(bind, hostOsOf(env));
       if (path.dirname(path.resolve(host)) === root) used.add(path.basename(host));
     }
   }

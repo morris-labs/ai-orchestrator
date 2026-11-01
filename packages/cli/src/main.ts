@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // The `aio` command.
 import { homedir } from "node:os";
+import { hostOsFrom } from "@aio/contracts";
 import { runCli } from "./program.js";
 
 // A SIGINT listener stops Node.js from exiting on Ctrl+C, so every command
@@ -15,5 +16,6 @@ const code = await runCli(process.argv.slice(2), {
   out: (text) => process.stdout.write(text),
   err: (text) => process.stderr.write(text),
   signal: controller.signal,
+  hostOs: hostOsFrom(process.platform),
 });
 process.exitCode = code;

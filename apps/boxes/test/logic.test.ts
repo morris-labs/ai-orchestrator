@@ -509,3 +509,36 @@ describe("store", () => {
     expect(withTransient([a], new Map([[a.box.id, "stopping"]]))[0]?.status).toBe("stopping");
   });
 });
+
+describe("Windows paths", () => {
+  it("parse and format mounts with a drive letter", () => {
+    expect(parseMountLine("C:\\data")).toEqual({ host: "C:\\data", container: "/mnt/host/c/data" });
+    expect(parseMountLine("C:\\data:/data")).toEqual({ host: "C:\\data", container: "/data" });
+    expect(parseMountLine("D:/x y:")).toEqual({ host: "D:/x y", container: "/mnt/host/d/x y" });
+    expect(formatMount({ host: "C:\\data", container: "/mnt/host/c/data" })).toBe("C:\\data");
+    expect(formatMount({ host: "C:\\data", container: "/data" })).toBe("C:\\data:/data");
+  });
+
+  it("accept drive paths and refuse UNC paths as mount sources", () => {
+    expect(mountProblems([{ host: "C:\\data", container: "/mnt/host/c/data" }])).toEqual([]);
+    expect(mountProblems([{ host: "\\\\server\\share", container: "/share" }])[0]).toMatch(/UNC/);
+  });
+
+  it("normalize a directory to the server's stored form", () => {
+    expect(normalizeDir(" c:\\Users\\dev\\app\\ ")).toBe("C:/Users/dev/app");
+    expect(normalizeDir("/w/site/")).toBe("/w/site");
+  });
+
+  it("accept an absolute Windows target directory", () => {
+    const base = {
+      targetDir: "C:\\Users\\dev\\app",
+      layout: "root",
+      name: "x",
+      conversation: "",
+      model: "claude-opus-5-5",
+      platform: "claude",
+    };
+    expect(validateForm(base as never, "new")).toEqual([]);
+    expect(validateForm({ ...base, targetDir: "C:app" } as never, "new")[0]).toMatch(/absolute/);
+  });
+});

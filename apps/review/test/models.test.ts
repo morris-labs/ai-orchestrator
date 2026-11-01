@@ -70,6 +70,14 @@ describe("buildRunRequest", () => {
       tip: "claude/Emails_not_sending",
     });
   });
+
+  it("prefills the container path of a Windows box", () => {
+    const box = { ...demoBox(), worktree: "C:/Users/dev/app/.worktrees/fix" };
+    expect(formFromBox(DEFAULT_FORM, box).repoPath).toBe(
+      "/mnt/host/c/Users/dev/app/.worktrees/fix",
+    );
+    expect(formFromBox(DEFAULT_FORM, box, "/mnt/host/c/x").repoPath).toBe("/mnt/host/c/x");
+  });
 });
 
 describe("filterFindings", () => {

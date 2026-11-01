@@ -8,10 +8,10 @@ import type { Duplex } from "node:stream";
 import { existsSync } from "node:fs";
 import {
   ClientHelloSchema,
+  boxWorkDir,
   EVENT_TYPES,
   ServerStreamFrameSchema,
   TerminalClientMessageSchema,
-  boxWorkDir,
   pathParamsSchema,
   projectContainerName,
   serverRoutes,
@@ -429,7 +429,7 @@ export async function resolveTerminal(
       return {
         container: view.container,
         cmd: shellCmd(),
-        workingDir: boxWorkDir(view.box),
+        workingDir: view.containerWorkDir ?? boxWorkDir(view.box),
         boxId: view.box.id,
         ...size,
       };

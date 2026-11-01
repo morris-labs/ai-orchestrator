@@ -2,6 +2,7 @@
 import {
   EffortSchema,
   boxWorkDir,
+  defaultContainerPath,
   type AccountView,
   type BoxView,
   type ConversationSummary,
@@ -30,6 +31,7 @@ import {
   conversationTooltip,
   defaultLayout,
   formFromBox,
+  isAbsoluteDir,
   normalizeDir,
   projectForDir,
   slugify,
@@ -130,7 +132,7 @@ export function BoxDialog(props: BoxDialogProps) {
   const [mounts, setMounts] = useState<PortRow[]>(() =>
     (project?.mounts ?? []).map((m) => ({
       host: m.host,
-      container: m.container === m.host ? "" : m.container,
+      container: m.container === defaultContainerPath(m.host) ? "" : m.container,
     })),
   );
   const [projectTouched, setProjectTouched] = useState(false);
@@ -166,7 +168,7 @@ export function BoxDialog(props: BoxDialogProps) {
         setForm((f) => ({ ...f, conversation: "", name: r.name }));
       }
     }
-    if (!catalogDir.startsWith("/")) {
+    if (!isAbsoluteDir(catalogDir)) {
       setConversations([]);
       setNewIssueScript(false);
       return;
@@ -238,7 +240,7 @@ export function BoxDialog(props: BoxDialogProps) {
       setMounts(
         (project?.mounts ?? []).map((m) => ({
           host: m.host,
-          container: m.container === m.host ? "" : m.container,
+          container: m.container === defaultContainerPath(m.host) ? "" : m.container,
         })),
       );
     }
@@ -272,7 +274,10 @@ export function BoxDialog(props: BoxDialogProps) {
       const portRows = ports.filter((r) => r.host.trim() !== "" || r.container.trim() !== "");
       const mountList: Mount[] = mounts
         .filter((r) => r.host.trim() !== "")
-        .map((r) => ({ host: r.host.trim(), container: r.container.trim() || r.host.trim() }));
+        .map((r) => ({
+          host: r.host.trim(),
+          container: r.container.trim() || defaultContainerPath(r.host.trim()),
+        }));
       if (projectTouched) {
         problems.push(...tcpMapProblems(portRows), ...mountProblems(mountList));
       }

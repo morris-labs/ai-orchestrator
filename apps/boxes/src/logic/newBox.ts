@@ -9,6 +9,7 @@ import type {
   Platform,
   Project,
 } from "@aio/contracts";
+import { guessHostOs, isAbsoluteHostPath, normalizeWindowsPath } from "@aio/contracts";
 import { relativeTime } from "./format";
 
 export type Layout = "worktree" | "workspace" | "root";
@@ -39,10 +40,26 @@ export function slugify(name: string): string {
   return name.replace(/[^A-Za-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
 }
 
-/** Normalizes a directory for lookups: no trailing slash. */
+/**
+ * Normalizes a directory for lookups: no trailing slash. A Windows path gets
+ * the form the server stores project roots in, `C:/Users/you/project`.
+ */
 export function normalizeDir(dir: string): string {
   const t = dir.trim();
+  if (guessHostOs(t) === "win32") {
+    try {
+      return normalizeWindowsPath(t);
+    } catch {
+      return t;
+    }
+  }
   return t.length > 1 ? t.replace(/\/+$/, "") : t;
+}
+
+/** Whether a directory typed in the dialog is absolute, as a POSIX or a Windows path. */
+export function isAbsoluteDir(dir: string): boolean {
+  const t = dir.trim();
+  return isAbsoluteHostPath(t, guessHostOs(t));
 }
 
 export function projectForDir(projects: readonly Project[], dir: string): Project | undefined {
@@ -111,9 +128,11 @@ export function validateForm(form: BoxForm, mode: DialogMode): string[] {
   const out: string[] = [];
   if (mode !== "edit") {
     if (form.targetDir.trim() === "") out.push("Choose a target directory.");
-    else if (!form.targetDir.trim().startsWith("/")) {
+    else if (!isAbsoluteDir(form.targetDir)) {
       // The server doesn't expand `~`.
-      out.push("The target directory must be an absolute path, such as /home/you/project.");
+      out.push(
+        "The target directory must be an absolute path, such as /home/you/project or C:\\Users\\you\\project.",
+      );
     }
     // Adopting a conversation creates no worktree or folder, so needs no slug.
     if (

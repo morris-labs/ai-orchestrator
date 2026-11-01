@@ -33,7 +33,14 @@ import {
 import type { z } from "zod";
 import type { AccountsRepo } from "../db/repositories.js";
 import type { DockerClient } from "../docker/types.js";
-import { accountDirFor, homePaths, hostToContainer, type HostEnv } from "../records/env.js";
+import {
+  accountDirFor,
+  bindOf,
+  homePaths,
+  hostOsOf,
+  hostToContainer,
+  type HostEnv,
+} from "../records/env.js";
 import { ApiError } from "../records/errors.js";
 import type { SettingsService } from "../records/settings.js";
 import type { SqlDatabase } from "../api/core-interface.js";
@@ -578,12 +585,12 @@ export class AccountService {
       if (!(await this.options.docker.inspectImage(image))) {
         throw new ApiError("image_missing", `The image ${image} doesn't exist. Build it first.`);
       }
-      const containerDir = hostToContainer(dir);
+      const containerDir = hostToContainer(dir, hostOsOf(this.env));
       const result = await this.options.docker.runOnce({
         image,
         entrypoint: [],
         cmd: command,
-        binds: [`${dir}:${containerDir}`],
+        binds: [bindOf(dir, containerDir)],
         env: [`${ACCOUNT_DIR_ENV[account.vendor]}=${containerDir}`, "DISABLE_AUTOUPDATER=1"],
         user: this.env.user,
         timeoutMs: 60_000,
