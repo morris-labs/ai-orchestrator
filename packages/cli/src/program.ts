@@ -43,6 +43,7 @@ import {
 } from "./client.js";
 import { tailEvents, type WebSocketCtor } from "./events.js";
 import { jsonText, keyValues, percent, table, terminalText } from "./format.js";
+import { attachRemote, type TerminalIo } from "./terminal.js";
 import {
   checkAttachArgv,
   checkServerUrl,
@@ -62,6 +63,8 @@ export interface CliDeps {
   /** Runs an attach command with the terminal; resolves with its exit code. */
   exec?: (argv: string[]) => Promise<number>;
   WebSocket?: WebSocketCtor;
+  /** The terminal that `box attach MACHINE/BOX` attaches. Default: standard input and output. */
+  terminal?: TerminalIo;
   /** How often `box new` and `accounts seed` poll their job. */
   pollMs?: number;
   /**
@@ -80,6 +83,9 @@ export interface CliDeps {
 
 /** A usage problem the CLI reports with exit code 2. */
 export class UsageError extends Error {}
+
+const BOX_TARGET_HELP =
+  "The box ID, or MACHINE/BOX for a box on another machine, where MACHINE is a machine ID or name from aio machines list.";
 
 const PLATFORMS: string[] = PlatformSchema.options;
 
@@ -533,14 +539,6 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
     if (!isAbsoluteOn(p, os)) throw relativeOnRemote(p, t.name);
     return os === "win32" ? path.win32.normalize(p) : path.posix.normalize(p);
   };
-  /** Refuses a command that runs a terminal on this machine for another machine's box. */
-  const refuseRemoteTerminal = async (command: string) => {
-    const t = await target();
-    if (!t) return;
-    throw new UsageError(
-      `aio box ${command} runs the terminal on this machine, so it can't reach a box on ${t.name}. Open the box's terminal in the Boxes app, or run the command on ${t.name}.`,
-    );
-  };
   /** Refuses `--machine` for a command about this machine itself. */
   const thisMachineOnly = (command: Command) =>
     command.hook("preAction", () => {
@@ -849,8 +847,34 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
     if (problem) throw new UsageError(problem);
     return r.argv;
   };
+  /**
+   * Attaches to a box on the machine the command goes to. Call `boxRef`
+   * first, so a `MACHINE/BOX` argument picks the machine.
+   */
   const attach = async (boxId: string, kind: "session" | "side" | "shell", platform?: string) => {
-    state.code = await exec(await attachArgv(boxId, kind, platform));
+    const remote = await target();
+    if (!remote) {
+      state.code = await exec(await attachArgv(boxId, kind, platform));
+      return;
+    }
+    const machineId = remote.id;
+    // A box on another machine: a host terminal here can't reach its
+    // container, so the terminal goes through the server and the hub.
+    const s = settings();
+    if (s.token === null)
+      throw new ApiCallError(401, "unauthorized", `No token in AIO_TOKEN or ${s.tokenFile}.`);
+    state.code = await attachRemote({
+      baseUrl: s.baseUrl,
+      token: s.token,
+      machineId,
+      boxId,
+      kind,
+      ...(platform ? { platform: platform as "claude" } : {}),
+      io: deps.terminal ?? { input: process.stdin, output: process.stdout },
+      note: deps.err,
+      WebSocket: deps.WebSocket,
+      tls: serverTls(s),
+    });
   };
 
   box
@@ -860,7 +884,11 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
     .option("--force", "Start it even when its container runs with stale mounts.")
     .action(async (ref: string, o: { force?: boolean }) => {
       const boxId = boxRef(ref);
-      await refuseRemoteTerminal("open");
+      if (await target()) {
+        throw new UsageError(
+          "aio box open works on this machine's boxes. To attach to a running box on another machine, run aio box attach MACHINE/BOX.",
+        );
+      }
       const c = client();
       const v = await c.call("boxes.get", { params: { boxId } });
       if (v.status === "stopped") {
@@ -875,25 +903,23 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
 
   box
     .command("attach")
-    .description("Attach this terminal to a box's session.")
-    .argument("<boxId>")
+    .description(
+      "Attach this terminal to a box's session. For a box on another machine, press Ctrl+] twice to detach.",
+    )
+    .argument("<boxId>", BOX_TARGET_HELP)
     .addOption(
       new Option("--side <platform>", "Attach to a side session instead.").choices(PLATFORMS),
     )
     .action(async (ref: string, o: { side?: string }) => {
-      const boxId = boxRef(ref);
-      await refuseRemoteTerminal("attach");
-      await attach(boxId, o.side ? "side" : "session", o.side);
+      await attach(boxRef(ref), o.side ? "side" : "session", o.side);
     });
 
   box
     .command("shell")
     .description("Open a shell in the box's container.")
-    .argument("<boxId>")
+    .argument("<boxId>", BOX_TARGET_HELP)
     .action(async (ref: string) => {
-      const boxId = boxRef(ref);
-      await refuseRemoteTerminal("shell");
-      await attach(boxId, "shell");
+      await attach(boxRef(ref), "shell");
     });
 
   box

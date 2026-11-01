@@ -201,12 +201,9 @@ describe("--machine", () => {
     });
   });
 
-  it("refuses to attach a terminal on this machine to another machine's box", async () => {
-    for (const command of ["attach", "shell", "open"]) {
-      err = "";
-      expect(await cli(["--machine", "build-server", "box", command, BOX_ID])).toBe(2);
-      expect(err).toContain(`aio box ${command} runs the terminal on this machine`);
-    }
+  it("refuses box open for another machine's box", async () => {
+    expect(await cli(["--machine", "build-server", "box", "open", BOX_ID])).toBe(2);
+    expect(err).toContain("run aio box attach MACHINE/BOX");
     expect(execs).toEqual([]);
     expect(calls()).toEqual([]);
   });

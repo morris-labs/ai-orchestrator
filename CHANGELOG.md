@@ -20,6 +20,11 @@ section's heading must have the form `## [X.Y.Z]`.
   the `machine_offline`, `machine_timeout`, and `hub_unreachable` error
   codes. `MACHINE_ID` is an enrolled machine's ID, `local` for the server
   that gets the call, or `hub` for a node's hub.
+- Terminal attach to a box on another machine, through the hub: in a
+  machine tab of the Boxes app, and with `aio box attach MACHINE/BOX` and
+  `aio box shell MACHINE/BOX` in the CLI, where **Ctrl+]** twice detaches.
+  A terminal that reads slowly holds the box's output back over the link
+  instead of being closed.
 - Machine tabs and a **Machines** page in the Boxes app. On another
   machine, **Browse** lists that machine's directories.
 - Machine health on the **Machines** page: each machine's engine version,

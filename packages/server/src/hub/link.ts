@@ -15,6 +15,13 @@ export interface LinkStream {
   onMessage(cb: (data: Buffer, binary: boolean) => void): void;
   close(code?: number, reason?: string): void;
   onClose(cb: (code: number, reason: string) => void): void;
+  /**
+   * Names the backlog of the sink that the stream's messages go to, such as
+   * a relayed client socket's unsent bytes. A stream with flow control then
+   * grants the sender more credit only while that backlog is under half a
+   * window, so a slow sink holds the sender back instead of filling memory.
+   */
+  setSinkBacklog?(backlog: () => number): void;
 }
 export interface NodeLink {
   readonly machineId: string;

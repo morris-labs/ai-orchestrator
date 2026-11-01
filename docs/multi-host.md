@@ -237,6 +237,42 @@ secrets broker. The following data crosses the link:
 
 If copied sign-ins keep signing machines out, sign in on each node instead.
 
+## Terminals on other machines
+
+A terminal on a box that runs on another machine travels through the hub:
+the server on your machine relays it to the hub, and the hub relays it to
+the machine that runs the box. Keys, output, and terminal size changes
+cross the link; the box's container never leaves its machine.
+
+- **Boxes app**: open the machine's tab and attach to the box as you do on
+  your own machine. **Open Shell in Container** and the side session
+  commands open a tab instead of an external terminal, because a terminal
+  on your machine can't reach a container on another one.
+- **CLI**: name the box as `MACHINE/BOX`:
+
+  ```bash
+  aio box attach MACHINE/BOX
+  ```
+
+  Replace the following:
+
+  - `MACHINE`: the machine's ID or name, from `aio machines list`
+  - `BOX`: the box ID on that machine
+
+  `aio box shell MACHINE/BOX` and `aio box attach MACHINE/BOX --side
+  PLATFORM` work the same way. To detach and leave the box running, press
+  **Ctrl+]** twice. In a session, the tmux detach key, **Ctrl+B** then
+  **D**, also works.
+
+Each terminal can have up to 1 MiB in flight on the link. When your
+terminal reads more slowly than the box prints, the hub holds the box's
+machine back, which pauses the box's output instead of dropping your
+terminal, and other calls on the link keep going.
+
+If the link to the box's machine drops, the terminal closes with the
+WebSocket close code `1014` and a reason that names the machine. The box
+keeps running; attach again once the machine is back online.
+
 ## Files
 
 The hub keeps its certificate authority in `DATA_DIR/hub/`, where

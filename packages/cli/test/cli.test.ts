@@ -1,9 +1,12 @@
 // The aio CLI against a fake server.
+import { EventEmitter } from "node:events";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { PassThrough } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { childEnv, runCli } from "../src/program.js";
+import type WebSocket from "ws";
 import { startFakeServer, type FakeServer } from "./fake-server.js";
 import {
   BOX_ID,
@@ -568,6 +571,172 @@ describe("machines and node", () => {
     server.on("GET /api/v1/node", { body: nodeStatus });
     await cli(["node", "status"]);
     expect(out).toMatch(/Link:\s+connecting/);
+  });
+});
+
+describe("box attach on another machine", () => {
+  const machine = (id: string, name: string, isLocal: boolean) => ({
+    id,
+    name,
+    role: isLocal ? "both" : "node",
+    status: "online",
+    isLocal,
+    serverVersion: "1.0.0",
+    protocol: 1,
+    capabilities: [],
+    lastSeen: null,
+    platform: "linux",
+  });
+
+  /** A terminal double: keys the test types, a screen it reads, and a size it changes. */
+  function fakeTerminal() {
+    const input = Object.assign(new PassThrough(), {
+      isTTY: true,
+      rawModes: [] as boolean[],
+      setRawMode(raw: boolean) {
+        input.rawModes.push(raw);
+      },
+    });
+    const output = Object.assign(new EventEmitter(), {
+      columns: 100,
+      rows: 30,
+      screen: [] as Buffer[],
+      write(data: Uint8Array | string) {
+        output.screen.push(Buffer.from(data));
+      },
+    });
+    return { input, output };
+  }
+
+  /** Records what a terminal socket receives. */
+  function serveTerminal(script: (ws: WebSocket, got: (Buffer | string)[]) => void) {
+    const seen: { path: string; query: Record<string, string>; got: (Buffer | string)[] } = {
+      path: "",
+      query: {},
+      got: [],
+    };
+    const closes: { code: number; reason: string }[] = [];
+    server.onTerminal = (ws, url) => {
+      seen.path = url.pathname;
+      seen.query = Object.fromEntries(url.searchParams);
+      ws.on("message", (data, isBinary) =>
+        seen.got.push(isBinary ? Buffer.from(data as Buffer) : data.toString()),
+      );
+      ws.on("close", (code, reason) => closes.push({ code, reason: reason.toString() }));
+      script(ws, seen.got);
+    };
+    return { seen, closes };
+  }
+
+  function attachCli(args: string[], terminal: ReturnType<typeof fakeTerminal>) {
+    return runCli(args, {
+      env: { AIO_SERVER: server.url, AIO_TOKEN: TOKEN },
+      home,
+      out: (t) => (out += t),
+      err: (t) => (err += t),
+      exec: async (argv) => {
+        execs.push(argv);
+        return 7;
+      },
+      terminal,
+    });
+  }
+
+  const until = async (predicate: () => boolean) => {
+    for (let i = 0; i < 400 && !predicate(); i += 1) await new Promise((r) => setTimeout(r, 5));
+    expect(predicate()).toBe(true);
+  };
+
+  beforeEach(() => {
+    server.on("GET /api/v1/machines", {
+      body: { machines: [machine("local", "desk", true), machine("m1", "node-one", false)] },
+    });
+  });
+
+  it("relays keys, output, and resizes, and exits with the box's exit code", async () => {
+    const terminal = fakeTerminal();
+    const { seen } = serveTerminal((ws, got) => {
+      ws.send(JSON.stringify({ type: "ready", terminalId: "t1" }));
+      ws.send(Buffer.from([0x1b, 0x5b, 0x48, 0xff]), { binary: true });
+      const timer = setInterval(() => {
+        if (got.some((g) => typeof g === "string" && g.includes("resize"))) {
+          clearInterval(timer);
+          ws.send(JSON.stringify({ type: "exit", exitCode: 3 }));
+          ws.close(1000, "ended");
+        }
+      }, 5);
+    });
+    const done = attachCli(["box", "attach", "node-one/" + BOX_ID], terminal);
+    await until(() => terminal.output.screen.length > 0);
+    terminal.input.write(Buffer.from("ls\r"));
+    await until(() => seen.got.length === 1);
+    terminal.output.columns = 120;
+    terminal.output.rows = 40;
+    terminal.output.emit("resize");
+    expect(await done).toBe(3);
+
+    expect(seen.path).toBe("/api/v1/machines/m1/proxy/terminals");
+    expect(seen.query).toEqual({ kind: "session", boxId: BOX_ID, cols: "100", rows: "30" });
+    expect(seen.got[0]).toEqual(Buffer.from("ls\r"));
+    expect(JSON.parse(seen.got[1] as string)).toEqual({ type: "resize", cols: 120, rows: 40 });
+    expect([...Buffer.concat(terminal.output.screen)]).toEqual([0x1b, 0x5b, 0x48, 0xff]);
+    expect(terminal.input.rawModes).toEqual([true, false]);
+    expect(err).toContain("Ctrl+] twice");
+    expect(execs).toEqual([]);
+  });
+
+  it("detaches on Ctrl+] twice and leaves the box running", async () => {
+    const terminal = fakeTerminal();
+    const { seen, closes } = serveTerminal((ws) =>
+      ws.send(JSON.stringify({ type: "ready", terminalId: "t1" })),
+    );
+    const done = attachCli(["box", "shell", "m1/" + BOX_ID], terminal);
+    await until(() => err.includes("Attached"));
+    // One Ctrl+] alone passes through with the next key.
+    terminal.input.write(Buffer.from([0x1d, 0x61]));
+    await until(() => seen.got.length === 1);
+    terminal.input.write(Buffer.from([0x1d]));
+    terminal.input.write(Buffer.from([0x1d]));
+    expect(await done).toBe(0);
+    await until(() => closes.length === 1);
+    expect(seen.query).toMatchObject({ kind: "shell", boxId: BOX_ID });
+    expect(seen.got).toEqual([Buffer.from([0x1d, 0x61])]);
+    expect(closes[0]).toEqual({ code: 1000, reason: "detached" });
+    expect(err).toContain("Detached. The box keeps running.");
+    expect(terminal.input.rawModes).toEqual([true, false]);
+  });
+
+  it("reports the server's refusal and a dropped connection", async () => {
+    const terminal = fakeTerminal();
+    server.refuseTerminal = {
+      status: 503,
+      body: { error: { code: "machine_offline", message: "Machine m1 is offline." } },
+    };
+    expect(await attachCli(["box", "attach", "m1/" + BOX_ID, "--side", "codex"], terminal)).toBe(1);
+    expect(err).toContain("Error (machine_offline): Machine m1 is offline.");
+
+    server.refuseTerminal = null;
+    err = "";
+    const { seen } = serveTerminal((ws) => {
+      ws.send(JSON.stringify({ type: "ready", terminalId: "t1" }));
+      setTimeout(() => ws.close(1014, "The link to machine m1 closed."), 20);
+    });
+    expect(await attachCli(["box", "attach", "m1/" + BOX_ID, "--side", "codex"], terminal)).toBe(1);
+    expect(seen.query).toMatchObject({ kind: "side", platform: "codex" });
+    expect(err).toContain("The link to machine m1 closed.");
+    expect(terminal.input.rawModes).toEqual([true, false]);
+  });
+
+  it("attaches locally for this machine and refuses an unknown one", async () => {
+    server.on(`GET /api/v1/boxes/${BOX_ID}/attach-command`, { body: { argv: sessionArgv() } });
+    const terminal = fakeTerminal();
+    expect(await attachCli(["box", "attach", "desk/" + BOX_ID], terminal)).toBe(7);
+    expect(execs).toHaveLength(1);
+    expect(await attachCli(["box", "attach", "nowhere/" + BOX_ID], terminal)).toBe(2);
+    expect(err).toContain("No machine has the ID or name nowhere.");
+    expect(await attachCli(["box", "attach", "m1/"], terminal)).toBe(2);
+    expect(await attachCli(["box", "open", "m1/" + BOX_ID], terminal)).toBe(2);
+    expect(err).toContain("aio box attach MACHINE/BOX");
   });
 });
 
