@@ -1,11 +1,13 @@
 // A directory picker for the browser, where there is no native dialog: it
 // walks the host's directories through the server's `fs.dirs` route. In
 // Electron, `useDirectoryPicker()` uses the native dialog from the bridge
-// instead.
+// instead, but only for this PC: another machine's directories are browsed
+// through that machine's `fs.dirs` route, never on the local disk.
 import type { DirListing } from "@aio/contracts";
 import { Button, Dialog, errorMessage, useApiClient } from "@aio/ui";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { useMachine } from "../app/machine";
 import { bridge } from "../bridge";
 
 export interface DirectoryPickerProps {
@@ -107,8 +109,9 @@ export function DirectoryPickerDialog(props: DirectoryPickerProps) {
 }
 
 /**
- * Picks a directory: the native dialog in Electron, else the `fs.dirs`
- * picker. Render `element` somewhere in the calling component.
+ * Picks a directory: the native dialog in Electron for this PC, else the
+ * `fs.dirs` picker of the view's machine. Render `element` somewhere in the
+ * calling component.
  */
 export function useDirectoryPicker(): {
   pick: (current?: string) => Promise<string | null>;
@@ -118,11 +121,15 @@ export function useDirectoryPicker(): {
     initial: string | undefined;
     resolve: (p: string | null) => void;
   } | null>(null);
-  const pick = useCallback(async (current?: string) => {
-    const b = bridge();
-    if (b) return b.pickDirectory(current || undefined);
-    return new Promise<string | null>((resolve) => setRequest({ initial: current, resolve }));
-  }, []);
+  const { isLocal } = useMachine();
+  const pick = useCallback(
+    async (current?: string) => {
+      const b = isLocal ? bridge() : undefined;
+      if (b) return b.pickDirectory(current || undefined);
+      return new Promise<string | null>((resolve) => setRequest({ initial: current, resolve }));
+    },
+    [isLocal],
+  );
   const element = request ? (
     <DirectoryPickerDialog
       initialPath={request.initial}

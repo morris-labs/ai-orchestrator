@@ -6,7 +6,8 @@ export interface Tab {
   /** Unique per tab, so a replaced tab gets a fresh terminal. */
   key: string;
   boxId: string;
-  kind: "session" | "side";
+  /** The main session, a side session, or a shell in the container. */
+  kind: "session" | "side" | "shell";
   platform?: Platform;
   title: string;
   tooltip: string;
@@ -111,7 +112,8 @@ export function pickTab(state: TabsState, n: number): TabsState {
 
 /**
  * Keeps tab titles on the conversation name after a rename: a session tab
- * shows the name, a side tab the name and its platform. `names` maps box ids
+ * shows the name, a side tab the name and its platform, and a shell tab the
+ * name and "(shell)". `names` maps box ids
  * to display names; `sideLabel` names a platform. Returns `state` itself when
  * no title changes.
  */
@@ -124,7 +126,12 @@ export function syncTitles(
   const tabs = state.tabs.map((t) => {
     const name = names.get(t.boxId);
     if (name === undefined) return t;
-    const title = t.kind === "side" && t.platform ? `${name} (${sideLabel(t.platform)})` : name;
+    const title =
+      t.kind === "side" && t.platform
+        ? `${name} (${sideLabel(t.platform)})`
+        : t.kind === "shell"
+          ? `${name} (shell)`
+          : name;
     if (title === t.title) return t;
     changed = true;
     return { ...t, title };
