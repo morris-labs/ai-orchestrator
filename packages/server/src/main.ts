@@ -21,7 +21,7 @@ import { defaultImageContext } from "./docker/image.js";
 import { DEV_ENGINES_ENV, parseDevEngines } from "./events/dev-engines.js";
 import { NodeProcessRunner } from "./jobs/process.js";
 import { DATA_DIR_ENV } from "./records/env.js";
-import { currentPlatform, type HostPlatform } from "./platform/host.js";
+import { currentPlatform, serviceEnvFromFile, type HostPlatform } from "./platform/host.js";
 import { installServerService, serviceSummary, systemdExecStart } from "./service/index.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -189,6 +189,18 @@ export async function main(argv: string[]): Promise<number> {
     return 2;
   }
 
+  // macOS and Windows: the 1Password token file that systemd's
+  // EnvironmentFile= loads on Linux.
+  Object.assign(
+    process.env,
+    serviceEnvFromFile(platform, (f) => {
+      try {
+        return readFileSync(f, "utf8");
+      } catch {
+        return null;
+      }
+    }),
+  );
   const version = serverVersion();
   const devEngines = parseDevEngines(process.env[DEV_ENGINES_ENV]);
   const repoRoot = path.resolve(here, "..", "..", "..");

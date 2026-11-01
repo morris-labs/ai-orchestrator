@@ -16,6 +16,7 @@ import {
   installHint,
   openerArgv,
   ptyArgv,
+  serviceEnvFromFile,
   serviceManagerOf,
 } from "../../src/platform/host.js";
 import { containerUsername } from "../../src/records/env.js";
@@ -209,5 +210,41 @@ describe("the files beside a bundled server", () => {
     const has = (p: string) => p === `${share}/web/boxes/index.html`;
     expect(defaultStaticDir("/repo", "boxes", has, share)).toBe(`${share}/web/boxes`);
     expect(defaultStaticDir("/repo", "review", has, share)).toBe("/repo/apps/review/dist/renderer");
+  });
+});
+
+describe("the op.env file on macOS and Windows", () => {
+  const text = [
+    "# 1Password",
+    'OP_SERVICE_ACCOUNT_TOKEN="ops_example"',
+    "OP_ACCOUNT=example.1password.com",
+    "PATH=/tmp/evil",
+    "NODE_OPTIONS=--require /tmp/evil.js",
+    "not a pair",
+    "",
+  ].join("\r\n");
+
+  it("returns only OP_ variables that the environment doesn't set", () => {
+    const files: string[] = [];
+    const read = (f: string) => {
+      files.push(f);
+      return text;
+    };
+    expect(serviceEnvFromFile({ ...mac, env: { OP_ACCOUNT: "set" } }, read)).toEqual({
+      OP_SERVICE_ACCOUNT_TOKEN: "ops_example",
+    });
+    expect(serviceEnvFromFile(win, read)).toEqual({
+      OP_SERVICE_ACCOUNT_TOKEN: "ops_example",
+      OP_ACCOUNT: "example.1password.com",
+    });
+    expect(files).toEqual([
+      "/Users/alex/.config/aio/op.env",
+      "C:\\Users\\alex\\AppData\\Roaming\\aio\\op.env",
+    ]);
+  });
+
+  it("reads nothing on Linux, where systemd loads the file, or when it's missing", () => {
+    expect(serviceEnvFromFile(linux, () => text)).toEqual({});
+    expect(serviceEnvFromFile(mac, () => null)).toEqual({});
   });
 });

@@ -273,3 +273,40 @@ export function maxSocketPathBytes(hostOs: HostOs): number {
 export function imageUserArgs(p: Pick<HostPlatform, "os" | "env">, name: string): string[] {
   return p.os === "linux" ? [] : ["--user", name];
 }
+
+/** The variables that `op.env` may set: the 1Password CLI's own. */
+const OP_ENV_NAME = /^OP_[A-Z0-9_]+$/;
+
+/**
+ * Reads `op.env` in the configuration directory on macOS and Windows and
+ * returns the `OP_*` variables it sets that `p.env` doesn't already have,
+ * such as `OP_SERVICE_ACCOUNT_TOKEN`. On Linux the systemd unit loads the
+ * same file with `EnvironmentFile=`, so this returns nothing there.
+ *
+ * The file holds `NAME=VALUE` lines; blank lines and `#` comments are
+ * skipped, and one pair of surrounding quotes is removed. Other names are
+ * ignored, so the file can't change the server's `PATH` or Node.js options.
+ * Values are never logged.
+ */
+export function serviceEnvFromFile(
+  p: Pick<HostPlatform, "os" | "home" | "env">,
+  read: (file: string) => string | null,
+): Record<string, string> {
+  if (p.os === "linux") return {};
+  const text = read(pathFor(p).join(configDir(p), "op.env"));
+  if (text === null) return {};
+  const out: Record<string, string> = {};
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (line === "" || line.startsWith("#")) continue;
+    const eq = line.indexOf("=");
+    if (eq <= 0) continue;
+    const name = line.slice(0, eq).trim();
+    let value = line.slice(eq + 1).trim();
+    if (value.length >= 2 && (value[0] === '"' || value[0] === "'") && value.endsWith(value[0])) {
+      value = value.slice(1, -1);
+    }
+    if (OP_ENV_NAME.test(name) && p.env[name] === undefined) out[name] = value;
+  }
+  return out;
+}
