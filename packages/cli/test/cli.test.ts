@@ -448,6 +448,34 @@ describe("box", () => {
   });
 });
 
+describe("secrets", () => {
+  it("lists the available fields and passes --refresh", async () => {
+    server.on("GET /api/v1/secrets/available", {
+      body: {
+        vaults: ["AgentBox"],
+        candidates: [
+          {
+            vault: "AgentBox",
+            item: "Token GitHub",
+            itemId: "i1",
+            field: "credential",
+            type: "CONCEALED",
+            ref: "op://AgentBox/Token GitHub/credential",
+            suggestedName: "TOKEN_GITHUB_CREDENTIAL",
+          },
+        ],
+        vaultErrors: [{ vault: "Old", message: "Can't list vault Old" }],
+        fetchedAt: "2026-10-28T09:00:00Z",
+      },
+    });
+    await cli(["secrets", "available", "--refresh"]);
+    expect(last()?.query).toEqual({ refresh: "true" });
+    expect(out).toContain("TOKEN_GITHUB_CREDENTIAL");
+    expect(out).toContain("op://AgentBox/Token GitHub/credential");
+    expect(out).toContain("Old: Can't list vault Old");
+  });
+});
+
 describe("project", () => {
   it("lists and shows projects", async () => {
     server.on("GET /api/v1/projects", { body: { projects: [projectSummary] } });

@@ -921,6 +921,29 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
     });
 
   // -------------------------------------------------------------------------
+  // secrets
+  const secrets = program.command("secrets").description("Work with 1Password secrets.");
+
+  secrets
+    .command("available")
+    .description("List the 1Password fields a project can reference. Never shows values.")
+    .option("--refresh", "Skip the server's 30 second cache.")
+    .action(async (o: { refresh?: boolean }) => {
+      const r = await client().call("secrets.available", {
+        query: { refresh: o.refresh ? "true" : "false" },
+      });
+      print(r, () => {
+        const rows = r.candidates.map((c) => [
+          c.suggestedName,
+          c.ref,
+          c.type,
+        ]);
+        const errors = r.vaultErrors.map((e) => `${e.vault}: ${e.message}\n`).join("");
+        return `${table(["NAME", "REFERENCE", "TYPE"], rows)}${errors}`;
+      });
+    });
+
+  // -------------------------------------------------------------------------
   // accounts
   const accounts = program
     .command("accounts")
