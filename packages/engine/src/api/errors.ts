@@ -21,6 +21,8 @@ const STATUS: Record<ApiErrorCode, number> = {
   invalid_state: 409,
   unauthorized: 401,
   internal: 500,
+  machine_offline: 503,
+  machine_timeout: 504,
 };
 
 /** The HTTP status for an error code. */

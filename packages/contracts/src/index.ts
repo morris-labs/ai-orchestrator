@@ -12,3 +12,4 @@ export * from "./api.js";
 export * from "./broker.js";
 export * from "./accounts.js";
 export * from "./machines.js";
+export * from "./machine-routing.js";
