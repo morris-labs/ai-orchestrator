@@ -44,6 +44,9 @@
 //   run's project container and return the engine's bodies unchanged.
 //   `usage.samples` on the server answers from the server's SQLite mirror,
 //   across every engine, instead.
+// - Every server route also answers under `/api/v1/machines/ID/proxy`,
+//   which sends the call to machine `ID`; `local` means the server itself.
+//   See `machine-routing.ts`.
 // - Terminal and job streams carry terminal bytes as binary frames in both
 //   directions and control messages as JSON text frames. Event streams carry
 //   only JSON text frames. The `clientMessage` and `serverMessage` schemas

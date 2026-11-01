@@ -183,7 +183,11 @@ export interface Harness {
   runs: RunMirror;
 }
 
-export async function createHarness(overrides: { proxy?: DevServerProxy } = {}): Promise<Harness> {
+export async function createHarness(
+  overrides: Partial<Pick<ApiDeps, "links" | "machines" | "token">> & {
+    proxy?: DevServerProxy;
+  } = {},
+): Promise<Harness> {
   const core = createFakeCore();
   const db = openDatabase(":memory:");
   const hub = new EventHub({ db });
@@ -211,7 +215,7 @@ export async function createHarness(overrides: { proxy?: DevServerProxy } = {}):
   const deps: ApiDeps = {
     core,
     home: fs.realpathSync(tempDir("api-home-")),
-    token: TOKEN,
+    token: overrides.token ?? TOKEN,
     version: "1.0.0-dev",
     startedAt: new Date(),
     hub,
@@ -293,6 +297,8 @@ export async function createHarness(overrides: { proxy?: DevServerProxy } = {}):
     },
     exec,
     proxy: overrides.proxy,
+    links: overrides.links,
+    machines: overrides.machines,
   };
   const server = await createApiServer(deps);
   return { core, deps, server, hub, jobs, engine, exec, runs };

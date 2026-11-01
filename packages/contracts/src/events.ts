@@ -48,6 +48,13 @@ const base = {
   streamId: z.string().min(1),
   seq: z.number().int().positive(),
   sourceSeq: z.number().int().positive(),
+  /**
+   * The machine whose stream the event came from, set by the hub when it
+   * relays a node's event stream (`/api/v1/machines/ID/proxy/events`).
+   * Absent means the server that sent the stream produced the event, which
+   * keeps every single-machine stream unchanged.
+   */
+  machine: z.string().min(1).optional(),
 };
 
 // ---------------------------------------------------------------------------

@@ -5,7 +5,9 @@
 // contract drift shows up as an `ApiRequestError` with code `bad_response`
 // instead of as a broken screen.
 import {
+  LOCAL_MACHINE_ID,
   buildPath,
+  machinePath,
   serverRoutes,
   type RouteOf,
   type ServerRouteKey,
@@ -92,6 +94,14 @@ export interface ApiClientOptions {
   socketAuth?: SocketAuth;
   /** Timeouts in milliseconds for `GET` routes and for the others. */
   timeouts?: { readMs?: number; writeMs?: number };
+  /**
+   * The machine whose API the client calls. Absent or `local` means the
+   * server at `baseUrl` itself. Any other ID sends every route, WebSockets
+   * included, through `/api/v1/machines/ID/proxy` on that server, which
+   * forwards it to the machine. `auth.session` always stays on the server
+   * at `baseUrl`, since the cookie it sets is that server's.
+   */
+  machineId?: string;
 }
 
 function queryString(query: Record<string, unknown> | undefined) {
@@ -114,6 +124,8 @@ export class ApiClient {
 
   private readonly readTimeoutMs: number;
   private readonly writeTimeoutMs: number;
+  /** The machine the client calls; `local` for the server at `baseUrl`. */
+  readonly machineId: string;
 
   constructor(options: ApiClientOptions = {}) {
     this.baseUrl = (options.baseUrl ?? "").replace(/\/$/, "");
@@ -123,6 +135,13 @@ export class ApiClient {
     this.socketAuth = options.socketAuth ?? "cookie";
     this.readTimeoutMs = options.timeouts?.readMs ?? READ_TIMEOUT_MS;
     this.writeTimeoutMs = options.timeouts?.writeMs ?? WRITE_TIMEOUT_MS;
+    this.machineId = options.machineId || LOCAL_MACHINE_ID;
+  }
+
+  /** A route's path with its params, sent to this client's machine. */
+  private routePath(key: ServerRouteKey, params: unknown): string {
+    const path = buildPath(serverRoutes[key].path, (params ?? {}) as never);
+    return key === "auth.session" ? path : machinePath(path, this.machineId);
   }
 
   /** The bearer token, or `null` once the client authenticates with the cookie only. */
@@ -132,8 +151,7 @@ export class ApiClient {
 
   /** Builds the URL of an HTTP route with its path params and query. */
   url<K extends ServerRouteKey>(key: K, args: { params?: unknown; query?: unknown } = {}): string {
-    const route = serverRoutes[key];
-    const path = buildPath(route.path, (args.params ?? {}) as never);
+    const path = this.routePath(key, args.params);
     return `${this.baseUrl}${path}${queryString(args.query as Record<string, unknown>)}`;
   }
 
@@ -269,8 +287,7 @@ export class ApiClient {
     key: K,
     args: { params?: Record<string, string>; query?: Record<string, unknown> } = {},
   ): string {
-    const route = serverRoutes[key];
-    const path = buildPath(route.path, (args.params ?? {}) as never);
+    const path = this.routePath(key, args.params);
     const origin = this.baseUrl !== "" ? this.baseUrl : (pageOrigin() ?? "https://127.0.0.1:21400");
     const wsOrigin = origin.replace(/^http/, "ws");
     return `${wsOrigin}${path}${queryString(args.query)}`;
@@ -288,6 +305,15 @@ export class ApiClient {
     }
     return new this.wsCtor(url);
   }
+}
+
+/**
+ * A client bound to `machineId`: the same options as `new ApiClient()`, with
+ * every route sent through `/api/v1/machines/ID/proxy` unless `machineId` is
+ * `local`.
+ */
+export function createMachineClient(options: ApiClientOptions, machineId: string): ApiClient {
+  return new ApiClient({ ...options, machineId });
 }
 
 /**
