@@ -22,6 +22,7 @@ const api: AioBridge = {
   openExternalTerminal: (req) => ipcRenderer.invoke("aio:open-external-terminal", req),
   launchReview: (req) => ipcRenderer.invoke("aio:launch-review", req),
   pickDirectory: (defaultPath) => ipcRenderer.invoke("aio:pick-directory", defaultPath),
+  readClipboardText: () => ipcRenderer.invoke("aio:read-clipboard-text"),
   openPath: (path) => ipcRenderer.invoke("aio:open-path", path),
   openExternal: (url) => ipcRenderer.invoke("aio:open-external", url),
   onSelectBox: (listener) => {

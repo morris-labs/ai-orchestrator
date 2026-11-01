@@ -26,6 +26,7 @@ import WebSocket from "ws";
 import {
   app,
   BrowserWindow,
+  clipboard,
   dialog,
   ipcMain,
   type IpcMainEvent,
@@ -376,6 +377,9 @@ function registerIpc() {
     const res = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts);
     return res.canceled ? null : (res.filePaths[0] ?? null);
   });
+  ipcMain.handle("aio:read-clipboard-text", async (e): Promise<string> =>
+    fromApp(e) ? clipboard.readText() : "",
+  );
   ipcMain.handle("aio:open-path", async (e, path: string): Promise<BridgeResult> => {
     if (!fromApp(e)) return REFUSED;
     // Only directories the server reports open; a file would run with its

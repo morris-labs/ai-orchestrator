@@ -41,6 +41,7 @@ import {
 } from "../logic/newBox";
 import { PLATFORMS, platformLabel } from "../logic/status";
 import { useDirectoryPicker } from "./DirectoryPicker";
+import { PasteButton } from "./PasteButton";
 
 export interface BoxDialogResult {
   form: BoxForm;
@@ -392,9 +393,12 @@ export function BoxDialog(props: BoxDialogProps) {
             onChange={(e) => set("targetDir", e.target.value)}
           />
           {mode === "new" && (
-            <Button onClick={() => void browse(form.targetDir, (p) => set("targetDir", p))}>
-              Browse...
-            </Button>
+            <>
+              <Button onClick={() => void browse(form.targetDir, (p) => set("targetDir", p))}>
+                Browse...
+              </Button>
+              <PasteButton field="target directory" onPaste={(p) => set("targetDir", p)} />
+            </>
           )}
         </div>
       </div>
@@ -628,6 +632,13 @@ export function BoxDialog(props: BoxDialogProps) {
             >
               Browse...
             </Button>
+            <PasteButton
+              field={`host folder ${i + 1}`}
+              onPaste={(p) => {
+                setProjectTouched(true);
+                setMounts((all) => all.map((x, j) => (j === i ? { ...x, host: p } : x)));
+              }}
+            />
             <input
               className="ab-input bx-grow"
               aria-label={`Box folder ${i + 1}`}
@@ -638,6 +649,13 @@ export function BoxDialog(props: BoxDialogProps) {
                 setMounts((all) =>
                   all.map((x, j) => (j === i ? { ...x, container: e.target.value } : x)),
                 );
+              }}
+            />
+            <PasteButton
+              field={`box folder ${i + 1}`}
+              onPaste={(p) => {
+                setProjectTouched(true);
+                setMounts((all) => all.map((x, j) => (j === i ? { ...x, container: p } : x)));
               }}
             />
             <Button

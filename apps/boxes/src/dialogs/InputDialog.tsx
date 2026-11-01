@@ -3,6 +3,7 @@
 import { Button, Dialog, errorMessage, useInFlight } from "@aio/ui";
 import { useState } from "react";
 import { useDirectoryPicker } from "./DirectoryPicker";
+import { PasteButton } from "./PasteButton";
 
 export interface InputDialogProps {
   title: string;
@@ -10,7 +11,11 @@ export interface InputDialogProps {
   intro?: string;
   initial: string;
   placeholder?: string;
-  /** Shows a Browse button that picks a directory: the native dialog in Electron, else `fs.dirs`. */
+  /**
+   * Shows a Browse button that picks a directory: the native dialog in
+   * Electron, else `fs.dirs`. A Paste button that reads a path from the
+   * clipboard comes with it.
+   */
   browse?: boolean;
   /** Allows an empty value, as Rename does (empty means the folder name). */
   allowEmpty?: boolean;
@@ -73,6 +78,7 @@ export function InputDialog(props: InputDialogProps) {
               Browse...
             </Button>
           )}
+          {props.browse && <PasteButton field={props.label.toLowerCase()} onPaste={setValue} />}
           {picker.element}
         </div>
       </div>
