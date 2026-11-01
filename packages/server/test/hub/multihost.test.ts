@@ -61,7 +61,13 @@ interface Server {
 
 async function startServer(
   name: string,
-  options: { signedIn?: boolean; linkProtocol?: number; before?: (home: string) => void } = {},
+  options: {
+    signedIn?: boolean;
+    linkProtocol?: number;
+    before?: (home: string) => void;
+    /** Replaces the fixed loopback link address of the other tests. */
+    link?: { linkHost?: string; linkAddress?: string; lanAddress?: () => string | undefined };
+  } = {},
 ): Promise<Server> {
   const home = fs.realpathSync(tempDir(`aio-mh-${name}-`));
   options.before?.(home);
@@ -81,8 +87,7 @@ async function startServer(
     exec: new FakeExec(),
     port: 0,
     linkPort: 0,
-    linkHost: "127.0.0.1",
-    linkAddress: "127.0.0.1",
+    ...(options.link ?? { linkHost: "127.0.0.1", linkAddress: "127.0.0.1" }),
     linkProtocol: options.linkProtocol,
     credentialPollMs: 0,
     linkTiming: { pingMs: 1000, timeoutMs: 5000, backoffMinMs: 50, backoffMaxMs: 200 },
@@ -197,6 +202,30 @@ describe("multi-host", () => {
     });
     expect(reuse.status).toBe(401);
     expect(reuse.json.error.code).toBe("unauthorized");
+  });
+
+  it("binds the LAN address, refuses to listen without one, and lets linkHost win", async () => {
+    // No LAN address: the hub refuses to listen rather than bind every interface.
+    const bare = await startServer("bare", { link: { lanAddress: () => undefined } });
+    const refused = await bare.api("POST", "/api/v1/machines/enrollment-codes");
+    expect(refused.status).toBe(409);
+    expect(refused.json.error.message).toMatch(/no LAN IPv4 address.*linkHost/);
+    expect(bare.app.multiHost.hub.port).toBeNull();
+
+    // An explicit linkHost setting wins, and the hub URL names the bound address.
+    const patched = await bare.api("PATCH", "/api/v1/settings", { linkHost: "127.0.0.1" });
+    expect(patched.status).toBe(200);
+    const code = await bare.api("POST", "/api/v1/machines/enrollment-codes");
+    expect(code.status).toBe(201);
+    expect(code.json.hubUrl).toBe(`https://127.0.0.1:${bare.app.multiHost.hub.port}`);
+
+    // The detected LAN address is the default bind, and linkAddress still names the hub.
+    const lan = await startServer("lan", {
+      link: { lanAddress: () => "127.0.0.1", linkAddress: "hub.example.com" },
+    });
+    const named = await lan.api("POST", "/api/v1/machines/enrollment-codes");
+    expect(named.status).toBe(201);
+    expect(named.json.hubUrl).toBe(`https://hub.example.com:${lan.app.multiHost.hub.port}`);
   });
 
   it("round-trips requests both ways and limits what a node may call on the hub", async () => {

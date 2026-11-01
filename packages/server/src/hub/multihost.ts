@@ -24,6 +24,7 @@ import type { OpClient } from "../secrets/op.js";
 import { CREDENTIAL_PATHS, CredentialStore, isCredentialKey } from "./credentials.js";
 import { jsonBody, jsonResponse, safely, type InternalHandler } from "./dispatch.js";
 import { Hub, type LinkTiming } from "./hub.js";
+import { detectLanAddress } from "./lan.js";
 import type { LinkRegistry, NodeLink } from "./link.js";
 import { HUB_LINK_ID, NodeAgent } from "./node.js";
 import { LINK_CAPABILITIES, LINK_PROTOCOL, machinePlatform, type LinkHello } from "./protocol.js";
@@ -85,11 +86,16 @@ export interface MultiHostOptions {
   api: () => FastifyInstance | null;
   /** The local 1Password client, which a hub uses and serves to its nodes. */
   op: OpClient;
-  /** The address the link listener binds. Default: every interface. */
+  /**
+   * The address the link listener binds, which wins over the `linkHost`
+   * setting. Default: the primary LAN IPv4 address from `lanAddress`.
+   */
   linkHost?: string;
+  /** Finds the primary LAN IPv4 address; tests replace it. Default `detectLanAddress`. */
+  lanAddress?: () => string | undefined;
   /** The link port, which wins over the setting; 0 picks a free one. */
   linkPort?: number;
-  /** The host name in hub URLs, which wins over the setting. */
+  /** The host name in hub URLs, which wins over the setting. Default: the bound address. */
   linkAddress?: string;
   /** The protocol version to speak; tests change it. Default `LINK_PROTOCOL`. */
   protocol?: number;
@@ -150,9 +156,9 @@ export class MultiHost {
       isHub: () => this.role() !== "node",
       hello,
       port: () => opts.linkPort ?? opts.settings().linkPort ?? DEFAULT_LINK_PORT,
-      bindHost: opts.linkHost,
-      address: () =>
-        opts.linkAddress ?? opts.settings().linkAddress ?? opts.hostname ?? os.hostname(),
+      bindHost: () =>
+        opts.linkHost ?? opts.settings().linkHost ?? (opts.lanAddress ?? detectLanAddress)(),
+      address: () => opts.linkAddress ?? opts.settings().linkAddress,
       token: opts.token,
       api: opts.api,
       internal: hubInternal,

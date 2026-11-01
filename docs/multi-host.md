@@ -63,9 +63,9 @@ To set up the hub, do the following on the machine that hosts it:
     Environment=AIO_ROLE=hub
     ```
 
-1.  If nodes reach the hub by another name than its host name, such as a
-    Tailscale name, set the `linkAddress` setting. For more information,
-    see [Add a machine to a hub](#add-a-machine-to-a-hub).
+1.  If the hub has more than one LAN address, or nodes reach it by a host
+    name, set the `linkHost` or `linkAddress` setting. For more
+    information, see [The link port](#the-link-port).
 
 1.  If the hub runs a firewall, allow the link port. For more information,
     see [Open the link port in a firewall](#open-the-link-port-in-a-firewall).
@@ -131,9 +131,9 @@ machine:
     The machine you run the command on comes first, with the ID `local`. On
     a node, the hub has the ID `hub`.
 
-The hub puts its host name in the hub URL. If nodes reach the hub by another
-name or address, such as a Tailscale name, set the `linkAddress` setting on
-the hub:
+The hub puts the address its link listener binds in the hub URL. If nodes
+reach the hub by a host name instead, set the `linkAddress` setting on the
+hub:
 
 ```bash
 curl --cacert ~/.ai-orchestrator/server.crt \
@@ -141,7 +141,11 @@ curl --cacert ~/.ai-orchestrator/server.crt \
     -H "Content-Type: application/json" \
     -X PATCH -d '{"linkAddress": "hub.example.com"}' \
     https://127.0.0.1:21400/api/v1/settings
+
 ```
+
+The name must resolve to the address the hub listens on. For more
+information, see [The link port](#the-link-port).
 
 ### How enrollment stays safe
 
@@ -168,9 +172,37 @@ machine again, issue a code and join again.
 
 ## The link port
 
-A hub listens for node links on port `21402`, on every network interface,
-over TLS. Nodes dial out to the hub, so only the hub needs a reachable port.
+A hub listens for node links on port `21402`, over TLS, on its LAN address
+only. Nodes dial out to the hub, so only the hub needs a reachable port.
 The local API stays on `127.0.0.1:21400` on every machine.
+
+By default, the hub binds its primary LAN IPv4 address: the private
+address (in `10.0.0.0/8`, `172.16.0.0/12`, or `192.168.0.0/16`) of the
+network interface that holds the default route. Loopback, Docker bridges
+(`docker*`, `br-*`, and `veth*` interfaces), and Tailscale (`tailscale*`
+interfaces and `100.64.0.0/10`) never count. If the default route has no
+LAN address, such as when it goes through a VPN, the hub binds the
+machine's only LAN address. The hub never listens on every interface. If it
+finds no LAN address, or several and none on the default route, it doesn't
+start the link listener, logs why, and refuses to issue enrollment codes.
+
+To choose the address, set the `linkHost` setting on the hub, then restart
+the server:
+
+```bash
+curl --cacert ~/.ai-orchestrator/server.crt \
+    -H "Authorization: Bearer $(cat ~/.ai-orchestrator/server.token)" \
+    -H "Content-Type: application/json" \
+    -X PATCH -d '{"linkHost": "192.0.2.10"}' \
+    https://127.0.0.1:21400/api/v1/settings
+systemctl --user restart aio-server
+
+```
+
+Replace `192.0.2.10` with the hub's address on the network your nodes are
+on. To go back to the detected address, send `{"linkHost": null}`. The hub
+reads the address when the listener starts, so after the LAN address
+changes, restart the server.
 
 The hub opens the port only when its role is `hub` or `both` and it has
 enrolled a machine or issued a code. A machine on its own never opens it.

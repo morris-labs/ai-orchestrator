@@ -82,10 +82,13 @@ export interface HubOptions {
   hello: () => LinkHello;
   /** The port to listen on; 0 picks a free one. */
   port: () => number;
-  /** The address to bind. Default: every interface. */
-  bindHost?: string;
-  /** The host name nodes use in the hub URL. */
-  address: () => string;
+  /**
+   * The address to bind, read each time the listener starts. `undefined`
+   * means no LAN address was found, so the listener doesn't start.
+   */
+  bindHost: () => string | undefined;
+  /** The host name nodes use in the hub URL; `undefined` means the bound address. */
+  address: () => string | undefined;
   /** The server token, for requests that nodes send into this machine's API. */
   token: string;
   api: () => FastifyInstance | null;
@@ -174,6 +177,8 @@ export class Hub {
   private server: https.Server | null = null;
   private wss: WebSocketServer | null = null;
   private listenPort: number | null = null;
+  private boundHost: string | null = null;
+  private listenError: string | null = null;
   private reconciling: Promise<void> = Promise.resolve();
   private timer: NodeJS.Timeout | null = null;
   private closed = false;
@@ -224,8 +229,14 @@ export class Hub {
       try {
         if (want && !this.server) await this.listen();
         else if (!want && this.server) await this.stopListening();
+        this.listenError = null;
       } catch (err) {
-        this.opts.log(`The hub link listener failed: ${(err as Error).message}`);
+        const message = (err as Error).message;
+        // The check repeats every minute; log a failure once, not each time.
+        if (message !== this.listenError) {
+          this.opts.log(`The hub link listener failed: ${message}`);
+        }
+        this.listenError = message;
       }
     });
     return this.reconciling;
@@ -246,13 +257,15 @@ export class Hub {
     if (this.listenPort === null) {
       throw new ApiError(
         "invalid_state",
-        `The hub can't listen for node links on port ${this.opts.port()}. See the server log.`,
+        this.listenError ??
+          `The hub can't listen for node links on port ${this.opts.port()}. See the server log.`,
       );
     }
+    const host = this.opts.address() ?? this.boundHost ?? "localhost";
     return {
       code,
       expiresAt: expiresAt.toISOString(),
-      hubUrl: `https://${hostForUrl(this.opts.address())}:${this.listenPort}`,
+      hubUrl: `https://${hostForUrl(host)}:${this.listenPort}`,
     };
   }
 
@@ -331,18 +344,25 @@ export class Hub {
     server.on("upgrade", (req, socket, head) => this.serveUpgrade(wss, req, socket, head));
     server.on("tlsClientError", () => undefined);
     const wanted = this.opts.port();
+    const host = this.opts.bindHost();
+    if (host === undefined) {
+      throw new Error(
+        "This machine has no LAN IPv4 address on its default route, so the hub doesn't listen for node links. Set the linkHost setting to the address to listen on.",
+      );
+    }
     await new Promise<void>((resolve, reject) => {
       server.once("error", reject);
-      server.listen(wanted, this.opts.bindHost ?? "0.0.0.0", () => {
+      server.listen(wanted, host, () => {
         server.off("error", reject);
         resolve();
       });
     });
     const address = server.address();
     this.listenPort = typeof address === "object" && address ? address.port : wanted;
+    this.boundHost = host;
     this.server = server;
     this.wss = wss;
-    this.opts.log(`Hub listening for node links on port ${this.listenPort}.`);
+    this.opts.log(`Hub listening for node links on ${hostForUrl(host)}:${this.listenPort}.`);
   }
 
   private async stopListening(): Promise<void> {
@@ -350,6 +370,7 @@ export class Hub {
     if (!server) return;
     this.server = null;
     this.listenPort = null;
+    this.boundHost = null;
     for (const peer of this.peers.values()) peer.close(1001, "The hub is stopping.");
     this.peers.clear();
     for (const client of this.wss?.clients ?? []) client.terminate();

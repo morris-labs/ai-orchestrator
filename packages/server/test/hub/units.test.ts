@@ -7,6 +7,14 @@ import { describe, expect, it } from "vitest";
 import { openDatabase } from "../../src/db/index.js";
 import { issueNodeCertificate, loadOrCreateHubIdentity, newNodeKey } from "../../src/hub/ca.js";
 import { defaultAllowNodeRequest, nameFromHost, parseRole } from "../../src/hub/multihost.js";
+import {
+  isCgnatIpv4,
+  isPrivateIpv4,
+  lanCandidates,
+  parseDefaultRoute,
+  primaryLanAddress,
+  readDefaultRouteInterface,
+} from "../../src/hub/lan.js";
 import { protocolMismatch, sendableCloseCode, closeReason } from "../../src/hub/protocol.js";
 import {
   MachineRegistry,
@@ -215,5 +223,84 @@ describe("the secret relay's clients", () => {
       code: "secrets_locked",
       message: "The hub: Not signed in.",
     });
+  });
+});
+
+describe("the link listener's LAN address", () => {
+  const v4 = (address: string, internal = false) => ({ address, family: "IPv4", internal });
+  const table = {
+    lo: [v4("127.0.0.1", true), { address: "::1", family: "IPv6", internal: true }],
+    docker0: [v4("172.17.0.1")],
+    "br-0a1b2c3d4e5f": [v4("172.18.0.1")],
+    veth12ab34: [v4("169.254.10.1")],
+    tailscale0: [
+      v4("100.101.102.103"),
+      { address: "fd7a:115c::1", family: "IPv6", internal: false },
+    ],
+    wlp3s0: [v4("10.0.0.23")],
+    enp5s0: [{ address: "fe80::1", family: "IPv6", internal: false }, v4("192.168.1.20")],
+  };
+
+  it("picks the private address of the interface on the default route", () => {
+    expect(primaryLanAddress(table, "enp5s0")).toBe("192.168.1.20");
+    expect(primaryLanAddress(table, "wlp3s0")).toBe("10.0.0.23");
+  });
+
+  it("ignores loopback, Docker bridges, Tailscale, and public addresses", () => {
+    expect(lanCandidates(table)).toEqual([
+      { name: "wlp3s0", address: "10.0.0.23" },
+      { name: "enp5s0", address: "192.168.1.20" },
+    ]);
+    expect(primaryLanAddress({ eth0: [v4("198.51.100.7")], ...table }, "eth0")).toBeUndefined();
+    expect(
+      primaryLanAddress({ tailscale0: table.tailscale0, docker0: table.docker0 }, "tailscale0"),
+    ).toBeUndefined();
+    expect(primaryLanAddress({ wg0: [v4("100.64.0.9")] }, "wg0")).toBeUndefined();
+  });
+
+  it("takes the only LAN address when the default route has none", () => {
+    const one = {
+      lo: table.lo,
+      docker0: table.docker0,
+      tailscale0: table.tailscale0,
+      eth0: [v4("172.20.4.5")],
+    };
+    expect(primaryLanAddress(one, "tailscale0")).toBe("172.20.4.5");
+    expect(primaryLanAddress(one, undefined)).toBe("172.20.4.5");
+    expect(primaryLanAddress(table, "tailscale0")).toBeUndefined();
+    expect(primaryLanAddress(table, undefined)).toBeUndefined();
+    expect(primaryLanAddress({}, undefined)).toBeUndefined();
+  });
+
+  it("knows the private and carrier-grade NAT ranges", () => {
+    for (const a of ["10.1.2.3", "172.16.0.1", "172.31.255.254", "192.168.0.1"]) {
+      expect(isPrivateIpv4(a)).toBe(true);
+    }
+    for (const a of [
+      "172.15.0.1",
+      "172.32.0.1",
+      "192.169.0.1",
+      "100.64.0.1",
+      "8.8.8.8",
+      "10.0.0",
+      "x",
+    ]) {
+      expect(isPrivateIpv4(a)).toBe(false);
+    }
+    expect(isCgnatIpv4("100.64.0.1")).toBe(true);
+    expect(isCgnatIpv4("100.127.255.255")).toBe(true);
+    expect(isCgnatIpv4("100.128.0.1")).toBe(false);
+  });
+
+  it("reads the default route from /proc/net/route", () => {
+    const route = [
+      "Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT",
+      "docker0\t000011AC\t00000000\t0001\t0\t0\t0\t0000FFFF\t0\t0\t0",
+      "enp5s0\t00000000\t0101A8C0\t0003\t0\t0\t100\t00000000\t0\t0\t0",
+      "enp5s0\t0001A8C0\t00000000\t0001\t0\t0\t100\t00FFFFFF\t0\t0\t0",
+    ].join("\n");
+    expect(parseDefaultRoute(route)).toBe("enp5s0");
+    expect(parseDefaultRoute(route.split("\n").slice(0, 2).join("\n"))).toBeUndefined();
+    expect(readDefaultRouteInterface("/nonexistent/route")).toBeUndefined();
   });
 });
