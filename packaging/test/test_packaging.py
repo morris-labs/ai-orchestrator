@@ -719,6 +719,10 @@ class ScriptsTest(unittest.TestCase):
             ).stdout
             self.assertIn("systemctl --user enable --now aio-server", fresh)
             self.assertNotIn(restart, fresh)
+            # A fresh install says how to join a hub and which port a hub needs.
+            self.assertIn("aio node join", fresh)
+            self.assertIn("TCP port 21402", fresh)
+            self.assertIn("docs/multi-host.md", fresh)
 
     def test_postrm_clears_the_apparmor_cache_on_purge(self):
         config = load_yaml(NFPM)
@@ -1059,6 +1063,34 @@ class NfpmBuildTest(unittest.TestCase):
             control = subprocess.run([dpkg_deb, "--ctrl-tarfile", str(deb)], check=True, capture_output=True).stdout
             self.assertIn(b"postinst", control)
             self.assertIn(b"conffiles", control)
+
+
+class LinkPortTest(unittest.TestCase):
+    """The hub's link port in the packaging and docs matches the server's."""
+
+    def test_the_link_port_agrees_everywhere(self):
+        records = (ROOT / "packages/contracts/src/records.ts").read_text()
+        match = re.search(r"export const DEFAULT_LINK_PORT = (\d+);", records)
+        self.assertIsNotNone(match)
+        port = match.group(1)
+        for rel in (
+            "packaging/deb/scripts/postinst",
+            "packaging/systemd/aio-server.service",
+            "docs/multi-host.md",
+            "docs/install.md",
+            "docs/platforms.md",
+        ):
+            with self.subTest(file=rel):
+                self.assertIn(port, (ROOT / rel).read_text())
+
+    def test_the_unit_names_the_role_variable(self):
+        unit = (ROOT / "packaging/systemd/aio-server.service").read_text()
+        self.assertIn("AIO_ROLE", unit)
+        # A comment only: the packaged unit pins no role, so the default stays both.
+        parser = configparser.ConfigParser(interpolation=None, strict=False)
+        parser.optionxform = str
+        parser.read_string(unit)
+        self.assertNotIn("AIO_ROLE", parser["Service"].get("Environment", ""))
 
 
 if __name__ == "__main__":
