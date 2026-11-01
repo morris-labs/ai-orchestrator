@@ -27,7 +27,15 @@ export const LINK_CAPABILITIES: readonly string[] = [
   "machines.v1",
   "secrets.op.v1",
   "credentials.v1",
+  "flow.v1",
 ];
+
+/**
+ * The bytes a stream may send before the receiver grants more credit, with
+ * `flow.v1`. A receiver grants credit back once its own sink has taken the
+ * bytes, so a slow sink slows the sender instead of filling memory.
+ */
+export const STREAM_WINDOW = 1024 * 1024;
 
 /** WebSocket close codes the link uses. */
 export const LINK_CLOSE = {
@@ -98,6 +106,7 @@ export const LinkFrameSchema = z.discriminatedUnion("type", [
   }),
   z.object({ type: z.literal("data"), id: z.string(), binary: z.boolean(), data: z.string() }),
   z.object({ type: z.literal("end"), id: z.string(), code: z.number().int(), reason: z.string() }),
+  z.object({ type: z.literal("credit"), id: z.string(), bytes: z.number().int().positive() }),
 ]);
 export type LinkFrame = z.infer<typeof LinkFrameSchema>;
 

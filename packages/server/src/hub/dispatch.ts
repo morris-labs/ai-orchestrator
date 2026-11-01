@@ -98,6 +98,20 @@ export class WsStream implements LinkStream {
     this.ws.send(data, { binary });
   }
 
+  /** Bytes queued on the socket but not yet sent. */
+  get bufferedAmount(): number {
+    return this.ws.bufferedAmount;
+  }
+
+  /** Stops reading from the socket until `resume`. */
+  pause(): void {
+    this.ws.pause();
+  }
+
+  resume(): void {
+    this.ws.resume();
+  }
+
   onMessage(cb: (data: Buffer, binary: boolean) => void): void {
     this.messageCbs.push(cb);
     const queued = this.queued;

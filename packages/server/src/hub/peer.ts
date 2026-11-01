@@ -5,12 +5,72 @@
 import type WebSocket from "ws";
 import type { LinkRequest, LinkResponse, LinkStream, NodeLink } from "./link.js";
 import {
+  STREAM_WINDOW,
   closeReason,
   parseFrame,
   sendableCloseCode,
   type LinkFrame,
   type LinkHello,
 } from "./protocol.js";
+
+/** A local stream that can also report its backlog and pause its source. */
+export type FlowStream = LinkStream & {
+  /** Bytes the stream has taken but not yet passed on. */
+  readonly bufferedAmount?: number;
+  pause?(): void;
+  resume?(): void;
+};
+
+/**
+ * Sends a stream's messages within the credit the receiver granted. Over the
+ * credit, messages wait here, and `onBlocked` lets the source pause; when
+ * the receiver grants more, they go out and `onUnblocked` resumes it. One
+ * message may overdraw the credit, so a message larger than the window
+ * still goes.
+ */
+export class CreditSender {
+  private credit = STREAM_WINDOW;
+  private queue: { data: Buffer; binary: boolean }[] = [];
+  private blocked = false;
+
+  constructor(
+    private readonly send: (data: Buffer, binary: boolean) => void,
+    private readonly enabled: boolean,
+    private readonly onBlocked?: () => void,
+    private readonly onUnblocked?: () => void,
+  ) {}
+
+  /** Bytes waiting for credit. */
+  get queuedBytes(): number {
+    return this.queue.reduce((n, m) => n + m.data.length, 0);
+  }
+
+  push(data: Buffer, binary: boolean): void {
+    if (!this.enabled || (this.queue.length === 0 && this.credit > 0)) {
+      this.credit -= data.length;
+      this.send(data, binary);
+      return;
+    }
+    this.queue.push({ data, binary });
+    if (!this.blocked) {
+      this.blocked = true;
+      this.onBlocked?.();
+    }
+  }
+
+  grant(bytes: number): void {
+    this.credit += bytes;
+    while (this.queue.length > 0 && this.credit > 0) {
+      const m = this.queue.shift()!;
+      this.credit -= m.data.length;
+      this.send(m.data, m.binary);
+    }
+    if (this.queue.length === 0 && this.blocked) {
+      this.blocked = false;
+      this.onUnblocked?.();
+    }
+  }
+}
 
 /** What serves the requests and streams that arrive over a link. */
 export interface LinkServer {
@@ -45,6 +105,16 @@ export interface LinkPeerOptions {
   log?: (message: string) => void;
 }
 
+/** A stream the other end opened, and its flow state. */
+interface Incoming {
+  local: FlowStream;
+  /** Sends the local stream's messages within the other end's credit. */
+  out: CreditSender;
+  /** Bytes the local stream took that this end hasn't granted back yet. */
+  owed: number;
+  timer: NodeJS.Timeout | null;
+}
+
 interface Pending {
   resolve(value: LinkFrame): void;
   reject(err: Error): void;
@@ -61,16 +131,22 @@ class PeerStream implements LinkStream {
   private closeCbs: ((code: number, reason: string) => void)[] = [];
   private queued: { data: Buffer; binary: boolean }[] = [];
   private ended: { code: number; reason: string } | null = null;
+  readonly out: CreditSender;
 
   constructor(
     private readonly peer: LinkPeer,
     readonly id: string,
-  ) {}
+  ) {
+    this.out = new CreditSender(
+      (bytes, binary) =>
+        peer.sendFrame({ type: "data", id, binary, data: bytes.toString("base64") }),
+      peer.flow,
+    );
+  }
 
   send(data: Buffer | string, binary: boolean): void {
     if (this.ended) return;
-    const bytes = typeof data === "string" ? Buffer.from(data) : data;
-    this.peer.sendFrame({ type: "data", id: this.id, binary, data: bytes.toString("base64") });
+    this.out.push(typeof data === "string" ? Buffer.from(data) : data, binary);
   }
 
   onMessage(cb: (data: Buffer, binary: boolean) => void): void {
@@ -78,6 +154,8 @@ class PeerStream implements LinkStream {
     const queued = this.queued;
     this.queued = [];
     for (const m of queued) cb(m.data, m.binary);
+    const bytes = queued.reduce((n, m) => n + m.data.length, 0);
+    if (bytes > 0 && !this.ended) this.peer.grant(this.id, bytes);
   }
 
   close(code?: number, reason?: string): void {
@@ -96,8 +174,14 @@ class PeerStream implements LinkStream {
   /** Delivers a message from the other end. */
   deliver(data: Buffer, binary: boolean): void {
     if (this.ended) return;
-    if (this.messageCbs.length === 0) this.queued.push({ data, binary });
-    else for (const cb of this.messageCbs) cb(data, binary);
+    if (this.messageCbs.length === 0) {
+      // Credit goes back once a callback takes these.
+      this.queued.push({ data, binary });
+      return;
+    }
+    for (const cb of this.messageCbs) cb(data, binary);
+    // The callback took the bytes; whatever buffering it does is its own.
+    this.peer.grant(this.id, data.length);
   }
 
   /** Ends the stream without telling the other end, which ended it or is gone. */
@@ -119,7 +203,9 @@ export class LinkPeer implements NodeLink {
   /** Streams this end opened, by id. */
   private readonly outgoing = new Map<string, PeerStream>();
   /** Streams the other end opened, served by a local stream, by id. */
-  private readonly incoming = new Map<string, LinkStream>();
+  private readonly incoming = new Map<string, Incoming>();
+  /** True when both ends speak `flow.v1`, so streams send within granted credit. */
+  readonly flow: boolean;
   private closeCbs: (() => void)[] = [];
   private closed = false;
   private pingTimer: NodeJS.Timeout | null = null;
@@ -128,6 +214,7 @@ export class LinkPeer implements NodeLink {
   constructor(private readonly opts: LinkPeerOptions) {
     this.machineId = opts.machineId;
     this.hello = opts.hello;
+    this.flow = opts.hello.capabilities.includes("flow.v1");
     const socket = opts.socket;
     socket.on("message", (data, isBinary) => {
       if (isBinary) return;
@@ -234,6 +321,36 @@ export class LinkPeer implements NodeLink {
     this.outgoing.delete(id);
   }
 
+  /** Grants the other end `bytes` more credit on stream `id`. */
+  grant(id: string, bytes: number): void {
+    if (this.flow && bytes > 0) this.sendFrame({ type: "credit", id, bytes });
+  }
+
+  /**
+   * Grants credit for bytes a local stream took, once its backlog is under
+   * half a window, so a slow sink holds the sender back.
+   */
+  private ackIncoming(id: string, entry: Incoming, bytes: number): void {
+    if (!this.flow) return;
+    entry.owed += bytes;
+    const settle = () => {
+      if (this.incoming.get(id) !== entry || entry.owed === 0) {
+        entry.timer = null;
+        return;
+      }
+      if ((entry.local.bufferedAmount ?? 0) > STREAM_WINDOW / 2) {
+        entry.timer = setTimeout(settle, 20);
+        entry.timer.unref();
+        return;
+      }
+      entry.timer = null;
+      const owed = entry.owed;
+      entry.owed = 0;
+      this.grant(id, owed);
+    };
+    if (!entry.timer) settle();
+  }
+
   private newId(): string {
     return `${this.opts.side}${this.nextId++}`;
   }
@@ -274,8 +391,21 @@ export class LinkPeer implements NodeLink {
       case "data": {
         const bytes = Buffer.from(frame.data, "base64");
         const out = this.outgoing.get(frame.id);
-        if (out) out.deliver(bytes, frame.binary);
-        else this.incoming.get(frame.id)?.send(bytes, frame.binary);
+        if (out) {
+          out.deliver(bytes, frame.binary);
+          return;
+        }
+        const entry = this.incoming.get(frame.id);
+        if (entry) {
+          entry.local.send(bytes, frame.binary);
+          this.ackIncoming(frame.id, entry, bytes.length);
+        }
+        return;
+      }
+      case "credit": {
+        const out = this.outgoing.get(frame.id);
+        if (out) out.out.grant(frame.bytes);
+        else this.incoming.get(frame.id)?.out.grant(frame.bytes);
         return;
       }
       case "end": {
@@ -284,10 +414,10 @@ export class LinkPeer implements NodeLink {
           out.finish(frame.code, frame.reason);
           return;
         }
-        const local = this.incoming.get(frame.id);
-        if (local) {
+        const entry = this.incoming.get(frame.id);
+        if (entry) {
           this.incoming.delete(frame.id);
-          local.close(frame.code, frame.reason);
+          entry.local.close(frame.code, frame.reason);
         }
         return;
       }
@@ -320,7 +450,7 @@ export class LinkPeer implements NodeLink {
   }
 
   private async serveStream(frame: Extract<LinkFrame, { type: "open" }>): Promise<void> {
-    let local: LinkStream;
+    let local: FlowStream;
     try {
       local = await this.opts.server.openStream({
         path: frame.path,
@@ -341,13 +471,23 @@ export class LinkPeer implements NodeLink {
       local.close(1001, "The link closed.");
       return;
     }
-    this.incoming.set(frame.id, local);
+    const entry: Incoming = {
+      local,
+      owed: 0,
+      timer: null,
+      out: new CreditSender(
+        (data, binary) =>
+          this.sendFrame({ type: "data", id: frame.id, binary, data: data.toString("base64") }),
+        this.flow,
+        () => local.pause?.(),
+        () => local.resume?.(),
+      ),
+    };
+    this.incoming.set(frame.id, entry);
     this.sendFrame({ type: "opened", id: frame.id });
-    local.onMessage((data, binary) => {
-      this.sendFrame({ type: "data", id: frame.id, binary, data: data.toString("base64") });
-    });
+    local.onMessage((data, binary) => entry.out.push(data, binary));
     local.onClose((code, reason) => {
-      if (this.incoming.get(frame.id) !== local) return;
+      if (this.incoming.get(frame.id) !== entry) return;
       this.incoming.delete(frame.id);
       this.sendFrame({
         type: "end",
@@ -369,9 +509,10 @@ export class LinkPeer implements NodeLink {
       p.reject(err);
     }
     for (const stream of [...this.outgoing.values()]) stream.finish(1001, "The link closed.");
-    for (const [id, local] of this.incoming) {
+    for (const [id, entry] of this.incoming) {
       this.incoming.delete(id);
-      local.close(1001, "The link closed.");
+      if (entry.timer) clearTimeout(entry.timer);
+      entry.local.close(1001, "The link closed.");
     }
     const cbs = this.closeCbs;
     this.closeCbs = [];
