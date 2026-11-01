@@ -291,6 +291,7 @@ describe("machine tabs", () => {
       openExternalTerminal,
       launchReview: async () => ({ ok: true }),
       pickDirectory,
+      readClipboardText: async () => "",
       openPath: async () => ({ ok: true }),
       openExternal: async () => ({ ok: true }),
       onSelectBox: () => () => undefined,
