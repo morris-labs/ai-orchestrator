@@ -55,7 +55,7 @@ export function Launcher({ prefill }: { prefill: { project: string | null; box: 
     if (!prefill.box) return;
     api
       .call("boxes.get", { params: { boxId: prefill.box } })
-      .then((view) => setForm((f) => formFromBox(f, view.box)), setError);
+      .then((view) => setForm((f) => formFromBox(f, view.box, view.containerWorkDir)), setError);
   }, [api, prefill.box]);
 
   const summary = projects.find((p) => p.project.id === form.projectId) ?? null;

@@ -1,6 +1,7 @@
 // The run launcher's form and its conversion into a `RunRequest`.
 import {
   RunRequestSchema,
+  defaultContainerPath,
   type Box,
   type Pipeline,
   type Profile,
@@ -40,13 +41,18 @@ export const DEFAULT_FORM: LauncherForm = {
   roundCap: "25",
 };
 
-/** Prefills the form from a box: its project, worktree, and branch. */
-export function formFromBox(form: LauncherForm, box: Box): LauncherForm {
+/**
+ * Prefills the form from a box: its project, worktree, and branch. The
+ * engine runs in the container, so the repository is the container path:
+ * the box view's `containerWorkDir` when the server sends it, else the
+ * host path mapped by its shape (the same path except on Windows).
+ */
+export function formFromBox(form: LauncherForm, box: Box, containerWorkDir?: string): LauncherForm {
   return {
     ...form,
     projectId: box.projectId,
     boxId: box.id,
-    repoPath: box.worktree ?? box.targetDir,
+    repoPath: containerWorkDir ?? defaultContainerPath(box.worktree ?? box.targetDir),
     tip: box.branch ?? form.tip,
   };
 }
