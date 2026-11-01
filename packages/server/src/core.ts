@@ -141,6 +141,7 @@ export function createServerCore(options: CoreOptions): ServerCore {
     portFree: options.portFree,
     graceSec: options.graceSec,
     removalTimeoutMs: options.removalTimeoutMs,
+    log: options.log,
   });
   const boxes = new BoxService({
     env,

@@ -36,7 +36,9 @@ export function assertContractEvent(payload: CoreEventPayload): void {
   });
 }
 
-export function makeHarness(options: { image?: boolean; engineLabel?: string } = {}): Harness {
+export function makeHarness(
+  options: { image?: boolean; engineLabel?: string; log?: (message: string) => void } = {},
+): Harness {
   const home = fs.realpathSync(tempDir("aio-core-"));
   const env: HostEnv = { home, user: "tester", now: () => new Date() };
   const docker = new MemoryDocker();
@@ -58,6 +60,7 @@ export function makeHarness(options: { image?: boolean; engineLabel?: string } =
     portFree: async () => true,
     removalTimeoutMs: 300,
     sessionGoneTimeoutMs: 300,
+    log: options.log,
   });
   const events: CoreEventPayload[] = [];
   core.events.subscribe((e) => events.push(e));

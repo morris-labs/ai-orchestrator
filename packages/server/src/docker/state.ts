@@ -1,9 +1,11 @@
 // The host side of a project container's keeper state:
 // `~/.ai-orchestrator/state/<container>/sessions` (live tmux sessions, rewritten
-// every second), `mounts` (the mounts the container was created with), and
-// `engine.token` (the engine's bearer token, mode 0600).
+// every second), `mounts` (the mounts the container was created with),
+// `engine.token` (the engine's bearer token, mode 0600), and
+// `account-dirs.json` (each vendor's default account folder, for the engine).
 import fs from "node:fs";
 import path from "node:path";
+import { ENGINE_ACCOUNT_DIRS_FILE, type EngineAccountDirs } from "@aio/contracts";
 import { homePaths, type HostEnv } from "../records/env.js";
 import { readRegularFileSync, replaceFileSync } from "../records/regular-file.js";
 
@@ -120,4 +122,23 @@ export function writeMountsFile(env: HostEnv, container: string, mounts: readonl
 export function readMountsFile(env: HostEnv, container: string): string[] | null {
   const content = readRegularFileSync(mountsFile(env, container));
   return content === null ? null : parseSessions(content);
+}
+
+export function accountDirsFile(env: HostEnv, container: string): string {
+  return path.join(stateDir(env, container), ENGINE_ACCOUNT_DIRS_FILE);
+}
+
+/**
+ * Writes the default account folder of each vendor, as the container sees
+ * it, for the engine's vendor calls. An empty object means no folder is
+ * known, as in `host` mode. The file is replaced rather than written
+ * through, for the same reason as `writeMountsFile()`.
+ */
+export function writeAccountDirsFile(
+  env: HostEnv,
+  container: string,
+  dirs: EngineAccountDirs,
+): void {
+  fs.mkdirSync(stateDir(env, container), { recursive: true });
+  replaceFileSync(accountDirsFile(env, container), `${JSON.stringify(dirs)}\n`);
 }
