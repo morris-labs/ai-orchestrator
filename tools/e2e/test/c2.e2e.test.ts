@@ -34,6 +34,26 @@ import {
   type Proc,
 } from "./harness.js";
 
+/**
+ * The engine's identity, `VERSION+HASH` once the engine is built. The engine
+ * reports it, and the server compares the engine's health reply with
+ * `AGENTBOX_ENGINE_VERSION`, so both processes get the same value. A plain
+ * version makes the server refuse the subscription (versionMatches false).
+ */
+function engineIdentity(): string {
+  const version = (
+    JSON.parse(
+      readFileSync(path.join(path.dirname(ENGINE_MAIN), "..", "package.json"), "utf8"),
+    ) as { version: string }
+  ).version;
+  try {
+    const hash = readFileSync(path.join(path.dirname(ENGINE_MAIN), "identity"), "utf8").trim();
+    return /^[0-9a-f]{8,64}$/.test(hash) ? `${version}+${hash}` : version;
+  } catch {
+    return version;
+  }
+}
+
 const MOCK_SCRIPT = path.join(import.meta.dirname, "fixtures", "mock-script.json");
 const TERMINAL = ["finished", "failed", "cancelled"];
 
@@ -133,7 +153,7 @@ beforeAll(async () => {
       AGENTBOX_ENGINE_PORT: String(enginePort),
       AGENTBOX_PROJECT_ROOT: repo,
       AGENTBOX_CONTAINER: projectContainerName(projectId),
-      AGENTBOX_ENGINE_VERSION: "4.0.0-dev",
+      AGENTBOX_ENGINE_VERSION: engineIdentity(),
       AGENTBOX_STATE_DIR: stateDir,
       AGENTBOX_MOCK_VENDORS: "1",
       AGENTBOX_MOCK_SCRIPT: MOCK_SCRIPT,
@@ -147,6 +167,7 @@ beforeAll(async () => {
     SERVER_MAIN,
     childEnv({
       AGENTBOX_HOME: home,
+      AGENTBOX_ENGINE_VERSION: engineIdentity(),
       AGENTBOX_DEV_ENGINES: `${projectId}=127.0.0.1:${enginePort}:${engineToken}`,
     }),
   );
