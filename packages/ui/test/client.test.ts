@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { ApiClient, ApiRequestError, isApiError } from "../src/core";
+import { ApiClient, ApiRequestError, createMachineClient, isApiError } from "../src/core";
 import { FakeServer, makeBoxView, type FakeSocket } from "../src/testing";
 
 function setup() {
@@ -206,5 +206,46 @@ describe("timeouts", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("machine clients", () => {
+  const base = { baseUrl: "https://127.0.0.1:21400", token: "tok" };
+
+  it("sends every route through the machine proxy prefix", () => {
+    const client = createMachineClient(base, "node a");
+    expect(client.machineId).toBe("node a");
+    expect(client.url("boxes.get", { params: { boxId: "b1" } })).toBe(
+      "https://127.0.0.1:21400/api/v1/machines/node%20a/proxy/boxes/b1",
+    );
+    expect(client.wsUrl("terminals.open", { query: { kind: "session", boxId: "b1" } })).toBe(
+      "wss://127.0.0.1:21400/api/v1/machines/node%20a/proxy/terminals?kind=session&boxId=b1",
+    );
+    // The session cookie belongs to the server the client talks to.
+    expect(client.url("auth.session")).toBe("https://127.0.0.1:21400/api/v1/auth/session");
+  });
+
+  it("keeps the plain paths for local and for no machine", () => {
+    for (const client of [new ApiClient(base), createMachineClient(base, "local")]) {
+      expect(client.machineId).toBe("local");
+      expect(client.url("boxes.list")).toBe("https://127.0.0.1:21400/api/v1/boxes");
+      expect(client.wsUrl("events.stream")).toBe("wss://127.0.0.1:21400/api/v1/events");
+    }
+  });
+
+  it("calls the prefixed URL", async () => {
+    const urls: string[] = [];
+    const client = createMachineClient(
+      {
+        token: "tok",
+        fetch: async (u) => {
+          urls.push(String(u));
+          return new Response(JSON.stringify({ ok: true }), { status: 200 });
+        },
+      },
+      "node-a",
+    );
+    await client.call("boxes.message", { params: { boxId: "b" }, body: { text: "hi" } });
+    expect(urls).toEqual(["/api/v1/machines/node-a/proxy/boxes/b/message"]);
   });
 });
