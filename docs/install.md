@@ -236,8 +236,35 @@ Your data in `~/.claude-box`, your transcripts in `~/.claude`, and the
 ## Build from source
 
 To build the package from a checkout, you need Node.js 22, pnpm through
-corepack, [nfpm](https://nfpm.goreleaser.com/install/), and `dpkg-deb`.
-electron-builder comes in as a dev dependency of the two apps.
+corepack, nfpm, and `dpkg-deb`. The two apps list electron-builder as a dev
+dependency, so `pnpm install` provides it and you install nothing else for it.
+The first build downloads the Electron binary, so it needs network access.
+
+1. Install `dpkg-deb`, which the `dpkg-dev` package provides on Debian and
+   Ubuntu:
+
+   ```sh
+   sudo apt-get install dpkg-dev
+   ```
+
+1. Install nfpm. Debian and Ubuntu don't package it, so download the release
+   that the CI workflow uses, check its checksum, and put the binary on your
+   `PATH`. The `NFPM_SHA256` value is in `.github/workflows/ci.yml`; copy it
+   from there when you change the version:
+
+   ```sh
+   NFPM_VERSION=2.48.0
+   NFPM_SHA256=6d7f9a28b2f397934403950fcbba83f598b08d02edbe79a0815b3b4897341750
+   cd "$(mktemp -d)"
+   curl -fsSL -o nfpm.tar.gz \
+     "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz"
+   echo "$NFPM_SHA256  nfpm.tar.gz" | sha256sum -c -
+   mkdir -p ~/.local/bin
+   tar -xzf nfpm.tar.gz -C ~/.local/bin nfpm
+   nfpm --version
+   ```
+
+   Make sure `~/.local/bin` is on your `PATH`.
 
 1. Install the workspace and run its checks:
 

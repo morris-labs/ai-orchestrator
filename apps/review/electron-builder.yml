@@ -1,0 +1,18 @@
+# Configures electron-builder for scripts/build-deb.sh, which runs it with
+# --dir and packages the result with nfpm. Vite bundles every dependency
+# into dist/, so the app needs only the build output and package.json. The
+# explicit file list keeps source, tests, and node_modules out of the
+# archive.
+appId: dev.agentbox.review
+productName: "Agent Box Review"
+npmRebuild: false
+nodeGypRebuild: false
+asar: true
+files:
+  - dist/**
+  - package.json
+  - "!**/*.map"
+  - "!**/node_modules/**"
+linux:
+  target: dir
+  category: Development
