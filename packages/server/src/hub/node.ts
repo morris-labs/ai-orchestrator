@@ -9,12 +9,7 @@ import { HUB_MACHINE_ID, type NodeLinkState } from "@aio/contracts";
 import WebSocket from "ws";
 import type { FastifyInstance } from "fastify";
 import { ApiError } from "../api/errors.js";
-import {
-  newNodeKey,
-  readNodeLinkFiles,
-  writeNodeLinkFiles,
-  type NodeLinkFiles,
-} from "./ca.js";
+import { newNodeKey, readNodeLinkFiles, writeNodeLinkFiles, type NodeLinkFiles } from "./ca.js";
 import { createDispatcher, type InternalHandler } from "./dispatch.js";
 import { EnrollResponseSchema, MAX_LINK_FRAME, awaitHello, type LinkTiming } from "./hub.js";
 import { LinkPeer } from "./peer.js";
@@ -136,7 +131,10 @@ export class NodeAgent {
       s.once("secureConnect", () => resolve(s));
       s.once("error", reject);
     }).catch((err: Error) => {
-      throw new ApiError("hub_unreachable", `Can't reach the hub at ${input.hubUrl}: ${err.message}`);
+      throw new ApiError(
+        "hub_unreachable",
+        `Can't reach the hub at ${input.hubUrl}: ${err.message}`,
+      );
     });
     const seen = socket.getPeerCertificate();
     if (!seen?.fingerprint256) {
@@ -189,15 +187,30 @@ export class NodeAgent {
     try {
       json = JSON.parse(text);
     } catch {
-      throw new ApiError("hub_unreachable", `The hub answered ${status} with a body that isn't JSON.`);
+      throw new ApiError(
+        "hub_unreachable",
+        `The hub answered ${status} with a body that isn't JSON.`,
+      );
     }
     if (status !== 200) {
       const err = (json as { error?: { code?: string; message?: string } }).error;
-      const code = err?.code === "conflict" ? "conflict" : err?.code === "validation" ? "validation" : "unauthorized";
-      throw new ApiError(code, `The hub refused the enrollment: ${err?.message ?? `status ${status}`}`);
+      const code =
+        err?.code === "conflict"
+          ? "conflict"
+          : err?.code === "validation"
+            ? "validation"
+            : "unauthorized";
+      throw new ApiError(
+        code,
+        `The hub refused the enrollment: ${err?.message ?? `status ${status}`}`,
+      );
     }
     const parsed = EnrollResponseSchema.safeParse(json);
-    if (!parsed.success) throw new ApiError("hub_unreachable", "The hub's enrollment answer doesn't match its schema.");
+    if (!parsed.success)
+      throw new ApiError(
+        "hub_unreachable",
+        "The hub's enrollment answer doesn't match its schema.",
+      );
     const res = parsed.data;
     const expected = hubProof(key, {
       nonce,
@@ -350,7 +363,10 @@ export class NodeAgent {
           }
           const mismatch = protocolMismatch(ours.protocol, first.hello.protocol);
           if (mismatch) {
-            terminal = { state: "refused", error: `This machine refused the hub's link: ${mismatch}` };
+            terminal = {
+              state: "refused",
+              error: `This machine refused the hub's link: ${mismatch}`,
+            };
             ws.send(JSON.stringify({ type: "refuse", reason: mismatch }));
             ws.close(LINK_CLOSE.protocolRefused, "Protocol versions differ.");
             this.setState("refused", terminal.error);
@@ -405,7 +421,10 @@ export class NodeAgent {
         return;
       }
       if (this.state !== "refused" && this.state !== "disconnected") {
-        this.setState("disconnected", this.error ?? (wasUp ? "The link to the hub dropped." : null));
+        this.setState(
+          "disconnected",
+          this.error ?? (wasUp ? "The link to the hub dropped." : null),
+        );
       }
       if (wasUp) this.opts.log("The link to the hub dropped; reconnecting.");
       this.scheduleRetry();

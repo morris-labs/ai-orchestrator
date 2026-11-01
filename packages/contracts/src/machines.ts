@@ -15,5 +15,9 @@ export const MachineSchema = z.object({
 });
 export type Machine = z.infer<typeof MachineSchema>;
 export const MachineListSchema = z.object({ machines: z.array(MachineSchema) });
-export const EnrollmentCodeSchema = z.object({ code: z.string(), expiresAt: z.string(), hubUrl: z.string() });
+export const EnrollmentCodeSchema = z.object({
+  code: z.string(),
+  expiresAt: z.string(),
+  hubUrl: z.string(),
+});
 export type EnrollmentCode = z.infer<typeof EnrollmentCodeSchema>;

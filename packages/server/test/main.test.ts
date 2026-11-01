@@ -38,7 +38,9 @@ describe("main", () => {
     expect(parseServerArgs([], { AIO_ROLE: "hub" }).role).toBe("hub");
     expect(parseServerArgs(["--role", "node"], { AIO_ROLE: "hub" }).role).toBe("node");
     expect(parseServerArgs(["--role=both"], {}).role).toBe("both");
-    expect(parseServerArgs(["--role", "boss"], {}).error).toMatch(/--role must be hub, node, or both/);
+    expect(parseServerArgs(["--role", "boss"], {}).error).toMatch(
+      /--role must be hub, node, or both/,
+    );
     expect(parseServerArgs([], { AIO_ROLE: "x" }).error).toMatch(/AIO_ROLE must be/);
     expect(parseServerArgs(["--role"], {}).error).toMatch(/needs hub, node, or both/);
   });

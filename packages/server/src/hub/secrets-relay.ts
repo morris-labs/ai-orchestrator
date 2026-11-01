@@ -67,7 +67,8 @@ export class HubOpClient implements OpClient {
 
   async read(ref: string): Promise<string> {
     const { value } = (await this.call(OP_PATHS.read, { ref })) as { value: string };
-    if (typeof value !== "string") throw new ApiError("secrets_unavailable", "The hub's answer has no value.");
+    if (typeof value !== "string")
+      throw new ApiError("secrets_unavailable", "The hub's answer has no value.");
     return value;
   }
 

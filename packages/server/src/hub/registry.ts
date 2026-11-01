@@ -32,16 +32,14 @@ export function newEnrollmentCode(): string {
 
 /** The code as typed, with case, spaces, and hyphens removed and look-alike letters mapped. */
 export function normalizeCode(code: string): string {
-  return code
-    .toUpperCase()
-    .replace(/[\s-]/g, "")
-    .replace(/[IL]/g, "1")
-    .replace(/O/g, "0");
+  return code.toUpperCase().replace(/[\s-]/g, "").replace(/[IL]/g, "1").replace(/O/g, "0");
 }
 
 /** The key derived from a code, which is all the hub stores of it. */
 export function codeKey(code: string): string {
-  return createHash("sha256").update(`aio-enroll-v1:${normalizeCode(code)}`).digest("hex");
+  return createHash("sha256")
+    .update(`aio-enroll-v1:${normalizeCode(code)}`)
+    .digest("hex");
 }
 
 /** The node's proof that it knows the code and saw `hubFingerprint`. */
@@ -50,7 +48,9 @@ export function nodeProof(
   parts: { hubFingerprint: string; nonce: string; name: string; publicKey: string },
 ): string {
   return createHmac("sha256", Buffer.from(key, "hex"))
-    .update(JSON.stringify(["node", parts.hubFingerprint, parts.nonce, parts.name, parts.publicKey]))
+    .update(
+      JSON.stringify(["node", parts.hubFingerprint, parts.nonce, parts.name, parts.publicKey]),
+    )
     .digest("hex");
 }
 
@@ -108,7 +108,8 @@ function toRow(r: RawMachine): MachineRow {
   } catch {
     capabilities = [];
   }
-  const platform = r.platform === "linux" || r.platform === "darwin" || r.platform === "win32" ? r.platform : null;
+  const platform =
+    r.platform === "linux" || r.platform === "darwin" || r.platform === "win32" ? r.platform : null;
   const role = r.role === "hub" || r.role === "both" ? r.role : "node";
   return {
     id: r.id,
@@ -133,13 +134,14 @@ export class MachineRegistry {
   ) {}
 
   list(): MachineRow[] {
-    return (this.db.prepare("SELECT * FROM machines ORDER BY created_at, id").all() as RawMachine[]).map(
-      toRow,
-    );
+    return (
+      this.db.prepare("SELECT * FROM machines ORDER BY created_at, id").all() as RawMachine[]
+    ).map(toRow);
   }
 
   get(id: string): MachineRow | undefined {
-    const r = this.db.prepare("SELECT * FROM machines WHERE id = ?").get(id) as RawMachine | undefined;
+    const r = this.db.prepare("SELECT * FROM machines WHERE id = ?").get(id) as
+      RawMachine | undefined;
     return r ? toRow(r) : undefined;
   }
 
@@ -183,7 +185,13 @@ export class MachineRegistry {
   /** Records what a machine said in its hello, and that it was seen now. */
   seen(
     id: string,
-    hello?: { role: Machine["role"]; serverVersion: string; protocol: number; capabilities: string[]; platform: Machine["platform"] },
+    hello?: {
+      role: Machine["role"];
+      serverVersion: string;
+      protocol: number;
+      capabilities: string[];
+      platform: Machine["platform"];
+    },
   ): void {
     const at = this.now().toISOString();
     if (hello) {
@@ -202,7 +210,9 @@ export class MachineRegistry {
           id,
         );
     } else {
-      this.db.prepare("UPDATE machines SET last_seen = ?, updated_at = ? WHERE id = ?").run(at, at, id);
+      this.db
+        .prepare("UPDATE machines SET last_seen = ?, updated_at = ? WHERE id = ?")
+        .run(at, at, id);
     }
   }
 

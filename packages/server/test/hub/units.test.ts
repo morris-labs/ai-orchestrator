@@ -5,11 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { openDatabase } from "../../src/db/index.js";
-import {
-  issueNodeCertificate,
-  loadOrCreateHubIdentity,
-  newNodeKey,
-} from "../../src/hub/ca.js";
+import { issueNodeCertificate, loadOrCreateHubIdentity, newNodeKey } from "../../src/hub/ca.js";
 import { defaultAllowNodeRequest, nameFromHost, parseRole } from "../../src/hub/multihost.js";
 import { protocolMismatch, sendableCloseCode, closeReason } from "../../src/hub/protocol.js";
 import {

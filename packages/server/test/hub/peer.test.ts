@@ -6,7 +6,12 @@ import { afterEach, describe, expect, it } from "vitest";
 import WebSocket, { WebSocketServer } from "ws";
 import type { LinkStream } from "../../src/hub/link.js";
 import { CreditSender, LinkPeer, type FlowStream, type LinkServer } from "../../src/hub/peer.js";
-import { LINK_CAPABILITIES, LINK_PROTOCOL, STREAM_WINDOW, type LinkHello } from "../../src/hub/protocol.js";
+import {
+  LINK_CAPABILITIES,
+  LINK_PROTOCOL,
+  STREAM_WINDOW,
+  type LinkHello,
+} from "../../src/hub/protocol.js";
 import { waitFor } from "../events/fake-engine.js";
 
 const hello = (capabilities = [...LINK_CAPABILITIES]): LinkHello => ({
@@ -94,7 +99,11 @@ describe("link peers", () => {
     const { hubSide, client } = await pair({
       request: async (req) => {
         if (req.path === "/slow") await new Promise<void>((r) => (release = r));
-        return { status: 200, headers: { "x-path": req.path }, body: req.body ?? Buffer.from("none") };
+        return {
+          status: 200,
+          headers: { "x-path": req.path },
+          body: req.body ?? Buffer.from("none"),
+        };
       },
       openStream: async () => {
         throw Object.assign(new Error("No such stream."), { status: 404 });

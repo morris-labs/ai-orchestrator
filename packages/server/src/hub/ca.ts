@@ -13,7 +13,12 @@
 //                           leaves the node.
 //   hub-ca.crt, hub.crt     The hub's authority and its pinned link certificate.
 //   node.json               The hub URL, this machine's id, and its name.
-import { X509Certificate, createPrivateKey, createPublicKey, generateKeyPairSync } from "node:crypto";
+import {
+  X509Certificate,
+  createPrivateKey,
+  createPublicKey,
+  generateKeyPairSync,
+} from "node:crypto";
 import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createCertificate } from "@aio/contracts/tls";
@@ -29,7 +34,11 @@ export const NODE_CERT_PREFIX = "aio-node:";
 const CERT_DAYS = 3650;
 
 /** Writes `text` to `file` with `mode` through a temporary file, so a reader never sees half. */
-export async function writeAtomic(file: string, text: string | Buffer, mode: number): Promise<void> {
+export async function writeAtomic(
+  file: string,
+  text: string | Buffer,
+  mode: number,
+): Promise<void> {
   const tmp = `${file}.${process.pid}.tmp`;
   await rm(tmp, { force: true });
   await writeFile(tmp, text, { mode, flag: "wx" });
@@ -104,7 +113,8 @@ export async function loadOrCreateHubIdentity(dir: string, now = new Date()): Pr
   if (caKey && caCert) {
     try {
       const x509 = new X509Certificate(caCert);
-      if (x509.ca && x509.checkPrivateKey(createPrivateKey(caKey))) ca = { key: caKey, cert: caCert };
+      if (x509.ca && x509.checkPrivateKey(createPrivateKey(caKey)))
+        ca = { key: caKey, cert: caCert };
     } catch {
       ca = null;
     }
@@ -170,7 +180,10 @@ export function issueNodeCertificate(
   } catch {
     throw new Error("The node's public key isn't a PEM public key.");
   }
-  if (publicKey.asymmetricKeyType !== "ec" || publicKey.asymmetricKeyDetails?.namedCurve !== "prime256v1") {
+  if (
+    publicKey.asymmetricKeyType !== "ec" ||
+    publicKey.asymmetricKeyDetails?.namedCurve !== "prime256v1"
+  ) {
     throw new Error("The node's public key must be an ECDSA P-256 key.");
   }
   const caPrivate = createPrivateKey(ca.key);

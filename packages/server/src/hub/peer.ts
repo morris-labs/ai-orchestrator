@@ -356,7 +356,8 @@ export class LinkPeer implements NodeLink {
   }
 
   private await(id: string, what: string): Promise<LinkFrame> {
-    if (this.closed) return Promise.reject(new LinkError(`The link to ${this.machineId} is closed.`));
+    if (this.closed)
+      return Promise.reject(new LinkError(`The link to ${this.machineId} is closed.`));
     return new Promise<LinkFrame>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);

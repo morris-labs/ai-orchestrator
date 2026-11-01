@@ -220,8 +220,7 @@ export class Hub {
     this.reconciling = this.reconciling.then(async () => {
       if (this.closed) return;
       const want =
-        this.opts.isHub() &&
-        (this.registry.count() > 0 || this.registry.liveCodeKeys().length > 0);
+        this.opts.isHub() && (this.registry.count() > 0 || this.registry.liveCodeKeys().length > 0);
       try {
         if (want && !this.server) await this.listen();
         else if (!want && this.server) await this.stopListening();
@@ -282,7 +281,13 @@ export class Hub {
   private toMachine(row: MachineRow, now: string): Machine {
     const online = this.get(row.id) !== undefined && row.revokedAt === null;
     const status: Machine["status"] =
-      row.revokedAt !== null ? "revoked" : online ? "online" : row.lastSeen === null ? "enrolling" : "offline";
+      row.revokedAt !== null
+        ? "revoked"
+        : online
+          ? "online"
+          : row.lastSeen === null
+            ? "enrolling"
+            : "offline";
     return {
       id: row.id,
       name: row.name,
@@ -372,7 +377,10 @@ export class Hub {
       }
       sendJson(res, 200, await this.enroll(parsed.data));
     } catch (err) {
-      const failure = err instanceof ApiError ? err : new ApiError("validation", "The enrollment request isn't valid JSON.");
+      const failure =
+        err instanceof ApiError
+          ? err
+          : new ApiError("validation", "The enrollment request isn't valid JSON.");
       sendJson(res, failure.status, failure.toBody());
     }
   }
@@ -380,19 +388,17 @@ export class Hub {
   /** Checks an enrollment against the live codes, and signs the node's certificate. */
   async enroll(req: EnrollRequest): Promise<EnrollResponse> {
     const identity = await this.ensureIdentity();
-    const key = this.registry
-      .liveCodeKeys()
-      .find((k) =>
-        sameHex(
-          nodeProof(k, {
-            hubFingerprint: identity.linkFingerprint,
-            nonce: req.nonce,
-            name: req.name,
-            publicKey: req.publicKey,
-          }),
-          req.proof,
-        ),
-      );
+    const key = this.registry.liveCodeKeys().find((k) =>
+      sameHex(
+        nodeProof(k, {
+          hubFingerprint: identity.linkFingerprint,
+          nonce: req.nonce,
+          name: req.name,
+          publicKey: req.publicKey,
+        }),
+        req.proof,
+      ),
+    );
     if (!key) {
       throw new ApiError(
         "unauthorized",
@@ -446,11 +452,16 @@ export class Hub {
     head: Buffer,
   ): void {
     const url = new URL(req.url ?? "/", "https://hub.invalid");
-    if (url.pathname !== LINK_PATHS.connect) return refuseUpgrade(socket, 404, "No such link route.");
+    if (url.pathname !== LINK_PATHS.connect)
+      return refuseUpgrade(socket, 404, "No such link route.");
     const tls = req.socket as TLSSocket;
     const cert = tls.getPeerCertificate?.();
     if (!tls.authorized || !cert?.fingerprint256) {
-      return refuseUpgrade(socket, 401, "The link needs a client certificate that this hub signed.");
+      return refuseUpgrade(
+        socket,
+        401,
+        "The link needs a client certificate that this hub signed.",
+      );
     }
     const machine = this.registry.byFingerprint(cert.fingerprint256);
     if (!machine) return refuseUpgrade(socket, 401, "This hub doesn't know the certificate.");

@@ -1344,7 +1344,9 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
 
   machines
     .command("enroll")
-    .description("Issue a one-time enrollment code on the hub. Run aio node join on the new machine with it.")
+    .description(
+      "Issue a one-time enrollment code on the hub. Run aio node join on the new machine with it.",
+    )
     .action(async () => {
       const r = await client().call("machines.enroll");
       print(
@@ -1389,7 +1391,10 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
   node
     .command("join")
     .description("Join a hub with a one-time enrollment code from aio machines enroll.")
-    .argument("<hub-url>", "The hub URL that came with the code, such as https://hub.example.com:21402.")
+    .argument(
+      "<hub-url>",
+      "The hub URL that came with the code, such as https://hub.example.com:21402.",
+    )
     .argument("<code>", "The enrollment code.")
     .option("--name <name>", "The name to enroll under. Default: this machine's host name.")
     .action(async (hubUrl: string, code: string, o: { name?: string }) => {

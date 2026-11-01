@@ -396,7 +396,8 @@ describe("multi-host", () => {
       });
       ids.push(joined.json.machineId as string);
     }
-    const read = (s: Server) => (fs.existsSync(credFile(s.home)) ? fs.readFileSync(credFile(s.home), "utf8") : null);
+    const read = (s: Server) =>
+      fs.existsSync(credFile(s.home)) ? fs.readFileSync(credFile(s.home), "utf8") : null;
     await waitFor(() => read(one) === '{"token":"synthetic-1"}' && read(two) === read(one), 5000);
     expect(fs.statSync(credFile(one.home)).mode & 0o777).toBe(0o600);
 

@@ -26,12 +26,7 @@ import { jsonBody, jsonResponse, safely, type InternalHandler } from "./dispatch
 import { Hub, type LinkTiming } from "./hub.js";
 import type { LinkRegistry, NodeLink } from "./link.js";
 import { HUB_LINK_ID, NodeAgent } from "./node.js";
-import {
-  LINK_CAPABILITIES,
-  LINK_PROTOCOL,
-  machinePlatform,
-  type LinkHello,
-} from "./protocol.js";
+import { LINK_CAPABILITIES, LINK_PROTOCOL, machinePlatform, type LinkHello } from "./protocol.js";
 import { HubOpClient, RoleOpClient, opRelayHandlers } from "./secrets-relay.js";
 
 export type MachineRole = Machine["role"];
@@ -111,7 +106,10 @@ export interface MultiHostOptions {
 /** A machine name from a host name: the first label, with anything else replaced. */
 export function nameFromHost(host: string): string {
   const label = host.split(".")[0] ?? "";
-  const clean = label.replace(/[^A-Za-z0-9-]/g, "-").replace(/^-+/, "").slice(0, 63);
+  const clean = label
+    .replace(/[^A-Za-z0-9-]/g, "-")
+    .replace(/^-+/, "")
+    .slice(0, 63);
   return clean === "" ? "machine" : clean;
 }
 
@@ -314,7 +312,11 @@ export class MultiHost {
       const link = this.node.link;
       if (!link || !link.can("credentials.v1")) return;
       try {
-        const res = await link.request({ method: "POST", path: CREDENTIAL_PATHS.pull, headers: {} });
+        const res = await link.request({
+          method: "POST",
+          path: CREDENTIAL_PATHS.pull,
+          headers: {},
+        });
         if (res.status !== 200) return;
         const { entries } = JSON.parse(res.body.toString()) as { entries: unknown[] };
         let wrote = 0;
@@ -469,7 +471,10 @@ export class MultiHost {
   async join(input: NodeJoin): Promise<NodeStatus> {
     const role = this.role();
     if (role === "hub") {
-      throw new ApiError("invalid_state", "This machine's role is hub, so it can't join another hub.");
+      throw new ApiError(
+        "invalid_state",
+        "This machine's role is hub, so it can't join another hub.",
+      );
     }
     if (role === "both" && this.hub.registry.liveCount() > 0) {
       throw new ApiError(
@@ -483,7 +488,11 @@ export class MultiHost {
         `This server runs with --role both or ${ROLE_ENV}=both. Start it without that override, or with node, to join a hub.`,
       );
     }
-    await this.node.join({ hubUrl: input.hubUrl, code: input.code, name: input.name ?? this.name() });
+    await this.node.join({
+      hubUrl: input.hubUrl,
+      code: input.code,
+      name: input.name ?? this.name(),
+    });
     if (this.opts.settings().role !== "node" && this.opts.roleOverride === undefined) {
       await this.opts.patchSettings({ role: "node" });
       await this.hub.reconcile();

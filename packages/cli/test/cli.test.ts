@@ -549,7 +549,14 @@ describe("machines and node", () => {
 
   it("joins a hub and shows the link", async () => {
     server.on("POST /api/v1/node/join", { body: nodeStatus });
-    await cli(["node", "join", "https://hub.example.com:21402", "7K2Q-M9XD-4HPA-R3TB", "--name", "node-one"]);
+    await cli([
+      "node",
+      "join",
+      "https://hub.example.com:21402",
+      "7K2Q-M9XD-4HPA-R3TB",
+      "--name",
+      "node-one",
+    ]);
     expect(last()?.body).toEqual({
       hubUrl: "https://hub.example.com:21402",
       code: "7K2Q-M9XD-4HPA-R3TB",

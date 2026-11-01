@@ -255,7 +255,8 @@ export async function main(argv: string[]): Promise<number> {
   if (dataDir) process.stderr.write(`Using the data directory ${dataDir}.\n`);
   if (role) process.stderr.write(`Running with the role ${role}.\n`);
   const linkPort = app.multiHost.hub.port;
-  if (linkPort !== null) process.stderr.write(`Hub listening for node links on port ${linkPort}.\n`);
+  if (linkPort !== null)
+    process.stderr.write(`Hub listening for node links on port ${linkPort}.\n`);
 
   await new Promise<void>((resolve) => {
     let closing = false;
