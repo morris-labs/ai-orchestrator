@@ -11,12 +11,22 @@ export interface TerminalTabsProps {
   onCloseAll: () => void;
   onEnded: (key: string, exitCode: number | null) => void;
   openLink: (url: string) => void;
+  /**
+   * The machine name of a multi-machine window. Every tab title then starts
+   * with `MACHINE / `, so boxes with one name on two PCs stay apart.
+   */
+  machineLabel?: string;
+  /** False while another machine's view is in front; no terminal takes focus then. */
+  visible?: boolean;
 }
 
 export function TerminalTabs(props: TerminalTabsProps) {
   const client = useApiClient();
   const menu = useContextMenu();
   const { tabs, current } = props.state;
+  const titleOf = (t: Tab) =>
+    props.machineLabel ? `${props.machineLabel} / ${tabTitle(t)}` : tabTitle(t);
+  const visible = props.visible ?? true;
   if (tabs.length === 0) {
     return (
       <div className="bx-terminal-placeholder">
@@ -35,7 +45,9 @@ export function TerminalTabs(props: TerminalTabsProps) {
             tabIndex={0}
             aria-selected={t.key === current}
             className={`ab-tab${t.key === current ? " ab-active" : ""}`}
-            title={`${t.tooltip}${i < 9 ? `  (Alt+${i + 1})` : ""}`}
+            title={`${props.machineLabel ? `${props.machineLabel}: ` : ""}${t.tooltip}${
+              i < 9 ? `  (Alt+${i + 1})` : ""
+            }`}
             onMouseDown={(e) => {
               if (e.button === 1) {
                 e.preventDefault();
@@ -57,11 +69,11 @@ export function TerminalTabs(props: TerminalTabsProps) {
             }}
           >
             <StatusDot decorative state={t.ended ? "stopped" : "running"} />
-            <span>{tabTitle(t)}</span>
+            <span>{titleOf(t)}</span>
             <button
               type="button"
               className="ab-tab-close"
-              aria-label={`Close ${tabTitle(t)}`}
+              aria-label={`Close ${titleOf(t)}`}
               onClick={(e) => {
                 e.stopPropagation();
                 props.onClose(t.key);
@@ -79,9 +91,11 @@ export function TerminalTabs(props: TerminalTabsProps) {
             target={
               t.kind === "side" && t.platform
                 ? { kind: "side", boxId: t.boxId, platform: t.platform }
-                : { kind: "session", boxId: t.boxId }
+                : t.kind === "shell"
+                  ? { kind: "shell", boxId: t.boxId }
+                  : { kind: "session", boxId: t.boxId }
             }
-            active={t.key === current}
+            active={visible && t.key === current}
             onExit={(code) => props.onEnded(t.key, code)}
             openLink={props.openLink}
           />

@@ -229,3 +229,84 @@
   color: var(--ab-stopped);
   margin-left: 6px;
 }
+
+/* Machine tabs: one boxes view per machine, the others hidden but mounted. */
+.bx-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+.bx-machine-pane {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.bx-machine-pane[hidden] {
+  display: none;
+}
+.bx-machine-pane > .bx-app,
+.bx-machine-remote > .bx-app {
+  flex: 1;
+  min-height: 0;
+  height: auto;
+}
+.bx-machine-remote {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.bx-machine-strip {
+  padding-left: 8px;
+  border-bottom: 1px solid var(--ab-border);
+  background: var(--ab-base-bg);
+}
+.bx-machine-skew {
+  color: var(--ab-pending);
+}
+.bx-machine-offline {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 20px;
+  text-align: center;
+}
+.bx-machine-offline h2 {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 6px;
+  font-size: 16px;
+}
+.bx-machine-offline p {
+  margin: 0;
+}
+.bx-machine-offline-bar {
+  flex-shrink: 0;
+}
+.bx-machines-page {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-bottom: 6px;
+}
+.bx-machines-page > .ab-table-wrap {
+  flex: 1;
+  margin: 0 6px;
+}
+.bx-machines-note {
+  padding: 0 10px;
+}
+.bx-machine-command {
+  width: 100%;
+  font-family: var(--ab-mono);
+}
+.bx-machine-code {
+  margin-top: 8px;
+}

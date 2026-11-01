@@ -66,6 +66,7 @@ import {
 } from "../logic/tabs";
 import { CHORDS } from "./chords";
 import type { DialogState } from "./dialogs";
+import { useMachine } from "./machine";
 import { useBoxesData } from "./useBoxesData";
 
 /** Pixels the table pane keeps: the filter box and a few rows. */
@@ -108,6 +109,9 @@ function store(key: string, value: string | null) {
 
 export function App() {
   const client = useApiClient();
+  const machine = useMachine();
+  // Each machine remembers its own project; this PC keeps the old key.
+  const projectKey = machine.isLocal ? "selectedProject" : `machine.${machine.id}.selectedProject`;
   const data = useBoxesData();
   const { ask, confirm, inform } = useMessageBox();
   const messageOpen = useMessageBoxOpen();
@@ -115,7 +119,7 @@ export function App() {
   const streamStatus = useStreamStatus();
   const tableMenu = useContextMenu();
 
-  const [projectId, setProjectId] = useState<string | null>(() => load("selectedProject"));
+  const [projectId, setProjectId] = useState<string | null>(() => load(projectKey));
   const [filter, setFilter] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [sort, setSort] = useState<SortState>({ column: "status", direction: "asc" });
@@ -147,7 +151,7 @@ export function App() {
   const projects = data.projects.map((p) => p.project);
   const currentProject = data.projects.find((p) => p.project.id === projectId);
 
-  useEffect(() => store("selectedProject", projectId), [projectId]);
+  useEffect(() => store(projectKey, projectId), [projectKey, projectId]);
   useEffect(() => store("detailsVisible", showDetails ? "1" : "0"), [showDetails]);
 
   // A project that disappeared falls back to "All projects".
@@ -206,7 +210,10 @@ export function App() {
 
   const startupDone = useRef(false);
   useEffect(() => {
-    if (startupDone.current || !data.loaded || data.error || !data.settings) return;
+    // Another machine's view waits until it comes to the front, so its
+    // prompts never open behind the view in front.
+    if (startupDone.current || !machine.active || !data.loaded || data.error || !data.settings)
+      return;
     startupDone.current = true;
     if (!data.settings.setupCompleted) {
       setDialog({ kind: "setup" });
@@ -241,16 +248,21 @@ export function App() {
     // Runs once, after the first load.
   });
 
-  // Notification clicks from the Electron main process select the box.
+  // Notification clicks from the Electron main process select the box. The
+  // notifications come from this PC's server, so only its view listens.
+  const activateRef = useRef(machine.activate);
+  activateRef.current = machine.activate;
+  const listensForNotifications = machine.isLocal;
   useEffect(
     () =>
-      bridge()?.onSelectBox((boxId) => {
+      (listensForNotifications ? bridge() : undefined)?.onSelectBox((boxId) => {
+        activateRef.current();
         setPage("boxes");
         setProjectId(null);
         setFilter("");
         setSelected(new Set([boxId]));
       }),
-    [],
+    [listensForNotifications],
   );
 
   // -------------------------------------------------------------------------
@@ -511,6 +523,25 @@ export function App() {
     platform?: Platform,
   ) => {
     const title = kind === "shell" ? "Open Shell in Container" : "Attach to Claude Session";
+    if (!machine.isLocal) {
+      // A host terminal here can't reach a container on another PC, so the
+      // terminal opens in a tab, through the hub.
+      if (kind === "shell")
+        setTabs((t) =>
+          openTab(t, { boxId: view.box.id, kind, title: `${displayName(view)} (shell)` }),
+        );
+      else if (kind === "side" && platform)
+        setTabs((t) =>
+          openTab(t, {
+            boxId: view.box.id,
+            kind,
+            platform,
+            title: `${displayName(view)} (${platformLabel[platform]})`,
+          }),
+        );
+      else openTerminal(view);
+      return;
+    }
     const b = bridge();
     if (b) {
       const r = await b.openExternalTerminal({
@@ -661,6 +692,13 @@ export function App() {
 
   const onStartReview = async () => {
     if (!single) return;
+    if (!machine.isLocal) {
+      void inform(
+        "Start Review",
+        `The review app reviews boxes on this PC only. To review ${single.box.id}, start the review on ${machine.name}.`,
+      );
+      return;
+    }
     const b = bridge();
     if (b) {
       const r = await b.launchReview({ projectId: single.box.projectId, boxId: single.box.id });
@@ -1029,14 +1067,18 @@ export function App() {
     {
       label: "Open folder",
       run: () => {
-        const b = bridge();
+        const b = machine.isLocal ? bridge() : undefined;
         if (b)
           void b
             .openPath(p.project.root)
             .then((r) => !r.ok && void inform("Open folder", r.error ?? ""));
         else {
           void navigator.clipboard?.writeText(p.project.root).catch(() => undefined);
-          toast(`${p.project.root} is on the clipboard.`);
+          toast(
+            machine.isLocal
+              ? `${p.project.root} is on the clipboard.`
+              : `${p.project.root} on ${machine.name} is on the clipboard.`,
+          );
         }
       },
     },
@@ -1078,6 +1120,7 @@ export function App() {
     sshRemotes: () => setDialog({ kind: "sshRemotes" }),
     prompts: () => setDialog({ kind: "prompts" }),
     globalMounts: () => setDialog({ kind: "globalMounts" }),
+    machines: () => machine.openMachines?.(),
     quit: () => {
       const b = bridge();
       if (b) b.quit();
@@ -1132,6 +1175,7 @@ export function App() {
     { chord: CHORDS.nextTab, run: run.nextTab },
     { chord: CHORDS.prevTab, run: run.prevTab },
     { chord: CHORDS.quit, run: run.quit },
+    ...(machine.openMachines ? [{ chord: CHORDS.machines, run: run.machines }] : []),
     ...Array.from({ length: 9 }, (_, i) => ({
       chord: `Alt+${i + 1}`,
       run: () => {
@@ -1140,7 +1184,7 @@ export function App() {
       },
     })),
   ];
-  useChords(dialog === null && !messageOpen ? bindings : []);
+  useChords(machine.active && dialog === null && !messageOpen ? bindings : []);
 
   const sideMenus = (view: BoxView): MenuEntry[] => {
     const running = view.status === "running";
@@ -1229,6 +1273,9 @@ export function App() {
         { label: "Manage SSH Remotes...", chord: CHORDS.sshRemotes, run: run.sshRemotes },
         { label: "Edit Prompts...", run: run.prompts },
         { label: "Global Mounts...", run: run.globalMounts },
+        ...(machine.openMachines
+          ? [{ label: "Machines...", chord: CHORDS.machines, run: run.machines }]
+          : []),
         { type: "separator" },
         { label: "Quit", chord: CHORDS.quit, run: run.quit },
       ] as MenuEntry[],
@@ -1330,9 +1377,15 @@ export function App() {
 
   const serverError =
     data.error && data.error.code !== "docker_unavailable"
-      ? data.error.code === "unreachable"
-        ? `The AI Orchestrator server is not reachable. Check that aio-server runs (systemctl --user status aio-server). ${data.error.message}`
-        : data.error.message
+      ? data.error.code === "machine_offline"
+        ? `${machine.name} is offline: the hub can't reach it. ${data.error.message}`
+        : data.error.code === "machine_timeout"
+          ? `${machine.name} timed out: it didn't answer the hub in time. ${data.error.message}`
+          : data.error.code === "unreachable"
+            ? machine.isLocal
+              ? `The AI Orchestrator server is not reachable. Check that aio-server runs (systemctl --user status aio-server). ${data.error.message}`
+              : `${machine.name} is not reachable through the hub. ${data.error.message}`
+            : data.error.message
       : null;
   const selectedRemotes = single
     ? remotes
@@ -1479,6 +1532,8 @@ export function App() {
           </Splitter>
           <TerminalTabs
             state={tabs}
+            machineLabel={machine.multi ? machine.name : undefined}
+            visible={machine.active}
             onSelect={(key) => setTabs((t) => ({ ...t, current: key }))}
             onClose={(key) => setTabs((t) => closeTab(t, key))}
             onCloseOthers={(key) => setTabs((t) => closeOthers(t, key))}

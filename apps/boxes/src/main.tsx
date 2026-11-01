@@ -4,14 +4,15 @@
 // the session cookie and removed from the address bar. Either way the page's
 // WebSockets authenticate with the session cookie, since a browser can't
 // set their headers, so a token is always traded for the cookie first, and
-// the client then forgets it.
+// the client then forgets it. The shell adds a tab per machine when the
+// server is the hub of more than one.
 import "@aio/ui/theme.css";
 import "./app.css";
-import { ApiClient } from "@aio/ui";
+import { ApiClient, createMachineClient } from "@aio/ui";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { App } from "./app/App";
 import { Root } from "./app/Root";
+import { Shell } from "./app/Shell";
 import { bridge } from "./bridge";
 
 async function makeClient(): Promise<ApiClient> {
@@ -30,13 +31,22 @@ async function makeClient(): Promise<ApiClient> {
   return new ApiClient();
 }
 
+/**
+ * Makes another machine's client. Like this server's client after
+ * `startSession()`, it authenticates with the session cookie.
+ */
+function machineClient(machineId: string): ApiClient {
+  const b = bridge();
+  return createMachineClient(b ? { baseUrl: b.serverUrl } : {}, machineId);
+}
+
 void makeClient().then((client) => {
   const el = document.getElementById("root");
   if (!el) return;
   createRoot(el).render(
     <StrictMode>
       <Root client={client}>
-        <App />
+        <Shell machineClient={machineClient} />
       </Root>
     </StrictMode>,
   );

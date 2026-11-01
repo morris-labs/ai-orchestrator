@@ -180,17 +180,60 @@ export class ApiClient {
         );
       }
     }
+    const timeoutMs =
+      a.timeoutMs ?? (route.method === "GET" ? this.readTimeoutMs : this.writeTimeoutMs);
+    return (await this.send(
+      key,
+      route.method,
+      this.url(key, a),
+      a.body,
+      route.response,
+      timeoutMs,
+    )) as ResponseOf<K>;
+  }
+
+  /**
+   * Calls an API path that the contracts route table doesn't list, such as
+   * the hub's machine routes, and parses the response with `response`.
+   * `path` starts with `/api/v1` and goes to this client's machine. Throws
+   * `ApiRequestError` as `call()` does.
+   */
+  async request<S extends z.ZodTypeAny>(
+    method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
+    path: string,
+    response: S,
+    options: { body?: unknown; timeoutMs?: number; query?: Record<string, unknown> } = {},
+  ): Promise<z.infer<S>> {
+    const url = `${this.baseUrl}${machinePath(path, this.machineId)}${queryString(options.query)}`;
+    const timeoutMs =
+      options.timeoutMs ?? (method === "GET" ? this.readTimeoutMs : this.writeTimeoutMs);
+    return (await this.send(
+      `${method} ${path}`,
+      method,
+      url,
+      options.body,
+      response,
+      timeoutMs,
+    )) as z.infer<S>;
+  }
+
+  private async send(
+    key: string,
+    method: string,
+    url: string,
+    requestBody: unknown,
+    response: z.ZodTypeAny,
+    timeoutMs: number,
+  ): Promise<unknown> {
     const headers: Record<string, string> = { Accept: "application/json" };
     if (this.token) headers.Authorization = `Bearer ${this.token}`;
     let body: string | undefined;
-    if (a.body !== undefined) {
+    if (requestBody !== undefined) {
       headers["Content-Type"] = "application/json";
-      body = JSON.stringify(a.body);
+      body = JSON.stringify(requestBody);
     }
     // A server that accepts the connection and then stalls must not leave a
     // caller, and the "Starting..." row it shows, waiting forever.
-    const timeoutMs =
-      a.timeoutMs ?? (route.method === "GET" ? this.readTimeoutMs : this.writeTimeoutMs);
     const abort = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timedOut = new Promise<never>((_, reject) => {
@@ -210,8 +253,8 @@ export class ApiClient {
     try {
       try {
         res = await Promise.race([
-          this.fetchImpl(this.url(key, a), {
-            method: route.method,
+          this.fetchImpl(url, {
+            method,
             headers,
             body,
             credentials: "same-origin",
@@ -245,7 +288,7 @@ export class ApiClient {
       }
     }
     if (!res.ok) throw ApiRequestError.fromResponse(res.status, json);
-    const parsed = route.response.safeParse(json);
+    const parsed = response.safeParse(json);
     if (!parsed.success) {
       throw new ApiRequestError(
         "bad_response",
@@ -257,7 +300,7 @@ export class ApiClient {
         parsed.error.issues,
       );
     }
-    return parsed.data as ResponseOf<K>;
+    return parsed.data;
   }
 
   /**
