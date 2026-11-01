@@ -211,7 +211,8 @@ The image, `aio-agent` by default, is built on the host from
   the engine package.
 
 The server creates each container with the keeper as its command, the
-project root mounted at the same path, the engine's port and the broker
+project root mounted at its container path (the same path on Linux and
+macOS; see [Host paths in containers](host-paths.md)), the engine's port and the broker
 socket's path in its environment, the engine token in a file in the mounted
 state directory, and the broker's directory mounted read-only. No secret
 value is in the container's configuration or environment. The image has no

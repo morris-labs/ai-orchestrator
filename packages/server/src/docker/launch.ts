@@ -347,7 +347,7 @@ export function buildLaunchSpec(
     }
     // Each link target at its container path, which is its own path except
     // on Windows. The container reads the link literally, so on Windows a
-    // link to a Windows path still dangles there; see docs/windows.md.
+    // link to a Windows path still dangles there; see docs/host-paths.md.
     for (const target of facts.accountLinkTargets ?? []) {
       const b = mirrorBind(target, hostOs);
       if (!binds.includes(b)) binds.push(b);
