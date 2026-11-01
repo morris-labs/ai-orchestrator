@@ -29,6 +29,27 @@ export const ACCOUNT_DIR_ENV = {
 } as const satisfies Record<Platform, string>;
 
 /**
+ * The file in a project container's state directory (`AIO_STATE_DIR`) that
+ * names each vendor's default account folder, as the container sees it. The
+ * server rewrites it when the container starts and when the account defaults
+ * or the accounts mode change; the engine reads it for every vendor call and
+ * points the CLI at the folder with `ACCOUNT_DIR_ENV`. A vendor without an
+ * entry, and an empty object in `host` mode, leave the CLI on its home
+ * folder.
+ */
+export const ENGINE_ACCOUNT_DIRS_FILE = "account-dirs.json";
+
+/** The content of `ENGINE_ACCOUNT_DIRS_FILE`: an absolute folder per vendor. */
+export const EngineAccountDirsSchema = z
+  .object({
+    claude: z.string().startsWith("/").optional(),
+    codex: z.string().startsWith("/").optional(),
+    copilot: z.string().startsWith("/").optional(),
+  })
+  .strip();
+export type EngineAccountDirs = z.infer<typeof EngineAccountDirsSchema>;
+
+/**
  * The command that signs an account in, run inside a container with the
  * account's variable set. Copilot must use `--device-code`: plain
  * `copilot login` starts a browser flow whose callback on `127.0.0.1` the host
