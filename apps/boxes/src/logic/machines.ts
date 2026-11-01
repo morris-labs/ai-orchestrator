@@ -165,3 +165,23 @@ export function diskText(m: Machine): string {
 export function joinCommand(code: EnrollmentCode): string {
   return `aio node join ${code.hubUrl} ${code.code}`;
 }
+
+/**
+ * Reads the hub URL and code from what the user pastes into the setup
+ * wizard: either the whole `aio node join HUB_URL CODE` command that the
+ * Machines page copies, or the hub URL alone. Returns `null` for anything
+ * else.
+ */
+export function parseJoinInput(text: string): { hubUrl: string; code?: string } | null {
+  const words = text.trim().split(/\s+/).filter(Boolean);
+  const rest =
+    words[0] === "aio" && words[1] === "node" && words[2] === "join" ? words.slice(3) : words;
+  const [hubUrl, code, ...extra] = rest;
+  if (!hubUrl || extra.length > 0) return null;
+  try {
+    if (new URL(hubUrl).protocol !== "https:") return null;
+  } catch {
+    return null;
+  }
+  return code ? { hubUrl, code } : { hubUrl };
+}

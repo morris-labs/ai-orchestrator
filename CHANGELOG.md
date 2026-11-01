@@ -40,6 +40,9 @@ section's heading must have the form `## [X.Y.Z]`.
   dashboard lists every machine's runs with the machine named and an
   offline machine marked. **Start Review** on another machine's tab in the
   Boxes app opens the Review app on that machine.
+- A machine role step in the setup wizard: keep a single machine, or join a
+  hub as a node with its URL and a one-time enrollment code. The `.deb`
+  package's install message names the hub's link port, TCP `21402`.
 - A **Paste** button beside each **Browse** button for paths in the Boxes
   app.
 - Windows host paths: the server maps a path such as
