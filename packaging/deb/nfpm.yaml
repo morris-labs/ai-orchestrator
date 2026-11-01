@@ -15,7 +15,7 @@ version: ${AGENTBOX_VERSION}
 version_schema: semver
 section: devel
 priority: optional
-maintainer: prime <isaac.s.morris@gmail.com>
+maintainer: Morris Labs <development@morrislabs.app>
 description: |-
   Sandboxed coding agents in Docker, with a multi-vendor review pipeline.
   Agent Box runs Claude Code, Codex, and GitHub Copilot sessions in one
