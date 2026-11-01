@@ -7,6 +7,7 @@
 import {
   DEFAULT_PROMPT_TEMPLATES,
   serverRoutes,
+  type AccountView,
   type AgentBoxEvent,
   type ApiErrorCode,
   type BoxView,
@@ -72,6 +73,7 @@ export interface FakeState {
   prompts: PromptTemplates;
   globalMounts: Mount[];
   sshRemotes: FakeSshRemote[];
+  accounts: AccountView[];
   jobs: Job[];
   conversations: Record<string, ConversationSummary[]>;
   models: string[];
@@ -96,6 +98,7 @@ export interface FakeServerOptions {
   boxes?: BoxView[];
   settings?: Partial<GlobalSettings>;
   conversations?: Record<string, ConversationSummary[]>;
+  accounts?: AccountView[];
   /** False leaves jobs running until `finishJob()`. Default true: jobs finish right away. */
   autoFinishJobs?: boolean;
 }
@@ -151,6 +154,7 @@ export class FakeServer {
       prompts: { ...DEFAULT_PROMPT_TEMPLATES },
       globalMounts: [],
       sshRemotes: [],
+      accounts: options.accounts ?? [],
       jobs: [],
       conversations: options.conversations ?? {},
       models: ["claude-opus-5-5", "claude-sonnet-5", "claude-haiku-5"],
@@ -427,7 +431,14 @@ function remoteView(server: FakeServer, r: FakeSshRemote) {
   };
 }
 
-const restartKeys = ["model", "effort", "skipPermissions", "sessionUuid", "sshRemoteRefs"] as const;
+const restartKeys = [
+  "model",
+  "effort",
+  "skipPermissions",
+  "sessionUuid",
+  "sshRemoteRefs",
+  "accounts",
+] as const;
 
 const defaultHandlers: Partial<Record<HttpRouteKey, FakeHandler>> = {
   health: () => ({ version: "4.0.0", uptimeS: 1 }),
@@ -490,6 +501,7 @@ const defaultHandlers: Partial<Record<HttpRouteKey, FakeHandler>> = {
       model?: string;
       effort?: BoxView["box"]["effort"];
       skipPermissions: boolean;
+      accounts?: BoxView["box"]["accounts"];
       sshRemoteRefs: string[];
       start: boolean;
     };
@@ -515,6 +527,7 @@ const defaultHandlers: Partial<Record<HttpRouteKey, FakeHandler>> = {
         conversationName: slug,
         platform: body.platform,
         skipPermissions: body.skipPermissions,
+        ...(body.accounts ? { accounts: body.accounts } : {}),
         sshRemoteRefs: body.sshRemoteRefs,
         sessionUuid: body.conversation.sessionUuid ?? "00000000-0000-4000-8000-000000000001",
         ...(body.model ? { model: body.model } : {}),
@@ -543,6 +556,15 @@ const defaultHandlers: Partial<Record<HttpRouteKey, FakeHandler>> = {
     }
     let changed = false;
     const rec = view.box as unknown as Record<string, unknown>;
+    if (body.accounts && typeof body.accounts === "object") {
+      // A patch: `null` clears a vendor, as the server does.
+      const merged: Record<string, unknown> = { ...(rec.accounts as object | undefined) };
+      for (const [vendor, id] of Object.entries(body.accounts)) {
+        if (id === null) delete merged[vendor];
+        else merged[vendor] = id;
+      }
+      body.accounts = Object.keys(merged).length > 0 ? merged : null;
+    }
     for (const [k, v] of Object.entries(body)) {
       if (k === "force" || v === undefined) continue;
       if (
@@ -792,6 +814,7 @@ const defaultHandlers: Partial<Record<HttpRouteKey, FakeHandler>> = {
     s.state.prompts = r.body as PromptTemplates;
     return { templates: s.state.prompts, defaults: { ...DEFAULT_PROMPT_TEMPLATES } };
   },
+  "accounts.list": (_r, s) => ({ accounts: s.state.accounts }),
   "sshRemotes.list": (_r, s) => ({ remotes: s.state.sshRemotes.map((x) => remoteView(s, x)) }),
   "sshRemotes.put": (r, s) => {
     const body = r.body as FakeSshRemote;

@@ -157,6 +157,7 @@ describe("new box form", () => {
     effort: "high",
     layout: "root",
     skipPermissions: true,
+    account: "",
     sshRemoteRefs: [],
   };
   it("slugifies as slugifyIssueName does", () => {
@@ -249,6 +250,27 @@ describe("new box form", () => {
     expect(codex.model).toBeUndefined();
     expect(codex.effort).toBeUndefined();
     expect(createBody(base, "new", { force: true }).force).toBe(true);
+  });
+  it("sends the chosen account for the platform, and diffs an account change", () => {
+    expect(createBody(base, "new").accounts).toBeUndefined();
+    expect(createBody({ ...base, account: "claude/work" }, "new").accounts).toEqual({
+      claude: "claude/work",
+    });
+    const box = makeBox({
+      id: "claude-agent-a",
+      targetDir: "/w/a",
+      sessionUuid: "11111111-1111-4111-8111-111111111111",
+      accounts: { claude: "claude/work" },
+    });
+    const form = formFromBox(box, "edit", { model: "m", effort: "high" });
+    expect(form.account).toBe("claude/work");
+    expect(formFromBox(box, "fork", { model: "m", effort: "high" }).account).toBe("claude/work");
+    const hand = { model: false, effort: false };
+    expect(updateBody(box, form, hand).accounts).toBeUndefined();
+    expect(updateBody(box, { ...form, account: "" }, hand).accounts).toEqual({ claude: null });
+    expect(updateBody(box, { ...form, account: "claude/home" }, hand).accounts).toEqual({
+      claude: "claude/home",
+    });
   });
   it("seeds edit and fork forms from a box and diffs the edit", () => {
     const box = makeBox({

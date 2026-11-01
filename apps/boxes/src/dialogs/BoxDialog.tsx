@@ -2,6 +2,7 @@
 import {
   EffortSchema,
   boxWorkDir,
+  type AccountView,
   type BoxView,
   type ConversationSummary,
   type Effort,
@@ -97,6 +98,7 @@ export function BoxDialog(props: BoxDialogProps) {
             projectForDir(projects, props.initialDir),
           ),
           skipPermissions: true,
+          account: "",
           sshRemoteRefs: [],
         },
   );
@@ -105,6 +107,7 @@ export function BoxDialog(props: BoxDialogProps) {
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [models, setModels] = useState<string[]>([]);
   const [remotes, setRemotes] = useState<SshRemote[]>([]);
+  const [accounts, setAccounts] = useState<AccountView[]>([]);
   const [errors, setErrors] = useState<string[]>([]);
   const { busy, run } = useInFlight();
   // In edit and fork mode, a model or effort the record leaves to the
@@ -174,7 +177,12 @@ export function BoxDialog(props: BoxDialogProps) {
         .then((r) => live && setConversations(r.conversations))
         .catch(() => live && setConversations([]));
       client
-        .call("models.list", { query: { dir: catalogDir } })
+        .call("models.list", {
+          query: {
+            dir: catalogDir,
+            ...(form.platform === "claude" && form.account !== "" ? { account: form.account } : {}),
+          },
+        })
         .then((r) => {
           if (!live) return;
           setModels(r.models);
@@ -197,9 +205,13 @@ export function BoxDialog(props: BoxDialogProps) {
       live = false;
       clearTimeout(t);
     };
-  }, [client, catalogDir, mode]);
+  }, [client, catalogDir, mode, form.platform, form.account]);
 
   useEffect(() => {
+    client
+      .call("accounts.list", {})
+      .then((r) => setAccounts(r.accounts))
+      .catch(() => setAccounts([]));
     client
       .call("sshRemotes.list", {})
       .then((r) => setRemotes(r.remotes.map((v) => v.remote)))
@@ -232,6 +244,8 @@ export function BoxDialog(props: BoxDialogProps) {
   }, [dir, settings, project, projectTouched, newIssueScript]);
 
   const claude = form.platform === "claude";
+  const vendorAccounts = accounts.filter((a) => a.account.vendor === form.platform);
+  const defaultAccount = settings?.accountDefaults[form.platform];
   const conversationDisabled = !claude || mode === "fork";
   const knownUuid = conversations.some((c) => c.sessionUuid === form.conversation);
   const picked = conversations.find((c) => c.sessionUuid === form.conversation) ?? null;
@@ -325,6 +339,7 @@ export function BoxDialog(props: BoxDialogProps) {
             setForm((f) => ({
               ...f,
               platform: p,
+              account: "",
               ...(p !== "claude" ? { conversation: "" } : {}),
             }));
           }}
@@ -335,6 +350,35 @@ export function BoxDialog(props: BoxDialogProps) {
             </option>
           ))}
         </select>
+      </div>
+      <div className="ab-field">
+        <label htmlFor="bx-account">Account</label>
+        <select
+          id="bx-account"
+          className="ab-select"
+          value={form.account}
+          onChange={(e) => set("account", e.target.value)}
+        >
+          <option value="">
+            {defaultAccount ? `Default (${defaultAccount})` : "Default (none set)"}
+          </option>
+          {form.account !== "" && !vendorAccounts.some((a) => a.account.id === form.account) && (
+            <option value={form.account}>{form.account}</option>
+          )}
+          {vendorAccounts.map((a) => (
+            <option key={a.account.id} value={a.account.id}>
+              {a.account.id}
+              {a.account.label !== a.account.name ? ` (${a.account.label})` : ""}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div className="ab-hint bx-indent">
+        {settings?.accountsMode === "accounts"
+          ? mode === "edit"
+            ? "A change takes effect when the box restarts. Claude conversations carry over; Codex and Copilot start a new session."
+            : "The box runs this CLI with the account's own sign-in and settings."
+          : "Accounts mode is off, so boxes use the host's agent folders and ignore this choice."}
       </div>
       <div className="ab-field">
         <label htmlFor="bx-dir">Target directory</label>
