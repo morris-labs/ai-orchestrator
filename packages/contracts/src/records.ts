@@ -98,6 +98,7 @@ import {
   type Platform,
 } from "./common.js";
 import { DEFAULT_PROMPT_TEMPLATES } from "./prompts.js";
+import { isUncPath, type HostOs } from "./containerPaths.js";
 
 /** Every shared container name and box id starts with this prefix. */
 export const CONTAINER_PREFIX = "aio-agent-";
@@ -130,13 +131,22 @@ const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
 /**
  * Why a host directory can't be bound into a container, or `null` when it
  * can: it must be absolute (`/...`, or `C:\...` on Windows), with no colon
- * after the drive letter and no control character.
+ * after the drive letter and no control character. A UNC network path
+ * (`\\server\share`) isn't supported; without `os`, only its backslash form
+ * reads as one, since `//data` is a valid POSIX path. With `os`, the path must also have
+ * that OS's form: a drive letter on Windows, a leading `/` elsewhere.
  */
-export function hostPathProblem(p: string): string | null {
+export function hostPathProblem(p: string, os?: HostOs): string | null {
   if (CONTROL_CHARS.test(p)) return `${JSON.stringify(p)} contains a control character.`;
-  const drive = /^[A-Za-z]:[\\/]/.test(p);
-  if (!drive && !p.startsWith("/")) return `${p} is not an absolute path.`;
-  if (p.slice(drive ? 2 : 0).includes(":"))
+  if (isUncPath(p) && (os === "win32" || p.startsWith("\\")))
+    return `${p} is a UNC network path, which can't be mounted yet. Map the share to a drive letter.`;
+  const bare = /^[\\/]{2}\?[\\/][A-Za-z]:/.test(p) ? p.slice(4) : p;
+  const drive = /^[A-Za-z]:[\\/]/.test(bare);
+  if (!drive && !bare.startsWith("/")) return `${p} is not an absolute path.`;
+  if (os === "win32" && !drive)
+    return `${p} is not an absolute Windows path. Start it with a drive letter, such as C:\\.`;
+  if (os !== undefined && os !== "win32" && drive) return `${p} is not an absolute path.`;
+  if (bare.slice(drive ? 2 : 0).includes(":"))
     return `${p} contains a colon, which Docker can't bind.`;
   return null;
 }
