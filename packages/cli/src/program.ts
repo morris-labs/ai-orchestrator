@@ -1068,9 +1068,7 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
 
   // -------------------------------------------------------------------------
   // review
-  const review = program
-    .command("review")
-    .description("Start and control code review runs.");
+  const review = program.command("review").description("Start and control code review runs.");
 
   review
     .command("start")

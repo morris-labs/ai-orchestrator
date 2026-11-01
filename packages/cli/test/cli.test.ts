@@ -989,8 +989,7 @@ describe("review on other machines", () => {
   ];
   const proxy = (id: string, rest: string) => `/api/v1/machines/${id}/proxy${rest}`;
   /** Every request path except the machine list that resolves `--machine`. */
-  const routed = () =>
-    server.requests.map((r) => r.path).filter((p) => p !== "/api/v1/machines");
+  const routed = () => server.requests.map((r) => r.path).filter((p) => p !== "/api/v1/machines");
 
   beforeEach(() => {
     server.on("GET /api/v1/machines", { body: { machines } });

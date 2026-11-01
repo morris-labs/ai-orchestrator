@@ -7,12 +7,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { afterEach, describe, expect, it } from "vitest";
 import { App } from "../src/App.js";
 import { FleetProvider } from "../src/components/machines.js";
-import {
-  fleetRuns,
-  MachineFleet,
-  mergeRuns,
-  SHOW_OFFLINE_RUNS_KEY,
-} from "../src/state/fleet.js";
+import { fleetRuns, MachineFleet, mergeRuns, SHOW_OFFLINE_RUNS_KEY } from "../src/state/fleet.js";
 import { AppStore, StoreProvider } from "../src/state/store.js";
 import { lastRun, loadDemoEvents, project } from "./helpers/data.js";
 import { fakeHub, machine } from "./helpers/hub.js";
@@ -249,7 +244,9 @@ describe("the Review app on several machines", () => {
     expect(within(table).getByText("build-server: Offline")).toBeInTheDocument();
     expect(within(table).queryByRole("link", { name: REMOTE_RUN_ID.slice(-6) })).toBeNull();
     expect(within(table).queryByText(/as of/)).toBeNull();
-    const toggle = within(table).getByRole("checkbox", { name: "Show offline machines' last runs" });
+    const toggle = within(table).getByRole("checkbox", {
+      name: "Show offline machines' last runs",
+    });
     expect(toggle).not.toBeChecked();
 
     // Turned on, its last runs show, named offline, with the time they were listed.
