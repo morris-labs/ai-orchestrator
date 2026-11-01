@@ -19,6 +19,10 @@
 # same, so an image built from older engine code reads as stale although the
 # package version never changes.
 #
+# The script runs on Linux, and on macOS with the system bash 3.2 and BSD
+# tools, so it avoids associative arrays, `sed -i` without a suffix, and
+# GNU-only tar options. On Windows it runs under Git for Windows' bash.
+#
 # Environment:
 #   IMAGE_TAG   The image tag. Default: aio-agent. The --tag option
 #               overrides it. Set it to build a test image, such as
@@ -37,6 +41,7 @@ PACK=auto
 PRINT=0
 PACK_ONLY=0
 UPDATE_CLI=0
+USER_NAME=""
 BUILD_ARGS=()
 VERSIONS="$IMAGE_DIR/versions.env"
 
@@ -48,6 +53,9 @@ Builds the AI Orchestrator image from $IMAGE_DIR.
 
 Options:
   --tag TAG              Tag the image TAG. Default: the IMAGE_TAG variable, else aio-agent.
+  --user NAME            Create the image's user as NAME. Default: \$(id -un). The
+                         server passes the name it runs containers with on
+                         Windows, where the account name isn't a Linux one.
   --update-cli           Update the agent CLIs to their latest versions. Resolves
                          the latest Claude Code, Codex, and Copilot versions from
                          npm, writes them to $VERSIONS
@@ -68,6 +76,7 @@ USAGE
 while (($#)); do
   case "$1" in
     --tag) TAG="${2:?--tag needs a value}"; shift ;;
+    --user) USER_NAME="${2:?--user needs a value}"; shift ;;
     --update-cli) UPDATE_CLI=1; BUILD_ARGS+=(--build-arg "CACHEBUST=$(date +%s)") ;;
     --update-packages) BUILD_ARGS+=(--build-arg "CACHEBUST_PACKAGES=$(date +%s)") ;;
     --no-cache) BUILD_ARGS+=(--no-cache --pull) ;;
@@ -82,25 +91,42 @@ done
 
 [[ -f "$IMAGE_DIR/Dockerfile" ]] || die "no Dockerfile in $IMAGE_DIR"
 
-# --update-cli: resolve the latest CLI versions from npm. OVERRIDES holds
-# them for this build; the pins file records them when it's writable. In an
-# installed package the file belongs to root, so the build still uses the
-# new versions and the script says it can't save them.
-declare -A OVERRIDES=()
+# --update-cli: resolve the latest CLI versions from npm. OVERRIDE_KEYS and
+# OVERRIDE_VALUES hold them for this build (two plain arrays, since macOS
+# bash 3.2 has no associative arrays); the pins file records them when it's
+# writable. In an installed package the file belongs to root, so the build
+# still uses the new versions and the script says it can't save them.
+OVERRIDE_KEYS=()
+OVERRIDE_VALUES=()
+
+# Prints the override of KEY, or nothing.
+override_of() {
+  local i
+  for ((i = 0; i < ${#OVERRIDE_KEYS[@]}; i++)); do
+    [[ "${OVERRIDE_KEYS[i]}" == "$1" ]] && { printf '%s' "${OVERRIDE_VALUES[i]}"; return; }
+  done
+  return 0
+}
+
 if ((UPDATE_CLI && !PACK_ONLY)); then
   require_tool npm "Install Node.js 22, which includes npm."
-  OVERRIDES[CLAUDE_CODE_VERSION]="$(npm_latest @anthropic-ai/claude-code)"
-  OVERRIDES[CODEX_VERSION]="$(npm_latest @openai/codex)"
-  OVERRIDES[COPILOT_VERSION]="$(npm_latest @github/copilot)"
+  OVERRIDE_KEYS=(CLAUDE_CODE_VERSION CODEX_VERSION COPILOT_VERSION)
+  OVERRIDE_VALUES=(
+    "$(npm_latest @anthropic-ai/claude-code)"
+    "$(npm_latest @openai/codex)"
+    "$(npm_latest @github/copilot)"
+  )
   if ((PRINT)); then
     log "Not saving the versions to $VERSIONS because of --print"
   elif [[ -w "$VERSIONS" ]]; then
-    for key in "${!OVERRIDES[@]}"; do
-      set_pin "$VERSIONS" "$key" "${OVERRIDES[$key]}"
+    for ((i = 0; i < ${#OVERRIDE_KEYS[@]}; i++)); do
+      set_pin "$VERSIONS" "${OVERRIDE_KEYS[i]}" "${OVERRIDE_VALUES[i]}"
     done
-    sed -i "s|^# Recorded [0-9-]*\.|# Recorded $(date +%Y-%m-%d).|" "$VERSIONS"
+    sed_inplace "s|^# Recorded [0-9-]*\.|# Recorded $(date +%Y-%m-%d).|" "$VERSIONS"
   else
-    for key in "${!OVERRIDES[@]}"; do log "$key=${OVERRIDES[$key]}"; done
+    for ((i = 0; i < ${#OVERRIDE_KEYS[@]}; i++)); do
+      log "${OVERRIDE_KEYS[i]}=${OVERRIDE_VALUES[i]}"
+    done
     log "warning: $VERSIONS isn't writable, so these versions apply to this build only"
   fi
 fi
@@ -127,7 +153,12 @@ if [[ "$PACK" == auto && -f "$ROOT/pnpm-workspace.yaml" ]]; then
   # relative, so the tree works wherever the Dockerfile unpacks it.
   (cd "$ROOT" && "${PNPM[@]}" --filter @aio/engine deploy --legacy --prod --frozen-lockfile "$DEPLOY/engine" > /dev/null)
   [[ -d "$DEPLOY/engine/node_modules" ]] || die "pnpm deploy left no node_modules in $DEPLOY/engine"
-  tar -C "$DEPLOY" --owner=0 --group=0 --numeric-owner -czf "$ENGINE_TARBALL" engine
+  # GNU tar and bsdtar (macOS, Windows) name the owner options differently.
+  if tar --version 2> /dev/null | grep -q 'GNU tar'; then
+    tar -C "$DEPLOY" --owner=0 --group=0 --numeric-owner -czf "$ENGINE_TARBALL" engine
+  else
+    tar -C "$DEPLOY" --uid 0 --gid 0 --numeric-owner -czf "$ENGINE_TARBALL" engine
+  fi
   # The server in an installed package expects the engine's content hash, and
   # reads it from here. The Dockerfile reads the same hash from the tarball.
   [[ -s "$DEPLOY/engine/dist/identity" ]] ||
@@ -144,10 +175,11 @@ for f in keeper/keeper.sh keeper/start-session.sh; do
   [[ -f "$IMAGE_DIR/$f" ]] || die "$IMAGE_DIR/$f is missing"
 done
 
-USER_NAME="$(id -un)"
+[[ -n "$USER_NAME" ]] || USER_NAME="$(id -un)"
 CMD=(docker build -t "$TAG" --build-arg "USER_NAME=$USER_NAME")
 while IFS= read -r pair; do
-  [[ -n "${OVERRIDES[${pair%%=*}]:-}" ]] && pair="${pair%%=*}=${OVERRIDES[${pair%%=*}]}"
+  override="$(override_of "${pair%%=*}")"
+  [[ -n "$override" ]] && pair="${pair%%=*}=$override"
   CMD+=(--build-arg "$pair")
 done < <(read_versions "$VERSIONS")
 CMD+=("${BUILD_ARGS[@]}" "$IMAGE_DIR")

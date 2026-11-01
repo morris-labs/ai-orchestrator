@@ -55,12 +55,20 @@ version_of() {
   printf '%s\n' "$value"
 }
 
+# Runs the sed EXPRESSION on FILE in place. GNU sed takes `-i` alone and
+# BSD sed (macOS) needs a suffix argument, so this writes a backup with
+# `-i.bak`, which both accept, and removes it.
+sed_inplace() {
+  local expression="$1" file="$2"
+  sed -i.bak "$expression" "$file" && rm -f -- "$file.bak"
+}
+
 # Replaces the value of KEY in the versions file FILE. Exits when FILE has no
 # KEY line.
 set_pin() {
   local file="$1" key="$2" value="$3"
   grep -q "^${key}=" "$file" || die "$file has no $key line"
-  sed -i "s|^${key}=.*|${key}=${value}|" "$file"
+  sed_inplace "s|^${key}=.*|${key}=${value}|" "$file"
   log "$key=$value"
 }
 
