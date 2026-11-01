@@ -92,32 +92,6 @@ export interface ApiClientOptions {
   socketAuth?: SocketAuth;
   /** Timeouts in milliseconds for `GET` routes and for the others. */
   timeouts?: { readMs?: number; writeMs?: number };
-  /**
-   * Binds the client to one machine of a multi-machine install: every
-   * `/api/v1` path, HTTP and WebSocket alike, goes through the hub's
-   * `/api/v1/machines/MACHINE_ID/proxy` route instead. Absent or `null`
-   * means this server's own API, as before.
-   */
-  machineId?: string | null;
-}
-
-/** The prefix of every server API path. */
-export const API_V1_PREFIX = "/api/v1";
-
-/** The path prefix that forwards a request to machine `machineId`'s `/api/v1`. */
-export function machineProxyPrefix(machineId: string): string {
-  return `${API_V1_PREFIX}/machines/${encodeURIComponent(machineId)}/proxy`;
-}
-
-/**
- * Rewrites an API path for a machine-bound client: `/api/v1/REST` becomes
- * `/api/v1/machines/MACHINE_ID/proxy/REST`. A path outside `/api/v1`, or a
- * `null` machine, passes through unchanged.
- */
-export function machinePath(path: string, machineId: string | null | undefined): string {
-  if (machineId === null || machineId === undefined) return path;
-  if (path !== API_V1_PREFIX && !path.startsWith(`${API_V1_PREFIX}/`)) return path;
-  return machineProxyPrefix(machineId) + path.slice(API_V1_PREFIX.length);
 }
 
 function queryString(query: Record<string, unknown> | undefined) {
@@ -140,15 +114,8 @@ export class ApiClient {
 
   private readonly readTimeoutMs: number;
   private readonly writeTimeoutMs: number;
-  /** The options `forMachine()` copies, without the token, which `bearer` holds. */
-  private readonly options: Omit<ApiClientOptions, "token">;
-  /** The machine this client is bound to, or `null` for this server. */
-  readonly machineId: string | null;
 
   constructor(options: ApiClientOptions = {}) {
-    const { token: _token, ...rest } = options;
-    this.options = rest;
-    this.machineId = options.machineId ?? null;
     this.baseUrl = (options.baseUrl ?? "").replace(/\/$/, "");
     this.bearer = options.token ?? null;
     this.fetchImpl = options.fetch ?? ((...args) => globalThis.fetch(...args));
@@ -163,20 +130,10 @@ export class ApiClient {
     return this.bearer;
   }
 
-  /**
-   * Returns a client for machine `machineId` with this client's server,
-   * token, and settings: every API path goes through the hub's proxy route.
-   * `null` returns a client for this server itself. Binding a bound client
-   * again replaces its machine.
-   */
-  forMachine(machineId: string | null): ApiClient {
-    return new ApiClient({ ...this.options, token: this.bearer, machineId });
-  }
-
   /** Builds the URL of an HTTP route with its path params and query. */
   url<K extends ServerRouteKey>(key: K, args: { params?: unknown; query?: unknown } = {}): string {
     const route = serverRoutes[key];
-    const path = machinePath(buildPath(route.path, (args.params ?? {}) as never), this.machineId);
+    const path = buildPath(route.path, (args.params ?? {}) as never);
     return `${this.baseUrl}${path}${queryString(args.query as Record<string, unknown>)}`;
   }
 
@@ -205,60 +162,17 @@ export class ApiClient {
         );
       }
     }
-    const timeoutMs =
-      a.timeoutMs ?? (route.method === "GET" ? this.readTimeoutMs : this.writeTimeoutMs);
-    return (await this.send(
-      key,
-      route.method,
-      this.url(key, a),
-      a.body,
-      route.response,
-      timeoutMs,
-    )) as ResponseOf<K>;
-  }
-
-  /**
-   * Calls an API path that the contracts route table doesn't list, such as
-   * a route another server version adds, and parses the response with
-   * `response`. `path` starts with `/api/v1` and gets the machine prefix of
-   * a bound client. Throws `ApiRequestError` as `call()` does.
-   */
-  async request<S extends z.ZodTypeAny>(
-    method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
-    path: string,
-    response: S,
-    options: { body?: unknown; timeoutMs?: number; query?: Record<string, unknown> } = {},
-  ): Promise<z.infer<S>> {
-    const url = `${this.baseUrl}${machinePath(path, this.machineId)}${queryString(options.query)}`;
-    const timeoutMs =
-      options.timeoutMs ?? (method === "GET" ? this.readTimeoutMs : this.writeTimeoutMs);
-    return (await this.send(
-      `${method} ${path}`,
-      method,
-      url,
-      options.body,
-      response,
-      timeoutMs,
-    )) as z.infer<S>;
-  }
-
-  private async send(
-    key: string,
-    method: string,
-    url: string,
-    requestBody: unknown,
-    response: z.ZodTypeAny,
-    timeoutMs: number,
-  ): Promise<unknown> {
     const headers: Record<string, string> = { Accept: "application/json" };
     if (this.token) headers.Authorization = `Bearer ${this.token}`;
     let body: string | undefined;
-    if (requestBody !== undefined) {
+    if (a.body !== undefined) {
       headers["Content-Type"] = "application/json";
-      body = JSON.stringify(requestBody);
+      body = JSON.stringify(a.body);
     }
     // A server that accepts the connection and then stalls must not leave a
     // caller, and the "Starting..." row it shows, waiting forever.
+    const timeoutMs =
+      a.timeoutMs ?? (route.method === "GET" ? this.readTimeoutMs : this.writeTimeoutMs);
     const abort = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timedOut = new Promise<never>((_, reject) => {
@@ -278,8 +192,8 @@ export class ApiClient {
     try {
       try {
         res = await Promise.race([
-          this.fetchImpl(url, {
-            method,
+          this.fetchImpl(this.url(key, a), {
+            method: route.method,
             headers,
             body,
             credentials: "same-origin",
@@ -313,7 +227,7 @@ export class ApiClient {
       }
     }
     if (!res.ok) throw ApiRequestError.fromResponse(res.status, json);
-    const parsed = response.safeParse(json);
+    const parsed = route.response.safeParse(json);
     if (!parsed.success) {
       throw new ApiRequestError(
         "bad_response",
@@ -325,7 +239,7 @@ export class ApiClient {
         parsed.error.issues,
       );
     }
-    return parsed.data;
+    return parsed.data as ResponseOf<K>;
   }
 
   /**
@@ -356,7 +270,7 @@ export class ApiClient {
     args: { params?: Record<string, string>; query?: Record<string, unknown> } = {},
   ): string {
     const route = serverRoutes[key];
-    const path = machinePath(buildPath(route.path, (args.params ?? {}) as never), this.machineId);
+    const path = buildPath(route.path, (args.params ?? {}) as never);
     const origin = this.baseUrl !== "" ? this.baseUrl : (pageOrigin() ?? "https://127.0.0.1:21400");
     const wsOrigin = origin.replace(/^http/, "ws");
     return `${wsOrigin}${path}${queryString(args.query)}`;
