@@ -22,6 +22,9 @@ section's heading must have the form `## [X.Y.Z]`.
   that gets the call, or `hub` for a node's hub.
 - Machine tabs and a **Machines** page in the Boxes app. On another
   machine, **Browse** lists that machine's directories.
+- The CLI's `--machine` option and `MACHINE/BOX` box arguments send a
+  command to another machine. `aio box list --all-machines` and
+  `aio events --all-machines` show every online machine's boxes and events.
 - A **Paste** button beside each **Browse** button for paths in the Boxes
   app.
 - Windows host paths: the server maps a path such as

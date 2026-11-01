@@ -100,6 +100,58 @@ proves that it knows the code too. A program in the middle presents another
 certificate, so the hub refuses the proof, and it can't make a new proof
 without the code. Each code is 80 random bits and works once.
 
+## Work with another machine's boxes
+
+The apps and the CLI on any machine reach another machine's boxes through
+the server on their own machine, which relays each call through the hub.
+
+In the Boxes app, each other machine has its own tab, with that machine's
+boxes, projects, events, and terminals. On another machine's tab,
+**Browse** lists that machine's directories, and the box dialogs use that
+machine's projects.
+
+In the CLI, the `--machine` option sends a command to another machine. It
+takes a machine ID or name from `aio machines list`:
+
+```bash
+aio --machine build-server box list
+aio --machine build-server box start BOX_ID
+aio --machine build-server events
+
+```
+
+Replace `BOX_ID` with the box ID from the first command.
+
+A box argument of the form `MACHINE/BOX` names its machine too, so the
+following command stops the same box:
+
+```bash
+aio box stop build-server/BOX_ID
+
+```
+
+To see the boxes or the events of every online machine at once, add the
+`--all-machines` option:
+
+```bash
+aio box list --all-machines
+aio events --all-machines
+
+```
+
+The box list shows another machine's boxes as `MACHINE/BOX`, and it warns
+about each machine that is offline. Each event from another machine carries
+that machine's ID in its `machine` field.
+
+The following rules apply to the CLI on another machine:
+
+- A path, such as the directory of `aio box new`, must be absolute on that
+  machine, because the current directory exists only on this machine.
+- `aio box attach`, `aio box shell`, and `aio box open` refuse another
+  machine's box, because they run the terminal on this machine. Open the
+  box's terminal in the Boxes app instead.
+- `aio machines`, `aio node`, and `aio doctor` work on this machine only.
+
 ## Remove a machine
 
 To revoke a machine, run the following command on the hub:
