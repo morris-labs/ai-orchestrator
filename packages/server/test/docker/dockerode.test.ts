@@ -1,8 +1,13 @@
 import type Docker from "dockerode";
 import { describe, expect, it } from "vitest";
 import { failureOf } from "../../src/api/server.js";
-import { DockerodeClient } from "../../src/docker/dockerode.js";
-import { DockerApiError, DockerUnavailableError, isContainerGone } from "../../src/docker/types.js";
+import { DockerodeClient, createBody } from "../../src/docker/dockerode.js";
+import {
+  DockerApiError,
+  DockerUnavailableError,
+  isContainerGone,
+  type ContainerCreateSpec,
+} from "../../src/docker/types.js";
 
 /** A dockerode stand-in whose container calls fail with `err`. */
 function failingDocker(err: unknown): Docker {
@@ -63,5 +68,62 @@ describe("DockerodeClient errors", () => {
     const err = await client.listContainers().catch((e: unknown) => e);
     expect(err).toBeInstanceOf(DockerUnavailableError);
     expect(failureOf(err)).toMatchObject({ code: "docker_unavailable", status: 503 });
+  });
+});
+
+describe("createBody", () => {
+  const base: ContainerCreateSpec = {
+    name: "aio-agent-proj-app-1a2b3c4d",
+    image: "aio-agent",
+    user: "tester",
+    workingDir: "/home/tester/work/app",
+    cmd: ["bash"],
+    env: ["AIO_BROKER_SOCKET=/run/aio-broker/broker.sock"],
+    binds: ["/home/tester/.ai-orchestrator/broker/0123456789abcdef:/run/aio-broker:ro"],
+    portBindings: { "20411/tcp": [{ hostIp: "127.0.0.1", hostPort: "41000" }] },
+    labels: { "aio.project": "app-1a2b3c4d" },
+    capDrop: ["MKNOD", "SETFCAP"],
+    tty: true,
+    openStdin: true,
+    autoRemove: true,
+  };
+
+  it("publishes the engine on loopback and adds no ExtraHosts for the Unix socket", () => {
+    const body = createBody(base);
+    expect(body.HostConfig).toEqual({
+      Binds: base.binds,
+      AutoRemove: true,
+      PortBindings: { "20411/tcp": [{ HostIp: "127.0.0.1", HostPort: "41000" }] },
+      CapDrop: ["MKNOD", "SETFCAP"],
+    });
+    expect(body.ExposedPorts).toEqual({ "20411/tcp": {} });
+    expect(body.Env).toEqual(base.env);
+  });
+
+  it("passes the host-gateway entry as ExtraHosts for TCP on native Linux", () => {
+    const body = createBody({
+      ...base,
+      env: ["AIO_BROKER_URL=http://host.docker.internal:41500"],
+      extraHosts: ["host.docker.internal:host-gateway"],
+    });
+    expect(body.HostConfig?.ExtraHosts).toEqual(["host.docker.internal:host-gateway"]);
+    expect(body.Env).toEqual(["AIO_BROKER_URL=http://host.docker.internal:41500"]);
+  });
+
+  it("reads the engine's /info fields", async () => {
+    const docker = {
+      info: async () => ({
+        OperatingSystem: "Docker Desktop",
+        OSType: "linux",
+        Name: "docker-desktop",
+        Labels: ["com.docker.desktop.address=npipe://x"],
+      }),
+    };
+    expect(await new DockerodeClient(docker as unknown as Docker).info()).toEqual({
+      operatingSystem: "Docker Desktop",
+      osType: "linux",
+      name: "docker-desktop",
+      labels: ["com.docker.desktop.address=npipe://x"],
+    });
   });
 });

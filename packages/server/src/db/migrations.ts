@@ -215,4 +215,7 @@ export const MIGRATIONS: readonly Migration[] = [
     UNIQUE (vendor, name)
   );
 `,
+  // 5: the host port of a container's TCP secrets broker, for Docker
+  // Desktop; NULL for a container that uses the Unix socket.
+  "ALTER TABLE engine_endpoints ADD COLUMN broker_port INTEGER",
 ];

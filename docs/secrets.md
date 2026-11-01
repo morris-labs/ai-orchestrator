@@ -5,7 +5,7 @@ store 1Password references in the global settings and in project settings.
 The server keeps the values out of every container's configuration and
 environment: a process in a project container asks the server's secrets
 broker for a value when it needs one, through a socket mounted into the
-container. One reference is different: the container user's `sudo`
+container, or under Docker Desktop, through a loopback port with a token. One reference is different: the container user's `sudo`
 password, which reaches a container only as a hash. See
 [The sudo password](#the-sudo-password).
 
@@ -108,6 +108,55 @@ request, a reference you add or remove takes effect at once, without a
 container restart. A value that a process already received stays with that
 process.
 
+### The broker under Docker Desktop
+
+Docker Desktop runs containers in a virtual machine, and a Unix socket on
+the host can't be mounted into it. The server then uses the broker's TCP
+transport instead:
+
+- The broker listens on `127.0.0.1` only, on one port per container. The
+  server picks the port like the engine port and stores it with it, so a
+  restarted server listens on the same port again.
+- Each time the server creates the container, it writes a random token to
+  `broker.token`, mode `0600`, in the same broker directory. The container
+  mounts that directory read-only at `/run/aio-broker`, as with the socket.
+- The container gets `AIO_BROKER_URL=http://host.docker.internal:PORT` in
+  place of `AIO_BROKER_SOCKET`, and the directory holds the same URL in
+  `broker.url`. The engine withholds every `AIO_` variable from the
+  programs it starts, so `aio-secret` finds the broker through that file
+  when its environment names none.
+- `aio-secret` and the engine send the token in an `Authorization: Bearer`
+  header. The broker compares it in constant time, and answers a request
+  without the right token with a `401` status code. The server logs the
+  refusal with the container and the route, never the header or the body.
+
+Any program on your computer can connect to a loopback port, so the token,
+not the port, identifies the container. Anything that can read your files
+can read the token, just as it can reach the socket, so the TCP transport
+is as strong as the socket and no stronger.
+
+The `brokerTransport` global setting chooses the transport for containers
+that the server creates afterward. Set it in the
+`~/.ai-orchestrator/config.json` file before the first start, or with
+`PATCH /api/v1/settings`:
+
+| Value | Transport |
+|---|---|
+| `auto` (default) | The Unix socket with Docker Engine on Linux. TCP when the engine's `/info` names Docker Desktop, when `DOCKER_HOST` points at a Docker Desktop endpoint, or when the server runs on macOS or Windows. |
+| `unix` | Always the Unix socket. |
+| `tcp` | Always TCP. |
+
+A running container keeps the transport it was created with. When the
+setting resolves to the other transport, the project shows the container as
+stale with `broker unix -> tcp` or `broker tcp -> unix` until it restarts.
+
+With `tcp` and Docker Engine on Linux, the server adds
+`host.docker.internal:host-gateway` to the container's hosts file, since
+only Docker Desktop defines that name. A container on Docker Engine on
+Linux reaches the host through the bridge address, not `127.0.0.1`, so it
+can't reach the loopback listener: use `tcp` with Docker Desktop only. The
+server logs a warning when it resolves to that combination.
+
 The server logs every request to its journal with the container, the
 secret names, the asking program's name, and the outcome. A log line never
 holds a value. To read the log, run `journalctl --user -u aio-server`.
@@ -130,7 +179,8 @@ follows:
   `aio-secret run DATABASE_URL -- npm run dev`.
 - To see which names the container can ask for, run `aio-secret list`.
 
-`aio-secret` exits with status 3 when the server can't be reached, 4
+`aio-secret` exits with status 3 when the server can't be reached or
+refuses the container's token, 4
 for a name the project doesn't list, and 5 when 1Password is locked or a
 reference doesn't resolve.
 
@@ -178,7 +228,7 @@ keeps working; one that needs a key reports a sign-in error.
 
 Every process in a project container runs as the same user. Any process
 there, including repository code that a test command or a review runs, can
-ask the socket for any secret the project lists, and can read a value from
+ask the broker for any secret the project lists, and can read a value from
 the environment of a process that received it. The broker keeps values out
 of `docker inspect`, out of every session's environment, and out of
 processes that don't ask, and it logs who asked. It doesn't hide a listed

@@ -118,12 +118,16 @@ export async function startApp(options: AppOptions): Promise<App> {
   });
   const services: CoreServices = {
     events: sink,
-    prepareSecrets: async (projectId, container) => {
+    prepareSecrets: async (projectId, container, tcp) => {
       if (!secrets) throw new Error("The secrets service is not ready.");
       const names = await secrets.preflight(projectId);
-      await broker.open({ container, projectId });
+      // A container created with TCP gets a token no earlier container had.
+      if (tcp)
+        await broker.open({ container, projectId, tcpPort: tcp.port }, { rotateToken: true });
+      else await broker.open({ container, projectId });
       return names;
     },
+    brokerTcpPort: (container) => broker.tcpPort(container),
     sudoPasswordHash: async () => {
       if (!secrets) throw new Error("The secrets service is not ready.");
       return secrets.sudoPasswordHash();
@@ -257,7 +261,13 @@ export async function startApp(options: AppOptions): Promise<App> {
       do {
         brokerSyncAgain = false;
         try {
-          const running = await core.engines.list();
+          const running = (await core.engines.list()).map((e) => ({
+            container: e.container,
+            projectId: e.projectId,
+            // The transport the container was created with: its environment
+            // can't change, so a changed setting waits for a recreate.
+            ...(e.brokerPort !== undefined ? { tcpPort: e.brokerPort } : {}),
+          }));
           if (!closing) await broker.sync(running);
         } catch (err) {
           log(`Secrets broker sync failed: ${(err as Error).message}`);

@@ -248,6 +248,11 @@ export interface EngineEndpoint {
   hostPort: number | null;
   /** The `AIO_ENGINE_TOKEN` the server gave the container. Never logged. */
   token: string;
+  /**
+   * The loopback port of the container's TCP secrets broker; absent when the
+   * container uses the Unix socket.
+   */
+  brokerPort?: number;
 }
 
 export interface CoreEngines {
@@ -286,9 +291,16 @@ export interface CoreServices {
   events: EventSink;
   /**
    * Checks that the global and project secret references resolve, opens the
-   * container's secrets broker socket, and returns the secret names.
+   * container's secrets broker socket, or with `broker`, its TCP listener
+   * with a fresh token, and returns the secret names.
    */
-  prepareSecrets(projectId: string, container: string): Promise<string[]>;
+  prepareSecrets(
+    projectId: string,
+    container: string,
+    broker?: { transport: "tcp"; port: number },
+  ): Promise<string[]>;
+  /** The port the broker listens on for `container` over TCP, or `null`. */
+  brokerTcpPort?(container: string): number | null;
   /** The hash of the container user's sudo password, or `null` for sudo off. Default: `null`. */
   sudoPasswordHash?(): Promise<string | null>;
   /** The active run that holds a box's working tree, or `null`. */

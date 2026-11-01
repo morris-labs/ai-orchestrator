@@ -60,12 +60,14 @@ usage scheduler, and terminals.
   settings in `~/.ai-orchestrator/config.json`.
 - It runs the secrets broker: one Unix socket per project container, in
   `~/.ai-orchestrator/broker/CONTAINER/`, mounted read-only at
-  `/run/aio-broker` in the container. A process in the container asks
-  the socket for a secret by name, and the server resolves it from
-  1Password on demand, with a 5-minute cache. At startup, after each
-  container event, and every 30 seconds, the server opens a socket for each
-  running project container and closes the sockets of containers that are
-  gone. See [Secrets](secrets.md#the-secrets-broker).
+  `/run/aio-broker` in the container. Under Docker Desktop, it listens on
+  one `127.0.0.1` port per container instead, with a per-container token
+  in the same directory. A process in the container asks the broker for a
+  secret by name, and the server resolves it from 1Password on demand, with
+  a 5-minute cache. At startup, after each container event, and every 30
+  seconds, the server opens a socket or TCP listener for each running
+  project container and closes those of containers that are gone. See
+  [Secrets](secrets.md#the-secrets-broker).
 - It's the only client of each engine.
 
 ### Engine
@@ -213,7 +215,7 @@ The image, `aio-agent` by default, is built on the host from
 The server creates each container with the keeper as its command, the
 project root mounted at its container path (the same path on Linux and
 macOS; see [Host paths in containers](host-paths.md)), the engine's port and the broker
-socket's path in its environment, the engine token in a file in the mounted
+socket's path, or under Docker Desktop the broker's URL, in its environment, the engine token in a file in the mounted
 state directory, and the broker's directory mounted read-only. No secret
 value is in the container's configuration or environment. The image has no
 default command.
@@ -239,6 +241,48 @@ variables that load code into a program cleared, because the container's
 own `PATH` starts with directories the container user can write. When the
 step fails, the server removes the container and the launch fails, since an
 older image's passwordless rule might still be in place.
+
+### Docker Desktop
+
+Docker Desktop on macOS and Windows runs containers in a virtual machine.
+The following list describes how each part of a launch behaves there, and
+which parts are untested on a real macOS or Windows host:
+
+- **Secrets broker**: uses the TCP transport. See
+  [The broker under Docker Desktop](secrets.md#the-broker-under-docker-desktop).
+  Untested on a real macOS or Windows host.
+- **Engine port**: the server publishes container port `20411` on
+  `127.0.0.1` with the same create body as on Linux. Docker Desktop binds
+  published ports on the host's own loopback address, so the server, the
+  engine supervisor, and the dev-server proxy reach the engine the same
+  way. Untested on a real macOS or Windows host.
+- **Dev-server proxy**: the proxy connects to the engine's published port,
+  and the engine connects to the dev server inside the container, so no
+  path crosses the virtual machine other than the published port.
+- **State and sessions directories**: the keeper rewrites
+  `/run/aio/sessions` every second, and the server counts a file older than
+  6 seconds as empty. File sharing adds latency to that rewrite, and file
+  change events from the container might not reach the host; the session
+  watcher's 3-second poll covers missed events. Untested on a real macOS or
+  Windows host.
+- **SSH agent**: the server doesn't forward an SSH agent into containers,
+  so there's no host socket to mount. SSH remotes run their tunnels on the
+  host. Docker Desktop for macOS offers its agent at
+  `/run/host-services/ssh-auth.sock` if agent forwarding is added later.
+- **`host.docker.internal`**: Docker Desktop defines it. The server adds
+  `host.docker.internal:host-gateway` only for the TCP transport on Docker
+  Engine on Linux.
+- **File ownership**: the image keeps the container user at uid 1000. Docker
+  Desktop maps ownership on bind mounts itself, so the uid doesn't need to
+  match a macOS uid such as 501, and file modes such as `0600` on the token
+  files might read differently inside the container. Untested on a real
+  macOS or Windows host.
+- **Image user name**: `scripts/build-image.sh` names the container user
+  after `id -un`, and the server runs containers as `USER`, `LOGNAME`, or
+  `USERNAME`, falling back to `user` for a name with whitespace. The two
+  must match. A Windows user name with uppercase letters or spaces isn't a
+  valid Linux user name, so the build fails or the names differ; building
+  and running on Windows needs one sanitized name on both sides.
 
 ### Container boundaries
 

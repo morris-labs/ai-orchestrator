@@ -99,6 +99,7 @@ import {
 } from "./common.js";
 import { DEFAULT_PROMPT_TEMPLATES } from "./prompts.js";
 import { isUncPath, type HostOs } from "./containerPaths.js";
+import { BrokerTransportSettingSchema } from "./broker.js";
 
 /** Every shared container name and box id starts with this prefix. */
 export const CONTAINER_PREFIX = "aio-agent-";
@@ -655,6 +656,11 @@ export const GlobalSettingsSchema = z
      * `DATA_DIR/backup/transcripts`. Absent means 7; 0 turns snapshots off.
      */
     transcriptBackupKeep: z.number().int().nonnegative().optional(),
+    /**
+     * How the secrets broker reaches containers; see
+     * `BrokerTransportSettingSchema`. Absent means `auto`.
+     */
+    brokerTransport: BrokerTransportSettingSchema.optional(),
   })
   .strict();
 export type GlobalSettings = z.infer<typeof GlobalSettingsSchema>;
@@ -770,6 +776,10 @@ export const GlobalSettingsPatchSchema = z
     transcriptRetentionDays: z.number().int().positive().nullable(),
     /** `0` turns snapshots off; `null` goes back to the default, 7. */
     transcriptBackupKeep: z.number().int().nonnegative().nullable(),
+    /**
+     * Applies to containers created afterward; `null` goes back to `auto`.
+     */
+    brokerTransport: BrokerTransportSettingSchema.nullable(),
     /**
      * Only the vendors it names change; `null` clears a default. The server
      * refuses an id that names no account.

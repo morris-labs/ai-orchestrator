@@ -317,12 +317,17 @@ export class AccountsRepo {
   }
 }
 
-/** A project container's engine: the loopback port that maps to 20411, and its token. */
+/**
+ * A project container's engine: the loopback port that maps to 20411, and its
+ * token. `brokerPort` is the loopback port of the container's TCP secrets
+ * broker; absent when the container uses the Unix socket.
+ */
 export interface EngineEndpoint {
   projectId: string;
   container: string;
   hostPort: number;
   token: string;
+  brokerPort?: number;
 }
 
 interface EndpointRow {
@@ -330,6 +335,7 @@ interface EndpointRow {
   container: string;
   host_port: number;
   token: string;
+  broker_port?: number | null;
 }
 
 export class EngineEndpointsRepo {
@@ -341,6 +347,7 @@ export class EngineEndpointsRepo {
       container: row.container,
       hostPort: row.host_port,
       token: row.token,
+      ...(typeof row.broker_port === "number" ? { brokerPort: row.broker_port } : {}),
     };
   }
 
@@ -367,10 +374,11 @@ export class EngineEndpointsRepo {
   put(endpoint: EngineEndpoint, now: Date): EngineEndpoint {
     this.db
       .prepare(
-        `INSERT INTO engine_endpoints (project_id, container, host_port, token, updated_at)
-         VALUES (?, ?, ?, ?, ?)
+        `INSERT INTO engine_endpoints (project_id, container, host_port, token, updated_at, broker_port)
+         VALUES (?, ?, ?, ?, ?, ?)
          ON CONFLICT(project_id) DO UPDATE SET container = excluded.container,
-           host_port = excluded.host_port, token = excluded.token, updated_at = excluded.updated_at`,
+           host_port = excluded.host_port, token = excluded.token, updated_at = excluded.updated_at,
+           broker_port = excluded.broker_port`,
       )
       .run(
         endpoint.projectId,
@@ -378,6 +386,7 @@ export class EngineEndpointsRepo {
         endpoint.hostPort,
         endpoint.token,
         now.toISOString(),
+        endpoint.brokerPort ?? null,
       );
     return endpoint;
   }

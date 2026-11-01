@@ -105,12 +105,39 @@ The `aio-secret` command exits with a status that names the cause:
 
 | Status | Cause | What to do |
 |---|---|---|
-| 3 | The secrets broker socket doesn't answer. | Check that the server runs with `systemctl --user status aio-server`. The server recreates the socket within 30 seconds of starting. |
+| 3 | The secrets broker doesn't answer, or refuses the container's token. | Check that the server runs with `systemctl --user status aio-server`. The server recreates the socket or TCP listener within 30 seconds of starting. Under Docker Desktop, see [aio-secret fails under Docker Desktop](#aio-secret-fails-under-docker-desktop). |
 | 4 | The project doesn't list the name. | Add a reference with that name in the project or global settings. No restart is needed. |
 | 5 | 1Password is locked, or the reference doesn't resolve. | Unlock 1Password or fix the reference, then try again. |
 
 The server's journal, `journalctl --user -u aio-server`, logs each
 request with the container, the names, and the outcome.
+
+## aio-secret fails under Docker Desktop
+
+Under Docker Desktop, the broker listens on a loopback port of the host and
+checks a token; see
+[The broker under Docker Desktop](secrets.md#the-broker-under-docker-desktop).
+Check the following:
+
+- **The container uses the Unix socket.** In the box, run
+  `echo "$AIO_BROKER_URL"; cat /run/aio-broker/broker.url`. When both are
+  empty, the container was created with the Unix socket, which can't
+  cross the Docker Desktop virtual machine. Restart the project container.
+  If the server chose the socket for a Docker Desktop engine, set
+  `brokerTransport` to `tcp`.
+- **The token was refused.** The journal shows
+  `Secrets broker: CONTAINER ROUTE: unauthorized (wrong token)` or
+  `(missing token)`. The server writes a new token each time it creates
+  the container. If the refusals continue, restart the project container.
+- **The port is taken.** The journal shows
+  `can't listen on 127.0.0.1:PORT`. Another program took the container's
+  broker port while the server was stopped. Stop that program, or restart
+  the project container, which picks a free port.
+- **`host.docker.internal` doesn't resolve or connect.** In the box, run
+  `getent hosts host.docker.internal`. Docker Desktop defines the name.
+  With Docker Engine on Linux and `brokerTransport` set to `tcp`, the name
+  resolves to the bridge address, where the loopback listener can't be
+  reached: set `brokerTransport` back to `auto`.
 
 ## sudo fails in a container
 

@@ -12,6 +12,7 @@ import {
   type ContainerInspect,
   type ContainerSummary,
   type DockerClient,
+  type DockerEngineInfo,
   type ExecOptions,
   type ExecResult,
   type ImageInspect,
@@ -46,6 +47,13 @@ export class MemoryDocker implements DockerClient {
   readonly calls: MemoryCall[] = [];
   /** False makes every call throw `DockerUnavailableError`, as an unreachable daemon does. */
   available = true;
+  /** What `info()` answers: a native Linux engine unless a test sets Docker Desktop. */
+  engineInfo: DockerEngineInfo = {
+    operatingSystem: "Ubuntu 24.04 LTS",
+    osType: "linux",
+    name: "memory-docker",
+    labels: [],
+  };
   /** Commands whose session dies right away (exit 2), matched by substring. */
   failingCommands: string[] = [];
   /** Answers to `runOnce`, keyed by the joined command. */
@@ -145,6 +153,12 @@ export class MemoryDocker implements DockerClient {
 
   async ping(): Promise<boolean> {
     return this.available;
+  }
+
+  /** Not recorded in `calls`, so tests that list the calls see none extra. */
+  async info(): Promise<DockerEngineInfo> {
+    if (!this.available) throw new DockerUnavailableError();
+    return { ...this.engineInfo, labels: [...this.engineInfo.labels] };
   }
 
   async listContainers(

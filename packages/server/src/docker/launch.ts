@@ -1,7 +1,7 @@
 // The launch parameters of a project container, described once (3.3.5
 // `DockerBackend::launchSpec`, inventory sections 4.1 and 4.2), minus the
 // port pool, plus the engine port, the engine environment, project TCP maps,
-// and the secrets broker mount. Secret values never reach the spec: the
+// and the secrets broker mount and transport. Secret values never reach the spec: the
 // container asks the broker for them (see `docs/secrets.md`).
 import fs from "node:fs";
 import path from "node:path";
@@ -10,7 +10,9 @@ import {
   BROKER_ENV,
   BROKER_MOUNT,
   BROKER_SOCKET_PATH,
+  BROKER_TCP_HOST,
   DEFAULT_ENGINE_PORT,
+  brokerTcpUrl,
   ENGINE_ENV,
   hostPathProblem,
   mountProblem,
@@ -51,10 +53,25 @@ export const LABELS = {
   secrets: "aio.secrets",
   /** `accounts` when the container mounts the account folders; absent or `host` otherwise. */
   accountsMode: "aio.accounts-mode",
+  /** `tcp` when the container reaches the broker over TCP; absent means the Unix socket. */
+  brokerTransport: "aio.broker-transport",
 } as const;
 
 /** The `aio.secrets` label value of a container that gets secrets from the broker. */
 export const SECRETS_LABEL_BROKER = "broker";
+
+/**
+ * How the container reaches the secrets broker: the Unix socket in the
+ * mounted directory, or TCP on the host's loopback address at `port`, which
+ * Docker Desktop forwards from `host.docker.internal`. `hostGateway` adds
+ * `host.docker.internal:host-gateway` to the hosts file, for a native Linux
+ * engine that doesn't define the name.
+ */
+export type BrokerLaunch =
+  { transport: "unix" } | { transport: "tcp"; port: number; hostGateway: boolean };
+
+/** The hosts file entry that makes `host.docker.internal` resolve on a native Linux engine. */
+export const HOST_GATEWAY_ENTRY = `${BROKER_TCP_HOST}:host-gateway`;
 
 /** The `aio.sudo` label value for a container with or without a sudo password. */
 export function sudoLabel(passwordSet: boolean): "password" | "off" {
@@ -95,6 +112,8 @@ export interface LaunchInput {
    * and not the host's agent folders.
    */
   accounts?: { claudeDirs: readonly string[] };
+  /** The broker transport; absent means the Unix socket. */
+  broker?: BrokerLaunch;
 }
 
 /** What the launch needs to know about the host, gathered by `prepareLaunchHost()`. */
@@ -330,6 +349,7 @@ export function buildLaunchSpec(
       throw new ApiError("validation", `The project root can't be mounted: ${err.message}`);
     throw err;
   }
+  const tcpBroker = input.broker?.transport === "tcp" ? input.broker : null;
 
   // Every host path becomes a container path through `hostToContainer()`:
   // the identity on Linux and macOS, `/mnt/host/<drive>/...` on Windows.
@@ -367,9 +387,10 @@ export function buildLaunchSpec(
   }
   for (const m of merged) binds.push(mountBind(m, hostOs));
   binds.push(bindOf(path.join(paths.stateDir, input.container), STATE_MOUNT));
-  // Read-only, so the container can't remove or replace the socket;
-  // connecting to it needs no write access. The directory, not the socket,
-  // is mounted, so a socket the server recreates stays reachable.
+  // Read-only, so the container can't remove or replace the socket or the
+  // TCP token; connecting to the socket needs no write access. The
+  // directory, not the socket, is mounted, so a socket the server recreates
+  // stays reachable, and a rotated token file shows through.
   binds.push(bindOf(brokerDirFor(env, input.container), BROKER_MOUNT, "ro"));
 
   const envList = ["IS_SANDBOX=1", "DISABLE_AUTOUPDATER=1"];
@@ -384,7 +405,9 @@ export function buildLaunchSpec(
     `${ENGINE_ENV.container}=${input.container}`,
     `${ENGINE_ENV.engineVersion}=${input.engine.version}`,
     `${ENGINE_ENV.stateDir}=${STATE_MOUNT}`,
-    `${BROKER_ENV.socket}=${BROKER_SOCKET_PATH}`,
+    tcpBroker
+      ? `${BROKER_ENV.url}=${brokerTcpUrl(tcpBroker.port)}`
+      : `${BROKER_ENV.socket}=${BROKER_SOCKET_PATH}`,
   );
   for (const [name, value] of Object.entries(input.extraEnv ?? {})) {
     if (!RESERVED_ENV_NAMES.has(name)) envList.push(`${name}=${value}`);
@@ -426,8 +449,11 @@ export function buildLaunchSpec(
       [LABELS.secrets]: SECRETS_LABEL_BROKER,
       // Absent means `host`: a host-mode launch is what it always was.
       ...(input.accounts ? { [LABELS.accountsMode]: "accounts" } : {}),
+      // Absent means the Unix socket, so a socket launch is what it always was.
+      ...(tcpBroker ? { [LABELS.brokerTransport]: "tcp" } : {}),
     },
     capDrop: [...DROPPED_CAPABILITIES],
+    ...(tcpBroker?.hostGateway ? { extraHosts: [HOST_GATEWAY_ENTRY] } : {}),
     tty: true,
     openStdin: true,
     autoRemove: true,
@@ -471,11 +497,13 @@ export function toDockerRunArgs(
     ENGINE_ENV.engineVersion,
     ENGINE_ENV.stateDir,
     BROKER_ENV.socket,
+    BROKER_ENV.url,
   ]);
   const args = ["run", "-d", "-i", "-t"];
   if (spec.autoRemove) args.push("--rm");
   args.push("--name", spec.name, "--user", spec.user);
   for (const cap of spec.capDrop ?? []) args.push("--cap-drop", cap);
+  for (const host of spec.extraHosts ?? []) args.push("--add-host", host);
   for (const e of spec.env) {
     const name = e.slice(0, e.indexOf("="));
     args.push("-e", mask && !shown.has(name) ? `${name}=***` : e);
