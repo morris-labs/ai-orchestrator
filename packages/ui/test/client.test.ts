@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { ApiClient, ApiRequestError, isApiError } from "../src/core";
+import { ApiClient, ApiRequestError, isApiError, machinePath } from "../src/core";
+import { z } from "zod";
 import { FakeServer, makeBoxView, type FakeSocket } from "../src/testing";
 
 function setup() {
@@ -206,5 +207,71 @@ describe("timeouts", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  describe("machine binding", () => {
+    it("rewrites only /api/v1 paths", () => {
+      expect(machinePath("/api/v1/boxes", "node-a")).toBe("/api/v1/machines/node-a/proxy/boxes");
+      expect(machinePath("/api/v1", "node-a")).toBe("/api/v1/machines/node-a/proxy");
+      expect(machinePath("/api/v1/boxes", null)).toBe("/api/v1/boxes");
+      expect(machinePath("/api/v10/x", "node-a")).toBe("/api/v10/x");
+      expect(machinePath("/review/", "node-a")).toBe("/review/");
+      expect(machinePath("/api/v1/x", "a/b")).toBe("/api/v1/machines/a%2Fb/proxy/x");
+    });
+
+    it("sends HTTP calls and WebSockets through the machine's proxy route", async () => {
+      const urls: string[] = [];
+      const sockets: string[] = [];
+      const root = new ApiClient({
+        baseUrl: "https://127.0.0.1:21400",
+        token: "tok",
+        fetch: async (u, init) => {
+          urls.push(String(u));
+          expect((init?.headers as Record<string, string>).Authorization).toBe("Bearer tok");
+          return new Response(JSON.stringify({ boxes: [] }), { status: 200 });
+        },
+        WebSocket: class {
+          constructor(url: string) {
+            sockets.push(url);
+          }
+        } as never,
+      });
+      const bound = root.forMachine("node-a");
+      expect(bound.machineId).toBe("node-a");
+      expect(root.machineId).toBeNull();
+      await bound.call("boxes.list", {});
+      expect(urls).toEqual(["https://127.0.0.1:21400/api/v1/machines/node-a/proxy/boxes"]);
+      expect(bound.url("boxes.get", { params: { boxId: "b 1" } })).toBe(
+        "https://127.0.0.1:21400/api/v1/machines/node-a/proxy/boxes/b%201",
+      );
+      bound.openSocket("terminals.open", { query: { kind: "session", boxId: "b" } });
+      expect(sockets[0]).toBe(
+        "wss://127.0.0.1:21400/api/v1/machines/node-a/proxy/terminals?kind=session&boxId=b",
+      );
+      expect(bound.forMachine(null).url("boxes.list")).toBe("https://127.0.0.1:21400/api/v1/boxes");
+      expect(bound.forMachine("node-b").url("boxes.list")).toBe(
+        "https://127.0.0.1:21400/api/v1/machines/node-b/proxy/boxes",
+      );
+    });
+
+    it("calls an unlisted path with request() and parses it", async () => {
+      const seen: { url: string; method?: string; body?: unknown }[] = [];
+      const client = new ApiClient({
+        fetch: async (u, init) => {
+          seen.push({ url: String(u), method: init?.method, body: init?.body });
+          return new Response(JSON.stringify({ n: 1 }), { status: 200 });
+        },
+      });
+      const res = await client.request("POST", "/api/v1/things", z.object({ n: z.number() }), {
+        body: { a: 1 },
+      });
+      expect(res.n).toBe(1);
+      expect(seen[0]).toEqual({ url: "/api/v1/things", method: "POST", body: '{"a":1}' });
+      await client.forMachine("m").request("GET", "/api/v1/things", z.object({ n: z.number() }));
+      expect(seen[1]?.url).toBe("/api/v1/machines/m/proxy/things");
+      await expect(
+        client.request("GET", "/api/v1/things", z.object({ n: z.string() })),
+      ).rejects.toMatchObject({ code: "bad_response" });
+    });
   });
 });
