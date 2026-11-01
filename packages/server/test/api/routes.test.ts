@@ -632,6 +632,30 @@ describe("review routes", () => {
     expect(h.core.calls).toContain(`message:${box.id}:${HOLD_EDITS_MESSAGE.slice(0, 20)}`);
   });
 
+  it("passes a request's starting roles to the engine and refuses a bad shape", async () => {
+    const payload = { projectId: "example-app-1a2b3c4d", repoPath: "/work/example-app" };
+    const roles = { reviewer: ["codex"], disprover: "copilot" };
+    const res = await h.server.app.inject({
+      method: "POST",
+      url: `${V1}/runs`,
+      headers: AUTH,
+      payload: { ...payload, roles },
+    });
+    expect(res.statusCode).toBe(201);
+    const sent = h.engine.calls.find((c) => c.key === "engine.runs.create");
+    expect((sent?.input.body as { roles: unknown }).roles).toEqual(roles);
+
+    const before = h.engine.calls.length;
+    const bad = await h.server.app.inject({
+      method: "POST",
+      url: `${V1}/runs`,
+      headers: AUTH,
+      payload: { ...payload, roles: { fixer: ["claude", "codex"] } },
+    });
+    expect(bad.statusCode).toBe(400);
+    expect(h.engine.calls.length).toBe(before);
+  });
+
   it("refuses a read-only post-push run before it reaches the engine", async () => {
     const res = await h.server.app.inject({
       method: "POST",
