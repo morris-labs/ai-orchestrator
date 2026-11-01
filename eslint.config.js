@@ -14,6 +14,8 @@ export default tseslint.config(
       ".worktrees/**",
       ".pnpm-store/**",
       "scripts/**",
+      // Runtime trees that scripts/stage-runtime.mjs assembles.
+      "packaging/build/**",
     ],
   },
   js.configs.recommended,

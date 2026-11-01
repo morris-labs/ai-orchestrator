@@ -1,8 +1,9 @@
 # Configures electron-builder for scripts/build-deb.sh, which runs it with
-# --dir and packages the result with nfpm. Vite bundles every dependency
-# into dist/, so the app needs only the build output and package.json. The
-# explicit file list keeps source, tests, and node_modules out of the
-# archive.
+# --dir and packages the result with nfpm, and for scripts/build-mac.sh and
+# scripts/build-win.ps1, which build the macOS and Windows targets. Vite
+# bundles every dependency into dist/, so the app needs only the build
+# output and package.json. The explicit file list keeps source, tests, and
+# node_modules out of the archive.
 appId: dev.aio.review
 productName: "AI Orchestrator Review"
 npmRebuild: false
@@ -16,3 +17,32 @@ files:
 linux:
   target: dir
   category: Development
+mac:
+  target:
+    - dmg
+    - zip
+  category: public.app-category.developer-tools
+  # Signing and notarization are TODO; see docs/platforms.md. Without an
+  # identity, scripts/build-mac.sh builds an ad hoc signed app.
+  hardenedRuntime: true
+  entitlements: ../../packaging/mac/entitlements.plist
+  entitlementsInherit: ../../packaging/mac/entitlements.plist
+  protocols:
+    - name: AI Orchestrator Review
+      schemes:
+        - aio-review
+win:
+  target: nsis
+  # Code signing is TODO; see docs/platforms.md.
+  protocols:
+    - name: AI Orchestrator Review
+      schemes:
+        - aio-review
+nsis:
+  # A per-user install needs no administrator rights, like the server's
+  # logon task.
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
