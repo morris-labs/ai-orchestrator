@@ -27,6 +27,8 @@ export interface FakeServer {
   events: unknown[];
   /** The query of the last event-socket connection. */
   lastEventsQuery: Record<string, string> | null;
+  /** The path of the last event-socket connection, such as a machine proxy path. */
+  lastEventsPath: string | null;
   /** Closes each event socket at once with this code and reason, like a refused query. */
   closeEventsWith: { code: number; reason: string } | null;
   close(): Promise<void>;
@@ -75,6 +77,7 @@ export async function startFakeServer(
     requests,
     events: [],
     lastEventsQuery: null,
+    lastEventsPath: null,
     closeEventsWith: null,
     on: (route, answer) => void answers.set(route, answer),
     close: () =>
@@ -90,7 +93,7 @@ export async function startFakeServer(
     const url = new URL(req.url ?? "/", "http://fake");
     // Like the server: the bearer header only, never a query token.
     if (
-      url.pathname !== "/api/v1/events" ||
+      !/^\/api\/v1(\/machines\/[^/]+\/proxy)?\/events$/.test(url.pathname) ||
       req.headers.authorization !== `Bearer ${token}` ||
       url.searchParams.has("token")
     ) {
@@ -98,6 +101,7 @@ export async function startFakeServer(
       return;
     }
     fake.lastEventsQuery = Object.fromEntries(url.searchParams);
+    fake.lastEventsPath = url.pathname;
     wss.handleUpgrade(req, socket, head, (ws) => {
       if (fake.closeEventsWith) {
         ws.close(fake.closeEventsWith.code, fake.closeEventsWith.reason);

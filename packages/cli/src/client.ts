@@ -4,6 +4,7 @@
 import {
   ApiErrorSchema,
   buildPath,
+  machinePath,
   serverRoutes,
   type ApiErrorCode,
   type HttpRouteDef,
@@ -102,6 +103,12 @@ export interface ClientOptions {
   fetch?: typeof fetch;
   /** Aborts every call, such as on Ctrl+C. */
   signal?: AbortSignal;
+  /**
+   * The machine that serves every call. Absent or `local` means the server
+   * at `baseUrl`; any other ID sends each call through
+   * `/api/v1/machines/ID/proxy` on that server.
+   */
+  machineId?: string;
 }
 
 function stringifyQuery(query: Record<string, unknown> | undefined): Record<string, string> {
@@ -131,7 +138,10 @@ export class ServerClient {
   ): Promise<unknown> {
     let path: string;
     try {
-      path = buildPath(route.path, (input.params ?? {}) as never);
+      path = machinePath(
+        buildPath(route.path, (input.params ?? {}) as never),
+        this.options.machineId,
+      );
     } catch (err) {
       throw new RequestInputError((err as Error).message);
     }

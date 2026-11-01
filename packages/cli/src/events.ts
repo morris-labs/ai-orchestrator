@@ -1,5 +1,5 @@
 // `aio events`: tails the server's event stream as JSON lines.
-import { ServerStreamFrameSchema, serverRoutes } from "@aio/contracts";
+import { ServerStreamFrameSchema, machinePath, serverRoutes } from "@aio/contracts";
 import { asIdentityError } from "@aio/contracts/tls";
 import WebSocket from "ws";
 import { jsonText } from "./format.js";
@@ -10,6 +10,8 @@ export interface TailOptions {
   baseUrl: string;
   token: string;
   types?: string;
+  /** The machine whose stream to tail; absent or `local` for the server at `baseUrl`. */
+  machineId?: string;
   /** Stop after this many events (not counting `hello`). */
   count?: number;
   write: (line: string) => void;
@@ -25,10 +27,12 @@ export interface TailOptions {
 const NORMAL_CLOSE_CODES = new Set([1000, 1001, 1005]);
 
 /** Builds the `events.stream` WebSocket URL. The token never goes in it. */
-export function eventsUrl(baseUrl: string, types?: string): string {
+export function eventsUrl(baseUrl: string, types?: string, machineId?: string): string {
   // Appended, not resolved, so a path prefix in `baseUrl` stays, as it does
   // for the REST calls.
-  const url = new URL(baseUrl.replace(/\/$/, "") + serverRoutes["events.stream"].path);
+  const url = new URL(
+    baseUrl.replace(/\/$/, "") + machinePath(serverRoutes["events.stream"].path, machineId),
+  );
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   if (types) url.searchParams.set("types", types);
   return url.toString();
@@ -46,7 +50,7 @@ export function tailEvents(options: TailOptions): Promise<void> {
   const Ctor = options.WebSocket ?? WebSocket;
   return new Promise<void>((resolve, reject) => {
     // The token goes in the upgrade's `Authorization` header, out of the URL.
-    const socket = new Ctor(eventsUrl(options.baseUrl, options.types), {
+    const socket = new Ctor(eventsUrl(options.baseUrl, options.types, options.machineId), {
       ...options.tls,
       headers: { authorization: `Bearer ${options.token}` },
     });

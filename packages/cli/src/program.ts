@@ -15,6 +15,7 @@ import {
   SeveritySchema,
   VerdictSchema,
   hostToContainer,
+  LOCAL_MACHINE_ID,
   isReadOnlyPostPush,
   parseAccountId,
   type AccountSeedReport,
@@ -40,6 +41,7 @@ import {
   ServerUnreachableError,
 } from "./client.js";
 import { tailEvents, type WebSocketCtor } from "./events.js";
+import { fleetRunText, isWindowsPath, listFleetRuns, REMOTE_REPO_MESSAGE } from "./fleet.js";
 import { jsonText, keyValues, percent, table, terminalText } from "./format.js";
 import {
   checkAttachArgv,
@@ -377,12 +379,13 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
     return s;
   };
   /** A client for `s`, which must have passed `urlProblem()`. */
-  const clientFor = (s: CliSettings) =>
+  const clientFor = (s: CliSettings, machineId?: string) =>
     new ServerClient({
       baseUrl: s.baseUrl,
       token: s.token,
       fetch: deps.fetch ?? serverFetch(s),
       signal: deps.signal,
+      machineId,
     });
   const client = () => clientFor(settings());
   /** Prints raw JSON with `--json`, or the text form. */
@@ -782,7 +785,20 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
 
   // -------------------------------------------------------------------------
   // review
-  const review = program.command("review").description("Start and control code review runs.");
+  const review = program
+    .command("review")
+    .description("Start and control code review runs.")
+    .option(
+      "--machine <id>",
+      "Send the command to this machine, from aio machines list. Default: this machine.",
+    );
+  /** The machine `--machine` names, or `undefined` for this machine. */
+  const reviewMachine = () => {
+    const id = review.opts<{ machine?: string }>().machine;
+    return id === undefined || id === LOCAL_MACHINE_ID ? undefined : id;
+  };
+  /** A client for the machine that `--machine` names. */
+  const reviewClient = () => clientFor(settings(), reviewMachine());
 
   review
     .command("start")
@@ -814,25 +830,35 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
       if (isReadOnlyPostPush({ readOnly: o.readOnly ?? false, pipeline: o.pipeline })) {
         throw new UsageError(READ_ONLY_POST_PUSH_MESSAGE);
       }
-      const c = client();
+      const c = reviewClient();
+      const remote = reviewMachine() !== undefined;
       let projectId: string | undefined = o.project;
       // The engine runs in the container, so it gets the container path:
       // the same as the host path except on Windows.
-      const toContainer = (p: string) => {
+      const toContainer = (p: string, os: HostOs = deps.hostOs ?? "linux") => {
         try {
-          return hostToContainer(p, deps.hostOs ?? "linux");
+          return hostToContainer(p, os);
         } catch (err) {
           throw new UsageError((err as Error).message);
         }
       };
-      // On Windows a POSIX path is already a container path.
       const repoArg = o.repo as string | undefined;
-      let repoPath: string | undefined =
-        repoArg === undefined
-          ? undefined
-          : deps.hostOs === "win32" && repoArg.startsWith("/")
+      let repoPath: string | undefined;
+      if (repoArg === undefined) {
+        repoPath = undefined;
+      } else if (remote) {
+        // Another machine's path can't resolve against this directory, and
+        // only its form tells whether that machine runs Windows.
+        if (isWindowsPath(repoArg)) repoPath = toContainer(repoArg, "win32");
+        else if (repoArg.startsWith("/")) repoPath = toContainer(repoArg, "linux");
+        else throw new UsageError(REMOTE_REPO_MESSAGE);
+      } else {
+        // On Windows a POSIX path is already a container path.
+        repoPath =
+          deps.hostOs === "win32" && repoArg.startsWith("/")
             ? repoArg
             : toContainer(absolute(repoArg));
+      }
       let tip: string | undefined = o.tip;
       if (o.box) {
         const v = await c.call("boxes.get", { params: { boxId: o.box } });
@@ -870,38 +896,59 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
     .argument("[runId]")
     .option("--project <projectId>", "Only runs in this project.")
     .option("--box <boxId>", "Only runs for this box.")
-    .action(async (runId: string | undefined, o: { project?: string; box?: string }) => {
-      const c = client();
-      if (!runId) {
-        const r = await c.call("runs.list", { query: { projectId: o.project, boxId: o.box } });
-        print(r, () => runRows(r.runs));
-        return;
-      }
-      const [run, rounds] = await Promise.all([
-        c.call("runs.get", { params: { runId } }),
-        c.call("runs.rounds", { params: { runId } }),
-      ]);
-      print({ run, rounds: rounds.rounds }, () => {
-        const text = runDetail(run);
-        if (rounds.rounds.length === 0) return text;
-        return (
-          text +
-          "\n" +
-          table(
-            ["ROUND", "FIXED", "OVERLAP", "COST", "VENDORS"],
-            rounds.rounds.map((r) => [
-              r.round,
-              r.fixed,
-              percent(r.overlapRate),
-              `$${r.costUsd.toFixed(2)}`,
-              Object.entries(r.perVendor)
-                .map(([v, s]) => `${v} ${s?.confirmed ?? 0}/${s?.raised ?? 0}`)
-                .join(", "),
-            ]),
-          )
-        );
-      });
-    });
+    .option(
+      "--all-machines",
+      "List the runs of every machine, with a MACHINE column. An offline machine shows as offline.",
+    )
+    .action(
+      async (
+        runId: string | undefined,
+        o: { project?: string; box?: string; allMachines?: boolean },
+      ) => {
+        if (o.allMachines) {
+          if (runId) throw new UsageError("--all-machines lists runs; leave out the run ID.");
+          if (reviewMachine() !== undefined)
+            throw new UsageError("Give --machine or --all-machines, not both.");
+          const s = settings();
+          const fleet = await listFleetRuns(clientFor(s), (id) => clientFor(s, id), {
+            projectId: o.project,
+            boxId: o.box,
+          });
+          print({ machines: fleet }, () => fleetRunText(fleet));
+          return;
+        }
+        const c = reviewClient();
+        if (!runId) {
+          const r = await c.call("runs.list", { query: { projectId: o.project, boxId: o.box } });
+          print(r, () => runRows(r.runs));
+          return;
+        }
+        const [run, rounds] = await Promise.all([
+          c.call("runs.get", { params: { runId } }),
+          c.call("runs.rounds", { params: { runId } }),
+        ]);
+        print({ run, rounds: rounds.rounds }, () => {
+          const text = runDetail(run);
+          if (rounds.rounds.length === 0) return text;
+          return (
+            text +
+            "\n" +
+            table(
+              ["ROUND", "FIXED", "OVERLAP", "COST", "VENDORS"],
+              rounds.rounds.map((r) => [
+                r.round,
+                r.fixed,
+                percent(r.overlapRate),
+                `$${r.costUsd.toFixed(2)}`,
+                Object.entries(r.perVendor)
+                  .map(([v, s]) => `${v} ${s?.confirmed ?? 0}/${s?.raised ?? 0}`)
+                  .join(", "),
+              ]),
+            )
+          );
+        });
+      },
+    );
 
   for (const [name, key, done] of [
     ["pause", "runs.pause", "Pausing"],
@@ -913,7 +960,7 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
       .description(`${name[0]?.toUpperCase()}${name.slice(1)} a run.`)
       .argument("<runId>")
       .action(async (runId: string) => {
-        const r = await client().call(key, { params: { runId } });
+        const r = await reviewClient().call(key, { params: { runId } });
         print(r, () => `${done} run ${r.id}; status ${r.status}.\n`);
       });
   }
@@ -927,7 +974,7 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
     .option("--title <text>", "The pull request title; default the server's choice.")
     .option("--draft", "Open the pull request as a draft.")
     .action(async (runId: string, o: { title?: string; draft?: boolean }) => {
-      const r = await client().call("runs.push", {
+      const r = await reviewClient().call("runs.push", {
         params: { runId },
         body: { title: o.title, draft: o.draft ?? false },
       });
@@ -945,7 +992,7 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
       if (unknown.length > 0) {
         throw new UsageError(`Unknown vendor ${unknown.join(", ")}; use ${PLATFORMS.join(", ")}.`);
       }
-      const r = await client().call("runs.assign", {
+      const r = await reviewClient().call("runs.assign", {
         params: { runId },
         body: { role: role as "reviewer", vendors: vendors as ["claude"] },
       });
@@ -958,7 +1005,7 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
     .argument("<runId>")
     .argument("<profile>", `One of ${PROFILES.join(", ")}.`, choice(PROFILES))
     .action(async (runId: string, profile: string) => {
-      const r = await client().call("runs.profile", {
+      const r = await reviewClient().call("runs.profile", {
         params: { runId },
         body: { profile: profile as "offload" },
       });
@@ -969,7 +1016,7 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
     .command("usage")
     .description("Show each vendor's usage against its ceiling.")
     .action(async () => {
-      const r = await client().call("usage.get");
+      const r = await reviewClient().call("usage.get");
       print(r, () =>
         table(
           ["VENDOR", "ACCOUNT", "WINDOW", "USED", "CEILING", "OVER", "RESETS", "FORECAST"],
@@ -1003,7 +1050,7 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
     .addOption(new Option("--severity <severity>").choices(SEVERITIES))
     .option("--round <n>", "Only findings from this round.", positiveInt)
     .action(async (runId: string, o: { verdict?: string; severity?: string; round?: number }) => {
-      const r = await client().call("findings.list", {
+      const r = await reviewClient().call("findings.list", {
         params: { runId },
         query: { verdict: o.verdict as "pending", severity: o.severity as "P1", round: o.round },
       });
@@ -1026,7 +1073,7 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
       if (option === "resume_waive" && o.waive.length === 0) {
         throw new UsageError("resume_waive needs at least one --waive FINDING_ID.");
       }
-      const r = await client().call("runs.decide", {
+      const r = await reviewClient().call("runs.decide", {
         params: { runId },
         body: { option: option as "resume", waiveFindingIds: o.waive, reason: o.reason },
       });
@@ -1514,7 +1561,11 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
     .description("Print the server's event stream as JSON lines until interrupted.")
     .option("--types <types>", "Comma-separated event types to receive.")
     .option("--count <n>", "Exit after this many events.", positiveInt)
-    .action(async (o: { types?: string; count?: number }) => {
+    .option(
+      "--machine <id>",
+      "Tail this machine's stream, from aio machines list. Default: this machine.",
+    )
+    .action(async (o: { types?: string; count?: number; machine?: string }) => {
       const s = settings();
       if (s.token === null)
         throw new ApiCallError(401, "unauthorized", `No token in AIO_TOKEN or ${s.tokenFile}.`);
@@ -1522,6 +1573,7 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
         baseUrl: s.baseUrl,
         token: s.token,
         types: o.types,
+        machineId: o.machine,
         count: o.count,
         write: deps.out,
         warn: deps.err,

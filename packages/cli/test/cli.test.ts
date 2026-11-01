@@ -797,6 +797,150 @@ describe("review", () => {
   });
 });
 
+describe("review on other machines", () => {
+  const machine = (over: Record<string, unknown>) => ({
+    role: "node",
+    status: "online",
+    isLocal: false,
+    serverVersion: "1.0.0",
+    protocol: 1,
+    capabilities: [],
+    lastSeen: "2026-11-01T10:00:00Z",
+    platform: "linux",
+    ...over,
+  });
+  const machines = [
+    machine({ id: "local", name: "desk", role: "both", isLocal: true }),
+    machine({ id: "m1", name: "build-server" }),
+    machine({ id: "m2", name: "laptop", status: "offline" }),
+    machine({ id: "m3", name: "old-pc", status: "revoked" }),
+    machine({ id: "m4", name: "far-pc" }),
+  ];
+  const proxy = (id: string, rest: string) => `/api/v1/machines/${id}/proxy${rest}`;
+
+  it("sends every review command to the machine that --machine names", async () => {
+    server.on(`GET ${proxy("m1", "/runs")}`, { body: { runs: [runState] } });
+    expect(await cli(["review", "status", "--machine", "m1"])).toBe(0);
+    expect(last()?.path).toBe(proxy("m1", "/runs"));
+    expect(out).toMatch(/^RUN\s+STATUS/);
+
+    // The option also works before the subcommand.
+    server.on(`POST ${proxy("m1", `/runs/${RUN}/pause`)}`, { body: runState });
+    expect(await cli(["review", "--machine", "m1", "pause", RUN])).toBe(0);
+    expect(last()?.path).toBe(proxy("m1", `/runs/${RUN}/pause`));
+
+    server.on(`GET ${proxy("m1", `/runs/${RUN}/findings`)}`, { body: { findings: [finding] } });
+    expect(await cli(["review", "findings", RUN, "--machine", "m1"])).toBe(0);
+    expect(last()?.path).toBe(proxy("m1", `/runs/${RUN}/findings`));
+
+    // `local` is this machine, with the plain routes.
+    server.on("GET /api/v1/runs", { body: { runs: [] } });
+    expect(await cli(["review", "status", "--machine", "local"])).toBe(0);
+    expect(last()?.path).toBe("/api/v1/runs");
+  });
+
+  it("starts a run on another machine from one of its boxes", async () => {
+    server.on(`GET ${proxy("m1", `/boxes/${BOX_ID}`)}`, { body: boxView() });
+    server.on(`POST ${proxy("m1", "/runs")}`, { status: 201, body: runState });
+    expect(await cli(["review", "start", "--machine", "m1", "--box", BOX_ID])).toBe(0);
+    expect(server.requests.map((r) => r.path)).toEqual([
+      proxy("m1", `/boxes/${BOX_ID}`),
+      proxy("m1", "/runs"),
+    ]);
+    expect(last()?.body).toMatchObject({ projectId: PROJECT_ID, boxId: BOX_ID });
+  });
+
+  it("takes another machine's repository path as given, and maps a Windows one", async () => {
+    server.on(`POST ${proxy("m1", "/runs")}`, { status: 201, body: runState });
+    const start = ["review", "start", "--machine", "m1", "--project", PROJECT_ID];
+    expect(await cli([...start, "--repo", "/srv/src/example"], {}, "/home/user")).toBe(0);
+    expect(last()?.body).toMatchObject({ repoPath: "/srv/src/example" });
+    expect(await cli([...start, "--repo", "C:\\Users\\user\\example"])).toBe(0);
+    expect(last()?.body).toMatchObject({ repoPath: "/mnt/host/c/Users/user/example" });
+
+    const before = server.requests.length;
+    expect(await cli([...start, "--repo", "example"])).toBe(2);
+    expect(err).toContain("absolute path on that machine");
+    expect(server.requests).toHaveLength(before);
+  });
+
+  it("reports a machine that can't be reached", async () => {
+    server.on(`GET ${proxy("m2", "/runs")}`, {
+      status: 503,
+      body: { error: { code: "machine_offline", message: "The machine laptop is offline." } },
+    });
+    expect(await cli(["review", "status", "--machine", "m2"])).toBe(1);
+    expect(err).toContain("Error (machine_offline): The machine laptop is offline.");
+  });
+
+  it("lists the runs of every machine and shows the unreachable ones as offline", async () => {
+    server.on("GET /api/v1/machines", { body: { machines } });
+    server.on("GET /api/v1/runs", { body: { runs: [runState] } });
+    const remoteRun = {
+      ...runState,
+      id: "01JB8Z5K3W6Q2V9X4T7R0M1N2Q",
+      updatedAt: "2026-12-01T00:00:00.000Z",
+    };
+    server.on(`GET ${proxy("m1", "/runs")}`, { body: { runs: [remoteRun] } });
+    server.on(`GET ${proxy("m4", "/runs")}`, {
+      status: 504,
+      body: { error: { code: "machine_timeout", message: "far-pc didn't answer in time." } },
+    });
+
+    expect(await cli(["review", "status", "--all-machines", "--project", PROJECT_ID])).toBe(0);
+    const paths = server.requests.map((r) => r.path);
+    // No call to the offline or the revoked machine.
+    expect(paths).not.toContain(proxy("m2", "/runs"));
+    expect(paths).not.toContain(proxy("m3", "/runs"));
+    expect(server.requests.find((r) => r.path === proxy("m1", "/runs"))?.query).toEqual({
+      projectId: PROJECT_ID,
+    });
+    const lines = out.split("\n");
+    expect(lines[0]).toMatch(/^MACHINE\s+RUN\s+STATUS/);
+    // Newest first, each with its machine's name.
+    expect(lines[1]).toMatch(/^build-server\s+01JB8Z5K3W6Q2V9X4T7R0M1N2Q/);
+    expect(lines[2]).toMatch(new RegExp(`^desk\\s+${RUN}`));
+    expect(out).toContain("laptop: offline. The hub reports it offline.");
+    expect(out).toContain("far-pc: offline. far-pc didn't answer in time.");
+
+    out = "";
+    expect(await cli(["--json", "review", "status", "--all-machines"])).toBe(0);
+    const json = JSON.parse(out) as { machines: { id: string; status: string; runs: unknown[] }[] };
+    expect(json.machines.map((m) => [m.id, m.status, m.runs.length])).toEqual([
+      ["local", "online", 1],
+      ["m1", "online", 1],
+      ["m2", "offline", 0],
+      ["m4", "offline", 0],
+    ]);
+  });
+
+  it("refuses --all-machines with a run ID or with --machine", async () => {
+    expect(await cli(["review", "status", RUN, "--all-machines"])).toBe(2);
+    expect(await cli(["review", "status", "--all-machines", "--machine", "m1"])).toBe(2);
+    expect(server.requests).toHaveLength(0);
+  });
+
+  it("tails another machine's event stream", async () => {
+    server.events = [
+      {
+        id: "e1",
+        time: "2026-10-28T09:00:00.000Z",
+        source: `engine:${CONTAINER}`,
+        streamId: "srv-1",
+        seq: 1,
+        sourceSeq: 4,
+        type: "ports.changed",
+        container: CONTAINER,
+        listeners: [],
+        machine: "m1",
+      },
+    ];
+    expect(await cli(["events", "--machine", "m1", "--count", "1"])).toBe(0);
+    expect(out).toContain('"machine":"m1"');
+    expect(server.lastEventsPath).toBe(proxy("m1", "/events"));
+  });
+});
+
 describe("relative paths", () => {
   const CWD = "/home/user/src/example";
 
