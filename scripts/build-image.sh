@@ -153,6 +153,9 @@ if [[ "$PACK" == auto && -f "$ROOT/pnpm-workspace.yaml" ]]; then
   # relative, so the tree works wherever the Dockerfile unpacks it.
   (cd "$ROOT" && "${PNPM[@]}" --filter @aio/engine deploy --legacy --prod --frozen-lockfile "$DEPLOY/engine" > /dev/null)
   [[ -d "$DEPLOY/engine/node_modules" ]] || die "pnpm deploy left no node_modules in $DEPLOY/engine"
+  # The box user, not root, runs the engine, so every file must be readable
+  # by all. pnpm deploy can leave folders at mode 0700.
+  chmod -R u=rwX,go=rX "$DEPLOY/engine"
   # GNU tar and bsdtar (macOS, Windows) name the owner options differently.
   if tar --version 2> /dev/null | grep -q 'GNU tar'; then
     tar -C "$DEPLOY" --owner=0 --group=0 --numeric-owner -czf "$ENGINE_TARBALL" engine
