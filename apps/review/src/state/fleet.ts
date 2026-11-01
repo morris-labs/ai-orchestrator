@@ -124,11 +124,10 @@ export class MachineFleet {
   private readonly stores = new Map<string, AppStore>();
   /** A lightweight client per machine, for the run lists. */
   private readonly clients = new Map<string, ApiClient>();
-  private readonly unsubscribe: Array<() => void> = [];
+  /** Stops following each store's run changes, by machine. */
+  private readonly follows = new Map<string, () => void>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private loads = 0;
-  /** True while the fleet follows the root store's run changes. */
-  private followingRoot = false;
 
   /**
    * `root` is this server's store. `makeClient` makes the API client of a
@@ -182,7 +181,9 @@ export class MachineFleet {
 
   /** Keeps `machineId`'s run list current with the run changes its store hears. */
   private follow(machineId: string, store: AppStore): void {
-    this.unsubscribe.push(
+    this.follows.get(machineId)?.();
+    this.follows.set(
+      machineId,
       store.onEvent((e) => {
         if (e.type !== "run.changed") return;
         this.set({
@@ -231,6 +232,7 @@ export class MachineFleet {
       ? this.state.selected
       : LOCAL_MACHINE_ID;
     this.set({ supported: true, machines: entries, selected, error: null });
+    this.dropStores(new Set(list.map((m) => m.id)));
     const startedAt = new Date(this.now()).toISOString();
     const results = await Promise.all(list.map((m) => this.loadRuns(m)));
     if (load !== this.loads) return;
@@ -270,11 +272,25 @@ export class MachineFleet {
     }
   }
 
+  /**
+   * Stops and forgets the store of every other machine outside `keep`, such
+   * as a revoked machine or an unknown one that a deep link named.
+   */
+  private dropStores(keep: ReadonlySet<string>): void {
+    for (const [id, store] of this.stores) {
+      if (id === LOCAL_MACHINE_ID || keep.has(id)) continue;
+      this.follows.get(id)?.();
+      this.follows.delete(id);
+      store.stop();
+      this.stores.delete(id);
+      this.clients.delete(id);
+    }
+  }
+
   /** Loads the fleet now and every `pollMs`, and follows this machine's run changes. */
   start(): void {
     if (this.timer !== null) return;
-    if (!this.followingRoot) this.follow(LOCAL_MACHINE_ID, this.root);
-    this.followingRoot = true;
+    if (!this.follows.has(LOCAL_MACHINE_ID)) this.follow(LOCAL_MACHINE_ID, this.root);
     void this.refresh();
     this.timer = setInterval(() => void this.refresh(), this.pollMs);
   }
@@ -288,12 +304,8 @@ export class MachineFleet {
   stop(): void {
     this.stopPolling();
     this.loads += 1;
-    for (const u of this.unsubscribe.splice(0)) u();
-    this.followingRoot = false;
-    for (const [id, store] of this.stores) {
-      if (id !== LOCAL_MACHINE_ID) store.stop();
-    }
-    this.stores.clear();
-    this.stores.set(LOCAL_MACHINE_ID, this.root);
+    this.dropStores(new Set());
+    this.follows.get(LOCAL_MACHINE_ID)?.();
+    this.follows.delete(LOCAL_MACHINE_ID);
   }
 }

@@ -109,9 +109,13 @@ describe("the machine fleet", () => {
     await fleet.refresh();
     fleet.select("m1");
     expect(fleet.getState().selected).toBe("m1");
+    const old = fleet.storeFor("m1");
     hub.machines = [LOCAL, { ...BUILD, status: "revoked" }];
     await fleet.refresh();
     expect(fleet.getState().selected).toBe("local");
+    // The revoked machine's store stops, and a later select makes a new one.
+    expect(old.getState().connection).toBe("closed");
+    expect(fleet.storeFor("m1")).not.toBe(old);
   });
 
   it("follows a selected machine's run changes over its event stream", async () => {
