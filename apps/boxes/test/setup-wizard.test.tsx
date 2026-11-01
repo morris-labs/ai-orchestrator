@@ -1,5 +1,5 @@
-// The setup wizard's machine role step: a single machine, or a node that
-// joins a hub with a one-time enrollment code.
+// The setup wizard's machine role step: a single machine, a hub, or a node
+// that joins a hub with a one-time enrollment code.
 import type { NodeStatus } from "@aio/contracts";
 import { FakeApiError, FakeServer } from "@aio/ui/testing";
 import { screen, waitFor, within } from "@testing-library/react";
@@ -123,11 +123,79 @@ describe("SetupWizard machine role", () => {
     expect(screen.queryByRole("radio")).not.toBeInTheDocument();
   });
 
-  it("points a hub at the Machines page", async () => {
+  it("offers single machine, hub, and node", async () => {
+    renderWithServer(<SetupWizard onClose={() => undefined} />, serverWith(status()));
+    const group = await screen.findByRole("group", { name: "This machine" });
+    expect(
+      within(group)
+        .getAllByRole("radio")
+        .map((r) => (r as HTMLInputElement).value),
+    ).toEqual(["single", "hub", "join"]);
+  });
+
+  it("stores the hub role on Done when the user picks Hub", async () => {
+    const user = userEvent.setup();
+    const server = serverWith(status());
+    const onClose = vi.fn();
+    renderWithServer(<SetupWizard onClose={onClose} />, server);
+    await user.click(await screen.findByRole("radio", { name: /^Hub:/ }));
+    expect(screen.getByText(/Nodes can't see or reach boxes on a hub/)).toBeVisible();
+    expect(screen.getByText(/applies at the next server start/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Hub URL")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(server.callsTo("settings.patch").map((c) => c.body)).toEqual([{ role: "hub" }]);
+    expect(server.state.settings.role).toBe("hub");
+    expect(server.callsTo("node.join")).toHaveLength(0);
+    expect(server.state.settings.setupCompleted).toBe(true);
+  });
+
+  it("keeps a hub as it is on Done and points it at the Machines page", async () => {
+    const user = userEvent.setup();
     const server = serverWith(status({ role: "hub" }));
-    renderWithServer(<SetupWizard onClose={() => undefined} />, server);
-    expect(await screen.findByText(/issue an enrollment code on the Machines page/)).toBeVisible();
-    expect(screen.queryByRole("radio")).not.toBeInTheDocument();
+    const onClose = vi.fn();
+    renderWithServer(<SetupWizard onClose={onClose} />, server);
+    expect(await screen.findByRole("radio", { name: /^Hub:/ })).toBeChecked();
+    expect(screen.getByText(/issue an enrollment code on the Machines page/)).toBeVisible();
+    expect(screen.queryByText(/applies at the next server start/)).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(server.callsTo("settings.patch")).toHaveLength(0);
+  });
+
+  it("sets a hub back to both when the user picks a single machine", async () => {
+    const user = userEvent.setup();
+    const server = serverWith(status({ role: "hub" }));
+    const onClose = vi.fn();
+    renderWithServer(<SetupWizard onClose={onClose} />, server);
+    await user.click(await screen.findByRole("radio", { name: /Single machine/ }));
+    expect(screen.getByText(/runs as a hub. Done sets its role to both/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(server.state.settings.role).toBe("both");
+  });
+
+  it("joins from a hub through both, and keeps the hub role when the join fails", async () => {
+    const user = userEvent.setup();
+    const server = serverWith(status({ role: "hub" }));
+    server.state.settings.role = "hub";
+    const onClose = vi.fn();
+    renderWithServer(<SetupWizard onClose={onClose} />, server);
+    await user.click(await screen.findByRole("radio", { name: /Node: join a hub/ }));
+    await user.type(screen.getByLabelText("Hub URL"), HUB);
+    await user.type(screen.getByLabelText("Enrollment code"), "WRONG-CODE");
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("The code is wrong."));
+    expect(server.callsTo("settings.patch").map((c) => c.body)).toEqual([
+      { role: "both" },
+      { role: "hub" },
+    ]);
+    expect(server.state.settings.role).toBe("hub");
+    await user.clear(screen.getByLabelText("Enrollment code"));
+    await user.type(screen.getByLabelText("Enrollment code"), CODE);
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(server.callsTo("node.join")).toHaveLength(2);
   });
 
   it("sets a node that never joined back to both when the user picks a single machine", async () => {

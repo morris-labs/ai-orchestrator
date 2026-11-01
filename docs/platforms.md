@@ -160,8 +160,10 @@ A hub on any host listens for node links on TCP port `21402`; for the
 roles and the enrollment steps, see [Multi-host](multi-host.md). No package
 opens the port in a firewall:
 
-- **Linux**: the `.deb` package changes no firewall. Allow the port with
-  `ufw` or your firewall's own tool, as
+- **Linux**: the `.deb` package changes no firewall. It installs the `ufw`
+  application profile `aio-hub` for the port, which you enable with
+  `sudo ufw allow from LAN_CIDR to any app aio-hub`, or use your firewall's
+  own tool, as
   [Multi-host](multi-host.md#open-the-link-port-in-a-firewall) describes.
 - **macOS**: when the application firewall is on, macOS asks the first time
   the hub listens whether the bundled `node` may accept incoming

@@ -1,6 +1,6 @@
 // The setup wizard: the host checks with their fixes, the image builds as
-// streamed jobs, this machine's multi-host role (a single machine, or a node
-// that joins a hub with an enrollment code), the default directory for New
+// streamed jobs, this machine's multi-host role (a single machine, a hub, or
+// a node that joins a hub with an enrollment code), the default directory for New
 // Box, and the 1Password reference of the containers' sudo password.
 import type { Job, NodeStatus, SetupCheck } from "@aio/contracts";
 import { Button, Dialog, StatusDot, errorMessage, useApiClient } from "@aio/ui";
@@ -8,8 +8,16 @@ import { useCallback, useEffect, useState } from "react";
 import { parseJoinInput } from "../logic/machines";
 import { JobDialog } from "./JobDialog";
 
-/** What the user picks for this machine: on its own, or a node of a hub. */
-type MachineChoice = "single" | "join";
+/**
+ * What the user picks for this machine: on its own (role `both`), a hub that
+ * only coordinates nodes (role `hub`), or a node of a hub.
+ */
+type MachineChoice = "single" | "hub" | "join";
+
+/** The choice that matches a role. */
+function choiceFor(role: NodeStatus["role"]): MachineChoice {
+  return role === "node" ? "join" : role === "hub" ? "hub" : "single";
+}
 
 const checkTitles: Record<SetupCheck["id"], string> = {
   docker: "Docker reachable",
@@ -86,19 +94,23 @@ export function SetupWizard({ onClose, onDone, stacked }: SetupWizardProps) {
       .call("node.get", {})
       .then((s) => {
         setNode(s);
-        setChoice(s.role === "node" ? "join" : "single");
+        setChoice(choiceFor(s.role));
       })
       .catch(() => setNode(null));
   }, [client]);
 
-  /** True when the wizard offers the role choice: not a hub, and not joined yet. */
-  const canChoose = node !== null && node.role !== "hub" && node.hubUrl === null;
+  /** True when the wizard offers the role choice: this machine hasn't joined a hub. */
+  const canChoose = node !== null && node.hubUrl === null;
 
-  /** Joins the hub, or puts a node that never joined back to a single machine. */
+  /** Stores the chosen role, or joins the hub. */
   const applyRole = async (): Promise<void> => {
     if (!canChoose || node === null) return;
-    if (choice === "single") {
-      if (node.role === "node") await client.call("settings.patch", { body: { role: "both" } });
+    if (choice !== "join") {
+      const role = choice === "hub" ? "hub" : "both";
+      if (node.role !== role) {
+        await client.call("settings.patch", { body: { role } });
+        setNode({ ...node, role });
+      }
       return;
     }
     const target = parseJoinInput(hubUrl);
@@ -110,11 +122,19 @@ export function SetupWizard({ onClose, onDone, stacked }: SetupWizardProps) {
     const joinCode = code.trim() || target.code;
     if (!joinCode) throw new Error("Enter the enrollment code from the hub.");
     const name = machineName.trim();
-    setNode(
-      await client.call("node.join", {
-        body: { hubUrl: target.hubUrl, code: joinCode, ...(name ? { name } : {}) },
-      }),
-    );
+    // A hub can't join another hub, so it becomes a single machine first,
+    // and goes back to a hub when the join fails.
+    if (node.role === "hub") await client.call("settings.patch", { body: { role: "both" } });
+    try {
+      setNode(
+        await client.call("node.join", {
+          body: { hubUrl: target.hubUrl, code: joinCode, ...(name ? { name } : {}) },
+        }),
+      );
+    } catch (err) {
+      if (node.role === "hub") await client.call("settings.patch", { body: { role: "hub" } });
+      throw err;
+    }
   };
 
   /** Splits a pasted `aio node join HUB_URL CODE` command into its two fields. */
@@ -294,7 +314,7 @@ interface MachineRoleSectionProps {
   setMachineName: (v: string) => void;
 }
 
-/** This machine's role: a summary once it is a hub or a node, else the choice. */
+/** This machine's role: a summary once it joined a hub, else the choice. */
 function MachineRoleSection(p: MachineRoleSectionProps) {
   const { node } = p;
   if (node.hubUrl !== null) {
@@ -308,16 +328,7 @@ function MachineRoleSection(p: MachineRoleSectionProps) {
       </div>
     );
   }
-  if (!p.canChoose) {
-    return (
-      <div className="ab-field" aria-label="This machine">
-        <div>This machine</div>
-        <div className="bx-dim">
-          A hub. To add a machine, issue an enrollment code on the Machines page.
-        </div>
-      </div>
-    );
-  }
+  if (!p.canChoose) return null;
   return (
     <div className="ab-field" role="group" aria-label="This machine">
       <div>This machine</div>
@@ -329,7 +340,17 @@ function MachineRoleSection(p: MachineRoleSectionProps) {
           checked={p.choice === "single"}
           onChange={() => p.setChoice("single")}
         />
-        Single machine: run boxes on this computer
+        Single machine: run boxes on this computer, and share them as the hub when you add machines
+      </label>
+      <label className="ab-checkbox">
+        <input
+          type="radio"
+          name="bx-machine-role"
+          value="hub"
+          checked={p.choice === "hub"}
+          onChange={() => p.setChoice("hub")}
+        />
+        Hub: coordinate other machines, and keep this computer&apos;s boxes to itself
       </label>
       <label className="ab-checkbox">
         <input
@@ -341,10 +362,19 @@ function MachineRoleSection(p: MachineRoleSectionProps) {
         />
         Node: join a hub with an enrollment code
       </label>
-      {p.choice === "single" && node.role === "node" && (
+      {p.choice === "single" && node.role !== "both" && (
         <div className="bx-dim">
-          This server runs as a node. Done sets its role to both, which applies at the next server
-          start.
+          This server runs as a {node.role}. Done sets its role to both, which applies at the next
+          server start.
+        </div>
+      )}
+      {p.choice === "hub" && (
+        <div className="bx-dim">
+          A hub enrolls nodes and relays between them, and never joins another hub. Nodes can&apos;t
+          see or reach boxes on a hub; to share this computer&apos;s boxes with them, choose Single
+          machine. To add a machine, issue an enrollment code on the Machines page.
+          {node.role !== "hub" &&
+            " Done sets the role to hub, which applies at the next server start."}
         </div>
       )}
       {p.choice === "join" && (

@@ -218,9 +218,15 @@ machine as this page describes, then do the following:
    aio machines enroll
    ```
 
-   The first code starts the hub's link listener on TCP port `21402`. If the
-   hub runs a firewall, allow that port from your LAN or VPN; the package
-   doesn't open it.
+   The first code starts the hub's link listener on TCP port `21402`, on the
+   hub's LAN address. The package doesn't open the port. If the hub runs
+   `ufw`, allow your LAN through the package's `aio-hub` application
+   profile, where `LAN_CIDR` is your LAN's range, such as `192.0.2.0/24`:
+
+   ```sh
+   sudo ufw allow from LAN_CIDR to any app aio-hub
+
+   ```
 
 1. On the machine to add, open the setup wizard, choose **Node: join a hub
    with an enrollment code**, paste the `aio node join` command from the hub

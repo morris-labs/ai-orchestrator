@@ -16,8 +16,8 @@ Every `aio-server` has one of the following roles:
 
 | Role | Does | Use it on |
 |---|---|---|
-| `both` | Runs boxes and can act as a hub. The default, which behaves like a single machine until you issue an enrollment code. | A single machine, or the machine that hosts the hub |
-| `hub` | Acts as a hub and never joins another hub. | An always-on machine that serves only as the hub |
+| `both` | Runs boxes and can act as a hub, whose nodes can see and operate its boxes. The default, which behaves like a single machine until you issue an enrollment code. | A single machine, or the machine that hosts the hub |
+| `hub` | Acts as a hub and never joins another hub. Nodes can't see or reach boxes on it. | An always-on machine that serves only as the hub |
 | `node` | Runs boxes and links to a hub. | Every other machine |
 
 The server stores the role in its settings. To change it for one run, start
@@ -42,8 +42,9 @@ To set up the hub, do the following on the machine that hosts it:
     and keep **Single machine** selected. A single machine has the role
     `both`, so it runs its own boxes and acts as the hub.
 
-1.  Optional: To make the machine a hub only, with no boxes of its own,
-    store the role `hub`:
+1.  Optional: To make the machine a hub only, whose boxes nodes can't see,
+    choose **Hub** in the setup wizard and click **Done**, or store the role
+    `hub` with the following command:
 
     ```bash
     curl --cacert ~/.ai-orchestrator/server.crt \
@@ -64,9 +65,9 @@ To set up the hub, do the following on the machine that hosts it:
     Environment=AIO_ROLE=hub
     ```
 
-1.  If nodes reach the hub by another name than its host name, such as a
-    Tailscale name, set the `linkAddress` setting. For more information,
-    see [Add a machine to a hub](#add-a-machine-to-a-hub).
+1.  If the hub has more than one LAN address, or nodes reach it by a host
+    name, set the `linkHost` or `linkAddress` setting. For more
+    information, see [The link port](#the-link-port).
 
 1.  If the hub runs a firewall, allow the link port. For more information,
     see [Open the link port in a firewall](#open-the-link-port-in-a-firewall).
@@ -132,9 +133,9 @@ machine:
     The machine you run the command on comes first, with the ID `local`. On
     a node, the hub has the ID `hub`.
 
-The hub puts its host name in the hub URL. If nodes reach the hub by another
-name or address, such as a Tailscale name, set the `linkAddress` setting on
-the hub:
+The hub puts the address its link listener binds in the hub URL. If nodes
+reach the hub by a host name instead, set the `linkAddress` setting on the
+hub:
 
 ```bash
 curl --cacert ~/.ai-orchestrator/server.crt \
@@ -142,7 +143,11 @@ curl --cacert ~/.ai-orchestrator/server.crt \
     -H "Content-Type: application/json" \
     -X PATCH -d '{"linkAddress": "hub.example.com"}' \
     https://127.0.0.1:21400/api/v1/settings
+
 ```
+
+The name must resolve to the address the hub listens on. For more
+information, see [The link port](#the-link-port).
 
 ### How enrollment stays safe
 
@@ -297,9 +302,37 @@ succeeds while any machine is offline.
 
 ## The link port
 
-A hub listens for node links on port `21402`, on every network interface,
-over TLS. Nodes dial out to the hub, so only the hub needs a reachable port.
+A hub listens for node links on port `21402`, over TLS, on its LAN address
+only. Nodes dial out to the hub, so only the hub needs a reachable port.
 The local API stays on `127.0.0.1:21400` on every machine.
+
+By default, the hub binds its primary LAN IPv4 address: the private
+address (in `10.0.0.0/8`, `172.16.0.0/12`, or `192.168.0.0/16`) of the
+network interface that holds the default route. Loopback, Docker bridges
+(`docker*`, `br-*`, and `veth*` interfaces), and Tailscale (`tailscale*`
+interfaces and `100.64.0.0/10`) never count. If the default route has no
+LAN address, such as when it goes through a VPN, the hub binds the
+machine's only LAN address. The hub never listens on every interface. If it
+finds no LAN address, or several and none on the default route, it doesn't
+start the link listener, logs why, and refuses to issue enrollment codes.
+
+To choose the address, set the `linkHost` setting on the hub, then restart
+the server:
+
+```bash
+curl --cacert ~/.ai-orchestrator/server.crt \
+    -H "Authorization: Bearer $(cat ~/.ai-orchestrator/server.token)" \
+    -H "Content-Type: application/json" \
+    -X PATCH -d '{"linkHost": "192.0.2.10"}' \
+    https://127.0.0.1:21400/api/v1/settings
+systemctl --user restart aio-server
+
+```
+
+Replace `192.0.2.10` with the hub's address on the network your nodes are
+on. To go back to the detected address, send `{"linkHost": null}`. The hub
+reads the address when the listener starts, so after the LAN address
+changes, restart the server.
 
 The hub opens the port only when its role is `hub` or `both` and it has
 enrolled a machine or issued a code. A machine on its own never opens it.
@@ -315,23 +348,27 @@ The packages don't change a firewall, because most machines never become a
 hub. Nodes need no inbound rule. On a hub that runs a firewall, allow TCP
 port `21402` only from the networks your nodes are on.
 
-With `ufw` on Ubuntu, run one of the following commands:
+The `.deb` package installs a `ufw` application profile, `aio-hub`, for TCP
+port `21402` in `/etc/ufw/applications.d/aio-hub`. It doesn't enable the
+profile or open the port. To allow your LAN with `ufw` on Ubuntu, run the
+following command:
 
-- To allow a LAN, where `192.0.2.0/24` stands for your LAN's range:
+```bash
+sudo ufw allow from LAN_CIDR to any app aio-hub
 
-  ```bash
-  sudo ufw allow from 192.0.2.0/24 to any port 21402 proto tcp
+```
 
-  ```
+Replace `LAN_CIDR` with your LAN's range, such as `192.0.2.0/24`.
 
-- To allow Tailscale only:
+To see the profile, run `sudo ufw app info aio-hub`. If you set the
+`linkPort` setting, the profile doesn't match; allow that port instead:
 
-  ```bash
-  sudo ufw allow in on tailscale0 to any port 21402 proto tcp
+```bash
+sudo ufw allow from LAN_CIDR to any port PORT proto tcp
 
-  ```
+```
 
-If you set the `linkPort` setting, use that port instead.
+Replace `PORT` with the `linkPort` value.
 
 The link uses mutual TLS. The hub serves a certificate that its authority
 signs, and every node pins that exact certificate. Each node presents a
@@ -352,9 +389,15 @@ Each machine keeps its own database, transcripts, accounts, image, and
 secrets broker. The following data crosses the link:
 
 - **Machine information**: names, versions, platforms, and capabilities.
-- **Requests between machines**: the hub can call a node's API, and a node
-  can call only the hub's machine list and the routes that relay to other
-  machines.
+- **Requests between machines**: the hub can call a node's API. A node can
+  call the hub's machine list, its health, and the routes that relay to
+  other machines. When the hub's role is `both`, a node can also list,
+  get, start, stop, and restart the hub's boxes, open their terminals and
+  the hub's event stream, and list the hub's projects and directories, so
+  the hub's tab in the Boxes app works. A node can't reach the hub's
+  settings, secrets, accounts, machine enrollment or revocation, or node
+  routes, and can't create, edit, or remove anything on the hub. With the
+  role `hub`, a node can reach only the machine list and health.
 - **Secret values**: only the hub holds the 1Password service account
   token. A node's secrets broker asks the hub for each value and keeps it in
   memory for the same 5 minutes as on a hub. While the hub is unreachable, a

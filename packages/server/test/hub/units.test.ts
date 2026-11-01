@@ -7,7 +7,21 @@ import { describe, expect, it } from "vitest";
 import { openDatabase } from "../../src/db/index.js";
 import { issueNodeCertificate, loadOrCreateHubIdentity, newNodeKey } from "../../src/hub/ca.js";
 import { HealthCache, measureHealth } from "../../src/hub/health.js";
-import { defaultAllowNodeRequest, nameFromHost, parseRole } from "../../src/hub/multihost.js";
+import {
+  HUB_BOX_ROUTES,
+  defaultAllowNodeRequest,
+  isHubBoxRoute,
+  nameFromHost,
+  parseRole,
+} from "../../src/hub/multihost.js";
+import {
+  isCgnatIpv4,
+  isPrivateIpv4,
+  lanCandidates,
+  parseDefaultRoute,
+  primaryLanAddress,
+  readDefaultRouteInterface,
+} from "../../src/hub/lan.js";
 import { protocolMismatch, sendableCloseCode, closeReason } from "../../src/hub/protocol.js";
 import {
   MachineRegistry,
@@ -129,6 +143,72 @@ describe("protocol helpers", () => {
         (id) => id === "hub-id",
       ),
     ).toBe(false);
+  });
+});
+
+describe("what a node may call on a hub that runs boxes", () => {
+  const isHub = (id: string) => id === "local" || id === "hub";
+  const allowed: [string, string][] = [
+    ["GET", "/api/v1/boxes"],
+    ["GET", "/api/v1/boxes/b-1"],
+    ["POST", "/api/v1/boxes/b-1/start"],
+    ["POST", "/api/v1/boxes/b-1/stop"],
+    ["POST", "/api/v1/boxes/b-1/restart"],
+    ["GET", "/api/v1/events"],
+    ["GET", "/api/v1/terminals"],
+    ["GET", "/api/v1/projects"],
+    ["GET", "/api/v1/fs/dirs"],
+  ];
+  const refused: [string, string][] = [
+    ["GET", "/api/v1/settings"],
+    ["PATCH", "/api/v1/settings"],
+    ["GET", "/api/v1/secrets/available"],
+    ["GET", "/api/v1/accounts"],
+    ["POST", "/api/v1/machines/enrollment-codes"],
+    ["DELETE", "/api/v1/machines/m1"],
+    ["GET", "/api/v1/node"],
+    ["POST", "/api/v1/node/join"],
+    ["POST", "/api/v1/boxes"],
+    ["PATCH", "/api/v1/boxes/b-1"],
+    ["DELETE", "/api/v1/boxes/b-1"],
+    ["POST", "/api/v1/boxes/b-1/purge"],
+    ["POST", "/api/v1/projects"],
+    ["GET", "/api/v1/boxes/b-1/start"],
+    ["POST", "/api/v1/boxes/../settings"],
+    ["GET", "/api/v1/boxes/.."],
+    ["GET", "/api/v1/boxes/%2e%2e"],
+    ["POST", "/api/v1/boxes/b-1/start/extra"],
+    ["GET", "/api/v1/boxes/b-1/sub"],
+  ];
+
+  it("allows the box, terminal, and event routes only when the role is both", () => {
+    for (const [method, path] of allowed) {
+      expect(defaultAllowNodeRequest({ method, path }, "m1", isHub, true), path).toBe(true);
+      expect(defaultAllowNodeRequest({ method, path }, "m1", isHub, false), path).toBe(false);
+      expect(isHubBoxRoute({ method: method.toLowerCase(), path }), path).toBe(true);
+    }
+  });
+
+  it("keeps settings, secrets, accounts, machines, node, and edit routes refused", () => {
+    for (const [method, path] of refused) {
+      expect(defaultAllowNodeRequest({ method, path }, "m1", isHub, true), path).toBe(false);
+    }
+  });
+
+  it("holds the per-machine route that names the hub to the same list", () => {
+    for (const id of ["local", "hub"]) {
+      const via = (rest: string) => `/api/v1/machines/${id}/proxy/${rest}`;
+      expect(
+        defaultAllowNodeRequest({ method: "GET", path: via("boxes") }, "m1", isHub, true),
+      ).toBe(true);
+      expect(
+        defaultAllowNodeRequest({ method: "GET", path: via("boxes") }, "m1", isHub, false),
+      ).toBe(false);
+      expect(
+        defaultAllowNodeRequest({ method: "GET", path: via("settings") }, "m1", isHub, true),
+      ).toBe(false);
+    }
+    expect(HUB_BOX_ROUTES).toContain("terminals.open");
   });
 });
 
@@ -281,5 +361,84 @@ describe("machine health", () => {
     expect(cache.peek("m2")).toBeNull();
     cache.delete("m1");
     expect(cache.peek("m1")).toBeNull();
+  });
+});
+
+describe("the link listener's LAN address", () => {
+  const v4 = (address: string, internal = false) => ({ address, family: "IPv4", internal });
+  const table = {
+    lo: [v4("127.0.0.1", true), { address: "::1", family: "IPv6", internal: true }],
+    docker0: [v4("172.17.0.1")],
+    "br-0a1b2c3d4e5f": [v4("172.18.0.1")],
+    veth12ab34: [v4("169.254.10.1")],
+    tailscale0: [
+      v4("100.101.102.103"),
+      { address: "fd7a:115c::1", family: "IPv6", internal: false },
+    ],
+    wlp3s0: [v4("10.0.0.23")],
+    enp5s0: [{ address: "fe80::1", family: "IPv6", internal: false }, v4("192.168.1.20")],
+  };
+
+  it("picks the private address of the interface on the default route", () => {
+    expect(primaryLanAddress(table, "enp5s0")).toBe("192.168.1.20");
+    expect(primaryLanAddress(table, "wlp3s0")).toBe("10.0.0.23");
+  });
+
+  it("ignores loopback, Docker bridges, Tailscale, and public addresses", () => {
+    expect(lanCandidates(table)).toEqual([
+      { name: "wlp3s0", address: "10.0.0.23" },
+      { name: "enp5s0", address: "192.168.1.20" },
+    ]);
+    expect(primaryLanAddress({ eth0: [v4("198.51.100.7")], ...table }, "eth0")).toBeUndefined();
+    expect(
+      primaryLanAddress({ tailscale0: table.tailscale0, docker0: table.docker0 }, "tailscale0"),
+    ).toBeUndefined();
+    expect(primaryLanAddress({ wg0: [v4("100.64.0.9")] }, "wg0")).toBeUndefined();
+  });
+
+  it("takes the only LAN address when the default route has none", () => {
+    const one = {
+      lo: table.lo,
+      docker0: table.docker0,
+      tailscale0: table.tailscale0,
+      eth0: [v4("172.20.4.5")],
+    };
+    expect(primaryLanAddress(one, "tailscale0")).toBe("172.20.4.5");
+    expect(primaryLanAddress(one, undefined)).toBe("172.20.4.5");
+    expect(primaryLanAddress(table, "tailscale0")).toBeUndefined();
+    expect(primaryLanAddress(table, undefined)).toBeUndefined();
+    expect(primaryLanAddress({}, undefined)).toBeUndefined();
+  });
+
+  it("knows the private and carrier-grade NAT ranges", () => {
+    for (const a of ["10.1.2.3", "172.16.0.1", "172.31.255.254", "192.168.0.1"]) {
+      expect(isPrivateIpv4(a)).toBe(true);
+    }
+    for (const a of [
+      "172.15.0.1",
+      "172.32.0.1",
+      "192.169.0.1",
+      "100.64.0.1",
+      "8.8.8.8",
+      "10.0.0",
+      "x",
+    ]) {
+      expect(isPrivateIpv4(a)).toBe(false);
+    }
+    expect(isCgnatIpv4("100.64.0.1")).toBe(true);
+    expect(isCgnatIpv4("100.127.255.255")).toBe(true);
+    expect(isCgnatIpv4("100.128.0.1")).toBe(false);
+  });
+
+  it("reads the default route from /proc/net/route", () => {
+    const route = [
+      "Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT",
+      "docker0\t000011AC\t00000000\t0001\t0\t0\t0\t0000FFFF\t0\t0\t0",
+      "enp5s0\t00000000\t0101A8C0\t0003\t0\t0\t100\t00000000\t0\t0\t0",
+      "enp5s0\t0001A8C0\t00000000\t0001\t0\t0\t100\t00FFFFFF\t0\t0\t0",
+    ].join("\n");
+    expect(parseDefaultRoute(route)).toBe("enp5s0");
+    expect(parseDefaultRoute(route.split("\n").slice(0, 2).join("\n"))).toBeUndefined();
+    expect(readDefaultRouteInterface("/nonexistent/route")).toBeUndefined();
   });
 });

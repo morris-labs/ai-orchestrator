@@ -50,7 +50,7 @@ async function startHub(): Promise<TestHub> {
       role: "both",
     }),
     port: () => 0,
-    bindHost: "127.0.0.1",
+    bindHost: () => "127.0.0.1",
     address: () => "127.0.0.1",
     token: "synthetic-token",
     api: () => null,
