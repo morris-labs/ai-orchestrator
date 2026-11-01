@@ -41,8 +41,9 @@ To set up the hub, do the following on the machine that hosts it:
     and keep **Single machine** selected. A single machine has the role
     `both`, so it runs its own boxes and acts as the hub.
 
-1.  Optional: To make the machine a hub only, with no boxes of its own,
-    store the role `hub`:
+1.  Optional: To make the machine a hub only, whose boxes nodes can't see,
+    choose **Hub** in the setup wizard and click **Done**, or store the role
+    `hub` with the following command:
 
     ```bash
     curl --cacert ~/.ai-orchestrator/server.crt \
