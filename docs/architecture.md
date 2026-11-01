@@ -89,6 +89,13 @@ keeper script, the container's first process, starts it.
   `AIO_` variable from the processes it starts. At startup the engine
   also executes itself again without its credentials in the environment and
   keeps them in memory, so its own `/proc/PID/environ` holds none.
+- The same state directory holds `account-dirs.json`, which names each
+  vendor's default account folder as the container sees it. The server
+  writes it before the container starts and rewrites it when the account
+  defaults or the accounts mode change. The engine reads it for every
+  vendor call and sets `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, or `COPILOT_HOME`
+  from it; a vendor without an entry, as in host mode, keeps its home
+  folder.
 - These measures control what a process inherits; they aren't isolation.
   Every process in the container runs as one user, so repository code that
   the review runs, such as a test command or a reproduction script, can

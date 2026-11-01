@@ -43,6 +43,16 @@ run view, or run `aio review profile RUN_ID PROFILE`. To move a role to
 another vendor from the next round, run
 `aio review assign RUN_ID ROLE VENDOR`.
 
+## Accounts
+
+In accounts mode, each model call of a run uses its vendor's default
+account: the engine sets `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, or
+`COPILOT_HOME` to the account folder that the server names in the
+container's `account-dirs.json` file. A change of default applies from the
+next call. In host mode, the CLIs use the container user's `~/.claude`,
+`~/.codex`, and `~/.copilot`. For more information, see
+[Accounts](accounts.md).
+
 ## Usage ceilings
 
 Usage belongs to an account, not a container, so the server keeps one
