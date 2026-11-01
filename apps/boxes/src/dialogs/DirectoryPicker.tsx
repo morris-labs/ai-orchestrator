@@ -2,8 +2,8 @@
 // walks the host's directories through the server's `fs.dirs` route. In
 // Electron, `useDirectoryPicker()` uses the native dialog from the bridge
 // instead.
-import type { DirListing } from "@agentbox/contracts";
-import { Button, Dialog, errorMessage, useApiClient } from "@agentbox/ui";
+import type { DirListing } from "@aio/contracts";
+import { Button, Dialog, errorMessage, useApiClient } from "@aio/ui";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { bridge } from "../bridge";

@@ -36,7 +36,7 @@ beforeEach(async () => {
       url: req.url,
       auth: req.headers.authorization,
       host: req.headers.host,
-      engineToken: req.headers["x-agentbox-engine-token"] as string | undefined,
+      engineToken: req.headers["x-aio-engine-token"] as string | undefined,
       headers: req.headers,
     });
     if (req.url?.includes("/slow")) {
@@ -55,7 +55,7 @@ beforeEach(async () => {
     seen.push({
       url: req.url,
       auth: req.headers.authorization,
-      engineToken: req.headers["x-agentbox-engine-token"] as string | undefined,
+      engineToken: req.headers["x-aio-engine-token"] as string | undefined,
     });
     wss.handleUpgrade(req, socket, head, (ws) =>
       ws.on("message", (d) => ws.send(`echo:${d.toString()}`)),
@@ -139,7 +139,7 @@ describe("dev-server proxy", () => {
     const res = await request(`3000.emails.localhost:${port}`, "/api/me", "GET", undefined, {
       authorization: "Bearer user-jwt",
       "proxy-authorization": "Basic secret",
-      "x-agentbox-engine-token": "spoofed",
+      "x-aio-engine-token": "spoofed",
       te: "trailers",
       connection: "keep-alive, x-drop-me",
       "x-drop-me": "1",
@@ -173,7 +173,7 @@ describe("dev-server proxy", () => {
 
   it("leaves API requests to the API", async () => {
     const res = await request(`127.0.0.1:${port}`, "/api/v1/health");
-    expect(JSON.parse(res.body).version).toBe("4.0.0-dev");
+    expect(JSON.parse(res.body).version).toBe("1.0.0-dev");
   });
 
   it("forwards WebSocket upgrades", async () => {
@@ -193,7 +193,7 @@ describe("dev-server proxy", () => {
       headers: {
         host: `5173.emails.localhost:${port}`,
         authorization: "Bearer user-jwt",
-        "x-agentbox-engine-token": "spoofed",
+        "x-aio-engine-token": "spoofed",
       },
     });
     await new Promise((r) => ws.once("open", r));

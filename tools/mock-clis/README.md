@@ -17,12 +17,12 @@ To make every adapter in a shell or container pick up the mocks, put the
 `bin` directory first on `PATH`:
 
 ```sh
-export PATH="/PATH/TO/agentbox/tools/mock-clis/bin:$PATH"
+export PATH="/PATH/TO/aio/tools/mock-clis/bin:$PATH"
 export MOCK_CLI_SCENARIO=/PATH/TO/scenario.json
 codex --version
 ```
 
-Replace `/PATH/TO/agentbox` with the repository checkout as the container
+Replace `/PATH/TO/aio` with the repository checkout as the container
 sees it, and `/PATH/TO/scenario.json` with your scenario file.
 
 The `claude` stand-in shadows the real Claude CLI on that `PATH`. To mock
@@ -30,8 +30,8 @@ only Codex and Copilot, link those two into a directory of their own:
 
 ```sh
 mkdir -p ~/.local/mock-clis
-ln -sf /PATH/TO/agentbox/tools/mock-clis/bin/codex ~/.local/mock-clis/codex
-ln -sf /PATH/TO/agentbox/tools/mock-clis/bin/copilot ~/.local/mock-clis/copilot
+ln -sf /PATH/TO/aio/tools/mock-clis/bin/codex ~/.local/mock-clis/codex
+ln -sf /PATH/TO/aio/tools/mock-clis/bin/copilot ~/.local/mock-clis/copilot
 export PATH="$HOME/.local/mock-clis:$PATH"
 ```
 

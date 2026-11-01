@@ -1,5 +1,5 @@
-import type { BoxView, ConversationSummary } from "@agentbox/contracts";
-import { makeBox, makeBoxView, makeEvent, makeProject, makeSettings } from "@agentbox/ui/testing";
+import type { BoxView, ConversationSummary } from "@aio/contracts";
+import { makeBox, makeBoxView, makeEvent, makeProject, makeSettings } from "@aio/ui/testing";
 import { describe, expect, it } from "vitest";
 import { matchesFilter, visibleBoxes } from "../src/logic/filter";
 import { formatBytes, relativeTime } from "../src/logic/format";
@@ -54,7 +54,7 @@ const v = (
   id: string,
   status: BoxView["status"] = "stopped",
   extra: Partial<BoxView["box"]> = {},
-) => makeBoxView({ box: { id: `claude-agent-${id}`, targetDir: `/w/${id}`, ...extra }, status });
+) => makeBoxView({ box: { id: `aio-agent-${id}`, targetDir: `/w/${id}`, ...extra }, status });
 
 describe("filter", () => {
   const b = v("alpha", "running", { conversationName: "Emails", targetDir: "/home/u/site" });
@@ -63,7 +63,7 @@ describe("filter", () => {
     ["running", true],
     ["/home/u", true],
     ["emails", true],
-    ["claude-agent-alpha", true],
+    ["aio-agent-alpha", true],
     ["proj-", true],
     ["nope", false],
   ])("matches %s: %s", (needle, expected) => {
@@ -73,10 +73,10 @@ describe("filter", () => {
     const other = v("beta", "stopped", { projectId: "other-00000000" });
     expect(visibleBoxes([b, other], null, "").length).toBe(2);
     expect(visibleBoxes([b, other], "other-00000000", "").map((x) => x.box.id)).toEqual([
-      "claude-agent-beta",
+      "aio-agent-beta",
     ]);
     expect(visibleBoxes([b, other], null, "Not running").map((x) => x.box.id)).toEqual([
-      "claude-agent-beta",
+      "aio-agent-beta",
     ]);
   });
 });
@@ -220,10 +220,10 @@ describe("new box form", () => {
       modifiedAt: "2026-10-28T09:00:00Z",
       sizeBytes: 10,
       lastPrompt: "",
-      trackedBy: ["claude-agent-a"],
+      trackedBy: ["aio-agent-a"],
     };
     expect(conversationLabel(c, new Date("2026-10-28T12:00:00Z"))).toBe(
-      "Fix login [claude-agent-a] \u00b7 3 h ago \u00b7 3 turns",
+      "Fix login [aio-agent-a] \u00b7 3 h ago \u00b7 3 turns",
     );
   });
   it("builds create bodies for new, adopt, and fork", () => {
@@ -243,8 +243,8 @@ describe("new box form", () => {
     expect(adopt.layout).toBe("root");
     expect(adopt.rememberLayout).toBe(false);
     expect(createBody({ ...base, layout: "workspace" }, "new").rememberLayout).toBe(true);
-    const fork = createBody(base, "fork", { forkFrom: "claude-agent-a" });
-    expect(fork.conversation).toEqual({ mode: "fork", fromBoxId: "claude-agent-a" });
+    const fork = createBody(base, "fork", { forkFrom: "aio-agent-a" });
+    expect(fork.conversation).toEqual({ mode: "fork", fromBoxId: "aio-agent-a" });
     expect(fork.rememberLayout).toBe(false);
     const codex = createBody({ ...base, platform: "codex" }, "new");
     expect(codex.model).toBeUndefined();
@@ -257,7 +257,7 @@ describe("new box form", () => {
       claude: "claude/work",
     });
     const box = makeBox({
-      id: "claude-agent-a",
+      id: "aio-agent-a",
       targetDir: "/w/a",
       sessionUuid: "11111111-1111-4111-8111-111111111111",
       accounts: { claude: "claude/work" },
@@ -274,7 +274,7 @@ describe("new box form", () => {
   });
   it("seeds edit and fork forms from a box and diffs the edit", () => {
     const box = makeBox({
-      id: "claude-agent-a",
+      id: "aio-agent-a",
       targetDir: "/w/a",
       conversationName: "A",
       model: "claude-sonnet-5",
@@ -293,7 +293,7 @@ describe("new box form", () => {
     expect(updateBody(box, { ...edit, model: "claude-opus-5" }, untouched)).toEqual({
       model: "claude-opus-5",
     });
-    const unpinned = makeBox({ id: "claude-agent-b", targetDir: "/w/b", conversationName: "B" });
+    const unpinned = makeBox({ id: "aio-agent-b", targetDir: "/w/b", conversationName: "B" });
     const unpinnedForm = formFromBox(unpinned, "edit", { model: "m", effort: "high" });
     expect(updateBody(unpinned, { ...unpinnedForm, name: "C" }, untouched)).toEqual({
       conversationName: "C",
@@ -380,7 +380,7 @@ describe("ssh", () => {
 describe("lists", () => {
   it("offers a resume only when nothing runs", () => {
     const was = v("a", "stopped", { wasRunning: true });
-    expect(resumableBoxes([was, v("b")]).map((b) => b.box.id)).toEqual(["claude-agent-a"]);
+    expect(resumableBoxes([was, v("b")]).map((b) => b.box.id)).toEqual(["aio-agent-a"]);
     expect(resumableBoxes([was, v("c", "running")])).toEqual([]);
     expect(resumeDetail(["x"])).toBe("1 box was running before the last shutdown:\n\n  x");
     expect(resumeDetail(["x", "y"])).toBe(
@@ -393,13 +393,13 @@ describe("lists", () => {
     expect(
       purgePreviewList({
         dryRun: true,
-        removedRecords: ["claude-agent-a"],
+        removedRecords: ["aio-agent-a"],
         removedTranscriptDirs: ["/home/user/.claude/projects/-w-my-site"],
       }),
-    ).toEqual(["/home/user/.claude/projects/-w-my-site", "the record of claude-agent-a"]);
-    expect(runningOnDir([a, b], "/w/my.site")?.box.id).toBe("claude-agent-b");
+    ).toEqual(["/home/user/.claude/projects/-w-my-site", "the record of aio-agent-a"]);
+    expect(runningOnDir([a, b], "/w/my.site")?.box.id).toBe("aio-agent-b");
     const starting = v("c", "starting", { targetDir: "/w/other/" });
-    expect(runningOnDir([starting], "/w/other")?.box.id).toBe("claude-agent-c");
+    expect(runningOnDir([starting], "/w/other")?.box.id).toBe("aio-agent-c");
     expect(
       runningOnDir([v("d", "stopped", { targetDir: "/w/other" })], "/w/other"),
     ).toBeUndefined();
@@ -441,10 +441,10 @@ describe("store", () => {
   });
   it("drops the live-session state of a box that stopped", () => {
     const a = makeBoxView({
-      box: { id: "claude-agent-a", targetDir: "/w/a" },
+      box: { id: "aio-agent-a", targetDir: "/w/a" },
       status: "running",
       stats: { cpuPercent: 5, memBytes: 1, memLimitBytes: 2 },
-      listeners: [{ port: 5173, proto: "tcp", process: "node", boxId: "claude-agent-a" }],
+      listeners: [{ port: 5173, proto: "tcp", process: "node", boxId: "aio-agent-a" }],
       proxyUrls: [{ port: 5173, url: "http://5173.a.localhost:21401/" }],
       sideSessions: ["codex"],
     });

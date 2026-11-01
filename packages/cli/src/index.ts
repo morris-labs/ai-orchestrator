@@ -1,4 +1,4 @@
-// Public entry point of `@agentbox/cli`: the client and the command runner.
+// Public entry point of `@aio/cli`: the client and the command runner.
 export * from "./client.js";
 export * from "./events.js";
 export * from "./format.js";

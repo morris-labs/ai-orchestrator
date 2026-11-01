@@ -1,6 +1,6 @@
-// One handler per engine HTTP route. The table in `@agentbox/contracts`
+// One handler per engine HTTP route. The table in `@aio/contracts`
 // decides which handlers must exist; `server.ts` validates inputs and outputs.
-import type { EngineRouteKey, EngineRoutes, Listener } from "@agentbox/contracts";
+import type { EngineRouteKey, EngineRoutes, Listener } from "@aio/contracts";
 import type { z } from "zod";
 import { EngineError, type RunManager } from "./core-interface.js";
 import type { RepoInfo, RepoRefs } from "./repos.js";

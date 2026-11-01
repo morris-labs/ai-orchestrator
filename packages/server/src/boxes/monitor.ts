@@ -2,7 +2,7 @@
 // states, container stats with the CPU delta, box status changes, and the
 // `was_running` rule for sessions that end on their own.
 import { EventEmitter } from "node:events";
-import { CONTAINER_PREFIX, type BoxStatus, type ContainerState } from "@agentbox/contracts";
+import { CONTAINER_PREFIX, type BoxStatus, type ContainerState } from "@aio/contracts";
 import type { Repositories } from "../db/repositories.js";
 import { LABELS } from "../docker/launch.js";
 import { STATE_MAX_AGE_SEC } from "../docker/state.js";

@@ -1,4 +1,4 @@
-// The run directory: `<project>/.claude-box/runs/<run id>/`.
+// The run directory: `<project>/.aio/runs/<run id>/`.
 //
 // Every stage hands its output to the next through a JSON file here, so a
 // run resumes from any stage and every decision stays auditable:
@@ -20,13 +20,13 @@ import {
   RUNS_DIR,
   RoundSummarySchema,
   RunStateSchema,
-  type AgentBoxEvent,
+  type AioEvent,
   type FileGroup,
   type Finding,
   type RoundSummary,
   type RunState,
   type Stage,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 import { z } from "zod";
 import { EngineStateSchema, newEngineState, type EngineState } from "./engine-state.js";
 import { appendJsonLine, readJson, writeJsonAtomic } from "./files.js";
@@ -38,7 +38,7 @@ export class RunNotFoundError extends Error {
   }
 }
 
-/** Returns `<projectRoot>/.claude-box/runs`. */
+/** Returns `<projectRoot>/.aio/runs`. */
 export function runsDir(projectRoot: string): string {
   return join(projectRoot, RUNS_DIR);
 }
@@ -141,7 +141,7 @@ export class RunStore {
     await this.writeJson(this.roundFile(parsed.round, "summary"), parsed);
   }
 
-  async appendEvent(event: AgentBoxEvent): Promise<void> {
+  async appendEvent(event: AioEvent): Promise<void> {
     await appendJsonLine(this.path("events.jsonl"), event);
   }
 
@@ -150,7 +150,7 @@ export class RunStore {
    * append that a crash or a full disk cut short, is skipped, so it can't
    * hide the rest of the run's events. `onBadLine` hears how many it skipped.
    */
-  async loadEvents(onBadLine?: (skipped: number) => void): Promise<AgentBoxEvent[]> {
+  async loadEvents(onBadLine?: (skipped: number) => void): Promise<AioEvent[]> {
     let text: string;
     try {
       text = await readFile(this.path("events.jsonl"), "utf8");
@@ -158,12 +158,12 @@ export class RunStore {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
       throw error;
     }
-    const events: AgentBoxEvent[] = [];
+    const events: AioEvent[] = [];
     let skipped = 0;
     for (const line of text.split("\n")) {
       if (line.trim() === "") continue;
       try {
-        events.push(JSON.parse(line) as AgentBoxEvent);
+        events.push(JSON.parse(line) as AioEvent);
       } catch {
         skipped += 1;
       }

@@ -1,7 +1,7 @@
 // SSH remotes: the manager list and the remote editor with Test Connection
 // and the ssh-copy-id job.
-import type { Job, SshForward, SshRemote } from "@agentbox/contracts";
-import { Button, Dialog, errorMessage, useApiClient, useMessageBox } from "@agentbox/ui";
+import type { Job, SshForward, SshRemote } from "@aio/contracts";
+import { Button, Dialog, errorMessage, useApiClient, useMessageBox } from "@aio/ui";
 import { useCallback, useEffect, useState } from "react";
 import { rowsToForwards, validTarget, type ForwardRow } from "../logic/ssh";
 import { JobDialog } from "./JobDialog";

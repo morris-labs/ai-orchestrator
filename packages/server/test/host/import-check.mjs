@@ -1,12 +1,12 @@
 #!/usr/bin/env node
-// Checks the one-time import against the host's real ~/.claude-box without
+// Checks the one-time import against the host's real ~/.ai-orchestrator without
 // touching it: the records are copied to a temporary home, imported into a
 // temporary database, and every box is checked against its transcript in the
 // real ~/.claude/projects. See README.md in this directory.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { boxWorkDir, projectContainerName } from "@agentbox/contracts";
+import { boxWorkDir, projectContainerName } from "@aio/contracts";
 import {
   createServerCore,
   defaultHostEnv,
@@ -21,7 +21,7 @@ import {
 const real = defaultHostEnv();
 const source = path.join(real.home, ".claude-box");
 const conf = path.join(real.home, ".config/claude-box/claude-box.conf");
-const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "agentbox-import-")));
+const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "aio-import-")));
 for (const entry of ["known", "projects", "global", "ssh_remotes"]) {
   const from = path.join(source, entry);
   if (fs.existsSync(from))
@@ -32,7 +32,7 @@ const env = { ...real, home: tmp };
 const core = createServerCore({
   engineVersion: "import-check",
   env,
-  dbPath: path.join(tmp, "agentbox.db"),
+  dbPath: path.join(tmp, "aio.db"),
 });
 let failures = 0;
 try {
@@ -40,7 +40,7 @@ try {
   console.log(JSON.stringify({ ...report, filesRead: report.filesRead.length }, null, 2));
   if (report.boxes.skipped.length > 0) failures += report.boxes.skipped.length;
 
-  console.log("\nbox | 3.3.5 container/session -> 4.0 container/session | transcript");
+  console.log("\nbox | 3.3.5 container/session -> AI Orchestrator container/session | transcript");
   for (const box of core.db.boxes.list()) {
     const record = readKvFile(path.join(source, "known", box.id));
     const oldContainer = kvLast(record, "container") || box.id;

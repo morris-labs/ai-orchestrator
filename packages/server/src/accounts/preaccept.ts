@@ -74,7 +74,7 @@ export function editJsonObject(
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") return "invalid";
   }
   if (!edit(obj)) return false;
-  const temp = `${file}.agentbox-${process.pid}-${Date.now()}.tmp`;
+  const temp = `${file}.aio-${process.pid}-${Date.now()}.tmp`;
   try {
     fs.writeFileSync(temp, `${JSON.stringify(obj, null, 2)}\n`, { mode: 0o600, flag: "wx" });
     // `rename` over a link replaces the link, not its target.

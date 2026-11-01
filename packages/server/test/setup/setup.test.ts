@@ -8,7 +8,7 @@ import {
   type ImageStatus,
   type OpStatus,
   type SetupCheck,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Core } from "../../src/api/core-interface.js";
 import { JobManager } from "../../src/jobs/jobs.js";
@@ -18,19 +18,19 @@ import { FakeRunner, waitFor } from "./fake-runner.js";
 import { tempDir } from "../tmp.js";
 
 const image: ImageStatus = {
-  name: "claude-code",
+  name: "aio-agent",
   exists: true,
   imageId: "sha256:abc",
   createdAt: "2026-10-01T00:00:00Z",
-  engineVersion: "4.0.0",
-  expectedEngineVersion: "4.0.0",
+  engineVersion: "1.0.0",
+  expectedEngineVersion: "1.0.0",
   engineMatches: true,
   cliVersions: { claude: "2.1.300", codex: null, copilot: null },
 };
 
 let home: string;
 beforeEach(async () => {
-  home = tempDir("agentbox-setup-");
+  home = tempDir("aio-setup-");
 });
 afterEach(async () => rm(home, { recursive: true, force: true }));
 
@@ -72,7 +72,7 @@ function make(overrides: {
     runner,
     op,
     home,
-    imageContext: overrides.imageContext ?? "/opt/agentbox/image",
+    imageContext: overrides.imageContext ?? "/opt/ai-orchestrator/image",
     serviceInstalled: async () => overrides.installed ?? false,
     installService: async (io) => {
       installs.push("install");
@@ -168,13 +168,12 @@ describe("SetupService checks", () => {
     expect(c.service?.status).toBe("warn");
   });
 
-  it("names Claude Box 3.x when the image has no engine", async () => {
+  it("names the missing engine when the image has none", async () => {
     const c = byId(
       await make({ image: { engineMatches: false, engineVersion: null } }).svc.checks(),
     );
     expect(c.engine).toMatchObject({ status: "fail", fixable: true });
-    expect(c.engine?.message).toContain("has no Agent Box engine");
-    expect(c.engine?.message).toContain("Claude Box 3.x");
+    expect(c.engine?.message).toContain("has no AI Orchestrator engine");
   });
 
   it("warns about the engine when the image is missing, and survives an image error", async () => {
@@ -202,9 +201,9 @@ describe("SetupService image builds and fixes", () => {
   ] as const)("runs the build script for %s", (kind, variant) => {
     const { svc } = make({});
     expect(svc.buildArgv(kind)).toEqual([
-      "/opt/agentbox/scripts/build-image.sh",
+      "/opt/ai-orchestrator/scripts/build-image.sh",
       "--tag",
-      "claude-code",
+      "aio-agent",
       ...variant,
     ]);
   });
@@ -267,7 +266,7 @@ describe("SetupService image builds and fixes", () => {
   });
 
   it("builds with every versions.env pin when run from the installed layout", async () => {
-    // Mimics /usr/share/agentbox with the real script, so the job's argv and
+    // Mimics /usr/share/ai-orchestrator with the real script, so the job's argv and
     // the script agree on the options and the script passes the pins.
     const repo = fileURLToPath(new URL("../../../../", import.meta.url));
     const root = join(home, "share");
@@ -289,15 +288,15 @@ describe("SetupService image builds and fixes", () => {
     await writeFile(join(img, "Dockerfile"), "FROM ubuntu\n");
     await writeFile(join(img, "keeper", "keeper.sh"), "");
     await writeFile(join(img, "keeper", "start-session.sh"), "");
-    const engine = /^AGENTBOX_ENGINE_VERSION=(.+)$/m.exec(versions)?.[1];
-    await writeFile(join(img, "dist", `agentbox-engine-${engine}.tgz`), "");
+    const engine = /^AIO_ENGINE_VERSION=(.+)$/m.exec(versions)?.[1];
+    await writeFile(join(img, "dist", `aio-engine-${engine}.tgz`), "");
 
-    const { svc } = make({ imageContext: img, settings: { engineImage: "claude-code:v4test" } });
+    const { svc } = make({ imageContext: img, settings: { engineImage: "aio-agent:v4test" } });
     const argv = svc.buildArgv("packages");
     const out = execFileSync(argv[0] as string, [...argv.slice(1), "--print"], {
       encoding: "utf8",
     });
-    expect(out).toContain("docker build -t claude-code:v4test");
+    expect(out).toContain("docker build -t aio-agent:v4test");
     expect(out).toMatch(/--build-arg CACHEBUST_PACKAGES=\d+/);
     for (const line of versions.split("\n").filter((l) => /^[A-Z]/.test(l))) {
       expect(out).toContain(`--build-arg ${line}`);
@@ -320,7 +319,7 @@ describe("SetupService image builds and fixes", () => {
       "-f",
       join(home, ".ssh", "id_ed25519"),
       "-C",
-      "claude-box",
+      "aio",
     ]);
     const service = svc.fix("service");
     await waitFor(() => jobs.get(service.id)?.status === "finished");
@@ -336,7 +335,7 @@ describe("SetupService image builds and fixes", () => {
     const key = join(home, ".ssh", "id_ed25519");
     await writeFile(key, "SYNTHETIC private key\n", { mode: 0o600 });
     const runner = new FakeRunner((argv) =>
-      argv[1] === "-y" ? { stdout: "ssh-ed25519 SYNTHETICKEY claude-box\n" } : {},
+      argv[1] === "-y" ? { stdout: "ssh-ed25519 SYNTHETICKEY aio\n" } : {},
     );
     const { svc, jobs } = make({ runner });
     const job = svc.fix("ssh_key");
@@ -344,7 +343,7 @@ describe("SetupService image builds and fixes", () => {
     expect(jobs.get(job.id)?.status).toBe("finished");
     expect(runner.spawned).toHaveLength(0);
     expect(runner.runs.map((r) => r.argv)).toEqual([["ssh-keygen", "-y", "-P", "", "-f", key]]);
-    expect(await readFile(`${key}.pub`, "utf8")).toBe("ssh-ed25519 SYNTHETICKEY claude-box\n");
+    expect(await readFile(`${key}.pub`, "utf8")).toBe("ssh-ed25519 SYNTHETICKEY aio\n");
     expect(await readFile(key, "utf8")).toBe("SYNTHETIC private key\n");
 
     // A complete pair is left alone.

@@ -10,7 +10,7 @@ const SERVER = "https://127.0.0.1:21400";
 
 /** The server's certificate, which the dev proxy trusts and nothing else. */
 function serverCert(): string | undefined {
-  const dataDir = process.env.AGENTBOX_DATA_DIR ?? join(homedir(), ".claude-box");
+  const dataDir = process.env.AIO_DATA_DIR ?? join(homedir(), ".ai-orchestrator");
   try {
     return readFileSync(join(dataDir, "server.crt"), "utf8");
   } catch {
@@ -29,7 +29,7 @@ export default defineConfig({
     chunkSizeWarningLimit: 1500,
   },
   server: {
-    // `pnpm dev` forwards API calls to a running agentbox-server over HTTPS.
+    // `pnpm dev` forwards API calls to a running aio-server over HTTPS.
     proxy: {
       "/api": {
         target: { protocol: "https:", host: "127.0.0.1", port: 21400, ca: serverCert() },

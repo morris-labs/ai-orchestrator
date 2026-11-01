@@ -1,23 +1,23 @@
 #!/usr/bin/env bash
-# Installs the agentbox-server systemd user unit for this source checkout.
+# Installs the aio-server systemd user unit for this source checkout.
 #
 # The script writes a drop-in that puts this checkout's Node.js directory on
-# the service's PATH, then runs `agentbox-server install-service` from
+# the service's PATH, then runs `aio-server install-service` from
 # packages/server/dist, which writes
-# ~/.config/systemd/user/agentbox-server.service with an ExecStart= line
+# ~/.config/systemd/user/aio-server.service with an ExecStart= line
 # that names this Node.js and this checkout, reloads systemd, and enables
 # and starts the service. The image build in a source checkout runs pnpm
 # through corepack, which lives beside node, and the systemd user manager's
 # PATH might not include that directory.
 #
-# Other files in agentbox-server.service.d/, such as a drop-in that loads
+# Other files in aio-server.service.d/, such as a drop-in that loads
 # the 1Password service account token with EnvironmentFile=, stay in place
 # and apply to the unit.
 #
 # Environment:
-#   AGENTBOX_DATA_DIR  The server's data directory. The unit's ExecStart=
-#                      line gets it as --data-dir. Default: ~/.claude-box.
-#   AGENTBOX_HOME      The home directory to install under in place of
+#   AIO_DATA_DIR  The server's data directory. The unit's ExecStart=
+#                      line gets it as --data-dir. Default: ~/.ai-orchestrator.
+#   AIO_HOME      The home directory to install under in place of
 #                      yours, as the server reads it.
 set -euo pipefail
 
@@ -27,8 +27,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 MAIN="$ROOT/packages/server/dist/main.js"
-UNIT_HOME="${AGENTBOX_HOME:-$HOME}"
-DROPIN_DIR="$UNIT_HOME/.config/systemd/user/agentbox-server.service.d"
+UNIT_HOME="${AIO_HOME:-$HOME}"
+DROPIN_DIR="$UNIT_HOME/.config/systemd/user/aio-server.service.d"
 DROPIN="$DROPIN_DIR/source-checkout.conf"
 PRINT=0
 SERVER_ARGS=()
@@ -37,12 +37,12 @@ usage() {
   cat <<USAGE
 Usage: $(basename "$0") [OPTIONS]
 
-Installs, enables, and starts the agentbox-server systemd user unit that
+Installs, enables, and starts the aio-server systemd user unit that
 runs the server from $ROOT.
 
 Options:
   --data-dir PATH   Run the server with the data directory PATH.
-                    Default: the AGENTBOX_DATA_DIR variable, else ~/.claude-box.
+                    Default: the AIO_DATA_DIR variable, else ~/.ai-orchestrator.
   --print           Print the drop-in and the command instead of running them.
   -h, --help        Show this help.
 USAGE

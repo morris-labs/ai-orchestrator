@@ -2,7 +2,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, rmSync, writeFileSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
-import { FindingInputSchema, type Finding, type LeaseRequest } from "@agentbox/contracts";
+import { FindingInputSchema, type Finding, type LeaseRequest } from "@aio/contracts";
 import { describe, expect, it } from "vitest";
 import {
   GrantingBroker,
@@ -188,10 +188,10 @@ describe("runFix", () => {
 describe("a gate_failed decision", () => {
   it("runs the fix and the gate again on resume instead of replaying them", async () => {
     const repo = buildSampleRepo();
-    const markerDir = tempDir("agentbox-marker-");
+    const markerDir = tempDir("aio-marker-");
     const marker = join(markerDir, "broken");
     writeFileSync(
-      join(repo, ".claude-box/policy.yaml"),
+      join(repo, ".aio/policy.yaml"),
       `version: 1\ntests:\n  - command: test ! -f ${marker}\n`,
     );
     const clock = new FakeClock();

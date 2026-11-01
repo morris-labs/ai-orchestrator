@@ -1,6 +1,6 @@
 // The client side of `events.stream`: hello, replay, resync, and reconnect.
 //
-// The protocol, from `@agentbox/contracts` `events.ts`: the client sends a
+// The protocol, from `@aio/contracts` `events.ts`: the client sends a
 // `hello` with the last `streamId` and `seq` it saw; the server answers with
 // its own `hello`. When `replaying` is true, the missed events follow. When
 // it is false, the client must reload its state through REST before it uses
@@ -8,10 +8,10 @@
 // triggers a fresh `hello`.
 import {
   ServerStreamFrameSchema,
-  type AgentBoxEvent,
+  type AioEvent,
   type ClientHello,
   type EventType,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 import type { ApiClient } from "../api/client";
 
 export type StreamStatus = "connecting" | "open" | "closed";
@@ -25,7 +25,7 @@ export interface EventsConnectionOptions {
   client: ApiClient | (() => ApiClient);
   /** Event types to receive; absent means all. */
   types?: readonly EventType[];
-  onEvent: (event: AgentBoxEvent) => void;
+  onEvent: (event: AioEvent) => void;
   /** Called after the server says it can't replay: reload state through REST. */
   onResync: () => void;
   onStatus?: (status: StreamStatus) => void;

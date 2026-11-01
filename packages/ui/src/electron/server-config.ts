@@ -1,21 +1,19 @@
 // Where an Electron main process finds the server: its data directory, and
 // the origin from the environment or from the port the server wrote.
-// Node.js only, like the rest of `@agentbox/ui/electron-main`.
+// Node.js only, like the rest of `@aio/ui/electron-main`.
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, posix, resolve } from "node:path";
-import { DEFAULT_SERVER_PORT, HOME_PATHS } from "@agentbox/contracts";
+import { DEFAULT_SERVER_PORT, HOME_PATHS } from "@aio/contracts";
 
 type Env = Record<string, string | undefined>;
 
 /**
- * The path of a file in the server's data directory: `AGENTBOX_DATA_DIR`,
- * else `~/.claude-box`. `homeRelative` is one of the `HOME_PATHS` entries.
+ * The path of a file in the server's data directory: `AIO_DATA_DIR`,
+ * else `~/.ai-orchestrator`. `homeRelative` is one of the `HOME_PATHS` entries.
  */
 export function dataFile(homeRelative: string, env: Env = process.env, home = homedir()): string {
-  const dataDir = env.AGENTBOX_DATA_DIR
-    ? resolve(env.AGENTBOX_DATA_DIR)
-    : join(home, HOME_PATHS.dataDir);
+  const dataDir = env.AIO_DATA_DIR ? resolve(env.AIO_DATA_DIR) : join(home, HOME_PATHS.dataDir);
   return join(dataDir, posix.relative(HOME_PATHS.dataDir, homeRelative));
 }
 
@@ -26,14 +24,14 @@ function asPort(value: unknown): number | null {
 }
 
 /**
- * The server origin, without a trailing slash: `AGENTBOX_SERVER_URL`, else
+ * The server origin, without a trailing slash: `AIO_SERVER_URL`, else
  * `https://127.0.0.1:PORT`. `PORT` is the one the running server wrote to
  * `server.port` in the data directory, else `serverPort` in its
  * `config.json`, else the default port. The server takes its port from its
  * database after the first start, so `server.port` wins.
  */
 export function serverUrl(env: Env = process.env, home = homedir()): string {
-  if (env.AGENTBOX_SERVER_URL) return env.AGENTBOX_SERVER_URL.replace(/\/$/, "");
+  if (env.AIO_SERVER_URL) return env.AIO_SERVER_URL.replace(/\/$/, "");
   let port: number | null = null;
   try {
     port = asPort(readFileSync(dataFile(HOME_PATHS.serverPort, env, home), "utf8"));

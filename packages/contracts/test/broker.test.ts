@@ -9,7 +9,7 @@ import {
 
 describe("broker protocol", () => {
   it("puts the socket in the read-only broker mount", () => {
-    expect(BROKER_SOCKET_PATH).toBe("/run/agentbox-broker/broker.sock");
+    expect(BROKER_SOCKET_PATH).toBe("/run/aio-broker/broker.sock");
   });
 
   it("accepts a read of valid names with an optional caller", () => {

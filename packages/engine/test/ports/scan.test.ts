@@ -1,6 +1,6 @@
 // Listener discovery: parsers, process-tree mapping, and a real local listener.
 import net from "node:net";
-import { ListenerSchema } from "@agentbox/contracts";
+import { ListenerSchema } from "@aio/contracts";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { execRunner, type CommandRunner } from "../../src/api/runner.js";
 import { silentLogger } from "../../src/main/logger.js";
@@ -52,7 +52,7 @@ function fakeProc(): ProcFs {
   };
 }
 
-const panes = "100 claude-agent-feature\n200 claude-agent-feature-codex\n";
+const panes = "100 aio-agent-feature\n200 aio-agent-feature-codex\n";
 
 function fakeRunner(ss: { code: number; stdout: string }): CommandRunner {
   return {
@@ -91,12 +91,11 @@ describe("parsers", () => {
 
   it("parses real tmux 3.6 output in PANES_FORMAT", () => {
     // Captured from tmux 3.6 in the image with `tmux list-panes -a -F "#{pane_pid} #{session_name}"`.
-    const real =
-      "762 claude-agent-agentbox-hostcheck-bmrt\n3779 claude-agent-agentbox-hostcheck-bmrt\n";
+    const real = "762 aio-agent-aio-hostcheck-bmrt\n3779 aio-agent-aio-hostcheck-bmrt\n";
     expect(parsePanes(real)).toEqual(
       new Map([
-        [762, "claude-agent-agentbox-hostcheck-bmrt"],
-        [3779, "claude-agent-agentbox-hostcheck-bmrt"],
+        [762, "aio-agent-aio-hostcheck-bmrt"],
+        [3779, "aio-agent-aio-hostcheck-bmrt"],
       ]),
     );
   });
@@ -108,7 +107,7 @@ describe("parsers", () => {
   });
 
   it("ignores the old tab format, which tmux 3.6 prints as an underscore", () => {
-    expect(parsePanes("claude-agent-feature_100\n")).toEqual(new Map());
+    expect(parsePanes("aio-agent-feature_100\n")).toEqual(new Map());
   });
 
   it("asks tmux for the pid first, separated by a space", () => {
@@ -118,17 +117,17 @@ describe("parsers", () => {
   it("parses tmux panes", () => {
     expect(parsePanes(panes)).toEqual(
       new Map([
-        [100, "claude-agent-feature"],
-        [200, "claude-agent-feature-codex"],
+        [100, "aio-agent-feature"],
+        [200, "aio-agent-feature-codex"],
       ]),
     );
   });
 
   it("maps sessions to boxes, side sessions included", () => {
-    const live = new Set(["claude-agent-a", "claude-agent-a-codex", "claude-agent-b-codex"]);
-    expect(sessionToBoxId("claude-agent-a", live)).toBe("claude-agent-a");
-    expect(sessionToBoxId("claude-agent-a-codex", live)).toBe("claude-agent-a");
-    expect(sessionToBoxId("claude-agent-b-codex", live)).toBe("claude-agent-b-codex");
+    const live = new Set(["aio-agent-a", "aio-agent-a-codex", "aio-agent-b-codex"]);
+    expect(sessionToBoxId("aio-agent-a", live)).toBe("aio-agent-a");
+    expect(sessionToBoxId("aio-agent-a-codex", live)).toBe("aio-agent-a");
+    expect(sessionToBoxId("aio-agent-b-codex", live)).toBe("aio-agent-b-codex");
     expect(sessionToBoxId("scratch", live)).toBeNull();
   });
 });
@@ -142,8 +141,8 @@ describe("scanListeners", () => {
     });
     for (const l of listeners) ListenerSchema.parse(l);
     expect(listeners).toEqual([
-      { port: 5173, proto: "tcp", process: "node", boxId: "claude-agent-feature" },
-      { port: 5173, proto: "tcp6", process: "node", boxId: "claude-agent-feature" },
+      { port: 5173, proto: "tcp", process: "node", boxId: "aio-agent-feature" },
+      { port: 5173, proto: "tcp6", process: "node", boxId: "aio-agent-feature" },
       { port: 8080, proto: "tcp", process: null, boxId: null },
     ]);
   });
@@ -154,7 +153,7 @@ describe("scanListeners", () => {
       proc: fakeProc(),
     });
     expect(listeners).toEqual([
-      { port: 5173, proto: "tcp", process: "node", boxId: "claude-agent-feature" },
+      { port: 5173, proto: "tcp", process: "node", boxId: "aio-agent-feature" },
     ]);
   });
 

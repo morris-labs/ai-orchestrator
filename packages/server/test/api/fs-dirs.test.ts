@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { DirListingSchema } from "@agentbox/contracts";
+import { DirListingSchema } from "@aio/contracts";
 import { listDirs, resolveDirQuery } from "../../src/api/fs-dirs.js";
 import { tempDir } from "../tmp.js";
 

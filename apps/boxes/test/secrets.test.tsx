@@ -1,5 +1,5 @@
-import type { SecretCandidate } from "@agentbox/contracts";
-import { FakeServer, makeBoxView, makeProject } from "@agentbox/ui/testing";
+import type { SecretCandidate } from "@aio/contracts";
+import { FakeServer, makeBoxView, makeProject } from "@aio/ui/testing";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -17,13 +17,13 @@ import { renderWithServer } from "./helpers";
 
 function cand(item: string, field: string, name: string, section?: string): SecretCandidate {
   return {
-    vault: "AgentBox",
+    vault: "Aio",
     item,
     itemId: item.toLowerCase().replace(/\W+/g, ""),
     field,
     ...(section ? { section } : {}),
     type: "CONCEALED",
-    ref: `op://AgentBox/${item}/${section ? `${section}/` : ""}${field}`,
+    ref: `op://Aio/${item}/${section ? `${section}/` : ""}${field}`,
     suggestedName: name,
   };
 }
@@ -73,7 +73,7 @@ describe("secrets logic", () => {
 });
 
 function editDialog(server: FakeServer) {
-  const view = makeBoxView({ box: { id: "claude-agent-site", targetDir: "/w/site" } });
+  const view = makeBoxView({ box: { id: "aio-agent-site", targetDir: "/w/site" } });
   server.state.boxes.push(view);
   const onAccept = vi.fn(async (_r: BoxDialogResult) => null as string | null);
   renderWithServer(
@@ -99,7 +99,7 @@ function serverWithProject() {
         root: "/w/site",
         name: "site",
         secretRefs: [
-          { name: "GONE", ref: "op://AgentBox/Old item/credential" },
+          { name: "GONE", ref: "op://Aio/Old item/credential" },
           { name: "ORDERS_DB_URL", ref: DB.ref },
         ],
       }),
@@ -138,7 +138,7 @@ describe("BoxDialog secrets section", () => {
 
     await waitFor(() => expect(onAccept).toHaveBeenCalled());
     expect((onAccept.mock.calls[0]?.[0] as BoxDialogResult).secretRefs).toEqual([
-      { name: "GONE", ref: "op://AgentBox/Old item/credential" },
+      { name: "GONE", ref: "op://Aio/Old item/credential" },
       { name: "ORDERS_DB_URL", ref: DB.ref },
       { name: "GH_TOKEN", ref: GITHUB.ref },
     ]);

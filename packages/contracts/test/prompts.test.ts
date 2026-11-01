@@ -114,8 +114,8 @@ describe("expandTemplate", () => {
       "slug",
       "Name",
       "/w",
-      "/w/.claude-box",
-      "/p/.claude-box/INFRA.md",
+      "/w/.aio",
+      "/p/.aio/INFRA.md",
       "/p",
       "claude/slug",
     ]);
@@ -126,10 +126,8 @@ describe("expandTemplate", () => {
 
 describe("secrets hint", () => {
   it("tells the agent how to get a secret and not to reveal it", () => {
-    expect(SECRETS_PROMPT_HINT).toContain("agentbox-secret list");
-    expect(SECRETS_PROMPT_HINT).toContain(
-      "agentbox-secret run NAME[,NAME...] -- COMMAND [ARGS...]",
-    );
+    expect(SECRETS_PROMPT_HINT).toContain("aio-secret list");
+    expect(SECRETS_PROMPT_HINT).toContain("aio-secret run NAME[,NAME...] -- COMMAND [ARGS...]");
     expect(SECRETS_PROMPT_HINT).toContain(
       "never print a value or write one to a file, a log, or your replies",
     );
@@ -138,8 +136,7 @@ describe("secrets hint", () => {
   });
 
   it("is not part of any default template", () => {
-    for (const t of Object.values(DEFAULT_PROMPT_TEMPLATES))
-      expect(t).not.toContain("agentbox-secret");
+    for (const t of Object.values(DEFAULT_PROMPT_TEMPLATES)) expect(t).not.toContain("aio-secret");
   });
 
   it("follows the prompt as its own paragraph", () => {

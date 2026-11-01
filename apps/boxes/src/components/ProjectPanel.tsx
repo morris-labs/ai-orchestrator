@@ -1,8 +1,8 @@
 // The project list left of the box table: "All projects (N)", then one row
 // per project with its running and total counts, sorted by name. A project
 // whose container runs with old settings gets a "stale" badge.
-import type { ProjectSummary } from "@agentbox/contracts";
-import { StatusDot, useContextMenu, type MenuEntry } from "@agentbox/ui";
+import type { ProjectSummary } from "@aio/contracts";
+import { StatusDot, useContextMenu, type MenuEntry } from "@aio/ui";
 
 export interface ProjectPanelProps {
   projects: ProjectSummary[];

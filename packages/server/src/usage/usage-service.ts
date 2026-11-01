@@ -3,7 +3,7 @@
 // `ceiling.crossed`, and forecasts when a vendor reaches its ceiling.
 import {
   PlatformSchema,
-  type AgentBoxEvent,
+  type AioEvent,
   type Ceiling,
   type Ceilings,
   type GlobalSettings,
@@ -11,7 +11,7 @@ import {
   type UsageWindow,
   type Vendor,
   type VendorUsageSchema,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 import type { z } from "zod";
 import type { EventInput } from "../api/core-interface.js";
 import type { UsageStore } from "./usage-store.js";
@@ -76,7 +76,7 @@ export interface OverState {
 export interface UsageServiceOptions {
   store: UsageStore;
   settings: () => GlobalSettings;
-  emit: (event: EventInput) => AgentBoxEvent;
+  emit: (event: EventInput) => AioEvent;
   now?: () => Date;
 }
 
@@ -91,7 +91,7 @@ export class UsageService {
   }
 
   /** Handles `usage.sample` and `lease.settled`; ignores every other event. */
-  ingest(event: AgentBoxEvent): void {
+  ingest(event: AioEvent): void {
     if (event.type === "lease.settled") {
       this.opts.store.recordSettlement(
         {

@@ -1,6 +1,6 @@
-// Public entry point of `@agentbox/engine`: the core's interfaces, the run
+// Public entry point of `@aio/engine`: the core's interfaces, the run
 // controller and manager, and the API's `RunManager` interface. Vendor
-// adapters are under `@agentbox/engine/adapters`.
+// adapters are under `@aio/engine/adapters`.
 export * from "./core.js";
 export {
   InvalidStateError,

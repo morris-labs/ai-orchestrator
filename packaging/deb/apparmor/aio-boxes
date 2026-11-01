@@ -1,4 +1,4 @@
-# AppArmor profile for the Agent Box review app.
+# AppArmor profile for the AI Orchestrator boxes app.
 #
 # Ubuntu 24.04 and later restrict unprivileged user namespaces, which
 # Chromium's sandbox inside Electron needs. This profile grants the app
@@ -7,8 +7,8 @@
 abi <abi/4.0>,
 include <tunables/global>
 
-profile agentbox-review /usr/lib/agentbox/review/agentbox-review flags=(unconfined) {
+profile aio-boxes /usr/lib/ai-orchestrator/boxes/aio-boxes flags=(unconfined) {
   userns,
 
-  include if exists <local/agentbox-review>
+  include if exists <local/aio-boxes>
 }

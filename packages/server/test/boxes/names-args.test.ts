@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Box } from "@agentbox/contracts";
+import type { Box } from "@aio/contracts";
 import {
   baseClaudeArgs,
   movedMessage,
@@ -11,7 +11,7 @@ import { sanitizeBoxBase, slugifyIssueName, uniqueBoxName } from "../../src/boxe
 
 const T = "2026-10-28T09:00:00.000Z";
 const box: Box = {
-  id: "claude-agent-fix",
+  id: "aio-agent-fix",
   projectId: "app-12345678",
   hostKey: "fix",
   targetDir: "/home/tester/app",
@@ -20,8 +20,8 @@ const box: Box = {
   transcriptSyncedName: "",
   platform: "claude",
   skipPermissions: true,
-  container: "claude-agent-proj-app-12345678",
-  session: "claude-agent-fix",
+  container: "aio-agent-proj-app-12345678",
+  session: "aio-agent-fix",
   wasRunning: false,
   sshRemoteRefs: [],
   createdAt: T,
@@ -41,13 +41,13 @@ describe("sanitizers", () => {
   });
 
   it("finds a unique name against containers, records, and tmux forms", () => {
-    expect(uniqueBoxName("app", new Set())).toBe("claude-agent-app");
-    expect(uniqueBoxName("app", new Set(["claude-agent-app"]))).toBe("claude-agent-app-2");
-    expect(uniqueBoxName("app", new Set(["claude-agent-app", "claude-agent-app-2"]))).toBe(
-      "claude-agent-app-3",
+    expect(uniqueBoxName("app", new Set())).toBe("aio-agent-app");
+    expect(uniqueBoxName("app", new Set(["aio-agent-app"]))).toBe("aio-agent-app-2");
+    expect(uniqueBoxName("app", new Set(["aio-agent-app", "aio-agent-app-2"]))).toBe(
+      "aio-agent-app-3",
     );
-    expect(uniqueBoxName("app.example.com", new Set(["claude-agent-app_example_com"]))).toBe(
-      "claude-agent-app.example.com-2",
+    expect(uniqueBoxName("app.example.com", new Set(["aio-agent-app_example_com"]))).toBe(
+      "aio-agent-app.example.com-2",
     );
   });
 });
@@ -139,7 +139,7 @@ describe("claude arguments", () => {
     expect(msg).toBe(
       "This conversation was moved into a git worktree. Your working directory is now ~/app/.worktrees/Fix_it (branch claude/Fix_it). " +
         "The folder you used before, ~/app/Fix_it, was renamed to ~/app/Fix_it.pre-worktree and must not be used any more. " +
-        "Your PLAN.md and STATUS.md are now in ~/app/.worktrees/Fix_it/.claude-box, and the shared INFRA.md is ~/app/.claude-box/INFRA.md. " +
+        "Your PLAN.md and STATUS.md are now in ~/app/.worktrees/Fix_it/.aio, and the shared INFRA.md is ~/app/.aio/INFRA.md. " +
         "Read them there, keep updating them there, and use these paths in place of any earlier ones from this conversation. " +
         "Reply with one line to confirm, then carry on.",
     );

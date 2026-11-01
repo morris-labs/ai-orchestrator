@@ -12,7 +12,7 @@ import {
   type SecretRef,
   type SshRemote,
   type Updates,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 import {
   MenuBar,
   Splitter,
@@ -29,7 +29,7 @@ import {
   type ChordBinding,
   type MenuEntry,
   type SortState,
-} from "@agentbox/ui";
+} from "@aio/ui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { bridge } from "../bridge";
 import { BoxTable } from "../components/BoxTable";
@@ -993,7 +993,7 @@ export function App() {
       setUpdates(u);
       if (which === "app") {
         if (!u.app.updateAvailable)
-          void inform("Check for Updates", `Agent Box ${u.app.current} is up to date.`);
+          void inform("Check for Updates", `AI Orchestrator ${u.app.current} is up to date.`);
         else {
           setDismissed(null);
           store("dismissedVersion", null);
@@ -1011,8 +1011,8 @@ export function App() {
 
   const about = () =>
     inform(
-      "About Agent Box",
-      "Agent Box runs Claude Code, Codex, and GitHub Copilot in sandboxed containers, one per project, with one tmux session per box.\n\nStop ends a box's session. A project's container stops by itself once no session runs in it.",
+      "About AI Orchestrator",
+      "AI Orchestrator runs Claude Code, Codex, and GitHub Copilot in sandboxed containers, one per project, with one tmux session per box.\n\nStop ends a box's session. A project's container stops by itself once no session runs in it.",
     );
 
   // -------------------------------------------------------------------------
@@ -1331,7 +1331,7 @@ export function App() {
   const serverError =
     data.error && data.error.code !== "docker_unavailable"
       ? data.error.code === "unreachable"
-        ? `The Agent Box server is not reachable. Check that agentbox-server runs (systemctl --user status agentbox-server). ${data.error.message}`
+        ? `The AI Orchestrator server is not reachable. Check that aio-server runs (systemctl --user status aio-server). ${data.error.message}`
         : data.error.message
       : null;
   const selectedRemotes = single
@@ -1582,7 +1582,7 @@ export function App() {
                 const p = data.projects.find(
                   (x) =>
                     x.container?.name === container ||
-                    `claude-agent-proj-${x.project.id}` === container,
+                    `aio-agent-proj-${x.project.id}` === container,
                 );
                 if (p)
                   await offerContainerRestart(
@@ -1684,7 +1684,7 @@ export function App() {
           <InputDialog
             title={dialog.title}
             label="Directory"
-            intro={`Points only this box at another directory. Nothing on disk moves. Use it when the directory was moved outside Agent Box.`}
+            intro={`Points only this box at another directory. Nothing on disk moves. Use it when the directory was moved outside AI Orchestrator.`}
             initial={v.box.targetDir}
             browse
             onCancel={close}

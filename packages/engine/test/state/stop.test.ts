@@ -1,5 +1,5 @@
 // The clean stop and the decisions that come before any stop.
-import { FindingInputSchema, type Finding, type Verdict } from "@agentbox/contracts";
+import { FindingInputSchema, type Finding, type Verdict } from "@aio/contracts";
 import { describe, expect, it } from "vitest";
 import { DecisionNeeded } from "../../src/state/context.js";
 import { drivePrePush, endRound } from "../../src/state/prepush.js";

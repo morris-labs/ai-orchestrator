@@ -8,7 +8,7 @@ import type {
   RunState,
   RunStatus,
   Stage,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 
 /** The steps each pipeline shows, in order. `sweep` follows verify, as in the design. */
 export const PIPELINE_STEPS: Record<Pipeline, readonly Stage[]> = {

@@ -20,7 +20,7 @@ function addContainer(docker: MemoryDocker, name: string, binds: string[] = []):
 }
 
 function setup() {
-  const home = fs.realpathSync(tempDir("agentbox-broker-dirs-"));
+  const home = fs.realpathSync(tempDir("aio-broker-dirs-"));
   const dataDir = path.join(home, "data");
   const root = path.join(dataDir, "broker");
   const dir = (name: string) => {
@@ -35,24 +35,24 @@ describe("removeUnusedBrokerDirs", () => {
   it("removes only the directories no container uses, and follows no link", async () => {
     const { env, home, root, dir } = setup();
     const docker = new MemoryDocker();
-    addContainer(docker, "claude-agent-proj-live-00000001");
-    addContainer(docker, "claude-agent-proj-legacy-00000002", [
-      `${path.join(root, "claude-agent-proj-legacy-00000002")}:/run/agentbox-broker:ro`,
+    addContainer(docker, "aio-agent-proj-live-00000001");
+    addContainer(docker, "aio-agent-proj-legacy-00000002", [
+      `${path.join(root, "aio-agent-proj-legacy-00000002")}:/run/aio-broker:ro`,
     ]);
     // Recreated since the hashed names: its per-name directory is a leftover.
-    addContainer(docker, "claude-agent-proj-recreated-00000005", [
-      `${path.join(root, brokerDirName("claude-agent-proj-recreated-00000005"))}:/run/agentbox-broker:ro`,
+    addContainer(docker, "aio-agent-proj-recreated-00000005", [
+      `${path.join(root, brokerDirName("aio-agent-proj-recreated-00000005"))}:/run/aio-broker:ro`,
     ]);
-    addContainer(docker, "claude-agent-proj-bound-00000003", [
-      `${path.join(root, "mounted")}:/run/agentbox-broker:ro`,
+    addContainer(docker, "aio-agent-proj-bound-00000003", [
+      `${path.join(root, "mounted")}:/run/aio-broker:ro`,
     ]);
-    dir(brokerDirName("claude-agent-proj-live-00000001"));
-    dir("claude-agent-proj-legacy-00000002");
+    dir(brokerDirName("aio-agent-proj-live-00000001"));
+    dir("aio-agent-proj-legacy-00000002");
     dir("mounted");
-    dir("claude-agent-proj-recreated-00000005");
-    dir(brokerDirName("claude-agent-proj-recreated-00000005"));
-    dir("claude-agent-proj-gone-00000004");
-    const gone = dir(brokerDirName("claude-agent-proj-gone-00000004"));
+    dir("aio-agent-proj-recreated-00000005");
+    dir(brokerDirName("aio-agent-proj-recreated-00000005"));
+    dir("aio-agent-proj-gone-00000004");
+    const gone = dir(brokerDirName("aio-agent-proj-gone-00000004"));
     // A link inside a removed directory goes with it; its target stays.
     const outside = path.join(home, "outside");
     fs.mkdirSync(outside);
@@ -66,16 +66,16 @@ describe("removeUnusedBrokerDirs", () => {
 
     expect(removed).toEqual(
       [
-        brokerDirName("claude-agent-proj-gone-00000004"),
-        "claude-agent-proj-gone-00000004",
-        "claude-agent-proj-recreated-00000005",
+        brokerDirName("aio-agent-proj-gone-00000004"),
+        "aio-agent-proj-gone-00000004",
+        "aio-agent-proj-recreated-00000005",
       ].sort(),
     );
     expect(fs.readdirSync(root).sort()).toEqual(
       [
-        brokerDirName("claude-agent-proj-live-00000001"),
-        "claude-agent-proj-legacy-00000002",
-        brokerDirName("claude-agent-proj-recreated-00000005"),
+        brokerDirName("aio-agent-proj-live-00000001"),
+        "aio-agent-proj-legacy-00000002",
+        brokerDirName("aio-agent-proj-recreated-00000005"),
         "linked",
         "mounted",
         "note.txt",

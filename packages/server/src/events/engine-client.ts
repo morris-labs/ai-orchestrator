@@ -9,13 +9,13 @@ import {
   LeaseResponseFrameSchema,
   buildPath,
   engineRoutes,
-  type AgentBoxEvent,
+  type AioEvent,
   type EngineInfo,
   type EngineRouteKey,
   type LeaseRequest,
   type LeaseResponse,
   type PathParams,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 import WebSocket from "ws";
 import type { z } from "zod";
 import { ApiError } from "../api/errors.js";
@@ -35,7 +35,7 @@ export interface EngineClientOptions {
   expectedVersion: string;
   cursor: StreamCursor;
   /** Receives each engine event, in order. */
-  onEvent(event: AgentBoxEvent): void;
+  onEvent(event: AioEvent): void;
   /** Answers a lease request. */
   onLease(request: LeaseRequest): Promise<LeaseResponse>;
   /** Called when the engine's stream id changed, so missed events can't replay. */

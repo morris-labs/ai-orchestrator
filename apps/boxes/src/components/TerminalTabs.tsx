@@ -1,6 +1,6 @@
 // The tab strip of embedded terminals. Every tab stays mounted, so a
 // session stays attached while another tab is in front.
-import { StatusDot, TerminalView, useApiClient, useContextMenu } from "@agentbox/ui";
+import { StatusDot, TerminalView, useApiClient, useContextMenu } from "@aio/ui";
 import { tabTitle, type Tab, type TabsState } from "../logic/tabs";
 
 export interface TerminalTabsProps {

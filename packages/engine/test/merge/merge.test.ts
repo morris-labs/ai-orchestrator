@@ -1,4 +1,4 @@
-import type { Finding, VendorFinding } from "@agentbox/contracts";
+import type { Finding, VendorFinding } from "@aio/contracts";
 import { describe, expect, it } from "vitest";
 import {
   enclosingSymbol,

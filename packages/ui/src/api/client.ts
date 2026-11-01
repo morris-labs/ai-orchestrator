@@ -10,7 +10,7 @@ import {
   type RouteOf,
   type ServerRouteKey,
   type ServerRoutes,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 import type { z } from "zod";
 import { ApiRequestError } from "./errors";
 
@@ -73,7 +73,7 @@ export type WebSocketCtor = new (
 /**
  * How a WebSocket proves who it is. The token never goes in the URL.
  *
- * - `cookie`: the `agentbox_session` cookie, which a browser sends with the
+ * - `cookie`: the `aio_session` cookie, which a browser sends with the
  *   upgrade. Browsers can't set WebSocket headers, so a renderer with a token
  *   calls `startSession()` first to get the cookie.
  * - `header`: `Authorization: Bearer <token>` on the upgrade, for a
@@ -84,7 +84,7 @@ export type SocketAuth = "cookie" | "header";
 export interface ApiClientOptions {
   /** Origin of the server, such as `https://127.0.0.1:21400`. Empty means the page's own origin. */
   baseUrl?: string;
-  /** The bearer token. Absent means the `agentbox_session` cookie authenticates. */
+  /** The bearer token. Absent means the `aio_session` cookie authenticates. */
   token?: string | null;
   fetch?: typeof fetch;
   WebSocket?: WebSocketCtor;
@@ -181,7 +181,7 @@ export class ApiClient {
         reject(
           new ApiRequestError(
             "unreachable",
-            `The Agent Box server didn't answer ${key} within ${Math.round(timeoutMs / 1000)} seconds.`,
+            `The AI Orchestrator server didn't answer ${key} within ${Math.round(timeoutMs / 1000)} seconds.`,
           ),
         );
       }, timeoutMs);
@@ -205,7 +205,7 @@ export class ApiClient {
         if (err instanceof ApiRequestError) throw err;
         throw new ApiRequestError(
           "unreachable",
-          `The Agent Box server is not reachable (${err instanceof Error ? err.message : String(err)}).`,
+          `The AI Orchestrator server is not reachable (${err instanceof Error ? err.message : String(err)}).`,
         );
       }
       text = await Promise.race([res.text(), timedOut]);
@@ -243,7 +243,7 @@ export class ApiClient {
   }
 
   /**
-   * Trades the bearer token for the `agentbox_session` cookie, which a
+   * Trades the bearer token for the `aio_session` cookie, which a
    * browser WebSocket sends with its upgrade. Resolves `false` without a
    * token or when the server refuses; a page served by the server with the
    * cookie already set still connects.

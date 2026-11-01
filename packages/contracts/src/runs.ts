@@ -1,6 +1,6 @@
 // Review runs: what starts one, its live state, its file groups, and its
 // per-round summaries. The engine writes these as JSON under
-// `<project>/.claude-box/runs/<run id>/`, and the server mirrors them.
+// `<project>/.aio/runs/<run id>/`, and the server mirrors them.
 import { z } from "zod";
 import {
   CommitShaSchema,

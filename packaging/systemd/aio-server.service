@@ -1,11 +1,11 @@
 [Unit]
-Description=Agent Box server
+Description=AI Orchestrator server
 After=default.target
 StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/agentbox-server
+ExecStart=/usr/bin/aio-server
 Restart=on-failure
 RestartSec=5
 UMask=0077

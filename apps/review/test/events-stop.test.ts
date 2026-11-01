@@ -2,7 +2,7 @@
 // does on `before-quit`, while the upgrade is still in progress. `ws` emits
 // `error` when a socket closes before it connects, and without a listener
 // that error is uncaught and crashes the main process.
-import { ApiClient, EventsConnection, type WebSocketCtor } from "@agentbox/ui/core";
+import { ApiClient, EventsConnection, type WebSocketCtor } from "@aio/ui/core";
 import { createServer, type Server, type Socket } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import WebSocket from "ws";

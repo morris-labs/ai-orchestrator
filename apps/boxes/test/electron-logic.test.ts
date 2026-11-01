@@ -73,8 +73,8 @@ describe("tray", () => {
   it("counts and words the status", () => {
     const c = trayCounts([{ status: "running" }, { status: "stopped" }, { status: "starting" }]);
     expect(c).toEqual({ running: 1, stopped: 1, transitioning: 1 });
-    expect(trayText(c)).toBe("Agent Box: 1 running \u00b7 1 not running \u00b7 1 changing");
-    expect(trayText(null)).toBe("Agent Box: server not reachable");
+    expect(trayText(c)).toBe("AI Orchestrator: 1 running \u00b7 1 not running \u00b7 1 changing");
+    expect(trayText(null)).toBe("AI Orchestrator: server not reachable");
   });
   it("draws a BGRA icon with an opaque body and a transparent corner", () => {
     const buf = trayIconBitmap(22, "running");
@@ -101,25 +101,25 @@ describe("notifications and review", () => {
   });
   it("prefills the review launcher", () => {
     expect(reviewCommand("p", "b")).toEqual({
-      file: "agentbox-review",
+      file: "aio-review",
       args: ["--project=p", "--box=b"],
     });
-    expect(reviewCommand("p", "b", "/opt/agentbox/review")).toEqual({
-      file: "/opt/agentbox/review",
+    expect(reviewCommand("p", "b", "/opt/ai-orchestrator/review")).toEqual({
+      file: "/opt/ai-orchestrator/review",
       args: ["--project=p", "--box=b"],
     });
-    expect(reviewCommand("p", "b", "").file).toBe("agentbox-review");
+    expect(reviewCommand("p", "b", "").file).toBe("aio-review");
   });
   it("keeps the server token out of a spawned process's environment", () => {
-    const env = { PATH: "/usr/bin", AGENTBOX_SERVER_TOKEN: "secret", HOME: "/home/dev" };
+    const env = { PATH: "/usr/bin", AIO_SERVER_TOKEN: "secret", HOME: "/home/dev" };
     expect(childEnv(env)).toEqual({ PATH: "/usr/bin", HOME: "/home/dev" });
-    expect(env.AGENTBOX_SERVER_TOKEN).toBe("secret");
+    expect(env.AIO_SERVER_TOKEN).toBe("secret");
   });
 });
 
 describe("the local page", () => {
   const server = "https://127.0.0.1:21400/boxes/";
-  const local = "file:///opt/agentbox/renderer/index.html";
+  const local = "file:///opt/ai-orchestrator/renderer/index.html";
   const pages = [server, local];
   const failed = (url: string, errorCode = -102, isMainFrame = true) => ({
     url,
@@ -181,14 +181,14 @@ describe("closing the window", () => {
     expect(closeHidesToTray(gnome, "['appindicatorsupport@rgcjonas.gmail.com']")).toBe(true);
   });
 
-  it("follows AGENTBOX_CLOSE_TO_TRAY over the desktop", () => {
-    expect(
-      closeHidesToTray({ XDG_CURRENT_DESKTOP: "GNOME", AGENTBOX_CLOSE_TO_TRAY: "1" }, null),
-    ).toBe(true);
-    expect(
-      closeHidesToTray({ XDG_CURRENT_DESKTOP: "KDE", AGENTBOX_CLOSE_TO_TRAY: "0" }, null),
-    ).toBe(false);
-    expect(needsExtensionList({ XDG_CURRENT_DESKTOP: "GNOME", AGENTBOX_CLOSE_TO_TRAY: "0" })).toBe(
+  it("follows AIO_CLOSE_TO_TRAY over the desktop", () => {
+    expect(closeHidesToTray({ XDG_CURRENT_DESKTOP: "GNOME", AIO_CLOSE_TO_TRAY: "1" }, null)).toBe(
+      true,
+    );
+    expect(closeHidesToTray({ XDG_CURRENT_DESKTOP: "KDE", AIO_CLOSE_TO_TRAY: "0" }, null)).toBe(
+      false,
+    );
+    expect(needsExtensionList({ XDG_CURRENT_DESKTOP: "GNOME", AIO_CLOSE_TO_TRAY: "0" })).toBe(
       false,
     );
   });

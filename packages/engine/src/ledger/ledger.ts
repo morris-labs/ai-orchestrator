@@ -1,6 +1,6 @@
 // The coverage ledger (design.md, "Reviewer depth"): every hunk a reviewer
 // gets must come back with a verdict, either findings or "examined, sound".
-import type { Hunk, VendorFinding } from "@agentbox/contracts";
+import type { Hunk, VendorFinding } from "@aio/contracts";
 import type { HunkVerdict } from "../core.js";
 
 export type LedgerVerdict = "findings" | "sound" | "missing";

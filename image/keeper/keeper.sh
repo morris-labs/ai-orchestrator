@@ -3,33 +3,33 @@
 #
 # Usage: keeper.sh STATE GRACE
 #
-#   STATE  The state directory shared with the host, /run/claude-box.
+#   STATE  The state directory shared with the host, /run/aio.
 #   GRACE  Seconds the container stays up with no tmux sessions and no
 #          active review runs.
 #
 # Each second the keeper writes the live tmux session names to
-# $STATE/sessions, keeps agentbox-engine running as a background child
+# $STATE/sessions, keeps aio-engine running as a background child
 # (restarting it when it exits), and exits once GRACE seconds pass with no
 # sessions and no active runs. The engine writes its active-run count to
 # $STATE/active-runs each second; a missing file, or one older than
-# AGENTBOX_ACTIVE_RUNS_STALE seconds (default 6), counts as zero.
+# AIO_ACTIVE_RUNS_STALE seconds (default 6), counts as zero.
 #
 # Environment:
-#   AGENTBOX_ENGINE_CMD            The engine program. Default: agentbox-engine.
-#   AGENTBOX_ENGINE_RESTART_DELAY  Minimum seconds between engine starts. Default: 5.
-#   AGENTBOX_ACTIVE_RUNS_STALE     Age in seconds after which active-runs counts as zero.
-#   AGENTBOX_ENGINE_STOP_TIMEOUT   Seconds to wait for the engine after SIGTERM. Default: 10.
+#   AIO_ENGINE_CMD            The engine program. Default: aio-engine.
+#   AIO_ENGINE_RESTART_DELAY  Minimum seconds between engine starts. Default: 5.
+#   AIO_ACTIVE_RUNS_STALE     Age in seconds after which active-runs counts as zero.
+#   AIO_ENGINE_STOP_TIMEOUT   Seconds to wait for the engine after SIGTERM. Default: 10.
 
 STATE="${1-}"; GRACE="${2-}"; IDLE=$SECONDS
 
-ENGINE_CMD=${AGENTBOX_ENGINE_CMD:-agentbox-engine}
-ENGINE_RESTART_DELAY=${AGENTBOX_ENGINE_RESTART_DELAY:-5}
-ACTIVE_RUNS_STALE=${AGENTBOX_ACTIVE_RUNS_STALE:-6}
-ENGINE_STOP_TIMEOUT=${AGENTBOX_ENGINE_STOP_TIMEOUT:-10}
+ENGINE_CMD=${AIO_ENGINE_CMD:-aio-engine}
+ENGINE_RESTART_DELAY=${AIO_ENGINE_RESTART_DELAY:-5}
+ACTIVE_RUNS_STALE=${AIO_ACTIVE_RUNS_STALE:-6}
+ENGINE_STOP_TIMEOUT=${AIO_ENGINE_STOP_TIMEOUT:-10}
 ENGINE_PID=
 ENGINE_STARTED_AT=
 ENGINE_MISSING_REPORTED=
-export AGENTBOX_STATE_DIR="$STATE"
+export AIO_STATE_DIR="$STATE"
 
 log() {
   printf 'keeper: %s\n' "$*" >&2

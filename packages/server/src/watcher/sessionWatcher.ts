@@ -4,14 +4,14 @@
 // `/clear` (a new session id) and `/rename`.
 //
 // Where the files are matters. Every container numbers its pids from the same
-// small values, so a box reads its own directory, `~/.claude-box/sessions/<box>`,
+// small values, so a box reads its own directory, `~/.ai-orchestrator/sessions/<box>`,
 // when that has entries; whatever is there is the box's. Otherwise the box
 // reads a directory it shares with others: its container's
-// (`~/.claude-box/sessions/<container>`) for a box in a shared container, or
+// (`~/.ai-orchestrator/sessions/<container>`) for a box in a shared container, or
 // the host's `~/.claude/sessions`. There the process is found by the recorded
 // session id and then followed by `pid|pidDomain|procStart`.
 import fs from "node:fs";
-import { BoxSchema, type Box } from "@agentbox/contracts";
+import { BoxSchema, type Box } from "@aio/contracts";
 import { readSessionEntries, sessionEntryKey, type SessionEntry } from "../catalog/sessions.js";
 import type { BoxesRepo } from "../db/repositories.js";
 import type { HostEnv } from "../records/env.js";

@@ -1,5 +1,5 @@
 // Polls the container's listeners and emits `ports.changed` when they change.
-import type { Listener } from "@agentbox/contracts";
+import type { Listener } from "@aio/contracts";
 import type { EventSink, Logger } from "../api/core-interface.js";
 
 export interface PortWatcherOptions {

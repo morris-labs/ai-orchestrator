@@ -1,6 +1,6 @@
 // SSH remote form helpers: the `user@host[:port]` target and the forward
 // rows, which 3.3.5 stored as `L|R:bindAddr:bindPort:destHost:destPort`.
-import type { SshForward } from "@agentbox/contracts";
+import type { SshForward } from "@aio/contracts";
 
 /** True for `host`, `user@host`, and either with `:port`. */
 export function validTarget(target: string): boolean {

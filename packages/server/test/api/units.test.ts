@@ -1,6 +1,6 @@
 import { readFile, stat, writeFile, mkdir, chmod } from "node:fs/promises";
 import path from "node:path";
-import { RunIdSchema } from "@agentbox/contracts";
+import { RunIdSchema } from "@aio/contracts";
 import { describe, expect, it } from "vitest";
 import { ZodError } from "zod";
 import {
@@ -18,18 +18,18 @@ import { tempDir } from "../tmp.js";
 
 describe("token file", () => {
   it("creates the token with mode 0600 and reads it back", async () => {
-    const home = tempDir("agentbox-");
+    const home = tempDir("aio-");
     const token = await loadOrCreateToken(home);
-    const file = path.join(home, ".claude-box", "server.token");
+    const file = path.join(home, ".ai-orchestrator", "server.token");
     expect(token).toMatch(/^[0-9a-f]{64}$/);
     expect((await stat(file)).mode & 0o777).toBe(0o600);
     expect(await loadOrCreateToken(home)).toBe(token);
   });
 
   it("tightens an existing file's mode", async () => {
-    const home = tempDir("agentbox-");
-    await mkdir(path.join(home, ".claude-box"));
-    const file = path.join(home, ".claude-box", "server.token");
+    const home = tempDir("aio-");
+    await mkdir(path.join(home, ".ai-orchestrator"));
+    const file = path.join(home, ".ai-orchestrator", "server.token");
     await writeFile(file, `${"a".repeat(64)}\n`);
     await chmod(file, 0o644);
     expect(await loadOrCreateToken(home)).toBe("a".repeat(64));
@@ -38,9 +38,9 @@ describe("token file", () => {
   });
 
   it("replaces a short token in a world-readable file with a new 0600 file", async () => {
-    const home = tempDir("agentbox-");
-    await mkdir(path.join(home, ".claude-box"));
-    const file = path.join(home, ".claude-box", "server.token");
+    const home = tempDir("aio-");
+    await mkdir(path.join(home, ".ai-orchestrator"));
+    const file = path.join(home, ".ai-orchestrator", "server.token");
     await writeFile(file, "short\n");
     await chmod(file, 0o644);
     const before = (await stat(file)).ino;
@@ -53,12 +53,12 @@ describe("token file", () => {
     expect((await readFile(file, "utf8")).trim()).toBe(token);
   });
 
-  it("uses the data directory in place of ~/.claude-box when given", async () => {
-    const home = tempDir("agentbox-");
+  it("uses the data directory in place of ~/.ai-orchestrator when given", async () => {
+    const home = tempDir("aio-");
     const dataDir = path.join(home, "data");
     const token = await loadOrCreateToken(home, dataDir);
     expect((await readFile(path.join(dataDir, "server.token"), "utf8")).trim()).toBe(token);
-    await expect(stat(path.join(home, ".claude-box"))).rejects.toThrow();
+    await expect(stat(path.join(home, ".ai-orchestrator"))).rejects.toThrow();
   });
 });
 
@@ -66,11 +66,9 @@ describe("auth checks", () => {
   const token = "x".repeat(64);
   it("accepts the bearer header and the cookie", () => {
     expect(isAuthorized({ authorization: `Bearer ${token}` }, token)).toBe(true);
-    expect(isAuthorized({ cookie: `a=1; agentbox_session=${sessionValue(token)}` }, token)).toBe(
-      true,
-    );
+    expect(isAuthorized({ cookie: `a=1; aio_session=${sessionValue(token)}` }, token)).toBe(true);
     expect(isAuthorized({ authorization: "Bearer y" }, token)).toBe(false);
-    expect(isAuthorized({ cookie: "agentbox_session=nope" }, token)).toBe(false);
+    expect(isAuthorized({ cookie: "aio_session=nope" }, token)).toBe(false);
     expect(isAuthorized({}, token)).toBe(false);
   });
 
@@ -78,19 +76,16 @@ describe("auth checks", () => {
     expect(readCookie("a=1; b=2", "b")).toBe("2");
     expect(readCookie(undefined, "b")).toBeUndefined();
     // A malformed escape, which any page on the host can set, reads as no cookie.
-    expect(readCookie("agentbox_session=%E0", "agentbox_session")).toBeUndefined();
-    expect(isAuthorized({ cookie: "agentbox_session=%E0" }, token)).toBe(false);
+    expect(readCookie("aio_session=%E0", "aio_session")).toBeUndefined();
+    expect(isAuthorized({ cookie: "aio_session=%E0" }, token)).toBe(false);
     expect(
-      isAuthorized(
-        { cookie: `agentbox_session=%E0; agentbox_session=${sessionValue(token)}` },
-        token,
-      ),
+      isAuthorized({ cookie: `aio_session=%E0; aio_session=${sessionValue(token)}` }, token),
     ).toBe(true);
     expect(sessionCookieHeader(token)).toBe(
-      `agentbox_session=${sessionValue(token)}; HttpOnly; SameSite=Strict; Path=/`,
+      `aio_session=${sessionValue(token)}; HttpOnly; SameSite=Strict; Path=/`,
     );
     expect(sessionCookieHeader(token, true)).toBe(
-      `agentbox_session=${sessionValue(token)}; HttpOnly; SameSite=Strict; Path=/; Secure`,
+      `aio_session=${sessionValue(token)}; HttpOnly; SameSite=Strict; Path=/; Secure`,
     );
   });
 });
@@ -134,7 +129,7 @@ describe("process helpers", () => {
     const runner = new NodeProcessRunner();
     const ok = await runner.run("sh", ["-c", "cat; echo err >&2; exit 3"], { input: "in" });
     expect(ok).toMatchObject({ code: 3, stdout: "in", stderr: "err\n", failedToStart: false });
-    const missing = await runner.run("agentbox-no-such-program", []);
+    const missing = await runner.run("aio-no-such-program", []);
     expect(missing.failedToStart).toBe(true);
     const slow = await runner.run("sleep", ["5"], { timeoutMs: 50 });
     expect(slow.timedOut).toBe(true);

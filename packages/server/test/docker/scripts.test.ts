@@ -82,7 +82,7 @@ describe("scripts", () => {
     );
   });
 
-  // 4.0.0 runs the image's keeper.sh, which does what the 3.3.5 keeper did
+  // 1.0.0 runs the image's keeper.sh, which does what the 3.3.5 keeper did
   // and also keeps the engine running, instead of the inline 3.3.5 script.
   it("runs the image's keeper after trusting every directory for git, without sudo", () => {
     expect(sharedKeeperCommand()).toEqual([
@@ -273,8 +273,8 @@ describe("scripts", () => {
     }
     expect(buildSessionCommand("claude", ["--name", "a b"])).toBe("claude '--name' 'a b'");
     expect(sessionStartCmd("s", "/w", "c")).toEqual([START_SESSION_PATH, "s", "/w", "c"]);
-    expect(KEEPER_PATH).toBe("/usr/local/lib/agentbox/keeper.sh");
-    expect(START_SESSION_PATH).toBe("/usr/local/lib/agentbox/start-session.sh");
+    expect(KEEPER_PATH).toBe("/usr/local/lib/ai-orchestrator/keeper.sh");
+    expect(START_SESSION_PATH).toBe("/usr/local/lib/ai-orchestrator/start-session.sh");
   });
 
   it("runs the session command through a shell as one argument per token", () => {

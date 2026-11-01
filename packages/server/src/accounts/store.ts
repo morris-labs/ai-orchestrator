@@ -1,8 +1,8 @@
 // The shared Claude transcript store (see `docs/accounts.md`): one folder, `DATA_DIR/transcripts/claude`, so that
-// `~/.claude-box` is the only folder in the home directory that Agent Box
+// `~/.ai-orchestrator` is the only folder in the home directory that AI Orchestrator
 // uses for its own data. Every Claude account's `projects` entry is a
 // symbolic link to it, and in host mode the host's `~/.claude/projects`
-// leads to it, possibly through other links (`agentbox transcripts adopt`
+// leads to it, possibly through other links (`aio transcripts adopt`
 // sets that up). Resume, fork, the conversation picker, Purge, and Move work
 // whichever account a box uses.
 import fs from "node:fs";
@@ -36,7 +36,7 @@ function realDirectory(p: string): string | undefined {
 /**
  * The folder that the host's `~/.claude/projects` leads to (the end of the
  * link chain), or that folder itself when it is a real directory.
- * `undefined` when there is none or the link dangles. Agent Box doesn't use
+ * `undefined` when there is none or the link dangles. AI Orchestrator doesn't use
  * it as the store; it only compares it with the store.
  */
 export function hostProjectsRoot(env: StoreEnv): string | undefined {
@@ -114,13 +114,13 @@ export function projectsLinkWarning(
     case "ok":
       return undefined;
     case "missing":
-      return `${projects} doesn't exist, so this account can't see the transcripts in ${storeRoot}. Run "agentbox accounts relink".`;
+      return `${projects} doesn't exist, so this account can't see the transcripts in ${storeRoot}. Run "aio accounts relink".`;
     case "dangling":
-      return `${projects} is a link to a folder that doesn't exist, so boxes on this account can't resume earlier conversations. Run "agentbox accounts relink".`;
+      return `${projects} is a link to a folder that doesn't exist, so boxes on this account can't resume earlier conversations. Run "aio accounts relink".`;
     case "foreign":
-      return `${projects} doesn't lead to the transcript store ${storeRoot}, so boxes on this account see other conversations. Run "agentbox accounts relink".`;
+      return `${projects} doesn't lead to the transcript store ${storeRoot}, so boxes on this account see other conversations. Run "aio accounts relink".`;
     case "directory":
-      return `${projects} is a real folder, not a link to ${storeRoot}. Move its transcripts into the store by hand, then run "agentbox accounts relink".`;
+      return `${projects} is a real folder, not a link to ${storeRoot}. Move its transcripts into the store by hand, then run "aio accounts relink".`;
   }
 }
 

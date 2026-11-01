@@ -7,8 +7,8 @@ import {
   type BoxView,
   type GlobalSettings,
   type ProjectSummary,
-} from "@agentbox/contracts";
-import { isApiError, useApiClient, useEvent, useResync, useStreamStatus } from "@agentbox/ui";
+} from "@aio/contracts";
+import { isApiError, useApiClient, useEvent, useResync, useStreamStatus } from "@aio/ui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { applyBoxChanged, applyPorts, applyStats, projectCounts } from "../logic/store";
 

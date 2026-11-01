@@ -1,17 +1,17 @@
-// The agentbox-review Electron shell: one window on the server's `/review/`
+// The aio-review Electron shell: one window on the server's `/review/`
 // page, a tray icon with the active run count, desktop notifications for the
-// review kinds, a single instance, and `agentbox-review://` deep links.
+// review kinds, a single instance, and `aio-review://` deep links.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { HOME_PATHS, type NotificationToggles } from "@agentbox/contracts";
-import { ApiClient, EventsConnection, isAppPage, isWebUrl } from "@agentbox/ui/core";
+import { HOME_PATHS, type NotificationToggles } from "@aio/contracts";
+import { ApiClient, EventsConnection, isAppPage, isWebUrl } from "@aio/ui/core";
 import {
   certificateVerdict,
   dataFile,
   pinReader,
   pinnedTransport,
   serverUrl,
-} from "@agentbox/ui/electron-main";
+} from "@aio/ui/electron-main";
 import WebSocket from "ws";
 import {
   BrowserWindow,
@@ -41,7 +41,7 @@ import {
 
 /** The token, read again for every use, so a server set up after the app started still works. */
 function readToken(): string | null {
-  if (process.env.AGENTBOX_SERVER_TOKEN) return process.env.AGENTBOX_SERVER_TOKEN;
+  if (process.env.AIO_SERVER_TOKEN) return process.env.AIO_SERVER_TOKEN;
   try {
     return readFileSync(dataFile(HOME_PATHS.serverToken), "utf8").trim() || null;
   } catch {
@@ -58,7 +58,7 @@ function readToken(): string | null {
 const readPin = pinReader(dataFile(HOME_PATHS.serverCert));
 
 const config = { serverUrl: serverUrl() };
-const DEV_URL = process.env.AGENTBOX_REVIEW_DEV_URL;
+const DEV_URL = process.env.AIO_REVIEW_DEV_URL;
 /** The pages that get the token; anything else is foreign. */
 const APP_PAGES = [rendererUrl(config.serverUrl, null), ...(DEV_URL ? [DEV_URL] : [])];
 
@@ -132,7 +132,7 @@ function show(hash?: string) {
   win.focus();
   if (!hash) return;
   const now = pending.request(hash, pageReady());
-  if (now) win.webContents.send("agentbox:navigate", now);
+  if (now) win.webContents.send("aio:navigate", now);
 }
 
 let serverRetry: ReturnType<typeof setTimeout> | null = null;
@@ -153,7 +153,7 @@ function createWindow(link: ReturnType<typeof parseDeepLink>) {
   win = new BrowserWindow({
     width: 1280,
     height: 860,
-    title: "Agent Box Review",
+    title: "AI Orchestrator Review",
     backgroundColor: "#0d0d0d",
     webPreferences: {
       preload: join(__dirname, "preload.cjs"),
@@ -196,7 +196,7 @@ function createWindow(link: ReturnType<typeof parseDeepLink>) {
   win.webContents.on("did-finish-load", () => {
     if (!win || !isApp(win.webContents.getURL())) return;
     const hash = pending.take();
-    if (hash) win.webContents.send("agentbox:navigate", hash);
+    if (hash) win.webContents.send("aio:navigate", hash);
   });
   win.on("close", (e) => {
     // Closing hides the window; the tray keeps counting runs.
@@ -282,9 +282,9 @@ function connectEvents() {
 let quitting = false;
 
 // Sets the X11 window class and the Wayland app_id to the name of the
-// desktop entry (agentbox-review.desktop), so the shell ties the window to
+// desktop entry (aio-review.desktop), so the shell ties the window to
 // its entry and icon. app.setName changes only the display name.
-app.commandLine.appendSwitch("class", "agentbox-review");
+app.commandLine.appendSwitch("class", "aio-review");
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -303,19 +303,19 @@ if (!app.requestSingleInstanceLock()) {
     quitting = true;
   });
   app.on("activate", () => show());
-  ipcMain.on("agentbox:config", (e) => {
+  ipcMain.on("aio:config", (e) => {
     // Under the Vite dev server the page calls its own origin, which proxies to the server.
     e.returnValue = { serverUrl: DEV_URL ? null : config.serverUrl };
   });
   // The preload asks once per page load and hands the token to the page once.
-  ipcMain.on("agentbox:token", (e) => {
+  ipcMain.on("aio:token", (e) => {
     // Only the app's own page gets the token.
     const url = e.senderFrame?.url;
     const trusted = typeof url === "string" && isAppPage(url, APP_PAGES);
     e.returnValue = trusted ? readToken() : null;
   });
   void app.whenReady().then(() => {
-    app.setAppUserModelId("agentbox-review");
+    app.setAppUserModelId("aio-review");
     // Pages and their sockets on the server's host load only from a server
     // that presents the pinned certificate.
     session.defaultSession.setCertificateVerifyProc((request, callback) =>

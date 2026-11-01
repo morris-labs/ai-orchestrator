@@ -1,4 +1,4 @@
-import type { Decision, Finding, RunState } from "@agentbox/contracts";
+import type { Decision, Finding, RunState } from "@aio/contracts";
 import { describe, expect, it } from "vitest";
 import {
   PIPELINE_STEPS,

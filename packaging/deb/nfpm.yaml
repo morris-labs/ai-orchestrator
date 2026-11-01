@@ -1,4 +1,4 @@
-# nfpm configuration for the agentbox .deb.
+# nfpm configuration for the ai-orchestrator .deb.
 #
 # scripts/build-deb.sh assembles a staging directory and runs nfpm from it,
 # so every `src` here is relative to that directory: `root/` mirrors the
@@ -8,22 +8,22 @@
 # The server runs as the logged-in user through a systemd user unit, never
 # as root. The package installs files only; postinst prints how to enable
 # the service.
-name: agentbox
+name: ai-orchestrator
 arch: amd64
 platform: linux
-version: ${AGENTBOX_VERSION}
+version: ${AIO_VERSION}
 version_schema: semver
 section: devel
 priority: optional
 maintainer: Morris Labs <development@morrislabs.app>
 description: |-
   Sandboxed coding agents in Docker, with a multi-vendor review pipeline.
-  Agent Box runs Claude Code, Codex, and GitHub Copilot sessions in one
-  container per project. The package holds the agentbox-server user
-  service, the agentbox CLI, the Agent Box and Agent Box Review desktop
+  AI Orchestrator runs Claude Code, Codex, and GitHub Copilot sessions in one
+  container per project. The package holds the aio-server user
+  service, the aio CLI, the AI Orchestrator and AI Orchestrator Review desktop
   apps, and the Dockerfile the setup wizard builds the container image from.
-vendor: Agent Box
-homepage: https://github.com/morris-labs/Claude-Box
+vendor: AI Orchestrator
+homepage: https://github.com/morris-labs/ai-orchestrator
 license: Proprietary
 
 depends:
@@ -42,82 +42,82 @@ recommends:
 
 contents:
   # The server and the CLI: production node_modules from `pnpm deploy`.
-  - src: root/usr/lib/agentbox/server
-    dst: /usr/lib/agentbox/server
+  - src: root/usr/lib/ai-orchestrator/server
+    dst: /usr/lib/ai-orchestrator/server
     type: tree
-  - src: root/usr/lib/agentbox/cli
-    dst: /usr/lib/agentbox/cli
+  - src: root/usr/lib/ai-orchestrator/cli
+    dst: /usr/lib/ai-orchestrator/cli
     type: tree
 
   # The two Electron apps, from `electron-builder --dir`.
-  - src: root/usr/lib/agentbox/boxes
-    dst: /usr/lib/agentbox/boxes
+  - src: root/usr/lib/ai-orchestrator/boxes
+    dst: /usr/lib/ai-orchestrator/boxes
     type: tree
-  - src: root/usr/lib/agentbox/review
-    dst: /usr/lib/agentbox/review
+  - src: root/usr/lib/ai-orchestrator/review
+    dst: /usr/lib/ai-orchestrator/review
     type: tree
 
   # Launchers.
-  - src: root/usr/bin/agentbox
-    dst: /usr/bin/agentbox
+  - src: root/usr/bin/aio
+    dst: /usr/bin/aio
     file_info:
       mode: 0755
-  - src: root/usr/bin/agentbox-server
-    dst: /usr/bin/agentbox-server
+  - src: root/usr/bin/aio-server
+    dst: /usr/bin/aio-server
     file_info:
       mode: 0755
-  - src: /usr/lib/agentbox/boxes/agentbox-boxes
-    dst: /usr/bin/agentbox-boxes
+  - src: /usr/lib/ai-orchestrator/boxes/aio-boxes
+    dst: /usr/bin/aio-boxes
     type: symlink
-  - src: /usr/lib/agentbox/review/agentbox-review
-    dst: /usr/bin/agentbox-review
+  - src: /usr/lib/ai-orchestrator/review/aio-review
+    dst: /usr/bin/aio-review
     type: symlink
 
   # Desktop entries and icons.
-  - src: root/usr/share/applications/agentbox-boxes.desktop
-    dst: /usr/share/applications/agentbox-boxes.desktop
+  - src: root/usr/share/applications/aio-boxes.desktop
+    dst: /usr/share/applications/aio-boxes.desktop
     file_info:
       mode: 0644
-  - src: root/usr/share/applications/agentbox-review.desktop
-    dst: /usr/share/applications/agentbox-review.desktop
+  - src: root/usr/share/applications/aio-review.desktop
+    dst: /usr/share/applications/aio-review.desktop
     file_info:
       mode: 0644
-  - src: root/usr/share/icons/hicolor/scalable/apps/agentbox-boxes.svg
-    dst: /usr/share/icons/hicolor/scalable/apps/agentbox-boxes.svg
+  - src: root/usr/share/icons/hicolor/scalable/apps/aio-boxes.svg
+    dst: /usr/share/icons/hicolor/scalable/apps/aio-boxes.svg
     file_info:
       mode: 0644
-  - src: root/usr/share/icons/hicolor/scalable/apps/agentbox-review.svg
-    dst: /usr/share/icons/hicolor/scalable/apps/agentbox-review.svg
+  - src: root/usr/share/icons/hicolor/scalable/apps/aio-review.svg
+    dst: /usr/share/icons/hicolor/scalable/apps/aio-review.svg
     file_info:
       mode: 0644
 
-  # The systemd user unit (packaging/systemd/agentbox-server.service).
-  - src: root/usr/lib/systemd/user/agentbox-server.service
-    dst: /usr/lib/systemd/user/agentbox-server.service
+  # The systemd user unit (packaging/systemd/aio-server.service).
+  - src: root/usr/lib/systemd/user/aio-server.service
+    dst: /usr/lib/systemd/user/aio-server.service
     file_info:
       mode: 0644
 
   # The apps' web bundles, which the server serves at /boxes/ and /review/.
-  - src: root/usr/share/agentbox/web
-    dst: /usr/share/agentbox/web
+  - src: root/usr/share/ai-orchestrator/web
+    dst: /usr/share/ai-orchestrator/web
     type: tree
 
   # The image build context and its build script, for the setup wizard.
-  - src: root/usr/share/agentbox/image
-    dst: /usr/share/agentbox/image
+  - src: root/usr/share/ai-orchestrator/image
+    dst: /usr/share/ai-orchestrator/image
     type: tree
-  - src: root/usr/share/agentbox/scripts
-    dst: /usr/share/agentbox/scripts
+  - src: root/usr/share/ai-orchestrator/scripts
+    dst: /usr/share/ai-orchestrator/scripts
     type: tree
 
   # AppArmor profiles that let the Electron sandbox create user namespaces.
-  - src: root/etc/apparmor.d/agentbox-boxes
-    dst: /etc/apparmor.d/agentbox-boxes
+  - src: root/etc/apparmor.d/aio-boxes
+    dst: /etc/apparmor.d/aio-boxes
     type: config
     file_info:
       mode: 0644
-  - src: root/etc/apparmor.d/agentbox-review
-    dst: /etc/apparmor.d/agentbox-review
+  - src: root/etc/apparmor.d/aio-review
+    dst: /etc/apparmor.d/aio-review
     type: config
     file_info:
       mode: 0644

@@ -1,7 +1,7 @@
 // Schema migrations, applied in order. `PRAGMA user_version` holds the number
 // of migrations applied. Never edit a migration that has shipped; add one. A
 // migration is SQL, or a function for a step that SQL can't express.
-import { deriveHostKey } from "@agentbox/contracts";
+import { deriveHostKey } from "@aio/contracts";
 import type { Sqlite } from "./database.js";
 
 export type Migration = string | ((db: Sqlite) => void);

@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { ModelsResultSchema, type ModelCache } from "@agentbox/contracts";
+import { ModelsResultSchema, type ModelCache } from "@aio/contracts";
 import {
   MODEL_BASELINE,
   MODEL_SCAN_COMMAND,
@@ -120,7 +120,7 @@ function catalog(docker: DockerClient, initial?: ModelCache) {
   const c = new ModelCatalog({
     env,
     docker,
-    image: () => "claude-code",
+    image: () => "aio-agent",
     getCache: () => cache,
     setCache: (v) => {
       cache = v;
@@ -152,7 +152,7 @@ describe("ModelCatalog", () => {
     const { c, cache } = catalog(docker);
     expect(await c.refreshIfStale()).toBe(true);
     expect(runs[0]).toMatchObject({
-      image: "claude-code",
+      image: "aio-agent",
       entrypoint: ["sh"],
       cmd: ["-c", MODEL_SCAN_COMMAND],
     });

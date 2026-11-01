@@ -1,15 +1,15 @@
-// Policy editor: loads and saves `<project>/.claude-box/policy.yaml` through
+// Policy editor: loads and saves `<project>/.aio/policy.yaml` through
 // the server, as a form or as raw YAML, validated with the contract schema.
 // It saves the file's text, so comments in the file survive, and passes the
 // revision it loaded, so a file changed on disk meanwhile isn't overwritten
 // without asking.
-import type { PolicyCommand, PolicyFile, PolicyRule, ProjectSummary } from "@agentbox/contracts";
-import { DEFAULT_POLICY } from "@agentbox/contracts";
+import type { PolicyCommand, PolicyFile, PolicyRule, ProjectSummary } from "@aio/contracts";
+import { DEFAULT_POLICY } from "@aio/contracts";
 import { useEffect, useRef, useState } from "react";
 import { ErrorBanner, Field } from "../components/common.js";
 import { href, navigate, setLeaveGuard } from "../state/router.js";
-import { isApiError } from "@agentbox/ui/core";
-import { useApiClient } from "@agentbox/ui/hooks";
+import { isApiError } from "@aio/ui/core";
+import { useApiClient } from "@aio/ui/hooks";
 import {
   commaList,
   lines,

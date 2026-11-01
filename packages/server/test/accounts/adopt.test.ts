@@ -18,8 +18,8 @@ function write(file: string, content: string): void {
 }
 
 function layout() {
-  const home = fs.realpathSync(tempDir("agentbox-adopt-"));
-  const store = path.join(home, ".claude-box", "transcripts", "claude");
+  const home = fs.realpathSync(tempDir("aio-adopt-"));
+  const store = path.join(home, ".ai-orchestrator", "transcripts", "claude");
   const projects = path.join(home, ".claude", "projects");
   fs.mkdirSync(path.join(home, ".claude"), { recursive: true });
   return { home, store, projects, middle: path.join(home, "intermediate-link") };
@@ -153,7 +153,7 @@ describe("AccountService.adoptTranscripts", () => {
     const l = layout();
     const env: HostEnv = {
       home: l.home,
-      dataDir: path.join(l.home, ".claude-box"),
+      dataDir: path.join(l.home, ".ai-orchestrator"),
       user: "tester",
       now: () => new Date("2026-11-01T09:00:00Z"),
     };

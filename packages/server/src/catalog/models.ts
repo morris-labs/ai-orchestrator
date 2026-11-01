@@ -9,7 +9,7 @@ import {
   type Effort,
   type ModelCache,
   type ModelsResultSchema,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 import type { z } from "zod";
 import type { DockerClient } from "../docker/types.js";
 import type { HostEnv } from "../records/env.js";

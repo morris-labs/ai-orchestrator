@@ -10,7 +10,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Vendor, VendorFinding } from "@agentbox/contracts";
+import type { Vendor, VendorFinding } from "@aio/contracts";
 import type {
   AdapterRequest,
   AdapterResult,
@@ -64,7 +64,7 @@ export function loadBugs(): Bug[] {
 
 /** Builds the sample repository in a new temporary directory and returns the repo path. */
 export function buildSampleRepo(): string {
-  const dest = tempDir("agentbox-sample-");
+  const dest = tempDir("aio-sample-");
   execFileSync("bash", [join(SAMPLE_DIR, "build.sh"), dest], { stdio: "pipe" });
   return join(dest, "repo");
 }

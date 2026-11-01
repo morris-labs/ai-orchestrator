@@ -2,13 +2,13 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { HOME_PATHS } from "@agentbox/contracts";
+import { HOME_PATHS } from "@aio/contracts";
 import { dataPath } from "../records/env.js";
 
-export const SESSION_COOKIE = "agentbox_session";
+export const SESSION_COOKIE = "aio_session";
 
 /**
- * Reads `server.token` in the data directory (`~/.claude-box` unless
+ * Reads `server.token` in the data directory (`~/.ai-orchestrator` unless
  * `dataDir` is set), or creates it with mode 0600 on first start. Tightens
  * the mode of an existing file that others can read.
  */

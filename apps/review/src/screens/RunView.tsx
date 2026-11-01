@@ -12,7 +12,7 @@ import {
   type RoundSummary,
   type RunState,
   type Vendor,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 import {
   AgentsTable,
   VENDOR_LABELS,
@@ -20,12 +20,12 @@ import {
   agentRows,
   formatUsd,
   vendorColor,
-} from "@agentbox/ui/dashboard";
+} from "@aio/ui/dashboard";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ErrorBanner, RunStatusBadge, shortId } from "../components/common.js";
 import { EventBuffer } from "../state/eventBuffer.js";
 import { href } from "../state/router.js";
-import { useApiClient, useAnyEvent } from "@agentbox/ui/hooks";
+import { useApiClient, useAnyEvent } from "@aio/ui/hooks";
 import { useStore } from "../state/store.js";
 import { decisionView, isNewerRun, oscillationPairs, runControls, stepStates } from "./runModel.js";
 

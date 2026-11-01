@@ -1,4 +1,4 @@
-import { RunIdSchema, projectContainerName, serverRoutes } from "@agentbox/contracts";
+import { RunIdSchema, projectContainerName, serverRoutes } from "@aio/contracts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { sessionValue } from "../../src/api/auth.js";
 import { failureOf } from "../../src/api/server.js";
@@ -417,7 +417,7 @@ describe("authentication", () => {
   it("serves health without a token", async () => {
     const res = await h.server.app.inject({ method: "GET", url: `${V1}/health` });
     expect(res.statusCode).toBe(200);
-    expect(res.json().version).toBe("4.0.0-dev");
+    expect(res.json().version).toBe("1.0.0-dev");
   });
 
   it("sets the session cookie and accepts it afterwards", async () => {
@@ -432,7 +432,7 @@ describe("authentication", () => {
     expect(cookie).toContain("Path=/");
     expect(cookie).not.toContain(TOKEN);
     const value = cookie.split(";")[0] as string;
-    expect(value).toBe(`agentbox_session=${sessionValue(TOKEN)}`);
+    expect(value).toBe(`aio_session=${sessionValue(TOKEN)}`);
     const next = await h.server.app.inject({
       method: "GET",
       url: `${V1}/projects`,
@@ -445,7 +445,7 @@ describe("authentication", () => {
     const res = await h.server.app.inject({
       method: "POST",
       url: `${V1}/auth/session`,
-      headers: { cookie: `agentbox_session=${sessionValue(TOKEN)}` },
+      headers: { cookie: `aio_session=${sessionValue(TOKEN)}` },
     });
     expect(res.statusCode).toBe(401);
   });
@@ -488,7 +488,7 @@ describe("errors", () => {
     h.server.app.inject({ method, url, headers: AUTH, ...(body ? { payload: body } : {}) });
 
   it("maps not_found to 404", async () => {
-    const res = await call("GET", `${V1}/boxes/claude-agent-missing`);
+    const res = await call("GET", `${V1}/boxes/aio-agent-missing`);
     expect(res.statusCode).toBe(404);
     expect(res.json().error.code).toBe("not_found");
   });
@@ -740,7 +740,7 @@ describe("jobs", () => {
       headers: AUTH,
     });
     expect(done.json().status).toBe("finished");
-    expect(done.json().result.box.id).toBe("claude-agent-new");
+    expect(done.json().result.box.id).toBe("aio-agent-new");
   });
 
   it("answers an unknown job with not_found", async () => {

@@ -3,8 +3,8 @@
 # into dist/, so the app needs only the build output and package.json. The
 # explicit file list keeps source, tests, and node_modules out of the
 # archive.
-appId: dev.agentbox.review
-productName: "Agent Box Review"
+appId: dev.aio.review
+productName: "AI Orchestrator Review"
 npmRebuild: false
 nodeGypRebuild: false
 asar: true

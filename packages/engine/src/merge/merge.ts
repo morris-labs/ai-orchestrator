@@ -7,7 +7,7 @@ import {
   type Severity,
   type Vendor,
   type VendorFinding,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 import { textSimilarity, titleSimilarity } from "./fingerprint.js";
 
 /** A raw finding from one agent, before the merge gives it an id. */

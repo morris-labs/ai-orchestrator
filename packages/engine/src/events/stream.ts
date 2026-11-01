@@ -2,9 +2,9 @@
 // events filtered by type, and the lease frames in both directions.
 import {
   EngineStreamClientFrameSchema,
-  type AgentBoxEvent,
+  type AioEvent,
   type EngineStreamFrame,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 import type { WebSocket } from "ws";
 import type { Logger } from "../api/core-interface.js";
 import type { EventHub } from "./hub.js";
@@ -49,7 +49,7 @@ export function serveEventSocket(socket: WebSocket, options: EventSocketOptions)
     }
     socket.send(JSON.stringify(frame));
   };
-  const wanted = (event: AgentBoxEvent) => types === null || types.has(event.type);
+  const wanted = (event: AioEvent) => types === null || types.has(event.type);
 
   socket.on("message", (data, isBinary) => {
     if (isBinary) {

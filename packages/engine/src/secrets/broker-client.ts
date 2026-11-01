@@ -1,10 +1,10 @@
 // A client of the secrets broker: the Unix socket the server mounts into
 // each project container (see `docs/secrets.md`). The engine uses
 // it to get the credentials it hands vendor CLIs and `git`, and the
-// `agentbox-secret` command wraps it for everything else in the container.
+// `aio-secret` command wraps it for everything else in the container.
 //
 // This module imports only Node built-ins and the contracts, so the
-// `agentbox-secret` command starts fast.
+// `aio-secret` command starts fast.
 import http from "node:http";
 import {
   BROKER_ENV,
@@ -12,7 +12,7 @@ import {
   BROKER_SOCKET_PATH,
   BrokerNamesResponseSchema,
   BrokerReadResponseSchema,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 
 /**
  * Why a broker call failed:
@@ -55,7 +55,7 @@ const BROKER_CODES = new Set<BrokerClientErrorCode>([
 
 /** Where a client finds the broker. */
 export interface BrokerClientOptions {
-  /** The socket path. Default: `AGENTBOX_BROKER_SOCKET`, else `BROKER_SOCKET_PATH`. */
+  /** The socket path. Default: `AIO_BROKER_SOCKET`, else `BROKER_SOCKET_PATH`. */
   socketPath?: string;
   /** The environment to read the transport from. Default: `process.env`. */
   env?: Record<string, string | undefined>;
@@ -172,7 +172,7 @@ export class BrokerClient {
   private unreachable(err: Error): BrokerError {
     return new BrokerError(
       "unreachable",
-      `Can't reach the secrets broker at ${this.socketPath}: ${err.message}. The Agent Box server might be stopped.`,
+      `Can't reach the secrets broker at ${this.socketPath}: ${err.message}. The AI Orchestrator server might be stopped.`,
     );
   }
 }

@@ -2,7 +2,7 @@
 // fans them out to subscribers. See the sequence rules in the contracts'
 // `events.ts`.
 import { randomUUID } from "node:crypto";
-import { EventSchema, type AgentBoxEvent } from "@agentbox/contracts";
+import { EventSchema, type AioEvent } from "@aio/contracts";
 import type { EventDraft, EventSink } from "../api/core-interface.js";
 
 export interface EventHubOptions {
@@ -15,19 +15,19 @@ export interface EventHubOptions {
   newId?: () => string;
 }
 
-export type EventListener = (event: AgentBoxEvent) => void;
+export type EventListener = (event: AioEvent) => void;
 
 /** The outcome of a client's `hello`: what to send back and what to replay. */
 export interface ReplayPlan {
   replaying: boolean;
-  events: AgentBoxEvent[];
+  events: AioEvent[];
 }
 
 export class EventHub implements EventSink {
   readonly streamId: string;
   readonly source: string;
   private seq = 0;
-  private readonly buffer: AgentBoxEvent[] = [];
+  private readonly buffer: AioEvent[] = [];
   private readonly capacity: number;
   private readonly listeners = new Set<EventListener>();
   private readonly now: () => Date;
@@ -51,7 +51,7 @@ export class EventHub implements EventSink {
    * hands it to every listener. Throws a `ZodError` for an invalid draft, in
    * which case no number is used.
    */
-  emit(draft: EventDraft): AgentBoxEvent {
+  emit(draft: EventDraft): AioEvent {
     const seq = this.seq + 1;
     const event = EventSchema.parse({
       ...draft,

@@ -1,4 +1,4 @@
-import { PolicyFileSchema } from "@agentbox/contracts";
+import { PolicyFileSchema } from "@aio/contracts";
 import { describe, expect, it } from "vitest";
 import type { CommandRunner } from "../../src/core.js";
 import {
@@ -142,7 +142,7 @@ describe("gate", () => {
       tests: [
         {
           command:
-            'echo "$PYTHONDONTWRITEBYTECODE" > flag.out; mkdir -p cache ignored .claude-box; touch cache/a.pyc ignored/keep .claude-box/run.json',
+            'echo "$PYTHONDONTWRITEBYTECODE" > flag.out; mkdir -p cache ignored .aio; touch cache/a.pyc ignored/keep .aio/run.json',
         },
       ],
     });
@@ -159,7 +159,7 @@ describe("gate", () => {
     expect(result.leftovers).toEqual(["cache/a.pyc", "flag.out"]);
     expect(existsSync(join(repo, "mine.txt"))).toBe(true);
     expect(existsSync(join(repo, "ignored", "keep"))).toBe(true);
-    expect(existsSync(join(repo, ".claude-box", "run.json"))).toBe(true);
+    expect(existsSync(join(repo, ".aio", "run.json"))).toBe(true);
     expect(result.commands[0]?.outputTail).toBe("");
   });
 

@@ -3,7 +3,7 @@
 // that connects late to `jobs.stream` sees it from the start.
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
-import type { Job } from "@agentbox/contracts";
+import type { Job } from "@aio/contracts";
 import { toApiError } from "../api/errors.js";
 import type { SpawnedProcess } from "./process.js";
 

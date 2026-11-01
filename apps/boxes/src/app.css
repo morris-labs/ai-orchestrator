@@ -1,4 +1,4 @@
-/* Layout of the boxes app. Colors come from the theme tokens in @agentbox/ui. */
+/* Layout of the boxes app. Colors come from the theme tokens in @aio/ui. */
 .bx-app {
   display: flex;
   flex-direction: column;

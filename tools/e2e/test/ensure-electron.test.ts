@@ -42,7 +42,7 @@ function run(...args: string[]) {
 }
 
 beforeEach(() => {
-  fake = fs.mkdtempSync(path.join(os.tmpdir(), "agentbox-ensure-electron-"));
+  fake = fs.mkdtempSync(path.join(os.tmpdir(), "aio-ensure-electron-"));
   pkg = path.join(fake, "store", "electron");
 });
 

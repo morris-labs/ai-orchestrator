@@ -1,6 +1,6 @@
 // An in-memory `DockerClient` for tests and for the server's dry-run mode. It
 // keeps containers in a map, plays the keeper by writing the sessions state
-// file into the container's `/run/claude-box` bind, and understands the tmux
+// file into the container's `/run/aio` bind, and understands the tmux
 // commands the core sends through `exec`.
 import fs from "node:fs";
 import path from "node:path";
@@ -151,7 +151,7 @@ export class MemoryDocker implements DockerClient {
     options: { all?: boolean; size?: boolean; status?: string; nameRegex?: string } = {},
   ): Promise<ContainerSummary[]> {
     this.record("listContainers", options);
-    const re = new RegExp(options.nameRegex ?? "^claude-agent-");
+    const re = new RegExp(options.nameRegex ?? "^aio-agent-");
     return [...this.containers.values()]
       .filter((c) => re.test(c.spec.name))
       .filter((c) => (options.all ? true : c.running))

@@ -32,7 +32,7 @@ export function isAuthorized(req: IncomingMessage, expected: string): boolean {
  * The header the server uses to send the engine token on `/proxy` requests,
  * so the browser's own `Authorization` header reaches the proxied app.
  */
-export const ENGINE_TOKEN_HEADER = "x-agentbox-engine-token";
+export const ENGINE_TOKEN_HEADER = "x-aio-engine-token";
 
 /** The token in the engine-token header, or `null`. */
 export function headerToken(value: string | string[] | undefined): string | null {
@@ -49,7 +49,7 @@ export function isEngineBearer(value: string | string[] | undefined, expected: s
 
 /**
  * True when a `/proxy` request, HTTP or WebSocket upgrade, carries the engine
- * token: in `x-agentbox-engine-token`, which the server sends, or in
+ * token: in `x-aio-engine-token`, which the server sends, or in
  * `Authorization`.
  */
 export function isProxyAuthorized(req: IncomingMessage, expected: string): boolean {

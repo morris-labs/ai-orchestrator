@@ -1,7 +1,7 @@
 // The prompt templates editor: four tabs, each with its placeholders, Reset
 // to default, and an empty template that turns the prompt off.
-import type { PromptTemplates } from "@agentbox/contracts";
-import { Button, Dialog, errorMessage, useApiClient } from "@agentbox/ui";
+import type { PromptTemplates } from "@aio/contracts";
+import { Button, Dialog, errorMessage, useApiClient } from "@aio/ui";
 import { useEffect, useState } from "react";
 
 type Key = keyof PromptTemplates;

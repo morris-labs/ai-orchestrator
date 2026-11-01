@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# Sets the Agent Box version in every workspace package.json and in the
-# AGENTBOX_ENGINE_VERSION pin of image/versions.env, or checks that they
+# Sets the AI Orchestrator version in every workspace package.json and in the
+# AIO_ENGINE_VERSION pin of image/versions.env, or checks that they
 # agree.
 #
 # A workspace package.json is the root one or any package.json under
 # packages/, apps/, or tools/ (one level deep) whose name starts with
-# "@agentbox/". Fixtures with other names keep their own versions.
+# "@aio/". Fixtures with other names keep their own versions.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source-path=SCRIPTDIR source=lib/common.sh
 . "$SCRIPT_DIR/lib/common.sh"
 
-ROOT="${AGENTBOX_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}"
+ROOT="${AIO_ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 VERSIONS="$ROOT/image/versions.env"
 
 usage() {
@@ -20,7 +20,7 @@ usage() {
 Usage: $(basename "$0") VERSION
        $(basename "$0") --check
 
-Sets VERSION (for example, 4.0.0 or 4.1.0-rc.1) in every workspace
+Sets VERSION (for example, 1.0.0 or 1.1.0-rc.1) in every workspace
 package.json and in image/versions.env, or with --check, exits with status 1
 when they disagree.
 USAGE
@@ -39,13 +39,13 @@ manifests() {
   printf '%s\n' "$ROOT/package.json"
   for f in "$ROOT"/packages/*/package.json "$ROOT"/apps/*/package.json "$ROOT"/tools/*/package.json; do
     [[ -f "$f" ]] || continue
-    node -e 'process.exit(require(process.argv[1]).name?.startsWith("@agentbox/") ? 0 : 1)' "$f" &&
+    node -e 'process.exit(require(process.argv[1]).name?.startsWith("@aio/") ? 0 : 1)' "$f" &&
       printf '%s\n' "$f"
   done
 }
 
 if [[ "$1" == "--check" ]]; then
-  expected="$(version_of "$VERSIONS" AGENTBOX_ENGINE_VERSION)"
+  expected="$(version_of "$VERSIONS" AIO_ENGINE_VERSION)"
   bad=0
   while IFS= read -r f; do
     v="$(node -p 'require(process.argv[1]).version' "$f")"
@@ -78,6 +78,6 @@ while IFS= read -r f; do
   log "${f#"$ROOT"/}: $VERSION"
 done < <(manifests)
 
-grep -q '^AGENTBOX_ENGINE_VERSION=' "$VERSIONS" || die "$VERSIONS has no AGENTBOX_ENGINE_VERSION line"
-sed -i "s|^AGENTBOX_ENGINE_VERSION=.*|AGENTBOX_ENGINE_VERSION=$VERSION|" "$VERSIONS"
+grep -q '^AIO_ENGINE_VERSION=' "$VERSIONS" || die "$VERSIONS has no AIO_ENGINE_VERSION line"
+sed -i "s|^AIO_ENGINE_VERSION=.*|AIO_ENGINE_VERSION=$VERSION|" "$VERSIONS"
 log "image/versions.env: $VERSION"

@@ -4,7 +4,7 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { UsageSample, UsageWindow } from "@agentbox/contracts";
+import type { UsageSample, UsageWindow } from "@aio/contracts";
 import {
   AUTH_PATTERN,
   CliAdapter,

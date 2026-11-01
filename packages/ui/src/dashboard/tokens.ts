@@ -1,10 +1,10 @@
 // Theme tokens for the dashboard. The surfaces, text, borders, and status
-// colors come from the shared Agent Box theme (`../theme/tokens`), so the
+// colors come from the shared AI Orchestrator theme (`../theme/tokens`), so the
 // dashboard matches the boxes app. The series colors stay the dataviz
 // palette: the vendor colors are its first three slots, which pass the
 // all-pairs colorblind checks on a dark surface. Every chart that uses them
 // also has a legend or a table view.
-import type { Vendor } from "@agentbox/contracts";
+import type { Vendor } from "@aio/contracts";
 import { blend, cssVariables, derived, palette } from "../theme/tokens";
 
 /** The fixed vendor order. Colors follow the vendor, never its rank. */
@@ -64,6 +64,6 @@ function declarations(vars: Record<string, string>): string {
 /**
  * The token style sheet: the shared theme's variables plus the dashboard's.
  * Mount it once with `<style>{themeCss}</style>`. An app that also imports
- * `@agentbox/ui/theme.css` gets the same values twice, which is harmless.
+ * `@aio/ui/theme.css` gets the same values twice, which is harmless.
  */
 export const themeCss = `:root { color-scheme: dark; ${declarations(cssVariables())} ${declarations(fonts)} ${declarations(dashboardTokens)} }`;

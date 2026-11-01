@@ -20,7 +20,7 @@ import {
   type Mount,
   type PromptTemplates,
   type SecretRef,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 import { z } from "zod";
 import type { SettingsRepo } from "../db/repositories.js";
 import type { HostEnv } from "./env.js";
@@ -77,7 +77,7 @@ export class SettingsService {
   ) {}
 
   /**
-   * Seeds the database from `~/.claude-box/config.json` the first time, when
+   * Seeds the database from `~/.ai-orchestrator/config.json` the first time, when
    * that file exists and no settings were saved yet. Returns whether it did.
    */
   seedFromConfigFile(): boolean {

@@ -29,9 +29,9 @@ describe("paths", () => {
   it("builds the worktree, branch, and notes paths", () => {
     expect(worktreePath("/r/repo/", "fix")).toBe("/r/repo/.worktrees/fix");
     expect(branchFor("fix")).toBe("claude/fix");
-    expect(notesDir("/p", "fix")).toBe("/p/.claude-box/conversations/fix");
-    expect(infraFile("/p/")).toBe("/p/.claude-box/INFRA.md");
-    expect(worktreeNotesDir("/r/.worktrees/fix")).toBe("/r/.worktrees/fix/.claude-box");
+    expect(notesDir("/p", "fix")).toBe("/p/.aio/conversations/fix");
+    expect(infraFile("/p/")).toBe("/p/.aio/INFRA.md");
+    expect(worktreeNotesDir("/r/.worktrees/fix")).toBe("/r/.worktrees/fix/.aio");
   });
 
   it("creates the notes directories", () => {
@@ -83,17 +83,17 @@ describe("exclude rules", () => {
     const file = await commonExcludeFile(repo);
     fs.writeFileSync(file, "*.log");
     expect((await ensureExcluded(repo)).ok).toBe(true);
-    expect(fs.readFileSync(file, "utf8")).toBe("*.log\n# claude-box\n.worktrees/\n.claude-box/\n");
+    expect(fs.readFileSync(file, "utf8")).toBe("*.log\n# aio\n.worktrees/\n.aio/\n");
     expect((await ensureExcluded(repo)).ok).toBe(true);
-    expect(fs.readFileSync(file, "utf8")).toBe("*.log\n# claude-box\n.worktrees/\n.claude-box/\n");
+    expect(fs.readFileSync(file, "utf8")).toBe("*.log\n# aio\n.worktrees/\n.aio/\n");
   });
 
   it("accepts entries that are already there with a leading slash or trailing spaces", async () => {
     const repo = initRepo(path.join(tempDir(), "repo"));
     const file = await commonExcludeFile(repo);
-    fs.writeFileSync(file, "/.worktrees/\n.claude-box/  \n");
+    fs.writeFileSync(file, "/.worktrees/\n.aio/  \n");
     await ensureExcluded(repo);
-    expect(fs.readFileSync(file, "utf8")).toBe("/.worktrees/\n.claude-box/  \n");
+    expect(fs.readFileSync(file, "utf8")).toBe("/.worktrees/\n.aio/  \n");
   });
 
   it("merges a clone's exclude rules without duplicates or comments", async () => {
@@ -172,7 +172,7 @@ describe("checkRemovable and removeWorktree", () => {
     commitAll(wt, "Ignore things");
     sh(repo, "branch", "keep", "claude/fix"); // the commit exists elsewhere
     write(`${wt}/node_modules/a/index.js`, "x");
-    write(`${wt}/.claude-box/PLAN.md`, "plan");
+    write(`${wt}/.aio/PLAN.md`, "plan");
     expect(await checkRemovable(repo, wt)).toEqual({ safe: true });
     write(`${wt}/.env`, "SECRET=1");
     const c = await checkRemovable(repo, wt);
@@ -184,16 +184,16 @@ describe("checkRemovable and removeWorktree", () => {
 
   it("refuses a nested notes folder and a secret inside build output", async () => {
     const { repo, wt } = await fresh();
-    write(`${wt}/.gitignore`, "out/\nnode_modules/\n.claude-box/\n");
+    write(`${wt}/.gitignore`, "out/\nnode_modules/\n.aio/\n");
     write(`${wt}/sub/tracked.txt`, "x");
     commitAll(wt, "Ignore things");
     sh(repo, "branch", "keep", "claude/fix");
-    write(`${wt}/sub/.claude-box/PLAN.md`, "nested plan");
+    write(`${wt}/sub/.aio/PLAN.md`, "nested plan");
     expect(await checkRemovable(repo, wt)).toEqual({
       safe: false,
-      reason: "it has ignored files that exist nowhere else (sub/.claude-box/)",
+      reason: "it has ignored files that exist nowhere else (sub/.aio/)",
     });
-    fs.rmSync(`${wt}/sub/.claude-box`, { recursive: true });
+    fs.rmSync(`${wt}/sub/.aio`, { recursive: true });
     write(`${wt}/out/bundle.js`, "x");
     write(`${wt}/node_modules/lib/test/fixture.pem`, "not mine");
     expect(await checkRemovable(repo, wt)).toEqual({ safe: true });
@@ -229,25 +229,25 @@ describe("checkRemovable and removeWorktree", () => {
 
   it("archives notes, removes the worktree, and deletes the claude/ branch", async () => {
     const { repo, wt } = await fresh();
-    write(`${wt}/.claude-box/STATUS.md`, "status");
+    write(`${wt}/.aio/STATUS.md`, "status");
     const r = await removeWorktree(repo, wt, new Date(2026, 9, 28, 9, 30, 15));
-    expect(r).toEqual({ ok: true, archive: `${repo}/.claude-box/archive/fix-20261028093015` });
-    expect(
-      fs.readFileSync(`${repo}/.claude-box/archive/fix-20261028093015/STATUS.md`, "utf8"),
-    ).toBe("status");
+    expect(r).toEqual({ ok: true, archive: `${repo}/.aio/archive/fix-20261028093015` });
+    expect(fs.readFileSync(`${repo}/.aio/archive/fix-20261028093015/STATUS.md`, "utf8")).toBe(
+      "status",
+    );
     expect(fs.existsSync(wt)).toBe(false);
     expect(sh(repo, "branch", "--list", "claude/fix")).toBe("");
   });
 
   it("puts the notes back when git refuses the removal", async () => {
     const { repo, wt } = await fresh();
-    write(`${wt}/.claude-box/STATUS.md`, "status");
+    write(`${wt}/.aio/STATUS.md`, "status");
     sh(repo, "worktree", "lock", wt);
     const r = await removeWorktree(repo, wt, new Date(2026, 9, 28, 9, 30, 15));
     expect(r.ok).toBe(false);
     expect(fs.existsSync(wt)).toBe(true);
-    expect(fs.readFileSync(`${wt}/.claude-box/STATUS.md`, "utf8")).toBe("status");
-    expect(fs.existsSync(`${repo}/.claude-box/archive/fix-20261028093015`)).toBe(false);
+    expect(fs.readFileSync(`${wt}/.aio/STATUS.md`, "utf8")).toBe("status");
+    expect(fs.existsSync(`${repo}/.aio/archive/fix-20261028093015`)).toBe(false);
   });
 
   it("keeps a branch outside claude/ and refuses an unsafe worktree", async () => {
@@ -268,7 +268,7 @@ describe("checkRemovable and removeWorktree", () => {
 describe("host git safety", () => {
   it("runs no hook, fsmonitor, or filter driver that a box wrote into the repository", async () => {
     const repo = initRepo(path.join(tempDir(), "repo"));
-    const marker = path.join(tempDir("agentbox-marker-"), "SYNTHETIC_PWNED");
+    const marker = path.join(tempDir("aio-marker-"), "SYNTHETIC_PWNED");
     const script = path.join(repo, ".git", "SYNTHETIC_payload.sh");
     write(script, `#!/bin/sh\necho "$0 $*" >> '${marker}'\ncat\n`);
     fs.chmodSync(script, 0o755);
@@ -327,7 +327,7 @@ describe("host git safety", () => {
 
   it("keeps a filter driver set only in the user's global configuration", async () => {
     const repo = initRepo(path.join(tempDir(), "repo"));
-    const globalFile = path.join(tempDir("agentbox-global-"), "gitconfig");
+    const globalFile = path.join(tempDir("aio-global-"), "gitconfig");
     write(globalFile, '[filter "up"]\n\tsmudge = tr a-z A-Z\n\tclean = cat\n');
     write(path.join(repo, ".gitattributes"), "*.txt filter=up\n");
     write(path.join(repo, "b.txt"), "SYNTHETIC lower\n");
@@ -347,7 +347,7 @@ describe("host git safety", () => {
 
   it("refuses transports other than local paths", async () => {
     const repo = initRepo(path.join(tempDir(), "repo"));
-    const marker = path.join(tempDir("agentbox-marker-"), "SYNTHETIC_PWNED");
+    const marker = path.join(tempDir("aio-marker-"), "SYNTHETIC_PWNED");
     const script = path.join(repo, ".git", "SYNTHETIC_ssh.sh");
     write(script, `#!/bin/sh\ntouch '${marker}'\nexit 1\n`);
     fs.chmodSync(script, 0o755);

@@ -1,7 +1,7 @@
-# Agent Box contracts
+# AI Orchestrator contracts
 
-The `@agentbox/contracts` package holds the zod schemas and TypeScript types
-that every Agent Box 4.0.0 package shares: the server, the engine, the CLI,
+The `@aio/contracts` package holds the zod schemas and TypeScript types
+that every AI Orchestrator 1.0.0 package shares: the server, the engine, the CLI,
 the UI library, and both apps. Each module exports a `...Schema` constant for
 runtime validation and a type of the same name inferred from it.
 
@@ -35,7 +35,7 @@ Records and responses follow two rules:
 Import from the package root:
 
 ```ts
-import { BoxSchema, routes, type RouteOf } from "@agentbox/contracts";
+import { BoxSchema, routes, type RouteOf } from "@aio/contracts";
 
 const box = BoxSchema.parse(json);
 type CreateBox = RouteOf<"boxes.create">;
@@ -69,9 +69,9 @@ stay unchanged.
 From the repository root, run the package's checks:
 
 ```sh
-corepack pnpm --filter @agentbox/contracts build
-corepack pnpm --filter @agentbox/contracts test
-corepack pnpm --filter @agentbox/contracts typecheck
+corepack pnpm --filter @aio/contracts build
+corepack pnpm --filter @aio/contracts test
+corepack pnpm --filter @aio/contracts typecheck
 ```
 
 ## Changelog
@@ -117,7 +117,7 @@ Consumers must update for the changes marked **breaking**.
 - `PolicyFile.commentAuthors` (optional list of GitHub logins) names extra
   authors whose pull request comments the post-push loop imports.
 - `ApiErrorCode` adds `unauthorized` (401) and `internal` (500).
-- `ENGINE_ENV.stateDir` (`AGENTBOX_STATE_DIR`, default `/run/claude-box`). On
+- `ENGINE_ENV.stateDir` (`AIO_STATE_DIR`, default `/run/aio`). On
   a version mismatch the engine starts, logs a warning, and reports
   `versionMatches: false`.
 - Server routes: `import.run` (`POST /api/v1/import`, `ImportReport`),
@@ -131,4 +131,4 @@ Consumers must update for the changes marked **breaking**.
   copies it.
 - `aiCredits`, optional, on `agent.finished` and `VendorRoundStats`.
 - The `GlobalSettingsSchema` comment says where settings live: in the
-  database, seeded once from `~/.claude-box/config.json`.
+  database, seeded once from `~/.ai-orchestrator/config.json`.

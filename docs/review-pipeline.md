@@ -7,7 +7,7 @@ conditions that stop a run, the decisions a run can ask you for, and the
 guardrails after a push.
 
 The engine inside each project container runs the pipeline. Every stage
-writes its output as JSON under `PROJECT/.claude-box/runs/RUN_ID/`, so a run
+writes its output as JSON under `PROJECT/.aio/runs/RUN_ID/`, so a run
 can resume from any stage. Replace `PROJECT` with the project root and
 `RUN_ID` with the run's ID.
 
@@ -39,9 +39,9 @@ profile at the start of each round.
 | `fast` | Reviews every round next to Codex, with focus-area reviewers on major groups, and disproves Codex findings. | You want the fewest rounds and the least time. |
 
 To switch the profile of a running run, use the **Profile** control in the
-run view, or run `agentbox review profile RUN_ID PROFILE`. To move a role to
+run view, or run `aio review profile RUN_ID PROFILE`. To move a role to
 another vendor from the next round, run
-`agentbox review assign RUN_ID ROLE VENDOR`.
+`aio review assign RUN_ID ROLE VENDOR`.
 
 ## Usage ceilings
 
@@ -64,7 +64,7 @@ passes its ceiling, the run pauses until the window resets and notifies you.
 You can change the ceilings in the settings, and override them per project.
 
 To see each vendor's usage, ceiling, and reset time, open the usage view or
-run `agentbox review usage`.
+run `aio review usage`.
 
 ## Review range
 
@@ -148,8 +148,8 @@ offers some of the following choices:
 - **Cancel**: end the run.
 
 For an oscillation, the run view shows both versions of the finding. From a
-terminal, `agentbox review resume RUN_ID` resumes a paused or waiting run,
-and `agentbox review cancel RUN_ID` cancels it.
+terminal, `aio review resume RUN_ID` resumes a paused or waiting run,
+and `aio review cancel RUN_ID` cancels it.
 
 ## Post-push loop
 

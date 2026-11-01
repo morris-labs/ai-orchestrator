@@ -1,10 +1,10 @@
 # Troubleshooting
 
-This page lists common problems with Agent Box and how to fix them. Start
+This page lists common problems with AI Orchestrator and how to fix them. Start
 with the built-in checks:
 
 ```sh
-agentbox doctor
+aio doctor
 ```
 
 The command runs the same checks as the setup wizard: Docker, the image, the
@@ -16,25 +16,25 @@ and the server.
 The server runs as a systemd user service. Check its state and its log:
 
 ```sh
-systemctl --user status agentbox-server
-journalctl --user -u agentbox-server -n 100
+systemctl --user status aio-server
+journalctl --user -u aio-server -n 100
 ```
 
 If the service isn't enabled, enable and start it:
 
 ```sh
-systemctl --user enable --now agentbox-server
+systemctl --user enable --now aio-server
 ```
 
 If the log says the port is in use, another process holds `127.0.0.1:21400`.
-Stop that process, or change `serverPort` in `~/.claude-box/config.json`
+Stop that process, or change `serverPort` in `~/.ai-orchestrator/config.json`
 and restart the service.
 
 If the CLI or an app says the server presented a certificate other than the
 one in `server.crt`, another program answered on the server port, or the
 server runs with another data directory than the client. Check what holds
 the port with `ss -ltnp 'sport = :21400'`, and set the same
-`AGENTBOX_DATA_DIR` for the server and its clients. The client sent no
+`AIO_DATA_DIR` for the server and its clients. The client sent no
 token to that program.
 
 If the CLI says there is no server certificate, the server has never started
@@ -42,7 +42,7 @@ with that data directory. Start it once; it creates `server.crt` and
 `server.key`.
 
 If the CLI reports `401 Unauthorized`, the token in
-`~/.claude-box/server.token` doesn't match the running server. Restart the
+`~/.ai-orchestrator/server.token` doesn't match the running server. Restart the
 service, which rereads the file.
 
 If a script or an older client gets `401 Unauthorized` on a WebSocket such
@@ -50,12 +50,12 @@ as `/api/v1/events`, check how it sends the token. The server accepts only
 the `Authorization: Bearer TOKEN` header or the session cookie on an
 upgrade, never a `token` query parameter. With `websocat`, for example,
 pass `-H "Authorization: Bearer TOKEN"`, where `TOKEN` is the content of
-`~/.claude-box/server.token`.
+`~/.ai-orchestrator/server.token`.
 
 If a project's engine never becomes healthy and the container log says
-`The engine token file /run/claude-box/engine.token can't be read`, the
+`The engine token file /run/aio/engine.token can't be read`, the
 container started without the token file the server writes to
-`~/.claude-box/state/CONTAINER/engine.token`. Stop the container and let the
+`~/.ai-orchestrator/state/CONTAINER/engine.token`. Stop the container and let the
 server create it again; check that the state directory is writable by your
 user.
 
@@ -71,13 +71,13 @@ as your user. Check the following:
 
 ## The image is missing or the engine version doesn't match
 
-An `image_missing` error means there's no `claude-code` image. An
+An `image_missing` error means there's no `aio-agent` image. An
 `engine_mismatch` error means the image carries an engine version other
 than the server's, which happens after a package upgrade. In both cases,
 rebuild the image from the setup wizard, or run the following command:
 
 ```sh
-/usr/share/agentbox/scripts/build-image.sh
+/usr/share/ai-orchestrator/scripts/build-image.sh
 ```
 
 The engine version has the form `VERSION+HASH`, where `HASH` identifies the
@@ -85,10 +85,10 @@ engine code. An image built before the hash existed records only `VERSION` and
 reads as stale. To update the agent CLIs as well, add `--update-cli`, which
 writes the latest npm versions to `image/versions.env` before it builds.
 
-The image records its versions in `/etc/agentbox-engine-version`,
+The image records its versions in `/etc/aio-engine-version`,
 `/etc/claude-code-version`, `/etc/codex-version`, and `/etc/copilot-version`.
 To read them, run
-`docker run --rm claude-code cat /etc/agentbox-engine-version`.
+`docker run --rm aio-agent cat /etc/aio-engine-version`.
 
 ## A box won't start because of secrets
 
@@ -99,17 +99,17 @@ installed or a reference can't be read. For each case, see
 come from the sudo password reference, when one is set; the message names
 it.
 
-## agentbox-secret fails in a box
+## aio-secret fails in a box
 
-The `agentbox-secret` command exits with a status that names the cause:
+The `aio-secret` command exits with a status that names the cause:
 
 | Status | Cause | What to do |
 |---|---|---|
-| 3 | The secrets broker socket doesn't answer. | Check that the server runs with `systemctl --user status agentbox-server`. The server recreates the socket within 30 seconds of starting. |
+| 3 | The secrets broker socket doesn't answer. | Check that the server runs with `systemctl --user status aio-server`. The server recreates the socket within 30 seconds of starting. |
 | 4 | The project doesn't list the name. | Add a reference with that name in the project or global settings. No restart is needed. |
 | 5 | 1Password is locked, or the reference doesn't resolve. | Unlock 1Password or fix the reference, then try again. |
 
-The server's journal, `journalctl --user -u agentbox-server`, logs each
+The server's journal, `journalctl --user -u aio-server`, logs each
 request with the container, the names, and the outcome.
 
 ## sudo fails in a container
@@ -122,7 +122,7 @@ password is wrong, set the reference and restart the project container. See
 If a box fails to start with `The container's sudo setup failed`, the root
 setup step that sets the `sudo` policy failed, and the server removed the
 container rather than run it with an unknown policy. The message gives the
-step's error. Rebuild the image if it predates 4.0.0.
+step's error. Rebuild the image if it predates 1.0.0.
 
 ## A container shows as unhealthy
 
@@ -135,7 +135,7 @@ docker logs CONTAINER
 ```
 
 Replace `CONTAINER` with the project container's name, which starts with
-`claude-agent-proj-`. If the log shows a version mismatch, rebuild the
+`aio-agent-proj-`. If the log shows a version mismatch, rebuild the
 image.
 
 ## A dev server link doesn't open
@@ -179,7 +179,7 @@ dialog once in the box's terminal. Claude Code records the answer as
 folder starts without the dialog. A worktree box works in its own folder,
 so a new worktree can ask once more.
 
-Agent Box doesn't answer the dialog for you. Every box mounts the host's
+AI Orchestrator doesn't answer the dialog for you. Every box mounts the host's
 `~/.claude.json` as a single file, and the host's and every box's Claude
 Code write it while they run. A rewrite by the server could race those
 writes and lose settings, and an atomic replace swaps the file for a new
@@ -200,15 +200,15 @@ The following errors can stop a run before its first stage:
 
 Ubuntu restricts unprivileged user namespaces, which the apps' sandbox
 needs. The package installs AppArmor profiles that allow it, at
-`/etc/apparmor.d/agentbox-boxes` and `/etc/apparmor.d/agentbox-review`. If
+`/etc/apparmor.d/aio-boxes` and `/etc/apparmor.d/aio-review`. If
 the apps still fail with a sandbox error, reload the profiles:
 
 ```sh
-sudo apparmor_parser -r /etc/apparmor.d/agentbox-boxes /etc/apparmor.d/agentbox-review
+sudo apparmor_parser -r /etc/apparmor.d/aio-boxes /etc/apparmor.d/aio-review
 ```
 
 The package's profiles cover only the installed apps in
-`/usr/lib/agentbox`. When you run the apps from a source checkout, they
+`/usr/lib/ai-orchestrator`. When you run the apps from a source checkout, they
 fail with an error about the namespace sandbox or about `chrome-sandbox`
 not being owned by root with mode 4755. To fix it, install profiles for the
 checkout's Electron binary:
@@ -229,11 +229,11 @@ Electron package undoes it. For more information, see
 Include the output of the following commands:
 
 ```sh
-agentbox doctor
-systemctl --user status agentbox-server
-journalctl --user -u agentbox-server -n 200
-docker ps --filter name=^claude-agent-
+aio doctor
+systemctl --user status aio-server
+journalctl --user -u aio-server -n 200
+docker ps --filter name=^aio-agent-
 ```
 
-Check the output for secrets before you share it. Agent Box never logs
+Check the output for secrets before you share it. AI Orchestrator never logs
 secret values, but your own commands might.

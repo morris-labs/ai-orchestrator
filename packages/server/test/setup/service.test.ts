@@ -7,41 +7,41 @@ import { tempDir } from "../tmp.js";
 
 let home: string;
 beforeEach(async () => {
-  home = tempDir("agentbox-service-");
+  home = tempDir("aio-service-");
 });
 afterEach(async () => rm(home, { recursive: true, force: true }));
 
 describe("systemd user service", () => {
   it("writes the unit content", () => {
-    const unit = unitFile({ execStart: "/usr/bin/node /opt/agentbox/main.js" });
-    expect(unit).toContain("ExecStart=/usr/bin/node /opt/agentbox/main.js\n");
+    const unit = unitFile({ execStart: "/usr/bin/node /opt/ai-orchestrator/main.js" });
+    expect(unit).toContain("ExecStart=/usr/bin/node /opt/ai-orchestrator/main.js\n");
     expect(unit).toContain("Restart=on-failure\n");
     expect(unit).toContain("RestartSec=5\n");
     expect(unit).toContain("StartLimitIntervalSec=0\n");
     expect(unit).toContain("UMask=0077\n");
     expect(unit).toContain("NoNewPrivileges=yes\n");
     expect(unit).toContain("WantedBy=default.target\n");
-    expect(unit.startsWith("[Unit]\nDescription=Agent Box server\n")).toBe(true);
+    expect(unit.startsWith("[Unit]\nDescription=AI Orchestrator server\n")).toBe(true);
   });
 
   it("matches the packaged unit", async () => {
     const packaged = await readFile(
-      new URL("../../../../packaging/systemd/agentbox-server.service", import.meta.url),
+      new URL("../../../../packaging/systemd/aio-server.service", import.meta.url),
       "utf8",
     );
-    expect(packaged).toBe(unitFile({ execStart: "/usr/bin/agentbox-server" }));
+    expect(packaged).toBe(unitFile({ execStart: "/usr/bin/aio-server" }));
   });
 
   it("installs and enables the service", async () => {
     const runner = new FakeRunner();
     expect(await serviceInstalled(home)).toBe(false);
-    const { path } = await installService({ home, execStart: "/usr/bin/agentbox-server", runner });
+    const { path } = await installService({ home, execStart: "/usr/bin/aio-server", runner });
     expect(path).toBe(unitPath(home));
-    expect(path).toBe(join(home, ".config/systemd/user/agentbox-server.service"));
-    expect(await readFile(path, "utf8")).toContain("ExecStart=/usr/bin/agentbox-server");
+    expect(path).toBe(join(home, ".config/systemd/user/aio-server.service"));
+    expect(await readFile(path, "utf8")).toContain("ExecStart=/usr/bin/aio-server");
     expect(runner.runs.map((r) => r.argv)).toEqual([
       ["systemctl", "--user", "daemon-reload"],
-      ["systemctl", "--user", "enable", "--now", "agentbox-server.service"],
+      ["systemctl", "--user", "enable", "--now", "aio-server.service"],
     ]);
     expect(await serviceInstalled(home)).toBe(true);
   });
@@ -51,7 +51,7 @@ describe("systemd user service", () => {
       argv.includes("enable") ? { code: 1, stderr: "Failed to connect to bus" } : {},
     );
     await expect(
-      installService({ home, execStart: "/usr/bin/agentbox-server", runner }),
+      installService({ home, execStart: "/usr/bin/aio-server", runner }),
     ).rejects.toMatchObject({
       code: "conflict",
       message: expect.stringContaining("Failed to connect to bus"),

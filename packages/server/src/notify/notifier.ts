@@ -3,19 +3,19 @@
 import { randomUUID } from "node:crypto";
 import {
   NotificationSchema,
-  type AgentBoxEvent,
+  type AioEvent,
   type EventOf,
   type GlobalSettings,
   type Notification,
   type NotificationToggles,
   type RunStatus,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 import type { EventInput, SqlDatabase } from "../api/core-interface.js";
 
 export interface NotifierOptions {
   db: SqlDatabase;
   settings: () => GlobalSettings;
-  emit: (event: EventInput) => AgentBoxEvent;
+  emit: (event: EventInput) => AioEvent;
   idFn?: () => string;
 }
 
@@ -33,7 +33,7 @@ export class Notifier {
   }
 
   /** Handles one event from the hub. Ignores `notification` events. */
-  ingest(event: AgentBoxEvent): void {
+  ingest(event: AioEvent): void {
     if (event.type === "run.changed") this.onRun(event);
     else if (event.type === "terminal.ended") this.onTerminal(event);
   }

@@ -17,14 +17,14 @@ async function broker(...args: Parameters<typeof startFakeBroker>) {
 
 describe("brokerSocketPath", () => {
   it("uses the variable, else the mounted default", () => {
-    expect(brokerSocketPath({ AGENTBOX_BROKER_SOCKET: "/x/broker.sock" })).toBe("/x/broker.sock");
-    expect(brokerSocketPath({})).toBe("/run/agentbox-broker/broker.sock");
+    expect(brokerSocketPath({ AIO_BROKER_SOCKET: "/x/broker.sock" })).toBe("/x/broker.sock");
+    expect(brokerSocketPath({})).toBe("/run/aio-broker/broker.sock");
   });
 
   it("refuses the TCP transport, which isn't built", () => {
-    expect(() =>
-      brokerSocketPath({ AGENTBOX_BROKER_URL: "http://host.docker.internal:1" }),
-    ).toThrow(expect.objectContaining({ code: "unsupported" }));
+    expect(() => brokerSocketPath({ AIO_BROKER_URL: "http://host.docker.internal:1" })).toThrow(
+      expect.objectContaining({ code: "unsupported" }),
+    );
   });
 });
 
@@ -59,7 +59,7 @@ describe("BrokerClient", () => {
   });
 
   it("reports a missing broker as unreachable", async () => {
-    const socketPath = path.join(tempDir("agentbox-no-broker-"), "broker.sock");
+    const socketPath = path.join(tempDir("aio-no-broker-"), "broker.sock");
     await expect(new BrokerClient({ socketPath }).names()).rejects.toMatchObject({
       code: "unreachable",
       message: expect.stringContaining(socketPath),

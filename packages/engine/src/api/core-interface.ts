@@ -20,7 +20,7 @@ import type {
   TimedUsageSample,
   Vendor,
   Verdict,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 import type { AdapterSet, Clock, CommandRunner, EventSink, LeaseBroker } from "../core.js";
 import type { GitHubClient } from "../postpush/github.js";
 

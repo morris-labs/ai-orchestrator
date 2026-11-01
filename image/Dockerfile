@@ -1,9 +1,9 @@
-# The Agent Box image: one container per project runs the keeper, a tmux
-# session per box, and the agentbox engine.
+# The AI Orchestrator image: one container per project runs the keeper, a tmux
+# session per box, and the aio engine.
 #
 # Build it with scripts/build-image.sh, which packs the engine into
 # image/dist/ and passes every pin in image/versions.env as a build argument.
-# An installed .deb carries this directory under /usr/share/agentbox/image/,
+# An installed .deb carries this directory under /usr/share/ai-orchestrator/image/,
 # with the engine tarballs already in dist/, so the setup wizard can build
 # the image without a source checkout.
 
@@ -67,7 +67,7 @@ RUN usermod -l "${USER_NAME}" ubuntu && \
 # server's root setup step installs the password's hash and a rule that asks
 # for it in each container it starts (docs/secrets.md). The server runs what
 # needs root through `docker exec --user root`, never sudo.
-RUN rm -f /etc/sudoers.d/claude-box && \
+RUN rm -f /etc/sudoers.d/aio && \
     usermod -p '!' "${USER_NAME}"
 
 # System Node.js 22 from NodeSource: it runs the agent CLIs and the engine.
@@ -127,45 +127,45 @@ RUN echo "agent CLI cache key: ${CACHEBUST}" && \
     done
 
 # The engine, from the tarball scripts/build-image.sh packs into dist/: a
-# `pnpm deploy` of @agentbox/engine with node_modules already in it, at the
+# `pnpm deploy` of @aio/engine with node_modules already in it, at the
 # versions in pnpm-lock.yaml, including workspace packages such as
-# @agentbox/contracts. The build only unpacks it, so no dependency comes
+# @aio/contracts. The build only unpacks it, so no dependency comes
 # from the npm registry and every host gets the versions the tests ran
 # against. The engine layer comes last among the installs because it
 # changes most often.
-ARG AGENTBOX_ENGINE_VERSION
-COPY dist/ /tmp/agentbox-dist/
-RUN test -n "${AGENTBOX_ENGINE_VERSION}" || { echo "AGENTBOX_ENGINE_VERSION is not set; build with scripts/build-image.sh" >&2; exit 1; } && \
-    test -f "/tmp/agentbox-dist/agentbox-engine-${AGENTBOX_ENGINE_VERSION}.tgz" || \
-      { echo "dist/agentbox-engine-${AGENTBOX_ENGINE_VERSION}.tgz is missing; run scripts/build-image.sh" >&2; exit 1; } && \
-    mkdir -p /usr/local/lib/agentbox && \
-    tar -xzf "/tmp/agentbox-dist/agentbox-engine-${AGENTBOX_ENGINE_VERSION}.tgz" \
-      -C /usr/local/lib/agentbox --no-same-owner && \
-    engine_pkg=/usr/local/lib/agentbox/engine && \
+ARG AIO_ENGINE_VERSION
+COPY dist/ /tmp/aio-dist/
+RUN test -n "${AIO_ENGINE_VERSION}" || { echo "AIO_ENGINE_VERSION is not set; build with scripts/build-image.sh" >&2; exit 1; } && \
+    test -f "/tmp/aio-dist/aio-engine-${AIO_ENGINE_VERSION}.tgz" || \
+      { echo "dist/aio-engine-${AIO_ENGINE_VERSION}.tgz is missing; run scripts/build-image.sh" >&2; exit 1; } && \
+    mkdir -p /usr/local/lib/ai-orchestrator && \
+    tar -xzf "/tmp/aio-dist/aio-engine-${AIO_ENGINE_VERSION}.tgz" \
+      -C /usr/local/lib/ai-orchestrator --no-same-owner && \
+    engine_pkg=/usr/local/lib/ai-orchestrator/engine && \
     { test -d "${engine_pkg}/node_modules" || \
-      { echo "dist/agentbox-engine-${AGENTBOX_ENGINE_VERSION}.tgz has no node_modules; pack it with scripts/build-image.sh" >&2; exit 1; }; } && \
+      { echo "dist/aio-engine-${AIO_ENGINE_VERSION}.tgz has no node_modules; pack it with scripts/build-image.sh" >&2; exit 1; }; } && \
     engine_ver="$(/usr/bin/node -p "require('${engine_pkg}/package.json').version")" && \
-    test "${engine_ver}" = "${AGENTBOX_ENGINE_VERSION}" && \
+    test "${engine_ver}" = "${AIO_ENGINE_VERSION}" && \
     engine_hash="$(tr -d '[:space:]' < "${engine_pkg}/dist/identity")" && \
     { test -n "${engine_hash}" || { echo "the engine package has no dist/identity; build it with scripts/build-image.sh" >&2; exit 1; }; } && \
-    printf '%s+%s\n' "${engine_ver}" "${engine_hash}" > /etc/agentbox-engine-version && \
-    engine_bin="$(/usr/bin/node -p "const p=require('${engine_pkg}/package.json'); (typeof p.bin === 'string' ? p.bin : p.bin?.['agentbox-engine']) ?? ''")" && \
-    { test -n "${engine_bin}" || { echo "the engine package has no agentbox-engine bin" >&2; exit 1; }; } && \
+    printf '%s+%s\n' "${engine_ver}" "${engine_hash}" > /etc/aio-engine-version && \
+    engine_bin="$(/usr/bin/node -p "const p=require('${engine_pkg}/package.json'); (typeof p.bin === 'string' ? p.bin : p.bin?.['aio-engine']) ?? ''")" && \
+    { test -n "${engine_bin}" || { echo "the engine package has no aio-engine bin" >&2; exit 1; }; } && \
     { test -f "${engine_pkg}/${engine_bin#./}" || { echo "the engine bin ${engine_bin} is missing from the package" >&2; exit 1; }; } && \
     printf '#!/bin/sh\n# Runs the engine on the system Node.js 22, whatever nvm puts first on PATH.\nexec /usr/bin/node %s "$@"\n' \
-      "${engine_pkg}/${engine_bin#./}" > /usr/local/bin/agentbox-engine && \
-    chmod 0755 /usr/local/bin/agentbox-engine && \
-    secret_bin="$(/usr/bin/node -p "require('${engine_pkg}/package.json').bin['agentbox-secret'] ?? ''")" && \
-    { test -n "${secret_bin}" || { echo "the engine package has no agentbox-secret bin" >&2; exit 1; }; } && \
+      "${engine_pkg}/${engine_bin#./}" > /usr/local/bin/aio-engine && \
+    chmod 0755 /usr/local/bin/aio-engine && \
+    secret_bin="$(/usr/bin/node -p "require('${engine_pkg}/package.json').bin['aio-secret'] ?? ''")" && \
+    { test -n "${secret_bin}" || { echo "the engine package has no aio-secret bin" >&2; exit 1; }; } && \
     { test -f "${engine_pkg}/${secret_bin#./}" || { echo "the secret bin ${secret_bin} is missing from the package" >&2; exit 1; }; } && \
-    printf '#!/bin/sh\n# Gets secrets from the Agent Box secrets broker, on the system Node.js 22.\nexec /usr/bin/node %s "$@"\n' \
-      "${engine_pkg}/${secret_bin#./}" > /usr/local/bin/agentbox-secret && \
-    chmod 0755 /usr/local/bin/agentbox-secret && \
-    rm -rf /tmp/agentbox-dist
+    printf '#!/bin/sh\n# Gets secrets from the AI Orchestrator secrets broker, on the system Node.js 22.\nexec /usr/bin/node %s "$@"\n' \
+      "${engine_pkg}/${secret_bin#./}" > /usr/local/bin/aio-secret && \
+    chmod 0755 /usr/local/bin/aio-secret && \
+    rm -rf /tmp/aio-dist
 
 # The keeper scripts the server runs: keeper.sh is the container's PID 1
 # and starts the engine; start-session.sh starts one box's tmux session.
-COPY --chmod=0755 keeper/keeper.sh keeper/start-session.sh /usr/local/lib/agentbox/
+COPY --chmod=0755 keeper/keeper.sh keeper/start-session.sh /usr/local/lib/ai-orchestrator/
 
 USER ${USER_NAME}
 
@@ -174,7 +174,7 @@ USER ${USER_NAME}
 # is only a fallback.
 WORKDIR /home/${USER_NAME}/workspace
 
-# The engine's health route needs no token. AGENTBOX_ENGINE_PORT comes from
+# The engine's health route needs no token. AIO_ENGINE_PORT comes from
 # the server; 20411 is the engine's default port.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
-    CMD curl -fsS "http://127.0.0.1:${AGENTBOX_ENGINE_PORT:-20411}/api/v1/health" > /dev/null || exit 1
+    CMD curl -fsS "http://127.0.0.1:${AIO_ENGINE_PORT:-20411}/api/v1/health" > /dev/null || exit 1

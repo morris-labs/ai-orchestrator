@@ -1,6 +1,6 @@
 // Derived views of the dashboard state. Every function here is pure, so the
 // components stay thin and the numbers are testable without rendering.
-import type { RunStatus, Stage, TimedUsageSample, UsageSource, Vendor } from "@agentbox/contracts";
+import type { RunStatus, Stage, TimedUsageSample, UsageSource, Vendor } from "@aio/contracts";
 import type { AgentView, ContainerView, DashboardState, RunView } from "./model.js";
 import { VENDORS } from "./tokens.js";
 

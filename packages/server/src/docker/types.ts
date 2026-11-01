@@ -1,6 +1,6 @@
 // The thin Docker layer the core uses. `DockerodeClient` implements it over
 // the Engine API; `MemoryDocker` implements it in memory for tests.
-import type { ApiErrorCode } from "@agentbox/contracts";
+import type { ApiErrorCode } from "@aio/contracts";
 import { ApiError } from "../records/errors.js";
 
 /** A container as `GET /containers/json` lists it. */
@@ -148,7 +148,7 @@ export function isContainerGone(err: unknown): boolean {
 export interface DockerClient {
   /** Whether the daemon answers. */
   ping(): Promise<boolean>;
-  /** Containers whose name matches `nameRegex` (default `^claude-agent-`). */
+  /** Containers whose name matches `nameRegex` (default `^aio-agent-`). */
   listContainers(options?: {
     all?: boolean;
     size?: boolean;

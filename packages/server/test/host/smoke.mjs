@@ -24,17 +24,17 @@ import {
 } from "../../dist/core.js";
 
 const args = new Set(process.argv.slice(2));
-const baseImage = process.argv.find((a) => a.startsWith("--image="))?.slice(8) ?? "claude-code";
+const baseImage = process.argv.find((a) => a.startsWith("--image="))?.slice(8) ?? "aio-agent";
 const keep = args.has("--keep");
 const withClaude = args.has("--claude");
 
-const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "agentbox-host-")));
+const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "aio-host-")));
 const env = { ...defaultHostEnv(), dataDir: path.join(tmp, "data") };
 const { stateDir } = homePaths(env);
 const root = path.join(tmp, "project");
 fs.mkdirSync(root);
 const engineVersion = `hosttest-${Date.now()}`;
-const testImage = "agentbox-hosttest";
+const testImage = "aio-hosttest";
 const core = createServerCore({
   engineVersion,
   env,
@@ -69,7 +69,7 @@ try {
   fs.mkdirSync(ctx);
   fs.writeFileSync(
     path.join(ctx, "Dockerfile"),
-    `FROM ${baseImage}\nUSER root\nRUN echo ${engineVersion} > /etc/agentbox-engine-version\nLABEL agentbox.engine-version=${engineVersion}\n`,
+    `FROM ${baseImage}\nUSER root\nRUN echo ${engineVersion} > /etc/aio-engine-version\nLABEL aio.engine-version=${engineVersion}\n`,
   );
   // The build goes through the docker CLI, as the server's own image build
   // does; everything else goes through the API client.
@@ -117,7 +117,7 @@ try {
 
   step("Start the project container");
   const ensured = await core.projects.ensureContainer(project.id, {
-    extraEnv: { AGENTBOX_HOSTTEST: "1" },
+    extraEnv: { AIO_HOSTTEST: "1" },
   });
   assert.equal(ensured.created, true);
   const inspect = await core.docker.inspectContainer(container);
@@ -132,8 +132,8 @@ try {
     { hostIp: "127.0.0.1", hostPort: String(endpoint.hostPort) },
   ]);
   assert.ok(inspect.env.includes("IS_SANDBOX=1"));
-  assert.ok(inspect.env.includes("AGENTBOX_STATE_DIR=/run/claude-box"));
-  assert.ok(inspect.env.includes("AGENTBOX_HOSTTEST=1"));
+  assert.ok(inspect.env.includes("AIO_STATE_DIR=/run/aio"));
+  assert.ok(inspect.env.includes("AIO_HOSTTEST=1"));
   assert.ok(inspect.binds.includes(`${root}:${root}`));
 
   step("The keeper writes its state file");
@@ -165,7 +165,7 @@ try {
   assert.equal(dies.exitCode, 2);
 
   step("Sample stats twice");
-  // The monitor samples every claude-agent-* container on the host; keep
+  // The monitor samples every aio-agent-* container on the host; keep
   // only this test's own.
   const stats = [];
   core.events.on("container.stats", (e) => {
@@ -189,10 +189,10 @@ try {
   }
 
   if (withClaude) {
-    // The container from the earlier steps carried AGENTBOX_HOSTTEST, which
+    // The container from the earlier steps carried AIO_HOSTTEST, which
     // boxes.create() would count as a stale secret. It is gone by now, so
     // create() starts a new one with the project's own settings.
-    step("Create, stop, and purge a real Claude box");
+    step("Create, stop, and purge a real box that runs Claude");
     const box = await core.boxes.create({
       targetDir: root,
       layout: "root",

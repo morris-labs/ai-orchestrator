@@ -12,7 +12,7 @@
 // - Ask the secrets broker's socket for any secret the project lists.
 // - Read `/proc/PID/environ` of a vendor CLI or a `git` process, which hold
 //   that child's credentials.
-// - Read the engine token file that `AGENTBOX_ENGINE_TOKEN_FILE` names, and
+// - Read the engine token file that `AIO_ENGINE_TOKEN_FILE` names, and
 //   the vendors' sign-in files under the home directory.
 //
 // With the engine token, such code can call the engine API, which can push.
@@ -20,7 +20,7 @@
 // repository code; the engine has neither. What the engine does guarantee:
 // its own `/proc/PID/environ` holds no credential (see
 // `src/main/environ.ts`), and no child inherits a credential it doesn't need.
-import type { Vendor } from "@agentbox/contracts";
+import type { Vendor } from "@aio/contracts";
 
 /**
  * Who the child is:
@@ -36,7 +36,7 @@ import type { Vendor } from "@agentbox/contracts";
 export type EnvProfile = `vendor:${Vendor}` | "github" | "untrusted";
 
 /** Variables the engine owns. No child ever sees them. */
-const ENGINE_PREFIX = /^AGENTBOX_/;
+const ENGINE_PREFIX = /^AIO_/;
 
 /** Names that look like a credential of any kind. */
 const SECRET_NAME =

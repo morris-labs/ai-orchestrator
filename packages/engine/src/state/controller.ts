@@ -13,11 +13,11 @@ import {
   type RoundSummary,
   type RunState,
   type Vendor,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 import type { z } from "zod";
 import type { EngineDeps } from "../core.js";
 import { systemClock } from "../core.js";
-import { DEFAULT_POLICY } from "@agentbox/contracts";
+import { DEFAULT_POLICY } from "@aio/contracts";
 import { loadPolicy, loadPolicyExtras } from "../policy/load.js";
 import { Git } from "../range/git.js";
 import { baseWorktreePath, removeBaseWorktree } from "../verify/verify.js";
@@ -48,7 +48,7 @@ export class InvalidStateError extends Error {
 }
 
 export interface RunLocation {
-  /** The project root; run files go under `<projectRoot>/.claude-box/runs/<run id>/`. */
+  /** The project root; run files go under `<projectRoot>/.aio/runs/<run id>/`. */
   projectRoot: string;
   /** The policy file path relative to the project root, or absolute. */
   policyPath?: string;
@@ -78,7 +78,7 @@ export class RunController {
     const { runId, ...request } = create;
     const clock = deps.clock ?? systemClock;
     const policy = await loadPolicy(location.projectRoot, location.policyPath);
-    // The run directory goes under `.claude-box/`, which is inside the
+    // The run directory goes under `.aio/`, which is inside the
     // working tree when the project root is the repository. The dirty-tree
     // check skips it too, so a failure here only leaves it in `git status`.
     await new Git(deps.runner, request.repoPath).excludeEngineDir().catch(() => false);

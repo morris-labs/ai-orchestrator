@@ -8,7 +8,7 @@ import {
   type BoxView,
   type GlobalSettings,
   type SshRemote,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 import type { Core, EngineEndpoint } from "../../src/api/core-interface.js";
 import { ApiError } from "../../src/api/errors.js";
 import {
@@ -55,7 +55,7 @@ export function createFakeCore(): FakeCore {
           createdAt: T1,
           updatedAt: T1,
         },
-        dir: "/home/u/.claude-box/accounts/claude/work",
+        dir: "/home/u/.ai-orchestrator/accounts/claude/work",
         dirExists: true,
         isDefault: false,
       },
@@ -82,12 +82,12 @@ export function createFakeCore(): FakeCore {
     },
     image: {
       status: async () => ({
-        name: "claude-code",
+        name: "aio-agent",
         exists: true,
         imageId: "sha256:abc",
         createdAt: T1,
-        engineVersion: "4.0.0-dev",
-        expectedEngineVersion: "4.0.0-dev",
+        engineVersion: "1.0.0-dev",
+        expectedEngineVersion: "1.0.0-dev",
         engineMatches: true,
         cliVersions: { claude: "2.1.300", codex: null, copilot: null },
       }),
@@ -133,7 +133,7 @@ export function createFakeCore(): FakeCore {
         log("Creating\r\n");
         const b: Box = {
           ...boxFixture,
-          id: "claude-agent-new",
+          id: "aio-agent-new",
           hostKey: "new",
           conversationName: input.conversationName,
         };
@@ -176,7 +176,7 @@ export function createFakeCore(): FakeCore {
         worktree: "/work/example-app/.worktrees/emails",
         branch: "claude/emails",
         oldFolder: "/work/example-app/emails.pre-worktree",
-        recordBackup: "/home/user/.claude-box/backup/x",
+        recordBackup: "/home/user/.ai-orchestrator/backup/x",
         keptRefs: [],
         notCarried: [],
       }),
@@ -274,7 +274,7 @@ export function createFakeCore(): FakeCore {
             createdAt: T1,
             updatedAt: T1,
           },
-          dir: `/home/u/.claude-box/accounts/${id}`,
+          dir: `/home/u/.ai-orchestrator/accounts/${id}`,
           dirExists: true,
           isDefault: false,
         };
@@ -311,7 +311,7 @@ export function createFakeCore(): FakeCore {
             createdAt: T1,
             updatedAt: T1,
           },
-          dir: `/home/u/.claude-box/accounts/${id}`,
+          dir: `/home/u/.ai-orchestrator/accounts/${id}`,
           dirExists: true,
           isDefault: false,
         };

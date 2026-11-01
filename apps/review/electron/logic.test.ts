@@ -1,4 +1,4 @@
-import type { AgentBoxEvent, RunState } from "@agentbox/contracts";
+import type { AioEvent, RunState } from "@aio/contracts";
 import { describe, expect, it } from "vitest";
 import {
   ActiveRuns,
@@ -19,16 +19,16 @@ import {
 describe("parseDeepLink", () => {
   it.each([
     [["electron", "."], null],
-    [["app", "agentbox-review://launch?project=p1&box=b1"], { project: "p1", box: "b1" }],
+    [["app", "aio-review://launch?project=p1&box=b1"], { project: "p1", box: "b1" }],
     [["app", "?project=p1"], { project: "p1", box: null }],
-    [["app", "--box=claude-agent-x"], { project: null, box: "claude-agent-x" }],
+    [["app", "--box=aio-agent-x"], { project: null, box: "aio-agent-x" }],
     // What the boxes app passes for Start Review.
     [
-      ["agentbox-review", "--project=example-app-1a2b3c4d", "--box=claude-agent-x"],
-      { project: "example-app-1a2b3c4d", box: "claude-agent-x" },
+      ["aio-review", "--project=example-app-1a2b3c4d", "--box=aio-agent-x"],
+      { project: "example-app-1a2b3c4d", box: "aio-agent-x" },
     ],
     [["app", "--project=", "--box="], null],
-    [["app", "agentbox-review://launch"], null],
+    [["app", "aio-review://launch"], null],
   ])("%j", (argv, want) => {
     expect(parseDeepLink(argv)).toEqual(want);
   });
@@ -46,7 +46,7 @@ describe("renderer URLs", () => {
 
 const run = (id: string, status: RunState["status"]) => ({ id, status }) as RunState;
 const changed = (r: RunState) =>
-  ({ type: "run.changed", run: r, roundSummary: null }) as unknown as AgentBoxEvent;
+  ({ type: "run.changed", run: r, roundSummary: null }) as unknown as AioEvent;
 
 describe("ActiveRuns", () => {
   it("counts active runs from the list and the events", () => {
@@ -55,7 +55,7 @@ describe("ActiveRuns", () => {
     expect(a.count).toBe(2);
     expect(a.apply(changed(run("1", "finished")))).toBe(true);
     expect(a.apply(changed(run("3", "paused")))).toBe(false);
-    expect(a.apply({ type: "notification" } as AgentBoxEvent)).toBe(false);
+    expect(a.apply({ type: "notification" } as AioEvent)).toBe(false);
     expect(a.count).toBe(1);
   });
 
@@ -170,7 +170,7 @@ describe("noticeFor", () => {
       severity: "info",
       read: false,
       ...extra,
-    }) as unknown as AgentBoxEvent;
+    }) as unknown as AioEvent;
 
   it.each([
     ["decision_needed", on, "#/runs/01JB8Z5K3W6Q2V9X4T7R0M1N2P", true],

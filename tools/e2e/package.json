@@ -1,6 +1,6 @@
 {
-  "name": "@agentbox/e2e",
-  "version": "4.0.0",
+  "name": "@aio/e2e",
+  "version": "1.0.0",
   "description": "End-to-end tests that run the built server, engine, and CLI together as local processes.",
   "private": true,
   "type": "module",
@@ -9,10 +9,10 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@agentbox/cli": "workspace:*",
-    "@agentbox/contracts": "workspace:*",
-    "@agentbox/engine": "workspace:*",
-    "@agentbox/server": "workspace:*",
+    "@aio/cli": "workspace:*",
+    "@aio/contracts": "workspace:*",
+    "@aio/engine": "workspace:*",
+    "@aio/server": "workspace:*",
     "better-sqlite3": "^12.4.1"
   },
   "devDependencies": {

@@ -2,13 +2,13 @@
 // events into the server's stream, answers lease requests with the
 // scheduler, and resynchronizes the run mirror when events were missed.
 import type {
-  AgentBoxEvent,
+  AioEvent,
   EngineInfo,
   Finding,
   LeaseRequest,
   LeaseResponse,
   RunState,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 import type { CoreEngines, EngineEndpoint, SqlDatabase } from "../api/core-interface.js";
 import { ApiError } from "../api/errors.js";
 import { EngineClient, type EngineClientOptions, type StreamCursor } from "./engine-client.js";
@@ -18,7 +18,7 @@ export interface EngineSupervisorOptions {
   db: SqlDatabase;
   expectedVersion: string;
   /** Receives every engine event in order. */
-  relay(event: AgentBoxEvent): void;
+  relay(event: AioEvent): void;
   /** Decides a lease for the engine of `projectId`. */
   decideLease(engineKey: string, projectId: string, request: LeaseRequest): Promise<LeaseResponse>;
   /** Receives the runs an engine lists after a resync. */
@@ -104,7 +104,7 @@ export function foreignRunReason(
 export function engineEventRefusal(
   db: SqlDatabase,
   endpoint: Pick<EngineEndpoint, "container" | "projectId">,
-  event: AgentBoxEvent,
+  event: AioEvent,
 ): string | null {
   const ownRun = (runId: string) => {
     const project = runProject(db, runId);

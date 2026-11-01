@@ -4,7 +4,7 @@
 // Recall and precision are split on purpose (design.md, "Reviewer depth"):
 // finder, continuation, and sweep prompts ask for every plausible issue, and
 // only the disprover prompt carries the precision rules.
-import type { Finding, Hunk } from "@agentbox/contracts";
+import type { Finding, Hunk } from "@aio/contracts";
 import type { FindingsLogEntry } from "../merge/merge.js";
 import {
   CONFIRM_OUTPUT_JSON_SCHEMA,

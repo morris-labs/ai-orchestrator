@@ -73,7 +73,7 @@ describe("createServerIdentity", () => {
 
 describe("readServerPin", () => {
   it("returns null without the file and refuses a file that isn't a certificate", () => {
-    const dir = mkdtempSync(path.join(tmpdir(), "agentbox-tls-"));
+    const dir = mkdtempSync(path.join(tmpdir(), "aio-tls-"));
     closers.push(async () => rmSync(dir, { recursive: true, force: true }));
     expect(readServerPin(path.join(dir, "server.crt"))).toBeNull();
     writeFileSync(path.join(dir, "server.crt"), "SYNTHETIC_NOT_A_CERT");

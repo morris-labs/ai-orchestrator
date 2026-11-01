@@ -3,7 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { DEFAULT_PROMPT_TEMPLATES, defaultConfig, type Box } from "@agentbox/contracts";
+import { DEFAULT_PROMPT_TEMPLATES, defaultConfig, type Box } from "@aio/contracts";
 import { openDatabase, repositories } from "../../src/db/index.js";
 import {
   ApiError,
@@ -29,7 +29,7 @@ import { assertContractEvent } from "../boxes/harness.js";
 import { tempDir } from "../tmp.js";
 
 function tempEnv(): HostEnv {
-  const home = tempDir("agentbox-rec-");
+  const home = tempDir("aio-rec-");
   return { home, user: "tester", now: () => new Date("2026-10-28T09:00:00Z") };
 }
 
@@ -83,7 +83,7 @@ describe("CoreEvents", () => {
     events.on("container.changed", (e) => typed.push(e));
     events.publish({
       type: "container.changed",
-      container: "claude-agent-proj-x-12345678",
+      container: "aio-agent-proj-x-12345678",
       projectId: "x-12345678",
       state: "running",
       engine: null,
@@ -104,7 +104,7 @@ describe("CoreEvents", () => {
 
 describe("derived box values", () => {
   it("rewrites tmux names and builds side sessions", () => {
-    expect(tmuxSessionName("claude-agent-app.example.com")).toBe("claude-agent-app_example_com");
+    expect(tmuxSessionName("aio-agent-app.example.com")).toBe("aio-agent-app_example_com");
     expect(tmuxSessionName("a:b")).toBe("a_b");
     expect(tmuxSessionName("")).toBe("main");
     expect(boxTmuxSession({ session: "x.y" })).toBe("x_y");
@@ -112,9 +112,9 @@ describe("derived box values", () => {
   });
 
   it("keeps host keys unique within a project", () => {
-    const sib = [{ id: "claude-agent-app", hostKey: "app" }] as Pick<Box, "id" | "hostKey">[];
-    expect(allocateHostKey("claude-agent-app", sib)).toBe("app");
-    expect(allocateHostKey("claude-agent-App", sib)).toBe("app-2");
+    const sib = [{ id: "aio-agent-app", hostKey: "app" }] as Pick<Box, "id" | "hostKey">[];
+    expect(allocateHostKey("aio-agent-app", sib)).toBe("app");
+    expect(allocateHostKey("aio-agent-App", sib)).toBe("app-2");
   });
 });
 
@@ -251,9 +251,9 @@ describe("SettingsService", () => {
     settings.setSecretRefs(kept);
     expect([...RESERVED_ENV_NAMES]).toEqual(
       expect.arrayContaining([
-        "AGENTBOX_ENGINE_TOKEN",
-        "AGENTBOX_ENGINE_TOKEN_FILE",
-        "AGENTBOX_BROKER_SOCKET",
+        "AIO_ENGINE_TOKEN",
+        "AIO_ENGINE_TOKEN_FILE",
+        "AIO_BROKER_SOCKET",
         "IS_SANDBOX",
         "DISABLE_AUTOUPDATER",
         "GIT_CONFIG_GLOBAL",
@@ -286,9 +286,9 @@ describe("SettingsService", () => {
 
   it("seeds from config.json once", () => {
     const { env, repos, settings } = setup();
-    fs.mkdirSync(path.join(env.home, ".claude-box"), { recursive: true });
+    fs.mkdirSync(path.join(env.home, ".ai-orchestrator"), { recursive: true });
     fs.writeFileSync(
-      path.join(env.home, ".claude-box", "config.json"),
+      path.join(env.home, ".ai-orchestrator", "config.json"),
       JSON.stringify({ serverPort: 20450 }),
     );
     expect(settings.seedFromConfigFile()).toBe(true);
@@ -309,12 +309,12 @@ describe("SshRemoteService", () => {
       tcpMaps: [],
       mounts: [],
       secretRefs: [],
-      policyPath: ".claude-box/policy.yaml",
+      policyPath: ".aio/policy.yaml",
       createdAt: T,
       updatedAt: T,
     });
     repos.boxes.put({
-      id: "claude-agent-a",
+      id: "aio-agent-a",
       projectId: "app-12345678",
       hostKey: "a",
       targetDir: "/work/app",
@@ -323,8 +323,8 @@ describe("SshRemoteService", () => {
       transcriptSyncedName: "",
       platform: "claude",
       skipPermissions: true,
-      container: "claude-agent-proj-app-12345678",
-      session: "claude-agent-a",
+      container: "aio-agent-proj-app-12345678",
+      session: "aio-agent-a",
       wasRunning: false,
       sshRemoteRefs: ["lab"],
       createdAt: T,
@@ -337,16 +337,16 @@ describe("SshRemoteService", () => {
       forwards: [{ direction: "L", bindPort: 8080, destHost: "localhost", destPort: 80 }],
     });
     expect(svc.get("lab")).toMatchObject({
-      referencedBy: ["claude-agent-a"],
+      referencedBy: ["aio-agent-a"],
       remote: { forwards: [{ bindAddress: "localhost" }] },
     });
     svc.put("other", { name: "other", host: "dev@203.0.113.6" });
     expect(() => svc.put("lab", { name: "other", host: "x" })).toThrow(/already exists/);
     svc.put("lab", { name: "lab2", host: "dev@203.0.113.5" });
-    expect(repos.boxes.get("claude-agent-a")?.sshRemoteRefs).toEqual(["lab2"]);
+    expect(repos.boxes.get("aio-agent-a")?.sshRemoteRefs).toEqual(["lab2"]);
     expect(() => svc.get("lab")).toThrow(ApiError);
-    expect(svc.delete("lab2")).toEqual({ unlinkedBoxes: ["claude-agent-a"] });
-    expect(repos.boxes.get("claude-agent-a")?.sshRemoteRefs).toEqual([]);
+    expect(svc.delete("lab2")).toEqual({ unlinkedBoxes: ["aio-agent-a"] });
+    expect(repos.boxes.get("aio-agent-a")?.sshRemoteRefs).toEqual([]);
     expect(() => svc.delete("lab2")).toThrow(/does not exist/);
     expect(svc.list().map((r) => r.remote.name)).toEqual(["other"]);
   });

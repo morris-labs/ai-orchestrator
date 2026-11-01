@@ -1,9 +1,4 @@
-import {
-  defaultConfig,
-  type GlobalSettings,
-  type OpStatus,
-  type SecretRef,
-} from "@agentbox/contracts";
+import { defaultConfig, type GlobalSettings, type OpStatus, type SecretRef } from "@aio/contracts";
 import { describe, expect, it } from "vitest";
 import { ApiError } from "../../src/api/errors.js";
 import { OpCli, type OpClient, type OpItemInfo } from "../../src/secrets/op.js";
@@ -43,23 +38,15 @@ describe("OpCli.listItems", () => {
 
   it("lists labels, sections and types, skips empty and OTP fields, and drops values", async () => {
     const r = runner();
-    const items = await new OpCli(r, {}).listItems("AgentBox");
-    expect(r.runs[0]?.argv).toEqual([
-      "op",
-      "item",
-      "list",
-      "--vault",
-      "AgentBox",
-      "--format",
-      "json",
-    ]);
+    const items = await new OpCli(r, {}).listItems("Aio");
+    expect(r.runs[0]?.argv).toEqual(["op", "item", "list", "--vault", "Aio", "--format", "json"]);
     expect(r.runs[1]?.argv).toEqual([
       "op",
       "item",
       "get",
       "i1",
       "--vault",
-      "AgentBox",
+      "Aio",
       "--format",
       "json",
     ]);
@@ -164,12 +151,12 @@ describe("SecretsService.available", () => {
     expect(JSON.stringify(r)).not.toMatch(/value/i);
   });
 
-  it("chooses the vaults from the setting, then the references, then AgentBox", async () => {
+  it("chooses the vaults from the setting, then the references, then Aio", async () => {
     const op = new FakeOp();
     op.items["Mine"] = [item];
     op.items["Dev"] = [];
     op.items["Ops"] = [];
-    op.items["AgentBox"] = [];
+    op.items["Aio"] = [];
     expect((await make(op, ["Mine"]).svc.available()).vaults).toEqual(["Mine"]);
     const fromRefs = make(
       op,
@@ -178,7 +165,7 @@ describe("SecretsService.available", () => {
       [{ name: "X", ref: "op://Dev/x/y" }],
     );
     expect((await fromRefs.svc.available()).vaults).toEqual(["Dev", "Ops"]);
-    expect((await make(op).svc.available()).vaults).toEqual(["AgentBox"]);
+    expect((await make(op).svc.available()).vaults).toEqual(["Aio"]);
   });
 
   it("caches for 30 seconds and refresh bypasses the cache", async () => {

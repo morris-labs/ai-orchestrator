@@ -15,7 +15,7 @@
 // Claude Code 2.1.316 has one other key with "cleanup" in its name:
 // `desktopSessionCleanupPeriodDays`. It bounds the transcripts of the desktop
 // app and Cowork, which the sweep exempts, and its default of 0 means no
-// ceiling. It can't delete a box's transcripts, so Agent Box doesn't write
+// ceiling. It can't delete a box's transcripts, so AI Orchestrator doesn't write
 // it; `accounts check` warns when it is set to more than 0.
 import fs from "node:fs";
 import path from "node:path";
@@ -104,7 +104,7 @@ function checkLinked(file: string, days: number): false {
   }
   if (!validDays(r.value) || r.value < days) {
     throw new RetentionError(
-      `${file} is a link to ${target}, which sets ${RETENTION_KEY} to ${JSON.stringify(r.value) ?? "nothing"}, below ${days}. Claude Code would delete transcripts older than that from the shared store. Agent Box doesn't rewrite your host file: set ${RETENTION_KEY} to at least ${days} in ${target}, or replace the link with a file of the account's own, then start again.`,
+      `${file} is a link to ${target}, which sets ${RETENTION_KEY} to ${JSON.stringify(r.value) ?? "nothing"}, below ${days}. Claude Code would delete transcripts older than that from the shared store. AI Orchestrator doesn't rewrite your host file: set ${RETENTION_KEY} to at least ${days} in ${target}, or replace the link with a file of the account's own, then start again.`,
       file,
     );
   }

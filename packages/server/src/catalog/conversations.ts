@@ -6,7 +6,7 @@
 // matched for a byte marker first and parsed only when it matches.
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { ConversationSummary } from "@agentbox/contracts";
+import type { ConversationSummary } from "@aio/contracts";
 import type { HostEnv } from "../records/env.js";
 import { projectDirFor, transcriptPath } from "./paths.js";
 

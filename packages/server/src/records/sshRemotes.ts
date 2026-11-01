@@ -1,5 +1,5 @@
 // Named SSH remotes and the box references to them. W2 runs the tunnels.
-import { SshRemoteInputSchema, type SshRemote } from "@agentbox/contracts";
+import { SshRemoteInputSchema, type SshRemote } from "@aio/contracts";
 import type { z } from "zod";
 import type { Repositories } from "../db/repositories.js";
 import type { HostEnv } from "./env.js";

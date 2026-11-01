@@ -1,6 +1,6 @@
-// Checks for a newer Agent Box release and a Claude Code newer than the
+// Checks for a newer AI Orchestrator release and a Claude Code newer than the
 // image's. A network failure gives `null` versions, never an error.
-import type { Updates } from "@agentbox/contracts";
+import type { Updates } from "@aio/contracts";
 import type { Core } from "../api/core-interface.js";
 
 export interface UpdateCheckerOptions {
@@ -14,7 +14,7 @@ export interface UpdateCheckerOptions {
 
 /**
  * Compares two versions numerically, part by part; a pre-release such as
- * `4.0.0-dev` sorts before `4.0.0`. Returns a negative number, 0, or a
+ * `1.0.0-dev` sorts before `1.0.0`. Returns a negative number, 0, or a
  * positive number.
  */
 export function compareVersions(a: string, b: string): number {
@@ -46,7 +46,7 @@ export class UpdateChecker {
   private async json(url: string): Promise<Record<string, unknown> | null> {
     try {
       const res = await (this.opts.fetch ?? fetch)(url, {
-        headers: { accept: "application/json", "user-agent": "agentbox-server" },
+        headers: { accept: "application/json", "user-agent": "aio-server" },
         signal: AbortSignal.timeout(10_000),
       });
       if (!res.ok) return null;
@@ -62,7 +62,7 @@ export class UpdateChecker {
     const ttl = this.opts.ttlMs ?? 24 * 60 * 60 * 1000;
     if (!force && this.cached && now.getTime() - this.cached.at < ttl) return this.cached.value;
 
-    const repo = this.opts.repo ?? "morris-labs/Claude-Box";
+    const repo = this.opts.repo ?? "morris-labs/ai-orchestrator";
     const [release, npm, image] = await Promise.all([
       this.json(`https://api.github.com/repos/${repo}/releases/latest`),
       this.json("https://registry.npmjs.org/@anthropic-ai/claude-code/latest"),

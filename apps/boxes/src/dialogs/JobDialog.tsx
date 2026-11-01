@@ -1,8 +1,8 @@
 // A job in a terminal, the CommandTerminalDialog of the Qt app: "Running:
 // <command>", the streamed output, and "Finished." or "Finished (exit N)."
 // when it ends.
-import type { Job } from "@agentbox/contracts";
-import { Button, Dialog, TerminalView, errorMessage, useApiClient } from "@agentbox/ui";
+import type { Job } from "@aio/contracts";
+import { Button, Dialog, TerminalView, errorMessage, useApiClient } from "@aio/ui";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 /** The status line for a job. */

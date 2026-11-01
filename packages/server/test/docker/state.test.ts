@@ -16,7 +16,7 @@ import type { HostEnv } from "../../src/records/env.js";
 import { tempDir } from "../tmp.js";
 
 function env(now = () => new Date()): HostEnv {
-  return { home: tempDir("agentbox-state-"), user: "tester", now };
+  return { home: tempDir("aio-state-"), user: "tester", now };
 }
 
 describe("keeper state", () => {
@@ -39,19 +39,19 @@ describe("keeper state", () => {
     const e = env();
     fs.mkdirSync(path.dirname(stateFile(e, "c1")), { recursive: true });
     fs.writeFileSync(stateFile(e, "c1"), "old\n");
-    expect(prepareStateDir(e, "c1", "/run/claude-box")).toBe(
-      `${path.dirname(stateFile(e, "c1"))}:/run/claude-box`,
+    expect(prepareStateDir(e, "c1", "/run/aio")).toBe(
+      `${path.dirname(stateFile(e, "c1"))}:/run/aio`,
     );
     expect(fs.existsSync(stateFile(e, "c1"))).toBe(false);
   });
 
   it("removes a directory left at the sessions path without following links", () => {
     const e = env();
-    const outside = tempDir("agentbox-outside-");
+    const outside = tempDir("aio-outside-");
     fs.writeFileSync(path.join(outside, "keep"), "x");
     fs.mkdirSync(stateFile(e, "c1"), { recursive: true });
     fs.symlinkSync(outside, path.join(stateFile(e, "c1"), "link"));
-    prepareStateDir(e, "c1", "/run/claude-box");
+    prepareStateDir(e, "c1", "/run/aio");
     expect(fs.existsSync(stateFile(e, "c1"))).toBe(false);
     expect(fs.existsSync(path.join(outside, "keep"))).toBe(true);
   });

@@ -6,7 +6,7 @@ import {
   type TimedUsageSample,
   type UsageWindow,
   type Vendor,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 import type { SqlDatabase } from "../api/core-interface.js";
 
 type Row = { json: string };

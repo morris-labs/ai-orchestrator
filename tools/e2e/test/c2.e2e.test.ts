@@ -1,8 +1,8 @@
 // The C2 gate without Docker: a mock-vendor review run starts from the
-// `agentbox` CLI, streams events, writes run files, and the server mirrors
+// `aio` CLI, streams events, writes run files, and the server mirrors
 // it to SQLite. The engine runs as a local process that stands in for a
 // project container, registered with the server through
-// `AGENTBOX_DEV_ENGINES`. The second part sets ceilings through the API and
+// `AIO_DEV_ENGINES`. The second part sets ceilings through the API and
 // checks that the server's scheduler redirects and pauses runs.
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -16,8 +16,8 @@ import {
   projectContainerName,
   type Finding,
   type RunState,
-} from "@agentbox/contracts";
-import { pinFromPem, pinnedFetch } from "@agentbox/contracts/tls";
+} from "@aio/contracts";
+import { pinFromPem, pinnedFetch } from "@aio/contracts/tls";
 import {
   ENGINE_MAIN,
   SAMPLE_BUILD,
@@ -37,7 +37,7 @@ import {
 /**
  * The engine's identity, `VERSION+HASH` once the engine is built. The engine
  * reports it, and the server compares the engine's health reply with
- * `AGENTBOX_ENGINE_VERSION`, so both processes get the same value. A plain
+ * `AIO_ENGINE_VERSION`, so both processes get the same value. A plain
  * version makes the server refuse the subscription (versionMatches false).
  */
 function engineIdentity(): string {
@@ -70,7 +70,7 @@ let cliEnv: NodeJS.ProcessEnv = {};
 
 async function api(method: string, route: string, body?: unknown): Promise<unknown> {
   // The server serves HTTPS; trust the certificate it wrote and nothing else.
-  const cert = readFileSync(path.join(home, ".claude-box", "server.crt"), "utf8");
+  const cert = readFileSync(path.join(home, ".ai-orchestrator", "server.crt"), "utf8");
   const res = await pinnedFetch(() => pinFromPem(cert))(`${serverUrl}/api/v1${route}`, {
     method,
     headers: {
@@ -85,7 +85,7 @@ async function api(method: string, route: string, body?: unknown): Promise<unkno
 }
 
 function db(): Database.Database {
-  return new Database(path.join(home, ".claude-box", "agentbox.db"), {
+  return new Database(path.join(home, ".ai-orchestrator", "aio.db"), {
     readonly: true,
     fileMustExist: true,
   });
@@ -93,7 +93,7 @@ function db(): Database.Database {
 
 /** Every event the engine wrote to a run's `events.jsonl`. */
 function runEvents(runId: string): Array<Record<string, unknown>> {
-  return readFileSync(path.join(repo, ".claude-box", "runs", runId, "events.jsonl"), "utf8")
+  return readFileSync(path.join(repo, ".aio", "runs", runId, "events.jsonl"), "utf8")
     .split("\n")
     .filter((l) => l.trim() !== "")
     .map((l) => JSON.parse(l) as Record<string, unknown>);
@@ -126,7 +126,7 @@ async function setCeilings(ceilings: Record<string, unknown>): Promise<void> {
 
 beforeAll(async () => {
   requireBuilt();
-  dir = mkdtempSync(path.join(os.tmpdir(), "agentbox-e2e-"));
+  dir = mkdtempSync(path.join(os.tmpdir(), "aio-e2e-"));
   repo = execFileSync(SAMPLE_BUILD, [path.join(dir, "sample")], { encoding: "utf8" }).trim();
   projectId = projectIdForRoot(repo);
 
@@ -140,23 +140,23 @@ beforeAll(async () => {
   const tokenFile = path.join(stateDir, "engine.token");
   writeFileSync(tokenFile, `${engineToken}\n`, { mode: 0o600 });
   home = path.join(dir, "home");
-  mkdirSync(path.join(home, ".claude-box"), { recursive: true });
+  mkdirSync(path.join(home, ".ai-orchestrator"), { recursive: true });
   writeFileSync(
-    path.join(home, ".claude-box", "config.json"),
+    path.join(home, ".ai-orchestrator", "config.json"),
     JSON.stringify({ serverPort }, null, 2),
   );
 
   engine = startProcess(
     ENGINE_MAIN,
     childEnv({
-      AGENTBOX_ENGINE_TOKEN_FILE: tokenFile,
-      AGENTBOX_ENGINE_PORT: String(enginePort),
-      AGENTBOX_PROJECT_ROOT: repo,
-      AGENTBOX_CONTAINER: projectContainerName(projectId),
-      AGENTBOX_ENGINE_VERSION: engineIdentity(),
-      AGENTBOX_STATE_DIR: stateDir,
-      AGENTBOX_MOCK_VENDORS: "1",
-      AGENTBOX_MOCK_SCRIPT: MOCK_SCRIPT,
+      AIO_ENGINE_TOKEN_FILE: tokenFile,
+      AIO_ENGINE_PORT: String(enginePort),
+      AIO_PROJECT_ROOT: repo,
+      AIO_CONTAINER: projectContainerName(projectId),
+      AIO_ENGINE_VERSION: engineIdentity(),
+      AIO_STATE_DIR: stateDir,
+      AIO_MOCK_VENDORS: "1",
+      AIO_MOCK_SCRIPT: MOCK_SCRIPT,
     }),
   );
   await waitFor("the engine to listen", () =>
@@ -166,21 +166,21 @@ beforeAll(async () => {
   server = startProcess(
     SERVER_MAIN,
     childEnv({
-      AGENTBOX_HOME: home,
-      AGENTBOX_ENGINE_VERSION: engineIdentity(),
-      AGENTBOX_DEV_ENGINES: `${projectId}=127.0.0.1:${enginePort}:${engineToken}`,
+      AIO_HOME: home,
+      AIO_ENGINE_VERSION: engineIdentity(),
+      AIO_DEV_ENGINES: `${projectId}=127.0.0.1:${enginePort}:${engineToken}`,
     }),
   );
   serverUrl = `https://127.0.0.1:${serverPort}`;
   await waitFor("the server to listen", () =>
     server?.output().includes("listening on") ? true : undefined,
   );
-  serverToken = readFileSync(path.join(home, ".claude-box", "server.token"), "utf8").trim();
+  serverToken = readFileSync(path.join(home, ".ai-orchestrator", "server.token"), "utf8").trim();
   // The CLI reads the token from server.token in the data directory, so it
   // stays out of the CLI's environment.
   cliEnv = childEnv({
-    AGENTBOX_SERVER: serverUrl,
-    AGENTBOX_DATA_DIR: path.join(home, ".claude-box"),
+    AIO_SERVER: serverUrl,
+    AIO_DATA_DIR: path.join(home, ".ai-orchestrator"),
   });
   // The server subscribes to the engine's event stream on its own.
   await waitFor("the server to subscribe to the engine", () =>
@@ -189,13 +189,13 @@ beforeAll(async () => {
 });
 
 afterAll(() => {
-  if (process.env.AGENTBOX_E2E_DEBUG === "1") {
+  if (process.env.AIO_E2E_DEBUG === "1") {
     console.error(`--- server\n${server?.output() ?? ""}\n--- engine\n${engine?.output() ?? ""}`);
   }
   for (const p of [server, engine]) {
     if (p && p.child.exitCode === null && p.child.signalCode === null) p.child.kill("SIGKILL");
   }
-  if (dir && process.env.AGENTBOX_E2E_KEEP !== "1") rmSync(dir, { recursive: true, force: true });
+  if (dir && process.env.AIO_E2E_KEEP !== "1") rmSync(dir, { recursive: true, force: true });
 });
 
 describe("C2: server and engine talk", () => {
@@ -251,7 +251,7 @@ describe("C2: server and engine talk", () => {
   });
 
   it("writes the run files under the repository", () => {
-    const runDir = path.join(repo, ".claude-box", "runs", runId);
+    const runDir = path.join(repo, ".aio", "runs", runId);
     for (const file of [
       "state.json",
       "engine.json",
@@ -282,7 +282,7 @@ describe("C2: server and engine talk", () => {
         .prepare("SELECT finding_id, verdict FROM svc_findings WHERE run_id = ? ORDER BY 1")
         .all(runId) as Array<{ finding_id: string; verdict: string }>;
       const files = JSON.parse(
-        readFileSync(path.join(repo, ".claude-box", "runs", runId, "findings.json"), "utf8"),
+        readFileSync(path.join(repo, ".aio", "runs", runId, "findings.json"), "utf8"),
       ) as { findings: Finding[] } | Finding[];
       const onDisk = (Array.isArray(files) ? files : files.findings)
         .map((f) => ({ finding_id: f.id, verdict: f.verdict }))

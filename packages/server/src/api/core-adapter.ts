@@ -3,7 +3,7 @@
 // and mostly synchronous calls; the API works in views and promises. This
 // file is the only place that knows both shapes.
 import path from "node:path";
-import type { Box, BoxView, ReviewState } from "@agentbox/contracts";
+import type { Box, BoxView, ReviewState } from "@aio/contracts";
 import type Docker from "dockerode";
 import type { ServerCore } from "../core.js";
 import { summarizeImport } from "../import/importer.js";

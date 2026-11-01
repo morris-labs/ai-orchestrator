@@ -1,6 +1,6 @@
 // The commands that attach to a box's tmux session, a side session, or a
 // shell (inventory section 5).
-import type { Platform } from "@agentbox/contracts";
+import type { Platform } from "@aio/contracts";
 
 /**
  * Waits up to 30 seconds for the session, then attaches. `-d` detaches any

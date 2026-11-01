@@ -1,7 +1,7 @@
 // The pre-push state machine (design.md, "Pre-push pipeline"). Each stage
 // reads the files the previous stage wrote, so the driver can start at any
 // stage after a crash, a pause, or a decision.
-import type { Finding, Role, RoleAssignment, StopReason, Vendor } from "@agentbox/contracts";
+import type { Finding, Role, RoleAssignment, StopReason, Vendor } from "@aio/contracts";
 import { runGate } from "../gate/gate.js";
 import { resolveRange } from "../range/resolve.js";
 import { DecisionNeeded, type RunContext } from "./context.js";

@@ -1,11 +1,11 @@
 // The app's live state: the dashboard model fed by the event stream, the
 // usage route's forecasts, and the stream's connection state. The API client
-// and the event stream come from `@agentbox/ui`: screens call the server
+// and the event stream come from `@aio/ui`: screens call the server
 // with `useApiClient()`, listen to events with `useAnyEvent()`, and read this
 // store with `useStore()`.
-import type { AgentBoxEvent } from "@agentbox/contracts";
-import { ApiClientProvider, EventHubProvider } from "@agentbox/ui/hooks";
-import { EventHub, EventsConnection, type ApiClient, type StreamStatus } from "@agentbox/ui/core";
+import type { AioEvent } from "@aio/contracts";
+import { ApiClientProvider, EventHubProvider } from "@aio/ui/hooks";
+import { EventHub, EventsConnection, type ApiClient, type StreamStatus } from "@aio/ui/core";
 import {
   addUsageSamples,
   applyEvent,
@@ -14,7 +14,7 @@ import {
   seedDashboard,
   type DashboardState,
   type VendorUsageInfo,
-} from "@agentbox/ui/dashboard";
+} from "@aio/ui/dashboard";
 import { createContext, useContext, useSyncExternalStore, type ReactNode } from "react";
 
 export type ConnectionState = StreamStatus;
@@ -91,7 +91,7 @@ export class AppStore {
   };
 
   /** Calls `listener` for every event the store applies. */
-  onEvent(listener: (e: AgentBoxEvent) => void): () => void {
+  onEvent(listener: (e: AioEvent) => void): () => void {
     return this.hub.on("*", listener);
   }
 
@@ -101,7 +101,7 @@ export class AppStore {
   }
 
   /** Applies one event; the stream connection and the tests call it. */
-  ingest(event: AgentBoxEvent): void {
+  ingest(event: AioEvent): void {
     this.trackRemoval(event);
     if (this.rebuilding) this.rebuilding = applyEvent(this.rebuilding, event);
     this.set({ dashboard: applyEvent(this.state.dashboard, event) });
@@ -109,7 +109,7 @@ export class AppStore {
     if (event.type === "usage.sample" || event.type === "ceiling.crossed") void this.loadUsage();
   }
 
-  private trackRemoval(event: AgentBoxEvent): void {
+  private trackRemoval(event: AioEvent): void {
     const removed = this.removedDuringLoad;
     if (!removed) return;
     if (event.type === "box.changed") {

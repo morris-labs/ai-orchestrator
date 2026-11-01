@@ -8,13 +8,13 @@ import { tempDir } from "../tmp.js";
 
 function spec(stateDir: string): ContainerCreateSpec {
   return {
-    name: "claude-agent-proj-x-12345678",
-    image: "claude-code",
+    name: "aio-agent-proj-x-12345678",
+    image: "aio-agent",
     user: "tester",
     workingDir: "/w",
     cmd: ["bash"],
     env: [],
-    binds: [`${stateDir}:/run/claude-box`],
+    binds: [`${stateDir}:/run/aio`],
     portBindings: {},
     labels: {},
     tty: true,
@@ -25,12 +25,12 @@ function spec(stateDir: string): ContainerCreateSpec {
 
 describe("MemoryDocker", () => {
   it("plays the keeper and the tmux commands", async () => {
-    const dir = tempDir("agentbox-mem-");
+    const dir = tempDir("aio-mem-");
     const d = new MemoryDocker();
-    d.addImage("claude-code");
+    d.addImage("aio-agent");
     const id = await d.createContainer(spec(dir));
     await d.startContainer(id);
-    const c = "claude-agent-proj-x-12345678";
+    const c = "aio-agent-proj-x-12345678";
     expect((await d.exec(c, { cmd: sessionStartCmd("s1", "/w", "claude") })).exitCode).toBe(0);
     expect(fs.readFileSync(path.join(dir, "sessions"), "utf8")).toBe("s1\n");
     expect((await d.exec(c, { cmd: sessionStartCmd("s1", "/w", "claude") })).exitCode).toBe(3);

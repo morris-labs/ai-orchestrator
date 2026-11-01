@@ -3,7 +3,7 @@
 // error mapping.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { EventSchema, FindingSchema, RunStateSchema } from "@agentbox/contracts";
+import { EventSchema, FindingSchema, RunStateSchema } from "@aio/contracts";
 import { beforeAll, describe, expect, it } from "vitest";
 import { silentLogger } from "../../src/main/logger.js";
 import { bridgeAdapters } from "../../src/adapters/bridge.js";
@@ -24,7 +24,7 @@ function manager(repo: string) {
   const broker = new GrantingBroker();
   const runs = new EngineRunManager({
     projectRoot: repo,
-    container: "claude-agent-proj-sample",
+    container: "aio-agent-proj-sample",
     events,
     leases: broker,
     adapters: bridgeAdapters(createMockAdapters(SCRIPT)),
@@ -149,7 +149,7 @@ describe("EngineRunManager", () => {
     expect(fresh.activeRunCount()).toBe(0);
     expect((await fresh.get(RUN_A))?.status).toBe("finished");
     const state = JSON.parse(
-      readFileSync(join(repo, ".claude-box/runs", RUN_A, "state.json"), "utf8"),
+      readFileSync(join(repo, ".aio/runs", RUN_A, "state.json"), "utf8"),
     ) as { status: string };
     expect(state.status).toBe("finished");
   });

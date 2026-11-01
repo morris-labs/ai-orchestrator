@@ -12,7 +12,7 @@
 import { constants as fsc } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { Platform } from "@agentbox/contracts";
+import type { Platform } from "@aio/contracts";
 
 /** Claude Code's sign-in, relative to its config folder. */
 export const CLAUDE_SIGN_IN_FILES = [".credentials.json"] as const;

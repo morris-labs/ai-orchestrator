@@ -1,5 +1,5 @@
 // The host side of a project container's keeper state:
-// `~/.claude-box/state/<container>/sessions` (live tmux sessions, rewritten
+// `~/.ai-orchestrator/state/<container>/sessions` (live tmux sessions, rewritten
 // every second), `mounts` (the mounts the container was created with), and
 // `engine.token` (the engine's bearer token, mode 0600).
 import fs from "node:fs";
@@ -91,7 +91,7 @@ export function allLiveSessions(env: HostEnv): string[] {
 /**
  * Creates the state directory and removes a sessions file (or a directory at
  * its path) left by an earlier container of the same name, so it cannot pass for a live one. Returns the
- * bind `HOST:/run/claude-box`.
+ * bind `HOST:/run/aio`.
  */
 export function prepareStateDir(env: HostEnv, container: string, mountPoint: string): string {
   const dir = stateDir(env, container);

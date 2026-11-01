@@ -8,7 +8,7 @@ import {
   isReadOnlyPostPush,
   type Finding,
   type Severity,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 import { createHash } from "node:crypto";
 import { DecisionNeeded, type RunContext } from "../state/context.js";
 import { finish, startRound, stagePreflight } from "../state/prepush.js";
@@ -179,7 +179,7 @@ async function stagePush(ctx: RunContext, requestReview = true): Promise<PrInfo>
       head: branch,
       // A blank title gets the default, since gh refuses an empty one.
       title: ctx.eng.push?.title?.trim() || `Review fixes for ${branch}`,
-      body: `Opened by Agent Box run ${ctx.state.id}.`,
+      body: `Opened by AI Orchestrator run ${ctx.state.id}.`,
       draft: ctx.eng.push?.draft ?? false,
     });
   }

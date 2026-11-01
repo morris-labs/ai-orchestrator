@@ -3,7 +3,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { RunState } from "@agentbox/contracts";
+import type { RunState } from "@aio/contracts";
 import { describe, expect, it } from "vitest";
 import { bridgeAdapters } from "../../src/adapters/bridge.js";
 import { GrantingBroker, MemoryEventSink } from "../../src/core.js";
@@ -57,7 +57,7 @@ async function leftRun(repo: string, patch: Partial<RunState>): Promise<string> 
     runs as unknown as { controllers: Map<string, { settled(): Promise<unknown> }> }
   ).controllers;
   await controllers.get(id)?.settled();
-  const file = join(repo, ".claude-box/runs", id, "state.json");
+  const file = join(repo, ".aio/runs", id, "state.json");
   const state = JSON.parse(readFileSync(file, "utf8")) as RunState;
   writeFileSync(
     file,
@@ -70,7 +70,7 @@ describe("engine startup", () => {
   it("survives a policy typo and fails only the run that goes on", async () => {
     const repo = buildSampleRepo();
     const id = await leftRun(repo, { status: "pending", stage: "preflight", round: 0 });
-    const policy = join(repo, ".claude-box/policy.yaml");
+    const policy = join(repo, ".aio/policy.yaml");
     const good = readFileSync(policy, "utf8");
     writeFileSync(policy, `${good}\ntsets: []\n`);
     const runs = await createRunManager(deps(repo));
@@ -83,10 +83,10 @@ describe("engine startup", () => {
   it("marks a run with a corrupt engine.json failed and starts anyway", async () => {
     const repo = buildSampleRepo();
     const broken = await leftRun(repo, { status: "running" });
-    writeFileSync(join(repo, ".claude-box/runs", broken, "engine.json"), "{ not json");
+    writeFileSync(join(repo, ".aio/runs", broken, "engine.json"), "{ not json");
     const runs = await createRunManager(deps(repo));
     const state = JSON.parse(
-      readFileSync(join(repo, ".claude-box/runs", broken, "state.json"), "utf8"),
+      readFileSync(join(repo, ".aio/runs", broken, "state.json"), "utf8"),
     ) as RunState;
     expect(state.status).toBe("failed");
     expect(state.error).toMatch(/couldn't load the run/);
@@ -131,10 +131,10 @@ describe("engine startup", () => {
   it("excludes its run directory from git when the project root is the repository", async () => {
     const repo = buildSampleRepo();
     const exclude = join(repo, ".git", "info", "exclude");
-    const without = readFileSync(exclude, "utf8").replace(".claude-box/\n", "");
+    const without = readFileSync(exclude, "utf8").replace(".aio/\n", "");
     writeFileSync(exclude, without);
     await leftRun(repo, {});
-    expect(readFileSync(exclude, "utf8")).toBe(`${without}.claude-box/\n`);
+    expect(readFileSync(exclude, "utf8")).toBe(`${without}.aio/\n`);
     const status = execFileSync("git", ["status", "--porcelain", "--untracked-files=all"], {
       cwd: repo,
       encoding: "utf8",
@@ -196,7 +196,7 @@ describe("engine shutdown", () => {
       runs as unknown as { controllers: Map<string, { settled(): Promise<unknown> }> }
     ).controllers;
     await controllers.get(id)?.settled();
-    const file = join(repo, ".claude-box/runs", id, "state.json");
+    const file = join(repo, ".aio/runs", id, "state.json");
     const left = JSON.parse(readFileSync(file, "utf8")) as RunState;
     expect(left.status).toBe("running");
     expect(left.error).toBeUndefined();

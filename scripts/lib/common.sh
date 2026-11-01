@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# Shared helpers for the Agent Box build scripts. Source this file; don't
+# Shared helpers for the AI Orchestrator build scripts. Source this file; don't
 # run it.
 #
 # The scripts that source it set `set -euo pipefail` themselves.

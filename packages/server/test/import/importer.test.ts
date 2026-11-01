@@ -1,11 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
-import {
-  DEFAULT_PROMPT_TEMPLATES,
-  ImportReportSchema,
-  projectContainerName,
-} from "@agentbox/contracts";
+import { DEFAULT_PROMPT_TEMPLATES, ImportReportSchema, projectContainerName } from "@aio/contracts";
 import { openDatabase, repositories, type Repositories } from "../../src/db/index.js";
 import {
   IMPORT_SOURCE,
@@ -241,7 +237,7 @@ describe("runImport", () => {
       name: "My App",
       primaryRepo: fx.app,
       secretRefs: [],
-      policyPath: ".claude-box/policy.yaml",
+      policyPath: ".aio/policy.yaml",
     });
     expect(app?.mounts).toEqual([
       { host: `${fx.home}/data`, container: "/data" },
@@ -265,18 +261,18 @@ describe("runImport", () => {
     expect(report.poolPortsDropped).toEqual([
       { projectId: fx.appId, boxId: null, port: "20000:20000" },
       { projectId: fx.appId, boxId: null, port: "20001:20001" },
-      { projectId: fx.appId, boxId: "claude-agent-classic", port: "20000:20000" },
-      { projectId: fx.appId, boxId: "claude-agent-shared.x", port: "20001:20001" },
+      { projectId: fx.appId, boxId: "aio-agent-classic", port: "20000:20000" },
+      { projectId: fx.appId, boxId: "aio-agent-shared.x", port: "20001:20001" },
     ]);
     expect(report.tcpMapsAdded).toEqual([
-      { projectId: fx.appId, boxId: "claude-agent-classic", host: 8080, container: 3000 },
-      { projectId: fx.looseId, boxId: "claude-agent-loose", host: 9000, container: 9000 },
-      { projectId: fx.appId, boxId: "claude-agent-shared.x", host: 8081, container: 4000 },
+      { projectId: fx.appId, boxId: "aio-agent-classic", host: 8080, container: 3000 },
+      { projectId: fx.looseId, boxId: "aio-agent-loose", host: 9000, container: 9000 },
+      { projectId: fx.appId, boxId: "aio-agent-shared.x", host: 8081, container: 4000 },
     ]);
     expect(report.mountsSkipped).toEqual([
       {
         projectId: fx.appId,
-        from: "claude-agent-classic",
+        from: "aio-agent-classic",
         mount: `${fx.home}/other:/data`,
         reason: `container path /data is already mounted from ${fx.home}/data`,
       },
@@ -291,12 +287,12 @@ describe("runImport", () => {
   it("imports every box field", () => {
     const report = runImport({ env: fx.env, repos });
     const container = projectContainerName(fx.appId);
-    const classic = repos.boxes.get("claude-agent-classic");
+    const classic = repos.boxes.get("aio-agent-classic");
     const mtime = fs
       .statSync(path.join(fx.home, ".claude-box/known/claude-agent-classic"))
       .mtime.toISOString();
     expect(classic).toEqual({
-      id: "claude-agent-classic",
+      id: "aio-agent-classic",
       projectId: fx.appId,
       hostKey: "classic",
       targetDir: fx.app,
@@ -308,7 +304,7 @@ describe("runImport", () => {
       effort: "high",
       skipPermissions: true,
       container,
-      session: "claude-agent-classic",
+      session: "aio-agent-classic",
       launchedModel: "claude-opus-5-5",
       launchedEffort: "high",
       wasRunning: true,
@@ -316,7 +312,7 @@ describe("runImport", () => {
       createdAt: mtime,
       updatedAt: mtime,
     });
-    const shared = repos.boxes.get("claude-agent-shared.x");
+    const shared = repos.boxes.get("aio-agent-shared.x");
     expect(shared).toMatchObject({
       targetDir: `${fx.app}/`,
       projectId: fx.appId,
@@ -327,14 +323,14 @@ describe("runImport", () => {
       wasRunning: false,
       conversationName: "Shared one",
     });
-    expect(repos.boxes.get("claude-agent-loose")).toMatchObject({
+    expect(repos.boxes.get("aio-agent-loose")).toMatchObject({
       projectId: fx.looseId,
       sessionUuid: null,
       skipPermissions: false,
-      session: "claude-agent-loose",
+      session: "aio-agent-loose",
       container: projectContainerName(fx.looseId),
     });
-    const tree = repos.boxes.get("claude-agent-tree");
+    const tree = repos.boxes.get("aio-agent-tree");
     expect(tree).toMatchObject({
       worktree: `${fx.app}/.worktrees/tree`,
       branch: "claude/tree",
@@ -343,17 +339,17 @@ describe("runImport", () => {
       session: "tree",
     });
     expect(
-      report.warnings.some((w) => w.includes("claude-agent-tree") && w.includes("elsewhere")),
+      report.warnings.some((w) => w.includes("aio-agent-tree") && w.includes("elsewhere")),
     ).toBe(true);
-    const codex = repos.boxes.get("claude-agent-codex");
+    const codex = repos.boxes.get("aio-agent-codex");
     expect(codex).toMatchObject({ platform: "codex", skipPermissions: false, sessionUuid: null });
     expect(codex?.effort).toBeUndefined();
     expect(codex?.launchedEffort).toBeUndefined();
     expect(report.warnings).toEqual(
       expect.arrayContaining([
-        "claude-agent-codex: dropped the invalid session_uuid not-a-uuid.",
-        "claude-agent-codex: dropped the invalid effort turbo.",
-        "claude-agent-codex: dropped the invalid launched_effort extreme.",
+        "aio-agent-codex: dropped the invalid session_uuid not-a-uuid.",
+        "aio-agent-codex: dropped the invalid effort turbo.",
+        "aio-agent-codex: dropped the invalid launched_effort extreme.",
       ]),
     );
     expect(report.boxes.skipped).toEqual([
@@ -371,8 +367,8 @@ describe("runImport", () => {
 
   it("converts legacy inline remotes and imports named ones", () => {
     const report = runImport({ env: fx.env, repos });
-    expect(repos.sshRemotes.get("claude-agent-legacyflat-0")).toEqual({
-      name: "claude-agent-legacyflat-0",
+    expect(repos.sshRemotes.get("aio-agent-legacyflat-0")).toEqual({
+      name: "aio-agent-legacyflat-0",
       host: "me@example.com:2222",
       identity: "/keys/id",
       forwards: [
@@ -385,8 +381,8 @@ describe("runImport", () => {
         },
       ],
     });
-    expect(repos.sshRemotes.get("claude-agent-legacyidx-0")).toEqual({
-      name: "claude-agent-legacyidx-0",
+    expect(repos.sshRemotes.get("aio-agent-legacyidx-0")).toEqual({
+      name: "aio-agent-legacyidx-0",
       host: "ops@203.0.113.5",
       forwards: [
         {
@@ -412,26 +408,26 @@ describe("runImport", () => {
         },
       ],
     });
-    expect(repos.boxes.get("claude-agent-legacyflat")?.sshRemoteRefs).toEqual([
-      "claude-agent-legacyflat-0",
+    expect(repos.boxes.get("aio-agent-legacyflat")?.sshRemoteRefs).toEqual([
+      "aio-agent-legacyflat-0",
     ]);
-    expect(repos.boxes.get("claude-agent-legacyidx")?.sshRemoteRefs).toEqual([
+    expect(repos.boxes.get("aio-agent-legacyidx")?.sshRemoteRefs).toEqual([
       "prod",
-      "claude-agent-legacyidx-0",
+      "aio-agent-legacyidx-0",
     ]);
     expect(report.sshRemotes.legacyConverted).toEqual([
-      { boxId: "claude-agent-legacyflat", remote: "claude-agent-legacyflat-0" },
-      { boxId: "claude-agent-legacyidx", remote: "claude-agent-legacyidx-0" },
+      { boxId: "aio-agent-legacyflat", remote: "aio-agent-legacyflat-0" },
+      { boxId: "aio-agent-legacyidx", remote: "aio-agent-legacyidx-0" },
     ]);
     expect(report.sshRemotes.imported).toEqual([
       "prod",
-      "claude-agent-legacyflat-0",
-      "claude-agent-legacyidx-0",
+      "aio-agent-legacyflat-0",
+      "aio-agent-legacyidx-0",
     ]);
     expect(report.warnings).toEqual(
       expect.arrayContaining([
-        "claude-agent-legacyflat: skipped the invalid SSH forward X:bad.",
-        "claude-agent-legacyidx: skipped inline SSH remote 1: it has no host.",
+        "aio-agent-legacyflat: skipped the invalid SSH forward X:bad.",
+        "aio-agent-legacyidx: skipped inline SSH remote 1: it has no host.",
       ]),
     );
   });
@@ -479,7 +475,7 @@ describe("runImport", () => {
     const report = runImport({ env: fx.env, repos });
     expect(snapshot(fx.files)).toEqual(before);
     const written = JSON.parse(
-      fs.readFileSync(path.join(fx.home, ".claude-box/import-report.json"), "utf8"),
+      fs.readFileSync(path.join(fx.home, ".ai-orchestrator/import-report.json"), "utf8"),
     );
     expect(written).toEqual(JSON.parse(JSON.stringify(report)));
     expect(repos.imports.latest(IMPORT_SOURCE)?.report).toEqual(JSON.parse(JSON.stringify(report)));
@@ -492,7 +488,7 @@ describe("runImport", () => {
     expect(repos.boxes.list()).toEqual([]);
     expect(repos.projects.list()).toEqual([]);
     expect(repos.imports.latest(IMPORT_SOURCE)).toBeUndefined();
-    expect(fs.existsSync(path.join(fx.home, ".claude-box/import-report.json"))).toBe(false);
+    expect(fs.existsSync(path.join(fx.home, ".ai-orchestrator/import-report.json"))).toBe(false);
     expect(needsImport(fx.env, repos)).toBe(true);
 
     const summary = ImportReportSchema.parse(summarizeImport(report, true));
@@ -515,7 +511,7 @@ describe("runImport", () => {
     );
     const report = runImport({ env: fx.env, repos });
     expect(repos.projects.get(fx.looseId)?.tcpMaps).toEqual([{ host: 9000, container: 9000 }]);
-    expect(report.tcpMapsAdded.filter((t) => t.boxId === "claude-agent-twin")).toEqual([]);
+    expect(report.tcpMapsAdded.filter((t) => t.boxId === "aio-agent-twin")).toEqual([]);
     expect(
       report.warnings.some((w) => w.includes("9100:9000") && w.includes("same container")),
     ).toBe(true);
@@ -534,9 +530,9 @@ describe("runImport", () => {
       fx.files,
     );
     const second = runImport({ env: fx.env, repos });
-    expect(second.boxes.imported).toEqual(["claude-agent-late"]);
+    expect(second.boxes.imported).toEqual(["aio-agent-late"]);
     expect(second.tcpMapsAdded).toEqual([
-      { projectId: fx.looseId, boxId: "claude-agent-late", host: 9300, container: 7000 },
+      { projectId: fx.looseId, boxId: "aio-agent-late", host: 9300, container: 7000 },
     ]);
     const loose = repos.projects.get(fx.looseId);
     expect(loose?.tcpMaps).toEqual([
@@ -570,7 +566,7 @@ describe("runImport", () => {
     expect(repos.sshRemotes.get("Mac Box")?.identity).toBe(path.join(ssh, "id_ed25519"));
     expect(repos.sshRemotes.get("tilde")?.identity).toBe("~/.ssh/id_ed25519");
     expect(repos.sshRemotes.get("orphan")?.identity).toBe(path.join(ssh, "only.pub"));
-    expect(repos.sshRemotes.get("claude-agent-pubinline-0")?.identity).toBe(
+    expect(repos.sshRemotes.get("aio-agent-pubinline-0")?.identity).toBe(
       path.join(ssh, "id_ed25519"),
     );
     const pubWarnings = report.warnings.filter((w) => w.includes("is a public key"));
@@ -607,7 +603,7 @@ describe("runImport", () => {
   });
 
   it("keeps the first import's report file when the import runs again", () => {
-    const mainFile = path.join(fx.home, ".claude-box/import-report.json");
+    const mainFile = path.join(fx.home, ".ai-orchestrator/import-report.json");
     const first = runImport({ env: fx.env, repos });
     expect(first.reportFile).toBe(mainFile);
     expect(first.previousImport).toBeUndefined();
@@ -618,7 +614,10 @@ describe("runImport", () => {
     expect(summarizeImport(dry, true).warnings[0]).toContain("would add only records");
 
     const second = runImport({ env: fx.env, repos });
-    const stampFile = path.join(fx.home, ".claude-box/import-report-2026-10-28T12-00-00Z.json");
+    const stampFile = path.join(
+      fx.home,
+      ".ai-orchestrator/import-report-2026-10-28T12-00-00Z.json",
+    );
     expect(second.reportFile).toBe(stampFile);
     expect(second.previousImport).toEqual({ finishedAt: NOW.toISOString(), reportFile: mainFile });
     expect(fs.readFileSync(mainFile, "utf8")).toBe(firstBytes);

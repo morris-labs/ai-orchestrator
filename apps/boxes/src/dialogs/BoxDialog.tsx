@@ -12,8 +12,8 @@ import {
   type Project,
   type SecretRef,
   type SshRemote,
-} from "@agentbox/contracts";
-import { Button, Collapsible, Dialog, errorMessage, useApiClient, useInFlight } from "@agentbox/ui";
+} from "@aio/contracts";
+import { Button, Collapsible, Dialog, errorMessage, useApiClient, useInFlight } from "@aio/ui";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { SecretsPicker } from "../components/SecretsPicker";
 import { mountProblems, tcpMapProblems, toTcpMaps } from "../logic/mounts";

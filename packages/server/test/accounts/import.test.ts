@@ -20,7 +20,7 @@ function write(file: string, content: string, mode = 0o600): void {
 }
 
 function setup(options: { dataDir?: string; tempDirs?: readonly string[] } = {}) {
-  const home = tempDir("agentbox-imp-home-");
+  const home = tempDir("aio-imp-home-");
   const env: HostEnv = {
     home,
     dataDir: options.dataDir ?? path.join(home, "data"),
@@ -47,7 +47,7 @@ function setup(options: { dataDir?: string; tempDirs?: readonly string[] } = {})
 }
 
 function readyFolder(vendor: "claude" | "codex" | "copilot"): string {
-  const dir = path.join(tempDir("agentbox-ready-"), vendor);
+  const dir = path.join(tempDir("aio-ready-"), vendor);
   const file =
     vendor === "claude" ? ".credentials.json" : vendor === "codex" ? "auth.json" : "config.json";
   write(path.join(dir, file), SECRET);
@@ -107,7 +107,7 @@ describe("accounts import", () => {
 
 describe("temporary directories", () => {
   it("refuses an accounts folder under a temporary directory for create, import, and seed", async () => {
-    const { accounts } = setup({ dataDir: "/tmp/agentbox-x/data", tempDirs: ["/tmp"] });
+    const { accounts } = setup({ dataDir: "/tmp/aio-x/data", tempDirs: ["/tmp"] });
     expect(() => accounts.create({ vendor: "codex", name: "work" })).toThrow(/temporary directory/);
     await expect(
       accounts.importFolder({ vendor: "codex", name: "work", from: "/home" }),
@@ -118,7 +118,7 @@ describe("temporary directories", () => {
 
 describe("seed deny-list", () => {
   function sources(): SeedSources {
-    const root = tempDir("agentbox-deny-");
+    const root = tempDir("aio-deny-");
     const claudeDir = path.join(root, ".claude");
     write(path.join(claudeDir, ".credentials.json"), SECRET);
     write(path.join(claudeDir, "agent.env"), SECRET);
@@ -147,7 +147,7 @@ describe("seed deny-list", () => {
   }
 
   it("leaves out agent.env and .env files at any depth", async () => {
-    const dest = path.join(tempDir("agentbox-seed-"), "claude", "personal");
+    const dest = path.join(tempDir("aio-seed-"), "claude", "personal");
     const r = await seedFolder("claude", sources(), dest);
     expect(holdsSecret(dest)).toBe(false);
     expect(r.leftOut).toEqual(
@@ -161,14 +161,14 @@ describe("seed deny-list", () => {
   });
 
   it("leaves out Copilot's config.json, which holds the token", async () => {
-    const dest = path.join(tempDir("agentbox-seed-"), "copilot", "personal");
+    const dest = path.join(tempDir("aio-seed-"), "copilot", "personal");
     await seedFolder("copilot", sources(), dest);
     expect(fs.existsSync(path.join(dest, "config.json"))).toBe(false);
     expect(fs.existsSync(path.join(dest, "session-store.db"))).toBe(true);
   });
 
   it("copies a linked ~/.claude.json as a file and sets installMethod to global", async () => {
-    const dest = path.join(tempDir("agentbox-seed-"), "claude", "personal");
+    const dest = path.join(tempDir("aio-seed-"), "claude", "personal");
     await seedFolder("claude", sources(), dest);
     const file = path.join(dest, ".claude.json");
     expect(fs.lstatSync(file).isFile()).toBe(true);

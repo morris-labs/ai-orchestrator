@@ -1,6 +1,6 @@
 // Shared plumbing for the CLI adapters: the method-to-role mapping, common
 // options, process failures, and limit detection from text.
-import { DEFAULT_CEILINGS, type AgentRole, type Ceiling, type Vendor } from "@agentbox/contracts";
+import { DEFAULT_CEILINGS, type AgentRole, type Ceiling, type Vendor } from "@aio/contracts";
 import { toJsonSchema } from "./output.js";
 import type { ProcessResult } from "./process.js";
 import {

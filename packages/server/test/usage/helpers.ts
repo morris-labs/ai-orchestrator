@@ -6,11 +6,11 @@ import { randomUUID } from "node:crypto";
 import {
   EventSchema,
   defaultConfig,
-  type AgentBoxEvent,
+  type AioEvent,
   type GlobalSettings,
   type UsageSample,
   type Vendor,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 import type { SqlDatabase } from "../../src/api/core-interface.js";
 import { EventHub } from "../../src/events/hub.js";
 import { UsageService } from "../../src/usage/usage-service.js";
@@ -25,7 +25,7 @@ export function setup() {
   const now = () => new Date(clock.now);
   const db: SqlDatabase = openDatabase(":memory:");
   const hub = new EventHub({ now });
-  const events: AgentBoxEvent[] = [];
+  const events: AioEvent[] = [];
   hub.subscribe((e) => events.push(e));
   const settings: { value: GlobalSettings } = { value: defaultConfig() };
   const store = new UsageStore(db);
@@ -35,11 +35,11 @@ export function setup() {
     emit: (e) => hub.emit(e),
     now,
   });
-  const ofType = <T extends AgentBoxEvent["type"]>(type: T) =>
-    events.filter((e): e is Extract<AgentBoxEvent, { type: T }> => e.type === type);
+  const ofType = <T extends AioEvent["type"]>(type: T) =>
+    events.filter((e): e is Extract<AioEvent, { type: T }> => e.type === type);
 
   let seq = 0;
-  const samples: AgentBoxEvent[] = [];
+  const samples: AioEvent[] = [];
   /** Builds a `usage.sample` event as an engine sends it and feeds it to the service. */
   function sample(vendor: Vendor, fields: Partial<UsageSample> = {}) {
     const ceiling = settings.value.ceilings[vendor];
@@ -47,7 +47,7 @@ export function setup() {
     const event = EventSchema.parse({
       id: randomUUID(),
       time: iso(clock.now),
-      source: "engine:claude-agent-proj-example-app-1a2b3c4d",
+      source: "engine:aio-agent-proj-example-app-1a2b3c4d",
       streamId: "engine-stream",
       seq,
       sourceSeq: seq,

@@ -1,6 +1,6 @@
 // The run controls and the stop conditions, on the sample repository.
 import { execFileSync } from "node:child_process";
-import type { LeaseRequest, LeaseResponse, Vendor } from "@agentbox/contracts";
+import type { LeaseRequest, LeaseResponse, Vendor } from "@aio/contracts";
 import { describe, expect, it } from "vitest";
 import {
   FakeClock,

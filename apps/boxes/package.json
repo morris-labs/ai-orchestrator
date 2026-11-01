@@ -1,9 +1,9 @@
 {
-  "name": "@agentbox/boxes",
-  "productName": "Agent Box",
-  "version": "4.0.0",
-  "desktopName": "agentbox-boxes.desktop",
-  "description": "The agentbox app: manage boxes, conversations, and their terminals.",
+  "name": "@aio/boxes",
+  "productName": "AI Orchestrator",
+  "version": "1.0.0",
+  "desktopName": "aio-boxes.desktop",
+  "description": "The aio app: manage boxes, conversations, and their terminals.",
   "private": true,
   "type": "module",
   "main": "dist/electron/main.cjs",
@@ -16,8 +16,8 @@
     "e2e": "playwright test -c e2e/playwright.config.ts"
   },
   "dependencies": {
-    "@agentbox/contracts": "workspace:*",
-    "@agentbox/ui": "workspace:*",
+    "@aio/contracts": "workspace:*",
+    "@aio/ui": "workspace:*",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "ws": "^8.18.3",

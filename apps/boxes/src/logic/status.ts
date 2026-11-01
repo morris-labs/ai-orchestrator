@@ -1,6 +1,6 @@
 // Box status: labels, dot colors, sort order, and the status-bar counts.
-import type { BoxStatus, BoxView, Platform } from "@agentbox/contracts";
-import type { DotState } from "@agentbox/ui";
+import type { BoxStatus, BoxView, Platform } from "@aio/contracts";
+import type { DotState } from "@aio/ui";
 
 export const statusLabel: Record<BoxStatus, string> = {
   running: "Running",
@@ -34,7 +34,7 @@ export const PLATFORMS: Platform[] = ["claude", "codex", "copilot"];
 
 /** A box's display name: its conversation name, or its id without the prefix. */
 export function displayName(view: BoxView): string {
-  return view.box.conversationName || view.box.id.replace(/^claude-agent-/, "");
+  return view.box.conversationName || view.box.id.replace(/^aio-agent-/, "");
 }
 
 /**

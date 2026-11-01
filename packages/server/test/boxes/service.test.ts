@@ -9,7 +9,7 @@ import {
   expandTemplate,
   withSecretsHint,
   type Box,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 import { START_SESSION_PATH } from "../../src/docker/scripts.js";
 import { ApiError } from "../../src/records/errors.js";
 import { commitAll, initRepo, originAndProject, write } from "../worktrees/helpers.js";
@@ -43,20 +43,20 @@ describe("create", () => {
     });
     expect(BoxSchema.parse(box)).toEqual(box);
     expect(box).toMatchObject({
-      id: "claude-agent-app",
+      id: "aio-agent-app",
       hostKey: "app",
       targetDir: dir,
       conversationName: "Quick look",
       transcriptSyncedName: "Quick look",
-      container: `claude-agent-proj-${box.projectId}`,
-      session: "claude-agent-app",
+      container: `aio-agent-proj-${box.projectId}`,
+      session: "aio-agent-app",
       wasRunning: true,
       launchedModel: "claude-opus-5-5",
       launchedEffort: "high",
     });
     expect(box.sessionUuid).toMatch(UUID_RE);
     const [session, workDir, command] = starts(h)[0]!;
-    expect([session, workDir]).toEqual(["claude-agent-app", dir]);
+    expect([session, workDir]).toEqual(["aio-agent-app", dir]);
     const prompt = expandTemplate(DEFAULT_PROMPT_TEMPLATES.starter, ["Quick look", dir]);
     expect(command).toBe(
       `claude '--remote-control=Quick look' '--permission-mode' 'auto' '--allow-dangerously-skip-permissions' ` +
@@ -66,7 +66,7 @@ describe("create", () => {
     const view = h.core.boxes.view(box);
     expect(BoxViewSchema.parse(view)).toMatchObject({
       status: "running",
-      tmuxSession: "claude-agent-app",
+      tmuxSession: "aio-agent-app",
       sideSessions: [],
       targetDirExists: true,
     });
@@ -82,13 +82,13 @@ describe("create", () => {
     const h = makeHarness();
     h.core.settings.setPromptTemplates({ ...DEFAULT_PROMPT_TEMPLATES, starter: "" });
     const box = await h.core.boxes.create({ targetDir: h.dir("app.example.com"), layout: "root" });
-    expect(box.id).toBe("claude-agent-app.example.com");
-    expect(box.session).toBe("claude-agent-app.example.com");
-    expect(h.core.boxes.view(box).tmuxSession).toBe("claude-agent-app_example_com");
-    expect(box.conversationName).toBe("claude-agent-app.example.com");
+    expect(box.id).toBe("aio-agent-app.example.com");
+    expect(box.session).toBe("aio-agent-app.example.com");
+    expect(h.core.boxes.view(box).tmuxSession).toBe("aio-agent-app_example_com");
+    expect(box.conversationName).toBe("aio-agent-app.example.com");
     expect(lastCommand(h)).not.toContain("Your working directory");
     const second = await h.core.boxes.create({ targetDir: box.targetDir, layout: "root" });
-    expect(second.id).toBe("claude-agent-app.example.com-2");
+    expect(second.id).toBe("aio-agent-app.example.com-2");
     expect(second.hostKey).toBe("app-example-com-2");
   });
 
@@ -120,7 +120,7 @@ describe("create", () => {
     const h = makeHarness();
     const dir = h.dir("work", "app");
     const plain = await h.core.boxes.create({ targetDir: dir, layout: "root", start: false });
-    expect(plain.firstStart?.openingPrompt).not.toContain("agentbox-secret");
+    expect(plain.firstStart?.openingPrompt).not.toContain("aio-secret");
 
     h.core.settings.setSecretRefs([{ name: "GH_TOKEN", ref: "op://V/github/token" }]);
     const global = await h.core.boxes.create({
@@ -162,20 +162,20 @@ describe("create", () => {
       conversationName: "Emails not sending!",
     });
     expect(box).toMatchObject({
-      id: "claude-agent-emails_not_sending",
+      id: "aio-agent-emails_not_sending",
       workspace: "Emails_not_sending",
       conversationName: "Emails_not_sending",
     });
     expect(fs.statSync(path.join(dir, "Emails_not_sending")).isDirectory()).toBe(true);
-    expect(
-      fs.statSync(path.join(dir, ".claude-box/conversations/Emails_not_sending")).isDirectory(),
-    ).toBe(true);
+    expect(fs.statSync(path.join(dir, ".aio/conversations/Emails_not_sending")).isDirectory()).toBe(
+      true,
+    );
     const prompt = expandTemplate(DEFAULT_PROMPT_TEMPLATES.workspace, [
       "Emails_not_sending",
       "Emails not sending!",
       path.join(dir, "Emails_not_sending"),
-      path.join(dir, ".claude-box/conversations/Emails_not_sending"),
-      path.join(dir, ".claude-box/INFRA.md"),
+      path.join(dir, ".aio/conversations/Emails_not_sending"),
+      path.join(dir, ".aio/INFRA.md"),
     ]);
     expect(lastCommand(h)).toContain(`'${prompt.replace(/'/g, `'\\''`)}'`);
     expect(lastCommand(h)).toContain("--remote-control=Emails_not_sending");
@@ -589,7 +589,7 @@ describe("start, stop, restart", () => {
       model: "claude-opus-5-5",
       effort: "high",
     });
-    const sessions = path.join(h.home, ".claude-box/sessions", box.container);
+    const sessions = path.join(h.home, ".ai-orchestrator/sessions", box.container);
     fs.mkdirSync(sessions, { recursive: true });
     fs.writeFileSync(
       path.join(sessions, "11.json"),
@@ -769,7 +769,7 @@ describe("remove and purge", () => {
     const box = await h.core.boxes.create({ targetDir: h.dir("app"), layout: "root" });
     await expect(h.core.boxes.remove(box.id)).rejects.toMatchObject({ code: "box_running" });
     await h.core.boxes.stop(box.id);
-    const sessions = path.join(h.home, ".claude-box/sessions", box.id);
+    const sessions = path.join(h.home, ".ai-orchestrator/sessions", box.id);
     fs.mkdirSync(sessions, { recursive: true });
     expect(await h.core.boxes.remove(box.id)).toEqual({
       removed: true,
@@ -893,7 +893,7 @@ describe("move and relink", () => {
     const moved = h.core.boxes.get(a.id);
     expect(moved.targetDir).toBe(target);
     expect(moved.projectId).not.toBe(a.projectId);
-    expect(moved.container).toBe(`claude-agent-proj-${moved.projectId}`);
+    expect(moved.container).toBe(`aio-agent-proj-${moved.projectId}`);
     expect(h.core.projects.get(moved.projectId)).toMatchObject({
       name: "Custom",
       tcpMaps: [{ host: 9000, container: 3000 }],
@@ -931,7 +931,7 @@ describe("move and relink", () => {
     });
     const two = h.dir("two");
     const r = await h.core.boxes.relink(box.id, two);
-    expect(r).toMatchObject({ targetDir: two, container: `claude-agent-proj-${r.projectId}` });
+    expect(r).toMatchObject({ targetDir: two, container: `aio-agent-proj-${r.projectId}` });
     expect(fs.existsSync(path.join(h.home, "one"))).toBe(true);
     await expect(h.core.boxes.relink(box.id, path.join(h.home, "missing"))).rejects.toMatchObject({
       code: "validation",
@@ -1049,7 +1049,7 @@ describe("bulk actions and reboot", () => {
     expect(h.core.boxes.resumeCandidates()).toEqual([]);
     // A reboot: the container is gone and the record still says it was running.
     h.docker.containers.clear();
-    fs.rmSync(path.join(h.home, ".claude-box/state"), { recursive: true, force: true });
+    fs.rmSync(path.join(h.home, ".ai-orchestrator/state"), { recursive: true, force: true });
     expect(h.core.boxes.resumeCandidates()).toEqual([a.id]);
     const r = await h.core.boxes.startAll(true);
     expect(r).toEqual({ done: [a.id], failed: [] });

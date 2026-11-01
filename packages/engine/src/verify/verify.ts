@@ -4,7 +4,7 @@
 import { lstat, mkdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import type { Finding, PolicyFile, Profile, RoleAssignment, Vendor } from "@agentbox/contracts";
+import type { Finding, PolicyFile, Profile, RoleAssignment, Vendor } from "@aio/contracts";
 import type { AdapterRequest, CommandRunner, VerifyOutput } from "../core.js";
 import { policyPromptSection } from "../policy/rules.js";
 import { disproverPrompt, type RangeInfo } from "../prompts/templates.js";
@@ -35,7 +35,7 @@ export function chooseDisprover(
 
 /** Where a run's base checkout lives: a temporary directory named after the run. */
 export function baseWorktreePath(runId: string): string {
-  return join(tmpdir(), `agentbox-base-${runId}`);
+  return join(tmpdir(), `aio-base-${runId}`);
 }
 
 /**
@@ -62,7 +62,7 @@ export class BaseWorktree {
   constructor(
     private readonly git: Git,
     private readonly baseSha: string,
-    private readonly dir: string = join(tmpdir(), `agentbox-base-${process.pid}-${Date.now()}`),
+    private readonly dir: string = join(tmpdir(), `aio-base-${process.pid}-${Date.now()}`),
   ) {}
 
   /** Creates the checkout on first use and returns its path. */

@@ -1,11 +1,11 @@
 #!/usr/bin/env node
-// The `agentbox-server` entry point.
+// The `aio-server` entry point.
 //
-//   agentbox-server                  Starts the server.
-//   agentbox-server install-service  Writes and enables the systemd user unit.
+//   aio-server                  Starts the server.
+//   aio-server install-service  Writes and enables the systemd user unit.
 //
-// `--data-dir PATH` (or `AGENTBOX_DATA_DIR`) moves the data directory away
-// from `~/.claude-box`.
+// `--data-dir PATH` (or `AIO_DATA_DIR`) moves the data directory away
+// from `~/.ai-orchestrator`.
 import { readFileSync, realpathSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -49,7 +49,7 @@ export function execStartLine(dataDir?: string): string {
 export interface ServerArgs {
   /** The command, or `undefined` to start the server. */
   command?: string;
-  /** The absolute data directory, or `undefined` for `~/.claude-box`. */
+  /** The absolute data directory, or `undefined` for `~/.ai-orchestrator`. */
   dataDir?: string;
   /** Set when the arguments are invalid; the caller prints it and exits 2. */
   error?: string;
@@ -57,7 +57,7 @@ export interface ServerArgs {
 
 /**
  * Parses the command line. `--data-dir PATH` and `--data-dir=PATH` win over
- * `AGENTBOX_DATA_DIR`; a relative path resolves against the working
+ * `AIO_DATA_DIR`; a relative path resolves against the working
  * directory.
  */
 export function parseServerArgs(
@@ -82,12 +82,12 @@ export function parseServerArgs(
 }
 
 /**
- * The home directory the server works in: `AGENTBOX_HOME` when set, so a
+ * The home directory the server works in: `AIO_HOME` when set, so a
  * test or a second instance can run against a scratch directory, else the
  * user's home directory.
  */
 export function serverHome(env: NodeJS.ProcessEnv = process.env): string {
-  const override = env.AGENTBOX_HOME;
+  const override = env.AIO_HOME;
   return override ? path.resolve(override) : os.homedir();
 }
 
@@ -95,7 +95,7 @@ export async function main(argv: string[]): Promise<number> {
   const home = serverHome();
   const { command, dataDir, error } = parseServerArgs(argv);
   if (error) {
-    process.stderr.write(`${error} Run agentbox-server --help.\n`);
+    process.stderr.write(`${error} Run aio-server --help.\n`);
     return 2;
   }
   if (command === "install-service") {
@@ -110,55 +110,55 @@ export async function main(argv: string[]): Promise<number> {
   }
   if (command === "--help" || command === "-h") {
     process.stdout.write(
-      "Usage: agentbox-server [--data-dir PATH] [install-service]\n\n" +
-        "Without a command, starts the Agent Box server: the API over HTTPS on 127.0.0.1,\n" +
+      "Usage: aio-server [--data-dir PATH] [install-service]\n\n" +
+        "Without a command, starts the AI Orchestrator server: the API over HTTPS on 127.0.0.1,\n" +
         "with the certificate in server.crt, and the dev-server proxy over HTTP.\n" +
-        "install-service writes ~/.config/systemd/user/agentbox-server.service and enables it.\n\n" +
+        "install-service writes ~/.config/systemd/user/aio-server.service and enables it.\n\n" +
         "Options:\n" +
-        "  --data-dir PATH         The directory for agentbox.db, server.token, server.crt, server.key,\n" +
+        "  --data-dir PATH         The directory for aio.db, server.token, server.crt, server.key,\n" +
         "                          state/, sessions/, and the 3.x records to import.\n" +
-        "                          Default: ~/.claude-box.\n\n" +
+        "                          Default: ~/.ai-orchestrator.\n\n" +
         "Environment:\n" +
-        "  AGENTBOX_DATA_DIR       The data directory, when --data-dir isn't given.\n" +
-        "  AGENTBOX_HOME           The home directory to use in place of yours.\n" +
-        "  AGENTBOX_ENGINE_VERSION The engine version to expect. Default: this server's version plus the\n" +
+        "  AIO_DATA_DIR       The data directory, when --data-dir isn't given.\n" +
+        "  AIO_HOME           The home directory to use in place of yours.\n" +
+        "  AIO_ENGINE_VERSION The engine version to expect. Default: this server's version plus the\n" +
         "                          engine's content hash, VERSION+HASH, when the build wrote one.\n" +
-        "  AGENTBOX_IMAGE_CONTEXT  The image build context, an image/ directory with scripts/build-image.sh\n" +
+        "  AIO_IMAGE_CONTEXT  The image build context, an image/ directory with scripts/build-image.sh\n" +
         "                          beside it. Default: image/ in the repository, else\n" +
-        "                          /usr/share/agentbox/image.\n" +
-        "  AGENTBOX_BOXES_DIR      The built Boxes app to serve at /boxes/.\n" +
-        "  AGENTBOX_REVIEW_DIR     The built Review app to serve at /review/.\n" +
-        "  AGENTBOX_DEV_ENGINES    Development only: engines for projects without a container,\n" +
+        "                          /usr/share/ai-orchestrator/image.\n" +
+        "  AIO_BOXES_DIR      The built Boxes app to serve at /boxes/.\n" +
+        "  AIO_REVIEW_DIR     The built Review app to serve at /review/.\n" +
+        "  AIO_DEV_ENGINES    Development only: engines for projects without a container,\n" +
         "                          as projectId=host:port:token[,...]. The host must be loopback.\n",
     );
     return 0;
   }
   if (command !== undefined) {
-    process.stderr.write(`Unknown command: ${command}. Run agentbox-server --help.\n`);
+    process.stderr.write(`Unknown command: ${command}. Run aio-server --help.\n`);
     return 2;
   }
 
   const version = serverVersion();
   const devEngines = parseDevEngines(process.env[DEV_ENGINES_ENV]);
   const repoRoot = path.resolve(here, "..", "..", "..");
-  const imageContext = process.env.AGENTBOX_IMAGE_CONTEXT ?? defaultImageContext(repoRoot);
+  const imageContext = process.env.AIO_IMAGE_CONTEXT ?? defaultImageContext(repoRoot);
   const app = await startApp({
     home,
     dataDir,
     createCore,
     version,
     expectedEngineVersion:
-      process.env.AGENTBOX_ENGINE_VERSION ??
+      process.env.AIO_ENGINE_VERSION ??
       expectedEngineVersion(version, engineIdentityFiles(repoRoot, imageContext)),
     execStart: execStartLine(dataDir),
     devEngines,
     imageContext,
     staticDirs: {
-      boxes: process.env.AGENTBOX_BOXES_DIR ?? defaultStaticDir(repoRoot, "boxes"),
-      review: process.env.AGENTBOX_REVIEW_DIR ?? defaultStaticDir(repoRoot, "review"),
+      boxes: process.env.AIO_BOXES_DIR ?? defaultStaticDir(repoRoot, "boxes"),
+      review: process.env.AIO_REVIEW_DIR ?? defaultStaticDir(repoRoot, "review"),
     },
   });
-  process.stderr.write(`agentbox-server ${version} listening on https://127.0.0.1:${app.port}\n`);
+  process.stderr.write(`aio-server ${version} listening on https://127.0.0.1:${app.port}\n`);
   if (app.proxyPort !== null) {
     process.stderr.write(`Dev-server proxy on http://*.localhost:${app.proxyPort}\n`);
   }
@@ -184,7 +184,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.ar
   main(process.argv.slice(2)).then(
     (code) => process.exit(code),
     (err: unknown) => {
-      process.stderr.write(`agentbox-server failed: ${(err as Error).message}\n`);
+      process.stderr.write(`aio-server failed: ${(err as Error).message}\n`);
       process.exit(1);
     },
   );

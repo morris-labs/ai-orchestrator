@@ -9,7 +9,7 @@ describe("config", () => {
     expect(config).toMatchObject({
       version: 1,
       serverPort: 21400,
-      engineImage: "claude-code",
+      engineImage: "aio-agent",
       setupCompleted: false,
       globalMounts: [],
       secretRefs: [],
@@ -50,23 +50,23 @@ describe("config", () => {
     const raw: Record<string, string> = {
       [ENGINE_ENV.token]: "0123456789abcdef0123",
       [ENGINE_ENV.projectRoot]: "/home/user/src/example-app",
-      [ENGINE_ENV.container]: "claude-agent-proj-example-app-1a2b3c4d",
-      [ENGINE_ENV.engineVersion]: "4.0.0",
+      [ENGINE_ENV.container]: "aio-agent-proj-example-app-1a2b3c4d",
+      [ENGINE_ENV.engineVersion]: "1.0.0",
       UNRELATED: "x",
     };
-    expect(parseEngineEnv(raw).AGENTBOX_ENGINE_PORT).toBe(20411);
-    expect(parseEngineEnv(raw).AGENTBOX_STATE_DIR).toBe("/run/claude-box");
-    expect(parseEngineEnv({ ...raw, [ENGINE_ENV.stateDir]: "/tmp/state" }).AGENTBOX_STATE_DIR).toBe(
+    expect(parseEngineEnv(raw).AIO_ENGINE_PORT).toBe(20411);
+    expect(parseEngineEnv(raw).AIO_STATE_DIR).toBe("/run/aio");
+    expect(parseEngineEnv({ ...raw, [ENGINE_ENV.stateDir]: "/tmp/state" }).AIO_STATE_DIR).toBe(
       "/tmp/state",
     );
-    expect(parseEngineEnv({ ...raw, [ENGINE_ENV.port]: "20500" }).AGENTBOX_ENGINE_PORT).toBe(20500);
+    expect(parseEngineEnv({ ...raw, [ENGINE_ENV.port]: "20500" }).AIO_ENGINE_PORT).toBe(20500);
     expect(() => parseEngineEnv({ ...raw, [ENGINE_ENV.token]: "short" })).toThrow();
     const { [ENGINE_ENV.token]: _token, ...noToken } = raw;
     expect(() => parseEngineEnv(noToken)).toThrow();
     expect(
-      parseEngineEnv({ ...noToken, [ENGINE_ENV.tokenFile]: "/run/claude-box/engine.token" })
-        .AGENTBOX_ENGINE_TOKEN_FILE,
-    ).toBe("/run/claude-box/engine.token");
+      parseEngineEnv({ ...noToken, [ENGINE_ENV.tokenFile]: "/run/aio/engine.token" })
+        .AIO_ENGINE_TOKEN_FILE,
+    ).toBe("/run/aio/engine.token");
     expect(() => parseEngineEnv({ ...raw, [ENGINE_ENV.port]: "http" })).toThrow();
   });
 });

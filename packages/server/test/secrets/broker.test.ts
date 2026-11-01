@@ -12,7 +12,7 @@ import {
 import { tempDir } from "../tmp.js";
 
 const VALUE = "SYNTHETIC_value_never_logged";
-const C = "claude-agent-proj-p-00000000";
+const C = "aio-agent-proj-p-00000000";
 
 /** A source that lists `A` and `B` for project `p-00000000` and nothing else. */
 class FakeSource implements BrokerSource {
@@ -59,7 +59,7 @@ afterEach(async () => {
 });
 
 function makeBroker(options: { now?: () => number; closeGraceMs?: number } = {}) {
-  const root = tempDir("agentbox-broker-");
+  const root = tempDir("aio-broker-");
   const source = new FakeSource();
   const log: string[] = [];
   const broker = new SecretsBroker({
@@ -89,7 +89,7 @@ describe("SecretsBroker", () => {
       socket,
       "POST",
       "/v1/read",
-      JSON.stringify({ names: ["B", "A", "B"], caller: "agentbox-secret run B\n-- make" }),
+      JSON.stringify({ names: ["B", "A", "B"], caller: "aio-secret run B\n-- make" }),
     );
     expect(read).toEqual({
       status: 200,
@@ -97,7 +97,7 @@ describe("SecretsBroker", () => {
     });
     expect(log.join("\n")).not.toContain(VALUE);
     expect(log).toContain(`Secrets broker: ${C} list: ok`);
-    expect(log).toContain(`Secrets broker: ${C} read B,A for "agentbox-secret run B -- make": ok`);
+    expect(log).toContain(`Secrets broker: ${C} read B,A for "aio-secret run B -- make": ok`);
   });
 
   it("maps errors to the broker's codes and statuses without values", async () => {
@@ -146,7 +146,7 @@ describe("SecretsBroker", () => {
   it("syncs with the running containers, keeping a fresh socket for the grace period", async () => {
     let now = 0;
     const { broker, root } = makeBroker({ now: () => now, closeGraceMs: 1000 });
-    const other = "claude-agent-proj-q-00000000";
+    const other = "aio-agent-proj-q-00000000";
     await broker.sync([{ container: C, projectId: "p-00000000" }]);
     expect(broker.openContainers()).toEqual([C]);
     // A container opens its socket before docker lists it.
@@ -167,7 +167,7 @@ describe("SecretsBroker", () => {
 
   it("refuses a socket path too long for a Unix socket", async () => {
     const { broker, log } = makeBroker();
-    const long = `claude-agent-proj-${"x".repeat(MAX_SOCKET_PATH_BYTES)}`;
+    const long = `aio-agent-proj-${"x".repeat(MAX_SOCKET_PATH_BYTES)}`;
     await expect(broker.open({ container: long, projectId: "p-00000000" })).rejects.toMatchObject({
       code: "internal",
       message: expect.stringMatching(/at most 107\. Choose a data directory .* shorter\.$/),

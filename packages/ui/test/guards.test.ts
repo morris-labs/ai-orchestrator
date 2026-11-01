@@ -2,13 +2,16 @@ import { describe, expect, it } from "vitest";
 import { isAllowedOpenPath, isAppPage, isWebUrl } from "../src/core";
 
 describe("isAppPage", () => {
-  const pages = ["http://127.0.0.1:21400/boxes/", "file:///opt/agentbox/renderer/index.html"];
+  const pages = [
+    "http://127.0.0.1:21400/boxes/",
+    "file:///opt/ai-orchestrator/renderer/index.html",
+  ];
 
   it("accepts the app's own pages", () => {
     expect(isAppPage("http://127.0.0.1:21400/boxes/", pages)).toBe(true);
     expect(isAppPage("http://127.0.0.1:21400/boxes/index.html?x=1#/a", pages)).toBe(true);
     expect(isAppPage("http://127.0.0.1:21400/boxes", pages)).toBe(true);
-    expect(isAppPage("file:///opt/agentbox/renderer/index.html#/", pages)).toBe(true);
+    expect(isAppPage("file:///opt/ai-orchestrator/renderer/index.html#/", pages)).toBe(true);
   });
 
   it("rejects other origins, paths, and files", () => {

@@ -1,5 +1,5 @@
 // Every engine HTTP route, through Fastify inject, against a fake core.
-import { engineRoutes, type HttpRouteDef, type RouteDef } from "@agentbox/contracts";
+import { engineRoutes, type HttpRouteDef, type RouteDef } from "@aio/contracts";
 import type { FastifyInstance } from "fastify";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { EngineError } from "../../src/api/core-interface.js";
@@ -23,14 +23,14 @@ const listener = { port: 5173, proto: "tcp" as const, process: "node", boxId: nu
 let runs: ReturnType<typeof fakeRunManager>;
 let app: FastifyInstance;
 
-async function build(expectedVersion = "4.0.0-dev") {
+async function build(expectedVersion = "1.0.0-dev") {
   const hub = newHub();
   runs = fakeRunManager();
   app = await buildEngineApp({
     token: TOKEN,
     container: CONTAINER,
     projectRoot: PROJECT_ROOT,
-    engineVersion: "4.0.0-dev",
+    engineVersion: "1.0.0-dev",
     expectedVersion,
     hub,
     leases: newBroker(hub),
@@ -76,7 +76,7 @@ const cases: Record<string, Case> = {
     url: "/api/v1/health",
     check: (j) =>
       expect(j).toMatchObject({
-        engineVersion: "4.0.0-dev",
+        engineVersion: "1.0.0-dev",
         streamId: "stream-1",
         versionMatches: true,
       }),
@@ -250,7 +250,7 @@ describe("engine API behavior", () => {
     await app.close();
     await build("4.0.1");
     const res = await app.inject({ method: "GET", url: "/api/v1/health" });
-    expect(res.json()).toMatchObject({ versionMatches: false, engineVersion: "4.0.0-dev" });
+    expect(res.json()).toMatchObject({ versionMatches: false, engineVersion: "1.0.0-dev" });
   });
 
   it("refuses a wrong token", async () => {

@@ -1,15 +1,15 @@
 // The engine image: its status, the engine version it carries, and builds.
-import { ENGINE_VERSION_FILE, type ImageStatus } from "@agentbox/contracts";
+import { ENGINE_VERSION_FILE, type ImageStatus } from "@aio/contracts";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import type { DockerClient } from "./types.js";
 
 /** Image labels that W8's Dockerfile sets; the version files are the fallback. */
 export const IMAGE_LABELS = {
-  engineVersion: "agentbox.engine-version",
-  claude: "agentbox.cli.claude",
-  codex: "agentbox.cli.codex",
-  copilot: "agentbox.cli.copilot",
+  engineVersion: "aio.engine-version",
+  claude: "aio.cli.claude",
+  codex: "aio.cli.codex",
+  copilot: "aio.cli.copilot",
 } as const;
 
 /** Files inside the image that name each version. */
@@ -24,7 +24,7 @@ type VersionKey = keyof typeof VERSION_FILES;
 
 /**
  * The npm package of each agent CLI. An image whose Dockerfile wrote no
- * version file for a CLI, as the first 4.0 image did for Codex and Copilot,
+ * version file for a CLI, as the first image did for Codex and Copilot,
  * still reports the version from the package's `package.json`.
  */
 export const CLI_PACKAGES: Partial<Record<VersionKey, string>> = {
@@ -138,13 +138,9 @@ export async function imageStatus(
   };
 }
 
-/**
- * The error for an engine image without an Agent Box engine. Claude Box 3.x
- * builds the same `claude-code` tag from the old Dockerfile, so its setup
- * wizard or its Update Claude Code action can replace the Agent Box image.
- */
+/** The error for an engine image without an AI Orchestrator engine. */
 export function noEngineMessage(image: string): string {
-  return `The image ${image} has no Agent Box engine, so it was probably built by Claude Box 3.x, which uses the same tag. Rebuild the image from Agent Box.`;
+  return `The image ${image} has no AI Orchestrator engine. Rebuild the image from AI Orchestrator.`;
 }
 
 /** The build kinds of `image.build`. */
@@ -170,8 +166,8 @@ export function imageBuildScriptArgs(kind: ImageBuildKind): string[] {
 /**
  * The build script for an image build context. The script and the context
  * sit side by side, in a source checkout (`scripts/` and `image/`) and in the
- * installed package (`/usr/share/agentbox/scripts` and
- * `/usr/share/agentbox/image`). The script builds `../image` from its own
+ * installed package (`/usr/share/ai-orchestrator/scripts` and
+ * `/usr/share/ai-orchestrator/image`). The script builds `../image` from its own
  * directory, so the context must be a directory named `image`.
  */
 export function imageBuildScript(context: string): string {
@@ -179,10 +175,10 @@ export function imageBuildScript(context: string): string {
 }
 
 /** Where the installed package puts the image build context. */
-export const INSTALLED_IMAGE_CONTEXT = "/usr/share/agentbox/image";
+export const INSTALLED_IMAGE_CONTEXT = "/usr/share/ai-orchestrator/image";
 
 /**
- * The image build context when `AGENTBOX_IMAGE_CONTEXT` isn't set: `image/`
+ * The image build context when `AIO_IMAGE_CONTEXT` isn't set: `image/`
  * in the source checkout at `repoRoot` when it has a Dockerfile, else the
  * installed package's context.
  */

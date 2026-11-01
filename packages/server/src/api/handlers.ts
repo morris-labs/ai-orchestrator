@@ -9,7 +9,7 @@ import {
   type PathParams,
   type RunState,
   type ServerRoutes,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 import path from "node:path";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import type { z } from "zod";

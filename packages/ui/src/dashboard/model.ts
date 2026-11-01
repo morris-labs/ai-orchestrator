@@ -3,7 +3,7 @@
 // returns a new state for every event that changes something, so React can
 // compare by reference.
 import type {
-  AgentBoxEvent,
+  AioEvent,
   AgentRole,
   BoxStatus,
   BoxView,
@@ -22,7 +22,7 @@ import type {
   TimedUsageSample,
   UsageWindow,
   Vendor,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 
 export interface ContainerView {
   name: string;
@@ -295,7 +295,7 @@ function pruneRuns(state: DashboardState): DashboardState {
 }
 
 /** Applies one event. Events of other streams or older `seq` values still apply. */
-export function applyEvent(prev: DashboardState, event: AgentBoxEvent): DashboardState {
+export function applyEvent(prev: DashboardState, event: AioEvent): DashboardState {
   const state: DashboardState = {
     ...prev,
     eventCount: prev.eventCount + 1,
@@ -608,6 +608,6 @@ export function seedDashboard(state: DashboardState, snap: DashboardSnapshot): D
 }
 
 /** Applies events in order. */
-export function replay(events: readonly AgentBoxEvent[], start = emptyDashboard()): DashboardState {
+export function replay(events: readonly AioEvent[], start = emptyDashboard()): DashboardState {
   return events.reduce(applyEvent, start);
 }

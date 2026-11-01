@@ -49,8 +49,6 @@ describe("format", () => {
       "ws://127.0.0.1:21400/api/v1/events?types=a%2Cb",
     );
     expect(eventsUrl("https://example.com")).toBe("wss://example.com/api/v1/events");
-    expect(eventsUrl("https://example.com/agentbox/")).toBe(
-      "wss://example.com/agentbox/api/v1/events",
-    );
+    expect(eventsUrl("https://example.com/aio/")).toBe("wss://example.com/aio/api/v1/events");
   });
 });

@@ -18,8 +18,8 @@ import {
   type EventType,
   type HttpRouteDef,
   type WsRouteDef,
-} from "@agentbox/contracts";
-import type { TlsIdentity } from "@agentbox/contracts/tls";
+} from "@aio/contracts";
+import type { TlsIdentity } from "@aio/contracts/tls";
 import fastifyStatic from "@fastify/static";
 import fastifyWebsocket from "@fastify/websocket";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
@@ -40,7 +40,7 @@ interface RouteConfig {
 
 declare module "fastify" {
   interface FastifyContextConfig {
-    agentbox?: RouteConfig;
+    aio?: RouteConfig;
   }
 }
 
@@ -157,7 +157,7 @@ export async function createApiServer(deps: ApiDeps & { tls?: TlsIdentity }): Pr
   );
 
   app.addHook("onRequest", async (request, reply) => {
-    const config = request.routeOptions.config.agentbox;
+    const config = request.routeOptions.config.aio;
     const port = request.socket.localPort ?? 0;
     if (config?.ws && !isOwnOrigin(request.headers.origin, tls !== undefined, port)) {
       reply.header("connection", "close");
@@ -239,7 +239,7 @@ function registerHttp(
   app.route({
     method: def.method,
     url: fastifyPath(def.path),
-    config: { agentbox: { auth: def.auth, ws: false } },
+    config: { aio: { auth: def.auth, ws: false } },
     handler: async (request, reply) => {
       const ctx = {
         params: parse(params, request.params, "path"),
@@ -323,7 +323,7 @@ function registerWs(
   app.route({
     method: "GET",
     url: fastifyPath(def.path),
-    config: { agentbox: { auth: def.auth, ws: true } },
+    config: { aio: { auth: def.auth, ws: true } },
     handler: (_request, reply) =>
       sendFailure(
         reply,

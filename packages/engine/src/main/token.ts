@@ -1,16 +1,16 @@
 // Where the engine finds its bearer token. The server writes it to a 0600
 // file in the keeper's state directory before the container starts and names
-// that file in `AGENTBOX_ENGINE_TOKEN_FILE`, so the token is never part of
+// that file in `AIO_ENGINE_TOKEN_FILE`, so the token is never part of
 // the container's environment, which every `docker exec` (and so every tmux
 // session and agent CLI) inherits.
 import { readFileSync } from "node:fs";
-import { ENGINE_ENV, type EngineEnv } from "@agentbox/contracts";
+import { ENGINE_ENV, type EngineEnv } from "@aio/contracts";
 
 export type TokenLoad = { ok: true; token: string } | { ok: false; problem: string };
 
 /**
  * Returns the bearer token from a validated environment: the content of
- * `AGENTBOX_ENGINE_TOKEN_FILE` when it is set, else `AGENTBOX_ENGINE_TOKEN`.
+ * `AIO_ENGINE_TOKEN_FILE` when it is set, else `AIO_ENGINE_TOKEN`.
  * The problem names the file, never its content.
  */
 export function loadEngineToken(

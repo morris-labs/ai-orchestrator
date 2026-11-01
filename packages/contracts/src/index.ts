@@ -1,4 +1,4 @@
-// Public entry point of `@agentbox/contracts`.
+// Public entry point of `@aio/contracts`.
 export * from "./common.js";
 export * from "./prompts.js";
 export * from "./records.js";

@@ -1,7 +1,7 @@
 // Which actions are enabled for the current selection: the rules of the Qt
-// app's `updateActionStates()` (inventory section 1.4), adapted to 4.0.0,
+// app's `updateActionStates()` (inventory section 1.4), adapted to 1.0.0,
 // where every box has a record and there is no "exited" state.
-import type { BoxView } from "@agentbox/contracts";
+import type { BoxView } from "@aio/contracts";
 
 export type ActionId =
   | "edit"

@@ -10,14 +10,14 @@
 import {
   EventSchema,
   VendorFindingSchema,
-  type AgentBoxEvent,
+  type AioEvent,
   type AgentRole,
   type Ceilings,
   type LeaseRequest,
   type LeaseResponse,
   type UsageSample,
   type Vendor,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 import { z } from "zod";
 import type { EnvProfile } from "./process/env.js";
 import type { GitHubClient } from "./postpush/github.js";
@@ -284,7 +284,7 @@ type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K>
  * numbers. A `usage.sample` draft names its reading's origin in
  * `sampleSource`, so the stream's `source` never collides with it.
  */
-export type EventDraft = DistributiveOmit<AgentBoxEvent, EventEnvelopeKey>;
+export type EventDraft = DistributiveOmit<AioEvent, EventEnvelopeKey>;
 
 /**
  * Where the core sends events. The engine's `EventHub` implements it: it
@@ -293,7 +293,7 @@ export type EventDraft = DistributiveOmit<AgentBoxEvent, EventEnvelopeKey>;
  * directory's `events.jsonl` keeps.
  */
 export interface EventSink {
-  emit(draft: EventDraft): AgentBoxEvent;
+  emit(draft: EventDraft): AioEvent;
 }
 
 /**
@@ -301,7 +301,7 @@ export interface EventSink {
  * validates each against the contract. Tests and the standalone CLI use it.
  */
 export class MemoryEventSink implements EventSink {
-  readonly events: AgentBoxEvent[] = [];
+  readonly events: AioEvent[] = [];
   private seq = 0;
 
   constructor(
@@ -310,7 +310,7 @@ export class MemoryEventSink implements EventSink {
     private readonly clock: Clock = systemClock,
   ) {}
 
-  emit(draft: EventDraft): AgentBoxEvent {
+  emit(draft: EventDraft): AioEvent {
     this.seq += 1;
     const event = EventSchema.parse({
       ...draft,
@@ -325,8 +325,8 @@ export class MemoryEventSink implements EventSink {
     return event;
   }
 
-  ofType<T extends AgentBoxEvent["type"]>(type: T): Array<Extract<AgentBoxEvent, { type: T }>> {
-    return this.events.filter((e): e is Extract<AgentBoxEvent, { type: T }> => e.type === type);
+  ofType<T extends AioEvent["type"]>(type: T): Array<Extract<AioEvent, { type: T }>> {
+    return this.events.filter((e): e is Extract<AioEvent, { type: T }> => e.type === type);
   }
 }
 

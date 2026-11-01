@@ -1,4 +1,4 @@
-/* The Agent Box dark theme, ported from the Qt app's Theme.cpp stylesheet.
+/* The AI Orchestrator dark theme, ported from the Qt app's Theme.cpp stylesheet.
    The variable values must match src/theme/tokens.ts; a test checks them. */
 :root {
   --ab-window-bg: #1b1c1e;

@@ -23,7 +23,7 @@ async function run(
   const code = await secretMain(argv, {
     stdout: (t) => (stdout += t),
     stderr: (t) => (stderr += t),
-    env: { AGENTBOX_BROKER_SOCKET: b.socketPath, PATH: "/usr/bin", KEEP: "1" },
+    env: { AIO_BROKER_SOCKET: b.socketPath, PATH: "/usr/bin", KEEP: "1" },
     run: async (command, args, env) => {
       ran.push({ command, args, env });
       return 7;
@@ -65,7 +65,7 @@ describe("secretMain", () => {
     const r = await run(["SYNTHETIC_TOKEN"]);
     expect(r).toMatchObject({ code: 0, stdout: "SYNTHETIC_value", stderr: "" });
     expect(r.broker.reads[0]?.names).toEqual(["SYNTHETIC_TOKEN"]);
-    expect(r.broker.reads[0]?.caller).toMatch(/^agentbox-secret get/);
+    expect(r.broker.reads[0]?.caller).toMatch(/^aio-secret get/);
   });
 
   it("lists names, never values", async () => {
@@ -81,7 +81,7 @@ describe("secretMain", () => {
     expect(r.ran[0]?.env).toMatchObject({ SYNTHETIC_TOKEN: "SYNTHETIC_value", KEEP: "1" });
     expect(r.ran[0]?.env.SYNTHETIC_URL).toBeUndefined();
     // The log gets the program's name, not its arguments.
-    expect(r.broker.reads[0]?.caller).toMatch(/^agentbox-secret run make/);
+    expect(r.broker.reads[0]?.caller).toMatch(/^aio-secret run make/);
     expect(r.broker.reads[0]?.caller).not.toContain("--secret-arg");
   });
 
@@ -105,7 +105,7 @@ describe("secretMain", () => {
     const gone = await secretMain(["list"], {
       stdout: () => undefined,
       stderr: () => undefined,
-      env: { AGENTBOX_BROKER_SOCKET: path.join(tempDir("agentbox-gone-"), "broker.sock") },
+      env: { AIO_BROKER_SOCKET: path.join(tempDir("aio-gone-"), "broker.sock") },
     });
     expect(gone).toBe(3);
   });
@@ -113,7 +113,7 @@ describe("secretMain", () => {
 
 describe("resolveCommand", () => {
   it("finds an executable on PATH, and takes a path as given", () => {
-    const dir = tempDir("agentbox-path-");
+    const dir = tempDir("aio-path-");
     const tool = path.join(dir, "synthetic-tool");
     fs.writeFileSync(tool, "#!/bin/sh\n", { mode: 0o755 });
     fs.writeFileSync(path.join(dir, "not-executable"), "", { mode: 0o644 });

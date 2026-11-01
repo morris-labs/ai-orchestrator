@@ -10,7 +10,7 @@ import {
   type ApiError,
   type HttpRouteDef,
   type RouteDef,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 import Fastify, { type FastifyInstance, type FastifyReply } from "fastify";
 import { WebSocketServer } from "ws";
 import type { EventHub } from "../events/hub.js";
@@ -29,7 +29,7 @@ export interface EngineAppOptions extends Omit<HandlerDeps, "health"> {
   projectRoot: string;
   /** The engine's package version. */
   engineVersion: string;
-  /** `AGENTBOX_ENGINE_VERSION`: the version the server expects. */
+  /** `AIO_ENGINE_VERSION`: the version the server expects. */
   expectedVersion: string;
   hub: EventHub;
   leases: EngineLeaseBroker;

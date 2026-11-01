@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { createServerIdentity, pinFromPem, pinnedFetch } from "@agentbox/contracts/tls";
+import { createServerIdentity, pinFromPem, pinnedFetch } from "@aio/contracts/tls";
 import { FakeServer } from "../src/testing";
 import { serveFake, staticFile, type ServedFake } from "../src/testing/node";
 
@@ -28,7 +28,7 @@ describe("serveFake", () => {
     served = await serveFake(new FakeServer(), { tls: id });
     expect(served.url).toMatch(/^https:\/\/127\.0\.0\.1:\d+$/);
     const res = await pinnedFetch(() => pinFromPem(id.cert))(`${served.url}/api/v1/health`);
-    expect(await res.json()).toMatchObject({ version: "4.0.0" });
+    expect(await res.json()).toMatchObject({ version: "1.0.0" });
   });
 
   it("answers API routes from the fake and serves files", async () => {
@@ -39,7 +39,7 @@ describe("serveFake", () => {
     const health = await fetch(`${served.url}/api/v1/health`, {
       headers: { authorization: "Bearer t" },
     });
-    expect(await health.json()).toMatchObject({ version: "4.0.0" });
+    expect(await health.json()).toMatchObject({ version: "1.0.0" });
     const patched = await fetch(`${served.url}/api/v1/settings`, {
       method: "PATCH",
       body: JSON.stringify({ notifications: { readyToPush: false } }),

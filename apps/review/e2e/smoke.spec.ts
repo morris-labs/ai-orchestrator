@@ -1,7 +1,7 @@
-// Electron smoke test. Build first (`pnpm --filter @agentbox/review build`)
-// and fetch the Electron binary once (`pnpm --filter @agentbox/review
+// Electron smoke test. Build first (`pnpm --filter @aio/review build`)
+// and fetch the Electron binary once (`pnpm --filter @aio/review
 // e2e:setup`). The test serves the built renderer and the shared fake server
-// from `@agentbox/ui/testing` over HTTPS, launches the app with a deep link,
+// from `@aio/ui/testing` over HTTPS, launches the app with a deep link,
 // and checks the launcher, navigation, the token hand-off, and the
 // single-instance hand-off. Without a display, run it under `xvfb-run`.
 import { spawnSync } from "node:child_process";
@@ -10,9 +10,9 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { _electron as electron, expect, test } from "@playwright/test";
-import { createServerIdentity } from "@agentbox/contracts/tls";
-import { DEMO_PROJECT as PROJECT_ID, FakeServer, makeProject } from "@agentbox/ui/testing";
-import { describeExit, secondInstanceCommand, serveFake } from "@agentbox/ui/testing/node";
+import { createServerIdentity } from "@aio/contracts/tls";
+import { DEMO_PROJECT as PROJECT_ID, FakeServer, makeProject } from "@aio/ui/testing";
+import { describeExit, secondInstanceCommand, serveFake } from "@aio/ui/testing/node";
 
 const appDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const main = resolve(appDir, "dist/electron/main.cjs");
@@ -25,7 +25,7 @@ test("launches, prefills the launcher, and keeps a single instance", async () =>
   });
   // The app pins the certificate in the data directory, as with the real server.
   const identity = createServerIdentity();
-  const dataDir = mkdtempSync(join(tmpdir(), "agentbox-e2e-"));
+  const dataDir = mkdtempSync(join(tmpdir(), "aio-e2e-"));
   writeFileSync(join(dataDir, "server.crt"), identity.cert);
   const mock = await serveFake(fake, {
     static: { "/review/": resolve(appDir, "dist/renderer") },
@@ -34,14 +34,14 @@ test("launches, prefills the launcher, and keeps a single instance", async () =>
   });
   const env = {
     ...process.env,
-    AGENTBOX_SERVER_URL: mock.url,
-    AGENTBOX_DATA_DIR: dataDir,
-    AGENTBOX_SERVER_TOKEN: "smoke-token",
+    AIO_SERVER_URL: mock.url,
+    AIO_DATA_DIR: dataDir,
+    AIO_SERVER_TOKEN: "smoke-token",
   } as Record<string, string>;
   const app = await electron.launch({ args: [main, `--project=${PROJECT_ID}`], env, cwd: appDir });
   try {
     const page = await app.firstWindow();
-    await expect(page).toHaveTitle("Agent Box Review");
+    await expect(page).toHaveTitle("AI Orchestrator Review");
     await expect(page.getByRole("heading", { name: "Start a review run" })).toBeVisible();
     await expect(page.getByLabel("Container")).toHaveValue(PROJECT_ID);
     // The page trades the token for the cookie and keeps none on its bridge.
@@ -50,7 +50,7 @@ test("launches, prefills the launcher, and keeps a single instance", async () =>
     ).toBe(true);
     expect(
       await page.evaluate(() => {
-        const b = (window as unknown as { agentbox: { takeToken(): string | null } }).agentbox;
+        const b = (window as unknown as { aio: { takeToken(): string | null } }).aio;
         return { onBridge: "token" in b, again: b.takeToken() };
       }),
     ).toEqual({ onBridge: false, again: null });
@@ -62,7 +62,7 @@ test("launches, prefills the launcher, and keeps a single instance", async () =>
 
     // A second launch hands its deep link to the first window and exits. It
     // gets the switches Playwright gave the first; see `secondInstanceCommand`.
-    const command = secondInstanceCommand([main, "agentbox-review://launch?project=other"], env);
+    const command = secondInstanceCommand([main, "aio-review://launch?project=other"], env);
     const second = spawnSync(String(app.process().spawnfile), command.args, {
       env: command.env,
       cwd: appDir,

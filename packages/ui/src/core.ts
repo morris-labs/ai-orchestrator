@@ -1,4 +1,4 @@
-// The parts of `@agentbox/ui` without React or the DOM: the API client and
+// The parts of `@aio/ui` without React or the DOM: the API client and
 // the stream connections. Electron main processes and the CLI can import
 // this entry point.
 export * from "./api/client";

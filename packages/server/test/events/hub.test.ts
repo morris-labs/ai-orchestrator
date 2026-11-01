@@ -1,6 +1,6 @@
 import { openDatabase } from "../../src/db/index.js";
 import { describe, expect, it } from "vitest";
-import { FindingSchema } from "@agentbox/contracts";
+import { FindingSchema } from "@aio/contracts";
 import { EventHub } from "../../src/events/hub.js";
 import { LateSink } from "../../src/events/late-sink.js";
 import { RunMirror } from "../../src/events/run-mirror.js";
@@ -12,20 +12,20 @@ const box = (id: string) =>
 describe("EventHub", () => {
   it("numbers server events and sets sourceSeq to seq", () => {
     const hub = new EventHub();
-    const a = hub.emit(box("claude-agent-a"));
-    const b = hub.emit(box("claude-agent-b"));
+    const a = hub.emit(box("aio-agent-a"));
+    const b = hub.emit(box("aio-agent-b"));
     expect([a.seq, b.seq]).toEqual([1, 2]);
     expect(b).toMatchObject({ source: "server", sourceSeq: 2, streamId: hub.streamId });
   });
 
   it("re-numbers relayed engine events and keeps their source and number", () => {
     const hub = new EventHub();
-    hub.emit(box("claude-agent-a"));
+    hub.emit(box("aio-agent-a"));
     const relayed = hub.relay({
-      ...box("claude-agent-x"),
+      ...box("aio-agent-x"),
       id: "engine-id",
       time: "2026-10-28T09:00:00.000Z",
-      source: "engine:claude-agent-proj-x",
+      source: "engine:aio-agent-proj-x",
       streamId: "engine-stream",
       seq: 41,
       sourceSeq: 41,
@@ -34,7 +34,7 @@ describe("EventHub", () => {
       id: "engine-id",
       seq: 2,
       sourceSeq: 41,
-      source: "engine:claude-agent-proj-x",
+      source: "engine:aio-agent-proj-x",
       streamId: hub.streamId,
     });
   });
@@ -55,9 +55,9 @@ describe("EventHub", () => {
       throw new Error("boom");
     });
     const off = hub.subscribe((e) => seen.push(e.seq));
-    hub.emit(box("claude-agent-a"));
+    hub.emit(box("aio-agent-a"));
     off();
-    hub.emit(box("claude-agent-b"));
+    hub.emit(box("aio-agent-b"));
     expect(seen).toEqual([1]);
     expect(errors).toHaveLength(2);
   });
@@ -68,11 +68,11 @@ describe("EventHub", () => {
   it("delivers an event emitted by a listener after the one being delivered", () => {
     const hub = new EventHub();
     hub.subscribe((e) => {
-      if (e.type === "box.changed" && e.boxId === "claude-agent-a") hub.emit(box("claude-agent-b"));
+      if (e.type === "box.changed" && e.boxId === "aio-agent-a") hub.emit(box("aio-agent-b"));
     });
     const seen: number[] = [];
     hub.subscribe((e) => seen.push(e.seq));
-    const first = hub.emit(box("claude-agent-a"));
+    const first = hub.emit(box("aio-agent-a"));
     expect(first.seq).toBe(1);
     expect(seen).toEqual([1, 2]);
     expect(hub.lastSeq).toBe(2);
@@ -80,7 +80,7 @@ describe("EventHub", () => {
 
   it("replays from memory, and refuses a gap or a foreign stream", () => {
     const hub = new EventHub({ bufferSize: 2 });
-    for (const id of ["a", "b", "c"]) hub.emit(box(`claude-agent-${id}`));
+    for (const id of ["a", "b", "c"]) hub.emit(box(`aio-agent-${id}`));
     expect(
       hub.replay({ type: "hello", streamId: hub.streamId, lastSeq: 1 }).events.map((e) => e.seq),
     ).toEqual([2, 3]);
@@ -108,11 +108,11 @@ describe("EventHub", () => {
   it("keeps the stream id and replays from SQLite across a restart", () => {
     const db = openDatabase(":memory:");
     const first = new EventHub({ db });
-    for (const id of ["a", "b", "c"]) first.emit(box(`claude-agent-${id}`));
+    for (const id of ["a", "b", "c"]) first.emit(box(`aio-agent-${id}`));
     const second = new EventHub({ db, bufferSize: 1 });
     expect(second.streamId).toBe(first.streamId);
     expect(second.lastSeq).toBe(3);
-    expect(second.emit(box("claude-agent-d")).seq).toBe(4);
+    expect(second.emit(box("aio-agent-d")).seq).toBe(4);
     expect(
       second
         .replay({ type: "hello", streamId: first.streamId, lastSeq: 1 })
@@ -123,7 +123,7 @@ describe("EventHub", () => {
   it("prunes SQLite to the configured size", () => {
     const db = openDatabase(":memory:");
     const hub = new EventHub({ db, keep: 10, bufferSize: 5 });
-    for (let i = 0; i < 1000; i += 1) hub.emit(box(`claude-agent-${i}`));
+    for (let i = 0; i < 1000; i += 1) hub.emit(box(`aio-agent-${i}`));
     const { n } = db.prepare("SELECT COUNT(*) AS n FROM svc_events").get() as { n: number };
     expect(n).toBe(10);
     expect(
@@ -136,9 +136,9 @@ describe("EventHub filtered streams", () => {
   const only = new Set(["box.changed"] as const);
   it("numbers the filtered stream by position and replays without gaps", () => {
     const hub = new EventHub();
-    hub.emit(box("claude-agent-a"));
+    hub.emit(box("aio-agent-a"));
     hub.emit(note());
-    hub.emit(box("claude-agent-b"));
+    hub.emit(box("aio-agent-b"));
     const id = hub.filteredStreamId(only);
     expect(id).not.toBe(hub.streamId);
     expect(hub.filteredStreamId(null)).toBe(hub.streamId);
@@ -146,8 +146,8 @@ describe("EventHub filtered streams", () => {
     const plan = hub.replay({ type: "hello", streamId: id, lastSeq: 0 }, only);
     expect(plan.hello).toEqual({ type: "hello", streamId: id, lastSeq: 2, replaying: true });
     expect(plan.events.map((e) => [e.seq, e.streamId, "boxId" in e && e.boxId])).toEqual([
-      [1, id, "claude-agent-a"],
-      [2, id, "claude-agent-b"],
+      [1, id, "aio-agent-a"],
+      [2, id, "aio-agent-b"],
     ]);
     // The hub's own position means nothing on the filtered stream.
     expect(
@@ -162,7 +162,7 @@ describe("EventHub filtered streams", () => {
     const db = openDatabase(":memory:");
     const first = new EventHub({ db, keep: 10, bufferSize: 5 });
     for (let i = 0; i < 1005; i += 1) {
-      first.emit(i % 2 === 0 ? box(`claude-agent-${i}`) : note());
+      first.emit(i % 2 === 0 ? box(`aio-agent-${i}`) : note());
     }
     const boxes = first.filteredLastSeq(only);
     expect(boxes).toBe(503);
@@ -198,11 +198,11 @@ function note() {
 describe("LateSink", () => {
   it("holds events until the hub is attached", () => {
     const sink = new LateSink();
-    sink.emit(box("claude-agent-a"));
+    sink.emit(box("aio-agent-a"));
     const hub = new EventHub();
     sink.attach(hub);
     expect(hub.lastSeq).toBe(1);
-    expect(sink.emit(box("claude-agent-b")).seq).toBe(2);
+    expect(sink.emit(box("aio-agent-b")).seq).toBe(2);
   });
 });
 
@@ -226,7 +226,7 @@ describe("RunMirror", () => {
     });
     expect(mirror.activeRunForBox(runState.boxId!)).toBeNull();
     expect(mirror.list({ projectId: runState.projectId, status: "finished" })).toHaveLength(1);
-    expect(mirror.list({ boxId: "claude-agent-none" })).toHaveLength(0);
+    expect(mirror.list({ boxId: "aio-agent-none" })).toHaveLength(0);
     expect(mirror.round(RUN)).toBe(1);
     expect(mirror.round("01JB8Z5K3W6Q2V9X4T7R0M1N2Q")).toBe(0);
   });
@@ -263,7 +263,7 @@ describe("RunMirror", () => {
         previousVerdict: null,
         id: `e${seq}`,
         time: "2026-10-28T10:00:00.000Z",
-        source: "engine:claude-agent-proj-x",
+        source: "engine:aio-agent-proj-x",
         streamId: "s",
         seq,
         sourceSeq: seq,

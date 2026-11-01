@@ -10,8 +10,8 @@
 //
 // - Server, REST. The server listens on `127.0.0.1:21400`. Every route with
 //   `auth: true` accepts either `Authorization: Bearer <token>`, where the
-//   token is the content of `~/.claude-box/server.token`, or the
-//   `agentbox_session` cookie. `POST /api/v1/auth/session` (`auth.session`)
+//   token is the content of `~/.ai-orchestrator/server.token`, or the
+//   `aio_session` cookie. `POST /api/v1/auth/session` (`auth.session`)
 //   sets that cookie (HttpOnly, SameSite=Strict, Path=/) when called with the
 //   bearer header. The Electron apps receive the token from their preload
 //   script and send the header; a plain browser opening the single-page apps
@@ -26,7 +26,7 @@
 // - Engine. The engine listens on `0.0.0.0:20411` inside its container, and
 //   every route with `auth: true`, WebSocket upgrades included, needs
 //   `Authorization: Bearer <engine token>`. Only the server calls it. The
-//   engine's `/proxy` route takes the token in `X-Agentbox-Engine-Token`
+//   engine's `/proxy` route takes the token in `X-Aio-Engine-Token`
 //   instead, so the browser's own `Authorization` header reaches the app.
 //
 // Other conventions:
@@ -554,7 +554,7 @@ export const ImageStatusSchema = z.object({
   exists: z.boolean(),
   imageId: z.string().nullable(),
   createdAt: IsoDateTimeSchema.nullable(),
-  /** From `/etc/agentbox-engine-version` in the image. */
+  /** From `/etc/aio-engine-version` in the image. */
   engineVersion: z.string().nullable(),
   expectedEngineVersion: z.string().min(1),
   engineMatches: z.boolean(),
@@ -795,7 +795,7 @@ export const EngineHealthSchema = HealthSchema.extend({
   /** The engine's event `streamId`. */
   streamId: z.string().min(1),
   /**
-   * Whether `engineVersion` equals `AGENTBOX_ENGINE_VERSION`. The engine
+   * Whether `engineVersion` equals `AIO_ENGINE_VERSION`. The engine
    * starts on a mismatch and reports `false` here.
    */
   versionMatches: z.boolean(),
@@ -1017,7 +1017,7 @@ export const serverRoutes = {
   "auth.session": http({
     method: "POST",
     path: `${V1}/auth/session`,
-    summary: "Set the `agentbox_session` cookie; needs the bearer header.",
+    summary: "Set the `aio_session` cookie; needs the bearer header.",
     response: OkSchema,
   }),
 

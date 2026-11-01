@@ -3,7 +3,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { EventSchema, FindingSchema, RunStateSchema, type Finding } from "@agentbox/contracts";
+import { EventSchema, FindingSchema, RunStateSchema, type Finding } from "@aio/contracts";
 import { describe, expect, it } from "vitest";
 import { FakeClock, GrantingBroker, MemoryEventSink, type EngineDeps } from "../../src/core.js";
 import { ExecaRunner } from "../../src/range/exec.js";
@@ -27,7 +27,7 @@ function deps(
     broker: new GrantingBroker(clock),
     runner: new ExecaRunner(),
     clock,
-    container: "claude-agent-proj-sample",
+    container: "aio-agent-proj-sample",
     ...extra,
     events: (extra.events as MemoryEventSink | undefined) ?? events,
   };

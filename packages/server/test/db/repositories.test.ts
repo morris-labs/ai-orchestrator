@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
-import { defaultConfig, type Box, type Project } from "@agentbox/contracts";
+import { defaultConfig, type Box, type Project } from "@aio/contracts";
 import { MIGRATIONS, migrate, openDatabase, repositories } from "../../src/db/index.js";
 import { tempDir } from "../tmp.js";
 
@@ -16,7 +16,7 @@ function project(id = "app-12345678", root = "/work/app"): Project {
     tcpMaps: [],
     mounts: [],
     secretRefs: [],
-    policyPath: ".claude-box/policy.yaml",
+    policyPath: ".aio/policy.yaml",
     createdAt: T,
     updatedAt: T,
   };
@@ -26,14 +26,14 @@ function box(id: string, overrides: Partial<Box> = {}): Box {
   return {
     id,
     projectId: "app-12345678",
-    hostKey: id.replace("claude-agent-", ""),
+    hostKey: id.replace("aio-agent-", ""),
     targetDir: "/work/app",
     sessionUuid: null,
     conversationName: "",
     transcriptSyncedName: "",
     platform: "claude",
     skipPermissions: true,
-    container: "claude-agent-proj-app-12345678",
+    container: "aio-agent-proj-app-12345678",
     session: id,
     wasRunning: false,
     sshRemoteRefs: [],
@@ -45,8 +45,8 @@ function box(id: string, overrides: Partial<Box> = {}): Box {
 
 describe("openDatabase", () => {
   it("creates the file with mode 0600 and applies every migration once", () => {
-    const dir = tempDir("agentbox-db-");
-    const file = path.join(dir, "sub", "agentbox.db");
+    const dir = tempDir("aio-db-");
+    const file = path.join(dir, "sub", "aio.db");
     const db = openDatabase(file);
     expect(fs.statSync(file).mode & 0o777).toBe(0o600);
     expect(db.pragma("user_version", { simple: true })).toBe(MIGRATIONS.length);
@@ -60,8 +60,8 @@ describe("openDatabase", () => {
 
 describe("database file modes", () => {
   it("keeps the directory, the database, and its WAL files private under a loose umask", () => {
-    const dir = tempDir("agentbox-db-");
-    const file = path.join(dir, "data", "agentbox.db");
+    const dir = tempDir("aio-db-");
+    const file = path.join(dir, "data", "aio.db");
     const old = process.umask(0o022);
     try {
       const db = openDatabase(file);
@@ -116,9 +116,9 @@ describe("migration 2", () => {
     const r = repositories(db);
     r.projects.put(project());
     r.projects.put(project("api-87654321", "/work/api"));
-    r.boxes.put(box("claude-agent-api.v2", { hostKey: "api-v2" }));
+    r.boxes.put(box("aio-agent-api.v2", { hostKey: "api-v2" }));
     r.boxes.put(
-      box("claude-agent-api-v2", {
+      box("aio-agent-api-v2", {
         hostKey: "api-v2",
         projectId: "api-87654321",
         targetDir: "/work/api",
@@ -126,18 +126,18 @@ describe("migration 2", () => {
       }),
     );
     migrate(db);
-    expect(r.boxes.get("claude-agent-api.v2")?.hostKey).toBe("api-v2");
-    expect(r.boxes.get("claude-agent-api-v2")?.hostKey).toBe("api-v2-2");
+    expect(r.boxes.get("aio-agent-api.v2")?.hostKey).toBe("api-v2");
+    expect(r.boxes.get("aio-agent-api-v2")?.hostKey).toBe("api-v2-2");
     expect(
       (
-        db.prepare("SELECT host_key FROM boxes WHERE id = ?").get("claude-agent-api-v2") as {
+        db.prepare("SELECT host_key FROM boxes WHERE id = ?").get("aio-agent-api-v2") as {
           host_key: string;
         }
       ).host_key,
     ).toBe("api-v2-2");
     expect(() =>
       r.boxes.put(
-        box("claude-agent-other", {
+        box("aio-agent-other", {
           hostKey: "api-v2",
           projectId: "api-87654321",
           targetDir: "/work/api",
@@ -154,24 +154,24 @@ describe("migration 2", () => {
     r.projects.put(project());
     r.projects.put(project("api-87654321", "/work/api"));
     const inApi = { projectId: "api-87654321", targetDir: "/work/api" };
-    r.boxes.put(box("claude-agent-api.v2", { hostKey: "api-v2" }));
+    r.boxes.put(box("aio-agent-api.v2", { hostKey: "api-v2" }));
     r.boxes.put(
-      box("claude-agent-api-v2", {
+      box("aio-agent-api-v2", {
         ...inApi,
         hostKey: "api-v2",
         createdAt: "2026-10-29T09:00:00.000Z",
       }),
     );
     r.boxes.put(
-      box("claude-agent-later", {
+      box("aio-agent-later", {
         ...inApi,
         hostKey: "api-v2-2",
         createdAt: "2026-10-30T09:00:00.000Z",
       }),
     );
     migrate(db);
-    expect(r.boxes.get("claude-agent-api-v2")?.hostKey).toBe("api-v2-3");
-    expect(r.boxes.get("claude-agent-later")?.hostKey).toBe("api-v2-2");
+    expect(r.boxes.get("aio-agent-api-v2")?.hostKey).toBe("api-v2-3");
+    expect(r.boxes.get("aio-agent-later")?.hostKey).toBe("api-v2-2");
   });
 });
 
@@ -189,20 +189,15 @@ describe("repositories", () => {
     const logged: string[] = [];
     const r = repositories(db, { log: (m) => logged.push(m) });
     r.projects.put(project());
-    r.boxes.put(box("claude-agent-good"));
-    r.boxes.put(box("claude-agent-bad"));
-    const bad = { ...box("claude-agent-bad"), platform: "SYNTHETIC" };
-    db.prepare("UPDATE boxes SET data = ? WHERE id = ?").run(
-      JSON.stringify(bad),
-      "claude-agent-bad",
-    );
-    expect(r.boxes.list().map((b) => b.id)).toEqual(["claude-agent-good"]);
-    expect(r.boxes.byProject("app-12345678").map((b) => b.id)).toEqual(["claude-agent-good"]);
-    expect(r.boxes.ids()).toEqual(["claude-agent-bad", "claude-agent-good"]);
+    r.boxes.put(box("aio-agent-good"));
+    r.boxes.put(box("aio-agent-bad"));
+    const bad = { ...box("aio-agent-bad"), platform: "SYNTHETIC" };
+    db.prepare("UPDATE boxes SET data = ? WHERE id = ?").run(JSON.stringify(bad), "aio-agent-bad");
+    expect(r.boxes.list().map((b) => b.id)).toEqual(["aio-agent-good"]);
+    expect(r.boxes.byProject("app-12345678").map((b) => b.id)).toEqual(["aio-agent-good"]);
+    expect(r.boxes.ids()).toEqual(["aio-agent-bad", "aio-agent-good"]);
     expect(logged).toHaveLength(1);
-    expect(logged[0]).toMatch(
-      /^Skipped a box record that doesn't parse: claude-agent-bad: platform/,
-    );
+    expect(logged[0]).toMatch(/^Skipped a box record that doesn't parse: aio-agent-bad: platform/);
   });
 
   it("round-trips projects and finds them by root", () => {
@@ -224,23 +219,23 @@ describe("repositories", () => {
     const r = repositories(openDatabase(":memory:"));
     r.projects.put(project());
     const uuid = "6f1c3a52-6d8b-4f43-9a51-2d5b7cbd3f10";
-    r.boxes.put(box("claude-agent-a", { sessionUuid: uuid }));
-    r.boxes.put(box("claude-agent-b", { targetDir: "/work/other" }));
+    r.boxes.put(box("aio-agent-a", { sessionUuid: uuid }));
+    r.boxes.put(box("aio-agent-b", { targetDir: "/work/other" }));
     expect(r.boxes.byProject("app-12345678").map((b) => b.id)).toEqual([
-      "claude-agent-a",
-      "claude-agent-b",
+      "aio-agent-a",
+      "aio-agent-b",
     ]);
-    expect(r.boxes.bySession(uuid).map((b) => b.id)).toEqual(["claude-agent-a"]);
-    expect(r.boxes.byTargetDir("/work/other").map((b) => b.id)).toEqual(["claude-agent-b"]);
-    expect(() => r.boxes.put(box("claude-agent-c", { hostKey: "a" }))).toThrow(/UNIQUE/);
-    r.boxes.put(box("claude-agent-a", { conversationName: "renamed" }));
-    expect(r.boxes.get("claude-agent-a")?.conversationName).toBe("renamed");
-    expect(r.boxes.delete("claude-agent-a")).toBe(true);
+    expect(r.boxes.bySession(uuid).map((b) => b.id)).toEqual(["aio-agent-a"]);
+    expect(r.boxes.byTargetDir("/work/other").map((b) => b.id)).toEqual(["aio-agent-b"]);
+    expect(() => r.boxes.put(box("aio-agent-c", { hostKey: "a" }))).toThrow(/UNIQUE/);
+    r.boxes.put(box("aio-agent-a", { conversationName: "renamed" }));
+    expect(r.boxes.get("aio-agent-a")?.conversationName).toBe("renamed");
+    expect(r.boxes.delete("aio-agent-a")).toBe(true);
   });
 
   it("refuses a box whose project does not exist", () => {
     const r = repositories(openDatabase(":memory:"));
-    expect(() => r.boxes.put(box("claude-agent-a"))).toThrow(/FOREIGN KEY/);
+    expect(() => r.boxes.put(box("aio-agent-a"))).toThrow(/FOREIGN KEY/);
   });
 
   it("returns default settings until some are saved", () => {
@@ -261,7 +256,7 @@ describe("repositories", () => {
     r.projects.put(project("other-87654321", "/work/other"));
     const e = {
       projectId: "app-12345678",
-      container: "claude-agent-proj-app-12345678",
+      container: "aio-agent-proj-app-12345678",
       hostPort: 41000,
       token: "t".repeat(64),
     };
@@ -270,7 +265,7 @@ describe("repositories", () => {
     expect(r.engines.byContainer(e.container)).toEqual(e);
     expect(() =>
       r.engines.put(
-        { ...e, projectId: "other-87654321", container: "claude-agent-proj-other-87654321" },
+        { ...e, projectId: "other-87654321", container: "aio-agent-proj-other-87654321" },
         new Date(T),
       ),
     ).toThrow(/UNIQUE/);

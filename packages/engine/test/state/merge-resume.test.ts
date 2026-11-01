@@ -1,5 +1,5 @@
 // The merge stage across a crash: the same candidates never merge twice.
-import type { Vendor } from "@agentbox/contracts";
+import type { Vendor } from "@aio/contracts";
 import { describe, expect, it } from "vitest";
 import type { VendorAdapter } from "../../src/core.js";
 import { RunController } from "../../src/state/controller.js";

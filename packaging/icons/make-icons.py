@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Regenerates the Agent Box app icons.
+"""Regenerates the AI Orchestrator app icons.
 
 Writes two SVG files next to this script:
 
-- agentbox-boxes.svg: the Claude mark behind bars, ported from the 3.x
+- aio-boxes.svg: the Claude mark behind bars, ported from the 3.x
   the `make-jail-icon.py` script of Claude Box 3.3.5. A box is a cell you put an agent in.
-- agentbox-review.svg: the same cell with a magnifying glass badge in the
+- aio-review.svg: the same cell with a magnifying glass badge in the
   lower-right corner, for the review app.
 
 The blade geometry is computed so the burst stays symmetric. Run this
@@ -124,12 +124,12 @@ REVIEW_BADGE = f"""
 """
 
 ICONS = {
-    "agentbox-boxes.svg": cell(
-        "Agent Box app icon: the Claude mark behind bars. A box is a cell\n"
+    "aio-boxes.svg": cell(
+        "AI Orchestrator app icon: the Claude mark behind bars. A box is a cell\n"
         "  you put an agent in."
     ),
-    "agentbox-review.svg": cell(
-        "Agent Box Review app icon: the boxes icon with a magnifying glass\n"
+    "aio-review.svg": cell(
+        "AI Orchestrator Review app icon: the boxes icon with a magnifying glass\n"
         "  badge, so the two apps read as a pair but stay distinct.",
         REVIEW_BADGE,
     ),

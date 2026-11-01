@@ -8,7 +8,7 @@ import type {
   GlobalSettings,
   Platform,
   Project,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 import { relativeTime } from "./format";
 
 export type Layout = "worktree" | "workspace" | "root";

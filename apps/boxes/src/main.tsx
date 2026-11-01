@@ -5,9 +5,9 @@
 // WebSockets authenticate with the session cookie, since a browser can't
 // set their headers, so a token is always traded for the cookie first, and
 // the client then forgets it.
-import "@agentbox/ui/theme.css";
+import "@aio/ui/theme.css";
 import "./app.css";
-import { ApiClient } from "@agentbox/ui";
+import { ApiClient } from "@aio/ui";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./app/App";

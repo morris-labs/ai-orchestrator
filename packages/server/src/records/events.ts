@@ -2,7 +2,7 @@
 // with the stream fields (`id`, `time`, `source`, `streamId`, `seq`,
 // `sourceSeq`) and relays it on `events.stream`.
 import { EventEmitter } from "node:events";
-import type { EventOf } from "@agentbox/contracts";
+import type { EventOf } from "@aio/contracts";
 
 /** The stream fields W2 adds when it relays an event. */
 export type StreamFields = "id" | "time" | "source" | "streamId" | "seq" | "sourceSeq";

@@ -1,5 +1,5 @@
 // Public entry point of the vendor adapters.
-import type { Vendor } from "@agentbox/contracts";
+import type { Vendor } from "@aio/contracts";
 import { ClaudeAdapter, type ClaudeAdapterOptions } from "./claude.js";
 import { CodexAdapter, type CodexAdapterOptions } from "./codex.js";
 import { CopilotAdapter, type CopilotAdapterOptions } from "./copilot.js";

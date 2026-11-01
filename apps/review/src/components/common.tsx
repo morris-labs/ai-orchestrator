@@ -1,7 +1,7 @@
 // Small shared pieces for the screens. At merge these can move to the shared
 // components in `packages/ui`.
 import type { ReactNode } from "react";
-import type { RunStatus } from "@agentbox/contracts";
+import type { RunStatus } from "@aio/contracts";
 
 export function ErrorBanner({ error }: { error: unknown }) {
   if (!error) return null;

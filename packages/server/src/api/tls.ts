@@ -4,8 +4,8 @@
 import { X509Certificate, createPrivateKey, createPublicKey } from "node:crypto";
 import { chmod, mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { HOME_PATHS } from "@agentbox/contracts";
-import { createServerIdentity, type TlsIdentity } from "@agentbox/contracts/tls";
+import { HOME_PATHS } from "@aio/contracts";
+import { createServerIdentity, type TlsIdentity } from "@aio/contracts/tls";
 import { dataDirOf, dataPath } from "../records/env.js";
 
 /** A certificate this close to its end is replaced at start. */

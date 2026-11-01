@@ -1,7 +1,7 @@
 // The box filter: a case-insensitive substring match on the status, the
 // directory, the conversation, and the container name. 3.3.5 never matched
-// container names (inventory section 0, item 4); 4.0.0 does.
-import type { BoxView } from "@agentbox/contracts";
+// container names (inventory section 0, item 4); 1.0.0 does.
+import type { BoxView } from "@aio/contracts";
 import { displayName, statusLabel } from "./status";
 
 export function matchesFilter(view: BoxView, filter: string): boolean {

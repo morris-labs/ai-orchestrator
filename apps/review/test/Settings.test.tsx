@@ -1,4 +1,4 @@
-import { defaultConfig } from "@agentbox/contracts";
+import { defaultConfig } from "@aio/contracts";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { Settings } from "../src/screens/Settings.js";

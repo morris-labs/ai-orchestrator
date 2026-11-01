@@ -37,7 +37,7 @@ FAKE
 # $FAKE_ENGINE_LIFETIME seconds when set.
 cat > "$WORK/bin/fake-engine" <<'FAKE'
 #!/usr/bin/env bash
-echo "start $AGENTBOX_STATE_DIR" >> "$FAKE_ENGINE_LOG"
+echo "start $AIO_STATE_DIR" >> "$FAKE_ENGINE_LOG"
 trap 'echo term >> "$FAKE_ENGINE_LOG"; exit 0' TERM
 end=$((SECONDS + ${FAKE_ENGINE_LIFETIME:-600}))
 while [ "$SECONDS" -lt "$end" ]; do sleep 0.1; done
@@ -45,7 +45,7 @@ FAKE
 chmod +x "$WORK/bin/tmux" "$WORK/bin/fake-engine"
 
 export PATH="$WORK/bin:$PATH"
-export AGENTBOX_ENGINE_CMD=fake-engine AGENTBOX_ENGINE_RESTART_DELAY=1 AGENTBOX_ENGINE_STOP_TIMEOUT=3
+export AIO_ENGINE_CMD=fake-engine AIO_ENGINE_RESTART_DELAY=1 AIO_ENGINE_STOP_TIMEOUT=3
 
 # Sets up a fresh case directory and exports the fakes' paths.
 new_case() {
@@ -75,16 +75,16 @@ pid=$!
 if wait_exit "$pid" 6; then pass "an idle keeper exits after the grace period"; else fail "an idle keeper exits after the grace period"; kill "$pid"; fi
 check "the keeper starts the engine" [ "$(count start)" -ge 1 ]
 check "the keeper stops the engine on exit" [ "$(count term)" -ge 1 ]
-check "the engine gets AGENTBOX_STATE_DIR" grep -q "start $CASE/state" "$FAKE_ENGINE_LOG"
+check "the engine gets AIO_STATE_DIR" grep -q "start $CASE/state" "$FAKE_ENGINE_LOG"
 
 # 2. Sessions keep it alive and land in the sessions file.
 new_case sessions
-printf 'claude-agent-a\nclaude-agent-b\n' > "$FAKE_SESSIONS"
+printf 'aio-agent-a\naio-agent-b\n' > "$FAKE_SESSIONS"
 "$HERE/keeper.sh" "$CASE/state" 1 &
 pid=$!
 sleep 3
 if kill -0 "$pid" 2>/dev/null; then pass "live sessions keep the keeper up"; else fail "live sessions keep the keeper up"; fi
-check "the keeper writes the session names" [ "$(cat "$CASE/state/sessions")" = $'claude-agent-a\nclaude-agent-b' ]
+check "the keeper writes the session names" [ "$(cat "$CASE/state/sessions")" = $'aio-agent-a\naio-agent-b' ]
 rm -f "$FAKE_SESSIONS"
 if wait_exit "$pid" 6; then pass "the keeper exits once the sessions end"; else fail "the keeper exits once the sessions end"; kill "$pid"; fi
 check "the sessions file is empty with no sessions" [ ! -s "$CASE/state/sessions" ]
@@ -110,9 +110,9 @@ if wait_exit "$pid" 6; then pass "an unreadable count is zero"; else fail "an un
 
 # 5. A dying engine is restarted.
 new_case restart
-printf 'claude-agent-a\n' > "$FAKE_SESSIONS"
+printf 'aio-agent-a\n' > "$FAKE_SESSIONS"
 # A 2-second delay keeps restarts apart from the keeper's 1-second loop.
-AGENTBOX_ENGINE_RESTART_DELAY=2 FAKE_ENGINE_LIFETIME=1 "$HERE/keeper.sh" "$CASE/state" 1 &
+AIO_ENGINE_RESTART_DELAY=2 FAKE_ENGINE_LIFETIME=1 "$HERE/keeper.sh" "$CASE/state" 1 &
 pid=$!
 sleep 5
 check "the keeper restarts an engine that exits" [ "$(count start)" -ge 2 ]
@@ -122,7 +122,7 @@ wait_exit "$pid" 6 || kill -KILL "$pid"
 
 # 6. SIGTERM stops the engine and exits 0.
 new_case term
-printf 'claude-agent-a\n' > "$FAKE_SESSIONS"
+printf 'aio-agent-a\n' > "$FAKE_SESSIONS"
 "$HERE/keeper.sh" "$CASE/state" 30 &
 pid=$!
 sleep 1.5
@@ -134,7 +134,7 @@ check "SIGTERM stops the engine" [ "$(count term)" -ge 1 ]
 
 # 7. A missing engine program doesn't stop the keeper.
 new_case missing
-AGENTBOX_ENGINE_CMD=no-such-engine "$HERE/keeper.sh" "$CASE/state" 1 2> "$CASE/stderr" &
+AIO_ENGINE_CMD=no-such-engine "$HERE/keeper.sh" "$CASE/state" 1 2> "$CASE/stderr" &
 pid=$!
 if wait_exit "$pid" 6; then pass "the keeper runs without an engine program"; else fail "the keeper runs without an engine program"; kill "$pid"; fi
 check "a missing engine is reported once" [ "$(grep -c "isn't installed" "$CASE/stderr")" -eq 1 ]
@@ -142,22 +142,22 @@ check "a missing engine is reported once" [ "$(grep -c "isn't installed" "$CASE/
 # 8. start-session.sh: start, refuse a duplicate or a missing directory,
 # and report an early exit.
 new_case session
-"$HERE/start-session.sh" claude-agent-x /tmp "claude --name x" 2>/dev/null
+"$HERE/start-session.sh" aio-agent-x /tmp "claude --name x" 2>/dev/null
 status=$?
 check "start-session starts a session" [ "$status" -eq 0 ]
 check "start-session passes the session, directory, and command" \
-  grep -q -- "-s claude-agent-x -c /tmp -- claude --name x" "$FAKE_LOG"
-"$HERE/start-session.sh" claude-agent-x /tmp "claude" 2>/dev/null
+  grep -q -- "-s aio-agent-x -c /tmp -- claude --name x" "$FAKE_LOG"
+"$HERE/start-session.sh" aio-agent-x /tmp "claude" 2>/dev/null
 status=$?
 check "start-session refuses a running session" [ "$status" -eq 3 ]
-FAKE_DIE=1 "$HERE/start-session.sh" claude-agent-y /tmp "false" 2>/dev/null
+FAKE_DIE=1 "$HERE/start-session.sh" aio-agent-y /tmp "false" 2>/dev/null
 status=$?
 check "start-session reports a session that ends at once" [ "$status" -eq 2 ]
-FAKE_FAIL=1 "$HERE/start-session.sh" claude-agent-z /tmp "true" 2>/dev/null
+FAKE_FAIL=1 "$HERE/start-session.sh" aio-agent-z /tmp "true" 2>/dev/null
 status=$?
 check "start-session reports a tmux failure" [ "$status" -eq 1 ]
 : > "$FAKE_LOG"
-"$HERE/start-session.sh" claude-agent-w "$CASE/SYNTHETIC_missing_dir" "true" 2>/dev/null
+"$HERE/start-session.sh" aio-agent-w "$CASE/SYNTHETIC_missing_dir" "true" 2>/dev/null
 status=$?
 check "start-session refuses a missing work directory" [ "$status" -eq 4 ]
 check "start-session starts no session in a missing work directory" [ ! -s "$FAKE_LOG" ]

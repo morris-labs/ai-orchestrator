@@ -1,8 +1,8 @@
-import { DEFAULT_POLICY } from "@agentbox/contracts";
+import { DEFAULT_POLICY } from "@aio/contracts";
 import { act } from "@testing-library/react";
 import { parse } from "yaml";
 import { fireEvent, screen, waitFor } from "@testing-library/react";
-import { FakeApiError } from "@agentbox/ui/testing";
+import { FakeApiError } from "@aio/ui/testing";
 import { describe, expect, it, vi } from "vitest";
 import { Policy } from "../src/screens/Policy.js";
 import { useRoute } from "../src/state/router.js";
@@ -30,7 +30,7 @@ function handlers(text?: string) {
   return {
     "projects.list": () => ({ projects: [project] }),
     "projects.policy.get": () => ({
-      path: "/home/user/src/example-app/.claude-box/policy.yaml",
+      path: "/home/user/src/example-app/.aio/policy.yaml",
       exists: true,
       policy: stored,
       ...(text !== undefined ? { text, revision: "sha256:one" } : {}),
@@ -189,7 +189,7 @@ describe("Policy project switch", () => {
     project: { ...project.project, id: OTHER, name: "other-app", root: "/home/user/src/other-app" },
   };
   const policyA = {
-    path: "/home/user/src/example-app/.claude-box/policy.yaml",
+    path: "/home/user/src/example-app/.aio/policy.yaml",
     exists: true,
     policy: { ...stored, riskPaths: ["SYNTHETIC_A/**"] },
   };

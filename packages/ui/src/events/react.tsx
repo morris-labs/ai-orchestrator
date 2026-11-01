@@ -1,5 +1,5 @@
 // React bindings for the event hub.
-import type { AgentBoxEvent, EventOf, EventType } from "@agentbox/contracts";
+import type { AioEvent, EventOf, EventType } from "@aio/contracts";
 import {
   createContext,
   useContext,
@@ -35,7 +35,7 @@ export function useEvent<T extends EventType>(type: T, handler: (event: EventOf<
 }
 
 /** Calls `handler` for every event. */
-export function useAnyEvent(handler: (event: AgentBoxEvent) => void): void {
+export function useAnyEvent(handler: (event: AioEvent) => void): void {
   const hub = useEventHub();
   const ref = useRef(handler);
   useEffect(() => {

@@ -8,11 +8,11 @@ import {
   type GlobalSettings,
   type NotificationToggles,
   type Vendor,
-} from "@agentbox/contracts";
-import { VENDOR_LABELS, VENDORS } from "@agentbox/ui/dashboard";
+} from "@aio/contracts";
+import { VENDOR_LABELS, VENDORS } from "@aio/ui/dashboard";
 import { useEffect, useRef, useState } from "react";
 import { ErrorBanner, Field } from "../components/common.js";
-import { useApiClient, useAnyEvent } from "@agentbox/ui/hooks";
+import { useApiClient, useAnyEvent } from "@aio/ui/hooks";
 import {
   draftFrom,
   rebaseDraft,

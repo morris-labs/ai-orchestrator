@@ -1,5 +1,5 @@
 // Conversion between the policy file, its YAML text, and the editor form.
-import { PolicyFileSchema, type PolicyFile } from "@agentbox/contracts";
+import { PolicyFileSchema, type PolicyFile } from "@aio/contracts";
 import { isMap, parse, parseDocument, stringify } from "yaml";
 
 export type ParseResult = { ok: true; policy: PolicyFile } | { ok: false; errors: string[] };

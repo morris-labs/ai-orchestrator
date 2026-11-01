@@ -1,7 +1,7 @@
 // Box naming (inventory section 4.8). Both sanitizers are ASCII-only on
 // purpose: they byte-match the bash `tr` and `sed` pipelines that named the
 // first boxes, so existing boxes keep resolving.
-import { CONTAINER_PREFIX } from "@agentbox/contracts";
+import { CONTAINER_PREFIX } from "@aio/contracts";
 import { tmuxSessionName } from "../records/box.js";
 
 /** `tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_.-' '-'`, per UTF-16 code unit. */
@@ -17,7 +17,7 @@ export function slugifyIssueName(name: string): string {
 }
 
 /**
- * `claude-agent-<sanitized base>`, with `-2`, `-3`, and so on appended until
+ * `aio-agent-<sanitized base>`, with `-2`, `-3`, and so on appended until
  * it collides with nothing in `taken`: container names, record ids, and live
  * tmux sessions. tmux rewrites `.` and `:`, so the rewritten form must be
  * free too.

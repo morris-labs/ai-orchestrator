@@ -1,4 +1,4 @@
-import { FakeApiError, FakeServer, makeBoxView, makeEvent } from "@agentbox/ui/testing";
+import { FakeApiError, FakeServer, makeBoxView, makeEvent } from "@aio/ui/testing";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
@@ -11,7 +11,7 @@ function boxes() {
   return [
     makeBoxView({
       box: {
-        id: "claude-agent-site",
+        id: "aio-agent-site",
         targetDir: "/w/site",
         conversationName: "Site work",
         sessionUuid: UUID,
@@ -20,7 +20,7 @@ function boxes() {
     }),
     makeBoxView({
       box: {
-        id: "claude-agent-api",
+        id: "aio-agent-api",
         targetDir: "/w/api",
         conversationName: "Api",
         worktree: "/w/api/.worktrees/Api",
@@ -104,7 +104,7 @@ describe("main window", () => {
     await user.pointer({ keys: "[MouseLeft>]", target: rowOf("Site work") });
     await user.click(screen.getByRole("button", { name: "Purge" }));
     expect(await screen.findByRole("dialog", { name: "Purge" })).toHaveTextContent(
-      "claude-agent-site is running against this directory. Stop it first.",
+      "aio-agent-site is running against this directory. Stop it first.",
     );
     expect(server.callsTo("boxes.purge")).toHaveLength(0);
   });
@@ -117,7 +117,7 @@ describe("main window", () => {
     await user.click(screen.getByRole("button", { name: "Purge" }));
     const dialog = await screen.findByRole("dialog", { name: "Purge" });
     expect(dialog).toHaveTextContent("/home/user/.claude/projects/-w-api");
-    expect(dialog).toHaveTextContent("the record of claude-agent-api");
+    expect(dialog).toHaveTextContent("the record of aio-agent-api");
     expect(server.callsTo("boxes.purge").map((c) => c.body)).toEqual([{ dryRun: true }]);
     expect(server.state.boxes).toHaveLength(2);
     await user.click(within(dialog).getByRole("button", { name: "Yes" }));
@@ -132,7 +132,7 @@ describe("main window", () => {
       boxes: [
         makeBoxView({
           box: {
-            id: "claude-agent-mail",
+            id: "aio-agent-mail",
             targetDir: "/w/app",
             conversationName: "Mail",
             workspace: "Mail",
@@ -173,7 +173,7 @@ describe("main window", () => {
     fireEvent.mouseDown(rowOf("Api"), { button: 0 });
     await user.click(screen.getByRole("button", { name: "Remove" }));
     const first = await screen.findByRole("dialog", { name: "Remove" });
-    expect(first).toHaveTextContent('Remove "claude-agent-api" from the dashboard?');
+    expect(first).toHaveTextContent('Remove "aio-agent-api" from the dashboard?');
     await user.click(within(first).getByRole("button", { name: "Yes" }));
     await waitFor(() =>
       expect(screen.getByRole("dialog", { name: "Remove" })).toHaveTextContent(
@@ -204,9 +204,9 @@ describe("main window", () => {
     const tabs = within(screen.getByRole("tablist", { name: "Terminals" })).getAllByRole("tab");
     expect(tabs).toHaveLength(1);
     expect(tabs[0]).toHaveTextContent("Site work");
-    expect(tabs[0]).toHaveAttribute("title", expect.stringContaining("claude-agent-site"));
+    expect(tabs[0]).toHaveAttribute("title", expect.stringContaining("aio-agent-site"));
     await waitFor(() => expect(server.socketsFor("/api/v1/terminals")).toHaveLength(1));
-    expect(server.socketsFor("/api/v1/terminals")[0]?.query.get("boxId")).toBe("claude-agent-site");
+    expect(server.socketsFor("/api/v1/terminals")[0]?.query.get("boxId")).toBe("aio-agent-site");
   });
 
   it("keeps the table's row nodes across events, and a double-click still opens the box", async () => {
@@ -277,7 +277,7 @@ describe("main window", () => {
 
   it("flags a project whose container runs with old settings", async () => {
     const server = new FakeServer({ boxes: boxes() });
-    const site = server.box("claude-agent-site").box.projectId;
+    const site = server.box("aio-agent-site").box.projectId;
     server.state.staleProjects.push(site);
     await renderApp(server);
     const badge = within(screen.getByRole("option", { name: /^site/ })).getByText("stale");
@@ -334,7 +334,7 @@ describe("main window", () => {
     const server = new FakeServer({
       boxes: [
         makeBoxView({
-          box: { id: "claude-agent-a", targetDir: "/w/a", wasRunning: true },
+          box: { id: "aio-agent-a", targetDir: "/w/a", wasRunning: true },
           status: "stopped",
         }),
       ],
@@ -361,7 +361,7 @@ describe("main window", () => {
     act(() => {
       server.emit(
         makeEvent("box.changed", {
-          boxId: "claude-agent-api",
+          boxId: "aio-agent-api",
           status: "running",
           box: { ...api!, conversationName: "Api v2" },
         }),
@@ -400,7 +400,7 @@ describe("main window", () => {
     act(() => {
       ws!.serverSend({
         ...makeEvent("box.changed", {
-          boxId: "claude-agent-api",
+          boxId: "aio-agent-api",
           status: "running",
           box: stale[1]!.box,
         }),
@@ -426,7 +426,7 @@ describe("main window", () => {
       server.emit(
         makeEvent("ports.changed", {
           container: site!.container,
-          listeners: [{ port: 5173, proto: "tcp", process: "node", boxId: "claude-agent-site" }],
+          listeners: [{ port: 5173, proto: "tcp", process: "node", boxId: "aio-agent-site" }],
         }),
       );
       server.emit(
@@ -451,7 +451,7 @@ describe("main window", () => {
     const user = userEvent.setup();
     const other = makeBoxView({
       box: {
-        id: "claude-agent-old",
+        id: "aio-agent-old",
         targetDir: "/w/site",
         sessionUuid: "22222222-2222-4222-8222-222222222222",
       },
@@ -468,7 +468,7 @@ describe("main window", () => {
             modifiedAt: "2026-10-28T08:00:00Z",
             sizeBytes: 1,
             lastPrompt: "",
-            trackedBy: ["claude-agent-old"],
+            trackedBy: ["aio-agent-old"],
           },
         ],
       },
@@ -496,7 +496,7 @@ describe("main window", () => {
   it("starts the box again when an Edit Box restart hits stale mounts", async () => {
     const user = userEvent.setup();
     const server = new FakeServer({ boxes: boxes() });
-    const site = server.box("claude-agent-site");
+    const site = server.box("aio-agent-site");
     server.on("boxes.restart", (req, s) => {
       // The server stops the box, then its start fails.
       s.box(req.params.boxId as string).status = "stopped";
@@ -531,7 +531,7 @@ describe("main window", () => {
     const user = userEvent.setup();
     const holder = makeBoxView({
       box: {
-        id: "claude-agent-holder",
+        id: "aio-agent-holder",
         targetDir: "/w/site",
         sessionUuid: "22222222-2222-4222-8222-222222222222",
       },
@@ -549,13 +549,13 @@ describe("main window", () => {
             modifiedAt: "2026-10-28T08:00:00Z",
             sizeBytes: 1,
             lastPrompt: "",
-            trackedBy: ["claude-agent-holder"],
+            trackedBy: ["aio-agent-holder"],
           },
         ],
       },
     });
     server.on("boxes.update", () => {
-      throw new FakeApiError("adoption_refused", "The running box claude-agent-holder holds it.");
+      throw new FakeApiError("adoption_refused", "The running box aio-agent-holder holds it.");
     });
     await renderApp(server);
     await waitFor(() => expect(rowOf("Site work")).toHaveAttribute("aria-selected", "true"));
@@ -579,12 +579,12 @@ describe("main window", () => {
     const server = new FakeServer({ boxes: boxes() });
     server.state.secretCandidates = [
       {
-        vault: "AgentBox",
+        vault: "Aio",
         item: "Token GitHub",
         itemId: "i1",
         field: "credential",
         type: "CONCEALED",
-        ref: "op://AgentBox/Token GitHub/credential",
+        ref: "op://Aio/Token GitHub/credential",
         suggestedName: "TOKEN_GITHUB_CREDENTIAL",
       },
     ];
@@ -597,9 +597,7 @@ describe("main window", () => {
     await user.click(within(dialog).getByRole("button", { name: "Save" }));
     await waitFor(() => expect(server.callsTo("projects.update")).toHaveLength(1));
     expect(server.callsTo("projects.update")[0]?.body).toEqual({
-      secretRefs: [
-        { name: "TOKEN_GITHUB_CREDENTIAL", ref: "op://AgentBox/Token GitHub/credential" },
-      ],
+      secretRefs: [{ name: "TOKEN_GITHUB_CREDENTIAL", ref: "op://Aio/Token GitHub/credential" }],
     });
     expect(screen.queryByText(/keeps its old mounts/)).toBeNull();
   });
@@ -734,6 +732,8 @@ describe("main window", () => {
       throw new TypeError("refused");
     });
     renderWithServer(<App />, server);
-    expect(await screen.findByText(/The Agent Box server is not reachable/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/The AI Orchestrator server is not reachable/),
+    ).toBeInTheDocument();
   });
 });

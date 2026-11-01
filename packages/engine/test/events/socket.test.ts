@@ -1,5 +1,5 @@
 // The engine event WebSocket: hello, replay, resync, filtering, and leases.
-import { EngineStreamFrameSchema } from "@agentbox/contracts";
+import { EngineStreamFrameSchema } from "@aio/contracts";
 import { afterEach, describe, expect, it } from "vitest";
 import WebSocket from "ws";
 import { CONTAINER, RUN, TOKEN, listenEngine } from "../api/fixtures.js";

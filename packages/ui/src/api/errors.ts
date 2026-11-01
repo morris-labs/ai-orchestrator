@@ -1,5 +1,5 @@
 // Errors that the API client raises.
-import { ApiErrorSchema, type ApiErrorCode } from "@agentbox/contracts";
+import { ApiErrorSchema, type ApiErrorCode } from "@aio/contracts";
 
 /**
  * The client-side codes on top of the server's `ApiErrorCode` list:

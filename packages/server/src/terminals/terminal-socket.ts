@@ -6,7 +6,7 @@ import {
   TerminalClientMessageSchema,
   TerminalServerMessageSchema,
   type TerminalServerMessage,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 import WebSocket from "ws";
 import { toApiError } from "../api/errors.js";
 import type { ExecBackend, ExecRequest } from "./exec.js";

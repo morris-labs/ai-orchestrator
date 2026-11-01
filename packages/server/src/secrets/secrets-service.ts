@@ -11,7 +11,7 @@ import type {
   SecretsAvailable,
   SecretsCheckResultSchema,
   SecretsViewSchema,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 import type { z } from "zod";
 import { ApiError, toApiError } from "../api/errors.js";
 import { hashSudoPassword } from "./crypt.js";
@@ -65,7 +65,7 @@ export class SecretsService {
 
   /**
    * The vaults to search: the `secretVaults` setting, else the vaults that
-   * global and project references name, else `AgentBox`.
+   * global and project references name, else `Aio`.
    */
   async searchedVaults(): Promise<string[]> {
     const configured = this.opts.settings().secretVaults;
@@ -278,7 +278,7 @@ export class SecretsService {
 }
 
 /** The vault used when neither the setting nor an existing reference names one. */
-export const DEFAULT_SECRET_VAULT = "AgentBox";
+export const DEFAULT_SECRET_VAULT = "Aio";
 
 /** How long the list of available fields stays cached: 30 seconds. */
 export const AVAILABLE_CACHE_TTL_MS = 30_000;

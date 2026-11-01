@@ -205,13 +205,13 @@ export function userConfigWarnings(accountDir: string, hostDir: string): string[
     const st = lstat(account);
     if (!st) {
       out.push(
-        `${name} isn't linked to ${host}, so this account lacks your global ${name}. Run "agentbox accounts relink".`,
+        `${name} isn't linked to ${host}, so this account lacks your global ${name}. Run "aio accounts relink".`,
       );
     } else if (st.isSymbolicLink() && realOf(account) === undefined) {
-      out.push(`${account} is a link that dangles. Run "agentbox accounts relink".`);
+      out.push(`${account} is a link that dangles. Run "aio accounts relink".`);
     } else if (!st.isSymbolicLink() || realOf(account) !== realOf(host)) {
       out.push(
-        `${name} is a local override: this account doesn't use ${host}. To use the host's, move ${account} away and run "agentbox accounts relink".`,
+        `${name} is a local override: this account doesn't use ${host}. To use the host's, move ${account} away and run "aio accounts relink".`,
       );
     }
   }

@@ -1,18 +1,18 @@
 // Sample server documents for the screen tests, built from the demo stream so
 // the two stay consistent.
-import type { Finding, ProjectSummary, RoundSummary, RunState } from "@agentbox/contracts";
-import { defaultConfig } from "@agentbox/contracts";
+import type { Finding, ProjectSummary, RoundSummary, RunState } from "@aio/contracts";
+import { defaultConfig } from "@aio/contracts";
 import {
   DEMO_BOX as BOX,
   DEMO_CONTAINER as CONTAINER,
   DEMO_PROJECT as PROJECT,
   DEMO_RUN_ID as RUN_ID,
   buildDemoEvents,
-} from "@agentbox/ui/testing";
+} from "@aio/ui/testing";
 
 export { BOX, CONTAINER, PROJECT, RUN_ID };
 
-/** The scripted demo stream from `@agentbox/ui/testing`. */
+/** The scripted demo stream from `@aio/ui/testing`. */
 export const loadDemoEvents = buildDemoEvents;
 
 const events = buildDemoEvents();
@@ -49,7 +49,7 @@ export const project: ProjectSummary = {
     tcpMaps: [],
     mounts: [],
     secretRefs: [],
-    policyPath: ".claude-box/policy.yaml",
+    policyPath: ".aio/policy.yaml",
     createdAt: "2026-10-28T09:00:00.000Z",
     updatedAt: "2026-10-28T09:00:00.000Z",
   },
@@ -58,7 +58,7 @@ export const project: ProjectSummary = {
   container: {
     name: CONTAINER,
     state: "running",
-    engine: { hostPort: 20412, version: "4.0.0-dev", healthy: true, versionMatches: true },
+    engine: { hostPort: 20412, version: "1.0.0-dev", healthy: true, versionMatches: true },
   },
 };
 

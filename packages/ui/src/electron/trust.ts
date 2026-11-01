@@ -1,14 +1,14 @@
 // How an Electron main process trusts the server: it pins the certificate
 // in the server's data directory for its own REST calls and WebSockets, and
 // for the pages its windows load from the server. Node.js only: import it as
-// `@agentbox/ui/electron-main`, never from page code.
+// `@aio/ui/electron-main`, never from page code.
 import {
   matchesPin,
   pinnedFetch,
   pinnedTlsOptions,
   readServerPin,
   type ServerPin,
-} from "@agentbox/contracts/tls";
+} from "@aio/contracts/tls";
 import type { WebSocketCtor } from "../api/client";
 
 export { dataFile, serverUrl } from "./server-config";

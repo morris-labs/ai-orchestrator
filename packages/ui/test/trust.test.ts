@@ -2,7 +2,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { createServerIdentity, pinFromPem } from "@agentbox/contracts/tls";
+import { createServerIdentity, pinFromPem } from "@aio/contracts/tls";
 import { afterEach, describe, expect, it } from "vitest";
 import { certificateVerdict, pinReader, pinnedWebSocket } from "../src/electron/trust";
 
@@ -61,7 +61,7 @@ describe("certificateVerdict", () => {
 
 describe("pinReader", () => {
   it("reads the file again on every call and says when it's missing", () => {
-    const dir = mkdtempSync(path.join(tmpdir(), "agentbox-trust-"));
+    const dir = mkdtempSync(path.join(tmpdir(), "aio-trust-"));
     dirs.push(dir);
     const file = path.join(dir, "server.crt");
     const read = pinReader(file);

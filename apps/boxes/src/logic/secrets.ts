@@ -2,7 +2,7 @@
 // are ticked, what each is named, and what to save. The list edits the
 // project's `secretRefs`, because the secrets broker is per container and a
 // project's boxes share one container.
-import { EnvVarNameSchema, type SecretCandidate, type SecretRef } from "@agentbox/contracts";
+import { EnvVarNameSchema, type SecretCandidate, type SecretRef } from "@aio/contracts";
 
 /** The ticked references of the project, as `ref` to the variable name. */
 export type SecretSelection = Record<string, string>;

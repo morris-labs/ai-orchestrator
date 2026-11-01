@@ -1,8 +1,8 @@
 // The box table: Status, Directory, Conversation, and Container, sortable,
 // multi-select, with a context menu and double-click.
-import type { BoxView } from "@agentbox/contracts";
-import { DataTable, StatusDot, type Column, type SortState } from "@agentbox/ui";
-import { boxWorkDir } from "@agentbox/contracts";
+import type { BoxView } from "@aio/contracts";
+import { DataTable, StatusDot, type Column, type SortState } from "@aio/ui";
+import { boxWorkDir } from "@aio/contracts";
 import { displayName, statusDot, statusLabel, statusRank } from "../logic/status";
 
 export const EMPTY_TEXT = "No boxes yet. Use New Box (Ctrl+Shift+N) to start one.";

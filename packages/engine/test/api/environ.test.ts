@@ -10,7 +10,7 @@ import { tempDir } from "../tmp.js";
 // The child process imports the built module. Node.js 22 can't run a
 // TypeScript source file, and the source imports use `.js` specifiers that
 // only a bundler or a TypeScript-aware loader resolves. `pnpm test` builds
-// every package first; run `pnpm --filter @agentbox/engine build` before a
+// every package first; run `pnpm --filter @aio/engine build` before a
 // bare `vitest run`.
 const environModule = fileURLToPath(new URL("../../dist/main/environ.js", import.meta.url));
 
@@ -34,7 +34,7 @@ describe("moveSecretsOutOfEnviron", () => {
           `  step,`,
           `  inEnviron: environ.includes("SYNTHETIC_SECRET_VALUE"),`,
           `  token: process.env.SYNTHETIC_ENGINE_TOKEN ?? null,`,
-          `  movedFile: process.env.AGENTBOX_ENGINE_MOVED_ENV_FILE ?? null,`,
+          `  movedFile: process.env.AIO_ENGINE_MOVED_ENV_FILE ?? null,`,
           `  args: process.argv.slice(2),`,
           `}));`,
           "",
@@ -60,9 +60,9 @@ describe("moveSecretsOutOfEnviron", () => {
   );
 
   it("treats the engine token and vendor and GitHub credentials as secrets", () => {
-    for (const name of ["AGENTBOX_ENGINE_TOKEN", "GH_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"])
+    for (const name of ["AIO_ENGINE_TOKEN", "GH_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"])
       expect(looksLikeCredential(name)).toBe(true);
-    for (const name of ["PATH", "HOME", "AGENTBOX_PROJECT_ROOT", "TOKENIZER_PATH"])
+    for (const name of ["PATH", "HOME", "AIO_PROJECT_ROOT", "TOKENIZER_PATH"])
       expect(looksLikeCredential(name)).toBe(false);
     expect(existsSync(environModule)).toBe(true);
   });

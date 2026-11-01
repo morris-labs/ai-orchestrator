@@ -1,5 +1,5 @@
 // Types and constants shared by the Electron main process and its logic.
-import type { RunStatus } from "@agentbox/contracts";
+import type { RunStatus } from "@aio/contracts";
 
 export interface DeepLink {
   project: string | null;

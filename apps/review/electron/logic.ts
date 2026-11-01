@@ -2,15 +2,15 @@
 // run in Node: deep links, the renderer URL, the active-run count, which
 // notifications to show, and the tray bitmap.
 import { ACTIVE_STATUSES_FOR_TRAY, type DeepLink } from "./types.js";
-import type { AgentBoxEvent, NotificationToggles, RunState } from "@agentbox/contracts";
+import type { AioEvent, NotificationToggles, RunState } from "@aio/contracts";
 
 export { ACTIVE_STATUSES_FOR_TRAY, type DeepLink };
 
-/** The URL scheme the app registers, as in `agentbox-review://launch?project=ID&box=ID`. */
-export const PROTOCOL = "agentbox-review";
+/** The URL scheme the app registers, as in `aio-review://launch?project=ID&box=ID`. */
+export const PROTOCOL = "aio-review";
 
 /**
- * Finds a deep link in a command line: an `agentbox-review://` URL, a bare
+ * Finds a deep link in a command line: an `aio-review://` URL, a bare
  * query such as `?project=ID&box=ID`, or `--project=ID` and `--box=ID`
  * flags. Returns `null` when there is none.
  */
@@ -89,7 +89,7 @@ export class ActiveRuns {
   }
 
   /** Returns true when the count changed. */
-  apply(event: AgentBoxEvent): boolean {
+  apply(event: AioEvent): boolean {
     if (event.type !== "run.changed") return false;
     this.version += 1;
     this.changedAt.set(event.run.id, this.version);
@@ -127,7 +127,7 @@ export const STALE_NOTICE_MS = 10 * 60 * 1000;
  * to the boxes app.
  */
 export function noticeFor(
-  event: AgentBoxEvent,
+  event: AioEvent,
   toggles: NotificationToggles,
   now?: number,
 ): DesktopNotice | null {
@@ -213,8 +213,8 @@ export class Reloader {
 }
 
 export function trayTooltip(count: number): string {
-  if (count === 0) return "Agent Box Review: no active runs";
-  return `Agent Box Review: ${count} active ${count === 1 ? "run" : "runs"}`;
+  if (count === 0) return "AI Orchestrator Review: no active runs";
+  return `AI Orchestrator Review: ${count} active ${count === 1 ? "run" : "runs"}`;
 }
 
 // 3x5 digit glyphs, one row per string, for the tray badge.
@@ -310,7 +310,7 @@ export function lostAppPage(
 /** The page the window shows while the server doesn't answer. */
 export function offlinePageUrl(serverUrl: string): string {
   const escaped = serverUrl.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
-  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Agent Box Review</title><style>body{background:#0d0d0d;color:#ddd;font:15px system-ui,sans-serif;margin:3em}</style></head><body><h1>The Agent Box server isn't reachable</h1><p>The app tries ${escaped} again every few seconds and opens the review page once it answers.</p></body></html>`;
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>AI Orchestrator Review</title><style>body{background:#0d0d0d;color:#ddd;font:15px system-ui,sans-serif;margin:3em}</style></head><body><h1>The AI Orchestrator server isn't reachable</h1><p>The app tries ${escaped} again every few seconds and opens the review page once it answers.</p></body></html>`;
   return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
 }
 

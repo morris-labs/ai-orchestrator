@@ -11,7 +11,7 @@ function readJson(file: string): Record<string, unknown> {
 
 describe("preacceptClaudeAccount", () => {
   it("creates both files in an empty account folder", () => {
-    const dir = tempDir("agentbox-pre-");
+    const dir = tempDir("aio-pre-");
     const r = preacceptClaudeAccount(dir, { trustDirs: ["/work/app"] });
     expect(r.changed).toEqual([
       "installMethod",
@@ -29,7 +29,7 @@ describe("preacceptClaudeAccount", () => {
   });
 
   it("changes only the named keys and keeps everything else", () => {
-    const dir = tempDir("agentbox-pre-");
+    const dir = tempDir("aio-pre-");
     fs.writeFileSync(
       path.join(dir, ".claude.json"),
       JSON.stringify({
@@ -60,7 +60,7 @@ describe("preacceptClaudeAccount", () => {
   });
 
   it("sets installMethod when it is missing from an imported file", () => {
-    const dir = tempDir("agentbox-pre-");
+    const dir = tempDir("aio-pre-");
     fs.writeFileSync(path.join(dir, ".claude.json"), JSON.stringify({ userID: "u" }));
     preacceptClaudeAccount(dir);
     expect(readJson(path.join(dir, ".claude.json"))).toEqual({
@@ -70,7 +70,7 @@ describe("preacceptClaudeAccount", () => {
   });
 
   it("writes nothing when the values are already there", () => {
-    const dir = tempDir("agentbox-pre-");
+    const dir = tempDir("aio-pre-");
     preacceptClaudeAccount(dir, { trustDirs: ["/work/app"] });
     const file = path.join(dir, ".claude.json");
     const old = new Date("2020-01-01T00:00:00Z");
@@ -83,7 +83,7 @@ describe("preacceptClaudeAccount", () => {
   });
 
   it("leaves a file that isn't a JSON object alone", () => {
-    const dir = tempDir("agentbox-pre-");
+    const dir = tempDir("aio-pre-");
     fs.writeFileSync(path.join(dir, ".claude.json"), "{ not json");
     fs.writeFileSync(path.join(dir, "settings.json"), "[1]");
     const r = preacceptClaudeAccount(dir, { trustDirs: ["/work/app"] });
@@ -93,8 +93,8 @@ describe("preacceptClaudeAccount", () => {
   });
 
   it("never writes through a symbolic link, and reports that it lacks the key", () => {
-    const dir = tempDir("agentbox-pre-");
-    const hostFile = path.join(tempDir("agentbox-host-"), "settings.json");
+    const dir = tempDir("aio-pre-");
+    const hostFile = path.join(tempDir("aio-host-"), "settings.json");
     fs.writeFileSync(hostFile, JSON.stringify({ model: "opus" }));
     fs.symlinkSync(hostFile, path.join(dir, "settings.json"));
     const r = preacceptClaudeAccount(dir);
@@ -106,7 +106,7 @@ describe("preacceptClaudeAccount", () => {
 
 describe("preacceptHostTrust", () => {
   it("adds only the missing trust entries and keeps other keys", () => {
-    const home = tempDir("agentbox-host-");
+    const home = tempDir("aio-host-");
     const file = path.join(home, ".claude.json");
     fs.writeFileSync(
       file,
@@ -127,7 +127,7 @@ describe("preacceptHostTrust", () => {
   });
 
   it("writes through a link, keeps the link, and adds no installMethod", () => {
-    const home = tempDir("agentbox-host-");
+    const home = tempDir("aio-host-");
     fs.mkdirSync(path.join(home, ".claude"));
     const real = path.join(home, ".claude", ".claude.json");
     fs.writeFileSync(real, "{}");
@@ -138,7 +138,7 @@ describe("preacceptHostTrust", () => {
   });
 
   it("leaves a missing or invalid file alone", () => {
-    const home = tempDir("agentbox-host-");
+    const home = tempDir("aio-host-");
     expect(preacceptHostTrust(home, ["/w"])).toEqual([]);
     expect(fs.existsSync(path.join(home, ".claude.json"))).toBe(false);
     fs.writeFileSync(path.join(home, ".claude.json"), "[1]");

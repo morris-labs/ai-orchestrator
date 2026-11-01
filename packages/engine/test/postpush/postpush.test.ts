@@ -420,7 +420,7 @@ describe("post-push loop", () => {
   it("never force-pushes over a branch that moved on origin", async () => {
     const repo = buildSampleRepo();
     const origin = join(dirname(repo), "origin.git");
-    const other = tempDir("agentbox-other-");
+    const other = tempDir("aio-other-");
     git(other, "clone", "-q", origin, "c");
     const clone = join(other, "c");
     git(clone, "checkout", "-q", "-b", "feature");
@@ -1040,10 +1040,7 @@ describe("untrusted pull request comments", () => {
 
   it("honors the policy's commentAuthors", async () => {
     const repo = buildSampleRepo();
-    writeFileSync(
-      join(repo, ".claude-box/policy.yaml"),
-      "version: 1\ncommentAuthors: [reviewer-a]\n",
-    );
+    writeFileSync(join(repo, ".aio/policy.yaml"), "version: 1\ncommentAuthors: [reviewer-a]\n");
     const gh = new FakeGitHub(join(dirname(repo), "origin.git"));
     gh.checks = [{ name: "tests", bucket: "pass", link: null, workflow: "ci" }];
     (gh as GitHubClient).listCollaborators = () => Promise.resolve(["maintainer"]);

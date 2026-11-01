@@ -1,7 +1,7 @@
 // Layout for the data-flow diagram: one column per stage, one lane per
 // vendor plus a pipeline lane for stage-level endpoints. Pure geometry, so the
 // component only draws.
-import type { FlowEndpoint, Stage, Vendor } from "@agentbox/contracts";
+import type { FlowEndpoint, Stage, Vendor } from "@aio/contracts";
 import type { FlowEdge } from "./model.js";
 import { VENDORS } from "./tokens.js";
 

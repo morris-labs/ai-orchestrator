@@ -25,7 +25,7 @@
 # that only your user can replace what the profile trusts.
 #
 # Environment:
-#   AGENTBOX_APPARMOR_DIR  The profile directory. Default: /etc/apparmor.d.
+#   AIO_APPARMOR_DIR  The profile directory. Default: /etc/apparmor.d.
 #                          Tests set it to a temporary directory.
 set -euo pipefail
 
@@ -35,8 +35,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 TEMPLATE_DIR="$ROOT/packaging/deb/apparmor"
-PROFILE_DIR="${AGENTBOX_APPARMOR_DIR:-/etc/apparmor.d}"
-MARK_PREFIX="# agentbox-dev checkout: "
+PROFILE_DIR="${AIO_APPARMOR_DIR:-/etc/apparmor.d}"
+MARK_PREFIX="# aio-dev checkout: "
 APPS=(boxes review)
 MARK="$MARK_PREFIX$ROOT"
 MODE=install
@@ -116,10 +116,10 @@ other_marks() {
 # already share the profile file stay in it.
 profile_text() {
   local app="$1" name="$2" bin="$3" template line deb_name deb_path in_header=1
-  template="$TEMPLATE_DIR/agentbox-$app"
+  template="$TEMPLATE_DIR/aio-$app"
   [[ -f "$template" ]] || die "the profile template $template is missing"
-  deb_name="agentbox-$app"
-  deb_path="/usr/lib/agentbox/$app/agentbox-$app"
+  deb_name="aio-$app"
+  deb_path="/usr/lib/ai-orchestrator/$app/aio-$app"
   printf '%s\n' "$MARK"
   other_marks "$PROFILE_DIR/$name"
   printf '# Written by scripts/install-dev-apparmor.sh from packaging/deb/apparmor/%s.\n' "$deb_name"
@@ -143,7 +143,7 @@ profile_text() {
 # Prints the profile files under PROFILE_DIR that this checkout wrote.
 installed_profiles() {
   local file
-  for file in "$PROFILE_DIR"/agentbox-dev-*; do
+  for file in "$PROFILE_DIR"/aio-dev-*; do
     [[ -f "$file" ]] || continue
     if grep -qxF -- "$MARK" "$file"; then
       printf '%s\n' "$file"
@@ -212,7 +212,7 @@ for app in "${APPS[@]}"; do
   done
   ((seen)) && continue
   hash="$(printf '%s' "$bin" | sha256sum)"
-  names+=("agentbox-dev-${hash:0:12}")
+  names+=("aio-dev-${hash:0:12}")
   apps_for+=("$app")
   bins+=("$bin")
 done

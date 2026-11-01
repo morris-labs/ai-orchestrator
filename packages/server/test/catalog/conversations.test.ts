@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { ConversationSummarySchema } from "@agentbox/contracts";
+import { ConversationSummarySchema } from "@aio/contracts";
 import {
   condense,
   claudePathHash,
@@ -110,7 +110,7 @@ describe("listConversations", () => {
     write(U3, [JSON.stringify({ type: "assistant", message: {} })]); // no user turn
     fs.writeFileSync(path.join(projectDirFor(env, workDir), "notes.txt"), "x");
 
-    const list = await listConversations(env, workDir, new Map([[U1, ["claude-agent-a"]]]));
+    const list = await listConversations(env, workDir, new Map([[U1, ["aio-agent-a"]]]));
     expect(list.map((c) => c.sessionUuid)).toEqual([U2, U1]);
     for (const c of list) ConversationSummarySchema.parse(c);
     const [c2, c1] = list as [(typeof list)[0], (typeof list)[0]];
@@ -119,7 +119,7 @@ describe("listConversations", () => {
       titleSource: "custom-title",
       turns: 2,
       lastPrompt: "the last prompt",
-      trackedBy: ["claude-agent-a"],
+      trackedBy: ["aio-agent-a"],
     });
     expect(c2).toMatchObject({
       title: "second ai",

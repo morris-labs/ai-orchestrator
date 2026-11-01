@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { projectContainerName } from "@agentbox/contracts";
+import { projectContainerName } from "@aio/contracts";
 import {
   assertDevEnginesAllowed,
   isLoopbackHost,
@@ -54,7 +54,7 @@ describe("parseDevEngines", () => {
       } catch (err) {
         message = (err as Error).message;
       }
-      expect(message, value).toMatch(/AGENTBOX_DEV_ENGINES entry \d/);
+      expect(message, value).toMatch(/AIO_DEV_ENGINES entry \d/);
       expect(message).not.toContain(TOKEN);
     }
   });

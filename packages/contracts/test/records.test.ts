@@ -35,7 +35,7 @@ describe("records", () => {
       tcpMaps: [],
       mounts: [],
       secretRefs: [],
-      policyPath: ".claude-box/policy.yaml",
+      policyPath: ".aio/policy.yaml",
     });
   });
 
@@ -157,7 +157,7 @@ describe("records", () => {
   });
 
   it("derives the shared container name and the working directory", () => {
-    expect(projectContainerName(project.id)).toBe("claude-agent-proj-example-app-1a2b3c4d");
+    expect(projectContainerName(project.id)).toBe("aio-agent-proj-example-app-1a2b3c4d");
     expect(boxWorkDir(BoxSchema.parse(box))).toBe(box.worktree);
     expect(boxWorkDir({ targetDir: "/t" })).toBe("/t");
   });
@@ -165,29 +165,29 @@ describe("records", () => {
 
 describe("deriveHostKey", () => {
   it("strips the prefix and maps to lowercase letters, digits, and hyphens", () => {
-    expect(deriveHostKey("claude-agent-Emails_not_sending")).toBe("emails-not-sending");
-    expect(deriveHostKey("claude-agent-a..b--c_")).toBe("a-b-c");
-    expect(deriveHostKey("claude-agent-___")).toBe("box");
+    expect(deriveHostKey("aio-agent-Emails_not_sending")).toBe("emails-not-sending");
+    expect(deriveHostKey("aio-agent-a..b--c_")).toBe("a-b-c");
+    expect(deriveHostKey("aio-agent-___")).toBe("box");
   });
 
   it("cuts to 30 characters without a trailing hyphen", () => {
-    const key = deriveHostKey(`claude-agent-${"abcdefghi-".repeat(5)}`);
+    const key = deriveHostKey(`aio-agent-${"abcdefghi-".repeat(5)}`);
     expect(key.length).toBeLessThanOrEqual(30);
     expect(HostKeySchema.safeParse(key).success).toBe(true);
   });
 
   it("appends a counter when the key is taken", () => {
-    expect(deriveHostKey("claude-agent-api", new Set(["api"]))).toBe("api-2");
-    expect(deriveHostKey("claude-agent-api", new Set(["api", "api-2"]))).toBe("api-3");
+    expect(deriveHostKey("aio-agent-api", new Set(["api"]))).toBe("api-2");
+    expect(deriveHostKey("aio-agent-api", new Set(["api", "api-2"]))).toBe("api-3");
     const long = "x".repeat(40);
-    const taken = new Set([deriveHostKey(`claude-agent-${long}`)]);
-    const next = deriveHostKey(`claude-agent-${long}`, taken);
+    const taken = new Set([deriveHostKey(`aio-agent-${long}`)]);
+    const next = deriveHostKey(`aio-agent-${long}`, taken);
     expect(next).toMatch(/-2$/);
     expect(next.length).toBe(30);
   });
 
   it("produces keys the schema accepts", () => {
-    for (const id of ["claude-agent-x", "claude-agent-ABC-123", "claude-agent-émoji-ü"]) {
+    for (const id of ["aio-agent-x", "aio-agent-ABC-123", "aio-agent-émoji-ü"]) {
       expect(HostKeySchema.safeParse(deriveHostKey(id)).success, id).toBe(true);
     }
     expect(HostKeySchema.safeParse("-bad").success).toBe(false);

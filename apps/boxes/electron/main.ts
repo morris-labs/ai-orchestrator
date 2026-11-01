@@ -1,8 +1,8 @@
-// The Electron main process of the agentbox app: one window that loads the
-// boxes page from agentbox-server, a tray icon with box counts, desktop
+// The Electron main process of the aio app: one window that loads the
+// boxes page from aio-server, a tray icon with box counts, desktop
 // notifications for box events, a single-instance lock, and the bridge
 // calls that need the host (external terminals, the review app, pickers).
-import { HOME_PATHS, boxWorkDir, type BoxView } from "@agentbox/contracts";
+import { HOME_PATHS, boxWorkDir, type BoxView } from "@aio/contracts";
 import {
   ApiClient,
   EventsConnection,
@@ -10,14 +10,14 @@ import {
   isAllowedOpenPath,
   isAppPage,
   isWebUrl,
-} from "@agentbox/ui/core";
+} from "@aio/ui/core";
 import {
   certificateVerdict,
   dataFile,
   pinReader,
   pinnedTransport,
   serverUrl,
-} from "@agentbox/ui/electron-main";
+} from "@aio/ui/electron-main";
 import { execFileSync, spawn } from "node:child_process";
 import { accessSync, constants, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -55,7 +55,7 @@ import {
 } from "./logic";
 
 const SERVER_URL = serverUrl();
-const BOXES_URL = process.env.AGENTBOX_BOXES_URL ?? `${SERVER_URL}/boxes/`;
+const BOXES_URL = process.env.AIO_BOXES_URL ?? `${SERVER_URL}/boxes/`;
 /** The copy of the page built into the app, shown when the server doesn't answer. */
 const LOCAL_PAGE = join(__dirname, "../renderer/index.html");
 /** The pages that get the token and the bridge; anything else is foreign. */
@@ -69,7 +69,7 @@ function fromApp(e: IpcMainEvent | IpcMainInvokeEvent): boolean {
 
 const REFUSED: BridgeResult = {
   ok: false,
-  error: "The request didn't come from the Agent Box page.",
+  error: "The request didn't come from the AI Orchestrator page.",
 };
 
 let win: BrowserWindow | null = null;
@@ -79,7 +79,7 @@ let counts: TrayCounts | null = null;
 
 function readToken(): string | null {
   // A test or a wrapper can hand the token over without the file.
-  if (process.env.AGENTBOX_SERVER_TOKEN) return process.env.AGENTBOX_SERVER_TOKEN;
+  if (process.env.AIO_SERVER_TOKEN) return process.env.AIO_SERVER_TOKEN;
   try {
     return readFileSync(dataFile(HOME_PATHS.serverToken), "utf8").trim() || null;
   } catch {
@@ -147,7 +147,7 @@ function createWindow() {
   win = new BrowserWindow({
     width: 1250,
     height: 820,
-    title: "Agent Box",
+    title: "AI Orchestrator",
     backgroundColor: "#1b1c1e",
     show: false,
     webPreferences: {
@@ -240,11 +240,11 @@ function updateTray() {
     Menu.buildFromTemplate([
       { label: trayText(counts), enabled: false },
       { type: "separator" },
-      { label: "Show Agent Box", click: showWindow },
+      { label: "Show AI Orchestrator", click: showWindow },
       {
         label: "Review",
         click: () => {
-          void detached(process.env.AGENTBOX_REVIEW_BIN || "agentbox-review", []);
+          void detached(process.env.AIO_REVIEW_BIN || "aio-review", []);
         },
       },
       { type: "separator" },
@@ -297,7 +297,7 @@ function watchEvents() {
         });
         n.on("click", () => {
           showWindow();
-          if (ev.boxId) win?.webContents.send("agentbox:select-box", ev.boxId);
+          if (ev.boxId) win?.webContents.send("aio:select-box", ev.boxId);
           void client()
             .call("notifications.read", { params: { notificationId: ev.notificationId } })
             .catch(() => undefined);
@@ -328,15 +328,15 @@ async function reportedDirectories(): Promise<string[]> {
 }
 
 function registerIpc() {
-  ipcMain.on("agentbox:init", (e) => {
+  ipcMain.on("aio:init", (e) => {
     e.returnValue = { serverUrl: SERVER_URL };
   });
   // The preload asks once per page load and hands the token to the page once.
-  ipcMain.on("agentbox:token", (e) => {
+  ipcMain.on("aio:token", (e) => {
     e.returnValue = fromApp(e) ? readToken() : null;
   });
   ipcMain.handle(
-    "agentbox:open-external-terminal",
+    "aio:open-external-terminal",
     async (e, req: ExternalTerminalRequest): Promise<BridgeResult> => {
       if (!fromApp(e)) return REFUSED;
       try {
@@ -360,14 +360,14 @@ function registerIpc() {
     },
   );
   ipcMain.handle(
-    "agentbox:launch-review",
+    "aio:launch-review",
     async (e, req: { projectId: string; boxId: string }): Promise<BridgeResult> => {
       if (!fromApp(e)) return REFUSED;
-      const cmd = reviewCommand(req.projectId, req.boxId, process.env.AGENTBOX_REVIEW_BIN);
+      const cmd = reviewCommand(req.projectId, req.boxId, process.env.AIO_REVIEW_BIN);
       return detached(cmd.file, cmd.args);
     },
   );
-  ipcMain.handle("agentbox:pick-directory", async (e, defaultPath?: string) => {
+  ipcMain.handle("aio:pick-directory", async (e, defaultPath?: string) => {
     if (!fromApp(e)) return null;
     const opts = {
       properties: ["openDirectory", "createDirectory"] as ("openDirectory" | "createDirectory")[],
@@ -376,7 +376,7 @@ function registerIpc() {
     const res = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts);
     return res.canceled ? null : (res.filePaths[0] ?? null);
   });
-  ipcMain.handle("agentbox:open-path", async (e, path: string): Promise<BridgeResult> => {
+  ipcMain.handle("aio:open-path", async (e, path: string): Promise<BridgeResult> => {
     if (!fromApp(e)) return REFUSED;
     // Only directories the server reports open; a file would run with its
     // default handler.
@@ -392,7 +392,7 @@ function registerIpc() {
     const error = await shell.openPath(path);
     return error ? { ok: false, error } : { ok: true };
   });
-  ipcMain.handle("agentbox:open-external", async (e, url: string): Promise<BridgeResult> => {
+  ipcMain.handle("aio:open-external", async (e, url: string): Promise<BridgeResult> => {
     if (!fromApp(e)) return REFUSED;
     if (!isWebUrl(url)) return { ok: false, error: "Only http and https links open externally." };
     try {
@@ -402,7 +402,7 @@ function registerIpc() {
       return { ok: false, error: errorMessage(err) };
     }
   });
-  ipcMain.on("agentbox:quit", (e) => {
+  ipcMain.on("aio:quit", (e) => {
     if (!fromApp(e)) return;
     quitting = true;
     app.quit();
@@ -410,14 +410,14 @@ function registerIpc() {
 }
 
 // Sets the X11 window class and the Wayland app_id to the name of the
-// desktop entry (agentbox-boxes.desktop), so the shell ties the window to
+// desktop entry (aio-boxes.desktop), so the shell ties the window to
 // its entry and icon. app.setName changes only the display name.
-app.commandLine.appendSwitch("class", "agentbox-boxes");
+app.commandLine.appendSwitch("class", "aio-boxes");
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  app.setName("Agent Box");
+  app.setName("AI Orchestrator");
   app.on("second-instance", showWindow);
   app.on("before-quit", () => {
     quitting = true;

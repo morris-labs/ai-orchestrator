@@ -5,7 +5,7 @@
 // listens on a port itself.
 import fs from "node:fs";
 import path from "node:path";
-import type { ImageStatus, Platform } from "@agentbox/contracts";
+import type { ImageStatus, Platform } from "@aio/contracts";
 import { apiCoreOf, relayEvents, wireHooks } from "./api/core-adapter.js";
 import type { Core as ApiCore, CoreFactoryOptions } from "./api/core-interface.js";
 import { AccountService } from "./accounts/service.js";
@@ -32,11 +32,11 @@ import { SessionWatcher } from "./watcher/sessionWatcher.js";
 import * as worktrees from "./worktrees/index.js";
 
 export interface CoreOptions {
-  /** The engine version this server expects in the image (`/etc/agentbox-engine-version`). */
+  /** The engine version this server expects in the image (`/etc/aio-engine-version`). */
   engineVersion: string;
   /** Home directory, container user, and clock. Default: this process's. */
   env?: HostEnv;
-  /** The SQLite file, or `":memory:"`. Default: `agentbox.db` in the data directory. */
+  /** The SQLite file, or `":memory:"`. Default: `aio.db` in the data directory. */
   dbPath?: string;
   /** Default: dockerode on the local socket (`DOCKER_HOST` honored). */
   docker?: DockerClient;

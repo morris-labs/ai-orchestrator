@@ -1,4 +1,4 @@
-"""Packaging checks for Agent Box.
+"""Packaging checks for AI Orchestrator.
 
 Run from the repository root:
 
@@ -8,7 +8,7 @@ The tests parse the nfpm configuration and the GitHub workflows, check that
 the image pins, desktop entries, icons, and scripts agree with each other,
 and, when the tools are on PATH, lint with actionlint, shellcheck, and
 hadolint and build a placeholder .deb with nfpm. A missing tool skips its
-test unless AGENTBOX_REQUIRE_TOOLS=1 is set, as CI sets it.
+test unless AIO_REQUIRE_TOOLS=1 is set, as CI sets it.
 """
 
 import configparser
@@ -30,7 +30,7 @@ WORKFLOWS = ROOT / ".github/workflows"
 DOCKERFILE = ROOT / "image/Dockerfile"
 VERSIONS = ROOT / "image/versions.env"
 APPS = ("boxes", "review")
-REQUIRE_TOOLS = os.environ.get("AGENTBOX_REQUIRE_TOOLS") == "1"
+REQUIRE_TOOLS = os.environ.get("AIO_REQUIRE_TOOLS") == "1"
 SHELL_SCRIPTS = [
     ROOT / "scripts/build-image.sh",
     ROOT / "scripts/build-deb.sh",
@@ -53,7 +53,7 @@ def tool(name):
     path = shutil.which(name)
     if path is None:
         if REQUIRE_TOOLS:
-            raise AssertionError(f"{name} is required (AGENTBOX_REQUIRE_TOOLS=1) but not on PATH")
+            raise AssertionError(f"{name} is required (AIO_REQUIRE_TOOLS=1) but not on PATH")
         raise unittest.SkipTest(f"{name} is not on PATH")
     return path
 
@@ -87,9 +87,9 @@ class NfpmConfigTest(unittest.TestCase):
         self.config = load_yaml(NFPM)
 
     def test_identity(self):
-        self.assertEqual(self.config["name"], "agentbox")
+        self.assertEqual(self.config["name"], "ai-orchestrator")
         self.assertEqual(self.config["arch"], "amd64")
-        self.assertEqual(self.config["version"], "${AGENTBOX_VERSION}")
+        self.assertEqual(self.config["version"], "${AIO_VERSION}")
 
     def test_depends(self):
         depends = self.config["depends"]
@@ -108,26 +108,26 @@ class NfpmConfigTest(unittest.TestCase):
     def test_required_destinations(self):
         dsts = {c["dst"] for c in self.config["contents"]}
         expected = {
-            "/usr/lib/agentbox/server",
-            "/usr/lib/agentbox/cli",
-            "/usr/bin/agentbox",
-            "/usr/bin/agentbox-server",
-            "/usr/lib/systemd/user/agentbox-server.service",
-            "/usr/share/agentbox/image",
+            "/usr/lib/ai-orchestrator/server",
+            "/usr/lib/ai-orchestrator/cli",
+            "/usr/bin/aio",
+            "/usr/bin/aio-server",
+            "/usr/lib/systemd/user/aio-server.service",
+            "/usr/share/ai-orchestrator/image",
         }
         for app in APPS:
             expected |= {
-                f"/usr/lib/agentbox/{app}",
-                f"/usr/bin/agentbox-{app}",
-                f"/usr/share/applications/agentbox-{app}.desktop",
-                f"/usr/share/icons/hicolor/scalable/apps/agentbox-{app}.svg",
+                f"/usr/lib/ai-orchestrator/{app}",
+                f"/usr/bin/aio-{app}",
+                f"/usr/share/applications/aio-{app}.desktop",
+                f"/usr/share/icons/hicolor/scalable/apps/aio-{app}.svg",
             }
         self.assertLessEqual(expected, dsts)
 
     def test_unit_is_hardened(self):
         parser = configparser.ConfigParser(interpolation=None, strict=False)
         parser.optionxform = str
-        parser.read(ROOT / "packaging/systemd/agentbox-server.service")
+        parser.read(ROOT / "packaging/systemd/aio-server.service")
         self.assertEqual(parser["Service"]["UMask"], "0077")
         self.assertEqual(parser["Service"]["NoNewPrivileges"], "yes")
         self.assertEqual(parser["Unit"]["StartLimitIntervalSec"], "0")
@@ -236,7 +236,7 @@ class ImageTest(unittest.TestCase):
         pins = read_versions()
         self.assertEqual(
             set(pins),
-            {"AGENTBOX_ENGINE_VERSION", "CLAUDE_CODE_VERSION", "CODEX_VERSION", "COPILOT_VERSION", "NVM_VERSION"},
+            {"AIO_ENGINE_VERSION", "CLAUDE_CODE_VERSION", "CODEX_VERSION", "COPILOT_VERSION", "NVM_VERSION"},
         )
         for key, value in pins.items():
             self.assertIn(key, args)
@@ -246,11 +246,11 @@ class ImageTest(unittest.TestCase):
 
     def test_image_contract(self):
         text = DOCKERFILE.read_text()
-        self.assertIn("/etc/agentbox-engine-version", text)
+        self.assertIn("/etc/aio-engine-version", text)
         self.assertIn("/etc/claude-code-version", text)
         self.assertIn("/etc/codex-version", text)
         self.assertIn("/etc/copilot-version", text)
-        self.assertIn("/usr/local/lib/agentbox/", text)
+        self.assertIn("/usr/local/lib/ai-orchestrator/", text)
         self.assertIn("keeper/keeper.sh keeper/start-session.sh", text)
         self.assertRegex(text, r"(?m)^HEALTHCHECK .*\n.*/api/v1/health")
         self.assertNotRegex(text, r"(?m)^CMD ")
@@ -265,7 +265,7 @@ class ImageTest(unittest.TestCase):
         text = DOCKERFILE.read_text()
         self.assertNotIn("NOPASSWD", text)
         self.assertNotRegex(text, r"> */etc/sudoers")
-        self.assertIn("rm -f /etc/sudoers.d/claude-box", text)
+        self.assertIn("rm -f /etc/sudoers.d/aio", text)
         self.assertIn("usermod -p '!' \"${USER_NAME}\"", text)
 
     def test_secret_client_in_image(self):
@@ -273,12 +273,12 @@ class ImageTest(unittest.TestCase):
         # package.json bin, on the system Node.js, in a root-owned directory.
         text = DOCKERFILE.read_text()
         engine_step = text[text.index("COPY dist/"):text.index("COPY --chmod=0755 keeper/")]
-        self.assertIn("bin['agentbox-secret']", engine_step)
-        self.assertIn("> /usr/local/bin/agentbox-secret", engine_step)
-        self.assertIn("chmod 0755 /usr/local/bin/agentbox-secret", engine_step)
+        self.assertIn("bin['aio-secret']", engine_step)
+        self.assertIn("> /usr/local/bin/aio-secret", engine_step)
+        self.assertIn("chmod 0755 /usr/local/bin/aio-secret", engine_step)
         self.assertIn("exec /usr/bin/node", engine_step)
         package = json.loads((ROOT / "packages/engine/package.json").read_text())
-        self.assertEqual(package["bin"]["agentbox-secret"], "./dist/secret-main.js")
+        self.assertEqual(package["bin"]["aio-secret"], "./dist/secret-main.js")
         self.assertTrue((ROOT / "packages/engine/src/secret-main.ts").is_file())
 
     def test_engine_wrappers_check_their_bin_entries(self):
@@ -298,8 +298,8 @@ class ImageTest(unittest.TestCase):
             return " && ".join(body)
 
         cases = {
-            "engine_bin": [{"bin": {"other": "./x.js"}}, {"bin": {"agentbox-engine": "./missing.js"}}],
-            "secret_bin": [{"bin": {"other": "./x.js"}}, {"bin": {"agentbox-secret": "./missing.js"}}],
+            "engine_bin": [{"bin": {"other": "./x.js"}}, {"bin": {"aio-engine": "./missing.js"}}],
+            "secret_bin": [{"bin": {"other": "./x.js"}}, {"bin": {"aio-secret": "./missing.js"}}],
         }
         with tempfile.TemporaryDirectory() as tmp:
             pkg = pathlib.Path(tmp)
@@ -312,7 +312,7 @@ class ImageTest(unittest.TestCase):
                     result = subprocess.run(["sh", "-c", script], capture_output=True, text=True)
                     self.assertNotEqual(result.returncode, 0, f"{var}: {package}")
                     self.assertIn("bin", result.stderr)
-                good = "agentbox-engine" if var == "engine_bin" else "agentbox-secret"
+                good = "aio-engine" if var == "engine_bin" else "aio-secret"
                 (pkg / "package.json").write_text(json.dumps({"bin": {good: "./dist/main.js"}}))
                 subprocess.run(["sh", "-c", script], check=True, capture_output=True)
 
@@ -323,10 +323,10 @@ class ImageTest(unittest.TestCase):
         engine_step = text[text.index("COPY dist/"):text.index("COPY --chmod=0755 keeper/")]
         self.assertNotIn("npm install", engine_step)
         self.assertNotIn("--no-package-lock", engine_step)
-        self.assertIn('tar -xzf "/tmp/agentbox-dist/agentbox-engine-${AGENTBOX_ENGINE_VERSION}.tgz"', engine_step)
+        self.assertIn('tar -xzf "/tmp/aio-dist/aio-engine-${AIO_ENGINE_VERSION}.tgz"', engine_step)
         self.assertIn("node_modules", engine_step)
         script = (ROOT / "scripts/build-image.sh").read_text()
-        self.assertRegex(script, r"--filter @agentbox/engine deploy --legacy --prod --frozen-lockfile")
+        self.assertRegex(script, r"--filter @aio/engine deploy --legacy --prod --frozen-lockfile")
         self.assertNotIn(" pack --pack-destination", script)
 
     def test_hadolint(self):
@@ -336,7 +336,7 @@ class ImageTest(unittest.TestCase):
         )
 
     def test_build_image_print_in_installed_layout(self):
-        # Mimics /usr/share/agentbox: scripts/ and image/ side by side, no
+        # Mimics /usr/share/ai-orchestrator: scripts/ and image/ side by side, no
         # workspace, the engine tarball already in image/dist/.
         with tempfile.TemporaryDirectory() as tmp:
             tmp = pathlib.Path(tmp)
@@ -347,18 +347,18 @@ class ImageTest(unittest.TestCase):
             shutil.copy(VERSIONS, tmp / "image")
             for name in ("keeper.sh", "start-session.sh"):
                 (tmp / "image/keeper" / name).write_text("#!/bin/sh\n")
-            version = read_versions()["AGENTBOX_ENGINE_VERSION"]
-            (tmp / f"image/dist/agentbox-engine-{version}.tgz").write_bytes(b"")
+            version = read_versions()["AIO_ENGINE_VERSION"]
+            (tmp / f"image/dist/aio-engine-{version}.tgz").write_bytes(b"")
             out = subprocess.run(
-                [str(tmp / "scripts/build-image.sh"), "--print", "--tag", "agentbox-test"],
+                [str(tmp / "scripts/build-image.sh"), "--print", "--tag", "aio-test"],
                 check=True, capture_output=True, text=True,
             ).stdout
-            self.assertIn("docker build -t agentbox-test", out)
+            self.assertIn("docker build -t aio-test", out)
             self.assertIn("USER_NAME=", out)
             for key, value in read_versions().items():
                 self.assertIn(f"--build-arg {key}={value}", out)
 
-            (tmp / f"image/dist/agentbox-engine-{version}.tgz").unlink()
+            (tmp / f"image/dist/aio-engine-{version}.tgz").unlink()
             failed = subprocess.run(
                 [str(tmp / "scripts/build-image.sh"), "--print"], capture_output=True, text=True
             )
@@ -375,34 +375,34 @@ class VersionTest(unittest.TestCase):
             tmp = pathlib.Path(tmp)
             (tmp / "image").mkdir()
             shutil.copy(VERSIONS, tmp / "image")
-            (tmp / "package.json").write_text('{\n  "name": "agentbox-workspace",\n  "version": "1.0.0"\n}\n')
-            for rel, name in (("packages/server", "@agentbox/server"), ("tools/sample-repo", "fixture")):
+            (tmp / "package.json").write_text('{\n  "name": "aio-workspace",\n  "version": "0.9.0"\n}\n')
+            for rel, name in (("packages/server", "@aio/server"), ("tools/sample-repo", "fixture")):
                 (tmp / rel).mkdir(parents=True)
                 (tmp / rel / "package.json").write_text(
-                    f'{{\n  "name": "{name}",\n  "version": "1.0.0",\n'
+                    f'{{\n  "name": "{name}",\n  "version": "0.9.0",\n'
                     f'  "engines": {{\n    "version": "keep"\n  }}\n}}\n'
                 )
-            env = {**os.environ, "AGENTBOX_ROOT": str(tmp)}
+            env = {**os.environ, "AIO_ROOT": str(tmp)}
             script = str(ROOT / "scripts/set-version.sh")
 
             mismatch = subprocess.run([script, "--check"], env=env, capture_output=True, text=True)
             self.assertNotEqual(mismatch.returncode, 0)
             self.assertIn("version mismatch", mismatch.stderr)
 
-            bad = subprocess.run([script, "4.0"], env=env, capture_output=True, text=True)
+            bad = subprocess.run([script, "1.0"], env=env, capture_output=True, text=True)
             self.assertNotEqual(bad.returncode, 0)
 
-            subprocess.run([script, "4.1.0-rc.1"], env=env, check=True, capture_output=True)
+            subprocess.run([script, "1.1.0-rc.1"], env=env, check=True, capture_output=True)
             subprocess.run([script, "--check"], env=env, check=True, capture_output=True)
-            self.assertIn('"version": "4.1.0-rc.1"', (tmp / "packages/server/package.json").read_text())
+            self.assertIn('"version": "1.1.0-rc.1"', (tmp / "packages/server/package.json").read_text())
             self.assertIn('"version": "keep"', (tmp / "packages/server/package.json").read_text())
-            self.assertIn('"version": "1.0.0"', (tmp / "tools/sample-repo/package.json").read_text())
-            self.assertIn("AGENTBOX_ENGINE_VERSION=4.1.0-rc.1", (tmp / "image/versions.env").read_text())
+            self.assertIn('"version": "0.9.0"', (tmp / "tools/sample-repo/package.json").read_text())
+            self.assertIn("AIO_ENGINE_VERSION=1.1.0-rc.1", (tmp / "image/versions.env").read_text())
 
 
 class DocsTest(unittest.TestCase):
     def test_changelog_has_the_release_section(self):
-        version = read_versions()["AGENTBOX_ENGINE_VERSION"].split("-")[0]
+        version = read_versions()["AIO_ENGINE_VERSION"].split("-")[0]
         text = (ROOT / "CHANGELOG.md").read_text()
         self.assertRegex(text, rf"(?m)^## \[{re.escape(version)}\]")
 
@@ -449,18 +449,18 @@ class DesktopTest(unittest.TestCase):
         for app in APPS:
             parser = configparser.ConfigParser(interpolation=None)
             parser.optionxform = str
-            parser.read(ROOT / f"packaging/desktop/agentbox-{app}.desktop")
+            parser.read(ROOT / f"packaging/desktop/aio-{app}.desktop")
             entry = parser["Desktop Entry"]
             launcher = entry["Exec"].split()[0]
-            self.assertEqual(launcher, f"/usr/bin/agentbox-{app}")
-            self.assertEqual(symlinks[launcher], f"/usr/lib/agentbox/{app}/agentbox-{app}")
-            self.assertEqual(entry["Icon"], f"agentbox-{app}")
-            self.assertEqual(entry["StartupWMClass"], f"agentbox-{app}")
+            self.assertEqual(launcher, f"/usr/bin/aio-{app}")
+            self.assertEqual(symlinks[launcher], f"/usr/lib/ai-orchestrator/{app}/aio-{app}")
+            self.assertEqual(entry["Icon"], f"aio-{app}")
+            self.assertEqual(entry["StartupWMClass"], f"aio-{app}")
             self.assertEqual(entry["Type"], "Application")
 
     def test_window_class_matches_entry_and_desktop_name(self):
         for app in APPS:
-            name = f"agentbox-{app}"
+            name = f"aio-{app}"
             parser = configparser.ConfigParser(interpolation=None)
             parser.optionxform = str
             parser.read(ROOT / f"packaging/desktop/{name}.desktop")
@@ -476,7 +476,7 @@ class DesktopTest(unittest.TestCase):
 
     def test_icons_are_well_formed(self):
         for app in APPS:
-            path = ROOT / f"packaging/icons/agentbox-{app}.svg"
+            path = ROOT / f"packaging/icons/aio-{app}.svg"
             text = path.read_text()
             self.assertTrue(text.startswith("<svg"), f"{path.name}: the root element must come first")
             ET.fromstring(text)
@@ -490,15 +490,15 @@ class DesktopTest(unittest.TestCase):
             subprocess.run(["python3", "-I", str(script)], check=True, capture_output=True)
             for app in APPS:
                 self.assertEqual(
-                    (pathlib.Path(tmp) / f"agentbox-{app}.svg").read_text(),
-                    (ROOT / f"packaging/icons/agentbox-{app}.svg").read_text(),
+                    (pathlib.Path(tmp) / f"aio-{app}.svg").read_text(),
+                    (ROOT / f"packaging/icons/aio-{app}.svg").read_text(),
                     "run packaging/icons/make-icons.py and commit the SVG files",
                 )
 
     def test_apparmor_profiles_name_the_app_binaries(self):
         for app in APPS:
-            text = (ROOT / f"packaging/deb/apparmor/agentbox-{app}").read_text()
-            self.assertIn(f"profile agentbox-{app} /usr/lib/agentbox/{app}/agentbox-{app}", text)
+            text = (ROOT / f"packaging/deb/apparmor/aio-{app}").read_text()
+            self.assertIn(f"profile aio-{app} /usr/lib/ai-orchestrator/{app}/aio-{app}", text)
             self.assertIn("userns,", text)
 
 
@@ -545,8 +545,8 @@ class ScriptsTest(unittest.TestCase):
             env = {
                 **os.environ,
                 "PATH": f"{tmp / 'bin'}:{os.environ['PATH']}",
-                "AGENTBOX_DATA_DIR": str(tmp / "data"),
-                "BOX_ID": "claude-agent-SYNTHETIC",
+                "AIO_DATA_DIR": str(tmp / "data"),
+                "BOX_ID": "aio-agent-SYNTHETIC",
                 "PROJECT": "SYNTHETIC_PROJECT",
                 "HEADERS_LOG": str(tmp / "headers.log"),
             }
@@ -599,7 +599,7 @@ class ScriptsTest(unittest.TestCase):
         self.assertIn("better-sqlite3", workspace["onlyBuiltDependencies"])
 
     def _installed_layout(self, tmp):
-        """Mimics /usr/share/agentbox in TMP and returns the engine version."""
+        """Mimics /usr/share/ai-orchestrator in TMP and returns the engine version."""
         shutil.copytree(ROOT / "scripts", tmp / "scripts")
         (tmp / "image/keeper").mkdir(parents=True)
         (tmp / "image/dist").mkdir()
@@ -607,8 +607,8 @@ class ScriptsTest(unittest.TestCase):
         shutil.copy(VERSIONS, tmp / "image")
         for name in ("keeper.sh", "start-session.sh"):
             (tmp / "image/keeper" / name).write_text("#!/bin/sh\n")
-        version = read_versions()["AGENTBOX_ENGINE_VERSION"]
-        (tmp / f"image/dist/agentbox-engine-{version}.tgz").write_bytes(b"")
+        version = read_versions()["AIO_ENGINE_VERSION"]
+        (tmp / f"image/dist/aio-engine-{version}.tgz").write_bytes(b"")
         return version
 
     def _fake_npm(self, tmp):
@@ -691,7 +691,7 @@ class ScriptsTest(unittest.TestCase):
     def test_image_records_the_engine_content_hash(self):
         text = DOCKERFILE.read_text()
         self.assertIn("dist/identity", text)
-        self.assertIn("/etc/agentbox-engine-version", text)
+        self.assertIn("/etc/aio-engine-version", text)
         self.assertIn("engine_ver}\" \"${engine_hash", text)
 
     def test_bump_versions_keeps_the_registry_token_out_of_argv(self):
@@ -702,22 +702,22 @@ class ScriptsTest(unittest.TestCase):
     def test_postinst_asks_for_a_restart_on_upgrade(self):
         # PATH holds only cat, so the script skips AppArmor and the desktop
         # caches; no chrome-sandbox helper exists outside an installed host.
-        if pathlib.Path("/usr/lib/agentbox").exists():
-            self.skipTest("agentbox is installed on this host")
-        restart = "systemctl --user daemon-reload && systemctl --user restart agentbox-server"
+        if pathlib.Path("/usr/lib/ai-orchestrator").exists():
+            self.skipTest("aio is installed on this host")
+        restart = "systemctl --user daemon-reload && systemctl --user restart aio-server"
         with tempfile.TemporaryDirectory() as tmp:
             (pathlib.Path(tmp) / "cat").symlink_to(shutil.which("cat"))
             env = {"PATH": tmp}
             postinst = str(ROOT / "packaging/deb/scripts/postinst")
             upgrade = subprocess.run(
-                [postinst, "configure", "4.0.0"], env=env, check=True, capture_output=True, text=True
+                [postinst, "configure", "1.0.0"], env=env, check=True, capture_output=True, text=True
             ).stdout
             self.assertIn(restart, upgrade)
             self.assertNotIn("enable --now", upgrade)
             fresh = subprocess.run(
                 [postinst, "configure", ""], env=env, check=True, capture_output=True, text=True
             ).stdout
-            self.assertIn("systemctl --user enable --now agentbox-server", fresh)
+            self.assertIn("systemctl --user enable --now aio-server", fresh)
             self.assertNotIn(restart, fresh)
 
     def test_postrm_clears_the_apparmor_cache_on_purge(self):
@@ -726,9 +726,9 @@ class ScriptsTest(unittest.TestCase):
         self.assertIn('"$ROOT/packaging/deb/scripts/postrm"', (ROOT / "scripts/build-deb.sh").read_text())
         text = (ROOT / "packaging/deb/scripts/postrm").read_text()
         purge = text[text.index("purge)"):text.index(";;")]
-        self.assertIn('rm -f /var/cache/apparmor/*/"agentbox-$app"', purge)
-        if pathlib.Path("/usr/lib/agentbox").exists():
-            self.skipTest("agentbox is installed on this host")
+        self.assertIn('rm -f /var/cache/apparmor/*/"aio-$app"', purge)
+        if pathlib.Path("/usr/lib/ai-orchestrator").exists():
+            self.skipTest("aio is installed on this host")
         with tempfile.TemporaryDirectory() as tmp:
             for name in ("rm",):
                 (pathlib.Path(tmp) / name).symlink_to(shutil.which(name))
@@ -744,7 +744,7 @@ class ScriptsTest(unittest.TestCase):
         branch = text.rindex("if ", 0, setuid)
         self.assertIn('"$loaded" = 1', text[branch:setuid])
         self.assertIn('"$userns_off" = 0', text[branch:setuid])
-        self.assertNotIn("apparmor_parser -r -T -W \"/etc/apparmor.d/agentbox-$app\" || true", text)
+        self.assertNotIn("apparmor_parser -r -T -W \"/etc/apparmor.d/aio-$app\" || true", text)
 
     def test_build_deb_fails_clearly_without_tools(self):
         # With an empty PATH apart from bash and coreutils, the script must
@@ -775,7 +775,7 @@ class SourceUnitTest(unittest.TestCase):
         self.tmp = pathlib.Path(tmp.name)
         self.home = self.tmp / "home"
         self.unit_dir = self.home / ".config/systemd/user"
-        self.dropin_dir = self.unit_dir / "agentbox-server.service.d"
+        self.dropin_dir = self.unit_dir / "aio-server.service.d"
         # systemctl is a fake that logs its arguments, first on PATH, so
         # nothing reaches the real user manager.
         bindir = self.tmp / "bin"
@@ -785,9 +785,9 @@ class SourceUnitTest(unittest.TestCase):
         fake.write_text(f'#!/bin/sh\nprintf "%s\\n" "$*" >> "{self.systemctl_log}"\n')
         fake.chmod(0o755)
         self.env = {
-            **{k: v for k, v in os.environ.items() if not k.startswith("AGENTBOX_")},
+            **{k: v for k, v in os.environ.items() if not k.startswith("AIO_")},
             "PATH": f"{bindir}:{os.path.dirname(self.node)}:/usr/bin:/bin",
-            "AGENTBOX_HOME": str(self.home),
+            "AIO_HOME": str(self.home),
         }
 
     def run_script(self, *args):
@@ -812,7 +812,7 @@ class SourceUnitTest(unittest.TestCase):
         if not self.MAIN.exists():
             self.skipTest("packages/server/dist is missing; run corepack pnpm -r build")
         self.dropin_dir.mkdir(parents=True)
-        op_conf = "[Service]\nEnvironmentFile=%h/.config/agentbox/op.env\n"
+        op_conf = "[Service]\nEnvironmentFile=%h/.config/aio/op.env\n"
         (self.dropin_dir / "op.conf").write_text(op_conf)
 
         self.run_script()
@@ -820,9 +820,9 @@ class SourceUnitTest(unittest.TestCase):
         self.assertEqual((self.dropin_dir / "op.conf").read_text(), op_conf)
         self.assertEqual(
             self.systemctl_log.read_text().splitlines(),
-            ["--user daemon-reload", "--user enable --now agentbox-server.service"],
+            ["--user daemon-reload", "--user enable --now aio-server.service"],
         )
-        unit = (self.unit_dir / "agentbox-server.service").read_text().splitlines()
+        unit = (self.unit_dir / "aio-server.service").read_text().splitlines()
         exec_start = [line.split("=", 1)[1] for line in unit if line.startswith("ExecStart=")]
         self.assertEqual(len(exec_start), 1)
         node, main, *rest = exec_start[0].split(" ")
@@ -865,7 +865,7 @@ class DevAppArmorTest(unittest.TestCase):
         self.env = {
             **os.environ,
             "PATH": f"{bindir}:{os.environ['PATH']}",
-            "AGENTBOX_APPARMOR_DIR": str(self.profile_dir),
+            "AIO_APPARMOR_DIR": str(self.profile_dir),
         }
 
     def make_checkout(self, dirname):
@@ -927,8 +927,8 @@ class DevAppArmorTest(unittest.TestCase):
         for app in APPS:
             self.link_electron(app, binary)
         shared = self.profiles(self.run_script("--print").stdout)[name]
-        first_mark = f"# agentbox-dev checkout: {os.path.realpath(first)}\n"
-        second_mark = f"# agentbox-dev checkout: {os.path.realpath(second)}\n"
+        first_mark = f"# aio-dev checkout: {os.path.realpath(first)}\n"
+        second_mark = f"# aio-dev checkout: {os.path.realpath(second)}\n"
         self.assertTrue(shared.startswith(second_mark + first_mark), shared)
         (self.profile_dir / name).write_text(shared)
 
@@ -948,13 +948,13 @@ class DevAppArmorTest(unittest.TestCase):
         profiles = self.profiles(out)
         self.assertEqual(len(profiles), 1, out)
         (name, text), = profiles.items()
-        self.assertRegex(name, r"^agentbox-dev-[0-9a-f]{12}$")
-        self.assertIn(f"# agentbox-dev checkout: {os.path.realpath(self.root)}\n", text)
+        self.assertRegex(name, r"^aio-dev-[0-9a-f]{12}$")
+        self.assertIn(f"# aio-dev checkout: {os.path.realpath(self.root)}\n", text)
         self.assertIn(f'profile {name} "{binary}" flags=(unconfined) {{\n', text)
         self.assertIn("  userns,\n", text)
         self.assertIn(f"include if exists <local/{name}>", text)
         self.assertIn("abi <abi/4.0>,\n", text)
-        self.assertNotIn("/usr/lib/agentbox", text)
+        self.assertNotIn("/usr/lib/ai-orchestrator", text)
         self.assertFalse(self.log.exists(), "--print must not run sudo or apparmor_parser")
 
     def test_print_gives_each_binary_its_own_profile(self):
@@ -985,7 +985,7 @@ class FileModeTest(unittest.TestCase):
         chmod = text.index('chmod -R go-w "$R"')
         self.assertLess(chmod, text.index("nfpm package"))
         # Every file staged under $R must exist before the chmod runs.
-        self.assertGreater(chmod, text.rindex('"$R/usr/share/agentbox/scripts/'))
+        self.assertGreater(chmod, text.rindex('"$R/usr/share/ai-orchestrator/scripts/'))
 
     def test_sandbox_helper_policy_is_consistent(self):
         # The package ships chrome-sandbox as 0755 root-owned, and postinst
@@ -994,8 +994,8 @@ class FileModeTest(unittest.TestCase):
         self.assertIn("chmod 4755", postinst)
         self.assertIn("chmod 0755", postinst)
         for app in APPS:
-            profile = (ROOT / f"packaging/deb/apparmor/agentbox-{app}").read_text()
-            self.assertIn(f"/usr/lib/agentbox/{app}/agentbox-{app}", profile)
+            profile = (ROOT / f"packaging/deb/apparmor/aio-{app}").read_text()
+            self.assertIn(f"/usr/lib/ai-orchestrator/{app}/aio-{app}", profile)
 
     def test_no_group_or_other_writable_entries_after_normalizing(self):
         # Mirrors the build script: a tree made under umask 002 has no
@@ -1042,20 +1042,20 @@ class NfpmBuildTest(unittest.TestCase):
             (stage / "maint").mkdir()
             for name in ("postinst", "prerm", "postrm"):
                 shutil.copy(ROOT / "packaging/deb/scripts" / name, stage / "maint")
-            deb = pathlib.Path(tmp) / "agentbox_4.0.0-test_amd64.deb"
+            deb = pathlib.Path(tmp) / "ai-orchestrator_1.0.0-test_amd64.deb"
             subprocess.run(
                 [nfpm, "package", "--config", str(NFPM), "--packager", "deb", "--target", str(deb)],
-                cwd=stage, env={**os.environ, "AGENTBOX_VERSION": "4.0.0-test"},
+                cwd=stage, env={**os.environ, "AIO_VERSION": "1.0.0-test"},
                 check=True, capture_output=True,
             )
             info = subprocess.run([dpkg_deb, "--field", str(deb)], check=True, capture_output=True, text=True).stdout
-            self.assertIn("Package: agentbox", info)
-            self.assertIn("Version: 4.0.0~test", info)
+            self.assertIn("Package: ai-orchestrator", info)
+            self.assertIn("Version: 1.0.0~test", info)
             self.assertIn("Depends: nodejs (>= 22), nodejs (<< 23), docker.io | docker-ce, tmux, git, openssh-client", info)
             listing = subprocess.run([dpkg_deb, "--contents", str(deb)], check=True, capture_output=True, text=True).stdout
-            self.assertIn("./usr/bin/agentbox-boxes -> /usr/lib/agentbox/boxes/agentbox-boxes", listing)
-            self.assertIn("./usr/lib/agentbox/server/link -> placeholder.txt", listing)
-            self.assertRegex(listing, r"-rwxr-xr-x .* \./usr/bin/agentbox\n")
+            self.assertIn("./usr/bin/aio-boxes -> /usr/lib/ai-orchestrator/boxes/aio-boxes", listing)
+            self.assertIn("./usr/lib/ai-orchestrator/server/link -> placeholder.txt", listing)
+            self.assertRegex(listing, r"-rwxr-xr-x .* \./usr/bin/aio\n")
             control = subprocess.run([dpkg_deb, "--ctrl-tarfile", str(deb)], check=True, capture_output=True).stdout
             self.assertIn(b"postinst", control)
             self.assertIn(b"conffiles", control)

@@ -1,8 +1,8 @@
 name: Build and release
 
 # Runs on version tags. To release, set the version, commit, and tag:
-#   scripts/set-version.sh 4.0.0 && git commit -am "Release 4.0.0"
-#   git tag v4.0.0 && git push origin v4.0.0
+#   scripts/set-version.sh 1.0.0 && git commit -am "Release 1.0.0"
+#   git tag v1.0.0 && git push origin v1.0.0
 #
 # The release carries the .deb and the engine tarballs. The container image
 # isn't pushed to a registry: each host builds it with

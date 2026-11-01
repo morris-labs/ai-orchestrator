@@ -351,10 +351,10 @@ export const EventSchema = z.discriminatedUnion("type", [
   NotificationEventSchema,
   SettingsChangedEventSchema,
 ]);
-export type AgentBoxEvent = z.infer<typeof EventSchema>;
-export type EventType = AgentBoxEvent["type"];
+export type AioEvent = z.infer<typeof EventSchema>;
+export type EventType = AioEvent["type"];
 /** The event with the given `type`. */
-export type EventOf<T extends EventType> = Extract<AgentBoxEvent, { type: T }>;
+export type EventOf<T extends EventType> = Extract<AioEvent, { type: T }>;
 
 /** Every event type, in declaration order. */
 export const EVENT_TYPES = EventSchema.options.map(

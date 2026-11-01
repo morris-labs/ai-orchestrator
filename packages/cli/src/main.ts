@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// The `agentbox` command.
+// The `aio` command.
 import { homedir } from "node:os";
 import { runCli } from "./program.js";
 

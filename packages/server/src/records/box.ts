@@ -1,5 +1,5 @@
 // Values derived from a stored box record (inventory section 3.1).
-import { deriveHostKey, type Box, type Platform } from "@agentbox/contracts";
+import { deriveHostKey, type Box, type Platform } from "@aio/contracts";
 
 /**
  * The tmux session name for a stored `session` value. tmux rewrites `.` and

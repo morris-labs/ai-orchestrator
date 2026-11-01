@@ -2,7 +2,7 @@
 // output schema. The engine core talks to vendors through its own
 // `VendorAdapter` in `src/core.ts`; `bridge.ts` turns a `CliVendorAdapter`
 // into one.
-import type { AgentRole, Effort, UsageSample, Vendor } from "@agentbox/contracts";
+import type { AgentRole, Effort, UsageSample, Vendor } from "@aio/contracts";
 import type { z } from "zod";
 import type { AdapterMethod, LimitInfo } from "../core.js";
 

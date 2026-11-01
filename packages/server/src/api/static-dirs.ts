@@ -6,7 +6,7 @@ import path from "node:path";
 export type WebApp = "boxes" | "review";
 
 /** Where the installed package puts the apps' web bundles, one directory per app. */
-export const INSTALLED_WEB_ROOT = "/usr/share/agentbox/web";
+export const INSTALLED_WEB_ROOT = "/usr/share/ai-orchestrator/web";
 
 /**
  * The web bundle of `app` when no environment variable names one:

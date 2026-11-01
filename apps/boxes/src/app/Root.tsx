@@ -8,7 +8,7 @@ import {
   MessageBoxProvider,
   ToastProvider,
   type ApiClient,
-} from "@agentbox/ui";
+} from "@aio/ui";
 import { useEffect, useMemo, type ReactNode } from "react";
 
 /** Event types the boxes app uses. */

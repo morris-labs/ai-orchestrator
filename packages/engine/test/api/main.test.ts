@@ -2,7 +2,7 @@
 // active-runs file, and a full start and stop.
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import type { EngineEnv, Vendor } from "@agentbox/contracts";
+import type { EngineEnv, Vendor } from "@aio/contracts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { startActiveRunsWriter, writeActiveRuns } from "../../src/main/active-runs.js";
 import { MockAdapter } from "../../src/adapters/mock.js";
@@ -36,24 +36,24 @@ describe("parseArgs", () => {
 
 describe("checkEnv", () => {
   const good = {
-    AGENTBOX_ENGINE_TOKEN: TOKEN,
-    AGENTBOX_PROJECT_ROOT: PROJECT_ROOT,
-    AGENTBOX_CONTAINER: CONTAINER,
-    AGENTBOX_ENGINE_VERSION: "4.0.0-dev",
+    AIO_ENGINE_TOKEN: TOKEN,
+    AIO_PROJECT_ROOT: PROJECT_ROOT,
+    AIO_CONTAINER: CONTAINER,
+    AIO_ENGINE_VERSION: "1.0.0-dev",
   };
 
   it("parses a complete environment with the default port", () => {
     const r = checkEnv(good);
-    expect(r.ok && r.env.AGENTBOX_ENGINE_PORT).toBe(20411);
+    expect(r.ok && r.env.AIO_ENGINE_PORT).toBe(20411);
   });
 
   it("refuses to start without a token and never echoes values", () => {
-    const r = checkEnv({ ...good, AGENTBOX_ENGINE_TOKEN: undefined });
+    const r = checkEnv({ ...good, AIO_ENGINE_TOKEN: undefined });
     expect(r).toEqual({
       ok: false,
-      problems: ["Set AGENTBOX_ENGINE_TOKEN_FILE or AGENTBOX_ENGINE_TOKEN."],
+      problems: ["Set AIO_ENGINE_TOKEN_FILE or AIO_ENGINE_TOKEN."],
     });
-    const short = checkEnv({ ...good, AGENTBOX_ENGINE_TOKEN: "short-secret" });
+    const short = checkEnv({ ...good, AIO_ENGINE_TOKEN: "short-secret" });
     expect(short.ok).toBe(false);
     expect(JSON.stringify(short)).not.toContain("short-secret");
   });
@@ -61,21 +61,21 @@ describe("checkEnv", () => {
   it("accepts the token file instead of the token", () => {
     const r = checkEnv({
       ...good,
-      AGENTBOX_ENGINE_TOKEN: undefined,
-      AGENTBOX_ENGINE_TOKEN_FILE: "/run/claude-box/engine.token",
+      AIO_ENGINE_TOKEN: undefined,
+      AIO_ENGINE_TOKEN_FILE: "/run/aio/engine.token",
     });
-    expect(r.ok && r.env.AGENTBOX_ENGINE_TOKEN_FILE).toBe("/run/claude-box/engine.token");
+    expect(r.ok && r.env.AIO_ENGINE_TOKEN_FILE).toBe("/run/aio/engine.token");
   });
 
-  it("defaults the state directory to /run/claude-box", () => {
+  it("defaults the state directory to /run/aio", () => {
     const r = checkEnv(good);
-    expect(r.ok && r.env.AGENTBOX_STATE_DIR).toBe("/run/claude-box");
-    const set = checkEnv({ ...good, AGENTBOX_STATE_DIR: "/tmp/state" });
-    expect(set.ok && set.env.AGENTBOX_STATE_DIR).toBe("/tmp/state");
+    expect(r.ok && r.env.AIO_STATE_DIR).toBe("/run/aio");
+    const set = checkEnv({ ...good, AIO_STATE_DIR: "/tmp/state" });
+    expect(set.ok && set.env.AIO_STATE_DIR).toBe("/tmp/state");
   });
 
   it("reports a bad port", () => {
-    const r = checkEnv({ ...good, AGENTBOX_ENGINE_PORT: "99999" });
+    const r = checkEnv({ ...good, AIO_ENGINE_PORT: "99999" });
     expect(r.ok).toBe(false);
   });
 });
@@ -99,8 +99,8 @@ describe("parseMockVendors", () => {
 });
 
 describe("selectAdapters", () => {
-  it("uses mock adapters for every vendor with AGENTBOX_MOCK_VENDORS=1", async () => {
-    const r = await selectAdapters({ AGENTBOX_MOCK_VENDORS: "1" }, silentLogger);
+  it("uses mock adapters for every vendor with AIO_MOCK_VENDORS=1", async () => {
+    const r = await selectAdapters({ AIO_MOCK_VENDORS: "1" }, silentLogger);
     expect(r.mock).toBe(true);
     expect(Object.keys(r.adapters).sort()).toEqual(["claude", "codex", "copilot"]);
     const review = await r.adapters.codex?.review({
@@ -161,21 +161,17 @@ describe("selectAdapters", () => {
         health: { available: true, version: "9.9" },
         responses: [],
       });
-    const r = await selectAdapters(
-      { AGENTBOX_MOCK_VENDORS: "codex, copilot" },
-      silentLogger,
-      () => {
-        const all = { claude: cli("claude"), codex: cli("codex"), copilot: cli("copilot") };
-        for (const [v, a] of Object.entries(all) as [Vendor, MockAdapter][]) {
-          const real = a.health.bind(a);
-          a.health = async () => {
-            health.push(v);
-            return real();
-          };
-        }
-        return all;
-      },
-    );
+    const r = await selectAdapters({ AIO_MOCK_VENDORS: "codex, copilot" }, silentLogger, () => {
+      const all = { claude: cli("claude"), codex: cli("codex"), copilot: cli("copilot") };
+      for (const [v, a] of Object.entries(all) as [Vendor, MockAdapter][]) {
+        const real = a.health.bind(a);
+        a.health = async () => {
+          health.push(v);
+          return real();
+        };
+      }
+      return all;
+    });
     expect(r.mock).toBe(false);
     expect(r.mocked).toEqual(["codex", "copilot"]);
     expect(Object.keys(r.adapters).sort()).toEqual(["claude", "codex", "copilot"]);
@@ -210,11 +206,11 @@ describe("active-runs file", () => {
 describe("startEngine", () => {
   it("starts, serves health, writes active-runs, and stops", async () => {
     const env = {
-      AGENTBOX_ENGINE_TOKEN: TOKEN,
-      AGENTBOX_ENGINE_PORT: 0,
-      AGENTBOX_PROJECT_ROOT: dir,
-      AGENTBOX_CONTAINER: CONTAINER,
-      AGENTBOX_ENGINE_VERSION: readPackageVersion(),
+      AIO_ENGINE_TOKEN: TOKEN,
+      AIO_ENGINE_PORT: 0,
+      AIO_PROJECT_ROOT: dir,
+      AIO_CONTAINER: CONTAINER,
+      AIO_ENGINE_VERSION: readPackageVersion(),
     } as unknown as EngineEnv;
     const runs = fakeRunManager();
     const handle = await startEngine({
@@ -239,16 +235,16 @@ describe("startEngine", () => {
 });
 
 describe("startEngine with the real core", () => {
-  it("serves an empty run list and writes active-runs to AGENTBOX_STATE_DIR", async () => {
+  it("serves an empty run list and writes active-runs to AIO_STATE_DIR", async () => {
     const stateDir = path.join(dir, "state");
     mkdirSync(stateDir);
     const env = {
-      AGENTBOX_ENGINE_TOKEN: TOKEN,
-      AGENTBOX_ENGINE_PORT: 0,
-      AGENTBOX_PROJECT_ROOT: dir,
-      AGENTBOX_CONTAINER: CONTAINER,
-      AGENTBOX_ENGINE_VERSION: "0.0.0-other",
-      AGENTBOX_STATE_DIR: stateDir,
+      AIO_ENGINE_TOKEN: TOKEN,
+      AIO_ENGINE_PORT: 0,
+      AIO_PROJECT_ROOT: dir,
+      AIO_CONTAINER: CONTAINER,
+      AIO_ENGINE_VERSION: "0.0.0-other",
+      AIO_STATE_DIR: stateDir,
     } as unknown as EngineEnv;
     const handle = await startEngine({
       env,

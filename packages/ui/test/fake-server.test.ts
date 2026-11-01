@@ -8,12 +8,12 @@ describe("FakeServer", () => {
       boxes: [
         makeBoxView({
           box: {
-            id: "claude-agent-a",
+            id: "aio-agent-a",
             targetDir: "/w/a",
             sessionUuid: "11111111-1111-4111-8111-111111111111",
           },
         }),
-        makeBoxView({ box: { id: "claude-agent-b", targetDir: "/w/a" }, status: "running" }),
+        makeBoxView({ box: { id: "aio-agent-b", targetDir: "/w/a" }, status: "running" }),
       ],
     });
     const c = new ApiClient({ fetch: server.fetch });
@@ -39,35 +39,35 @@ describe("FakeServer", () => {
           conversation: { mode: "adopt", sessionUuid: "11111111-1111-4111-8111-111111111111" },
         },
       }),
-    ).rejects.toMatchObject({ code: "session_tracked", details: { holders: ["claude-agent-a"] } });
-    await expect(
-      c.call("boxes.purge", { params: { boxId: "claude-agent-a" } }),
-    ).rejects.toMatchObject({ code: "box_running" });
+    ).rejects.toMatchObject({ code: "session_tracked", details: { holders: ["aio-agent-a"] } });
+    await expect(c.call("boxes.purge", { params: { boxId: "aio-agent-a" } })).rejects.toMatchObject(
+      { code: "box_running" },
+    );
     expect(server.contractViolations).toEqual([]);
   });
 
   it("answers the C2 routes within the contract", async () => {
     const view = makeBoxView({
-      box: { id: "claude-agent-a", targetDir: "/w/a", workspace: "Mail" },
+      box: { id: "aio-agent-a", targetDir: "/w/a", workspace: "Mail" },
     });
     const server = new FakeServer({ boxes: [view] });
     const c = new ApiClient({ fetch: server.fetch });
     const preview = await c.call("boxes.purge", {
-      params: { boxId: "claude-agent-a" },
+      params: { boxId: "aio-agent-a" },
       body: { dryRun: true },
     });
-    expect(preview).toMatchObject({ dryRun: true, removedRecords: ["claude-agent-a"] });
+    expect(preview).toMatchObject({ dryRun: true, removedRecords: ["aio-agent-a"] });
     expect(server.state.boxes).toHaveLength(1);
     const plan = await c.call("boxes.convertToWorktree.plan", {
-      params: { boxId: "claude-agent-a" },
+      params: { boxId: "aio-agent-a" },
     });
     expect(plan.report).toContain("/w/a/.worktrees/Mail");
     server.state.staleProjects.push(view.box.projectId);
-    await expect(
-      c.call("boxes.start", { params: { boxId: "claude-agent-a" } }),
-    ).rejects.toMatchObject({ code: "stale_mounts" });
+    await expect(c.call("boxes.start", { params: { boxId: "aio-agent-a" } })).rejects.toMatchObject(
+      { code: "stale_mounts" },
+    );
     const started = await c.call("boxes.start", {
-      params: { boxId: "claude-agent-a" },
+      params: { boxId: "aio-agent-a" },
       body: { force: true },
     });
     expect(started.status).toBe("running");

@@ -29,7 +29,7 @@ export const CONTENT_SECURITY_POLICY = [
 
 function contentSecurityPolicy(): Plugin {
   return {
-    name: "agentbox-csp",
+    name: "aio-csp",
     apply: "build",
     transformIndexHtml: () => [
       {
@@ -45,7 +45,7 @@ const SERVER = "https://127.0.0.1:21400";
 
 /** The server's certificate, which the dev proxy trusts and nothing else. */
 function serverCert(): string | undefined {
-  const dataDir = process.env.AGENTBOX_DATA_DIR ?? join(homedir(), ".claude-box");
+  const dataDir = process.env.AIO_DATA_DIR ?? join(homedir(), ".ai-orchestrator");
   try {
     return readFileSync(join(dataDir, "server.crt"), "utf8");
   } catch {

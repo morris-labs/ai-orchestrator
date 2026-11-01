@@ -18,7 +18,7 @@ import {
   BrokerErrorCodeSchema,
   BrokerReadRequestSchema,
   type BrokerErrorCode,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 import { ApiError, STATUS_BY_CODE, toApiError } from "../api/errors.js";
 
 /** Where the broker gets names and values for a project. */
@@ -69,7 +69,7 @@ export function assertSocketPathFits(socketPath: string): void {
     "internal",
     `The secrets broker socket path ${socketPath} is ${bytes} bytes, and a Unix socket path ` +
       `can be at most ${MAX_SOCKET_PATH_BYTES}. Choose a data directory (--data-dir or ` +
-      `AGENTBOX_DATA_DIR) whose path is at least ${bytes - MAX_SOCKET_PATH_BYTES} bytes shorter.`,
+      `AIO_DATA_DIR) whose path is at least ${bytes - MAX_SOCKET_PATH_BYTES} bytes shorter.`,
   );
 }
 

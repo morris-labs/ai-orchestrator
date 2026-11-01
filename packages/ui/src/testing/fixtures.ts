@@ -4,7 +4,7 @@ import {
   defaultConfig,
   deriveHostKey,
   projectContainerName,
-  type AgentBoxEvent,
+  type AioEvent,
   type Box,
   type BoxView,
   type EventOf,
@@ -12,7 +12,7 @@ import {
   type GlobalSettings,
   type Job,
   type Project,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 
 export const T0 = "2026-10-28T09:00:00Z";
 
@@ -32,7 +32,7 @@ export function makeProject(partial: Partial<Project> & { root: string }): Proje
     tcpMaps: [],
     mounts: [],
     secretRefs: [],
-    policyPath: ".claude-box/policy.yaml",
+    policyPath: ".aio/policy.yaml",
     createdAt: T0,
     updatedAt: T0,
     ...partial,
@@ -45,7 +45,7 @@ export function makeBox(partial: Partial<Box> & { id: string; targetDir: string 
     projectId,
     hostKey: deriveHostKey(partial.id),
     sessionUuid: null,
-    conversationName: partial.id.replace(/^claude-agent-/, ""),
+    conversationName: partial.id.replace(/^aio-agent-/, ""),
     transcriptSyncedName: "",
     platform: "claude",
     skipPermissions: true,
@@ -107,7 +107,7 @@ let eventCounter = 0;
 export function makeEvent<T extends EventType>(
   type: T,
   payload: Omit<EventOf<T>, "type" | "id" | "time" | "source" | "streamId" | "seq" | "sourceSeq"> &
-    Partial<Pick<AgentBoxEvent, "streamId" | "seq">>,
+    Partial<Pick<AioEvent, "streamId" | "seq">>,
 ): EventOf<T> {
   eventCounter += 1;
   const seq = payload.seq ?? eventCounter;

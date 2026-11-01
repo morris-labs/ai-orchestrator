@@ -100,7 +100,7 @@ export class DockerodeClient implements DockerClient {
   async listContainers(
     options: { all?: boolean; size?: boolean; status?: string; nameRegex?: string } = {},
   ): Promise<ContainerSummary[]> {
-    const filters: Record<string, string[]> = { name: [options.nameRegex ?? "^claude-agent-"] };
+    const filters: Record<string, string[]> = { name: [options.nameRegex ?? "^aio-agent-"] };
     if (options.status) filters.status = [options.status];
     const list = await call(() =>
       this.docker.listContainers({

@@ -35,10 +35,10 @@ importers:
 
   apps/boxes:
     dependencies:
-      '@agentbox/contracts':
+      '@aio/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
-      '@agentbox/ui':
+      '@aio/ui':
         specifier: workspace:*
         version: link:../../packages/ui
       react:
@@ -111,10 +111,10 @@ importers:
 
   apps/review:
     dependencies:
-      '@agentbox/contracts':
+      '@aio/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
-      '@agentbox/ui':
+      '@aio/ui':
         specifier: workspace:*
         version: link:../../packages/ui
       react:
@@ -181,7 +181,7 @@ importers:
 
   packages/cli:
     dependencies:
-      '@agentbox/contracts':
+      '@aio/contracts':
         specifier: workspace:*
         version: link:../contracts
       commander:
@@ -222,7 +222,7 @@ importers:
 
   packages/engine:
     dependencies:
-      '@agentbox/contracts':
+      '@aio/contracts':
         specifier: workspace:*
         version: link:../contracts
       fastify:
@@ -256,7 +256,7 @@ importers:
 
   packages/server:
     dependencies:
-      '@agentbox/contracts':
+      '@aio/contracts':
         specifier: workspace:*
         version: link:../contracts
       '@fastify/static':
@@ -305,7 +305,7 @@ importers:
 
   packages/ui:
     dependencies:
-      '@agentbox/contracts':
+      '@aio/contracts':
         specifier: workspace:*
         version: link:../contracts
       '@xterm/addon-fit':
@@ -357,16 +357,16 @@ importers:
 
   tools/e2e:
     dependencies:
-      '@agentbox/cli':
+      '@aio/cli':
         specifier: workspace:*
         version: link:../../packages/cli
-      '@agentbox/contracts':
+      '@aio/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
-      '@agentbox/engine':
+      '@aio/engine':
         specifier: workspace:*
         version: link:../../packages/engine
-      '@agentbox/server':
+      '@aio/server':
         specifier: workspace:*
         version: link:../../packages/server
       better-sqlite3:

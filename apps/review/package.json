@@ -1,9 +1,9 @@
 {
-  "name": "@agentbox/review",
-  "productName": "Agent Box Review",
-  "version": "4.0.0",
-  "desktopName": "agentbox-review.desktop",
-  "description": "The agentbox-review app: review runs, findings, policy, and the infrastructure dashboard.",
+  "name": "@aio/review",
+  "productName": "AI Orchestrator Review",
+  "version": "1.0.0",
+  "desktopName": "aio-review.desktop",
+  "description": "The aio-review app: review runs, findings, policy, and the infrastructure dashboard.",
   "private": true,
   "type": "module",
   "main": "dist/electron/main.cjs",
@@ -17,8 +17,8 @@
     "e2e:setup": "node node_modules/electron/install.js"
   },
   "dependencies": {
-    "@agentbox/contracts": "workspace:*",
-    "@agentbox/ui": "workspace:*",
+    "@aio/contracts": "workspace:*",
+    "@aio/ui": "workspace:*",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "ws": "^8.18.3",

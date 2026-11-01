@@ -4,7 +4,7 @@
 import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import type { UsageSample, UsageWindow } from "@agentbox/contracts";
+import type { UsageSample, UsageWindow } from "@aio/contracts";
 import {
   CliAdapter,
   limitFromError,
@@ -113,7 +113,7 @@ export class CodexAdapter extends CliAdapter {
   }
 
   protected async call<T>(req: CliRequest<T>, _ctx: CallContext): Promise<CliResult<T>> {
-    const dir = mkdtempSync(join(tmpdir(), "agentbox-codex-"));
+    const dir = mkdtempSync(join(tmpdir(), "aio-codex-"));
     try {
       const schemaFile = join(dir, "schema.json");
       writeFileSync(schemaFile, JSON.stringify(toStrictJsonSchema(this.jsonSchemaFor(req))));

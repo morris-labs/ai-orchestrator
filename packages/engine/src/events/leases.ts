@@ -8,7 +8,7 @@ import {
   type LeaseRequest,
   type LeaseRequestFrame,
   type LeaseResponse,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 import type { Logger } from "../api/core-interface.js";
 import type { LeaseActual, LeaseBroker } from "../core.js";
 

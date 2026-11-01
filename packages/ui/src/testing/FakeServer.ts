@@ -1,4 +1,4 @@
-// An in-memory stand-in for agentbox-server, built from the contracts route
+// An in-memory stand-in for aio-server, built from the contracts route
 // table. It matches each request to its route, parses the query and body
 // with the route's schemas (answering 400 `validation` on a bad request),
 // runs a handler, and checks the answer against the route's response schema.
@@ -8,7 +8,7 @@ import {
   DEFAULT_PROMPT_TEMPLATES,
   serverRoutes,
   type AccountView,
-  type AgentBoxEvent,
+  type AioEvent,
   type ApiErrorCode,
   type BoxView,
   type ConversationSummary,
@@ -23,7 +23,7 @@ import {
   type SetupCheck,
   type ImageStatus,
   type Updates,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 import type { z } from "zod";
 import type { HttpRouteKey, ResponseOf, WebSocketCtor } from "../api/client";
 import { FakeSocket } from "./FakeSocket";
@@ -135,7 +135,7 @@ export class FakeServer {
   readonly overrides = new Map<HttpRouteKey, FakeHandler>();
   readonly streamId = "fake-stream";
   autoFinishJobs: boolean;
-  private eventLog: AgentBoxEvent[] = [];
+  private eventLog: AioEvent[] = [];
   private jobCounter = 0;
 
   constructor(options: FakeServerOptions = {}) {
@@ -160,23 +160,23 @@ export class FakeServer {
       models: ["claude-opus-5-5", "claude-sonnet-5", "claude-haiku-5"],
       setupChecks: [
         { id: "docker", status: "ok", message: "Docker is reachable.", fixable: false },
-        { id: "image", status: "ok", message: "The claude-code image exists.", fixable: true },
+        { id: "image", status: "ok", message: "The aio-agent image exists.", fixable: true },
         { id: "ssh_client", status: "ok", message: "ssh is installed.", fixable: false },
         { id: "ssh_key", status: "fail", message: "No key at ~/.ssh/id_ed25519.", fixable: true },
       ],
       image: {
-        name: "claude-code",
+        name: "aio-agent",
         exists: true,
         imageId: "sha256:abc",
         createdAt: T0,
-        engineVersion: "4.0.0",
-        expectedEngineVersion: "4.0.0",
+        engineVersion: "1.0.0",
+        expectedEngineVersion: "1.0.0",
         engineMatches: true,
         cliVersions: { claude: "2.1.300", codex: null, copilot: null },
       },
       updates: {
         checkedAt: T0,
-        app: { current: "4.0.0", latest: "4.0.0", updateAvailable: false, releaseUrl: null },
+        app: { current: "1.0.0", latest: "1.0.0", updateAvailable: false, releaseUrl: null },
         claudeCode: { image: "2.1.300", latest: "2.1.300", stale: false },
       },
       notifications: [],
@@ -332,9 +332,9 @@ export class FakeServer {
   }
 
   /** Emits an event to every events socket, numbered in this fake's stream. */
-  emit(event: AgentBoxEvent): AgentBoxEvent {
+  emit(event: AioEvent): AioEvent {
     const seq = this.eventLog.length + 1;
-    const numbered = { ...event, streamId: this.streamId, seq, sourceSeq: seq } as AgentBoxEvent;
+    const numbered = { ...event, streamId: this.streamId, seq, sourceSeq: seq } as AioEvent;
     this.eventLog.push(numbered);
     for (const s of this.socketsFor("/api/v1/events")) s.serverSend(numbered);
     return numbered;
@@ -411,7 +411,7 @@ function summary(server: FakeServer, p: Project) {
     // server before the secrets broker does.
     container: server.state.staleProjects.includes(p.id)
       ? {
-          name: `claude-agent-proj-${p.id}`,
+          name: `aio-agent-proj-${p.id}`,
           state: "running" as const,
           engine: null,
           stale: ["secrets environment -> broker"],
@@ -441,7 +441,7 @@ const restartKeys = [
 ] as const;
 
 const defaultHandlers: Partial<Record<HttpRouteKey, FakeHandler>> = {
-  health: () => ({ version: "4.0.0", uptimeS: 1 }),
+  health: () => ({ version: "1.0.0", uptimeS: 1 }),
   "auth.session": () => ({ ok: true }),
   "projects.list": (_r, s) => ({ projects: s.state.projects.map((p) => summary(s, p)) }),
   "projects.get": (r, s) => {
@@ -524,7 +524,7 @@ const defaultHandlers: Partial<Record<HttpRouteKey, FakeHandler>> = {
     const slug = (body.conversationName || body.targetDir.split("/").pop() || "box")
       .replace(/[^A-Za-z0-9]+/g, "_")
       .replace(/^_|_$/g, "");
-    let id = `claude-agent-${slug.toLowerCase().replace(/[^a-z0-9_.-]/g, "-")}`;
+    let id = `aio-agent-${slug.toLowerCase().replace(/[^a-z0-9_.-]/g, "-")}`;
     for (let n = 2; s.state.boxes.some((b) => b.box.id === id); n += 1)
       id = `${id.replace(/-\d+$/, "")}-${n}`;
     return s.startJob("box_create", `create ${id}`, id, () => {
@@ -659,7 +659,7 @@ const defaultHandlers: Partial<Record<HttpRouteKey, FakeHandler>> = {
         worktree: view.box.worktree,
         branch: view.box.branch,
         oldFolder: `${view.box.workspace ?? slug}.pre-worktree`,
-        recordBackup: `/home/user/.claude-box/backup/${view.box.id}.20261028`,
+        recordBackup: `/home/user/.ai-orchestrator/backup/${view.box.id}.20261028`,
         keptRefs: [],
         notCarried: [],
       };
@@ -749,7 +749,7 @@ const defaultHandlers: Partial<Record<HttpRouteKey, FakeHandler>> = {
   "image.status": (_r, s) => s.state.image,
   "image.build": (r, s) => {
     const kind = (r.body as { kind: string }).kind;
-    return s.startJob("image_build", `docker build -t claude-code (${kind})`, null, () => null);
+    return s.startJob("image_build", `docker build -t aio-agent (${kind})`, null, () => null);
   },
   "updates.check": (_r, s) => s.state.updates,
   "setup.get": (_r, s) => ({
@@ -769,7 +769,7 @@ const defaultHandlers: Partial<Record<HttpRouteKey, FakeHandler>> = {
       throw new FakeApiError(s.state.secretsError, "1Password is not available.", 503);
     }
     return {
-      vaults: ["AgentBox"],
+      vaults: ["Aio"],
       candidates: s.state.secretCandidates,
       vaultErrors: [],
       fetchedAt: T0,

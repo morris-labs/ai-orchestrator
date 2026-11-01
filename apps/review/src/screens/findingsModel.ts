@@ -1,5 +1,5 @@
 // Filtering for the findings browser.
-import type { Finding, Severity, Vendor, Verdict } from "@agentbox/contracts";
+import type { Finding, Severity, Vendor, Verdict } from "@aio/contracts";
 import { vendorOfLabel } from "./runModel.js";
 
 export interface FindingFilter {

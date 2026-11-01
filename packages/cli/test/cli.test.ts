@@ -1,4 +1,4 @@
-// The agentbox CLI against a fake server.
+// The aio CLI against a fake server.
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -32,10 +32,10 @@ let execs: string[][];
 
 beforeEach(async () => {
   server = await startFakeServer(TOKEN);
-  home = mkdtempSync(path.join(tmpdir(), "agentbox-cli-"));
+  home = mkdtempSync(path.join(tmpdir(), "aio-cli-"));
   // The CLI pins the certificate in the data directory, as the server writes it.
-  mkdirSync(path.join(home, ".claude-box"));
-  writeFileSync(path.join(home, ".claude-box", "server.crt"), server.cert);
+  mkdirSync(path.join(home, ".ai-orchestrator"));
+  writeFileSync(path.join(home, ".ai-orchestrator", "server.crt"), server.cert);
   out = "";
   err = "";
   execs = [];
@@ -54,7 +54,7 @@ function cli(
   return runCli(args, {
     cwd,
     signal,
-    env: { AGENTBOX_SERVER: server.url, AGENTBOX_TOKEN: TOKEN, ...env },
+    env: { AIO_SERVER: server.url, AIO_TOKEN: TOKEN, ...env },
     home,
     out: (t) => (out += t),
     err: (t) => (err += t),
@@ -94,23 +94,23 @@ const shellArgv = () => [
 ];
 
 describe("settings", () => {
-  it("reads the token from ~/.claude-box/server.token and the port from config.json", async () => {
-    writeFileSync(path.join(home, ".claude-box", "server.token"), `${TOKEN}\n`);
+  it("reads the token from ~/.ai-orchestrator/server.token and the port from config.json", async () => {
+    writeFileSync(path.join(home, ".ai-orchestrator", "server.token"), `${TOKEN}\n`);
     const port = new URL(server.url).port;
     writeFileSync(
-      path.join(home, ".claude-box", "config.json"),
+      path.join(home, ".ai-orchestrator", "config.json"),
       JSON.stringify({ serverPort: Number(port) }),
     );
     server.on("GET /api/v1/boxes", { body: { boxes: [] } });
     const code = await cli(["box", "list"], {
-      AGENTBOX_SERVER: undefined,
-      AGENTBOX_TOKEN: undefined,
+      AIO_SERVER: undefined,
+      AIO_TOKEN: undefined,
     });
     expect(code).toBe(0);
     expect(last()?.authorization).toBe(`Bearer ${TOKEN}`);
   });
 
-  it("reads the token and config.json from AGENTBOX_DATA_DIR when set", async () => {
+  it("reads the token and config.json from AIO_DATA_DIR when set", async () => {
     const dataDir = path.join(home, "data");
     mkdirSync(dataDir);
     writeFileSync(path.join(dataDir, "server.token"), `${TOKEN}\n`);
@@ -121,9 +121,9 @@ describe("settings", () => {
     );
     server.on("GET /api/v1/boxes", { body: { boxes: [] } });
     const code = await cli(["box", "list"], {
-      AGENTBOX_SERVER: undefined,
-      AGENTBOX_TOKEN: undefined,
-      AGENTBOX_DATA_DIR: dataDir,
+      AIO_SERVER: undefined,
+      AIO_TOKEN: undefined,
+      AIO_DATA_DIR: dataDir,
     });
     expect(code).toBe(0);
     expect(last()?.authorization).toBe(`Bearer ${TOKEN}`);
@@ -131,19 +131,25 @@ describe("settings", () => {
 
   it("reads only serverPort from config.json, so an unknown key keeps the port", async () => {
     writeFileSync(
-      path.join(home, ".claude-box", "config.json"),
+      path.join(home, ".ai-orchestrator", "config.json"),
       JSON.stringify({ serverPort: Number(new URL(server.url).port), keyFromALaterBuild: true }),
     );
     server.on("GET /api/v1/boxes", { body: { boxes: [] } });
-    expect(await cli(["box", "list"], { AGENTBOX_SERVER: undefined })).toBe(0);
+    expect(await cli(["box", "list"], { AIO_SERVER: undefined })).toBe(0);
     expect(server.requests).toHaveLength(1);
   });
 
   it("prefers the port the server wrote to server.port over config.json", async () => {
-    writeFileSync(path.join(home, ".claude-box", "config.json"), JSON.stringify({ serverPort: 1 }));
-    writeFileSync(path.join(home, ".claude-box", "server.port"), `${new URL(server.url).port}\n`);
+    writeFileSync(
+      path.join(home, ".ai-orchestrator", "config.json"),
+      JSON.stringify({ serverPort: 1 }),
+    );
+    writeFileSync(
+      path.join(home, ".ai-orchestrator", "server.port"),
+      `${new URL(server.url).port}\n`,
+    );
     server.on("GET /api/v1/boxes", { body: { boxes: [] } });
-    expect(await cli(["box", "list"], { AGENTBOX_SERVER: undefined })).toBe(0);
+    expect(await cli(["box", "list"], { AIO_SERVER: undefined })).toBe(0);
     expect(server.requests).toHaveLength(1);
   });
 
@@ -156,34 +162,34 @@ describe("settings", () => {
     server.on("GET /api/v1/boxes", { body: { boxes: [] } });
     const code = await cli(
       ["--data-dir", "service-data", "box", "list"],
-      { AGENTBOX_SERVER: undefined, AGENTBOX_TOKEN: undefined, AGENTBOX_DATA_DIR: "/nonexistent" },
+      { AIO_SERVER: undefined, AIO_TOKEN: undefined, AIO_DATA_DIR: "/nonexistent" },
       home,
     );
     expect(code).toBe(0);
     expect(last()?.authorization).toBe(`Bearer ${TOKEN}`);
   });
 
-  it("prefers --server over AGENTBOX_SERVER", async () => {
+  it("prefers --server over AIO_SERVER", async () => {
     server.on("GET /api/v1/boxes", { body: { boxes: [] } });
     expect(
       await cli(["--server", server.url, "box", "list"], {
-        AGENTBOX_SERVER: "https://127.0.0.1:1",
+        AIO_SERVER: "https://127.0.0.1:1",
       }),
     ).toBe(0);
   });
 
   it("explains a refused token", async () => {
-    const code = await cli(["box", "list"], { AGENTBOX_TOKEN: "wrong" });
+    const code = await cli(["box", "list"], { AIO_TOKEN: "wrong" });
     expect(code).toBe(1);
     expect(err).toContain("refused the token");
   });
 
   it("explains an unreachable server", async () => {
-    const code = await cli(["box", "list"], { AGENTBOX_SERVER: "https://127.0.0.1:1" });
+    const code = await cli(["box", "list"], { AIO_SERVER: "https://127.0.0.1:1" });
     expect(code).toBe(1);
-    expect(err).toMatch(/^Can't reach the Agent Box server at https:\/\/127\.0\.0\.1:1: \S/);
+    expect(err).toMatch(/^Can't reach the AI Orchestrator server at https:\/\/127\.0\.0\.1:1: \S/);
     expect(err).toContain("ECONNREFUSED");
-    expect(err).toContain("systemctl --user start agentbox-server");
+    expect(err).toContain("systemctl --user start aio-server");
   });
 
   it("names the cause of a failed global fetch", async () => {
@@ -191,7 +197,7 @@ describe("settings", () => {
       throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } });
     }) as unknown as typeof fetch;
     const code = await runCli(["box", "list"], {
-      env: { AGENTBOX_SERVER: "https://example.com", AGENTBOX_TOKEN: TOKEN },
+      env: { AIO_SERVER: "https://example.com", AIO_TOKEN: TOKEN },
       home,
       out: (t) => (out += t),
       err: (t) => (err += t),
@@ -203,14 +209,14 @@ describe("settings", () => {
 
   it("doesn't suggest starting the server when the certificate is the problem", async () => {
     writeFileSync(
-      path.join(home, ".claude-box", "server.crt"),
-      (await import("@agentbox/contracts/tls")).createServerIdentity().cert,
+      path.join(home, ".ai-orchestrator", "server.crt"),
+      (await import("@aio/contracts/tls")).createServerIdentity().cert,
     );
     expect(await cli(["box", "list"])).toBe(1);
     expect(err).toMatch(/server\.crt/);
     expect(err).not.toContain("systemctl");
     err = "";
-    rmSync(path.join(home, ".claude-box", "server.crt"));
+    rmSync(path.join(home, ".ai-orchestrator", "server.crt"));
     expect(await cli(["box", "list"])).toBe(1);
     expect(err).toMatch(/No server certificate/);
     expect(err).not.toContain("systemctl");
@@ -452,15 +458,15 @@ describe("secrets", () => {
   it("lists the available fields and passes --refresh", async () => {
     server.on("GET /api/v1/secrets/available", {
       body: {
-        vaults: ["AgentBox"],
+        vaults: ["Aio"],
         candidates: [
           {
-            vault: "AgentBox",
+            vault: "Aio",
             item: "Token GitHub",
             itemId: "i1",
             field: "credential",
             type: "CONCEALED",
-            ref: "op://AgentBox/Token GitHub/credential",
+            ref: "op://Aio/Token GitHub/credential",
             suggestedName: "TOKEN_GITHUB_CREDENTIAL",
           },
         ],
@@ -471,7 +477,7 @@ describe("secrets", () => {
     await cli(["secrets", "available", "--refresh"]);
     expect(last()?.query).toEqual({ refresh: "true" });
     expect(out).toContain("TOKEN_GITHUB_CREDENTIAL");
-    expect(out).toContain("op://AgentBox/Token GitHub/credential");
+    expect(out).toContain("op://Aio/Token GitHub/credential");
     expect(out).toContain("Old: Can't list vault Old");
   });
 });
@@ -552,12 +558,12 @@ describe("project", () => {
     server.on(`POST /api/v1/projects/${PROJECT_ID}/container/restart`, {
       body: {
         done: [BOX_ID],
-        failed: [{ boxId: "claude-agent-other", error: { code: "internal", message: "No." } }],
+        failed: [{ boxId: "aio-agent-other", error: { code: "internal", message: "No." } }],
       },
     });
     expect(await cli(["project", "restart", PROJECT_ID])).toBe(1);
     expect(out).toContain(`Started again: ${BOX_ID}.`);
-    expect(out).toContain("Failed claude-agent-other: No.");
+    expect(out).toContain("Failed aio-agent-other: No.");
   });
 });
 
@@ -757,7 +763,7 @@ describe("accounts", () => {
         createdAt: T,
         updatedAt: T,
       },
-      dir: `/home/user/.claude-box/accounts/${id}`,
+      dir: `/home/user/.ai-orchestrator/accounts/${id}`,
       dirExists: true,
       isDefault,
     };
@@ -786,7 +792,7 @@ describe("accounts", () => {
         ...entry,
         id: "claude/personal",
         source: "/home/user/.claude",
-        dir: "/home/user/.claude-box/accounts/claude/personal",
+        dir: "/home/user/.ai-orchestrator/accounts/claude/personal",
         status: "seeded",
       },
       {
@@ -794,7 +800,7 @@ describe("accounts", () => {
         id: "copilot/personal",
         vendor: "copilot",
         source: "/home/user/.copilot",
-        dir: "/home/user/.claude-box/accounts/copilot/personal",
+        dir: "/home/user/.ai-orchestrator/accounts/copilot/personal",
         status: "skipped",
         reason: "/home/user/.copilot isn't a folder.",
         files: 0,
@@ -858,7 +864,7 @@ describe("accounts", () => {
     server.on("POST /api/v1/accounts/relink", {
       status: 200,
       body: {
-        store: "/home/me/.claude-box/transcripts/claude",
+        store: "/home/me/.ai-orchestrator/transcripts/claude",
         source: "data",
         accounts: [
           {
@@ -871,7 +877,7 @@ describe("accounts", () => {
       },
     });
     expect(await cli(["accounts", "relink"])).toBe(0);
-    expect(out).toContain("/home/me/.claude-box/transcripts/claude (data)");
+    expect(out).toContain("/home/me/.ai-orchestrator/transcripts/claude (data)");
     expect(out).toContain("claude/work: dangling -> replaced.");
     expect(out).toContain("Linked to the host: settings.json.");
     expect(out).toContain("Local overrides, left alone: skills.");
@@ -881,7 +887,7 @@ describe("accounts", () => {
     server.on("POST /api/v1/transcripts/adopt", {
       status: 200,
       body: {
-        store: "/home/me/.claude-box/transcripts/claude",
+        store: "/home/me/.ai-orchestrator/transcripts/claude",
         dryRun: true,
         status: "adopted",
         moved: 3,
@@ -956,7 +962,7 @@ describe("accounts", () => {
     server.on("GET /api/v1/accounts/copilot/work", { body: view("copilot/work") });
     expect(await cli(["accounts", "login", "copilot/work"])).toBe(0);
     expect(out).toContain(
-      "COPILOT_HOME=/home/user/.claude-box/accounts/copilot/work copilot login --device-code",
+      "COPILOT_HOME=/home/user/.ai-orchestrator/accounts/copilot/work copilot login --device-code",
     );
   });
 
@@ -974,10 +980,10 @@ describe("accounts", () => {
 
   it("removes an account and says the folder stays", async () => {
     server.on("DELETE /api/v1/accounts/codex/work", {
-      body: { keptDir: "/home/user/.claude-box/accounts/codex/work" },
+      body: { keptDir: "/home/user/.ai-orchestrator/accounts/codex/work" },
     });
     expect(await cli(["accounts", "remove", "codex/work"])).toBe(0);
-    expect(out).toContain("Its folder stays at /home/user/.claude-box/accounts/codex/work");
+    expect(out).toContain("Its folder stays at /home/user/.ai-orchestrator/accounts/codex/work");
   });
 
   it("seeds accounts, waits for the job, and prints the report", async () => {
@@ -1042,7 +1048,7 @@ describe("migrate, setup, doctor", () => {
   });
 
   const healthy = () => {
-    server.on("GET /api/v1/health", { body: { version: "4.0.0-dev", uptimeS: 5 } });
+    server.on("GET /api/v1/health", { body: { version: "1.0.0-dev", uptimeS: 5 } });
     server.on("GET /api/v1/setup", {
       body: { ...setupStatus, checks: setupStatus.checks.filter((c) => c.id !== "op") },
     });
@@ -1054,7 +1060,7 @@ describe("migrate, setup, doctor", () => {
     healthy();
     expect(await cli(["doctor"])).toBe(0);
     expect(out).toMatch(/server\s+ok/);
-    expect(out).toMatch(/token\s+ok\s+AGENTBOX_TOKEN/);
+    expect(out).toMatch(/token\s+ok\s+AIO_TOKEN/);
     expect(out).toMatch(new RegExp(`engine ${PROJECT_ID}\\s+ok`));
     expect(out).toMatch(/sudo\s+ok\s+sudo is off in containers\./);
   });
@@ -1100,15 +1106,15 @@ describe("migrate, setup, doctor", () => {
 
   it("fails doctor without a token or with a refused one", async () => {
     healthy();
-    expect(await cli(["doctor"], { AGENTBOX_TOKEN: undefined })).toBe(1);
+    expect(await cli(["doctor"], { AIO_TOKEN: undefined })).toBe(1);
     expect(out).toMatch(/token\s+fail\s+No token/);
     out = "";
-    expect(await cli(["doctor"], { AGENTBOX_TOKEN: "wrong" })).toBe(1);
+    expect(await cli(["doctor"], { AIO_TOKEN: "wrong" })).toBe(1);
     expect(out).toMatch(/token\s+fail/);
   });
 
   it("fails doctor's server check on a refused server URL", async () => {
-    const code = await cli(["doctor"], { AGENTBOX_SERVER: "http://203.0.113.5:21400" });
+    const code = await cli(["doctor"], { AIO_SERVER: "http://203.0.113.5:21400" });
     expect(code).toBe(1);
     expect(out).toMatch(/server\s+fail\s+The CLI won't send its token over plain HTTP/);
     expect(err).toBe("");
@@ -1116,7 +1122,7 @@ describe("migrate, setup, doctor", () => {
   });
 
   it("fails doctor when the server is down", async () => {
-    expect(await cli(["doctor"], { AGENTBOX_SERVER: "https://127.0.0.1:1" })).toBe(1);
+    expect(await cli(["doctor"], { AIO_SERVER: "https://127.0.0.1:1" })).toBe(1);
     expect(out).toMatch(/server\s+fail/);
   });
 });
@@ -1161,7 +1167,7 @@ describe("events", () => {
   });
 
   it("fails on a refused token", async () => {
-    expect(await cli(["events"], { AGENTBOX_TOKEN: "wrong" })).toBe(1);
+    expect(await cli(["events"], { AIO_TOKEN: "wrong" })).toBe(1);
     expect(err).toContain("refused the token");
   });
 
@@ -1180,7 +1186,7 @@ describe("events", () => {
 describe("help", () => {
   it("prints help and exits 0", async () => {
     expect(await cli(["--help"])).toBe(0);
-    expect(out).toContain("Usage: agentbox");
+    expect(out).toContain("Usage: aio");
     out = "";
     expect(await cli(["review", "--help"])).toBe(0);
     expect(out).toContain("findings");
@@ -1193,7 +1199,7 @@ describe("help", () => {
 
 describe("trust in the server", () => {
   it("refuses to send the token over plain HTTP to another host", async () => {
-    const code = await cli(["box", "list"], { AGENTBOX_SERVER: "http://203.0.113.5:21400" });
+    const code = await cli(["box", "list"], { AIO_SERVER: "http://203.0.113.5:21400" });
     expect(code).not.toBe(0);
     expect(err).toMatch(/won't send its token over plain HTTP to 203\.0\.113\.5:21400/);
     expect(server.requests).toHaveLength(0);
@@ -1202,7 +1208,7 @@ describe("trust in the server", () => {
   it("allows plain HTTP only with --insecure, and https anywhere", async () => {
     const { checkServerUrl } = await import("../src/settings.js");
     expect(checkServerUrl("http://203.0.113.5:21400", true)).toBeNull();
-    expect(checkServerUrl("https://agentbox.example.com", false)).toBeNull();
+    expect(checkServerUrl("https://aio.example.com", false)).toBeNull();
     expect(checkServerUrl("http://localhost:21400", false)).toMatch(/use https:\/\/localhost/);
     expect(checkServerUrl("http://[::1]:21400", false)).toMatch(/serves HTTPS/);
     expect(checkServerUrl("http://127.0.0.1:21400", true)).toBeNull();
@@ -1211,8 +1217,8 @@ describe("trust in the server", () => {
 
   it("refuses plain HTTP without a token, without mentioning one", async () => {
     const code = await cli(["box", "list"], {
-      AGENTBOX_SERVER: "http://203.0.113.5:21400",
-      AGENTBOX_TOKEN: undefined,
+      AIO_SERVER: "http://203.0.113.5:21400",
+      AIO_TOKEN: undefined,
     });
     expect(code).toBe(2);
     expect(err).toMatch(/won't trust answers over plain HTTP from 203\.0\.113\.5:21400/);
@@ -1220,14 +1226,12 @@ describe("trust in the server", () => {
   });
 
   it("keeps the server URL's credentials out of its messages", async () => {
-    expect(await cli(["box", "list"], { AGENTBOX_SERVER: "https://user:hunter2@[bad" })).toBe(2);
+    expect(await cli(["box", "list"], { AIO_SERVER: "https://user:hunter2@[bad" })).toBe(2);
     expect(err).toMatch(/isn't a valid URL/);
     expect(err).not.toContain("hunter2");
     err = "";
-    expect(
-      await cli(["box", "list"], { AGENTBOX_SERVER: "https://user:hunter2@127.0.0.1:1" }),
-    ).toBe(1);
-    expect(err).toMatch(/Can't reach the Agent Box server at https:\/\/127\.0\.0\.1:1/);
+    expect(await cli(["box", "list"], { AIO_SERVER: "https://user:hunter2@127.0.0.1:1" })).toBe(1);
+    expect(err).toMatch(/Can't reach the AI Orchestrator server at https:\/\/127\.0\.0\.1:1/);
     expect(err).not.toContain("hunter2");
   });
 
@@ -1246,7 +1250,7 @@ describe("trust in the server", () => {
   });
 
   it("refuses plain HTTP to this machine, where another program can hold the port", async () => {
-    const code = await cli(["box", "list"], { AGENTBOX_SERVER: "http://127.0.0.1:21400" });
+    const code = await cli(["box", "list"], { AIO_SERVER: "http://127.0.0.1:21400" });
     expect(code).toBe(2);
     expect(err).toMatch(/serves HTTPS/);
   });
@@ -1255,12 +1259,12 @@ describe("trust in the server", () => {
     const squatter = await startFakeServer(TOKEN);
     try {
       squatter.on("GET /api/v1/boxes", { body: { boxes: [] } });
-      const code = await cli(["box", "list"], { AGENTBOX_SERVER: squatter.url });
+      const code = await cli(["box", "list"], { AIO_SERVER: squatter.url });
       expect(code).toBe(1);
       expect(err).toMatch(/certificate other than the one in the data directory's server\.crt/);
       expect(squatter.requests).toEqual([]);
       err = "";
-      const events = await cli(["events", "--count", "1"], { AGENTBOX_SERVER: squatter.url });
+      const events = await cli(["events", "--count", "1"], { AIO_SERVER: squatter.url });
       expect(events).toBe(1);
       expect(err).toMatch(/server\.crt/);
       expect(squatter.lastEventsQuery).toBeNull();
@@ -1271,11 +1275,11 @@ describe("trust in the server", () => {
 
   it("reads the certificate again for every call", async () => {
     server.on("GET /api/v1/boxes", { body: { boxes: [] } });
-    rmSync(path.join(home, ".claude-box", "server.crt"));
+    rmSync(path.join(home, ".ai-orchestrator", "server.crt"));
     expect(await cli(["box", "list"])).toBe(1);
     expect(err).toMatch(/No server certificate at .*server\.crt/);
     expect(server.requests).toEqual([]);
-    writeFileSync(path.join(home, ".claude-box", "server.crt"), server.cert);
+    writeFileSync(path.join(home, ".ai-orchestrator", "server.crt"), server.cert);
     expect(await cli(["box", "list"])).toBe(0);
   });
 
@@ -1369,7 +1373,7 @@ describe("trust in the server", () => {
 
 describe("child environment", () => {
   it("drops the server token and keeps everything else", () => {
-    const env = childEnv({ PATH: "/usr/bin", AGENTBOX_TOKEN: "t", AGENTBOX_SERVER_TOKEN: "s" });
+    const env = childEnv({ PATH: "/usr/bin", AIO_TOKEN: "t", AIO_SERVER_TOKEN: "s" });
     expect(env).toEqual({ PATH: "/usr/bin" });
   });
 });

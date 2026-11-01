@@ -1,4 +1,4 @@
-import { DEFAULT_POLICY, PolicyFileSchema } from "@agentbox/contracts";
+import { DEFAULT_POLICY, PolicyFileSchema } from "@aio/contracts";
 import { describe, expect, it } from "vitest";
 import { fileKind, importedModules, importsFile, stem } from "../../src/group/classify.js";
 import { groupFiles, splitSlice } from "../../src/group/group.js";

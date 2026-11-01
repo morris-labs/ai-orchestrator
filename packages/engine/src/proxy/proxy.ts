@@ -4,7 +4,7 @@
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import net from "node:net";
 import type { Duplex } from "node:stream";
-import type { ApiError } from "@agentbox/contracts";
+import type { ApiError } from "@aio/contracts";
 import { ENGINE_TOKEN_HEADER, isEngineBearer } from "../api/auth.js";
 import type { Logger } from "../api/core-interface.js";
 
@@ -38,7 +38,7 @@ export function isEngineCredential(name: string, value: string, engineToken: str
 
 /**
  * Copies the headers, minus the engine's credential: the
- * `x-agentbox-engine-token` header, and an `Authorization` header that
+ * `x-aio-engine-token` header, and an `Authorization` header that
  * carries the engine token in any spelling the engine accepts. The browser's
  * own `Authorization` header passes through.
  */

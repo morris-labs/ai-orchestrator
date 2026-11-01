@@ -8,10 +8,10 @@ import {
   BROKER_SOCKET_NAME,
   HOME_PATHS,
   proxyPortOf,
-  type AgentBoxEvent,
+  type AioEvent,
   type Box,
   type Listener,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 import type { Core, CoreFactory, CoreServices, EngineEndpoint } from "./core-interface.js";
 import type { ApiDeps } from "./deps.js";
 import { createApiServer, type ApiServer } from "./server.js";
@@ -41,7 +41,7 @@ import { UsageStore } from "../usage/usage-store.js";
 
 export interface AppOptions {
   home: string;
-  /** The data directory in place of `~/.claude-box`; see `HostEnv.dataDir`. */
+  /** The data directory in place of `~/.ai-orchestrator`; see `HostEnv.dataDir`. */
   dataDir?: string;
   createCore: CoreFactory;
   version: string;
@@ -63,7 +63,7 @@ export interface AppOptions {
   proxyPort?: number;
   engineIntervalMs?: number;
   /**
-   * Engines of projects without a container, from `AGENTBOX_DEV_ENGINES`.
+   * Engines of projects without a container, from `AIO_DEV_ENGINES`.
    * The server refuses them unless it binds to a loopback host.
    */
   devEngines?: EngineEndpoint[];
@@ -91,7 +91,7 @@ export async function startApp(options: AppOptions): Promise<App> {
   // refuse it now rather than at the first start.
   assertSocketPathFits(
     path.join(
-      brokerDirFor({ home: options.home, dataDir: options.dataDir }, "claude-agent-check"),
+      brokerDirFor({ home: options.home, dataDir: options.dataDir }, "aio-agent-check"),
       BROKER_SOCKET_NAME,
     ),
   );
@@ -270,7 +270,7 @@ export async function startApp(options: AppOptions): Promise<App> {
   const brokerTimer = setInterval(syncBroker, BROKER_SYNC_INTERVAL_MS);
   brokerTimer.unref();
 
-  hub.subscribe((event: AgentBoxEvent) => {
+  hub.subscribe((event: AioEvent) => {
     runMirror.ingest(event);
     usage.ingest(event);
     vendorHealth.ingest(event);

@@ -1,7 +1,7 @@
 // What the core asks the server's services for. `createCore()` in
 // `src/core.ts` replaces the defaults with `setHooks()`; the defaults keep the
 // core usable on its own, as in the core tests.
-import type { Listener, ReviewState } from "@agentbox/contracts";
+import type { Listener, ReviewState } from "@aio/contracts";
 
 export interface EngineHealth {
   /** From the engine's health route; `null` until it answers. */

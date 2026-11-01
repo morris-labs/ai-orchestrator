@@ -4,8 +4,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { BoxViewSchema, ProjectSummarySchema } from "@agentbox/contracts";
-import { pinFromPem, pinnedFetch } from "@agentbox/contracts/tls";
+import { BoxViewSchema, ProjectSummarySchema } from "@aio/contracts";
+import { pinFromPem, pinnedFetch } from "@aio/contracts/tls";
 import { startApp, type App } from "../../src/api/app.js";
 import { createCore } from "../../src/core.js";
 import { MemoryDocker } from "../../src/docker/memory.js";
@@ -14,7 +14,7 @@ import { FakeRunner } from "../setup/fake-runner.js";
 import { FakeExec } from "./harness.js";
 import { tempDir } from "../tmp.js";
 
-const ENGINE_VERSION = "4.0.0-test";
+const ENGINE_VERSION = "1.0.0-test";
 
 type Body = Record<string, unknown>;
 
@@ -29,7 +29,7 @@ afterEach(async () => {
 });
 
 async function start(docker: MemoryDocker, before?: (home: string) => void) {
-  const home = fs.realpathSync(tempDir("agentbox-real-"));
+  const home = fs.realpathSync(tempDir("aio-real-"));
   before?.(home);
   const logs: string[] = [];
   let real: Awaited<ReturnType<typeof createCore>> | null = null;
@@ -41,7 +41,7 @@ async function start(docker: MemoryDocker, before?: (home: string) => void) {
     },
     version: ENGINE_VERSION,
     expectedEngineVersion: ENGINE_VERSION,
-    execStart: "/usr/bin/agentbox-server",
+    execStart: "/usr/bin/aio-server",
     imageContext: path.join(home, "image"),
     runner: new FakeRunner(),
     op: {
@@ -54,9 +54,9 @@ async function start(docker: MemoryDocker, before?: (home: string) => void) {
     engineIntervalMs: 50,
     log: (m) => logs.push(m),
   });
-  const token = fs.readFileSync(path.join(home, ".claude-box", "server.token"), "utf8").trim();
+  const token = fs.readFileSync(path.join(home, ".ai-orchestrator", "server.token"), "utf8").trim();
   const fetchPinned = pinnedFetch(() =>
-    pinFromPem(fs.readFileSync(path.join(home, ".claude-box", "server.crt"), "utf8")),
+    pinFromPem(fs.readFileSync(path.join(home, ".ai-orchestrator", "server.crt"), "utf8")),
   );
   async function api(method: string, url: string, body?: unknown) {
     const res = await fetchPinned(`https://127.0.0.1:${app!.port}${url}`, {
@@ -74,7 +74,7 @@ async function start(docker: MemoryDocker, before?: (home: string) => void) {
 
 function dockerWithImage(): MemoryDocker {
   const docker = new MemoryDocker();
-  docker.addImage("claude-code", { "agentbox.engine-version": ENGINE_VERSION });
+  docker.addImage("aio-agent", { "aio.engine-version": ENGINE_VERSION });
   return docker;
 }
 
@@ -156,13 +156,13 @@ describe("the server over the real core", () => {
   });
 
   it("removes broker directories that no container uses at start", async () => {
-    const broker = (home: string) => path.join(home, ".claude-box", "broker");
+    const broker = (home: string) => path.join(home, ".ai-orchestrator", "broker");
     const { home, logs } = await start(dockerWithImage(), (h) => {
-      fs.mkdirSync(path.join(broker(h), "claude-agent-proj-old-00000001"), { recursive: true });
+      fs.mkdirSync(path.join(broker(h), "aio-agent-proj-old-00000001"), { recursive: true });
     });
     expect(fs.readdirSync(broker(home))).toEqual([]);
     expect(logs).toContain(
-      "Removed 1 unused secrets broker directory: claude-agent-proj-old-00000001.",
+      "Removed 1 unused secrets broker directory: aio-agent-proj-old-00000001.",
     );
   });
 });

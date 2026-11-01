@@ -2,7 +2,7 @@
 // Each `handoff` event restarts a pulse along its edge, labeled with the
 // item count. Motion stops for readers who ask for reduced motion.
 import { useEffect, useRef, useState } from "react";
-import type { Stage } from "@agentbox/contracts";
+import type { Stage } from "@aio/contracts";
 import { ChartCard } from "./ChartCard.js";
 import {
   FLOW_GEOMETRY,

@@ -26,12 +26,12 @@ afterEach(async () => {
 
 describe("attach commands", () => {
   it("waits for the session and attaches with -d inside the container", () => {
-    expect(attachCmd("claude-agent-x")).toEqual([
+    expect(attachCmd("aio-agent-x")).toEqual([
       "bash",
       "-c",
       EMBEDDED_ATTACH_SCRIPT,
       "_",
-      "claude-agent-x",
+      "aio-agent-x",
     ]);
     expect(EMBEDDED_ATTACH_SCRIPT).toContain('tmux attach -d -t "=$1"');
     expect(EMBEDDED_ATTACH_SCRIPT).toContain("seq 1 300");
@@ -66,7 +66,7 @@ describe("terminals.open", () => {
       cols: 100,
       rows: 30,
     });
-    // The id in `ready` is the one the exec carries as AGENTBOX_TERMINAL_ID.
+    // The id in `ready` is the one the exec carries as AIO_TERMINAL_ID.
     const ready = s.texts[0] as { terminalId: string };
     expect(ready.terminalId).toBeTruthy();
     expect(h.exec.requests[0]!.terminalId).toBe(ready.terminalId);
@@ -133,7 +133,7 @@ describe("terminals.open", () => {
     await bad.until((x) => x.texts.length === 1);
     expect(bad.texts[0]).toMatchObject({ type: "error", error: { code: "validation" } });
     expect((await bad.closed).code).toBe(1008);
-    const missing = await connect(`${base}/terminals?kind=session&boxId=claude-agent-zz`);
+    const missing = await connect(`${base}/terminals?kind=session&boxId=aio-agent-zz`);
     await missing.until((x) => x.texts.length === 1);
     expect(missing.texts[0]).toMatchObject({ type: "error", error: { code: "not_found" } });
   });

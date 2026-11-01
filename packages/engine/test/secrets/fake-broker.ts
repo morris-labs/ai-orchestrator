@@ -20,7 +20,7 @@ export async function startFakeBroker(
   values: Record<string, string>,
   fail?: { status: number; code: string; message: string },
 ): Promise<FakeBroker> {
-  const socketPath = path.join(tempDir("agentbox-fake-broker-"), "broker.sock");
+  const socketPath = path.join(tempDir("aio-fake-broker-"), "broker.sock");
   const state: FakeBroker = {
     socketPath,
     reads: [],

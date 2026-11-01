@@ -1,7 +1,7 @@
 // Serves a `FakeServer` over real HTTP for end-to-end tests, such as the
 // apps' Playwright smoke tests: API requests go to the fake, and static
 // prefixes serve built renderers. Node only; the browser-safe test doubles
-// are in `@agentbox/ui/testing`. WebSocket upgrades are refused, so an app
+// are in `@aio/ui/testing`. WebSocket upgrades are refused, so an app
 // under test shows its event stream as offline.
 import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type RequestListener, type Server } from "node:http";

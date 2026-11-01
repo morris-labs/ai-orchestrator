@@ -2,7 +2,7 @@
 import { openDatabase } from "../../src/db/index.js";
 import fs from "node:fs";
 import { PassThrough, Duplex } from "node:stream";
-import type { EngineRouteKey, Job, RunState } from "@agentbox/contracts";
+import type { EngineRouteKey, Job, RunState } from "@aio/contracts";
 import type { ApiDeps, ApiEngine, ApiEngines } from "../../src/api/deps.js";
 import { ApiError } from "../../src/api/errors.js";
 import { createApiServer, type ApiServer } from "../../src/api/server.js";
@@ -212,7 +212,7 @@ export async function createHarness(overrides: { proxy?: DevServerProxy } = {}):
     core,
     home: fs.realpathSync(tempDir("api-home-")),
     token: TOKEN,
-    version: "4.0.0-dev",
+    version: "1.0.0-dev",
     startedAt: new Date(),
     hub,
     jobs,
@@ -260,7 +260,7 @@ export async function createHarness(overrides: { proxy?: DevServerProxy } = {}):
         op: { installed: false, version: null, signedIn: false, mode: "none" },
       }),
       available: async () => ({
-        vaults: ["AgentBox"],
+        vaults: ["Aio"],
         candidates: [],
         vaultErrors: [],
         fetchedAt: "2026-10-28T09:00:00Z",
@@ -281,7 +281,7 @@ export async function createHarness(overrides: { proxy?: DevServerProxy } = {}):
     updates: {
       check: async () => ({
         checkedAt: T1,
-        app: { current: "4.0.0-dev", latest: null, updateAvailable: false, releaseUrl: null },
+        app: { current: "1.0.0-dev", latest: null, updateAvailable: false, releaseUrl: null },
         claudeCode: { image: "2.1.300", latest: null, stale: false },
       }),
     },

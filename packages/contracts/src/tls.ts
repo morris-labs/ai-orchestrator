@@ -6,7 +6,7 @@
 // other, so a process that binds the server port while the server is down
 // never receives the token.
 //
-// This module uses Node.js built-ins. Import it as `@agentbox/contracts/tls`
+// This module uses Node.js built-ins. Import it as `@aio/contracts/tls`
 // from Node.js and Electron main processes only, never from page code.
 //
 // The certificate is built with `node:crypto` and a small DER encoder rather
@@ -92,7 +92,7 @@ function pem(label: string, der: Buffer): string {
 // The certificate.
 
 /** The common name of the server's certificate. */
-export const SERVER_CERT_NAME = "Agent Box server";
+export const SERVER_CERT_NAME = "AI Orchestrator server";
 
 /** How long a new certificate is valid. Clients pin it, so no CA limit applies. */
 export const SERVER_CERT_DAYS = 3650;
@@ -281,7 +281,7 @@ function bodyText(body: unknown): string | Buffer | undefined {
 /**
  * A `fetch` that sends `https` requests only to a server that presents the
  * pinned certificate. `pin` runs for every request, so a certificate the
- * server replaced is read again. Supports what the Agent Box clients use: a
+ * server replaced is read again. Supports what the AI Orchestrator clients use: a
  * method, headers, a string or byte body, and an abort signal.
  */
 export function pinnedFetch(pin: () => ServerPin): typeof fetch {

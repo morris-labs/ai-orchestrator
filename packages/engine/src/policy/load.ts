@@ -1,4 +1,4 @@
-// Loads the repository policy, `<project>/.claude-box/policy.yaml` by default.
+// Loads the repository policy, `<project>/.aio/policy.yaml` by default.
 import { readFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import {
@@ -6,7 +6,7 @@ import {
   DEFAULT_POLICY_PATH,
   PolicyFileSchema,
   type PolicyFile,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 import { parse } from "yaml";
 import { ZodError } from "zod";
 import { globProblem } from "./glob.js";

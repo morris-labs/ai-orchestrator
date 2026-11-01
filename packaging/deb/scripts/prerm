@@ -1,5 +1,5 @@
 #!/bin/sh
-# prerm for the agentbox package.
+# prerm for the aio package.
 set -e
 
 case "$1" in
@@ -7,15 +7,15 @@ case "$1" in
     # Unload the AppArmor profiles before dpkg removes their files.
     if command -v apparmor_parser > /dev/null 2>&1 && [ -d /sys/kernel/security/apparmor ]; then
       for app in boxes review; do
-        if [ -f "/etc/apparmor.d/agentbox-$app" ]; then
-          apparmor_parser -R "/etc/apparmor.d/agentbox-$app" > /dev/null 2>&1 || true
+        if [ -f "/etc/apparmor.d/aio-$app" ]; then
+          apparmor_parser -R "/etc/apparmor.d/aio-$app" > /dev/null 2>&1 || true
         fi
       done
     fi
     cat <<'MSG'
-Agent Box doesn't stop your user service. As each user who enabled it, run:
-  systemctl --user disable --now agentbox-server
-Your data in ~/.claude-box stays in place.
+AI Orchestrator doesn't stop your user service. As each user who enabled it, run:
+  systemctl --user disable --now aio-server
+Your data in ~/.ai-orchestrator stays in place.
 MSG
     ;;
 esac

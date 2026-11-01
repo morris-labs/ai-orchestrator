@@ -35,7 +35,7 @@ if [[ $# -eq 1 ]]; then
     exit 2
   fi
 else
-  DIR="$(mktemp -d "${TMPDIR:-/tmp}/agentbox-smoke-XXXXXX")"
+  DIR="$(mktemp -d "${TMPDIR:-/tmp}/aio-smoke-XXXXXX")"
 fi
 S="$(mkdir -p "$DIR" && cd "$DIR" && pwd)"
 echo "Smoke directory: $S"
@@ -52,10 +52,10 @@ head -c 24 /dev/urandom | base64 | tr -d '/+=' > "$TOKEN_FILE"
 printf 'authorization: Bearer %s\n' "$(cat "$TOKEN_FILE")" > "$S/auth.header"
 H="@$S/auth.header"
 echo '$ node packages/engine/dist/main.js &'
-AGENTBOX_ENGINE_TOKEN_FILE="$TOKEN_FILE" AGENTBOX_ENGINE_PORT=20499 AGENTBOX_PROJECT_ROOT="$R" \
-  AGENTBOX_CONTAINER=claude-agent-proj-sample AGENTBOX_ENGINE_VERSION=4.0.0-dev \
-  AGENTBOX_STATE_DIR="$S/state" AGENTBOX_MOCK_VENDORS=1 \
-  AGENTBOX_MOCK_SCRIPT="$ROOT/packages/engine/test/smoke/mock-script.json" \
+AIO_ENGINE_TOKEN_FILE="$TOKEN_FILE" AIO_ENGINE_PORT=20499 AIO_PROJECT_ROOT="$R" \
+  AIO_CONTAINER=aio-agent-proj-sample AIO_ENGINE_VERSION=1.0.0-dev \
+  AIO_STATE_DIR="$S/state" AIO_MOCK_VENDORS=1 \
+  AIO_MOCK_SCRIPT="$ROOT/packages/engine/test/smoke/mock-script.json" \
   node packages/engine/dist/main.js > "$S/engine.log" 2>&1 &
 ENGINE=$!
 B=http://127.0.0.1:20499/api/v1

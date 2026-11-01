@@ -1,4 +1,4 @@
-// Public entry point of `@agentbox/ui/dashboard`.
+// Public entry point of `@aio/ui/dashboard`.
 export * from "./model.js";
 export * from "./selectors.js";
 export * from "./flow.js";

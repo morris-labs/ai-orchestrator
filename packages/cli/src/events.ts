@@ -1,6 +1,6 @@
-// `agentbox events`: tails the server's event stream as JSON lines.
-import { ServerStreamFrameSchema, serverRoutes } from "@agentbox/contracts";
-import { asIdentityError } from "@agentbox/contracts/tls";
+// `aio events`: tails the server's event stream as JSON lines.
+import { ServerStreamFrameSchema, serverRoutes } from "@aio/contracts";
+import { asIdentityError } from "@aio/contracts/tls";
 import WebSocket from "ws";
 import { jsonText } from "./format.js";
 
@@ -103,7 +103,7 @@ export function tailEvents(options: TailOptions): Promise<void> {
       finish(
         new Error(
           res.statusCode === 401
-            ? "The server refused the token. Check server.token in the data directory (~/.claude-box or AGENTBOX_DATA_DIR), or AGENTBOX_TOKEN."
+            ? "The server refused the token. Check server.token in the data directory (~/.ai-orchestrator or AIO_DATA_DIR), or AIO_TOKEN."
             : `The server refused the event stream with status ${res.statusCode}.`,
         ),
       );

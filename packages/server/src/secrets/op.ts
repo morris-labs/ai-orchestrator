@@ -1,6 +1,6 @@
 // The 1Password CLI (`op`) behind an interface, so tests use a double.
 // Secret values never appear in a log line or an error message.
-import type { OpStatus } from "@agentbox/contracts";
+import type { OpStatus } from "@aio/contracts";
 import { ApiError } from "../api/errors.js";
 import type { ProcessRunner, RunResult } from "../jobs/process.js";
 

@@ -12,7 +12,7 @@
 // saved removes only what this run created.
 import fs from "node:fs";
 import path from "node:path";
-import type { Box, ConvertToWorktreeResult } from "@agentbox/contracts";
+import type { Box, ConvertToWorktreeResult } from "@aio/contracts";
 import { projectDirFor } from "../catalog/paths.js";
 import { ApiError, messageOf } from "../records/errors.js";
 import { homePaths, stamp, type HostEnv } from "../records/env.js";
@@ -51,7 +51,7 @@ export interface MigrationPlan {
   cloneBranch: string;
   /** `<repo>/.worktrees/<slug>`. */
   worktree: string;
-  /** `<worktree>/.claude-box`. */
+  /** `<worktree>/.aio`. */
   notesDir: string;
   /** `claude-keep/<slug>/`, under which the clone's other commits are kept. */
   keepPrefix: string;

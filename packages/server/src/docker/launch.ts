@@ -15,7 +15,7 @@ import {
   mountProblem,
   type Mount,
   type TcpMap,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 import { ApiError } from "../records/errors.js";
 import { RESERVED_ENV_NAMES } from "../records/settings.js";
 import {
@@ -32,25 +32,25 @@ import type { ContainerCreateSpec } from "./types.js";
 
 /** Labels the server sets on every project container. */
 export const LABELS = {
-  project: "agentbox.project",
-  tcpMaps: "agentbox.tcp-maps",
-  secretNames: "agentbox.secret-names",
-  engineVersion: "agentbox.engine-version",
+  project: "aio.project",
+  tcpMaps: "aio.tcp-maps",
+  secretNames: "aio.secret-names",
+  engineVersion: "aio.engine-version",
   /** `password` when the container user's sudo asks for a password, `off` when sudo is off. */
-  sudo: "agentbox.sudo",
+  sudo: "aio.sudo",
   /**
    * `broker` when secrets come from the broker socket. A container without
    * the label has its secret values in its environment.
    */
-  secrets: "agentbox.secrets",
+  secrets: "aio.secrets",
   /** `accounts` when the container mounts the account folders; absent or `host` otherwise. */
-  accountsMode: "agentbox.accounts-mode",
+  accountsMode: "aio.accounts-mode",
 } as const;
 
-/** The `agentbox.secrets` label value of a container that gets secrets from the broker. */
+/** The `aio.secrets` label value of a container that gets secrets from the broker. */
 export const SECRETS_LABEL_BROKER = "broker";
 
-/** The `agentbox.sudo` label value for a container with or without a sudo password. */
+/** The `aio.sudo` label value for a container with or without a sudo password. */
 export function sudoLabel(passwordSet: boolean): "password" | "off" {
   return passwordSet ? "password" : "off";
 }
@@ -70,12 +70,12 @@ export interface LaunchInput {
   engine: { hostPort: number; token: string; version: string };
   /**
    * The names of the secrets the container may request from the broker, for
-   * the `agentbox.secret-names` label. The values never enter the spec.
+   * the `aio.secret-names` label. The values never enter the spec.
    */
   secretNames: readonly string[];
   /**
    * Plain variables that the host test scripts add, such as
-   * `AGENTBOX_MOCK_VENDORS`. Never secrets: `docker inspect` shows them. A
+   * `AIO_MOCK_VENDORS`. Never secrets: `docker inspect` shows them. A
    * name the server sets itself is dropped.
    */
   extraEnv?: Readonly<Record<string, string>>;
@@ -411,7 +411,7 @@ export function buildLaunchSpec(
 }
 
 /**
- * The `agentbox.tcp-maps` label value, sorted and comma-separated:
+ * The `aio.tcp-maps` label value, sorted and comma-separated:
  * `127.0.0.1:HOST:CONTAINER` for a loopback map and `HOST:CONTAINER` for one
  * on every interface. Containers created before loopback became the default
  * published every map on all interfaces with the second form, so they show

@@ -8,7 +8,7 @@
 // checkout while the commands run, so the gate never deletes a file there.
 // It reports the untracked files that appeared instead.
 import { join } from "node:path";
-import type { PolicyCommand, PolicyFile } from "@agentbox/contracts";
+import type { PolicyCommand, PolicyFile } from "@aio/contracts";
 import type { CommandRunner } from "../core.js";
 
 export interface GateCommandResult {
@@ -126,7 +126,7 @@ export const GATE_ENV: Record<string, string> = { PYTHONDONTWRITEBYTECODE: "1" }
 
 /**
  * Untracked files that git doesn't ignore, relative to the repository,
- * without the engine's own `.claude-box/` directory. `null` when git fails.
+ * without the engine's own `.aio/` directory. `null` when git fails.
  */
 export async function untrackedFiles(
   git: CommandRunner,
@@ -137,7 +137,7 @@ export async function untrackedFiles(
     timeoutMs: 60_000,
   });
   if (r.exitCode !== 0) return null;
-  return new Set(r.stdout.split("\0").filter((p) => p !== "" && !p.startsWith(".claude-box/")));
+  return new Set(r.stdout.split("\0").filter((p) => p !== "" && !p.startsWith(".aio/")));
 }
 
 /**

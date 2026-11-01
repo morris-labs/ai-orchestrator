@@ -1,7 +1,7 @@
 // The Usage tab: CPU and memory totals, one card per running container with
 // its boxes, and each vendor account against its ceiling.
-import type { BoxView } from "@agentbox/contracts";
-import { ProgressBar, useApiClient } from "@agentbox/ui";
+import type { BoxView } from "@aio/contracts";
+import { ProgressBar, useApiClient } from "@aio/ui";
 import { useEffect, useState } from "react";
 import { formatBytes } from "../logic/format";
 import { displayName } from "../logic/status";

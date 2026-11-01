@@ -158,10 +158,10 @@ describe("route catalog", () => {
 
   it("reports whether the engine version matches on the engine's health route", () => {
     const health = {
-      version: "4.0.0",
+      version: "1.0.0",
       uptimeS: 12,
-      engineVersion: "4.0.0",
-      container: "claude-agent-proj-example-app-1a2b3c4d",
+      engineVersion: "1.0.0",
+      container: "aio-agent-proj-example-app-1a2b3c4d",
       projectRoot: "/home/user/src/example-app",
       streamId: "S1",
     };
@@ -239,7 +239,7 @@ describe("request schemas", () => {
   it("rejects server-owned fields in a settings patch", () => {
     const body = routes["settings.patch"].body;
     expect(body.safeParse({ serverPort: 1 }).success).toBe(false);
-    expect(body.safeParse({ engineImage: "claude-code" }).success).toBe(true);
+    expect(body.safeParse({ engineImage: "aio-agent" }).success).toBe(true);
   });
 
   it("parses query booleans as strings", () => {
@@ -269,7 +269,7 @@ describe("request schemas", () => {
   it("previews a purge with dryRun and reports which kind it was", () => {
     expect(routes["boxes.purge"].body.parse(undefined)).toEqual({ dryRun: false });
     expect(routes["boxes.purge"].body.parse({ dryRun: true })).toEqual({ dryRun: true });
-    const result = { dryRun: true, removedRecords: ["claude-agent-x"], removedTranscriptDirs: [] };
+    const result = { dryRun: true, removedRecords: ["aio-agent-x"], removedTranscriptDirs: [] };
     expect(routes["boxes.purge"].response.parse(result)).toEqual(result);
     const { dryRun: _d, ...withoutFlag } = result;
     expect(routes["boxes.purge"].response.safeParse(withoutFlag).success).toBe(false);
@@ -286,7 +286,7 @@ describe("request schemas", () => {
       boxes: 5,
       sshRemotes: 1,
       settingsApplied: true,
-      warnings: ["Skipped the mount /srv/data on claude-agent-x: /srv/data is already mounted."],
+      warnings: ["Skipped the mount /srv/data on aio-agent-x: /srv/data is already mounted."],
     };
     expect(route.response.parse(report)).toEqual(report);
   });

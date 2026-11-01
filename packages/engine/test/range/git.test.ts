@@ -17,7 +17,7 @@ const BODY = Array.from({ length: 50 }, (_, i) => `line_${i + 1} = ${i + 1}`).jo
 
 /** A repository whose second commit renames SYNTHETIC_old.py and changes one line. */
 function renamedRepo(): { repo: string; base: string; tip: string } {
-  const repo = tempDir("agentbox-git-");
+  const repo = tempDir("aio-git-");
   git(repo, "init", "-q", "-b", "main");
   writeFileSync(join(repo, "SYNTHETIC_old.py"), BODY);
   writeFileSync(join(repo, "other.py"), "x = 1\n");
@@ -34,7 +34,7 @@ function renamedRepo(): { repo: string; base: string; tip: string } {
 
 describe("non-ASCII paths", () => {
   it("parse to the real path, which then gives the file's diff and content", async () => {
-    const repo = tempDir("agentbox-git-");
+    const repo = tempDir("aio-git-");
     git(repo, "init", "-q", "-b", "main");
     writeFileSync(join(repo, "café.txt"), "a\n");
     git(repo, "add", ".");
@@ -66,7 +66,7 @@ describe("Git.diffForPrompt", () => {
   });
 
   it("takes the paths literally, not as globs or pathspec magic", async () => {
-    const repo = tempDir("agentbox-git-");
+    const repo = tempDir("aio-git-");
     git(repo, "init", "-q", "-b", "main");
     for (const name of ["SYNTHETIC_*.txt", "SYNTHETIC_x.txt", ":(glob)y"]) {
       writeFileSync(join(repo, name), "a\n");
@@ -96,8 +96,8 @@ describe("Git.diffForPrompt", () => {
 });
 
 describe("excludeEngineDir", () => {
-  it("adds .claude-box/ to the shared info/exclude once, from any worktree", async () => {
-    const repo = tempDir("agentbox-git-");
+  it("adds .aio/ to the shared info/exclude once, from any worktree", async () => {
+    const repo = tempDir("aio-git-");
     git(repo, "init", "-q", "-b", "main");
     writeFileSync(join(repo, "app.py"), "x = 1\n");
     git(repo, "add", ".");
@@ -105,15 +105,15 @@ describe("excludeEngineDir", () => {
     const exclude = join(repo, ".git", "info", "exclude");
     // A last line without a newline stays intact.
     writeFileSync(exclude, "*.log");
-    const linked = join(tempDir("agentbox-git-wt-"), "wt");
+    const linked = join(tempDir("aio-git-wt-"), "wt");
     git(repo, "worktree", "add", "-q", linked);
 
     expect(await new Git(new ExecaRunner(), linked).excludeEngineDir()).toBe(true);
     expect(await new Git(new ExecaRunner(), repo).excludeEngineDir()).toBe(false);
-    expect(readFileSync(exclude, "utf8")).toBe("*.log\n.claude-box/\n");
+    expect(readFileSync(exclude, "utf8")).toBe("*.log\n.aio/\n");
 
-    mkdirSync(join(linked, ".claude-box", "runs"), { recursive: true });
-    writeFileSync(join(linked, ".claude-box", "runs", "state.json"), "{}");
+    mkdirSync(join(linked, ".aio", "runs"), { recursive: true });
+    writeFileSync(join(linked, ".aio", "runs", "state.json"), "{}");
     expect(git(linked, "status", "--porcelain", "--untracked-files=all")).toBe("");
   });
 });

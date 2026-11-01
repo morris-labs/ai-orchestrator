@@ -1,5 +1,5 @@
 #!/bin/sh
-# postrm for the agentbox package.
+# postrm for the aio package.
 set -e
 
 case "$1" in
@@ -8,7 +8,7 @@ case "$1" in
     # profiles themselves are conffiles that dpkg removes on purge, so their
     # cache entries go too.
     for app in boxes review; do
-      rm -f /var/cache/apparmor/*/"agentbox-$app" || true
+      rm -f /var/cache/apparmor/*/"aio-$app" || true
     done
     ;;
 esac

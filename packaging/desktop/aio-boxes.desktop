@@ -1,11 +1,11 @@
 [Desktop Entry]
 Type=Application
 Version=1.5
-Name=Agent Box
+Name=AI Orchestrator
 GenericName=Agent Sandbox Manager
 Comment=Manage sandboxed coding agents, their containers, and their terminals
-Exec=/usr/bin/agentbox-boxes %U
-Icon=agentbox-boxes
+Exec=/usr/bin/aio-boxes %U
+Icon=aio-boxes
 Terminal=false
 Categories=Development;
 Keywords=claude;codex;copilot;agent;docker;container;sandbox;terminal;
@@ -15,4 +15,4 @@ Keywords=claude;codex;copilot;agent;docker;container;sandbox;terminal;
 StartupNotify=false
 # Must match the Electron app's WM_CLASS and its desktopName, so GNOME on
 # Wayland ties the window to this entry and shows the right icon.
-StartupWMClass=agentbox-boxes
+StartupWMClass=aio-boxes

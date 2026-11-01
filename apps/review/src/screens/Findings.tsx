@@ -10,13 +10,13 @@ import {
   type Severity,
   type Vendor,
   type Verdict,
-} from "@agentbox/contracts";
-import { VENDOR_LABELS, VENDORS } from "@agentbox/ui/dashboard";
+} from "@aio/contracts";
+import { VENDOR_LABELS, VENDORS } from "@aio/ui/dashboard";
 import { useEffect, useMemo, useState } from "react";
 import { DiffView, ErrorBanner, Field, shortId } from "../components/common.js";
 import { EventBuffer } from "../state/eventBuffer.js";
 import { href, navigate } from "../state/router.js";
-import { useApiClient, useAnyEvent } from "@agentbox/ui/hooks";
+import { useApiClient, useAnyEvent } from "@aio/ui/hooks";
 import { useStore } from "../state/store.js";
 import {
   NO_FILTER,

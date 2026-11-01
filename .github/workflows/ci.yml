@@ -104,7 +104,7 @@ jobs:
       - name: Run the packaging tests
         env:
           # Fail instead of skipping when a tool is missing in CI.
-          AGENTBOX_REQUIRE_TOOLS: "1"
+          AIO_REQUIRE_TOOLS: "1"
         run: python3 -m unittest discover -s packaging/test -v
 
       - name: Run the keeper script tests

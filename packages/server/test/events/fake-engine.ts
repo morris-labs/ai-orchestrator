@@ -1,7 +1,7 @@
 // A fake engine on a real socket: the health route, a run route, and the
 // event socket with hello, replay, and lease frames.
 import http from "node:http";
-import type { AgentBoxEvent, LeaseResponse } from "@agentbox/contracts";
+import type { AioEvent, LeaseResponse } from "@aio/contracts";
 import WebSocket, { WebSocketServer } from "ws";
 import type { EventInput } from "../../src/api/core-interface.js";
 import { RUN, runState } from "../api/fixtures.js";
@@ -11,9 +11,9 @@ export const ENGINE_TOKEN = "e".repeat(32);
 export class FakeEngineServer {
   server!: http.Server;
   port = 0;
-  version = "4.0.0-dev";
+  version = "1.0.0-dev";
   streamId = "engine-stream-1";
-  events: AgentBoxEvent[] = [];
+  events: AioEvent[] = [];
   hellos: unknown[] = [];
   leaseResponses: LeaseResponse[] = [];
   sockets: WebSocket[] = [];
@@ -35,7 +35,7 @@ export class FakeEngineServer {
             version: this.version,
             uptimeS: 1,
             engineVersion: this.version,
-            container: "claude-agent-proj-example-app-1a2b3c4d",
+            container: "aio-agent-proj-example-app-1a2b3c4d",
             projectRoot: "/work/example-app",
             streamId: this.streamId,
             versionMatches: this.versionMatches,
@@ -111,11 +111,11 @@ export class FakeEngineServer {
       ...event,
       id: `e${seq}`,
       time: "2026-10-28T09:00:00.000Z",
-      source: "engine:claude-agent-proj-example-app-1a2b3c4d",
+      source: "engine:aio-agent-proj-example-app-1a2b3c4d",
       streamId: this.streamId,
       seq,
       sourceSeq: seq,
-    } as AgentBoxEvent;
+    } as AioEvent;
     this.events.push(full);
     for (const ws of this.sockets)
       if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(full));

@@ -15,9 +15,9 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 
 /** Names the file that holds the moved variables, for the re-executed engine. */
-export const MOVED_ENV_FILE = "AGENTBOX_ENGINE_MOVED_ENV_FILE";
+export const MOVED_ENV_FILE = "AIO_ENGINE_MOVED_ENV_FILE";
 
-const DIR_PREFIX = "agentbox-engine-env-";
+const DIR_PREFIX = "aio-engine-env-";
 
 export type EnvironStep =
   /** Nothing to move, or the moved variables are back in `process.env`. */

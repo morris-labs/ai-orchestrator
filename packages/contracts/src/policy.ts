@@ -1,4 +1,4 @@
-// The repository policy file, `<project>/.claude-box/policy.yaml` by default
+// The repository policy file, `<project>/.aio/policy.yaml` by default
 // (see `ProjectSettings.policyPath`). The file is git-excluded and the review
 // app edits it. Keys use the same camelCase as the schema, and unknown keys
 // are rejected so a misspelled key fails loudly.

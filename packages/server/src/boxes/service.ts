@@ -24,7 +24,7 @@ import {
   type ConvertToWorktreeResult,
   type Platform,
   type Project,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 import type { z } from "zod";
 import { listConversations, titleForUuid, transcriptExists } from "../catalog/conversations.js";
 import { projectDirFor, transcriptPath } from "../catalog/paths.js";
@@ -412,7 +412,7 @@ export class BoxService {
     if (id === undefined) {
       throw new ApiError(
         "conflict",
-        `No ${platform} account is set for ${box.id}, and ${platform} has no default. Add one with "agentbox accounts add ${platform} NAME", or import or seed one.`,
+        `No ${platform} account is set for ${box.id}, and ${platform} has no default. Add one with "aio accounts add ${platform} NAME", or import or seed one.`,
       );
     }
     const record = this.repos.accounts.get(id);

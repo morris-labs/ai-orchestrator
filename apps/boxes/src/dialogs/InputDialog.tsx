@@ -1,6 +1,6 @@
 // A one-field dialog: rename a project, move or change a working directory,
 // relink a box.
-import { Button, Dialog, errorMessage, useInFlight } from "@agentbox/ui";
+import { Button, Dialog, errorMessage, useInFlight } from "@aio/ui";
 import { useState } from "react";
 import { useDirectoryPicker } from "./DirectoryPicker";
 

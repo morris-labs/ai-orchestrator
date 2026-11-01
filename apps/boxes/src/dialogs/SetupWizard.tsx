@@ -1,14 +1,14 @@
 // The setup wizard: the host checks with their fixes, the image builds as
 // streamed jobs, the default directory for New Box, and the 1Password
 // reference of the containers' sudo password.
-import type { Job, SetupCheck } from "@agentbox/contracts";
-import { Button, Dialog, StatusDot, errorMessage, useApiClient } from "@agentbox/ui";
+import type { Job, SetupCheck } from "@aio/contracts";
+import { Button, Dialog, StatusDot, errorMessage, useApiClient } from "@aio/ui";
 import { useCallback, useEffect, useState } from "react";
 import { JobDialog } from "./JobDialog";
 
 const checkTitles: Record<SetupCheck["id"], string> = {
   docker: "Docker reachable",
-  image: "claude-code image",
+  image: "aio-agent image",
   engine: "Engine version",
   ssh_client: "SSH client",
   ssh_key: "SSH keypair",
@@ -130,7 +130,8 @@ export function SetupWizard({ onClose, onDone, stacked }: SetupWizardProps) {
       }
     >
       <div className="bx-dim">
-        Agent Box checks what it needs on this computer. Fix anything marked red, then press Done.
+        AI Orchestrator checks what it needs on this computer. Fix anything marked red, then press
+        Done.
       </div>
       {checks === null && !error && <div className="bx-dim">Checking...</div>}
       {checks?.map((c) => (

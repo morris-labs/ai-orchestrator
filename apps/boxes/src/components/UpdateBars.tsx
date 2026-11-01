@@ -1,7 +1,7 @@
 // The bars above the table: a new app release, a Claude Code newer than the
 // image's, an engine that doesn't match, and Docker being unreachable.
-import type { ImageStatus, Updates } from "@agentbox/contracts";
-import { Button } from "@agentbox/ui";
+import type { ImageStatus, Updates } from "@aio/contracts";
+import { Button } from "@aio/ui";
 
 export interface UpdateBarsProps {
   updates: Updates | null;
@@ -39,7 +39,7 @@ export function UpdateBars(p: UpdateBarsProps) {
       {app?.updateAvailable && app.latest && app.latest !== p.dismissedVersion && (
         <div className="ab-update-bar" role="status">
           <span className="ab-update-text">
-            Agent Box {app.latest} is available (you have {app.current}).
+            AI Orchestrator {app.latest} is available (you have {app.current}).
           </span>
           {app.releaseUrl && (
             <Button onClick={() => p.onViewRelease(app.releaseUrl as string)}>View release</Button>

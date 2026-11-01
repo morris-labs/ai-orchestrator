@@ -1,7 +1,7 @@
 // An event sink the core can hold before the hub exists: the hub needs the
 // core's database, and the core needs a sink when it is built. Events emitted
 // before `attach()` wait in order and go out when the hub arrives.
-import type { AgentBoxEvent } from "@agentbox/contracts";
+import type { AioEvent } from "@aio/contracts";
 import type { EventInput, EventSink } from "../api/core-interface.js";
 
 export class LateSink implements EventSink {
@@ -13,7 +13,7 @@ export class LateSink implements EventSink {
     for (const event of this.pending.splice(0)) target.emit(event);
   }
 
-  emit(event: EventInput): AgentBoxEvent {
+  emit(event: EventInput): AioEvent {
     if (this.target) return this.target.emit(event);
     this.pending.push(event);
     // Before the hub exists the event has no number yet; callers that need
@@ -26,6 +26,6 @@ export class LateSink implements EventSink {
       streamId: "pending",
       seq: 1,
       sourceSeq: 1,
-    } as AgentBoxEvent;
+    } as AioEvent;
   }
 }

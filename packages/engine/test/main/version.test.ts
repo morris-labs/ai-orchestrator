@@ -13,12 +13,12 @@ const SCRIPT = path.resolve(
 
 describe("engineIdentity", () => {
   it("appends the content hash to the version", () => {
-    expect(engineIdentity("4.0.0-dev", "0123456789ab\n")).toBe("4.0.0-dev+0123456789ab");
+    expect(engineIdentity("1.0.0-dev", "0123456789ab\n")).toBe("1.0.0-dev+0123456789ab");
   });
 
   it("is the plain version without a hash", () => {
-    expect(engineIdentity("4.0.0-dev", null)).toBe("4.0.0-dev");
-    expect(engineIdentity("4.0.0-dev", " \n")).toBe("4.0.0-dev");
+    expect(engineIdentity("1.0.0-dev", null)).toBe("1.0.0-dev");
+    expect(engineIdentity("1.0.0-dev", " \n")).toBe("1.0.0-dev");
   });
 });
 

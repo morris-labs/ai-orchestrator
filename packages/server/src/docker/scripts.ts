@@ -1,24 +1,24 @@
 // How the server runs a project container's scripts. The image installs
-// them at `AGENTBOX_LIB` (`image/keeper/` in the repository): `keeper.sh` is
+// them at `AIO_LIB` (`image/keeper/` in the repository): `keeper.sh` is
 // the container's PID 1, keeps the engine running, and writes the live tmux
 // sessions to the state directory; `start-session.sh` starts one box's tmux
 // session. The 3.3.5 keeper and session scripts (`SharedContainer.cpp`,
 // inventory section 4.2) stay below as the reference those scripts follow.
 
 /** Where the keeper's state directory appears inside the container. */
-export const STATE_MOUNT = "/run/claude-box";
+export const STATE_MOUNT = "/run/aio";
 
 /** Seconds the keeper lingers with no sessions before the container exits. */
 export const STARTUP_GRACE_SEC = 30;
 
 /** Where the image installs the keeper scripts. */
-export const AGENTBOX_LIB = "/usr/local/lib/agentbox";
+export const AIO_LIB = "/usr/local/lib/ai-orchestrator";
 
 /** The keeper: `keeper.sh STATE GRACE`. */
-export const KEEPER_PATH = `${AGENTBOX_LIB}/keeper.sh`;
+export const KEEPER_PATH = `${AIO_LIB}/keeper.sh`;
 
 /** The session starter: `start-session.sh SESSION WORK_DIR COMMAND`. */
-export const START_SESSION_PATH = `${AGENTBOX_LIB}/start-session.sh`;
+export const START_SESSION_PATH = `${AIO_LIB}/start-session.sh`;
 
 /**
  * Single-quotes one token for a `bash -c` string. Safe for any byte; only a
@@ -61,10 +61,10 @@ export const SESSION_START_SCRIPT =
 
 /**
  * The sudoers file that holds the container user's sudo rule. Images built
- * before 4.0.0 put a `NOPASSWD` rule here; the root setup step replaces or
+ * before 1.0.0 put a `NOPASSWD` rule here; the root setup step replaces or
  * removes it in every container it starts.
  */
-export const SUDOERS_FILE = "/etc/sudoers.d/claude-box";
+export const SUDOERS_FILE = "/etc/sudoers.d/aio";
 
 /**
  * The container's root setup step, which the server runs once with

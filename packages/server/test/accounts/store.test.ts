@@ -28,14 +28,14 @@ interface Options {
 }
 
 function setup(options: Options = {}) {
-  const home = tempDir("agentbox-store-home-");
+  const home = tempDir("aio-store-home-");
   const env: HostEnv = {
     home,
-    dataDir: path.join(home, ".claude-box"),
+    dataDir: path.join(home, ".ai-orchestrator"),
     user: "tester",
     now: () => new Date("2026-10-31T09:00:00Z"),
   };
-  const store = path.join(home, ".claude-box", "transcripts", "claude");
+  const store = path.join(home, ".ai-orchestrator", "transcripts", "claude");
   const middle = path.join(home, "intermediate-link");
   const kind = options.host ?? "chain";
   fs.mkdirSync(path.join(home, ".claude"), { recursive: true });
@@ -79,9 +79,9 @@ function setup(options: Options = {}) {
 
 /** A ready Claude folder whose `projects` link leads to a deleted scratch store. */
 function scratchFolder(): string {
-  const dir = path.join(tempDir("agentbox-ready-"), "claude");
+  const dir = path.join(tempDir("aio-ready-"), "claude");
   write(path.join(dir, ".credentials.json"), "x");
-  fs.symlinkSync("/tmp/agentbox-gone-scratch/projects", path.join(dir, "projects"));
+  fs.symlinkSync("/tmp/aio-gone-scratch/projects", path.join(dir, "projects"));
   return dir;
 }
 
@@ -109,8 +109,8 @@ describe("resolveStore", () => {
 describe("linkProjectsToStore", () => {
   it("creates, replaces a dangling or foreign link, and leaves a good one", () => {
     const s = setup();
-    const store = tempDir("agentbox-the-store-");
-    const dir = tempDir("agentbox-acct-");
+    const store = tempDir("aio-the-store-");
+    const dir = tempDir("aio-acct-");
     expect(projectsLinkState(dir, store)).toBe("missing");
     expect(linkProjectsToStore(dir, store)).toBe("created");
     expect(linkProjectsToStore(dir, store)).toBe("unchanged");
@@ -118,7 +118,7 @@ describe("linkProjectsToStore", () => {
     fs.symlinkSync("/nowhere/at/all", path.join(dir, "projects"));
     expect(projectsLinkState(dir, store)).toBe("dangling");
     expect(linkProjectsToStore(dir, store)).toBe("replaced");
-    const other = tempDir("agentbox-other-");
+    const other = tempDir("aio-other-");
     fs.unlinkSync(path.join(dir, "projects"));
     fs.symlinkSync(other, path.join(dir, "projects"));
     expect(projectsLinkState(dir, store)).toBe("foreign");
@@ -131,12 +131,12 @@ describe("linkProjectsToStore", () => {
   });
 
   it("keeps a real projects folder that holds transcripts, and replaces an empty one", () => {
-    const store = tempDir("agentbox-the-store-");
-    const dir = tempDir("agentbox-acct-");
+    const store = tempDir("aio-the-store-");
+    const dir = tempDir("aio-acct-");
     write(path.join(dir, "projects", "-a", "u.jsonl"), "{}\n");
     expect(linkProjectsToStore(dir, store)).toBe("kept-directory");
     expect(fs.lstatSync(path.join(dir, "projects")).isDirectory()).toBe(true);
-    const empty = tempDir("agentbox-acct-");
+    const empty = tempDir("aio-acct-");
     fs.mkdirSync(path.join(empty, "projects"));
     expect(linkProjectsToStore(empty, store)).toBe("replaced");
   });
@@ -201,7 +201,7 @@ describe("check warning and relink", () => {
     const created = s.accounts.create({ vendor: "claude", name: "work" });
     const link = path.join(created.dir, "projects");
     fs.unlinkSync(link);
-    fs.symlinkSync("/tmp/agentbox-gone-scratch/projects", link);
+    fs.symlinkSync("/tmp/aio-gone-scratch/projects", link);
     const view = s.accounts.view(s.accounts.get("claude/work"));
     expect(view.warnings?.join(" ")).toMatch(/doesn't exist/);
     expect(view.warnings?.join(" ")).toMatch(/accounts relink/);
@@ -232,7 +232,7 @@ describe("check warning and relink", () => {
     const created = s.accounts.create({ vendor: "claude", name: "work" });
     const link = path.join(created.dir, "projects");
     fs.unlinkSync(link);
-    fs.symlinkSync(tempDir("agentbox-elsewhere-"), link);
+    fs.symlinkSync(tempDir("aio-elsewhere-"), link);
     expect(s.accounts.view(s.accounts.get("claude/work")).warnings?.join(" ")).toMatch(
       /doesn't lead to the transcript store/,
     );
@@ -250,7 +250,7 @@ describe("switching to accounts mode", () => {
   it("refuses when the transcriptStore override differs from the host's folder", () => {
     const s = setup({ host: "chain" });
     s.accounts.create({ vendor: "claude", name: "work" });
-    s.settings.patch({ transcriptStore: tempDir("agentbox-override-") });
+    s.settings.patch({ transcriptStore: tempDir("aio-override-") });
     expect(() => s.settings.patch({ accountsMode: "accounts" })).toThrow(/transcripts adopt/);
   });
 
@@ -267,7 +267,7 @@ describe("switching to accounts mode", () => {
     const created = s.accounts.create({ vendor: "claude", name: "work" });
     const link = path.join(created.dir, "projects");
     fs.unlinkSync(link);
-    fs.symlinkSync("/tmp/agentbox-gone-scratch/projects", link);
+    fs.symlinkSync("/tmp/aio-gone-scratch/projects", link);
     expect(() => s.settings.patch({ accountsMode: "accounts" })).toThrow(/accounts relink/);
     s.accounts.relink();
     expect(s.settings.patch({ accountsMode: "accounts" }).accountsMode).toBe("accounts");

@@ -2,7 +2,7 @@
 // the box) that owns each one. `ss -ltnpH` is the primary source;
 // `/proc/net/tcp` and `/proc/net/tcp6` are the fallback.
 import { readFileSync, readdirSync, readlinkSync } from "node:fs";
-import type { Listener } from "@agentbox/contracts";
+import type { Listener } from "@aio/contracts";
 import type { CommandRunner } from "../api/runner.js";
 
 /** A listening socket before it is mapped to a box. */
@@ -133,13 +133,13 @@ const SIDE_SUFFIX = /-(claude|codex|copilot)$/;
 
 /**
  * The box a tmux session belongs to. A box's main session is named after the
- * box (`claude-agent-...`); a side session is `<main>-<platform>`, which
+ * box (`aio-agent-...`); a side session is `<main>-<platform>`, which
  * counts only when `<main>` is itself a live session.
  */
 export function sessionToBoxId(session: string, liveSessions: Set<string>): string | null {
   const main = session.replace(SIDE_SUFFIX, "");
   const name = main !== session && liveSessions.has(main) ? main : session;
-  return name.startsWith("claude-agent-") ? name : null;
+  return name.startsWith("aio-agent-") ? name : null;
 }
 
 export interface ScannerOptions {

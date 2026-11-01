@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createServerIdentity, pinFromPem, pinnedFetch } from "@agentbox/contracts/tls";
+import { createServerIdentity, pinFromPem, pinnedFetch } from "@aio/contracts/tls";
 import { startApp, type App } from "../../src/api/app.js";
 import type { OpClient } from "../../src/secrets/op.js";
 import { ENGINE_TOKEN, FakeEngineServer, waitFor } from "../events/fake-engine.js";
@@ -27,7 +27,7 @@ const op: OpClient = {
 };
 
 beforeEach(async () => {
-  home = tempDir("agentbox-app-");
+  home = tempDir("aio-app-");
   engine = await new FakeEngineServer().start();
   core = createFakeCore();
   core.endpoints = [
@@ -37,9 +37,9 @@ beforeEach(async () => {
   app = await startApp({
     home,
     createCore: async () => core,
-    version: "4.0.0-dev",
-    expectedEngineVersion: "4.0.0-dev",
-    execStart: "/usr/bin/agentbox-server",
+    version: "1.0.0-dev",
+    expectedEngineVersion: "1.0.0-dev",
+    execStart: "/usr/bin/aio-server",
     imageContext: "/repo/image",
     runner,
     op,
@@ -57,8 +57,10 @@ afterEach(async () => {
 });
 
 async function api(method: string, url: string, body?: unknown) {
-  const token = (await readFile(path.join(home, ".claude-box", "server.token"), "utf8")).trim();
-  const cert = await readFile(path.join(home, ".claude-box", "server.crt"), "utf8");
+  const token = (
+    await readFile(path.join(home, ".ai-orchestrator", "server.token"), "utf8")
+  ).trim();
+  const cert = await readFile(path.join(home, ".ai-orchestrator", "server.crt"), "utf8");
   const res = await pinnedFetch(() => pinFromPem(cert))(`https://127.0.0.1:${app.port}${url}`, {
     method,
     headers: {
@@ -85,15 +87,15 @@ function plainGet(port: number, host: string, url: string) {
 
 describe("startApp", () => {
   it("refuses a data directory too long for the broker's sockets before it writes anything", async () => {
-    const dataDir = path.join(tempDir("agentbox-app-long-"), "d".repeat(100));
+    const dataDir = path.join(tempDir("aio-app-long-"), "d".repeat(100));
     await expect(
       startApp({
         home,
         dataDir,
         createCore: async () => core,
-        version: "4.0.0-dev",
-        expectedEngineVersion: "4.0.0-dev",
-        execStart: "/usr/bin/agentbox-server",
+        version: "1.0.0-dev",
+        expectedEngineVersion: "1.0.0-dev",
+        execStart: "/usr/bin/aio-server",
         imageContext: "/repo/image",
         runner,
         op,
@@ -112,7 +114,7 @@ describe("startApp", () => {
   });
 
   it("writes the port it listens on to server.port for the CLI", async () => {
-    const written = await readFile(path.join(home, ".claude-box", "server.port"), "utf8");
+    const written = await readFile(path.join(home, ".ai-orchestrator", "server.port"), "utf8");
     expect(written).toBe(`${app.port}\n`);
   });
 
@@ -129,7 +131,7 @@ describe("startApp", () => {
     expect(proxied.body).toContain("nobox");
     // The proxy listener serves no API, and the API listener no proxy.
     expect((await plainGet(app.proxyPort!, "127.0.0.1", "/api/v1/health")).status).toBe(400);
-    const cert = await readFile(path.join(home, ".claude-box", "server.crt"), "utf8");
+    const cert = await readFile(path.join(home, ".ai-orchestrator", "server.crt"), "utf8");
     const res = await pinnedFetch(() => pinFromPem(cert))(`https://127.0.0.1:${app.port}/`, {
       headers: { host: "3000.nobox.localhost" },
     });

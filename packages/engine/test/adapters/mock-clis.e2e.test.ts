@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { UsageSampleSchema, type Vendor } from "@agentbox/contracts";
+import { UsageSampleSchema, type Vendor } from "@aio/contracts";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { ClaudeAdapter } from "../../src/adapters/claude.js";
@@ -49,7 +49,7 @@ const scenario = {
 };
 
 function setup() {
-  const dir = tempDir("agentbox-mockcli-");
+  const dir = tempDir("aio-mockcli-");
   const file = join(dir, "scenario.json");
   writeFileSync(file, JSON.stringify({ codex: scenario, copilot: scenario, claude: scenario }));
   const log = join(dir, "calls.jsonl");
@@ -236,7 +236,7 @@ describe("mock CLI state lock", () => {
 
 describe("missing CLI", () => {
   it("reports unavailable", async () => {
-    const adapter = new CodexAdapter({ command: "agentbox-no-such-codex" });
+    const adapter = new CodexAdapter({ command: "aio-no-such-codex" });
     expect((await adapter.health()).available).toBe(false);
     await expect(adapter.review(request(tmpdir(), "x"))).rejects.toMatchObject({
       kind: "unavailable",

@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { Box } from "@agentbox/contracts";
+import type { Box } from "@aio/contracts";
 import { describe, expect, it } from "vitest";
 import { projectDirFor } from "../../src/catalog/paths.js";
 import { ApiError } from "../../src/records/errors.js";
@@ -46,7 +46,7 @@ describe("normalizeUrl and parseStatus", () => {
 
 /** A project repository, its home, and a workspace clone with a lot of state. */
 function scenario() {
-  const root = tempDir("agentbox-mig-");
+  const root = tempDir("aio-mig-");
   const home = path.join(root, "home");
   fs.mkdirSync(home);
   const env = testEnv(home);
@@ -189,7 +189,7 @@ describe("executeMigration", () => {
     expect(result.box.movedFrom).toBe(clone);
     expect(result.box.workspace).toBeUndefined();
     expect(result.recordBackup).toBe(
-      path.join(env.home, ".claude-box/backup", `${box.id}.20261028093015`),
+      path.join(env.home, ".ai-orchestrator/backup", `${box.id}.20261028093015`),
     );
     expect(JSON.parse(fs.readFileSync(result.recordBackup, "utf8"))).toEqual(box);
 
@@ -209,7 +209,7 @@ describe("executeMigration", () => {
     expect(fs.readFileSync(`${wt}/.env`, "utf8")).toBe("SECRET=1\n");
     expect(fs.existsSync(`${wt}/del.txt`)).toBe(false);
     expect(fs.existsSync(`${wt}/node_modules`)).toBe(false);
-    expect(fs.readFileSync(`${wt}/.claude-box/PLAN.md`, "utf8")).toBe("the plan\n");
+    expect(fs.readFileSync(`${wt}/.aio/PLAN.md`, "utf8")).toBe("the plan\n");
 
     // Transcripts are copied, not moved.
     const to = projectDirFor(env, wt);
@@ -276,8 +276,8 @@ describe("executeMigration", () => {
   it("rolls back when it can't create a directory, so a retry can run", async () => {
     const { env, project, clone, box } = scenario();
     // A file where the worktree's notes directory must go.
-    write(`${clone}/.claude-box`, "SYNTHETIC file in the way\n");
-    sh(clone, "add", "-f", ".claude-box");
+    write(`${clone}/.aio`, "SYNTHETIC file in the way\n");
+    sh(clone, "add", "-f", ".aio");
     sh(clone, "commit", "-q", "-m", "SYNTHETIC blocker");
     const plan = await planMigration({ env, box, primaryRepo: project });
     expect(plan.ok).toBe(true);

@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { DEFAULT_POLICY, FindingInputSchema, type RoleAssignment } from "@agentbox/contracts";
+import { DEFAULT_POLICY, FindingInputSchema, type RoleAssignment } from "@aio/contracts";
 import { describe, expect, it } from "vitest";
 import type { VerifyOutput } from "../../src/core.js";
 import { ExecaRunner } from "../../src/range/exec.js";
@@ -155,9 +155,9 @@ describe("decideVerdict", () => {
 
 describe("runReproScript", () => {
   it("runs a script against a directory and refuses one outside the scratch directory", async () => {
-    const scratch = tempDir("agentbox-scratch-");
+    const scratch = tempDir("aio-scratch-");
     writeFileSync(join(scratch, "r.sh"), 'test -f "$1/marker" && exit 1; exit 0\n');
-    const repo = tempDir("agentbox-repo-");
+    const repo = tempDir("aio-repo-");
     const runner = new ExecaRunner();
     expect(
       (await runReproScript(runner, scratch, { path: "r.sh", interpreter: "sh" }, repo)).exitCode,
@@ -174,10 +174,10 @@ describe("runReproScript", () => {
   // Finding 48: the write used to follow a dangling link planted in the
   // scratch directory and create the file outside it.
   it("doesn't write script content through a dangling link", async () => {
-    const root = tempDir("agentbox-verify-");
+    const root = tempDir("aio-verify-");
     const scratch = join(root, "scratch");
     mkdirSync(scratch);
-    const repo = tempDir("agentbox-repo-");
+    const repo = tempDir("aio-repo-");
     const target = join(root, "outside.sh");
     symlinkSync(target, join(scratch, "r.sh"));
     const run = await runReproScript(
@@ -191,12 +191,12 @@ describe("runReproScript", () => {
   });
 
   it("doesn't write script content through a linked directory", async () => {
-    const root = tempDir("agentbox-verify-");
+    const root = tempDir("aio-verify-");
     const scratch = join(root, "scratch");
     const outside = join(root, "outside");
     mkdirSync(scratch);
     mkdirSync(outside);
-    const repo = tempDir("agentbox-repo-");
+    const repo = tempDir("aio-repo-");
     symlinkSync(outside, join(scratch, "dir"));
     await expect(
       runReproScript(
@@ -210,10 +210,10 @@ describe("runReproScript", () => {
   });
 
   it("refuses a script that links outside the scratch directory", async () => {
-    const root = tempDir("agentbox-verify-");
+    const root = tempDir("aio-verify-");
     const scratch = join(root, "scratch");
     mkdirSync(scratch);
-    const repo = tempDir("agentbox-repo-");
+    const repo = tempDir("aio-repo-");
     writeFileSync(join(root, "evil.sh"), "exit 1\n");
     symlinkSync(join(root, "evil.sh"), join(scratch, "link.sh"));
     await expect(
@@ -222,10 +222,10 @@ describe("runReproScript", () => {
   });
 
   it("doesn't write script content through a link to a file outside", async () => {
-    const root = tempDir("agentbox-verify-");
+    const root = tempDir("aio-verify-");
     const scratch = join(root, "scratch");
     mkdirSync(scratch);
-    const repo = tempDir("agentbox-repo-");
+    const repo = tempDir("aio-repo-");
     const target = join(root, "outside.sh");
     writeFileSync(target, "original\n");
     symlinkSync(target, join(scratch, "r.sh"));
@@ -241,8 +241,8 @@ describe("runReproScript", () => {
   });
 
   it("creates the directories for script content inside the scratch directory", async () => {
-    const scratch = tempDir("agentbox-scratch-");
-    const repo = tempDir("agentbox-repo-");
+    const scratch = tempDir("aio-scratch-");
+    const repo = tempDir("aio-repo-");
     const run = await runReproScript(
       new ExecaRunner(),
       scratch,
@@ -287,8 +287,8 @@ describe("classifyRun", () => {
     expect(
       classifyRun(r({ exitCode: 1, output: traceback("ModuleNotFoundError: No module named x") })),
     ).toBe("failed");
-    const scratch = tempDir("agentbox-scratch-");
-    const repo = tempDir("agentbox-repo-");
+    const scratch = tempDir("aio-scratch-");
+    const repo = tempDir("aio-repo-");
     const run = await runReproScript(
       new ExecaRunner(),
       scratch,
@@ -384,7 +384,7 @@ describe("verifyFinding", () => {
   }
 
   function dirs() {
-    const root = tempDir("agentbox-verify-");
+    const root = tempDir("aio-verify-");
     const scratch = join(root, "scratch");
     const repo = join(root, "repo");
     const base = join(root, "base");

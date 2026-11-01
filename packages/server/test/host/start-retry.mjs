@@ -6,7 +6,7 @@
 // The first session-start exec force-removes the project container just
 // before it runs, so the real dockerode client gets the 404 that a keeper
 // leaving at the end of its grace period produces. The script uses a
-// temporary data directory and project, starts a real Claude box, and
+// temporary data directory and project, starts a real box that runs Claude, and
 // removes everything it made.
 //
 // Usage: node packages/server/test/host/start-retry.mjs [--image=IMAGE]
@@ -18,9 +18,9 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { createServerCore, defaultHostEnv } from "../../dist/core.js";
 import { serverVersion } from "../../dist/main.js";
 
-const image = process.argv.find((a) => a.startsWith("--image="))?.slice(8) ?? "claude-code";
+const image = process.argv.find((a) => a.startsWith("--image="))?.slice(8) ?? "aio-agent";
 
-const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "agentbox-retry-")));
+const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "aio-retry-")));
 const env = { ...defaultHostEnv(), dataDir: path.join(tmp, "data") };
 const root = path.join(tmp, "project");
 fs.mkdirSync(root);
@@ -40,7 +40,7 @@ try {
   core.settings.patch({ engineImage: image });
   const project = core.projects.create({ root, name: "Start retry" });
   container = core.projects.containerName(project);
-  assert.match(container, /^claude-agent-proj-/);
+  assert.match(container, /^aio-agent-proj-/);
 
   const realExec = core.docker.exec.bind(core.docker);
   let removed = false;

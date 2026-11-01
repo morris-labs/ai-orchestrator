@@ -1,4 +1,4 @@
-import { duplicateChords, findBinding, isApplicationChord, parseChord } from "@agentbox/ui";
+import { duplicateChords, findBinding, isApplicationChord, parseChord } from "@aio/ui";
 import { describe, expect, it } from "vitest";
 import { CHORDS } from "../src/app/chords";
 

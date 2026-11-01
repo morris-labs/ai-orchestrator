@@ -1,5 +1,5 @@
 // The dialogs the main window can open, one at a time.
-import type { BoxView, Job, ProjectSummary } from "@agentbox/contracts";
+import type { BoxView, Job, ProjectSummary } from "@aio/contracts";
 import type { ReactNode } from "react";
 
 export type DialogState =

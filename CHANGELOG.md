@@ -1,38 +1,38 @@
 # Changelog
 
-This file lists the notable changes in each Agent Box release. The release
+This file lists the notable changes in each AI Orchestrator release. The release
 workflow copies a version's section into its GitHub release, so each
 section's heading must have the form `## [X.Y.Z]`.
 
-## [4.0.0] - Unreleased
+## [1.0.0] - Unreleased
 
-Agent Box 4.0.0 replaces the Qt app, Claude Box 3.x, with a TypeScript host
+AI Orchestrator 1.0.0 replaces Claude Box 3.x, the Qt app, with a TypeScript host
 server, an engine in the container image, two Electron apps, and a CLI. For
 the upgrade steps, see `docs/migration-3x.md`.
 
 ### Added
 
-- `agentbox-server`, a systemd user service that owns Docker, boxes,
+- `aio-server`, a systemd user service that owns Docker, boxes,
   projects, worktrees, secrets, usage, and terminals, with a REST and
   WebSocket API on `127.0.0.1:21400`.
-- The Agent Box engine, baked into the image, which runs the review pipeline
+- The AI Orchestrator engine, baked into the image, which runs the review pipeline
   inside each project container.
 - A multi-vendor review pipeline with the `offload`, `balanced`, and `fast`
   profiles, cross-vendor verification, a test and lint gate, stop
   conditions, human decisions, and a post-push loop on the pull request.
 - Usage ceilings per vendor account, with leases that move work between
   vendors or pause a run until a window resets.
-- **Agent Box Review**, an app with a run launcher, a findings browser, a
+- **AI Orchestrator Review**, an app with a run launcher, a findings browser, a
   policy editor, and a live infrastructure dashboard.
-- The `agentbox` CLI with `box` and `review` commands, plus `migrate`,
+- The `aio` CLI with `box` and `review` commands, plus `migrate`,
   `setup`, and `doctor`.
 - Dev servers proxied at `http://PORT.BOX.localhost:21400/`, found
   automatically, with optional explicit TCP maps per project.
 - Secrets from 1Password references, served on request by a per-container
-  broker socket and the `agentbox-secret` command in the image, never put
+  broker socket and the `aio-secret` command in the image, never put
   in a container's environment. When a project has secret references, the
-  opening prompt tells the agent how to use `agentbox-secret`.
-- A repository policy file, `.claude-box/policy.yaml`.
+  opening prompt tells the agent how to use `aio-secret`.
+- A repository policy file, `.aio/policy.yaml`.
 - Tray icons and desktop notifications.
 - A one-time import of 3.x records and settings into SQLite.
 - A `.deb` package with the server, the CLI, both apps, desktop entries, the
@@ -43,8 +43,10 @@ the upgrade steps, see `docs/migration-3x.md`.
 
 ### Changed
 
-- The product name is Agent Box, and the command is `agentbox`. Container
-  names keep the `claude-agent-` prefix, and data stays in `~/.claude-box`.
+- The product name is AI Orchestrator, and the command is `aio`. Container
+  names use the `aio-agent-` prefix, the image is `aio-agent`, data lives in
+  `~/.ai-orchestrator`, and per-project notes live in `.aio/`. The import
+  from Claude Box 3.x reads `~/.claude-box` and renames the boxes.
 - Every box runs in its project's shared container. Classic boxes move into
   it on their first start.
 - Terminals use xterm.js, with scrollback and selection.

@@ -1,9 +1,9 @@
 // The optional Electron bridge. The preload script puts it on
-// `window.agentbox`; in a plain browser it is absent, and the page's own
+// `window.aio`; in a plain browser it is absent, and the page's own
 // origin and session cookie authenticate.
 
 /** What the Electron preload exposes. */
-export interface AgentboxBridge {
+export interface AioBridge {
   /** The server token on the first call, `null` on every later one. */
   takeToken(): string | null;
   serverUrl: string | null;
@@ -11,6 +11,6 @@ export interface AgentboxBridge {
 }
 
 /** The bridge, or `undefined` in a plain browser. */
-export function bridge(): AgentboxBridge | undefined {
-  return (globalThis as { agentbox?: AgentboxBridge }).agentbox;
+export function bridge(): AioBridge | undefined {
+  return (globalThis as { aio?: AioBridge }).aio;
 }

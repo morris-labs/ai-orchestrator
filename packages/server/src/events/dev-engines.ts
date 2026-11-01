@@ -1,13 +1,13 @@
-// The `AGENTBOX_DEV_ENGINES` development switch: engine endpoints for
+// The `AIO_DEV_ENGINES` development switch: engine endpoints for
 // projects that have no container, such as an engine started as a local
 // process in an end-to-end test. The supervisor subscribes to them like to
 // any container's engine, and run routes resolve to them by project id.
 import { isIP } from "node:net";
-import { projectContainerName } from "@agentbox/contracts";
+import { projectContainerName } from "@aio/contracts";
 import type { CoreEngines, EngineEndpoint } from "../api/core-interface.js";
 
 /** The environment variable that lists development engines. */
-export const DEV_ENGINES_ENV = "AGENTBOX_DEV_ENGINES";
+export const DEV_ENGINES_ENV = "AIO_DEV_ENGINES";
 
 const PROJECT_ID = /^[A-Za-z0-9-]+-[0-9a-f]{8}$/;
 
@@ -23,7 +23,7 @@ export function isLoopbackHost(host: string): boolean {
 /**
  * Parses `projectId=host:port:token[,...]` into engine endpoints. Each
  * endpoint's container is the project's container name, which the engine
- * must also get as `AGENTBOX_CONTAINER`, because the server finds the engine
+ * must also get as `AIO_CONTAINER`, because the server finds the engine
  * that holds a run by the run's `container`. The host must be a loopback
  * address: the server always reaches an engine on 127.0.0.1.
  *

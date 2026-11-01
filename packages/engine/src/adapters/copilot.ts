@@ -147,7 +147,7 @@ export class CopilotAdapter extends CliAdapter {
     const prompt = this.buildPrompt(req);
     const sessionId = req.sessionId ?? randomUUID();
     // `mkdtempSync` makes the directory 0700.
-    const dir = mkdtempSync(join(tmpdir(), "agentbox-copilot-"));
+    const dir = mkdtempSync(join(tmpdir(), "aio-copilot-"));
     const promptFile = join(dir, "prompt.md");
     try {
       writeFileSync(promptFile, prompt, { mode: 0o600 });

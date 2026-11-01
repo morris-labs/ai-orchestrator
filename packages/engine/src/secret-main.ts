@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// The `agentbox-secret` entry point. See `src/secrets/cli.ts`.
+// The `aio-secret` entry point. See `src/secrets/cli.ts`.
 import { secretMain } from "./secrets/cli.js";
 
 const code = await secretMain(process.argv.slice(2), {

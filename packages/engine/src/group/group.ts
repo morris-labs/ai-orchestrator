@@ -1,5 +1,5 @@
 // Deterministic grouping of the changed files (design.md, pre-push step 2).
-import type { FileGroup, Hunk, PolicyFile } from "@agentbox/contracts";
+import type { FileGroup, Hunk, PolicyFile } from "@aio/contracts";
 import { isRiskPath } from "../policy/rules.js";
 import type { DiffFile, DiffHunk } from "../range/diff.js";
 import { fileKind, importedModules, importsFile, stem } from "./classify.js";

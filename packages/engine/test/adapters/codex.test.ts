@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { DEFAULT_CEILINGS, UsageSampleSchema } from "@agentbox/contracts";
+import { DEFAULT_CEILINGS, UsageSampleSchema } from "@aio/contracts";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
@@ -105,7 +105,7 @@ describe("codexRateLimitSamples", () => {
 
 describe("findRolloutFile", () => {
   it("finds the thread's rollout in the newest day directories", () => {
-    const sessions = tempDir("agentbox-codex-sessions-");
+    const sessions = tempDir("aio-codex-sessions-");
     const day = join(sessions, "2026", "10", "28");
     mkdirSync(day, { recursive: true });
     mkdirSync(join(sessions, "2026", "10", "27"), { recursive: true });

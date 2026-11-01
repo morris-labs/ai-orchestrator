@@ -1,19 +1,14 @@
 // Where the server is, which token to send, and which certificate to trust.
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { DEFAULT_SERVER_PORT, HOME_PATHS } from "@agentbox/contracts";
-import {
-  pinnedFetch,
-  pinnedTlsOptions,
-  readServerPin,
-  type ServerPin,
-} from "@agentbox/contracts/tls";
+import { DEFAULT_SERVER_PORT, HOME_PATHS } from "@aio/contracts";
+import { pinnedFetch, pinnedTlsOptions, readServerPin, type ServerPin } from "@aio/contracts/tls";
 
 export interface CliSettings {
   baseUrl: string;
   token: string | null;
   /** Where the token came from, for `doctor`. */
-  tokenSource: "AGENTBOX_TOKEN" | "file" | "none";
+  tokenSource: "AIO_TOKEN" | "file" | "none";
   tokenFile: string;
   /** The server's certificate, which the CLI pins for a server on this machine. */
   certFile: string;
@@ -29,19 +24,19 @@ function readText(file: string): string | null {
 
 /**
  * Returns the server's data directory: `dataDir` (the `--data-dir` option)
- * when given, else `AGENTBOX_DATA_DIR`, the same order `agentbox-server`
- * uses, else `~/.claude-box`.
+ * when given, else `AIO_DATA_DIR`, the same order `aio-server`
+ * uses, else `~/.ai-orchestrator`.
  */
 export function dataDirFor(
   env: Record<string, string | undefined>,
   home: string,
   dataDir?: string,
 ): string {
-  const override = dataDir ?? env.AGENTBOX_DATA_DIR;
+  const override = dataDir ?? env.AIO_DATA_DIR;
   return override ? path.resolve(override) : path.join(home, HOME_PATHS.dataDir);
 }
 
-/** A `HOME_PATHS` entry under `~/.claude-box`, resolved against the data directory. */
+/** A `HOME_PATHS` entry under `~/.ai-orchestrator`, resolved against the data directory. */
 function inDataDir(dataDir: string, homeRelative: string): string {
   return path.join(dataDir, path.posix.relative(HOME_PATHS.dataDir, homeRelative));
 }
@@ -79,11 +74,11 @@ export function serverPortIn(dataDir: string): number {
 
 /**
  * Resolves the server URL and token. The data directory is `--data-dir`,
- * then `AGENTBOX_DATA_DIR`, else `~/.claude-box`.
+ * then `AIO_DATA_DIR`, else `~/.ai-orchestrator`.
  *
- * - URL: `--server`, then `AGENTBOX_SERVER`, then `https://127.0.0.1:<port>`
+ * - URL: `--server`, then `AIO_SERVER`, then `https://127.0.0.1:<port>`
  *   with the port from `serverPortIn()`.
- * - Token: `AGENTBOX_TOKEN`, then `server.token` in the data directory.
+ * - Token: `AIO_TOKEN`, then `server.token` in the data directory.
  * - Certificate: `server.crt` in the data directory.
  */
 export function resolveSettings(options: {
@@ -95,12 +90,12 @@ export function resolveSettings(options: {
   const { env, home } = options;
   const dataDir = dataDirFor(env, home, options.dataDir);
   const port = serverPortIn(dataDir);
-  const baseUrl = options.server ?? env.AGENTBOX_SERVER ?? `https://127.0.0.1:${port}`;
+  const baseUrl = options.server ?? env.AIO_SERVER ?? `https://127.0.0.1:${port}`;
   const tokenFile = inDataDir(dataDir, HOME_PATHS.serverToken);
   const certFile = inDataDir(dataDir, HOME_PATHS.serverCert);
   const files = { tokenFile, certFile };
-  const fromEnv = env.AGENTBOX_TOKEN?.trim();
-  if (fromEnv) return { baseUrl, token: fromEnv, tokenSource: "AGENTBOX_TOKEN", ...files };
+  const fromEnv = env.AIO_TOKEN?.trim();
+  if (fromEnv) return { baseUrl, token: fromEnv, tokenSource: "AIO_TOKEN", ...files };
   const fromFile = readText(tokenFile)?.trim();
   if (fromFile) return { baseUrl, token: fromFile, tokenSource: "file", ...files };
   return { baseUrl, token: null, tokenSource: "none", ...files };
@@ -108,7 +103,7 @@ export function resolveSettings(options: {
 
 /**
  * True when the CLI pins the server's certificate for `baseUrl`: an `https`
- * server on this machine must be this machine's Agent Box server. For a
+ * server on this machine must be this machine's AI Orchestrator server. For a
  * server elsewhere, the system's trusted authorities apply.
  */
 export function pinsServer(baseUrl: string): boolean {
@@ -211,7 +206,7 @@ export function checkServerUrl(baseUrl: string, insecure: boolean, hasToken = tr
   try {
     url = new URL(baseUrl);
   } catch {
-    return "The server URL isn't a valid URL. Check --server and AGENTBOX_SERVER.";
+    return "The server URL isn't a valid URL. Check --server and AIO_SERVER.";
   }
   if (url.protocol === "https:") return null;
   if (url.protocol !== "http:") {
@@ -235,8 +230,8 @@ export function checkServerUrl(baseUrl: string, insecure: boolean, hasToken = tr
 export const ATTACH_SCRIPT =
   'for i in $(seq 1 300); do tmux has-session -t "=$1" 2>/dev/null && break; sleep 0.1; done; exec tmux attach -t "=$1"';
 
-/** A box container name: docker's name rules, under the `claude-agent-` prefix. */
-const CONTAINER_NAME = /^claude-agent-[a-zA-Z0-9][a-zA-Z0-9_.-]*$/;
+/** A box container name: docker's name rules, under the `aio-agent-` prefix. */
+const CONTAINER_NAME = /^aio-agent-[a-zA-Z0-9][a-zA-Z0-9_.-]*$/;
 /** A tmux session name the attach script receives as `$1`. */
 const SESSION_NAME = /^[a-zA-Z0-9_][a-zA-Z0-9_.-]*$/;
 

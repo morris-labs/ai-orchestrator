@@ -4,20 +4,20 @@ import path from "node:path";
 import { execStartLine, main, parseServerArgs, serverHome } from "../src/main.js";
 
 describe("main", () => {
-  it("uses AGENTBOX_HOME when set, else the home directory", () => {
-    expect(serverHome({ AGENTBOX_HOME: "/tmp/agentbox-test/../scratch" })).toBe("/tmp/scratch");
+  it("uses AIO_HOME when set, else the home directory", () => {
+    expect(serverHome({ AIO_HOME: "/tmp/aio-test/../scratch" })).toBe("/tmp/scratch");
     expect(serverHome({})).toBe(os.homedir());
-    expect(serverHome({ AGENTBOX_HOME: "" })).toBe(os.homedir());
+    expect(serverHome({ AIO_HOME: "" })).toBe(os.homedir());
   });
 
   it("refuses an unknown command", async () => {
     expect(await main(["bogus"])).toBe(2);
   });
 
-  it("reads --data-dir in both forms, ahead of AGENTBOX_DATA_DIR", () => {
+  it("reads --data-dir in both forms, ahead of AIO_DATA_DIR", () => {
     expect(parseServerArgs([], {})).toEqual({ command: undefined, dataDir: undefined });
-    expect(parseServerArgs([], { AGENTBOX_DATA_DIR: "/srv/a" }).dataDir).toBe("/srv/a");
-    expect(parseServerArgs(["--data-dir", "/srv/b"], { AGENTBOX_DATA_DIR: "/srv/a" })).toEqual({
+    expect(parseServerArgs([], { AIO_DATA_DIR: "/srv/a" }).dataDir).toBe("/srv/a");
+    expect(parseServerArgs(["--data-dir", "/srv/b"], { AIO_DATA_DIR: "/srv/a" })).toEqual({
       command: undefined,
       dataDir: "/srv/b",
     });

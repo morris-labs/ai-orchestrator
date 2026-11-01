@@ -1,4 +1,4 @@
-import { EVENT_TYPES } from "@agentbox/contracts";
+import { EVENT_TYPES } from "@aio/contracts";
 import { describe, expect, it } from "vitest";
 import { buildDemoEvents } from "../../src/testing/demoRun";
 

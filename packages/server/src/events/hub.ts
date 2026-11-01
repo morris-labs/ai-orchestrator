@@ -15,14 +15,14 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
   EventSchema,
-  type AgentBoxEvent,
+  type AioEvent,
   type ClientHello,
   type EventType,
   type StreamHello,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 import type { EventInput, EventSink, SqlDatabase } from "../api/core-interface.js";
 
-export type EventListener = (event: AgentBoxEvent) => void;
+export type EventListener = (event: AioEvent) => void;
 
 export interface EventHubOptions {
   /** The SQLite mirror; without it the stream lives in memory only. */
@@ -33,13 +33,13 @@ export interface EventHubOptions {
   keep?: number;
   now?: () => Date;
   /** Receives a listener's exception; the hub carries on. */
-  onListenerError?: (err: unknown, event: AgentBoxEvent) => void;
+  onListenerError?: (err: unknown, event: AioEvent) => void;
 }
 
 /** What a client receives first: the hello frame and the events to replay. */
 export interface ReplayPlan {
   hello: StreamHello;
-  events: AgentBoxEvent[];
+  events: AioEvent[];
 }
 
 /** The event types a client reads, or `null` for all of them. */
@@ -59,13 +59,13 @@ export class EventHub implements EventSink {
   private seq: number;
   /** How many events of each type the stream holds, from its first event. */
   private readonly typeCounts = new Map<string, number>();
-  private readonly buffer: AgentBoxEvent[] = [];
+  private readonly buffer: AioEvent[] = [];
   private readonly listeners = new Set<EventListener>();
   private readonly bufferSize: number;
   private readonly keep: number;
   private insertsSincePrune = 0;
   /** Events numbered while listeners were running, waiting their turn. */
-  private readonly undelivered: AgentBoxEvent[] = [];
+  private readonly undelivered: AioEvent[] = [];
   private delivering = false;
 
   constructor(private readonly options: EventHubOptions = {}) {
@@ -151,7 +151,7 @@ export class EventHub implements EventSink {
   }
 
   /** Emits an event the server produces itself. */
-  emit(input: EventInput): AgentBoxEvent {
+  emit(input: EventInput): AioEvent {
     const seq = this.seq + 1;
     const event = {
       ...input,
@@ -169,7 +169,7 @@ export class EventHub implements EventSink {
    * Relays an engine event: keeps its id, time, and source, re-numbers `seq`,
    * and keeps the engine's number in `sourceSeq`.
    */
-  relay(event: AgentBoxEvent): AgentBoxEvent {
+  relay(event: AioEvent): AioEvent {
     return this.publish({
       ...event,
       streamId: this.streamId,
@@ -178,7 +178,7 @@ export class EventHub implements EventSink {
     });
   }
 
-  private publish(candidate: unknown): AgentBoxEvent {
+  private publish(candidate: unknown): AioEvent {
     const event = EventSchema.parse(candidate);
     this.seq = event.seq;
     this.typeCounts.set(event.type, (this.typeCounts.get(event.type) ?? 0) + 1);
@@ -198,7 +198,7 @@ export class EventHub implements EventSink {
    * event emitted during delivery waits until every listener has the one
    * before it.
    */
-  private deliver(event: AgentBoxEvent): void {
+  private deliver(event: AioEvent): void {
     this.undelivered.push(event);
     if (this.delivering) return;
     this.delivering = true;
@@ -217,7 +217,7 @@ export class EventHub implements EventSink {
     }
   }
 
-  private persist(event: AgentBoxEvent): void {
+  private persist(event: AioEvent): void {
     const db = this.options.db;
     if (!db) return;
     db.prepare("INSERT INTO svc_events (seq, type, json) VALUES (?, ?, ?)").run(
@@ -286,9 +286,9 @@ export class EventHub implements EventSink {
    * run of the newest events, so the newest `count` matches in either one
    * are the newest in the stream.
    */
-  private lastMatching(filter: ReadonlySet<EventType>, count: number): AgentBoxEvent[] | null {
+  private lastMatching(filter: ReadonlySet<EventType>, count: number): AioEvent[] | null {
     if (count === 0) return [];
-    const found: AgentBoxEvent[] = [];
+    const found: AioEvent[] = [];
     for (let i = this.buffer.length - 1; i >= 0 && found.length < count; i -= 1) {
       const event = this.buffer[i]!;
       if (filter.has(event.type)) found.push(event);
@@ -308,7 +308,7 @@ export class EventHub implements EventSink {
   }
 
   /** Every kept event after `seq`, or `null` when some of them are gone. */
-  private eventsAfter(seq: number): AgentBoxEvent[] | null {
+  private eventsAfter(seq: number): AioEvent[] | null {
     const first = this.buffer[0];
     if (first && first.seq <= seq + 1) return this.buffer.filter((e) => e.seq > seq);
     const db = this.options.db;

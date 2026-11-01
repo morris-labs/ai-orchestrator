@@ -1,12 +1,12 @@
 // The secrets broker's protocol: HTTP/1.1 with JSON bodies over a Unix
 // socket that the server opens for each project container and mounts into
-// it. The engine and the `agentbox-secret` client in the image speak it.
+// it. The engine and the `aio-secret` client in the image speak it.
 // See `docs/secrets.md`.
 import { z } from "zod";
 import { ApiErrorCodeSchema, EnvVarNameSchema } from "./common.js";
 
 /** Where the server mounts a container's broker directory, read-only. */
-export const BROKER_MOUNT = "/run/agentbox-broker";
+export const BROKER_MOUNT = "/run/aio-broker";
 
 /** The socket's file name in the broker directory. */
 export const BROKER_SOCKET_NAME = "broker.sock";
@@ -17,13 +17,13 @@ export const BROKER_SOCKET_PATH = `${BROKER_MOUNT}/${BROKER_SOCKET_NAME}`;
 /** Environment variables that tell a client where the broker is. */
 export const BROKER_ENV = {
   /** The socket path; the client falls back to `BROKER_SOCKET_PATH`. */
-  socket: "AGENTBOX_BROKER_SOCKET",
+  socket: "AIO_BROKER_SOCKET",
   /**
    * A TCP broker URL for Docker Desktop, where a host socket can't be
    * mounted. Reserved: the server never sets it, and the client refuses it
    * until the TCP transport exists.
    */
-  url: "AGENTBOX_BROKER_URL",
+  url: "AIO_BROKER_URL",
 } as const;
 
 /** The broker's routes. */

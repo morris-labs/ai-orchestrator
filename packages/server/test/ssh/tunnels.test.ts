@@ -1,4 +1,4 @@
-import type { SshRemote } from "@agentbox/contracts";
+import type { SshRemote } from "@aio/contracts";
 import { afterEach, describe, expect, it } from "vitest";
 import { JobManager } from "../../src/jobs/jobs.js";
 import {
@@ -55,7 +55,7 @@ describe("ssh arguments", () => {
     ).toMatchObject({ ok: false });
     expect(runner.runs).toHaveLength(0);
     const manager = new SshTunnelManager({ runner, remotes: async () => [evil] });
-    await manager.sync([{ id: "claude-agent-x", sshRemoteRefs: ["evil"] }]);
+    await manager.sync([{ id: "aio-agent-x", sshRemoteRefs: ["evil"] }]);
     expect(runner.spawned).toHaveLength(0);
     expect(manager.status("evil")).toEqual({ tunnelUp: false, tunnelError: expect.any(String) });
   });
@@ -180,28 +180,28 @@ describe("SshTunnelManager", () => {
   it("ref-counts tunnels over running boxes", async () => {
     const { runner } = setup([remote, plain]);
     await manager.sync([
-      { id: "claude-agent-a", sshRemoteRefs: ["dev"] },
-      { id: "claude-agent-b", sshRemoteRefs: ["dev", "unknown"] },
+      { id: "aio-agent-a", sshRemoteRefs: ["dev"] },
+      { id: "aio-agent-b", sshRemoteRefs: ["dev", "unknown"] },
     ]);
     expect(runner.spawned).toHaveLength(1);
     expect(runner.spawned[0]?.argv[0]).toBe("ssh");
     expect(manager.status("dev")).toEqual({ tunnelUp: true, tunnelError: null });
     expect(manager.status("plain")).toEqual({ tunnelUp: false, tunnelError: null });
 
-    await manager.sync([{ id: "claude-agent-b", sshRemoteRefs: ["dev"] }]);
+    await manager.sync([{ id: "aio-agent-b", sshRemoteRefs: ["dev"] }]);
     expect(runner.spawned).toHaveLength(1);
 
     await manager.sync([]);
     expect(runner.spawned[0]?.killed).toBe(true);
     expect(manager.status("dev").tunnelUp).toBe(false);
 
-    await manager.sync([{ id: "claude-agent-a", sshRemoteRefs: ["dev"] }]);
+    await manager.sync([{ id: "aio-agent-a", sshRemoteRefs: ["dev"] }]);
     expect(runner.spawned).toHaveLength(2);
   });
 
   it("restarts a tunnel whose remote changed", async () => {
     const { runner, list } = setup([remote]);
-    const boxes = [{ id: "claude-agent-a", sshRemoteRefs: ["dev"] }];
+    const boxes = [{ id: "aio-agent-a", sshRemoteRefs: ["dev"] }];
     await manager.sync(boxes);
     await manager.sync(boxes);
     expect(runner.spawned).toHaveLength(1);
@@ -214,7 +214,7 @@ describe("SshTunnelManager", () => {
 
   it("reconnects with backoff and keeps the error", async () => {
     const { runner } = setup([remote]);
-    await manager.sync([{ id: "claude-agent-a", sshRemoteRefs: ["dev"] }]);
+    await manager.sync([{ id: "aio-agent-a", sshRemoteRefs: ["dev"] }]);
     runner.spawned[0]!.emit("bind: Address already in use\n");
     runner.spawned[0]!.exit(255);
     expect(manager.status("dev")).toEqual({
@@ -230,7 +230,7 @@ describe("SshTunnelManager", () => {
 
   it("does not reconnect a stopped tunnel, and reconnect restarts a wanted one", async () => {
     const { runner } = setup([remote]);
-    await manager.sync([{ id: "claude-agent-a", sshRemoteRefs: ["dev"] }]);
+    await manager.sync([{ id: "aio-agent-a", sshRemoteRefs: ["dev"] }]);
     await manager.reconnect("dev");
     expect(runner.spawned).toHaveLength(2);
     expect(runner.spawned[0]?.killed).toBe(true);

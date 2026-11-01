@@ -98,13 +98,13 @@ describe("resolveRange", () => {
 
   it("doesn't count the engine's own files as a dirty tree without the exclude", async () => {
     const { mkdirSync } = await import("node:fs");
-    const fresh = tempDir("agentbox-fresh-");
+    const fresh = tempDir("aio-fresh-");
     git(fresh, "init", "-q", "-b", "main");
     writeFileSync(join(fresh, "app.py"), "x = 1\n");
     git(fresh, "add", ".");
     git(fresh, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-q", "-m", "a");
-    mkdirSync(join(fresh, ".claude-box", "runs", "RUN"), { recursive: true });
-    writeFileSync(join(fresh, ".claude-box", "runs", "RUN", "state.json"), "{}");
+    mkdirSync(join(fresh, ".aio", "runs", "RUN"), { recursive: true });
+    writeFileSync(join(fresh, ".aio", "runs", "RUN", "state.json"), "{}");
     const plain = input(fresh, { base: "main" });
     await expect(resolveRange(runner, plain)).resolves.toMatchObject({ dirty: false });
     // Any other change still counts.

@@ -1,6 +1,6 @@
 // Renders a tree against a fake server, with every provider the app uses.
-import { ApiClient } from "@agentbox/ui";
-import type { FakeServer } from "@agentbox/ui/testing";
+import { ApiClient } from "@aio/ui";
+import type { FakeServer } from "@aio/ui/testing";
 import { render } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { Root } from "../src/app/Root";

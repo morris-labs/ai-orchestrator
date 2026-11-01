@@ -7,22 +7,22 @@ import {
   EVENT_TYPES,
   EventSchema,
   defaultConfig,
-  type AgentBoxEvent,
+  type AioEvent,
   type Finding,
   type RoundSummary,
   type RunState,
   type Stage,
   type Vendor,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 
 /** The run the demo stream reviews. */
 export const DEMO_RUN_ID = "01JB8Z5K3W6Q2V9X4T7R0M1N2P";
 /** The project the demo stream belongs to. */
 export const DEMO_PROJECT = "example-app-1a2b3c4d";
 /** The project container that runs the demo's engine. */
-export const DEMO_CONTAINER = "claude-agent-proj-example-app-1a2b3c4d";
+export const DEMO_CONTAINER = "aio-agent-proj-example-app-1a2b3c4d";
 /** The box the demo run reviews. */
-export const DEMO_BOX = "claude-agent-emails_not_sending";
+export const DEMO_BOX = "aio-agent-emails_not_sending";
 /** The stream id of every demo event. */
 export const DEMO_STREAM = "server-demo-1";
 
@@ -35,15 +35,15 @@ const ENGINE = `engine:${CONTAINER}`;
 const T0 = Date.parse("2026-10-28T09:00:00.000Z");
 
 type Draft = {
-  [K in AgentBoxEvent["type"]]: Omit<
-    Extract<AgentBoxEvent, { type: K }>,
+  [K in AioEvent["type"]]: Omit<
+    Extract<AioEvent, { type: K }>,
     "id" | "time" | "source" | "streamId" | "seq" | "sourceSeq"
   > & { source?: string };
-}[AgentBoxEvent["type"]];
+}[AioEvent["type"]];
 
 /** Builds the demo stream: every event type, numbered from 1 in one stream. */
-export function buildDemoEvents(): AgentBoxEvent[] {
-  const events: AgentBoxEvent[] = [];
+export function buildDemoEvents(): AioEvent[] {
+  const events: AioEvent[] = [];
   let clock = 0;
 
   function at(seconds: number) {
@@ -270,7 +270,7 @@ export function buildDemoEvents(): AgentBoxEvent[] {
       container: CONTAINER,
       projectId: PROJECT,
       state: "running",
-      engine: { hostPort: 20412, version: "4.0.0-dev", healthy: true, versionMatches: true },
+      engine: { hostPort: 20412, version: "1.0.0-dev", healthy: true, versionMatches: true },
     },
     "server",
   );

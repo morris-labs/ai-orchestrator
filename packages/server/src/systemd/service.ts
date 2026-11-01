@@ -1,10 +1,10 @@
-// The systemd user service that runs `agentbox-server`.
+// The systemd user service that runs `aio-server`.
 import { access, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ApiError } from "../api/errors.js";
 import type { ProcessRunner } from "../jobs/process.js";
 
-export const SERVICE_NAME = "agentbox-server.service";
+export const SERVICE_NAME = "aio-server.service";
 
 /** The unit file path under a home directory. */
 export function unitPath(home: string): string {
@@ -22,7 +22,7 @@ export function unitPath(home: string): string {
 export function unitFile(opts: { execStart: string; description?: string }): string {
   return [
     "[Unit]",
-    `Description=${opts.description ?? "Agent Box server"}`,
+    `Description=${opts.description ?? "AI Orchestrator server"}`,
     "After=default.target",
     "StartLimitIntervalSec=0",
     "",

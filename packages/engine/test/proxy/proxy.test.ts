@@ -82,16 +82,16 @@ describe("proxy", () => {
 
   it("accepts the engine-token header and passes the browser's Authorization through", async () => {
     const res = await fetch(`${engine.base}/proxy/${upstreamPort}/app`, {
-      headers: { "x-agentbox-engine-token": TOKEN, authorization: "Basic YXBwOmFwcA==" },
+      headers: { "x-aio-engine-token": TOKEN, authorization: "Basic YXBwOmFwcA==" },
     });
     expect(res.status).toBe(201);
     expect(seen[0]?.headers.authorization).toBe("Basic YXBwOmFwcA==");
-    expect(seen[0]?.headers["x-agentbox-engine-token"]).toBeUndefined();
+    expect(seen[0]?.headers["x-aio-engine-token"]).toBeUndefined();
   });
 
   it("refuses a wrong engine-token header", async () => {
     const res = await fetch(`${engine.base}/proxy/${upstreamPort}/`, {
-      headers: { "x-agentbox-engine-token": "wrong-token-0123456789" },
+      headers: { "x-aio-engine-token": "wrong-token-0123456789" },
     });
     expect(res.status).toBe(401);
     expect(seen).toHaveLength(0);
@@ -107,7 +107,7 @@ describe("proxy", () => {
 
   it("strips the engine-token header from a WebSocket upgrade", async () => {
     const socket = new WebSocket(`${engine.ws}/proxy/${upstreamPort}/`, {
-      headers: { "x-agentbox-engine-token": TOKEN, authorization: "Basic YXBwOmFwcA==" },
+      headers: { "x-aio-engine-token": TOKEN, authorization: "Basic YXBwOmFwcA==" },
     });
     await new Promise<void>((resolve, reject) => {
       socket.once("message", () => resolve());
@@ -115,7 +115,7 @@ describe("proxy", () => {
     });
     socket.close();
     const headers = wsHeaders.at(-1);
-    expect(headers?.["x-agentbox-engine-token"]).toBeUndefined();
+    expect(headers?.["x-aio-engine-token"]).toBeUndefined();
     expect(headers?.authorization).toBe("Basic YXBwOmFwcA==");
   });
 
@@ -153,7 +153,7 @@ describe("proxy", () => {
 
   it("forwards a WebSocket with the engine-token header and its query unchanged", async () => {
     const socket = new WebSocket(`${engine.ws}/proxy/${upstreamPort}/live?room=7`, {
-      headers: { "x-agentbox-engine-token": TOKEN },
+      headers: { "x-aio-engine-token": TOKEN },
     });
     const messages: string[] = [];
     await new Promise<void>((resolve, reject) => {

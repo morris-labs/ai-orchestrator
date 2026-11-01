@@ -41,7 +41,7 @@ function repo(): string {
 describe("snapshotTree", () => {
   it("sees edits, new files, and commits, but not ignored or excluded paths", async () => {
     const dir = repo();
-    const runs = join(dir, ".claude-box", "runs", "r1");
+    const runs = join(dir, ".aio", "runs", "r1");
     const before = await snapshotTree(runner, dir, [runs]);
     mkdirSync(join(dir, "__pycache__"));
     writeFileSync(join(dir, "__pycache__", "a.pyc"), "x");

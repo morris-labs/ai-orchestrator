@@ -15,10 +15,10 @@ describe("secondInstanceCommand", () => {
   it("drops NODE_OPTIONS and unset variables, and keeps the rest", () => {
     const { env } = secondInstanceCommand(
       ["/app"],
-      { NODE_OPTIONS: "--import loader.mjs", AGENTBOX_DATA_DIR: "/d", UNSET: undefined },
+      { NODE_OPTIONS: "--import loader.mjs", AIO_DATA_DIR: "/d", UNSET: undefined },
       "linux",
     );
-    expect(env).toEqual({ AGENTBOX_DATA_DIR: "/d" });
+    expect(env).toEqual({ AIO_DATA_DIR: "/d" });
   });
 });
 

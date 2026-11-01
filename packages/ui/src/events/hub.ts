@@ -1,8 +1,8 @@
 // A fan-out of server events to subscribers, plus the stream status.
-import type { AgentBoxEvent, EventOf, EventType } from "@agentbox/contracts";
+import type { AioEvent, EventOf, EventType } from "@aio/contracts";
 import type { StreamStatus } from "./connection";
 
-type Handler = (event: AgentBoxEvent) => void;
+type Handler = (event: AioEvent) => void;
 
 /** Distributes events by type and tracks the stream status and resyncs. */
 export class EventHub {
@@ -30,7 +30,7 @@ export class EventHub {
    * handler that throws is reported and skipped, so it can't keep the event
    * from the handlers after it.
    */
-  emit(event: AgentBoxEvent): void {
+  emit(event: AioEvent): void {
     for (const h of [...(this.handlers.get(event.type) ?? []), ...(this.handlers.get("*") ?? [])]) {
       try {
         h(event);

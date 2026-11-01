@@ -17,7 +17,7 @@ import type {
   AccountSeedRequest,
   AccountUpdate,
   AccountView,
-  AgentBoxEvent,
+  AioEvent,
   Box,
   BoxCreate,
   BoxView,
@@ -48,7 +48,7 @@ import type {
   ProjectUpdateSchema,
   PurgeResultSchema,
   BoxUpdateResultSchema,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 import type Docker from "dockerode";
 import type { z } from "zod";
 
@@ -75,12 +75,12 @@ export type EventBaseKey = "id" | "time" | "source" | "streamId" | "seq" | "sour
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 
 /** An event as a producer emits it, before the hub numbers it. */
-export type EventInput = DistributiveOmit<AgentBoxEvent, EventBaseKey>;
+export type EventInput = DistributiveOmit<AioEvent, EventBaseKey>;
 
 /** Where the core sends the events it emits (`box.changed`, `container.*`, `settings.changed`). */
 export interface EventSink {
   /** Numbers, stores, and broadcasts the event, and returns it as sent. */
-  emit(event: EventInput): AgentBoxEvent;
+  emit(event: EventInput): AioEvent;
 }
 
 // ---------------------------------------------------------------------------
@@ -187,7 +187,7 @@ export interface CoreModels {
 }
 
 /**
- * The global settings in `~/.claude-box/config.json`. Every write emits
+ * The global settings in `~/.ai-orchestrator/config.json`. Every write emits
  * `settings.changed`.
  */
 export interface CoreSettings {
@@ -246,7 +246,7 @@ export interface EngineEndpoint {
   projectId: string;
   /** The host loopback port Docker maps to the engine's 20411; `null` while unknown. */
   hostPort: number | null;
-  /** The `AGENTBOX_ENGINE_TOKEN` the server gave the container. Never logged. */
+  /** The `AIO_ENGINE_TOKEN` the server gave the container. Never logged. */
   token: string;
 }
 
@@ -302,7 +302,7 @@ export interface CoreServices {
 export interface CoreFactoryOptions {
   /** The host user's home directory; every `~` path resolves against it. */
   home: string;
-  /** The data directory in place of `~/.claude-box`; see `HostEnv.dataDir`. */
+  /** The data directory in place of `~/.ai-orchestrator`; see `HostEnv.dataDir`. */
   dataDir?: string;
   services: CoreServices;
   /** The engine version this server expects in the image and in each container. */

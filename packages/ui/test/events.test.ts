@@ -28,7 +28,7 @@ function setup() {
 }
 
 const boxEvent = () =>
-  makeEvent("box.changed", { boxId: "claude-agent-x", status: "running", box: null });
+  makeEvent("box.changed", { boxId: "aio-agent-x", status: "running", box: null });
 
 describe("EventsConnection", () => {
   it("asks a client factory again on every reconnect, so a token written later is used", async () => {

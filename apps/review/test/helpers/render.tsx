@@ -1,10 +1,10 @@
 // Renders a screen with an app store over the shared fake server from
-// `@agentbox/ui/testing`. Handlers given here replace the fake's defaults
+// `@aio/ui/testing`. Handlers given here replace the fake's defaults
 // for their routes; the fake checks every request and answer against the
 // contracts.
 import { render } from "@testing-library/react";
-import { ApiClient, type HttpRouteKey } from "@agentbox/ui/core";
-import { FakeServer, type FakeHandler, type FakeRequest } from "@agentbox/ui/testing";
+import { ApiClient, type HttpRouteKey } from "@aio/ui/core";
+import { FakeServer, type FakeHandler, type FakeRequest } from "@aio/ui/testing";
 import type { ReactElement } from "react";
 import { AppStore, StoreProvider } from "../../src/state/store.js";
 

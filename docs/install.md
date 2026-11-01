@@ -1,10 +1,10 @@
-# Install Agent Box
+# Install AI Orchestrator
 
-This page describes how to install Agent Box 4 on Ubuntu from the `.deb`
+This page describes how to install AI Orchestrator on Ubuntu from the `.deb`
 package, start its server, and build the container image. To build the
 package yourself, see [Build from source](#build-from-source).
 
-Agent Box 4 supports Linux on x86-64. macOS and Windows packages are
+AI Orchestrator supports Linux on x86-64. macOS and Windows packages are
 deferred.
 
 ## Before you begin
@@ -34,39 +34,39 @@ sudo usermod -aG docker "$USER"
 
 ## Install the package
 
-1. Download `agentbox_VERSION_amd64.deb` from the
-   [releases page](https://github.com/morris-labs/Claude-Box/releases).
-   Replace `VERSION` with the release you want, for example `4.0.0`.
+1. Download `ai-orchestrator_VERSION_amd64.deb` from the
+   [releases page](https://github.com/morris-labs/ai-orchestrator/releases).
+   Replace `VERSION` with the release you want, for example `1.0.0`.
 
 1. Install the package with `apt`, which also installs the dependencies:
 
    ```sh
-   sudo apt install ./agentbox_VERSION_amd64.deb
+   sudo apt install ./ai-orchestrator_VERSION_amd64.deb
    ```
 
 The package installs the following:
 
 | Path | Contents |
 |---|---|
-| `/usr/bin/agentbox` | The command-line client |
-| `/usr/bin/agentbox-server` | The host server |
-| `/usr/bin/agentbox-boxes`, `/usr/bin/agentbox-review` | The two desktop apps |
-| `/usr/lib/agentbox/` | The server, the CLI, and both apps |
-| `/usr/lib/systemd/user/agentbox-server.service` | The systemd user unit |
-| `/usr/share/agentbox/image/` | The Dockerfile, the keeper scripts, and the engine tarball |
-| `/usr/share/applications/` | The **Agent Box** and **Agent Box Review** desktop entries |
+| `/usr/bin/aio` | The command-line client |
+| `/usr/bin/aio-server` | The host server |
+| `/usr/bin/aio-boxes`, `/usr/bin/aio-review` | The two desktop apps |
+| `/usr/lib/ai-orchestrator/` | The server, the CLI, and both apps |
+| `/usr/lib/systemd/user/aio-server.service` | The systemd user unit |
+| `/usr/share/ai-orchestrator/image/` | The Dockerfile, the keeper scripts, and the engine tarball |
+| `/usr/share/applications/` | The **AI Orchestrator** and **AI Orchestrator Review** desktop entries |
 
 ## Start the server
 
 The server runs as your user, under your systemd user manager. It never
-runs as root: it reads and writes your `~/.claude-box` directory and talks to
+runs as root: it reads and writes your `~/.ai-orchestrator` directory and talks to
 Docker with your permissions. The package doesn't start it for you, because
 a package installs for every user and the server belongs to one.
 
 1. As the user who runs your boxes, enable and start the service:
 
    ```sh
-   systemctl --user enable --now agentbox-server
+   systemctl --user enable --now aio-server
    ```
 
 1. Optional: To keep the server running while you're logged out, turn on
@@ -79,11 +79,11 @@ a package installs for every user and the server belongs to one.
 1. Check that the server is healthy:
 
    ```sh
-   agentbox doctor
+   aio doctor
    ```
 
 The server serves its API over HTTPS on `127.0.0.1:21400` only. On its first
-start it writes the following files to `~/.claude-box`, which it keeps at
+start it writes the following files to `~/.ai-orchestrator`, which it keeps at
 mode `0700`:
 
 - `server.token`, the bearer token, with mode `0600`.
@@ -98,15 +98,15 @@ certificate: before they send the token, the server must prove that it holds
 `server.key`. A program that takes the port while the server is down gets
 nothing. Anything else that calls the API must send the token, and must
 trust `server.crt` rather than skip the certificate check. With `curl`, for
-example, pass `--cacert ~/.claude-box/server.crt`.
+example, pass `--cacert ~/.ai-orchestrator/server.crt`.
 
 The dev-server proxy has its own plain HTTP listener on the port after the
 server's, `127.0.0.1:21401`, because a certificate can't name every
 `PORT.BOX.localhost` host. The proxy carries no token.
 
-The server keeps all its data in `~/.claude-box` unless you start it with
-`--data-dir PATH` or set `AGENTBOX_DATA_DIR`. When you move it, set
-`AGENTBOX_DATA_DIR` for the CLI and the apps as well, so they find the token
+The server keeps all its data in `~/.ai-orchestrator` unless you start it with
+`--data-dir PATH` or set `AIO_DATA_DIR`. When you move it, set
+`AIO_DATA_DIR` for the CLI and the apps as well, so they find the token
 and the certificate. For details, see the server's `packages/server/README.md`
 file.
 
@@ -121,8 +121,8 @@ before you open them:
   add the certificate to your NSS database as a trusted server certificate:
 
   ```sh
-  certutil -d sql:"$HOME/.pki/nssdb" -A -t "P,," -n "Agent Box server" \
-    -i ~/.claude-box/server.crt
+  certutil -d sql:"$HOME/.pki/nssdb" -A -t "P,," -n "AI Orchestrator server" \
+    -i ~/.ai-orchestrator/server.crt
   ```
 
   Restart the browser.
@@ -132,25 +132,25 @@ before you open them:
   following command before you click **Accept the Risk and Continue**:
 
   ```sh
-  openssl x509 -in ~/.claude-box/server.crt -noout -fingerprint -sha256
+  openssl x509 -in ~/.ai-orchestrator/server.crt -noout -fingerprint -sha256
   ```
 
 To sign the page in, open it once with the token in the address's fragment,
 `https://127.0.0.1:21400/boxes/#token=TOKEN`, where `TOKEN` is the content of
-`~/.claude-box/server.token`. The page trades the token for a session
+`~/.ai-orchestrator/server.token`. The page trades the token for a session
 cookie and removes it from the address bar.
 
 When the server replaces its certificate, trust the new one the same way.
 In Chrome, first remove the old entry with
-`certutil -d sql:"$HOME/.pki/nssdb" -D -n "Agent Box server"`.
+`certutil -d sql:"$HOME/.pki/nssdb" -D -n "AI Orchestrator server"`.
 
 ## Build the container image
 
-Every project runs in one container from the `claude-code` image. The image
+Every project runs in one container from the `aio-agent` image. The image
 carries the toolchain, the Claude Code, Codex, and GitHub Copilot CLIs at the
-versions pinned in `image/versions.env`, and the Agent Box engine.
+versions pinned in `image/versions.env`, and the AI Orchestrator engine.
 
-To build the image, open **Agent Box** from your applications menu. The setup
+To build the image, open **AI Orchestrator** from your applications menu. The setup
 wizard checks Docker, the image, the engine version, SSH, 1Password, `sudo`
 in containers, and the server, and offers **Build image** when the image is
 missing.
@@ -163,7 +163,7 @@ To build the image from a terminal instead, run the script that ships with
 the package:
 
 ```sh
-/usr/share/agentbox/scripts/build-image.sh
+/usr/share/ai-orchestrator/scripts/build-image.sh
 ```
 
 The script builds the image with your user name, so file ownership in the
@@ -174,7 +174,7 @@ from, set the `IMAGE_TAG` environment variable. The `--tag` option overrides
 it.
 
 ```sh
-IMAGE_TAG=claude-code:v4test /usr/share/agentbox/scripts/build-image.sh
+IMAGE_TAG=aio-agent:v4test /usr/share/ai-orchestrator/scripts/build-image.sh
 ```
 
 The server refuses to start a container whose engine version differs from
@@ -182,7 +182,7 @@ its own, and offers a rebuild. After you upgrade the package, rebuild the
 image.
 
 The engine version includes a content hash of the built engine, as in
-`4.0.0-dev+0123456789ab`. A rebuild after any engine change therefore changes
+`1.0.0-dev+0123456789ab`. A rebuild after any engine change therefore changes
 the version, and an image built from older engine code reads as stale although
 the package version stays the same.
 
@@ -194,7 +194,7 @@ in the installed package, the build still uses the new versions and the script
 tells you it couldn't save them.
 
 ```sh
-/usr/share/agentbox/scripts/build-image.sh --update-cli
+/usr/share/ai-orchestrator/scripts/build-image.sh --update-cli
 ```
 
 ## Sign in to the other CLIs
@@ -206,12 +206,12 @@ the review pipeline uses only the vendors that are signed in.
 
 ## Upgrade
 
-1. Install the new package with `sudo apt install ./agentbox_VERSION_amd64.deb`.
+1. Install the new package with `sudo apt install ./ai-orchestrator_VERSION_amd64.deb`.
 1. As each user who runs the server, reload the unit and restart the
    server, which still runs the old version until you do:
 
    ```sh
-   systemctl --user daemon-reload && systemctl --user restart agentbox-server
+   systemctl --user daemon-reload && systemctl --user restart aio-server
    ```
 
 1. Rebuild the image from the setup wizard or with `build-image.sh`.
@@ -221,17 +221,17 @@ the review pipeline uses only the vendors that are signed in.
 1. Stop and disable the service:
 
    ```sh
-   systemctl --user disable --now agentbox-server
+   systemctl --user disable --now aio-server
    ```
 
 1. Remove the package:
 
    ```sh
-   sudo apt remove agentbox
+   sudo apt remove ai-orchestrator
    ```
 
-Your data in `~/.claude-box`, your transcripts in `~/.claude`, and the
-`claude-code` image stay in place.
+Your data in `~/.ai-orchestrator`, your transcripts in `~/.claude`, and the
+`aio-agent` image stay in place.
 
 ## Build from source
 
@@ -290,7 +290,7 @@ The first build downloads the Electron binary, so it needs network access.
    ```
 
    The script checks for every tool before it starts and names any that are
-   missing. It writes `dist/agentbox_VERSION_amd64.deb` and packs the engine,
+   missing. It writes `dist/ai-orchestrator_VERSION_amd64.deb` and packs the engine,
    with its dependencies at the versions in `pnpm-lock.yaml`, into
    `image/dist/`.
 
@@ -329,41 +329,41 @@ and other write permission from `dist/`. To only check, add `--check`.
 
 The script does the following:
 
-1. Writes the `~/.config/systemd/user/agentbox-server.service.d/source-checkout.conf`
+1. Writes the `~/.config/systemd/user/aio-server.service.d/source-checkout.conf`
    drop-in, which puts the directory of the `node` on your `PATH` first on
    the service's `PATH`. The setup wizard's image build runs pnpm through
    corepack, and the systemd user manager's `PATH` might not include the
    directory that holds them, such as an nvm install.
-1. Runs `agentbox-server install-service` from `packages/server/dist`. It
-   writes `~/.config/systemd/user/agentbox-server.service`, whose
+1. Runs `aio-server install-service` from `packages/server/dist`. It
+   writes `~/.config/systemd/user/aio-server.service`, whose
    `ExecStart=` line names that `node` and the checkout's
    `packages/server/dist/main.js` file, then reloads systemd and enables and
    starts the service.
 
 To see the drop-in and the command without changing anything, run
 `scripts/install-server-unit.sh --print`. To use a data directory other than
-`~/.claude-box`, pass `--data-dir PATH` or set `AGENTBOX_DATA_DIR`.
+`~/.ai-orchestrator`, pass `--data-dir PATH` or set `AIO_DATA_DIR`.
 
 The script replaces only the unit and its own drop-in. Other files in
-`~/.config/systemd/user/agentbox-server.service.d/` stay in place and apply
+`~/.config/systemd/user/aio-server.service.d/` stay in place and apply
 to the unit, such as one that loads the 1Password service account token
 with `EnvironmentFile=`; see [Secrets](secrets.md). To see the unit
 with every drop-in it loads, run the following command:
 
 ```sh
-systemctl --user cat agentbox-server
+systemctl --user cat aio-server
 ```
 
 The unit runs whatever `packages/server/dist` holds when the service starts:
 
 - After you pull and rebuild, restart the service with
-  `systemctl --user restart agentbox-server`.
+  `systemctl --user restart aio-server`.
 - After you switch Node.js versions, run the script again: the unit names
   the `node` binary by its full path.
 - The unit in `~/.config/systemd/user` takes precedence over the packaged
   unit in `/usr/lib/systemd/user`. To go back to the packaged one, run
-  `systemctl --user disable --now agentbox-server`, remove
-  `agentbox-server.service` and `agentbox-server.service.d/source-checkout.conf`
+  `systemctl --user disable --now aio-server`, remove
+  `aio-server.service` and `aio-server.service.d/source-checkout.conf`
   from `~/.config/systemd/user`, and run `systemctl --user daemon-reload`.
 
 ### Run the Electron apps from the checkout
@@ -385,7 +385,7 @@ Electron binary. It then resolves the real path of each app's Electron binary in
 store, builds a profile for it from the templates in
 `packaging/deb/apparmor/`, and runs `sudo` to write the profile to
 `/etc/apparmor.d/` and load it. Both apps usually share one binary, and
-then they share one profile. Each profile is named `agentbox-dev-HASH`,
+then they share one profile. Each profile is named `aio-dev-HASH`,
 where `HASH` is taken from the binary's path, and carries a comment that
 names the checkout. Checkouts and worktrees that share a pnpm store share
 the binary, so its profile names each of them.
@@ -420,7 +420,7 @@ the Electron package undoes that change, so you have to repeat it.
 The `scripts/` directory holds the following release tools:
 
 - `scripts/set-version.sh VERSION`: sets `VERSION` in every workspace
-  `package.json` file and in the `AGENTBOX_ENGINE_VERSION` pin. CI runs
+  `package.json` file and in the `AIO_ENGINE_VERSION` pin. CI runs
   `scripts/set-version.sh --check` and fails when they disagree.
 - `scripts/bump-versions.sh`: refreshes the Claude Code, Codex, Copilot, and
   nvm pins in `image/versions.env`. With `--base`, it also moves the base

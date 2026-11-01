@@ -1,10 +1,5 @@
 import { openDatabase } from "../../src/db/index.js";
-import {
-  FindingSchema,
-  type AgentBoxEvent,
-  type Finding,
-  type LeaseRequest,
-} from "@agentbox/contracts";
+import { FindingSchema, type AioEvent, type Finding, type LeaseRequest } from "@aio/contracts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { EngineClient, type StreamCursor } from "../../src/events/engine-client.js";
 import { EngineSupervisor, engineEventRefusal, sqliteCursor } from "../../src/events/engines.js";
@@ -14,7 +9,7 @@ import { ENGINE_TOKEN, FakeEngineServer, waitFor } from "./fake-engine.js";
 
 let engine: FakeEngineServer;
 let client: EngineClient | null;
-let received: AgentBoxEvent[];
+let received: AioEvent[];
 let resyncs: number;
 let cursor: StreamCursor;
 
@@ -28,7 +23,7 @@ function build(overrides: Partial<ConstructorParameters<typeof EngineClient>[0]>
       hostPort: engine.port,
       token: ENGINE_TOKEN,
     },
-    expectedVersion: "4.0.0-dev",
+    expectedVersion: "1.0.0-dev",
     cursor,
     onEvent: (e) => received.push(e),
     onLease: async (req) => ({
@@ -65,7 +60,7 @@ describe("EngineClient", () => {
     await c.health();
     expect(c.info).toEqual({
       hostPort: engine.port,
-      version: "4.0.0-dev",
+      version: "1.0.0-dev",
       healthy: true,
       versionMatches: true,
     });
@@ -263,7 +258,7 @@ describe("EngineClient", () => {
 describe("EngineSupervisor", () => {
   it("starts a client per endpoint, relays, decides leases, and drops removed containers", async () => {
     const db = openDatabase(":memory:");
-    const relayed: AgentBoxEvent[] = [];
+    const relayed: AioEvent[] = [];
     const runs: unknown[] = [];
     let endpoints = [
       { container: CONTAINER, projectId: PROJECT_ID, hostPort: engine.port, token: ENGINE_TOKEN },
@@ -271,7 +266,7 @@ describe("EngineSupervisor", () => {
     const sup = new EngineSupervisor({
       engines: { list: async () => endpoints },
       db,
-      expectedVersion: "4.0.0-dev",
+      expectedVersion: "1.0.0-dev",
       relay: (e) => relayed.push(e),
       decideLease: async (engineKey, projectId, req) => ({
         decision: "deny",
@@ -354,7 +349,7 @@ describe("EngineSupervisor", () => {
         ],
       },
       db,
-      expectedVersion: "4.0.0-dev",
+      expectedVersion: "1.0.0-dev",
       relay: () => undefined,
       decideLease: async () => {
         throw new Error("unused");
@@ -385,7 +380,7 @@ describe("engine event admission", () => {
     seq: 1,
     sourceSeq: 1,
   };
-  const ev = (event: Record<string, unknown>) => ({ ...base, ...event }) as AgentBoxEvent;
+  const ev = (event: Record<string, unknown>) => ({ ...base, ...event }) as AioEvent;
   const stage = (runId: string) =>
     ev({ type: "stage.changed", runId, round: 1, stage: "find", previousStage: null });
 
@@ -397,7 +392,7 @@ describe("engine event admission", () => {
       ...runState,
       id: OTHER_RUN,
       projectId: OTHER_PROJECT,
-      container: `claude-agent-proj-${OTHER_PROJECT}`,
+      container: `aio-agent-proj-${OTHER_PROJECT}`,
       boxId: undefined,
     });
     db.prepare(
@@ -419,7 +414,7 @@ describe("engine event admission", () => {
 
   it("accepts the engine's own events", () => {
     const db = seededDb();
-    expect(engineEventRefusal(db, endpoint, runEvent as unknown as AgentBoxEvent)).toBeNull();
+    expect(engineEventRefusal(db, endpoint, runEvent as unknown as AioEvent)).toBeNull();
     expect(engineEventRefusal(db, endpoint, stage(RUN))).toBeNull();
     expect(
       engineEventRefusal(
@@ -450,7 +445,7 @@ describe("engine event admission", () => {
 
   it("refuses events for another container, project, run, or box", () => {
     const db = seededDb();
-    const other = `claude-agent-proj-${OTHER_PROJECT}`;
+    const other = `aio-agent-proj-${OTHER_PROJECT}`;
     expect(
       engineEventRefusal(
         db,
@@ -478,7 +473,7 @@ describe("engine event admission", () => {
 
   it("drops a refused event, logs it, and relays the rest", async () => {
     const db = seededDb();
-    const relayed: AgentBoxEvent[] = [];
+    const relayed: AioEvent[] = [];
     const logs: string[] = [];
     const sup = new EngineSupervisor({
       engines: {
@@ -492,7 +487,7 @@ describe("engine event admission", () => {
         ],
       },
       db,
-      expectedVersion: "4.0.0-dev",
+      expectedVersion: "1.0.0-dev",
       relay: (e) => relayed.push(e),
       decideLease: async () => {
         throw new Error("unused");
@@ -538,7 +533,7 @@ describe("engine event admission", () => {
         ],
       },
       db,
-      expectedVersion: "4.0.0-dev",
+      expectedVersion: "1.0.0-dev",
       relay: () => undefined,
       decideLease: async () => {
         throw new Error("unused");

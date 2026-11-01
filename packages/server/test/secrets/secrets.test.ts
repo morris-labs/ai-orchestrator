@@ -1,9 +1,4 @@
-import {
-  defaultConfig,
-  type GlobalSettings,
-  type OpStatus,
-  type SecretRef,
-} from "@agentbox/contracts";
+import { defaultConfig, type GlobalSettings, type OpStatus, type SecretRef } from "@aio/contracts";
 import { describe, expect, it } from "vitest";
 import { ApiError } from "../../src/api/errors.js";
 import { SHA512_CRYPT_PATTERN, sha512Crypt } from "../../src/secrets/crypt.js";

@@ -1,4 +1,4 @@
-import type { AgentBoxEvent, EventOf, TimedUsageSample } from "@agentbox/contracts";
+import type { AioEvent, EventOf, TimedUsageSample } from "@aio/contracts";
 import {
   addUsageSamples,
   applyEvent,
@@ -114,15 +114,15 @@ describe("applyEvent edge cases", () => {
       projectId: "p",
       state: "removed",
       engine: null,
-    } as AgentBoxEvent);
+    } as AioEvent);
     expect(s.containers[CONTAINER]).toBeUndefined();
     s = applyEvent(s, {
       ...base,
       type: "box.changed",
-      boxId: "claude-agent-emails_not_sending",
+      boxId: "aio-agent-emails_not_sending",
       status: "stopped",
       box: null,
-    } as AgentBoxEvent);
+    } as AioEvent);
     expect(Object.keys(s.boxes)).toEqual([]);
   });
 
@@ -132,7 +132,7 @@ describe("applyEvent edge cases", () => {
       type: "ports.changed",
       container: "c",
       listeners: [],
-    } as AgentBoxEvent);
+    } as AioEvent);
     expect(s.containers).toEqual({});
   });
 
@@ -145,7 +145,7 @@ describe("applyEvent edge cases", () => {
       kind: "session",
       exitCode: 1,
       unexpected: true,
-    } as AgentBoxEvent);
+    } as AioEvent);
     expect(s.unexpectedEnds).toBe(1);
   });
 });
@@ -155,7 +155,7 @@ describe("usage.sample events", () => {
     const event = {
       id: "e-1",
       time: "2026-10-28T10:00:00.000Z",
-      source: "engine:claude-agent-proj-x",
+      source: "engine:aio-agent-proj-x",
       streamId: "s",
       seq: 1,
       sourceSeq: 1,
@@ -168,7 +168,7 @@ describe("usage.sample events", () => {
       ceiling: { kind: "utilization", window: "5h", max: 0.7 },
       resetAt: null,
       sampleSource: "codex_session",
-    } as AgentBoxEvent;
+    } as AioEvent;
     const s = applyEvent(emptyDashboard(), event);
     const [point] = s.usage[seriesKey("codex", "a", "5h")]!;
     expect(point).toMatchObject({ sampleSource: "codex_session", time: event.time });
@@ -280,21 +280,19 @@ describe("seedDashboard", () => {
           project,
           running: 1,
           total: 1,
-          container: { name: "claude-agent-proj-app-1", state: "running", engine: null },
+          container: { name: "aio-agent-proj-app-1", state: "running", engine: null },
         },
       ],
-      boxes: [
-        makeBoxView({ box: { id: "claude-agent-x", targetDir: "/w/app" }, status: "running" }),
-      ],
+      boxes: [makeBoxView({ box: { id: "aio-agent-x", targetDir: "/w/app" }, status: "running" })],
     });
     expect(s.runs[run.id]!.run?.status).toBe("waiting_decision");
     expect(s.runs[run.id]!.stage).toBe(run.stage);
     expect(s.runs[run.id]!.findings[f.id]).toEqual(f);
-    expect(s.containers["claude-agent-proj-app-1"]).toMatchObject({
+    expect(s.containers["aio-agent-proj-app-1"]).toMatchObject({
       projectId: "app-1",
       state: "running",
     });
-    expect(s.boxes["claude-agent-x"]).toBe("running");
+    expect(s.boxes["aio-agent-x"]).toBe("running");
   });
 
   it("keeps state that events applied while the snapshot loaded", () => {
@@ -315,19 +313,19 @@ describe("seedDashboard", () => {
           project,
           running: 1,
           total: 1,
-          container: { name: "claude-agent-proj-app-1", state: "running", engine: null },
+          container: { name: "aio-agent-proj-app-1", state: "running", engine: null },
         },
       ],
       boxes: [
-        makeBoxView({ box: { id: "claude-agent-x", targetDir: "/w/app" }, status: "running" }),
-        makeBoxView({ box: { id: "claude-agent-y", targetDir: "/w/app" }, status: "stopped" }),
+        makeBoxView({ box: { id: "aio-agent-x", targetDir: "/w/app" }, status: "running" }),
+        makeBoxView({ box: { id: "aio-agent-y", targetDir: "/w/app" }, status: "stopped" }),
       ],
       removed: {
-        boxes: new Set(["claude-agent-x"]),
-        containers: new Set(["claude-agent-proj-app-1"]),
+        boxes: new Set(["aio-agent-x"]),
+        containers: new Set(["aio-agent-proj-app-1"]),
       },
     });
-    expect(s.boxes).toEqual({ "claude-agent-y": "stopped" });
+    expect(s.boxes).toEqual({ "aio-agent-y": "stopped" });
     expect(s.containers).toEqual({});
   });
 });
@@ -368,7 +366,7 @@ describe("agents that never report agent.finished", () => {
         container: CONTAINER,
         projectId: run.request.projectId,
         state: "running",
-        engine: { hostPort: 20412, version: "4.0.0-dev", healthy: false, versionMatches: true },
+        engine: { hostPort: 20412, version: "1.0.0-dev", healthy: false, versionMatches: true },
       }),
     );
     expect(running(s)).toBe(0);
@@ -378,7 +376,7 @@ describe("agents that never report agent.finished", () => {
     const s = applyEvent(
       withRunningAgent(),
       makeEvent("container.changed", {
-        container: "claude-agent-proj-SYNTHETIC_other",
+        container: "aio-agent-proj-SYNTHETIC_other",
         projectId: "SYNTHETIC_other",
         state: "exited",
         engine: null,

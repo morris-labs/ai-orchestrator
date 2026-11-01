@@ -6,7 +6,7 @@
 # Creates DEST/repo, a working repository with a `main` branch and a
 # `feature` branch carrying the planted bugs in scenario/bugs.json, and
 # DEST/origin.git, a bare repository that `origin` points at, holding `main`.
-# The policy file goes to DEST/repo/.claude-box/policy.yaml, which git
+# The policy file goes to DEST/repo/.aio/policy.yaml, which git
 # excludes. DEST must not exist yet or must be empty.
 set -euo pipefail
 
@@ -60,8 +60,8 @@ mkdir -p "$repo/docs"
 cp "$here/feature/docs/reports.md" "$repo/docs/"
 commit "2026-01-03T10:00:00Z" "Add stock reports"
 
-mkdir -p "$repo/.claude-box"
-cp "$here/policy.yaml" "$repo/.claude-box/policy.yaml"
-printf '.claude-box/\n__pycache__/\nreports/\n' >> "$repo/.git/info/exclude"
+mkdir -p "$repo/.aio"
+cp "$here/policy.yaml" "$repo/.aio/policy.yaml"
+printf '.aio/\n__pycache__/\nreports/\n' >> "$repo/.git/info/exclude"
 
 echo "$repo"

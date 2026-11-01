@@ -1,8 +1,8 @@
 // The properties of the selected box: the record merged with its live
 // state, a Relink button, the SSH section with Reconnect, dev-server links,
 // and CPU and memory bars.
-import { boxWorkDir, type BoxView, type GlobalSettings, type Project } from "@agentbox/contracts";
-import { Button, ProgressBar, StatusDot } from "@agentbox/ui";
+import { boxWorkDir, type BoxView, type GlobalSettings, type Project } from "@aio/contracts";
+import { Button, ProgressBar, StatusDot } from "@aio/ui";
 import type { ReactNode } from "react";
 import { formatBytes } from "../logic/format";
 import { formatMount } from "../logic/mounts";

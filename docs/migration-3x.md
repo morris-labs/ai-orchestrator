@@ -1,30 +1,56 @@
 # Migrate from Claude Box 3.x
 
-Agent Box 4.0.0 replaces the Qt app (Claude Box 3.x) with a host server, two
+AI Orchestrator 1.0.0 replaces the Qt app (Claude Box 3.x) with a host server, two
 Electron apps, and a CLI. It keeps your boxes, their transcripts, and their
 worktrees. This page describes what the one-time import does, what changes
-for classic boxes, and what 4.0.0 drops or defers.
+for classic boxes, and what 1.0.0 drops or defers.
 
 ## What stays the same
 
-- Container names keep the `claude-agent-` prefix, and a project's shared
-  container is still `claude-agent-proj-PROJECT_ID`.
-- Your data stays in `~/.claude-box`. The import reads the 3.x files and
-  leaves them in place.
 - Each box keeps its session ID, so it resumes the same conversation.
-  Transcripts move from `~/.claude/projects` to `~/.claude-box/transcripts/claude`,
-  so that `~/.claude-box` is the only folder in your home directory that
-  Agent Box uses. Stop every box and run `agentbox transcripts adopt`
-  (`--dry-run` shows the plan first). The command moves the files, merges
-  without overwriting, reports clashes, and points `~/.claude/projects` at the
-  new folder. If `~/.claude/projects` is already a link to a folder elsewhere,
-  the command moves that folder's contents. Until you run it, boxes in host
-  mode keep working through whatever link `~/.claude/projects` is.
 - Worktrees stay at `PRIMARY_REPO/.worktrees/SLUG` on `claude/SLUG`
-  branches, with their notes in `WORKTREE/.claude-box/`.
+  branches.
 - Mounts work as before: the project root at the same path, `~/.claude`,
   `~/.claude.json`, `~/.codex`, `~/.copilot`, the global mounts, and each
   project's mounts.
+
+## What changes in names and folders
+
+| 3.x | 1.0.0 |
+|---|---|
+| `~/.claude-box` | `~/.ai-orchestrator` |
+| Box containers `claude-agent-NAME` | `aio-agent-NAME` |
+| Shared containers `claude-agent-proj-PROJECT_ID` | `aio-agent-proj-PROJECT_ID` |
+| The `claude-code` image | The `aio-agent` image |
+| `PROJECT/.claude-box/` and `WORKTREE/.claude-box/` | `PROJECT/.aio/` and `WORKTREE/.aio/` |
+
+The import reads the 3.x files from `~/.claude-box` and leaves them in
+place. It renames each box from `claude-agent-NAME` to `aio-agent-NAME`.
+AI Orchestrator ignores containers whose names start with `claude-agent-`, so
+stop every 3.x box before the import. The two products use different image
+tags, so a build in one never replaces the image of the other.
+
+Transcripts move from `~/.claude/projects` to
+`~/.ai-orchestrator/transcripts/claude`, so that `~/.ai-orchestrator` is the
+only folder in your home directory that AI Orchestrator uses. Stop every
+box and run `aio transcripts adopt` (`--dry-run` shows the plan first). The
+command moves the files, merges without overwriting, reports clashes, and
+points `~/.claude/projects` at the new folder. If `~/.claude/projects` is
+already a link to a folder elsewhere, the command moves that folder's
+contents. Until you run it, boxes in host mode keep working through
+whatever link `~/.claude/projects` is.
+
+A conversation's `PLAN.md` and `STATUS.md` notes live in the `.claude-box/`
+folder of its worktree or project in 3.x. AI Orchestrator reads `.aio/`
+instead. After the import, rename each folder that exists:
+
+```sh
+mv WORKTREE/.claude-box WORKTREE/.aio
+mv PROJECT/.claude-box PROJECT/.aio
+```
+
+Replace `WORKTREE` with the path of each worktree and `PROJECT` with the
+path of each project root.
 
 ## Before you migrate
 
@@ -35,27 +61,8 @@ for classic boxes, and what 4.0.0 drops or defers.
    cp -a ~/.claude-box ~/.claude-box.3x-backup
    ```
 
-1. Install Agent Box 4 and start its server. For more information, see
-   [Install Agent Box](install.md).
-
-## Keep the two apps' images apart
-
-Agent Box and the 3.x app both build their container image as
-`claude-code`, so each build replaces the other's image:
-
-- A build from the 3.x setup wizard, or its **Update Claude Code** action,
-  makes an image without the Agent Box engine. Agent Box then refuses to
-  start project containers, and its setup wizard reports that the image has
-  no Agent Box engine. Rebuild the image from Agent Box to fix it.
-- A build from Agent Box removes the passwordless sudo that 3.x boxes had,
-  and the 3.x app replaces its shared containers because their image
-  changed.
-
-After the import, build images only from Agent Box. To keep the 3.x app
-working beside Agent Box, give Agent Box its own tag: set the `engineImage`
-setting to `IMAGE` with `PATCH /api/v1/settings`, where `IMAGE` is a tag
-such as `agentbox`, and then rebuild the image from the setup wizard, which
-builds the tag that the setting names.
+1. Install AI Orchestrator 4 and start its server. For more information, see
+   [Install AI Orchestrator](install.md).
 
 ## Run the import
 
@@ -63,11 +70,11 @@ The import runs once. Start it from the setup wizard, which offers it when it
 finds 3.x records, or from a terminal:
 
 ```sh
-agentbox migrate
+aio migrate
 ```
 
 The import reads the following sources into the database at
-`~/.claude-box/agentbox.db`:
+`~/.ai-orchestrator/aio.db`:
 
 | 3.x source | Becomes |
 |---|---|
@@ -80,13 +87,13 @@ The import reads the following sources into the database at
 A box that refers to a directory with no project record gets a project, as
 in 3.x. The import reports every record it converts and every value it
 drops or changes, and doesn't change the 3.x files. After the import,
-4.0.0 reads only the database.
+1.0.0 reads only the database.
 
 The server runs the import by itself on its first start when it finds 3.x
 records. The first import writes its report to
-`~/.claude-box/import-report.json`. A later `agentbox migrate` adds only
+`~/.ai-orchestrator/import-report.json`. A later `aio migrate` adds only
 records created since then, says when the first import ran, and writes its
-own report to `~/.claude-box/import-report-TIMESTAMP.json`, where
+own report to `~/.ai-orchestrator/import-report-TIMESTAMP.json`, where
 `TIMESTAMP` is the time the run started, in UTC. It never replaces the first
 import's report.
 
@@ -104,11 +111,11 @@ import's report.
 
 ## Classic boxes
 
-4.0.0 drops classic mode, in which each box had its own container. Every box
+1.0.0 drops classic mode, in which each box had its own container. Every box
 runs as a tmux session in its project's shared container.
 
 The import keeps a classic box as it is, with the same name, session, and
-transcript. The first time you start it in 4.0.0, the server moves it into
+transcript. The first time you start it in 1.0.0, the server moves it into
 its project's container, the same move as the 3.x **Move existing boxes**
 command, and starts it there. The box keeps its name in the box list, and
 its tmux session takes the box's name.
@@ -116,9 +123,9 @@ its tmux session takes the box's name.
 A 3.x project that had opted out of the shared container
 (`shared_container=0`) gets one too.
 
-## What 4.0.0 drops
+## What 1.0.0 drops
 
-The following 3.x features and files have no 4.0.0 equivalent:
+The following 3.x features and files have no 1.0.0 equivalent:
 
 - **Classic one-container-per-box mode**: every project runs one shared
   container.
@@ -134,15 +141,15 @@ The following 3.x features and files have no 4.0.0 equivalent:
 - **The Qt app and the bash launcher scripts**: the tag `v3.3.5` keeps them
   in the repository history.
 
-## What 4.0.0 defers
+## What 1.0.0 defers
 
-- **macOS and Windows packages**: 4.0.0 ships a `.deb` for Linux on x86-64
+- **macOS and Windows packages**: 1.0.0 ships a `.deb` for Linux on x86-64
   only.
 
 ## Roll back
 
-To go back to 3.x, stop the Agent Box service, then reinstall Claude Box
+To go back to 3.x, stop the AI Orchestrator service, then reinstall Claude Box
 3.3.5. The import didn't change the 3.x files, so 3.x reads them as before.
-Boxes that 4.0.0 moved into a shared container have `container=` and
-`session=` keys only in the 4.0.0 database; in 3.x they stay classic. To
+Boxes that 1.0.0 moved into a shared container have `container=` and
+`session=` keys only in the 1.0.0 database; in 3.x they stay classic. To
 undo every change, restore `~/.claude-box.3x-backup`.

@@ -51,7 +51,7 @@ When you stop work or are asked to checkpoint, update STATUS.md with: the active
  * reference. It is not a template and has no placeholders. See
  * `docs/secrets.md`.
  */
-export const SECRETS_PROMPT_HINT = `Secrets come from the Agent Box secrets broker: run \`agentbox-secret list\` to see their names and \`agentbox-secret run NAME[,NAME...] -- COMMAND [ARGS...]\` to give them to one command, and never print a value or write one to a file, a log, or your replies. Variables such as \`GH_TOKEN\` also come from the broker where the project configures them, so pass them the same way, for example \`agentbox-secret run GH_TOKEN -- gh pr list\`.`;
+export const SECRETS_PROMPT_HINT = `Secrets come from the AI Orchestrator secrets broker: run \`aio-secret list\` to see their names and \`aio-secret run NAME[,NAME...] -- COMMAND [ARGS...]\` to give them to one command, and never print a value or write one to a file, a log, or your replies. Variables such as \`GH_TOKEN\` also come from the broker where the project configures them, so pass them the same way, for example \`aio-secret run GH_TOKEN -- gh pr list\`.`;
 
 /**
  * Adds `SECRETS_PROMPT_HINT` to `prompt` as its last paragraph. An empty

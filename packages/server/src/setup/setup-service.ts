@@ -3,7 +3,7 @@
 import { existsSync } from "node:fs";
 import { chmod, stat, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
-import type { Job, SetupCheck, SetupStatusSchema } from "@agentbox/contracts";
+import type { Job, SetupCheck, SetupStatusSchema } from "@aio/contracts";
 import type { z } from "zod";
 import type { Core } from "../api/core-interface.js";
 import { ApiError, toApiError } from "../api/errors.js";
@@ -316,14 +316,14 @@ export class SetupService {
       ? {
           id: "service",
           status: "ok",
-          message: "The agentbox-server user service is installed.",
+          message: "The aio-server user service is installed.",
           fixable: true,
         }
       : {
           id: "service",
           status: "warn",
           message:
-            "The agentbox-server user service is not installed, so the server doesn't start at login.",
+            "The aio-server user service is not installed, so the server doesn't start at login.",
           fixable: true,
         };
   }
@@ -375,7 +375,7 @@ export class SetupService {
             (io) => this.completeKeyPair(io, identity, derive),
           );
         }
-        const argv = ["ssh-keygen", "-t", "ed25519", "-N", "", "-f", identity, "-C", "claude-box"];
+        const argv = ["ssh-keygen", "-t", "ed25519", "-N", "", "-f", identity, "-C", "aio"];
         return this.opts.jobs.start({ kind: "setup_fix", command: commandLine(argv) }, (io) =>
           processJob(io, this.opts.runner.spawn(argv[0] as string, argv.slice(1))),
         );
@@ -398,7 +398,7 @@ export class SetupService {
       }
       case "service":
         return this.opts.jobs.start(
-          { kind: "setup_fix", command: "agentbox-server install-service" },
+          { kind: "setup_fix", command: "aio-server install-service" },
           async (io) => {
             await this.opts.installService(io);
             return { exitCode: 0 };
@@ -450,14 +450,14 @@ export class SetupService {
     if (!existsSync(join(context, "Dockerfile"))) {
       throw new ApiError(
         "image_missing",
-        `The image build context ${context} has no Dockerfile. Set AGENTBOX_IMAGE_CONTEXT to the directory that holds the image's Dockerfile.`,
+        `The image build context ${context} has no Dockerfile. Set AIO_IMAGE_CONTEXT to the directory that holds the image's Dockerfile.`,
       );
     }
     const script = imageBuildScript(context);
     if (basename(context) !== "image" || !existsSync(script)) {
       throw new ApiError(
         "image_missing",
-        `The image build needs ${script} beside the build context ${context}, and the context directory must be named image. Set AGENTBOX_IMAGE_CONTEXT to the image directory of a source checkout or of the installed package.`,
+        `The image build needs ${script} beside the build context ${context}, and the context directory must be named image. Set AIO_IMAGE_CONTEXT to the image directory of a source checkout or of the installed package.`,
       );
     }
     const argv = this.buildArgv(kind);

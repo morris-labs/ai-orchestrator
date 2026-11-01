@@ -45,14 +45,14 @@ goes only into two files with mode `0600`: the engine's token file,
 runs with the following environment:
 
 ```sh
-AGENTBOX_ENGINE_TOKEN_FILE=SMOKE_DIR/state/engine.token
-AGENTBOX_ENGINE_PORT=20499
-AGENTBOX_PROJECT_ROOT=SMOKE_DIR/sample/repo
-AGENTBOX_CONTAINER=claude-agent-proj-sample
-AGENTBOX_ENGINE_VERSION=4.0.0-dev
-AGENTBOX_STATE_DIR=SMOKE_DIR/state
-AGENTBOX_MOCK_VENDORS=1
-AGENTBOX_MOCK_SCRIPT=packages/engine/test/smoke/mock-script.json
+AIO_ENGINE_TOKEN_FILE=SMOKE_DIR/state/engine.token
+AIO_ENGINE_PORT=20499
+AIO_PROJECT_ROOT=SMOKE_DIR/sample/repo
+AIO_CONTAINER=aio-agent-proj-sample
+AIO_ENGINE_VERSION=1.0.0-dev
+AIO_STATE_DIR=SMOKE_DIR/state
+AIO_MOCK_VENDORS=1
+AIO_MOCK_SCRIPT=packages/engine/test/smoke/mock-script.json
 ```
 
 ## Transcript
@@ -67,7 +67,7 @@ $ tools/sample-repo/build.sh "$S/sample"
 $S/sample/repo
 $ node packages/engine/dist/main.js &
 $ curl -s $B/health
-{"version":"4.0.0-dev","uptimeS":0.066,"engineVersion":"4.0.0-dev","container":"claude-agent-proj-sample","projectRoot":"$S/sample/repo","streamId":"75fd65df-056a-4fdf-84cd-51de7bb26969","versionMatches":true}
+{"version":"1.0.0-dev","uptimeS":0.066,"engineVersion":"1.0.0-dev","container":"aio-agent-proj-sample","projectRoot":"$S/sample/repo","streamId":"75fd65df-056a-4fdf-84cd-51de7bb26969","versionMatches":true}
 $ node packages/engine/test/smoke/lease-granter.mjs 20499 &
 $ curl -s -X POST $B/runs -H "$H" -d {runId, projectId, repoPath, base, readOnly}
 {"id":"01JBSM0KE0000000000000000A","status":"running","stage":"preflight","roles":{"reviewer":["codex","copilot"],"disprover":"codex","confirmer":"codex","fixer":"claude"}}

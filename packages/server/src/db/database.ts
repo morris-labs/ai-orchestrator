@@ -51,7 +51,7 @@ export function migrate(db: Sqlite): number {
   if (current > MIGRATIONS.length) {
     throw new Error(
       `The database has schema version ${current}, newer than this server's ${MIGRATIONS.length}. ` +
-        "A newer Agent Box created it: install that version again, or move the database aside to start over.",
+        "A newer AI Orchestrator created it: install that version again, or move the database aside to start over.",
     );
   }
   for (let i = current; i < MIGRATIONS.length; i += 1) {

@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { DEFAULT_CEILINGS } from "@agentbox/contracts";
+import { DEFAULT_CEILINGS } from "@aio/contracts";
 import { detectLimitInText, parseResetTime } from "../../src/adapters/base.js";
 import { ClaudeAdapter } from "../../src/adapters/claude.js";
 import { CodexAdapter } from "../../src/adapters/codex.js";

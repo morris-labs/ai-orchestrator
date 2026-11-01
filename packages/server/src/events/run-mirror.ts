@@ -7,10 +7,10 @@ import {
   FindingSchema,
   RunStateSchema,
   type Finding,
-  type AgentBoxEvent,
+  type AioEvent,
   type RunState,
   type RunStatus,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 import type { EngineEndpoint, SqlDatabase } from "../api/core-interface.js";
 import { foreignRunReason } from "./engines.js";
 
@@ -60,7 +60,7 @@ export class RunMirror {
   }
 
   /** Mirrors `run.changed` and `finding.changed` events; ignores every other event. */
-  ingest(event: AgentBoxEvent): void {
+  ingest(event: AioEvent): void {
     if (event.type === "run.changed") this.upsert(event.run);
     if (event.type === "finding.changed") this.upsertFinding(event.finding);
   }

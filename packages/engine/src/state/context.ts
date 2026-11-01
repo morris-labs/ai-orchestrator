@@ -15,7 +15,7 @@ import {
   type Stage,
   type Verdict,
   type Vendor,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 import {
   DEFAULT_TIMEOUTS,
   systemClock,

@@ -4,7 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import type { CommandRunner } from "../core.js";
 
 /** The `info/exclude` line that hides the engine's own directory. */
-const ENGINE_DIR_PATTERN = ".claude-box/";
+const ENGINE_DIR_PATTERN = ".aio/";
 
 export class GitError extends Error {
   constructor(
@@ -97,7 +97,7 @@ export class Git {
   }
 
   /**
-   * Adds `.claude-box/` to the repository's `info/exclude`, which every
+   * Adds `.aio/` to the repository's `info/exclude`, which every
    * worktree of the repository shares, unless a line there already names
    * it. Returns whether it added the line.
    */
@@ -110,7 +110,7 @@ export class Git {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
-    const names = new Set([".claude-box", ".claude-box/", "/.claude-box", "/.claude-box/"]);
+    const names = new Set([".aio", ".aio/", "/.aio", "/.aio/"]);
     if (text.split("\n").some((l) => names.has(l.trim()))) return false;
     await mkdir(dirname(file), { recursive: true });
     const sep = text === "" || text.endsWith("\n") ? "" : "\n";
@@ -222,7 +222,7 @@ export class Git {
 
   /**
    * A commit whose tree is the working tree: `HEAD` plus the tracked changes
-   * and the untracked files git doesn't ignore, without `.claude-box/`.
+   * and the untracked files git doesn't ignore, without `.aio/`.
    * Returns `HEAD` itself when the working tree has no changes. The commit
    * is built in a temporary index file, so the checkout's own index, its
    * files, and its refs stay as they are; the commit is reachable from no
@@ -236,11 +236,11 @@ export class Git {
   async snapshotWorktree(indexFile: string): Promise<string> {
     const head = await this.head();
     const env = { GIT_INDEX_FILE: indexFile };
-    // `.claude-box/` leaves the index after the `add`: an exclude pathspec
+    // `.aio/` leaves the index after the `add`: an exclude pathspec
     // for it makes `git add` fail when `info/exclude` already ignores it.
     const add = async () => {
       await this.run(["add", "--all", "--", "."], { env });
-      await this.run(["rm", "-r", "-q", "--cached", "--ignore-unmatch", "--", ".claude-box"], {
+      await this.run(["rm", "-r", "-q", "--cached", "--ignore-unmatch", "--", ".aio"], {
         env,
       });
     };
@@ -263,7 +263,7 @@ export class Git {
       const headTree = (await this.revParseTree(head)).trim();
       if (tree === headTree) return head;
       const commit = await this.run(
-        ["commit-tree", tree, "-p", head, "-m", "Agent Box snapshot of the working tree"],
+        ["commit-tree", tree, "-p", head, "-m", "AI Orchestrator snapshot of the working tree"],
         { env: SNAPSHOT_IDENTITY },
       );
       return commit.trim();
@@ -293,8 +293,8 @@ export class Git {
 
 /** The author and committer of a snapshot commit, so `commit-tree` needs no user settings. */
 const SNAPSHOT_IDENTITY: Record<string, string> = {
-  GIT_AUTHOR_NAME: "Agent Box",
-  GIT_AUTHOR_EMAIL: "agentbox@localhost",
-  GIT_COMMITTER_NAME: "Agent Box",
-  GIT_COMMITTER_EMAIL: "agentbox@localhost",
+  GIT_AUTHOR_NAME: "AI Orchestrator",
+  GIT_AUTHOR_EMAIL: "aio@localhost",
+  GIT_COMMITTER_NAME: "AI Orchestrator",
+  GIT_COMMITTER_EMAIL: "aio@localhost",
 };

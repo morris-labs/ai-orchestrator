@@ -1,8 +1,8 @@
 // The Secrets section of the box dialog: a checklist of the 1Password fields
 // the server lists, with an editable variable name for each. The ticks edit
 // the project's references, so they apply to every box in the project.
-import type { SecretCandidate, SecretRef } from "@agentbox/contracts";
-import { Button, errorMessage, useApiClient } from "@agentbox/ui";
+import type { SecretCandidate, SecretRef } from "@aio/contracts";
+import { Button, errorMessage, useApiClient } from "@aio/ui";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   groupCandidates,
@@ -73,7 +73,7 @@ export function SecretsPicker(props: SecretsPickerProps) {
       <div className="ab-hint">
         These secrets apply to every box in {projectName ? `"${projectName}"` : "this project"}, not
         only this one: the project&apos;s boxes share one container and one secrets broker. A
-        process in the box asks for a value by its name, with <code>agentbox-secret</code>.
+        process in the box asks for a value by its name, with <code>aio-secret</code>.
       </div>
       {globalRefs.length > 0 && (
         <div className="ab-group">

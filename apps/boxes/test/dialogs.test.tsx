@@ -1,5 +1,5 @@
-import type { ConversationSummary, Effort, Job } from "@agentbox/contracts";
-import { FakeServer, makeBoxView, makeProject } from "@agentbox/ui/testing";
+import type { ConversationSummary, Effort, Job } from "@aio/contracts";
+import { FakeServer, makeBoxView, makeProject } from "@aio/ui/testing";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -10,7 +10,7 @@ import { PromptsDialog } from "../src/dialogs/PromptsDialog";
 import { SetupWizard } from "../src/dialogs/SetupWizard";
 import { SshRemoteDialog, remoteProblems } from "../src/dialogs/SshDialogs";
 import { updateBody } from "../src/logic/newBox";
-import { makeJob } from "@agentbox/ui/testing";
+import { makeJob } from "@aio/ui/testing";
 import { renderWithServer } from "./helpers";
 
 const UUID1 = "11111111-1111-4111-8111-111111111111";
@@ -61,7 +61,7 @@ describe("BoxDialog, account picker", () => {
       createdAt: "2026-10-31T09:00:00Z",
       updatedAt: "2026-10-31T09:00:00Z",
     },
-    dir: `/home/user/.claude-box/accounts/${id}`,
+    dir: `/home/user/.ai-orchestrator/accounts/${id}`,
     dirExists: true,
     isDefault: false,
   });
@@ -318,7 +318,7 @@ describe("BoxDialog, new mode", () => {
   it("shows an error the save returns and stays open", async () => {
     const user = userEvent.setup();
     const { onAccept } = newDialog(new FakeServer(), { initialDir: "/w/site" });
-    onAccept.mockResolvedValueOnce("claude-agent-x is already running this conversation.");
+    onAccept.mockResolvedValueOnce("aio-agent-x is already running this conversation.");
     await user.click(screen.getByRole("button", { name: "Create" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("already running this conversation");
     expect(screen.getByRole("dialog", { name: "New Box" })).toBeInTheDocument();
@@ -351,7 +351,7 @@ describe("BoxDialog, double submit", () => {
 describe("BoxDialog, edit and fork modes", () => {
   const view = makeBoxView({
     box: {
-      id: "claude-agent-site",
+      id: "aio-agent-site",
       targetDir: "/w/site",
       conversationName: "Site",
       sessionUuid: UUID3,

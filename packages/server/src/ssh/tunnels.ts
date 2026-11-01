@@ -8,7 +8,7 @@ import {
   type Job,
   type SshRemote,
   type SshTestResultSchema,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 import { ApiError } from "../records/errors.js";
 import type { z } from "zod";
 import { processJob, type JobManager } from "../jobs/jobs.js";

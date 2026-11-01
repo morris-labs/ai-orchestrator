@@ -1,20 +1,20 @@
 // Runs the Claude adapter against the real `claude` CLI. It costs a few
-// cents, so it runs only with AGENTBOX_REAL_CLAUDE=1. Each run saves the raw
+// cents, so it runs only with AIO_REAL_CLAUDE=1. Each run saves the raw
 // stream to a temporary directory. The stream holds your paths, session IDs
 // and tool lists, so don't commit it. Replace it with a synthetic fixture
 // under fixtures/ before you use it in a test.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { UsageSampleSchema } from "@agentbox/contracts";
+import { UsageSampleSchema } from "@aio/contracts";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { ClaudeAdapter } from "../../src/adapters/claude.js";
 import { VendorFindingsOutputSchema } from "../../src/adapters/output.js";
 import { tempDir } from "../tmp.js";
 
-const enabled = process.env.AGENTBOX_REAL_CLAUDE === "1";
-const recorded = join(tmpdir(), "agentbox-recorded");
+const enabled = process.env.AIO_REAL_CLAUDE === "1";
+const recorded = join(tmpdir(), "aio-recorded");
 
 /** Saves a raw stream to the temporary directory, with the home directory replaced. */
 function save(name: string, raw: string): void {
@@ -35,7 +35,7 @@ describe.skipIf(!enabled)("Claude adapter against the real CLI", () => {
   });
 
   it("returns schema-valid findings and records the rate_limit_event", async () => {
-    const cwd = tempDir("agentbox-claude-");
+    const cwd = tempDir("aio-claude-");
     writeFileSync(join(cwd, "a.ts"), "// teh greeting\nexport const greet = () => 'hi';\n");
     const seen: unknown[] = [];
     const result = await adapter.review({
@@ -68,7 +68,7 @@ describe.skipIf(!enabled)("Claude adapter against the real CLI", () => {
   }, 150_000);
 
   it("writes a file with tools set to write", async () => {
-    const cwd = tempDir("agentbox-claude-fix-");
+    const cwd = tempDir("aio-claude-fix-");
     const result = await adapter.fix({
       prompt:
         "Create a file named done.txt in the current directory containing the word fixed, then report done true.",
@@ -87,8 +87,8 @@ describe.skipIf(!enabled)("Claude adapter against the real CLI", () => {
   }, 150_000);
 
   it("lets a read-only call write in its scratch directory and nowhere else", async () => {
-    const cwd = tempDir("agentbox-claude-ro-");
-    const scratch = join(tempDir("agentbox-claude-scratch-"), "F-0001");
+    const cwd = tempDir("aio-claude-ro-");
+    const scratch = join(tempDir("aio-claude-scratch-"), "F-0001");
     mkdirSync(scratch);
     const result = await adapter.verify({
       prompt:

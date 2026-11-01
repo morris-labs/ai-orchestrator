@@ -1,6 +1,6 @@
 # Architecture
 
-Agent Box has four parts: a host server, an engine inside each project
+AI Orchestrator has four parts: a host server, an engine inside each project
 container, two desktop apps, and a CLI. This page describes what each part
 owns, how they talk, and how the server keeps vendor usage under its
 ceilings with leases.
@@ -12,16 +12,16 @@ The following diagram shows the parts and their connections:
 ```
 host                                     container (one per project)
 +------------------------------+         +------------------------------+
-| agentbox-server (systemd)    | docker  | keeper (PID 1)               |
+| aio-server (systemd)    | docker  | keeper (PID 1)               |
 |  Docker, boxes, projects,    |-------->|  tmux: one session per box   |
-|  worktrees, catalog, watcher,|         |  agentbox-engine :20411      |
+|  worktrees, catalog, watcher,|         |  aio-engine :20411      |
 |  SQLite, secrets, scheduler, |<--------|   pipeline, adapters, run    |
 |  usage, events, terminals,   | :2041x  |   files, port discovery,     |
 |  HTTPS REST+WS :21400,       | mapped  |   dev-server proxy           |
 |  dev-server proxy :21401     |         |                              |
 +-------^----------^-----------+         +------------------------------+
         |          |
-  agentbox (boxes) agentbox-review        agentbox CLI
+  aio (boxes) aio-review        aio CLI
   Electron+xterm   Electron+dashboard     commander
 ```
 
@@ -29,7 +29,7 @@ host                                     container (one per project)
 
 ### Server
 
-The server, `agentbox-server`, runs as a systemd user service under your
+The server, `aio-server`, runs as a systemd user service under your
 user. It owns everything that touches Docker or host files: projects, boxes,
 worktrees, the conversation catalog, the session watcher, secrets, the
 usage scheduler, and terminals.
@@ -39,13 +39,13 @@ usage scheduler, and terminals.
   `/review/`. A second, plain HTTP listener on `127.0.0.1:21401` serves the
   dev-server proxy for `PORT.BOX.localhost` host names, which the
   certificate can't name.
-- The certificate is self-signed and lives in `~/.claude-box/server.crt`,
+- The certificate is self-signed and lives in `~/.ai-orchestrator/server.crt`,
   its key in `server.key` (mode `0600`). Every client pins it: the CLI, the
   Electron main processes for their REST calls and WebSockets, and both
   apps' windows for the pages they load. A client checks the certificate
   before it sends the token, so a program that binds the port while the
   server is down never receives the token.
-- Every API call needs the bearer token in `~/.claude-box/server.token`
+- Every API call needs the bearer token in `~/.ai-orchestrator/server.token`
   (mode `0600`), or the session cookie that the token buys. WebSocket
   upgrades authenticate the same way: the CLI and the Electron main
   processes send `Authorization: Bearer`, and the app pages, whose browser
@@ -56,11 +56,11 @@ usage scheduler, and terminals.
   own origin, `https://127.0.0.1:21400` or the same port on `localhost` or
   `[::1]`, so a page on another port can't open a terminal with the
   user's cookie. Clients without a browser send no `Origin`.
-- It stores its state in SQLite at `~/.claude-box/agentbox.db` and its
-  settings in `~/.claude-box/config.json`.
+- It stores its state in SQLite at `~/.ai-orchestrator/aio.db` and its
+  settings in `~/.ai-orchestrator/config.json`.
 - It runs the secrets broker: one Unix socket per project container, in
-  `~/.claude-box/broker/CONTAINER/`, mounted read-only at
-  `/run/agentbox-broker` in the container. A process in the container asks
+  `~/.ai-orchestrator/broker/CONTAINER/`, mounted read-only at
+  `/run/aio-broker` in the container. A process in the container asks
   the socket for a secret by name, and the server resolves it from
   1Password on demand, with a 5-minute cache. At startup, after each
   container event, and every 30 seconds, the server opens a socket for each
@@ -70,7 +70,7 @@ usage scheduler, and terminals.
 
 ### Engine
 
-The engine, `agentbox-engine`, ships in the container image and runs in each
+The engine, `aio-engine`, ships in the container image and runs in each
 project container next to the repositories and the signed-in CLIs. The
 keeper script, the container's first process, starts it.
 
@@ -81,12 +81,12 @@ keeper script, the container's first process, starts it.
   route, `/api/v1/health`, needs no token; the image's health check calls
   it.
 - The server writes the token to `engine.token` (mode `0600`) in the
-  container's state directory, `~/.claude-box/state/CONTAINER/` on the host
-  and `/run/claude-box/` in the container, before the container starts. The
-  engine reads it from `AGENTBOX_ENGINE_TOKEN_FILE`. The token isn't in the
+  container's state directory, `~/.ai-orchestrator/state/CONTAINER/` on the host
+  and `/run/aio/` in the container, before the container starts. The
+  engine reads it from `AIO_ENGINE_TOKEN_FILE`. The token isn't in the
   container's environment, so the tmux sessions, shells, and agent CLIs
   that `docker exec` starts don't inherit it, and the engine withholds every
-  `AGENTBOX_` variable from the processes it starts. At startup the engine
+  `AIO_` variable from the processes it starts. At startup the engine
   also executes itself again without its credentials in the environment and
   keeps them in memory, so its own `/proc/PID/environ` holds none.
 - These measures control what a process inherits; they aren't isolation.
@@ -100,7 +100,7 @@ keeper script, the container's first process, starts it.
   the secrets broker when it starts each one, and gives each program only
   the names its job takes. Repository code it starts gets none.
 - The dev-server proxy sends the engine token in its own header,
-  `X-Agentbox-Engine-Token`, on HTTP requests and WebSocket upgrades alike,
+  `X-Aio-Engine-Token`, on HTTP requests and WebSocket upgrades alike,
   so the browser's `Authorization` header reaches the dev server unchanged.
   It refuses a request whose `Origin` isn't the proxy host itself or whose
   `Sec-Fetch-Site` is other than `same-origin` or `none`, and forwards only
@@ -108,25 +108,25 @@ keeper script, the container's first process, starts it.
 - It runs the review pipeline and its vendor adapters, writes each run's
   files, discovers listening ports with `ss`, and proxies HTTP to them.
 - It refuses to start when its version differs from
-  `AGENTBOX_ENGINE_VERSION`, the version the server expects. The image
-  records its engine version in `/etc/agentbox-engine-version`.
+  `AIO_ENGINE_VERSION`, the version the server expects. The image
+  records its engine version in `/etc/aio-engine-version`.
 
 ### Apps
 
-**Agent Box** manages boxes and terminals, and **Agent Box Review** runs and
+**AI Orchestrator** manages boxes and terminals, and **AI Orchestrator Review** runs and
 watches reviews. Both are React single-page apps that the server serves.
 Electron wraps each one for the tray icon, desktop notifications, the
 external terminal, and the desktop entry.
 
 ### CLI
 
-The `agentbox` command calls the same server API as the apps. It has `box`
+The `aio` command calls the same server API as the apps. It has `box`
 and `review` command groups, plus `migrate`, `setup`, and `doctor`.
 
 ## Files as handoffs
 
 Every pipeline stage writes its result as JSON under
-`PROJECT/.claude-box/runs/RUN_ID/`. A run resumes from the last complete
+`PROJECT/.aio/runs/RUN_ID/`. A run resumes from the last complete
 stage after a crash or a container restart. The engine records the process
 groups it starts in `engine-children.json` in the keeper's state directory,
 and an engine that the keeper restarts first kills the groups that the
@@ -192,7 +192,7 @@ The schemas for these frames are in `packages/contracts/src/lease.ts`.
 
 ## Container image
 
-The image, `claude-code` by default, is built on the host from
+The image, `aio-agent` by default, is built on the host from
 `image/Dockerfile`. It holds the following:
 
 - Ubuntu 26.04, pinned by digest, with the C, C++, Java, Python, and
@@ -200,14 +200,14 @@ The image, `claude-code` by default, is built on the host from
 - The Claude Code, Codex, and GitHub Copilot CLIs at the versions pinned in
   `image/versions.env`, with their versions in `/etc/claude-code-version`,
   `/etc/codex-version`, and `/etc/copilot-version`.
-- The engine, unpacked into `/usr/local/lib/agentbox/engine` from a
+- The engine, unpacked into `/usr/local/lib/ai-orchestrator/engine` from a
   tarball that carries its dependencies at the versions in
   `pnpm-lock.yaml`, and started through
-  `/usr/local/bin/agentbox-engine` on the system Node.js 22.
-- The keeper scripts in `/usr/local/lib/agentbox/`: `keeper.sh`, the
+  `/usr/local/bin/aio-engine` on the system Node.js 22.
+- The keeper scripts in `/usr/local/lib/ai-orchestrator/`: `keeper.sh`, the
   container's first process, and `start-session.sh`, which starts one box's
   tmux session.
-- `/usr/local/bin/agentbox-secret`, the client of the secrets broker, from
+- `/usr/local/bin/aio-secret`, the client of the secrets broker, from
   the engine package.
 
 The server creates each container with the keeper as its command, the
@@ -226,8 +226,8 @@ never calls `sudo`. It does the following:
   `/tmp/claude-1000` above a project in `/tmp/claude-1000/...`. Claude Code
   refuses to start when its temporary directory is owned by root. The step
   skips any path with a symbolic link in it.
-- Sets the `sudo` policy. It removes `/etc/sudoers.d/claude-box`, where
-  images built before 4.0.0 granted passwordless `sudo`. With a sudo
+- Sets the `sudo` policy. It removes `/etc/sudoers.d/aio`, where
+  images built before 1.0.0 granted passwordless `sudo`. With a sudo
   password reference in the settings, it installs the password's hash and a
   rule that asks for the password every time. Without one, it locks the
   user's password, so `sudo` is off. See
@@ -254,7 +254,7 @@ older image's passwordless rule might still be in place.
   lists, without a prompt, and every request is logged with names only.
   The socket's directory is mounted read-only, and the container user can't
   become root, so a process in the container can't remove or replace the
-  socket or the `agentbox-secret` command. See [Secrets](secrets.md).
+  socket or the `aio-secret` command. See [Secrets](secrets.md).
 - **Vendor sign-ins.** Every container mounts your `~/.claude`,
   `~/.claude.json`, `~/.codex`, and `~/.copilot`, so any process in any
   project container can read and change the Claude, Codex, and Copilot
@@ -293,9 +293,9 @@ The repository is a pnpm workspace:
 | Path | Contents |
 |---|---|
 | `packages/contracts` | Zod schemas and types shared by every package |
-| `packages/server` | `agentbox-server` |
-| `packages/engine` | `agentbox-engine` |
-| `packages/cli` | `agentbox` |
+| `packages/server` | `aio-server` |
+| `packages/engine` | `aio-engine` |
+| `packages/cli` | `aio` |
 | `packages/ui` | Shared React components, theme, and API client |
 | `apps/boxes`, `apps/review` | The two Electron apps |
 | `image/` | The Dockerfile, the version pins, and the keeper scripts |

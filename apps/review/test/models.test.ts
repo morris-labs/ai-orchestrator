@@ -1,4 +1,4 @@
-import { DEFAULT_POLICY, defaultConfig } from "@agentbox/contracts";
+import { DEFAULT_POLICY, defaultConfig } from "@aio/contracts";
 import { describe, expect, it } from "vitest";
 import {
   canWaive,
@@ -65,7 +65,7 @@ describe("buildRunRequest", () => {
     const f = formFromBox(DEFAULT_FORM, demoBox());
     expect(f).toMatchObject({
       projectId: "example-app-1a2b3c4d",
-      boxId: "claude-agent-emails_not_sending",
+      boxId: "aio-agent-emails_not_sending",
       repoPath: "/home/user/src/example-app/.worktrees/Emails_not_sending",
       tip: "claude/Emails_not_sending",
     });

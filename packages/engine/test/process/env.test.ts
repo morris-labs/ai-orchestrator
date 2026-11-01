@@ -15,8 +15,8 @@ import { VerifyOutputSchema } from "../../src/core.js";
 const BASE = {
   PATH: "/usr/bin",
   HOME: "/home/user",
-  AGENTBOX_ENGINE_TOKEN: "engine-token-0123456789",
-  AGENTBOX_SERVER_SECRET: "x",
+  AIO_ENGINE_TOKEN: "engine-token-0123456789",
+  AIO_SERVER_SECRET: "x",
   GH_TOKEN: "gh",
   ANTHROPIC_API_KEY: "sk-ant",
   ANTHROPIC_BASE_URL: "https://example.com",
@@ -61,8 +61,8 @@ describe("childEnv", () => {
   it("never passes the engine's own variables", () => {
     for (const profile of ["untrusted", "github", "vendor:claude", "vendor:copilot"] as const) {
       const env = childEnv(profile, {}, BASE);
-      expect(env.AGENTBOX_ENGINE_TOKEN).toBeUndefined();
-      expect(env.AGENTBOX_SERVER_SECRET).toBeUndefined();
+      expect(env.AIO_ENGINE_TOKEN).toBeUndefined();
+      expect(env.AIO_SERVER_SECRET).toBeUndefined();
       expect(env.PATH).toBe("/usr/bin");
       expect(env.LANG).toBe("C.UTF-8");
     }
@@ -132,7 +132,7 @@ describe("childEnv", () => {
 
 describe("runners", () => {
   const saved: Record<string, string | undefined> = {};
-  const set = { AGENTBOX_ENGINE_TOKEN: "engine-token-0123456789", GH_TOKEN: "gh-secret" };
+  const set = { AIO_ENGINE_TOKEN: "engine-token-0123456789", GH_TOKEN: "gh-secret" };
   beforeEach(() => {
     for (const [k, v] of Object.entries(set)) {
       saved[k] = process.env[k];
@@ -149,14 +149,14 @@ describe("runners", () => {
   it("keeps the engine token and GitHub token from shell commands", async () => {
     const r = await new ShellRunner().run("env", [], { cwd: "/" });
     expect(r.exitCode).toBe(0);
-    expect(r.stdout).not.toContain("AGENTBOX_ENGINE_TOKEN");
+    expect(r.stdout).not.toContain("AIO_ENGINE_TOKEN");
     expect(r.stdout).not.toContain("gh-secret");
     expect(r.stdout).toContain("PATH=");
   });
 
   it("keeps the engine token from git but passes the GitHub token", async () => {
     const r = await new ProcessRunner().run("env", [], { cwd: "/", envProfile: "github" });
-    expect(r.stdout).not.toContain("AGENTBOX_ENGINE_TOKEN");
+    expect(r.stdout).not.toContain("AIO_ENGINE_TOKEN");
     expect(r.stdout).toContain("GH_TOKEN=gh-secret");
   });
 
@@ -186,15 +186,15 @@ describe("runners", () => {
   it("keeps the engine token from the API's runner", async () => {
     const r = await execRunner.run("env", []);
     expect(r.code).toBe(0);
-    expect(r.stdout).not.toContain("AGENTBOX_ENGINE_TOKEN");
+    expect(r.stdout).not.toContain("AIO_ENGINE_TOKEN");
     expect(r.stdout).not.toContain("gh-secret");
   });
 
   it("reports a missing program as not started with exit code 127", async () => {
-    const r = await new ProcessRunner().run("/nonexistent/agentbox-x", [], { cwd: "/" });
+    const r = await new ProcessRunner().run("/nonexistent/aio-x", [], { cwd: "/" });
     expect(r.notStarted).toBe(true);
     expect(r.exitCode).toBe(127);
-    expect((await execRunner.run("/nonexistent/agentbox-x", [])).code).toBe(127);
+    expect((await execRunner.run("/nonexistent/aio-x", [])).code).toBe(127);
   });
 
   it("kills the whole process group on a timeout", async () => {

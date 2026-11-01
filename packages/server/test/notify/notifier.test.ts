@@ -1,16 +1,16 @@
-import { RunRequestSchema, type RoundSummary, type RunState } from "@agentbox/contracts";
+import { RunRequestSchema, type RoundSummary, type RunState } from "@aio/contracts";
 import { describe, expect, it } from "vitest";
 import { Notifier } from "../../src/notify/notifier.js";
 import { T0, iso, setup } from "../usage/helpers.js";
 
 const RUN = "01JB8Z5K3W6Q2V9X4T7R0M1N2P";
-const BOX = "claude-agent-mail";
+const BOX = "aio-agent-mail";
 
 const run = (fields: Partial<RunState> = {}): RunState => ({
   id: RUN,
   projectId: "mail-0123abcd",
   boxId: BOX,
-  container: "claude-agent-proj-mail-0123abcd",
+  container: "aio-agent-proj-mail-0123abcd",
   request: RunRequestSchema.parse({
     projectId: "mail-0123abcd",
     repoPath: "/home/user/mail",

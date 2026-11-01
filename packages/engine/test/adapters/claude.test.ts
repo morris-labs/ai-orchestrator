@@ -1,6 +1,6 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { DEFAULT_CEILINGS, UsageSampleSchema } from "@agentbox/contracts";
+import { DEFAULT_CEILINGS, UsageSampleSchema } from "@aio/contracts";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
@@ -348,7 +348,7 @@ describe("claudeTokens", () => {
 
 describe("claudeAccount", () => {
   it("reads the OAuth email and tolerates a missing file", () => {
-    const dir = tempDir("agentbox-acct-");
+    const dir = tempDir("aio-acct-");
     const file = join(dir, "claude.json");
     writeFileSync(file, JSON.stringify({ oauthAccount: { emailAddress: "user@example.com" } }));
     expect(claudeAccount(file)).toBe("user@example.com");
@@ -356,7 +356,7 @@ describe("claudeAccount", () => {
   });
 
   it("keeps the last email while another claude rewrites the file", () => {
-    const dir = tempDir("agentbox-acct-");
+    const dir = tempDir("aio-acct-");
     const file = join(dir, "claude.json");
     writeFileSync(file, JSON.stringify({ oauthAccount: { emailAddress: "user@example.com" } }));
     expect(claudeAccount(file)).toBe("user@example.com");

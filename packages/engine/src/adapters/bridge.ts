@@ -2,7 +2,7 @@
 // `VendorAdapter`. The core asks for a role's output shape by method; the CLI
 // adapter takes any schema, so the bridge picks the schema, maps the request
 // and result field names, and leaves the CLI behavior to the adapter.
-import type { Vendor } from "@agentbox/contracts";
+import type { Vendor } from "@aio/contracts";
 import type { z } from "zod";
 import {
   ConfirmOutputSchema,

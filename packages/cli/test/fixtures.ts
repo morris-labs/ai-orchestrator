@@ -2,8 +2,8 @@
 export const T0 = "2026-10-28T09:00:00.000Z";
 export const RUN = "01JB8Z5K3W6Q2V9X4T7R0M1N2P";
 export const PROJECT_ID = "example-1a2b3c4d";
-export const CONTAINER = "claude-agent-proj-example-1a2b3c4d";
-export const BOX_ID = "claude-agent-feature";
+export const CONTAINER = "aio-agent-proj-example-1a2b3c4d";
+export const BOX_ID = "aio-agent-feature";
 
 export const project = {
   id: PROJECT_ID,
@@ -12,14 +12,14 @@ export const project = {
   tcpMaps: [],
   mounts: [],
   secretRefs: [{ name: "API_TOKEN", ref: "op://Dev/Example/credential" }],
-  policyPath: ".claude-box/policy.yaml",
+  policyPath: ".aio/policy.yaml",
   createdAt: T0,
   updatedAt: T0,
 };
 
 export const engine = {
   hostPort: 32768,
-  version: "4.0.0-dev",
+  version: "1.0.0-dev",
   healthy: true,
   versionMatches: true,
 };
@@ -71,7 +71,7 @@ export function job(status: "running" | "finished" | "failed") {
     id: "job-1",
     kind: "box_create",
     boxId: BOX_ID,
-    command: "agentbox box new",
+    command: "aio box new",
     status,
     exitCode: status === "running" ? null : status === "failed" ? 1 : 0,
     error:
@@ -194,7 +194,7 @@ export const setupStatus = {
   defaultTargetDir: null,
   checks: [
     { id: "docker", status: "ok", message: "Docker 27 answers.", fixable: false },
-    { id: "image", status: "ok", message: "claude-code exists.", fixable: false },
+    { id: "image", status: "ok", message: "aio-agent exists.", fixable: false },
     { id: "engine", status: "warn", message: "No engine running.", fixable: false },
     { id: "op", status: "fail", message: "op isn't installed.", fixable: true },
     { id: "sudo", status: "ok", message: "sudo is off in containers.", fixable: false },
@@ -202,12 +202,12 @@ export const setupStatus = {
 };
 
 export const imageStatus = {
-  name: "claude-code",
+  name: "aio-agent",
   exists: true,
   imageId: "sha256:abc",
   createdAt: T0,
-  engineVersion: "4.0.0-dev",
-  expectedEngineVersion: "4.0.0-dev",
+  engineVersion: "1.0.0-dev",
+  expectedEngineVersion: "1.0.0-dev",
   engineMatches: true,
   cliVersions: { claude: "2.1.300", codex: null, copilot: null },
 };

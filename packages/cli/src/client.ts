@@ -10,8 +10,8 @@ import {
   type RouteOf,
   type ServerRouteKey,
   type ServerRoutes,
-} from "@agentbox/contracts";
-import { ServerCertificateDateError, ServerIdentityError } from "@agentbox/contracts/tls";
+} from "@aio/contracts";
+import { ServerCertificateDateError, ServerIdentityError } from "@aio/contracts/tls";
 import { CertificateFileError, displayUrl } from "./settings.js";
 
 /** The server routes served over plain HTTP. */
@@ -58,7 +58,7 @@ export class ServerUnreachableError extends Error {
     const code = (cause as { cause?: { code?: unknown } })?.cause?.code;
     const detail =
       typeof code === "string" && !message.includes(code) ? `${message} (${code})` : message;
-    super(`Can't reach the Agent Box server at ${displayUrl(baseUrl)}: ${detail}`);
+    super(`Can't reach the AI Orchestrator server at ${displayUrl(baseUrl)}: ${detail}`);
     this.name = "ServerUnreachableError";
     this.suggestStart = !(
       cause instanceof ServerIdentityError ||
@@ -174,7 +174,7 @@ export class ServerClient {
         throw new ApiCallError(
           401,
           "unauthorized",
-          "The server refused the token. Check server.token in the data directory (~/.claude-box or AGENTBOX_DATA_DIR), or AGENTBOX_TOKEN.",
+          "The server refused the token. Check server.token in the data directory (~/.ai-orchestrator or AIO_DATA_DIR), or AIO_TOKEN.",
         );
       }
       if (parsed.success) {

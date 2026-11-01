@@ -2,7 +2,7 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import type { Box } from "@agentbox/contracts";
+import type { Box } from "@aio/contracts";
 import type { HostEnv } from "../../src/records/env.js";
 import { tempDir as registeredTempDir } from "../tmp.js";
 
@@ -10,7 +10,7 @@ import { tempDir as registeredTempDir } from "../tmp.js";
 process.env.GIT_CONFIG_GLOBAL = "/dev/null";
 process.env.GIT_CONFIG_NOSYSTEM = "1";
 
-export function tempDir(prefix = "agentbox-wt-"): string {
+export function tempDir(prefix = "aio-wt-"): string {
   // realpath: git reports resolved paths, and /tmp can be a symlink.
   return fs.realpathSync(registeredTempDir(prefix));
 }
@@ -73,7 +73,7 @@ export function testEnv(home: string): HostEnv {
 
 export function makeBox(overrides: Partial<Box>): Box {
   return {
-    id: "claude-agent-fix_login",
+    id: "aio-agent-fix_login",
     projectId: "project-0123abcd",
     hostKey: "fix-login",
     targetDir: "/nowhere",
@@ -82,8 +82,8 @@ export function makeBox(overrides: Partial<Box>): Box {
     transcriptSyncedName: "fix_login",
     platform: "claude",
     skipPermissions: true,
-    container: "claude-agent-proj-project-0123abcd",
-    session: "claude-agent-fix_login",
+    container: "aio-agent-proj-project-0123abcd",
+    session: "aio-agent-fix_login",
     wasRunning: false,
     sshRemoteRefs: [],
     createdAt: "2026-10-28T09:00:00.000Z",

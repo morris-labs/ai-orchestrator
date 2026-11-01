@@ -9,7 +9,7 @@ import { linkTargetsOutside } from "../../src/docker/launch.js";
 import { tempDir } from "../tmp.js";
 
 function setup(): { host: string; account: string } {
-  const root = fs.realpathSync(tempDir("agentbox-uc-"));
+  const root = fs.realpathSync(tempDir("aio-uc-"));
   const host = path.join(root, "host");
   const account = path.join(root, "account");
   fs.mkdirSync(path.join(host, "skills", "s1"), { recursive: true });

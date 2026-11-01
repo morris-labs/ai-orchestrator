@@ -14,7 +14,7 @@ import {
   type GlobalSettings,
   type Project,
   type SshRemote,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 import type { Sqlite } from "./database.js";
 
 interface DataRow {

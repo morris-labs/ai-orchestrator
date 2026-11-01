@@ -12,6 +12,7 @@ import {
   PlatformSchema,
   ProjectInputSchema,
   SshRemoteInputSchema,
+  CONTAINER_PREFIX,
   projectContainerName,
   type Box,
   type GlobalSettings,
@@ -21,7 +22,7 @@ import {
   type SshRemote,
   type TcpMap,
   type ImportReport as ContractImportReport,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 import type { Repositories } from "../db/repositories.js";
 import { allocateHostKey } from "../records/box.js";
 import { homePaths, hostToContainer, splitMountSpec, type HostEnv } from "../records/env.js";
@@ -125,8 +126,21 @@ interface ProjectDraft {
   existing?: Project;
 }
 
+/** The container prefix that 3.x used. */
+const LEGACY_PREFIX = "claude-agent-";
+
+/** The 3.x data directory, under the home directory. */
+const LEGACY_DATA_DIR = ".claude-box";
+
+/** Returns a 3.x box name with the AI Orchestrator container prefix, `aio-agent-`. */
+function renamedBox(name: string): string {
+  return name.startsWith(LEGACY_PREFIX)
+    ? CONTAINER_PREFIX + name.slice(LEGACY_PREFIX.length)
+    : name;
+}
+
 function sourceDirs(env: HostEnv) {
-  const data = homePaths(env).dataDir;
+  const data = path.join(env.home, LEGACY_DATA_DIR);
   return {
     data,
     known: path.join(data, "known"),
@@ -236,7 +250,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 /**
  * Imports the 3.3.5 records and settings into the database in one
  * transaction, saves the report in the `imports` table, and writes it to
- * `~/.claude-box/import-report.json`.
+ * `import-report.json` in the data directory.
  */
 export function runImport(options: ImportOptions): ImportReport {
   const { env, repos } = options;
@@ -393,7 +407,8 @@ export function runImport(options: ImportOptions): ImportReport {
       report.filesRead.push(full);
       const kv = readKvFile(full);
       const skip = (reason: string) => report.boxes.skipped.push({ file, reason });
-      if (!file.startsWith("claude-agent-")) {
+      const id = renamedBox(file);
+      if (!file.startsWith(LEGACY_PREFIX)) {
         skip("the name does not start with claude-agent-");
         continue;
       }
@@ -403,11 +418,11 @@ export function runImport(options: ImportOptions): ImportReport {
         continue;
       }
       const draft = projectFor(targetDir);
-      if (repos.boxes.get(file)) {
-        report.boxes.alreadyPresent.push(file);
+      if (repos.boxes.get(id)) {
+        report.boxes.alreadyPresent.push(id);
         continue;
       }
-      const warn = (msg: string) => report.warnings.push(`${file}: ${msg}`);
+      const warn = (msg: string) => report.warnings.push(`${id}: ${msg}`);
       const value = (key: string) => {
         const v = kvLast(kv, key);
         return v === undefined || v === "" ? undefined : v;
@@ -420,7 +435,7 @@ export function runImport(options: ImportOptions): ImportReport {
       if (shared && recContainer !== container) {
         warn(`its container ${recContainer} becomes ${container}.`);
       }
-      const session = shared ? (value("session") ?? file) : file;
+      const session = renamedBox(shared ? (value("session") ?? file) : file);
 
       let sessionUuid: string | null = value("session_uuid") ?? null;
       if (sessionUuid !== null && !UUID_RE.test(sessionUuid)) {
@@ -448,7 +463,7 @@ export function runImport(options: ImportOptions): ImportReport {
           continue;
         }
         if (draft.poolHostPorts.has(map.host)) {
-          report.poolPortsDropped.push({ projectId: draft.id, boxId: file, port: spec });
+          report.poolPortsDropped.push({ projectId: draft.id, boxId: id, port: spec });
           continue;
         }
         const existing = draft.tcpMaps.find((t) => t.host === map.host);
@@ -474,7 +489,7 @@ export function runImport(options: ImportOptions): ImportReport {
           continue;
         }
         draft.tcpMaps.push(map);
-        report.tcpMapsAdded.push({ projectId: draft.id, boxId: file, ...map });
+        report.tcpMapsAdded.push({ projectId: draft.id, boxId: id, ...map });
       }
       for (const spec of kvAll(kv, "dir")) {
         const mount = parseMount(spec);
@@ -482,7 +497,7 @@ export function runImport(options: ImportOptions): ImportReport {
           warn("skipped an empty mount.");
           continue;
         }
-        addMount(draft, mount, file, spec);
+        addMount(draft, mount, id, spec);
       }
 
       // Remotes: named references, then legacy inline remotes.
@@ -504,7 +519,7 @@ export function runImport(options: ImportOptions): ImportReport {
         else if (k === "ssh_host") slot(0).host = v;
       }
       for (const [n, r] of [...inline.entries()].sort((a, b) => a[0] - b[0])) {
-        const name = `${file}-${n}`;
+        const name = `${id}-${n}`;
         if (r.host.trim() === "") {
           warn(`skipped inline SSH remote ${n}: it has no host.`);
           continue;
@@ -528,7 +543,7 @@ export function runImport(options: ImportOptions): ImportReport {
             forwards,
           }),
         );
-        report.sshRemotes.legacyConverted.push({ boxId: file, remote: name });
+        report.sshRemotes.legacyConverted.push({ boxId: id, remote: name });
         if (!refs.includes(name)) refs.push(name);
       }
 
@@ -536,9 +551,9 @@ export function runImport(options: ImportOptions): ImportReport {
       // Host keys are unique across every project; the proxy resolves them so.
       const siblings = [...repos.boxes.list(), ...boxes];
       const input = {
-        id: file,
+        id,
         projectId: draft.id,
-        hostKey: allocateHostKey(file, siblings),
+        hostKey: allocateHostKey(id, siblings),
         targetDir,
         sessionUuid,
         conversationName: kvLast(kv, "conversation_name") ?? "",

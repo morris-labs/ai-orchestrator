@@ -1,5 +1,5 @@
 // Starts the built engine and server as local processes and runs the built
-// `agentbox` CLI against them.
+// `aio` CLI against them.
 import { spawn, execFile, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
@@ -25,12 +25,12 @@ export function requireBuilt(): void {
 /**
  * The environment for a child process: this one's plus `extra`, without
  * `TMUX`, so that nothing a child runs can reach the tmux server of the box
- * the suite runs in, and without any `AGENTBOX_` variable the suite didn't set.
+ * the suite runs in, and without any `AIO_` variable the suite didn't set.
  */
 export function childEnv(extra: Record<string, string>): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
-  for (const name of ["TMUX", "TMUX_PANE", "AGENTBOX_SERVER", "AGENTBOX_TOKEN"]) delete env[name];
-  for (const name of Object.keys(env)) if (name.startsWith("AGENTBOX_")) delete env[name];
+  for (const name of ["TMUX", "TMUX_PANE", "AIO_SERVER", "AIO_TOKEN"]) delete env[name];
+  for (const name of Object.keys(env)) if (name.startsWith("AIO_")) delete env[name];
   return { ...env, ...extra };
 }
 
@@ -108,7 +108,7 @@ export interface CliResult {
   stderr: string;
 }
 
-/** Runs the built `agentbox` CLI to completion. */
+/** Runs the built `aio` CLI to completion. */
 export function runCli(args: string[], env: NodeJS.ProcessEnv): Promise<CliResult> {
   return new Promise((resolve) => {
     execFile(process.execPath, [CLI_MAIN, ...args], { env }, (err, stdout, stderr) => {
@@ -121,12 +121,12 @@ export function runCli(args: string[], env: NodeJS.ProcessEnv): Promise<CliResul
 /** Runs the CLI with `--json` and parses its output; throws on a non-zero exit. */
 export async function cliJson<T>(args: string[], env: NodeJS.ProcessEnv): Promise<T> {
   const r = await runCli(["--json", ...args], env);
-  if (r.code !== 0) throw new Error(`agentbox ${args.join(" ")} exited ${r.code}: ${r.stderr}`);
+  if (r.code !== 0) throw new Error(`aio ${args.join(" ")} exited ${r.code}: ${r.stderr}`);
   return JSON.parse(r.stdout) as T;
 }
 
 /**
- * Starts `agentbox events` in the background and resolves `connected` once
+ * Starts `aio events` in the background and resolves `connected` once
  * the server's hello line arrives, so no later event is missed.
  */
 export function tailEvents(args: string[], env: NodeJS.ProcessEnv) {

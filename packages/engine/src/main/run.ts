@@ -7,7 +7,7 @@ import {
   ENGINE_ENV,
   EngineEnvSchema,
   type EngineEnv,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 import type { FastifyInstance } from "fastify";
 import { join } from "node:path";
 import { type LogLevel, type Logger, type RunManager } from "../api/core-interface.js";
@@ -31,11 +31,11 @@ import { LOG_LEVELS, createLogger, isLogLevel } from "./logger.js";
 import { loadEngineToken } from "./token.js";
 import { readPackageVersion } from "./version.js";
 
-export const LOG_LEVEL_ENV = "AGENTBOX_LOG_LEVEL";
+export const LOG_LEVEL_ENV = "AIO_LOG_LEVEL";
 
-export const USAGE = `Usage: agentbox-engine [--log-level LEVEL]
+export const USAGE = `Usage: aio-engine [--log-level LEVEL]
 
-Runs the Agent Box engine inside a project container.
+Runs the AI Orchestrator engine inside a project container.
 
 Options:
   --log-level LEVEL  One of ${LOG_LEVELS.join(", ")}. Default: $${LOG_LEVEL_ENV}, or info.
@@ -116,7 +116,7 @@ export interface StartOptions {
   /** The bearer token the API requires, from `loadEngineToken`. */
   token: string;
   log: Logger;
-  /** Where to write `active-runs`. Defaults to `AGENTBOX_STATE_DIR`. */
+  /** Where to write `active-runs`. Defaults to `AIO_STATE_DIR`. */
   stateDir?: string;
   host?: string;
   runner?: CommandRunner;

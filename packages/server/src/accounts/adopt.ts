@@ -1,6 +1,6 @@
 // `transcripts.adopt`: moves the host's Claude transcripts into the store
 // (`DATA_DIR/transcripts/claude`) and points `~/.claude/projects` at it, so
-// that `~/.claude-box` is the only folder in the home directory that Agent Box
+// that `~/.ai-orchestrator` is the only folder in the home directory that AI Orchestrator
 // uses for its own data.
 //
 // The move merges without overwriting. A file that exists on both sides with

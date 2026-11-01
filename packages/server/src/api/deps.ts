@@ -1,7 +1,7 @@
 // What the API layer needs, as narrow interfaces, so route tests can pass
 // fakes for the services as well as for the core.
 import type {
-  AgentBoxEvent,
+  AioEvent,
   EngineRouteKey,
   EventType,
   Job,
@@ -19,7 +19,7 @@ import type {
   VendorUsageSchema,
   SshRemote,
   ImageBuildSchema,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 import type { z } from "zod";
 import type { Core, EventInput } from "./core-interface.js";
 import type { EngineCallInput } from "../events/engine-client.js";
@@ -46,8 +46,8 @@ export interface ApiHub {
   readonly streamId: string;
   /** The `seq` of the newest event in the unfiltered stream. */
   readonly lastSeq: number;
-  emit(event: EventInput): AgentBoxEvent;
-  subscribe(listener: (event: AgentBoxEvent) => void): () => void;
+  emit(event: EventInput): AioEvent;
+  subscribe(listener: (event: AioEvent) => void): () => void;
   /** With `filter`, plans the stream of those event types only; see `EventHub.replay`. */
   replay(
     hello: { type: "hello"; streamId: string | null; lastSeq: number | null },

@@ -1,6 +1,6 @@
 // The command lines a box's sessions run (inventory section 4.3), kept in one
 // place so creating and reopening a box can't drift apart.
-import type { Box, Platform, Project } from "@agentbox/contracts";
+import type { Box, Platform, Project } from "@aio/contracts";
 import { hostToContainer, promptPath, type HostEnv } from "../records/env.js";
 import { normalizeRoot } from "../projects/ids.js";
 import { infraFile, worktreeNotesDir } from "../worktrees/worktrees.js";

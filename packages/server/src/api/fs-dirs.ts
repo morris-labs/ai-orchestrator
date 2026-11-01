@@ -4,7 +4,7 @@
 import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { DirListing } from "@agentbox/contracts";
+import type { DirListing } from "@aio/contracts";
 import { ApiError } from "./errors.js";
 
 /**

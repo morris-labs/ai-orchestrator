@@ -1,6 +1,6 @@
 // API errors: an `ApiError` carries a contract error code, and the API layer
 // turns it into the status code and `ApiError` body the contracts define.
-import { ApiErrorCodeSchema, type ApiErrorCode } from "@agentbox/contracts";
+import { ApiErrorCodeSchema, type ApiErrorCode } from "@aio/contracts";
 import { ZodError } from "zod";
 import { API_ERROR_STATUS, ApiError } from "../records/errors.js";
 

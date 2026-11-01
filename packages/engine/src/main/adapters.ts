@@ -1,7 +1,7 @@
 // Picks the vendor adapters the engine runs with: the real CLIs that answer
-// `--version`, or scripted mocks for the vendors `AGENTBOX_MOCK_VENDORS` names.
+// `--version`, or scripted mocks for the vendors `AIO_MOCK_VENDORS` names.
 import { readFileSync } from "node:fs";
-import { VendorSchema, type Vendor } from "@agentbox/contracts";
+import { VendorSchema, type Vendor } from "@aio/contracts";
 import { z } from "zod";
 import type { Logger } from "../api/core-interface.js";
 import { bridgeAdapters } from "../adapters/bridge.js";
@@ -14,9 +14,9 @@ import type { AdapterSet } from "../core.js";
  * The vendors whose calls a script answers instead of a CLI: `1` for every
  * vendor, or a comma-separated list such as `codex,copilot`.
  */
-export const MOCK_VENDORS_ENV = "AGENTBOX_MOCK_VENDORS";
-/** A JSON file with a `responses` list per vendor, for the vendors `AGENTBOX_MOCK_VENDORS` mocks. */
-export const MOCK_SCRIPT_ENV = "AGENTBOX_MOCK_SCRIPT";
+export const MOCK_VENDORS_ENV = "AIO_MOCK_VENDORS";
+/** A JSON file with a `responses` list per vendor, for the vendors `AIO_MOCK_VENDORS` mocks. */
+export const MOCK_SCRIPT_ENV = "AIO_MOCK_SCRIPT";
 
 const VENDORS: readonly Vendor[] = ["claude", "codex", "copilot"];
 
@@ -70,7 +70,7 @@ export function createMockAdapters(scriptPath?: string): Record<Vendor, MockAdap
 }
 
 /**
- * Reads `AGENTBOX_MOCK_VENDORS`: `1` mocks every vendor, a comma-separated
+ * Reads `AIO_MOCK_VENDORS`: `1` mocks every vendor, a comma-separated
  * list mocks those vendors, and an absent, empty, or `0` value mocks none.
  * Throws for a name that isn't a vendor.
  */

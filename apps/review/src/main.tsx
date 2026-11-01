@@ -6,7 +6,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App.js";
-import { ApiClient } from "@agentbox/ui/core";
+import { ApiClient } from "@aio/ui/core";
 import { bridge } from "./lib/bridge.js";
 import { AppStore, StoreProvider } from "./state/store.js";
 import "./styles.css";

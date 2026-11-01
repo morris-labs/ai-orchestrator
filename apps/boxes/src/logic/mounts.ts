@@ -1,5 +1,5 @@
 // Parsing and checking of the mount and TCP map editors.
-import type { Mount, TcpMap } from "@agentbox/contracts";
+import type { Mount, TcpMap } from "@aio/contracts";
 
 /** One `HOST[:CONTAINER]` line; the container path defaults to the host path. */
 export function parseMountLine(line: string): Mount | null {

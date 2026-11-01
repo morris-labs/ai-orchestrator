@@ -1,5 +1,5 @@
 #!/bin/sh
-# postinst for the agentbox package.
+# postinst for the aio package.
 set -e
 
 case "$1" in
@@ -22,10 +22,10 @@ case "$1" in
     fi
     for app in boxes review; do
       loaded=0
-      if [ "$have_apparmor" = 1 ] && apparmor_parser -r -T -W "/etc/apparmor.d/agentbox-$app"; then
+      if [ "$have_apparmor" = 1 ] && apparmor_parser -r -T -W "/etc/apparmor.d/aio-$app"; then
         loaded=1
       fi
-      helper="/usr/lib/agentbox/$app/chrome-sandbox"
+      helper="/usr/lib/ai-orchestrator/$app/chrome-sandbox"
       if [ -f "$helper" ]; then
         chown root:root "$helper"
         if [ "$loaded" = 1 ] && [ "$userns_off" = 0 ]; then
@@ -50,13 +50,13 @@ case "$1" in
     if [ -n "${2:-}" ]; then
       cat <<'MSG'
 
-Agent Box is upgraded. A server that was already running still runs the
+AI Orchestrator is upgraded. A server that was already running still runs the
 old version. As each user who runs the server, restart it:
 
-  systemctl --user daemon-reload && systemctl --user restart agentbox-server
+  systemctl --user daemon-reload && systemctl --user restart aio-server
 
 Then rebuild the container image from the setup wizard, or with
-/usr/share/agentbox/scripts/build-image.sh, so that its engine matches the
+/usr/share/ai-orchestrator/scripts/build-image.sh, so that its engine matches the
 new server.
 
 MSG
@@ -65,20 +65,20 @@ MSG
 
     cat <<'MSG'
 
-Agent Box is installed. The server runs as your user, not as root, under
+AI Orchestrator is installed. The server runs as your user, not as root, under
 your systemd user manager. As the user who runs your boxes, enable and
 start it:
 
-  systemctl --user enable --now agentbox-server
+  systemctl --user enable --now aio-server
 
 To keep it running while you're logged out, also run:
 
   sudo loginctl enable-linger "$USER"
 
-Your user must be in the docker group. Then open Agent Box from your
+Your user must be in the docker group. Then open AI Orchestrator from your
 applications menu; its setup wizard builds the container image from
-/usr/share/agentbox/image. For more information, see
-https://github.com/morris-labs/Claude-Box/blob/main/docs/install.md
+/usr/share/ai-orchestrator/image. For more information, see
+https://github.com/morris-labs/ai-orchestrator/blob/main/docs/install.md
 
 MSG
     ;;

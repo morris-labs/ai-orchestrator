@@ -1,7 +1,7 @@
 // Applies server events to the app's box list. `box.changed` carries the
 // record and the status; `container.stats` and `ports.changed` are per
 // container, so they update every box that runs in that container.
-import type { BoxView, EventOf, Listener, ProjectSummary } from "@agentbox/contracts";
+import type { BoxView, EventOf, Listener, ProjectSummary } from "@aio/contracts";
 
 /**
  * Applies `box.changed`. Returns the new list and whether the box is unknown

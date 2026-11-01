@@ -1,11 +1,11 @@
 [Desktop Entry]
 Type=Application
 Version=1.5
-Name=Agent Box Review
+Name=AI Orchestrator Review
 GenericName=Code Review Pipeline
 Comment=Run multi-vendor code reviews on a box's branch and watch them live
-Exec=/usr/bin/agentbox-review %U
-Icon=agentbox-review
+Exec=/usr/bin/aio-review %U
+Icon=aio-review
 Terminal=false
 Categories=Development;
 Keywords=review;claude;codex;copilot;agent;pipeline;findings;
@@ -15,4 +15,4 @@ Keywords=review;claude;codex;copilot;agent;pipeline;findings;
 StartupNotify=false
 # Must match the Electron app's WM_CLASS and its desktopName, so GNOME on
 # Wayland ties the window to this entry and shows the right icon.
-StartupWMClass=agentbox-review
+StartupWMClass=aio-review

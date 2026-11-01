@@ -1,7 +1,7 @@
 // Pure logic of the Electron main process, kept apart from `electron` so
 // that tests can run it under Node.
-import type { BoxView, Notification, NotificationKind } from "@agentbox/contracts";
-import { isAppPage } from "@agentbox/ui/core";
+import type { BoxView, Notification, NotificationKind } from "@aio/contracts";
+import { isAppPage } from "@aio/ui/core";
 
 // ---------------------------------------------------------------------------
 // The page
@@ -109,12 +109,12 @@ export function trayCounts(boxes: readonly Pick<BoxView, "status">[]): TrayCount
   };
 }
 
-/** The tray tooltip and status line: `Agent Box: 2 running · 3 not running`. */
+/** The tray tooltip and status line: `AI Orchestrator: 2 running · 3 not running`. */
 export function trayText(counts: TrayCounts | null): string {
-  if (counts === null) return "Agent Box: server not reachable";
+  if (counts === null) return "AI Orchestrator: server not reachable";
   const parts = [`${counts.running} running`, `${counts.stopped} not running`];
   if (counts.transitioning > 0) parts.push(`${counts.transitioning} changing`);
-  return `Agent Box: ${parts.join(" · ")}`;
+  return `AI Orchestrator: ${parts.join(" · ")}`;
 }
 
 /**
@@ -181,9 +181,9 @@ export function isBoxNotification(n: Pick<Notification, "kind" | "runId" | "boxI
 
 /**
  * The argv that launches the review app with the launcher prefilled. The
- * review app also takes an `agentbox-review://launch?project=&box=` URL or a
+ * review app also takes an `aio-review://launch?project=&box=` URL or a
  * bare `?project=&box=` query; the flags are the form this app uses.
- * `binary` comes from `AGENTBOX_REVIEW_BIN` when it is set.
+ * `binary` comes from `AIO_REVIEW_BIN` when it is set.
  */
 export function reviewCommand(
   projectId: string,
@@ -191,13 +191,13 @@ export function reviewCommand(
   binary: string | undefined = undefined,
 ): { file: string; args: string[] } {
   return {
-    file: binary || "agentbox-review",
+    file: binary || "aio-review",
     args: [`--project=${projectId}`, `--box=${boxId}`],
   };
 }
 
 /** Environment variables that hold a secret and never reach a spawned process. */
-export const SECRET_ENV: readonly string[] = ["AGENTBOX_SERVER_TOKEN"];
+export const SECRET_ENV: readonly string[] = ["AIO_SERVER_TOKEN"];
 
 /**
  * A copy of `env` for a process this app spawns, such as a terminal or the
@@ -240,7 +240,7 @@ function desktopNames(env: Record<string, string | undefined>): string[] {
 
 /** True when `closeHidesToTray` needs the GNOME Shell extension list to decide. */
 export function needsExtensionList(env: Record<string, string | undefined>): boolean {
-  const override = env.AGENTBOX_CLOSE_TO_TRAY;
+  const override = env.AIO_CLOSE_TO_TRAY;
   if (override === "1" || override === "0") return false;
   const desktop = desktopNames(env);
   return desktop.includes("gnome") && !desktop.includes("ubuntu");
@@ -252,7 +252,7 @@ export function needsExtensionList(env: Record<string, string | undefined>): boo
  * extension runs, so a hidden window would leave a process with no visible
  * way back. Quitting the app never stops a box: the server runs them.
  *
- * - `AGENTBOX_CLOSE_TO_TRAY=1` or `0` decides outright.
+ * - `AIO_CLOSE_TO_TRAY=1` or `0` decides outright.
  * - A GNOME session hides to the tray only in the Ubuntu session, which
  *   ships the AppIndicator extension, or when `enabledExtensions` (the
  *   `org.gnome.shell enabled-extensions` value, or `null` when unknown)
@@ -263,7 +263,7 @@ export function closeHidesToTray(
   env: Record<string, string | undefined>,
   enabledExtensions: string | null,
 ): boolean {
-  const override = env.AGENTBOX_CLOSE_TO_TRAY;
+  const override = env.AIO_CLOSE_TO_TRAY;
   if (override === "1") return true;
   if (override === "0") return false;
   if (!needsExtensionList(env)) return true;

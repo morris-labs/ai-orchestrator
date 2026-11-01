@@ -1,7 +1,7 @@
 // The store's REST snapshot: events applied while it loads win, and one
 // run's failure keeps the rest of it.
-import { ApiClient, type HttpRouteKey } from "@agentbox/ui/core";
-import { FakeServer, makeEvent, type FakeHandler } from "@agentbox/ui/testing";
+import { ApiClient, type HttpRouteKey } from "@aio/ui/core";
+import { FakeServer, makeEvent, type FakeHandler } from "@aio/ui/testing";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppStore, SNAPSHOT_RETRY_MS, SNAPSHOT_RUN_CONCURRENCY } from "../src/state/store.js";
 import { BOX, CONTAINER, PROJECT, boxView, lastRun, project } from "./helpers/data.js";

@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { DEFAULT_POLICY, PolicyFileSchema } from "@agentbox/contracts";
+import { DEFAULT_POLICY, PolicyFileSchema } from "@aio/contracts";
 import { describe, expect, it } from "vitest";
 import { globToRegExp, matchesAny, matchesGlob } from "../../src/policy/glob.js";
 import {
@@ -68,13 +68,13 @@ describe("policy loading", () => {
   });
 
   it("loads the file from the project, or the default when absent", async () => {
-    const root = tempDir("agentbox-policy-");
+    const root = tempDir("aio-policy-");
     expect(await loadPolicy(root)).toEqual(DEFAULT_POLICY);
-    mkdirSync(join(root, ".claude-box"));
-    writeFileSync(join(root, ".claude-box/policy.yaml"), "version: 1\ngroupSizeLimit: 50\n");
+    mkdirSync(join(root, ".aio"));
+    writeFileSync(join(root, ".aio/policy.yaml"), "version: 1\ngroupSizeLimit: 50\n");
     expect((await loadPolicy(root)).groupSizeLimit).toBe(50);
     expect(policyFilePath(root, "/etc/p.yaml")).toBe("/etc/p.yaml");
-    expect(policyFilePath("/r")).toBe("/r/.claude-box/policy.yaml");
+    expect(policyFilePath("/r")).toBe("/r/.aio/policy.yaml");
   });
 });
 

@@ -5,15 +5,15 @@
 #
 # Run one step at a time: ./host-checks.sh STEP
 # Replace the following before you start:
-#   BOX_ID:   a running box, such as claude-agent-example
+#   BOX_ID:   a running box, such as aio-agent-example
 #   PROJECT:  its project id
 #   REMOTE:   a saved SSH remote name, such as "Mac Box"; the script encodes it
 #   DEV_PORT: a port a dev server listens on inside the box's container
-# Set AGENTBOX_DATA_DIR when the server runs with --data-dir.
+# Set AIO_DATA_DIR when the server runs with --data-dir.
 set -euo pipefail
 
 SERVER="${SERVER:-https://127.0.0.1:21400}"
-DATA_DIR="${AGENTBOX_DATA_DIR:-$HOME/.claude-box}"
+DATA_DIR="${AIO_DATA_DIR:-$HOME/.ai-orchestrator}"
 TOKEN_FILE="$DATA_DIR/server.token"
 [ -r "$TOKEN_FILE" ] || { echo "Can't read $TOKEN_FILE." >&2; exit 1; }
 # curl reads the Authorization header from a file that only you can read,
@@ -99,12 +99,12 @@ case "$step" in
     ;;
   service)
     # Installs and starts the user unit; expect "active".
-    agentbox-server install-service
-    systemctl --user is-active agentbox-server.service
+    aio-server install-service
+    systemctl --user is-active aio-server.service
     ;;
   shutdown)
     # Expect a clean exit within 10 seconds and no orphaned ssh processes.
-    systemctl --user stop agentbox-server.service
+    systemctl --user stop aio-server.service
     pgrep -a ssh | grep -c ExitOnForwardFailure || true
     ;;
   *)

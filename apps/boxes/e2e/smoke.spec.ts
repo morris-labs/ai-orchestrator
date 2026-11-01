@@ -1,8 +1,8 @@
 // A smoke test of the packaged boxes app: the window opens on the server's
-// page, the menus and chords work, and, when AGENTBOX_E2E_BOX names a running
-// box, its terminal echoes what you type. With AGENTBOX_SERVER_URL set, it
+// page, the menus and chords work, and, when AIO_E2E_BOX names a running
+// box, its terminal echoes what you type. With AIO_SERVER_URL set, it
 // runs against that server (a real host); without it, against the shared
-// fake server from `@agentbox/ui/testing`, which serves the built renderer
+// fake server from `@aio/ui/testing`, which serves the built renderer
 // at /boxes/ over HTTPS with a certificate in a temporary data directory.
 // Without a display, run it under `xvfb-run`.
 //
@@ -17,15 +17,15 @@ import {
   type ElectronApplication,
   type Page,
 } from "@playwright/test";
-import { FakeServer, makeBoxView } from "@agentbox/ui/testing";
+import { FakeServer, makeBoxView } from "@aio/ui/testing";
 import {
   describeExit,
   secondInstanceCommand,
   serveFake,
   type ServedFake,
-} from "@agentbox/ui/testing/node";
+} from "@aio/ui/testing/node";
 import { spawnSync } from "node:child_process";
-import { createServerIdentity } from "@agentbox/contracts/tls";
+import { createServerIdentity } from "@aio/contracts/tls";
 import {
   existsSync,
   mkdirSync,
@@ -51,29 +51,29 @@ const env: Record<string, string> = { ...(process.env as Record<string, string>)
 
 test.beforeAll(async () => {
   if (!existsSync(mainFile)) throw new Error(`Build the app first: ${mainFile} is missing.`);
-  if (!process.env.AGENTBOX_SERVER_URL) {
+  if (!process.env.AIO_SERVER_URL) {
     const server = new FakeServer({
       boxes: [
         makeBoxView({
-          box: { id: "claude-agent-site", targetDir: "/w/site", conversationName: "Site work" },
+          box: { id: "aio-agent-site", targetDir: "/w/site", conversationName: "Site work" },
           status: "running",
         }),
-        makeBoxView({ box: { id: "claude-agent-api", targetDir: "/w/api" } }),
+        makeBoxView({ box: { id: "aio-agent-api", targetDir: "/w/api" } }),
       ],
     });
     // The app pins the certificate in the data directory, as with the real server.
     const identity = createServerIdentity();
-    dataDir = mkdtempSync(join(tmpdir(), "agentbox-e2e-"));
+    dataDir = mkdtempSync(join(tmpdir(), "aio-e2e-"));
     writeFileSync(join(dataDir, "server.crt"), identity.cert);
     fake = await serveFake(server, {
       static: { "/boxes/": resolve(appDir, "dist/renderer") },
       tls: identity,
     });
-    env.AGENTBOX_SERVER_URL = fake.url;
-    env.AGENTBOX_DATA_DIR = dataDir;
-    env.AGENTBOX_SERVER_TOKEN = "smoke-token";
+    env.AIO_SERVER_URL = fake.url;
+    env.AIO_DATA_DIR = dataDir;
+    env.AIO_SERVER_TOKEN = "smoke-token";
   }
-  userDataDir = mkdtempSync(join(tmpdir(), "agentbox-e2e-profile-"));
+  userDataDir = mkdtempSync(join(tmpdir(), "aio-e2e-profile-"));
   appArgs = [appDir, `--user-data-dir=${userDataDir}`];
   app = await electron.launch({ args: appArgs, env });
   page = await app.firstWindow();
@@ -89,7 +89,7 @@ test.afterAll(async () => {
 });
 
 test("opens the main window from the server", async () => {
-  expect(await page.title()).toBe("Agent Box");
+  expect(await page.title()).toBe("AI Orchestrator");
   await expect(page.getByRole("menubar")).toBeVisible();
   await expect(page.getByRole("tab", { name: "Boxes" })).toBeVisible();
   await expect(page.getByRole("toolbar", { name: "Box actions" })).toBeVisible();
@@ -101,9 +101,9 @@ test("hands the page the token once, for the session cookie", async () => {
   const bridge = await page.evaluate(() => {
     const b = (
       window as unknown as {
-        agentbox?: { token?: unknown; takeToken: () => string | null; serverUrl: string };
+        aio?: { token?: unknown; takeToken: () => string | null; serverUrl: string };
       }
-    ).agentbox;
+    ).aio;
     return b ? { onBridge: "token" in b, again: b.takeToken(), serverUrl: b.serverUrl } : null;
   });
   // The page took the token at start, so the bridge has none left to give.
@@ -163,7 +163,7 @@ test("toggles the details panel with Ctrl+Shift+D", async () => {
  */
 async function lockBox(boxId: string): Promise<() => void> {
   const base = process.platform === "win32" ? tmpdir() : "/tmp";
-  const lock = join(base, `agentbox-e2e-terminal-${boxId.replace(/[^\w.-]/g, "_")}.lock`);
+  const lock = join(base, `aio-e2e-terminal-${boxId.replace(/[^\w.-]/g, "_")}.lock`);
   const until = Date.now() + 180_000;
   let announced = false;
   for (;;) {
@@ -203,8 +203,8 @@ async function lockBox(boxId: string): Promise<() => void> {
 
 test("types into a running box's terminal and sees the echo", async () => {
   test.setTimeout(300_000);
-  const boxId = process.env.AGENTBOX_E2E_BOX;
-  test.skip(!boxId, "Set AGENTBOX_E2E_BOX to a running box id to run this test.");
+  const boxId = process.env.AIO_E2E_BOX;
+  test.skip(!boxId, "Set AIO_E2E_BOX to a running box id to run this test.");
   const unlock = await lockBox(boxId as string);
   try {
     await typeIntoTerminal(boxId as string);
@@ -238,7 +238,7 @@ async function typeIntoTerminal(boxId: string): Promise<void> {
     .poll(() => page.locator(".bx-terminal-pane:not([hidden]) .xterm-rows > div").count())
     .toBeGreaterThanOrEqual(10);
   await terminal.click();
-  const marker = `agentbox-e2e-${Date.now()}`;
+  const marker = `aio-e2e-${Date.now()}`;
   await page.keyboard.type(marker);
   await expect(page.locator(".bx-terminal-pane:not([hidden]) .xterm-rows")).toContainText(marker, {
     timeout: 15_000,
@@ -263,19 +263,19 @@ test("refuses to open a path the server didn't report, or a non-web link", async
     };
   });
   // A path no server reports, whether the fake or a real host.
-  const path = `/nonexistent-agentbox-e2e-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const path = `/nonexistent-aio-e2e-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const results = await page.evaluate(async (p) => {
     const b = (
       window as unknown as {
-        agentbox: {
+        aio: {
           openPath: (p: string) => Promise<{ ok: boolean; error?: string }>;
           openExternal: (u: string) => Promise<{ ok: boolean; error?: string }>;
         };
       }
-    ).agentbox;
+    ).aio;
     return {
       path: await b.openPath(p),
-      file: await b.openExternal("file:///nonexistent-agentbox-e2e.desktop"),
+      file: await b.openExternal("file:///nonexistent-aio-e2e.desktop"),
     };
   }, path);
   expect(results.path.ok).toBe(false);
@@ -305,7 +305,5 @@ test("keeps the window on the app's page when something navigates it away", asyn
     .poll(() => app.evaluate(() => (globalThis as { seen?: unknown[] }).seen))
     .toEqual([{ url: target, blocked: true }]);
   expect(page.url()).toBe(before);
-  expect(await page.evaluate(() => typeof (window as { agentbox?: unknown }).agentbox)).toBe(
-    "object",
-  );
+  expect(await page.evaluate(() => typeof (window as { aio?: unknown }).aio)).toBe("object");
 });

@@ -1,4 +1,4 @@
-// The `agentbox-secret` command: gets secrets from the broker for agents and
+// The `aio-secret` command: gets secrets from the broker for agents and
 // tools in a project container, so values reach only the process that needs
 // them instead of every process's environment.
 import { spawn } from "node:child_process";
@@ -8,12 +8,12 @@ import { delimiter, isAbsolute, join } from "node:path";
 import { BrokerClient, BrokerError, type BrokerClientErrorCode } from "./broker-client.js";
 
 export const SECRET_USAGE = `Usage:
-  agentbox-secret NAME
-  agentbox-secret get NAME
-  agentbox-secret run NAME[,NAME...] [NAME...] -- COMMAND [ARGS...]
-  agentbox-secret list
+  aio-secret NAME
+  aio-secret get NAME
+  aio-secret run NAME[,NAME...] [NAME...] -- COMMAND [ARGS...]
+  aio-secret list
 
-Gets the project's secrets from the Agent Box secrets broker.
+Gets the project's secrets from the AI Orchestrator secrets broker.
 
 Commands:
   get NAME   Print the value of NAME, without a trailing newline. "get" is
@@ -149,13 +149,13 @@ export async function execOrSpawn(
   });
 }
 
-/** Runs `agentbox-secret` and returns its exit status. */
+/** Runs `aio-secret` and returns its exit status. */
 export async function secretMain(argv: readonly string[], io: SecretCliIo): Promise<number> {
   let parsed: SecretCommand;
   try {
     parsed = parseSecretArgs(argv);
   } catch (err) {
-    io.stderr(`agentbox-secret: ${(err as Error).message}\n\n${SECRET_USAGE}`);
+    io.stderr(`aio-secret: ${(err as Error).message}\n\n${SECRET_USAGE}`);
     return 2;
   }
   if (parsed.kind === "help") {
@@ -172,20 +172,20 @@ export async function secretMain(argv: readonly string[], io: SecretCliIo): Prom
       return 0;
     }
     if (parsed.kind === "get") {
-      const values = await client.read([parsed.name], `agentbox-secret get${from}`);
+      const values = await client.read([parsed.name], `aio-secret get${from}`);
       io.stdout(values[parsed.name]!);
       return 0;
     }
     // Only the program's name goes to the log: its arguments could hold anything.
-    const values = await client.read(parsed.names, `agentbox-secret run ${parsed.command}${from}`);
+    const values = await client.read(parsed.names, `aio-secret run ${parsed.command}${from}`);
     const env: NodeJS.ProcessEnv = { ...io.env, ...values };
     return await (io.run ?? execOrSpawn)(parsed.command, parsed.args, env);
   } catch (err) {
     if (err instanceof BrokerError) {
-      io.stderr(`agentbox-secret: ${err.message}\n`);
+      io.stderr(`aio-secret: ${err.message}\n`);
       return EXIT_CODES[err.code];
     }
-    io.stderr(`agentbox-secret: ${(err as Error).message}\n`);
+    io.stderr(`aio-secret: ${(err as Error).message}\n`);
     return parsed.kind === "run" ? 127 : 1;
   }
 }

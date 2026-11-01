@@ -23,12 +23,12 @@ export interface CheckoutState {
 
 /** The read-only checkout of a run: a temporary directory named after the run. */
 export function readOnlyCheckoutPath(runId: string): string {
-  return join(tmpdir(), `agentbox-tip-${runId}`);
+  return join(tmpdir(), `aio-tip-${runId}`);
 }
 
 /** The directory that holds a run's reproduction-script checkouts. */
 export function scriptCheckoutsDir(runId: string): string {
-  return join(tmpdir(), `agentbox-scripts-${runId}`);
+  return join(tmpdir(), `aio-scripts-${runId}`);
 }
 
 /**

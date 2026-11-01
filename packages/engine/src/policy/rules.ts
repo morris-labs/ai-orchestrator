@@ -1,5 +1,5 @@
 // Turns the policy into prompt text for reviewers and verifiers.
-import type { PolicyFile, PolicyRule } from "@agentbox/contracts";
+import type { PolicyFile, PolicyRule } from "@aio/contracts";
 import { matchesAny } from "./glob.js";
 
 /** The rules that apply to at least one of `files`; every rule when `files` is absent. */

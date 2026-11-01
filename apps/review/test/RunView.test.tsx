@@ -1,4 +1,4 @@
-import type { Decision, Finding, RunState } from "@agentbox/contracts";
+import type { Decision, Finding, RunState } from "@aio/contracts";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { DecisionPanel, RunList, RunView, StageStepper } from "../src/screens/RunView.js";

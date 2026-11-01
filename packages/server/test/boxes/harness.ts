@@ -2,14 +2,14 @@
 // Docker double. Every test gets its own.
 import fs from "node:fs";
 import path from "node:path";
-import { EventSchema } from "@agentbox/contracts";
+import { EventSchema } from "@aio/contracts";
 import { createServerCore, type ServerCore } from "../../src/core.js";
 import type { CoreEventPayload } from "../../src/records/events.js";
 import type { HostEnv } from "../../src/records/env.js";
 import { MemoryDocker } from "../../src/docker/memory.js";
 import { tempDir } from "../tmp.js";
 
-export const ENGINE_VERSION = "4.0.0-test";
+export const ENGINE_VERSION = "1.0.0-test";
 
 export interface Harness {
   home: string;
@@ -37,12 +37,12 @@ export function assertContractEvent(payload: CoreEventPayload): void {
 }
 
 export function makeHarness(options: { image?: boolean; engineLabel?: string } = {}): Harness {
-  const home = fs.realpathSync(tempDir("agentbox-core-"));
+  const home = fs.realpathSync(tempDir("aio-core-"));
   const env: HostEnv = { home, user: "tester", now: () => new Date() };
   const docker = new MemoryDocker();
   if (options.image ?? true) {
-    docker.addImage("claude-code", {
-      "agentbox.engine-version": options.engineLabel ?? ENGINE_VERSION,
+    docker.addImage("aio-agent", {
+      "aio.engine-version": options.engineLabel ?? ENGINE_VERSION,
     });
   }
   let nextPort = 41000;

@@ -1,6 +1,6 @@
 // The terminal tab strip: which tabs are open, which is current, and the
 // Qt rules for reusing a live tab and replacing an ended one.
-import type { Platform } from "@agentbox/contracts";
+import type { Platform } from "@aio/contracts";
 
 export interface Tab {
   /** Unique per tab, so a replaced tab gets a fresh terminal. */

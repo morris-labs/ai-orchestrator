@@ -1,4 +1,4 @@
-import { ServerStreamFrameSchema, type AgentBoxEvent } from "@agentbox/contracts";
+import { ServerStreamFrameSchema, type AioEvent } from "@aio/contracts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parseTypes } from "../../src/api/server.js";
 import { runState } from "../api/fixtures.js";
@@ -30,12 +30,12 @@ describe("events.stream", () => {
 
   it("accepts the session cookie", async () => {
     const { sessionValue } = await import("../../src/api/auth.js");
-    const s = await connect(base, { cookie: `agentbox_session=${sessionValue(TOKEN)}` });
+    const s = await connect(base, { cookie: `aio_session=${sessionValue(TOKEN)}` });
     s.ws.close();
   });
 
   it("sends hello, then live events numbered in order", async () => {
-    h.hub.emit(boxEvent("claude-agent-a"));
+    h.hub.emit(boxEvent("aio-agent-a"));
     const s = await connect(`${base}`);
     s.ws.send(JSON.stringify({ type: "hello", streamId: null, lastSeq: null }));
     await s.until((x) => x.texts.length === 1);
@@ -45,7 +45,7 @@ describe("events.stream", () => {
       lastSeq: 1,
       replaying: false,
     });
-    h.hub.emit(boxEvent("claude-agent-b"));
+    h.hub.emit(boxEvent("aio-agent-b"));
     await s.until((x) => x.texts.length === 2);
     const event = ServerStreamFrameSchema.parse(s.texts[1]);
     expect(event).toMatchObject({ type: "box.changed", seq: 2, sourceSeq: 2, source: "server" });
@@ -53,20 +53,20 @@ describe("events.stream", () => {
   });
 
   it("replays events after the client's lastSeq when the stream id matches", async () => {
-    for (const id of ["a", "b", "c"]) h.hub.emit(boxEvent(`claude-agent-${id}`));
+    for (const id of ["a", "b", "c"]) h.hub.emit(boxEvent(`aio-agent-${id}`));
     const s = await connect(`${base}`);
     s.ws.send(JSON.stringify({ type: "hello", streamId: h.hub.streamId, lastSeq: 1 }));
     await s.until((x) => x.texts.length === 3);
     expect(s.texts[0]).toMatchObject({ type: "hello", replaying: true, lastSeq: 3 });
     expect((s.texts.slice(1) as { seq: number }[]).map((e) => e.seq)).toEqual([2, 3]);
-    h.hub.emit(boxEvent("claude-agent-d"));
+    h.hub.emit(boxEvent("aio-agent-d"));
     await s.until((x) => x.texts.length === 4);
     expect((s.texts[3] as { seq: number }).seq).toBe(4);
     s.ws.close();
   });
 
   it("replays nothing for another stream id, and resyncs on a second hello", async () => {
-    h.hub.emit(boxEvent("claude-agent-a"));
+    h.hub.emit(boxEvent("aio-agent-a"));
     const s = await connect(`${base}`);
     s.ws.send(JSON.stringify({ type: "hello", streamId: "old-stream", lastSeq: 9 }));
     await s.until((x) => x.texts.length === 1);
@@ -82,7 +82,7 @@ describe("events.stream", () => {
     const s = await connect(`${base}?types=notification`);
     s.ws.send(JSON.stringify({ type: "hello", streamId: null, lastSeq: null }));
     await s.until((x) => x.texts.length === 1);
-    h.hub.emit(boxEvent("claude-agent-a"));
+    h.hub.emit(boxEvent("aio-agent-a"));
     h.hub.emit({
       type: "notification",
       notificationId: "n1",
@@ -125,7 +125,7 @@ describe("events.stream", () => {
       }
       return last;
     };
-    h.hub.emit(boxEvent("claude-agent-a"));
+    h.hub.emit(boxEvent("aio-agent-a"));
     h.hub.emit(note("n1"));
     const s = await connect(url);
     s.ws.send(JSON.stringify({ type: "hello", streamId: null, lastSeq: null }));
@@ -133,9 +133,9 @@ describe("events.stream", () => {
     const hello = s.texts[0] as { streamId: string; lastSeq: number };
     expect(hello).toMatchObject({ replaying: false, lastSeq: 1 });
     expect(hello.streamId).not.toBe(h.hub.streamId);
-    h.hub.emit(boxEvent("claude-agent-b"));
+    h.hub.emit(boxEvent("aio-agent-b"));
     h.hub.emit(note("n2"));
-    h.hub.emit(boxEvent("claude-agent-c"));
+    h.hub.emit(boxEvent("aio-agent-c"));
     h.hub.emit(note("n3"));
     await s.until((x) => x.texts.length === 3);
     const live = s.texts.slice(1) as { streamId: string; seq: number }[];
@@ -144,7 +144,7 @@ describe("events.stream", () => {
     s.ws.close();
 
     // A reconnect resumes from the filtered position and replays only what it missed.
-    h.hub.emit(boxEvent("claude-agent-d"));
+    h.hub.emit(boxEvent("aio-agent-d"));
     h.hub.emit(note("n4"));
     const r = await connect(url);
     r.ws.send(JSON.stringify({ type: "hello", streamId: hello.streamId, lastSeq: 2 }));
@@ -182,7 +182,7 @@ describe("events.stream", () => {
       });
     });
     const urls = [`${base}`, `${base}?types=run.changed,notification`];
-    h.hub.emit(boxEvent("claude-agent-a"));
+    h.hub.emit(boxEvent("aio-agent-a"));
     const live = await Promise.all(urls.map((url) => connect(url)));
     for (const s of live) {
       s.ws.send(JSON.stringify({ type: "hello", streamId: null, lastSeq: null }));
@@ -194,7 +194,7 @@ describe("events.stream", () => {
       ({ type: "run.changed", run: { ...runState, status }, roundSummary: null }) as const;
     for (let i = 0; i < 3; i += 1) {
       h.hub.emit(run("running"));
-      h.hub.emit(boxEvent("claude-agent-b"));
+      h.hub.emit(boxEvent("aio-agent-b"));
       h.hub.emit(run("finished"));
     }
     // Unfiltered: 9 events and 3 notifications. Filtered: 6 runs and 3.
@@ -211,7 +211,9 @@ describe("events.stream", () => {
       const hello = hellos[i]!;
       const want = live[i]!.texts.length;
       const r = await connect(url);
-      r.ws.send(JSON.stringify({ type: "hello", streamId: hello.streamId, lastSeq: hello.lastSeq }));
+      r.ws.send(
+        JSON.stringify({ type: "hello", streamId: hello.streamId, lastSeq: hello.lastSeq }),
+      );
       await r.until((x) => x.texts.length === want);
       const sent = strip(live[i]!.texts.slice(1));
       expect(sent).toEqual(strip(r.texts.slice(1)));
@@ -225,7 +227,7 @@ describe("events.stream", () => {
   });
 
   it("closes a filtered socket that the hub hands an event out of order", async () => {
-    const listeners: ((e: AgentBoxEvent) => void)[] = [];
+    const listeners: ((e: AioEvent) => void)[] = [];
     const subscribe = h.hub.subscribe.bind(h.hub);
     h.hub.subscribe = (listener) => {
       listeners.push(listener);
@@ -234,7 +236,7 @@ describe("events.stream", () => {
     const s = await connect(`${base}?types=box.changed`);
     s.ws.send(JSON.stringify({ type: "hello", streamId: null, lastSeq: null }));
     await s.until((x) => x.texts.length === 1);
-    const event = h.hub.emit(boxEvent("claude-agent-a"));
+    const event = h.hub.emit(boxEvent("aio-agent-a"));
     await s.until((x) => x.texts.length === 2);
     listeners.at(-1)!({ ...event, seq: event.seq + 2 });
     await s.until((x) => x.ws.readyState === x.ws.CLOSED);

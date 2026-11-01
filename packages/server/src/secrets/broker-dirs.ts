@@ -3,7 +3,7 @@
 // container leaves its directory behind; nothing else removes either.
 import fs from "node:fs";
 import path from "node:path";
-import { HOME_PATHS } from "@agentbox/contracts";
+import { HOME_PATHS } from "@aio/contracts";
 import type { DockerClient } from "../docker/types.js";
 import { brokerDirName, dataPath, type HostEnv } from "../records/env.js";
 

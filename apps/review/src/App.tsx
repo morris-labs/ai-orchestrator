@@ -1,5 +1,5 @@
 // The app shell: navigation, the status line, and the routed screens.
-import { Dashboard, dashboardCss, themeCss } from "@agentbox/ui/dashboard";
+import { Dashboard, dashboardCss, themeCss } from "@aio/ui/dashboard";
 import { useEffect, useState } from "react";
 import { bridge } from "./lib/bridge.js";
 import { Findings } from "./screens/Findings.js";
@@ -92,7 +92,7 @@ export function App({
       <style>{dashboardCss}</style>
       <div className="app">
         <nav className="nav" aria-label="Main">
-          <div className="brand">Agent Box Review</div>
+          <div className="brand">AI Orchestrator Review</div>
           <ul>
             {NAV.map((n) => (
               <li key={n.name}>

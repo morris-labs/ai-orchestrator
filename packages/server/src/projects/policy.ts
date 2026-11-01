@@ -4,12 +4,7 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import {
-  DEFAULT_POLICY,
-  PolicyFileSchema,
-  type PolicyFile,
-  type PolicyPut,
-} from "@agentbox/contracts";
+import { DEFAULT_POLICY, PolicyFileSchema, type PolicyFile, type PolicyPut } from "@aio/contracts";
 import { parse, stringify } from "yaml";
 import { ApiError, messageOf } from "../records/errors.js";
 

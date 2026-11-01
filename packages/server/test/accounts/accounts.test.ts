@@ -30,7 +30,7 @@ function write(file: string, content: string, mode = 0o600): void {
 
 /** Synthetic host folders: `~/.claude` (with a shared projects link), `~/.claude.json`, `~/.codex`, `~/.copilot`. */
 function hostFolders(options: { projectsDir?: boolean } = {}): SeedSources & { root: string } {
-  const root = tempDir("agentbox-acct-host-");
+  const root = tempDir("aio-acct-host-");
   const claudeDir = path.join(root, ".claude");
   write(path.join(claudeDir, ".credentials.json"), SECRET);
   write(path.join(claudeDir, ".claude.json"), '{"stale":true}');
@@ -117,12 +117,12 @@ function setup(options: { running?: string[]; projectsDir?: boolean } = {}) {
 
 describe("copyTree", () => {
   it("copies files with their modes, keeps links as links, and leaves out named paths", async () => {
-    const src = tempDir("agentbox-copy-src-");
+    const src = tempDir("aio-copy-src-");
     write(path.join(src, "a.txt"), "a", 0o640);
     write(path.join(src, "keep", "b.txt"), "bb", 0o600);
     write(path.join(src, "secret.json"), SECRET);
     fs.symlinkSync("/nowhere/at/all", path.join(src, "dangling"));
-    const dest = path.join(tempDir("agentbox-copy-dst-"), "out");
+    const dest = path.join(tempDir("aio-copy-dst-"), "out");
     const stats = await copyTree(src, dest, { leaveOut: new Set(["secret.json"]) });
     expect(stats).toMatchObject({ files: 2, bytes: 3, symlinks: 1, leftOut: ["secret.json"] });
     expect(listTree(dest)).toEqual(["a.txt", "dangling", "keep", "keep/b.txt"]);
@@ -131,9 +131,9 @@ describe("copyTree", () => {
   });
 
   it("writes nothing on a dry run", async () => {
-    const src = tempDir("agentbox-copy-src-");
+    const src = tempDir("aio-copy-src-");
     write(path.join(src, "a.txt"), "a");
-    const dest = path.join(tempDir("agentbox-copy-dst-"), "out");
+    const dest = path.join(tempDir("aio-copy-dst-"), "out");
     const stats = await copyTree(src, dest, { dryRun: true });
     expect(stats.files).toBe(1);
     expect(fs.existsSync(dest)).toBe(false);
@@ -148,7 +148,7 @@ describe("copyTree", () => {
 
 describe("addCodexFileStore", () => {
   it("puts the setting before the first table, once", async () => {
-    const file = path.join(tempDir("agentbox-codex-"), "config.toml");
+    const file = path.join(tempDir("aio-codex-"), "config.toml");
     write(file, '[profiles.x]\nmodel = "y"\n');
     expect(await addCodexFileStore(file)).toBe(true);
     expect(fs.readFileSync(file, "utf8")).toBe(
@@ -158,7 +158,7 @@ describe("addCodexFileStore", () => {
   });
 
   it("replaces a symbolic link with a regular file and leaves its target alone", async () => {
-    const dir = tempDir("agentbox-codex-");
+    const dir = tempDir("aio-codex-");
     const dotfile = path.join(dir, "dotfiles", "config.toml");
     write(dotfile, 'model = "SYNTHETIC"\n', 0o644);
     const file = path.join(dir, "config.toml");
@@ -174,7 +174,7 @@ describe("addCodexFileStore", () => {
   });
 
   it("keeps a store setting the user chose", async () => {
-    const file = path.join(tempDir("agentbox-codex-"), "config.toml");
+    const file = path.join(tempDir("aio-codex-"), "config.toml");
     write(file, 'cli_auth_credentials_store = "keyring"\n');
     expect(await addCodexFileStore(file)).toBe(false);
   });
@@ -183,7 +183,7 @@ describe("addCodexFileStore", () => {
 describe("seedFolder", () => {
   it("leaves projects out instead of copying transcripts or linking to the host's folder", async () => {
     const sources = hostFolders({ projectsDir: true });
-    const dest = path.join(tempDir("agentbox-seed-"), "claude", "personal");
+    const dest = path.join(tempDir("aio-seed-"), "claude", "personal");
     const r = await seedFolder("claude", sources, dest);
     expect(fs.existsSync(path.join(dest, "projects"))).toBe(false);
     expect(fs.lstatSync(path.join(dest, "projects"), { throwIfNoEntry: false })).toBeUndefined();
@@ -192,7 +192,7 @@ describe("seedFolder", () => {
 
   it("removes its temporary folder when the copy fails", async () => {
     const sources = hostFolders();
-    const parent = tempDir("agentbox-seed-");
+    const parent = tempDir("aio-seed-");
     const dest = path.join(parent, "codex", "personal");
     await expect(
       seedFolder("codex", { ...sources, codexDir: path.join(sources.root, "missing") }, dest),
@@ -352,7 +352,7 @@ describe("AccountService.seed", () => {
   });
 
   it("refuses while a box runs, and copies nothing", async () => {
-    const { accounts } = setup({ running: ["claude-agent-app"] });
+    const { accounts } = setup({ running: ["aio-agent-app"] });
     await expect(accounts.seed({})).rejects.toMatchObject({ code: "box_running" });
     expect(fs.existsSync(accounts.dirOf("claude", "personal"))).toBe(false);
   });
@@ -475,7 +475,7 @@ describe("AccountService records", () => {
 describe("AccountService.check", () => {
   it("runs the status command with the account folder and stores the answer", async () => {
     const { accounts, docker } = setup();
-    docker.images.set("claude-code", {
+    docker.images.set("aio-agent", {
       id: "sha256:img",
       created: "2026-10-31T00:00:00Z",
       labels: {},

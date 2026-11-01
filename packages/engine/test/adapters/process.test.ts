@@ -23,18 +23,18 @@ describe("runProcess", () => {
   });
 
   it("sets and removes environment variables", async () => {
-    process.env.AGENTBOX_TEST_REMOVE = "1";
+    process.env.AIO_TEST_REMOVE = "1";
     const result = await runProcess({
       command: node,
       args: [
         "-e",
-        "process.stdout.write(String(process.env.AGENTBOX_TEST_SET) + ',' + String(process.env.AGENTBOX_TEST_REMOVE))",
+        "process.stdout.write(String(process.env.AIO_TEST_SET) + ',' + String(process.env.AIO_TEST_REMOVE))",
       ],
       cwd: process.cwd(),
-      env: { AGENTBOX_TEST_SET: "yes", AGENTBOX_TEST_REMOVE: undefined },
+      env: { AIO_TEST_SET: "yes", AIO_TEST_REMOVE: undefined },
       timeoutMs: 10_000,
     });
-    delete process.env.AGENTBOX_TEST_REMOVE;
+    delete process.env.AIO_TEST_REMOVE;
     expect(result.stdout).toBe("yes,undefined");
   });
 
@@ -163,7 +163,7 @@ describe("runProcess", () => {
 
   it("reports a missing program as a spawn error", async () => {
     const result = await runProcess({
-      command: "agentbox-no-such-cli",
+      command: "aio-no-such-cli",
       args: [],
       cwd: process.cwd(),
       timeoutMs: 10_000,

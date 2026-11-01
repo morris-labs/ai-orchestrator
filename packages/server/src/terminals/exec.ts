@@ -11,7 +11,7 @@ export interface ExecRequest {
   cols: number;
   rows: number;
   /**
-   * The value of `AGENTBOX_TERMINAL_ID` for this exec. `serveTerminal` passes
+   * The value of `AIO_TERMINAL_ID` for this exec. `serveTerminal` passes
    * the id it reports in `ready`, so the two match; without one, the backend
    * makes one up.
    */
@@ -36,11 +36,11 @@ export interface ExecBackend {
 export const TERMINAL_ENV = ["TERM=xterm-256color", "COLORTERM=truecolor"];
 
 /** The variable that marks every process of one terminal. */
-export const TERMINAL_ID_ENV = "AGENTBOX_TERMINAL_ID";
+export const TERMINAL_ID_ENV = "AIO_TERMINAL_ID";
 
 /**
  * A shell script that sends SIGHUP to every process in the container whose
- * environment carries `AGENTBOX_TERMINAL_ID=$1`. Docker doesn't signal an
+ * environment carries `AIO_TERMINAL_ID=$1`. Docker doesn't signal an
  * exec's process when its attach connection closes, so a closed tab would
  * otherwise leave its shell or tmux client running.
  *

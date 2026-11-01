@@ -1,6 +1,6 @@
 # Secrets
 
-Agent Box gives containers secrets from 1Password and from nowhere else. You
+AI Orchestrator gives containers secrets from 1Password and from nowhere else. You
 store 1Password references in the global settings and in project settings.
 The server keeps the values out of every container's configuration and
 environment: a process in a project container asks the server's secrets
@@ -14,7 +14,7 @@ password, which reaches a container only as a hash. See
 A secret reference has two parts:
 
 - `name`: the name a process asks for, and the environment variable that
-  `agentbox-secret run` sets, for example `DATABASE_URL`.
+  `aio-secret run` sets, for example `DATABASE_URL`.
 - `ref`: a 1Password secret reference in the form
   `op://VAULT/ITEM/FIELD`.
 
@@ -80,23 +80,23 @@ The server searches these vaults, in this order:
 1. The vaults in the `secretVaults` setting, set with
    `PATCH /api/v1/settings` and `{"secretVaults": ["VAULT"]}`.
 1. The vaults that existing global and project references name.
-1. The `AgentBox` vault.
+1. The `Aio` vault.
 
 A service account reads only its own vaults, whatever the setting says. A
 vault that can't be read appears as a note under the list, and the other
 vaults still show. When 1Password is locked or `op` is missing, the section
 shows the same `secrets_locked` or `secrets_unavailable` message as a launch.
 
-To list the candidates from a terminal, run `agentbox secrets available`.
+To list the candidates from a terminal, run `aio secrets available`.
 The API route is `GET /api/v1/secrets/available`, with `refresh=true` to
 skip the cache.
 
 ### The secrets broker
 
 For each project container, the server listens on a Unix socket,
-`~/.claude-box/broker/CONTAINER/broker.sock`, readable only by you. It
-mounts the socket's directory read-only at `/run/agentbox-broker` in the
-container, and sets `AGENTBOX_BROKER_SOCKET` to the socket's path there. Any
+`~/.ai-orchestrator/broker/CONTAINER/broker.sock`, readable only by you. It
+mounts the socket's directory read-only at `/run/aio-broker` in the
+container, and sets `AIO_BROKER_SOCKET` to the socket's path there. Any
 process in the container can ask the socket for a secret that the project
 lists, at any time, without a prompt.
 
@@ -110,27 +110,27 @@ process.
 
 The server logs every request to its journal with the container, the
 secret names, the asking program's name, and the outcome. A log line never
-holds a value. To read the log, run `journalctl --user -u agentbox-server`.
+holds a value. To read the log, run `journalctl --user -u aio-server`.
 
 Values never appear in a record, an API response, an event, a log, the
 review app, or the container's configuration. `docker inspect` shows only
-the names, in the `agentbox.secret-names` label.
+the names, in the `aio.secret-names` label.
 
 ### Use a secret in a container
 
-The image includes the `agentbox-secret` command. In a box, use it as
+The image includes the `aio-secret` command. In a box, use it as
 follows:
 
 - To print one value, for a tool that reads a secret from a command, run
-  `agentbox-secret NAME`. The value has no trailing newline.
+  `aio-secret NAME`. The value has no trailing newline.
 - To run a command with secrets in its environment, run
-  `agentbox-secret run NAME[,NAME...] -- COMMAND [ARGS...]`. Only that
+  `aio-secret run NAME[,NAME...] -- COMMAND [ARGS...]`. Only that
   command and its children get the values. For example, to start a dev
   server that reads `DATABASE_URL`, run
-  `agentbox-secret run DATABASE_URL -- npm run dev`.
-- To see which names the container can ask for, run `agentbox-secret list`.
+  `aio-secret run DATABASE_URL -- npm run dev`.
+- To see which names the container can ask for, run `aio-secret list`.
 
-`agentbox-secret` exits with status 3 when the server can't be reached, 4
+`aio-secret` exits with status 3 when the server can't be reached, 4
 for a name the project doesn't list, and 5 when 1Password is locked or a
 reference doesn't resolve.
 
@@ -138,12 +138,12 @@ When a project has at least one global or project reference, the server
 ends the opening prompt of each new conversation in that project with the
 following paragraph:
 
-> Secrets come from the Agent Box secrets broker: run `agentbox-secret list`
-> to see their names and `agentbox-secret run NAME[,NAME...] -- COMMAND [ARGS...]`
+> Secrets come from the AI Orchestrator secrets broker: run `aio-secret list`
+> to see their names and `aio-secret run NAME[,NAME...] -- COMMAND [ARGS...]`
 > to give them to one command, and never print a value or write one to a
 > file, a log, or your replies. Variables such as `GH_TOKEN` also come from
 > the broker where the project configures them, so pass them the same way,
-> for example `agentbox-secret run GH_TOKEN -- gh pr list`.
+> for example `aio-secret run GH_TOKEN -- gh pr list`.
 
 The paragraph follows whichever prompt template the box uses, including one
 you edited, and isn't part of the templates, so you can't edit or remove it
@@ -168,7 +168,7 @@ starts, and gives each program only its own:
   engine runs uses the repository's hooks.
 - Test and lint commands and other repository code get nothing. A policy
   test command that needs a secret must ask for it, for example with
-  `agentbox-secret run DATABASE_URL -- npm test`.
+  `aio-secret run DATABASE_URL -- npm test`.
 
 When the broker can't answer, the engine logs a warning and starts the
 program without the values. A vendor CLI signed in with its own account
@@ -201,28 +201,28 @@ order:
    without a desktop session and suits a server that runs while you're
    logged out. Give the service account read access to the vaults your
    references name. To set the variable for the user service, run
-   `systemctl --user edit agentbox-server` and add an
+   `systemctl --user edit aio-server` and add an
    `Environment=OP_SERVICE_ACCOUNT_TOKEN=TOKEN` line under `[Service]`,
    where `TOKEN` is the service account token. Keep that file readable only
    by you. To keep the token out of the drop-in, put the
    `OP_SERVICE_ACCOUNT_TOKEN=TOKEN` line in a file with mode `0600`, such as
-   `~/.config/agentbox/op.env`, and add
-   `EnvironmentFile=%h/.config/agentbox/op.env` under `[Service]` instead.
+   `~/.config/aio/op.env`, and add
+   `EnvironmentFile=%h/.config/aio/op.env` under `[Service]` instead.
    Drop-ins stay in place when you reinstall the unit.
 1. **Desktop app integration**: when the 1Password desktop app runs with
    **Integrate with 1Password CLI** turned on, `op` asks the app, which can
    prompt you to unlock.
 
 To see which mode the server uses and whether it's signed in, open the setup
-wizard and look at the **1Password** check, or run `agentbox doctor`. To try
+wizard and look at the **1Password** check, or run `aio doctor`. To try
 every reference without starting a container, click **Check secrets** in the
 settings. The check reports each reference as resolved or failed, with the
 reason, and never shows a value.
 
 ## When 1Password is locked or missing
 
-Agent Box has no fallback. In 3.x, a project could hold an `agent.env` file
-of plain values; 4.0.0 doesn't read it.
+AI Orchestrator has no fallback. In 3.x, a project could hold an `agent.env` file
+of plain values; 1.0.0 doesn't read it.
 
 Before the server creates a project container, it runs a pre-start check:
 it resolves every reference with a fresh `op read`. If the server can't
@@ -239,7 +239,7 @@ without `op`.
 
 After the container starts, a request for a value that isn't in the cache
 can fail the same way, for example when 1Password locks while a box runs.
-`agentbox-secret` then exits with status 5 and the same message. In desktop
+`aio-secret` then exits with status 5 and the same message. In desktop
 mode, the server's `op` call can show the unlock prompt on your desktop; in
 service account mode, fix the token.
 
@@ -294,7 +294,7 @@ container, it does the following:
    so it's in no command line, environment variable, `docker inspect`
    output, or container log.
 1. The step installs the hash with `chpasswd -e` and writes a `sudo` rule to
-   `/etc/sudoers.d/claude-box`.
+   `/etc/sudoers.d/aio`.
 
 The agent can't read or replace the hash. `/etc/shadow` is readable only by
 root and the `shadow` group, which the container user isn't in, and only
@@ -306,7 +306,7 @@ root.
 When a reference is set and the server can't resolve it, the container
 doesn't start, with the same `secrets_locked` and `secrets_unavailable`
 errors as other secrets. The **sudo in containers** check in the setup
-wizard, and `agentbox doctor`, report whether the reference resolves.
+wizard, and `aio doctor`, report whether the reference resolves.
 
 ## Migrate from `agent.env`
 

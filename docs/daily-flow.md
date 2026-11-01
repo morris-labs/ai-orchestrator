@@ -1,8 +1,8 @@
 # Daily flow
 
-This page walks through a typical day with Agent Box: you create a box for a
+This page walks through a typical day with AI Orchestrator: you create a box for a
 piece of work, let the agent work, review its branch with the pipeline, and
-push. Each step names the app action and the matching `agentbox` command.
+push. Each step names the app action and the matching `aio` command.
 
 A *box* is one conversation with a coding agent. It runs as a tmux session
 in its project's container, in its own git worktree on its own branch. A
@@ -10,15 +10,15 @@ in its project's container, in its own git worktree on its own branch. A
 
 ## Create a box
 
-1. In **Agent Box**, pick a project in the project list.
+1. In **AI Orchestrator**, pick a project in the project list.
 1. Click **New box**, type a conversation name, and click **Create**.
 
-Agent Box creates a worktree at `PRIMARY_REPO/.worktrees/SLUG` on the branch
+AI Orchestrator creates a worktree at `PRIMARY_REPO/.worktrees/SLUG` on the branch
 `claude/SLUG`, starts the project container if it isn't running, starts the
 agent's session, and opens a terminal tab on it. You don't choose any ports.
 
-From a terminal, run `agentbox box new`. For the options, run
-`agentbox box new --help`.
+From a terminal, run `aio box new`. For the options, run
+`aio box new --help`.
 
 ## Work
 
@@ -29,15 +29,15 @@ While the agent works, the following happens without any setup:
   `http://PORT.BOX.localhost:21401/`. The engine finds listening ports and
   the server proxies them.
 - **Secrets**: A process in the box gets the project's 1Password secrets on
-  request, for example with `agentbox-secret run DATABASE_URL -- npm run dev`.
+  request, for example with `aio-secret run DATABASE_URL -- npm run dev`.
   They aren't in the box's environment. For more information, see
   [Secrets](secrets.md#use-a-secret-in-a-container).
 - **Notes**: The agent keeps its `PLAN.md` and `STATUS.md` files in
-  `WORKTREE/.claude-box/`, which git ignores.
+  `WORKTREE/.aio/`, which git ignores.
 
 The terminal tab is a tmux client. To detach without stopping the agent,
 press Control+B, then D. To attach again, double-click the box or run
-`agentbox box attach BOX`.
+`aio box attach BOX`.
 
 Replace the following:
 
@@ -53,7 +53,7 @@ Replace the following:
 To review the box's branch, right-click the box and click **Start review**,
 or click **Review** on the toolbar.
 
-**Agent Box Review** opens with the run launcher filled in:
+**AI Orchestrator Review** opens with the run launcher filled in:
 
 | Field | Value |
 |---|---|
@@ -67,11 +67,11 @@ session receives one message that asks it to hold edits until the run ends.
 The run refuses to start when the worktree has uncommitted changes. Ask the
 agent to commit, or start the run with **Include uncommitted changes**.
 
-From a terminal, run `agentbox review start`.
+From a terminal, run `aio review start`.
 
 ## Watch or leave
 
-The dashboard in **Agent Box Review** shows the run live: the stage, the
+The dashboard in **AI Orchestrator Review** shows the run live: the stage, the
 round, each agent call, the findings per vendor, and each vendor's usage
 against its ceiling. You don't need to watch it. A desktop notification
 arrives in the following cases:
@@ -101,13 +101,13 @@ versions of the finding side by side. For the reasons a run stops, see
 ## Push
 
 When the run reports the branch ready, click **Push and open pull request**
-in the run's summary. Agent Box pushes the branch, opens the pull request,
+in the run's summary. AI Orchestrator pushes the branch, opens the pull request,
 and starts the post-push loop, which imports review comments and failing
 checks, verifies them, fixes what's real, and pushes again. The loop never
 force-pushes and never pushes to the default branch.
 
 ## Merge
 
-When the post-push loop reports the pull request mergeable, **Agent Box
+When the post-push loop reports the pull request mergeable, **AI Orchestrator
 Review** shows the pull request link. Merging stays your decision: open the
 link and merge on GitHub.

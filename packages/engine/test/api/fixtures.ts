@@ -5,7 +5,7 @@ import {
   type Finding,
   type RoundSummary,
   type RunState,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 import { vi } from "vitest";
 import type { FindingDetail, RunManager } from "../../src/api/core-interface.js";
 import { EngineLeaseBroker } from "../../src/events/leases.js";
@@ -16,7 +16,7 @@ export const TOKEN = "test-token-0123456789abcdef";
 export const T0 = "2026-10-28T09:00:00.000Z";
 export const T1 = "2026-10-28T09:05:00.000Z";
 export const RUN = "01JB8Z5K3W6Q2V9X4T7R0M1N2P";
-export const CONTAINER = "claude-agent-proj-example-1a2b3c4d";
+export const CONTAINER = "aio-agent-proj-example-1a2b3c4d";
 export const PROJECT_ROOT = "/home/user/src/example";
 
 export const runCreate = EngineRunCreateSchema.parse({
@@ -151,8 +151,8 @@ export async function listenEngine(overrides: { hub?: EventHub; leases?: EngineL
     token: TOKEN,
     container: CONTAINER,
     projectRoot: PROJECT_ROOT,
-    engineVersion: "4.0.0-dev",
-    expectedVersion: "4.0.0-dev",
+    engineVersion: "1.0.0-dev",
+    expectedVersion: "1.0.0-dev",
     hub,
     leases,
     log: silentLogger,

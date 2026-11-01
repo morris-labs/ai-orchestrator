@@ -17,7 +17,7 @@ import { brokerDirName, type HostEnv } from "../../src/records/env.js";
 import { tempDir } from "../tmp.js";
 
 const env: HostEnv = { home: "/home/tester", user: "tester", now: () => new Date() };
-const C = "claude-agent-proj-app-1a2b3c4d";
+const C = "aio-agent-proj-app-1a2b3c4d";
 
 const input: LaunchInput = {
   container: C,
@@ -32,8 +32,8 @@ const input: LaunchInput = {
     { host: "/elsewhere", container: "/shared/" },
   ],
   tcpMaps: [{ host: 8080, container: 3000 }],
-  image: "claude-code",
-  engine: { hostPort: 41000, token: "secret-token-value-0123456789", version: "4.0.0" },
+  image: "aio-agent",
+  engine: { hostPort: 41000, token: "secret-token-value-0123456789", version: "1.0.0" },
   secretNames: ["GITHUB_TOKEN", "API_KEY"],
 };
 
@@ -41,16 +41,16 @@ describe("buildLaunchSpec", () => {
   it("puts no secret in the environment and leaves reserved names out of the label", () => {
     const spec = buildLaunchSpec(
       env,
-      { ...input, secretNames: ["AGENTBOX_ENGINE_TOKEN", "AGENTBOX_BROKER_SOCKET", "API_KEY"] },
+      { ...input, secretNames: ["AIO_ENGINE_TOKEN", "AIO_BROKER_SOCKET", "API_KEY"] },
       { projectsLinkMounts: [], hasGitconfig: false },
     );
-    expect(spec.env.filter((e) => e.startsWith("AGENTBOX_ENGINE_TOKEN="))).toEqual([]);
+    expect(spec.env.filter((e) => e.startsWith("AIO_ENGINE_TOKEN="))).toEqual([]);
     expect(spec.env.some((e) => e.startsWith("API_KEY"))).toBe(false);
-    expect(spec.env.filter((e) => e.startsWith("AGENTBOX_BROKER_SOCKET="))).toEqual([
-      "AGENTBOX_BROKER_SOCKET=/run/agentbox-broker/broker.sock",
+    expect(spec.env.filter((e) => e.startsWith("AIO_BROKER_SOCKET="))).toEqual([
+      "AIO_BROKER_SOCKET=/run/aio-broker/broker.sock",
     ]);
-    expect(spec.labels["agentbox.secret-names"]).toBe("API_KEY");
-    expect(spec.labels["agentbox.secrets"]).toBe("broker");
+    expect(spec.labels["aio.secret-names"]).toBe("API_KEY");
+    expect(spec.labels["aio.secrets"]).toBe("broker");
   });
 
   it("adds a host test script's plain variables, never over a reserved one", () => {
@@ -58,34 +58,34 @@ describe("buildLaunchSpec", () => {
       env,
       {
         ...input,
-        extraEnv: { AGENTBOX_MOCK_VENDORS: "1", AGENTBOX_ENGINE_TOKEN_FILE: "/tmp/evil" },
+        extraEnv: { AIO_MOCK_VENDORS: "1", AIO_ENGINE_TOKEN_FILE: "/tmp/evil" },
       },
       { projectsLinkMounts: [], hasGitconfig: false },
     );
-    expect(spec.env).toContain("AGENTBOX_MOCK_VENDORS=1");
-    expect(spec.env.filter((e) => e.startsWith("AGENTBOX_ENGINE_TOKEN_FILE="))).toEqual([
-      "AGENTBOX_ENGINE_TOKEN_FILE=/run/claude-box/engine.token",
+    expect(spec.env).toContain("AIO_MOCK_VENDORS=1");
+    expect(spec.env.filter((e) => e.startsWith("AIO_ENGINE_TOKEN_FILE="))).toEqual([
+      "AIO_ENGINE_TOKEN_FILE=/run/aio/engine.token",
     ]);
   });
 
   it("mounts the broker directory read-only, and prepares it on the host", () => {
-    const home = tempDir("agentbox-launch-");
+    const home = tempDir("aio-launch-");
     const hostEnv: HostEnv = { home, user: "tester", now: () => new Date() };
     prepareLaunchHost(hostEnv, { container: C, root: path.join(home, "app") });
-    const dir = path.join(home, ".claude-box", "broker", brokerDirName(C));
+    const dir = path.join(home, ".ai-orchestrator", "broker", brokerDirName(C));
     expect(fs.statSync(dir).mode & 0o777).toBe(0o700);
     const spec = buildLaunchSpec(hostEnv, input, {
       projectsLinkMounts: [],
       hasGitconfig: false,
     });
-    expect(spec.binds).toContain(`${dir}:/run/agentbox-broker:ro`);
+    expect(spec.binds).toContain(`${dir}:/run/aio-broker:ro`);
   });
 
   it("labels whether the container's sudo asks for a password, and lists the mount paths", () => {
     const facts = { projectsLinkMounts: [], hasGitconfig: false };
-    expect(buildLaunchSpec(env, input, facts).labels["agentbox.sudo"]).toBe("off");
+    expect(buildLaunchSpec(env, input, facts).labels["aio.sudo"]).toBe("off");
     const on = buildLaunchSpec(env, { ...input, sudoPassword: true }, facts);
-    expect(on.labels["agentbox.sudo"]).toBe("password");
+    expect(on.labels["aio.sudo"]).toBe("password");
     // Neither the keeper command nor the environment carries anything about sudo.
     expect(on.cmd.join(" ")).not.toContain("sudo");
     expect(on.env.join(" ")).not.toContain("sudo");
@@ -106,16 +106,16 @@ describe("buildLaunchSpec", () => {
   // It differs from 3.3.5 in the command and one variable on purpose: the
   // container runs the image's keeper.sh (which also keeps the engine
   // running) in place of the inline 3.3.5 keeper, and gets
-  // AGENTBOX_STATE_DIR, where keeper.sh and the engine share state. The
+  // AIO_STATE_DIR, where keeper.sh and the engine share state. The
   // engine token is a file in that directory, not a variable.
   it("matches the inventoried 3.3.5 launch, minus the pool, plus the engine", () => {
     const spec = buildLaunchSpec(env, input, {
-      projectsLinkMounts: ["/home/tester/.claude-box/transcripts/claude"],
+      projectsLinkMounts: ["/home/tester/.ai-orchestrator/transcripts/claude"],
       hasGitconfig: true,
     });
     expect(spec).toEqual({
       name: C,
-      image: "claude-code",
+      image: "aio-agent",
       user: "tester",
       workingDir: "/home/tester/work/app",
       cmd: [
@@ -123,20 +123,20 @@ describe("buildLaunchSpec", () => {
         "-c",
         `${GIT_SAFE_DIRECTORY_SETUP}; exec ${KEEPER_PATH} "$1" "$2"`,
         "_",
-        "/run/claude-box",
+        "/run/aio",
         "30",
       ],
       env: [
         "IS_SANDBOX=1",
         "DISABLE_AUTOUPDATER=1",
         "GIT_CONFIG_GLOBAL=/home/tester/work/app/gitconfig",
-        "AGENTBOX_ENGINE_TOKEN_FILE=/run/claude-box/engine.token",
-        "AGENTBOX_ENGINE_PORT=20411",
-        "AGENTBOX_PROJECT_ROOT=/home/tester/work/app",
-        `AGENTBOX_CONTAINER=${C}`,
-        "AGENTBOX_ENGINE_VERSION=4.0.0",
-        "AGENTBOX_STATE_DIR=/run/claude-box",
-        "AGENTBOX_BROKER_SOCKET=/run/agentbox-broker/broker.sock",
+        "AIO_ENGINE_TOKEN_FILE=/run/aio/engine.token",
+        "AIO_ENGINE_PORT=20411",
+        "AIO_PROJECT_ROOT=/home/tester/work/app",
+        `AIO_CONTAINER=${C}`,
+        "AIO_ENGINE_VERSION=1.0.0",
+        "AIO_STATE_DIR=/run/aio",
+        "AIO_BROKER_SOCKET=/run/aio-broker/broker.sock",
       ],
       binds: [
         "/home/tester/work/app:/home/tester/work/app",
@@ -144,25 +144,25 @@ describe("buildLaunchSpec", () => {
         "/home/tester/.claude.json:/home/tester/.claude.json",
         "/home/tester/.codex:/home/tester/.codex",
         "/home/tester/.copilot:/home/tester/.copilot",
-        "/home/tester/.claude-box/transcripts/claude:/home/tester/.claude-box/transcripts/claude",
-        `/home/tester/.claude-box/sessions/${C}:/home/tester/.claude/sessions`,
+        "/home/tester/.ai-orchestrator/transcripts/claude:/home/tester/.ai-orchestrator/transcripts/claude",
+        `/home/tester/.ai-orchestrator/sessions/${C}:/home/tester/.claude/sessions`,
         "/data/ref:/data/ref",
         "/data/shared:/shared",
         "/home/tester/Bin/.project_archive:/home/tester/Bin/.project_archive",
-        `/home/tester/.claude-box/state/${C}:/run/claude-box`,
-        `/home/tester/.claude-box/broker/${brokerDirName(C)}:/run/agentbox-broker:ro`,
+        `/home/tester/.ai-orchestrator/state/${C}:/run/aio`,
+        `/home/tester/.ai-orchestrator/broker/${brokerDirName(C)}:/run/aio-broker:ro`,
       ],
       portBindings: {
         "20411/tcp": [{ hostIp: "127.0.0.1", hostPort: "41000" }],
         "3000/tcp": [{ hostIp: "127.0.0.1", hostPort: "8080" }],
       },
       labels: {
-        "agentbox.project": "app-1a2b3c4d",
-        "agentbox.tcp-maps": "127.0.0.1:8080:3000",
-        "agentbox.secret-names": "API_KEY,GITHUB_TOKEN",
-        "agentbox.engine-version": "4.0.0",
-        "agentbox.sudo": "off",
-        "agentbox.secrets": "broker",
+        "aio.project": "app-1a2b3c4d",
+        "aio.tcp-maps": "127.0.0.1:8080:3000",
+        "aio.secret-names": "API_KEY,GITHUB_TOKEN",
+        "aio.engine-version": "1.0.0",
+        "aio.sudo": "off",
+        "aio.secrets": "broker",
       },
       capDrop: ["MKNOD", "SETFCAP"],
       tty: true,
@@ -180,7 +180,7 @@ describe("buildLaunchSpec", () => {
     expect(spec.env.some((e) => e.startsWith("GIT_CONFIG_GLOBAL="))).toBe(false);
     expect(spec.binds).toHaveLength(11);
     expect(Object.keys(spec.portBindings)).toEqual(["20411/tcp"]);
-    expect(spec.labels["agentbox.secret-names"]).toBe("");
+    expect(spec.labels["aio.secret-names"]).toBe("");
   });
 
   it("publishes TCP maps on loopback unless a map asks for every interface", () => {
@@ -197,7 +197,7 @@ describe("buildLaunchSpec", () => {
     );
     expect(spec.portBindings["3000/tcp"]).toEqual([{ hostIp: "127.0.0.1", hostPort: "8080" }]);
     expect(spec.portBindings["4000/tcp"]).toEqual([{ hostIp: "", hostPort: "9090" }]);
-    expect(spec.labels["agentbox.tcp-maps"]).toBe("127.0.0.1:8080:3000,9090:4000");
+    expect(spec.labels["aio.tcp-maps"]).toBe("127.0.0.1:8080:3000,9090:4000");
     expect(toDockerRunArgs(spec)).toContain("9090:4000");
   });
 
@@ -241,17 +241,17 @@ describe("buildLaunchSpec", () => {
       "-e",
       "IS_SANDBOX=1",
     ]);
-    expect(args).toContain("AGENTBOX_ENGINE_TOKEN_FILE=/run/claude-box/engine.token");
+    expect(args).toContain("AIO_ENGINE_TOKEN_FILE=/run/aio/engine.token");
     expect(args.join(" ")).not.toContain(input.engine.token);
     expect(args).toContain("GITHUB_TOKEN=***");
-    expect(args).toContain("AGENTBOX_BROKER_SOCKET=/run/agentbox-broker/broker.sock");
+    expect(args).toContain("AIO_BROKER_SOCKET=/run/aio-broker/broker.sock");
     expect(args).toContain(
-      `/home/tester/.claude-box/broker/${brokerDirName(C)}:/run/agentbox-broker:ro`,
+      `/home/tester/.ai-orchestrator/broker/${brokerDirName(C)}:/run/aio-broker:ro`,
     );
     expect(args.join(" ")).not.toContain("ghp_value");
     expect(args).toContain("127.0.0.1:41000:20411");
     expect(args).toContain("127.0.0.1:8080:3000");
-    expect(args.indexOf("claude-code")).toBe(args.length - 1 - spec.cmd.length);
+    expect(args.indexOf("aio-agent")).toBe(args.length - 1 - spec.cmd.length);
   });
 });
 
@@ -283,15 +283,15 @@ describe("mergeMounts", () => {
 
 describe("host preparation", () => {
   it("creates the host directories, empties the sessions dir, and finds the link mounts", () => {
-    const home = tempDir("agentbox-launch-");
+    const home = tempDir("aio-launch-");
     const e = { ...env, home };
     const root = path.join(home, "work");
     fs.mkdirSync(root);
     fs.writeFileSync(path.join(root, "gitconfig"), "[safe]\n\tdirectory = *\n");
-    const sessions = path.join(home, ".claude-box", "sessions", C);
+    const sessions = path.join(home, ".ai-orchestrator", "sessions", C);
     fs.mkdirSync(sessions, { recursive: true });
     fs.writeFileSync(path.join(sessions, "11.json"), "{}");
-    const shared = path.join(home, ".claude-box", "transcripts", "claude");
+    const shared = path.join(home, ".ai-orchestrator", "transcripts", "claude");
     fs.mkdirSync(shared, { recursive: true });
     fs.mkdirSync(path.join(home, ".claude"), { recursive: true });
     fs.symlinkSync(shared, path.join(home, ".claude", "projects"));
@@ -301,7 +301,7 @@ describe("host preparation", () => {
     for (const d of [".claude/sessions", ".codex", ".copilot"])
       expect(fs.statSync(path.join(home, d)).isDirectory()).toBe(true);
     expect(fs.readdirSync(sessions)).toEqual([]);
-    expect(fs.existsSync(path.join(home, ".claude-box", "state", C))).toBe(true);
+    expect(fs.existsSync(path.join(home, ".ai-orchestrator", "state", C))).toBe(true);
     // Docker would otherwise create a missing ~/.claude.json as a root-owned directory.
     const claudeJson = path.join(home, ".claude.json");
     expect(fs.lstatSync(claudeJson).isFile()).toBe(true);
@@ -310,7 +310,7 @@ describe("host preparation", () => {
   });
 
   it("leaves an existing ~/.claude.json alone", () => {
-    const home = tempDir("agentbox-launch-");
+    const home = tempDir("aio-launch-");
     const root = path.join(home, "work");
     fs.mkdirSync(root);
     fs.writeFileSync(path.join(home, ".claude.json"), '{"SYNTHETIC":1}');
@@ -319,7 +319,7 @@ describe("host preparation", () => {
   });
 
   it("ignores a projects symlink that points inside ~/.claude", () => {
-    const home = tempDir("agentbox-launch-");
+    const home = tempDir("aio-launch-");
     fs.mkdirSync(path.join(home, ".claude", "real"), { recursive: true });
     fs.symlinkSync(path.join(home, ".claude", "real"), path.join(home, ".claude", "projects"));
     expect(projectsLinkMounts({ ...env, home })).toEqual([]);
@@ -330,8 +330,8 @@ describe("host preparation", () => {
 
   describe("projects link chains", () => {
     function chainHome(): { home: string; store: string; shared: string } {
-      const home = fs.realpathSync(tempDir("agentbox-launch-"));
-      const store = path.join(home, ".claude-box", "transcripts", "claude");
+      const home = fs.realpathSync(tempDir("aio-launch-"));
+      const store = path.join(home, ".ai-orchestrator", "transcripts", "claude");
       fs.mkdirSync(store, { recursive: true });
       fs.mkdirSync(path.join(home, ".claude"), { recursive: true });
       return { home, store, shared: path.join(home, "intermediate-link") };

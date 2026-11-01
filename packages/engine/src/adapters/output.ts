@@ -1,6 +1,6 @@
 // Validates structured output against the caller's schema and the contract's
 // vendor finding schema, and derives the JSON Schema the CLIs take.
-import { VendorFindingSchema, type VendorFinding, type Vendor } from "@agentbox/contracts";
+import { VendorFindingSchema, type VendorFinding, type Vendor } from "@aio/contracts";
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { dropNulls, extractJson } from "./json.js";

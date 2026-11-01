@@ -9,7 +9,7 @@ import {
   type ProjectSummary,
   type RunState,
   type SshRemote,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 
 export const T0 = "2026-10-28T09:00:00.000Z";
 export const T1 = "2026-10-28T09:05:00.000Z";
@@ -26,7 +26,7 @@ export const project: Project = {
   tcpMaps: [],
   mounts: [],
   secretRefs: [{ name: "API_TOKEN", ref: "op://Dev/Example API/credential" }],
-  policyPath: ".claude-box/policy.yaml",
+  policyPath: ".aio/policy.yaml",
   createdAt: T0,
   updatedAt: T1,
 };
@@ -39,7 +39,7 @@ export const projectSummary: ProjectSummary = {
 };
 
 export const box: Box = {
-  id: "claude-agent-emails",
+  id: "aio-agent-emails",
   projectId: PROJECT_ID,
   hostKey: "emails",
   targetDir: project.root,
@@ -51,7 +51,7 @@ export const box: Box = {
   worktree: "/work/example-app/.worktrees/emails",
   branch: "claude/emails",
   container: CONTAINER,
-  session: "claude-agent-emails",
+  session: "aio-agent-emails",
   wasRunning: true,
   sshRemoteRefs: ["staging"],
   createdAt: T0,
@@ -115,7 +115,7 @@ export const runState: RunState = {
 };
 
 export const policyResult = {
-  path: "/work/example-app/.claude-box/policy.yaml",
+  path: "/work/example-app/.aio/policy.yaml",
   exists: false,
   policy: DEFAULT_POLICY,
 };

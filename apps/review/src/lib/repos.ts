@@ -3,8 +3,8 @@
 // project's engine. When the engine can't answer (its container isn't
 // running, or an older server lacks the routes), the launcher falls back to
 // the project's primary repository with free-text refs.
-import type { ProjectSummary, RepoInfoSchema, RepoRefsSchema } from "@agentbox/contracts";
-import { ApiRequestError, type ApiClient } from "@agentbox/ui/core";
+import type { ProjectSummary, RepoInfoSchema, RepoRefsSchema } from "@aio/contracts";
+import { ApiRequestError, type ApiClient } from "@aio/ui/core";
 import type { z } from "zod";
 
 export type RepoInfo = z.infer<typeof RepoInfoSchema>;

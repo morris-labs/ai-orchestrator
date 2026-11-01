@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { ProjectSchema, ProjectSummarySchema } from "@agentbox/contracts";
+import { ProjectSchema, ProjectSummarySchema } from "@aio/contracts";
 import {
   defaultProjectName,
   detectPrimaryRepo,
@@ -64,7 +64,7 @@ describe("ProjectService", () => {
       tcpMaps: [],
       mounts: [],
       secretRefs: [],
-      policyPath: ".claude-box/policy.yaml",
+      policyPath: ".aio/policy.yaml",
     });
     expect(h.core.projects.ensureForRoot(dir).id).toBe(p.id);
     expect(() => h.core.projects.create({ root: dir })).toThrow(/already a project/);
@@ -73,9 +73,7 @@ describe("ProjectService", () => {
     );
     const other = h.core.projects.create({ root: h.dir("work", "other"), name: "Other" });
     expect(other.name).toBe("Other");
-    expect(h.core.projects.policyFile(other)).toBe(
-      path.join(other.root, ".claude-box/policy.yaml"),
-    );
+    expect(h.core.projects.policyFile(other)).toBe(path.join(other.root, ".aio/policy.yaml"));
     expect(() => h.core.projects.get("nope-00000000")).toThrow(ApiError);
   });
 
@@ -132,8 +130,8 @@ describe("ProjectService", () => {
       },
     });
     const r = await h.core.projects.ensureContainer(p.id);
-    expect(prepared).toEqual([[p.id, `claude-agent-proj-${p.id}`]]);
-    expect(r).toEqual({ container: `claude-agent-proj-${p.id}`, created: true, stale: [] });
+    expect(prepared).toEqual([[p.id, `aio-agent-proj-${p.id}`]]);
+    expect(r).toEqual({ container: `aio-agent-proj-${p.id}`, created: true, stale: [] });
     const endpoint = h.core.projects.engineEndpoint(p.id)!;
     expect(endpoint).toMatchObject({ hostPort: 41000, container: r.container });
     expect(endpoint.token).toMatch(/^[0-9a-f]{64}$/);
@@ -143,8 +141,8 @@ describe("ProjectService", () => {
     expect(fs.readFileSync(tokenFile, "utf8")).toBe(`${endpoint.token}\n`);
     expect(fs.statSync(tokenFile).mode & 0o777).toBe(0o600);
     expect(c.spec.env.some((e) => e.startsWith("SECRET="))).toBe(false);
-    expect(c.spec.labels["agentbox.secret-names"]).toBe("SECRET");
-    expect(c.spec.env).toContain(`AGENTBOX_ENGINE_VERSION=${ENGINE_VERSION}`);
+    expect(c.spec.labels["aio.secret-names"]).toBe("SECRET");
+    expect(c.spec.env).toContain(`AIO_ENGINE_VERSION=${ENGINE_VERSION}`);
     expect(readMountsFile(h.env, r.container)).toEqual([]);
     const again = await h.core.projects.ensureContainer(p.id);
     expect(again.created).toBe(false);
@@ -171,7 +169,7 @@ describe("ProjectService", () => {
     expect(options.cmd.slice(0, 3)).toEqual(["/bin/sh", "-c", ROOT_SETUP_SCRIPT]);
     expect(options.cmd.slice(4)).toEqual([h.env.user, containerHome(h.env), SUDOERS_FILE, p.root]);
     expect(options.stdin).toBe("\n");
-    expect(h.docker.containers.get(r.container)!.spec.labels["agentbox.sudo"]).toBe("off");
+    expect(h.docker.containers.get(r.container)!.spec.labels["aio.sudo"]).toBe("off");
   });
 
   it("installs the sudo password hash only through the root step's standard input", async () => {
@@ -183,7 +181,7 @@ describe("ProjectService", () => {
     const [, options] = h.docker.callsOf("exec")[0]!.args as [string, ExecOptions];
     expect(options.stdin).toBe(`${hash}\n`);
     const c = h.docker.containers.get(r.container)!;
-    expect(c.spec.labels["agentbox.sudo"]).toBe("password");
+    expect(c.spec.labels["aio.sudo"]).toBe("password");
     expect(JSON.stringify(c.spec)).not.toContain(hash);
     expect(JSON.stringify(options.cmd) + JSON.stringify(options.env)).not.toContain(hash);
   });
@@ -193,11 +191,11 @@ describe("ProjectService", () => {
     const p = h.core.projects.ensureForRoot(h.dir("app"));
     h.docker.execHandler = (_c, options) =>
       options.user === "root"
-        ? { exitCode: 12, stdout: "", stderr: "can't remove /etc/sudoers.d/claude-box\n" }
+        ? { exitCode: 12, stdout: "", stderr: "can't remove /etc/sudoers.d/aio\n" }
         : undefined;
     await expect(h.core.projects.ensureContainer(p.id)).rejects.toMatchObject({
       code: "internal",
-      message: expect.stringContaining("can't remove /etc/sudoers.d/claude-box"),
+      message: expect.stringContaining("can't remove /etc/sudoers.d/aio"),
     });
     expect(h.docker.callsOf("removeContainer")).toHaveLength(1);
     expect(h.core.projects.engineEndpoint(p.id)).toBeUndefined();
@@ -225,7 +223,7 @@ describe("ProjectService", () => {
     h.core.settings.patch({ sudoPasswordRef: "op://SYNTHETIC/sudo/password" });
     expect(await h.core.projects.staleDifferences(p)).toEqual(["sudo off -> password"]);
     // A container from an older server has the image's passwordless sudo.
-    delete h.docker.containers.get(r.container)!.spec.labels["agentbox.sudo"];
+    delete h.docker.containers.get(r.container)!.spec.labels["aio.sudo"];
     h.core.settings.patch({ sudoPasswordRef: null });
     expect(await h.core.projects.staleDifferences(p)).toEqual(["sudo passwordless -> off"]);
   });
@@ -236,7 +234,7 @@ describe("ProjectService", () => {
     const r = await h.core.projects.ensureContainer(p.id);
     expect(await h.core.projects.staleDifferences(p)).toEqual([]);
     // A container that a server from before the broker created has no label.
-    delete h.docker.containers.get(r.container)!.spec.labels["agentbox.secrets"];
+    delete h.docker.containers.get(r.container)!.spec.labels["aio.secrets"];
     expect(await h.core.projects.staleDifferences(p)).toEqual(["secrets environment -> broker"]);
   });
 
@@ -259,7 +257,7 @@ describe("ProjectService", () => {
     const p = h.core.projects.ensureForRoot(h.dir("app"));
     const r = await h.core.projects.ensureContainer(p.id);
     expect((await h.core.projects.summary(p)).container).not.toHaveProperty("stale");
-    delete h.docker.containers.get(r.container)!.spec.labels["agentbox.secrets"];
+    delete h.docker.containers.get(r.container)!.spec.labels["aio.secrets"];
     expect((await h.core.projects.summary(p)).container?.stale).toEqual([
       "secrets environment -> broker",
     ]);
@@ -295,15 +293,14 @@ describe("ProjectService", () => {
     });
   });
 
-  it("names Claude Box 3.x for an image without an engine", async () => {
-    // Claude Box 3.x builds the same tag from the old Dockerfile, which has
-    // no engine and no version label.
+  it("names the missing engine for an image without one", async () => {
+    // An image with no engine has no version label.
     const h = makeHarness();
-    h.docker.addImage("claude-code", {});
+    h.docker.addImage("aio-agent", {});
     const p = h.core.projects.ensureForRoot(h.dir("app"));
     await expect(h.core.projects.ensureContainer(p.id)).rejects.toMatchObject({
       code: "engine_mismatch",
-      message: expect.stringContaining("Claude Box 3.x"),
+      message: expect.stringContaining("has no AI Orchestrator engine"),
       details: { imageEngineVersion: null },
     });
     expect(h.docker.callsOf("createContainer")).toHaveLength(0);
@@ -367,11 +364,7 @@ describe("ProjectService", () => {
     const h = makeHarness();
     const p = h.core.projects.ensureForRoot(h.dir("app"));
     await h.core.projects.ensureContainer(p.id);
-    h.docker.addImage(
-      "claude-code",
-      { "agentbox.engine-version": ENGINE_VERSION },
-      "sha256:claude-code-2",
-    );
+    h.docker.addImage("aio-agent", { "aio.engine-version": ENGINE_VERSION }, "sha256:aio-agent-2");
     expect((await h.core.projects.ensureContainer(p.id)).created).toBe(true);
   });
 

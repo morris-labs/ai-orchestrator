@@ -3,43 +3,40 @@ import { z } from "zod";
 import { PortSchema } from "./common.js";
 import { DEFAULT_ENGINE_PORT, GlobalSettingsInputSchema, type GlobalSettings } from "./records.js";
 
-/**
- * Files under the home directory, relative to it. The `~/.claude-box`
- * directory name stays from 3.x so the import finds the old records.
- */
+/** Files under the home directory, relative to it. */
 export const HOME_PATHS = {
-  dataDir: ".claude-box",
-  config: ".claude-box/config.json",
-  database: ".claude-box/agentbox.db",
+  dataDir: ".ai-orchestrator",
+  config: ".ai-orchestrator/config.json",
+  database: ".ai-orchestrator/aio.db",
   /** The server's bearer token, mode 0600. */
-  serverToken: ".claude-box/server.token",
+  serverToken: ".ai-orchestrator/server.token",
   /**
    * The server's self-signed TLS certificate, which every client pins. See
-   * `@agentbox/contracts/tls`.
+   * `@aio/contracts/tls`.
    */
-  serverCert: ".claude-box/server.crt",
+  serverCert: ".ai-orchestrator/server.crt",
   /** The private key of `serverCert`, mode 0600. */
-  serverKey: ".claude-box/server.key",
+  serverKey: ".ai-orchestrator/server.key",
   /**
    * The port the running server listens on, which the server writes at
    * every start. The CLI reads it before `config.json`, since the server
    * takes its port from its database after the first start.
    */
-  serverPort: ".claude-box/server.port",
+  serverPort: ".ai-orchestrator/server.port",
   /** Per-container keeper state: `state/<container>/sessions` and `mounts`. */
-  stateDir: ".claude-box/state",
+  stateDir: ".ai-orchestrator/state",
   /** Per-container Claude sessions directory, mounted over `~/.claude/sessions`. */
-  sessionsDir: ".claude-box/sessions",
+  sessionsDir: ".ai-orchestrator/sessions",
   /** Per-container secrets broker directory, `broker/<container>/broker.sock`. */
-  brokerDir: ".claude-box/broker",
-  backupDir: ".claude-box/backup",
+  brokerDir: ".ai-orchestrator/broker",
+  backupDir: ".ai-orchestrator/backup",
 } as const;
 
-/** Run files, relative to the project root: `<project>/.claude-box/runs/<run id>/`. */
-export const RUNS_DIR = ".claude-box/runs";
+/** Run files, relative to the project root: `<project>/.aio/runs/<run id>/`. */
+export const RUNS_DIR = ".aio/runs";
 
 /** The file inside the image that names the engine version it carries. */
-export const ENGINE_VERSION_FILE = "/etc/agentbox-engine-version";
+export const ENGINE_VERSION_FILE = "/etc/aio-engine-version";
 
 /**
  * The configuration file schema: global settings with defaults. Its output is
@@ -49,7 +46,7 @@ export const ServerConfigSchema = GlobalSettingsInputSchema;
 export type ServerConfig = GlobalSettings;
 
 /**
- * Parses `~/.claude-box/config.json` content and fills every missing field
+ * Parses `~/.ai-orchestrator/config.json` content and fills every missing field
  * with its default. `undefined` and `null` (no file) give the full default
  * configuration. Throws a `ZodError` when a present field is invalid or a key
  * is unknown.
@@ -69,30 +66,30 @@ export const ENGINE_ENV = {
    * Bearer token the engine requires on every request, for an engine started
    * by hand in development. Ignored when `tokenFile` is set.
    */
-  token: "AGENTBOX_ENGINE_TOKEN",
+  token: "AIO_ENGINE_TOKEN",
   /**
    * File that holds the bearer token. The server sets this rather than
    * `token`, so the token stays out of the container's environment.
    */
-  tokenFile: "AGENTBOX_ENGINE_TOKEN_FILE",
+  tokenFile: "AIO_ENGINE_TOKEN_FILE",
   /** Port the engine listens on inside the container. */
-  port: "AGENTBOX_ENGINE_PORT",
+  port: "AIO_ENGINE_PORT",
   /** The project root as the container sees it. */
-  projectRoot: "AGENTBOX_PROJECT_ROOT",
+  projectRoot: "AIO_PROJECT_ROOT",
   /** The container's own name, used in event sources (`engine:<container>`). */
-  container: "AGENTBOX_CONTAINER",
+  container: "AIO_CONTAINER",
   /**
    * The engine version the server expects. On a mismatch the engine still
    * starts, logs a warning, and reports `versionMatches: false` on its health
    * route.
    */
-  engineVersion: "AGENTBOX_ENGINE_VERSION",
+  engineVersion: "AIO_ENGINE_VERSION",
   /** The keeper's state directory inside the container, which holds the `sessions` file. */
-  stateDir: "AGENTBOX_STATE_DIR",
+  stateDir: "AIO_STATE_DIR",
 } as const;
 
 /** The container path the server mounts the keeper's state directory at. */
-export const DEFAULT_ENGINE_STATE_DIR = "/run/claude-box";
+export const DEFAULT_ENGINE_STATE_DIR = "/run/aio";
 
 /**
  * The engine's view of its environment, after parsing. It needs the token

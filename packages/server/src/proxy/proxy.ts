@@ -13,7 +13,7 @@
 import http from "node:http";
 import net from "node:net";
 import type { Duplex } from "node:stream";
-import type { Listener } from "@agentbox/contracts";
+import type { Listener } from "@aio/contracts";
 
 /** Parses a `Host` header of the form `<port>.<hostKey>.localhost[:N]`. */
 export function parseProxyHost(host: string | undefined): { port: number; hostKey: string } | null {
@@ -57,7 +57,7 @@ export function proxyPorts(
 export type ProxyResolver = (hostKey: string) => Promise<ProxyTarget | null>;
 
 /** The header that carries the engine token, so the browser's `Authorization` passes untouched. */
-export const ENGINE_TOKEN_HEADER = "x-agentbox-engine-token";
+export const ENGINE_TOKEN_HEADER = "x-aio-engine-token";
 
 /** Hop-by-hop headers (RFC 9110 section 7.6.1), which a proxy must not forward. */
 const HOP_BY_HOP = [
@@ -75,7 +75,7 @@ const HOP_BY_HOP = [
 /**
  * The headers for the engine. The browser's `Authorization` header belongs
  * to the dev server and passes unchanged; the engine token travels in
- * `x-agentbox-engine-token`, which the engine strips, on plain requests and
+ * `x-aio-engine-token`, which the engine strips, on plain requests and
  * upgrades alike. An upgrade keeps `Connection` and `Upgrade`.
  */
 export function upstreamHeaders(

@@ -5,7 +5,7 @@ import {
   TerminalServerMessageSchema,
   type ApiError,
   type TerminalClientMessage,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 import type { ApiClient } from "../api/client";
 
 /** What a terminal pane connects to. */

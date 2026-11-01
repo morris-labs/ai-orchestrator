@@ -49,13 +49,13 @@ const SHA_RE = /^[0-9a-f]{7,64}$/;
 
 /**
  * Whether a `git status --porcelain` line names only paths in a
- * `.claude-box/` directory, the engine's own. A rename names two paths.
+ * `.aio/` directory, the engine's own. A rename names two paths.
  */
 function isEngineStatusLine(line: string): boolean {
   return line
     .slice(3)
     .split(" -> ")
-    .every((p) => /(^|\/)\.claude-box\//.test(p.replace(/^"/, "")));
+    .every((p) => /(^|\/)\.aio\//.test(p.replace(/^"/, "")));
 }
 
 /**
@@ -140,7 +140,7 @@ export async function resolveRange(
   }
 
   // The engine's own run files don't count, in case `info/exclude` lacks
-  // `.claude-box/`.
+  // `.aio/`.
   const dirty = (await git.statusLines()).some((l) => !isEngineStatusLine(l));
   if (dirty && !input.includeWorktree) {
     throw new RangeError(

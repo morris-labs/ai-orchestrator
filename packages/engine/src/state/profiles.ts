@@ -1,5 +1,5 @@
 // Profiles and role assignment (design.md, "Profiles" and "Vendor roles").
-import type { FileGroup, Profile, RoleAssignment, Vendor } from "@agentbox/contracts";
+import type { FileGroup, Profile, RoleAssignment, Vendor } from "@aio/contracts";
 import { FOCUS_AREAS } from "../prompts/templates.js";
 
 /** Rounds in which the `balanced` profile has Claude review. */

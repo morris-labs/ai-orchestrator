@@ -1,7 +1,7 @@
 // The optional Electron bridge. The preload script puts it on
-// `window.agentbox`; in a plain browser it is absent, and the app falls back
+// `window.aio`; in a plain browser it is absent, and the app falls back
 // to browser behavior for each call.
-import type { Platform } from "@agentbox/contracts";
+import type { Platform } from "@aio/contracts";
 
 export interface ExternalTerminalRequest {
   boxId: string;
@@ -14,7 +14,7 @@ export interface BridgeResult {
   error?: string;
 }
 
-export interface AgentBoxBridge {
+export interface AioBridge {
   /**
    * Returns the server's bearer token, which the main process reads from
    * `server.token` in the data directory, on the first call, and `null` on
@@ -25,7 +25,7 @@ export interface AgentBoxBridge {
   serverUrl: string;
   /** Opens a host terminal attached to a box, through the attach-command route. */
   openExternalTerminal: (req: ExternalTerminalRequest) => Promise<BridgeResult>;
-  /** Launches `agentbox-review` with the launcher prefilled. */
+  /** Launches `aio-review` with the launcher prefilled. */
   launchReview: (req: { projectId: string; boxId: string }) => Promise<BridgeResult>;
   pickDirectory: (defaultPath?: string) => Promise<string | null>;
   openPath: (path: string) => Promise<BridgeResult>;
@@ -37,11 +37,11 @@ export interface AgentBoxBridge {
 
 declare global {
   interface Window {
-    agentbox?: AgentBoxBridge;
+    aio?: AioBridge;
   }
 }
 
 /** The bridge, or `undefined` in a plain browser. */
-export function bridge(): AgentBoxBridge | undefined {
-  return typeof window !== "undefined" ? window.agentbox : undefined;
+export function bridge(): AioBridge | undefined {
+  return typeof window !== "undefined" ? window.aio : undefined;
 }

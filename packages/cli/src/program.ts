@@ -1,4 +1,4 @@
-// The `agentbox` command tree.
+// The `aio` command tree.
 import { spawn } from "node:child_process";
 import path from "node:path";
 import {
@@ -27,7 +27,7 @@ import {
   type ProjectSummary,
   type RunState,
   type SetupCheck,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 import { Command, CommanderError, InvalidArgumentError, Option } from "commander";
 import {
   ApiCallError,
@@ -290,7 +290,7 @@ function projectRows(projects: ProjectSummary[]) {
 }
 
 /** Variables that hold the server token, which no child of the CLI needs. */
-const TOKEN_ENV = ["AGENTBOX_TOKEN", "AGENTBOX_SERVER_TOKEN"];
+const TOKEN_ENV = ["AIO_TOKEN", "AIO_SERVER_TOKEN"];
 
 /** `env` without the server token, for a child such as the attach command. */
 export function childEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
@@ -310,20 +310,17 @@ function defaultExec(argv: string[]): Promise<number> {
 
 /** Builds the command tree. `state.code` receives the exit code of the command that ran. */
 export function buildProgram(deps: CliDeps, state: { code: number }): Command {
-  const program = new Command("agentbox")
-    .description("Manage Agent Box boxes, projects, and code review runs from the terminal.")
+  const program = new Command("aio")
+    .description("Manage AI Orchestrator boxes, projects, and code review runs from the terminal.")
     .option("--json", "Print the server's JSON instead of a table.")
-    .option(
-      "--server <url>",
-      "The server URL. Default: $AGENTBOX_SERVER or https://127.0.0.1:21400.",
-    )
+    .option("--server <url>", "The server URL. Default: $AIO_SERVER or https://127.0.0.1:21400.")
     .option(
       "--insecure",
       "Allow a plain http server URL. The token then travels unencrypted to whatever answers.",
     )
     .option(
       "--data-dir <path>",
-      "The server's data directory, as passed to agentbox-server. Default: $AGENTBOX_DATA_DIR or ~/.claude-box.",
+      "The server's data directory, as passed to aio-server. Default: $AIO_DATA_DIR or ~/.ai-orchestrator.",
     )
     .showHelpAfterError()
     .exitOverride()
@@ -1106,7 +1103,7 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
           const lines = [
             `${r.mode === "moved" ? "Moved" : "Copied"} the folder to ${r.dir} as ${r.account.id}${r.isDefault ? " (default)" : ""}.`,
             ...r.warnings.map((w) => `Warning: ${w}`),
-            `Run "agentbox accounts check ${r.account.id}" to confirm it is signed in.`,
+            `Run "aio accounts check ${r.account.id}" to confirm it is signed in.`,
           ];
           return `${lines.join("\n")}\n`;
         });
@@ -1280,7 +1277,7 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
   // migrate, setup, doctor, events
   program
     .command("migrate")
-    .description("Import the 3.x records under ~/.claude-box into the server's database.")
+    .description("Import the 3.x records under ~/.ai-orchestrator into the server's database.")
     .option("--dry-run", "Report what would be imported without writing.")
     .action(async (o: { dryRun?: boolean }) => {
       const r = await client().call("import.run", { body: { dryRun: o.dryRun ?? false } });
@@ -1335,11 +1332,11 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
       }
       if (c && reachable) {
         if (s.token === null) {
-          add("token", "fail", `No token in AGENTBOX_TOKEN or ${s.tokenFile}.`);
+          add("token", "fail", `No token in AIO_TOKEN or ${s.tokenFile}.`);
         } else {
           try {
             const setup = await c.call("setup.get");
-            add("token", "ok", s.tokenSource === "file" ? s.tokenFile : "AGENTBOX_TOKEN");
+            add("token", "ok", s.tokenSource === "file" ? s.tokenFile : "AIO_TOKEN");
             for (const id of ["docker", "image", "engine", "sudo"] as const) {
               const check = setup.checks.find((x) => x.id === id);
               if (check) add(id, check.status, check.message);
@@ -1391,11 +1388,7 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
     .action(async (o: { types?: string; count?: number }) => {
       const s = settings();
       if (s.token === null)
-        throw new ApiCallError(
-          401,
-          "unauthorized",
-          `No token in AGENTBOX_TOKEN or ${s.tokenFile}.`,
-        );
+        throw new ApiCallError(401, "unauthorized", `No token in AIO_TOKEN or ${s.tokenFile}.`);
       await tailEvents({
         baseUrl: s.baseUrl,
         token: s.token,
@@ -1445,7 +1438,7 @@ export async function runCli(argv: string[], deps: CliDeps): Promise<number> {
     }
     if (err instanceof ServerUnreachableError) {
       deps.err(terminalText(`${err.message}\n`));
-      if (err.suggestStart) deps.err("Start it with: systemctl --user start agentbox-server\n");
+      if (err.suggestStart) deps.err("Start it with: systemctl --user start aio-server\n");
       return 1;
     }
     deps.err(terminalText(`${err instanceof Error ? err.message : String(err)}\n`));

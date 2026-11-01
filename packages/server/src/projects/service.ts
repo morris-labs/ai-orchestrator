@@ -15,7 +15,7 @@ import {
   type ContainerState,
   type Project,
   type ProjectSummary,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 import type { z } from "zod";
 import type { EngineEndpoint, Repositories } from "../db/repositories.js";
 import { noEngineMessage, type ImageVersions } from "../docker/image.js";

@@ -1,7 +1,7 @@
 # Host tests for the server core
 
 The scripts in this directory run the server core against the real Docker
-daemon and the real `~/.claude-box`. The sandbox container that builds the
+daemon and the real `~/.ai-orchestrator`. The sandbox container that builds the
 workspace has neither, so the host peer session runs them. Nothing here runs
 in `pnpm test`.
 
@@ -23,33 +23,33 @@ node packages/server/test/host/smoke.mjs [--image=BASE_IMAGE] [--claude] [--keep
 ```
 
 Replace `BASE_IMAGE` with the image to build on; the default is
-`claude-code`.
-The base image must carry `/usr/local/lib/agentbox/keeper.sh` and
+`aio-agent`.
+The base image must carry `/usr/local/lib/ai-orchestrator/keeper.sh` and
 `start-session.sh`, as the image built from `image/Dockerfile` does: the
 container runs `keeper.sh` as PID 1 and starts sessions with
-`start-session.sh`. The keeper starts `agentbox-engine` when the image has
+`start-session.sh`. The keeper starts `aio-engine` when the image has
 it and runs without it otherwise.
 
 The script does the following:
 
-1. Builds `agentbox-hosttest` on top of the base image, with a test engine
-   version in `/etc/agentbox-engine-version` and the
-   `agentbox.engine-version` label.
+1. Builds `aio-hosttest` on top of the base image, with a test engine
+   version in `/etc/aio-engine-version` and the
+   `aio.engine-version` label.
 1. Creates a project in a temporary directory, prints the `docker run`
    equivalent of its launch spec with secrets masked, and starts the project
    container through `ensureContainer()`.
-1. Checks the binds, the environment (including `AGENTBOX_STATE_DIR`), and
+1. Checks the binds, the environment (including `AIO_STATE_DIR`), and
    the engine port binding on
    `127.0.0.1`.
 1. Waits for the keeper's state file, starts a tmux session with the session
    start script, and checks exit codes 0, 3 (already running), and 2 (ended
    right away).
 1. Samples stats twice and prints a `container.stats` event for its own
-   container. The monitor samples every `claude-agent-*` container on the
+   container. The monitor samples every `aio-agent-*` container on the
    host, so the script ignores the others.
 1. Kills the session and waits for the idle container to remove itself after
    its 5-second grace period.
-1. With `--claude`, creates a real Claude box in the project, which starts a
+1. With `--claude`, creates a real box that runs Claude in the project, which starts a
    new project container without the test's extra environment variable. It
    stops the box, waits until its status is `stopped`, and purges its
    transcripts. This uses your Claude sign-in.
@@ -57,7 +57,7 @@ The script does the following:
 Without `--keep`, the script removes the container, the test image, and the
 temporary directory. The temporary directory is also the server's data
 directory, so the database, the keeper state, and the sessions directories
-never touch `~/.claude-box`.
+never touch `~/.ai-orchestrator`.
 
 ## Start retry
 
@@ -65,7 +65,7 @@ never touch `~/.claude-box`.
 node packages/server/test/host/start-retry.mjs [--image=IMAGE]
 ```
 
-Replace `IMAGE` with the image to start from; the default is `claude-code`.
+Replace `IMAGE` with the image to start from; the default is `aio-agent`.
 Its engine version must match this checkout's server version, so build it
 from the same checkout with `scripts/build-image.sh`.
 
@@ -77,7 +77,7 @@ keeper leaves at the end of its grace period. It does the following:
    directory.
 1. Wraps `docker.exec` so that the first session-start exec force-removes
    the project container just before it runs.
-1. Creates a real Claude box and checks that a new container runs. This uses
+1. Creates a real box that runs Claude and checks that a new container runs. This uses
    your Claude sign-in.
 1. Stops the box, waits until its status is `stopped`, and purges it.
 
@@ -96,4 +96,4 @@ report. For every box it prints the 3.3.5 container and session, the 4.0
 container and session, and whether the box's transcript exists in the real
 `~/.claude/projects`. It fails when a record is skipped, when a box's
 container is not its project's, or when a second import changes records. It
-never writes to `~/.claude-box`.
+never writes to `~/.ai-orchestrator`.

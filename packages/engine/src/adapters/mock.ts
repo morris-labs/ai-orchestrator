@@ -1,7 +1,7 @@
 // An adapter that replays scripted responses, for engine tests and app demos.
 // It runs no process.
 import { readFileSync } from "node:fs";
-import { UsageSampleSchema, VendorSchema, type Vendor } from "@agentbox/contracts";
+import { UsageSampleSchema, VendorSchema, type Vendor } from "@aio/contracts";
 import { z } from "zod";
 import { parseStructured } from "./output.js";
 import {

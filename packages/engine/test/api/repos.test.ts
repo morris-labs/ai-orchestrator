@@ -3,7 +3,7 @@
 import { execFileSync } from "node:child_process";
 import { rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { RepoInfoSchema, RepoRefsSchema } from "@agentbox/contracts";
+import { RepoInfoSchema, RepoRefsSchema } from "@aio/contracts";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { RepoService } from "../../src/api/repos.js";
 import { execRunner, type CommandRunner } from "../../src/api/runner.js";

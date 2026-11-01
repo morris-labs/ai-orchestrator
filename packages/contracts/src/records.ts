@@ -1,6 +1,6 @@
 // Persistent records: projects, boxes, SSH remotes, and settings.
 //
-// The server stores these in SQLite (`~/.claude-box/agentbox.db`). The
+// The server stores these in SQLite (`~/.ai-orchestrator/aio.db`). The
 // one-time import reads the 3.3.5 key-value files, so every field below maps
 // to a key of the 3.3.5 record files.
 //
@@ -10,11 +10,11 @@
 // so on) fills defaults and outputs the read type; use it for the import, for
 // creation, and for the configuration file.
 //
-// Box: `~/.claude-box/known/<container-name>` (inventory 3.1)
+// Box: `~/.ai-orchestrator/known/<container-name>` (inventory 3.1)
 //
 // | 3.3.5 key                | TypeScript field        | Notes                                      |
 // |--------------------------|-------------------------|--------------------------------------------|
-// | (file name)              | `id`                    | `claude-agent-<base>`                      |
+// | (file name)              | `id`                    | `aio-agent-<base>`                      |
 // | (new)                    | `hostKey`               | from `deriveHostKey()`; proxy host names   |
 // | `target_dir`             | `targetDir`             |                                            |
 // | `session_uuid`           | `sessionUuid`           | `null` when empty                          |
@@ -40,7 +40,7 @@
 // | `rc`                     | (ignored)               |                                            |
 // | (new)                    | `projectId`, `createdAt`, `updatedAt` |                              |
 //
-// Project: `~/.claude-box/projects/<id>` (inventory 3.2)
+// Project: `~/.ai-orchestrator/projects/<id>` (inventory 3.2)
 //
 // | 3.3.5 key            | TypeScript field | Notes                                         |
 // |----------------------|------------------|-----------------------------------------------|
@@ -62,7 +62,7 @@
 //   same container path, the first one wins (project mounts first, then boxes
 //   in record-file order), and the import reports each mount it skipped.
 //
-// SSH remote: `~/.claude-box/ssh_remotes/<sanitized>` (inventory 3.3)
+// SSH remote: `~/.ai-orchestrator/ssh_remotes/<sanitized>` (inventory 3.3)
 //
 // | 3.3.5 key         | TypeScript field |
 // |-------------------|------------------|
@@ -71,7 +71,7 @@
 // | `identity`        | `identity`       |
 // | `forward` (rep.)  | `forwards`       |
 //
-// Global settings: `~/.claude-box/global` and QSettings (inventory 3.3, 3.4)
+// Global settings: `~/.ai-orchestrator/global` and QSettings (inventory 3.3, 3.4)
 //
 // | 3.3.5 source                 | TypeScript field              |
 // |------------------------------|-------------------------------|
@@ -100,9 +100,9 @@ import {
 import { DEFAULT_PROMPT_TEMPLATES } from "./prompts.js";
 
 /** Every shared container name and box id starts with this prefix. */
-export const CONTAINER_PREFIX = "claude-agent-";
+export const CONTAINER_PREFIX = "aio-agent-";
 
-/** Returns the shared container name for a project: `claude-agent-proj-<id>`. */
+/** Returns the shared container name for a project: `aio-agent-proj-<id>`. */
 export function projectContainerName(projectId: string): string {
   return `${CONTAINER_PREFIX}proj-${projectId}`;
 }
@@ -239,7 +239,7 @@ export type CeilingsOverride = z.infer<typeof CeilingsOverrideSchema>;
 // Project
 
 /** The project path, relative to the project root, of the default policy file. */
-export const DEFAULT_POLICY_PATH = ".claude-box/policy.yaml";
+export const DEFAULT_POLICY_PATH = ".aio/policy.yaml";
 
 /** Settings a person edits on a project. */
 export const ProjectSettingsSchema = z.object({
@@ -369,7 +369,7 @@ export const SshRemoteInputSchema = SshRemoteSchema.extend({
 export const HostKeySchema = z.string().regex(/^[a-z0-9](?:[a-z0-9-]{0,28}[a-z0-9])?$/);
 
 /**
- * Derives a box's `hostKey` from its id: drops the `claude-agent-` prefix,
+ * Derives a box's `hostKey` from its id: drops the `aio-agent-` prefix,
  * lowercases, turns every other character into a hyphen, collapses and trims
  * hyphens, and cuts to 30 characters. When the key is in `taken`, it appends
  * `-2`, `-3`, and so on, cutting the stem to keep 30 characters.
@@ -422,7 +422,7 @@ export type BoxAccountsPatch = z.infer<typeof BoxAccountsPatchSchema>;
  * server derives `BoxView.reviewState` from the active runs.
  */
 export const BoxSchema = z.object({
-  /** The box name, `claude-agent-<base>`; the 3.3.5 record's file name. */
+  /** The box name, `aio-agent-<base>`; the 3.3.5 record's file name. */
   id: z.string().startsWith(CONTAINER_PREFIX),
   projectId: z.string().min(1),
   hostKey: HostKeySchema,
@@ -573,12 +573,12 @@ export const DEFAULT_COPILOT_MODEL = "auto";
 
 export const DEFAULT_SERVER_PORT = 21400;
 export const DEFAULT_ENGINE_PORT = 20411;
-export const DEFAULT_ENGINE_IMAGE = "claude-code";
+export const DEFAULT_ENGINE_IMAGE = "aio-agent";
 
 /**
  * Global settings. The server stores them in its database. On the first
  * start, when the database holds no settings yet, the server seeds them from
- * `~/.claude-box/config.json` through `GlobalSettingsInputSchema`, and reads
+ * `~/.ai-orchestrator/config.json` through `GlobalSettingsInputSchema`, and reads
  * that file never again. Unknown keys are rejected.
  */
 export const GlobalSettingsSchema = z
@@ -611,7 +611,7 @@ export const GlobalSettingsSchema = z
     secretRefs: z.array(SecretRefSchema),
     /**
      * The 1Password vaults the secrets picker lists. Empty means the vaults
-     * that existing references name, else `AgentBox`.
+     * that existing references name, else `Aio`.
      */
     secretVaults: z.array(z.string().min(1)),
     /**
@@ -635,7 +635,7 @@ export const GlobalSettingsSchema = z
      */
     transcriptStore: z.string().min(1).optional(),
     /**
-     * The least `cleanupPeriodDays` that Agent Box keeps in every Claude
+     * The least `cleanupPeriodDays` that AI Orchestrator keeps in every Claude
      * account's `settings.json`, unless the host's `~/.claude/settings.json`
      * sets one, which wins. Absent means 3650.
      */
@@ -653,7 +653,7 @@ export type GlobalSettings = z.infer<typeof GlobalSettingsSchema>;
  * The dev-server proxy's port: `proxyPort`, else the port after
  * `serverPort`. The API listener serves HTTPS with a certificate for
  * loopback only, so the proxy's `*.localhost` names need a listener of their
- * own; a `proxyPort` equal to `serverPort`, which 4.0 development builds
+ * own; a `proxyPort` equal to `serverPort`, which pre-release development builds
  * allowed, counts as absent.
  */
 export function proxyPortOf(settings: Pick<GlobalSettings, "serverPort" | "proxyPort">): number {

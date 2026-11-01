@@ -15,7 +15,7 @@ export const WORKTREES_DIR_NAME = ".worktrees";
 /** Branch prefix for each conversation's branch. */
 export const BRANCH_PREFIX = "claude/";
 /** Directory for per-conversation notes. */
-export const NOTES_DIR_NAME = ".claude-box";
+export const NOTES_DIR_NAME = ".aio";
 
 /** Whether `dir` is inside a git working tree. */
 export async function isRepo(dir: string): Promise<boolean> {
@@ -51,17 +51,17 @@ export function branchFor(slug: string): string {
   return BRANCH_PREFIX + slug;
 }
 
-/** `<projectRoot>/.claude-box/conversations/<slug>`: a workspace conversation's notes. */
+/** `<projectRoot>/.aio/conversations/<slug>`: a workspace conversation's notes. */
 export function notesDir(projectRoot: string, slug: string): string {
   return path.posix.normalize(`${projectRoot}/${NOTES_DIR_NAME}/conversations/${slug}`);
 }
 
-/** `<projectRoot>/.claude-box/INFRA.md`: the project's shared notes. */
+/** `<projectRoot>/.aio/INFRA.md`: the project's shared notes. */
 export function infraFile(projectRoot: string): string {
   return path.posix.normalize(`${projectRoot}/${NOTES_DIR_NAME}/INFRA.md`);
 }
 
-/** `<worktree>/.claude-box`: a worktree conversation's notes, ignored by git. */
+/** `<worktree>/.aio`: a worktree conversation's notes, ignored by git. */
 export function worktreeNotesDir(worktree: string): string {
   return path.posix.normalize(`${worktree}/${NOTES_DIR_NAME}`);
 }
@@ -126,7 +126,7 @@ export async function mergeExcludeRules(repo: string, fromExcludeFile: string): 
 }
 
 /**
- * Adds `.worktrees/` and `.claude-box/` to the repository's `info/exclude`,
+ * Adds `.worktrees/` and `.aio/` to the repository's `info/exclude`,
  * which lives in the common git directory, so one entry covers every
  * worktree. Idempotent.
  */
@@ -147,7 +147,7 @@ export async function ensureExcluded(repo: string): Promise<{ ok: boolean; error
       const text = fs.readFileSync(file, "utf8");
       if (text.length > 0 && !text.endsWith("\n")) prefix = "\n";
     }
-    fs.appendFileSync(file, `${prefix}# claude-box\n${missing.map((m) => `${m}\n`).join("")}`);
+    fs.appendFileSync(file, `${prefix}# aio\n${missing.map((m) => `${m}\n`).join("")}`);
   } catch {
     return { ok: false, error: `cannot write ${file}` };
   }
@@ -301,7 +301,7 @@ export async function checkRemovable(_repo: string, wt: string): Promise<RemoveC
 /**
  * Removes a worktree and its `claude/` branch, only when `checkRemovable()`
  * allows it. The notes folder moves to
- * `<repo>/.claude-box/archive/<leaf>-<stamp>` first so removal cannot lose it.
+ * `<repo>/.aio/archive/<leaf>-<stamp>` first so removal cannot lose it.
  */
 export async function removeWorktree(
   repo: string,

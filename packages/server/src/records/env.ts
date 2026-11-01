@@ -4,7 +4,7 @@
 import crypto from "node:crypto";
 import os from "node:os";
 import path from "node:path";
-import { ACCOUNTS_DIR, HOME_PATHS, type Platform } from "@agentbox/contracts";
+import { ACCOUNTS_DIR, HOME_PATHS, type Platform } from "@aio/contracts";
 
 export interface HostEnv {
   /** The host user's home directory. Every `~` path below resolves against it. */
@@ -12,7 +12,7 @@ export interface HostEnv {
   /**
    * The server's data directory, which holds the database, the token, the
    * keeper state, the sessions directories, and the 3.x records the import
-   * reads. Default: `~/.claude-box`.
+   * reads. Default: `~/.ai-orchestrator`.
    */
   dataDir?: string;
   /** The user name inside the container; see `containerUsername()`. */
@@ -48,15 +48,15 @@ export function containerHome(env: HostEnv): string {
 }
 
 /** The environment variable that sets the data directory. */
-export const DATA_DIR_ENV = "AGENTBOX_DATA_DIR";
+export const DATA_DIR_ENV = "AIO_DATA_DIR";
 
-/** The data directory: `env.dataDir` when set, else `~/.claude-box`. */
+/** The data directory: `env.dataDir` when set, else `~/.ai-orchestrator`. */
 export function dataDirOf(env: Pick<HostEnv, "home" | "dataDir">): string {
   return env.dataDir ? path.resolve(env.dataDir) : path.join(env.home, HOME_PATHS.dataDir);
 }
 
 /**
- * Resolves a `HOME_PATHS` entry under the `~/.claude-box` directory against
+ * Resolves a `HOME_PATHS` entry under the `~/.ai-orchestrator` directory against
  * the data directory instead.
  */
 export function dataPath(env: Pick<HostEnv, "home" | "dataDir">, homeRelative: string): string {

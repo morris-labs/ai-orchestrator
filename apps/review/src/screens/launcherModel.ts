@@ -5,7 +5,7 @@ import {
   type Pipeline,
   type Profile,
   type RunRequest,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 
 export type BaseMode = "merge-base" | "exact";
 

@@ -14,7 +14,7 @@ import type {
   Vendor,
   VendorFinding,
   VendorRoundStats,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 import type { ConfirmOutput, FixOutput, ReviewOutput, SweepOutput, VerifyOutput } from "../core.js";
 import { compareGate, formatRegressions, runGate, type GateRun } from "../gate/gate.js";
 import { groupFiles } from "../group/group.js";
@@ -183,7 +183,7 @@ function readOnlyState(ctx: RunContext): Promise<CheckoutState> {
       return { commit: tip, head: tip };
     }
     const head = await ctx.git.head();
-    const index = join(tmpdir(), `agentbox-index-${ctx.state.id}-${Date.now()}`);
+    const index = join(tmpdir(), `aio-index-${ctx.state.id}-${Date.now()}`);
     return { commit: await ctx.git.snapshotWorktree(index), head };
   })();
   readOnlyStates.set(ctx, { key, state });

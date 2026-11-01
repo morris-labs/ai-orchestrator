@@ -16,15 +16,15 @@ export const project = {
   mounts: [{ host: "/srv/data", container: "/srv/data" }],
   secretRefs: [{ name: "API_TOKEN", ref: "op://Dev/Example API/credential" }],
   ceilingsOverride: { claude: { kind: "utilization", window: "5h", max: 0.5 } },
-  policyPath: ".claude-box/policy.yaml",
+  policyPath: ".aio/policy.yaml",
   createdAt: T0,
   updatedAt: T1,
 };
 
-const CONTAINER = "claude-agent-proj-example-app-1a2b3c4d";
+const CONTAINER = "aio-agent-proj-example-app-1a2b3c4d";
 
 export const box = {
-  id: "claude-agent-emails_not_sending",
+  id: "aio-agent-emails_not_sending",
   projectId: project.id,
   hostKey: "emails-not-sending",
   targetDir: project.root,
@@ -38,7 +38,7 @@ export const box = {
   worktree: "/home/user/src/example-app/.worktrees/Emails_not_sending",
   branch: "claude/Emails_not_sending",
   container: CONTAINER,
-  session: "claude-agent-emails_not_sending",
+  session: "aio-agent-emails_not_sending",
   launchedModel: "claude-opus-5-5",
   launchedEffort: "high",
   wasRunning: true,
@@ -49,12 +49,12 @@ export const box = {
 
 /** What the import produces for a 3.3.5 record with few keys, before defaults. */
 export const minimalBoxInput = {
-  id: "claude-agent-example-app",
+  id: "aio-agent-example-app",
   projectId: project.id,
   hostKey: "example-app",
   targetDir: project.root,
   container: CONTAINER,
-  session: "claude-agent-example-app",
+  session: "aio-agent-example-app",
   createdAt: T0,
   updatedAt: T0,
 };
@@ -256,7 +256,7 @@ export const leaseResponses = [
 export const settingsFile = {
   version: 1,
   serverPort: 21400,
-  engineImage: "claude-code",
+  engineImage: "aio-agent",
   ceilings: { copilot: { kind: "spend", period: "month", maxUsd: 50 } },
   notifications: { roundSummary: false },
   vendorDefaults: { claude: { effort: "high" } },
@@ -373,7 +373,7 @@ export const events = [
     container: CONTAINER,
     projectId: project.id,
     state: "running",
-    engine: { hostPort: 41234, version: "4.0.0", healthy: true, versionMatches: true },
+    engine: { hostPort: 41234, version: "1.0.0", healthy: true, versionMatches: true },
   },
   {
     ...ev(13, "server"),

@@ -22,7 +22,7 @@ function readJson(file: string): Record<string, unknown> {
 function addAccount(h: Harness, name: string): string {
   const dir = accountDirFor(h.env, "claude", name);
   fs.mkdirSync(dir, { recursive: true });
-  const store = h.dir(".claude-box", "transcripts", "claude");
+  const store = h.dir(".ai-orchestrator", "transcripts", "claude");
   fs.mkdirSync(store, { recursive: true });
   fs.symlinkSync(store, path.join(dir, "projects"));
   const now = new Date().toISOString();
@@ -51,7 +51,7 @@ function sessionStarts(h: Harness): number {
 
 describe("ensureRetention", () => {
   it("writes the key when it is missing and keeps the other keys", () => {
-    const dir = tempDir("agentbox-ret-");
+    const dir = tempDir("aio-ret-");
     fs.writeFileSync(path.join(dir, "settings.json"), JSON.stringify({ model: "opus" }));
     expect(ensureRetention(dir, 3650)).toBe(true);
     expect(readJson(path.join(dir, "settings.json"))).toEqual({
@@ -61,13 +61,13 @@ describe("ensureRetention", () => {
   });
 
   it("creates a missing settings.json", () => {
-    const dir = tempDir("agentbox-ret-");
+    const dir = tempDir("aio-ret-");
     expect(ensureRetention(dir, 100)).toBe(true);
     expect(readJson(path.join(dir, "settings.json"))).toEqual({ cleanupPeriodDays: 100 });
   });
 
   it("raises a lower value and never lowers a larger one", () => {
-    const dir = tempDir("agentbox-ret-");
+    const dir = tempDir("aio-ret-");
     const file = path.join(dir, "settings.json");
     fs.writeFileSync(file, JSON.stringify({ cleanupPeriodDays: 30 }));
     expect(ensureRetention(dir, 3650)).toBe(true);
@@ -78,7 +78,7 @@ describe("ensureRetention", () => {
   });
 
   it("replaces a value that Claude Code wouldn't accept", () => {
-    const dir = tempDir("agentbox-ret-");
+    const dir = tempDir("aio-ret-");
     const file = path.join(dir, "settings.json");
     fs.writeFileSync(file, JSON.stringify({ cleanupPeriodDays: "30" }));
     ensureRetention(dir, 3650);
@@ -86,7 +86,7 @@ describe("ensureRetention", () => {
   });
 
   it("throws for a settings.json that isn't a JSON object", () => {
-    const dir = tempDir("agentbox-ret-");
+    const dir = tempDir("aio-ret-");
     const file = path.join(dir, "settings.json");
     fs.writeFileSync(file, "{ not json");
     expect(() => ensureRetention(dir, 3650)).toThrow(/isn't a JSON object/);
@@ -94,7 +94,7 @@ describe("ensureRetention", () => {
   });
 
   it.skipIf(process.getuid?.() === 0)("throws when the file can't be written", () => {
-    const dir = tempDir("agentbox-ret-");
+    const dir = tempDir("aio-ret-");
     fs.chmodSync(dir, 0o500);
     try {
       expect(() => ensureRetention(dir, 3650)).toThrow(/Can't write cleanupPeriodDays/);
@@ -106,7 +106,7 @@ describe("ensureRetention", () => {
 
 describe("protected retention value", () => {
   it("takes the host's value, else the setting, else 3650", () => {
-    const home = tempDir("agentbox-ret-home-");
+    const home = tempDir("aio-ret-home-");
     expect(protectedRetentionDays(home, undefined)).toBe(3650);
     expect(protectedRetentionDays(home, 500)).toBe(500);
     fs.mkdirSync(path.join(home, ".claude"));
@@ -116,7 +116,7 @@ describe("protected retention value", () => {
   });
 
   it("ignores a host value that isn't a positive whole number", () => {
-    const home = tempDir("agentbox-ret-home-");
+    const home = tempDir("aio-ret-home-");
     fs.mkdirSync(path.join(home, ".claude"));
     fs.writeFileSync(path.join(home, ".claude", "settings.json"), '{"cleanupPeriodDays": 0}');
     expect(protectedRetentionDays(home, undefined)).toBe(3650);
@@ -125,7 +125,7 @@ describe("protected retention value", () => {
 
 describe("retentionWarnings", () => {
   it("warns about a missing or lower value and a desktop ceiling", () => {
-    const dir = tempDir("agentbox-ret-");
+    const dir = tempDir("aio-ret-");
     const file = path.join(dir, "settings.json");
     expect(retentionWarnings(dir, 3650)[0]).toMatch(/doesn't set cleanupPeriodDays/);
     fs.writeFileSync(file, JSON.stringify({ cleanupPeriodDays: 30 }));
@@ -256,8 +256,8 @@ describe("starting a Claude session on an account", () => {
 
 describe("transcript snapshots", () => {
   function store(): { root: string; backup: string } {
-    const root = tempDir("agentbox-snap-");
-    const backup = path.join(tempDir("agentbox-snap-b-"), "backup", "transcripts");
+    const root = tempDir("aio-snap-");
+    const backup = path.join(tempDir("aio-snap-b-"), "backup", "transcripts");
     fs.mkdirSync(path.join(root, "-work-app"), { recursive: true });
     fs.writeFileSync(path.join(root, "-work-app", "a.jsonl"), "one\n");
     return { root, backup };
@@ -315,13 +315,13 @@ describe("transcript snapshots", () => {
   it("is taken once, at the first Claude start after the server started", async () => {
     const h = makeHarness();
     addAccount(h, "personal");
-    const store = path.join(h.home, ".claude-box", "transcripts", "claude");
+    const store = path.join(h.home, ".ai-orchestrator", "transcripts", "claude");
     fs.mkdirSync(path.join(store, "-x"), { recursive: true });
     fs.writeFileSync(path.join(store, "-x", "t.jsonl"), "x\n");
     const a = await h.core.boxes.create({ targetDir: h.dir("a"), layout: "root" });
     await h.core.boxes.stop(a.id);
     await h.core.boxes.start(a.id);
-    const backup = path.join(h.home, ".claude-box", "backup", "transcripts");
+    const backup = path.join(h.home, ".ai-orchestrator", "backup", "transcripts");
     expect(listSnapshots(backup)).toHaveLength(1);
   });
 
@@ -330,7 +330,9 @@ describe("transcript snapshots", () => {
     addAccount(h, "personal");
     h.core.settings.patch({ transcriptBackupKeep: 0 });
     await h.core.boxes.create({ targetDir: h.dir("a"), layout: "root" });
-    expect(listSnapshots(path.join(h.home, ".claude-box", "backup", "transcripts"))).toEqual([]);
+    expect(listSnapshots(path.join(h.home, ".ai-orchestrator", "backup", "transcripts"))).toEqual(
+      [],
+    );
   });
 });
 

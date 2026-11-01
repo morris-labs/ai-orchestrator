@@ -5,7 +5,7 @@
 // disprove roles fall back to the next vendor, and the fixer stays with
 // Claude, so a Claude over its ceiling pauses the run.
 import type {
-  AgentBoxEvent,
+  AioEvent,
   AgentRole,
   Ceilings,
   CeilingsOverride,
@@ -13,7 +13,7 @@ import type {
   LeaseRequest,
   LeaseResponse,
   Vendor,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 import type { EventInput } from "../api/core-interface.js";
 import type { UsageService } from "../usage/usage-service.js";
 
@@ -38,7 +38,7 @@ export interface SchedulerOptions {
   projectCeilings: (projectId: string) => Promise<CeilingsOverride | undefined>;
   /** The run's current round, for `role.reassigned`. */
   runRound: (runId: string) => number;
-  emit: (event: EventInput) => AgentBoxEvent;
+  emit: (event: EventInput) => AioEvent;
   now?: () => Date;
   grantTtlMs?: number;
   fallbackOrder?: Vendor[];
@@ -62,7 +62,7 @@ export class VendorHealth {
 
   constructor(private readonly maxRuns = 1000) {}
 
-  ingest(event: AgentBoxEvent): void {
+  ingest(event: AioEvent): void {
     if (event.type !== "agent.finished") return;
     if (event.outcome === "error" || event.outcome === "timeout") {
       let set = this.failing.get(event.runId);

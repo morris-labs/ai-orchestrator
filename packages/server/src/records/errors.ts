@@ -1,6 +1,6 @@
 // The error the server throws for every failure that an API caller can act
 // on, and the status code of each contract error code.
-import type { ApiErrorCode, ApiError as ApiErrorBody } from "@agentbox/contracts";
+import type { ApiErrorCode, ApiError as ApiErrorBody } from "@aio/contracts";
 
 /** The HTTP status for each contract error code. */
 export const API_ERROR_STATUS: Record<ApiErrorCode, number> = {

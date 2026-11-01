@@ -29,7 +29,7 @@ import {
   type AccountUpdate,
   type AccountView,
   type Platform,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 import type { z } from "zod";
 import type { AccountsRepo } from "../db/repositories.js";
 import type { DockerClient } from "../docker/types.js";
@@ -186,7 +186,7 @@ export class AccountService {
       if (resolved === t || resolved.startsWith(`${t}/`)) {
         throw new ApiError(
           "validation",
-          `The accounts folder ${dir} is under ${t}, a temporary directory. Codex won't run there. Set the data directory (--data-dir or AGENTBOX_DATA_DIR) outside ${t}.`,
+          `The accounts folder ${dir} is under ${t}, a temporary directory. Codex won't run there. Set the data directory (--data-dir or AIO_DATA_DIR) outside ${t}.`,
           { dir, tempDir: t },
         );
       }
@@ -261,7 +261,7 @@ export class AccountService {
     if (host !== undefined && !sameLocation(host, store.root) && storeEntryCount(host) > 0) {
       throw new ApiError(
         "conflict",
-        `The host's ~/.claude/projects leads to ${host}, which holds conversations outside the transcript store ${store.root}. Boxes in accounts mode wouldn't find them. Run "agentbox transcripts adopt" first.`,
+        `The host's ~/.claude/projects leads to ${host}, which holds conversations outside the transcript store ${store.root}. Boxes in accounts mode wouldn't find them. Run "aio transcripts adopt" first.`,
         { store: store.root, host },
       );
     }
@@ -276,7 +276,7 @@ export class AccountService {
     if (bad.length > 0) {
       throw new ApiError(
         "conflict",
-        `The projects link of ${bad.map((b) => `${b.id} (${b.state})`).join(", ")} doesn't lead to the transcript store ${store.root}. Run "agentbox accounts relink" first.`,
+        `The projects link of ${bad.map((b) => `${b.id} (${b.state})`).join(", ")} doesn't lead to the transcript store ${store.root}. Run "aio accounts relink" first.`,
         { store: store.root, accounts: bad },
       );
     }
@@ -332,7 +332,7 @@ export class AccountService {
       return `Replaced the projects link with a link to the shared transcript store ${store}.`;
     }
     if (outcome === "kept-directory") {
-      return `projects is a real folder that holds transcripts, so it wasn't replaced. Move its transcripts into ${store}, then run "agentbox accounts relink".`;
+      return `projects is a real folder that holds transcripts, so it wasn't replaced. Move its transcripts into ${store}, then run "aio accounts relink".`;
     }
     return undefined;
   }
@@ -357,7 +357,7 @@ export class AccountService {
           .linkedMissing.length > 0
       ) {
         warnings.push(
-          `settings.json is the host's file and lacks ${BYPASS_ACCEPTED_KEY}, so a box that enters bypass permissions mode shows Claude's warning once. Agent Box doesn't write the host's file. Add the key there, or replace the link with a file of the account's own.`,
+          `settings.json is the host's file and lacks ${BYPASS_ACCEPTED_KEY}, so a box that enters bypass permissions mode shows Claude's warning once. AI Orchestrator doesn't write the host's file. Add the key there, or replace the link with a file of the account's own.`,
         );
       }
     }

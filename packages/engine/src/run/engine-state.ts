@@ -1,7 +1,7 @@
 // The engine's own bookkeeping for a run, kept beside `state.json` in
 // `engine.json`. `RunState` is the contract that the server and apps read;
 // this file holds what only the state machine needs to resume.
-import { ProfileSchema, RoleAssignmentSchema, RoleSchema, VendorSchema } from "@agentbox/contracts";
+import { ProfileSchema, RoleAssignmentSchema, RoleSchema, VendorSchema } from "@aio/contracts";
 import { z } from "zod";
 
 const VendorStatsSchema = z.object({

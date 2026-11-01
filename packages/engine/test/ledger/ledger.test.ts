@@ -1,4 +1,4 @@
-import type { Hunk } from "@agentbox/contracts";
+import type { Hunk } from "@aio/contracts";
 import { describe, expect, it } from "vitest";
 import {
   findingTouchesHunk,

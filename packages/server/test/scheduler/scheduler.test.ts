@@ -1,4 +1,4 @@
-import type { AgentBoxEvent, CeilingsOverride, LeaseRequest, Vendor } from "@agentbox/contracts";
+import type { AioEvent, CeilingsOverride, LeaseRequest, Vendor } from "@aio/contracts";
 import { describe, expect, it } from "vitest";
 import {
   ANNOUNCED_RUN_LIMIT,
@@ -161,7 +161,7 @@ describe("Scheduler", () => {
   it("skips a vendor that failed earlier in the run", async () => {
     const health = new VendorHealth();
     const finished = (vendor: Vendor, outcome: "ok" | "error") =>
-      ({ type: "agent.finished", runId: RUN, vendor, outcome }) as unknown as AgentBoxEvent;
+      ({ type: "agent.finished", runId: RUN, vendor, outcome }) as unknown as AioEvent;
     health.ingest(finished("copilot", "error"));
     const t = make(undefined, health);
     t.sample("codex", { utilization: 0.8 });
@@ -179,7 +179,7 @@ describe("Scheduler", () => {
         runId: RUN,
         vendor,
         outcome: "error",
-      } as unknown as AgentBoxEvent);
+      } as unknown as AioEvent);
     const t = make(undefined, health);
     t.sample("codex", { utilization: 0.8, resetAt: iso(T0 + 30 * MIN) });
     const res = await t.scheduler.decide("e", "p", t.req());

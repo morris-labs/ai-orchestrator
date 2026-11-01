@@ -80,16 +80,16 @@ describe("image helpers", () => {
     expect(imageBuildScript("/repo/image")).toBe("/repo/scripts/build-image.sh");
     expect(imageBuildScript("/repo/image/")).toBe("/repo/scripts/build-image.sh");
     expect(imageBuildScript(INSTALLED_IMAGE_CONTEXT)).toBe(
-      "/usr/share/agentbox/scripts/build-image.sh",
+      "/usr/share/ai-orchestrator/scripts/build-image.sh",
     );
   });
 
   it("defaults the context to the checkout, else the installed package", () => {
     const has = (files: string[]) => (p: string) => files.includes(p);
     expect(defaultImageContext("/repo", has(["/repo/image/Dockerfile"]))).toBe("/repo/image");
-    expect(defaultImageContext("/usr/lib", has(["/usr/share/agentbox/image/Dockerfile"]))).toBe(
-      "/usr/share/agentbox/image",
-    );
+    expect(
+      defaultImageContext("/usr/lib", has(["/usr/share/ai-orchestrator/image/Dockerfile"])),
+    ).toBe("/usr/share/ai-orchestrator/image");
     expect(defaultImageContext("/repo", has([]))).toBe("/repo/image");
   });
 
@@ -100,16 +100,16 @@ describe("image helpers", () => {
     ).toBe("/repo/apps/boxes/dist/renderer");
     expect(
       defaultStaticDir("/usr/lib", "review", has([`${INSTALLED_WEB_ROOT}/review/index.html`])),
-    ).toBe("/usr/share/agentbox/web/review");
+    ).toBe("/usr/share/ai-orchestrator/web/review");
     expect(defaultStaticDir("/repo", "boxes", has([]))).toBe("/repo/apps/boxes/dist/renderer");
   });
 
   it("parses the version probe", () => {
-    expect(parseVersionProbe("engineVersion=4.0.0\nclaude=2.1.310\ncodex=\nbogus=1\n")).toEqual({
-      engineVersion: "4.0.0",
+    expect(parseVersionProbe("engineVersion=1.0.0\nclaude=2.1.310\ncodex=\nbogus=1\n")).toEqual({
+      engineVersion: "1.0.0",
       claude: "2.1.310",
     });
-    expect(VERSION_PROBE_COMMAND).toContain("/etc/agentbox-engine-version");
+    expect(VERSION_PROBE_COMMAND).toContain("/etc/aio-engine-version");
   });
 
   describe("under sh", () => {
@@ -119,7 +119,7 @@ describe("image helpers", () => {
     });
 
     it("reports every CLI, from its file or else its npm package", () => {
-      const dir = tempDir("agentbox-probe-");
+      const dir = tempDir("aio-probe-");
       dirs.push(dir);
       // A global npm root with all three CLIs, and an `npm` that prints it.
       const root = path.join(dir, "lib", "node_modules");
@@ -134,14 +134,14 @@ describe("image helpers", () => {
       const bin = path.join(dir, "bin");
       fs.mkdirSync(bin);
       fs.writeFileSync(path.join(bin, "npm"), `#!/bin/sh\necho '${root}'\n`, { mode: 0o755 });
-      // Only the engine and Claude Code have version files, as in the first 4.0 image.
+      // Only the engine and Claude Code have version files, as in the first image.
       const file = (name: string, content?: string) => {
         const f = path.join(dir, name);
         if (content !== undefined) fs.writeFileSync(f, content);
         return f;
       };
       const command = versionProbeCommand({
-        engineVersion: file("engine", "4.0.0-dev\n"),
+        engineVersion: file("engine", "1.0.0-dev\n"),
         claude: file("claude", "2.1.312\n"),
         codex: file("codex"),
         copilot: file("copilot"),
@@ -152,7 +152,7 @@ describe("image helpers", () => {
       });
       expect(r.status).toBe(0);
       expect(parseVersionProbe(r.stdout)).toEqual({
-        engineVersion: "4.0.0-dev",
+        engineVersion: "1.0.0-dev",
         claude: "2.1.312",
         codex: "0.165.0",
         copilot: "1.0.105",
@@ -160,7 +160,7 @@ describe("image helpers", () => {
     });
 
     it("leaves a CLI out when neither its file nor its package exists", () => {
-      const dir = tempDir("agentbox-probe-");
+      const dir = tempDir("aio-probe-");
       dirs.push(dir);
       const missing = path.join(dir, "missing");
       // An empty npm root, so the CLIs installed on this host stay out of it.
@@ -192,13 +192,13 @@ describe("image helpers", () => {
 
   it("reads codex and copilot through the probe when the labels lack them", async () => {
     const docker = new MemoryDocker();
-    docker.addImage("claude-code", {});
-    docker.runOnceAnswers.set("agentbox-engine-version", {
+    docker.addImage("aio-agent", {});
+    docker.runOnceAnswers.set("aio-engine-version", {
       exitCode: 0,
-      stdout: "engineVersion=4.0.0\nclaude=2.1.312\ncodex=0.165.0\ncopilot=1.0.105\n",
+      stdout: "engineVersion=1.0.0\nclaude=2.1.312\ncodex=0.165.0\ncopilot=1.0.105\n",
       stderr: "",
     });
-    const status = await imageStatus(new ImageVersions(docker), docker, "claude-code", "4.0.0");
+    const status = await imageStatus(new ImageVersions(docker), docker, "aio-agent", "1.0.0");
     expect(status.cliVersions).toEqual({ claude: "2.1.312", codex: "0.165.0", copilot: "1.0.105" });
     const call = docker.callsOf("runOnce")[0]?.args[0] as { entrypoint: string[]; cmd: string[] };
     expect(call.entrypoint).toEqual(["sh"]);
@@ -207,28 +207,28 @@ describe("image helpers", () => {
 
   it("reads versions from labels first, then the files, cached per image id", async () => {
     const docker = new MemoryDocker();
-    docker.addImage("claude-code", { "agentbox.engine-version": "4.0.0" });
-    docker.runOnceAnswers.set("agentbox-engine-version", {
+    docker.addImage("aio-agent", { "aio.engine-version": "1.0.0" });
+    docker.runOnceAnswers.set("aio-engine-version", {
       exitCode: 0,
       stdout: "engineVersion=3.9\nclaude=2.1.310\n",
       stderr: "",
     });
     const v = new ImageVersions(docker);
-    expect((await v.read("claude-code"))?.versions).toEqual({
-      engineVersion: "4.0.0",
+    expect((await v.read("aio-agent"))?.versions).toEqual({
+      engineVersion: "1.0.0",
       claude: "2.1.310",
     });
-    await v.read("claude-code");
+    await v.read("aio-agent");
     expect(docker.callsOf("runOnce")).toHaveLength(1);
     expect(await v.read("missing")).toBeNull();
-    const status = await imageStatus(v, docker, "claude-code", "4.0.0");
+    const status = await imageStatus(v, docker, "aio-agent", "1.0.0");
     expect(status).toMatchObject({
       exists: true,
-      engineVersion: "4.0.0",
+      engineVersion: "1.0.0",
       engineMatches: true,
       cliVersions: { claude: "2.1.310", codex: null },
     });
-    expect(await imageStatus(v, docker, "missing", "4.0.0")).toMatchObject({
+    expect(await imageStatus(v, docker, "missing", "1.0.0")).toMatchObject({
       exists: false,
       imageId: null,
       engineMatches: false,

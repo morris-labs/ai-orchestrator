@@ -5,7 +5,7 @@ import { FakeServer, makeBoxView, type FakeSocket } from "../src/testing";
 function setup() {
   const server = new FakeServer({
     boxes: [
-      makeBoxView({ box: { id: "claude-agent-one", targetDir: "/work/one" }, status: "running" }),
+      makeBoxView({ box: { id: "aio-agent-one", targetDir: "/work/one" }, status: "running" }),
     ],
   });
   const client = new ApiClient({
@@ -31,7 +31,7 @@ describe("ApiClient", () => {
   it("parses a response with its route schema", async () => {
     const { client, server } = setup();
     const res = await client.call("boxes.list", {});
-    expect(res.boxes[0]?.box.id).toBe("claude-agent-one");
+    expect(res.boxes[0]?.box.id).toBe("aio-agent-one");
     expect(server.contractViolations).toEqual([]);
   });
 
@@ -62,7 +62,7 @@ describe("ApiClient", () => {
   it("turns an ApiError body into ApiRequestError", async () => {
     const { client } = setup();
     const err = await client
-      .call("boxes.remove", { params: { boxId: "claude-agent-one" } })
+      .call("boxes.remove", { params: { boxId: "aio-agent-one" } })
       .catch((e: unknown) => e);
     expect(isApiError(err, "box_running")).toBe(true);
     expect((err as ApiRequestError).status).toBe(409);
@@ -196,7 +196,7 @@ describe("timeouts", () => {
       await readCheck;
       expect(signal?.aborted).toBe(true);
 
-      const start = client.call("boxes.start", { params: { boxId: "claude-agent-x" } });
+      const start = client.call("boxes.start", { params: { boxId: "aio-agent-x" } });
       let settled = false;
       start.catch(() => undefined).finally(() => (settled = true));
       await vi.advanceTimersByTimeAsync(1001);

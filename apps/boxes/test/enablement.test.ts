@@ -1,6 +1,6 @@
 // The action enablement table of inventory section 1.4, one row per case.
-import type { BoxView } from "@agentbox/contracts";
-import { makeBoxView } from "@agentbox/ui/testing";
+import type { BoxView } from "@aio/contracts";
+import { makeBoxView } from "@aio/ui/testing";
 import { describe, expect, it } from "vitest";
 import { actionStates, type ActionId } from "../src/logic/enablement";
 
@@ -13,7 +13,7 @@ function box(
   review = false,
 ): BoxView {
   return makeBoxView({
-    box: { id: `claude-agent-${id}`, targetDir: `/w/${id}`, sessionUuid: UUID, ...extra },
+    box: { id: `aio-agent-${id}`, targetDir: `/w/${id}`, sessionUuid: UUID, ...extra },
     status,
     ...(review
       ? { reviewState: { state: "under_review", runId: "01J00000000000000000000000" } }

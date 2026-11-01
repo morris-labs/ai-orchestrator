@@ -1,11 +1,11 @@
 // Run launcher: container, repository, base, tip, pipeline, profile, options,
 // a group preview, and Start. A deep link `?project=&box=` prefills it.
-import type { ProjectSummary, RouteOf } from "@agentbox/contracts";
+import type { ProjectSummary, RouteOf } from "@aio/contracts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ErrorBanner, Field } from "../components/common.js";
 import { listRefs, listRepos, EMPTY_REFS, type RepoInfo, type RepoRefs } from "../lib/repos.js";
 import { href, navigate } from "../state/router.js";
-import { useApiClient, useRestoreFocusAfterBusy } from "@agentbox/ui/hooks";
+import { useApiClient, useRestoreFocusAfterBusy } from "@aio/ui/hooks";
 import { DEFAULT_FORM, buildRunRequest, formFromBox, type LauncherForm } from "./launcherModel.js";
 
 type Preview = RouteOf<"runs.preview">["response"];

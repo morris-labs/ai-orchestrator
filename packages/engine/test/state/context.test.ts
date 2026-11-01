@@ -1,7 +1,7 @@
 // RunContext: agent calls, leases, and persistence.
 import { getEventListeners } from "node:events";
 import { describe, expect, it } from "vitest";
-import type { LeaseRequest, LeaseResponse, Vendor } from "@agentbox/contracts";
+import type { LeaseRequest, LeaseResponse, Vendor } from "@aio/contracts";
 import {
   GrantingBroker,
   type AdapterRequest,

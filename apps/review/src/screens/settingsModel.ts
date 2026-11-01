@@ -8,7 +8,7 @@ import {
   type GlobalSettingsPatch,
   type NotificationToggles,
   type Vendor,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 
 /** The vendor defaults as form fields: an empty string leaves the choice to the vendor CLI. */
 export interface VendorDefaultsDraft {

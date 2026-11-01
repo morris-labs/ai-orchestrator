@@ -15,7 +15,7 @@ import {
   type RunState,
   type TimedUsageSample,
   type Vendor,
-} from "@agentbox/contracts";
+} from "@aio/contracts";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -278,7 +278,7 @@ export class EngineRunManager implements RunManager {
       // untracked files count too.
       const tip = withWorktree
         ? await git.snapshotWorktree(
-            join(tmpdir(), `agentbox-index-preview-${process.pid}-${randomUUID()}`),
+            join(tmpdir(), `aio-index-preview-${process.pid}-${randomUUID()}`),
           )
         : range.tipSha;
       const files = parseDiff(await git.diff(range.diffBaseSha, tip));

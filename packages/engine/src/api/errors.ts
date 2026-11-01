@@ -1,5 +1,5 @@
 // Maps engine errors to `ApiError` bodies and HTTP status codes.
-import { ApiErrorCodeSchema, type ApiError, type ApiErrorCode } from "@agentbox/contracts";
+import { ApiErrorCodeSchema, type ApiError, type ApiErrorCode } from "@aio/contracts";
 import { ZodError } from "zod";
 
 const STATUS: Record<ApiErrorCode, number> = {

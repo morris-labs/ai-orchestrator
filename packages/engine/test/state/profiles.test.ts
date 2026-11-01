@@ -1,4 +1,4 @@
-import type { FileGroup } from "@agentbox/contracts";
+import type { FileGroup } from "@aio/contracts";
 import { describe, expect, it } from "vitest";
 import { assignRoles, planReviews, profileRoles } from "../../src/state/profiles.js";
 import { runPerVendor } from "../../src/state/steps.js";

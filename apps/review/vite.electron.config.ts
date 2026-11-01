@@ -1,5 +1,5 @@
 // Builds the Electron main process and preload script as CommonJS, so they
-// can import the dependency-free parts of `@agentbox/ui`.
+// can import the dependency-free parts of `@aio/ui`.
 //
 // Each entry is its own build: `vite build --mode main`, then
 // `--mode preload`. Built together, the two entries share a chunk (at least

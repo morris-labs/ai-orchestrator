@@ -7,13 +7,13 @@ The pipeline itself stays the same for every repository.
 
 ## Location
 
-The policy file lives at `PROJECT/.claude-box/policy.yaml`, where `PROJECT`
-is the project root. Git ignores the `.claude-box/` directory, so the policy
+The policy file lives at `PROJECT/.aio/policy.yaml`, where `PROJECT`
+is the project root. Git ignores the `.aio/` directory, so the policy
 stays local to your machine. To keep it somewhere else, set the project's
 policy path in the project settings; a relative path is relative to the
 project root.
 
-To edit the policy, open the project in **Agent Box Review** and click
+To edit the policy, open the project in **AI Orchestrator Review** and click
 **Policy**. The editor validates the file before it saves it. You can also
 edit the file in any text editor; the engine reads it at the start of each
 run.

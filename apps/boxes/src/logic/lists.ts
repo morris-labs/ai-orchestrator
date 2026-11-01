@@ -1,7 +1,7 @@
 // The lists that confirmations show: what Resume, Restart All, and Purge
 // act on.
 import { normalizeDir } from "./newBox";
-import type { BoxView, PurgeResult } from "@agentbox/contracts";
+import type { BoxView, PurgeResult } from "@aio/contracts";
 
 /**
  * Boxes to offer after a reboot: none when any box runs (the app was only

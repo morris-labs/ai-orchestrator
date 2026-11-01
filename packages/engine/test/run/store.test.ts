@@ -1,6 +1,6 @@
 import { appendFileSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { RoundSummary, RunState } from "@agentbox/contracts";
+import type { RoundSummary, RunState } from "@aio/contracts";
 import { describe, expect, it } from "vitest";
 import { newEngineState } from "../../src/run/engine-state.js";
 import { appendJsonLine, readJson, writeJsonAtomic } from "../../src/run/files.js";
@@ -10,7 +10,7 @@ import { tempDir } from "../tmp.js";
 const RUN_ID = "01JB0000000000000000000001";
 
 function tmp(): string {
-  return tempDir("agentbox-store-");
+  return tempDir("aio-store-");
 }
 
 function state(): RunState {
@@ -77,9 +77,9 @@ describe("files", () => {
 });
 
 describe("RunStore", () => {
-  it("keeps the run under .claude-box/runs/<id>", () => {
+  it("keeps the run under .aio/runs/<id>", () => {
     const store = new RunStore("/project", RUN_ID);
-    expect(store.dir).toBe(`/project/.claude-box/runs/${RUN_ID}`);
+    expect(store.dir).toBe(`/project/.aio/runs/${RUN_ID}`);
     expect(store.roundFile(2, "verify")).toBe("rounds/2/verify.json");
   });
 
@@ -103,7 +103,7 @@ describe("RunStore", () => {
   it("skips a torn line in events.jsonl instead of losing every event", async () => {
     const root = tmp();
     const store = new RunStore(root, RUN_ID);
-    const file = join(root, ".claude-box", "runs", RUN_ID, "events.jsonl");
+    const file = join(root, ".aio", "runs", RUN_ID, "events.jsonl");
     await appendJsonLine(file, { type: "usage.sample", seq: 1 });
     await appendJsonLine(file, { type: "usage.sample", seq: 2 });
     appendFileSync(file, '{"type":"usage.sam');

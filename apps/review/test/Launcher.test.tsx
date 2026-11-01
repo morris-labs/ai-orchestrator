@@ -2,7 +2,7 @@ import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { Launcher } from "../src/screens/Launcher.js";
 import { BOX, PROJECT, boxView, lastRun, project } from "./helpers/data.js";
-import { FakeApiError } from "@agentbox/ui/testing";
+import { FakeApiError } from "@aio/ui/testing";
 import { renderWithStore } from "./helpers/render.js";
 import { StoreProvider } from "../src/state/store.js";
 

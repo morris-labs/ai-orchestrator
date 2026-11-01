@@ -1,8 +1,8 @@
-// A fake Agent Box server for CLI tests: canned answers per route and a
+// A fake AI Orchestrator server for CLI tests: canned answers per route and a
 // recording of every request.
 import https from "node:https";
 import type { AddressInfo } from "node:net";
-import { createServerIdentity, type TlsIdentity } from "@agentbox/contracts/tls";
+import { createServerIdentity, type TlsIdentity } from "@aio/contracts/tls";
 import { WebSocketServer } from "ws";
 
 export interface Recorded {

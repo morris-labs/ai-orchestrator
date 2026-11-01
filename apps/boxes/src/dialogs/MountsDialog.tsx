@@ -1,7 +1,7 @@
 // A multi-line mounts editor, one `HOST[:CONTAINER]` per line: the global
 // mounts and a project's mounts and TCP maps.
-import type { Mount, TcpMap } from "@agentbox/contracts";
-import { Button, Dialog, errorMessage } from "@agentbox/ui";
+import type { Mount, TcpMap } from "@aio/contracts";
+import { Button, Dialog, errorMessage } from "@aio/ui";
 import { useState } from "react";
 import { formatMount, parseMountText, tcpMapProblems, toTcpMaps } from "../logic/mounts";
 

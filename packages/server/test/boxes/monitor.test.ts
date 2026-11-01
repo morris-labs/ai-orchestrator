@@ -61,9 +61,9 @@ describe("ContainerMonitor", () => {
     expect(h.core.monitor.statsFor(box.container)?.diskBytes).toBe(1024);
     offsetMs = DISK_SIZE_INTERVAL_MS;
     h.docker.tick();
-    for (const f of fs.readdirSync(path.join(h.home, ".claude-box/state"))) {
+    for (const f of fs.readdirSync(path.join(h.home, ".ai-orchestrator/state"))) {
       const t = new Date(realNow().getTime() + offsetMs);
-      fs.utimesSync(path.join(h.home, ".claude-box/state", f, "sessions"), t, t);
+      fs.utimesSync(path.join(h.home, ".ai-orchestrator/state", f, "sessions"), t, t);
     }
     await h.core.monitor.poll({ sampleStats: true });
     expect(sized()).toBe(2);
@@ -84,7 +84,7 @@ describe("ContainerMonitor", () => {
     expect(h.core.boxes.get(box.id).wasRunning).toBe(true);
     // The keeper rewrites its file a second later.
     h.docker.tick();
-    const file = path.join(h.home, ".claude-box/state", box.container, "sessions");
+    const file = path.join(h.home, ".ai-orchestrator/state", box.container, "sessions");
     const t = new Date(realNow().getTime() + jumpMs);
     fs.utimesSync(file, t, t);
     await h.core.monitor.poll();
@@ -119,7 +119,7 @@ describe("ContainerMonitor", () => {
     const b = await h.core.boxes.create({ targetDir: dir, layout: "root" });
     await h.core.monitor.poll();
     h.docker.containers.clear();
-    fs.rmSync(path.join(h.home, ".claude-box/state"), { recursive: true });
+    fs.rmSync(path.join(h.home, ".ai-orchestrator/state"), { recursive: true });
     await h.core.monitor.poll();
     expect(h.core.boxes.get(a.id).wasRunning).toBe(true);
     expect(h.core.boxes.get(b.id).wasRunning).toBe(true);
@@ -134,7 +134,7 @@ describe("ContainerMonitor", () => {
     h.core.monitor.on("boxEnded", (e: BoxEndedEvent) => ended.push(e));
     await h.core.monitor.poll();
     h.docker.containers.clear();
-    fs.rmSync(path.join(h.home, ".claude-box/state"), { recursive: true });
+    fs.rmSync(path.join(h.home, ".ai-orchestrator/state"), { recursive: true });
     await h.core.monitor.poll();
     expect(ended.sort((x, y) => (x.boxId < y.boxId ? -1 : 1))).toEqual(
       [a.id, b.id].sort().map((boxId) => ({ boxId, unexpected: false })),
@@ -155,7 +155,7 @@ describe("ContainerMonitor", () => {
   it("survives an unreachable daemon and feeds the watcher", async () => {
     const h = makeHarness();
     const box = await h.core.boxes.create({ targetDir: h.dir("app"), layout: "root" });
-    const sessions = path.join(h.home, ".claude-box/sessions", box.container);
+    const sessions = path.join(h.home, ".ai-orchestrator/sessions", box.container);
     fs.writeFileSync(
       path.join(sessions, "11.json"),
       JSON.stringify({
@@ -224,11 +224,11 @@ describe("core", () => {
       `target_dir=${work}\nsession_uuid=\nconversation_name=app\nyolo=1\nwas_running=1\n`,
     );
     const first = await h.core.start({ pollMs: 0, watch: false });
-    expect(first.imported?.boxes.imported).toEqual(["claude-agent-app"]);
-    expect(h.core.boxes.get("claude-agent-app")).toMatchObject({
+    expect(first.imported?.boxes.imported).toEqual(["aio-agent-app"]);
+    expect(h.core.boxes.get("aio-agent-app")).toMatchObject({
       targetDir: work,
       wasRunning: true,
-      session: "claude-agent-app",
+      session: "aio-agent-app",
     });
     expect(h.core.legacyImport.needed()).toBe(false);
     const second = await h.core.start({ pollMs: 0, watch: false });

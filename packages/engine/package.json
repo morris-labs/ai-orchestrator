@@ -1,14 +1,14 @@
 {
-  "name": "@agentbox/engine",
-  "version": "4.0.0",
-  "description": "The Agent Box engine: the review pipeline service inside each project container.",
+  "name": "@aio/engine",
+  "version": "1.0.0",
+  "description": "The AI Orchestrator engine: the review pipeline service inside each project container.",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "agentbox-engine": "./dist/main.js",
-    "agentbox-secret": "./dist/secret-main.js"
+    "aio-engine": "./dist/main.js",
+    "aio-secret": "./dist/secret-main.js"
   },
   "exports": {
     ".": {
@@ -31,7 +31,7 @@
     "clean": "rm -rf dist *.tsbuildinfo"
   },
   "dependencies": {
-    "@agentbox/contracts": "workspace:*",
+    "@aio/contracts": "workspace:*",
     "fastify": "^5.6.0",
     "ws": "^8.18.3",
     "yaml": "^2.8.1",
