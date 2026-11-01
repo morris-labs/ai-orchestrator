@@ -84,7 +84,7 @@ usage scheduler, and terminals.
   [Secrets](secrets.md#the-secrets-broker).
 - It's the only client of each engine.
 - In a multi-host setup, a hub also listens for node links on port `21402`
-  on every interface, over mutual TLS, once it has enrolled a machine or
+  on its LAN address only, over mutual TLS, once it has enrolled a machine or
   issued an enrollment code. Each node dials out to its hub and keeps one
   WebSocket open. See [Multi-host](multi-host.md).
 
