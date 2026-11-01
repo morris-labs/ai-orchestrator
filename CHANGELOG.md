@@ -22,6 +22,9 @@ section's heading must have the form `## [X.Y.Z]`.
   that gets the call, or `hub` for a node's hub.
 - Machine tabs and a **Machines** page in the Boxes app. On another
   machine, **Browse** lists that machine's directories.
+- A machine role step in the setup wizard: keep a single machine, or join a
+  hub as a node with its URL and a one-time enrollment code. The `.deb`
+  package's install message names the hub's link port, TCP `21402`.
 - A **Paste** button beside each **Browse** button for paths in the Boxes
   app.
 - Windows host paths: the server maps a path such as

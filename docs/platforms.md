@@ -172,8 +172,9 @@ opens the port in a firewall:
   runs without them. Allow private networks only.
 
 A node dials out to the hub, so it needs no inbound rule on any host. A
-node on macOS or Windows also needs the secrets broker's TCP transport and
-the host path mapping from the table, which other branches carry.
+node on macOS or Windows runs boxes the same way as a single machine on
+that host, with the secrets broker's TCP transport and, on Windows, the
+host path mapping.
 
 ### Packages
 
