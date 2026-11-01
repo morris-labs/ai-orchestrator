@@ -22,6 +22,9 @@ section's heading must have the form `## [X.Y.Z]`.
   that gets the call, or `hub` for a node's hub.
 - Machine tabs and a **Machines** page in the Boxes app. On another
   machine, **Browse** lists that machine's directories.
+- Machine health on the **Machines** page: each machine's engine version,
+  image state, and free disk space, from `GET /api/v1/node/health` and the
+  `health.v1` link capability.
 - A **Paste** button beside each **Browse** button for paths in the Boxes
   app.
 - Windows host paths: the server maps a path such as

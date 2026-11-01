@@ -100,6 +100,27 @@ proves that it knows the code too. A program in the middle presents another
 certificate, so the hub refuses the proof, and it can't make a new proof
 without the code. Each code is 80 random bits and works once.
 
+## Check a machine's health
+
+To see each machine's health, open the **Machines** page in the Boxes app.
+For every machine, the page shows the following:
+
+- The status (online, offline, enrolling, or revoked) and when the hub last
+  saw it.
+- The server version, the link protocol, and the capabilities.
+- The engine version in the machine's image, and the image state: ready,
+  not built, engine mismatch, or unknown when Docker doesn't answer. Hold
+  the pointer over the state to see the expected engine version.
+- The free disk space where the machine keeps its data directory.
+
+Each machine measures its own health. The hub asks each linked node for its
+health at most every 30 seconds. While a machine is offline, the hub shows
+the last health it heard since its own server started. A machine whose server lacks the `health.v1`
+capability shows a dash.
+
+To read a machine's own health, call `GET /api/v1/node/health` on that
+machine.
+
 ## Remove a machine
 
 To revoke a machine, run the following command on the hub:
