@@ -13,6 +13,7 @@ import WebSocket from "ws";
 import { startApp, type App } from "../../src/api/app.js";
 import { createCore } from "../../src/core.js";
 import { MemoryDocker } from "../../src/docker/memory.js";
+import type { LinkPeer } from "../../src/hub/peer.js";
 import { attachCmd } from "../../src/terminals/attach.js";
 import { waitFor } from "../events/fake-engine.js";
 import { FakeRunner } from "../setup/fake-runner.js";
@@ -254,7 +255,7 @@ describe("terminal attach through the hub", () => {
     await client.until(() => client.texts.length === 1);
 
     // The link drops while the terminal is open.
-    hub.app.multiHost.links.get(machineId)!.close(1001, "test");
+    (hub.app.multiHost.links.get(machineId) as LinkPeer).close(1001, "test");
     const closed = await client.closed;
     expect(closed.code).toBe(1014);
     expect(closed.reason).toContain(machineId);

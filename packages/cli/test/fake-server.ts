@@ -3,7 +3,7 @@
 import https from "node:https";
 import type { AddressInfo } from "node:net";
 import { createServerIdentity, type TlsIdentity } from "@aio/contracts/tls";
-import WebSocket, { WebSocketServer } from "ws";
+import { WebSocketServer, type WebSocket } from "ws";
 
 export interface Recorded {
   method: string;
