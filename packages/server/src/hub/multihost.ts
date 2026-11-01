@@ -12,7 +12,9 @@ import {
   type EnrollmentCode,
   type GlobalSettings,
   type GlobalSettingsPatch,
+  type ImageStatus,
   type Machine,
+  type MachineHealth,
   type NodeJoin,
   type NodeStatus,
 } from "@aio/contracts";
@@ -23,6 +25,7 @@ import type { SqlDatabase } from "../api/core-interface.js";
 import type { OpClient } from "../secrets/op.js";
 import { CREDENTIAL_PATHS, CredentialStore, isCredentialKey } from "./credentials.js";
 import { jsonBody, jsonResponse, safely, type InternalHandler } from "./dispatch.js";
+import { HealthCache, fetchHealth, measureHealth } from "./health.js";
 import { Hub, type LinkTiming } from "./hub.js";
 import type { LinkRegistry, NodeLink } from "./link.js";
 import { HUB_LINK_ID, NodeAgent } from "./node.js";
@@ -80,6 +83,12 @@ export interface MultiHostOptions {
   /** The role from `--role` or `AIO_ROLE`, which wins over the stored one. */
   roleOverride?: MachineRole;
   version: string;
+  /** The engine version this server expects in its image. */
+  expectedEngineVersion?: string;
+  /** The image's status, for this machine's health. Without it, the image reads as unknown. */
+  imageStatus?: () => Promise<ImageStatus>;
+  /** Milliseconds a machine list waits for a stale health to refresh. Default 3 seconds. */
+  healthWaitMs?: number;
   token: string;
   /** This machine's API, once it exists. */
   api: () => FastifyInstance | null;
@@ -120,6 +129,8 @@ export class MultiHost {
   /** The op client the secrets service uses: the hub's while this machine is a plain node. */
   readonly op: OpClient;
   readonly credentials: CredentialStore;
+  /** The health of this machine and of the hub's linked nodes. */
+  private readonly healthCache = new HealthCache();
   private lastHubList: Machine[] = [];
   private credentialTimer: NodeJS.Timeout | null = null;
   private credentialSync: Promise<void> = Promise.resolve();
@@ -393,6 +404,7 @@ export class MultiHost {
     const local = this.localMachine();
     const out: Machine[] = [local];
     if (this.role() !== "node") out.push(...this.hub.machines());
+    await this.addHealth(out);
     const joined = this.node.joined;
     if (!joined || this.role() === "hub") return out;
     const link = this.node.link;
@@ -438,6 +450,42 @@ export class MultiHost {
         status: m.status === "revoked" ? m.status : ("offline" as const),
       })),
     ];
+  }
+
+  /** Measures this machine's health now. */
+  health(): Promise<MachineHealth> {
+    return measureHealth({
+      dataDir: this.opts.dataDir,
+      expectedEngineVersion: this.opts.expectedEngineVersion ?? this.opts.version,
+      imageStatus: this.opts.imageStatus,
+    });
+  }
+
+  /**
+   * Sets `health` on this machine's entry and on each enrolled machine's. A
+   * linked node with `health.v1` is asked when its cached value is stale;
+   * any other machine shows its last known health, or `null`.
+   */
+  private async addHealth(list: Machine[]): Promise<void> {
+    const wait = this.opts.healthWaitMs;
+    await Promise.all(
+      list.map(async (m) => {
+        if (m.isLocal) {
+          m.health = await this.healthCache.get(LOCAL_ID, () => this.health(), wait);
+          return;
+        }
+        if (m.status === "revoked") {
+          this.healthCache.delete(m.id);
+          m.health = null;
+          return;
+        }
+        const link = this.hub.get(m.id);
+        m.health =
+          link && this.hub.helloOf(m.id)?.capabilities.includes("health.v1")
+            ? await this.healthCache.get(m.id, () => fetchHealth(link), wait)
+            : this.healthCache.peek(m.id);
+      }),
+    );
   }
 
   enroll(): Promise<EnrollmentCode> {

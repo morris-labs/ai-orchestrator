@@ -204,6 +204,8 @@ export async function startApp(options: AppOptions): Promise<App> {
     patchSettings: (patch) => core.settings.patch(patch),
     roleOverride: options.role,
     version: options.version,
+    expectedEngineVersion: options.expectedEngineVersion,
+    imageStatus: () => core.image.status(),
     token,
     api: () => apiServer?.app ?? null,
     op: options.op ?? new OpCli(runner),

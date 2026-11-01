@@ -199,6 +199,36 @@ describe("multi-host", () => {
     expect(reuse.json.error.code).toBe("unauthorized");
   });
 
+  it("shows each machine's health on both ends", async () => {
+    const { hub, node, joined } = await linkedPair();
+    const machineId = joined.json.machineId as string;
+    await waitFor(() => node.app.multiHost.status().link === "connected", 5000);
+    await waitFor(() => hub.app.multiHost.links.get(machineId) !== undefined, 5000);
+
+    const own = (await node.api("GET", "/api/v1/node/health")).json;
+    expect(own).toMatchObject({ expectedEngineVersion: VERSION, image: "missing" });
+    expect(own.diskTotalBytes).toBeGreaterThan(0);
+
+    const onHub = MachineListSchema.parse((await hub.api("GET", "/api/v1/machines")).json);
+    expect(onHub.machines.map((m) => [m.id, m.health?.image])).toEqual([
+      ["local", "missing"],
+      [machineId, "missing"],
+    ]);
+    expect(onHub.machines[1]?.health?.diskTotalBytes).toBe(own.diskTotalBytes);
+
+    // The node shows the hub's health as the hub measured it.
+    const onNode = MachineListSchema.parse((await node.api("GET", "/api/v1/machines")).json);
+    expect(onNode.machines.find((m) => m.id === "hub")?.health).toMatchObject({
+      image: "missing",
+      expectedEngineVersion: VERSION,
+    });
+
+    // A revoked machine shows no health.
+    await hub.api("DELETE", `/api/v1/machines/${machineId}`);
+    const after = MachineListSchema.parse((await hub.api("GET", "/api/v1/machines")).json);
+    expect(after.machines.find((m) => m.id === machineId)?.health).toBeNull();
+  });
+
   it("round-trips requests both ways and limits what a node may call on the hub", async () => {
     const { hub, node, joined } = await linkedPair();
     const machineId = joined.json.machineId as string;

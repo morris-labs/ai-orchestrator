@@ -6,6 +6,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { openDatabase } from "../../src/db/index.js";
 import { issueNodeCertificate, loadOrCreateHubIdentity, newNodeKey } from "../../src/hub/ca.js";
+import { HealthCache, measureHealth } from "../../src/hub/health.js";
 import { defaultAllowNodeRequest, nameFromHost, parseRole } from "../../src/hub/multihost.js";
 import { protocolMismatch, sendableCloseCode, closeReason } from "../../src/hub/protocol.js";
 import {
@@ -215,5 +216,70 @@ describe("the secret relay's clients", () => {
       code: "secrets_locked",
       message: "The hub: Not signed in.",
     });
+  });
+});
+
+describe("machine health", () => {
+  const health = (at: string) => ({
+    engineVersion: "1.0.0",
+    expectedEngineVersion: "1.0.0",
+    image: "ready" as const,
+    diskFreeBytes: 1,
+    diskTotalBytes: 2,
+    checkedAt: at,
+  });
+
+  it("measures the image and the data directory's disk, and reads a failure as unknown", async () => {
+    const dir = tempDir("aio-health-");
+    const measured = await measureHealth({
+      dataDir: dir,
+      expectedEngineVersion: "1.0.0",
+      imageStatus: async () => ({
+        name: "aio-agent:latest",
+        exists: true,
+        imageId: "sha256:0",
+        createdAt: null,
+        engineVersion: "0.9.0",
+        expectedEngineVersion: "1.0.0",
+        engineMatches: false,
+        cliVersions: { claude: null, codex: null, copilot: null },
+      }),
+    });
+    expect(measured).toMatchObject({ engineVersion: "0.9.0", image: "mismatch" });
+    expect(measured.diskTotalBytes).toBeGreaterThanOrEqual(measured.diskFreeBytes ?? 0);
+    const failed = await measureHealth({
+      dataDir: path.join(dir, "missing"),
+      expectedEngineVersion: "1.0.0",
+      imageStatus: async () => {
+        throw new Error("Docker is unreachable.");
+      },
+    });
+    expect(failed).toMatchObject({ image: "unknown", diskFreeBytes: null, diskTotalBytes: null });
+  });
+
+  it("caches each machine's health, refreshes it when stale, and keeps it when a refresh fails", async () => {
+    let now = 0;
+    const cache = new HealthCache(1000, () => now);
+    let calls = 0;
+    const fetch = async () => {
+      calls += 1;
+      return health(`t${calls}`);
+    };
+    expect((await cache.get("m1", fetch))?.checkedAt).toBe("t1");
+    expect((await cache.get("m1", fetch))?.checkedAt).toBe("t1");
+    expect(calls).toBe(1);
+    now = 2000;
+    await expect(
+      cache.get("m1", async () => {
+        throw new Error("The link dropped.");
+      }),
+    ).resolves.toMatchObject({ checkedAt: "t1" });
+    now = 4000;
+    // A slow node doesn't hold the list up past the wait.
+    const slow = cache.get("m1", () => new Promise(() => undefined), 10);
+    await expect(slow).resolves.toMatchObject({ checkedAt: "t1" });
+    expect(cache.peek("m2")).toBeNull();
+    cache.delete("m1");
+    expect(cache.peek("m1")).toBeNull();
   });
 });

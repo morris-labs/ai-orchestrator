@@ -28,6 +28,7 @@ export const LINK_CAPABILITIES: readonly string[] = [
   "secrets.op.v1",
   "credentials.v1",
   "flow.v1",
+  "health.v1",
 ];
 
 /**

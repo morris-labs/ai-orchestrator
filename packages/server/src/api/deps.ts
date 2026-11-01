@@ -21,6 +21,7 @@ import type {
   ImageBuildSchema,
   EnrollmentCode,
   Machine,
+  MachineHealth,
   NodeJoin,
   NodeStatus,
 } from "@aio/contracts";
@@ -40,6 +41,8 @@ export interface ApiMultiHost {
   enroll(): Promise<EnrollmentCode>;
   revoke(id: string): Promise<void>;
   status(): NodeStatus;
+  /** This machine's health, which the hub shows on the Machines page. */
+  health(): Promise<MachineHealth>;
   join(input: NodeJoin): Promise<NodeStatus>;
 }
 

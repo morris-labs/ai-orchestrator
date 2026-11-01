@@ -348,6 +348,7 @@ const cases: Case[] = [
   { key: "machines.enroll", method: "POST", url: `${V1}/machines/enrollment-codes`, status: 201 },
   { key: "machines.revoke", method: "DELETE", url: `${V1}/machines/m1`, status: 200 },
   { key: "node.get", method: "GET", url: `${V1}/node`, status: 200 },
+  { key: "node.health", method: "GET", url: `${V1}/node/health`, status: 200 },
   {
     key: "node.join",
     method: "POST",
