@@ -316,6 +316,19 @@ class ImageTest(unittest.TestCase):
                 (pkg / "package.json").write_text(json.dumps({"bin": {good: "./dist/main.js"}}))
                 subprocess.run(["sh", "-c", script], check=True, capture_output=True)
 
+    def test_engine_is_readable_by_the_box_user(self):
+        # The box user, not root, runs the engine. A tarball with 0700
+        # folders left the engine unreadable, so the engine never started.
+        text = DOCKERFILE.read_text()
+        engine_step = text[text.index("COPY dist/"):text.index("COPY --chmod=0755 keeper/")]
+        extract = engine_step.index("tar -xzf")
+        chmod = engine_step.index('chmod -R u=rwX,go=rX "${engine_pkg}"')
+        self.assertLess(extract, chmod)
+        self.assertLess(chmod, engine_step.index("require('${engine_pkg}/package.json')"))
+        script = (ROOT / "scripts/build-image.sh").read_text()
+        pack = script.index('chmod -R u=rwX,go=rX "$DEPLOY/engine"')
+        self.assertLess(pack, script.index('-czf "$ENGINE_TARBALL" engine'))
+
     def test_engine_dependencies_are_locked(self):
         # The engine's dependencies must come from pnpm-lock.yaml at pack
         # time, never from a fresh registry resolve during the image build.

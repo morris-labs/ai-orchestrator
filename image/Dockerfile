@@ -133,6 +133,8 @@ RUN echo "agent CLI cache key: ${CACHEBUST}" && \
 # from the npm registry and every host gets the versions the tests ran
 # against. The engine layer comes last among the installs because it
 # changes most often.
+# The box user runs the engine, so the build makes every engine file
+# readable by all, whatever modes the tarball carries.
 ARG AIO_ENGINE_VERSION
 COPY dist/ /tmp/aio-dist/
 RUN test -n "${AIO_ENGINE_VERSION}" || { echo "AIO_ENGINE_VERSION is not set; build with scripts/build-image.sh" >&2; exit 1; } && \
@@ -142,6 +144,7 @@ RUN test -n "${AIO_ENGINE_VERSION}" || { echo "AIO_ENGINE_VERSION is not set; bu
     tar -xzf "/tmp/aio-dist/aio-engine-${AIO_ENGINE_VERSION}.tgz" \
       -C /usr/local/lib/ai-orchestrator --no-same-owner && \
     engine_pkg=/usr/local/lib/ai-orchestrator/engine && \
+    chmod -R u=rwX,go=rX "${engine_pkg}" && \
     { test -d "${engine_pkg}/node_modules" || \
       { echo "dist/aio-engine-${AIO_ENGINE_VERSION}.tgz has no node_modules; pack it with scripts/build-image.sh" >&2; exit 1; }; } && \
     engine_ver="$(/usr/bin/node -p "require('${engine_pkg}/package.json').version")" && \
