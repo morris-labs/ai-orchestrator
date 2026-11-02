@@ -33,7 +33,9 @@ describe("fileTier", () => {
     ["schema", { schemaPath: true }, "large", /schema/],
     ["concurrency", { risky: "concurrency" }, "large", /concurrency/],
     ["time limit", { referencesSkipped: true }, "medium", /ran out of time/],
-    ["policy pin", { pinned: "small", riskPath: true }, "small", /tierPaths/],
+    ["small pin on docs", { pinned: "small", noCode: true, riskPath: true }, "small", /tierPaths/],
+    ["small pin on code", { pinned: "small" }, "medium", /code stays/],
+    ["large pin", { pinned: "large", noCode: true }, "large", /tierPaths/],
   ])("%s", (_name, patch, tier, reason) => {
     const got = fileTier(signals(patch));
     expect(got.tier).toBe(tier);
@@ -50,7 +52,14 @@ describe("groupTier", () => {
   });
 
   it("uses a fixed tier", () => {
-    expect(groupTier([signals({ riskPath: true })], "small").tier).toBe("small");
+    expect(groupTier([signals({ riskPath: true })], "large").tier).toBe("large");
+    expect(groupTier([signals({ noCode: true })], "small").tier).toBe("small");
+  });
+
+  it("keeps code at medium under a fixed small tier", () => {
+    expect(groupTier([signals({})], "small").tier).toBe("medium");
+    expect(groupTier([signals({ noCode: true }), signals({})], "small").tier).toBe("medium");
+    expect(groupTier([], "small").tier).toBe("medium");
   });
 });
 
@@ -74,13 +83,21 @@ describe("roleTier", () => {
   });
 
   it.each([
-    ["reviewer", "small", "small"],
+    ["reviewer", "small", "medium"],
     ["disprover", "small", "medium"],
     ["fixer", "small", "medium"],
     ["disprover", "medium", "medium"],
     ["reviewer", "large", "large"],
   ] as const)("fixed: %s at %s gives %s", (role, choice, tier) => {
     expect(roleTier(large, role, { choice, persisting: true }).tier).toBe(tier);
+  });
+
+  it("keeps a reviewer small under a fixed small tier only without code", () => {
+    const opts = { choice: "small", persisting: false } as const;
+    expect(roleTier(small, "reviewer", opts).tier).toBe("small");
+    expect(roleTier(medium, "reviewer", opts).tier).toBe("medium");
+    expect(roleTier(null, "reviewer", opts).tier).toBe("medium");
+    expect(roleTier(small, "fixer", opts).tier).toBe("medium");
   });
 
   it("stops at large", () => {

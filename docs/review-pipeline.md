@@ -119,19 +119,29 @@ reason says so.
 A call moves one more tier up when its files have findings that persist from
 an earlier round, and when the retry follows a malformed answer. A fixed tier
 turns off these moves and applies to every role, except that disprovers,
-confirmers, and fixers stay at medium or above. A fixed `small` tier and a
-`tierPaths` rule can put a code review on the small tier, because a person
-chose that.
+confirmers, and fixers stay at medium or above.
+
+Code never runs below medium. A fixed `small` tier or a `tierPaths` rule gives
+a group that holds code the medium tier. Only docs, comments, formatting, and
+lockfiles can get the small tier. The engine counts a change as code when it
+can't read the change with confidence: a file with a shell heredoc, a Java text
+block, or a C++ raw string, and every `.jsx` or `.tsx` file.
 
 The run view lists each group's tier and reason. Each `agent.started` event
 carries the call's tier and reason, and the engine logs each choice.
 
 ### Tier mappings
 
-The built-in mappings are `claude-haiku-5-5`, `claude-sonnet-5-5`, and
-`claude-opus-5-5` for Claude. Codex and Copilot have no built-in mappings: a
-vendor with no mapping keeps its existing model, and the call's reason records
-that. To map a vendor, set `tierModels` in the [policy file](policy.md).
+The built-in mappings are the following:
+
+| Vendor | Small | Medium | Large |
+|---|---|---|---|
+| Claude | `claude-haiku-5-5` | `claude-sonnet-5-5` | `claude-opus-5-5` |
+| Codex | `gpt-6-luna` | `gpt-6-sol` | `gpt-6.1-sol` |
+
+GitHub Copilot has no mapping and keeps its automatic model selection
+(`--model auto`). To change a mapping, set `tierModels` in the
+[policy file](policy.md).
 
 ### Blocked models
 
@@ -145,15 +155,14 @@ names. The engine enforces the rule in the following places:
 - The engine refuses a blocked name in its per-vendor model setting.
 - Each call checks its model before it starts, and the adapter bridge checks
   again before it runs a CLI.
-- A Claude call with no other model uses `claude-opus-5-5`, so it can't fall
-  through to the CLI's default.
-- After a call, the run fails if the CLI reports a blocked model. This check
-  catches a CLI default or an alias. For Codex, the report comes from the
-  session's rollout file.
+- A Claude or Codex call with no other model passes `claude-opus-5-5` or
+  `gpt-6.1-sol`, so it never falls through to the CLI's default.
+- After a call, the run fails if the CLI reports a blocked model. This backstop
+  catches an alias that resolves to a blocked model. For Codex, the report
+  comes from the session's rollout file.
 
-An unmapped Codex call uses the Codex CLI's default model, which the engine
-can't choose in advance. To rule out a blocked default, map Codex in
-`tierModels`.
+The rule doesn't cover GitHub Copilot: it has no block list, and its automatic
+selection chooses the model.
 
 ## Accounts
 

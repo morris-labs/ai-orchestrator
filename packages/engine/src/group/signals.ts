@@ -15,6 +15,7 @@ import {
   languageOf,
   riskyChange,
   sameCode,
+  type Language,
 } from "./symbols.js";
 import { groupTier, type FileSignals } from "./tier.js";
 
@@ -53,6 +54,11 @@ function excluded(path: string, other: string): boolean {
   return kind === "test" && stem(other) === stem(path);
 }
 
+/** JSX text can hold `//` that isn't a comment, so those files never count as unchanged code. */
+function comparable(path: string, language: Language | null): Language | null {
+  return /\.[jt]sx$/i.test(path) ? null : language;
+}
+
 function pinnedTier(policy: PolicyFile, path: string) {
   return policy.tierPaths?.find((rule) => matchesAny(path, rule.paths))?.tier ?? null;
 }
@@ -64,11 +70,12 @@ export async function assignTiers(
   inputs: TierInputs,
 ): Promise<FileGroup[]> {
   const { git, policy, diffBase, tip, choice } = inputs;
-  if (choice !== "auto") return groups.map((g) => ({ ...g, ...tierFields(g, [], choice) }));
+  const auto = choice === "auto";
   const now = inputs.now ?? Date.now;
   const deadline = now() + (inputs.budgetMs ?? REFERENCE_BUDGET_MS);
   const byPath = new Map(files.map((f) => [f.path, f]));
-  const context = await git.functionDiff(diffBase, tip).catch(() => "");
+  // A fixed tier needs only to know which files hold code.
+  const context = auto ? await git.functionDiff(diffBase, tip).catch(() => "") : "";
   const diffs = splitFunctionDiff(context);
   const counts = new Map<string, readonly string[] | null>();
   const grep = async (symbol: string): Promise<readonly string[] | null> => {
@@ -89,12 +96,14 @@ export async function assignTiers(
       file?.status === "added" ? null : await git.show(diffBase, file?.oldPath ?? path);
     const noCode =
       isDocOrLockfile(path) ||
-      (tipText !== null && baseText !== null && sameCode(language, baseText, tipText));
+      (tipText !== null &&
+        baseText !== null &&
+        sameCode(comparable(path, language), baseText, tipText));
     const lines = diffs.get(path) ?? [];
     const code = fileKind(path) === "test" ? [] : changedCode(lines);
     let references: FileSignals["references"] = null;
     let referencesSkipped = false;
-    if (!noCode && language && fileKind(path) !== "test") {
+    if (auto && !noCode && language && fileKind(path) !== "test") {
       for (const symbol of changedSymbols(language, lines)) {
         const found = await grep(symbol);
         if (found === null) {

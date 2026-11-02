@@ -56,7 +56,11 @@ export function fileTier(s: FileSignals): TierChoice {
     tier,
     reason: `${s.path}: ${why}`,
   });
-  if (s.pinned) return at(s.pinned, "the policy's tierPaths sets this tier");
+  if (s.pinned) {
+    return s.pinned === "small" && !s.noCode
+      ? at("medium", "the policy's tierPaths sets small, but code stays at medium or above")
+      : at(s.pinned, "the policy's tierPaths sets this tier");
+  }
   if (s.riskPath) return at("large", "matches a risk path");
   if (s.noCode) return at("small", "only docs, comments, formatting, or a lockfile");
   if (s.exportedChange) return at("large", "changes an exported API");
@@ -83,6 +87,12 @@ export function fileTier(s: FileSignals): TierChoice {
 
 /** A group's tier: its strongest file's tier, or the run's fixed tier. */
 export function groupTier(files: readonly FileSignals[], choice: ModelTierChoice): TierChoice {
+  if (choice === "small" && (files.length === 0 || files.some((f) => !f.noCode))) {
+    return {
+      tier: "medium",
+      reason: "The run uses the small tier, but code stays at medium or above.",
+    };
+  }
   if (choice !== "auto") return { tier: choice, reason: `The run uses the ${choice} tier.` };
   let best: TierChoice | null = null;
   for (const file of [...files].sort((a, b) => a.path.localeCompare(b.path))) {
@@ -97,7 +107,7 @@ const AT_LEAST_MEDIUM: readonly AgentRole[] = ["disprover", "confirmer", "fixer"
 /**
  * The tier of one call. `base` is the tier of the groups the call covers, or
  * `null` when no group covers it. A fixed run keeps its tier, except that
- * disprovers, confirmers, and fixers stay at medium or above.
+ * code, disprovers, confirmers, and fixers stay at medium or above.
  */
 export function roleTier(
   base: TierChoice | null,
@@ -107,13 +117,15 @@ export function roleTier(
   const { choice, persisting } = options;
   const floor = AT_LEAST_MEDIUM.includes(role);
   if (choice !== "auto") {
-    const tier = floor ? higherTier(choice, "medium") : choice;
+    // Only a group the engine measured as free of code can stay small.
+    const noCodeOnly = !floor && base?.tier === "small";
+    const tier = choice === "small" && !noCodeOnly ? "medium" : choice;
     return {
       tier,
       reason:
         tier === choice
           ? `The run uses the ${choice} tier.`
-          : `The run uses the ${choice} tier; a ${role} stays at medium or above.`,
+          : `The run uses the ${choice} tier; code and a ${role} stay at medium or above.`,
     };
   }
   const from = base ?? { tier: "medium" as const, reason: "No group covers the call." };

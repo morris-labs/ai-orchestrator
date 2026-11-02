@@ -88,6 +88,16 @@ describe("sameCode", () => {
     ["python", "if a:\n  b()\n", "if a:\nb()\n", false],
     ["shell", "# one\na\n", "# two\na\n", true],
     [null, "a\n", "a \n", false],
+    // Text that could pass for a comment stays code.
+    ["js", "const r = /\\/*/;\na(1);\n", "const r = /\\/*/;\na(2);\n", false],
+    ["js", "const u = /\\/\\//;\na(1);\n", "const u = /\\/\\//;\na(2);\n", false],
+    ["js", "a(1); /* open\n", "a(2); /* open\n", false],
+    ["js", "/* open\n", "/* open\nb();\n", false],
+    ["js", "const t = `// a`;\n", "const t = `// b`;\n", false],
+    ["shell", "cat <<EOF\n# one\nEOF\n", "cat <<EOF\n# two\nEOF\n", false],
+    ["java", 'String s = """\n// a\n""";\n', 'String s = """\n// b\n""";\n', false],
+    ["c", 'auto s = R"(// a)";\n', 'auto s = R"(// b)";\n', false],
+    ["python", 's = """\n# a\n"""\n', 's = """\n# b\n"""\n', false],
   ] as const)("%s %j and %j: %s", (language, base, tip, same) => {
     expect(sameCode(language, base, tip)).toBe(same);
   });

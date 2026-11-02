@@ -18,6 +18,7 @@ the upgrade steps, see `docs/migration-3x.md`.
   the policy file.
 - A list of models that review runs refuse: Claude models with `fable` in the
   name and Codex models with `astra` in the name.
+  The list doesn't cover GitHub Copilot, which keeps automatic model selection.
 - `aio-server`, a systemd user service that owns Docker, boxes,
   projects, worktrees, secrets, usage, and terminals, with a REST and
   WebSocket API on `127.0.0.1:21400`.

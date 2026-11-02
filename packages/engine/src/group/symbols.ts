@@ -176,9 +176,32 @@ export function isDocOrLockfile(path: string): boolean {
   return /\.(md|mdx|rst|adoc|txt)$/i.test(name) || DOC_NAMES.test(name);
 }
 
-/** `text` without comments, line for line. Understands strings well enough to skip markers in them. */
-export function stripComments(language: Language, text: string): string {
-  if (language === "shell") return text.replace(/^[ \t]*#(?!!).*$/gm, "");
+/** Characters after which a `/` in JavaScript starts a regular expression, not a division. */
+const BEFORE_REGEX = /(?:^|[(,=:[!&|?{};\n]|\breturn)\s*$/;
+
+/** The end of a regular expression literal that starts at `start`, or -1 when none closes the line. */
+function regexEnd(text: string, start: number): number {
+  let inClass = false;
+  for (let i = start + 1; i < text.length && text[i] !== "\n"; i++) {
+    const ch = text[i];
+    if (ch === "\\") i += 1;
+    else if (ch === "[") inClass = true;
+    else if (ch === "]") inClass = false;
+    else if (ch === "/" && !inClass) return i + 1;
+  }
+  return -1;
+}
+
+/**
+ * `text` without comments, line for line, and whether the scan ended cleanly.
+ * It understands strings and JavaScript regular expressions well enough to
+ * skip markers in them. A comment or a multi-line string left open means the
+ * scan lost its place.
+ */
+function scanComments(language: Language, text: string): { text: string; clean: boolean } {
+  if (language === "shell") {
+    return { text: text.replace(/^[ \t]*#(?!!).*$/gm, ""), clean: true };
+  }
   const hash = language === "python";
   let out = "";
   let i = 0;
@@ -204,8 +227,13 @@ export function stripComments(language: Language, text: string): string {
       while (i < text.length && text[i] !== "\n") i += 1;
     } else if (!hash && text.startsWith("/*", i)) {
       const end = text.indexOf("*/", i + 2);
-      const stop = end < 0 ? text.length : end + 2;
-      out += text.slice(i, stop).replace(/[^\n]/g, "");
+      if (end < 0) return { text: out, clean: false };
+      out += text.slice(i, end + 2).replace(/[^\n]/g, "");
+      i = end + 2;
+    } else if (language === "js" && ch === "/" && BEFORE_REGEX.test(out.slice(-80))) {
+      const end = regexEnd(text, i);
+      const stop = end < 0 ? i + 1 : end;
+      out += text.slice(i, stop);
       i = stop;
     } else if (hash && (text.startsWith('"""', i) || text.startsWith("'''", i))) {
       quote = text.slice(i, i + 3);
@@ -220,20 +248,38 @@ export function stripComments(language: Language, text: string): string {
       i += 1;
     }
   }
-  return out;
+  return { text: out, clean: quote === null || (quote.length === 1 && quote !== "`") };
 }
+
+/** `text` without comments, line for line. */
+export function stripComments(language: Language, text: string): string {
+  return scanComments(language, text).text;
+}
+
+/** Text forms the comment scan can't read: shell heredocs, Java text blocks, C++ raw strings. */
+const UNREADABLE: Partial<Record<Language, RegExp>> = {
+  shell: /<</,
+  java: /"""/,
+  c: /\bR"/,
+};
 
 const TOKEN = /"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\[\s\S])*`|\w+|\S/g;
 
 /**
  * True when two versions of a file differ only in comments or formatting.
  * In Python and shell, where whitespace carries meaning, only blank lines and
- * trailing space count as formatting. An unknown language never qualifies.
+ * trailing space count as formatting. An unknown language, or text the scan
+ * can't read, never qualifies, so a doubtful change counts as code.
  */
 export function sameCode(language: Language | null, base: string, tip: string): boolean {
   if (language === null) return false;
-  const a = stripComments(language, base);
-  const b = stripComments(language, tip);
+  const unreadable = UNREADABLE[language];
+  if (unreadable && (unreadable.test(base) || unreadable.test(tip))) return false;
+  const scannedBase = scanComments(language, base);
+  const scannedTip = scanComments(language, tip);
+  if (!scannedBase.clean || !scannedTip.clean) return false;
+  const a = scannedBase.text;
+  const b = scannedTip.text;
   if (language === "python" || language === "shell") {
     const lines = (t: string) =>
       t

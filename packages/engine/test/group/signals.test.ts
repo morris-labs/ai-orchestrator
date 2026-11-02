@@ -129,7 +129,53 @@ describe("assignTiers", () => {
         tierPaths: [{ paths: ["gen/**"], tier: "small" }],
       },
     );
-    expect(pinned.tier).toBe("small");
+    expect(pinned.tier).toBe("medium");
+  });
+});
+
+describe("code floor", () => {
+  it("keeps code at medium under a small tierPaths rule, and a JSX // change counts as code", async () => {
+    const policy = { ...DEFAULT_POLICY, tierPaths: [{ paths: ["**"], tier: "small" as const }] };
+    const code = await tier({ "gen/a.ts": "a();\n" }, { "gen/a.ts": "b();\n" }, policy);
+    expect(code.tier).toBe("medium");
+    const jsx = await tier(
+      { "a.tsx": "<a>// one</a>;\n" },
+      { "a.tsx": "<a>// two</a>;\n" },
+      policy,
+    );
+    expect(jsx.tier).toBe("medium");
+    const docs = await tier({ "a.md": "1\n" }, { "a.md": "2\n" }, policy);
+    expect(docs.tier).toBe("small");
+  });
+
+  it("measures code under a fixed small tier", async () => {
+    const { dir, base, tip } = repo(
+      { "a.ts": "a();\n", "b.md": "1\n" },
+      { "a.ts": "b();\n", "b.md": "2\n" },
+    );
+    const git = new Git(new ExecaRunner(), dir);
+    const files = parseDiff(await git.diff(base, tip));
+    const group = (id: string, paths: string[]): FileGroup => ({
+      id,
+      files: paths,
+      kind: "minor",
+      changedLines: 1,
+      riskPath: false,
+      hunks: [],
+    });
+    const [code, docs] = await assignTiers(
+      [group("G01", ["a.ts"]), group("G02", ["b.md"])],
+      files,
+      {
+        git,
+        policy: DEFAULT_POLICY,
+        diffBase: base,
+        tip,
+        choice: "small",
+      },
+    );
+    expect(code?.tier).toBe("medium");
+    expect(docs?.tier).toBe("small");
   });
 });
 
