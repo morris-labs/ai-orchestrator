@@ -9,11 +9,10 @@ import { FakeClock, GrantingBroker, MemoryEventSink, type EngineDeps } from "../
 import { ExecaRunner } from "../../src/range/exec.js";
 import { RunController } from "../../src/state/controller.js";
 import { Scenario, bugPresent, buildSampleRepo } from "./scenario.js";
+import { uniqueRunId } from "./run-ids.js";
 
-let seq = 0;
 function runId(): string {
-  seq += 1;
-  return `01JB${String(seq).padStart(22, "0")}`;
+  return uniqueRunId();
 }
 
 function deps(

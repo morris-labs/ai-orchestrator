@@ -16,9 +16,9 @@ import {
 import { ExecaRunner } from "../../src/range/exec.js";
 import { InvalidStateError, RunController } from "../../src/state/controller.js";
 import { Scenario, buildSampleRepo } from "./scenario.js";
+import { uniqueRunId } from "./run-ids.js";
 
-let seq = 100;
-const nextRunId = () => `01JC${String(++seq).padStart(22, "0")}`;
+const nextRunId = uniqueRunId;
 
 type Hook = (req: LeaseRequest) => void;
 

@@ -15,10 +15,10 @@ import { ExecaRunner } from "../../src/range/exec.js";
 import { EngineRunManager, createRunManager } from "../../src/state/manager.js";
 import { BaseWorktree, baseWorktreePath } from "../../src/verify/verify.js";
 import { buildSampleRepo } from "./scenario.js";
+import { uniqueRunId } from "./run-ids.js";
 
 const SCRIPT = join(import.meta.dirname, "../smoke/mock-script.json");
-let seq = 0;
-const runId = () => `01JE${String(++seq).padStart(22, "0")}`;
+const runId = uniqueRunId;
 
 function deps(repo: string) {
   return {
