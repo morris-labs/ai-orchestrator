@@ -46,6 +46,9 @@ export interface CliAdapterOptions {
 /** Environment every vendor call gets unless `CliAdapterOptions.env` overrides it. */
 export const VENDOR_ENV: Record<string, string> = { PYTHONDONTWRITEBYTECODE: "1" };
 
+/** How many sessions an adapter remembers the account folder of. */
+const MAX_SESSION_FOLDERS = 1000;
+
 /** Context each concrete adapter gets for one call. */
 export interface CallContext {
   method: AdapterMethod;
@@ -55,6 +58,8 @@ export interface CallContext {
 export abstract class CliAdapter implements CliVendorAdapter {
   abstract readonly vendor: Vendor;
   protected readonly options: CliAdapterOptions;
+  /** The account folder of each session this adapter started, newest last. */
+  private readonly sessionFolders = new Map<string, string | undefined>();
 
   constructor(options: CliAdapterOptions = {}) {
     this.options = options;
@@ -72,7 +77,15 @@ export abstract class CliAdapter implements CliVendorAdapter {
    * that the read-only guard checks.
    */
   protected get env(): Record<string, string | undefined> {
-    const dir = this.accountDir();
+    return this.envWith(this.accountDir());
+  }
+
+  /** The environment of one call, whose folder `dispatch` chose once. */
+  protected envFor(req: CliRequest<unknown>): Record<string, string | undefined> {
+    return "accountFolder" in req ? this.envWith(req.accountFolder) : this.env;
+  }
+
+  private envWith(dir: string | undefined): Record<string, string | undefined> {
     return {
       ...VENDOR_ENV,
       ...(dir === undefined ? {} : { [ACCOUNT_DIR_ENV[this.vendor]]: dir }),
@@ -92,9 +105,9 @@ export abstract class CliAdapter implements CliVendorAdapter {
    * vendor's variable as the child gets it, or `undefined` when the CLI
    * falls back to its home folder.
    */
-  protected configDir(): string | undefined {
+  protected configDir(req?: CliRequest<unknown>): string | undefined {
     const name = ACCOUNT_DIR_ENV[this.vendor];
-    const env = this.env;
+    const env = req ? this.envFor(req) : this.env;
     if (name in env) return env[name] || undefined;
     return process.env[name] || undefined;
   }
@@ -107,8 +120,18 @@ export abstract class CliAdapter implements CliVendorAdapter {
     return this.options.ceiling ?? DEFAULT_CEILINGS[this.vendor];
   }
 
+  /**
+   * The usage label: `options.account`, the account id when the config folder
+   * is an account's (`VENDOR/NAME`), or a fallback name.
+   */
   protected get account(): string {
-    return this.options.account ?? `${this.vendor}-default`;
+    return this.options.account ?? this.accountIn(this.configDir()) ?? `${this.vendor}-default`;
+  }
+
+  /** The account id of a config folder, or `undefined` for any other folder. */
+  protected accountIn(dir: string | undefined): string | undefined {
+    const name = dir?.match(new RegExp(`/accounts/${this.vendor}/([^/]+)/?$`))?.[1];
+    return name === undefined ? undefined : `${this.vendor}/${name}`;
   }
 
   protected now(): Date {
@@ -171,11 +194,28 @@ export abstract class CliAdapter implements CliVendorAdapter {
     return { vendor: this.vendor, available: true, version: version || null, error: null };
   }
 
-  private dispatch<T>(method: AdapterMethod, req: CliRequest<T>): Promise<CliResult<T>> {
-    // A continuation keeps its session; every other role starts fresh, as the
-    // design asks, even when the caller left a session id on the request.
-    const request = method === "continueReview" ? req : { ...req, sessionId: undefined };
-    return this.call(request, { method, role: METHOD_ROLES[method] });
+  private async dispatch<T>(method: AdapterMethod, req: CliRequest<T>): Promise<CliResult<T>> {
+    // A continuation keeps its session and the folder that holds the session;
+    // every other role starts fresh, as the design asks, even when the caller
+    // left a session id on the request. The folder is read once, so a change
+    // of default during a call can't split it.
+    const continuing = method === "continueReview" && req.sessionId !== undefined;
+    const known = continuing ? this.sessionFolders.get(req.sessionId as string) : undefined;
+    const accountFolder = known ?? this.accountDir();
+    const request = {
+      ...req,
+      accountFolder,
+      ...(method === "continueReview" ? {} : { sessionId: undefined }),
+    };
+    const result = await this.call(request, { method, role: METHOD_ROLES[method] });
+    if (result.sessionId) {
+      this.sessionFolders.set(result.sessionId, accountFolder);
+      if (this.sessionFolders.size > MAX_SESSION_FOLDERS) {
+        const oldest = this.sessionFolders.keys().next().value;
+        if (oldest !== undefined) this.sessionFolders.delete(oldest);
+      }
+    }
+    return result;
   }
 
   /**

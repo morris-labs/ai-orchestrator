@@ -25,14 +25,29 @@ export function isBlockedReviewModel(vendor: Vendor, model: string): boolean {
   return (BLOCKED_REVIEW_MODELS[vendor] ?? []).some((text) => name.includes(text.toLowerCase()));
 }
 
+/**
+ * True when a person or config must not ask for `model` on `vendor`. Stricter
+ * than `isBlockedReviewModel`: Copilot's automatic selection is exempt, but
+ * naming a blocked model through Copilot isn't, since Copilot serves other
+ * vendors' models.
+ */
+export function isBlockedRequestedModel(vendor: Vendor, model: string): boolean {
+  if (vendor !== "copilot") return isBlockedReviewModel(vendor, model);
+  const name = model.toLowerCase();
+  return Object.values(BLOCKED_REVIEW_MODELS)
+    .flat()
+    .some((text) => name.includes(text.toLowerCase()));
+}
+
 /** The error text for a blocked model. */
 export function blockedModelMessage(vendor: Vendor, model: string): string {
-  return `Review runs can't use the ${vendor} model ${model}. Choose a model whose name doesn't contain ${(BLOCKED_REVIEW_MODELS[vendor] ?? []).join(" or ")}.`;
+  const names = BLOCKED_REVIEW_MODELS[vendor] ?? Object.values(BLOCKED_REVIEW_MODELS).flat();
+  return `Review runs can't use the ${vendor} model ${model}. Choose a model whose name doesn't contain ${names.join(" or ")}.`;
 }
 
 /** Throws when review runs must not use `model` on `vendor`. */
 export function assertReviewModelAllowed(vendor: Vendor, model: string | undefined): void {
-  if (model !== undefined && isBlockedReviewModel(vendor, model)) {
+  if (model !== undefined && isBlockedRequestedModel(vendor, model)) {
     throw new Error(blockedModelMessage(vendor, model));
   }
 }
@@ -45,7 +60,10 @@ const TierModelNamesSchema = z
   })
   .strict();
 
-/** The model for each vendor and tier. A vendor or tier left out has no mapping. */
+/**
+ * The model for each vendor and tier. A vendor or tier left out uses the built-in
+ * mapping in `DEFAULT_TIER_MODELS`, or the vendor's default when that has none.
+ */
 export const TierModelsSchema = z
   .record(VendorSchema, TierModelNamesSchema)
   .superRefine((map, ctx) => {

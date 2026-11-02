@@ -53,7 +53,13 @@ import {
   scriptCheckoutsDir,
   type CheckoutState,
 } from "./checkout.js";
-import { DecisionNeeded, RunCancelled, type CallTier, type RunContext } from "./context.js";
+import {
+  DecisionNeeded,
+  RunCancelled,
+  type AgentOutcome,
+  type CallTier,
+  type RunContext,
+} from "./context.js";
 import { snapshotTree } from "./tree-guard.js";
 import { planReviews, type ReviewTask } from "./profiles.js";
 
@@ -260,15 +266,21 @@ export function callTier(
     }
   }
   const declined = new Set(ctx.eng.declined);
-  const persisting = ctx.findings.some(
-    (f) =>
-      (f.verdict === "pending" || f.verdict === "confirmed") &&
-      f.round < ctx.round &&
-      !declined.has(f.id) &&
-      f.file !== null &&
-      f.file !== undefined &&
-      (files ?? groups.flatMap((g) => g.files)).includes(f.file),
-  );
+  const scope = new Set(files ?? groups.flatMap((g) => g.files));
+  // A finding persists when a fix had its chance and it's still confirmed. A
+  // nit, a read-only run, and an unverified finding give no fix that chance.
+  const persisting =
+    !ctx.state.request.readOnly &&
+    ctx.findings.some(
+      (f) =>
+        f.verdict === "confirmed" &&
+        aboveNit(f) &&
+        f.round < ctx.round &&
+        !declined.has(f.id) &&
+        f.file !== null &&
+        f.file !== undefined &&
+        scope.has(f.file),
+    );
   return { ...roleTier(base, role, { choice, persisting }), fixed: choice !== "auto" };
 }
 
@@ -347,10 +359,10 @@ async function runReviewTask(
     role: "reviewer" as const,
     groupId: task.groupId,
     allowFallback: true,
-    ...(tier ? { tier } : {}),
   };
   const first = await ctx.callAgent<ReviewOutput>({
     ...base,
+    ...(tier ? { tier } : {}),
     key: `find-${task.key}`,
     vendor: task.vendor,
     method: "review",
@@ -370,6 +382,14 @@ async function runReviewTask(
   );
   let calls = 1;
   const sessionId = first.sessionId;
+  // A session keeps a tier that a malformed answer raised, and never drops back.
+  let sessionTier = tier;
+  const keepTier = (out: AgentOutcome<ReviewOutput>): void => {
+    if (sessionTier && out.tier && out.tier.tier !== sessionTier.tier) {
+      sessionTier = { ...sessionTier, ...out.tier };
+    }
+  };
+  keepTier(first);
 
   const absorb = (out: ReviewOutput): VendorFinding[] => {
     const fresh = out.findings.filter((f) => !seen.has(dedupeKey(f)));
@@ -388,6 +408,7 @@ async function runReviewTask(
       const followUp = ledgerFollowUpPrompt(missing);
       const out = await ctx.callAgent<ReviewOutput>({
         ...base,
+        ...(sessionTier ? { tier: sessionTier } : {}),
         key: `find-${task.key}-ledger${i + 1}`,
         vendor,
         method: "continueReview",
@@ -401,12 +422,14 @@ async function runReviewTask(
         allowFallback: false,
       });
       calls += 1;
+      keepTier(out);
       absorb(out.output);
     }
     for (let i = 0; i < ctx.state.request.continuationCap; i++) {
       const more = continuationPrompt({ reported: collected.map((f) => f.title) });
       const out = await ctx.callAgent<ReviewOutput>({
         ...base,
+        ...(sessionTier ? { tier: sessionTier } : {}),
         key: `find-${task.key}-more${i + 1}`,
         vendor,
         method: "continueReview",
@@ -420,6 +443,7 @@ async function runReviewTask(
         allowFallback: false,
       });
       calls += 1;
+      keepTier(out);
       const fresh = absorb(out.output);
       if (!fresh.some((f) => f.severity === "P1" || f.severity === "P2")) break;
     }
@@ -1025,11 +1049,12 @@ export async function runFix(
           findings.flatMap((f) => (f.file ? [f.file] : [])),
         ),
       });
+      // A gate failure can be anywhere in the change, so that call covers every group.
       const fixTier = callTier(
         ctx,
         "fixer",
         await roundGroups(ctx),
-        findings.flatMap((f) => (f.file ? [f.file] : [])),
+        gateFailure ? undefined : findings.flatMap((f) => (f.file ? [f.file] : [])),
       );
       const out = await ctx.callAgent<FixOutput>({
         key,
@@ -1178,12 +1203,13 @@ export async function runConfirm(
   const crossVendor = ctx.state.request.crossVendor;
   const fixer = ctx.state.roles.fixer;
   const vendor = crossVendor ? ctx.state.roles.confirmer : fixer;
-  const confirmTier = callTier(
-    ctx,
-    "confirmer",
-    groups,
-    fixed.flatMap((f) => (f.file ? [f.file] : [])),
-  );
+  // The confirmer reads the whole fix diff, which can reach past the findings' files.
+  const confirmTier = callTier(ctx, "confirmer", groups, [
+    ...new Set([
+      ...fixed.flatMap((f) => (f.file ? [f.file] : [])),
+      ...parseDiff(fixDiff).map((f) => f.path),
+    ]),
+  ]);
   const out = await ctx.callAgent<ConfirmOutput>({
     key: "confirm",
     role: "confirmer",

@@ -20,6 +20,8 @@ import {
   type Stage,
   type Verdict,
   type Vendor,
+  type UsageSample,
+  isBlockedRequestedModel,
 } from "@aio/contracts";
 import {
   DEFAULT_TIMEOUTS,
@@ -138,6 +140,8 @@ export interface AgentOutcome<T> {
   tokens: { in: number; out: number };
   /** Tool calls that failed during the call, when the vendor reported any. */
   toolErrors?: string[];
+  /** The tier the call ended up using, after any move. */
+  tier?: { tier: ModelTier; reason: string };
 }
 
 const ROLE_FOR_AGENT: Record<AgentRole, Role> = {
@@ -614,7 +618,18 @@ export class RunContext {
    */
   async callAgent<T>(spec: AgentCallSpec): Promise<AgentOutcome<T>> {
     const cached = await this.store.readJson<AgentOutcome<T>>(this.callFile(spec.key));
-    if (cached) return cached;
+    if (cached) {
+      if (!cached.model || !isBlockedReviewModel(cached.vendor, cached.model)) return cached;
+      // A call saved before the rule. A read-only call can run again, but a
+      // write call's commits are already part of the run's history.
+      if (spec.request.toolPolicy === "write") {
+        throw new AgentFailed(
+          spec.role,
+          cached.vendor,
+          blockedModelMessage(cached.vendor, cached.model),
+        );
+      }
+    }
 
     let vendor = spec.vendor;
     const tried: Vendor[] = [];
@@ -637,7 +652,7 @@ export class RunContext {
       }
       const choice = this.chooseModel(vendor, tier);
       if (choice.note) tierReason = `${tierReason}; ${choice.note}`;
-      if (choice.model !== undefined && isBlockedReviewModel(vendor, choice.model)) {
+      if (choice.model !== undefined && isBlockedRequestedModel(vendor, choice.model)) {
         await this.settle(lease.leaseId, vendor, spec.role, ZERO_USE);
         throw new AgentFailed(spec.role, vendor, blockedModelMessage(vendor, choice.model));
       }
@@ -671,6 +686,8 @@ export class RunContext {
       await this.emit({ type: "agent.started", ...common });
       const started = this.clock.now();
       const timeoutMs = spec.request.timeoutMs ?? this.timeouts[spec.role];
+      // A write call that turns out to have used a blocked model loses its commits.
+      const headBefore = spec.request.toolPolicy === "write" ? await this.git.head() : null;
       let result: AdapterResult<T>;
       try {
         result =
@@ -689,6 +706,11 @@ export class RunContext {
       } catch (error) {
         const elapsedMs = Math.max(0, this.clock.now() - started);
         const limit = this.signal.aborted ? null : adapter.detectLimit(error);
+        // A failed or limited call can still hold the vendor's freshest reading.
+        for (const { ceiling: _ignored, ...sample } of usageOfError(error)) {
+          const ceiling = (this.deps.ceilings ?? DEFAULT_CEILINGS)[sample.vendor];
+          await this.emit({ type: "usage.sample", ...sample, ceiling });
+        }
         const outcome = this.signal.aborted
           ? "cancelled"
           : limit
@@ -764,11 +786,14 @@ export class RunContext {
         ...(result.aiCredits !== undefined ? { aiCredits: result.aiCredits } : {}),
         costEstimate: result.costEstimate,
       };
+      // A CLI default or an alias can resolve to a blocked model; the run stops
+      // here, before anything uses the answer.
+      const blocked = Boolean(result.model && isBlockedReviewModel(vendor, result.model));
       await this.emit({
         type: "agent.finished",
         ...common,
         model: result.model || model,
-        outcome: "ok",
+        outcome: blocked ? "error" : "ok",
         elapsedMs,
         tokens: actual.tokens,
         premiumRequests: actual.premiumRequests,
@@ -780,10 +805,10 @@ export class RunContext {
         const ceiling = (this.deps.ceilings ?? DEFAULT_CEILINGS)[sample.vendor];
         await this.emit({ type: "usage.sample", ...sample, ceiling });
       }
-      // A CLI default or an alias can resolve to a blocked model; the run stops
-      // here, before anything uses the answer.
-      if (result.model && isBlockedReviewModel(vendor, result.model)) {
-        throw new AgentFailed(spec.role, vendor, blockedModelMessage(vendor, result.model));
+      if (blocked) {
+        const message = blockedModelMessage(vendor, result.model);
+        const undone = headBefore ? await this.undoCommits(headBefore) : "";
+        throw new AgentFailed(spec.role, vendor, `${message}${undone}`);
       }
       const outcome: AgentOutcome<T> = {
         vendor,
@@ -792,9 +817,26 @@ export class RunContext {
         output: result.output,
         tokens: actual.tokens,
         ...(result.toolErrors?.length ? { toolErrors: result.toolErrors } : {}),
+        ...(tier ? { tier: { tier, reason: tierReason ?? "" } } : {}),
       };
       await this.store.writeJson(this.callFile(spec.key), outcome);
       return outcome;
+    }
+  }
+
+  /**
+   * Moves the branch back to `head` and says so in a sentence for the error,
+   * so no commit from a blocked model stays on the branch. The commits stay
+   * reachable through the reflog.
+   */
+  private async undoCommits(head: string): Promise<string> {
+    try {
+      const now = await this.git.head();
+      if (now === head) return "";
+      await this.git.resetHard(head);
+      return ` The engine moved the branch back to ${head}; the call's commits end at ${now}.`;
+    } catch (error) {
+      return ` The engine couldn't remove the call's commits: ${describeError(error)}`;
     }
   }
 
@@ -878,6 +920,12 @@ export class RunContext {
       costEstimate: actual.costEstimate,
     });
   }
+}
+
+/** The usage samples an adapter attached to a failed call. */
+function usageOfError(error: unknown): UsageSample[] {
+  const usage = (error as { usage?: unknown } | null)?.usage;
+  return Array.isArray(usage) ? (usage as UsageSample[]) : [];
 }
 
 /** An error's message for a log line, on one line and at most 500 characters. */

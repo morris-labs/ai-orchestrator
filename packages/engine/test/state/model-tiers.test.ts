@@ -1,6 +1,12 @@
 // RunContext: the model a call uses, per tier, and the blocked models.
 import { describe, expect, it } from "vitest";
-import { DEFAULT_POLICY, type Vendor } from "@aio/contracts";
+import {
+  DEFAULT_POLICY,
+  isBlockedRequestedModel,
+  isBlockedReviewModel,
+  type Finding,
+  type Vendor,
+} from "@aio/contracts";
 import type { AdapterRequest, ReviewOutput, VendorAdapter } from "../../src/core.js";
 import { BridgedAdapter } from "../../src/adapters/bridge.js";
 import { codexRolloutModel } from "../../src/adapters/codex.js";
@@ -8,6 +14,7 @@ import { AgentFailed } from "../../src/state/context.js";
 import type { CoreDeps } from "../../src/api/core-interface.js";
 import { parsePolicy } from "../../src/policy/load.js";
 import { EngineRunManager } from "../../src/state/manager.js";
+import { callTier } from "../../src/state/steps.js";
 import { makeRun } from "./harness.js";
 
 function recording(vendor: Vendor, reported?: string) {
@@ -137,6 +144,21 @@ describe("blocked models", () => {
     await expect(ctx.callAgent<ReviewOutput>(call("codex"))).rejects.toThrow(/gpt-6-astra/);
   });
 
+  it("marks the call as an error before it stops the run", async () => {
+    const claude = recording("claude", "claude-fable-5-1");
+    const { ctx, events } = await makeRun({ adapters: { claude: claude.adapter } });
+    await expect(ctx.callAgent<ReviewOutput>(call("claude", "large"))).rejects.toBeInstanceOf(
+      AgentFailed,
+    );
+    expect(events.ofType("agent.finished").at(-1)?.outcome).toBe("error");
+  });
+
+  it("names a blocked model through Copilot, but leaves automatic selection alone", () => {
+    expect(isBlockedRequestedModel("copilot", "claude-fable-5-1")).toBe(true);
+    expect(isBlockedRequestedModel("copilot", "auto")).toBe(false);
+    expect(isBlockedReviewModel("copilot", "claude-fable-5-1")).toBe(false);
+  });
+
   it("refuses at the adapter bridge", async () => {
     const bridged = new BridgedAdapter({ vendor: "claude" } as never);
     await expect(
@@ -154,5 +176,41 @@ describe("blocked models", () => {
     const line = JSON.stringify({ type: "turn_context", payload: { model: "gpt-6-astra" } });
     expect(codexRolloutModel(`{"type":"other"}\n${line}\n{torn`)).toBe("gpt-6-astra");
     expect(codexRolloutModel("")).toBeNull();
+  });
+});
+
+describe("call tiers and persisting findings", () => {
+  const group = {
+    id: "G01",
+    files: ["a.ts"],
+    kind: "minor" as const,
+    changedLines: 1,
+    riskPath: false,
+    hunks: [],
+    tier: "medium" as const,
+    tierReason: "r",
+  };
+  const finding = (patch: Partial<Finding>): Finding =>
+    ({ id: "F-1", severity: "P2", verdict: "confirmed", round: 1, file: "a.ts", ...patch }) as Finding;
+
+  async function tierWith(f: Finding, readOnly = false) {
+    const { ctx } = await makeRun({ adapters: { claude: recording("claude").adapter } });
+    ctx.state.request.modelTier = "auto";
+    ctx.state.request.readOnly = readOnly;
+    ctx.state.round = 2;
+    ctx.findings.push(f);
+    return callTier(ctx, "reviewer", [group], ["a.ts"])?.tier;
+  }
+
+  it("moves up for a confirmed finding above nit from an earlier round", async () => {
+    expect(await tierWith(finding({}))).toBe("large");
+  });
+
+  it.each([
+    ["a nit", finding({ severity: "nit" }), false],
+    ["a pending finding", finding({ verdict: "pending" }), false],
+    ["a read-only run", finding({}), true],
+  ])("doesn't move up for %s", async (_name, f, readOnly) => {
+    expect(await tierWith(f, readOnly)).toBe("medium");
   });
 });

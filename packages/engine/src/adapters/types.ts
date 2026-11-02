@@ -48,6 +48,8 @@ export interface CliRequest<T = unknown> {
   signal?: AbortSignal;
   /** Called for each usage sample as it arrives, before the call ends. */
   onUsage?: (sample: UsageSample) => void;
+  /** The account folder of this call, which the adapter's `dispatch` sets once. */
+  accountFolder?: string | undefined;
 }
 
 export interface TokenCounts {
@@ -88,7 +90,14 @@ export interface CliLimitInfo extends LimitInfo {
 }
 
 export type AdapterErrorKind =
-  "limit" | "auth" | "timeout" | "cancelled" | "output" | "process" | "unavailable";
+  | "limit"
+  | "auth"
+  | "timeout"
+  | "cancelled"
+  | "output"
+  | "process"
+  | "unavailable"
+  | "blocked_model";
 
 /** The one error type adapters throw. */
 export class AdapterError extends Error {
@@ -98,6 +107,8 @@ export class AdapterError extends Error {
   readonly exitCode: number | null;
   readonly raw: string;
   readonly sessionId: string | null;
+  /** Usage samples the call reported before it failed. The bridge fills this in. */
+  usage: UsageSample[] = [];
 
   constructor(
     vendor: Vendor,

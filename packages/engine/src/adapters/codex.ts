@@ -65,8 +65,13 @@ export class CodexAdapter extends CliAdapter {
     return ["--version"];
   }
 
-  private get codexHome(): string {
-    return this.codexOptions.codexHome ?? this.configDir() ?? join(homedir(), ".codex");
+  /** `codexHome` takes the account folder's place, so the child and the rollout lookup agree. */
+  protected override accountDir(): string | undefined {
+    return this.codexOptions.codexHome ?? super.accountDir();
+  }
+
+  private homeFor(req?: CliRequest<unknown>): string {
+    return this.configDir(req) ?? join(homedir(), ".codex");
   }
 
   /**
@@ -123,15 +128,20 @@ export class CodexAdapter extends CliAdapter {
         args: this.buildArgs(req, schemaFile),
         cwd: this.workingDir(req),
         input: prompt,
-        env: this.env,
+        env: this.envFor(req),
         envProfile: `vendor:${this.vendor}`,
         timeoutMs: req.timeoutMs,
         signal: req.signal,
         onLine: (line) => parser.push(line),
       });
+      const summary = parser.summary();
+      // Read before any failure check: a failed or limited call's reading is
+      // the freshest usage there is, and the only way to learn a limit reset.
+      const rollout = summary.threadId ? this.readRollout(summary.threadId, req) : null;
+      const usage = rollout ? codexRateLimitSamples(rollout, this.account, this.ceiling) : [];
+      for (const sample of usage) req.onUsage?.(sample);
       const failure = this.processFailure(result, req);
       if (failure) throw failure;
-      const summary = parser.summary();
       const sessionId = summary.threadId ?? req.sessionId ?? null;
 
       // `turn.failed` and top-level `error` events are fatal; item-level errors aren't collected.
@@ -150,9 +160,7 @@ export class CodexAdapter extends CliAdapter {
         result.stdout,
         sessionId,
       );
-      const usage = summary.threadId ? this.rateLimitSamples(summary.threadId) : [];
-      const actual = summary.threadId ? this.rolloutModel(summary.threadId) : null;
-      for (const sample of usage) req.onUsage?.(sample);
+      const actual = rollout ? codexRolloutModel(rollout) : null;
       return {
         output,
         sessionId,
@@ -169,28 +177,27 @@ export class CodexAdapter extends CliAdapter {
     }
   }
 
-  /** The model the CLI says it used, from the thread's rollout file. */
-  rolloutModel(threadId: string): string | null {
-    const file = findRolloutFile(join(this.codexHome, "sessions"), threadId);
+  /** The thread's rollout file, or `null` when Codex wrote none that can be read. */
+  private readRollout(threadId: string, req?: CliRequest<unknown>): string | null {
+    const file = findRolloutFile(join(this.homeFor(req), "sessions"), threadId);
     if (!file) return null;
     try {
-      return codexRolloutModel(readFileSync(file, "utf8"));
+      return readFileSync(file, "utf8");
     } catch {
       return null;
     }
   }
 
+  /** The model the CLI says it used, from the thread's rollout file. */
+  rolloutModel(threadId: string): string | null {
+    const rollout = this.readRollout(threadId);
+    return rollout === null ? null : codexRolloutModel(rollout);
+  }
+
   /** Reads the newest rate-limit reading from the thread's rollout file. */
   rateLimitSamples(threadId: string): UsageSample[] {
-    const file = findRolloutFile(join(this.codexHome, "sessions"), threadId);
-    if (!file) return [];
-    let content: string;
-    try {
-      content = readFileSync(file, "utf8");
-    } catch {
-      return [];
-    }
-    return codexRateLimitSamples(content, this.account, this.ceiling);
+    const rollout = this.readRollout(threadId);
+    return rollout === null ? [] : codexRateLimitSamples(rollout, this.account, this.ceiling);
   }
 
   detectLimit(error: unknown): CliLimitInfo | null {

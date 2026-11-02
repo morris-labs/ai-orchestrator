@@ -121,6 +121,11 @@ export class Git {
     return true;
   }
 
+  /** Moves the checked-out branch and the worktree to `rev`. */
+  async resetHard(rev: string): Promise<void> {
+    await this.run(["reset", "--hard", rev]);
+  }
+
   /** `git status --porcelain` lines, untracked files included, ignored files not. */
   async statusLines(): Promise<string[]> {
     const out = await this.run(["status", "--porcelain", "--untracked-files=all"]);
