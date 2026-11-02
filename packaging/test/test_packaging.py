@@ -17,6 +17,7 @@ import os
 import pathlib
 import re
 import shutil
+import stat
 import subprocess
 import tempfile
 import unittest
@@ -325,6 +326,23 @@ class ImageTest(unittest.TestCase):
         chmod = engine_step.index('chmod -R u=rwX,go=rX "${engine_pkg}"')
         self.assertLess(extract, chmod)
         self.assertLess(chmod, engine_step.index("require('${engine_pkg}/package.json')"))
+        # Runs the Dockerfile's own command on a tree with 0700 folders.
+        command = re.search(r'^\s*(chmod -R [^\n]*"\$\{engine_pkg\}")', engine_step, re.M)
+        self.assertIsNotNone(command)
+        with tempfile.TemporaryDirectory() as tmp:
+            pkg = pathlib.Path(tmp) / "engine"
+            (pkg / "dist").mkdir(parents=True)
+            (pkg / "dist" / "main.js").write_text("x")
+            os.chmod(pkg / "dist" / "main.js", 0o600)
+            os.chmod(pkg / "dist", 0o700)
+            os.chmod(pkg, 0o700)
+            subprocess.run(
+                ["sh", "-c", f'engine_pkg="{pkg}"; {command.group(1)}'],
+                check=True,
+                capture_output=True,
+            )
+            self.assertEqual(stat.S_IMODE((pkg / "dist").stat().st_mode), 0o755)
+            self.assertEqual(stat.S_IMODE((pkg / "dist" / "main.js").stat().st_mode), 0o644)
         script = (ROOT / "scripts/build-image.sh").read_text()
         pack = script.index('chmod -R u=rwX,go=rX "$DEPLOY/engine"')
         self.assertLess(pack, script.index('-czf "$ENGINE_TARBALL" engine'))

@@ -1,7 +1,7 @@
 // Picks the vendor adapters the engine runs with: the real CLIs that answer
 // `--version`, or scripted mocks for the vendors `AIO_MOCK_VENDORS` names.
 import { readFileSync } from "node:fs";
-import { DEFAULT_ENGINE_STATE_DIR, ENGINE_ENV, VendorSchema, type Vendor } from "@aio/contracts";
+import { ENGINE_CONFIG_MOUNT, VendorSchema, type Vendor } from "@aio/contracts";
 import { z } from "zod";
 import type { Logger } from "../api/core-interface.js";
 import { bridgeAdapters } from "../adapters/bridge.js";
@@ -105,13 +105,14 @@ export interface SelectedAdapters {
 
 /**
  * The real adapters, each pointed at its vendor's default account folder as
- * the server names it in the state directory's `account-dirs.json`.
+ * the server names it in `account-dirs.json` in `configDir`.
  */
 export function createEngineAdapters(
-  stateDir: string,
+  configDir: string,
   options: AdapterOptionsByVendor = {},
+  warn?: (message: string) => void,
 ): Record<Vendor, CliVendorAdapter> {
-  const sources = accountDirSources(accountDirsFileIn(stateDir));
+  const sources = accountDirSources(accountDirsFileIn(configDir), warn);
   return createAdapters({
     claude: { accountDir: sources.claude, ...options.claude },
     codex: { accountDir: sources.codex, ...options.codex },
@@ -124,7 +125,7 @@ export async function selectAdapters(
   env: Record<string, string | undefined>,
   log: Logger,
   candidates: () => Record<Vendor, CliVendorAdapter> = () =>
-    createEngineAdapters(env[ENGINE_ENV.stateDir] || DEFAULT_ENGINE_STATE_DIR),
+    createEngineAdapters(ENGINE_CONFIG_MOUNT, {}, (message) => log.warn(message)),
 ): Promise<SelectedAdapters> {
   const mocked = parseMockVendors(env[MOCK_VENDORS_ENV]);
   const script = env[MOCK_SCRIPT_ENV] || undefined;

@@ -39,6 +39,13 @@ export const ACCOUNT_DIR_ENV = {
  */
 export const ENGINE_ACCOUNT_DIRS_FILE = "account-dirs.json";
 
+/**
+ * Where a container sees the folder that holds `ENGINE_ACCOUNT_DIRS_FILE`. The
+ * server owns the folder and mounts it read-only, so code in the container
+ * can't choose the config folder that vendor CLIs load.
+ */
+export const ENGINE_CONFIG_MOUNT = "/run/aio-config";
+
 /** The content of `ENGINE_ACCOUNT_DIRS_FILE`: an absolute folder per vendor. */
 export const EngineAccountDirsSchema = z
   .object({

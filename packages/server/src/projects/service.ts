@@ -39,12 +39,16 @@ import {
   mountsFile,
   readMountsFile,
   stateDir,
+  accountDirsFile,
+  readContainerLayout,
   writeAccountDirsFile,
+  writeContainerLayout,
   writeEngineTokenFile,
   writeMountsFile,
 } from "../docker/state.js";
 import type { ContainerInspect, DockerClient } from "../docker/types.js";
 import { boxTmuxSession } from "../records/box.js";
+import { readRegularFileSync } from "../records/regular-file.js";
 import {
   accountDirFor,
   containerHome,
@@ -138,7 +142,7 @@ const ACCOUNT_DIR_SETTINGS = new Set(["accountDefaults", "accountsMode"]);
 export class ProjectService {
   constructor(private readonly deps: ProjectServiceDeps) {
     // The engine reads the file for every vendor call, so a running
-    // container follows a new default without a restart.
+    // container follows a new default without a restart, within what it mounts.
     deps.events.on("settings.changed", (payload: { changedKeys?: string[] }) => {
       if (payload.changedKeys?.some((k) => ACCOUNT_DIR_SETTINGS.has(k))) this.syncAccountDirs();
     });
@@ -444,22 +448,61 @@ export class ProjectService {
   }
 
   /**
-   * Rewrites the account folders file (`account-dirs.json`) of every
-   * container that has an engine record and a state directory, so their
-   * engines use the current defaults. A failure is logged, not thrown: the
-   * settings change itself succeeded.
+   * The account folders one container can use: the current defaults, limited
+   * to what it mounts. A container launched in host mode doesn't mount the
+   * accounts folder, so it stays on its home folders. An account made after
+   * the launch has no `sessions` mount there, so Claude stays on its previous
+   * folder until the container restarts.
    */
-  syncAccountDirs(): void {
-    const dirs = this.accountDirs();
-    for (const { container } of this.repos.engines.list()) {
-      if (!isDirectory(stateDir(this.deps.env, container))) continue;
-      try {
-        writeAccountDirsFile(this.deps.env, container, dirs);
-      } catch (err) {
-        this.deps.log?.(
-          `Couldn't update the account folders for ${container}: ${(err as Error).message}`,
+  private containerAccountDirs(container: string): EngineAccountDirs {
+    const wanted = this.accountDirs();
+    const layout = readContainerLayout(this.deps.env, container);
+    if (!layout) return wanted;
+    if (!layout.accounts) return {};
+    if (wanted.claude === undefined || layout.claudeDirs.includes(wanted.claude)) return wanted;
+    this.deps.log?.(
+      `${container}: the default Claude account has no mount in this container, so review ` +
+        `runs keep the previous account until the container restarts.`,
+    );
+    const { claude: _claude, ...others } = wanted;
+    const previous = readRegularFileSync(accountDirsFile(this.deps.env, container));
+    const kept = previous === null ? undefined : (JSON.parse(previous) as EngineAccountDirs).claude;
+    return kept === undefined ? others : { ...others, claude: kept };
+  }
+
+  /** Brings one container's account folders file up to date. Logs a failure. */
+  private syncContainerAccountDirs(container: string): void {
+    try {
+      const dirs = this.containerAccountDirs(container);
+      writeAccountDirsFile(this.deps.env, container, dirs);
+      const layout = readContainerLayout(this.deps.env, container);
+      if (layout?.accounts) {
+        void this.linkHome(container, container, layout.accountLinkTargets, dirs).catch(
+          () => undefined,
         );
       }
+    } catch (err) {
+      this.deps.log?.(
+        `Couldn't update the account folders for ${container}: ${(err as Error).message}`,
+      );
+    }
+  }
+
+  /**
+   * Rewrites the account folders file (`account-dirs.json`) of every
+   * container that has an engine record and a state directory, and moves its
+   * home links, so its engine and shells use the current defaults. A failure
+   * is logged, not thrown: the settings change itself succeeded.
+   */
+  syncAccountDirs(): void {
+    try {
+      for (const { container } of this.repos.engines.list()) {
+        if (isDirectory(stateDir(this.deps.env, container))) {
+          this.syncContainerAccountDirs(container);
+        }
+      }
+    } catch (err) {
+      this.deps.log?.(`Couldn't update the account folders: ${(err as Error).message}`);
     }
   }
 
@@ -476,8 +519,8 @@ export class ProjectService {
     container: string,
     name: string,
     accountLinkTargets: readonly string[],
+    dirs: EngineAccountDirs = this.accountDirs(),
   ): Promise<void> {
-    const dirs = this.accountDirs();
     const home = containerHome(this.deps.env);
     const args: string[] = [];
     if (dirs.claude !== undefined)
@@ -649,6 +692,8 @@ export class ProjectService {
           await docker.stopContainer(name, 10);
           await this.waitForRemoval(name);
         } else {
+          // Covers a container from an older server, and a missed settings event.
+          this.syncContainerAccountDirs(name);
           return { container: name, created: false, stale };
         }
       } else if (inspect) {
@@ -699,7 +744,20 @@ export class ProjectService {
         facts,
       );
       writeEngineTokenFile(this.deps.env, name, token);
-      writeAccountDirsFile(this.deps.env, name, this.accountDirs());
+      // A failed write must not block the start: the engine warns and falls
+      // back to the home folders.
+      try {
+        writeContainerLayout(this.deps.env, name, {
+          accounts: accounts !== undefined && accounts !== null,
+          claudeDirs: (accounts?.claudeDirs ?? []).map(hostToContainer),
+          accountLinkTargets: facts.accountLinkTargets ?? [],
+        });
+        writeAccountDirsFile(this.deps.env, name, this.accountDirs());
+      } catch (err) {
+        this.deps.log?.(
+          `Couldn't write the account folders for ${name}: ${(err as Error).message}`,
+        );
+      }
       const id = await docker.createContainer(spec);
       try {
         await docker.startContainer(id);
@@ -719,6 +777,14 @@ export class ProjectService {
         fs.rmSync(mountsFile(this.deps.env, name), { recursive: true, force: true });
       }
       this.repos.engines.put({ projectId, container: name, hostPort, token }, this.deps.env.now());
+      // A settings change during the start skipped this container, which had no record yet.
+      try {
+        writeAccountDirsFile(this.deps.env, name, this.containerAccountDirs(name));
+      } catch (err) {
+        this.deps.log?.(
+          `Couldn't update the account folders for ${name}: ${(err as Error).message}`,
+        );
+      }
       this.publishContainer(projectId, name, "running");
       return { container: name, created: true, stale: [] };
     });
@@ -738,7 +804,7 @@ export function skippedLinkMessage(
   link: string,
   accountLinkTargets: readonly string[],
 ): string {
-  const inside = accountLinkTargets.filter((t) => t.startsWith(`${link}/`));
+  const inside = accountLinkTargets.filter((t) => t === link || t.startsWith(`${link}/`));
   if (inside.length > 0) {
     return (
       `${container}: ${link} is a folder, not a link to the default account, because ` +

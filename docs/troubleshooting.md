@@ -218,18 +218,32 @@ found no sign-in in the folder it used. Check the following:
    `account-dirs.json`. An older engine runs `claude` with the container
    user's `~/.claude`, which in accounts mode can be a real folder that
    Docker created to hold the shared `CLAUDE.md`, `settings.json`, `skills`,
-   and `plugins` mounts, without the account's sign-in. The server log then
-   has a warning that `~/.claude` is a folder, not a link to the default
-   account. Rebuild the image and restart the project container:
+   and `plugins` mounts, without the account's sign-in. To check, compare the
+   engine version that `aio doctor` reports with the server's.
+
+   A server log warning that `~/.claude` is a folder, not a link to the
+   default account, doesn't show an older engine. A current engine logs it too
+   and its review runs aren't affected, so don't rebuild for that warning
+   alone.
+
+   If the engine is older, rebuild the image and restart the project
+   container. On a packaged install, run the following:
 
    ```bash
-   scripts/build-image.sh
+   /usr/share/ai-orchestrator/scripts/build-image.sh
    aio project restart PROJECT_ID
 
    ```
 
    Replace `PROJECT_ID` with the project's id, which `aio project list`
    shows.
+
+   > **Warning:** `aio project restart` stops every running box in the project.
+
+   In a source checkout, run `scripts/build-image.sh` from the repository root
+   instead. If the checkout is newer than the running server, restart the
+   server first: the server refuses an image whose engine differs from its own,
+   and the project stays down with `engine_mismatch` until the versions match.
 1. In host mode, sign in on the host. The containers mount `~/.claude`,
    `~/.claude.json`, `~/.codex`, and `~/.copilot`.
 

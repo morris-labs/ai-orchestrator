@@ -70,6 +70,18 @@ describe("readAccountDirs", () => {
     expect(readAccountDirs(file)).toEqual({});
     expect(accountDirsFileIn("/run/aio")).toBe(`/run/aio/${ENGINE_ACCOUNT_DIRS_FILE}`);
   });
+
+  it("keeps the good entries of a file with a bad one, and warns", () => {
+    const dir = tempDir("account-dirs-");
+    const file = join(dir, ENGINE_ACCOUNT_DIRS_FILE);
+    writeFileSync(file, JSON.stringify({ claude: "/data/claude", codex: "relative" }));
+    const warnings: string[] = [];
+    expect(readAccountDirs(file, (m) => warnings.push(m))).toEqual({ claude: "/data/claude" });
+    expect(warnings).toEqual([expect.stringMatching(/codex entry .* isn't valid/)]);
+    writeFileSync(file, "{not json");
+    readAccountDirs(file, (m) => warnings.push(m));
+    expect(warnings[1]).toMatch(/Couldn't read the account folders/);
+  });
 });
 
 describe("account folder for vendor calls", () => {

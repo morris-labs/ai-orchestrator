@@ -305,15 +305,24 @@ In accounts mode, a box behaves as follows:
   account's `.claude.json` and `settings.json`.
 
 Review runs use the default account of each vendor. The server writes the
-default account folders to `account-dirs.json` in the container's state
-directory (`/run/aio` in the container) when the container starts, and
-rewrites it in every running container when you change a default or the
-accounts mode. For every model call, the engine reads the file and starts
-the CLI with `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, or `COPILOT_HOME` set to the
-folder, so a new default applies from the next call without a container
-restart. The engine doesn't depend on the `~/.claude` link in the
-container's home. In host mode, the file holds no folders and each CLI uses
-its home folder.
+default account folders to `account-dirs.json` in a folder that the container
+mounts read-only at `/run/aio-config` when the container starts, and rewrites
+it for each running container when you change a default or the accounts mode.
+For every model call, the engine reads the file and starts the CLI with
+`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, or `COPILOT_HOME` set to the folder, so a
+new default applies from the next call without a container restart. A session
+that continues stays in the account folder it started in. The server also moves
+the container's home links to the new default.
+
+A restart is still needed in two cases, and the server logs the second:
+
+- A container launched in host mode stays on its home folders after you switch
+  to accounts mode.
+- A running container keeps its previous Claude account when the default moves
+  to an account made after the container started.
+
+The engine doesn't depend on the `~/.claude` link in the container's home. In
+host mode, the file holds no folders and each CLI uses its home folder.
 
 ## Transcript retention
 
