@@ -763,6 +763,16 @@ describe("review", () => {
     expect(out).toContain("not verified: below floor");
   });
 
+  it("labels a confirmed finding the floor kept from the fixer", async () => {
+    server.on(`GET /api/v1/runs/${RUN}/findings`, {
+      body: {
+        findings: [{ ...finding, verdict: "confirmed", fixHeldReason: "below_verify_floor" }],
+      },
+    });
+    await cli(["review", "findings", RUN]);
+    expect(out).toContain("not sent to the fixer: below floor");
+  });
+
   it("lists findings with filters", async () => {
     server.on(`GET /api/v1/runs/${RUN}/findings`, { body: { findings: [finding] } });
     await cli(["review", "findings", RUN, "--severity", "P1", "--round", "2"]);

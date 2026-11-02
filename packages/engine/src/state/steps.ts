@@ -276,6 +276,7 @@ export function callTier(
       (f) =>
         f.verdict === "confirmed" &&
         aboveNit(f) &&
+        !belowVerifyFloor(f, ctx.state.request.verifyFloor) &&
         f.round < ctx.round &&
         !declined.has(f.id) &&
         f.file !== null &&
@@ -746,17 +747,41 @@ export function belowFloorPending(ctx: RunContext): Finding[] {
 }
 
 /**
- * Makes each finding's "not verified" label match the run's floor and the
- * finding's verdict, and announces the findings that changed. A retry can
- * move the floor, and a person can waive a finding.
+ * Confirmed findings that would go to the fixer without the verification
+ * floor. They stay confirmed. A fix that already exists still reaches the
+ * confirmer, and a finding the fixer declined is already left to a person.
+ */
+export function heldByFloor(ctx: RunContext): Finding[] {
+  if (ctx.state.request.readOnly) return [];
+  const floor = ctx.state.request.verifyFloor;
+  const declined = new Set(ctx.eng.declined);
+  return ctx.findings.filter(
+    (f) =>
+      f.verdict === "confirmed" &&
+      aboveNit(f) &&
+      !f.fixCommit &&
+      !declined.has(f.id) &&
+      belowVerifyFloor(f, floor),
+  );
+}
+
+/**
+ * Makes each finding's floor labels match the run's floor and the finding's
+ * verdict, and announces the findings that changed. A retry can move the
+ * floor, and a person can waive a finding.
  */
 export async function syncFloorLabels(ctx: RunContext): Promise<void> {
   const below = new Set(belowFloorPending(ctx));
+  const held = new Set(heldByFloor(ctx));
   const changed: Finding[] = [];
   for (const f of ctx.findings) {
-    if (below.has(f) === (f.unverifiedReason !== undefined)) continue;
+    const unverified = below.has(f) !== (f.unverifiedReason !== undefined);
+    const fixHeld = held.has(f) !== (f.fixHeldReason !== undefined);
+    if (!unverified && !fixHeld) continue;
     if (below.has(f)) f.unverifiedReason = "below_verify_floor";
     else delete f.unverifiedReason;
+    if (held.has(f)) f.fixHeldReason = "below_verify_floor";
+    else delete f.fixHeldReason;
     changed.push(f);
   }
   if (changed.length === 0) return;
@@ -882,6 +907,7 @@ export async function runSweep(
   const patterns = ctx.findings.filter(
     (f) =>
       f.verdict === "confirmed" &&
+      !belowVerifyFloor(f, ctx.state.request.verifyFloor) &&
       f.history.some((h) => h.verdict === "confirmed" && h.round === ctx.round),
   );
   if (patterns.length === 0) {
@@ -955,11 +981,16 @@ export interface FixRecord {
   batches: FixBatchRecord[];
 }
 
-/** Findings the fixer should work on: confirmed, above `nit`, and not declined. */
+/** Findings the fixer should work on: confirmed, above `nit`, at or above the floor, and not declined. */
 export function fixTargets(ctx: RunContext): Finding[] {
   const declined = new Set(ctx.eng.declined);
+  const floor = ctx.state.request.verifyFloor;
   return ctx.findings.filter(
-    (f) => f.verdict === "confirmed" && aboveNit(f) && !declined.has(f.id),
+    (f) =>
+      f.verdict === "confirmed" &&
+      aboveNit(f) &&
+      !declined.has(f.id) &&
+      !belowVerifyFloor(f, floor),
   );
 }
 
@@ -1060,6 +1091,21 @@ export async function runFix(
   if (!plan) {
     plan = planBatches(targets, gateFailure);
     await ctx.store.writeJson(planFile, plan);
+  }
+  // A retry can raise the floor after the plan was saved. A batch the fixer
+  // already finished stays, and the others lose what the floor now holds.
+  const held = new Set(heldByFloor(ctx).map((f) => f.id));
+  if (held.size > 0) {
+    const kept: string[][] = [];
+    for (const ids of plan) {
+      const key = `${name}-${batchKey(ids)}`;
+      const finished =
+        (await ctx.store.readJson(ctx.store.roundFile(ctx.round, key))) ??
+        (await ctx.store.readJson(ctx.store.roundFile(ctx.round, `calls/${key}`)));
+      const rest = finished ? ids : ids.filter((id) => !held.has(id));
+      if (rest.length > 0) kept.push(rest);
+    }
+    plan = kept;
   }
 
   const record: FixRecord = { attempt: ctx.eng.gateAttempts + 1, preFixSha, batches: [] };
@@ -1375,6 +1421,7 @@ export function confirmedThisRound(ctx: RunContext): Finding[] {
   return ctx.findings.filter(
     (f) =>
       aboveNit(f) &&
+      !belowVerifyFloor(f, ctx.state.request.verifyFloor) &&
       f.history.some(
         (h) => h.round === ctx.round && h.verdict === "confirmed" && h.actor.role === "disprover",
       ),

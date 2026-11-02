@@ -49,3 +49,6 @@ export function canWaive(f: Finding): boolean {
 
 /** How a finding that the verification floor kept from a disprover reads. */
 export const NOT_VERIFIED_LABEL = "not verified: below the verification floor";
+
+/** How a confirmed finding that the verification floor kept from the fixer reads. */
+export const FIX_HELD_LABEL = "not sent to the fixer: below the verification floor";

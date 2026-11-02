@@ -248,6 +248,87 @@ describe("retry of a run that failed on a vendor's limit", () => {
   });
 });
 
+describe("a floor on confirmed findings", () => {
+  /** A vendor that records which findings each fixer and sweep prompt names. */
+  function recording(vendor: Vendor, seen: { fix: string[]; sweep: string[] }): VendorAdapter {
+    const adapter = disprover(vendor, "ok", []);
+    const answer = (output: unknown) => ({
+      output,
+      model: vendor,
+      sessionId: null,
+      tokens: { in: 1, out: 1 },
+      usage: [],
+      premiumRequests: 0,
+      costEstimate: 0,
+    });
+    const ids = (prompt: string) => [...new Set(prompt.match(/F-\d{4}/g) ?? [])];
+    adapter.fix = ((req: { prompt: string }) => {
+      seen.fix.push(...ids(req.prompt));
+      return Promise.resolve(
+        answer({ fixed: [], notFixed: ids(req.prompt).map((id) => ({ id, reason: "No." })) }),
+      );
+    }) as never;
+    adapter.sweep = ((req: { prompt: string }) => {
+      seen.sweep.push(...ids(req.prompt));
+      return Promise.resolve(answer({ findings: [] }));
+    }) as never;
+    return adapter;
+  }
+
+  /** The real run's shape: earlier disprovers confirmed findings of mixed severity. */
+  async function withConfirmed() {
+    const seen = { fix: [] as string[], sweep: [] as string[] };
+    const made = await failedRun({
+      claude: recording("claude", seen),
+      codex: recording("codex", seen),
+    });
+    const { ctx } = made;
+    for (const f of ctx.findings) {
+      f.verdict = "confirmed";
+      f.history.push({
+        time: ctx.nowIso(),
+        verdict: "confirmed",
+        actor: { kind: "agent", vendor: "codex", role: "disprover" },
+        round: 1,
+      });
+    }
+    return { ...made, seen };
+  }
+
+  it("keeps a confirmed finding below the floor from the fixer and the sweep", async () => {
+    const { run, seen } = await withConfirmed();
+    await run.retry({ verifyFloor: "P2" });
+    const done = await run.settled();
+    expect(new Set(seen.fix)).toEqual(new Set(["F-0001", "F-0002", "F-0003"]));
+    expect(new Set(seen.sweep)).toEqual(new Set(["F-0001", "F-0002", "F-0003"]));
+    const p3 = run.findings.find((f) => f.id === "F-0004");
+    expect(p3?.verdict).toBe("confirmed");
+    expect(p3?.fixHeldReason).toBe("below_verify_floor");
+    // A nit never goes to the fixer, so the floor isn't what kept it away.
+    expect(run.findings.find((f) => f.id === "F-0005")?.fixHeldReason).toBeUndefined();
+    expect(done.notices?.at(-1)).toMatch(/^1 confirmed finding below the P2 verification floor/);
+  });
+
+  it("drops a held finding from a fix plan saved before the floor rose", async () => {
+    const { run, ctx, seen } = await withConfirmed();
+    await ctx.setStage("fix");
+    await ctx.store.writeJson(ctx.store.roundFile(1, "fix-0-1-plan"), [["F-0002", "F-0004"]]);
+    await run.retry({ verifyFloor: "P2" });
+    await run.settled();
+    expect(seen.fix).toEqual(["F-0002"]);
+  });
+
+  it("sends them to the fixer again when the floor is removed", async () => {
+    const { run, ctx, seen } = await withConfirmed();
+    ctx.state.request.verifyFloor = "P2";
+    await run.retry({ verifyFloor: "all" });
+    await run.settled();
+    expect(seen.fix).toContain("F-0004");
+    expect(seen.sweep).toContain("F-0004");
+    expect(run.findings.find((f) => f.id === "F-0004")?.fixHeldReason).toBeUndefined();
+  });
+});
+
 describe("retry refuses", () => {
   const adapters = () => ({
     claude: disprover("claude", "ok", []),

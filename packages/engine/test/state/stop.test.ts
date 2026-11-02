@@ -3,7 +3,7 @@ import { FindingInputSchema, type Finding, type Verdict } from "@aio/contracts";
 import { describe, expect, it } from "vitest";
 import { DecisionNeeded } from "../../src/state/context.js";
 import { drivePrePush, endRound, finish, openFindings } from "../../src/state/prepush.js";
-import { belowFloorPending, syncFloorLabels } from "../../src/state/steps.js";
+import { belowFloorPending, fixTargets, syncFloorLabels } from "../../src/state/steps.js";
 import { makeRun } from "./harness.js";
 
 function finding(id: string, verdict: Verdict, runId: string): Finding {
@@ -165,6 +165,24 @@ describe("the verification floor", () => {
     ctx.findings.push(below("F-0001", ctx.state.id));
     expect(openFindings(ctx)).toEqual([]);
     expect(await endRound(ctx)).toBe("clean_above_floor");
+  });
+
+  it("stops above the floor, never clean, with a confirmed finding the floor holds", async () => {
+    const { ctx } = await makeRun({ request: { verifyFloor: "P2" } });
+    ctx.state.round = 3;
+    ctx.eng.cleanRounds = 1;
+    ctx.findings.push({ ...below("F-0001", ctx.state.id), verdict: "confirmed" });
+    expect(fixTargets(ctx)).toEqual([]);
+    expect(await endRound(ctx)).toBe("clean_above_floor");
+  });
+
+  it("calls the same confirmed finding open once the floor is gone", async () => {
+    const { ctx } = await makeRun();
+    ctx.state.round = 3;
+    ctx.eng.cleanRounds = 1;
+    ctx.findings.push({ ...below("F-0001", ctx.state.id), verdict: "confirmed" });
+    expect(fixTargets(ctx)).toHaveLength(1);
+    expect(await endRound(ctx)).toBeNull();
   });
 
   it("still holds the run open for a pending finding at the floor", async () => {

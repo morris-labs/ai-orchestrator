@@ -17,6 +17,7 @@ import {
   disposeBaseWorktree,
   disposeCheckouts,
   fixTargets,
+  heldByFloor,
   oscillationDecision,
   runConfirm,
   runFind,
@@ -228,8 +229,10 @@ export async function endRound(ctx: RunContext): Promise<StopReason | null> {
 
   if (ctx.eng.cleanRounds >= 2 && openFindings(ctx).length === 0) {
     // Findings below the floor don't hold the run open, but nothing checked
-    // them, so the run can't call itself clean.
-    return belowFloorPending(ctx).length > 0 ? "clean_above_floor" : "clean";
+    // or fixed them, so the run can't call itself clean.
+    return belowFloorPending(ctx).length > 0 || heldByFloor(ctx).length > 0
+      ? "clean_above_floor"
+      : "clean";
   }
   if (ctx.round >= ctx.state.request.roundCap) return "round_cap";
   return null;
@@ -248,7 +251,11 @@ export function openFindings(ctx: RunContext): Finding[] {
   return ctx.findings.filter(
     (f) =>
       (f.verdict === "pending" && !belowVerifyFloor(f, ctx.state.request.verifyFloor)) ||
-      (fixes && f.verdict === "confirmed" && aboveNit(f) && !declined.has(f.id)),
+      (fixes &&
+        f.verdict === "confirmed" &&
+        aboveNit(f) &&
+        !declined.has(f.id) &&
+        !belowVerifyFloor(f, ctx.state.request.verifyFloor)),
   );
 }
 
@@ -258,6 +265,13 @@ export async function finish(ctx: RunContext, reason: StopReason): Promise<void>
   const unchecked = belowFloorPending(ctx).length;
   if (unchecked > 0) {
     const notice = `${unchecked} ${unchecked === 1 ? "finding" : "findings"} below the ${ctx.state.request.verifyFloor} verification floor stayed pending: no disprover checked them, and the fixer didn't work on them.`;
+    if (!ctx.state.notices?.includes(notice)) {
+      ctx.state.notices = [...(ctx.state.notices ?? []), notice];
+    }
+  }
+  const held = heldByFloor(ctx).length;
+  if (held > 0) {
+    const notice = `${held} confirmed ${held === 1 ? "finding" : "findings"} below the ${ctx.state.request.verifyFloor} verification floor didn't go to the fixer.`;
     if (!ctx.state.notices?.includes(notice)) {
       ctx.state.notices = [...(ctx.state.notices ?? []), notice];
     }

@@ -120,6 +120,12 @@ const findingFields = {
    * Absent otherwise and on findings stored before the field existed.
    */
   unverifiedReason: z.enum(["below_verify_floor"]).optional(),
+  /**
+   * Why a confirmed finding doesn't go to the fixer. `below_verify_floor`:
+   * its severity is below the run's verification floor. Absent otherwise and
+   * on findings stored before the field existed.
+   */
+  fixHeldReason: z.enum(["below_verify_floor"]).optional(),
   /** Reviewer label, such as `claude-opus` or `codex-gpt-5`. */
   reportedBy: z.string().min(1),
   /** Other reviewers whose findings merged into this one; drives the overlap rate. */

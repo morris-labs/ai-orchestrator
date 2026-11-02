@@ -284,7 +284,11 @@ function findingRows(findings: Finding[]) {
     findings.map((f) => [
       f.id,
       f.severity,
-      f.unverifiedReason ? `${f.verdict} (not verified: below floor)` : f.verdict,
+      f.unverifiedReason
+        ? `${f.verdict} (not verified: below floor)`
+        : f.fixHeldReason
+          ? `${f.verdict} (not sent to the fixer: below floor)`
+          : f.verdict,
       f.round,
       f.file ? (f.lines ? `${f.file}:${f.lines[0]}-${f.lines[1]}` : f.file) : null,
       f.title,

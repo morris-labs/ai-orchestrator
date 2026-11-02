@@ -16,7 +16,8 @@ the upgrade steps, see `docs/migration-3x.md`.
   `aio review retry RUN_ID`. It resumes at the failed stage from saved state,
   reuses saved calls, and can change roles and the verification floor.
 - A verification floor for review runs, on the launcher and as `--verify-floor`.
-  Findings below it stay pending, labeled, and away from the fixer, and a run with
+  Findings below it stay labeled and away from the fixer and the sweep, even when
+  already confirmed; unchecked ones stay pending. A run with
   such findings stops with `clean_above_floor` instead of `clean`.
 - Model tiers for review runs: code in the engine picks a small, medium, or
   large model for each group and role, with **Auto** or a fixed tier on the

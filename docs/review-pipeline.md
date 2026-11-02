@@ -361,10 +361,17 @@ Findings below the floor behave as follows:
 - Every finish with such findings, for any stop reason, adds a notice with their
   count to the run.
 
+A confirmed finding below the floor also stays away from the fixer and the sweep,
+even when a disprover confirmed it before a retry set the floor. It stays
+`confirmed` and listed, with a label that says the floor kept it from the fixer
+(`fixHeldReason: below_verify_floor`), and it makes the run stop with
+`clean_above_floor` instead of `clean`. A fix that already exists still goes to
+the confirmer. A confirmed `nit` never goes to the fixer, with or without a
+floor, so it gets no label. To send held findings to the fixer again, retry with
+`--verify-floor all`, or with a lower floor.
+
 A finding at or above the floor that a disprover couldn't check stays pending
-and holds the run open, as it does without a floor. Findings that a disprover
-already checked keep their verdicts when a retry raises the floor, so a confirmed
-`P3` still goes to the fixer. Pull request comments and failing checks that the
+and holds the run open, as it does without a floor. Pull request comments and failing checks that the
 post-push loop imports always go to a disprover, because the loop must answer
 them. The floor doesn't change the rest of the post-push loop, so `pr_clean` can
 carry the notice too.
