@@ -64,11 +64,12 @@ export const TierModelsSchema = z
 export type TierModels = z.infer<typeof TierModelsSchema>;
 
 /**
- * The built-in mappings, pinned to exact model IDs. The repository names no
- * Codex or Copilot models, so those vendors stay unmapped.
+ * The built-in mappings, pinned to exact model IDs. Copilot has no mapping and
+ * keeps its automatic model selection.
  */
 export const DEFAULT_TIER_MODELS: TierModels = {
   claude: { small: "claude-haiku-5-5", medium: "claude-sonnet-5-5", large: "claude-opus-5-5" },
+  codex: { small: "gpt-6-luna", medium: "gpt-6-sol", large: "gpt-6.1-sol" },
 };
 
 /**
@@ -77,6 +78,7 @@ export const DEFAULT_TIER_MODELS: TierModels = {
  */
 export const BLOCKED_DEFAULT_FALLBACK: Partial<Record<Vendor, string>> = {
   claude: "claude-opus-5-5",
+  codex: "gpt-6.1-sol",
 };
 
 /** Gives a set of files a tier in the policy file. */

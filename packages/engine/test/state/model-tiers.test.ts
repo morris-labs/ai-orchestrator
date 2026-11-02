@@ -52,17 +52,30 @@ describe("the model of a call", () => {
   });
 
   it("keeps the existing model for an unmapped vendor and records why", async () => {
-    const codex = recording("codex");
-    const { ctx, events } = await makeRun({
-      adapters: { codex: codex.adapter },
-      deps: { models: { codex: "gpt-6-sol" } },
-    });
-    await ctx.callAgent<ReviewOutput>(call("codex", "small"));
-    expect(codex.models).toEqual(["gpt-6-sol"]);
+    const copilot = recording("copilot");
+    const { ctx, events } = await makeRun({ adapters: { copilot: copilot.adapter } });
+    await ctx.callAgent<ReviewOutput>(call("copilot", "small"));
+    expect(copilot.models).toEqual([undefined]);
     const started = events.events.find((e) => e.type === "agent.started") as {
       tierReason?: string;
     };
     expect(started.tierReason).toMatch(/no mapping for the small tier/);
+  });
+
+  it("passes the Codex tier models", async () => {
+    const codex = recording("codex");
+    const { ctx } = await makeRun({ adapters: { codex: codex.adapter } });
+    for (const tier of ["small", "medium", "large"] as const) {
+      await ctx.callAgent<ReviewOutput>(call("codex", tier));
+    }
+    expect(codex.models).toEqual(["gpt-6-luna", "gpt-6-sol", "gpt-6.1-sol"]);
+  });
+
+  it("never lets a tierless Codex call reach the CLI default", async () => {
+    const codex = recording("codex");
+    const { ctx } = await makeRun({ adapters: { codex: codex.adapter } });
+    await ctx.callAgent<ReviewOutput>(call("codex"));
+    expect(codex.models).toEqual(["gpt-6.1-sol"]);
   });
 
   it("uses a policy mapping", async () => {
@@ -118,6 +131,7 @@ describe("blocked models", () => {
   });
 
   it("stops the run when the CLI reports a blocked default", async () => {
+    // The backstop: the CLI answered with a blocked model despite the request.
     const codex = recording("codex", "gpt-6-astra");
     const { ctx } = await makeRun({ adapters: { codex: codex.adapter } });
     await expect(ctx.callAgent<ReviewOutput>(call("codex"))).rejects.toThrow(/gpt-6-astra/);

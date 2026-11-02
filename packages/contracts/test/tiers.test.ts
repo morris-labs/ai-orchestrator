@@ -47,7 +47,21 @@ describe("blocked review models", () => {
       medium: "claude-sonnet-5-5",
       large: "claude-opus-5-5",
     });
-    expect(isBlockedReviewModel("claude", BLOCKED_DEFAULT_FALLBACK.claude ?? "")).toBe(false);
+    expect(DEFAULT_TIER_MODELS.codex).toEqual({
+      small: "gpt-6-luna",
+      medium: "gpt-6-sol",
+      large: "gpt-6.1-sol",
+    });
+    expect(DEFAULT_TIER_MODELS.copilot).toBeUndefined();
+    expect(BLOCKED_DEFAULT_FALLBACK.copilot).toBeUndefined();
+    for (const vendor of ["claude", "codex"] as const) {
+      const fallback = BLOCKED_DEFAULT_FALLBACK[vendor] ?? "";
+      expect(fallback).not.toBe("");
+      expect(isBlockedReviewModel(vendor, fallback)).toBe(false);
+      for (const model of Object.values(DEFAULT_TIER_MODELS[vendor] ?? {})) {
+        expect(isBlockedReviewModel(vendor, model)).toBe(false);
+      }
+    }
   });
 });
 
