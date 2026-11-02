@@ -3,10 +3,19 @@ import {
   RunRequestSchema,
   defaultContainerPath,
   type Box,
+  type ModelTierChoice,
   type Pipeline,
   type Profile,
+  type Role,
   type RunRequest,
+  type Vendor,
 } from "@aio/contracts";
+import {
+  followsProfile,
+  profileDraft,
+  roleOverrides,
+  type RoleDraft,
+} from "../components/rolesModel.js";
 
 export type BaseMode = "merge-base" | "exact";
 
@@ -21,6 +30,14 @@ export interface LauncherForm {
   pipeline: Pipeline;
   prNumber: string;
   profile: Profile;
+  /**
+   * Only the roles a person edited, or `null` when every role follows the
+   * profile. A role left out follows the profile from round to round.
+   */
+  roles: Partial<RoleDraft> | null;
+  /** When true, a vendor never disproves its own findings or confirms its own fixes. */
+  crossVendor: boolean;
+  modelTier: ModelTierChoice;
   readOnly: boolean;
   includeWorktree: boolean;
   roundCap: string;
@@ -36,6 +53,9 @@ export const DEFAULT_FORM: LauncherForm = {
   pipeline: "pre-push",
   prNumber: "",
   profile: "offload",
+  roles: null,
+  crossVendor: true,
+  modelTier: "auto",
   readOnly: false,
   includeWorktree: false,
   roundCap: "25",
@@ -55,6 +75,35 @@ export function formFromBox(form: LauncherForm, box: Box, containerWorkDir?: str
     repoPath: containerWorkDir ?? defaultContainerPath(box.worktree ?? box.targetDir),
     tip: box.branch ?? form.tip,
   };
+}
+
+/** The roles the role table shows: the person's edits over the profile's round 1 roles. */
+export function formRoles(form: LauncherForm): RoleDraft {
+  return { ...profileDraft(form.profile), ...form.roles };
+}
+
+/** Keeps the edits that differ from what the profile gives in every round. */
+function withEdits(form: LauncherForm, edits: Partial<RoleDraft>): LauncherForm {
+  const kept = Object.entries(edits).filter(
+    ([role, vendors]) => !followsProfile(form.profile, role as Role, vendors),
+  );
+  return {
+    ...form,
+    roles: kept.length > 0 ? (Object.fromEntries(kept) as Partial<RoleDraft>) : null,
+  };
+}
+
+/** Gives a role to vendors in the form. */
+export function setFormRole(form: LauncherForm, role: Role, vendors: Vendor[]): LauncherForm {
+  return withEdits(form, { ...form.roles, [role]: vendors });
+}
+
+/**
+ * Switches the profile. Roles a person edited stay; every other role follows
+ * the new profile.
+ */
+export function setFormProfile(form: LauncherForm, profile: Profile): LauncherForm {
+  return withEdits({ ...form, profile }, form.roles ?? {});
 }
 
 export type BuildResult = { ok: true; request: RunRequest } | { ok: false; errors: string[] };
@@ -77,7 +126,14 @@ export function buildRunRequest(form: LauncherForm): BuildResult {
   if (form.base.trim() === "pr" && form.pipeline === "pre-push" && !form.tip.trim()) {
     errors.push("The pull request base needs a tip branch with an open pull request.");
   }
+  const draft = formRoles(form);
+  if (draft.reviewer.length === 0) errors.push("Choose at least one reviewer.");
   if (errors.length > 0) return { ok: false, errors };
+  // Only the roles a person edited go with the request; the others keep
+  // following the profile from round to round. A read-only run has no fix
+  // stage, so its fixer and confirmer choices don't apply.
+  const { fixer: _fixer, confirmer: _confirmer, ...kept } = form.roles ?? {};
+  const overrides = roleOverrides(form.readOnly ? kept : (form.roles ?? {}));
   const parsed = RunRequestSchema.safeParse({
     projectId: form.projectId,
     boxId: form.boxId || undefined,
@@ -89,6 +145,9 @@ export function buildRunRequest(form: LauncherForm): BuildResult {
     pipeline: form.pipeline,
     prNumber,
     profile: form.profile,
+    ...(Object.keys(overrides).length > 0 ? { roles: overrides } : {}),
+    modelTier: form.modelTier,
+    crossVendor: form.crossVendor,
     readOnly: form.readOnly,
     includeWorktree: form.includeWorktree,
     roundCap,

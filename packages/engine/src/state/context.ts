@@ -2,7 +2,12 @@
 // and the pause, resume, and cancel controls. The pre-push and post-push
 // drivers build on it.
 import {
+  BLOCKED_DEFAULT_FALLBACK,
   DEFAULT_CEILINGS,
+  DEFAULT_TIER_MODELS,
+  blockedModelMessage,
+  isBlockedReviewModel,
+  type ModelTier,
   type Actor,
   type AgentRole,
   type Decision,
@@ -15,6 +20,9 @@ import {
   type Stage,
   type Verdict,
   type Vendor,
+  type UsageSample,
+  isBlockedRequestedModel,
+  VENDOR_ROLES,
 } from "@aio/contracts";
 import {
   DEFAULT_TIMEOUTS,
@@ -38,6 +46,7 @@ import type { RunStore } from "../run/store.js";
 import { EngineCheckout, readOnlyCheckoutPath } from "./checkout.js";
 import { TreeGuard } from "./tree-guard.js";
 import { FALLBACK_ORDER } from "../verify/verify.js";
+import { assignRoles } from "./profiles.js";
 import type { RangeInfo } from "../prompts/templates.js";
 
 /** Thrown inside a stage to stop the run and wait for a person. */
@@ -87,7 +96,22 @@ class CallTimeout extends Error {
   }
 }
 
+/** The tier a step chose for a call. */
+export interface CallTier {
+  tier: ModelTier;
+  reason: string;
+  /** The run has a fixed tier, so nothing moves the call up. */
+  fixed: boolean;
+}
+
+/** True for a vendor's answer that didn't match the output schema. */
+function isMalformedOutput(error: unknown): boolean {
+  return (error as { kind?: unknown } | null)?.kind === "output";
+}
+
 export interface AgentCallSpec {
+  /** The call's tier. Absent when the run doesn't use tiers. */
+  tier?: CallTier;
   /** Cache key, unique in the round. A finished call with this key is not repeated on resume. */
   key: string;
   role: AgentRole;
@@ -118,7 +142,12 @@ export interface AgentOutcome<T> {
   tokens: { in: number; out: number };
   /** Tool calls that failed during the call, when the vendor reported any. */
   toolErrors?: string[];
+  /** The tier the call ended up using, after any move. */
+  tier?: { tier: ModelTier; reason: string };
 }
+
+/** How often a run waiting out a ceiling asks the server again. */
+const LEASE_RECHECK_MS = 60_000;
 
 const ROLE_FOR_AGENT: Record<AgentRole, Role> = {
   reviewer: "reviewer",
@@ -142,6 +171,8 @@ export class RunContext {
   readonly shell: CommandRunner;
   readonly timeouts: RoleTimeouts;
   private abort = new AbortController();
+  /** Ends the wait of a pause for a usage limit early. */
+  private pauseWake: AbortController | null = null;
   private pauseRequested = false;
   private cancelRequested = false;
   /** Every parallel call waits on the same gate while the run is paused. */
@@ -209,6 +240,24 @@ export class RunContext {
   /** True when this engine has an adapter for `vendor`. */
   usable(vendor: Vendor): boolean {
     return this.deps.adapters[vendor] !== undefined;
+  }
+
+  /**
+   * The model for a call on `vendor` at `tier`, and a note when the vendor
+   * has no mapping. Every model a call uses comes from here.
+   */
+  private chooseModel(
+    vendor: Vendor,
+    tier: ModelTier | undefined,
+  ): { model: string | undefined; note: string | null } {
+    const existing = this.deps.models?.[vendor] ?? BLOCKED_DEFAULT_FALLBACK[vendor];
+    if (!tier) return { model: existing, note: null };
+    const mapped = this.policy.tierModels?.[vendor]?.[tier] ?? DEFAULT_TIER_MODELS[vendor]?.[tier];
+    if (mapped) return { model: mapped, note: null };
+    return {
+      model: existing,
+      note: `${vendor} has no mapping for the ${tier} tier, so the call uses ${existing ?? "the CLI's default model"}`,
+    };
   }
 
   /** The run's range. `repoPath` overrides the repository path, such as for a read-only checkout. */
@@ -421,15 +470,91 @@ export class RunContext {
   /** Pauses the run until `until` (ISO time), as a ceiling or a limit asks. */
   async pauseUntil(until: string): Promise<void> {
     await this.setStatus("paused", { pausedUntil: until });
-    const ms = Date.parse(until) - this.clock.now();
-    try {
-      if (ms > 0) await this.clock.sleep(ms, this.signal);
-    } catch {
-      throw new RunCancelled();
-    }
+    await this.waitOut(Date.parse(until) - this.clock.now());
+    await this.endPause();
+  }
+
+  private async endPause(): Promise<void> {
     if (this.cancelRequested) throw new RunCancelled();
     this.state.pausedUntil = undefined;
     await this.setStatus("running");
+  }
+
+  /** Waits for `ms`, or until a person wakes the pause. */
+  private async waitOut(ms: number): Promise<void> {
+    if (ms <= 0) return;
+    const wake = new AbortController();
+    this.pauseWake = wake;
+    const onCancel = () => wake.abort();
+    this.signal.addEventListener("abort", onCancel, { once: true });
+    try {
+      await this.clock.sleep(ms, wake.signal);
+    } catch {
+      if (this.signal.aborted) throw new RunCancelled();
+    } finally {
+      this.signal.removeEventListener("abort", onCancel);
+      if (this.pauseWake === wake) this.pauseWake = null;
+    }
+  }
+
+  /** Ends a wait for a usage limit now, such as after a person resumes the run. */
+  wakePause(): void {
+    this.pauseWake?.abort();
+  }
+
+  /**
+   * Gives a role to vendors for the rest of this round too: calls that haven't
+   * started move, including one waiting out a ceiling. A later assignment of
+   * the same role replaces a queued one.
+   */
+  async assignNow(role: Role, vendors: Vendor[]): Promise<void> {
+    this.eng.pendingAssign = this.eng.pendingAssign.filter((a) => a.role !== role);
+    this.eng.pendingAssign.push({ role, vendors });
+    if (role === "reviewer") this.eng.manualRoles.reviewer = vendors;
+    else this.eng.manualRoles[role] = vendors[0] as Vendor;
+    const before = this.state.roles;
+    const after = assignRoles({
+      profile: this.state.profile,
+      round: Math.max(this.round, 1),
+      available: this.availableVendors,
+      manual: this.eng.manualRoles,
+      alternating: this.eng.alternating,
+      crossVendor: this.state.request.crossVendor,
+    });
+    this.state.roles = after;
+    await this.persist();
+    const from = role === "reviewer" ? before.reviewer : [before[role]];
+    const to = role === "reviewer" ? after.reviewer : [after[role]];
+    if (from.join() !== to.join()) {
+      await this.emit({
+        type: "role.reassigned",
+        runId: this.state.id,
+        role,
+        from,
+        to,
+        reason: "manual",
+        effectiveRound: Math.max(this.round, 1),
+      });
+    }
+    this.wakePause();
+  }
+
+  /**
+   * The vendor a pending call uses after a person's assignment: the assigned
+   * vendor, unless the call may not use it or already tried it. A continuation
+   * stays with the vendor that holds its session.
+   */
+  private assignedVendor(spec: AgentCallSpec, vendor: Vendor, tried: readonly Vendor[]): Vendor {
+    if (spec.method === "continueReview" || spec.role === "sweeper") return vendor;
+    const role = ROLE_FOR_AGENT[spec.role];
+    const manual = this.eng.manualRoles[role];
+    if (manual === undefined) return vendor;
+    const assigned = Array.isArray(manual) ? manual : [manual];
+    if (assigned.includes(vendor)) return vendor;
+    return (
+      assigned.find((v) => !tried.includes(v) && !spec.avoid?.includes(v) && this.usable(v)) ??
+      vendor
+    );
   }
 
   // -------------------------------------------------------------------------
@@ -487,7 +612,9 @@ export class RunContext {
     role: AgentRole,
     estimateTokens: number,
     avoid: readonly Vendor[] = [],
+    current?: (vendor: Vendor) => Vendor,
   ): Promise<{ vendor: Vendor; leaseId: string }> {
+    let waiting = false;
     for (;;) {
       await this.checkpoint();
       this.eng.counters.lease += 1;
@@ -513,6 +640,7 @@ export class RunContext {
         throw error;
       }
       if (response.decision === "granted") {
+        if (waiting) await this.endPause();
         const leaseId = response.leaseId;
         if (response.vendor !== vendor) {
           if (!this.usable(response.vendor)) {
@@ -545,7 +673,17 @@ export class RunContext {
         return { vendor, leaseId };
       }
       if (response.decision === "pause") {
-        await this.pauseUntil(response.resumeAt);
+        // Ask again before the old reset time: a person can clear a stale
+        // sample, or a raised ceiling can make room, and only a new lease
+        // sees that.
+        const until = Date.parse(response.resumeAt) - this.clock.now();
+        if (!waiting || this.state.pausedUntil !== response.resumeAt) {
+          await this.setStatus("paused", { pausedUntil: response.resumeAt });
+        }
+        await this.waitOut(Math.min(until, LEASE_RECHECK_MS));
+        if (this.cancelRequested) throw new RunCancelled();
+        waiting = true;
+        vendor = current?.(vendor) ?? vendor;
         continue;
       }
       if (response.action === "fail_role") throw new RoleDenied(role, vendor, response.reason);
@@ -565,7 +703,13 @@ export class RunContext {
   ): Vendor | null {
     if (role === "fixer") return null;
     return (
-      FALLBACK_ORDER.find((v) => !tried.includes(v) && !avoid.includes(v) && this.usable(v)) ?? null
+      FALLBACK_ORDER.find(
+        (v) =>
+          VENDOR_ROLES[v].includes(role) &&
+          !tried.includes(v) &&
+          !avoid.includes(v) &&
+          this.usable(v),
+      ) ?? null
     );
   }
 
@@ -576,21 +720,53 @@ export class RunContext {
    */
   async callAgent<T>(spec: AgentCallSpec): Promise<AgentOutcome<T>> {
     const cached = await this.store.readJson<AgentOutcome<T>>(this.callFile(spec.key));
-    if (cached) return cached;
+    if (cached) {
+      if (!cached.model || !isBlockedReviewModel(cached.vendor, cached.model)) return cached;
+      // A call saved before the rule. A read-only call can run again, but a
+      // write call's commits are already part of the run's history.
+      if (spec.request.toolPolicy === "write") {
+        throw new AgentFailed(
+          spec.role,
+          cached.vendor,
+          blockedModelMessage(cached.vendor, cached.model),
+        );
+      }
+    }
 
     let vendor = spec.vendor;
     const tried: Vendor[] = [];
     let failures = 0;
     let limitHits = 0;
+    let malformed = false;
     for (;;) {
-      const lease = await this.acquireLease(vendor, spec.role, spec.estimateTokens, spec.avoid);
+      vendor = this.assignedVendor(spec, vendor, tried);
+      const lease = await this.acquireLease(
+        vendor,
+        spec.role,
+        spec.estimateTokens,
+        spec.avoid,
+        (v) => this.assignedVendor(spec, v, tried),
+      );
       vendor = lease.vendor;
       const adapter: VendorAdapter | undefined = this.deps.adapters[vendor];
       if (!adapter)
         throw new AgentFailed(spec.role, vendor, `No adapter is configured for ${vendor}.`);
       this.eng.counters.agent += 1;
       const agentId = `${this.state.id}-A${this.eng.counters.agent}`;
-      const model = this.deps.models?.[vendor] ?? vendor;
+      let tier = spec.tier?.tier;
+      let tierReason = spec.tier?.reason;
+      if (tier && malformed && !spec.tier?.fixed && tier !== "large") {
+        tier = tier === "small" ? "medium" : "large";
+        tierReason = `${tierReason}; the last answer was malformed, so one tier up`;
+      }
+      const choice = this.chooseModel(vendor, tier);
+      if (choice.note) tierReason = `${tierReason}; ${choice.note}`;
+      if (choice.model !== undefined && isBlockedRequestedModel(vendor, choice.model)) {
+        await this.settle(lease.leaseId, vendor, spec.role, ZERO_USE);
+        throw new AgentFailed(spec.role, vendor, blockedModelMessage(vendor, choice.model));
+      }
+      const requestModel = choice.model;
+      const model = requestModel ?? vendor;
       const common = {
         runId: this.state.id,
         agentId,
@@ -600,17 +776,33 @@ export class RunContext {
         role: spec.role,
         groupId: spec.groupId,
         round: this.round,
+        ...(tier ? { tier } : {}),
+        ...(tierReason ? { tierReason } : {}),
       };
+      if (tier) {
+        this.deps.log?.info?.("Chose a call's model", {
+          runId: this.state.id,
+          agentId,
+          key: spec.key,
+          vendor,
+          role: spec.role,
+          tier,
+          model,
+          reason: tierReason,
+        });
+      }
       await this.persist();
       await this.emit({ type: "agent.started", ...common });
       const started = this.clock.now();
       const timeoutMs = spec.request.timeoutMs ?? this.timeouts[spec.role];
+      // A write call that turns out to have used a blocked model loses its commits.
+      const headBefore = spec.request.toolPolicy === "write" ? await this.git.head() : null;
       let result: AdapterResult<T>;
       try {
         result =
           spec.request.toolPolicy === "read-only"
             ? await this.treeGuardFor(spec.request.repoPath).run(
-                () => this.invoke<T>(adapter, spec, timeoutMs),
+                () => this.invoke<T>(adapter, spec, timeoutMs, requestModel),
                 (message) =>
                   this.deps.log?.warn("A failed read-only call changed the worktree", {
                     runId: this.state.id,
@@ -619,10 +811,15 @@ export class RunContext {
                     error: message,
                   }),
               )
-            : await this.invoke<T>(adapter, spec, timeoutMs);
+            : await this.invoke<T>(adapter, spec, timeoutMs, requestModel);
       } catch (error) {
         const elapsedMs = Math.max(0, this.clock.now() - started);
         const limit = this.signal.aborted ? null : adapter.detectLimit(error);
+        // A failed or limited call can still hold the vendor's freshest reading.
+        for (const { ceiling: _ignored, ...sample } of usageOfError(error)) {
+          const ceiling = (this.deps.ceilings ?? DEFAULT_CEILINGS)[sample.vendor];
+          await this.emit({ type: "usage.sample", ...sample, ceiling });
+        }
         const outcome = this.signal.aborted
           ? "cancelled"
           : limit
@@ -677,6 +874,7 @@ export class RunContext {
           continue;
         }
         failures += 1;
+        malformed = isMalformedOutput(error);
         // One retry per call, unless the adapter knows a retry fails the same way.
         if (failures >= 2 || adapter.isRetryable?.(error) === false) {
           const reason = (error as Error).message ?? String(error);
@@ -697,11 +895,14 @@ export class RunContext {
         ...(result.aiCredits !== undefined ? { aiCredits: result.aiCredits } : {}),
         costEstimate: result.costEstimate,
       };
+      // A CLI default or an alias can resolve to a blocked model; the run stops
+      // here, before anything uses the answer.
+      const blocked = Boolean(result.model && isBlockedReviewModel(vendor, result.model));
       await this.emit({
         type: "agent.finished",
         ...common,
         model: result.model || model,
-        outcome: "ok",
+        outcome: blocked ? "error" : "ok",
         elapsedMs,
         tokens: actual.tokens,
         premiumRequests: actual.premiumRequests,
@@ -713,6 +914,11 @@ export class RunContext {
         const ceiling = (this.deps.ceilings ?? DEFAULT_CEILINGS)[sample.vendor];
         await this.emit({ type: "usage.sample", ...sample, ceiling });
       }
+      if (blocked) {
+        const message = blockedModelMessage(vendor, result.model);
+        const undone = headBefore ? await this.undoCommits(headBefore) : "";
+        throw new AgentFailed(spec.role, vendor, `${message}${undone}`);
+      }
       const outcome: AgentOutcome<T> = {
         vendor,
         model: result.model || model,
@@ -720,9 +926,26 @@ export class RunContext {
         output: result.output,
         tokens: actual.tokens,
         ...(result.toolErrors?.length ? { toolErrors: result.toolErrors } : {}),
+        ...(tier ? { tier: { tier, reason: tierReason ?? "" } } : {}),
       };
       await this.store.writeJson(this.callFile(spec.key), outcome);
       return outcome;
+    }
+  }
+
+  /**
+   * Moves the branch back to `head` and says so in a sentence for the error,
+   * so no commit from a blocked model stays on the branch. The commits stay
+   * reachable through the reflog.
+   */
+  private async undoCommits(head: string): Promise<string> {
+    try {
+      const now = await this.git.head();
+      if (now === head) return "";
+      await this.git.resetKeep(head);
+      return ` The engine moved the branch back to ${head}; the call's commits end at ${now}.`;
+    } catch (error) {
+      return ` The engine couldn't remove the call's commits: ${describeError(error)}`;
     }
   }
 
@@ -730,6 +953,7 @@ export class RunContext {
     adapter: VendorAdapter,
     spec: AgentCallSpec,
     timeoutMs: number,
+    model: string | undefined,
   ): Promise<AdapterResult<T>> {
     const controller = new AbortController();
     let rejectAborted: (error: Error) => void = () => undefined;
@@ -759,7 +983,7 @@ export class RunContext {
     const request = {
       ...rest,
       timeoutMs,
-      model: this.deps.models?.[adapter.vendor],
+      model,
       signal: controller.signal,
     };
     try {
@@ -805,6 +1029,12 @@ export class RunContext {
       costEstimate: actual.costEstimate,
     });
   }
+}
+
+/** The usage samples an adapter attached to a failed call. */
+function usageOfError(error: unknown): UsageSample[] {
+  const usage = (error as { usage?: unknown } | null)?.usage;
+  return Array.isArray(usage) ? (usage as UsageSample[]) : [];
 }
 
 /** An error's message for a log line, on one line and at most 500 characters. */

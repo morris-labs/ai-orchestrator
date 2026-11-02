@@ -441,3 +441,102 @@ describe("a read-only call", () => {
     ).resolves.toMatchObject({ vendor: "codex" });
   });
 });
+
+describe("usage from failed calls", () => {
+  it("records the samples a failed call reported", async () => {
+    const sample = {
+      vendor: "codex" as const,
+      account: "codex/work",
+      window: "5h" as const,
+      utilization: 0.2,
+      spendUsd: null,
+      ceiling: { kind: "utilization" as const, window: "5h" as const, max: 0.7 },
+      resetAt: null,
+      sampleSource: "codex_session" as const,
+    };
+    const adapter = {
+      ...answering("codex"),
+      vendor: "codex",
+      review: () =>
+        Promise.reject(Object.assign(new LimitError("usage limit"), { usage: [sample] })),
+      detectLimit: (e: unknown) =>
+        e instanceof LimitError ? { resetAt: null, message: "usage limit" } : null,
+    } as unknown as VendorAdapter;
+    const { ctx, events } = await makeRun({
+      adapters: { codex: adapter, copilot: answering("copilot") },
+    });
+    await ctx.callAgent(review(ctx.state.request.repoPath));
+    expect(events.ofType("usage.sample")[0]).toMatchObject({
+      vendor: "codex",
+      utilization: 0.2,
+    });
+  });
+});
+
+describe("assigning a role during a round", () => {
+  it("moves a call that hasn't started, and collapses queued duplicates", async () => {
+    const { ctx } = await makeRun({
+      adapters: { codex: answering("codex"), copilot: answering("copilot") },
+    });
+    await ctx.assignNow("disprover", ["codex"]);
+    await ctx.assignNow("disprover", ["copilot"]);
+    expect(ctx.eng.pendingAssign).toEqual([{ role: "disprover", vendors: ["copilot"] }]);
+    const out = await ctx.callAgent(review(ctx.state.request.repoPath));
+    expect(out.vendor).toBe("copilot");
+    expect(ctx.state.roles.disprover).toBe("copilot");
+  });
+
+  it("doesn't move a call to a vendor it must avoid", async () => {
+    const { ctx } = await makeRun({
+      adapters: { codex: answering("codex"), copilot: answering("copilot") },
+    });
+    await ctx.assignNow("disprover", ["copilot"]);
+    const out = await ctx.callAgent({
+      ...review(ctx.state.request.repoPath),
+      avoid: ["copilot"],
+    });
+    expect(out.vendor).toBe("codex");
+  });
+});
+
+describe("waiting out a ceiling", () => {
+  it("asks the server again before the old reset time", async () => {
+    let asks = 0;
+    const granting = new GrantingBroker();
+    const broker: LeaseBroker = {
+      acquire: async (req) => {
+        asks += 1;
+        if (asks === 1) {
+          return {
+            decision: "pause",
+            leaseId: req.leaseId,
+            resumeAt: "2099-01-01T00:00:00.000Z",
+            reason: "Over its ceiling.",
+          };
+        }
+        return granting.acquire(req);
+      },
+      settle: () => undefined,
+    };
+    const { ctx } = await makeRun({ adapters: { codex: answering("codex") }, broker });
+    await ctx.callAgent(review(ctx.state.request.repoPath));
+    expect(asks).toBe(2);
+    expect(ctx.state.status).toBe("running");
+    expect(ctx.state.pausedUntil).toBeUndefined();
+  });
+});
+
+describe("limit fallback", () => {
+  it("doesn't offer a vendor a role it can't take", async () => {
+    const copilot = answering("copilot");
+    const { ctx } = await makeRun({ adapters: { codex: limited("codex"), copilot } });
+    await expect(
+      ctx.callAgent({
+        ...review(ctx.state.request.repoPath),
+        role: "confirmer",
+        method: "confirm",
+        vendor: "codex",
+      }),
+    ).rejects.toThrow(/kept hitting its limit/);
+  });
+});

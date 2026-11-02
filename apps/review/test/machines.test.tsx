@@ -6,8 +6,10 @@ import { FakeServer, makeBoxView } from "@aio/ui/testing";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { App } from "../src/App.js";
+import { EMPTY_REFS } from "../src/lib/repos.js";
 import { FleetProvider } from "../src/components/machines.js";
 import { fleetRuns, MachineFleet, mergeRuns, SHOW_OFFLINE_RUNS_KEY } from "../src/state/fleet.js";
+import { Launcher } from "../src/screens/Launcher.js";
 import { AppStore, StoreProvider } from "../src/state/store.js";
 import { lastRun, loadDemoEvents, project } from "./helpers/data.js";
 import { fakeHub, machine } from "./helpers/hub.js";
@@ -62,6 +64,58 @@ function setup(machines = [LOCAL, BUILD, LAPTOP, OLD]) {
   });
   return { local, build, hub, store, fleet };
 }
+
+describe("the launcher on another machine", () => {
+  it("sends the role, tier, and cross-vendor controls to the selected machine", async () => {
+    const { local, build, fleet } = setup();
+    build.on("projects.list", () => ({ projects: [project] }));
+    build.on("projects.repos.list", () => ({
+      repos: [
+        {
+          path: "/srv/src/build-app",
+          name: "build-app",
+          currentBranch: "topic",
+          headSha: null,
+          dirty: false,
+        },
+      ],
+    }));
+    build.on("projects.repos.refs", () => EMPTY_REFS);
+    build.on("runs.create", () => remoteRun());
+    fleet.select("m1");
+    render(
+      <StoreProvider store={fleet.storeFor("m1")}>
+        <Launcher prefill={{ project: project.project.id, box: null }} />
+      </StoreProvider>,
+    );
+    await waitFor(() =>
+      expect(screen.getByLabelText(/^Repository/)).toHaveValue("/srv/src/build-app"),
+    );
+    fireEvent.change(screen.getByLabelText(/^Tier/), { target: { value: "large" } });
+    fireEvent.click(screen.getByLabelText("Cross-vendor checks"));
+    const table = screen.getByRole("table", { name: "Roles" });
+    fireEvent.click(within(table).getByRole("radio", { name: "fixer: Codex" }));
+    fireEvent.click(screen.getByRole("button", { name: "Start" }));
+    await waitFor(() => expect(build.callsTo("runs.create")).toHaveLength(1));
+    expect(build.callsTo("runs.create")[0]!.body).toMatchObject({
+      repoPath: "/srv/src/build-app",
+      roles: { fixer: "codex" },
+      modelTier: "large",
+      crossVendor: false,
+    });
+    expect(local.callsTo("runs.create")).toHaveLength(0);
+  });
+});
+
+describe("the usage view on another machine", () => {
+  it("loads the selected machine's windows through its store", async () => {
+    const { build, fleet } = setup();
+    const store = fleet.storeFor("m1");
+    await store.loadUsage();
+    expect(build.callsTo("usage.get").length).toBeGreaterThan(0);
+    expect(store.getState().usageInfo).toEqual([]);
+  });
+});
 
 describe("the machine fleet", () => {
   it("lists every shown machine's runs and leaves out revoked machines", async () => {

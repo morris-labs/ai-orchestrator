@@ -24,6 +24,7 @@ import {
   splitMountSpec,
   type HostEnv,
 } from "../../src/records/env.js";
+import { ProjectService } from "../../src/projects/service.js";
 import { infraFile, worktreeNotesDir } from "../../src/worktrees/worktrees.js";
 import { addWorktree } from "../../src/worktrees/index.js";
 import { initRepo, tempDir } from "../worktrees/helpers.js";
@@ -235,7 +236,30 @@ describe("the launch spec on Windows", () => {
       expect.stringMatching(
         /^C:\/Users\/tester\/\.ai-orchestrator\/broker\/[0-9a-f]{16}:\/run\/aio-broker:ro$/,
       ),
+      expect.stringMatching(
+        /^C:\/Users\/tester\/\.ai-orchestrator\/engine-config\/[0-9a-f]{16}:\/run\/aio-config:ro$/,
+      ),
     ]);
+    const config = spec.binds.at(-1)!;
+    expect(splitMountSpec(config, "win32")).toMatchObject({
+      host: expect.stringMatching(/^C:\//),
+      container: "/run/aio-config",
+      options: "ro",
+    });
+  });
+
+  it("names the default account folders by their container paths", () => {
+    const service = new ProjectService({
+      env: winEnv,
+      events: { on: () => undefined },
+      docker: {},
+      settings: {
+        get: () => ({ accountsMode: "accounts", accountDefaults: { codex: "codex/work" } }),
+      },
+    } as never);
+    expect(service.accountDirs()).toEqual({
+      codex: "/mnt/host/c/Users/tester/.ai-orchestrator/accounts/codex/work",
+    });
   });
 
   it("gives docker run the same binds and working directory", () => {

@@ -25,6 +25,9 @@ export class GitError extends Error {
  */
 export const NO_HOOKS = ["-c", "core.hooksPath=/dev/null"] as const;
 
+/** The paths `Git.grepFiles` found, or why it stopped. */
+export type GrepResult = string[] | "timeout" | "error";
+
 export class Git {
   constructor(
     private readonly runner: CommandRunner,
@@ -118,6 +121,11 @@ export class Git {
     return true;
   }
 
+  /** Moves the branch to `rev` and keeps uncommitted changes; fails if it can't keep them. */
+  async resetKeep(rev: string): Promise<void> {
+    await this.run(["reset", "--keep", rev]);
+  }
+
   /** `git status --porcelain` lines, untracked files included, ignored files not. */
   async statusLines(): Promise<string[]> {
     const out = await this.run(["status", "--porcelain", "--untracked-files=all"]);
@@ -199,6 +207,37 @@ export class Git {
   async show(rev: string, path: string): Promise<string | null> {
     const result = await this.exec(["show", `${rev}:${path}`], { timeoutMs: 60_000 });
     return result.exitCode === 0 ? result.stdout : null;
+  }
+
+  /** The diff with whole functions as context, for reading which symbols changed. */
+  async functionDiff(from: string, to: string, timeoutMs: number): Promise<string> {
+    const result = await this.exec(
+      ["diff", "--no-color", "--no-ext-diff", "--no-textconv", "--find-renames", "-W", from, to],
+      { timeoutMs },
+    );
+    if (result.timedOut || result.exitCode !== 0) {
+      throw new Error(`git diff -W ${from} ${to} failed.`);
+    }
+    return result.stdout;
+  }
+
+  /**
+   * The files at `rev` that hold `word` as a whole word, as paths from the
+   * repository root, or why the search stopped, so the caller can fall back.
+   * `-e` keeps the word from acting as an option and no shell runs. Callers
+   * must pass a resolved commit: `rev` has no such protection.
+   */
+  async grepFiles(word: string, rev: string, timeoutMs: number): Promise<GrepResult> {
+    const args = ["grep", "-l", "-z", "-w", "-F", "-I", "--full-name", "-e", word, rev, "--", ":/"];
+    const result = await this.exec(args, { timeoutMs });
+    if (result.timedOut) return "timeout";
+    if (result.exitCode === 1) return [];
+    if (result.exitCode !== 0) return "error";
+    const prefix = `${rev}:`;
+    return result.stdout
+      .split("\0")
+      .filter((p) => p !== "")
+      .map((p) => (p.startsWith(prefix) ? p.slice(prefix.length) : p));
   }
 
   async head(): Promise<string> {

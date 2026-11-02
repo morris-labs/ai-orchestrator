@@ -1,43 +1,10 @@
 // Profiles and role assignment (design.md, "Profiles" and "Vendor roles").
-import type { FileGroup, Profile, RoleAssignment, Vendor } from "@aio/contracts";
+import { BALANCED_CLAUDE_ROUNDS, VENDOR_ROLES, profileRoles } from "@aio/contracts";
+import type { AgentRole, FileGroup, Profile, RoleAssignment, Vendor } from "@aio/contracts";
 import { FOCUS_AREAS } from "../prompts/templates.js";
 
-/** Rounds in which the `balanced` profile has Claude review. */
-export const BALANCED_CLAUDE_ROUNDS = 2;
-
-/** The roles a profile gives in a round, before availability and manual changes. */
-export function profileRoles(profile: Profile, round: number): RoleAssignment {
-  switch (profile) {
-    case "offload":
-      return {
-        reviewer: ["codex", "copilot"],
-        disprover: "codex",
-        confirmer: "codex",
-        fixer: "claude",
-      };
-    case "balanced":
-      return round <= BALANCED_CLAUDE_ROUNDS
-        ? {
-            reviewer: ["claude", "codex", "copilot"],
-            disprover: "codex",
-            confirmer: "codex",
-            fixer: "claude",
-          }
-        : {
-            reviewer: ["codex", "copilot"],
-            disprover: "codex",
-            confirmer: "codex",
-            fixer: "claude",
-          };
-    case "fast":
-      return {
-        reviewer: ["claude", "codex"],
-        disprover: "claude",
-        confirmer: "codex",
-        fixer: "claude",
-      };
-  }
-}
+// The profile defaults live in the contracts, so the Review app can show them.
+export { BALANCED_CLAUDE_ROUNDS, profileRoles };
 
 export interface RoleOptions {
   profile: Profile;
@@ -52,10 +19,20 @@ export interface RoleOptions {
   crossVendor: boolean;
 }
 
-function firstAvailable(preferred: Vendor, available: readonly Vendor[], avoid?: Vendor): Vendor {
+/**
+ * `preferred` when it can run, or the first vendor that can take the role. A
+ * run with no such vendor still gets any available one, so it can start.
+ */
+function firstAvailable(
+  role: AgentRole,
+  preferred: Vendor,
+  available: readonly Vendor[],
+  avoid?: Vendor,
+): Vendor {
   if (available.includes(preferred) && preferred !== avoid) return preferred;
   const order: Vendor[] = ["codex", "copilot", "claude"];
   return (
+    order.find((v) => available.includes(v) && v !== avoid && VENDOR_ROLES[v].includes(role)) ??
     order.find((v) => available.includes(v) && v !== avoid) ??
     order.find((v) => available.includes(v)) ??
     preferred
@@ -68,13 +45,18 @@ export function assignRoles(options: RoleOptions): RoleAssignment {
   const manual = options.manual ?? {};
   let reviewer = (manual.reviewer ?? base.reviewer).filter((v) => options.available.includes(v));
   if (reviewer.length === 0)
-    reviewer = [firstAvailable(base.reviewer[0] as Vendor, options.available)];
+    reviewer = [firstAvailable("reviewer", base.reviewer[0] as Vendor, options.available)];
   if (options.alternating && reviewer.length > 1) {
     reviewer = [reviewer[(options.round - 1) % reviewer.length] as Vendor];
   }
-  const fixer = firstAvailable(manual.fixer ?? base.fixer, options.available);
-  const disprover = firstAvailable(manual.disprover ?? base.disprover, options.available);
+  const fixer = firstAvailable("fixer", manual.fixer ?? base.fixer, options.available);
+  const disprover = firstAvailable(
+    "disprover",
+    manual.disprover ?? base.disprover,
+    options.available,
+  );
   const confirmer = firstAvailable(
+    "confirmer",
     manual.confirmer ?? base.confirmer,
     options.available,
     options.crossVendor ? fixer : undefined,

@@ -1,12 +1,22 @@
-// Run launcher: container, repository, base, tip, pipeline, profile, options,
-// a group preview, and Start. A deep link `?project=&box=` prefills it.
-import type { ProjectSummary, RouteOf } from "@aio/contracts";
+// Run launcher: container, repository, base, tip, pipeline, profile and
+// roles, options, a group preview, and Start. A deep link `?project=&box=` prefills it.
+import type { ModelTierChoice, ProjectSummary, RouteOf } from "@aio/contracts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ErrorBanner, Field } from "../components/common.js";
 import { listRefs, listRepos, EMPTY_REFS, type RepoInfo, type RepoRefs } from "../lib/repos.js";
 import { href, navigate } from "../state/router.js";
 import { useApiClient, useRestoreFocusAfterBusy } from "@aio/ui/hooks";
-import { DEFAULT_FORM, buildRunRequest, formFromBox, type LauncherForm } from "./launcherModel.js";
+import { ProfileSelect, RoleTable } from "../components/roles.js";
+import {
+  DEFAULT_FORM,
+  buildRunRequest,
+  formFromBox,
+  formRoles,
+  setFormProfile,
+  setFormRole,
+  type LauncherForm,
+} from "./launcherModel.js";
+import { roleConflicts } from "../components/rolesModel.js";
 
 type Preview = RouteOf<"runs.preview">["response"];
 
@@ -372,14 +382,75 @@ export function Launcher({ prefill }: { prefill: { project: string | null; box: 
                 </datalist>
               </Field>
             ) : null}
+          </fieldset>
+
+          <fieldset>
+            <legend>Profile and roles</legend>
             <Field label="Profile">
-              <select
+              <ProfileSelect
                 value={form.profile}
-                onChange={(e) => update({ profile: e.target.value as LauncherForm["profile"] })}
+                onChange={(profile) => {
+                  setForm((f) => setFormProfile(f, profile));
+                  setPreview(null);
+                }}
+              />
+            </Field>
+            <p className="muted small">
+              The table shows the roles of round 1. A role you change holds until you switch the
+              run&apos;s profile; the others follow the profile.
+            </p>
+            <RoleTable
+              name="launcher-role"
+              value={formRoles(form)}
+              onChange={(role, vendors) => setForm((f) => setFormRole(f, role, vendors))}
+              {...(preview?.vendors ? { available: preview.vendors } : {})}
+              {...(form.readOnly ? { unused: ["fixer", "confirmer"] as const } : {})}
+            />
+            <label className="field inline">
+              <input
+                type="checkbox"
+                checked={form.crossVendor}
+                onChange={(e) => update({ crossVendor: e.target.checked })}
+              />
+              <span className="field-label">Cross-vendor checks</span>
+            </label>
+            <p className="muted small">
+              With this on, a vendor never disproves its own findings or confirms its own fixes.
+            </p>
+            {roleConflicts(formRoles(form), form.crossVendor).map((text) => (
+              <p key={text} className="small" role="status">
+                {text}
+              </p>
+            ))}
+            <div className="row">
+              {/* aria-disabled, not disabled: a disabled button would lose keyboard focus. */}
+              <button
+                type="button"
+                aria-disabled={form.roles === null}
+                onClick={() => setForm((f) => ({ ...f, roles: null }))}
               >
-                <option value="offload">offload: Claude fixes only</option>
-                <option value="balanced">balanced: Claude reviews rounds 1 and 2</option>
-                <option value="fast">fast: Claude reviews every round</option>
+                Reset to profile defaults
+              </button>
+              {form.roles !== null ? (
+                <span className="muted small">Changed from the profile&apos;s defaults.</span>
+              ) : null}
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend>Model tier</legend>
+            <Field
+              label="Tier"
+              hint="Auto picks a tier for each group and role. A fixed tier applies to the run, but with Small, code, disprovers, confirmers, and fixers still use Medium."
+            >
+              <select
+                value={form.modelTier}
+                onChange={(e) => update({ modelTier: e.target.value as ModelTierChoice })}
+              >
+                <option value="auto">Auto</option>
+                <option value="small">Small</option>
+                <option value="medium">Medium</option>
+                <option value="large">Large</option>
               </select>
             </Field>
           </fieldset>
@@ -442,6 +513,8 @@ export function Launcher({ prefill }: { prefill: { project: string | null; box: 
               <tr>
                 <th scope="col">Group</th>
                 <th scope="col">Kind</th>
+                <th scope="col">Tier</th>
+                <th scope="col">Reason</th>
                 <th scope="col">Changed lines</th>
                 <th scope="col">Files</th>
               </tr>
@@ -454,6 +527,8 @@ export function Launcher({ prefill }: { prefill: { project: string | null; box: 
                     {g.kind}
                     {g.riskPath ? " (risk path)" : ""}
                   </td>
+                  <td>{g.tier ?? "None"}</td>
+                  <td>{g.tierReason ?? ""}</td>
                   <td className="ab-num">{g.changedLines}</td>
                   <td className="ab-mono">{g.files.join(", ")}</td>
                 </tr>

@@ -10,6 +10,7 @@ import {
   RunIdSchema,
   VendorSchema,
 } from "./common.js";
+import { ModelTierChoiceSchema, ModelTierSchema } from "./tiers.js";
 
 export const PipelineSchema = z.enum(["pre-push", "post-push"]);
 export type Pipeline = z.infer<typeof PipelineSchema>;
@@ -53,6 +54,72 @@ export const StageSchema = z.enum([
 ]);
 export type Stage = z.infer<typeof StageSchema>;
 
+/** The vendor for each role. Several reviewers can run in one round. */
+export const RoleAssignmentSchema = z.object({
+  reviewer: z.array(VendorSchema).min(1),
+  disprover: VendorSchema,
+  confirmer: VendorSchema,
+  fixer: VendorSchema,
+});
+export type RoleAssignment = z.infer<typeof RoleAssignmentSchema>;
+
+/**
+ * Roles a run starts with in place of the profile's defaults. Each role it
+ * names holds from round 1 until a profile switch, like a role a person
+ * assigns with `runs.assign`; the roles it leaves out follow the profile.
+ */
+export const RoleOverridesSchema = RoleAssignmentSchema.partial();
+export type RoleOverrides = z.infer<typeof RoleOverridesSchema>;
+
+/** Rounds in which the `balanced` profile has Claude review. */
+export const BALANCED_CLAUDE_ROUNDS = 2;
+
+/**
+ * The roles each vendor can take when the engine or the server chooses for it:
+ * a fallback, a replacement, or a role with no available default. A person can
+ * still name any vendor for a role. Copilot disproves because the `offload`
+ * profile relies on it for Codex's findings.
+ */
+export const VENDOR_ROLES: Record<z.infer<typeof VendorSchema>, readonly AgentRole[]> = {
+  claude: ["reviewer", "disprover", "fixer", "sweeper"],
+  codex: ["reviewer", "disprover", "confirmer", "sweeper"],
+  copilot: ["reviewer", "disprover", "sweeper"],
+};
+
+/** The roles a profile gives in a round, before availability and manual changes. */
+export function profileRoles(profile: Profile, round: number): RoleAssignment {
+  switch (profile) {
+    case "offload":
+      return {
+        reviewer: ["codex", "copilot"],
+        disprover: "codex",
+        confirmer: "codex",
+        fixer: "claude",
+      };
+    case "balanced":
+      return round <= BALANCED_CLAUDE_ROUNDS
+        ? {
+            reviewer: ["claude", "codex", "copilot"],
+            disprover: "codex",
+            confirmer: "codex",
+            fixer: "claude",
+          }
+        : {
+            reviewer: ["codex", "copilot"],
+            disprover: "codex",
+            confirmer: "codex",
+            fixer: "claude",
+          };
+    case "fast":
+      return {
+        reviewer: ["claude", "codex"],
+        disprover: "claude",
+        confirmer: "codex",
+        fixer: "claude",
+      };
+  }
+}
+
 /** A run request with every default resolved, as `RunState.request` stores it. */
 export const ResolvedRunRequestSchema = z.object({
   projectId: z.string().min(1),
@@ -82,6 +149,19 @@ export const ResolvedRunRequestSchema = z.object({
   roundCap: z.number().int().positive(),
   overlapThreshold: FractionSchema,
   continuationCap: z.number().int().nonnegative(),
+  /**
+   * Roles that replace the profile's defaults from round 1. Absent in
+   * requests from clients and runs that predate it.
+   */
+  roles: RoleOverridesSchema.optional(),
+  /**
+   * `auto`, or a tier for the run. A fixed `small` tier still gives code,
+   * disprovers, confirmers, and fixers the medium tier. The engine stores
+   * `auto` for a new request without it. A stored run without it uses each
+   * vendor's configured model; where a CLI default could be a blocked model,
+   * it uses the safe fallback model instead.
+   */
+  modelTier: ModelTierChoiceSchema.optional(),
 });
 export type ResolvedRunRequest = z.infer<typeof ResolvedRunRequestSchema>;
 
@@ -144,15 +224,6 @@ export const EngineRunCreateSchema = RunRequestFieldsSchema.extend({
   .superRefine(refuseReadOnlyPostPush)
   .transform(foldExactBase);
 export type EngineRunCreate = z.infer<typeof EngineRunCreateSchema>;
-
-/** The vendor for each role. Several reviewers can run in one round. */
-export const RoleAssignmentSchema = z.object({
-  reviewer: z.array(VendorSchema).min(1),
-  disprover: VendorSchema,
-  confirmer: VendorSchema,
-  fixer: VendorSchema,
-});
-export type RoleAssignment = z.infer<typeof RoleAssignmentSchema>;
 
 export const StopReasonSchema = z.enum([
   "clean",
@@ -244,6 +315,10 @@ export const FileGroupSchema = z.object({
   /** True when any file matches a policy risk path; such a group is always major. */
   riskPath: z.boolean(),
   hunks: z.array(HunkSchema),
+  /** The group's model tier. Absent in runs that predate tiers. */
+  tier: ModelTierSchema.optional(),
+  /** Why the group has its tier. */
+  tierReason: z.string().optional(),
 });
 export type FileGroup = z.infer<typeof FileGroupSchema>;
 

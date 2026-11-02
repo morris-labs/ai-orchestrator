@@ -750,6 +750,8 @@ export const RunListQuerySchema = z.object({
 });
 
 export const RunPreviewSchema = z.object({
+  /** The vendors with an adapter in the container. Absent from an older engine. */
+  vendors: z.array(VendorSchema).optional(),
   baseSha: CommitShaSchema,
   tipSha: CommitShaSchema,
   /** The commit the diff starts from: the merge base, or `baseSha` with `exactBase`. */
@@ -928,7 +930,7 @@ function reviewRoutes<const P extends string, B extends z.ZodTypeAny>(
     "runs.assign": http({
       method: "POST",
       path: `${runs}/:runId/assign`,
-      summary: "Give a role to one or more vendors from the next round.",
+      summary: "Give a role to one or more vendors, for calls that haven't started.",
       body: z.object({ role: RoleSchema, vendors: z.array(VendorSchema).min(1) }),
       response: RunStateSchema,
       errors: runErrors,
@@ -1647,7 +1649,19 @@ export const serverRoutes = {
     method: "GET",
     path: `${V1}/usage`,
     summary: "Usage per vendor account against its ceiling.",
-    response: z.object({ vendors: z.array(VendorUsageSchema) }),
+    response: z.object({
+      vendors: z.array(VendorUsageSchema),
+      /** The server's clock, which reset times compare against. */
+      time: z.string().optional(),
+    }),
+  }),
+  "usage.clear": http({
+    method: "POST",
+    path: `${V1}/usage/clear`,
+    summary:
+      "Clear a vendor's usage block, such as after you buy a reset. The next real sample replaces it.",
+    body: z.object({ vendor: VendorSchema, account: z.string().min(1).optional() }),
+    response: z.object({ vendors: z.array(VendorUsageSchema), cleared: z.number().int() }),
   }),
 
   // Machines (multi-host)

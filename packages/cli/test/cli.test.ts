@@ -853,6 +853,41 @@ describe("review", () => {
     expect(await cli([...args, "--continuation-cap", "-1"])).not.toBe(0);
   });
 
+  it("passes a model tier and refuses an unknown one", async () => {
+    server.on("POST /api/v1/runs", { status: 201, body: runState });
+    const args = ["review", "start", "--project", PROJECT_ID, "--repo", "/r"];
+    expect(await cli(args)).toBe(0);
+    expect(last()?.body).toMatchObject({ modelTier: "auto" });
+    expect(await cli([...args, "--tier", "small"])).toBe(0);
+    expect(last()?.body).toMatchObject({ modelTier: "small" });
+    expect(await cli([...args, "--tier", "fable"])).not.toBe(0);
+  });
+
+  it("passes starting roles and refuses a bad role", async () => {
+    server.on("POST /api/v1/runs", { status: 201, body: runState });
+    const args = ["review", "start", "--project", PROJECT_ID, "--repo", "/r"];
+    expect(await cli([...args, "--role", "reviewer=codex,copilot", "--role", "fixer=codex"])).toBe(
+      0,
+    );
+    expect(last()?.body).toMatchObject({
+      roles: { reviewer: ["codex", "copilot"], fixer: "codex" },
+    });
+    expect(await cli(args)).toBe(0);
+    expect(last()?.body).not.toHaveProperty("roles");
+    const calls = server.requests.length;
+    for (const bad of [
+      ["--role", "disprover=codex,copilot"],
+      ["--role", "tester=codex"],
+      ["--role", "fixer=gemini"],
+      ["--role", "fixer"],
+      ["--role", "fixer=codex", "--role", "fixer=claude"],
+    ]) {
+      expect(await cli([...args, ...bad])).toBe(2);
+    }
+    expect(server.requests.length).toBe(calls);
+    expect(err).toContain("The disprover role takes one vendor.");
+  });
+
   it("refuses a read-only post-push run without calling the server", async () => {
     server.on("POST /api/v1/runs", { status: 201, body: runState });
     const args = ["review", "start", "--project", PROJECT_ID, "--repo", "/r", "--read-only"];
@@ -917,10 +952,40 @@ describe("review", () => {
   });
 
   it("shows usage against ceilings", async () => {
-    server.on("GET /api/v1/usage", { body: { vendors: [vendorUsage] } });
+    server.on("GET /api/v1/usage", {
+      body: { vendors: [vendorUsage], time: "2020-01-01T00:00:00.000Z" },
+    });
     await cli(["review", "usage"]);
     expect(out).toContain("42%");
     expect(out).toContain("60% of 5h");
+  });
+
+  it("shows every window and marks one whose reset has passed", async () => {
+    const sample = vendorUsage.latest[0];
+    server.on("GET /api/v1/usage", {
+      body: {
+        time: "2030-06-01T00:00:00.000Z",
+        vendors: [
+          {
+            ...vendorUsage,
+            latest: [
+              { ...sample, window: "5h", resetAt: "2030-01-01T00:00:00.000Z" },
+              { ...sample, window: "7d", resetAt: "2031-01-01T00:00:00.000Z" },
+            ],
+          },
+        ],
+      },
+    });
+    await cli(["review", "usage"]);
+    expect(out).toMatch(/5h\s+reset/);
+    expect(out).toMatch(/7d\s+42%/);
+  });
+
+  it("clears a usage block", async () => {
+    server.on("POST /api/v1/usage/clear", { body: { vendors: [], cleared: 1 } });
+    await cli(["review", "clear-usage", "codex", "--account", "codex/work"]);
+    expect(last()?.body).toEqual({ vendor: "codex", account: "codex/work" });
+    expect(out).toContain("Cleared 1 usage blocks");
   });
 
   it("lists findings with filters", async () => {
@@ -1889,5 +1954,13 @@ describe("Windows paths", () => {
       await winCli(["review", "start", "--project", PROJECT_ID, "--repo", "\\\\server\\share"]),
     ).toBe(2);
     expect(err).toMatch(/UNC/);
+  });
+});
+
+describe("--role", () => {
+  it("refuses a vendor list with an empty entry", async () => {
+    await expect(
+      cli(["review", "start", "--box", "b", "--role", "reviewer=codex,"]),
+    ).resolves.not.toBe(0);
   });
 });

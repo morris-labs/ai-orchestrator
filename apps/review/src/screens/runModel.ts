@@ -142,7 +142,7 @@ export interface Controls {
   cancel: boolean;
   rebaseBase: boolean;
   push: boolean;
-  /** Profile and role changes apply from the next round. */
+  /** A profile change applies from the next round, and a role change to calls not yet started. */
   steer: boolean;
 }
 

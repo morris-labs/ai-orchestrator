@@ -151,6 +151,7 @@ describe("buildLaunchSpec", () => {
         "/home/tester/Bin/.project_archive:/home/tester/Bin/.project_archive",
         `/home/tester/.ai-orchestrator/state/${C}:/run/aio`,
         `/home/tester/.ai-orchestrator/broker/${brokerDirName(C)}:/run/aio-broker:ro`,
+        `/home/tester/.ai-orchestrator/engine-config/${brokerDirName(C)}:/run/aio-config:ro`,
       ],
       portBindings: {
         "20411/tcp": [{ hostIp: "127.0.0.1", hostPort: "41000" }],
@@ -178,7 +179,7 @@ describe("buildLaunchSpec", () => {
       { projectsLinkMounts: [], hasGitconfig: false },
     );
     expect(spec.env.some((e) => e.startsWith("GIT_CONFIG_GLOBAL="))).toBe(false);
-    expect(spec.binds).toHaveLength(11);
+    expect(spec.binds).toHaveLength(12);
     expect(Object.keys(spec.portBindings)).toEqual(["20411/tcp"]);
     expect(spec.labels["aio.secret-names"]).toBe("");
   });

@@ -109,12 +109,30 @@ keeper script, the container's first process, starts it.
   `AIO_` variable from the processes it starts. At startup the engine
   also executes itself again without its credentials in the environment and
   keeps them in memory, so its own `/proc/PID/environ` holds none.
+- `account-dirs.json` names each vendor's default account folder as the
+  container sees it. It lives in a server-owned folder outside the state
+  directory, which the container mounts read-only at `/run/aio-config`, so
+  code in the container can't redirect a vendor CLI by rewriting the file. The
+  server writes it before the container starts, and rewrites it when the
+  account defaults or the accounts mode change and each time it ensures a
+  running container. The engine reads it for every vendor call and sets
+  `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, or `COPILOT_HOME` from it. A vendor
+  without a valid entry, as in host mode, uses its home folder, and the
+  engine logs a warning when the file is missing or an entry isn't valid.
+- A running container uses only what it mounts. One launched in host mode stays
+  on its home folders when the mode changes to accounts. One launched in
+  accounts mode keeps its previous Claude account when the default moves to an
+  account made after the launch, because that account has no `sessions` mount
+  there. The server logs this. Restart the container to apply the change. When
+  a default moves, the server also moves the container's home links, so a bare
+  CLI in a shell and the engine use the same account.
 - These measures control what a process inherits; they aren't isolation.
   Every process in the container runs as one user, so repository code that
   the review runs, such as a test command or a reproduction script, can
   still read the token file, ask the secrets broker for any secret the
-  project lists, and read a vendor CLI's environment. With the token it can
-  call the engine API. Run reviews only on code you would run in the box
+  project lists, read a vendor CLI's environment, and write to the account
+  folders it mounts, such as an account's `settings.json`, which a later
+  vendor call loads. With the token it can call the engine API. Run reviews only on code you would run in the box
   yourself.
 - The engine gets the credentials it hands vendor CLIs, `git`, and `gh` from
   the secrets broker when it starts each one, and gives each program only

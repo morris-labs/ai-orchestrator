@@ -13,6 +13,7 @@ import {
   BROKER_TCP_HOST,
   DEFAULT_ENGINE_PORT,
   brokerTcpUrl,
+  ENGINE_CONFIG_MOUNT,
   ENGINE_ENV,
   hostPathProblem,
   mountProblem,
@@ -26,6 +27,7 @@ import {
   bindOf,
   bindSource,
   brokerDirFor,
+  engineConfigDirFor,
   containerHome,
   homePaths,
   hostOsOf,
@@ -302,6 +304,8 @@ export function prepareLaunchHost(
   // The broker listens here; created now so docker doesn't create it as root.
   const broker = brokerDirFor(env, input.container);
   fs.mkdirSync(broker, { recursive: true, mode: 0o700 });
+  // Made here so Docker never creates it, as root, for the read-only bind.
+  fs.mkdirSync(engineConfigDirFor(env, input.container), { recursive: true, mode: 0o700 });
   fs.chmodSync(broker, 0o700);
   if (!accountsMode) {
     try {
@@ -392,6 +396,9 @@ export function buildLaunchSpec(
   // directory, not the socket, is mounted, so a socket the server recreates
   // stays reachable, and a rotated token file shows through.
   binds.push(bindOf(brokerDirFor(env, input.container), BROKER_MOUNT, "ro"));
+  // Read-only for the same reason: the account folders this names decide
+  // which configuration every vendor CLI loads.
+  binds.push(bindOf(engineConfigDirFor(env, input.container), ENGINE_CONFIG_MOUNT, "ro"));
 
   const envList = ["IS_SANDBOX=1", "DISABLE_AUTOUPDATER=1"];
   if (facts.hasGitconfig) envList.push(`GIT_CONFIG_GLOBAL=${containerDir}/gitconfig`);

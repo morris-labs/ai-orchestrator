@@ -215,10 +215,15 @@ export const MIGRATIONS: readonly Migration[] = [
     UNIQUE (vendor, name)
   );
 `,
-  // 5: the host port of a container's TCP secrets broker, for Docker
+  // 5: \`latest()\` looks up one account's newest sample per window, once a minute per panel.
+  `
+  CREATE INDEX IF NOT EXISTS svc_usage_samples_account
+    ON svc_usage_samples (vendor, account, window, time_ms);
+`,
+  // 6: the host port of a container's TCP secrets broker, for Docker
   // Desktop; NULL for a container that uses the Unix socket.
   "ALTER TABLE engine_endpoints ADD COLUMN broker_port INTEGER",
-  // 6: multi-host. On a hub, the enrolled machines and the one-time
+  // 7: multi-host. On a hub, the enrolled machines and the one-time
   // enrollment codes. A code is kept only as the key derived from it.
   `
   CREATE TABLE machines (

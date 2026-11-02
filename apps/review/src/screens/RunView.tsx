@@ -2,27 +2,20 @@
 // profile switch, controls, the decision panel, round summaries, the run's
 // live agents, and cost per round.
 import {
-  ProfileSchema,
-  RoleSchema,
   type Decision,
   type DecisionOption,
+  type FileGroup,
   type Finding,
-  type Profile,
   type Role,
   type RoundSummary,
   type RunState,
   type Vendor,
 } from "@aio/contracts";
-import {
-  AgentsTable,
-  VENDOR_LABELS,
-  VENDORS,
-  agentRows,
-  formatUsd,
-  vendorColor,
-} from "@aio/ui/dashboard";
+import { AgentsTable, VENDOR_LABELS, VENDORS, agentRows, formatUsd } from "@aio/ui/dashboard";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ErrorBanner, RunStatusBadge, shortId } from "../components/common.js";
+import { ProfileSelect, RoleTable } from "../components/roles.js";
+import { draftFromRoles, sameVendors, type RoleDraft } from "../components/rolesModel.js";
 import { EventBuffer } from "../state/eventBuffer.js";
 import { href } from "../state/router.js";
 import { useApiClient, useAnyEvent } from "@aio/ui/hooks";
@@ -187,81 +180,35 @@ function RoleEditor({
   disabled: boolean;
   onAssign: (role: Role, vendors: Vendor[]) => void;
 }) {
-  const current = (role: Role): Vendor[] => {
-    const v = run.roles[role];
-    return Array.isArray(v) ? v : [v];
-  };
   // Reset the draft only when the run's roles actually change. Resetting from
   // an effect raced a click made before the mount effect flushed: the effect's
   // update landed after the click's and wiped the choice.
   const rolesKey = JSON.stringify(run.roles);
-  const initial = () =>
-    Object.fromEntries(RoleSchema.options.map((r) => [r, current(r)])) as Record<Role, Vendor[]>;
-  const [draft, setDraft] = useState<Record<Role, Vendor[]>>(initial);
+  const [draft, setDraft] = useState<RoleDraft>(() => draftFromRoles(run.roles));
   const [draftKey, setDraftKey] = useState(rolesKey);
   if (draftKey !== rolesKey) {
     setDraftKey(rolesKey);
-    setDraft(initial());
+    setDraft(draftFromRoles(run.roles));
   }
+  const current = draftFromRoles(run.roles);
   return (
-    <table className="ab-table" aria-label="Roles">
-      <thead>
-        <tr>
-          <th scope="col">Role</th>
-          {VENDORS.map((v) => (
-            <th key={v} scope="col">
-              <span className="ab-key-rect" style={{ background: vendorColor(v) }} />
-              {VENDOR_LABELS[v]}
-            </th>
-          ))}
-          <th scope="col">
-            <span className="visually-hidden">Apply</span>
-          </th>
-        </tr>
-      </thead>
-      <tbody>
-        {RoleSchema.options.map((role) => {
-          const multi = role === "reviewer";
-          const chosen = draft[role];
-          const changed = chosen.slice().sort().join() !== current(role).slice().sort().join();
-          return (
-            <tr key={role}>
-              <th scope="row">{role}</th>
-              {VENDORS.map((v) => (
-                <td key={v}>
-                  <input
-                    type={multi ? "checkbox" : "radio"}
-                    name={`role-${role}`}
-                    aria-label={`${role}: ${VENDOR_LABELS[v]}`}
-                    checked={chosen.includes(v)}
-                    disabled={disabled}
-                    onChange={(e) =>
-                      setDraft((d) => ({
-                        ...d,
-                        [role]: multi
-                          ? e.target.checked
-                            ? [...chosen, v]
-                            : chosen.filter((x) => x !== v)
-                          : [v],
-                      }))
-                    }
-                  />
-                </td>
-              ))}
-              <td>
-                <button
-                  type="button"
-                  disabled={disabled || !changed || chosen.length === 0}
-                  onClick={() => onAssign(role, chosen)}
-                >
-                  Assign
-                </button>
-              </td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
+    <RoleTable
+      value={draft}
+      disabled={disabled}
+      onChange={(role, vendors) => setDraft((d) => ({ ...d, [role]: vendors }))}
+      action={{
+        header: "Apply",
+        render: (role, chosen) => (
+          <button
+            type="button"
+            disabled={disabled || sameVendors(chosen, current[role]) || chosen.length === 0}
+            onClick={() => onAssign(role, chosen)}
+          >
+            Assign
+          </button>
+        ),
+      }}
+    />
   );
 }
 
@@ -269,12 +216,29 @@ export function RunView({ runId }: { runId: string }) {
   const api = useApiClient();
   const [run, setRun] = useState<RunState | null>(null);
   const [rounds, setRounds] = useState<RoundSummary[]>([]);
+  const [groups, setGroups] = useState<FileGroup[]>([]);
   const [decisionFindings, setDecisionFindings] = useState<Finding[]>([]);
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   const resets = useStore((s) => s.resets);
   const dashboard = useStore((s) => s.dashboard);
   const agents = agentRows(dashboard, runId);
+  const round = run?.round;
+
+  // The tiers are extra detail: a failed read leaves the run view as it is,
+  // and the next round or reconnect reads them again. The first read waits
+  // for the run, so one mount makes one request.
+  useEffect(() => {
+    if (round === undefined) return;
+    let live = true;
+    api.call("runs.groups", { params: { runId } }).then(
+      (r) => live && setGroups(r.groups),
+      () => undefined,
+    );
+    return () => {
+      live = false;
+    };
+  }, [api, runId, round, resets]);
 
   // The newest run state seen from either REST or the event stream. Kept in
   // a ref so a late response can be compared without a state updater.
@@ -516,23 +480,17 @@ export function RunView({ runId }: { runId: string }) {
         <h3>Profile and roles</h3>
         <label className="field inline">
           <span className="field-label">Profile</span>
-          <select
+          <ProfileSelect
             value={run.profile}
             disabled={!controls.steer || busy}
-            onChange={(e) =>
-              void act(() =>
-                api.call("runs.profile", { params, body: { profile: e.target.value as Profile } }),
-              )
+            onChange={(profile) =>
+              void act(() => api.call("runs.profile", { params, body: { profile } }))
             }
-          >
-            {ProfileSchema.options.map((p) => (
-              <option key={p} value={p}>
-                {p}
-              </option>
-            ))}
-          </select>
+          />
         </label>
-        <p className="muted small">Changes apply from the next round.</p>
+        <p className="muted small">
+          A profile applies from the next round. A role applies to calls that haven&apos;t started.
+        </p>
         <RoleEditor
           run={run}
           disabled={!controls.steer || busy}
@@ -546,6 +504,34 @@ export function RunView({ runId }: { runId: string }) {
         <h3>Round summaries</h3>
         <RoundTable rounds={rounds} />
       </section>
+
+      {groups.some((g) => g.tier) ? (
+        <section className="card">
+          <h3>Model tiers</h3>
+          <p className="muted small">
+            Each group&apos;s base tier. A call&apos;s role, persisting findings, or a malformed
+            answer can move it up; the agents table shows the tier each call used.
+          </p>
+          <table className="ab-table" aria-label="Model tiers">
+            <thead>
+              <tr>
+                <th scope="col">Group</th>
+                <th scope="col">Tier</th>
+                <th scope="col">Reason</th>
+              </tr>
+            </thead>
+            <tbody>
+              {groups.map((g) => (
+                <tr key={g.id}>
+                  <td>{g.id}</td>
+                  <td>{g.tier ?? "None"}</td>
+                  <td>{g.tierReason ?? ""}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      ) : null}
 
       <AgentsTable agents={agents} title="Agents in this run" />
     </div>

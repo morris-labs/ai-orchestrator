@@ -237,7 +237,7 @@ describe("pre-push end to end", () => {
       requests: granting.requests,
       settle: granting.settle.bind(granting),
       acquire: async (req: Parameters<GrantingBroker["acquire"]>[0]) => {
-        if (req.role === "fixer" && ++fixerAsks === 1) {
+        if (req.role === "fixer" && (++fixerAsks, clock.now() < Date.parse(resumeAt))) {
           return {
             decision: "pause" as const,
             leaseId: req.leaseId,

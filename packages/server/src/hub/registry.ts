@@ -1,4 +1,4 @@
-// The hub's machine registry and enrollment codes, in SQLite (migration 6),
+// The hub's machine registry and enrollment codes, in SQLite (migration 7),
 // and the proofs that bind an enrollment to the code and to the hub's
 // certificate.
 //

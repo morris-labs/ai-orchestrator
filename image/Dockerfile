@@ -144,9 +144,9 @@ RUN test -n "${AIO_ENGINE_VERSION}" || { echo "AIO_ENGINE_VERSION is not set; bu
     tar -xzf "/tmp/aio-dist/aio-engine-${AIO_ENGINE_VERSION}.tgz" \
       -C /usr/local/lib/ai-orchestrator --no-same-owner && \
     engine_pkg=/usr/local/lib/ai-orchestrator/engine && \
-    chmod -R u=rwX,go=rX "${engine_pkg}" && \
     { test -d "${engine_pkg}/node_modules" || \
       { echo "dist/aio-engine-${AIO_ENGINE_VERSION}.tgz has no node_modules; pack it with scripts/build-image.sh" >&2; exit 1; }; } && \
+    chmod -R u=rwX,go=rX "${engine_pkg}" && \
     engine_ver="$(/usr/bin/node -p "require('${engine_pkg}/package.json').version")" && \
     test "${engine_ver}" = "${AIO_ENGINE_VERSION}" && \
     engine_hash="$(tr -d '[:space:]' < "${engine_pkg}/dist/identity")" && \

@@ -64,9 +64,10 @@ section's heading must have the form `## [X.Y.Z]`.
 
 ### Changed
 
-- The database schema is at version 6. Migration 5 adds the broker port to
-  `engine_endpoints`, and migration 6 adds the `machines` and
-  `enrollment_codes` tables. The server applies both at its next start.
+- The database schema is at version 7. Migration 6 adds the broker port to
+  `engine_endpoints`, and migration 7 adds the `machines` and
+  `enrollment_codes` tables. The server applies both at its next start, after
+  migration 5, the usage index, on a database that doesn't have it.
 
 ## [1.0.0] - Unreleased
 
@@ -76,6 +77,13 @@ the upgrade steps, see `docs/migration-3x.md`.
 
 ### Added
 
+- Model tiers for review runs: code in the engine picks a small, medium, or
+  large model for each group and role, with **Auto** or a fixed tier on the
+  launcher and `aio review start --tier`, and `tierModels` and `tierPaths` in
+  the policy file.
+- A list of models that review runs refuse: Claude models with `fable` in the
+  name and Codex models with `astra` in the name.
+  The list doesn't cover GitHub Copilot, which keeps automatic model selection.
 - `aio-server`, a systemd user service that owns Docker, boxes,
   projects, worktrees, secrets, usage, and terminals, with a REST and
   WebSocket API on `127.0.0.1:21400`.
@@ -96,6 +104,10 @@ the upgrade steps, see `docs/migration-3x.md`.
   broker socket and the `aio-secret` command in the image, never put
   in a container's environment. When a project has secret references, the
   opening prompt tells the agent how to use `aio-secret`.
+- Starting roles for a review run: the run launcher's **Profile and roles**
+  section and `aio review start --role ROLE=VENDOR[,VENDOR]` give roles to
+  vendors from round 1 over the profile's defaults, through the run
+  request's optional `roles` field.
 - A repository policy file, `.aio/policy.yaml`.
 - Tray icons and desktop notifications.
 - A one-time import of 3.x records and settings into SQLite.
@@ -107,6 +119,10 @@ the upgrade steps, see `docs/migration-3x.md`.
 
 ### Changed
 
+- The **Model usage** panel in the Boxes app shows each usage window
+  that a vendor's CLI reports on its own line, with its own percentage, reset
+  time, and sample age. A window whose reset time has passed shows **No recent
+  data** instead of a percentage, and the panel refreshes every minute.
 - The product name is AI Orchestrator, and the command is `aio`. Container
   names use the `aio-agent-` prefix, the image is `aio-agent`, data lives in
   `~/.ai-orchestrator`, and per-project notes live in `.aio/`. The import

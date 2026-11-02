@@ -1,3 +1,4 @@
+import { VENDOR_ROLES } from "@aio/contracts";
 import type { AioEvent, CeilingsOverride, LeaseRequest, Vendor } from "@aio/contracts";
 import { describe, expect, it } from "vitest";
 import {
@@ -68,8 +69,11 @@ describe("Scheduler", () => {
     const t = make();
     t.sample("codex", { utilization: 0.8 });
     const first = await t.scheduler.decide("engine:a", "p", t.req({ role: "disprover" }));
-    // codex -> copilot can't disprove -> claude.
-    expect(first).toMatchObject({ decision: "granted", vendor: "claude", redirectedFrom: "codex" });
+    expect(first).toMatchObject({
+      decision: "granted",
+      vendor: "copilot",
+      redirectedFrom: "codex",
+    });
     await t.scheduler.decide("engine:a", "p", t.req({ role: "disprover" }));
     const moved = t.ofType("role.reassigned");
     expect(moved).toHaveLength(1);
@@ -77,7 +81,7 @@ describe("Scheduler", () => {
       runId: RUN,
       role: "disprover",
       from: ["codex"],
-      to: ["claude"],
+      to: ["copilot"],
       reason: "ceiling",
       effectiveRound: 2,
     });
@@ -132,6 +136,12 @@ describe("Scheduler", () => {
     const t = make();
     t.sample("codex", { utilization: 0.9, resetAt: iso(T0 + 60 * MIN) });
     t.sample("claude", { utilization: 0.9, resetAt: iso(T0 + 20 * MIN) });
+    t.sample("copilot", {
+      window: "month",
+      utilization: 2,
+      spendUsd: 140,
+      resetAt: iso(T0 + 90 * MIN),
+    });
     const res = await t.scheduler.decide("e", "p", t.req({ role: "disprover" }));
     expect(res).toMatchObject({ decision: "pause", resumeAt: iso(T0 + 20 * MIN) });
   });
@@ -141,6 +151,22 @@ describe("Scheduler", () => {
     t.sample("codex", { utilization: 0.9, resetAt: null });
     const res = await t.scheduler.decide("e", "p", t.req({ role: "confirmer" }));
     expect(res).toMatchObject({ decision: "deny", action: "pause" });
+  });
+
+  it("names the role that stays with an over vendor", async () => {
+    const t = make();
+    t.sample("codex", { utilization: 0.9, resetAt: iso(T0 + 60 * MIN) });
+    const res = await t.scheduler.decide("e", "p", t.req({ role: "fixer" }));
+    expect(res).toMatchObject({ decision: "pause" });
+    expect((res as { reason: string }).reason).toMatch(/the fixer role stays/);
+    const confirm = await t.scheduler.decide("e", "p", t.req({ role: "confirmer" }));
+    expect((confirm as { reason: string }).reason).toMatch(/confirmer role/);
+  });
+
+  it("offers Copilot neither the confirmer nor the fixer role", async () => {
+    expect(VENDOR_ROLES.copilot).not.toContain("confirmer");
+    expect(VENDOR_ROLES.copilot).not.toContain("fixer");
+    expect(VENDOR_ROLES.copilot).toContain("disprover");
   });
 
   it("counts a zero ceiling with no sample as over", async () => {

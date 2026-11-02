@@ -6,6 +6,8 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { START_SESSION_PATH } from "../../src/docker/scripts.js";
 import { linkTargetsOutside } from "../../src/docker/launch.js";
+import { accountDirsFile } from "../../src/docker/state.js";
+import { skippedLinkMessage } from "../../src/projects/service.js";
 import { accountDirFor } from "../../src/records/env.js";
 import { makeHarness, type Harness } from "./harness.js";
 
@@ -260,5 +262,100 @@ describe("moving a box between accounts", () => {
     const box = await h.core.boxes.create({ targetDir: h.dir("a"), layout: "root" });
     const r = await h.core.boxes.update(box.id, { accounts: { claude: "claude/work" } });
     expect(r.restartRequired).toBe(true);
+  });
+});
+
+describe("engine account folders", () => {
+  function readDirs(h: Harness, container: string): unknown {
+    return JSON.parse(fs.readFileSync(accountDirsFile(h.env, container), "utf8"));
+  }
+
+  it("writes each vendor's default folder when the container starts", async () => {
+    const h = makeHarness();
+    const personal = addAccount(
+      h,
+      "claude/personal",
+      h.dir(".ai-orchestrator", "transcripts", "claude"),
+    );
+    const codex = addAccount(h, "codex/main");
+    accountsMode(h, { claude: "claude/personal", codex: "codex/main" });
+    const box = await h.core.boxes.create({ targetDir: h.dir("a"), layout: "root" });
+    expect(readDirs(h, box.container)).toEqual({ claude: personal, codex });
+  });
+
+  it("rewrites the file for a running container when the defaults change", async () => {
+    const h = makeHarness();
+    const store = h.dir(".ai-orchestrator", "transcripts", "claude");
+    const personal = addAccount(h, "claude/personal", store);
+    const work = addAccount(h, "claude/work", store);
+    accountsMode(h, { claude: "claude/personal" });
+    const box = await h.core.boxes.create({ targetDir: h.dir("a"), layout: "root" });
+    expect(readDirs(h, box.container)).toEqual({ claude: personal });
+    h.core.settings.patch({ accountDefaults: { claude: "claude/work" } });
+    expect(readDirs(h, box.container)).toEqual({ claude: work });
+    h.core.settings.patch({ accountsMode: "host" });
+    expect(readDirs(h, box.container)).toEqual({});
+  });
+
+  it("keeps a container launched in host mode on its home folders", async () => {
+    const h = makeHarness();
+    const box = await h.core.boxes.create({ targetDir: h.dir("a"), layout: "root" });
+    addAccount(h, "claude/personal", h.dir(".ai-orchestrator", "transcripts", "claude"));
+    accountsMode(h, { claude: "claude/personal" });
+    expect(readDirs(h, box.container)).toEqual({});
+  });
+
+  it("keeps the previous Claude account when the default has no mount, and logs it", async () => {
+    const lines: string[] = [];
+    const h = makeHarness({ log: (m) => lines.push(m) });
+    const store = h.dir(".ai-orchestrator", "transcripts", "claude");
+    const personal = addAccount(h, "claude/personal", store);
+    accountsMode(h, { claude: "claude/personal" });
+    const box = await h.core.boxes.create({ targetDir: h.dir("a"), layout: "root" });
+    addAccount(h, "claude/later", store);
+    h.core.settings.patch({ accountDefaults: { claude: "claude/later" } });
+    expect(readDirs(h, box.container)).toEqual({ claude: personal });
+    expect(lines.join("\n")).toMatch(/no mount in this container/);
+  });
+
+  it("repairs the file when a running container is ensured again", async () => {
+    const h = makeHarness();
+    const box = await h.core.boxes.create({ targetDir: h.dir("a"), layout: "root" });
+    fs.rmSync(accountDirsFile(h.env, box.container));
+    await h.core.projects.ensureContainer(box.projectId);
+    expect(readDirs(h, box.container)).toEqual({});
+  });
+
+  it("writes an empty object in host mode", async () => {
+    const h = makeHarness();
+    const box = await h.core.boxes.create({ targetDir: h.dir("a"), layout: "root" });
+    expect(readDirs(h, box.container)).toEqual({});
+  });
+});
+
+describe("home links left alone", () => {
+  it("logs each link the script reports it skipped", async () => {
+    const lines: string[] = [];
+    const h = makeHarness({ log: (m) => lines.push(m) });
+    addAccount(h, "claude/personal", h.dir(".ai-orchestrator", "transcripts", "claude"));
+    accountsMode(h, { claude: "claude/personal" });
+    h.docker.execHandler = (_c, options) =>
+      options.cmd[0] === "/bin/sh" && options.cmd[3] === "_"
+        ? { exitCode: 0, stdout: "skipped /home/tester/.claude\n", stderr: "" }
+        : undefined;
+    const box = await h.core.boxes.create({ targetDir: h.dir("a"), layout: "root" });
+    expect(lines.some((l) => l.startsWith(`${box.container}: /home/tester/.claude `))).toBe(true);
+  });
+
+  it("names outside account links as the cause when they live under the folder", () => {
+    const message = skippedLinkMessage("aio-agent-proj-sample", "/home/tester/.claude", [
+      "/home/tester/.claude/CLAUDE.md",
+      "/home/tester/.claude/skills",
+      "/srv/elsewhere",
+    ]);
+    expect(message).toContain("Docker created it to hold the mounts");
+    expect(message).toContain("/home/tester/.claude/CLAUDE.md, /home/tester/.claude/skills");
+    expect(message).not.toContain("/srv/elsewhere");
+    expect(skippedLinkMessage("c", "/home/tester/.codex", [])).toContain("isn't a link");
   });
 });

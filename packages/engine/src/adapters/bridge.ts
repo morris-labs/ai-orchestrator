@@ -2,7 +2,12 @@
 // `VendorAdapter`. The core asks for a role's output shape by method; the CLI
 // adapter takes any schema, so the bridge picks the schema, maps the request
 // and result field names, and leaves the CLI behavior to the adapter.
-import type { Vendor } from "@aio/contracts";
+import {
+  blockedModelMessage,
+  isBlockedRequestedModel,
+  type UsageSample,
+  type Vendor,
+} from "@aio/contracts";
 import type { z } from "zod";
 import {
   ConfirmOutputSchema,
@@ -143,15 +148,30 @@ export class BridgedAdapter implements VendorAdapter {
     method: AdapterMethod,
     request: AdapterRequest | ContinueRequest,
   ): Promise<AdapterResult<T>> {
-    const cli = toCliRequest(method, request);
-    const result =
-      method === "continueReview"
-        ? await this.cli.continueReview({
-            ...cli,
-            sessionId: (request as ContinueRequest).sessionId,
-          })
-        : await this.cli[method](cli);
-    return toCoreResult<T>(this.vendor, result, request.model);
+    // The last gate before a CLI: no path reaches a vendor with a blocked model.
+    if (request.model !== undefined && isBlockedRequestedModel(this.vendor, request.model)) {
+      // A retry fails the same way, so the core must not spend a second attempt.
+      throw new AdapterError(
+        this.vendor,
+        "blocked_model",
+        blockedModelMessage(this.vendor, request.model),
+      );
+    }
+    const seen: UsageSample[] = [];
+    const cli = { ...toCliRequest(method, request), onUsage: (s: UsageSample) => seen.push(s) };
+    try {
+      const result =
+        method === "continueReview"
+          ? await this.cli.continueReview({
+              ...cli,
+              sessionId: (request as ContinueRequest).sessionId,
+            })
+          : await this.cli[method](cli);
+      return toCoreResult<T>(this.vendor, result, request.model);
+    } catch (error) {
+      if (error instanceof AdapterError) error.usage = seen;
+      throw error;
+    }
   }
 }
 

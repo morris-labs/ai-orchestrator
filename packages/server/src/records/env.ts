@@ -175,6 +175,19 @@ export function brokerDirFor(env: Pick<HostEnv, "home" | "dataDir">, container: 
 }
 
 /**
+ * `<data dir>/engine-config/<hash>`: the server-owned files a container's
+ * engine reads, mounted read-only at `ENGINE_CONFIG_MOUNT`. This folder must
+ * stay outside the writable state directory, or the same files would also be
+ * reachable through that mount.
+ */
+export function engineConfigDirFor(
+  env: Pick<HostEnv, "home" | "dataDir">,
+  container: string,
+): string {
+  return path.join(dataDirOf(env), "engine-config", brokerDirName(container));
+}
+
+/**
  * Maps a host path to the path the container sees. On Linux and macOS the
  * project is mounted at its own host path, so this is the absolute, cleaned
  * path. On Windows it is `/mnt/host/<drive>/...`; see the contracts'

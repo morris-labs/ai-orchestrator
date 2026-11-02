@@ -25,7 +25,7 @@ according to the profile and the usage ceilings.
 |---|---|---|
 | Claude | `claude -p` | Fixer, always. Reviewer and disprover when the profile allows. |
 | Codex | `codex exec` | Reviewer, disprover, and fix confirmer. |
-| GitHub Copilot | `copilot -p`, with automatic model selection | Reviewer. Pull request reviewer after the push. |
+| GitHub Copilot | `copilot -p`, with automatic model selection | Reviewer. Disprover of Codex findings in `offload`. Pull request reviewer after the push. |
 
 A run has four roles: `reviewer` (one or more vendors), `disprover`,
 `confirmer`, and `fixer`. By default, the disprover and the confirmer come
@@ -44,9 +44,150 @@ profile at the start of each round.
 | `fast` | Reviews every round next to Codex, with focus-area reviewers on major groups, and disproves Codex findings. | You want the fewest rounds and the least time. |
 
 To switch the profile of a running run, use the **Profile** control in the
-run view, or run `aio review profile RUN_ID PROFILE`. To move a role to
-another vendor from the next round, run
-`aio review assign RUN_ID ROLE VENDOR`.
+run view, or run `aio review profile RUN_ID PROFILE`. A profile switch applies
+from the next round. To move a role to another vendor, run
+`aio review assign RUN_ID ROLE VENDOR`. An assignment applies at once to every
+call of that role that hasn't started, including one waiting out a ceiling. A
+later assignment of the same role replaces an earlier one, and a continuation
+of a review stays with the vendor that holds its session.
+
+### Choose roles when a run starts
+
+To start a run with other vendors than the profile gives, change the roles
+in the **Profile and roles** section of the run launcher. The role table
+starts from the selected profile's round 1 roles and follows the profile
+when you switch it, until you change a role. After that, a profile switch
+keeps your changes; to drop them, click **Reset to profile defaults**. The
+`reviewer` row takes one or more vendors, and every other row takes one.
+
+From a terminal, pass `--role` to `aio review start` once for each role:
+
+```bash
+aio review start --box BOX_ID --role reviewer=codex,copilot --role confirmer=copilot
+```
+
+Replace `BOX_ID` with the box whose branch you want to review.
+
+A run request carries only the roles you changed, in its `roles` field. Those roles hold from round 1, like roles you
+assign with `aio review assign`; the roles you leave alone follow the
+profile from round to round. The engine refuses a role for a vendor with no
+adapter in the container, and the request schema refuses more than one
+vendor for any role but `reviewer`. Switching the profile of the running
+run drops the starting roles and every assigned role, and the run takes the
+new profile's roles from the next round.
+
+## Model tiers
+
+A tier sets how strong a model each call uses. The profile picks the vendors;
+the tier picks the model on each vendor. In **Auto**, the default, code in the
+engine chooses the tier for each group and role, with no model call. To fix
+one tier for a whole run, use the **Model tier** section of the run launcher,
+or pass `--tier` to `aio review start`:
+
+```bash
+aio review start --box BOX_ID --tier medium
+```
+
+Replace `BOX_ID` with the box whose branch you want to review. The values are
+`auto`, `small`, `medium`, and `large`.
+
+### How a group gets its tier
+
+Each changed file asks for a tier, and the group takes the strongest. The
+first row that matches a file decides:
+
+| Signal | Tier |
+|---|---|
+| A `tierPaths` rule in the policy file matches | The rule's tier |
+| A risk path matches | Large |
+| A documentation file or a lockfile, by path | Small, whatever the size |
+| An exported API changes, and a changed symbol appears in 3 or more other files | Large |
+| A schema changes | Large |
+| A changed symbol appears in 10 or more other files | Large |
+| The changed code involves concurrency, migrations, or parsing | Large |
+| Any other code | Medium |
+
+Changed symbols come from `git diff -W` and per-language patterns for
+TypeScript, JavaScript, Python, Go, Java, C, C++, and shell. Other languages
+skip this signal. `git grep -l -w` counts the files at the tip that hold each
+symbol. The count leaves out the file itself, its tests, documentation,
+lockfiles, build output, and data files, and it skips names under four
+characters and common words. The counts of one round have a 15-second limit;
+after that, the other signals decide, an exported change stays large, and the
+reason says so. These signals only raise a tier.
+
+### How a role changes the tier
+
+| Role | Tier |
+|---|---|
+| Reviewer | The group's tier |
+| Disprover, confirmer | One tier up, at medium or above |
+| Fixer | The group's tier, at medium or above |
+| Sweeper | The group's tier, at medium at most |
+
+A call moves one more tier up when its files have findings that persist from
+an earlier round, and when the retry follows a malformed answer. A fixed tier
+turns off these moves and applies to every role, except that disprovers,
+confirmers, and fixers stay at medium or above.
+
+Code never runs below medium. A fixed `small` tier or a `tierPaths` rule gives
+a group that holds code the medium tier. Only files that are documentation or
+lockfiles by path can get the small tier: Markdown, reStructuredText, and
+AsciiDoc files, `README` and `LICENSE` style names, and known lockfiles. A
+comment or formatting change in a code file counts as code. So do MDX files,
+other text files, and Markdown that instructs an agent, such as `CLAUDE.md`,
+`AGENTS.md`, `SKILL.md`, `*.prompt.md`, and files under `prompts`, `skills`,
+`.claude`, or `.github` folders. A file renamed from code to a documentation
+name also counts as code. A lockfile stays small even when it changes a
+dependency's source; to review lockfiles more closely, add them to `riskPaths`
+or `tierPaths` in the policy file.
+
+The run view lists each group's tier and reason. Each `agent.started` event
+carries the call's tier and reason, and the engine logs each choice.
+
+### Tier mappings
+
+The built-in mappings are the following:
+
+| Vendor | Small | Medium | Large |
+|---|---|---|---|
+| Claude | `claude-haiku-5-5` | `claude-sonnet-5-5` | `claude-opus-5-5` |
+| Codex | `gpt-6-luna` | `gpt-6-sol` | `gpt-6.1-sol` |
+
+GitHub Copilot has no mapping and keeps its automatic model selection
+(`--model auto`). To change a mapping, set `tierModels` in the
+[policy file](policy.md).
+
+### Blocked models
+
+Review runs never use a Claude model whose name contains `fable`, or a Codex
+model whose name contains `astra`, in any letter case. The
+`BLOCKED_REVIEW_MODELS` list in `packages/contracts/src/tiers.ts` holds these
+names. The engine enforces the rule in the following places:
+
+- The policy schema refuses a blocked name in `tierModels`, with an error that
+  names the model.
+- The engine refuses a blocked name in its per-vendor model setting.
+- Each call checks its model before it starts, and the adapter bridge checks
+  again before it runs a CLI.
+- A Claude or Codex call with no other model passes `claude-opus-5-5` or
+  `gpt-6.1-sol`, so it never falls through to the CLI's default.
+- After a call, the run fails if the CLI reports a blocked model. This backstop
+  catches an alias that resolves to a blocked model. For Codex, the report
+  comes from the session's rollout file.
+
+The rule doesn't cover GitHub Copilot: it has no block list, and its automatic
+selection chooses the model.
+
+## Accounts
+
+In accounts mode, each model call of a run uses its vendor's default
+account: the engine sets `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, or
+`COPILOT_HOME` to the account folder that the server names in the
+read-only `/run/aio-config/account-dirs.json` file. A change of default applies
+from the next call that starts a session, within what the container mounts. In host mode, the CLIs use the container user's `~/.claude`,
+`~/.codex`, and `~/.copilot`. For more information, see
+[Accounts](accounts.md).
 
 ## Usage ceilings
 
@@ -64,12 +205,56 @@ The default ceilings are the following:
 | Copilot | $70 per month |
 
 When a vendor passes its ceiling, the server moves its pending review and
-disprove roles to the next vendor. The fixer stays with Claude: when Claude
-passes its ceiling, the run pauses until the window resets and notifies you.
-You can change the ceilings in the settings, and override them per project.
+disprove roles to the next vendor that can take them. Codex and Copilot can
+review and disprove, Claude can review and disprove, and only Codex confirms.
+The fixer stays with its vendor: when that vendor passes its ceiling, the run
+pauses until the window resets and notifies you. You can change the ceilings
+in the settings, and override them per project.
+
+### Clear a stale usage block
+
+A stored sample counts until its reset time. If you buy a reset, the sample
+still says the vendor is over its ceiling, and a blocked vendor gets no call
+that could report the new figure. To clear the block, select **Clear block**
+in the **Model usage** panel, or run the following command:
+
+```bash
+aio review clear-usage VENDOR
+
+```
+
+Replace `VENDOR` with `claude`, `codex`, or `copilot`. To clear one account,
+add `--account VENDOR/NAME`. The vendor's next real sample replaces the cleared
+reading. A run waiting on the ceiling asks the server again every minute, so it
+continues on its own. A run waiting after the vendor's CLI reported a limit
+keeps waiting until you resume it:
+
+```bash
+aio review resume RUN_ID
+
+```
+
+Replace `RUN_ID` with the run's ID.
 
 To see each vendor's usage, ceiling, and reset time, open the usage view or
 run `aio review usage`.
+
+The **Model usage** panel on the **Usage** tab of the Boxes app shows one line
+for each window that a vendor's CLI reports:
+
+- **Claude**: the 5-hour block and the weekly window.
+- **Codex**: the 5-hour block and the weekly window.
+- **GitHub Copilot**: none. The output that the engine reads has no usage windows.
+
+No vendor reports a monthly window through its CLI. A monthly line appears only
+when a stored sample has that window.
+
+The engine records samples from every review call that reports them, including
+calls that fail or hit a limit, so a figure can be older than your last call
+only when that call reported nothing. Each line shows the age of its sample.
+After a window's reset time passes, its line shows **No recent data** instead
+of a percentage, until a later call records a sample. `aio review usage` lists
+the same windows, and shows `reset` for a window whose reset time has passed.
 
 ## Review range
 

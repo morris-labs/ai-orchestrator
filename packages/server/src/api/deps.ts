@@ -94,6 +94,7 @@ export interface ApiDeps {
   engines: ApiEngines;
   usage: {
     vendors(): z.infer<typeof VendorUsageSchema>[];
+    clear(vendor: Vendor, account?: string): number;
     samples(query: { vendor?: Vendor; since?: string; until?: string }): TimedUsageSample[];
   };
   notifications: {

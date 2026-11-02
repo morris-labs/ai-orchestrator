@@ -202,6 +202,7 @@ export const USAGE_SOURCE_LABELS: Record<UsageSource, string> = {
   codex_tokens: "estimated from Codex tokens",
   billing_api: "billing API",
   estimate: "estimate",
+  manual_clear: "cleared by you",
 };
 
 /** True for a reading the server estimated instead of reading from the vendor. */

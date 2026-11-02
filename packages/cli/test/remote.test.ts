@@ -8,7 +8,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runCli } from "../src/program.js";
 import { startFakeServer, type FakeServer } from "./fake-server.js";
-import { BOX_ID, CONTAINER, PROJECT_ID, box, boxView, job } from "./fixtures.js";
+import { BOX_ID, CONTAINER, PROJECT_ID, box, boxView, job, runState } from "./fixtures.js";
 
 const TOKEN = "cli-test-token";
 const NODE = "m0123456789abcdef";
@@ -80,6 +80,36 @@ const remoteBox = () => ({
 });
 
 describe("--machine", () => {
+  it("sends a review's roles, tier, and cross-vendor choice to the machine", async () => {
+    server.on(`POST ${PROXY}/runs`, { status: 201, body: runState });
+    const flags = ["--role", "reviewer=codex", "--tier", "large", "--no-cross-vendor"];
+    const args = ["--project", PROJECT_ID, "--repo", "/srv/site", ...flags];
+    expect(await cli(["--machine", "build-server", "review", "start", ...args])).toBe(0);
+    expect(calls()).toEqual([`POST ${PROXY}/runs`]);
+    expect(server.requests.at(-1)?.body).toMatchObject({
+      repoPath: "/srv/site",
+      roles: { reviewer: ["codex"] },
+      modelTier: "large",
+      crossVendor: false,
+    });
+  });
+
+  it("takes the machine of a review's MACHINE/BOX argument", async () => {
+    server.on(`GET ${PROXY}/boxes/${BOX_ID}`, { body: remoteBox() });
+    server.on(`POST ${PROXY}/runs`, { status: 201, body: runState });
+    const ref = `build-server/${BOX_ID}`;
+    expect(await cli(["review", "start", "--box", ref, "--tier", "small"])).toBe(0);
+    expect(server.requests.at(-1)?.path).toBe(`${PROXY}/runs`);
+    expect(server.requests.at(-1)?.body).toMatchObject({ boxId: BOX_ID, modelTier: "small" });
+  });
+
+  it("clears another machine's usage block", async () => {
+    server.on(`POST ${PROXY}/usage/clear`, { body: { vendors: [], cleared: 1 } });
+    expect(await cli(["--machine", "build-server", "review", "clear-usage", "codex"])).toBe(0);
+    expect(calls()).toEqual([`POST ${PROXY}/usage/clear`]);
+    expect(server.requests.at(-1)?.body).toEqual({ vendor: "codex" });
+  });
+
   it("lists another machine's boxes through the proxy route, by name or ID", async () => {
     server.on(`GET ${PROXY}/boxes`, { body: { boxes: [remoteBox()] } });
     expect(await cli(["--machine", "build-server", "box", "list"])).toBe(0);

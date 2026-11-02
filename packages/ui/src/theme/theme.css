@@ -265,6 +265,11 @@ a {
   cursor: pointer;
   user-select: none;
 }
+/* A row header doesn't stick or act as a sort control. */
+.ab-table th.ab-row-header {
+  position: static;
+  cursor: default;
+}
 .ab-table th:last-child {
   border-right: none;
 }

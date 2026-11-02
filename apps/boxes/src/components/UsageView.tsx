@@ -1,19 +1,14 @@
 // The Usage tab: CPU and memory totals, one card per running container with
-// its boxes, and each vendor account against its ceiling.
-import type { BoxView } from "@aio/contracts";
+// its boxes, and each vendor account's usage windows.
+import type { BoxView, Vendor } from "@aio/contracts";
 import { ProgressBar, useApiClient } from "@aio/ui";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { formatBytes } from "../logic/format";
 import { displayName } from "../logic/status";
+import { vendorRows, type VendorUsageInput } from "../logic/usage";
 
-interface VendorRow {
-  vendor: string;
-  account: string;
-  utilization: number;
-  label: string;
-  over: boolean;
-  resetAt: string | null;
-}
+/** How often the panel reads usage again and rechecks reset times. */
+const USAGE_REFRESH_MS = 60_000;
 
 export function UsageView({
   boxes,
@@ -23,37 +18,48 @@ export function UsageView({
   disk: ReadonlyMap<string, number>;
 }) {
   const client = useApiClient();
-  const [vendors, setVendors] = useState<VendorRow[] | null>(null);
-  useEffect(() => {
-    let live = true;
+  const [vendors, setVendors] = useState<VendorUsageInput[] | null>(null);
+  const [now, setNow] = useState(() => new Date());
+  const [failed, setFailed] = useState(false);
+  const live = useRef(true);
+  const load = useCallback(() => {
     client
       .call("usage.get", {})
       .then((r) => {
-        if (!live) return;
-        setVendors(
-          r.vendors.map((v) => {
-            const sample = v.latest.find((s) => s.window === v.window) ?? v.latest[0];
-            const utilization = sample?.utilization ?? 0;
-            const label =
-              sample?.spendUsd != null
-                ? `$${sample.spendUsd.toFixed(2)}`
-                : `${Math.round(utilization * 100)}%`;
-            return {
-              vendor: v.vendor,
-              account: v.account,
-              utilization,
-              label,
-              over: v.overCeiling,
-              resetAt: v.resetAt,
-            };
-          }),
-        );
+        if (!live.current) return;
+        setVendors(r.vendors);
+        setFailed(false);
+        // The server's clock decides resets, so the panel agrees with `overCeiling`.
+        setNow(r.time ? new Date(r.time) : new Date());
       })
-      .catch(() => live && setVendors([]));
-    return () => {
-      live = false;
-    };
+      .catch(() => {
+        if (!live.current) return;
+        setVendors((previous) => previous ?? []);
+        setFailed(true);
+        setNow(new Date());
+      });
   }, [client]);
+  useEffect(() => {
+    live.current = true;
+    load();
+    // A hidden panel makes no requests, and catches up when it shows again.
+    const tick = () => {
+      if (!document.hidden) load();
+    };
+    const timer = setInterval(tick, USAGE_REFRESH_MS);
+    document.addEventListener("visibilitychange", tick);
+    return () => {
+      live.current = false;
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", tick);
+    };
+  }, [load]);
+  const clearBlock = (vendor: string, account: string) => {
+    client
+      .call("usage.clear", { body: { vendor: vendor as Vendor, account } })
+      .then(load)
+      .catch(() => setFailed(true));
+  };
 
   const running = boxes.filter((b) => b.status === "running");
   const containers = new Map<string, BoxView[]>();
@@ -126,23 +132,46 @@ export function UsageView({
       </div>
       <section className="ab-group">
         <h3>Model usage</h3>
+        {failed ? (
+          <div className="bx-dim" role="alert">
+            Couldn&apos;t refresh usage. These readings can be out of date.
+          </div>
+        ) : null}
         {vendors === null ? (
           <div className="bx-dim">Loading...</div>
         ) : vendors.length === 0 ? (
           <div className="bx-dim">No usage samples yet.</div>
         ) : (
-          vendors.map((v) => (
-            <div key={`${v.vendor}:${v.account}`} className="bx-usage-row">
-              <span>
+          vendorRows(vendors, now).map((v) => (
+            <div key={`${v.vendor}:${v.account}`} className="bx-usage-vendor">
+              <div>
                 {v.vendor} <span className="bx-dim">{v.account}</span>
-              </span>
-              <ProgressBar
-                fraction={v.utilization}
-                label={`${v.label}${v.over ? " (over ceiling)" : ""}`}
-              />
-              <span className="bx-dim">
-                {v.resetAt ? `resets ${new Date(v.resetAt).toLocaleString()}` : ""}
-              </span>
+                {v.overWithoutRow ? <span> (over ceiling)</span> : null}
+                {v.over ? (
+                  <button
+                    type="button"
+                    title="Use this after you buy a reset. The next real sample replaces this."
+                    onClick={() => clearBlock(v.vendor, v.account)}
+                  >
+                    Clear block
+                  </button>
+                ) : null}
+              </div>
+              {v.windows.length === 0 ? (
+                <div className="bx-dim">No usage windows reported.</div>
+              ) : (
+                v.windows.map((w) => (
+                  <div key={w.window} className="bx-usage-row">
+                    <span>{w.name}</span>
+                    {w.current ? (
+                      <ProgressBar fraction={w.current.fraction} label={w.current.label} />
+                    ) : (
+                      <span className="bx-dim">No recent data</span>
+                    )}
+                    <span className="bx-dim">{w.detail}</span>
+                  </div>
+                ))
+              )}
             </div>
           ))
         )}

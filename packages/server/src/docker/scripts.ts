@@ -215,11 +215,25 @@ export function buildSessionCommand(
  * The script that links the container user's home to the default accounts,
  * so a bare `claude` typed in a shell works and absolute paths in user files
  * resolve. Arguments are pairs of TARGET and LINK. It leaves a LINK that is a
- * real file or folder alone.
+ * real file or folder alone, and prints `HOME_LINK_SKIPPED` and the LINK on
+ * one line of standard output for each, so the server can say why.
  */
 export const HOME_LINKS_SCRIPT =
   'while [ "$#" -ge 2 ]; do t="$1"; l="$2"; shift 2; ' +
-  'if [ -e "$l" ] && [ ! -L "$l" ]; then continue; fi; ln -sfn -- "$t" "$l"; done';
+  'if [ -e "$l" ] && [ ! -L "$l" ]; then printf \'%s %s\\n\' skipped "$l"; continue; fi; ' +
+  'ln -sfn -- "$t" "$l"; done';
+
+/** The first word of each line `HOME_LINKS_SCRIPT` prints for a LINK it left alone. */
+export const HOME_LINK_SKIPPED = "skipped";
+
+/** The LINK paths that a `HOME_LINKS_SCRIPT` run left alone, from its standard output. */
+export function skippedHomeLinks(stdout: string): string[] {
+  const prefix = `${HOME_LINK_SKIPPED} `;
+  return stdout
+    .split("\n")
+    .filter((line) => line.startsWith(prefix))
+    .map((line) => line.slice(prefix.length));
+}
 
 /** The `docker exec` argv that starts session `session` in `workDir` with the image's script. */
 export function sessionStartCmd(session: string, workDir: string, command: string): string[] {

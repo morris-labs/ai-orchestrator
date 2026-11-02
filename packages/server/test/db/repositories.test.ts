@@ -175,25 +175,69 @@ describe("migration 2", () => {
   });
 });
 
-describe("migrations 5 and 6", () => {
-  it("brings a version 4 database to the broker port column and the multi-host tables", () => {
+describe("migrations 5 to 7", () => {
+  /** A database at `version`, built from the first `version` migrations. */
+  function databaseAt(version: number): Database.Database {
     const db = new Database(":memory:");
-    for (const m of MIGRATIONS.slice(0, 4)) {
+    for (const m of MIGRATIONS.slice(0, version)) {
       if (typeof m === "function") m(db);
       else db.exec(m as string);
     }
-    db.pragma("user_version = 4");
-    expect(MIGRATIONS).toHaveLength(6);
-    expect(migrate(db)).toBe(6);
-    expect(db.pragma("user_version", { simple: true })).toBe(6);
-    const columns = (
-      db.prepare("PRAGMA table_info(engine_endpoints)").all() as { name: string }[]
-    ).map((c) => c.name);
-    expect(columns).toContain("broker_port");
-    const tables = (
-      db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[]
-    ).map((t) => t.name);
-    expect(tables).toEqual(expect.arrayContaining(["machines", "enrollment_codes"]));
+    db.pragma(`user_version = ${version}`);
+    return db;
+  }
+
+  function schemaNames(db: Database.Database, type: "table" | "index"): string[] {
+    return (
+      db.prepare("SELECT name FROM sqlite_master WHERE type = ?").all(type) as { name: string }[]
+    ).map((row) => row.name);
+  }
+
+  function engineColumns(db: Database.Database): string[] {
+    return (db.prepare("PRAGMA table_info(engine_endpoints)").all() as { name: string }[]).map(
+      (c) => c.name,
+    );
+  }
+
+  it("keeps the usage index at 5, the broker port at 6, and the machines at 7", () => {
+    expect(MIGRATIONS).toHaveLength(7);
+    expect(MIGRATIONS[4]).toContain("svc_usage_samples_account");
+    expect(MIGRATIONS[5]).toContain("broker_port");
+    expect(MIGRATIONS[6]).toContain("CREATE TABLE machines");
+    expect(MIGRATIONS[6]).toContain("CREATE TABLE enrollment_codes");
+  });
+
+  it("brings a version 5 database from main to version 7 and keeps its rows", () => {
+    const db = databaseAt(5);
+    expect(schemaNames(db, "index")).toContain("svc_usage_samples_account");
+    expect(engineColumns(db)).not.toContain("broker_port");
+    expect(schemaNames(db, "table")).not.toContain("machines");
+    db.prepare(
+      "INSERT INTO accounts (id, vendor, name, data, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+    ).run("claude/work", "claude", "work", "{}", "2026-01-01", "2026-01-01");
+
+    expect(migrate(db)).toBe(7);
+
+    expect(db.pragma("user_version", { simple: true })).toBe(7);
+    expect(schemaNames(db, "index")).toContain("svc_usage_samples_account");
+    expect(engineColumns(db)).toContain("broker_port");
+    expect(schemaNames(db, "table")).toEqual(
+      expect.arrayContaining(["machines", "enrollment_codes"]),
+    );
+    expect(db.prepare("SELECT id FROM accounts").all()).toEqual([{ id: "claude/work" }]);
+  });
+
+  it("brings a version 4 database through all three changes", () => {
+    const db = databaseAt(4);
+    expect(schemaNames(db, "index")).not.toContain("svc_usage_samples_account");
+
+    expect(migrate(db)).toBe(7);
+
+    expect(schemaNames(db, "index")).toContain("svc_usage_samples_account");
+    expect(engineColumns(db)).toContain("broker_port");
+    expect(schemaNames(db, "table")).toEqual(
+      expect.arrayContaining(["machines", "enrollment_codes"]),
+    );
   });
 });
 

@@ -229,6 +229,57 @@ The following errors can stop a run before its first stage:
 - The policy file doesn't parse: the preflight stage names the field. For the
   format, see [Policy file](policy.md).
 
+## A reviewer call fails with "Not logged in"
+
+A run stops with an error like `The reviewer call on claude failed: ...
+Not logged in · Please run /login`. The vendor CLI that the engine started
+found no sign-in in the folder it used. Check the following:
+
+1. In accounts mode, make sure the vendor has a default account that is
+   signed in. To check an account, run the following command, where
+   `VENDOR/NAME` is the account's id, such as `claude/personal`:
+
+   ```bash
+   aio accounts check VENDOR/NAME
+
+   ```
+
+   If the account isn't signed in, run `aio accounts login VENDOR/NAME`,
+   which prints the command that signs it in, and run that command in a box
+   shell.
+1. Make sure the project container runs an image with an engine that reads
+   `account-dirs.json`. An older engine runs `claude` with the container
+   user's `~/.claude`, which in accounts mode can be a real folder that
+   Docker created to hold the shared `CLAUDE.md`, `settings.json`, `skills`,
+   and `plugins` mounts, without the account's sign-in. To check, compare the
+   engine version that `aio doctor` reports with the server's.
+
+   A server log warning that `~/.claude` is a folder, not a link to the
+   default account, doesn't show an older engine. A current engine logs it too
+   and its review runs aren't affected, so don't rebuild for that warning
+   alone.
+
+   If the engine is older, rebuild the image and restart the project
+   container. On a packaged install, run the following:
+
+   ```bash
+   /usr/share/ai-orchestrator/scripts/build-image.sh
+   aio project restart PROJECT_ID
+
+   ```
+
+   Replace `PROJECT_ID` with the project's id, which `aio project list`
+   shows.
+
+   > **Warning:** `aio project restart` stops every running box in the project.
+
+   In a source checkout, run `scripts/build-image.sh` from the repository root
+   instead. If the checkout is newer than the running server, restart the
+   server first: the server refuses an image whose engine differs from its own,
+   and the project stays down with `engine_mismatch` until the versions match.
+1. In host mode, sign in on the host. The containers mount `~/.claude`,
+   `~/.claude.json`, `~/.codex`, and `~/.copilot`.
+
 ## The Electron apps don't open on Ubuntu 24.04 or later
 
 Ubuntu restricts unprivileged user namespaces, which the apps' sandbox

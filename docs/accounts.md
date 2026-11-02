@@ -270,7 +270,14 @@ In accounts mode, a box behaves as follows:
   `sessions` folder is the container's own directory, and the target of any
   link at the top of a Claude account folder (such as `projects`) is mounted
   at its own path. In the container, `~/.claude`, `~/.claude.json`, `~/.codex`,
-  and `~/.copilot` link to each vendor's default account.
+  and `~/.copilot` link to each vendor's default account, for a bare command
+  that you type in a container shell. The server leaves a path there that
+  is a real file or folder alone and logs a warning that names it. When the
+  account's shared entries (see "Share your Claude configuration") are
+  mounted at their host paths under `~/.claude`, Docker creates
+  `~/.claude` as a folder to hold them, so it can't be a link; the warning
+  names those mounts as the cause. Boxes and review runs aren't affected,
+  because they name the account folder themselves.
 - **Transcripts**: every Claude account's `projects` link leads to one shared
   store, `DATA_DIR/transcripts/claude` (`~/.ai-orchestrator/transcripts/claude`
   by default), so a conversation resumes under any Claude account. The store
@@ -296,6 +303,26 @@ In accounts mode, a box behaves as follows:
   because the old one stays in the old account's folder.
 - **Models**: the model list and the defaults come from the chosen Claude
   account's `.claude.json` and `settings.json`.
+
+Review runs use the default account of each vendor. The server writes the
+default account folders to `account-dirs.json` in a folder that the container
+mounts read-only at `/run/aio-config` when the container starts, and rewrites
+it for each running container when you change a default or the accounts mode.
+For every model call, the engine reads the file and starts the CLI with
+`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, or `COPILOT_HOME` set to the folder, so a
+new default applies from the next call without a container restart. A session
+that continues stays in the account folder it started in. The server also moves
+the container's home links to the new default.
+
+A restart is still needed in two cases, and the server logs the second:
+
+- A container launched in host mode stays on its home folders after you switch
+  to accounts mode.
+- A running container keeps its previous Claude account when the default moves
+  to an account made after the container started.
+
+The engine doesn't depend on the `~/.claude` link in the container's home. In
+host mode, the file holds no folders and each CLI uses its home folder.
 
 ## Transcript retention
 

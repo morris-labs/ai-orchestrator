@@ -108,7 +108,7 @@ export class UsageService {
       return;
     }
     if (event.type !== "usage.sample") return;
-    const sample: TimedUsageSample = {
+    this.recordSample({
       vendor: event.vendor,
       account: accountLabel(event.vendor, event.account, this.opts.settings()),
       window: event.window,
@@ -118,7 +118,11 @@ export class UsageService {
       resetAt: event.resetAt,
       sampleSource: event.sampleSource,
       time: event.time,
-    };
+    });
+  }
+
+  /** Stores a sample and emits `ceiling.crossed` when it moves the vendor across its ceiling. */
+  private recordSample(sample: TimedUsageSample): void {
     const ceiling = this.opts.settings().ceilings[sample.vendor];
     const key = `${sample.vendor}|${sample.account}|${sample.window}`;
     const now = this.nowMs();
@@ -142,6 +146,32 @@ export class UsageService {
       direction: after ? "above" : "below",
       resetAt: sample.resetAt,
     });
+  }
+
+  /**
+   * Clears a stale block: for each of the vendor's accounts that is over its
+   * ceiling, or the one named, records a zero reading in the ceiling's window.
+   * A stored sample can say 100% until its old reset time even after a person
+   * buys a reset, and a blocked vendor gets no call that could correct it. The
+   * vendor's next real sample replaces this one. Returns how many it cleared.
+   */
+  clear(vendor: Vendor, account?: string): number {
+    const ceilings = this.opts.settings().ceilings;
+    const window = ceilingWindow(ceilings[vendor]);
+    let cleared = 0;
+    for (const name of account === undefined ? this.opts.store.accounts(vendor) : [account]) {
+      const latest = this.opts.store.latest(vendor, window, name);
+      if (!latest || !sampleIsOver(latest, ceilings[vendor], this.nowMs())) continue;
+      this.recordSample({
+        ...latest,
+        utilization: 0,
+        spendUsd: latest.spendUsd === null ? null : 0,
+        sampleSource: "manual_clear",
+        time: new Date(this.nowMs()).toISOString(),
+      });
+      cleared += 1;
+    }
+    return cleared;
   }
 
   /**

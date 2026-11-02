@@ -8,9 +8,11 @@ import {
   LeaseResponseSchema,
   READ_ONLY_POST_PUSH_MESSAGE,
   ResolvedRunRequestSchema,
+  RoleOverridesSchema,
   RoundSummarySchema,
   RunRequestSchema,
   RunStateSchema,
+  profileRoles,
 } from "../src/index.js";
 import {
   RUN,
@@ -67,6 +69,38 @@ describe("runs", () => {
     expect(EngineRunCreateSchema.safeParse({ ...bad, runId: RUN }).success).toBe(false);
     expect(RunRequestSchema.safeParse({ ...runRequest, readOnly: true }).success).toBe(true);
     expect(RunRequestSchema.safeParse({ ...runRequest, pipeline: "post-push" }).success).toBe(true);
+  });
+
+  it("parses a request with and without starting roles", () => {
+    expect(RunRequestSchema.parse(runRequest)).not.toHaveProperty("roles");
+    const roles = { reviewer: ["codex"], confirmer: "copilot" };
+    const parsed = roundTrip(RunRequestSchema, { ...runRequest, roles });
+    expect(parsed.roles).toEqual(roles);
+    expect(ResolvedRunRequestSchema.parse(parsed).roles).toEqual(roles);
+    expect(EngineRunCreateSchema.parse({ ...runRequest, runId: RUN, roles }).roles).toEqual(roles);
+    // A run state stored before requests had roles still parses.
+    expect(RunStateSchema.parse(runState).request).not.toHaveProperty("roles");
+  });
+
+  it("refuses starting roles of the wrong shape", () => {
+    const bad = [
+      { disprover: ["codex", "copilot"] },
+      { fixer: ["claude"] },
+      { reviewer: [] },
+      { reviewer: "codex" },
+      { confirmer: "gemini" },
+    ];
+    for (const roles of bad) {
+      expect(RunRequestSchema.safeParse({ ...runRequest, roles }).success).toBe(false);
+      expect(RoleOverridesSchema.safeParse(roles).success).toBe(false);
+    }
+  });
+
+  it("gives each profile's default roles", () => {
+    expect(profileRoles("offload", 1).reviewer).toEqual(["codex", "copilot"]);
+    expect(profileRoles("balanced", 2).reviewer).toContain("claude");
+    expect(profileRoles("balanced", 3).reviewer).not.toContain("claude");
+    expect(profileRoles("fast", 1).disprover).toBe("claude");
   });
 
   it("round-trips a run state waiting for a decision", () => {

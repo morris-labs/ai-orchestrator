@@ -1,10 +1,14 @@
 // The host side of a project container's keeper state:
 // `~/.ai-orchestrator/state/<container>/sessions` (live tmux sessions, rewritten
-// every second), `mounts` (the mounts the container was created with), and
-// `engine.token` (the engine's bearer token, mode 0600).
+// every second), `mounts` (the mounts the container was created with),
+// and `engine.token` (the engine's bearer token, mode 0600). The container can
+// write this directory. `account-dirs.json` (each vendor's default account
+// folder, for the engine) and `layout.json` live in a separate folder that the
+// container mounts read-only.
 import fs from "node:fs";
 import path from "node:path";
-import { homePaths, type HostEnv } from "../records/env.js";
+import { ENGINE_ACCOUNT_DIRS_FILE, type EngineAccountDirs } from "@aio/contracts";
+import { engineConfigDirFor, homePaths, type HostEnv } from "../records/env.js";
 import { readRegularFileSync, replaceFileSync } from "../records/regular-file.js";
 
 /** Seconds a sessions file stays trustworthy; an older one means the keeper is gone. */
@@ -120,4 +124,59 @@ export function writeMountsFile(env: HostEnv, container: string, mounts: readonl
 export function readMountsFile(env: HostEnv, container: string): string[] | null {
   const content = readRegularFileSync(mountsFile(env, container));
   return content === null ? null : parseSessions(content);
+}
+
+export function accountDirsFile(env: HostEnv, container: string): string {
+  return path.join(engineConfigDirFor(env, container), ENGINE_ACCOUNT_DIRS_FILE);
+}
+
+/** What a container was launched with, which a settings change can't alter. */
+export interface ContainerLayout {
+  /** True when the container mounts the accounts folder and has home links. */
+  accounts: boolean;
+  /** The Claude account folders with a `sessions` mount, as the container sees them. */
+  claudeDirs: string[];
+  /** The targets of account links that lead outside the account folder. */
+  accountLinkTargets: string[];
+}
+
+function layoutFile(env: HostEnv, container: string): string {
+  return path.join(engineConfigDirFor(env, container), "layout.json");
+}
+
+/** Records a container's layout, in the folder the container can't write. */
+export function writeContainerLayout(
+  env: HostEnv,
+  container: string,
+  layout: ContainerLayout,
+): void {
+  fs.mkdirSync(engineConfigDirFor(env, container), { recursive: true, mode: 0o700 });
+  replaceFileSync(layoutFile(env, container), `${JSON.stringify(layout)}\n`);
+}
+
+/** A container's recorded layout, or `null` for one from before the record. */
+export function readContainerLayout(env: HostEnv, container: string): ContainerLayout | null {
+  const content = readRegularFileSync(layoutFile(env, container));
+  if (content === null) return null;
+  try {
+    return JSON.parse(content) as ContainerLayout;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Writes the default account folder of each vendor, as the container sees
+ * it, for the engine's vendor calls. An empty object means no folder is
+ * known, as in `host` mode. The file is replaced rather than written
+ * through, for the same reason as `writeMountsFile()`.
+ */
+export function writeAccountDirsFile(
+  env: HostEnv,
+  container: string,
+  dirs: EngineAccountDirs,
+): void {
+  fs.mkdirSync(stateDir(env, container), { recursive: true });
+  fs.mkdirSync(engineConfigDirFor(env, container), { recursive: true, mode: 0o700 });
+  replaceFileSync(accountDirsFile(env, container), `${JSON.stringify(dirs)}\n`);
 }

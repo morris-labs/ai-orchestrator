@@ -22,6 +22,24 @@ describe("account labels", () => {
   });
 });
 
+describe("clearing a usage block", () => {
+  it("clears an over account until the next real sample, and announces the crossing", () => {
+    const t = setup();
+    t.sample("codex", { utilization: 1, resetAt: iso(T0 + 60 * MIN) });
+    expect(t.usage.isOver("codex", t.settings.value.ceilings).over).toBe(true);
+    expect(t.usage.clear("codex")).toBe(1);
+    expect(t.usage.isOver("codex", t.settings.value.ceilings).over).toBe(false);
+    t.sample("codex", { utilization: 1, resetAt: iso(T0 + 60 * MIN) });
+    expect(t.usage.isOver("codex", t.settings.value.ceilings).over).toBe(true);
+  });
+
+  it("leaves an account that isn't over alone", () => {
+    const t = setup();
+    t.sample("codex", { utilization: 0.1, resetAt: iso(T0 + 60 * MIN) });
+    expect(t.usage.clear("codex")).toBe(0);
+  });
+});
+
 describe("UsageStore", () => {
   it("filters samples by vendor and time, oldest first", () => {
     const t = setup();

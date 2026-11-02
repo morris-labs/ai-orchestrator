@@ -13,6 +13,8 @@ import {
   projectContainerName,
   type ContainerInfo,
   type ContainerState,
+  type EngineAccountDirs,
+  type Platform,
   type Project,
   type ProjectSummary,
   type HostOs,
@@ -33,16 +35,22 @@ import {
   sudoLabel,
   tcpMapsLabel,
 } from "../docker/launch.js";
-import { HOME_LINKS_SCRIPT, rootSetupExec } from "../docker/scripts.js";
+import { HOME_LINKS_SCRIPT, rootSetupExec, skippedHomeLinks } from "../docker/scripts.js";
 import {
   liveSessions,
   mountsFile,
   readMountsFile,
+  stateDir,
+  accountDirsFile,
+  readContainerLayout,
+  writeAccountDirsFile,
+  writeContainerLayout,
   writeEngineTokenFile,
   writeMountsFile,
 } from "../docker/state.js";
 import type { ContainerInspect, DockerClient } from "../docker/types.js";
 import { boxTmuxSession } from "../records/box.js";
+import { readRegularFileSync } from "../records/regular-file.js";
 import {
   accountDirFor,
   containerHome,
@@ -108,12 +116,15 @@ export interface ProjectServiceDeps {
    * process's platform; see `decideBrokerTransport()`.
    */
   brokerTransport?: () => Promise<BrokerTransportDecision>;
-  /** Logs the broker transport decision. Default: none. */
-  log?: (message: string) => void;
   /** Seconds the keeper lingers; 30 unless a test shortens it. */
   graceSec?: number;
   /** Milliseconds to wait for a stopped container to go away. */
   removalTimeoutMs?: number;
+  /**
+   * Logs the broker transport decision and problems that don't stop a
+   * container, such as a home link left alone. Default: none.
+   */
+  log?: (message: string) => void;
 }
 
 export interface EnsureContainerResult {
@@ -138,6 +149,9 @@ function isDirectory(p: string): boolean {
   }
 }
 
+/** The settings whose change moves a vendor's default account folder. */
+const ACCOUNT_DIR_SETTINGS = new Set(["accountDefaults", "accountsMode"]);
+
 export class ProjectService {
   private readonly resolver: BrokerTransportResolver;
   /** The last transport decision, for the stale check; `null` until one is made. */
@@ -150,6 +164,11 @@ export class ProjectService {
       setting: () => deps.settings.get().brokerTransport,
       dockerHost: process.env.DOCKER_HOST,
       log: deps.log,
+    });
+    // The engine reads the file for every vendor call, so a running
+    // container follows a new default without a restart, within what it mounts.
+    deps.events.on("settings.changed", (payload: { changedKeys?: string[] }) => {
+      if (payload.changedKeys?.some((k) => ACCOUNT_DIR_SETTINGS.has(k))) this.syncAccountDirs();
     });
   }
 
@@ -459,40 +478,120 @@ export class ProjectService {
   }
 
   /**
+   * The default account folder of each vendor as the container sees it, or
+   * an empty object in `host` mode. A vendor without a default has no entry.
+   */
+  accountDirs(): EngineAccountDirs {
+    const settings = this.deps.settings.get();
+    if (settings.accountsMode !== "accounts") return {};
+    const out: EngineAccountDirs = {};
+    for (const vendor of ["claude", "codex", "copilot"] as const satisfies Platform[]) {
+      const id = settings.accountDefaults[vendor];
+      if (id === undefined || !id.startsWith(`${vendor}/`)) continue;
+      out[vendor] = hostToContainer(
+        accountDirFor(this.deps.env, vendor, id.slice(vendor.length + 1)),
+        this.hostOs,
+      );
+    }
+    return out;
+  }
+
+  /**
+   * The account folders one container can use: the current defaults, limited
+   * to what it mounts. A container launched in host mode doesn't mount the
+   * accounts folder, so it stays on its home folders. An account made after
+   * the launch has no `sessions` mount there, so Claude stays on its previous
+   * folder until the container restarts.
+   */
+  private containerAccountDirs(container: string): EngineAccountDirs {
+    const wanted = this.accountDirs();
+    const layout = readContainerLayout(this.deps.env, container);
+    if (!layout) return wanted;
+    if (!layout.accounts) return {};
+    if (wanted.claude === undefined || layout.claudeDirs.includes(wanted.claude)) return wanted;
+    this.deps.log?.(
+      `${container}: the default Claude account has no mount in this container, so review ` +
+        `runs keep the previous account until the container restarts.`,
+    );
+    const { claude: _claude, ...others } = wanted;
+    const previous = readRegularFileSync(accountDirsFile(this.deps.env, container));
+    const kept = previous === null ? undefined : (JSON.parse(previous) as EngineAccountDirs).claude;
+    return kept === undefined ? others : { ...others, claude: kept };
+  }
+
+  /** Brings one container's account folders file up to date. Logs a failure. */
+  private syncContainerAccountDirs(container: string): void {
+    try {
+      const dirs = this.containerAccountDirs(container);
+      writeAccountDirsFile(this.deps.env, container, dirs);
+      const layout = readContainerLayout(this.deps.env, container);
+      if (layout?.accounts) {
+        void this.linkHome(container, container, layout.accountLinkTargets, dirs).catch(
+          () => undefined,
+        );
+      }
+    } catch (err) {
+      this.deps.log?.(
+        `Couldn't update the account folders for ${container}: ${(err as Error).message}`,
+      );
+    }
+  }
+
+  /**
+   * Rewrites the account folders file (`account-dirs.json`) of every
+   * container that has an engine record and a state directory, and moves its
+   * home links, so its engine and shells use the current defaults. A failure
+   * is logged, not thrown: the settings change itself succeeded.
+   */
+  syncAccountDirs(): void {
+    try {
+      for (const { container } of this.repos.engines.list()) {
+        if (isDirectory(stateDir(this.deps.env, container))) {
+          this.syncContainerAccountDirs(container);
+        }
+      }
+    } catch (err) {
+      this.deps.log?.(`Couldn't update the account folders: ${(err as Error).message}`);
+    }
+  }
+
+  /**
    * Links the container user's home to the default account of each vendor:
    * `~/.claude`, `~/.claude.json`, `~/.codex`, and `~/.copilot`. Keeps a bare
    * `claude` in a shell working and keeps absolute paths in user files, such
-   * as the global `CLAUDE.md`, resolving. Failures are ignored: the sessions
-   * name their account's folder themselves.
+   * as the global `CLAUDE.md`, resolving. Failures don't stop the start:
+   * the sessions name their account's folder themselves, and the engine
+   * takes it from `account-dirs.json`. A link the script left alone is
+   * logged.
    */
-  private async linkHome(container: string): Promise<void> {
-    const defaults = this.deps.settings.get().accountDefaults;
+  private async linkHome(
+    container: string,
+    name: string,
+    accountLinkTargets: readonly string[],
+    dirs: EngineAccountDirs = this.accountDirs(),
+  ): Promise<void> {
     const home = containerHome(this.deps.env);
     const args: string[] = [];
-    const dirOf = (vendor: "claude" | "codex" | "copilot") => {
-      const id = defaults[vendor];
-      return id === undefined
-        ? undefined
-        : hostToContainer(
-            accountDirFor(this.deps.env, vendor, id.slice(vendor.length + 1)),
-            this.hostOs,
-          );
-    };
-    const claude = dirOf("claude");
-    if (claude !== undefined)
-      args.push(claude, `${home}/.claude`, `${claude}/.claude.json`, `${home}/.claude.json`);
-    const codex = dirOf("codex");
-    if (codex !== undefined) args.push(codex, `${home}/.codex`);
-    const copilot = dirOf("copilot");
-    if (copilot !== undefined) args.push(copilot, `${home}/.copilot`);
+    if (dirs.claude !== undefined)
+      args.push(
+        dirs.claude,
+        `${home}/.claude`,
+        `${dirs.claude}/.claude.json`,
+        `${home}/.claude.json`,
+      );
+    if (dirs.codex !== undefined) args.push(dirs.codex, `${home}/.codex`);
+    if (dirs.copilot !== undefined) args.push(dirs.copilot, `${home}/.copilot`);
     if (args.length === 0) return;
-    await this.deps.docker
+    const result = await this.deps.docker
       .exec(container, {
         cmd: ["/bin/sh", "-c", HOME_LINKS_SCRIPT, "_", ...args],
         user: this.deps.env.user,
         timeoutMs: 15_000,
       })
       .catch(() => undefined);
+    for (const link of skippedHomeLinks(result?.stdout ?? "")) {
+      this.deps.log?.(skippedLinkMessage(name, link, accountLinkTargets));
+    }
   }
 
   /** Checks the engine image: it must exist and carry the expected engine version. */
@@ -663,6 +762,8 @@ export class ProjectService {
           await docker.stopContainer(name, 10);
           await this.waitForRemoval(name);
         } else {
+          // Covers a container from an older server, and a missed settings event.
+          this.syncContainerAccountDirs(name);
           return { container: name, created: false, stale };
         }
       } else if (inspect) {
@@ -728,11 +829,25 @@ export class ProjectService {
         facts,
       );
       writeEngineTokenFile(this.deps.env, name, token);
+      // A failed write must not block the start: the engine warns and falls
+      // back to the home folders.
+      try {
+        writeContainerLayout(this.deps.env, name, {
+          accounts: accounts !== undefined && accounts !== null,
+          claudeDirs: (accounts?.claudeDirs ?? []).map((dir) => hostToContainer(dir, this.hostOs)),
+          accountLinkTargets: facts.accountLinkTargets ?? [],
+        });
+        writeAccountDirsFile(this.deps.env, name, this.accountDirs());
+      } catch (err) {
+        this.deps.log?.(
+          `Couldn't write the account folders for ${name}: ${(err as Error).message}`,
+        );
+      }
       const id = await docker.createContainer(spec);
       try {
         await docker.startContainer(id);
         await this.runRootSetup(id, project, passwordHash);
-        if (accounts) await this.linkHome(id);
+        if (accounts) await this.linkHome(id, name, facts.accountLinkTargets ?? []);
       } catch (err) {
         await docker.removeContainer(id, { force: true }).catch(() => undefined);
         throw err;
@@ -756,8 +871,45 @@ export class ProjectService {
         },
         this.deps.env.now(),
       );
+      // A settings change during the start skipped this container, which had no record yet.
+      try {
+        writeAccountDirsFile(this.deps.env, name, this.containerAccountDirs(name));
+      } catch (err) {
+        this.deps.log?.(
+          `Couldn't update the account folders for ${name}: ${(err as Error).message}`,
+        );
+      }
       this.publishContainer(projectId, name, "running");
       return { container: name, created: true, stale: [] };
     });
   }
+}
+
+/**
+ * The warning for a home link that `HOME_LINKS_SCRIPT` left alone. When the
+ * link is a folder that holds the mount points of account links that lead
+ * outside the account folder, such as `~/.claude/CLAUDE.md` linked to the
+ * host's own file, Docker made that folder to hold the mounts. Shell use of
+ * a bare `claude` then sees no sign-in; boxes and the engine aren't
+ * affected, since they name the account folder themselves.
+ */
+export function skippedLinkMessage(
+  container: string,
+  link: string,
+  accountLinkTargets: readonly string[],
+): string {
+  const inside = accountLinkTargets.filter((t) => t === link || t.startsWith(`${link}/`));
+  if (inside.length > 0) {
+    return (
+      `${container}: ${link} is a folder, not a link to the default account, because ` +
+      `Docker created it to hold the mounts of account links that lead outside the ` +
+      `account folder (${inside.join(", ")}). A bare command in a container shell ` +
+      `doesn't see the account's sign-in there; boxes and review runs name the ` +
+      `account folder themselves.`
+    );
+  }
+  return (
+    `${container}: ${link} already exists and isn't a link, so it wasn't linked to the ` +
+    `default account. A bare command in a container shell uses it instead of the account.`
+  );
 }

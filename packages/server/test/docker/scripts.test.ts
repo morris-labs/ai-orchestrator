@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   GIT_SAFE_DIRECTORY_SETUP,
+  HOME_LINKS_SCRIPT,
   KEEPER_PATH,
   KEEPER_SCRIPT,
   ROOT_SETUP_SCRIPT,
@@ -23,6 +24,7 @@ import {
   sessionStartCmd,
   sharedKeeperCommand,
   shellQuote,
+  skippedHomeLinks,
 } from "../../src/docker/scripts.js";
 
 /**
@@ -280,5 +282,30 @@ describe("scripts", () => {
   it("runs the session command through a shell as one argument per token", () => {
     const cmd = buildSessionCommand("printf", ["%s|", "multi word", "it's"]);
     expect(execFileSync("bash", ["-c", cmd], { encoding: "utf8" })).toBe("multi word|it's|");
+  });
+});
+
+describe("HOME_LINKS_SCRIPT", () => {
+  it("links missing and linked paths, and reports a real folder it leaves alone", () => {
+    const dir = mkdtempSync(join(tmpdir(), "aio-home-links-"));
+    try {
+      const account = join(dir, "account");
+      mkdirSync(account);
+      const real = join(dir, "real");
+      mkdirSync(real);
+      const old = join(dir, "old");
+      fs.symlinkSync(join(dir, "elsewhere"), old);
+      const out = execFileSync(
+        "/bin/sh",
+        ["-c", HOME_LINKS_SCRIPT, "_", account, join(dir, "new"), account, real, account, old],
+        { encoding: "utf8" },
+      );
+      expect(fs.readlinkSync(join(dir, "new"))).toBe(account);
+      expect(fs.readlinkSync(old)).toBe(account);
+      expect(fs.lstatSync(real).isSymbolicLink()).toBe(false);
+      expect(skippedHomeLinks(out)).toEqual([real]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

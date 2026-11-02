@@ -6,7 +6,14 @@ import {
   findingVendors,
   NO_FILTER,
 } from "../src/screens/findingsModel.js";
-import { DEFAULT_FORM, buildRunRequest, formFromBox } from "../src/screens/launcherModel.js";
+import {
+  DEFAULT_FORM,
+  buildRunRequest,
+  formFromBox,
+  formRoles,
+  setFormProfile,
+  setFormRole,
+} from "../src/screens/launcherModel.js";
 import { commaList, lines, parsePolicyYaml, policyToYaml } from "../src/screens/policyModel.js";
 import {
   draftFrom,
@@ -14,6 +21,7 @@ import {
   switchCeilingKind,
   vendorDefaultsPatch,
 } from "../src/screens/settingsModel.js";
+import { roleConflicts } from "../src/components/rolesModel.js";
 import { deepLink, href, parseHash } from "../src/state/router.js";
 import { demoBox, demoFindings } from "./helpers/data.js";
 
@@ -59,6 +67,73 @@ describe("buildRunRequest", () => {
       ok: true,
       request: { mergeBase: false, exactBase: true, prNumber: 42, tip: "x" },
     });
+  });
+
+  it("follows the profile's roles until a person changes one", () => {
+    expect(formRoles(ok).reviewer).toEqual(["codex", "copilot"]);
+    const fast = setFormProfile(ok, "fast");
+    expect(fast.roles).toBeNull();
+    expect(formRoles(fast).disprover).toEqual(["claude"]);
+    const edited = setFormRole(ok, "disprover", ["copilot"]);
+    expect(edited.roles).toEqual({ disprover: ["copilot"] });
+    // Choosing the defaults again drops the edit.
+    expect(setFormRole(edited, "disprover", ["codex"]).roles).toBeNull();
+  });
+
+  it("keeps only edited roles when the profile switches", () => {
+    const edited = setFormRole(ok, "disprover", ["copilot"]);
+    const switched = setFormProfile(edited, "fast");
+    expect(formRoles(switched).disprover).toEqual(["copilot"]);
+    // The reviewers the person never touched follow the new profile.
+    expect(formRoles(switched).reviewer).toEqual(["claude", "codex"]);
+    const built = buildRunRequest(switched);
+    expect(built.ok).toBe(true);
+    if (built.ok) expect(built.request.roles).toEqual({ disprover: "copilot" });
+  });
+
+  it("holds a choice that matches only round 1 of a profile", () => {
+    const pinned = setFormRole(ok, "reviewer", ["claude", "codex", "copilot"]);
+    const built = buildRunRequest(setFormProfile(pinned, "balanced"));
+    expect(built.ok).toBe(true);
+    if (built.ok) expect(built.request.roles?.reviewer).toEqual(["claude", "codex", "copilot"]);
+  });
+
+  it("sends only the roles a person edited", () => {
+    const r0 = buildRunRequest(ok);
+    expect(r0.ok).toBe(true);
+    if (r0.ok) expect(r0.request).not.toHaveProperty("roles");
+    const form = setFormRole(setFormRole(ok, "confirmer", ["copilot"]), "reviewer", ["codex"]);
+    const r = buildRunRequest(form);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.request.roles).toEqual({ reviewer: ["codex"], confirmer: "copilot" });
+    // The same vendors in another order are no change.
+    const r2 = buildRunRequest(setFormRole(ok, "reviewer", ["copilot", "codex"]));
+    expect(r2.ok).toBe(true);
+    if (r2.ok) expect(r2.request).not.toHaveProperty("roles");
+  });
+
+  it("leaves the fixer and confirmer out of a read-only request", () => {
+    const form = setFormRole(setFormRole(ok, "fixer", ["codex"]), "disprover", ["copilot"]);
+    const r = buildRunRequest({ ...form, readOnly: true });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.request.roles).toEqual({ disprover: "copilot" });
+  });
+
+  it("sends the cross-vendor choice and warns about conflicting roles", () => {
+    const r = buildRunRequest({ ...ok, crossVendor: false });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.request.crossVendor).toBe(false);
+    const conflicts = formRoles(setFormRole(ok, "confirmer", ["claude"]));
+    expect(roleConflicts(conflicts, true).join()).toMatch(/claude can't confirm/);
+    expect(roleConflicts(conflicts, false)).toEqual([]);
+    const reviewerDisproves = formRoles(ok);
+    expect(roleConflicts(reviewerDisproves, true).join()).toMatch(/codex can't disprove/);
+  });
+
+  it("refuses a run with no reviewer", () => {
+    const r = buildRunRequest(setFormRole(ok, "reviewer", []));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors).toContain("Choose at least one reviewer.");
   });
 
   it("prefills from a box", () => {
@@ -211,5 +286,15 @@ describe("router", () => {
     expect(() => parseHash("#/runs/%E0%A4")).not.toThrow();
     expect(parseHash("#/runs/%E0%A4").params.runId).toBe("%E0%A4");
     expect(parseHash("#/runs/a%20b").params.runId).toBe("a b");
+  });
+});
+
+describe("buildRunRequest model tier", () => {
+  const form = { ...DEFAULT_FORM, projectId: "p", repoPath: "/w" };
+  it("sends auto by default and a fixed tier when chosen", () => {
+    const auto = buildRunRequest(form);
+    expect(auto.ok && auto.request.modelTier).toBe("auto");
+    const fixed = buildRunRequest({ ...form, modelTier: "medium" });
+    expect(fixed.ok && fixed.request.modelTier).toBe("medium");
   });
 });

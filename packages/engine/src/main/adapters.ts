@@ -1,11 +1,12 @@
 // Picks the vendor adapters the engine runs with: the real CLIs that answer
 // `--version`, or scripted mocks for the vendors `AIO_MOCK_VENDORS` names.
 import { readFileSync } from "node:fs";
-import { VendorSchema, type Vendor } from "@aio/contracts";
+import { ENGINE_CONFIG_MOUNT, VendorSchema, type Vendor } from "@aio/contracts";
 import { z } from "zod";
 import type { Logger } from "../api/core-interface.js";
 import { bridgeAdapters } from "../adapters/bridge.js";
-import { createAdapters } from "../adapters/index.js";
+import { accountDirSources, accountDirsFileIn } from "../adapters/account-dirs.js";
+import { createAdapters, type AdapterOptionsByVendor } from "../adapters/index.js";
 import { MockAdapter, MockResponseSchema, type MockResponse } from "../adapters/mock.js";
 import type { CliVendorAdapter } from "../adapters/types.js";
 import type { AdapterSet } from "../core.js";
@@ -102,11 +103,29 @@ export interface SelectedAdapters {
   missing: Array<{ vendor: Vendor; error: string | null }>;
 }
 
+/**
+ * The real adapters, each pointed at its vendor's default account folder as
+ * the server names it in `account-dirs.json` in `configDir`.
+ */
+export function createEngineAdapters(
+  configDir: string,
+  options: AdapterOptionsByVendor = {},
+  warn?: (message: string) => void,
+): Record<Vendor, CliVendorAdapter> {
+  const sources = accountDirSources(accountDirsFileIn(configDir), warn);
+  return createAdapters({
+    claude: { accountDir: sources.claude, ...options.claude },
+    codex: { accountDir: sources.codex, ...options.codex },
+    copilot: { accountDir: sources.copilot, ...options.copilot },
+  });
+}
+
 /** Returns the adapters for the engine's environment. */
 export async function selectAdapters(
   env: Record<string, string | undefined>,
   log: Logger,
-  candidates: () => Record<Vendor, CliVendorAdapter> = () => createAdapters(),
+  candidates: () => Record<Vendor, CliVendorAdapter> = () =>
+    createEngineAdapters(ENGINE_CONFIG_MOUNT, {}, (message) => log.warn(message)),
 ): Promise<SelectedAdapters> {
   const mocked = parseMockVendors(env[MOCK_VENDORS_ENV]);
   const script = env[MOCK_SCRIPT_ENV] || undefined;
