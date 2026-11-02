@@ -2,7 +2,8 @@
 import { FindingInputSchema, type Finding, type Verdict } from "@aio/contracts";
 import { describe, expect, it } from "vitest";
 import { DecisionNeeded } from "../../src/state/context.js";
-import { drivePrePush, endRound } from "../../src/state/prepush.js";
+import { drivePrePush, endRound, finish, openFindings } from "../../src/state/prepush.js";
+import { belowFloorPending, syncFloorLabels } from "../../src/state/steps.js";
 import { makeRun } from "./harness.js";
 
 function finding(id: string, verdict: Verdict, runId: string): Finding {
@@ -148,5 +149,74 @@ describe("working-tree inclusion", () => {
     ctx.state.stage = "sweep";
     await computeGroups(ctx);
     expect(snapshots).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("the verification floor", () => {
+  const below = (id: string, runId: string, severity: "P3" | "nit" = "P3"): Finding => ({
+    ...finding(id, "pending", runId),
+    severity,
+  });
+
+  it("keeps a below-floor finding from holding the run open, without calling it clean", async () => {
+    const { ctx } = await makeRun({ request: { verifyFloor: "P2" } });
+    ctx.state.round = 3;
+    ctx.eng.cleanRounds = 1;
+    ctx.findings.push(below("F-0001", ctx.state.id));
+    expect(openFindings(ctx)).toEqual([]);
+    expect(await endRound(ctx)).toBe("clean_above_floor");
+  });
+
+  it("still holds the run open for a pending finding at the floor", async () => {
+    const { ctx } = await makeRun({ request: { verifyFloor: "P1" } });
+    ctx.state.round = 3;
+    ctx.eng.cleanRounds = 1;
+    ctx.findings.push(finding("F-0001", "pending", ctx.state.id));
+    expect(await endRound(ctx)).toBeNull();
+  });
+
+  it("stops clean when nothing is left below the floor", async () => {
+    const { ctx } = await makeRun({ request: { verifyFloor: "P2" } });
+    ctx.state.round = 3;
+    ctx.eng.cleanRounds = 1;
+    ctx.findings.push({ ...below("F-0001", ctx.state.id), verdict: "waived" });
+    expect(await endRound(ctx)).toBe("clean");
+  });
+
+  it("needs two rounds with nothing confirmed, as a clean stop does", async () => {
+    const { ctx } = await makeRun({ request: { verifyFloor: "P2", roundCap: 25 } });
+    ctx.state.round = 3;
+    ctx.findings.push(below("F-0001", ctx.state.id));
+    expect(await endRound(ctx)).toBeNull();
+  });
+
+  it("reports the unchecked findings when the run finishes for any reason", async () => {
+    const { ctx } = await makeRun({ request: { verifyFloor: "P2" } });
+    ctx.findings.push(below("F-0001", ctx.state.id), below("F-0002", ctx.state.id, "nit"));
+    await finish(ctx, "round_cap");
+    expect(ctx.state.notices).toEqual([
+      "2 findings below the P2 verification floor stayed pending: no disprover checked them, and the fixer didn't work on them.",
+    ]);
+    expect(ctx.findings.map((f) => f.unverifiedReason)).toEqual([
+      "below_verify_floor",
+      "below_verify_floor",
+    ]);
+  });
+
+  it("drops the label from a below-floor finding a person waived", async () => {
+    const { ctx } = await makeRun({ request: { verifyFloor: "P2" } });
+    const f = below("F-0001", ctx.state.id);
+    ctx.findings.push(f);
+    await syncFloorLabels(ctx);
+    expect(f.unverifiedReason).toBe("below_verify_floor");
+    f.verdict = "waived";
+    await syncFloorLabels(ctx);
+    expect(f.unverifiedReason).toBeUndefined();
+  });
+
+  it("sends an imported finding to a disprover whatever its severity", async () => {
+    const { ctx } = await makeRun({ request: { verifyFloor: "P1" } });
+    ctx.findings.push({ ...below("F-0001", ctx.state.id), origin: "pr_comment" });
+    expect(belowFloorPending(ctx)).toEqual([]);
   });
 });

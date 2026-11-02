@@ -4,6 +4,7 @@
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { belowVerifyFloor } from "@aio/contracts";
 import type {
   AgentRole,
   FileGroup,
@@ -738,9 +739,47 @@ export async function disposeCheckouts(ctx: RunContext): Promise<void> {
   await removeCheckout(ctx.git, scriptCheckoutsDir(ctx.state.id));
 }
 
-/** Verifies every pending finding with a disprover from another vendor. */
+/** Pending findings that no disprover checks, because of the verification floor. */
+export function belowFloorPending(ctx: RunContext): Finding[] {
+  const floor = ctx.state.request.verifyFloor;
+  return ctx.findings.filter((f) => f.verdict === "pending" && belowVerifyFloor(f, floor));
+}
+
+/**
+ * Makes each finding's "not verified" label match the run's floor and the
+ * finding's verdict, and announces the findings that changed. A retry can
+ * move the floor, and a person can waive a finding.
+ */
+export async function syncFloorLabels(ctx: RunContext): Promise<void> {
+  const below = new Set(belowFloorPending(ctx));
+  const changed: Finding[] = [];
+  for (const f of ctx.findings) {
+    if (below.has(f) === (f.unverifiedReason !== undefined)) continue;
+    if (below.has(f)) f.unverifiedReason = "below_verify_floor";
+    else delete f.unverifiedReason;
+    changed.push(f);
+  }
+  if (changed.length === 0) return;
+  await ctx.persist();
+  for (const f of changed) {
+    await ctx.emit({
+      type: "finding.changed",
+      runId: ctx.state.id,
+      finding: structuredClone(f),
+      previousVerdict: f.verdict,
+    });
+  }
+}
+
+/**
+ * Verifies every pending finding at or above the verification floor with a
+ * disprover from another vendor. The rest stay pending and labeled.
+ */
 export async function verifyPending(ctx: RunContext, stageFile: string): Promise<VerifyResult[]> {
-  const pending = ctx.findings.filter((f) => f.verdict === "pending");
+  await syncFloorLabels(ctx);
+  const pending = ctx.findings.filter(
+    (f) => f.verdict === "pending" && f.unverifiedReason === undefined,
+  );
   const repoPath = pending.length > 0 ? await readOnlyRepo(ctx) : ctx.state.request.repoPath;
   const tipState = pending.length > 0 ? await readOnlyState(ctx) : null;
   const groups = await roundGroups(ctx);
