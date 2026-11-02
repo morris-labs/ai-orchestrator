@@ -3,6 +3,7 @@
 // app edits it. Keys use the same camelCase as the schema, and unknown keys
 // are rejected so a misspelled key fails loudly.
 import { z } from "zod";
+import { TierModelsSchema, TierPathRuleSchema } from "./tiers.js";
 
 export const PolicyRuleSchema = z.object({
   id: z.string().min(1),
@@ -41,6 +42,10 @@ export const PolicyFileSchema = z
      * collaborators. Logins are case-insensitive.
      */
     commentAuthors: z.array(z.string().min(1)).optional(),
+    /** Models per vendor and tier, over the built-in mappings. Refuses a blocked model. */
+    tierModels: TierModelsSchema.optional(),
+    /** Tiers for paths; the first rule that matches a file wins. */
+    tierPaths: z.array(TierPathRuleSchema).optional(),
   })
   .strict();
 export type PolicyFile = z.infer<typeof PolicyFileSchema>;

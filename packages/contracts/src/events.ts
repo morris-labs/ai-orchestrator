@@ -21,6 +21,7 @@
 //
 // Event payloads use `null`, not absent fields, for missing values.
 import { z } from "zod";
+import { ModelTierSchema } from "./tiers.js";
 import { CountSchema, IsoDateTimeSchema, PortSchema, RunIdSchema, VendorSchema } from "./common.js";
 import { FindingSchema, VerdictSchema } from "./findings.js";
 import {
@@ -170,6 +171,10 @@ const agentFields = {
   /** `null` for calls that span groups, such as a Copilot whole-diff review. */
   groupId: z.string().min(1).nullable(),
   round: CountSchema,
+  /** The call's model tier. Absent when the run doesn't use tiers. */
+  tier: ModelTierSchema.optional(),
+  /** Why the call has its tier and model. */
+  tierReason: z.string().optional(),
 };
 
 export const AgentStartedEventSchema = z.object({

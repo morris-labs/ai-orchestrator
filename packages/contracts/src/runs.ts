@@ -10,6 +10,7 @@ import {
   RunIdSchema,
   VendorSchema,
 } from "./common.js";
+import { ModelTierChoiceSchema, ModelTierSchema } from "./tiers.js";
 
 export const PipelineSchema = z.enum(["pre-push", "post-push"]);
 export type Pipeline = z.infer<typeof PipelineSchema>;
@@ -141,6 +142,11 @@ export const ResolvedRunRequestSchema = z.object({
    * requests from clients and runs that predate it.
    */
   roles: RoleOverridesSchema.optional(),
+  /**
+   * `auto`, or one tier for the whole run. The engine stores `auto` for a new
+   * request without it; a stored run without it keeps its models.
+   */
+  modelTier: ModelTierChoiceSchema.optional(),
 });
 export type ResolvedRunRequest = z.infer<typeof ResolvedRunRequestSchema>;
 
@@ -294,6 +300,10 @@ export const FileGroupSchema = z.object({
   /** True when any file matches a policy risk path; such a group is always major. */
   riskPath: z.boolean(),
   hunks: z.array(HunkSchema),
+  /** The group's model tier. Absent in runs that predate tiers. */
+  tier: ModelTierSchema.optional(),
+  /** Why the group has its tier. */
+  tierReason: z.string().optional(),
 });
 export type FileGroup = z.infer<typeof FileGroupSchema>;
 
