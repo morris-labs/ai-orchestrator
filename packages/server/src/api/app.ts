@@ -315,7 +315,11 @@ export async function startApp(options: AppOptions): Promise<App> {
     jobs,
     runs: runMirror,
     engines,
-    usage: { vendors: () => usage.vendors(), samples: (q) => usageStore.samples(q) },
+    usage: {
+      vendors: () => usage.vendors(),
+      clear: (vendor, account) => usage.clear(vendor, account),
+      samples: (q) => usageStore.samples(q),
+    },
     notifications: notifier,
     secrets,
     setup,

@@ -1,5 +1,5 @@
 // RunContext: the model a call uses, per tier, and the blocked models.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_POLICY,
   isBlockedRequestedModel,
@@ -153,6 +153,21 @@ describe("blocked models", () => {
     expect(events.ofType("agent.finished").at(-1)?.outcome).toBe("error");
   });
 
+  it("takes a write call's commits back when it used a blocked model", async () => {
+    const claude = recording("claude", "claude-fable-5-1");
+    const { ctx } = await makeRun({ adapters: { claude: claude.adapter } });
+    const head = vi
+      .spyOn(ctx.git, "head")
+      .mockResolvedValueOnce("a".repeat(40))
+      .mockResolvedValue("b".repeat(40));
+    const reset = vi.spyOn(ctx.git, "resetHard").mockResolvedValue();
+    await expect(ctx.callAgent<ReviewOutput>(call("claude", "large"))).rejects.toThrow(
+      /moved the branch back/,
+    );
+    expect(head).toHaveBeenCalled();
+    expect(reset).toHaveBeenCalledWith("a".repeat(40));
+  });
+
   it("names a blocked model through Copilot, but leaves automatic selection alone", () => {
     expect(isBlockedRequestedModel("copilot", "claude-fable-5-1")).toBe(true);
     expect(isBlockedRequestedModel("copilot", "auto")).toBe(false);
@@ -191,7 +206,14 @@ describe("call tiers and persisting findings", () => {
     tierReason: "r",
   };
   const finding = (patch: Partial<Finding>): Finding =>
-    ({ id: "F-1", severity: "P2", verdict: "confirmed", round: 1, file: "a.ts", ...patch }) as Finding;
+    ({
+      id: "F-1",
+      severity: "P2",
+      verdict: "confirmed",
+      round: 1,
+      file: "a.ts",
+      ...patch,
+    }) as Finding;
 
   async function tierWith(f: Finding, readOnly = false) {
     const { ctx } = await makeRun({ adapters: { claude: recording("claude").adapter } });

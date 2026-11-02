@@ -99,7 +99,8 @@ export class RunController {
   ): Promise<RunController> {
     const create = EngineRunCreateSchema.parse(input);
     const { runId, ...fields } = create;
-    // Only a stored run lacks the field, and it keeps the models it had.
+    // Only a stored run lacks the field. It keeps each vendor's configured model, or takes
+    // the safe fallback where a CLI default could be a blocked model.
     const request = { ...fields, modelTier: fields.modelTier ?? ("auto" as const) };
     const available = (["claude", "codex", "copilot"] as const).filter((v) => deps.adapters[v]);
     const manual = startingRoles(request.roles, available);
@@ -342,10 +343,11 @@ export class RunController {
   async resume(): Promise<RunState> {
     if (this.ctx.state.status !== "paused")
       throw new InvalidStateError(`Can't resume a ${this.ctx.state.status} run.`);
+    // A person who bought a reset can end the wait; a vendor still at its
+    // limit only pauses the run again.
     if (this.ctx.state.pausedUntil && this.active) {
-      throw new InvalidStateError(
-        `The run waits for a usage limit until ${this.ctx.state.pausedUntil}.`,
-      );
+      this.ctx.wakePause();
+      return this.state;
     }
     this.ctx.requestResume();
     if (!this.active) this.drive();
@@ -372,7 +374,7 @@ export class RunController {
     return this.state;
   }
 
-  /** Gives a role to vendors from the next round. Only `reviewer` takes more than one. */
+  /** Gives a role to vendors from now on. Only `reviewer` takes more than one. */
   async assign(role: Role, vendors: Vendor[]): Promise<RunState> {
     this.requireLive("assign a role");
     if (vendors.length === 0) throw new InvalidStateError("Name at least one vendor.");
@@ -381,8 +383,7 @@ export class RunController {
     const missing = vendors.filter((v) => !this.ctx.deps.adapters[v]);
     if (missing.length > 0)
       throw new InvalidStateError(`No adapter is configured for ${missing.join(", ")}.`);
-    this.ctx.eng.pendingAssign.push({ role, vendors });
-    await this.ctx.persist();
+    await this.ctx.assignNow(role, vendors);
     return this.state;
   }
 

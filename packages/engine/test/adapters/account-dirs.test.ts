@@ -143,6 +143,19 @@ describe("account folder for vendor calls", () => {
   });
 });
 
+describe("Codex usage label", () => {
+  class Probe extends CodexAdapter {
+    get label(): string {
+      return this.account;
+    }
+  }
+
+  it("names the account of its folder, or falls back", () => {
+    expect(new Probe({ accountDir: "/data/accounts/codex/work" }).label).toBe("codex/work");
+    expect(new Probe({ accountDir: "/data/elsewhere" }).label).toBe("codex-default");
+  });
+});
+
 describe("Claude usage label", () => {
   class LabelProbe extends ClaudeAdapter {
     label(): string {

@@ -22,6 +22,7 @@ import {
   type Vendor,
   type UsageSample,
   isBlockedRequestedModel,
+  VENDOR_ROLES,
 } from "@aio/contracts";
 import {
   DEFAULT_TIMEOUTS,
@@ -45,6 +46,7 @@ import type { RunStore } from "../run/store.js";
 import { EngineCheckout, readOnlyCheckoutPath } from "./checkout.js";
 import { TreeGuard } from "./tree-guard.js";
 import { FALLBACK_ORDER } from "../verify/verify.js";
+import { assignRoles } from "./profiles.js";
 import type { RangeInfo } from "../prompts/templates.js";
 
 /** Thrown inside a stage to stop the run and wait for a person. */
@@ -144,6 +146,9 @@ export interface AgentOutcome<T> {
   tier?: { tier: ModelTier; reason: string };
 }
 
+/** How often a run waiting out a ceiling asks the server again. */
+const LEASE_RECHECK_MS = 60_000;
+
 const ROLE_FOR_AGENT: Record<AgentRole, Role> = {
   reviewer: "reviewer",
   disprover: "disprover",
@@ -166,6 +171,8 @@ export class RunContext {
   readonly shell: CommandRunner;
   readonly timeouts: RoleTimeouts;
   private abort = new AbortController();
+  /** Ends the wait of a pause for a usage limit early. */
+  private pauseWake: AbortController | null = null;
   private pauseRequested = false;
   private cancelRequested = false;
   /** Every parallel call waits on the same gate while the run is paused. */
@@ -463,15 +470,91 @@ export class RunContext {
   /** Pauses the run until `until` (ISO time), as a ceiling or a limit asks. */
   async pauseUntil(until: string): Promise<void> {
     await this.setStatus("paused", { pausedUntil: until });
-    const ms = Date.parse(until) - this.clock.now();
-    try {
-      if (ms > 0) await this.clock.sleep(ms, this.signal);
-    } catch {
-      throw new RunCancelled();
-    }
+    await this.waitOut(Date.parse(until) - this.clock.now());
+    await this.endPause();
+  }
+
+  private async endPause(): Promise<void> {
     if (this.cancelRequested) throw new RunCancelled();
     this.state.pausedUntil = undefined;
     await this.setStatus("running");
+  }
+
+  /** Waits for `ms`, or until a person wakes the pause. */
+  private async waitOut(ms: number): Promise<void> {
+    if (ms <= 0) return;
+    const wake = new AbortController();
+    this.pauseWake = wake;
+    const onCancel = () => wake.abort();
+    this.signal.addEventListener("abort", onCancel, { once: true });
+    try {
+      await this.clock.sleep(ms, wake.signal);
+    } catch {
+      if (this.signal.aborted) throw new RunCancelled();
+    } finally {
+      this.signal.removeEventListener("abort", onCancel);
+      if (this.pauseWake === wake) this.pauseWake = null;
+    }
+  }
+
+  /** Ends a wait for a usage limit now, such as after a person resumes the run. */
+  wakePause(): void {
+    this.pauseWake?.abort();
+  }
+
+  /**
+   * Gives a role to vendors for the rest of this round too: calls that haven't
+   * started move, including one waiting out a ceiling. A later assignment of
+   * the same role replaces a queued one.
+   */
+  async assignNow(role: Role, vendors: Vendor[]): Promise<void> {
+    this.eng.pendingAssign = this.eng.pendingAssign.filter((a) => a.role !== role);
+    this.eng.pendingAssign.push({ role, vendors });
+    if (role === "reviewer") this.eng.manualRoles.reviewer = vendors;
+    else this.eng.manualRoles[role] = vendors[0] as Vendor;
+    const before = this.state.roles;
+    const after = assignRoles({
+      profile: this.state.profile,
+      round: Math.max(this.round, 1),
+      available: this.availableVendors,
+      manual: this.eng.manualRoles,
+      alternating: this.eng.alternating,
+      crossVendor: this.state.request.crossVendor,
+    });
+    this.state.roles = after;
+    await this.persist();
+    const from = role === "reviewer" ? before.reviewer : [before[role]];
+    const to = role === "reviewer" ? after.reviewer : [after[role]];
+    if (from.join() !== to.join()) {
+      await this.emit({
+        type: "role.reassigned",
+        runId: this.state.id,
+        role,
+        from,
+        to,
+        reason: "manual",
+        effectiveRound: Math.max(this.round, 1),
+      });
+    }
+    this.wakePause();
+  }
+
+  /**
+   * The vendor a pending call uses after a person's assignment: the assigned
+   * vendor, unless the call may not use it or already tried it. A continuation
+   * stays with the vendor that holds its session.
+   */
+  private assignedVendor(spec: AgentCallSpec, vendor: Vendor, tried: readonly Vendor[]): Vendor {
+    if (spec.method === "continueReview" || spec.role === "sweeper") return vendor;
+    const role = ROLE_FOR_AGENT[spec.role];
+    const manual = this.eng.manualRoles[role];
+    if (manual === undefined) return vendor;
+    const assigned = Array.isArray(manual) ? manual : [manual];
+    if (assigned.includes(vendor)) return vendor;
+    return (
+      assigned.find((v) => !tried.includes(v) && !spec.avoid?.includes(v) && this.usable(v)) ??
+      vendor
+    );
   }
 
   // -------------------------------------------------------------------------
@@ -529,7 +612,9 @@ export class RunContext {
     role: AgentRole,
     estimateTokens: number,
     avoid: readonly Vendor[] = [],
+    current?: (vendor: Vendor) => Vendor,
   ): Promise<{ vendor: Vendor; leaseId: string }> {
+    let waiting = false;
     for (;;) {
       await this.checkpoint();
       this.eng.counters.lease += 1;
@@ -555,6 +640,7 @@ export class RunContext {
         throw error;
       }
       if (response.decision === "granted") {
+        if (waiting) await this.endPause();
         const leaseId = response.leaseId;
         if (response.vendor !== vendor) {
           if (!this.usable(response.vendor)) {
@@ -587,7 +673,17 @@ export class RunContext {
         return { vendor, leaseId };
       }
       if (response.decision === "pause") {
-        await this.pauseUntil(response.resumeAt);
+        // Ask again before the old reset time: a person can clear a stale
+        // sample, or a raised ceiling can make room, and only a new lease
+        // sees that.
+        const until = Date.parse(response.resumeAt) - this.clock.now();
+        if (!waiting || this.state.pausedUntil !== response.resumeAt) {
+          await this.setStatus("paused", { pausedUntil: response.resumeAt });
+        }
+        await this.waitOut(Math.min(until, LEASE_RECHECK_MS));
+        if (this.cancelRequested) throw new RunCancelled();
+        waiting = true;
+        vendor = current?.(vendor) ?? vendor;
         continue;
       }
       if (response.action === "fail_role") throw new RoleDenied(role, vendor, response.reason);
@@ -607,7 +703,13 @@ export class RunContext {
   ): Vendor | null {
     if (role === "fixer") return null;
     return (
-      FALLBACK_ORDER.find((v) => !tried.includes(v) && !avoid.includes(v) && this.usable(v)) ?? null
+      FALLBACK_ORDER.find(
+        (v) =>
+          VENDOR_ROLES[v].includes(role) &&
+          !tried.includes(v) &&
+          !avoid.includes(v) &&
+          this.usable(v),
+      ) ?? null
     );
   }
 
@@ -637,7 +739,14 @@ export class RunContext {
     let limitHits = 0;
     let malformed = false;
     for (;;) {
-      const lease = await this.acquireLease(vendor, spec.role, spec.estimateTokens, spec.avoid);
+      vendor = this.assignedVendor(spec, vendor, tried);
+      const lease = await this.acquireLease(
+        vendor,
+        spec.role,
+        spec.estimateTokens,
+        spec.avoid,
+        (v) => this.assignedVendor(spec, v, tried),
+      );
       vendor = lease.vendor;
       const adapter: VendorAdapter | undefined = this.deps.adapters[vendor];
       if (!adapter)

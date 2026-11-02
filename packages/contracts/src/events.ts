@@ -64,6 +64,7 @@ export const UsageSourceSchema = z.enum([
   "codex_tokens",
   "billing_api",
   "estimate",
+  "manual_clear",
 ]);
 export type UsageSource = z.infer<typeof UsageSourceSchema>;
 

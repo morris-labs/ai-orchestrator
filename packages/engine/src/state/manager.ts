@@ -300,6 +300,7 @@ export class EngineRunManager implements RunManager {
         choice: request.modelTier ?? "auto",
       });
       return {
+        vendors: Object.keys(this.deps.adapters) as Vendor[],
         baseSha: range.baseSha,
         tipSha: range.tipSha,
         diffBaseSha: range.diffBaseSha,

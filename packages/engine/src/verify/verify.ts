@@ -5,6 +5,7 @@ import { lstat, mkdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { Finding, PolicyFile, Profile, RoleAssignment, Vendor } from "@aio/contracts";
+import { VENDOR_ROLES } from "@aio/contracts";
 import type { AdapterRequest, CommandRunner, VerifyOutput } from "../core.js";
 import { policyPromptSection } from "../policy/rules.js";
 import { disproverPrompt, type RangeInfo } from "../prompts/templates.js";
@@ -28,7 +29,9 @@ export function chooseDisprover(
     return reporter && options.available.includes(reporter) ? reporter : roles.disprover;
   if (roles.disprover !== reporter && options.available.includes(roles.disprover))
     return roles.disprover;
-  const others = FALLBACK_ORDER.filter((v) => v !== reporter && options.available.includes(v));
+  const others = FALLBACK_ORDER.filter(
+    (v) => v !== reporter && options.available.includes(v) && VENDOR_ROLES[v].includes("disprover"),
+  );
   const preferred = options.profile === "offload" ? others.filter((v) => v !== "claude") : others;
   return preferred[0] ?? others[0] ?? roles.disprover;
 }

@@ -219,6 +219,7 @@ export async function createHarness(overrides: { proxy?: DevServerProxy } = {}):
     runs,
     engines: new FakeEngines([engine]),
     usage: {
+      clear: () => 0,
       vendors: () => [
         {
           vendor: "claude",

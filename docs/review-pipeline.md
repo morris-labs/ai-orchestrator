@@ -20,7 +20,7 @@ according to the profile and the usage ceilings.
 |---|---|---|
 | Claude | `claude -p` | Fixer, always. Reviewer and disprover when the profile allows. |
 | Codex | `codex exec` | Reviewer, disprover, and fix confirmer. |
-| GitHub Copilot | `copilot -p`, with automatic model selection | Reviewer. Pull request reviewer after the push. |
+| GitHub Copilot | `copilot -p`, with automatic model selection | Reviewer. Disprover of Codex findings in `offload`. Pull request reviewer after the push. |
 
 A run has four roles: `reviewer` (one or more vendors), `disprover`,
 `confirmer`, and `fixer`. By default, the disprover and the confirmer come
@@ -39,9 +39,12 @@ profile at the start of each round.
 | `fast` | Reviews every round next to Codex, with focus-area reviewers on major groups, and disproves Codex findings. | You want the fewest rounds and the least time. |
 
 To switch the profile of a running run, use the **Profile** control in the
-run view, or run `aio review profile RUN_ID PROFILE`. To move a role to
-another vendor from the next round, run
-`aio review assign RUN_ID ROLE VENDOR`.
+run view, or run `aio review profile RUN_ID PROFILE`. A profile switch applies
+from the next round. To move a role to another vendor, run
+`aio review assign RUN_ID ROLE VENDOR`. An assignment applies at once to every
+call of that role that hasn't started, including one waiting out a ceiling. A
+later assignment of the same role replaces an earlier one, and a continuation
+of a review stays with the vendor that holds its session.
 
 ### Choose roles when a run starts
 
@@ -60,8 +63,7 @@ aio review start --box BOX_ID --role reviewer=codex,copilot --role confirmer=cop
 
 Replace `BOX_ID` with the box whose branch you want to review.
 
-A run request carries only the roles that differ from the profile's
-defaults, in its `roles` field. Those roles hold from round 1, like roles you
+A run request carries only the roles you changed, in its `roles` field. Those roles hold from round 1, like roles you
 assign with `aio review assign`; the roles you leave alone follow the
 profile from round to round. The engine refuses a role for a vendor with no
 adapter in the container, and the request schema refuses more than one
@@ -198,9 +200,36 @@ The default ceilings are the following:
 | Copilot | $70 per month |
 
 When a vendor passes its ceiling, the server moves its pending review and
-disprove roles to the next vendor. The fixer stays with Claude: when Claude
-passes its ceiling, the run pauses until the window resets and notifies you.
-You can change the ceilings in the settings, and override them per project.
+disprove roles to the next vendor that can take them. Codex and Copilot can
+review and disprove, Claude can review and disprove, and only Codex confirms.
+The fixer stays with its vendor: when that vendor passes its ceiling, the run
+pauses until the window resets and notifies you. You can change the ceilings
+in the settings, and override them per project.
+
+### Clear a stale usage block
+
+A stored sample counts until its reset time. If you buy a reset, the sample
+still says the vendor is over its ceiling, and a blocked vendor gets no call
+that could report the new figure. To clear the block, select **Clear block**
+in the **Model usage** panel, or run the following command:
+
+```bash
+aio review clear-usage VENDOR
+
+```
+
+Replace `VENDOR` with `claude`, `codex`, or `copilot`. To clear one account,
+add `--account VENDOR/NAME`. The vendor's next real sample replaces the cleared
+reading. A run waiting on the ceiling asks the server again every minute, so it
+continues on its own. A run waiting after the vendor's CLI reported a limit
+keeps waiting until you resume it:
+
+```bash
+aio review resume RUN_ID
+
+```
+
+Replace `RUN_ID` with the run's ID.
 
 To see each vendor's usage, ceiling, and reset time, open the usage view or
 run `aio review usage`.
@@ -215,10 +244,12 @@ for each window that a vendor's CLI reports:
 No vendor reports a monthly window through its CLI. A monthly line appears only
 when a stored sample has that window.
 
-The engine records samples when a review call succeeds, so a figure can be
-older than your last call. Each line shows the age of its sample. After a
-window's reset time passes, its line shows **No recent data** instead of a
-percentage, until a later call records a sample.
+The engine records samples from every review call that reports them, including
+calls that fail or hit a limit, so a figure can be older than your last call
+only when that call reported nothing. Each line shows the age of its sample.
+After a window's reset time passes, its line shows **No recent data** instead
+of a percentage, until a later call records a sample. `aio review usage` lists
+the same windows, and shows `reset` for a window whose reset time has passed.
 
 ## Review range
 

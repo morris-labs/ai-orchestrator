@@ -58,7 +58,7 @@ async function until(check: () => boolean): Promise<void> {
 }
 
 describe("run controls", () => {
-  it("applies a profile switch and a manual assignment from the next round", async () => {
+  it("applies a profile switch from the next round and an assignment at once", async () => {
     const repo = buildSampleRepo();
     const ref: { run?: RunController } = {};
     let done = false;
@@ -76,10 +76,12 @@ describe("run controls", () => {
     expect(state.status).toBe("finished");
     const changes = events.ofType("role.reassigned").filter((e) => e.effectiveRound === 2);
     expect(changes.find((e) => e.role === "reviewer")?.to).toEqual(["claude", "codex"]);
-    expect(changes.find((e) => e.role === "confirmer")).toMatchObject({
-      to: ["copilot"],
-      reason: "manual",
-    });
+    expect(
+      events
+        .ofType("role.reassigned")
+        .find((e) => e.effectiveRound === 1 && e.role === "confirmer"),
+    ).toMatchObject({ to: ["copilot"], reason: "manual" });
+    expect(state.roles.confirmer).toBe("copilot");
     expect(state.profile).toBe("fast");
     expect(
       events
@@ -157,8 +159,12 @@ describe("run controls", () => {
   it("refuses request roles that give a single-vendor role two vendors", async () => {
     const repo = buildSampleRepo();
     const { deps } = setup(new Scenario());
-    await expect(create(repo, deps, { roles: { fixer: ["claude", "codex"] } })).rejects.toThrow();
-    await expect(create(repo, deps, { roles: { reviewer: [] } })).rejects.toThrow();
+    await expect(
+      create(repo, deps, { roles: { fixer: ["claude", "codex"] } }),
+    ).rejects.toMatchObject({ name: "ZodError" });
+    await expect(create(repo, deps, { roles: { reviewer: [] } })).rejects.toMatchObject({
+      name: "ZodError",
+    });
   });
 
   it("pauses after the current call and resumes", async () => {

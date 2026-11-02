@@ -17,6 +17,7 @@ import {
   isReadOnlyPostPush,
   parseAccountId,
   type AccountSeedReport,
+  VendorSchema,
   type AccountSignIn,
   type AccountView,
   type BoxView,
@@ -120,6 +121,8 @@ function nonNegativeInt(value: string): number {
   return n;
 }
 
+const WINDOW_ORDER: readonly string[] = ["5h", "7d", "month"];
+
 function collect(value: string, previous: string[] = []): string[] {
   return [...previous, value];
 }
@@ -132,8 +135,8 @@ function rolesOf(specs: readonly string[]): RoleOverrides | undefined {
   const out: RoleOverrides = {};
   for (const spec of specs) {
     const [role = "", list = "", ...rest] = spec.split("=");
-    const vendors = list.split(",").filter((v) => v !== "");
-    if (rest.length > 0 || !ROLES.includes(role) || vendors.length === 0) {
+    const vendors = list.split(",");
+    if (rest.length > 0 || !ROLES.includes(role) || vendors.some((v) => v === "")) {
       throw new UsageError(
         `Invalid role ${spec}; use ROLE=VENDOR[,VENDOR], with a role of ${ROLES.join(", ")}.`,
       );
@@ -816,7 +819,7 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
     .addOption(
       new Option(
         "--tier <tier>",
-        "Use auto, which picks a model tier per group and role, or one tier for the whole run.",
+        "Use auto, which picks a model tier per group and role, or a tier for the run. With small, code, disprovers, confirmers, and fixers still use medium.",
       )
         .choices(["auto", "small", "medium", "large"])
         .default("auto"),
@@ -941,7 +944,7 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
 
   review
     .command("assign")
-    .description("Give a role to one or more vendors from the next round.")
+    .description("Give a role to one or more vendors, for calls that haven't started.")
     .argument("<runId>")
     .argument("<role>", `One of ${ROLES.join(", ")}.`, choice(ROLES))
     .argument("<vendors...>", `One or more of ${PLATFORMS.join(", ")}.`)
@@ -954,7 +957,7 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
         params: { runId },
         body: { role: role as "reviewer", vendors: vendors as ["claude"] },
       });
-      print(r, () => `Assigned ${role} to ${vendors.join(", ")} from the next round.\n`);
+      print(r, () => `Assigned ${role} to ${vendors.join(", ")}.\n`);
     });
 
   review
@@ -971,30 +974,59 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
     });
 
   review
+    .command("clear-usage <vendor>")
+    .description(
+      "Clear a vendor's usage block when its stored sample is stale, such as after you buy a reset.",
+    )
+    .option("--account <id>", "Clear only this account, such as codex/work.")
+    .action(async (vendor: string, o: { account?: string }) => {
+      const parsed = VendorSchema.safeParse(vendor);
+      if (!parsed.success) throw new UsageError(`Unknown vendor ${vendor}.`);
+      const r = await client().call("usage.clear", {
+        body: { vendor: parsed.data, ...(o.account ? { account: o.account } : {}) },
+      });
+      print(r, () => `Cleared ${r.cleared} usage blocks for ${vendor}.\n`);
+    });
+
+  review
     .command("usage")
-    .description("Show each vendor's usage against its ceiling.")
+    .description("Show each vendor's usage in every window, against its ceiling.")
     .action(async () => {
       const r = await client().call("usage.get");
+      const now = Date.parse(r.time ?? new Date().toISOString());
       print(r, () =>
         table(
           ["VENDOR", "ACCOUNT", "WINDOW", "USED", "CEILING", "OVER", "RESETS", "FORECAST"],
-          r.vendors.map((v) => {
-            const sample = v.latest.find((s) => s.window === v.window) ?? v.latest[0];
-            const used = sample
-              ? sample.spendUsd !== null
-                ? `$${sample.spendUsd.toFixed(2)}`
-                : percent(sample.utilization)
-              : null;
-            return [
-              v.vendor,
-              v.account,
-              v.window,
-              used,
-              ceilingText(v.ceiling),
-              v.overCeiling ? "yes" : "no",
-              v.resetAt,
-              v.forecastAt,
-            ];
+          r.vendors.flatMap((v) => {
+            // One row per window with a sample, and the ceiling's window even without one.
+            const windows = [...new Set([v.window, ...v.latest.map((s) => s.window)])].sort(
+              (a, b) => WINDOW_ORDER.indexOf(a) - WINDOW_ORDER.indexOf(b),
+            );
+            return windows.map((window) => {
+              const sample = v.latest.find((s) => s.window === window);
+              const passed =
+                sample?.resetAt !== null &&
+                sample?.resetAt !== undefined &&
+                Date.parse(sample.resetAt) <= now;
+              const used = !sample
+                ? null
+                : passed
+                  ? "reset"
+                  : sample.spendUsd !== null
+                    ? `$${sample.spendUsd.toFixed(2)}`
+                    : percent(sample.utilization);
+              const ceilingRow = window === v.window;
+              return [
+                v.vendor,
+                v.account,
+                window,
+                used,
+                ceilingRow ? ceilingText(v.ceiling) : null,
+                ceilingRow ? (v.overCeiling ? "yes" : "no") : null,
+                sample?.resetAt ?? (ceilingRow ? v.resetAt : null),
+                ceilingRow ? v.forecastAt : null,
+              ];
+            });
           }),
         ),
       );

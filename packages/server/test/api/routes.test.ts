@@ -342,6 +342,13 @@ const cases: Case[] = [
   },
   { key: "usage.samples", method: "GET", url: `${V1}/usage/samples?vendor=claude`, status: 200 },
   { key: "usage.get", method: "GET", url: `${V1}/usage`, status: 200 },
+  {
+    key: "usage.clear",
+    method: "POST",
+    url: `${V1}/usage/clear`,
+    body: { vendor: "codex" },
+    status: 200,
+  },
   { key: "notifications.list", method: "GET", url: `${V1}/notifications?unread=true`, status: 200 },
   { key: "notifications.read", method: "POST", url: `${V1}/notifications/n1/read`, status: 200 },
 ];

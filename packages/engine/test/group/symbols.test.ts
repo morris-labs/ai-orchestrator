@@ -41,9 +41,9 @@ describe("changedSymbols", () => {
   });
 
   it("keeps the enclosing C function past a local struct variable", () => {
-    expect(changedSymbols("c", hunk(" int charge_card(int a) {", "   struct point p;", "+  x();"))).toEqual(
-      ["charge_card"],
-    );
+    expect(
+      changedSymbols("c", hunk(" int charge_card(int a) {", "   struct point p;", "+  x();")),
+    ).toEqual(["charge_card"]);
   });
 
   it.each([

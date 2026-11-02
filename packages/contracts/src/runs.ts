@@ -74,6 +74,18 @@ export type RoleOverrides = z.infer<typeof RoleOverridesSchema>;
 /** Rounds in which the `balanced` profile has Claude review. */
 export const BALANCED_CLAUDE_ROUNDS = 2;
 
+/**
+ * The roles each vendor can take when the engine or the server chooses for it:
+ * a fallback, a replacement, or a role with no available default. A person can
+ * still name any vendor for a role. Copilot disproves because the `offload`
+ * profile relies on it for Codex's findings.
+ */
+export const VENDOR_ROLES: Record<z.infer<typeof VendorSchema>, readonly AgentRole[]> = {
+  claude: ["reviewer", "disprover", "fixer", "sweeper"],
+  codex: ["reviewer", "disprover", "confirmer", "sweeper"],
+  copilot: ["reviewer", "disprover", "sweeper"],
+};
+
 /** The roles a profile gives in a round, before availability and manual changes. */
 export function profileRoles(profile: Profile, round: number): RoleAssignment {
   switch (profile) {
@@ -143,8 +155,11 @@ export const ResolvedRunRequestSchema = z.object({
    */
   roles: RoleOverridesSchema.optional(),
   /**
-   * `auto`, or one tier for the whole run. The engine stores `auto` for a new
-   * request without it; a stored run without it keeps its models.
+   * `auto`, or a tier for the run. A fixed `small` tier still gives code,
+   * disprovers, confirmers, and fixers the medium tier. The engine stores
+   * `auto` for a new request without it. A stored run without it uses each
+   * vendor's configured model; where a CLI default could be a blocked model,
+   * it uses the safe fallback model instead.
    */
   modelTier: ModelTierChoiceSchema.optional(),
 });

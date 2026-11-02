@@ -108,9 +108,7 @@ export function changedSymbols(language: Language, diff: FunctionDiffLines): str
     if (mark !== " " && current && line.trim() !== "") out.add(current);
   }
   return [...out]
-    .filter(
-      (s) => SAFE_SYMBOL.test(s) && s.length >= 4 && !SYMBOL_STOPLIST.has(s.toLowerCase()),
-    )
+    .filter((s) => SAFE_SYMBOL.test(s) && s.length >= 4 && !SYMBOL_STOPLIST.has(s.toLowerCase()))
     .sort();
 }
 

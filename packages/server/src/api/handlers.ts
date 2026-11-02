@@ -483,7 +483,11 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
     },
     ...runProxies,
     "usage.samples": async ({ query }) => ({ samples: deps.usage.samples(query) }),
-    "usage.get": async () => ({ vendors: deps.usage.vendors() }),
+    "usage.get": async () => ({ vendors: deps.usage.vendors(), time: new Date().toISOString() }),
+    "usage.clear": async ({ body }) => ({
+      cleared: deps.usage.clear(body.vendor, body.account),
+      vendors: deps.usage.vendors(),
+    }),
 
     // Notifications
     "notifications.list": async ({ query }) => ({

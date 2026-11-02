@@ -4,9 +4,9 @@
 // "Usage tracking and rebalancing" in the review pipeline design: review and
 // disprove roles fall back to the next vendor, and the fixer stays with
 // Claude, so a Claude over its ceiling pauses the run.
+import { VENDOR_ROLES } from "@aio/contracts";
 import type {
   AioEvent,
-  AgentRole,
   Ceilings,
   CeilingsOverride,
   GlobalSettings,
@@ -17,12 +17,7 @@ import type {
 import type { EventInput } from "../api/core-interface.js";
 import type { UsageService } from "../usage/usage-service.js";
 
-/** The roles each vendor can take. */
-export const VENDOR_ROLES: Record<Vendor, readonly AgentRole[]> = {
-  claude: ["reviewer", "disprover", "fixer", "sweeper"],
-  codex: ["reviewer", "disprover", "confirmer", "sweeper"],
-  copilot: ["reviewer", "sweeper"],
-};
+export { VENDOR_ROLES };
 
 export const DEFAULT_FALLBACK_ORDER: readonly Vendor[] = ["codex", "copilot", "claude"];
 export const DEFAULT_GRANT_TTL_MS = 10 * 60 * 1000;
@@ -168,7 +163,7 @@ export class Scheduler {
         leaseId: req.leaseId,
         resumeAt:
           requested.resetAt ?? new Date(now.getTime() + UNKNOWN_RESET_PAUSE_MS).toISOString(),
-        reason: `${req.vendor} is over its ceiling and the fixer role stays with it.`,
+        reason: `${req.vendor} is over its ceiling and the ${req.role} role stays with it.`,
       };
     }
 

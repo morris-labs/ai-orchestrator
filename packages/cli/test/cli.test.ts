@@ -694,10 +694,40 @@ describe("review", () => {
   });
 
   it("shows usage against ceilings", async () => {
-    server.on("GET /api/v1/usage", { body: { vendors: [vendorUsage] } });
+    server.on("GET /api/v1/usage", {
+      body: { vendors: [vendorUsage], time: "2020-01-01T00:00:00.000Z" },
+    });
     await cli(["review", "usage"]);
     expect(out).toContain("42%");
     expect(out).toContain("60% of 5h");
+  });
+
+  it("shows every window and marks one whose reset has passed", async () => {
+    const sample = vendorUsage.latest[0];
+    server.on("GET /api/v1/usage", {
+      body: {
+        time: "2030-06-01T00:00:00.000Z",
+        vendors: [
+          {
+            ...vendorUsage,
+            latest: [
+              { ...sample, window: "5h", resetAt: "2030-01-01T00:00:00.000Z" },
+              { ...sample, window: "7d", resetAt: "2031-01-01T00:00:00.000Z" },
+            ],
+          },
+        ],
+      },
+    });
+    await cli(["review", "usage"]);
+    expect(out).toMatch(/5h\s+reset/);
+    expect(out).toMatch(/7d\s+42%/);
+  });
+
+  it("clears a usage block", async () => {
+    server.on("POST /api/v1/usage/clear", { body: { vendors: [], cleared: 1 } });
+    await cli(["review", "clear-usage", "codex", "--account", "codex/work"]);
+    expect(last()?.body).toEqual({ vendor: "codex", account: "codex/work" });
+    expect(out).toContain("Cleared 1 usage blocks");
   });
 
   it("lists findings with filters", async () => {
@@ -1410,5 +1440,13 @@ describe("child environment", () => {
   it("drops the server token and keeps everything else", () => {
     const env = childEnv({ PATH: "/usr/bin", AIO_TOKEN: "t", AIO_SERVER_TOKEN: "s" });
     expect(env).toEqual({ PATH: "/usr/bin" });
+  });
+});
+
+describe("--role", () => {
+  it("refuses a vendor list with an empty entry", async () => {
+    await expect(
+      cli(["review", "start", "--box", "b", "--role", "reviewer=codex,"]),
+    ).resolves.not.toBe(0);
   });
 });

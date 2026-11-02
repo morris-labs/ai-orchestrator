@@ -215,4 +215,9 @@ export const MIGRATIONS: readonly Migration[] = [
     UNIQUE (vendor, name)
   );
 `,
+  // 5: \`latest()\` looks up one account's newest sample per window, once a minute per panel.
+  `
+  CREATE INDEX IF NOT EXISTS svc_usage_samples_account
+    ON svc_usage_samples (vendor, account, window, time_ms);
+`,
 ];
