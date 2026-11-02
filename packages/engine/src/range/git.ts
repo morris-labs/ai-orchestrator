@@ -121,7 +121,6 @@ export class Git {
     return true;
   }
 
-  /** Moves the checked-out branch and the worktree to `rev`. */
   /** Moves the branch to `rev` and keeps uncommitted changes; fails if it can't keep them. */
   async resetKeep(rev: string): Promise<void> {
     await this.run(["reset", "--keep", rev]);
