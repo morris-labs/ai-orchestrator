@@ -197,6 +197,21 @@ You can change the ceilings in the settings, and override them per project.
 To see each vendor's usage, ceiling, and reset time, open the usage view or
 run `aio review usage`.
 
+The **Model usage** panel on the **Usage** tab of the Boxes app shows one line
+for each window that a vendor's CLI reports:
+
+- **Claude**: the 5-hour block and the weekly window.
+- **Codex**: the 5-hour block and the weekly window.
+- **GitHub Copilot**: none. The output that the engine reads has no usage windows.
+
+No vendor reports a monthly window through its CLI. A monthly line appears only
+when a stored sample has that window.
+
+The engine records samples when a review call succeeds, so a figure can be
+older than your last call. Each line shows the age of its sample. After a
+window's reset time passes, its line shows **No recent data** instead of a
+percentage, until a later call records a sample.
+
 ## Review range
 
 A run reviews the changes between a base and a tip:

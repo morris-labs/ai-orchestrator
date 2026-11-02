@@ -54,6 +54,10 @@ the upgrade steps, see `docs/migration-3x.md`.
 
 ### Changed
 
+- The **Model usage** panel in the Boxes app shows each usage window
+  that a vendor's CLI reports on its own line, with its own percentage, reset
+  time, and sample age. A window whose reset time has passed shows **No recent
+  data** instead of a percentage, and the panel refreshes every minute.
 - The product name is AI Orchestrator, and the command is `aio`. Container
   names use the `aio-agent-` prefix, the image is `aio-agent`, data lives in
   `~/.ai-orchestrator`, and per-project notes live in `.aio/`. The import
