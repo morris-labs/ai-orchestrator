@@ -13,6 +13,7 @@ import {
   type Role,
   type RoundSummary,
   type RunRequest,
+  type RunRetry,
   type RunState,
   type TimedUsageSample,
   type Vendor,
@@ -350,6 +351,10 @@ export class EngineRunManager implements RunManager {
 
   async rebaseBase(runId: string): Promise<RunState> {
     return (await this.require(runId)).rebaseBase();
+  }
+
+  retry(runId: string, options: RunRetry): Promise<RunState> {
+    return api(async () => (await this.require(runId)).retry(options));
   }
 
   async decide(runId: string, answer: DecisionAnswer): Promise<RunState> {

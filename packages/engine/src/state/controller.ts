@@ -12,6 +12,7 @@ import {
   type Role,
   type RoleOverrides,
   type RoundSummary,
+  type RunRetry,
   type RunState,
   type Vendor,
 } from "@aio/contracts";
@@ -37,7 +38,8 @@ import {
 } from "./context.js";
 import { readOnlyCheckoutPath, removeCheckout, scriptCheckoutsDir } from "./checkout.js";
 import { drivePrePush } from "./prepush.js";
-import { disposeCheckouts } from "./steps.js";
+import { retryProblems, tipMovedNotice } from "./retry.js";
+import { disposeCheckouts, syncFloorLabels } from "./steps.js";
 import { assignRoles } from "./profiles.js";
 
 /** The action doesn't fit the run's status; the API answers `invalid_state`. */
@@ -81,6 +83,8 @@ export class RunController {
   private active: Promise<void> | null = null;
   /** Set when the engine shuts down; see `stopForShutdown()`. */
   private shuttingDown = false;
+  /** True while `retry()` checks a run, so a second request can't start it twice. */
+  private retrying = false;
 
   private constructor(
     private readonly ctx: RunContext,
@@ -247,6 +251,7 @@ export class RunController {
     const ctx = this.ctx;
     this.active = (async () => {
       try {
+        await ctx.beginDrive();
         ctx.policy = await loadPolicy(this.location.projectRoot, this.location.policyPath);
         ctx.extras = await loadPolicyExtras(this.location.projectRoot, this.location.policyPath);
         if (ctx.state.status !== "running") {
@@ -309,6 +314,7 @@ export class RunController {
       });
       return;
     }
+    ctx.stopCalls();
     await disposeCheckouts(ctx).catch(() => undefined);
     if (error instanceof DecisionNeeded) {
       await ctx.settleStatus("waiting_decision", { decision: error.decision });
@@ -320,6 +326,14 @@ export class RunController {
           ? error.message
           : `The ${ctx.state.stage} stage failed: ${(error as Error)?.message ?? String(error)}`;
       await ctx.settleStatus("failed", { stopReason: "error", error: message });
+    }
+  }
+
+  /** Refuses a change to a run that can't go on. A failed run can, through a retry. */
+  private requireOpen(action: string): void {
+    const status = this.ctx.state.status;
+    if (status === "finished" || status === "cancelled") {
+      throw new InvalidStateError(`Can't ${action}: the run is ${status}.`);
     }
   }
 
@@ -345,6 +359,7 @@ export class RunController {
       throw new InvalidStateError(`Can't resume a ${this.ctx.state.status} run.`);
     // A person who bought a reset can end the wait; a vendor still at its
     // limit only pauses the run again.
+    this.ctx.clearVendorLimits();
     if (this.ctx.state.pausedUntil && this.active) {
       this.ctx.wakePause();
       return this.state;
@@ -368,7 +383,7 @@ export class RunController {
 
   /** Switches the profile from the next round. */
   async setProfile(profile: Profile): Promise<RunState> {
-    this.requireLive("switch the profile");
+    this.requireOpen("switch the profile");
     this.ctx.eng.pendingProfile = profile;
     await this.ctx.persist();
     return this.state;
@@ -376,7 +391,7 @@ export class RunController {
 
   /** Gives a role to vendors from now on. Only `reviewer` takes more than one. */
   async assign(role: Role, vendors: Vendor[]): Promise<RunState> {
-    this.requireLive("assign a role");
+    this.requireOpen("assign a role");
     if (vendors.length === 0) throw new InvalidStateError("Name at least one vendor.");
     if (role !== "reviewer" && vendors.length > 1)
       throw new InvalidStateError(`The ${role} role takes one vendor.`);
@@ -435,6 +450,7 @@ export class RunController {
         );
       }
     }
+    if (decision.kind === "ceiling") ctx.clearVendorLimits();
     ctx.state.decision = null;
     // A pause asked for before the run stopped for this decision is
     // answered by the decision; it must not pause the run right after.
@@ -442,6 +458,59 @@ export class RunController {
     await ctx.persist();
     this.drive();
     return this.state;
+  }
+
+  /**
+   * Resumes a failed run from its saved state, at the stage that failed.
+   * Saved calls answer from their files. The options apply only after every
+   * check passes, so a refused retry changes nothing.
+   */
+  async retry(options: RunRetry = {}): Promise<RunState> {
+    const ctx = this.ctx;
+    const status = ctx.state.status;
+    if (status === "cancelled") throw new InvalidStateError("A cancelled run is final.");
+    if (status !== "failed" || this.active || this.retrying) {
+      throw new InvalidStateError(`Can't retry a ${status} run; only a failed run can retry.`);
+    }
+    this.retrying = true;
+    try {
+      const roles = startingRoles(options.roles, ctx.availableVendors);
+      const floor =
+        options.verifyFloor === undefined
+          ? ctx.state.request.verifyFloor
+          : options.verifyFloor === "all"
+            ? undefined
+            : options.verifyFloor;
+      const problems = await retryProblems(ctx, floor);
+      if (problems.length > 0) {
+        throw new InvalidStateError(`Can't retry this run: ${problems.join(" ")}`);
+      }
+      const notices = [
+        `Retried from the ${ctx.state.stage} stage after: ${ctx.state.error ?? "an unknown error"}`,
+        ...(await tipMovedNotice(ctx)),
+      ];
+      if (floor) ctx.state.request.verifyFloor = floor;
+      else delete ctx.state.request.verifyFloor;
+      ctx.clearVendorLimits();
+      ctx.requestResume();
+      for (const [role, vendors] of Object.entries(roles) as [Role, Vendor | Vendor[]][]) {
+        await ctx.assignNow(role, Array.isArray(vendors) ? vendors : [vendors]);
+      }
+      await ctx.refreshRoles();
+      await syncFloorLabels(ctx);
+      await ctx.setStatus("running", {
+        error: undefined,
+        stopReason: null,
+        decision: null,
+        finishedAt: undefined,
+        pausedUntil: undefined,
+        notices: [...(ctx.state.notices ?? []), ...notices],
+      });
+      this.drive();
+      return this.state;
+    } finally {
+      this.retrying = false;
+    }
   }
 
   /** Waives one finding outside a decision. */
@@ -463,6 +532,7 @@ export class RunController {
     if (
       ctx.state.status === "finished" &&
       ctx.state.stopReason !== "clean" &&
+      ctx.state.stopReason !== "clean_above_floor" &&
       ctx.state.stopReason !== "round_cap"
     ) {
       throw new InvalidStateError(

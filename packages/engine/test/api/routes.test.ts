@@ -145,6 +145,12 @@ const cases: Record<string, Case> = {
     body: { role: "reviewer", vendors: ["codex", "claude"] },
     check: () => expect(runs.assign).toHaveBeenCalledWith(RUN, "reviewer", ["codex", "claude"]),
   },
+  "engine.runs.retry": {
+    method: "POST",
+    url: `${base}/${RUN}/retry`,
+    body: { verifyFloor: "P2" },
+    check: () => expect(runs.retry).toHaveBeenCalledWith(RUN, { verifyFloor: "P2" }),
+  },
   "engine.runs.rebaseBase": {
     method: "POST",
     url: `${base}/${RUN}/rebase-base`,

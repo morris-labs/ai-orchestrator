@@ -120,6 +120,7 @@ export function fakeRunManager(): {
     profile: vi.fn(async () => ({ ...runState, profile: "fast" })),
     assign: vi.fn(async () => runState),
     rebaseBase: vi.fn(async () => runState),
+    retry: vi.fn(async () => runState),
     decide: vi.fn(async () => runState),
     push: vi.fn(async () => runState),
     groups: vi.fn(async () => [fileGroup]),
