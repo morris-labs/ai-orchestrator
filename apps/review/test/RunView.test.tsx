@@ -107,7 +107,7 @@ describe("DecisionPanel", () => {
 
 describe("RunView", () => {
   it("shows each group's tier and reason", async () => {
-    renderWithStore(<RunView runId={RUN_ID} />, {
+    const { server } = renderWithStore(<RunView runId={RUN_ID} />, {
       ...handlers(),
       "runs.groups": () => ({
         groups: [
@@ -126,6 +126,10 @@ describe("RunView", () => {
     });
     expect(await screen.findByText("a.ts: changes code")).toBeInTheDocument();
     expect(screen.getByText("Model tiers")).toBeInTheDocument();
+    const table = screen.getByRole("table", { name: "Model tiers" });
+    expect(within(table).getByText("medium")).toBeInTheDocument();
+    // One mount reads the groups once, after the run's round is known.
+    expect(server.callsTo("runs.groups")).toHaveLength(1);
   });
 
   it("loads the run, shows the oscillation, and answers the decision", async () => {

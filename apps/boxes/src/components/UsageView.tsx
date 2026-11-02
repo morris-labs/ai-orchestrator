@@ -1,8 +1,8 @@
 // The Usage tab: CPU and memory totals, one card per running container with
 // its boxes, and each vendor account's usage windows.
-import type { BoxView } from "@aio/contracts";
+import type { BoxView, Vendor } from "@aio/contracts";
 import { ProgressBar, useApiClient } from "@aio/ui";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { formatBytes } from "../logic/format";
 import { displayName } from "../logic/status";
 import { vendorRows, type VendorUsageInput } from "../logic/usage";
@@ -20,29 +20,46 @@ export function UsageView({
   const client = useApiClient();
   const [vendors, setVendors] = useState<VendorUsageInput[] | null>(null);
   const [now, setNow] = useState(() => new Date());
-  useEffect(() => {
-    let live = true;
-    const load = () => {
-      client
-        .call("usage.get", {})
-        .then((r) => {
-          if (!live) return;
-          setVendors(r.vendors);
-          setNow(new Date());
-        })
-        .catch(() => {
-          if (!live) return;
-          setVendors((previous) => previous ?? []);
-          setNow(new Date());
-        });
-    };
-    load();
-    const timer = setInterval(load, USAGE_REFRESH_MS);
-    return () => {
-      live = false;
-      clearInterval(timer);
-    };
+  const [failed, setFailed] = useState(false);
+  const live = useRef(true);
+  const load = useCallback(() => {
+    client
+      .call("usage.get", {})
+      .then((r) => {
+        if (!live.current) return;
+        setVendors(r.vendors);
+        setFailed(false);
+        // The server's clock decides resets, so the panel agrees with `overCeiling`.
+        setNow(r.time ? new Date(r.time) : new Date());
+      })
+      .catch(() => {
+        if (!live.current) return;
+        setVendors((previous) => previous ?? []);
+        setFailed(true);
+        setNow(new Date());
+      });
   }, [client]);
+  useEffect(() => {
+    live.current = true;
+    load();
+    // A hidden panel makes no requests, and catches up when it shows again.
+    const tick = () => {
+      if (!document.hidden) load();
+    };
+    const timer = setInterval(tick, USAGE_REFRESH_MS);
+    document.addEventListener("visibilitychange", tick);
+    return () => {
+      live.current = false;
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", tick);
+    };
+  }, [load]);
+  const clearBlock = (vendor: string, account: string) => {
+    client
+      .call("usage.clear", { body: { vendor: vendor as Vendor, account } })
+      .then(load)
+      .catch(() => setFailed(true));
+  };
 
   const running = boxes.filter((b) => b.status === "running");
   const containers = new Map<string, BoxView[]>();
@@ -115,6 +132,11 @@ export function UsageView({
       </div>
       <section className="ab-group">
         <h3>Model usage</h3>
+        {failed ? (
+          <div className="bx-dim" role="alert">
+            Couldn&apos;t refresh usage. These readings can be out of date.
+          </div>
+        ) : null}
         {vendors === null ? (
           <div className="bx-dim">Loading...</div>
         ) : vendors.length === 0 ? (
@@ -124,6 +146,16 @@ export function UsageView({
             <div key={`${v.vendor}:${v.account}`} className="bx-usage-vendor">
               <div>
                 {v.vendor} <span className="bx-dim">{v.account}</span>
+                {v.overWithoutRow ? <span> (over ceiling)</span> : null}
+                {v.over ? (
+                  <button
+                    type="button"
+                    title="Use this after you buy a reset. The next real sample replaces this."
+                    onClick={() => clearBlock(v.vendor, v.account)}
+                  >
+                    Clear block
+                  </button>
+                ) : null}
               </div>
               {v.windows.length === 0 ? (
                 <div className="bx-dim">No usage windows reported.</div>

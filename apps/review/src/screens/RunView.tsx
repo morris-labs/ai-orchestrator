@@ -225,8 +225,11 @@ export function RunView({ runId }: { runId: string }) {
   const agents = agentRows(dashboard, runId);
   const round = run?.round;
 
-  // The tiers are extra detail: a failed read leaves the run view as it is.
+  // The tiers are extra detail: a failed read leaves the run view as it is,
+  // and the next round or reconnect reads them again. The first read waits
+  // for the run, so one mount makes one request.
   useEffect(() => {
+    if (round === undefined) return;
     let live = true;
     api.call("runs.groups", { params: { runId } }).then(
       (r) => live && setGroups(r.groups),
@@ -235,7 +238,7 @@ export function RunView({ runId }: { runId: string }) {
     return () => {
       live = false;
     };
-  }, [api, runId, round]);
+  }, [api, runId, round, resets]);
 
   // The newest run state seen from either REST or the event stream. Kept in
   // a ref so a late response can be compared without a state updater.
@@ -485,7 +488,9 @@ export function RunView({ runId }: { runId: string }) {
             }
           />
         </label>
-        <p className="muted small">Changes apply from the next round.</p>
+        <p className="muted small">
+          A profile applies from the next round. A role applies to calls that haven&apos;t started.
+        </p>
         <RoleEditor
           run={run}
           disabled={!controls.steer || busy}
@@ -503,7 +508,11 @@ export function RunView({ runId }: { runId: string }) {
       {groups.some((g) => g.tier) ? (
         <section className="card">
           <h3>Model tiers</h3>
-          <table className="ab-table">
+          <p className="muted small">
+            Each group&apos;s base tier. A call&apos;s role, persisting findings, or a malformed
+            answer can move it up; the agents table shows the tier each call used.
+          </p>
+          <table className="ab-table" aria-label="Model tiers">
             <thead>
               <tr>
                 <th scope="col">Group</th>

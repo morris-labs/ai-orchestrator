@@ -21,6 +21,7 @@ import {
   switchCeilingKind,
   vendorDefaultsPatch,
 } from "../src/screens/settingsModel.js";
+import { roleConflicts } from "../src/components/rolesModel.js";
 import { deepLink, href, parseHash } from "../src/state/router.js";
 import { demoBox, demoFindings } from "./helpers/data.js";
 
@@ -74,24 +75,59 @@ describe("buildRunRequest", () => {
     expect(fast.roles).toBeNull();
     expect(formRoles(fast).disprover).toEqual(["claude"]);
     const edited = setFormRole(ok, "disprover", ["copilot"]);
-    expect(edited.roles?.disprover).toEqual(["copilot"]);
-    const switched = setFormProfile(edited, "fast");
-    expect(formRoles(switched).disprover).toEqual(["copilot"]);
-    expect(formRoles(switched).reviewer).toEqual(["codex", "copilot"]);
-    // Choosing the defaults again drops the draft.
+    expect(edited.roles).toEqual({ disprover: ["copilot"] });
+    // Choosing the defaults again drops the edit.
     expect(setFormRole(edited, "disprover", ["codex"]).roles).toBeNull();
   });
 
-  it("sends only the roles that differ from the profile's defaults", () => {
+  it("keeps only edited roles when the profile switches", () => {
+    const edited = setFormRole(ok, "disprover", ["copilot"]);
+    const switched = setFormProfile(edited, "fast");
+    expect(formRoles(switched).disprover).toEqual(["copilot"]);
+    // The reviewers the person never touched follow the new profile.
+    expect(formRoles(switched).reviewer).toEqual(["claude", "codex"]);
+    const built = buildRunRequest(switched);
+    expect(built.ok).toBe(true);
+    if (built.ok) expect(built.request.roles).toEqual({ disprover: "copilot" });
+  });
+
+  it("holds a choice that matches only round 1 of a profile", () => {
+    const pinned = setFormRole(ok, "reviewer", ["claude", "codex", "copilot"]);
+    const built = buildRunRequest(setFormProfile(pinned, "balanced"));
+    expect(built.ok).toBe(true);
+    if (built.ok) expect(built.request.roles?.reviewer).toEqual(["claude", "codex", "copilot"]);
+  });
+
+  it("sends only the roles a person edited", () => {
     const r0 = buildRunRequest(ok);
-    expect(r0.ok && r0.request).not.toHaveProperty("roles");
+    expect(r0.ok).toBe(true);
+    if (r0.ok) expect(r0.request).not.toHaveProperty("roles");
     const form = setFormRole(setFormRole(ok, "confirmer", ["copilot"]), "reviewer", ["codex"]);
     const r = buildRunRequest(form);
-    expect(r.ok && r.request.roles).toEqual({ reviewer: ["codex"], confirmer: "copilot" });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.request.roles).toEqual({ reviewer: ["codex"], confirmer: "copilot" });
     // The same vendors in another order are no change.
-    const reordered = { ...ok, roles: { ...formRoles(ok), reviewer: ["copilot", "codex"] } };
-    const r2 = buildRunRequest(reordered as typeof ok);
-    expect(r2.ok && r2.request).not.toHaveProperty("roles");
+    const r2 = buildRunRequest(setFormRole(ok, "reviewer", ["copilot", "codex"]));
+    expect(r2.ok).toBe(true);
+    if (r2.ok) expect(r2.request).not.toHaveProperty("roles");
+  });
+
+  it("leaves the fixer and confirmer out of a read-only request", () => {
+    const form = setFormRole(setFormRole(ok, "fixer", ["codex"]), "disprover", ["copilot"]);
+    const r = buildRunRequest({ ...form, readOnly: true });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.request.roles).toEqual({ disprover: "copilot" });
+  });
+
+  it("sends the cross-vendor choice and warns about conflicting roles", () => {
+    const r = buildRunRequest({ ...ok, crossVendor: false });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.request.crossVendor).toBe(false);
+    const conflicts = formRoles(setFormRole(ok, "confirmer", ["claude"]));
+    expect(roleConflicts(conflicts, true).join()).toMatch(/claude can't confirm/);
+    expect(roleConflicts(conflicts, false)).toEqual([]);
+    const reviewerDisproves = formRoles(ok);
+    expect(roleConflicts(reviewerDisproves, true).join()).toMatch(/codex can't disprove/);
   });
 
   it("refuses a run with no reviewer", () => {

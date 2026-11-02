@@ -283,8 +283,8 @@ export function Settings() {
         <h3>Usage ceilings</h3>
         <p className="muted small">
           When a vendor passes its ceiling, the scheduler moves its review and disprove roles to
-          another vendor. The fixer stays with Claude, and a run pauses when Claude passes its
-          ceiling.
+          another vendor. The fixer stays with its vendor, and a run pauses when that vendor passes
+          its ceiling.
         </p>
         <div className="ceilings">
           {VENDORS.map((v) => (

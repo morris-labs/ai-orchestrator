@@ -10,9 +10,9 @@ import {
   type Vendor,
 } from "@aio/contracts";
 import {
+  followsProfile,
   profileDraft,
   roleOverrides,
-  sameDraft,
   type RoleDraft,
 } from "../components/rolesModel.js";
 
@@ -30,10 +30,12 @@ export interface LauncherForm {
   prNumber: string;
   profile: Profile;
   /**
-   * The roles a person chose, or `null` to follow the profile's defaults.
-   * Holds only choices that differ from the profile's defaults.
+   * Only the roles a person edited, or `null` when every role follows the
+   * profile. A role left out follows the profile from round to round.
    */
-  roles: RoleDraft | null;
+  roles: Partial<RoleDraft> | null;
+  /** When true, a vendor never disproves its own findings or confirms its own fixes. */
+  crossVendor: boolean;
   modelTier: ModelTierChoice;
   readOnly: boolean;
   includeWorktree: boolean;
@@ -51,6 +53,7 @@ export const DEFAULT_FORM: LauncherForm = {
   prNumber: "",
   profile: "offload",
   roles: null,
+  crossVendor: true,
   modelTier: "auto",
   readOnly: false,
   includeWorktree: false,
@@ -68,28 +71,33 @@ export function formFromBox(form: LauncherForm, box: Box): LauncherForm {
   };
 }
 
-/** The roles the role table shows: the person's choices, or the profile's defaults. */
+/** The roles the role table shows: the person's edits over the profile's round 1 roles. */
 export function formRoles(form: LauncherForm): RoleDraft {
-  return form.roles ?? profileDraft(form.profile);
+  return { ...profileDraft(form.profile), ...form.roles };
 }
 
-/** Keeps a draft only while it differs from the profile's defaults. */
-function withRoles(form: LauncherForm, roles: RoleDraft): LauncherForm {
-  return { ...form, roles: sameDraft(roles, profileDraft(form.profile)) ? null : roles };
+/** Keeps the edits that differ from what the profile gives in every round. */
+function withEdits(form: LauncherForm, edits: Partial<RoleDraft>): LauncherForm {
+  const kept = Object.entries(edits).filter(
+    ([role, vendors]) => !followsProfile(form.profile, role as Role, vendors),
+  );
+  return {
+    ...form,
+    roles: kept.length > 0 ? (Object.fromEntries(kept) as Partial<RoleDraft>) : null,
+  };
 }
 
 /** Gives a role to vendors in the form. */
 export function setFormRole(form: LauncherForm, role: Role, vendors: Vendor[]): LauncherForm {
-  return withRoles(form, { ...formRoles(form), [role]: vendors });
+  return withEdits(form, { ...form.roles, [role]: vendors });
 }
 
 /**
- * Switches the profile. Roles a person edited stay; otherwise the table
- * follows the new profile's defaults.
+ * Switches the profile. Roles a person edited stay; every other role follows
+ * the new profile.
  */
 export function setFormProfile(form: LauncherForm, profile: Profile): LauncherForm {
-  const next = { ...form, profile };
-  return form.roles ? withRoles(next, form.roles) : next;
+  return withEdits({ ...form, profile }, form.roles ?? {});
 }
 
 export type BuildResult = { ok: true; request: RunRequest } | { ok: false; errors: string[] };
@@ -115,9 +123,11 @@ export function buildRunRequest(form: LauncherForm): BuildResult {
   const draft = formRoles(form);
   if (draft.reviewer.length === 0) errors.push("Choose at least one reviewer.");
   if (errors.length > 0) return { ok: false, errors };
-  // Only the roles that differ from the profile's defaults go with the
-  // request; the others keep following the profile from round to round.
-  const overrides = roleOverrides(draft, profileDraft(form.profile));
+  // Only the roles a person edited go with the request; the others keep
+  // following the profile from round to round. A read-only run has no fix
+  // stage, so its fixer and confirmer choices don't apply.
+  const { fixer: _fixer, confirmer: _confirmer, ...kept } = form.roles ?? {};
+  const overrides = roleOverrides(form.readOnly ? kept : (form.roles ?? {}));
   const parsed = RunRequestSchema.safeParse({
     projectId: form.projectId,
     boxId: form.boxId || undefined,
@@ -131,6 +141,7 @@ export function buildRunRequest(form: LauncherForm): BuildResult {
     profile: form.profile,
     ...(Object.keys(overrides).length > 0 ? { roles: overrides } : {}),
     modelTier: form.modelTier,
+    crossVendor: form.crossVendor,
     readOnly: form.readOnly,
     includeWorktree: form.includeWorktree,
     roundCap,

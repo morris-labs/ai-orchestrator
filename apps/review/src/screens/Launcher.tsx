@@ -16,6 +16,7 @@ import {
   setFormRole,
   type LauncherForm,
 } from "./launcherModel.js";
+import { roleConflicts } from "../components/rolesModel.js";
 
 type Preview = RouteOf<"runs.preview">["response"];
 
@@ -395,18 +396,37 @@ export function Launcher({ prefill }: { prefill: { project: string | null; box: 
               />
             </Field>
             <p className="muted small">
-              The table shows the roles of round 1. A role you change holds for the whole run; the
-              others follow the profile.
+              The table shows the roles of round 1. A role you change holds until you switch the
+              run&apos;s profile; the others follow the profile.
             </p>
             <RoleTable
               name="launcher-role"
               value={formRoles(form)}
               onChange={(role, vendors) => setForm((f) => setFormRole(f, role, vendors))}
+              {...(preview?.vendors ? { available: preview.vendors } : {})}
+              {...(form.readOnly ? { unused: ["fixer", "confirmer"] as const } : {})}
             />
+            <label className="field inline">
+              <input
+                type="checkbox"
+                checked={form.crossVendor}
+                onChange={(e) => update({ crossVendor: e.target.checked })}
+              />
+              <span className="field-label">Cross-vendor checks</span>
+            </label>
+            <p className="muted small">
+              With this on, a vendor never disproves its own findings or confirms its own fixes.
+            </p>
+            {roleConflicts(formRoles(form), form.crossVendor).map((text) => (
+              <p key={text} className="small" role="status">
+                {text}
+              </p>
+            ))}
             <div className="row">
+              {/* aria-disabled, not disabled: a disabled button would lose keyboard focus. */}
               <button
                 type="button"
-                disabled={form.roles === null}
+                aria-disabled={form.roles === null}
                 onClick={() => setForm((f) => ({ ...f, roles: null }))}
               >
                 Reset to profile defaults
@@ -421,7 +441,7 @@ export function Launcher({ prefill }: { prefill: { project: string | null; box: 
             <legend>Model tier</legend>
             <Field
               label="Tier"
-              hint="Auto picks a tier for each group and role. A fixed tier applies to the whole run."
+              hint="Auto picks a tier for each group and role. A fixed tier applies to the run, but with Small, code, disprovers, confirmers, and fixers still use Medium."
             >
               <select
                 value={form.modelTier}
@@ -494,6 +514,7 @@ export function Launcher({ prefill }: { prefill: { project: string | null; box: 
                 <th scope="col">Group</th>
                 <th scope="col">Kind</th>
                 <th scope="col">Tier</th>
+                <th scope="col">Reason</th>
                 <th scope="col">Changed lines</th>
                 <th scope="col">Files</th>
               </tr>
@@ -506,7 +527,8 @@ export function Launcher({ prefill }: { prefill: { project: string | null; box: 
                     {g.kind}
                     {g.riskPath ? " (risk path)" : ""}
                   </td>
-                  <td title={g.tierReason}>{g.tier ?? "None"}</td>
+                  <td>{g.tier ?? "None"}</td>
+                  <td>{g.tierReason ?? ""}</td>
                   <td className="ab-num">{g.changedLines}</td>
                   <td className="ab-mono">{g.files.join(", ")}</td>
                 </tr>

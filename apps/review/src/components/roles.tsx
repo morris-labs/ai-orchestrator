@@ -41,6 +41,8 @@ export function RoleTable({
   onChange,
   action,
   name = "role",
+  available,
+  unused = [],
 }: {
   value: RoleDraft;
   disabled?: boolean;
@@ -48,6 +50,10 @@ export function RoleTable({
   action?: { header: string; render: (role: Role, chosen: Vendor[]) => ReactNode };
   /** Prefixes the radio group names, so two tables on a page don't share groups. */
   name?: string;
+  /** The vendors with an adapter, when known. The table disables the others. */
+  available?: readonly Vendor[];
+  /** Roles the run never uses, such as the fixer of a read-only run. */
+  unused?: readonly Role[];
 }) {
   return (
     <table className="ab-table" aria-label="Roles">
@@ -73,7 +79,10 @@ export function RoleTable({
           const chosen = value[role];
           return (
             <tr key={role}>
-              <th scope="row">{role}</th>
+              <th scope="row" className="ab-row-header">
+                {role}
+                {unused.includes(role) ? <span className="muted small"> (not used)</span> : null}
+              </th>
               {VENDORS.map((v) => (
                 <td key={v}>
                   <input
@@ -81,7 +90,11 @@ export function RoleTable({
                     name={`${name}-${role}`}
                     aria-label={`${role}: ${VENDOR_LABELS[v]}`}
                     checked={chosen.includes(v)}
-                    disabled={disabled}
+                    disabled={
+                      disabled ||
+                      unused.includes(role) ||
+                      (available !== undefined && !available.includes(v) && !chosen.includes(v))
+                    }
                     onChange={(e) =>
                       onChange(
                         role,

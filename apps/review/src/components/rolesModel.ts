@@ -1,6 +1,7 @@
 // The role table's values: the vendors for each role, and how they compare
 // with a profile's defaults.
 import {
+  BALANCED_CLAUDE_ROUNDS,
   RoleSchema,
   profileRoles,
   type Profile,
@@ -37,17 +38,45 @@ export function sameVendors(a: readonly Vendor[], b: readonly Vendor[]): boolean
   return [...a].sort().join() === [...b].sort().join();
 }
 
-export function sameDraft(a: RoleDraft, b: RoleDraft): boolean {
-  return RoleSchema.options.every((r) => sameVendors(a[r], b[r]));
+/**
+ * True when `vendors` is what the profile gives `role` in every round. A
+ * choice that matches only round 1, such as Claude reviewing under `balanced`,
+ * is still a choice: without an override the profile drops it later.
+ */
+export function followsProfile(profile: Profile, role: Role, vendors: readonly Vendor[]): boolean {
+  return [1, BALANCED_CLAUDE_ROUNDS + 1].every((round) => {
+    const value = profileRoles(profile, round)[role];
+    return sameVendors(vendors, Array.isArray(value) ? value : [value]);
+  });
 }
 
-/** The roles of a draft that differ from the base, in the shape of a run request's `roles`. */
-export function roleOverrides(draft: RoleDraft, base: RoleDraft): RoleOverrides {
+/** The roles a person chose, in the shape of a run request's `roles`. */
+export function roleOverrides(edits: Partial<RoleDraft>): RoleOverrides {
   const out: RoleOverrides = {};
   for (const role of RoleSchema.options) {
-    if (sameVendors(draft[role], base[role])) continue;
-    if (role === "reviewer") out.reviewer = [...draft.reviewer];
-    else if (draft[role][0]) out[role] = draft[role][0];
+    const vendors = edits[role];
+    if (!vendors) continue;
+    if (role === "reviewer") out.reviewer = [...vendors];
+    else if (vendors[0]) out[role] = vendors[0];
+  }
+  return out;
+}
+
+/** What the engine will replace in a draft, for a warning next to the table. */
+export function roleConflicts(draft: RoleDraft, crossVendor: boolean): string[] {
+  if (!crossVendor) return [];
+  const out: string[] = [];
+  const disprover = draft.disprover[0];
+  const confirmer = draft.confirmer[0];
+  if (disprover && draft.reviewer.includes(disprover)) {
+    out.push(
+      `With cross-vendor checks on, ${disprover} can't disprove its own findings, so another vendor disproves them.`,
+    );
+  }
+  if (confirmer && confirmer === draft.fixer[0]) {
+    out.push(
+      `With cross-vendor checks on, ${confirmer} can't confirm its own fixes, so another vendor confirms them.`,
+    );
   }
   return out;
 }

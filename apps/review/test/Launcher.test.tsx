@@ -91,7 +91,10 @@ describe("Launcher", () => {
     expect(within(table).getByRole("checkbox", { name: "reviewer: Codex" })).toBeChecked();
     expect(within(table).getByRole("checkbox", { name: "reviewer: Claude" })).not.toBeChecked();
     expect(within(table).getByRole("radio", { name: "disprover: Codex" })).toBeChecked();
-    expect(screen.getByRole("button", { name: "Reset to profile defaults" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Reset to profile defaults" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
 
     fireEvent.change(screen.getByLabelText("Profile"), { target: { value: "fast" } });
     expect(within(table).getByRole("checkbox", { name: "reviewer: Claude" })).toBeChecked();
@@ -125,7 +128,7 @@ describe("Launcher", () => {
 
     const reset = screen.getByRole("button", { name: "Reset to profile defaults" });
     fireEvent.click(reset);
-    expect(reset).toBeDisabled();
+    expect(reset).toHaveAttribute("aria-disabled", "true");
     expect(within(table).getByRole("checkbox", { name: "reviewer: Claude" })).toBeChecked();
     expect(within(table).getByRole("radio", { name: "confirmer: Codex" })).toBeChecked();
 

@@ -25,6 +25,10 @@ export interface VendorRow {
   vendor: string;
   account: string;
   windows: WindowRow[];
+  /** True when the server blocks this account, which a row might not show. */
+  over: boolean;
+  /** True when the block has no row to carry its label. */
+  overWithoutRow: boolean;
 }
 
 const WINDOW_NAMES: Record<UsageWindow, string> = {
@@ -72,5 +76,7 @@ export function vendorRows(vendors: readonly VendorUsageInput[], now: Date): Ven
       const sample = v.latest.find((s) => s.window === window);
       return sample ? [windowRow(sample, v.overCeiling && window === v.window, now)] : [];
     }),
+    over: v.overCeiling,
+    overWithoutRow: v.overCeiling && !v.latest.some((s) => s.window === v.window),
   }));
 }
