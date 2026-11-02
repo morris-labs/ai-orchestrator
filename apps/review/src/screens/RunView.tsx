@@ -4,6 +4,7 @@
 import {
   type Decision,
   type DecisionOption,
+  type FileGroup,
   type Finding,
   type Role,
   type RoundSummary,
@@ -215,12 +216,26 @@ export function RunView({ runId }: { runId: string }) {
   const api = useApiClient();
   const [run, setRun] = useState<RunState | null>(null);
   const [rounds, setRounds] = useState<RoundSummary[]>([]);
+  const [groups, setGroups] = useState<FileGroup[]>([]);
   const [decisionFindings, setDecisionFindings] = useState<Finding[]>([]);
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   const resets = useStore((s) => s.resets);
   const dashboard = useStore((s) => s.dashboard);
   const agents = agentRows(dashboard, runId);
+  const round = run?.round;
+
+  // The tiers are extra detail: a failed read leaves the run view as it is.
+  useEffect(() => {
+    let live = true;
+    api.call("runs.groups", { params: { runId } }).then(
+      (r) => live && setGroups(r.groups),
+      () => undefined,
+    );
+    return () => {
+      live = false;
+    };
+  }, [api, runId, round]);
 
   // The newest run state seen from either REST or the event stream. Kept in
   // a ref so a late response can be compared without a state updater.
@@ -484,6 +499,30 @@ export function RunView({ runId }: { runId: string }) {
         <h3>Round summaries</h3>
         <RoundTable rounds={rounds} />
       </section>
+
+      {groups.some((g) => g.tier) ? (
+        <section className="card">
+          <h3>Model tiers</h3>
+          <table className="ab-table">
+            <thead>
+              <tr>
+                <th scope="col">Group</th>
+                <th scope="col">Tier</th>
+                <th scope="col">Reason</th>
+              </tr>
+            </thead>
+            <tbody>
+              {groups.map((g) => (
+                <tr key={g.id}>
+                  <td>{g.id}</td>
+                  <td>{g.tier ?? "None"}</td>
+                  <td>{g.tierReason ?? ""}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      ) : null}
 
       <AgentsTable agents={agents} title="Agents in this run" />
     </div>

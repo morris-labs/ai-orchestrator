@@ -201,6 +201,39 @@ export class Git {
     return result.exitCode === 0 ? result.stdout : null;
   }
 
+  /** The diff with whole functions as context, for reading which symbols changed. */
+  functionDiff(from: string, to: string): Promise<string> {
+    return this.run([
+      "diff",
+      "--no-color",
+      "--no-ext-diff",
+      "--no-textconv",
+      "--find-renames",
+      "-W",
+      from,
+      to,
+    ]);
+  }
+
+  /**
+   * The files at `rev` that hold `word` as a whole word, as paths from the
+   * repository root. Returns `null` on a timeout or an error, so the caller
+   * can fall back. `-e` and `--` keep the word and the revision from acting
+   * as options or paths, and no shell runs.
+   */
+  async grepFiles(word: string, rev: string, timeoutMs: number): Promise<string[] | null> {
+    const args = ["grep", "-l", "-z", "-w", "-F", "-I", "--full-name", "-e", word, rev, "--", ":/"];
+    const result = await this.exec(args, { timeoutMs });
+    if (result.timedOut) return null;
+    if (result.exitCode === 1) return [];
+    if (result.exitCode !== 0) return null;
+    const prefix = `${rev}:`;
+    return result.stdout
+      .split("\0")
+      .filter((p) => p !== "")
+      .map((p) => (p.startsWith(prefix) ? p.slice(prefix.length) : p));
+  }
+
   async head(): Promise<string> {
     return this.revParse("HEAD");
   }

@@ -2,7 +2,12 @@
 // and the pause, resume, and cancel controls. The pre-push and post-push
 // drivers build on it.
 import {
+  BLOCKED_DEFAULT_FALLBACK,
   DEFAULT_CEILINGS,
+  DEFAULT_TIER_MODELS,
+  blockedModelMessage,
+  isBlockedReviewModel,
+  type ModelTier,
   type Actor,
   type AgentRole,
   type Decision,
@@ -87,7 +92,22 @@ class CallTimeout extends Error {
   }
 }
 
+/** The tier a step chose for a call. */
+export interface CallTier {
+  tier: ModelTier;
+  reason: string;
+  /** The run has a fixed tier, so nothing moves the call up. */
+  fixed: boolean;
+}
+
+/** True for a vendor's answer that didn't match the output schema. */
+function isMalformedOutput(error: unknown): boolean {
+  return (error as { kind?: unknown } | null)?.kind === "output";
+}
+
 export interface AgentCallSpec {
+  /** The call's tier. Absent when the run doesn't use tiers. */
+  tier?: CallTier;
   /** Cache key, unique in the round. A finished call with this key is not repeated on resume. */
   key: string;
   role: AgentRole;
@@ -209,6 +229,24 @@ export class RunContext {
   /** True when this engine has an adapter for `vendor`. */
   usable(vendor: Vendor): boolean {
     return this.deps.adapters[vendor] !== undefined;
+  }
+
+  /**
+   * The model for a call on `vendor` at `tier`, and a note when the vendor
+   * has no mapping. Every model a call uses comes from here.
+   */
+  private chooseModel(
+    vendor: Vendor,
+    tier: ModelTier | undefined,
+  ): { model: string | undefined; note: string | null } {
+    const existing = this.deps.models?.[vendor] ?? BLOCKED_DEFAULT_FALLBACK[vendor];
+    if (!tier) return { model: existing, note: null };
+    const mapped = this.policy.tierModels?.[vendor]?.[tier] ?? DEFAULT_TIER_MODELS[vendor]?.[tier];
+    if (mapped) return { model: mapped, note: null };
+    return {
+      model: existing,
+      note: `${vendor} has no mapping for the ${tier} tier, so the call uses ${existing ?? "the CLI's default model"}`,
+    };
   }
 
   /** The run's range. `repoPath` overrides the repository path, such as for a read-only checkout. */
@@ -582,6 +620,7 @@ export class RunContext {
     const tried: Vendor[] = [];
     let failures = 0;
     let limitHits = 0;
+    let malformed = false;
     for (;;) {
       const lease = await this.acquireLease(vendor, spec.role, spec.estimateTokens, spec.avoid);
       vendor = lease.vendor;
@@ -590,7 +629,20 @@ export class RunContext {
         throw new AgentFailed(spec.role, vendor, `No adapter is configured for ${vendor}.`);
       this.eng.counters.agent += 1;
       const agentId = `${this.state.id}-A${this.eng.counters.agent}`;
-      const model = this.deps.models?.[vendor] ?? vendor;
+      let tier = spec.tier?.tier;
+      let tierReason = spec.tier?.reason;
+      if (tier && malformed && !spec.tier?.fixed && tier !== "large") {
+        tier = tier === "small" ? "medium" : "large";
+        tierReason = `${tierReason}; the last answer was malformed, so one tier up`;
+      }
+      const choice = this.chooseModel(vendor, tier);
+      if (choice.note) tierReason = `${tierReason}; ${choice.note}`;
+      if (choice.model !== undefined && isBlockedReviewModel(vendor, choice.model)) {
+        await this.settle(lease.leaseId, vendor, spec.role, ZERO_USE);
+        throw new AgentFailed(spec.role, vendor, blockedModelMessage(vendor, choice.model));
+      }
+      const requestModel = choice.model;
+      const model = requestModel ?? vendor;
       const common = {
         runId: this.state.id,
         agentId,
@@ -600,7 +652,21 @@ export class RunContext {
         role: spec.role,
         groupId: spec.groupId,
         round: this.round,
+        ...(tier ? { tier } : {}),
+        ...(tierReason ? { tierReason } : {}),
       };
+      if (tier) {
+        this.deps.log?.info?.("Chose a call's model", {
+          runId: this.state.id,
+          agentId,
+          key: spec.key,
+          vendor,
+          role: spec.role,
+          tier,
+          model,
+          reason: tierReason,
+        });
+      }
       await this.persist();
       await this.emit({ type: "agent.started", ...common });
       const started = this.clock.now();
@@ -610,7 +676,7 @@ export class RunContext {
         result =
           spec.request.toolPolicy === "read-only"
             ? await this.treeGuardFor(spec.request.repoPath).run(
-                () => this.invoke<T>(adapter, spec, timeoutMs),
+                () => this.invoke<T>(adapter, spec, timeoutMs, requestModel),
                 (message) =>
                   this.deps.log?.warn("A failed read-only call changed the worktree", {
                     runId: this.state.id,
@@ -619,7 +685,7 @@ export class RunContext {
                     error: message,
                   }),
               )
-            : await this.invoke<T>(adapter, spec, timeoutMs);
+            : await this.invoke<T>(adapter, spec, timeoutMs, requestModel);
       } catch (error) {
         const elapsedMs = Math.max(0, this.clock.now() - started);
         const limit = this.signal.aborted ? null : adapter.detectLimit(error);
@@ -677,6 +743,7 @@ export class RunContext {
           continue;
         }
         failures += 1;
+        malformed = isMalformedOutput(error);
         // One retry per call, unless the adapter knows a retry fails the same way.
         if (failures >= 2 || adapter.isRetryable?.(error) === false) {
           const reason = (error as Error).message ?? String(error);
@@ -713,6 +780,11 @@ export class RunContext {
         const ceiling = (this.deps.ceilings ?? DEFAULT_CEILINGS)[sample.vendor];
         await this.emit({ type: "usage.sample", ...sample, ceiling });
       }
+      // A CLI default or an alias can resolve to a blocked model; the run stops
+      // here, before anything uses the answer.
+      if (result.model && isBlockedReviewModel(vendor, result.model)) {
+        throw new AgentFailed(spec.role, vendor, blockedModelMessage(vendor, result.model));
+      }
       const outcome: AgentOutcome<T> = {
         vendor,
         model: result.model || model,
@@ -730,6 +802,7 @@ export class RunContext {
     adapter: VendorAdapter,
     spec: AgentCallSpec,
     timeoutMs: number,
+    model: string | undefined,
   ): Promise<AdapterResult<T>> {
     const controller = new AbortController();
     let rejectAborted: (error: Error) => void = () => undefined;
@@ -759,7 +832,7 @@ export class RunContext {
     const request = {
       ...rest,
       timeoutMs,
-      model: this.deps.models?.[adapter.vendor],
+      model,
       signal: controller.signal,
     };
     try {

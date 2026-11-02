@@ -412,7 +412,7 @@ export interface EngineDeps {
   /** Ceilings attached to usage samples. Defaults to `DEFAULT_CEILINGS`. */
   ceilings?: Ceilings;
   timeouts?: Partial<RoleTimeouts>;
-  /** Model per vendor, or absent for each CLI's default. */
+  /** Model per vendor, or absent for each CLI's default. Refused when it names a blocked model. */
   models?: Partial<Record<Vendor, string>>;
   /** Container name for `RunState.container`. */
   container: string;
@@ -422,6 +422,7 @@ export interface EngineDeps {
 
 /** The logger the core writes to; the engine's `Logger` fits it. */
 export interface CoreLog {
+  info?(message: string, fields?: Record<string, unknown>): void;
   warn(message: string, fields?: Record<string, unknown>): void;
   error(message: string, fields?: Record<string, unknown>): void;
 }

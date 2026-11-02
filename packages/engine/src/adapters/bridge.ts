@@ -2,7 +2,7 @@
 // `VendorAdapter`. The core asks for a role's output shape by method; the CLI
 // adapter takes any schema, so the bridge picks the schema, maps the request
 // and result field names, and leaves the CLI behavior to the adapter.
-import type { Vendor } from "@aio/contracts";
+import { assertReviewModelAllowed, type Vendor } from "@aio/contracts";
 import type { z } from "zod";
 import {
   ConfirmOutputSchema,
@@ -143,6 +143,8 @@ export class BridgedAdapter implements VendorAdapter {
     method: AdapterMethod,
     request: AdapterRequest | ContinueRequest,
   ): Promise<AdapterResult<T>> {
+    // The last gate before a CLI: no path reaches a vendor with a blocked model.
+    assertReviewModelAllowed(this.vendor, request.model);
     const cli = toCliRequest(method, request);
     const result =
       method === "continueReview"

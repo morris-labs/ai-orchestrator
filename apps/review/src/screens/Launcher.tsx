@@ -1,6 +1,6 @@
 // Run launcher: container, repository, base, tip, pipeline, profile and
 // roles, options, a group preview, and Start. A deep link `?project=&box=` prefills it.
-import type { ProjectSummary, RouteOf } from "@aio/contracts";
+import type { ModelTierChoice, ProjectSummary, RouteOf } from "@aio/contracts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ErrorBanner, Field } from "../components/common.js";
 import { listRefs, listRepos, EMPTY_REFS, type RepoInfo, type RepoRefs } from "../lib/repos.js";
@@ -418,6 +418,24 @@ export function Launcher({ prefill }: { prefill: { project: string | null; box: 
           </fieldset>
 
           <fieldset>
+            <legend>Model tier</legend>
+            <Field
+              label="Tier"
+              hint="Auto picks a tier for each group and role. A fixed tier applies to the whole run."
+            >
+              <select
+                value={form.modelTier}
+                onChange={(e) => update({ modelTier: e.target.value as ModelTierChoice })}
+              >
+                <option value="auto">Auto</option>
+                <option value="small">Small</option>
+                <option value="medium">Medium</option>
+                <option value="large">Large</option>
+              </select>
+            </Field>
+          </fieldset>
+
+          <fieldset>
             <legend>Options</legend>
             <label className="check">
               <input
@@ -475,6 +493,7 @@ export function Launcher({ prefill }: { prefill: { project: string | null; box: 
               <tr>
                 <th scope="col">Group</th>
                 <th scope="col">Kind</th>
+                <th scope="col">Tier</th>
                 <th scope="col">Changed lines</th>
                 <th scope="col">Files</th>
               </tr>
@@ -487,6 +506,7 @@ export function Launcher({ prefill }: { prefill: { project: string | null; box: 
                     {g.kind}
                     {g.riskPath ? " (risk path)" : ""}
                   </td>
+                  <td title={g.tierReason}>{g.tier ?? "None"}</td>
                   <td className="ab-num">{g.changedLines}</td>
                   <td className="ab-mono">{g.files.join(", ")}</td>
                 </tr>

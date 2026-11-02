@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
+  AgentRole,
   FileGroup,
   Finding,
   FindingOrigin,
@@ -18,6 +19,8 @@ import type {
 import type { ConfirmOutput, FixOutput, ReviewOutput, SweepOutput, VerifyOutput } from "../core.js";
 import { compareGate, formatRegressions, runGate, type GateRun } from "../gate/gate.js";
 import { groupFiles } from "../group/group.js";
+import { assignTiers } from "../group/signals.js";
+import { roleTier, tierRank, type TierChoice } from "../group/tier.js";
 import {
   hunksForFinding,
   missingHunks,
@@ -50,7 +53,7 @@ import {
   scriptCheckoutsDir,
   type CheckoutState,
 } from "./checkout.js";
-import { DecisionNeeded, RunCancelled, type RunContext } from "./context.js";
+import { DecisionNeeded, RunCancelled, type CallTier, type RunContext } from "./context.js";
 import { snapshotTree } from "./tree-guard.js";
 import { planReviews, type ReviewTask } from "./profiles.js";
 
@@ -210,10 +213,68 @@ export async function computeGroups(ctx: RunContext): Promise<FileGroup[]> {
   const diffBase = ctx.eng.diffBaseSha ?? ctx.state.baseSha ?? "";
   const tip = await diffTip(ctx);
   const files = parseDiff(await ctx.git.diff(diffBase, tip));
-  return groupFiles(files, {
+  const groups = await groupFiles(files, {
     policy: ctx.policy,
     readFile: (path) => ctx.git.show(tip, path),
   });
+  const choice = ctx.state.request.modelTier;
+  if (!choice) return groups;
+  const tiered = await assignTiers(groups, files, {
+    git: ctx.git,
+    policy: ctx.policy,
+    diffBase,
+    tip,
+    choice,
+    now: () => ctx.clock.now(),
+  });
+  for (const g of tiered) {
+    ctx.deps.log?.info?.("Chose a group's model tier", {
+      runId: ctx.state.id,
+      round: ctx.round,
+      groupId: g.id,
+      tier: g.tier,
+      reason: g.tierReason,
+    });
+  }
+  return tiered;
+}
+
+/**
+ * The tier of a call that covers `files`, or all of `groups` when `files` is
+ * absent. Absent when the run doesn't use tiers. Group ids change from round
+ * to round, so the lookup goes by file.
+ */
+export function callTier(
+  ctx: RunContext,
+  role: AgentRole,
+  groups: readonly FileGroup[],
+  files?: readonly string[],
+): CallTier | undefined {
+  const choice = ctx.state.request.modelTier;
+  if (!choice) return undefined;
+  const covering = files ? groups.filter((g) => g.files.some((f) => files.includes(f))) : groups;
+  let base: TierChoice | null = null;
+  for (const g of covering) {
+    if (g.tier && (!base || tierRank(g.tier) > tierRank(base.tier))) {
+      base = { tier: g.tier, reason: g.tierReason ?? `Group ${g.id}.` };
+    }
+  }
+  const declined = new Set(ctx.eng.declined);
+  const persisting = ctx.findings.some(
+    (f) =>
+      (f.verdict === "pending" || f.verdict === "confirmed") &&
+      f.round < ctx.round &&
+      !declined.has(f.id) &&
+      f.file !== null &&
+      f.file !== undefined &&
+      (files ?? groups.flatMap((g) => g.files)).includes(f.file),
+  );
+  return { ...roleTier(base, role, { choice, persisting }), fixed: choice !== "auto" };
+}
+
+/** The current round's groups, or none when the round has no group stage. */
+async function roundGroups(ctx: RunContext): Promise<FileGroup[]> {
+  return (await ctx.store.loadGroups(ctx.round)) ?? [];
 }
 
 /** Reads a file at the current tip, with a per-call cache. */
@@ -281,10 +342,12 @@ async function runReviewTask(
     findingsLog: findingsLog(ctx.findings),
     policySection: policyPromptSection(ctx.policy, files),
   });
+  const tier = callTier(ctx, "reviewer", groups, group ? group.files : undefined);
   const base = {
     role: "reviewer" as const,
     groupId: task.groupId,
     allowFallback: true,
+    ...(tier ? { tier } : {}),
   };
   const first = await ctx.callAgent<ReviewOutput>({
     ...base,
@@ -656,6 +719,7 @@ export async function verifyPending(ctx: RunContext, stageFile: string): Promise
   const pending = ctx.findings.filter((f) => f.verdict === "pending");
   const repoPath = pending.length > 0 ? await readOnlyRepo(ctx) : ctx.state.request.repoPath;
   const tipState = pending.length > 0 ? await readOnlyState(ctx) : null;
+  const groups = await roundGroups(ctx);
   const results = await mapLimit(pending, VERIFY_CONCURRENCY, async (finding) => {
     const vendor = chooseDisprover(reporterVendor(finding), ctx.state.roles, {
       crossVendor: ctx.state.request.crossVendor,
@@ -676,6 +740,7 @@ export async function verifyPending(ctx: RunContext, stageFile: string): Promise
       scratchDirFor: (id) => ctx.store.scratchDir(id),
       timeoutMs: ctx.timeouts.disprover,
       callDisprover: async (v, f, request) => {
+        const tier = callTier(ctx, "disprover", groups, f.file ? [f.file] : []);
         const out = await ctx.callAgent<VerifyOutput>({
           key: `verify-${f.id}`,
           role: "disprover",
@@ -685,6 +750,7 @@ export async function verifyPending(ctx: RunContext, stageFile: string): Promise
           groupId: f.groupId,
           estimateTokens: estimateTokens(request.prompt) + 6000,
           allowFallback: true,
+          ...(tier ? { tier } : {}),
           ...(ctx.state.request.crossVendor ? { avoid: avoidFor(f) } : {}),
         });
         return {
@@ -770,6 +836,7 @@ export async function runSweep(
     diff,
     policySection: policyPromptSection(ctx.policy),
   });
+  const sweepTier = callTier(ctx, "sweeper", groups);
   const out = await ctx.callAgent<SweepOutput>({
     key: "sweep",
     role: "sweeper",
@@ -779,6 +846,7 @@ export async function runSweep(
     groupId: null,
     estimateTokens: estimateTokens(prompt) + 3000,
     allowFallback: true,
+    ...(sweepTier ? { tier: sweepTier } : {}),
   });
   const raw = out.output.findings.map((finding) => ({
     finding,
@@ -957,6 +1025,12 @@ export async function runFix(
           findings.flatMap((f) => (f.file ? [f.file] : [])),
         ),
       });
+      const fixTier = callTier(
+        ctx,
+        "fixer",
+        await roundGroups(ctx),
+        findings.flatMap((f) => (f.file ? [f.file] : [])),
+      );
       const out = await ctx.callAgent<FixOutput>({
         key,
         role: "fixer",
@@ -966,6 +1040,7 @@ export async function runFix(
         groupId: findings[0]?.groupId ?? null,
         estimateTokens: estimateTokens(prompt) + 8000,
         allowFallback: false,
+        ...(fixTier ? { tier: fixTier } : {}),
       });
       const after = await ctx.git.head();
       if (!(await ctx.git.ok(["merge-base", "--is-ancestor", before, after]))) {
@@ -1103,6 +1178,12 @@ export async function runConfirm(
   const crossVendor = ctx.state.request.crossVendor;
   const fixer = ctx.state.roles.fixer;
   const vendor = crossVendor ? ctx.state.roles.confirmer : fixer;
+  const confirmTier = callTier(
+    ctx,
+    "confirmer",
+    groups,
+    fixed.flatMap((f) => (f.file ? [f.file] : [])),
+  );
   const out = await ctx.callAgent<ConfirmOutput>({
     key: "confirm",
     role: "confirmer",
@@ -1112,6 +1193,7 @@ export async function runConfirm(
     groupId: null,
     estimateTokens: estimateTokens(prompt) + 3000,
     allowFallback: true,
+    ...(confirmTier ? { tier: confirmTier } : {}),
     ...(crossVendor ? { avoid: [fixer] } : {}),
   });
   const actor = { kind: "agent" as const, vendor: out.vendor, model: out.model, role: "confirmer" };

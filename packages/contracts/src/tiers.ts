@@ -64,18 +64,20 @@ export const TierModelsSchema = z
 export type TierModels = z.infer<typeof TierModelsSchema>;
 
 /**
- * The built-in mappings. The Claude CLI's `--model` takes these aliases. The
- * repository names no Codex or Copilot models, so those vendors stay unmapped.
+ * The built-in mappings, pinned to exact model IDs. The repository names no
+ * Codex or Copilot models, so those vendors stay unmapped.
  */
 export const DEFAULT_TIER_MODELS: TierModels = {
-  claude: { small: "haiku", medium: "sonnet", large: "opus" },
+  claude: { small: "claude-haiku-5-5", medium: "claude-sonnet-5-5", large: "claude-opus-5-5" },
 };
 
 /**
  * The model for a call with no other model on a vendor whose CLI default can
  * be a blocked model, so the call never falls through to that default.
  */
-export const BLOCKED_DEFAULT_FALLBACK: Partial<Record<Vendor, string>> = { claude: "opus" };
+export const BLOCKED_DEFAULT_FALLBACK: Partial<Record<Vendor, string>> = {
+  claude: "claude-opus-5-5",
+};
 
 /** Gives a set of files a tier in the policy file. */
 export const TierPathRuleSchema = z

@@ -98,7 +98,9 @@ export class RunController {
     deps: EngineDeps,
   ): Promise<RunController> {
     const create = EngineRunCreateSchema.parse(input);
-    const { runId, ...request } = create;
+    const { runId, ...fields } = create;
+    // Only a stored run lacks the field, and it keeps the models it had.
+    const request = { ...fields, modelTier: fields.modelTier ?? ("auto" as const) };
     const available = (["claude", "codex", "copilot"] as const).filter((v) => deps.adapters[v]);
     const manual = startingRoles(request.roles, available);
     const clock = deps.clock ?? systemClock;

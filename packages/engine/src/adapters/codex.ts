@@ -151,11 +151,12 @@ export class CodexAdapter extends CliAdapter {
         sessionId,
       );
       const usage = summary.threadId ? this.rateLimitSamples(summary.threadId) : [];
+      const actual = summary.threadId ? this.rolloutModel(summary.threadId) : null;
       for (const sample of usage) req.onUsage?.(sample);
       return {
         output,
         sessionId,
-        model: req.model ?? null,
+        model: actual ?? req.model ?? null,
         usage,
         tokens: summary.tokens,
         toolErrors: summary.toolErrors,
@@ -165,6 +166,17 @@ export class CodexAdapter extends CliAdapter {
       };
     } finally {
       rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  /** The model the CLI says it used, from the thread's rollout file. */
+  rolloutModel(threadId: string): string | null {
+    const file = findRolloutFile(join(this.codexHome, "sessions"), threadId);
+    if (!file) return null;
+    try {
+      return codexRolloutModel(readFileSync(file, "utf8"));
+    } catch {
+      return null;
     }
   }
 
@@ -184,6 +196,23 @@ export class CodexAdapter extends CliAdapter {
   detectLimit(error: unknown): CliLimitInfo | null {
     return limitFromError(error, this.now());
   }
+}
+
+/** The model of the last `turn_context` line in a rollout file, or `null`. */
+export function codexRolloutModel(rollout: string): string | null {
+  let model: string | null = null;
+  for (const line of rollout.split("\n")) {
+    if (!line.includes('"turn_context"')) continue;
+    try {
+      const event = JSON.parse(line) as { type?: string; payload?: { model?: unknown } };
+      if (event.type === "turn_context" && typeof event.payload?.model === "string") {
+        model = event.payload.model;
+      }
+    } catch {
+      // A torn line says nothing about the model.
+    }
+  }
+  return model;
 }
 
 /** Reads `codex exec --json` lines one at a time. */

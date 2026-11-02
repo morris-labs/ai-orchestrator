@@ -260,6 +260,7 @@ function runDetail(r: RunState): string {
     ["Box", r.boxId],
     ["Repository", r.request.repoPath],
     ["Range", `${r.request.base}${r.request.mergeBase ? "..." : ".."}${r.request.tip ?? "HEAD"}`],
+    ["Model tier", r.request.modelTier],
     ["Reviewers", r.roles.reviewer.join(", ")],
     ["Disprover", r.roles.disprover],
     ["Confirmer", r.roles.confirmer],
@@ -812,6 +813,14 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
       collect,
       [],
     )
+    .addOption(
+      new Option(
+        "--tier <tier>",
+        "Use auto, which picks a model tier per group and role, or one tier for the whole run.",
+      )
+        .choices(["auto", "small", "medium", "large"])
+        .default("auto"),
+    )
     .option("--no-cross-vendor", "Let the same vendor disprove and confirm its own work.")
     .option("--round-cap <n>", "Stop after this many rounds.", positiveInt)
     .option(
@@ -849,6 +858,7 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
           includeWorktree: o.includeWorktree ?? false,
           profile: o.profile,
           roles,
+          modelTier: o.tier,
           pipeline: o.pipeline,
           prNumber: o.pr,
           crossVendor: o.crossVendor,

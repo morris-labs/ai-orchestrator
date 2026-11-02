@@ -69,6 +69,92 @@ vendor for any role but `reviewer`. Switching the profile of the running
 run drops the starting roles and every assigned role, and the run takes the
 new profile's roles from the next round.
 
+## Model tiers
+
+A tier sets how strong a model each call uses. The profile picks the vendors;
+the tier picks the model on each vendor. In **Auto**, the default, code in the
+engine chooses the tier for each group and role, with no model call. To fix
+one tier for a whole run, use the **Model tier** section of the run launcher,
+or pass `--tier` to `aio review start`:
+
+```bash
+aio review start --box BOX_ID --tier medium
+```
+
+Replace `BOX_ID` with the box whose branch you want to review. The values are
+`auto`, `small`, `medium`, and `large`.
+
+### How a group gets its tier
+
+Each changed file asks for a tier, and the group takes the strongest. The
+first row that matches a file decides:
+
+| Signal | Tier |
+|---|---|
+| A `tierPaths` rule in the policy file matches | The rule's tier |
+| A risk path matches | Large |
+| Only docs, comments, formatting, or a lockfile | Small, whatever the size |
+| An exported API or a schema changes | Large |
+| A changed symbol appears in 10 or more other files | Large |
+| The changed code involves concurrency, migrations, or parsing | Large |
+| Any other code | Medium |
+
+Changed symbols come from `git diff -W` and per-language patterns for
+TypeScript, JavaScript, Python, Go, Java, C, C++, and shell. Other languages
+skip this signal. `git grep -l -w` counts the files at the tip that hold each
+symbol. The count leaves out the file itself, its tests, and documentation,
+and it skips names under four characters and common words. The counts of one
+round have a 15-second limit; after that, the other signals decide, and the
+reason says so.
+
+### How a role changes the tier
+
+| Role | Tier |
+|---|---|
+| Reviewer | The group's tier |
+| Disprover, confirmer | One tier up, at medium or above |
+| Fixer | The group's tier, at medium or above |
+| Sweeper | The group's tier, at medium at most |
+
+A call moves one more tier up when its files have findings that persist from
+an earlier round, and when the retry follows a malformed answer. A fixed tier
+turns off these moves and applies to every role, except that disprovers,
+confirmers, and fixers stay at medium or above. A fixed `small` tier and a
+`tierPaths` rule can put a code review on the small tier, because a person
+chose that.
+
+The run view lists each group's tier and reason. Each `agent.started` event
+carries the call's tier and reason, and the engine logs each choice.
+
+### Tier mappings
+
+The built-in mappings are `claude-haiku-5-5`, `claude-sonnet-5-5`, and
+`claude-opus-5-5` for Claude. Codex and Copilot have no built-in mappings: a
+vendor with no mapping keeps its existing model, and the call's reason records
+that. To map a vendor, set `tierModels` in the [policy file](policy.md).
+
+### Blocked models
+
+Review runs never use a Claude model whose name contains `fable`, or a Codex
+model whose name contains `astra`, in any letter case. The
+`BLOCKED_REVIEW_MODELS` list in `packages/contracts/src/tiers.ts` holds these
+names. The engine enforces the rule in the following places:
+
+- The policy schema refuses a blocked name in `tierModels`, with an error that
+  names the model.
+- The engine refuses a blocked name in its per-vendor model setting.
+- Each call checks its model before it starts, and the adapter bridge checks
+  again before it runs a CLI.
+- A Claude call with no other model uses `claude-opus-5-5`, so it can't fall
+  through to the CLI's default.
+- After a call, the run fails if the CLI reports a blocked model. This check
+  catches a CLI default or an alias. For Codex, the report comes from the
+  session's rollout file.
+
+An unmapped Codex call uses the Codex CLI's default model, which the engine
+can't choose in advance. To rule out a blocked default, map Codex in
+`tierModels`.
+
 ## Accounts
 
 In accounts mode, each model call of a run uses its vendor's default

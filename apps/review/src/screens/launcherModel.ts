@@ -2,6 +2,7 @@
 import {
   RunRequestSchema,
   type Box,
+  type ModelTierChoice,
   type Pipeline,
   type Profile,
   type Role,
@@ -33,6 +34,7 @@ export interface LauncherForm {
    * Holds only choices that differ from the profile's defaults.
    */
   roles: RoleDraft | null;
+  modelTier: ModelTierChoice;
   readOnly: boolean;
   includeWorktree: boolean;
   roundCap: string;
@@ -49,6 +51,7 @@ export const DEFAULT_FORM: LauncherForm = {
   prNumber: "",
   profile: "offload",
   roles: null,
+  modelTier: "auto",
   readOnly: false,
   includeWorktree: false,
   roundCap: "25",
@@ -127,6 +130,7 @@ export function buildRunRequest(form: LauncherForm): BuildResult {
     prNumber,
     profile: form.profile,
     ...(Object.keys(overrides).length > 0 ? { roles: overrides } : {}),
+    modelTier: form.modelTier,
     readOnly: form.readOnly,
     includeWorktree: form.includeWorktree,
     roundCap,

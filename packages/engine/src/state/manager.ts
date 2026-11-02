@@ -3,6 +3,7 @@
 // project-wide reads (run list, preview, usage samples) the API needs.
 import {
   RunIdSchema,
+  assertReviewModelAllowed,
   TimedUsageSampleSchema,
   type DecisionAnswer,
   type EngineRunCreate,
@@ -32,6 +33,7 @@ import {
 } from "../api/core-interface.js";
 import type { EngineDeps } from "../core.js";
 import { groupFiles } from "../group/group.js";
+import { assignTiers } from "../group/signals.js";
 import { PolicyError, loadPolicy } from "../policy/load.js";
 import { GhCliClient } from "../postpush/github.js";
 import { parseDiff } from "../range/diff.js";
@@ -86,6 +88,9 @@ export class EngineRunManager implements RunManager {
   private readonly engineDeps: EngineDeps;
 
   constructor(private readonly deps: CoreDeps) {
+    for (const [vendor, model] of Object.entries(deps.models ?? {}) as [Vendor, string][]) {
+      assertReviewModelAllowed(vendor, model);
+    }
     const runner = deps.runner ?? new ExecaRunner();
     this.engineDeps = {
       adapters: deps.adapters,
@@ -282,9 +287,17 @@ export class EngineRunManager implements RunManager {
           )
         : range.tipSha;
       const files = parseDiff(await git.diff(range.diffBaseSha, tip));
-      const groups = await groupFiles(files, {
-        policy: await loadPolicy(this.location.projectRoot, this.location.policyPath),
+      const policy = await loadPolicy(this.location.projectRoot, this.location.policyPath);
+      const grouped = await groupFiles(files, {
+        policy,
         readFile: (path) => git.show(tip, path),
+      });
+      const groups = await assignTiers(grouped, files, {
+        git,
+        policy,
+        diffBase: range.diffBaseSha,
+        tip,
+        choice: request.modelTier ?? "auto",
       });
       return {
         baseSha: range.baseSha,

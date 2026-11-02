@@ -243,3 +243,13 @@ describe("router", () => {
     expect(parseHash("#/runs/a%20b").params.runId).toBe("a b");
   });
 });
+
+describe("buildRunRequest model tier", () => {
+  const form = { ...DEFAULT_FORM, projectId: "p", repoPath: "/w" };
+  it("sends auto by default and a fixed tier when chosen", () => {
+    const auto = buildRunRequest(form);
+    expect(auto.ok && auto.request.modelTier).toBe("auto");
+    const fixed = buildRunRequest({ ...form, modelTier: "medium" });
+    expect(fixed.ok && fixed.request.modelTier).toBe("medium");
+  });
+});
