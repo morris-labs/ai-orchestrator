@@ -82,8 +82,9 @@ const DECISION_TEXT: Record<Decision["kind"], { title: string; explanation: stri
     explanation: "The pipeline stopped at the round limit with findings still open.",
   },
   ceiling: {
-    title: "A vendor passed its usage ceiling",
-    explanation: "The fixer can't continue until the usage window resets or you raise the ceiling.",
+    title: "A vendor reached its limit",
+    explanation:
+      "A role can't continue on any usable vendor. Assign it to another vendor, or resume after the vendor's usage resets or you raise its ceiling.",
   },
   gate_failed: {
     title: "Tests or lint regressed",
@@ -141,6 +142,8 @@ export interface Controls {
   resume: boolean;
   cancel: boolean;
   rebaseBase: boolean;
+  /** Resume a failed run from its saved state. */
+  retry: boolean;
   push: boolean;
   /** A profile change applies from the next round, and a role change to calls not yet started. */
   steer: boolean;
@@ -168,13 +171,15 @@ export function runControls(run: RunState): Controls {
     resume: run.status === "paused",
     cancel: active,
     rebaseBase: active,
+    retry: run.status === "failed" && run.stage !== "done",
     push:
       run.request.pipeline === "pre-push" &&
       !run.request.readOnly &&
       run.status === "finished" &&
-      run.stopReason === "clean" &&
+      (run.stopReason === "clean" || run.stopReason === "clean_above_floor") &&
       !run.prUrl,
-    steer: active,
+    // A retry can replace the vendor that a failed run stopped on.
+    steer: active || run.status === "failed",
   };
 }
 

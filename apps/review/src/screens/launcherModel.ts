@@ -7,6 +7,7 @@ import {
   type Profile,
   type Role,
   type RunRequest,
+  type Severity,
   type Vendor,
 } from "@aio/contracts";
 import {
@@ -37,10 +38,20 @@ export interface LauncherForm {
   /** When true, a vendor never disproves its own findings or confirms its own fixes. */
   crossVendor: boolean;
   modelTier: ModelTierChoice;
+  verifyFloor: Severity | "all";
   readOnly: boolean;
   includeWorktree: boolean;
   roundCap: string;
 }
+
+/** The choices of a verification floor control, from checking everything to the least. */
+export const VERIFY_FLOOR_OPTIONS: ReadonlyArray<{ value: Severity | "all"; label: string }> = [
+  { value: "all", label: "All severities" },
+  { value: "nit", label: "nit and above" },
+  { value: "P3", label: "P3 and above" },
+  { value: "P2", label: "P2 and above" },
+  { value: "P1", label: "P1 only" },
+];
 
 export const DEFAULT_FORM: LauncherForm = {
   projectId: "",
@@ -55,6 +66,7 @@ export const DEFAULT_FORM: LauncherForm = {
   roles: null,
   crossVendor: true,
   modelTier: "auto",
+  verifyFloor: "all",
   readOnly: false,
   includeWorktree: false,
   roundCap: "25",
@@ -141,6 +153,7 @@ export function buildRunRequest(form: LauncherForm): BuildResult {
     profile: form.profile,
     ...(Object.keys(overrides).length > 0 ? { roles: overrides } : {}),
     modelTier: form.modelTier,
+    ...(form.verifyFloor !== "all" ? { verifyFloor: form.verifyFloor } : {}),
     crossVendor: form.crossVendor,
     readOnly: form.readOnly,
     includeWorktree: form.includeWorktree,

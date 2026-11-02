@@ -7,6 +7,7 @@ import {
   type FileGroup,
   type Finding,
   type Role,
+  type Severity,
   type RoundSummary,
   type RunState,
   type Vendor,
@@ -20,6 +21,7 @@ import { EventBuffer } from "../state/eventBuffer.js";
 import { href } from "../state/router.js";
 import { useApiClient, useAnyEvent } from "@aio/ui/hooks";
 import { useStore } from "../state/store.js";
+import { VERIFY_FLOOR_OPTIONS } from "./launcherModel.js";
 import { decisionView, isNewerRun, oscillationPairs, runControls, stepStates } from "./runModel.js";
 
 export function StageStepper({ run }: { run: Pick<RunState, "stage" | "status" | "request"> }) {
@@ -209,6 +211,40 @@ function RoleEditor({
         ),
       }}
     />
+  );
+}
+
+/** Retries a failed run. The role table on this page changes vendors first. */
+function RetryControl({
+  run,
+  busy,
+  onRetry,
+}: {
+  run: RunState;
+  busy: boolean;
+  onRetry: (verifyFloor: Severity | "all") => void;
+}) {
+  const [floor, setFloor] = useState<Severity | "all">(run.request.verifyFloor ?? "all");
+  return (
+    <>
+      <label>
+        Verification floor{" "}
+        <select
+          value={floor}
+          disabled={busy}
+          onChange={(e) => setFloor(e.target.value as Severity | "all")}
+        >
+          {VERIFY_FLOOR_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <button type="button" className="primary" disabled={busy} onClick={() => onRetry(floor)}>
+        Retry
+      </button>
+    </>
   );
 }
 
@@ -436,6 +472,15 @@ export function RunView({ runId }: { runId: string }) {
           >
             Resume
           </button>
+        ) : null}
+        {controls.retry ? (
+          <RetryControl
+            run={run}
+            busy={busy}
+            onRetry={(verifyFloor) =>
+              void act(() => api.call("runs.retry", { params, body: { verifyFloor } }))
+            }
+          />
         ) : null}
         {controls.rebaseBase ? (
           <button

@@ -53,7 +53,7 @@ describe("decisionView", () => {
       /came back/,
     ],
     [decision("round_cap", ["cancel", "resume"]), ["resume", "cancel"], false, /round cap/],
-    [decision("ceiling", ["resume", "cancel"], []), ["resume", "cancel"], false, /ceiling/],
+    [decision("ceiling", ["resume", "cancel"], []), ["resume", "cancel"], false, /limit/],
     [decision("gate_failed", ["resume_waive", "cancel"], []), ["cancel"], false, /regressed/],
     [decision("push_blocked", ["cancel"]), ["cancel"], false, /push was blocked/],
   ])("%#: %o", (d, buttons, compare, title) => {
@@ -99,7 +99,11 @@ describe("runControls", () => {
       { status: "finished", stopReason: "clean", prUrl: "https://github.com/o/r/pull/3" },
       { push: false },
     ],
-    [{ status: "failed" }, { cancel: false, steer: false }],
+    [{ status: "failed" }, { cancel: false, steer: true, retry: true }],
+    [{ status: "failed", stage: "done" }, { retry: false }],
+    [{ status: "cancelled" }, { retry: false, steer: false }],
+    [{ status: "finished", stopReason: "clean" }, { retry: false }],
+    [{ status: "finished", stopReason: "clean_above_floor" }, { push: true }],
   ] as const)("%o", (patch, want) => {
     expect(with_(patch as Partial<RunState>)).toMatchObject(want);
   });

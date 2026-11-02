@@ -46,3 +46,6 @@ export function filterFindings(findings: readonly Finding[], filter: FindingFilt
 export function canWaive(f: Finding): boolean {
   return f.verdict === "pending" || f.verdict === "confirmed" || f.verdict === "pre-existing";
 }
+
+/** How a finding that the verification floor kept from a disprover reads. */
+export const NOT_VERIFIED_LABEL = "not verified: below the verification floor";

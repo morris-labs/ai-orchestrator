@@ -1,6 +1,6 @@
 // Run launcher: container, repository, base, tip, pipeline, profile and
 // roles, options, a group preview, and Start. A deep link `?project=&box=` prefills it.
-import type { ModelTierChoice, ProjectSummary, RouteOf } from "@aio/contracts";
+import type { ModelTierChoice, ProjectSummary, RouteOf, Severity } from "@aio/contracts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ErrorBanner, Field } from "../components/common.js";
 import { listRefs, listRepos, EMPTY_REFS, type RepoInfo, type RepoRefs } from "../lib/repos.js";
@@ -15,6 +15,7 @@ import {
   setFormProfile,
   setFormRole,
   type LauncherForm,
+  VERIFY_FLOOR_OPTIONS,
 } from "./launcherModel.js";
 import { roleConflicts } from "../components/rolesModel.js";
 
@@ -435,6 +436,25 @@ export function Launcher({ prefill }: { prefill: { project: string | null; box: 
                 <span className="muted small">Changed from the profile&apos;s defaults.</span>
               ) : null}
             </div>
+          </fieldset>
+
+          <fieldset>
+            <legend>Verification</legend>
+            <Field
+              label="Verification floor"
+              hint="Findings below this severity stay pending and unchecked. They stay listed, never go to the fixer, and keep the run from reporting clean."
+            >
+              <select
+                value={form.verifyFloor}
+                onChange={(e) => update({ verifyFloor: e.target.value as Severity | "all" })}
+              >
+                {VERIFY_FLOOR_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
           </fieldset>
 
           <fieldset>

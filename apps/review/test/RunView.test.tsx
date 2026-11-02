@@ -26,6 +26,7 @@ function handlers(run: RunState = lastRun()) {
     }),
     "runs.pause": () => ({ ...run, status: "paused" }),
     "runs.assign": () => run,
+    "runs.retry": () => ({ ...run, status: "running" }),
     "runs.profile": (c: { body: unknown }) => ({
       ...run,
       profile: (c.body as { profile: RunState["profile"] }).profile,
@@ -283,6 +284,36 @@ describe("RunView", () => {
     await new Promise((res) => setTimeout(res, 20));
     expect(screen.getByText("fix").closest("li")).toHaveAttribute("data-state", "current");
     store.stop();
+  });
+});
+
+describe("Retry", () => {
+  const failed = (): RunState => ({
+    ...lastRun(),
+    status: "failed",
+    stage: "verify",
+    stopReason: "error",
+    error: "copilot kept hitting its limit",
+  });
+
+  it("sends the chosen verification floor, with the role table on offer", async () => {
+    const { server } = renderWithStore(<RunView runId={RUN_ID} />, handlers(failed()));
+    const retry = await screen.findByRole("button", { name: "Retry" });
+    expect(screen.getByRole("table", { name: "Roles" })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Verification floor"), { target: { value: "P2" } });
+    fireEvent.click(retry);
+    await waitFor(() =>
+      expect(server.callsTo("runs.retry")[0]?.body).toEqual({ verifyFloor: "P2" }),
+    );
+  });
+
+  it("isn't offered for a cancelled run", async () => {
+    renderWithStore(
+      <RunView runId={RUN_ID} />,
+      handlers({ ...failed(), status: "cancelled", stopReason: "cancelled" }),
+    );
+    await screen.findByRole("table", { name: "Roles" });
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
   });
 });
 
