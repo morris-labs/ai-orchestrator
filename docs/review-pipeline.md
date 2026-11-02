@@ -93,8 +93,9 @@ first row that matches a file decides:
 |---|---|
 | A `tierPaths` rule in the policy file matches | The rule's tier |
 | A risk path matches | Large |
-| Only docs, comments, formatting, or a lockfile | Small, whatever the size |
-| An exported API or a schema changes | Large |
+| A documentation file or a lockfile, by path | Small, whatever the size |
+| An exported API changes, and a changed symbol appears in 3 or more other files | Large |
+| A schema changes | Large |
 | A changed symbol appears in 10 or more other files | Large |
 | The changed code involves concurrency, migrations, or parsing | Large |
 | Any other code | Medium |
@@ -102,10 +103,11 @@ first row that matches a file decides:
 Changed symbols come from `git diff -W` and per-language patterns for
 TypeScript, JavaScript, Python, Go, Java, C, C++, and shell. Other languages
 skip this signal. `git grep -l -w` counts the files at the tip that hold each
-symbol. The count leaves out the file itself, its tests, and documentation,
-and it skips names under four characters and common words. The counts of one
-round have a 15-second limit; after that, the other signals decide, and the
-reason says so.
+symbol. The count leaves out the file itself, its tests, documentation,
+lockfiles, build output, and data files, and it skips names under four
+characters and common words. The counts of one round have a 15-second limit;
+after that, the other signals decide, an exported change stays large, and the
+reason says so. These signals only raise a tier.
 
 ### How a role changes the tier
 
@@ -122,10 +124,16 @@ turns off these moves and applies to every role, except that disprovers,
 confirmers, and fixers stay at medium or above.
 
 Code never runs below medium. A fixed `small` tier or a `tierPaths` rule gives
-a group that holds code the medium tier. Only docs, comments, formatting, and
-lockfiles can get the small tier. The engine counts a change as code when it
-can't read the change with confidence: a file with a shell heredoc, a Java text
-block, or a C++ raw string, and every `.jsx` or `.tsx` file.
+a group that holds code the medium tier. Only files that are documentation or
+lockfiles by path can get the small tier: Markdown, reStructuredText, and
+AsciiDoc files, `README` and `LICENSE` style names, and known lockfiles. A
+comment or formatting change in a code file counts as code. So do MDX files,
+other text files, and Markdown that instructs an agent, such as `CLAUDE.md`,
+`AGENTS.md`, `SKILL.md`, `*.prompt.md`, and files under `prompts`, `skills`,
+`.claude`, or `.github` folders. A file renamed from code to a documentation
+name also counts as code. A lockfile stays small even when it changes a
+dependency's source; to review lockfiles more closely, add them to `riskPaths`
+or `tierPaths` in the policy file.
 
 The run view lists each group's tier and reason. Each `agent.started` event
 carries the call's tier and reason, and the engine logs each choice.

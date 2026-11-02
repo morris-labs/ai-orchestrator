@@ -4,8 +4,6 @@ import type { AgentRole, ModelTier, ModelTierChoice } from "@aio/contracts";
 
 /** Starting guesses from the plan; change them from logged data. */
 export const TIER_THRESHOLDS = {
-  fileLines: 200,
-  changedLines: 50,
   mediumReferences: 3,
   largeReferences: 10,
 } as const;
@@ -15,14 +13,16 @@ const ORDER: readonly ModelTier[] = ["small", "medium", "large"];
 /** What the engine measured about one changed file. */
 export interface FileSignals {
   path: string;
-  /** Docs, a lockfile, or a change to only comments or formatting. */
+  /** Docs or a lockfile, by path. */
   noCode: boolean;
-  fileLines: number;
-  changedLines: number;
   /** The changed symbol that the most other files mention, when one was counted. */
   references: { symbol: string; files: number } | null;
-  /** The time limit stopped the reference counts; the other signals still apply. */
-  referencesSkipped: boolean;
+  /**
+   * Why some reference counts or changed-code signals are missing: `timeout`
+   * for the time limit, `error` for a git failure, and `diff` when the function
+   * diff failed. The other signals still apply.
+   */
+  referencesSkipped: "timeout" | "error" | "diff" | null;
   exportedChange: boolean;
   schemaPath: boolean;
   /** `concurrency`, `migrations`, or `parsing`, when the changed code has it. */
@@ -50,6 +50,13 @@ export function nextTier(tier: ModelTier): ModelTier {
   return ORDER[Math.min(tierRank(tier) + 1, ORDER.length - 1)] as ModelTier;
 }
 
+const SKIPPED_NOTES: Record<NonNullable<FileSignals["referencesSkipped"]> | "none", string> = {
+  none: "",
+  timeout: "; reference counts ran out of time",
+  error: "; a reference count failed",
+  diff: "; the function diff failed, so the changed-code signals are missing",
+};
+
 /** The tier one changed file asks for. */
 export function fileTier(s: FileSignals): TierChoice {
   const at = (tier: ModelTier, why: string): TierChoice => ({
@@ -62,25 +69,26 @@ export function fileTier(s: FileSignals): TierChoice {
       : at(s.pinned, "the policy's tierPaths sets this tier");
   }
   if (s.riskPath) return at("large", "matches a risk path");
-  if (s.noCode) return at("small", "only docs, comments, formatting, or a lockfile");
-  if (s.exportedChange) return at("large", "changes an exported API");
+  if (s.noCode) return at("small", "only docs or a lockfile");
+  const skipped = SKIPPED_NOTES[s.referencesSkipped ?? "none"];
+  const used = s.references?.files ?? 0;
+  if (s.exportedChange) {
+    // An exported change that few files use is no riskier than other code. A
+    // count that didn't finish counts as used, so doubt stays at large.
+    if (used >= TIER_THRESHOLDS.mediumReferences || s.referencesSkipped) {
+      return at("large", `changes an exported API${skipped}`);
+    }
+  }
   if (s.schemaPath) return at("large", "changes a schema");
-  if (s.references && s.references.files >= TIER_THRESHOLDS.largeReferences) {
-    return at("large", `${s.references.symbol} appears in ${s.references.files} other files`);
+  if (s.references && used >= TIER_THRESHOLDS.largeReferences) {
+    return at("large", `${s.references.symbol} appears in ${used} other files`);
   }
   if (s.risky) return at("large", `the changed code involves ${s.risky}`);
-  const skipped = s.referencesSkipped ? "; reference counts ran out of time" : "";
-  if (s.references && s.references.files >= TIER_THRESHOLDS.mediumReferences) {
-    return at(
-      "medium",
-      `${s.references.symbol} appears in ${s.references.files} other files${skipped}`,
-    );
+  if (s.references && used >= TIER_THRESHOLDS.mediumReferences) {
+    return at("medium", `${s.references.symbol} appears in ${used} other files${skipped}`);
   }
-  if (s.fileLines > TIER_THRESHOLDS.fileLines) {
-    return at("medium", `code in a file of ${s.fileLines} lines${skipped}`);
-  }
-  if (s.changedLines > TIER_THRESHOLDS.changedLines) {
-    return at("medium", `${s.changedLines} changed lines of code${skipped}`);
+  if (s.exportedChange) {
+    return at("medium", `changes an exported API that ${used} other files use`);
   }
   return at("medium", `changes code${skipped}`);
 }
@@ -95,7 +103,7 @@ export function groupTier(files: readonly FileSignals[], choice: ModelTierChoice
   }
   if (choice !== "auto") return { tier: choice, reason: `The run uses the ${choice} tier.` };
   let best: TierChoice | null = null;
-  for (const file of [...files].sort((a, b) => a.path.localeCompare(b.path))) {
+  for (const file of [...files].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))) {
     const next = fileTier(file);
     if (!best || tierRank(next.tier) > tierRank(best.tier)) best = next;
   }
@@ -132,18 +140,21 @@ export function roleTier(
   let tier = from.tier;
   const notes = [from.reason];
   if (role === "disprover" || role === "confirmer") {
-    tier = higherTier(nextTier(tier), "medium");
+    // With no measured group there is nothing to step up from.
+    tier = base ? higherTier(nextTier(tier), "medium") : "medium";
     notes.push(`a ${role} takes one tier up, at medium or above`);
   } else if (role === "fixer") {
     tier = higherTier(tier, "medium");
     notes.push("a fixer takes medium or above");
-  } else if (role === "sweeper" && tierRank(tier) > tierRank("medium")) {
-    tier = "medium";
-    notes.push("a sweeper takes medium at most");
   }
   if (persisting) {
     tier = nextTier(tier);
     notes.push("findings persist from an earlier round, so one tier up");
+  }
+  // After the persistence move, so the cap holds for a whole-diff sweep.
+  if (role === "sweeper" && tierRank(tier) > tierRank("medium")) {
+    tier = "medium";
+    notes.push("a sweeper takes medium at most");
   }
   return { tier, reason: notes.join("; ") };
 }

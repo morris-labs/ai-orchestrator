@@ -25,6 +25,9 @@ export class GitError extends Error {
  */
 export const NO_HOOKS = ["-c", "core.hooksPath=/dev/null"] as const;
 
+/** The paths `Git.grepFiles` found, or why it stopped. */
+export type GrepResult = string[] | "timeout" | "error";
+
 export class Git {
   constructor(
     private readonly runner: CommandRunner,
@@ -202,31 +205,29 @@ export class Git {
   }
 
   /** The diff with whole functions as context, for reading which symbols changed. */
-  functionDiff(from: string, to: string): Promise<string> {
-    return this.run([
-      "diff",
-      "--no-color",
-      "--no-ext-diff",
-      "--no-textconv",
-      "--find-renames",
-      "-W",
-      from,
-      to,
-    ]);
+  async functionDiff(from: string, to: string, timeoutMs: number): Promise<string> {
+    const result = await this.exec(
+      ["diff", "--no-color", "--no-ext-diff", "--no-textconv", "--find-renames", "-W", from, to],
+      { timeoutMs },
+    );
+    if (result.timedOut || result.exitCode !== 0) {
+      throw new Error(`git diff -W ${from} ${to} failed.`);
+    }
+    return result.stdout;
   }
 
   /**
    * The files at `rev` that hold `word` as a whole word, as paths from the
-   * repository root. Returns `null` on a timeout or an error, so the caller
-   * can fall back. `-e` and `--` keep the word and the revision from acting
-   * as options or paths, and no shell runs.
+   * repository root, or why the search stopped, so the caller can fall back.
+   * `-e` keeps the word from acting as an option and no shell runs. Callers
+   * must pass a resolved commit: `rev` has no such protection.
    */
-  async grepFiles(word: string, rev: string, timeoutMs: number): Promise<string[] | null> {
+  async grepFiles(word: string, rev: string, timeoutMs: number): Promise<GrepResult> {
     const args = ["grep", "-l", "-z", "-w", "-F", "-I", "--full-name", "-e", word, rev, "--", ":/"];
     const result = await this.exec(args, { timeoutMs });
-    if (result.timedOut) return null;
+    if (result.timedOut) return "timeout";
     if (result.exitCode === 1) return [];
-    if (result.exitCode !== 0) return null;
+    if (result.exitCode !== 0) return "error";
     const prefix = `${rev}:`;
     return result.stdout
       .split("\0")

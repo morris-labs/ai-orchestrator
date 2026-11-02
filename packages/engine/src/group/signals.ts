@@ -4,7 +4,7 @@ import type { FileGroup, ModelTierChoice, PolicyFile } from "@aio/contracts";
 import { matchesAny } from "../policy/glob.js";
 import { isRiskPath } from "../policy/rules.js";
 import { parseDiff, type DiffFile } from "../range/diff.js";
-import type { Git } from "../range/git.js";
+import type { Git, GrepResult } from "../range/git.js";
 import { fileKind, stem } from "./classify.js";
 import {
   changedCode,
@@ -14,13 +14,13 @@ import {
   isSchemaPath,
   languageOf,
   riskyChange,
-  sameCode,
-  type Language,
 } from "./symbols.js";
 import { groupTier, type FileSignals } from "./tier.js";
 
 /** How long the reference counts of one round may take in total. */
 export const REFERENCE_BUDGET_MS = 15_000;
+/** How long the function diff of one round may take. */
+export const FUNCTION_DIFF_BUDGET_MS = 30_000;
 
 export interface TierInputs {
   git: Git;
@@ -45,18 +45,18 @@ export function splitFunctionDiff(text: string): Map<string, string[]> {
   return out;
 }
 
+const NOT_A_REFERENCE =
+  /(^|\/)(?:dist|build|out|vendor|node_modules|__snapshots__|fixtures?)\/|\.(?:snap|json|min\.js|map|csv)$/i;
+
 /** True when `other` doesn't count as a reference to code in `path`. */
 function excluded(path: string, other: string): boolean {
   if (other === path) return true;
   const kind = fileKind(other);
   // The docs mention a symbol without calling it.
   if (kind === "doc") return true;
+  // Generated output and data name a symbol without using it as code does.
+  if (isDocOrLockfile(other) || NOT_A_REFERENCE.test(other)) return true;
   return kind === "test" && stem(other) === stem(path);
-}
-
-/** JSX text can hold `//` that isn't a comment, so those files never count as unchanged code. */
-function comparable(path: string, language: Language | null): Language | null {
-  return /\.[jt]sx$/i.test(path) ? null : language;
 }
 
 function pinnedTier(policy: PolicyFile, path: string) {
@@ -72,16 +72,24 @@ export async function assignTiers(
   const { git, policy, diffBase, tip, choice } = inputs;
   const auto = choice === "auto";
   const now = inputs.now ?? Date.now;
-  const deadline = now() + (inputs.budgetMs ?? REFERENCE_BUDGET_MS);
   const byPath = new Map(files.map((f) => [f.path, f]));
-  // A fixed tier needs only to know which files hold code.
-  const context = auto ? await git.functionDiff(diffBase, tip).catch(() => "") : "";
+  // A fixed tier needs only each file's path, so it reads no history.
+  let diffFailed = false;
+  const context = auto
+    ? await git.functionDiff(diffBase, tip, FUNCTION_DIFF_BUDGET_MS).catch(() => {
+        diffFailed = true;
+        return "";
+      })
+    : "";
   const diffs = splitFunctionDiff(context);
-  const counts = new Map<string, readonly string[] | null>();
-  const grep = async (symbol: string): Promise<readonly string[] | null> => {
-    if (counts.has(symbol)) return counts.get(symbol) ?? null;
+  // The budget covers the reference counts only, so it starts after the diff.
+  const deadline = now() + (inputs.budgetMs ?? REFERENCE_BUDGET_MS);
+  const counts = new Map<string, GrepResult>();
+  const grep = async (symbol: string): Promise<GrepResult> => {
+    const known = counts.get(symbol);
+    if (known !== undefined) return known;
     const left = deadline - now();
-    const found = left > 0 ? await git.grepFiles(symbol, tip, left) : null;
+    const found = left > 0 ? await git.grepFiles(symbol, tip, left) : "timeout";
     counts.set(symbol, found);
     return found;
   };
@@ -91,23 +99,17 @@ export async function assignTiers(
     if (known) return known;
     const file = byPath.get(path);
     const language = languageOf(path);
-    const tipText = file?.status === "deleted" ? null : await git.show(tip, path);
-    const baseText =
-      file?.status === "added" ? null : await git.show(diffBase, file?.oldPath ?? path);
-    const noCode =
-      isDocOrLockfile(path) ||
-      (tipText !== null &&
-        baseText !== null &&
-        sameCode(comparable(path, language), baseText, tipText));
+    // A rename keeps the old file's role: code renamed to a doc name is still code.
+    const noCode = isDocOrLockfile(path) && (!file?.oldPath || isDocOrLockfile(file.oldPath));
     const lines = diffs.get(path) ?? [];
     const code = fileKind(path) === "test" ? [] : changedCode(lines);
     let references: FileSignals["references"] = null;
-    let referencesSkipped = false;
+    let referencesSkipped: FileSignals["referencesSkipped"] = auto && diffFailed ? "diff" : null;
     if (auto && !noCode && language && fileKind(path) !== "test") {
       for (const symbol of changedSymbols(language, lines)) {
         const found = await grep(symbol);
-        if (found === null) {
-          referencesSkipped = true;
+        if (typeof found === "string") {
+          referencesSkipped = found;
           continue;
         }
         const others = found.filter((other) => !excluded(path, other)).length;
@@ -117,8 +119,6 @@ export async function assignTiers(
     const signals: FileSignals = {
       path,
       noCode,
-      fileLines: tipText === null ? 0 : tipText.split("\n").length - 1,
-      changedLines: (file?.added ?? 0) + (file?.removed ?? 0),
       references,
       referencesSkipped,
       exportedChange: changesExport(path, language, code),

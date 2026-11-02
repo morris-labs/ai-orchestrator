@@ -1,5 +1,7 @@
 // Reads changed code as plain text for the tier signals: changed symbols,
-// exported declarations, risky constructs, and whether code changed at all.
+// exported declarations, and risky constructs. These signals only raise a
+// tier. Whether a file can take the small tier depends on its path alone
+// (`isDocOrLockfile`), so a wrong guess here can't lower a change's review.
 // A language this file doesn't know skips the symbol signals.
 import { posix } from "node:path";
 
@@ -35,51 +37,61 @@ export function languageOf(path: string): Language | null {
 const SYMBOL_PATTERNS: Record<Language, readonly RegExp[]> = {
   js: [
     /^\s*(?:export\s+)?(?:default\s+)?(?:declare\s+)?(?:async\s+)?function\*?\s+([A-Za-z_$][\w$]*)/,
-    /^\s*(?:export\s+)?(?:default\s+)?(?:declare\s+)?(?:abstract\s+)?(?:class|interface|type|enum)\s+([A-Za-z_$][\w$]*)/,
-    /^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)/,
+    /^\s*(?:export\s+)?(?:default\s+)?(?:declare\s+)?(?:abstract\s+|const\s+)?(?:class|interface|type|enum)\s+([A-Za-z_$][\w$]*)/,
+    // Only a top-level or exported variable: an indented one is local to its function.
+    /^(?:\s*export\s+(?:declare\s+)?)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)/,
     /^\s*(?:(?:public|private|protected|static|async|override|readonly|get|set)\s+)*([A-Za-z_$][\w$]*)\s*(?:<[^>]*>)?\([^)]*\)\s*(?::[^={]+)?\{\s*$/,
+    /^\s*(?:(?:public|private|protected|static|readonly)\s+)*([A-Za-z_$][\w$]*)\s*[:=]\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*(?::[^=]+)?=>/,
   ],
-  python: [/^\s*(?:async\s+)?def\s+(\w+)/, /^\s*class\s+(\w+)/],
-  go: [/^func\s+(?:\([^)]*\)\s*)?(\w+)/, /^type\s+(\w+)/],
+  python: [/^\s*(?:async\s+)?def\s+(\w+)/, /^\s*class\s+(\w+)/, /^([A-Z_][A-Z0-9_]*)\s*=/],
+  go: [/^func\s+(?:\([^)]*\)\s*)?(\w+)/, /^type\s+(\w+)/, /^(?:var|const)\s+(\w+)/],
   java: [
     /^\s*(?:(?:public|protected|private|static|final|abstract|sealed)\s+)*(?:class|interface|enum|record)\s+(\w+)/,
     /^\s*(?:(?:public|protected|private|static|final|abstract|synchronized)\s+)+[\w<>[\], ?]+\s+(\w+)\s*\(/,
+    // A constructor, and a method with no modifier.
+    /^\s*(?:(?:public|protected|private)\s+)?([A-Z]\w*)\s*\([^;]*\)\s*(?:throws\s[^{]*)?\{\s*$/,
+    /^\s+[\w<>[\],?]+\s+(\w+)\s*\([^;]*\)\s*(?:throws\s[^{]*)?\{\s*$/,
   ],
   c: [
-    /^\s*(?:class|struct|enum|union)\s+(\w+)/,
+    // A type's own definition, not a variable of that type such as `struct point p;`.
+    /^\s*(?:enum\s+(?:class|struct)|class|struct|enum|union)\s+(?:[A-Z_][A-Z0-9_]*\s+)?(\w+)\s*(?:final\s*)?(?::[^;]*)?\{?\s*$/,
     /^\s*#\s*define\s+(\w+)/,
     /^[A-Za-z_][\w:*&<>,\s~]*?\b(?:\w+::)*~?(\w+)\s*\([^;]*\)\s*(?:const\s*)?(?:noexcept\s*)?\{?\s*$/,
   ],
   shell: [/^\s*function\s+([A-Za-z_]\w*)/, /^\s*([A-Za-z_]\w*)\s*\(\)/],
 };
 
-/** Words too common for a reference count to mean anything. */
+/** Words a pattern can capture that never name a definition. */
+const NOT_A_NAME: ReadonlySet<string> = new Set(
+  "if for while switch catch return function class extends implements struct enum union else do try new await yield typeof sizeof".split(
+    " ",
+  ),
+);
+
+/** Lowercase words too common for a reference count to mean anything. */
 export const SYMBOL_STOPLIST: ReadonlySet<string> = new Set(
-  "main init test tests setup teardown start stop close open read write name type data value values item items list next self this else elif then while for return switch case catch function class public private static const void null true false print render handle handler index error result config options args string number object default".split(
+  "main init test tests setup teardown start stop close open read write name type data value values item items list next self this else elif then while for return switch case catch function class public private static const void null true false print render handle handler index error result config options args string number object default constructor destructor __init__ __str__ __repr__ tostring equals hashcode unknown".split(
     " ",
   ),
 );
 
 const SAFE_SYMBOL = /^[A-Za-z_$][\w$]*$/;
-/** The most symbols counted per file. */
-export const MAX_SYMBOLS_PER_FILE = 20;
 
 function definedOn(language: Language, line: string): string | null {
   for (const re of SYMBOL_PATTERNS[language]) {
     const name = re.exec(line)?.[1];
-    if (name) return name;
+    if (name && !NOT_A_NAME.has(name)) return name;
   }
   return null;
 }
-
-const COMMENT_LEAD = /^\s*(?:$|\/\/|\/\*|\*|#(?!\s*(?:include|define|if|ifdef|ifndef|else|endif)))/;
 
 /** Lines of one file's `git diff -W` hunks, each with its diff prefix. */
 export type FunctionDiffLines = readonly string[];
 
 /**
  * The symbols a file's change touches: for each changed line that isn't
- * blank or a comment, the nearest definition at or before it in its hunk.
+ * blank, the nearest definition at or before it in its hunk. The names are
+ * sorted. The reference budget, not a count, limits how many get counted.
  */
 export function changedSymbols(language: Language, diff: FunctionDiffLines): string[] {
   const out = new Set<string>();
@@ -93,15 +105,16 @@ export function changedSymbols(language: Language, diff: FunctionDiffLines): str
     if (mark !== " " && mark !== "+" && mark !== "-") continue;
     const line = raw.slice(1);
     current = definedOn(language, line) ?? current;
-    if (mark !== " " && current && !COMMENT_LEAD.test(line)) out.add(current);
+    if (mark !== " " && current && line.trim() !== "") out.add(current);
   }
   return [...out]
-    .filter((s) => SAFE_SYMBOL.test(s) && s.length >= 4 && !SYMBOL_STOPLIST.has(s))
-    .sort()
-    .slice(0, MAX_SYMBOLS_PER_FILE);
+    .filter(
+      (s) => SAFE_SYMBOL.test(s) && s.length >= 4 && !SYMBOL_STOPLIST.has(s.toLowerCase()),
+    )
+    .sort();
 }
 
-/** The changed lines of a `git diff -W` hunk list, without their prefixes or comments. */
+/** The changed lines of a `git diff -W` hunk list that aren't blank, without their prefixes. */
 export function changedCode(diff: FunctionDiffLines): string[] {
   let inHunk = false;
   const out: string[] = [];
@@ -109,7 +122,7 @@ export function changedCode(diff: FunctionDiffLines): string[] {
     if (raw.startsWith("@@")) inHunk = true;
     else if (inHunk && (raw[0] === "+" || raw[0] === "-")) {
       const line = raw.slice(1);
-      if (!COMMENT_LEAD.test(line)) out.push(line);
+      if (line.trim() !== "") out.push(line);
     }
   }
   return out;
@@ -117,25 +130,31 @@ export function changedCode(diff: FunctionDiffLines): string[] {
 
 const HEADER = /\.(h|hh|hpp)$/i;
 
+const EXPORT_PATTERNS: Partial<Record<Language, RegExp>> = {
+  js: /^\s*export\b|^\s*module\.exports\b|^\s*exports\.\w+\s*=/,
+  // A top-level declaration, or a member of a `const (`, `var (`, or `type (` block.
+  go: /^(?:func\s+(?:\([^)]*\)\s*)?|type\s+|var\s+|const\s+)[A-Z]|^\t[A-Z]\w*(?:\s+[\w.*[]|\s*=)/,
+  java: /^\s*public\b/,
+  python: /^\s*(?:async\s+)?(?:def|class)\s+[A-Za-z]|^__all__\b|^[A-Z][A-Z0-9_]*\s*=/,
+};
+const C_HEADER_EXPORT =
+  /^(?:(?:class|struct|enum|union|typedef|extern)\b|#\s*define\b|(?!return\b)[A-Za-z_][\w\s*&:<>,~]*\([^;{]*\)\s*(?:const\s*)?;?\s*$)/;
+
 /** True when a changed line declares something other code can import. */
 export function changesExport(path: string, language: Language | null, code: readonly string[]) {
-  const re: RegExp | null =
-    language === "js"
-      ? /^\s*export\b/
-      : language === "go"
-        ? /^(?:func\s+(?:\([^)]*\)\s*)?|type\s+|var\s+|const\s+)[A-Z]/
-        : language === "java"
-          ? /^\s*public\b/
-          : language === "python"
-            ? /^(?:async\s+)?(?:def|class)\s+[A-Za-z]/
-            : language === "c" && HEADER.test(path)
-              ? /^\s*(?:(?:class|struct|enum|union)\s+\w+|[A-Za-z_].*\))/
-              : null;
-  return re !== null && code.some((line) => re.test(line));
+  const re =
+    language === null
+      ? undefined
+      : language === "c"
+        ? HEADER.test(path)
+          ? C_HEADER_EXPORT
+          : undefined
+        : EXPORT_PATTERNS[language];
+  return re !== undefined && code.some((line) => re.test(line));
 }
 
 const SCHEMA_PATH =
-  /(^|\/)schemas?\/|(^|\/)[^/]*schema[^/]*$|\.(proto|graphql|gql|avsc|xsd)$|(^|\/)(openapi|swagger)[^/]*\.(ya?ml|json)$/i;
+  /(^|\/)schemas?\/|(^|\/)(?:[^/]*[._-])?schemas?\.[^/]+$|\.(proto|graphql|gql|avsc|xsd|sql|prisma|thrift|fbs)$|(^|\/)(openapi|swagger)[^/]*\.(ya?ml|json)$/i;
 
 export function isSchemaPath(path: string): boolean {
   return SCHEMA_PATH.test(path);
@@ -144,18 +163,20 @@ export function isSchemaPath(path: string): boolean {
 const RISKY: ReadonlyArray<readonly [string, RegExp]> = [
   [
     "concurrency",
-    /\b(?:Mutex|RWMutex|Semaphore|WaitGroup|Atomics|AtomicInteger|synchronized|pthread_\w+|std::thread|std::mutex|lock_guard|threading|asyncio\.gather|ExecutorService|flock)\b|\bgo\s+func\b|\bchan\s+\w|\bPromise\.(?:all|race|allSettled|any)\b|\bnew\s+Worker\b/,
+    /\b(?:Mutex|RWMutex|Semaphore|WaitGroup|Atomics|AtomicInteger|ReentrantLock|ThreadPoolExecutor|synchronized|pthread_\w+|std::thread|std::mutex|std::atomic|std::async|lock_guard|threading|asyncio\.gather|asyncio\.create_task|ExecutorService|flock|sync\.Once)\b|\bgo\s+(?:func\b|[\w.]+\()|\bchan\s+\w|\bselect\s*\{|\bPromise\.(?:all|race|allSettled|any)\b|\bnew\s+(?:Worker|Thread)\b/,
   ],
   ["migrations", /\b(?:ALTER\s+TABLE|CREATE\s+TABLE|DROP\s+TABLE|migrations?)\b/i],
   [
     "parsing",
-    /\b(?:\w*[Pp]arser\w*|[Tt]okeni[sz]e\w*|[Ll]exer|[Dd]eseriali[sz]e\w*|[Uu]nmarshal\w*|JSON\.parse|yaml\.(?:safe_)?load|ast\.parse|parse[A-Z_]\w*)\b/,
+    /\b(?:\w*[Pp]arser\w*|[Tt]okeni[sz]e\w*|[Ll]exer|[Dd]eseriali[sz]e\w*|[Uu]nmarshal\w*|JSON\.parse|json\.loads|pickle\.loads|yaml\.(?:safe_)?load|ast\.parse|parse(?!Int\b|Float\b)[A-Z_]\w*)\b/,
   ],
 ];
 
+const MIGRATION_PATH = /(^|\/)(?:migrations?\/|db\/migrate\/|alembic\/versions\/)/i;
+
 /** The kind of risky change in these lines of `path`, or `null`. */
 export function riskyChange(path: string, code: readonly string[]): string | null {
-  if (/(^|\/)migrations?\//i.test(path)) return "migrations";
+  if (MIGRATION_PATH.test(path)) return "migrations";
   for (const [name, re] of RISKY) if (code.some((line) => re.test(line))) return name;
   return null;
 }
@@ -165,129 +186,23 @@ const LOCKFILES: ReadonlySet<string> = new Set(
     " ",
   ),
 );
-const DOC_NAMES = /^(?:README|LICENSE|LICENCE|NOTICE|AUTHORS|CHANGELOG|CONTRIBUTING)$/i;
-const NOT_DOC_TXT = /^(?:CMakeLists|requirements[\w.-]*|constraints[\w.-]*)\.txt$/i;
+const DOC_NAMES = /^(?:README|LICENSE|LICENCE|NOTICE|AUTHORS|CHANGELOG|CONTRIBUTING)(?:\.txt)?$/i;
+/** Markdown that tells an agent what to do changes behavior, so it counts as code. */
+const AGENT_NAMES =
+  /^(?:CLAUDE|AGENTS|GEMINI|SKILL|copilot-instructions)(?:\.[\w-]+)?\.md$|\.(?:prompt|instructions|agent)\.md$/i;
+const AGENT_FOLDERS = /(^|\/)(?:\.claude|\.codex|\.copilot|\.cursor|\.github|prompts?|skills?)\//i;
 
-/** True for a documentation file or lockfile. Anything else counts as code, whatever its folder. */
-export function isDocOrLockfile(path: string): boolean {
+function isDocPath(path: string): boolean {
   const name = posix.basename(path);
-  if (LOCKFILES.has(name)) return true;
-  if (NOT_DOC_TXT.test(name)) return false;
-  return /\.(md|mdx|rst|adoc|txt)$/i.test(name) || DOC_NAMES.test(name);
-}
-
-/** Characters after which a `/` in JavaScript starts a regular expression, not a division. */
-const BEFORE_REGEX = /(?:^|[(,=:[!&|?{};\n]|\breturn)\s*$/;
-
-/** The end of a regular expression literal that starts at `start`, or -1 when none closes the line. */
-function regexEnd(text: string, start: number): number {
-  let inClass = false;
-  for (let i = start + 1; i < text.length && text[i] !== "\n"; i++) {
-    const ch = text[i];
-    if (ch === "\\") i += 1;
-    else if (ch === "[") inClass = true;
-    else if (ch === "]") inClass = false;
-    else if (ch === "/" && !inClass) return i + 1;
-  }
-  return -1;
+  if (AGENT_NAMES.test(name) || AGENT_FOLDERS.test(path)) return false;
+  return /\.(md|rst|adoc)$/i.test(name) || DOC_NAMES.test(name);
 }
 
 /**
- * `text` without comments, line for line, and whether the scan ended cleanly.
- * It understands strings and JavaScript regular expressions well enough to
- * skip markers in them. A comment or a multi-line string left open means the
- * scan lost its place.
+ * True for a documentation file or lockfile, by path alone. These are the only
+ * files that can take the small tier. Anything else counts as code, including
+ * MDX, plain text files, and Markdown that instructs an agent.
  */
-function scanComments(language: Language, text: string): { text: string; clean: boolean } {
-  if (language === "shell") {
-    return { text: text.replace(/^[ \t]*#(?!!).*$/gm, ""), clean: true };
-  }
-  const hash = language === "python";
-  let out = "";
-  let i = 0;
-  let quote: string | null = null;
-  while (i < text.length) {
-    const ch = text[i] as string;
-    if (quote) {
-      if (ch === "\\" && i + 1 < text.length) {
-        out += text.slice(i, i + 2);
-        i += 2;
-      } else if (text.startsWith(quote, i)) {
-        out += quote;
-        i += quote.length;
-        quote = null;
-      } else {
-        if (ch === "\n" && quote.length === 1 && quote !== "`") quote = null;
-        out += ch;
-        i += 1;
-      }
-    } else if (hash && ch === "#") {
-      while (i < text.length && text[i] !== "\n") i += 1;
-    } else if (!hash && text.startsWith("//", i)) {
-      while (i < text.length && text[i] !== "\n") i += 1;
-    } else if (!hash && text.startsWith("/*", i)) {
-      const end = text.indexOf("*/", i + 2);
-      if (end < 0) return { text: out, clean: false };
-      out += text.slice(i, end + 2).replace(/[^\n]/g, "");
-      i = end + 2;
-    } else if (language === "js" && ch === "/" && BEFORE_REGEX.test(out.slice(-80))) {
-      const end = regexEnd(text, i);
-      const stop = end < 0 ? i + 1 : end;
-      out += text.slice(i, stop);
-      i = stop;
-    } else if (hash && (text.startsWith('"""', i) || text.startsWith("'''", i))) {
-      quote = text.slice(i, i + 3);
-      out += quote;
-      i += 3;
-    } else if (ch === '"' || ch === "'" || (ch === "`" && language !== "python")) {
-      quote = ch;
-      out += ch;
-      i += 1;
-    } else {
-      out += ch;
-      i += 1;
-    }
-  }
-  return { text: out, clean: quote === null || (quote.length === 1 && quote !== "`") };
-}
-
-/** `text` without comments, line for line. */
-export function stripComments(language: Language, text: string): string {
-  return scanComments(language, text).text;
-}
-
-/** Text forms the comment scan can't read: shell heredocs, Java text blocks, C++ raw strings. */
-const UNREADABLE: Partial<Record<Language, RegExp>> = {
-  shell: /<</,
-  java: /"""/,
-  c: /\bR"/,
-};
-
-const TOKEN = /"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\[\s\S])*`|\w+|\S/g;
-
-/**
- * True when two versions of a file differ only in comments or formatting.
- * In Python and shell, where whitespace carries meaning, only blank lines and
- * trailing space count as formatting. An unknown language, or text the scan
- * can't read, never qualifies, so a doubtful change counts as code.
- */
-export function sameCode(language: Language | null, base: string, tip: string): boolean {
-  if (language === null) return false;
-  const unreadable = UNREADABLE[language];
-  if (unreadable && (unreadable.test(base) || unreadable.test(tip))) return false;
-  const scannedBase = scanComments(language, base);
-  const scannedTip = scanComments(language, tip);
-  if (!scannedBase.clean || !scannedTip.clean) return false;
-  const a = scannedBase.text;
-  const b = scannedTip.text;
-  if (language === "python" || language === "shell") {
-    const lines = (t: string) =>
-      t
-        .split("\n")
-        .map((l) => l.trimEnd())
-        .filter((l) => l !== "")
-        .join("\n");
-    return lines(a) === lines(b);
-  }
-  return (a.match(TOKEN) ?? []).join("\0") === (b.match(TOKEN) ?? []).join("\0");
+export function isDocOrLockfile(path: string): boolean {
+  return LOCKFILES.has(posix.basename(path)) || isDocPath(path);
 }

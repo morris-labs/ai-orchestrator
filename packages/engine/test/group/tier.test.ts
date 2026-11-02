@@ -5,10 +5,8 @@ function signals(patch: Partial<FileSignals>): FileSignals {
   return {
     path: "src/a.ts",
     noCode: false,
-    fileLines: 30,
-    changedLines: 3,
     references: null,
-    referencesSkipped: false,
+    referencesSkipped: null,
     exportedChange: false,
     schemaPath: false,
     risky: null,
@@ -20,19 +18,31 @@ function signals(patch: Partial<FileSignals>): FileSignals {
 
 describe("fileTier", () => {
   it.each<[string, Partial<FileSignals>, string, RegExp]>([
-    ["30-line file, 3 changed lines", { fileLines: 30 }, "medium", /changes code/],
-    ["300-line file, 3 changed lines", { fileLines: 300 }, "medium", /300 lines/],
-    ["60 changed lines", { changedLines: 60 }, "medium", /60 changed/],
-    ["300-line doc", { noCode: true, fileLines: 300 }, "small", /only docs/],
+    ["code", {}, "medium", /changes code/],
+    ["doc", { noCode: true }, "small", /only docs/],
     ["doc on a risk path", { noCode: true, riskPath: true }, "large", /risk path/],
     ["2 references", { references: { symbol: "doWork", files: 2 } }, "medium", /changes code/],
     ["3 references", { references: { symbol: "doWork", files: 3 } }, "medium", /in 3 other/],
     ["9 references", { references: { symbol: "doWork", files: 9 } }, "medium", /in 9 other/],
     ["10 references", { references: { symbol: "doWork", files: 10 } }, "large", /in 10 other/],
-    ["exported API", { exportedChange: true }, "large", /exported/],
+    ["exported API that few files use", { exportedChange: true }, "medium", /exported/],
+    [
+      "exported API that 3 files use",
+      { exportedChange: true, references: { symbol: "doWork", files: 3 } },
+      "large",
+      /exported/,
+    ],
+    [
+      "exported API with an unfinished count",
+      { exportedChange: true, referencesSkipped: "timeout" },
+      "large",
+      /exported.*ran out of time/,
+    ],
     ["schema", { schemaPath: true }, "large", /schema/],
     ["concurrency", { risky: "concurrency" }, "large", /concurrency/],
-    ["time limit", { referencesSkipped: true }, "medium", /ran out of time/],
+    ["time limit", { referencesSkipped: "timeout" }, "medium", /ran out of time/],
+    ["failed count", { referencesSkipped: "error" }, "medium", /count failed/],
+    ["failed diff", { referencesSkipped: "diff" }, "medium", /function diff failed/],
     ["small pin on docs", { pinned: "small", noCode: true, riskPath: true }, "small", /tierPaths/],
     ["small pin on code", { pinned: "small" }, "medium", /code stays/],
     ["large pin", { pinned: "large", noCode: true }, "large", /tierPaths/],
@@ -102,5 +112,19 @@ describe("roleTier", () => {
 
   it("stops at large", () => {
     expect(nextTier("large")).toBe("large");
+  });
+});
+
+describe("roleTier edge cases", () => {
+  const large = { tier: "large" as const, reason: "r" };
+
+  it("keeps a sweeper at medium when findings persist", () => {
+    expect(roleTier(large, "sweeper", { choice: "auto", persisting: true }).tier).toBe("medium");
+    const small = { tier: "small" as const, reason: "r" };
+    expect(roleTier(small, "sweeper", { choice: "auto", persisting: true }).tier).toBe("medium");
+  });
+
+  it("gives a disprover with no covering group the medium tier", () => {
+    expect(roleTier(null, "disprover", { choice: "auto", persisting: false }).tier).toBe("medium");
   });
 });
