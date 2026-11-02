@@ -206,6 +206,32 @@ The fixer stays with its vendor: when that vendor passes its ceiling, the run
 pauses until the window resets and notifies you. You can change the ceilings
 in the settings, and override them per project.
 
+### When a vendor reports a limit
+
+A vendor's CLI can report a usage or rate limit that the ceilings didn't
+predict, such as a monthly quota. A limit never fails a run. The engine
+remembers the vendor for the rest of the run, sends it no more calls, and tells
+the server not to move calls to it. Calls already under way can still report
+the same limit, so a vendor gets at most one call per parallel worker, not one
+per finding.
+
+The engine then acts in the following order:
+
+1. It moves the call to another vendor that can take the role. The cross-vendor
+   rule holds: a disprover is never the finding's reporter, and a confirmer is
+   never the fixer. The fixer and a reviewer's continuation never move.
+1. With no such vendor, and a reset time for the vendor or any other candidate,
+   the run pauses until the earliest reset. The server's ceiling answer can also
+   set this time.
+1. With no reset time known, such as for a monthly quota message, the run stops
+   with a `ceiling` decision. To go on, assign the role to another vendor or fix
+   the vendor's quota, then resume.
+
+A rate limit with no reset time blocks its vendor for 15 minutes. When you
+resume or retry a run, the engine forgets the limits it remembers, and when you
+assign a role to a vendor, it forgets that vendor's limit. If the vendor is
+still at its limit, its next call reports that, and the steps start again.
+
 ### Clear a stale usage block
 
 A stored sample counts until its reset time. If you buy a reset, the sample
@@ -222,7 +248,8 @@ Replace `VENDOR` with `claude`, `codex`, or `copilot`. To clear one account,
 add `--account VENDOR/NAME`. The vendor's next real sample replaces the cleared
 reading. A run waiting on the ceiling asks the server again every minute, so it
 continues on its own. A run waiting after the vendor's CLI reported a limit
-keeps waiting until you resume it:
+keeps waiting for the reported reset time, or for a decision, until you resume
+it:
 
 ```bash
 aio review resume RUN_ID
@@ -304,6 +331,44 @@ Each round of a pre-push run goes through the following stages:
 1. **Sweep**: turns each confirmed finding into a pattern and searches the
    whole diff for other instances.
 
+## Verification floor
+
+To limit how many findings go to a disprover, set a verification floor. The
+floor is the lowest severity that a disprover checks. The severities, from the
+strongest, are `P1`, `P2`, `P3`, and `nit`. No severity ranks above `P1`. With
+no floor, a disprover checks every severity.
+
+Set the floor in the **Verification** section of the run launcher, or pass
+`--verify-floor` to `aio review start`:
+
+```bash
+aio review start --box BOX_ID --verify-floor P2
+
+```
+
+Replace `BOX_ID` with the box whose branch you want to review.
+
+Findings below the floor behave as follows:
+
+- They stay `pending` and stay listed. The Findings screen and
+  `aio review findings` label them as not verified because of the floor, and the
+  finding carries `unverifiedReason: below_verify_floor`.
+- They never count as confirmed and never go to the fixer or the sweep.
+- They don't hold a run open. The clean test ignores them, so a run can finish.
+- They keep a run from reporting `clean`. Where a run would stop clean, it stops
+  with `clean_above_floor` instead, and you get the ordinary **Run finished**
+  notification, not **Branch is ready to push**. You can still push the run.
+- Every finish with such findings, for any stop reason, adds a notice with their
+  count to the run.
+
+A finding at or above the floor that a disprover couldn't check stays pending
+and holds the run open, as it does without a floor. Findings that a disprover
+already checked keep their verdicts when a retry raises the floor, so a confirmed
+`P3` still goes to the fixer. Pull request comments and failing checks that the
+post-push loop imports always go to a disprover, because the loop must answer
+them. The floor doesn't change the rest of the post-push loop, so `pr_clean` can
+carry the notice too.
+
 ## Stop conditions
 
 A run ends, or stops for you, when one of the following holds:
@@ -311,9 +376,10 @@ A run ends, or stops for you, when one of the following holds:
 | Condition | Result |
 |---|---|
 | Clean | Two rounds in a row confirm no finding above `nit`. The branch is ready to push. |
+| Clean above the floor | The same test as clean, with findings below the verification floor left unchecked. The result is `clean_above_floor`, not `clean`. |
 | Round cap | The run reaches its round limit, 25 by default. The run stops and asks you. |
 | Oscillation | A finding that a fix closed comes back. The run stops and asks you. |
-| Ceiling | Claude is over its ceiling and no other vendor can take the role. The run pauses until the window resets, or asks you. |
+| Ceiling or limit | A vendor is over its ceiling or reported a limit, and no other vendor can take the role. The run pauses until the reset, or asks you when no reset time is known. |
 | Gate failed | Tests or lint stay broken after the fix stage. The run asks you. |
 | Push blocked | The post-push loop can't push. The run asks you. |
 | Cancelled | You cancelled the run. |
@@ -335,6 +401,47 @@ offers some of the following choices:
 For an oscillation, the run view shows both versions of the finding. From a
 terminal, `aio review resume RUN_ID` resumes a paused or waiting run,
 and `aio review cancel RUN_ID` cancels it.
+
+## Retry a failed run
+
+A run with the `failed` status can resume from its saved state at the stage that
+failed, including a run that failed before this control existed. To retry a run,
+click **Retry** in the run view, or run the following command:
+
+```bash
+aio review retry RUN_ID --role disprover=codex --verify-floor P2
+
+```
+
+Replace `RUN_ID` with the run's ID. Both options are optional:
+
+- `--role ROLE=VENDOR[,VENDOR]`: gives a role to vendors, as `aio review assign`
+  does. You can repeat it. You can also use `aio review assign` or the role table
+  in the run view while the run is failed, then retry.
+- `--verify-floor SEVERITY`: sets the verification floor. Use `all` to remove the
+  floor. Without the option, the run keeps its floor.
+
+A retry works as follows:
+
+- Saved calls answer from their files, so no finished call runs again and
+  findings that already have verdicts keep them. A reproduction script for a
+  saved answer runs again, because the engine owns that check.
+- The roles return to the profile and your assignments, which drops any move a
+  limit made. The engine forgets the vendor limits it remembers.
+- A moved tip or a dirty tree doesn't stop a retry, as with any resume: the open
+  round keeps checking the saved tip commit, the fix stage commits on the branch
+  as it stands, and the next round reviews the new tip. The run shows a notice
+  when the tip moved, and another with the error it retried after.
+
+The engine refuses a retry, and changes nothing, in the following cases:
+
+- The run's status isn't `failed`. A `cancelled` run stays final.
+- The stage can't resume: `done`, or a stage of the other pipeline.
+- The stored state is inconsistent: a missing base or tip commit, a closed round
+  or missing round files at a stage that needs them, a missing merge file, a
+  repeated finding, or a finding counter behind the findings.
+- With the cross-vendor rule, no available vendor other than the reporter can
+  check a pending finding at or above the floor.
 
 ## Post-push loop
 
