@@ -264,6 +264,7 @@ function runDetail(r: RunState): string {
     ["Repository", r.request.repoPath],
     ["Range", `${r.request.base}${r.request.mergeBase ? "..." : ".."}${r.request.tip ?? "HEAD"}`],
     ["Model tier", r.request.modelTier],
+    ["Verification floor", r.request.verifyFloor],
     ["Reviewers", r.roles.reviewer.join(", ")],
     ["Disprover", r.roles.disprover],
     ["Confirmer", r.roles.confirmer],
@@ -283,7 +284,7 @@ function findingRows(findings: Finding[]) {
     findings.map((f) => [
       f.id,
       f.severity,
-      f.verdict,
+      f.unverifiedReason ? `${f.verdict} (not verified: below floor)` : f.verdict,
       f.round,
       f.file ? (f.lines ? `${f.file}:${f.lines[0]}-${f.lines[1]}` : f.file) : null,
       f.title,
@@ -824,6 +825,12 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
         .choices(["auto", "small", "medium", "large"])
         .default("auto"),
     )
+    .addOption(
+      new Option(
+        "--verify-floor <severity>",
+        "Send only findings at or above this severity to a disprover. The rest stay pending, unchecked, and away from the fixer.",
+      ).choices(SEVERITIES),
+    )
     .option("--no-cross-vendor", "Let the same vendor disprove and confirm its own work.")
     .option("--round-cap <n>", "Stop after this many rounds.", positiveInt)
     .option(
@@ -862,6 +869,7 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
           profile: o.profile,
           roles,
           modelTier: o.tier,
+          verifyFloor: o.verifyFloor,
           pipeline: o.pipeline,
           prNumber: o.pr,
           crossVendor: o.crossVendor,
@@ -925,6 +933,32 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
         print(r, () => `${done} run ${r.id}; status ${r.status}.\n`);
       });
   }
+
+  review
+    .command("retry")
+    .description(
+      "Resume a failed run from its saved state at the stage that failed, reusing saved calls.",
+    )
+    .argument("<runId>")
+    .option(
+      "--role <role=vendors>",
+      "Give a role to vendors for calls that haven't started, such as disprover=codex (repeatable).",
+      collect,
+      [],
+    )
+    .addOption(
+      new Option(
+        "--verify-floor <severity>",
+        "Send only findings at or above this severity to a disprover. Use all to remove the run's floor. Default: keep the run's floor.",
+      ).choices([...SEVERITIES, "all"]),
+    )
+    .action(async (runId: string, o: { role: string[]; verifyFloor?: string }) => {
+      const r = await client().call("runs.retry", {
+        params: { runId },
+        body: { roles: rolesOf(o.role), verifyFloor: o.verifyFloor as "P1" | "all" | undefined },
+      });
+      print(r, () => `Retried run ${r.id}; status ${r.status}, stage ${r.stage}.\n`);
+    });
 
   review
     .command("push")

@@ -730,6 +730,39 @@ describe("review", () => {
     expect(out).toContain("Cleared 1 usage blocks");
   });
 
+  it("starts a run with a verification floor", async () => {
+    server.on("POST /api/v1/runs", { body: runState });
+    await cli(["review", "start", "--project", "p", "--repo", "/r", "--verify-floor", "P2"]);
+    expect((last()?.body as { verifyFloor?: string }).verifyFloor).toBe("P2");
+    expect(
+      await cli(["review", "start", "--project", "p", "--repo", "/r", "--verify-floor", "P0"]),
+    ).toBe(2);
+  });
+
+  it("retries a run with roles and a floor, and refuses a bad floor", async () => {
+    server.on(`POST /api/v1/runs/${RUN}/retry`, { body: runState });
+    await cli(["review", "retry", RUN, "--role", "disprover=codex", "--verify-floor", "P2"]);
+    expect(last()?.body).toEqual({
+      roles: { disprover: "codex" },
+      verifyFloor: "P2",
+    });
+    await cli(["review", "retry", RUN]);
+    expect(last()?.body).toEqual({});
+    await cli(["review", "retry", RUN, "--verify-floor", "all"]);
+    expect(last()?.body).toEqual({ verifyFloor: "all" });
+    expect(await cli(["review", "retry", RUN, "--verify-floor", "P0"])).toBe(2);
+  });
+
+  it("labels a finding the floor kept from a disprover", async () => {
+    server.on(`GET /api/v1/runs/${RUN}/findings`, {
+      body: {
+        findings: [{ ...finding, verdict: "pending", unverifiedReason: "below_verify_floor" }],
+      },
+    });
+    await cli(["review", "findings", RUN]);
+    expect(out).toContain("not verified: below floor");
+  });
+
   it("lists findings with filters", async () => {
     server.on(`GET /api/v1/runs/${RUN}/findings`, { body: { findings: [finding] } });
     await cli(["review", "findings", RUN, "--severity", "P1", "--round", "2"]);
