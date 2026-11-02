@@ -11,6 +11,23 @@ import { CommitShaSchema, IsoDateTimeSchema, RunIdSchema, VendorSchema } from ".
 export const SeveritySchema = z.enum(["P1", "P2", "P3", "nit"]);
 export type Severity = z.infer<typeof SeveritySchema>;
 
+/** Severities from the strongest down. `P1` is the strongest value the contracts define. */
+const SEVERITY_ORDER: readonly Severity[] = ["P1", "P2", "P3", "nit"];
+
+/**
+ * True when a finding's severity is below the verification floor, so no
+ * disprover checks it. An imported pull request comment or check failure is
+ * never below the floor, because the post-push loop has to answer it.
+ */
+export function belowVerifyFloor(
+  finding: { severity: Severity; origin?: string },
+  floor: Severity | undefined,
+): boolean {
+  if (!floor) return false;
+  if (finding.origin === "pr_comment" || finding.origin === "check_run") return false;
+  return SEVERITY_ORDER.indexOf(finding.severity) > SEVERITY_ORDER.indexOf(floor);
+}
+
 /**
  * The design's four verdicts, plus `fixed` (a confirmed finding whose fix
  * passed the gate and the confirmer) and `waived` (a person chose to accept it).
@@ -97,6 +114,12 @@ const findingFields = {
   category: z.string().min(1),
   /** False when the flaw already exists at the pinned base. */
   introduced: z.boolean(),
+  /**
+   * Why a pending finding has no verdict. `below_verify_floor`: its severity
+   * is below the run's verification floor, so no disprover checked it.
+   * Absent otherwise and on findings stored before the field existed.
+   */
+  unverifiedReason: z.enum(["below_verify_floor"]).optional(),
   /** Reviewer label, such as `claude-opus` or `codex-gpt-5`. */
   reportedBy: z.string().min(1),
   /** Other reviewers whose findings merged into this one; drives the overlap rate. */

@@ -11,6 +11,9 @@ import {
   pathParamsSchema,
   routes,
   serverRoutes,
+  RunStateSchema,
+  StopReasonSchema,
+  belowVerifyFloor,
 } from "../src/index.js";
 import { RUN, box, runRequest } from "./fixtures.js";
 
@@ -92,6 +95,7 @@ describe("route catalog", () => {
       "profile",
       "assign",
       "rebaseBase",
+      "retry",
       "decide",
     ]) {
       expect(keys, action).toContain(`engine.runs.${action}`);
@@ -370,4 +374,41 @@ describe("RouteOf", () => {
     type Create = RouteOf<"boxes.create">;
     expectTypeOf<Create["response"]["boxId"]>().toEqualTypeOf<string | null>();
   });
+});
+
+describe("the verification floor and retry", () => {
+  it("takes a request without a floor and refuses an unknown floor", () => {
+    const create = routes["runs.create"].body;
+    expect(routes["runs.retry"].body.parse({})).toEqual({});
+    expect(routes["runs.retry"].body.parse({ verifyFloor: "all" }).verifyFloor).toBe("all");
+    expect(routes["runs.retry"].body.safeParse({ verifyFloor: "P0" }).success).toBe(false);
+    const request = { projectId: "p", repoPath: "/r" };
+    expect(create.parse(request).verifyFloor).toBeUndefined();
+    expect(create.parse({ ...request, verifyFloor: "P2" }).verifyFloor).toBe("P2");
+    expect(create.safeParse({ ...request, verifyFloor: "P0" }).success).toBe(false);
+  });
+
+  it.each([
+    ["P1", undefined, false],
+    ["nit", undefined, false],
+    ["P1", "P1", false],
+    ["P2", "P1", true],
+    ["P2", "P2", false],
+    ["P3", "P2", true],
+    ["nit", "P3", true],
+    ["nit", "nit", false],
+  ] as const)("a %s finding with floor %s: below is %s", (severity, floor, want) => {
+    expect(belowVerifyFloor({ severity }, floor)).toBe(want);
+  });
+
+  it("never puts an imported finding below the floor", () => {
+    expect(belowVerifyFloor({ severity: "nit", origin: "pr_comment" }, "P1")).toBe(false);
+    expect(belowVerifyFloor({ severity: "nit", origin: "check_run" }, "P1")).toBe(false);
+  });
+});
+
+it("keeps a stored run and finding without the optional fields parsing", () => {
+  const stored = routes["runs.get"].response;
+  expect(stored).toBe(RunStateSchema);
+  expect(StopReasonSchema.parse("clean_above_floor")).toBe("clean_above_floor");
 });

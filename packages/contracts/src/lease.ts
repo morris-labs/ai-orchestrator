@@ -31,6 +31,12 @@ export const LeaseRequestSchema = z.object({
   vendor: VendorSchema,
   role: AgentRoleSchema,
   estimate: z.object({ tokens: CountSchema }),
+  /**
+   * Vendors the server must not move the call to: the vendor that did the
+   * work under the cross-vendor rule, one that reported a limit in this run,
+   * or one with no working CLI. Absent means no restriction.
+   */
+  exclude: z.array(VendorSchema).optional(),
 });
 export type LeaseRequest = z.infer<typeof LeaseRequestSchema>;
 

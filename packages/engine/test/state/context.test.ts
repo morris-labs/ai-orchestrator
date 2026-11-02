@@ -201,14 +201,14 @@ describe("the cross-vendor rule under limits and redirects", () => {
     expect(events.ofType("agent.started").some((e) => e.vendor === "copilot")).toBe(false);
   });
 
-  it("waits for the limit instead of using the avoided vendor when it is the only other one", async () => {
+  it("asks a person instead of using the avoided vendor when it is the only other one", async () => {
     const { ctx, events } = await makeRun({
       adapters: { codex: limited("codex"), copilot: answering("copilot") },
     });
     await expect(
       ctx.callAgent(review(ctx.state.request.repoPath, { avoid: ["copilot"] })),
-    ).rejects.toThrow(/kept hitting its limit/);
-    expect(events.ofType("agent.started").every((e) => e.vendor === "codex")).toBe(true);
+    ).rejects.toBeInstanceOf(DecisionNeeded);
+    expect(events.ofType("agent.started").map((e) => e.vendor)).toEqual(["codex"]);
   });
 
   it("asks a person when the server redirects the call to the avoided vendor", async () => {
@@ -537,6 +537,132 @@ describe("limit fallback", () => {
         method: "confirm",
         vendor: "codex",
       }),
-    ).rejects.toThrow(/kept hitting its limit/);
+    ).rejects.toThrow(/No other usable vendor can take the confirmer call/);
+  });
+});
+
+describe("a vendor that reports a limit", () => {
+  const started = (events: { ofType: (t: "agent.started") => Array<{ vendor: Vendor }> }) =>
+    events.ofType("agent.started").map((e) => e.vendor);
+
+  /** A vendor whose calls report `limit`, counting them. */
+  function reporting(vendor: Vendor, limit: { resetAt: string | null; kind?: string }) {
+    const adapter = limited(vendor);
+    adapter.detectLimit = () => ({ message: "usage limit", ...limit }) as never;
+    return adapter;
+  }
+
+  it("isn't called again for the next finding", async () => {
+    const { ctx, events } = await makeRun({
+      adapters: {
+        copilot: reporting("copilot", { resetAt: null, kind: "usage_limit" }),
+        codex: answering("codex"),
+      },
+    });
+    for (const key of ["a", "b", "c"]) {
+      const out = await ctx.callAgent(
+        review(ctx.state.request.repoPath, { key, vendor: "copilot" }),
+      );
+      expect(out.vendor).toBe("codex");
+    }
+    expect(started(events)).toEqual(["copilot", "codex", "codex", "codex"]);
+  });
+
+  it("stops the redirect loop: the server moved calls to the vendor at its quota", async () => {
+    // Codex is over its ceiling. The server moves its calls to Copilot, whose
+    // quota is gone, until the engine rules Copilot out.
+    const asks: LeaseRequest[] = [];
+    const resumeAt = "2099-01-01T00:00:00.000Z";
+    const broker: LeaseBroker = {
+      acquire: (req: LeaseRequest): Promise<LeaseResponse> => {
+        asks.push(req);
+        return Promise.resolve(
+          req.exclude?.includes("copilot")
+            ? { decision: "pause", leaseId: req.leaseId, resumeAt, reason: "Over the ceiling." }
+            : {
+                decision: "granted",
+                leaseId: req.leaseId,
+                vendor: "copilot",
+                redirectedFrom: "codex",
+                expiresAt: resumeAt,
+              },
+        );
+      },
+      settle: () => undefined,
+    };
+    const { ctx, events } = await makeRun({
+      adapters: {
+        claude: answering("claude"),
+        codex: answering("codex"),
+        copilot: reporting("copilot", { resetAt: null, kind: "usage_limit" }),
+      },
+      broker,
+    });
+    const call = ctx.callAgent(review(ctx.state.request.repoPath, { avoid: ["claude"] }));
+    await expect.poll(() => ctx.state.status).toBe("paused");
+    expect(ctx.state.pausedUntil).toBe(resumeAt);
+    expect(started(events)).toEqual(["copilot"]);
+    expect(asks.at(-1)?.exclude).toEqual(["copilot", "claude"]);
+    ctx.requestCancel();
+    await expect(call).rejects.toThrow();
+  });
+
+  it("pauses until a known reset when no vendor can take the call", async () => {
+    const resetAt = "2099-01-01T00:00:00.000Z";
+    const { ctx, clock } = await makeRun({
+      adapters: { codex: reporting("codex", { resetAt, kind: "usage_limit" }) },
+    });
+    const sleeps: number[] = [];
+    const sleep = clock.sleep.bind(clock);
+    clock.sleep = (ms, signal) => {
+      sleeps.push(ms);
+      ctx.requestCancel();
+      return sleep(ms, signal);
+    };
+    await expect(ctx.callAgent(review(ctx.state.request.repoPath))).rejects.toThrow();
+    expect(ctx.state.pausedUntil).toBe(resetAt);
+    expect(ctx.eng.limitedVendors.codex?.until).toBe(resetAt);
+    // A timer can't hold a wait this long, so the wait is capped and checks again.
+    expect(sleeps).toEqual([2_000_000_000]);
+  });
+
+  it("blocks a rate limit with no reset time for a while, not until a person acts", async () => {
+    const { ctx, clock } = await makeRun({
+      adapters: { codex: reporting("codex", { resetAt: null, kind: "rate_limit" }) },
+    });
+    const sleep = clock.sleep.bind(clock);
+    clock.sleep = (ms, signal) => {
+      ctx.requestCancel();
+      return sleep(ms, signal);
+    };
+    const now = clock.now();
+    await expect(ctx.callAgent(review(ctx.state.request.repoPath))).rejects.toThrow();
+    expect(Date.parse(ctx.eng.limitedVendors.codex?.until ?? "")).toBe(now + 15 * 60_000);
+  });
+
+  it("gets a call again after a person assigns it the role", async () => {
+    const { ctx, events } = await makeRun({
+      adapters: {
+        copilot: reporting("copilot", { resetAt: null, kind: "usage_limit" }),
+        codex: answering("codex"),
+      },
+    });
+    const repoPath = ctx.state.request.repoPath;
+    await ctx.callAgent(review(repoPath, { key: "a", vendor: "copilot" }));
+    await ctx.assignNow("reviewer", ["copilot"]);
+    expect(ctx.eng.limitedVendors.copilot).toBeUndefined();
+    await ctx.callAgent(review(repoPath, { key: "b", vendor: "copilot" }));
+    expect(started(events).filter((v) => v === "copilot")).toHaveLength(2);
+  });
+
+  it("a call left over from a stopped driver starts nothing and changes no status", async () => {
+    const { ctx, events } = await makeRun({ adapters: { codex: answering("codex") } });
+    ctx.state.status = "failed";
+    ctx.stopCalls();
+    await expect(ctx.callAgent(review(ctx.state.request.repoPath))).rejects.toThrow();
+    expect(events.ofType("agent.started")).toEqual([]);
+    expect(ctx.state.status).toBe("failed");
+    await ctx.beginDrive();
+    await expect(ctx.callAgent(review(ctx.state.request.repoPath))).resolves.toBeDefined();
   });
 });

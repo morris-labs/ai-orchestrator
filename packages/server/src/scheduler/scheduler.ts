@@ -171,7 +171,9 @@ export class Scheduler {
     const start = order.indexOf(req.vendor);
     const capable = order
       .map((_, i) => order[(start + 1 + i) % order.length] as Vendor)
-      .filter((v) => v !== req.vendor && VENDOR_ROLES[v].includes(req.role));
+      .filter((v) => v !== req.vendor && VENDOR_ROLES[v].includes(req.role))
+      // The engine rules these out: the cross-vendor rule, a limit it saw, or no CLI.
+      .filter((v) => !req.exclude?.includes(v));
     // A vendor that is failing in this run would only fail the call; its
     // window resetting doesn't make it work, so its reset doesn't count.
     const usable = this.opts.usable ?? (() => true);
@@ -190,7 +192,9 @@ export class Scheduler {
     const reason =
       failing.length > 0
         ? `${req.vendor} is over its ceiling, and no other vendor can take the ${req.role} role: ${failing.join(" and ")} failed earlier in this run${candidates.length > 0 ? `, and ${candidates.join(" and ")} ${candidates.length === 1 ? "is" : "are"} over the ceiling too` : ""}.`
-        : `Every vendor that can take the ${req.role} role is over its ceiling.`;
+        : req.exclude?.length
+          ? `${req.vendor} is over its ceiling, and this run can't move the ${req.role} role to ${req.exclude.join(" or ")}.`
+          : `Every vendor that can take the ${req.role} role is over its ceiling.`;
     if (resets.length === 0) {
       return { decision: "deny", leaseId: req.leaseId, reason, action: "pause" };
     }

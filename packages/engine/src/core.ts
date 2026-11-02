@@ -122,6 +122,8 @@ export interface LimitInfo {
   /** When the limit resets, or `null` when the vendor didn't say. */
   resetAt: string | null;
   message: string;
+  /** `rate_limit` is a short throttle. Anything else counts as a plan window or quota. */
+  kind?: "usage_limit" | "rate_limit";
 }
 
 const HunkVerdictSchema = z.object({

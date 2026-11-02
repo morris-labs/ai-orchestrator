@@ -114,6 +114,7 @@ import {
   RoleSchema,
   RoundSummarySchema,
   RunRequestSchema,
+  RunRetrySchema,
   RunStateSchema,
   RunStatusSchema,
 } from "./runs.js";
@@ -922,6 +923,14 @@ function reviewRoutes<const P extends string, B extends z.ZodTypeAny>(
       method: "POST",
       path: `${runs}/:runId/rebase-base`,
       summary: "Re-resolve the base; the next round starts from it.",
+      response: RunStateSchema,
+      errors: runErrors,
+    }),
+    "runs.retry": http({
+      method: "POST",
+      path: `${runs}/:runId/retry`,
+      summary: "Resume a failed run from its saved state at the stage that failed.",
+      body: RunRetrySchema,
       response: RunStateSchema,
       errors: runErrors,
     }),

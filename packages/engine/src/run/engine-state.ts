@@ -56,6 +56,14 @@ export const EngineStateSchema = z.object({
   pendingAssign: z
     .array(z.object({ role: RoleSchema, vendors: z.array(VendorSchema).min(1) }))
     .default([]),
+  /**
+   * Vendors that reported a usage or rate limit in this run, so no call goes
+   * to them until `until`. `null` means the vendor gave no reset time, and
+   * the block lasts until a person acts. Absent in older runs.
+   */
+  limitedVendors: z
+    .record(VendorSchema, z.object({ until: z.string().nullable(), message: z.string() }))
+    .default({}),
   /** Roles a person assigned by hand; they hold until a profile switch. */
   manualRoles: RoleAssignmentSchema.partial().default({}),
   /** Re-resolve the base before the next round. */
