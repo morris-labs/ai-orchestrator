@@ -1,19 +1,14 @@
 // The Usage tab: CPU and memory totals, one card per running container with
-// its boxes, and each vendor account against its ceiling.
+// its boxes, and each vendor account's usage windows.
 import type { BoxView } from "@aio/contracts";
 import { ProgressBar, useApiClient } from "@aio/ui";
 import { useEffect, useState } from "react";
 import { formatBytes } from "../logic/format";
 import { displayName } from "../logic/status";
+import { vendorRows, type VendorUsageInput } from "../logic/usage";
 
-interface VendorRow {
-  vendor: string;
-  account: string;
-  utilization: number;
-  label: string;
-  over: boolean;
-  resetAt: string | null;
-}
+/** How often the panel reads usage again and rechecks reset times. */
+const USAGE_REFRESH_MS = 60_000;
 
 export function UsageView({
   boxes,
@@ -23,35 +18,29 @@ export function UsageView({
   disk: ReadonlyMap<string, number>;
 }) {
   const client = useApiClient();
-  const [vendors, setVendors] = useState<VendorRow[] | null>(null);
+  const [vendors, setVendors] = useState<VendorUsageInput[] | null>(null);
+  const [now, setNow] = useState(() => new Date());
   useEffect(() => {
     let live = true;
-    client
-      .call("usage.get", {})
-      .then((r) => {
-        if (!live) return;
-        setVendors(
-          r.vendors.map((v) => {
-            const sample = v.latest.find((s) => s.window === v.window) ?? v.latest[0];
-            const utilization = sample?.utilization ?? 0;
-            const label =
-              sample?.spendUsd != null
-                ? `$${sample.spendUsd.toFixed(2)}`
-                : `${Math.round(utilization * 100)}%`;
-            return {
-              vendor: v.vendor,
-              account: v.account,
-              utilization,
-              label,
-              over: v.overCeiling,
-              resetAt: v.resetAt,
-            };
-          }),
-        );
-      })
-      .catch(() => live && setVendors([]));
+    const load = () => {
+      client
+        .call("usage.get", {})
+        .then((r) => {
+          if (!live) return;
+          setVendors(r.vendors);
+          setNow(new Date());
+        })
+        .catch(() => {
+          if (!live) return;
+          setVendors((previous) => previous ?? []);
+          setNow(new Date());
+        });
+    };
+    load();
+    const timer = setInterval(load, USAGE_REFRESH_MS);
     return () => {
       live = false;
+      clearInterval(timer);
     };
   }, [client]);
 
@@ -131,18 +120,26 @@ export function UsageView({
         ) : vendors.length === 0 ? (
           <div className="bx-dim">No usage samples yet.</div>
         ) : (
-          vendors.map((v) => (
-            <div key={`${v.vendor}:${v.account}`} className="bx-usage-row">
-              <span>
+          vendorRows(vendors, now).map((v) => (
+            <div key={`${v.vendor}:${v.account}`} className="bx-usage-vendor">
+              <div>
                 {v.vendor} <span className="bx-dim">{v.account}</span>
-              </span>
-              <ProgressBar
-                fraction={v.utilization}
-                label={`${v.label}${v.over ? " (over ceiling)" : ""}`}
-              />
-              <span className="bx-dim">
-                {v.resetAt ? `resets ${new Date(v.resetAt).toLocaleString()}` : ""}
-              </span>
+              </div>
+              {v.windows.length === 0 ? (
+                <div className="bx-dim">No usage windows reported.</div>
+              ) : (
+                v.windows.map((w) => (
+                  <div key={w.window} className="bx-usage-row">
+                    <span>{w.name}</span>
+                    {w.current ? (
+                      <ProgressBar fraction={w.current.fraction} label={w.current.label} />
+                    ) : (
+                      <span className="bx-dim">No recent data</span>
+                    )}
+                    <span className="bx-dim">{w.detail}</span>
+                  </div>
+                ))
+              )}
             </div>
           ))
         )}

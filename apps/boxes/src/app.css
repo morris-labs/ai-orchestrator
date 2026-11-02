@@ -187,6 +187,9 @@
   align-items: center;
   margin: 4px 0;
 }
+.bx-usage-vendor {
+  margin: 8px 0;
+}
 .bx-cards {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
