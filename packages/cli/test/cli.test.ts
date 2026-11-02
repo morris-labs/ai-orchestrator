@@ -595,6 +595,16 @@ describe("review", () => {
     expect(await cli([...args, "--continuation-cap", "-1"])).not.toBe(0);
   });
 
+  it("passes a model tier and refuses an unknown one", async () => {
+    server.on("POST /api/v1/runs", { status: 201, body: runState });
+    const args = ["review", "start", "--project", PROJECT_ID, "--repo", "/r"];
+    expect(await cli(args)).toBe(0);
+    expect(last()?.body).toMatchObject({ modelTier: "auto" });
+    expect(await cli([...args, "--tier", "small"])).toBe(0);
+    expect(last()?.body).toMatchObject({ modelTier: "small" });
+    expect(await cli([...args, "--tier", "fable"])).not.toBe(0);
+  });
+
   it("passes starting roles and refuses a bad role", async () => {
     server.on("POST /api/v1/runs", { status: 201, body: runState });
     const args = ["review", "start", "--project", PROJECT_ID, "--repo", "/r"];

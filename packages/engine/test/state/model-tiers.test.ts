@@ -5,6 +5,9 @@ import type { AdapterRequest, ReviewOutput, VendorAdapter } from "../../src/core
 import { BridgedAdapter } from "../../src/adapters/bridge.js";
 import { codexRolloutModel } from "../../src/adapters/codex.js";
 import { AgentFailed } from "../../src/state/context.js";
+import type { CoreDeps } from "../../src/api/core-interface.js";
+import { parsePolicy } from "../../src/policy/load.js";
+import { EngineRunManager } from "../../src/state/manager.js";
 import { makeRun } from "./harness.js";
 
 function recording(vendor: Vendor, reported?: string) {
@@ -79,6 +82,18 @@ describe("the model of a call", () => {
 });
 
 describe("blocked models", () => {
+  it("refuses a blocked per-vendor model when the manager starts", () => {
+    expect(
+      () => new EngineRunManager({ models: { codex: "gpt-6-astra" } } as unknown as CoreDeps),
+    ).toThrow(/can't use/);
+  });
+
+  it("refuses a blocked model in a policy file", () => {
+    expect(() => parsePolicy("version: 1\ntierModels:\n  claude:\n    large: Fable\n")).toThrow(
+      /can't use the claude model Fable/,
+    );
+  });
+
   it.each([
     ["claude", "claude-fable-5-1"],
     ["codex", "gpt-6-ASTRA"],
