@@ -942,7 +942,7 @@ export class RunContext {
     try {
       const now = await this.git.head();
       if (now === head) return "";
-      await this.git.resetHard(head);
+      await this.git.resetKeep(head);
       return ` The engine moved the branch back to ${head}; the call's commits end at ${now}.`;
     } catch (error) {
       return ` The engine couldn't remove the call's commits: ${describeError(error)}`;

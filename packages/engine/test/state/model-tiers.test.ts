@@ -160,7 +160,7 @@ describe("blocked models", () => {
       .spyOn(ctx.git, "head")
       .mockResolvedValueOnce("a".repeat(40))
       .mockResolvedValue("b".repeat(40));
-    const reset = vi.spyOn(ctx.git, "resetHard").mockResolvedValue();
+    const reset = vi.spyOn(ctx.git, "resetKeep").mockResolvedValue();
     await expect(ctx.callAgent<ReviewOutput>(call("claude", "large"))).rejects.toThrow(
       /moved the branch back/,
     );
