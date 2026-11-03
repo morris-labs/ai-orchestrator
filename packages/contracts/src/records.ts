@@ -189,6 +189,24 @@ export const OpReferenceSchema = z.string().regex(/^op:\/\/[^/]+\/[^/]+\/.+$/, {
 });
 
 /**
+ * What a hub lets one enrolled machine reach over the link. The hub refuses
+ * everything that the grant doesn't name. See docs/multi-host.md.
+ */
+export const NodeGrantSchema = z
+  .object({
+    /** The exact `op://` references the machine may read through the hub. */
+    opRefs: z.array(OpReferenceSchema).default([]),
+    /** The vaults whose item and field names the machine may list through the hub. */
+    opVaults: z.array(z.string().min(1)).default([]),
+    /** The keys of the sign-in files the hub copies to the machine. */
+    signInCopies: z.array(z.string().min(1)).default([]),
+    /** The keys of the sign-in files the machine may overwrite on the hub and on other machines. */
+    signInUpdates: z.array(z.string().min(1)).default([]),
+  })
+  .strict();
+export type NodeGrant = z.infer<typeof NodeGrantSchema>;
+
+/**
  * A secret reference. The server resolves `ref` with `op read` at launch and
  * injects the value as the environment variable `name`. Values never appear
  * in a record, an API response, an event, or a log.
@@ -696,6 +714,8 @@ export const GlobalSettingsSchema = z
      * binds.
      */
     linkAddress: z.string().min(1).optional(),
+    /** On a hub, what each enrolled machine may reach, by machine ID. Absent grants nothing. */
+    nodeGrants: z.record(z.string().min(1), NodeGrantSchema).optional(),
   })
   .strict();
 export type GlobalSettings = z.infer<typeof GlobalSettingsSchema>;
@@ -824,6 +844,8 @@ export const GlobalSettingsPatchSchema = z
     linkHost: z.string().min(1).nullable(),
     /** `null` goes back to the address the link listener binds. */
     linkAddress: z.string().min(1).nullable(),
+    /** Replaces every machine's grant; `null` removes them all. */
+    nodeGrants: z.record(z.string().min(1), NodeGrantSchema).nullable(),
     /**
      * Applies to containers created afterward; `null` goes back to `auto`.
      */

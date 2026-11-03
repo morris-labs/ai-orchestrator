@@ -6,6 +6,10 @@
 // and the hub writes it and sends it to every other node. The last change
 // wins.
 //
+// A node is less trusted than the hub, so the hub copies a file to a machine
+// only when that machine's grant lists the key in `signInCopies`, and takes a
+// file from it only when the grant lists the key in `signInUpdates`.
+//
 // Synced files, by key:
 //
 //   host/claude/.credentials.json  HOME/.claude/.credentials.json

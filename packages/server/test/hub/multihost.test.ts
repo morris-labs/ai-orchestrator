@@ -526,12 +526,43 @@ describe("multi-host", () => {
   });
 
   it("resolves a node's secrets through the hub", async () => {
-    const { hub, node } = await linkedPair();
+    const { hub, node, joined } = await linkedPair();
     await waitFor(() => node.app.multiHost.links.get("hub") !== undefined, 5000);
     const op = node.app.multiHost.op;
     expect(await op.status()).toMatchObject({ signedIn: true, mode: "service_account" });
+
+    // A machine with no grant reads and lists nothing.
+    await expect(op.read("op://Vault/item/field")).rejects.toMatchObject({
+      code: "secrets_unavailable",
+      message: expect.stringContaining("nodeGrants"),
+    });
+    await expect(op.listItems("Vault")).rejects.toMatchObject({ code: "secrets_unavailable" });
+    expect(hub.op.reads).toEqual([]);
+
+    const machineId = joined.json.machineId as string;
+    const granted = await hub.api("PATCH", "/api/v1/settings", {
+      nodeGrants: { [machineId]: { opRefs: ["op://Vault/item/field"], opVaults: ["Vault"] } },
+    });
+    expect(granted.status).toBe(200);
     expect(await op.read("op://Vault/item/field")).toBe(SECRET);
+    expect(await op.listItems("Vault")).toEqual([]);
     expect(hub.op.reads).toEqual(["op://Vault/item/field"]);
+
+    // The grant names exact references and vaults, and never its neighbours.
+    for (const ref of ["op://Vault/item/other", "op://Vault/item/field?attribute=otp"]) {
+      await expect(op.read(ref)).rejects.toMatchObject({ code: "secrets_unavailable" });
+    }
+    await expect(op.listItems("Other")).rejects.toMatchObject({ code: "secrets_unavailable" });
+    expect(hub.op.reads).toEqual(["op://Vault/item/field"]);
+
+    // A request outside the grant answers 403 on the link itself.
+    const refused = await node.app.multiHost.links.get("hub")!.request({
+      method: "POST",
+      path: "/link/v1/op/read",
+      headers: { "content-type": "application/json" },
+      body: Buffer.from(JSON.stringify({ ref: "op://Vault/item/other" })),
+    });
+    expect(refused.status).toBe(403);
     expect(node.op.reads).toEqual([]);
     await expect(op.read("not-a-reference")).rejects.toMatchObject({ code: "validation" });
 
@@ -620,8 +651,49 @@ describe("multi-host", () => {
     }
     const read = (s: Server) =>
       fs.existsSync(credFile(s.home)) ? fs.readFileSync(credFile(s.home), "utf8") : null;
+    await waitFor(() => one.app.multiHost.status().link === "connected", 5000);
+    await waitFor(() => two.app.multiHost.status().link === "connected", 5000);
+    const key = "host/claude/.credentials.json";
+    const [idOne, idTwo] = ids as [string, string];
+
+    // With no grant, the hub copies nothing and takes nothing.
+    const pull = (s: Server) =>
+      s.app.multiHost.links
+        .get("hub")!
+        .request({ method: "POST", path: "/link/v1/credentials/pull", headers: {} });
+    expect(JSON.parse((await pull(one)).body.toString())).toEqual({ entries: [] });
+    const push = await one.app.multiHost.links.get("hub")!.request({
+      method: "POST",
+      path: "/link/v1/credentials/push",
+      headers: { "content-type": "application/json" },
+      body: Buffer.from(
+        JSON.stringify({ key, content: Buffer.from('{"token":"forged"}').toString("base64") }),
+      ),
+    });
+    expect(push.status).toBe(403);
+    expect(read(hub)).toBe('{"token":"synthetic-1"}');
+    expect(read(one)).toBeNull();
+    expect(read(two)).toBeNull();
+
+    const patched = await hub.api("PATCH", "/api/v1/settings", {
+      nodeGrants: {
+        [idOne]: { signInCopies: [key], signInUpdates: [key] },
+        [idTwo]: { signInCopies: [key] },
+      },
+    });
+    expect(patched.status).toBe(200);
+    one.app.multiHost.node.restart();
+    two.app.multiHost.node.restart();
     await waitFor(() => read(one) === '{"token":"synthetic-1"}' && read(two) === read(one), 5000);
     expect(fs.statSync(credFile(one.home)).mode & 0o777).toBe(0o600);
+
+    // A copy grant doesn't let a machine overwrite the file for anyone else.
+    fs.writeFileSync(credFile(two.home), '{"token":"forged"}');
+    await two.app.multiHost.syncCredentials();
+    expect(read(hub)).toBe('{"token":"synthetic-1"}');
+    expect(read(one)).toBe('{"token":"synthetic-1"}');
+    fs.writeFileSync(credFile(two.home), '{"token":"synthetic-1"}');
+    await two.app.multiHost.syncCredentials();
 
     // Node one's CLI refreshes its token.
     fs.writeFileSync(credFile(one.home), '{"token":"synthetic-2"}');
@@ -632,5 +704,17 @@ describe("multi-host", () => {
     fs.writeFileSync(credFile(hub.home), '{"token":"synthetic-3"}');
     await hub.app.multiHost.syncCredentials();
     await waitFor(() => read(one) === '{"token":"synthetic-3"}' && read(two) === read(one), 5000);
+
+    // The hub doesn't send a file to a machine whose grant no longer lists it.
+    await hub.api("PATCH", "/api/v1/settings", {
+      nodeGrants: { [idOne]: { signInCopies: [key] } },
+    });
+    fs.writeFileSync(credFile(hub.home), '{"token":"synthetic-4"}');
+    await hub.app.multiHost.syncCredentials();
+    await waitFor(() => read(one) === '{"token":"synthetic-4"}', 5000);
+    expect(read(two)).toBe('{"token":"synthetic-3"}');
+    const cleared = await hub.api("PATCH", "/api/v1/settings", { nodeGrants: null });
+    expect(cleared.json.nodeGrants).toBeUndefined();
+    expect(JSON.parse((await pull(one)).body.toString())).toEqual({ entries: [] });
   });
 });

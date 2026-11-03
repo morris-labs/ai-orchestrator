@@ -16,6 +16,7 @@ import {
   type ImageStatus,
   type Machine,
   type MachineHealth,
+  type NodeGrant,
   type NodeJoin,
   type NodeStatus,
 } from "@aio/contracts";
@@ -248,7 +249,10 @@ export class MultiHost {
     });
     this.credentials = new CredentialStore({ home: opts.home, dataDir: opts.dataDir });
     const hubInternal = new Map<string, InternalHandler>([
-      ...opRelayHandlers(() => opts.op),
+      ...opRelayHandlers(
+        () => opts.op,
+        (machineId) => this.grantOf(machineId),
+      ),
       ...this.hubCredentialHandlers(),
       ...(opts.internal ?? new Map()),
     ]);
@@ -364,16 +368,33 @@ export class MultiHost {
   // -------------------------------------------------------------------------
   // Sign-in sync; see `credentials.ts`.
 
+  /** What the hub's settings let an enrolled machine reach over the link. */
+  private grantOf(machineId: string): NodeGrant | undefined {
+    return this.opts.settings().nodeGrants?.[machineId];
+  }
+
   private hubCredentialHandlers(): Map<string, InternalHandler> {
     return new Map<string, InternalHandler>([
       [
         `POST ${CREDENTIAL_PATHS.pull}`,
-        safely(async () => jsonResponse(200, { entries: await this.credentials.list() })),
+        safely(async (_req, caller) => {
+          const allowed = this.grantOf(caller)?.signInCopies ?? [];
+          const entries = await this.credentials.list();
+          return jsonResponse(200, { entries: entries.filter((e) => allowed.includes(e.key)) });
+        }),
       ],
       [
         `POST ${CREDENTIAL_PATHS.push}`,
         safely(async (req, caller) => {
           const entry = parseEntry(jsonBody(req));
+          if (!this.grantOf(caller)?.signInUpdates.includes(entry.key)) {
+            throw new ApiError(
+              "unauthorized",
+              `The hub doesn't take ${entry.key} from machine ${caller}. To allow it, add the key to signInUpdates in that machine's entry in the nodeGrants setting on the hub.`,
+              undefined,
+              403,
+            );
+          }
           if (await this.credentials.write(entry)) {
             this.opts.log(`Took a refreshed sign-in, ${entry.key}, from ${caller}.`);
           }
@@ -399,13 +420,14 @@ export class MultiHost {
     ]);
   }
 
-  /** Sends one sign-in file to every linked node that syncs, except `except`. */
+  /** Sends one sign-in file to every linked node whose grant lists it, except `except`. */
   private async broadcastCredential(
     entry: { key: string; content: string },
     except?: string,
   ): Promise<void> {
     for (const id of this.hub.list()) {
       if (id === except || !this.hub.helloOf(id)?.capabilities.includes("credentials.v1")) continue;
+      if (!this.grantOf(id)?.signInCopies.includes(entry.key)) continue;
       try {
         await this.hub.get(id)?.request({
           method: "POST",
@@ -466,13 +488,17 @@ export class MultiHost {
         }
         if (!link?.can("credentials.v1")) continue;
         try {
-          await link.request({
+          const res = await link.request({
             method: "POST",
             path: CREDENTIAL_PATHS.push,
             headers: { "content-type": "application/json" },
             body: Buffer.from(JSON.stringify({ key: entry.key, content: entry.content })),
           });
-          this.opts.log(`Sent a refreshed sign-in, ${entry.key}, to the hub.`);
+          this.opts.log(
+            res.status === 200
+              ? `Sent a refreshed sign-in, ${entry.key}, to the hub.`
+              : `The hub didn't take ${entry.key}: status ${res.status}.`,
+          );
         } catch (err) {
           this.opts.log(`Couldn't send ${entry.key} to the hub: ${(err as Error).message}`);
         }

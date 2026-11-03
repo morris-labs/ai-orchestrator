@@ -5,9 +5,14 @@
 // `op` calls cross the link. With the hub down, a node can't read a value it
 // hasn't cached.
 //
+// The hub's service account can read more than any node needs, so the hub
+// serves a node only the references and vaults in that machine's grant. A
+// node's own settings can't widen the grant, because a compromised node can
+// change them.
+//
 // No value is logged. An error that crosses the link carries the hub's
 // message, which `OpCli` already keeps free of values.
-import type { OpStatus } from "@aio/contracts";
+import type { NodeGrant, OpStatus } from "@aio/contracts";
 import { ApiError, isApiErrorCode } from "../api/errors.js";
 import type { OpClient, OpItemInfo } from "../secrets/op.js";
 import { jsonBody, jsonResponse, safely, type InternalHandler } from "./dispatch.js";
@@ -21,30 +26,51 @@ export const OP_PATHS = {
 } as const;
 
 /** The hub's handlers for the relay, served to its nodes. */
-export function opRelayHandlers(op: () => OpClient): Map<string, InternalHandler> {
+export function opRelayHandlers(
+  op: () => OpClient,
+  grantOf: (machineId: string) => NodeGrant | undefined,
+): Map<string, InternalHandler> {
   return new Map<string, InternalHandler>([
     [`POST ${OP_PATHS.status}`, safely(async () => jsonResponse(200, await op().status()))],
     [
       `POST ${OP_PATHS.read}`,
-      safely(async (req) => {
+      safely(async (req, caller) => {
         const { ref } = jsonBody(req) as { ref?: unknown };
         if (typeof ref !== "string" || !ref.startsWith("op://")) {
           throw new ApiError("validation", "The relay reads only op:// references.");
         }
+        if (!grantOf(caller)?.opRefs.includes(ref)) throw refused(caller, `read ${ref}`);
         return jsonResponse(200, { value: await op().read(ref) });
       }),
     ],
     [
       `POST ${OP_PATHS.listItems}`,
-      safely(async (req) => {
+      safely(async (req, caller) => {
         const { vault } = jsonBody(req) as { vault?: unknown };
         if (typeof vault !== "string" || vault === "") {
           throw new ApiError("validation", "Name a vault.");
+        }
+        if (!grantOf(caller)?.opVaults.includes(vault)) {
+          throw refused(caller, `list the vault ${vault}`);
         }
         return jsonResponse(200, { items: await op().listItems(vault) });
       }),
     ],
   ]);
+}
+
+/**
+ * The error for a request outside the caller's grant. A 401 code would blame
+ * the caller's API token on the node, so the node reports it as a secret that
+ * it can't get.
+ */
+function refused(machineId: string, action: string): ApiError {
+  return new ApiError(
+    "secrets_unavailable",
+    `The hub doesn't let machine ${machineId} ${action}. To allow it, add it to that machine's entry in the nodeGrants setting on the hub.`,
+    undefined,
+    403,
+  );
 }
 
 /** The status a node reports while it can't ask its hub. */

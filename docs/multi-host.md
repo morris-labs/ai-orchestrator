@@ -423,23 +423,81 @@ secrets broker. The following data crosses the link:
   list, health, and relay routes.
 - **Secret values**: only the hub holds the 1Password service account
   token. A node's secrets broker asks the hub for each value and keeps it in
-  memory for the same 5 minutes as on a hub. The hub doesn't limit which
-  `op://` references an enrolled node can request, so a compromised node can
-  read any 1Password value that the hub's service account can read. While
-  the hub is unreachable, a node can't read a secret that it hasn't cached.
+  memory for the same 5 minutes as on a hub. The hub serves only the `op://`
+  references and vaults in that machine's grant, so a node starts with none;
+  see [Grant a machine secrets and sign-ins](#grant-a-machine-secrets-and-sign-ins).
+  A compromised node can read only what its grant names. While the hub is
+  unreachable, a node can't read a secret that it hasn't cached.
 - **Agent sign-ins**: the hub's Claude and Codex sign-in files, from the host
   folders (`~/.claude/.credentials.json` and `~/.codex/auth.json`) and from
-  account folders. A node copies them from the hub when its link comes up.
-  When an agent CLI on a node refreshes its sign-in, the node sends the file
-  to the hub, which overwrites its own copy and sends it to every other
-  node, so a compromised node can replace the sign-ins on every machine.
-  Revoking a machine closes its link but doesn't delete the sign-in files
+  account folders, for only the keys in that machine's grant. A node copies
+  the files that its grant lists when its link comes up. When an agent CLI on
+  a node refreshes its sign-in, the node sends the file to the hub. If the
+  grant lists the key for updates, the hub overwrites its own copy and sends
+  the file to every other node whose grant lists it, so a compromised node
+  can replace those sign-ins and no others. Revoking a machine closes its link but doesn't delete the sign-in files
   that it already copied; sign out on that machine, or remove the files. A
   file arrives only where its folder exists, so create the same accounts on
   each node. GitHub Copilot keeps its token beside its settings, so its
   sign-in isn't copied.
 
 If copied sign-ins keep signing machines out, sign in on each node instead.
+
+## Grant a machine secrets and sign-ins
+
+A hub gives an enrolled machine no secrets and no sign-ins until you grant
+them. To grant them, set the `nodeGrants` setting on the hub. Keep each grant
+to what the machine's projects use: a machine can read everything that its
+grant names, and a compromised machine can pass it on.
+
+```bash
+curl --cacert ~/.ai-orchestrator/server.crt \
+    -H "Authorization: Bearer $(cat ~/.ai-orchestrator/server.token)" \
+    -H "Content-Type: application/json" \
+    -X PATCH -d '{"nodeGrants": {"MACHINE_ID": {
+        "opRefs": ["op://VAULT/ITEM/FIELD"],
+        "opVaults": ["VAULT"],
+        "signInCopies": ["host/claude/.credentials.json"],
+        "signInUpdates": ["host/claude/.credentials.json"]
+    }}}' \
+    https://127.0.0.1:21400/api/v1/settings
+
+```
+
+Replace the following:
+
+- `MACHINE_ID`: the machine's ID, from `aio machines list`
+- `VAULT`, `ITEM`, and `FIELD`: the parts of a 1Password reference
+
+Each field is optional and defaults to an empty list:
+
+- `opRefs`: the exact references that the machine can read. List every
+  reference that its projects and global settings use.
+- `opVaults`: the vaults whose item and field names the machine's secrets
+  picker can list. This field doesn't grant any value.
+- `signInCopies`: the sign-in files that the hub copies to the machine.
+- `signInUpdates`: the sign-in files that the machine can overwrite on the
+  hub and on the machines that copy them. List a key here when the machine's
+  agent CLI rotates a refresh token that other machines share.
+
+A sign-in key is `host/claude/.credentials.json`, `host/codex/auth.json`,
+`account/claude/NAME/.credentials.json`, or `account/codex/NAME/auth.json`,
+where `NAME` is the account's name.
+
+The request replaces every machine's grant, so send the whole setting. To
+remove every grant, send `{"nodeGrants": null}`. The hub applies a change to
+its next request, but a node keeps a value that it already read in memory for
+up to 5 minutes, and keeps the sign-in files that it already copied. A node
+copies sign-ins only when its link comes up, so to copy a file that you just
+granted, restart the server on the node:
+
+```bash
+systemctl --user restart aio-server
+
+```
+
+When a grant leaves out a reference that a project on the machine uses, the
+project's box doesn't start, and the error names the reference.
 
 ## Terminals on other machines
 
