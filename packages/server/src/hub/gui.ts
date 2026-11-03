@@ -541,8 +541,19 @@ export class GuiListener {
       stream.close(LINK_CLOSE.revoked, "This app's certificate was revoked.");
       return refuseUpgrade(socket, 403, "This app's certificate was revoked.");
     }
-    this.track(client, req.socket);
-    wss.handleUpgrade(req, socket, head, (ws) => this.bridge(client, ws, stream));
+    // `handleUpgrade` calls back synchronously or not at all: it skips the
+    // callback when the socket already ended, the handshake is invalid, or the
+    // server is closing. Nothing else owns the stream in those cases.
+    let bridged = false;
+    try {
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        this.track(client, req.socket);
+        this.bridge(client, ws, stream);
+        bridged = true;
+      });
+    } finally {
+      if (!bridged) stream.close(1001, "The app's upgrade didn't finish.");
+    }
   }
 
   /** Joins an app's WebSocket to a stream into the API. */

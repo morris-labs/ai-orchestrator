@@ -7,9 +7,10 @@ import https from "node:https";
 import net from "node:net";
 import type { Duplex } from "node:stream";
 import path from "node:path";
+import tls from "node:tls";
 import { GUI_ENROLL_PATH, guiClientProof, guiCodeKey } from "@aio/contracts/gui-enroll";
 import { pinFromPem, pinnedFetch } from "@aio/contracts/tls";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import WebSocket from "ws";
 import {
   enrollWithHub,
@@ -27,6 +28,7 @@ import {
   loadOrCreateHubIdentity,
   newNodeKey,
 } from "../../src/hub/ca.js";
+import { WsStream } from "../../src/hub/dispatch.js";
 import { waitFor } from "../events/fake-engine.js";
 import { FakeExec } from "../api/harness.js";
 import { FakeRunner } from "../setup/fake-runner.js";
@@ -455,6 +457,67 @@ describe("GUI to hub to node to box", () => {
       headers: { authorization: `Bearer ${proxy.token}` },
     });
     expect(res.status).toBe(502);
+  });
+});
+
+describe("a GUI upgrade that doesn't reach the app", () => {
+  /** A listener, one client's certificate, and a count of the API streams closed. */
+  async function listener() {
+    const hub = await startServer("hub");
+    const { code, enrollment } = await enrolled(hub);
+    const closes = vi.spyOn(WsStream.prototype, "close");
+    return { hub, hubUrl: code.hubUrl as string, identity: identityOf(enrollment), closes };
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("closes the API stream when the app's socket ends during the open", async () => {
+    const { hub, hubUrl, identity, closes } = await listener();
+    // `serveUpgrade` is waiting on the stream when this listener runs after it.
+    const gui = hub.app.multiHost.gui as unknown as { server: https.Server };
+    gui.server.on("upgrade", (_req, socket: Duplex) => socket.destroy());
+
+    const ws = new WebSocket(`${hubUrl.replace("https", "wss")}/api/v1/events`, {
+      ...identity,
+      rejectUnauthorized: false,
+    });
+    sockets.push(ws);
+    await new Promise((resolve) => ws.once("error", resolve));
+
+    await waitFor(() => closes.mock.calls.length > 0);
+  });
+
+  it("closes the API stream when the handshake is refused", async () => {
+    const { hubUrl, identity, closes } = await listener();
+    const { hostname, port } = new URL(hubUrl);
+    const socket = tls.connect({
+      host: hostname,
+      port: Number(port),
+      ...identity,
+      rejectUnauthorized: false,
+    });
+    hubSockets.push(socket);
+    await new Promise((resolve) => socket.once("secureConnect", resolve));
+    const answer = new Promise<string>((resolve) =>
+      socket.once("data", (chunk: Buffer) => resolve(chunk.toString())),
+    );
+    socket.write(
+      [
+        "GET /api/v1/events HTTP/1.1",
+        `Host: ${hostname}`,
+        "Connection: Upgrade",
+        "Upgrade: websocket",
+        "Sec-WebSocket-Key: AAAAAAAAAAAAAAAAAAAAAA==",
+        "Sec-WebSocket-Version: 1",
+        "",
+        "",
+      ].join("\r\n"),
+    );
+
+    expect(await answer).toContain("400");
+    await waitFor(() => closes.mock.calls.length > 0);
   });
 });
 
