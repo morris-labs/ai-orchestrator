@@ -32,10 +32,10 @@ describe("the standard depth", () => {
     const options = { choice: "auto", persisting: true, depth: "standard" } as const;
     const at = (tier: "small" | "medium" | "large") => ({ tier, reason: "group" });
     expect(roleTier(at("medium"), "disprover", options).tier).toBe("medium");
-    expect(roleTier(at("medium"), "confirmer", options).tier).toBe("medium");
+    expect(roleTier(at("medium"), "confirmer", options).tier).toBe("large");
     expect(roleTier(at("small"), "disprover", options).tier).toBe("small");
     expect(roleTier(at("small"), "fixer", options).tier).toBe("medium");
-    expect(roleTier(at("small"), "confirmer", options).tier).toBe("medium");
+    expect(roleTier(at("small"), "confirmer", options).tier).toBe("large");
     expect(roleTier(at("large"), "fixer", options).tier).toBe("large");
     expect(roleTier(at("large"), "sweeper", options).tier).toBe("medium");
     expect(roleTier(null, "disprover", options).tier).toBe("medium");
