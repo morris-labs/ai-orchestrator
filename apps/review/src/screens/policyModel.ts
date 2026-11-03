@@ -1,11 +1,17 @@
 // Conversion between the policy file, its YAML text, and the editor form.
-import { PolicyFileSchema, type PolicyFile } from "@aio/contracts";
+import { DEFAULT_GROUP_SIZE_LIMIT, PolicyFileSchema, type PolicyFile } from "@aio/contracts";
 import { isMap, parse, parseDocument, stringify } from "yaml";
 
 export type ParseResult = { ok: true; policy: PolicyFile } | { ok: false; errors: string[] };
 
+/**
+ * The policy as YAML. A default `groupSizeLimit` stays out of the file, because
+ * a file that names the key overrides the limit of the run's depth.
+ */
 export function policyToYaml(policy: PolicyFile): string {
-  return stringify(policy, { lineWidth: 100 });
+  const { groupSizeLimit, ...rest } = policy;
+  const named = groupSizeLimit === DEFAULT_GROUP_SIZE_LIMIT ? rest : policy;
+  return stringify(named, { lineWidth: 100 });
 }
 
 /**
@@ -26,8 +32,9 @@ export function mergePolicyYaml(text: string, policy: PolicyFile): string {
   for (const key of keys) {
     const next = newValues[key];
     if (JSON.stringify(oldValues[key]) === JSON.stringify(next)) continue;
-    if (next === undefined) doc.delete(key);
-    else doc.set(key, doc.createNode(next));
+    if (next === undefined || (key === "groupSizeLimit" && next === DEFAULT_GROUP_SIZE_LIMIT)) {
+      doc.delete(key);
+    } else doc.set(key, doc.createNode(next));
   }
   return doc.toString({ lineWidth: 100 });
 }

@@ -17,6 +17,7 @@ import {
   type LeaseResponse,
   type UsageSample,
   type Vendor,
+  type Effort,
 } from "@aio/contracts";
 import { z } from "zod";
 import type { EnvProfile } from "./process/env.js";
@@ -83,6 +84,8 @@ export interface AdapterRequest {
   timeoutMs: number;
   /** A model name for the vendor's CLI, or absent for the vendor's default. */
   model?: string;
+  /** The reasoning effort, or absent for the vendor's default. */
+  effort?: Effort;
   /** Aborted when the run is cancelled. The adapter must stop the CLI. */
   signal?: AbortSignal;
 }

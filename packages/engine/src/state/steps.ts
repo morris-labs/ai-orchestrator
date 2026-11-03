@@ -42,6 +42,9 @@ import { findingsLog, mergeCandidates, type Candidate, type MergeResult } from "
 import { isRiskPath, policyPromptSection } from "../policy/rules.js";
 import {
   batchDisproverPrompt,
+  isExternal,
+  triageLine,
+  triagePrompt,
   batchFindingBlock,
   confirmerPrompt,
   continuationPrompt,
@@ -51,7 +54,13 @@ import {
   sweepPrompt,
 } from "../prompts/templates.js";
 import { parseDiff } from "../range/diff.js";
-import { planVerifyBatches, rootCauseDuplicates, type VerifyBatch } from "../verify/batch.js";
+import {
+  batchEffort,
+  planVerifyBatches,
+  rootCauseDuplicates,
+  splitByTokens,
+  type VerifyBatch,
+} from "../verify/batch.js";
 import {
   BaseWorktree,
   baseWorktreePath,
@@ -68,6 +77,7 @@ import {
 } from "./checkout.js";
 import {
   AgentFailed,
+  RoleDenied,
   DecisionNeeded,
   RunCancelled,
   SafetyRefused,
@@ -1081,6 +1091,7 @@ export async function verifyPending(ctx: RunContext, stageFile: string): Promise
     try {
       result = await verifyFinding(finding, vendor, {
         ...deps(finding.id),
+        ...(runDepth(ctx.state.request) === "standard" ? { standard: true } : {}),
         scratchDirFor: (id) => ctx.store.scratchDir(id),
         timeoutMs: ctx.timeouts.disprover,
         callDisprover: async (v, f, request) => {
@@ -1159,6 +1170,7 @@ export async function verifyPending(ctx: RunContext, stageFile: string): Promise
             scratchDir,
             toolPolicy: "read-only",
             timeoutMs: Math.round(ctx.timeouts.disprover * growth),
+            effort: batchEffort(findings.length),
           },
           groupId: batch.groupId,
           estimateTokens: estimateTokens(prompt) + 6000 * growth,
@@ -1231,6 +1243,112 @@ export async function verifyPending(ctx: RunContext, stageFile: string): Promise
   return done;
 }
 
+/** The recorded reason a selected finding passes the verification floor. */
+const TRIAGE_REASON = "A triage call selected it as real and worth fixing.";
+
+/**
+ * Asks one read-only call which unchecked P3 findings below the floor are real
+ * and worth fixing. Those become confirmed and go to the fixer; the rest stay
+ * pending and labeled. Only `standard` runs that fix do this, and a failed call
+ * leaves the labels and the run as they were. Returns the number selected.
+ */
+export async function triageBelowFloor(ctx: RunContext): Promise<number> {
+  if (ctx.state.request.readOnly || runDepth(ctx.state.request) !== "standard") return 0;
+  const triaged = new Set(ctx.eng.triaged);
+  const unasked = belowFloorPending(ctx).filter(
+    (f) =>
+      f.severity === "P3" && !isExternal(f) && f.followUpReason === undefined && !triaged.has(f.id),
+  );
+  if (unasked.length === 0) return 0;
+  // Saved before any call, so a resumed stage keeps the same call keys.
+  const file = ctx.store.roundFile(ctx.round, "triage");
+  const plan = (await ctx.store.readJson<{ batches: string[][] }>(file)) ?? { batches: [] };
+  const planned = new Set(plan.batches.flat());
+  const fresh = unasked.filter((f) => !planned.has(f.id));
+  if (fresh.length > 0) {
+    plan.batches.push(
+      ...splitByTokens(fresh, (f) => estimateTokens(triageLine(f))).map((part) =>
+        part.map((f) => f.id),
+      ),
+    );
+    await ctx.store.writeJson(file, plan);
+  }
+  const repoPath = await readOnlyRepo(ctx);
+  const open = new Set(unasked.map((f) => f.id));
+  for (const ids of plan.batches) {
+    const findings = ids.flatMap((id) => {
+      const f = ctx.findingById(id);
+      return f && open.has(id) ? [f] : [];
+    });
+    if (findings.length === 0) continue;
+    const prompt = triagePrompt({ range: ctx.range(repoPath), findings });
+    try {
+      const out = await callWithRefusalFallback<VerifyBatchOutput>(
+        ctx,
+        {
+          key: `triage-${batchKey(ids)}`,
+          role: "disprover",
+          vendor: chooseDisprover(null, ctx.state.roles, {
+            crossVendor: true,
+            available: ctx.availableVendors,
+            profile: ctx.state.profile,
+          }),
+          method: "verifyBatch",
+          request: {
+            prompt,
+            repoPath,
+            toolPolicy: "read-only",
+            timeoutMs: ctx.timeouts.disprover,
+            effort: "medium",
+          },
+          groupId: null,
+          estimateTokens: estimateTokens(prompt) + 6000,
+          allowFallback: true,
+          ...(ctx.state.request.modelTier
+            ? { tier: { tier: "medium" as const, reason: "A P3 triage call", fixed: true } }
+            : {}),
+        },
+        "the P3 triage",
+      );
+      for (const finding of findings) {
+        const answer = out.output.verdicts.find((v) => v.id === finding.id);
+        if (answer?.verdict !== "confirmed" || answer.evidence.trim() === "") continue;
+        finding.floorBypassReason = TRIAGE_REASON;
+        await ctx.setVerdict(
+          finding,
+          "confirmed",
+          { kind: "agent", vendor: out.vendor, model: out.model, role: "disprover" },
+          answer.evidence,
+          { verification: "code-reading", introduced: finding.introduced },
+        );
+      }
+    } catch (error) {
+      if (
+        !(error instanceof AgentFailed) &&
+        !(error instanceof RefusalFallbackFailed) &&
+        !(error instanceof RoleDenied)
+      ) {
+        throw error;
+      }
+      ctx.deps.log?.warn("A P3 triage call failed; its findings stay labeled", {
+        runId: ctx.state.id,
+        error: (error as Error).message.slice(0, 500),
+      });
+    }
+  }
+  ctx.eng.triaged = [...ctx.eng.triaged, ...unasked.map((f) => f.id)];
+  await syncFloorLabels(ctx);
+  const ids = plan.batches.flat();
+  const selected = ctx.findings.filter(
+    (f) => ids.includes(f.id) && f.floorBypassReason !== undefined,
+  ).length;
+  await addNotice(
+    ctx,
+    `A triage call read ${ids.length} P3 ${ids.length === 1 ? "finding" : "findings"} below the verification floor and sent ${selected} to the fixer.`,
+  );
+  return selected;
+}
+
 // ---------------------------------------------------------------------------
 // Sweep
 
@@ -1260,6 +1378,7 @@ export async function runSweep(
   const diff = await ctx.git.diffForPrompt(diffBase, await diffTip(ctx));
   const repoPath = await readOnlyRepo(ctx);
   const prompt = sweepPrompt({
+    standard: runDepth(ctx.state.request) === "standard",
     range: reviewsFixDiffOnly(ctx)
       ? { ...ctx.range(repoPath), baseSha: diffBase }
       : ctx.range(repoPath),
@@ -1468,6 +1587,7 @@ export async function runFix(
       }
       const before = start.before;
       const prompt = fixerPrompt({
+        standard: runDepth(ctx.state.request) === "standard",
         range: ctx.range(),
         findings,
         gateFailure,

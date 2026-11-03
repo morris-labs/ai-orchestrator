@@ -150,6 +150,125 @@ export const CONFIRM_OUTPUT_JSON_SCHEMA = {
   },
 } as const;
 
+/**
+ * The longest each text field can be at the `standard` depth, in characters.
+ * Agents read these fields, so they carry claims and facts, not narration. The
+ * limits are guidance: the engine doesn't cut a field that decides a verdict.
+ */
+export const TERSE_LIMITS = {
+  title: 80,
+  failureCase: 160,
+  evidence: 200,
+  reason: 100,
+  summary: 200,
+} as const;
+
+const TERSE_FINDING_SCHEMA = {
+  ...FINDING_SCHEMA,
+  properties: {
+    ...FINDING_SCHEMA.properties,
+    title: { type: "string", description: `Short claim. Max ${TERSE_LIMITS.title} chars.` },
+    file: { type: "string", description: "Repo-relative path." },
+    symbol: { type: "string" },
+    lines: { ...FINDING_SCHEMA.properties.lines, description: "First, last, in the tip." },
+    failure_case: {
+      type: "string",
+      description: `input > wrong result. Max ${TERSE_LIMITS.failureCase} chars.`,
+    },
+    category: {
+      type: "string",
+      description:
+        "correctness, error-handling, security, data-exposure, resource, performance, concurrency, or maintainability.",
+    },
+    introduced: { type: "boolean", description: "False if at base." },
+  },
+} as const;
+
+const TERSE_REASON = { type: "string", description: `Max ${TERSE_LIMITS.reason} chars.` } as const;
+
+export const TERSE_REVIEW_SCHEMA = {
+  ...REVIEW_OUTPUT_JSON_SCHEMA,
+  properties: {
+    findings: { type: "array", items: TERSE_FINDING_SCHEMA },
+    ledger: {
+      type: "array",
+      items: {
+        ...REVIEW_OUTPUT_JSON_SCHEMA.properties.ledger.items,
+        properties: {
+          hunkId: { type: "string" },
+          verdict: { enum: ["findings", "sound"] },
+          reason: TERSE_REASON,
+        },
+      },
+    },
+  },
+} as const;
+
+export const TERSE_SWEEP_SCHEMA = {
+  ...SWEEP_OUTPUT_JSON_SCHEMA,
+  properties: { findings: { type: "array", items: TERSE_FINDING_SCHEMA } },
+} as const;
+
+const TERSE_VERIFY_PROPERTIES = {
+  ...VERIFY_OUTPUT_JSON_SCHEMA.properties,
+  evidence: {
+    type: "string",
+    description: `file:line and a minimal fact. Max ${TERSE_LIMITS.evidence} chars.`,
+  },
+  presentAtBase: { type: "boolean" },
+} as const;
+
+export const TERSE_VERIFY_SCHEMA = {
+  ...VERIFY_OUTPUT_JSON_SCHEMA,
+  properties: TERSE_VERIFY_PROPERTIES,
+} as const;
+
+export const TERSE_VERIFY_BATCH_SCHEMA = {
+  type: "object",
+  required: ["verdicts"],
+  properties: {
+    verdicts: {
+      type: "array",
+      items: {
+        type: "object",
+        required: ["id", ...VERIFY_OUTPUT_JSON_SCHEMA.required],
+        properties: { id: { type: "string" }, ...TERSE_VERIFY_PROPERTIES },
+      },
+    },
+  },
+} as const;
+
+const TERSE_REASONS = {
+  type: "array",
+  items: {
+    type: "object",
+    required: ["id", "reason"],
+    properties: { id: { type: "string" }, reason: TERSE_REASON },
+  },
+} as const;
+
+export const TERSE_FIX_SCHEMA = {
+  ...FIX_OUTPUT_JSON_SCHEMA,
+  properties: {
+    fixed: { type: "array", items: { type: "string" } },
+    notFixed: TERSE_REASONS,
+    summary: { type: "string", description: `Max ${TERSE_LIMITS.summary} chars.` },
+  },
+} as const;
+
+export const TERSE_CONFIRM_SCHEMA = {
+  ...CONFIRM_OUTPUT_JSON_SCHEMA,
+  properties: {
+    incomplete: TERSE_REASONS,
+    findings: { type: "array", items: TERSE_FINDING_SCHEMA },
+  },
+} as const;
+
+/** The closing instruction of a compact prompt: the schema on one line. */
+export function terseJsonInstruction(schema: object): string {
+  return `Answer with one JSON object and nothing else, no code fence. Schema: ${JSON.stringify(schema)}`;
+}
+
 /** The closing instruction of every prompt: answer with one JSON object of this schema. */
 export function jsonInstruction(schema: object): string {
   return [

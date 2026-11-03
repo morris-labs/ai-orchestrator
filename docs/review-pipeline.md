@@ -41,7 +41,10 @@ Settings you name win over the depth: `--round-cap`, `--continuation-cap`,
 `--verify-floor`, `--tier`, `--role`, and `groupSizeLimit` in the policy file. To
 check every severity at `standard`, pass `--verify-floor all`, which the request
 stores as the `nit` floor. A post-push request keeps the cap of 25 unless you
-name one.
+name one. A pre-push run that continues after `aio review push` gets a separate cap
+of 25 for its post-push rounds, whatever its pre-push cap was. A policy file that
+doesn't name `groupSizeLimit` uses the limit of the depth, and the policy editor
+doesn't write the key when the value is the default of 400.
 
 ### Reviewers at the standard depth
 
@@ -84,12 +87,28 @@ finding. The batches work as follows:
   comes from the planned finding IDs, so a saved call still answers after a restart.
 - **Scripts**: a verdict can name a reproduction script, which the engine reruns
   for that finding at the tip and the base.
+- **Effort**: a batch call asks for medium reasoning effort, and high from 5
+  findings, because many checks share one call. Claude and Codex calls take the
+  setting, and the log and the tier reason record it. Copilot calls don't.
 - **Refusals**: a refused batch goes through the fallback in
   [Retry a failed run](#retry-a-failed-run). If nothing answers, each of its
   findings tries alone before the engine flags it, so one finding can't flag a whole
   group.
 
 A `thorough` run makes one call per finding.
+
+### Compact findings
+
+At `standard`, agents write findings for other agents. The prompts ask for a
+title that is a short claim of at most 80 characters, a failure case in the form
+`input > wrong result` of at most 160, and evidence of `file:line` and a minimal
+fact of at most 200. Reasons are at most 100 characters. These limits are
+guidance in the prompts. The engine doesn't cut a field that decides a verdict,
+and it cuts only the copy of the evidence that a fixer reads, at 400 characters.
+
+Later agents also read less. A disprover gets the severity, location, title, and
+failure case. A confirmer gets the location, title, and failure case. The apps
+show the stored fields as they do at `thorough`, in shorter form.
 
 ### Rounds at the standard depth
 
@@ -473,6 +492,25 @@ even when a disprover confirmed it before a retry set the floor. It stays
 the confirmer. A confirmed `nit` never goes to the fixer, with or without a
 floor, so it gets no label. To send held findings to the fixer again, retry with
 `--verify-floor all`, or with a lower floor.
+
+### P3 triage
+
+After verification, a `standard` run that fixes makes one bulk read-only call
+with the unchecked P3 findings below the floor. The call goes to the disprover
+role's vendor at the medium tier and medium effort, and it splits only by token
+size. It asks which findings are real and worth fixing given their stated cost.
+Triage works as follows:
+
+- A selected finding becomes `confirmed` with the call's evidence, goes to the
+  fixer, and records `floorBypassReason`.
+- The other findings stay `pending` and labeled. The engine doesn't ask about
+  them again.
+- `nit` findings and pull request comments aren't included. A `thorough` run and
+  a read-only run skip triage.
+- A refused call uses the fallback in [Retry a failed run](#retry-a-failed-run).
+  Any other failure leaves the labels as they were, and the run goes on.
+- A resumed stage reuses the saved call. A notice gives the number of findings read
+  and sent to the fixer.
 
 A finding at or above the floor that a disprover couldn't check stays pending
 and holds the run open, as it does without a floor. Pull request comments and failing checks that the

@@ -6,12 +6,14 @@ import {
   LeaseRequestSchema,
   LeaseResponseFrameSchema,
   LeaseResponseSchema,
+  POST_PUSH_ROUND_CAP,
   READ_ONLY_POST_PUSH_MESSAGE,
   ResolvedRunRequestSchema,
   RoleOverridesSchema,
   RoundSummarySchema,
   RunRequestSchema,
   RunStateSchema,
+  postPushRoundCap,
   estimateRunTokens,
   profileRoles,
   runDepth,
@@ -197,5 +199,12 @@ describe("leases", () => {
       LeaseResponseFrameSchema.parse({ type: "lease.response", response: leaseResponses[0] })
         .response.decision,
     ).toBe("granted");
+  });
+});
+
+describe("postPushRoundCap", () => {
+  it("gives a pre-push run its own cap after a push, and keeps a post-push request's", () => {
+    expect(postPushRoundCap({ pipeline: "pre-push", roundCap: 2 })).toBe(POST_PUSH_ROUND_CAP);
+    expect(postPushRoundCap({ pipeline: "post-push", roundCap: 7 })).toBe(7);
   });
 });

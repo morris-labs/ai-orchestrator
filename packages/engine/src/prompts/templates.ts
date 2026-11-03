@@ -11,9 +11,15 @@ import {
   FIX_OUTPUT_JSON_SCHEMA,
   REVIEW_OUTPUT_JSON_SCHEMA,
   SWEEP_OUTPUT_JSON_SCHEMA,
-  VERIFY_BATCH_OUTPUT_JSON_SCHEMA,
   VERIFY_OUTPUT_JSON_SCHEMA,
+  TERSE_CONFIRM_SCHEMA,
+  TERSE_FIX_SCHEMA,
+  TERSE_REVIEW_SCHEMA,
+  TERSE_SWEEP_SCHEMA,
+  TERSE_VERIFY_BATCH_SCHEMA,
+  TERSE_VERIFY_SCHEMA,
   jsonInstruction,
+  terseJsonInstruction,
 } from "./schema.js";
 
 /** Focus areas for two reviewers on one group, so they don't report the same issues. */
@@ -40,9 +46,25 @@ export const STANDARD_REPORT_RULES = [
   "There is no cap on the number of findings: report every P1 and P2 issue you find.",
 ];
 
-/** What the `standard` depth tells a disprover about scope. */
-const STANDARD_DISPROVER_RULE =
-  "Assume a trusted owner and trusted machines. Disprove a finding that needs a targeted attack chain, a compromised node, or a hostile container.";
+/** The writing rule of every compact prompt. The schema carries each field's limit. */
+export const TERSE_RULE =
+  "Write every field for another agent: claims and facts only. No preamble, no restating code or this prompt.";
+
+/** The most evidence characters a fixer reads per finding at the `standard` depth. */
+const TERSE_FIXER_EVIDENCE = 400;
+
+/** The precision rules, shortened for the compact prompts. */
+const TERSE_PRECISION_RULES = [
+  "Zero confirmed is acceptable. Confirm only when you can name the triggering input or state.",
+  "`disproved` needs positive evidence that the failure can't happen. When tools fail and the code doesn't settle it, answer `unverified`.",
+  "Style, naming, and preference aren't defects.",
+  "A flaw in untouched code still counts; set `presentAtBase`.",
+  "Assume a trusted owner and machines. Disprove a finding that needs a targeted attack chain, a compromised node, or a hostile container.",
+];
+
+function location(f: Finding): string {
+  return `${f.file ?? "(none)"}${f.lines ? `:${f.lines[0]}-${f.lines[1]}` : ""}`;
+}
 
 export interface RangeInfo {
   repoPath: string;
@@ -76,8 +98,18 @@ function hunkList(hunks: readonly Hunk[]): string {
   return hunks.map((h) => `- ${h.id}: ${h.file} lines ${h.start}-${h.end}`).join("\n");
 }
 
-export function formatFindingsLog(log: readonly FindingsLogEntry[]): string {
-  if (log.length === 0) return "No findings are closed yet.";
+export function formatFindingsLog(log: readonly FindingsLogEntry[], terse = false): string {
+  if (log.length === 0) return terse ? "None." : "No findings are closed yet.";
+  if (terse) {
+    return log
+      .map((e) => {
+        const where = e.file
+          ? `${e.file}${e.lines ? `:${e.lines[0]}-${e.lines[1]}` : ""}`
+          : "(none)";
+        return `- ${e.id} ${e.verdict} ${where} ${e.title}`;
+      })
+      .join("\n");
+  }
   return log
     .map((e) => {
       const where = e.file
@@ -131,6 +163,7 @@ function join(parts: readonly string[]): string {
 
 /** The finder prompt: recall first, a verdict for every hunk, and the findings log. */
 export function finderPrompt(input: FinderPromptInput): string {
+  if (input.standard) return terseFinderPrompt(input);
   const scope = input.groupId === null ? "the whole diff" : `file group ${input.groupId}`;
   const focus = input.focusAreas
     ? `Concentrate on ${input.focusAreas.join(", ")}. Another reviewer covers the other areas, but report anything else you notice too.`
@@ -183,6 +216,36 @@ export function finderPrompt(input: FinderPromptInput): string {
   ]);
 }
 
+/** The finder prompt at the `standard` depth. */
+function terseFinderPrompt(input: FinderPromptInput): string {
+  const scope = input.groupId === null ? "the whole diff" : `file group ${input.groupId}`;
+  return join([
+    `Review ${scope} in round ${input.round}: ${input.range.baseSha}..${input.range.tipSha} in ${input.range.repoPath}. You are read-only.`,
+    input.fixDiffOnly
+      ? "The diff holds only what the fixer changed after the last review. Check those changes, not the rest of the branch."
+      : "",
+    section(
+      "Report",
+      [
+        ...STANDARD_REPORT_RULES,
+        "A verifier checks each finding, so report what meets this bar even when unsure. Examine every hunk.",
+        TERSE_RULE,
+      ].join("\n"),
+    ),
+    section(
+      "Ledger",
+      `One entry per hunk id: \`findings\`, or \`sound\` with a reason.\n\n${hunkList(input.hunks)}`,
+    ),
+    section(
+      "Closed findings",
+      `Report one again only if the flaw remains after its fix.\n\n${formatFindingsLog(input.findingsLog, true)}`,
+    ),
+    section("Repository policy", input.policySection),
+    section("Diff", `\`\`\`diff\n${input.diff.trimEnd()}\n\`\`\``),
+    terseJsonInstruction(TERSE_REVIEW_SCHEMA),
+  ]);
+}
+
 export interface ContinuationPromptInput {
   /** Titles you already reported in this session, to exclude. */
   reported: readonly string[];
@@ -192,6 +255,15 @@ export interface ContinuationPromptInput {
 
 /** Resumes the same reviewer to drain what it hasn't reported yet. */
 export function continuationPrompt(input: ContinuationPromptInput): string {
+  if (input.standard) {
+    return join([
+      "Keep reviewing. List P1 and P2 issues not yet on your list; empty `findings` only when none remain. Repeat ledger entries only for changed verdicts.",
+      TERSE_RULE,
+      "Already reported:",
+      input.reported.length > 0 ? input.reported.map((t) => `- ${t}`).join("\n") : "- (nothing)",
+      terseJsonInstruction(TERSE_REVIEW_SCHEMA),
+    ]);
+  }
   return join([
     "Keep reviewing the same change. List issues that are not yet on your list.",
     "Look again at the hunks where you found problems: bugs cluster. Then look at the hunks you marked sound with fresh eyes.",
@@ -225,6 +297,8 @@ export interface SweepPromptInput {
   /** The whole diff with context. */
   diff: string;
   policySection: string;
+  /** Uses the compact prompt. */
+  standard?: boolean;
 }
 
 /** The pattern sweep: other instances of each confirmed pattern across the whole diff. */
@@ -239,10 +313,13 @@ export function sweepPrompt(input: SweepPromptInput): string {
     `Each confirmed finding below is a pattern. Search the whole change from ${input.range.baseSha} to ${input.range.tipSha} in ${input.range.repoPath} for other instances of each pattern: the same mistake in another function, file, or call site.`,
     "You are read-only. Report every other instance you find, with its own location and failure case. Don't report the instances listed here again.",
     "",
+    input.standard ? TERSE_RULE : "",
     section("Patterns", patterns),
     section("Repository policy", input.policySection),
     section("Diff", `\`\`\`diff\n${input.diff.trimEnd()}\n\`\`\``),
-    jsonInstruction(SWEEP_OUTPUT_JSON_SCHEMA),
+    input.standard
+      ? terseJsonInstruction(TERSE_SWEEP_SCHEMA)
+      : jsonInstruction(SWEEP_OUTPUT_JSON_SCHEMA),
   ]);
 }
 
@@ -254,11 +331,25 @@ export interface DisproverPromptInput {
   /** A checkout of the pinned base, for the pre-existing check. */
   baseWorktree: string;
   policySection: string;
+  /** Uses the compact prompt. */
+  standard?: boolean;
 }
 
 /** The disprover: tries to disprove one finding, with the precision rules. */
 export function disproverPrompt(input: DisproverPromptInput): string {
   const f = input.finding;
+  if (input.standard) {
+    return join([
+      `Try to disprove this finding. Confirm it only when the evidence holds.`,
+      "",
+      batchFindingBlock(f),
+      isExternal(f) ? UNTRUSTED_FRAME : "",
+      section("Rules", [...TERSE_PRECISION_RULES, TERSE_RULE].map((r) => `- ${r}`).join("\n")),
+      section("How to verify", terseVerifySteps(input).join("\n")),
+      section("Repository policy", input.policySection),
+      terseJsonInstruction(TERSE_VERIFY_SCHEMA),
+    ]);
+  }
   return join([
     "You verify one finding from another reviewer. Try to disprove it. Confirm it only when the evidence holds.",
     "",
@@ -304,11 +395,9 @@ export interface BatchDisproverPromptInput {
 export function batchFindingBlock(f: Finding): string {
   return [
     `### ${f.id}`,
-    `Severity: ${f.severity}`,
-    `Title: ${f.title}`,
-    `Location: ${f.file ?? "(none)"}${f.lines ? ` lines ${f.lines[0]}-${f.lines[1]}` : ""}`,
-    `Category: ${f.category}`,
-    isExternal(f) ? `Source: ${f.origin} [external]` : `Failure case: ${f.failureCase}`,
+    `${f.severity} ${location(f)}`,
+    f.title,
+    isExternal(f) ? `Source: ${f.origin} [external]` : f.failureCase,
     isExternal(f) ? untrusted(`${f.failureCase}\n\n${f.evidence}`) : "",
   ]
     .filter((line) => line !== "")
@@ -318,24 +407,49 @@ export function batchFindingBlock(f: Finding): string {
 /** The disprover at the `standard` depth: checks every finding of a batch in one call. */
 export function batchDisproverPrompt(input: BatchDisproverPromptInput): string {
   return join([
-    "You verify the findings below from another reviewer. Try to disprove each one. Confirm a finding only when the evidence holds. Return one entry in `verdicts` for every finding id. Findings in one call often share code, so read that code once.",
+    "Try to disprove each finding below. Confirm one only when the evidence holds. Return one `verdicts` entry per id. Findings here often share code, so read it once.",
     "",
     section("Findings", input.findings.map(batchFindingBlock).join("\n\n")),
     input.findings.some(isExternal) ? UNTRUSTED_FRAME : "",
-    section("Rules", [...PRECISION_RULES, STANDARD_DISPROVER_RULE].map((r) => `- ${r}`).join("\n")),
-    section(
-      "How to verify",
-      [
-        `The repository at the tip is ${input.range.repoPath}. Don't edit it.`,
-        `A checkout of the base (${input.range.baseSha}) is at ${input.baseWorktree}. Don't edit it.`,
-        `Where a finding is worth it, write a reproduction script in the scratch directory ${input.scratchDir}, the only place you may write, with a file name unique to that finding. The script must exit 1 when the flaw reproduces and 0 when it doesn't, must let any other failure exit with a different code, and must take the repository directory as its first argument, so it runs against both checkouts.`,
-        "The engine runs each script against the tip and the base; you might not be able to run it yourself. In that finding's verdict, return its path relative to the scratch directory, or `null` when you verified by reading the code. When you can't write the file, put its text in `script.content` and the engine writes it.",
-        "Base each verdict and `presentAtBase` on your own reading too: a script that doesn't run counts for nothing.",
-        "Set `presentAtBase` to true when the same flaw exists in the base checkout.",
-      ].join("\n"),
-    ),
+    section("Rules", [...TERSE_PRECISION_RULES, TERSE_RULE].map((r) => `- ${r}`).join("\n")),
+    section("How to verify", terseVerifySteps(input).join("\n")),
     section("Repository policy", input.policySection),
-    jsonInstruction(VERIFY_BATCH_OUTPUT_JSON_SCHEMA),
+    terseJsonInstruction(TERSE_VERIFY_BATCH_SCHEMA),
+  ]);
+}
+
+/** Where a compact disprover prompt's agent works, and what a script must do. */
+function terseVerifySteps(input: {
+  range: RangeInfo;
+  scratchDir: string;
+  baseWorktree: string;
+}): string[] {
+  return [
+    `Tip: ${input.range.repoPath}. Base (${input.range.baseSha}): ${input.baseWorktree}. Don't edit either.`,
+    `Optional reproduction script: write it in ${input.scratchDir}, the only writable place, with a name unique to the finding. Exit 1 when the flaw reproduces, 0 when it doesn't, any other code otherwise. The first argument is the repository directory.`,
+    "The engine runs the script at the tip and the base. Return its path relative to the scratch directory, or `null` for code reading. If you can't write the file, put its text in `script.content`.",
+    "Base the verdict and `presentAtBase` on your own reading too: a script that doesn't run counts for nothing.",
+  ];
+}
+
+export interface TriagePromptInput {
+  range: RangeInfo;
+  findings: readonly Finding[];
+}
+
+/** One finding's line in a triage prompt. Its length decides when a triage call splits. */
+export function triageLine(f: Finding): string {
+  return `- ${f.id} ${location(f)} ${f.title} | ${f.failureCase}`;
+}
+
+/** Asks which unchecked P3 findings are real and worth fixing, in one read-only call. */
+export function triagePrompt(input: TriagePromptInput): string {
+  return join([
+    `These P3 findings in ${input.range.repoPath} at ${input.range.tipSha} are unchecked. Read only what you need; you are read-only.`,
+    "Select only findings that are real and worth fixing given the cost each failure case states. Return a `verdicts` entry only for those, with `verdict` `confirmed`, `verification` `code-reading`, `presentAtBase` false, `script` null, and the evidence you read. Omit the rest. Selecting none is acceptable.",
+    TERSE_RULE,
+    section("Findings", input.findings.map(triageLine).join("\n")),
+    terseJsonInstruction(TERSE_VERIFY_BATCH_SCHEMA),
   ]);
 }
 
@@ -345,10 +459,36 @@ export interface FixerPromptInput {
   /** The gate's failure report when a fix broke tests or lint; absent on the first try. */
   gateFailure?: string;
   policySection: string;
+  /** Uses the compact prompt. */
+  standard?: boolean;
 }
 
 /** The fixer: fixes confirmed findings on the tip branch and commits. */
 export function fixerPrompt(input: FixerPromptInput): string {
+  if (input.standard) {
+    const items = input.findings.map((f) =>
+      isExternal(f)
+        ? `- ${f.id} ${f.severity} ${location(f)} ${f.title} [external]\n${findingDetails(f, TERSE_FIXER_EVIDENCE)}`
+        : `- ${f.id} ${f.severity} ${location(f)} ${f.title}\n  ${f.failureCase}\n  Evidence: ${f.evidence.replace(/\s+/g, " ").slice(0, TERSE_FIXER_EVIDENCE)}`,
+    );
+    return join([
+      `Fix these confirmed findings in ${input.range.repoPath} on ${input.range.tipRef ?? "the checked-out branch"}.`,
+      "- Fix the root cause and every instance. Add a test that fails without the fix where the repository has tests. Keep changes small.",
+      "- Commit on this branch, naming the finding ids. Don't switch branches, rebase, amend, or push.",
+      "- If a finding isn't a real defect, leave the code and list it under `notFixed`.",
+      `- ${TERSE_RULE}`,
+      input.findings.some(isExternal) ? UNTRUSTED_FRAME : "",
+      section("Findings", items.join("\n")),
+      input.gateFailure
+        ? section(
+            "Gate failure",
+            `Your last fix broke the gate. Fix the regression first:\n\n${input.gateFailure}`,
+          )
+        : "",
+      section("Repository policy", input.policySection),
+      terseJsonInstruction(TERSE_FIX_SCHEMA),
+    ]);
+  }
   const list = input.findings
     .map(
       (f) =>
@@ -390,6 +530,24 @@ export interface ConfirmerPromptInput {
 
 /** The confirmer: reviews the fix diff for incomplete fixes and new issues. */
 export function confirmerPrompt(input: ConfirmerPromptInput): string {
+  if (input.standard) {
+    const items = input.findings.map((f) =>
+      isExternal(f)
+        ? `- ${f.id} ${location(f)} ${f.title} [external]\n${untrusted(f.failureCase)}`
+        : `- ${f.id} ${location(f)} ${f.title}: ${f.failureCase}`,
+    );
+    return join([
+      `Another agent fixed these findings in ${input.range.repoPath}. Review the fix diff. You are read-only.`,
+      "- `incomplete`: each fix that doesn't remove the failure case.",
+      "- `findings`: each P1 or P2 regression the fix introduced. A verifier checks them.",
+      `- ${TERSE_RULE}`,
+      input.findings.some(isExternal) ? UNTRUSTED_FRAME : "",
+      section("Fixed findings", items.join("\n")),
+      section("Repository policy", input.policySection),
+      section("Fix diff", `\`\`\`diff\n${input.fixDiff.trimEnd()}\n\`\`\``),
+      terseJsonInstruction(TERSE_CONFIRM_SCHEMA),
+    ]);
+  }
   const list = input.findings
     .map((f) =>
       isExternal(f)

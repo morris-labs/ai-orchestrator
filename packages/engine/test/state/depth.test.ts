@@ -13,9 +13,27 @@ import {
 import { describe, expect, it } from "vitest";
 import type { EngineDeps, VendorAdapter } from "../../src/core.js";
 import { parsePolicyExtras } from "../../src/policy/load.js";
-import { planVerifyBatches, rootCauseDuplicates } from "../../src/verify/batch.js";
+import {
+  HIGH_EFFORT_BATCH_SIZE,
+  batchEffort,
+  planVerifyBatches,
+  rootCauseDuplicates,
+  splitByTokens,
+} from "../../src/verify/batch.js";
+import { TERSE_LIMITS } from "../../src/prompts/schema.js";
+import {
+  TERSE_RULE,
+  batchDisproverPrompt,
+  finderPrompt,
+  fixerPrompt,
+} from "../../src/prompts/templates.js";
 import { planReviews } from "../../src/state/profiles.js";
-import { verifyPending } from "../../src/state/steps.js";
+import {
+  fixTargets,
+  syncFloorLabels,
+  triageBelowFloor,
+  verifyPending,
+} from "../../src/state/steps.js";
 import { RunStore } from "../../src/run/store.js";
 import { makeRun, nextRunId } from "./harness.js";
 
@@ -563,5 +581,288 @@ describe("the policy's group size limit", () => {
   it("counts as named only when the file names it", () => {
     expect(parsePolicyExtras("version: 1\n").groupSizeLimit).toBeNull();
     expect(parsePolicyExtras("version: 1\ngroupSizeLimit: 77\n").groupSizeLimit).toBe(77);
+  });
+});
+
+describe("batch disprover effort", () => {
+  const efforts = async (vendor: Vendor, count: number) => {
+    const seen: unknown[] = [];
+    const other: Vendor = vendor === "codex" ? "copilot" : "codex";
+    const made = await makeRun({
+      adapters: {
+        [vendor]: adapter(vendor, {
+          verifyBatch: (request) => {
+            seen.push((request as { effort?: unknown }).effort);
+            return { verdicts: idsIn(request.prompt).map((id) => verdict(id as string)) };
+          },
+        }),
+        [other]: adapter(other, {}),
+      },
+      request: { depth: "standard", roles: { disprover: vendor } },
+    });
+    const { ctx } = made;
+    ctx.state.round = 1;
+    ctx.state.roles.disprover = vendor;
+    ctx.findings = Array.from({ length: count }, (_, i) =>
+      finding(i + 1, ctx.state.id, {
+        reportedBy: `${other}-model`,
+        title: `Problem ${i} about word${i}`,
+      }),
+    );
+    await ctx.store.saveGroups([], 1);
+    await verifyPending(ctx, ctx.store.roundFile(1, "verify"));
+    return seen;
+  };
+
+  it("picks medium, then high from the named size", () => {
+    expect(batchEffort(1)).toBe("medium");
+    expect(batchEffort(HIGH_EFFORT_BATCH_SIZE - 1)).toBe("medium");
+    expect(batchEffort(HIGH_EFFORT_BATCH_SIZE)).toBe("high");
+  });
+
+  it("sends the effort to Codex and leaves it off for Copilot", async () => {
+    expect(await efforts("codex", 2)).toEqual(["medium"]);
+    expect(await efforts("codex", HIGH_EFFORT_BATCH_SIZE)).toEqual(["high"]);
+    expect(await efforts("copilot", 2)).toEqual([undefined]);
+  });
+});
+
+describe("compact prompts at the standard depth", () => {
+  const range = { repoPath: "/repo", baseSha: "b", tipSha: "t", tipRef: "main" };
+
+  it("sends a disprover only what it needs, with field limits", () => {
+    const f = { ...finding(1, nextRunId()), evidence: "EVIDENCE_FROM_EARLIER" };
+    const prompt = batchDisproverPrompt({
+      range,
+      findings: [f],
+      scratchDir: "/s",
+      baseWorktree: "/b",
+      policySection: "",
+    });
+    expect(prompt).toContain("P2 shop/file1.py:1-2");
+    expect(prompt).not.toContain("Category:");
+    expect(prompt).not.toContain("EVIDENCE_FROM_EARLIER");
+    expect(prompt).toContain(`Max ${TERSE_LIMITS.evidence} chars`);
+    expect(prompt).toContain(TERSE_RULE);
+    expect(prompt).toContain("`unverified`");
+  });
+
+  it("is shorter than the thorough prompt, for a reviewer and a fixer", () => {
+    const f = finding(1, nextRunId());
+    const finder = {
+      range,
+      round: 1,
+      groupId: "G01",
+      files: ["a.py"],
+      hunks: [],
+      diff: "",
+      focusAreas: null,
+      findingsLog: [],
+      policySection: "",
+    };
+    const terse = finderPrompt({ ...finder, standard: true });
+    expect(terse.length).toBeLessThan(finderPrompt(finder).length * 0.7);
+    expect(terse).toContain(`Max ${TERSE_LIMITS.title} chars`);
+    const fixer = { range, findings: [f], policySection: "" };
+    const fixPrompt = fixerPrompt({ ...fixer, standard: true });
+    expect(fixPrompt.length).toBeLessThan(fixerPrompt(fixer).length);
+    expect(fixPrompt).toContain(f.failureCase);
+  });
+
+  it("keeps a thorough prompt's full text", () => {
+    const prompt = fixerPrompt({ range, findings: [finding(1, nextRunId())], policySection: "" });
+    expect(prompt).not.toContain(TERSE_RULE);
+    expect(prompt).toContain("Failure case:");
+  });
+});
+
+describe("P3 triage", () => {
+  const p3s = (runId: string) => [
+    finding(1, runId, { severity: "P3" }),
+    finding(2, runId, { severity: "P3", title: "Second unrelated claim" }),
+    finding(3, runId, { severity: "nit", title: "A nit with no claim" }),
+  ];
+  const pick = (id: string, v = "confirmed") => ({ ...verdict(id), verdict: v });
+
+  it("sends the selected P3 to the fixer, and keeps the rest labeled", async () => {
+    const prompts: string[] = [];
+    const seen: unknown[] = [];
+    const { ctx } = await verifyRun(
+      {
+        copilot: adapter("copilot", {
+          verifyBatch: (request) => {
+            prompts.push(request.prompt);
+            seen.push(request.model);
+            return { verdicts: [pick("F-0002"), pick("F-9999")] };
+          },
+        }),
+        codex: adapter("codex", {}),
+      },
+      p3s,
+    );
+    ctx.state.roles.disprover = "copilot";
+    await syncFloorLabels(ctx);
+    expect(await triageBelowFloor(ctx)).toBe(1);
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toContain("F-0001");
+    expect(prompts[0]).not.toContain("F-0003");
+    const [first, second, nit] = ctx.findings;
+    expect(second).toMatchObject({ verdict: "confirmed", verification: "code-reading" });
+    expect(second?.floorBypassReason).toBeDefined();
+    expect(second?.unverifiedReason).toBeUndefined();
+    expect(second?.fixHeldReason).toBeUndefined();
+    expect(fixTargets(ctx).map((f) => f.id)).toEqual(["F-0002"]);
+    expect(first).toMatchObject({ verdict: "pending", unverifiedReason: "below_verify_floor" });
+    expect(nit).toMatchObject({ verdict: "pending", unverifiedReason: "below_verify_floor" });
+    expect(ctx.state.notices?.join(" ")).toContain("read 2 P3 findings");
+    expect(ctx.state.notices?.join(" ")).toContain("sent 1 to the fixer");
+    // A finding it read isn't asked about again.
+    await triageBelowFloor(ctx);
+    expect(prompts).toHaveLength(1);
+  });
+
+  it("reuses a saved call when the stage resumes", async () => {
+    let calls = 0;
+    const { ctx } = await verifyRun(
+      {
+        copilot: adapter("copilot", {
+          verifyBatch: () => {
+            calls += 1;
+            return { verdicts: [pick("F-0001")] };
+          },
+        }),
+        codex: adapter("codex", {}),
+      },
+      p3s,
+    );
+    ctx.state.roles.disprover = "copilot";
+    await triageBelowFloor(ctx);
+    // A crash before the engine state saved: the finding reverts, the call stays.
+    ctx.eng.triaged = [];
+    const first = ctx.findings[0] as Finding;
+    first.verdict = "pending";
+    delete first.floorBypassReason;
+    await triageBelowFloor(ctx);
+    expect(calls).toBe(1);
+    expect(first.verdict).toBe("confirmed");
+  });
+
+  it("leaves the labels when the call fails, and doesn't fail the run", async () => {
+    const { ctx } = await verifyRun(
+      {
+        copilot: adapter("copilot", {
+          verifyBatch: () => {
+            throw new Error("The vendor call broke.");
+          },
+        }),
+        codex: adapter("codex", {}),
+      },
+      p3s,
+    );
+    ctx.state.roles.disprover = "copilot";
+    await syncFloorLabels(ctx);
+    expect(await triageBelowFloor(ctx)).toBe(0);
+    expect(ctx.findings[0]).toMatchObject({
+      verdict: "pending",
+      unverifiedReason: "below_verify_floor",
+    });
+    expect(fixTargets(ctx)).toEqual([]);
+  });
+
+  it("moves a refused call through the fallback", async () => {
+    const { ctx } = await verifyRun(
+      {
+        copilot: adapter("copilot", {
+          verifyBatch: () => {
+            throw new Error(REFUSED);
+          },
+        }),
+        codex: adapter("codex", {}),
+        claude: adapter("claude", { verifyBatch: () => ({ verdicts: [pick("F-0001")] }) }),
+      },
+      p3s,
+    );
+    ctx.state.roles.disprover = "copilot";
+    expect(await triageBelowFloor(ctx)).toBe(1);
+    expect(ctx.state.notices?.join(" ")).toContain("Claude answered for the P3 triage");
+  });
+
+  it("skips a thorough run and a read-only run", async () => {
+    const thorough = await makeRun({
+      adapters: { codex: adapter("codex", {}), copilot: adapter("copilot", {}) },
+      request: { depth: "thorough", verifyFloor: "P2" },
+    });
+    thorough.ctx.findings = p3s(thorough.ctx.state.id);
+    expect(await triageBelowFloor(thorough.ctx)).toBe(0);
+    expect(thorough.ctx.state.notices ?? []).toEqual([]);
+    const readOnly = await verifyRun(
+      { codex: adapter("codex", {}), copilot: adapter("copilot", {}) },
+      p3s,
+    );
+    readOnly.ctx.state.request.readOnly = true;
+    expect(await triageBelowFloor(readOnly.ctx)).toBe(0);
+  });
+
+  it("fixes a selected P3 in a whole run with nothing above the floor", async () => {
+    const fixed: string[] = [];
+    let repo = "";
+    let reviews = 0;
+    const triage: Handler = ({ prompt }) => ({
+      verdicts: [...prompt.matchAll(/^- (F-\d+) /gm)].map((m) => pick(m[1] as string)),
+    });
+    const made = await makeRun({
+      adapters: {
+        codex: adapter("codex", {
+          review: () => {
+            reviews += 1;
+            return {
+              findings:
+                reviews === 1
+                  ? [
+                      {
+                        severity: "P3",
+                        title: "A small flaw in the cart",
+                        file: "shop/cart.py",
+                        lines: [1, 2],
+                        failure_case: "Empty cart > wrong total",
+                        category: "correctness",
+                        introduced: true,
+                      },
+                    ]
+                  : [],
+              ledger: [],
+            };
+          },
+          continueReview: () => ({ findings: [], ledger: [] }),
+          confirm: () => ({ incomplete: [], findings: [] }),
+          sweep: () => ({ findings: [] }),
+          verifyBatch: triage,
+        }),
+        copilot: adapter("copilot", { verifyBatch: triage }),
+        claude: adapter("claude", {
+          verifyBatch: triage,
+          fix: ({ prompt }) => {
+            fixed.push(prompt);
+            writeFileSync(join(repo, "fix_marker.py"), "FIXED = 1\n");
+            execFileSync("git", ["add", "fix_marker.py"], { cwd: repo });
+            execFileSync("git", ["commit", "-qm", "Fix F-0001"], { cwd: repo });
+            return { fixed: ["F-0001"], notFixed: [], summary: "" };
+          },
+        }),
+      },
+      request: { depth: "standard" },
+    });
+    repo = made.repo;
+    await made.run.start();
+    const state = await made.run.settled();
+    expect(state.error).toBeUndefined();
+    expect(fixed).toHaveLength(1);
+    expect(state.notices?.join(" ")).toContain("sent 1 to the fixer");
+  });
+
+  it("splits only by token size", () => {
+    const parts = splitByTokens([1, 2, 3], () => 600, 1100);
+    expect(parts).toEqual([[1], [2], [3]]);
+    expect(splitByTokens([1, 2, 3], () => 1, 10_000)).toEqual([[1, 2, 3]]);
   });
 });

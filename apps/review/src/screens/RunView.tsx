@@ -415,7 +415,10 @@ export function RunView({ runId }: { runId: string }) {
         <div className="round-counter" aria-label="Round">
           <span className="tile-label">Round</span>
           <span className="tile-value">
-            {run.round} <span className="muted">of {run.request.roundCap}</span>
+            {run.round} {/* A run that continued after a push has its own cap past this one. */}
+            {run.round > run.request.roundCap ? null : (
+              <span className="muted">of {run.request.roundCap}</span>
+            )}
           </span>
           {currentRoundCost !== undefined ? (
             <span className="muted small">{formatUsd(currentRoundCost)} so far this round</span>

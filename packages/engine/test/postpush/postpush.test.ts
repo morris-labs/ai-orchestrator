@@ -974,6 +974,34 @@ describe("post-push ordering", () => {
     expect(gh.resolved.has("T1")).toBe(true);
   });
 
+  it("doesn't apply a pre-push cap to the rounds after a push", async () => {
+    const repo = buildSampleRepo();
+    const gh = new FakeGitHub(join(dirname(repo), "origin.git"));
+    gh.checks = [{ name: "tests", bucket: "pass", link: null, workflow: "ci" }];
+    const scenario = new Scenario();
+    const run = await RunController.create(
+      { runId: nextRunId(), projectId: "sample", repoPath: repo, depth: "thorough", roundCap: 1 },
+      { projectRoot: repo },
+      deps(scenario, gh),
+    );
+    await run.start();
+    expect(await run.settled()).toMatchObject({ status: "finished", stopReason: "round_cap" });
+    const fp = scenario.bugs.find((b) => b.id === "FP1")!;
+    gh.threads = [
+      {
+        id: "T2",
+        isResolved: false,
+        path: "shop/pricing.py",
+        line: 11,
+        startLine: null,
+        comments: [{ id: "c2", author: "Copilot", body: fp.title, url: null }],
+      },
+    ];
+    await run.push({});
+    // Two post-push rounds pass the pre-push cap of 1.
+    expect(await run.settled()).toMatchObject({ status: "finished", stopReason: "pr_clean" });
+  });
+
   it("gives the post-push loop its own round count after a pre-push run hit its cap", async () => {
     const repo = buildSampleRepo();
     const gh = new FakeGitHub(join(dirname(repo), "origin.git"));

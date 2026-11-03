@@ -14,7 +14,13 @@ import {
   setFormProfile,
   setFormRole,
 } from "../src/screens/launcherModel.js";
-import { commaList, lines, parsePolicyYaml, policyToYaml } from "../src/screens/policyModel.js";
+import {
+  commaList,
+  lines,
+  mergePolicyYaml,
+  parsePolicyYaml,
+  policyToYaml,
+} from "../src/screens/policyModel.js";
 import {
   draftFrom,
   settingsPatch,
@@ -298,5 +304,23 @@ describe("buildRunRequest model tier", () => {
     expect(capped.ok && capped.request.roundCap).toBe(9);
     const floor = buildRunRequest({ ...form, verifyFloor: "P2" });
     expect(floor.ok && floor.request.verifyFloor).toBe("P2");
+  });
+});
+
+describe("the policy file's groupSizeLimit", () => {
+  it("stays out of a file written from the default", () => {
+    expect(policyToYaml(DEFAULT_POLICY)).not.toContain("groupSizeLimit");
+    expect(mergePolicyYaml("", DEFAULT_POLICY)).not.toContain("groupSizeLimit");
+  });
+
+  it("is written when it differs, and removed when it returns to the default", () => {
+    const text = mergePolicyYaml("version: 1\n", { ...DEFAULT_POLICY, groupSizeLimit: 77 });
+    expect(text).toContain("groupSizeLimit: 77");
+    expect(mergePolicyYaml(text, DEFAULT_POLICY)).not.toContain("groupSizeLimit");
+  });
+
+  it("keeps a named value that didn't change", () => {
+    const text = `version: 1\ngroupSizeLimit: ${DEFAULT_POLICY.groupSizeLimit}\n`;
+    expect(mergePolicyYaml(text, DEFAULT_POLICY)).toBe(text);
   });
 });

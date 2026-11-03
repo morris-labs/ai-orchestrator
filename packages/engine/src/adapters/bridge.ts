@@ -71,6 +71,7 @@ export function toCliRequest(
     tools: request.toolPolicy,
     timeoutMs: request.timeoutMs,
     ...(request.model !== undefined ? { model: request.model } : {}),
+    ...(request.effort !== undefined ? { effort: request.effort } : {}),
     ...(request.signal !== undefined ? { signal: request.signal } : {}),
     ...("sessionId" in request ? { sessionId: request.sessionId } : {}),
     outputSchema: schema.output,

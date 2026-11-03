@@ -26,6 +26,7 @@ import {
   runMerge,
   runSweep,
   syncFloorLabels,
+  triageBelowFloor,
   verifyPending,
   warnLeftovers,
   type MergeOutput,
@@ -374,6 +375,7 @@ export async function drivePrePush(ctx: RunContext): Promise<void> {
         if (sweep && sweep.created.length > 0) {
           await verifyPending(ctx, ctx.store.roundFile(ctx.round, "sweep-verify"));
         }
+        await triageBelowFloor(ctx);
         const decision = openOscillations(ctx, sweep);
         if (ctx.state.request.readOnly || fixTargets(ctx).length === 0) {
           if (await closeRound(ctx, decision)) return;

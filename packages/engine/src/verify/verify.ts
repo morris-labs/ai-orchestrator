@@ -399,6 +399,8 @@ export function decideVerdict(
 }
 
 export interface VerifyDeps {
+  /** Uses the compact prompt of the `standard` depth. */
+  standard?: boolean;
   runner: CommandRunner;
   range: RangeInfo;
   policy: PolicyFile;
@@ -453,6 +455,7 @@ export async function verifyFinding(
   await mkdir(scratchDir, { recursive: true });
   const baseDir = await deps.baseWorktree.ensure();
   const prompt = disproverPrompt({
+    ...(deps.standard ? { standard: true } : {}),
     range: deps.range,
     finding,
     scratchDir,

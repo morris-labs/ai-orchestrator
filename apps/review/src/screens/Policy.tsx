@@ -390,7 +390,7 @@ export function Policy({ projectId }: { projectId: string | null }) {
           </Field>
           <Field
             label="Group size limit"
-            hint="A group with more changed lines splits into smaller groups."
+            hint="A group with more changed lines splits into smaller groups. A file without this key uses the limit of the run's depth."
           >
             <input
               type="number"

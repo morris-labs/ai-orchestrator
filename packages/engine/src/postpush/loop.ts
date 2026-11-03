@@ -6,6 +6,7 @@ import {
   FindingInputSchema,
   READ_ONLY_POST_PUSH_MESSAGE,
   isReadOnlyPostPush,
+  postPushRoundCap,
   type Finding,
   type Severity,
 } from "@aio/contracts";
@@ -605,7 +606,7 @@ async function closePostPushRound(ctx: RunContext): Promise<void> {
 /** Closes the round and finishes the run at the post-push round cap. Returns true when it finished. */
 async function endPostPushRound(ctx: RunContext): Promise<boolean> {
   await closePostPushRound(ctx);
-  if (postPushRounds(ctx) >= ctx.state.request.roundCap) {
+  if (postPushRounds(ctx) >= postPushRoundCap(ctx.state.request)) {
     await finishPostPush(ctx, "round_cap");
     return true;
   }
@@ -669,7 +670,7 @@ export async function drivePostPush(ctx: RunContext): Promise<void> {
             await finishPostPush(ctx, "non_code_failures");
             return;
           }
-          if (postPushRounds(ctx) >= ctx.state.request.roundCap) {
+          if (postPushRounds(ctx) >= postPushRoundCap(ctx.state.request)) {
             await finishPostPush(ctx, "round_cap");
             return;
           }

@@ -16,6 +16,10 @@ the upgrade steps, see `docs/migration-3x.md`.
   `standard` asks for P1 and P2 findings, with coarser groups, one reviewer pass per
   group, batched verification, and at most 2 rounds, with round 2 on the fixer's diff.
   `thorough` keeps the full pipeline, and stored runs with no depth stay `thorough`.
+- At `standard`: higher reasoning effort for batched disprover calls, compact
+  findings between agents, and one triage call that can send below-floor P3 findings
+  to the fixer.
+- A separate cap of 25 rounds for a pre-push run that continues after a push.
 - A rough token estimate in the launcher's group preview, computed with no model
   call.
 - The Codex medium tier maps to `gpt-6.1-terra`.

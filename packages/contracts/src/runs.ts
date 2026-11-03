@@ -107,6 +107,14 @@ export const DEPTH_DEFAULTS: Record<
 /** The round cap of a post-push request, whose rounds answer pull request comments. */
 export const POST_PUSH_ROUND_CAP = 25;
 
+/**
+ * The round cap of a run's post-push loop. A post-push request's own cap applies.
+ * A pre-push run that continues after a push doesn't inherit its pre-push cap.
+ */
+export function postPushRoundCap(request: { pipeline: Pipeline; roundCap: number }): number {
+  return request.pipeline === "post-push" ? request.roundCap : POST_PUSH_ROUND_CAP;
+}
+
 /** A run's depth. A stored run without the field predates depths and stays `thorough`. */
 export function runDepth(request: { depth?: RunDepth | undefined }): RunDepth {
   return request.depth ?? "thorough";

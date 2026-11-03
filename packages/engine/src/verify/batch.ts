@@ -1,7 +1,7 @@
 // Plans batched verification at the `standard` depth: which findings share one
 // disprover call, and which are the same root cause as another. Pure and
 // deterministic, so a plan can be saved and resumed.
-import type { Finding, Vendor } from "@aio/contracts";
+import type { Effort, Finding, Vendor } from "@aio/contracts";
 import { textSimilarity, titleSimilarity } from "../merge/fingerprint.js";
 import { sameIssue } from "../merge/merge.js";
 
@@ -13,6 +13,36 @@ export const VERDICT_TOKEN_RESERVE = 400;
 
 /** How similar two findings in one file must be to share a root cause at any lines. */
 export const ROOT_CAUSE_SIMILARITY = 0.8;
+
+/** The number of findings at which a batch's disprover call takes high effort. */
+export const HIGH_EFFORT_BATCH_SIZE = 5;
+
+/** The reasoning effort of a batch call, raised because many checks share one call. */
+export function batchEffort(findings: number): Effort {
+  return findings >= HIGH_EFFORT_BATCH_SIZE ? "high" : "medium";
+}
+
+/** Splits findings in order so that no part passes `limit` tokens, except a lone large one. */
+export function splitByTokens<T>(
+  items: readonly T[],
+  tokensFor: (item: T) => number,
+  limit = VERIFY_BATCH_TOKEN_LIMIT,
+): T[][] {
+  const parts: T[][] = [];
+  let size = 0;
+  for (const item of items) {
+    const tokens = tokensFor(item) + VERDICT_TOKEN_RESERVE;
+    const last = parts[parts.length - 1];
+    if (last && size + tokens <= limit) {
+      last.push(item);
+      size += tokens;
+    } else {
+      parts.push([item]);
+      size = tokens;
+    }
+  }
+  return parts;
+}
 
 export interface VerifyBatch {
   ids: string[];

@@ -292,7 +292,9 @@ function findingRows(findings: Finding[]) {
           ? `${f.verdict} (not verified: below floor)`
           : f.fixHeldReason
             ? `${f.verdict} (not sent to the fixer: below floor)`
-            : f.verdict,
+            : f.floorBypassReason
+              ? `${f.verdict} (triage: sent to the fixer)`
+              : f.verdict,
       f.round,
       f.file ? (f.lines ? `${f.file}:${f.lines[0]}-${f.lines[1]}` : f.file) : null,
       f.title,

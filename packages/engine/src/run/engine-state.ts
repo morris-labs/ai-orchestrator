@@ -88,6 +88,8 @@ export const EngineStateSchema = z.object({
   appliedMerges: z.array(z.string()).default([]),
   /** Findings the fixer declined to fix; not sent to it again. */
   declined: z.array(z.string()).default([]),
+  /** Below-floor findings a triage call already covered; none is asked about twice. */
+  triaged: z.array(z.string()).default([]),
   /** Usage of the current round per vendor. */
   roundUsage: z.record(VendorSchema, VendorStatsSchema).default({}),
   /** Post-push: external references already imported as findings. */
