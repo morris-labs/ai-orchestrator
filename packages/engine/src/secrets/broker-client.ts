@@ -297,9 +297,12 @@ export class BrokerClient {
           });
         },
       );
-      req.setTimeout(this.timeoutMs, () => {
+      // A deadline for the whole call: `req.setTimeout` only starts once the
+      // socket connects, so it misses a TCP name lookup or connect that hangs.
+      const deadline = setTimeout(() => {
         req.destroy(new Error(`no answer within ${Math.round(this.timeoutMs / 1000)} seconds`));
-      });
+      }, this.timeoutMs);
+      req.on("close", () => clearTimeout(deadline));
       req.on("error", (err) => reject(this.unreachable(err)));
       req.end(data);
     });

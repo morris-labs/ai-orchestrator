@@ -1,8 +1,9 @@
+import dns from "node:dns";
 import fs from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   BrokerClient,
   BrokerError,
@@ -215,6 +216,39 @@ describe("BrokerClient over TCP", () => {
     await expect(stopped.names()).rejects.toMatchObject({
       code: "unreachable",
       message: expect.stringContaining(`http://127.0.0.1:${closed}`),
+    });
+  });
+
+  it("gives up after the timeout when the name lookup hangs", async () => {
+    const lookup = vi.spyOn(dns, "lookup").mockImplementation((() => undefined) as never);
+    try {
+      const client = new BrokerClient({
+        endpoint: parseBrokerUrl("http://broker.example.com:41000"),
+        readText: () => "e".repeat(64),
+        timeoutMs: 50,
+      });
+      await expect(client.names()).rejects.toMatchObject({
+        code: "unreachable",
+        message: expect.stringContaining("no answer within"),
+      });
+      expect(lookup).toHaveBeenCalled();
+    } finally {
+      lookup.mockRestore();
+    }
+  });
+
+  it("gives up after the timeout when a connected broker doesn't answer", async () => {
+    const server = http.createServer(() => undefined);
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    servers.push(server);
+    const client = new BrokerClient({
+      endpoint: parseBrokerUrl(`http://127.0.0.1:${(server.address() as AddressInfo).port}`),
+      readText: () => "f".repeat(64),
+      timeoutMs: 50,
+    });
+    await expect(client.names()).rejects.toMatchObject({
+      code: "unreachable",
+      message: expect.stringContaining("no answer within"),
     });
   });
 });
