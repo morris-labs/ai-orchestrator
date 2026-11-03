@@ -1246,6 +1246,7 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
             (m) => clientFor(s, async () => (m.isLocal ? null : m.id)),
             { projectId: o.project, boxId: o.box },
           );
+          if (runs.some((m) => m.status === "error")) state.code = 1;
           print({ machines: runs }, () => fleetRunText(runs));
           return;
         }

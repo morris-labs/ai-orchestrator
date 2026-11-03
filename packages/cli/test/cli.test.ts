@@ -1253,6 +1253,67 @@ describe("review on other machines", () => {
     ]);
   });
 
+  it("fails an all-machines run list when another machine answers with an error", async () => {
+    server.on("GET /api/v1/machines", { body: { machines: machines.slice(0, 2) } });
+    server.on("GET /api/v1/runs", { body: { runs: [runState] } });
+    server.on(`GET ${proxy("m1", "/runs")}`, {
+      status: 500,
+      body: { error: { code: "internal", message: "The node failed." } },
+    });
+
+    expect(await cli(["review", "status", "--all-machines"])).toBe(1);
+    expect(out).toMatch(new RegExp(`^desk\\s+${RUN}`, "m"));
+    expect(out).toContain("build-server: error. The node failed.");
+  });
+
+  it("fails an all-machines run list when this server's own list fails", async () => {
+    server.on("GET /api/v1/machines", { body: { machines: machines.slice(0, 2) } });
+    server.on("GET /api/v1/runs", {
+      status: 500,
+      body: { error: { code: "internal", message: "The server failed." } },
+    });
+    server.on(`GET ${proxy("m1", "/runs")}`, { body: { runs: [runState] } });
+
+    expect(await cli(["review", "status", "--all-machines"])).toBe(1);
+    expect(err).toContain("Error (internal): The server failed.");
+    expect(out).toBe("");
+  });
+
+  it("fails an all-machines run list when the server stops answering", async () => {
+    const failing: typeof fetch = async (input) => {
+      if (String(input).endsWith("/api/v1/machines")) {
+        return Response.json({ machines: machines.slice(0, 2) });
+      }
+      throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } });
+    };
+    const code = await runCli(["review", "status", "--all-machines"], {
+      env: { AIO_SERVER: "https://example.com", AIO_TOKEN: TOKEN },
+      home,
+      fetch: failing,
+      out: (t) => (out += t),
+      err: (t) => (err += t),
+    });
+
+    expect(code).toBe(1);
+    expect(err).toContain("ECONNREFUSED");
+    expect(out).toBe("");
+  });
+
+  it("exits 130 when an all-machines run list is interrupted", async () => {
+    const controller = new AbortController();
+    server.on("GET /api/v1/machines", { body: { machines: machines.slice(0, 2) } });
+    server.on("GET /api/v1/runs", { body: { runs: [runState] } });
+    server.on(`GET ${proxy("m1", "/runs")}`, () => {
+      controller.abort();
+      return { body: { runs: [runState] } };
+    });
+
+    const args = ["review", "status", "--all-machines"];
+    expect(await cli(args, {}, undefined, controller.signal)).toBe(130);
+    expect(err).toBe("Interrupted.\n");
+    expect(out).toBe("");
+  });
+
   it("refuses --all-machines with a run ID or with --machine", async () => {
     expect(await cli(["review", "status", RUN, "--all-machines"])).toBe(2);
     expect(await cli(["review", "status", "--all-machines", "--machine", "m1"])).toBe(2);

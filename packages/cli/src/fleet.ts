@@ -1,8 +1,8 @@
 // Review runs across the machines of a multi-host setup: `aio review status
-// --all-machines` lists every machine's runs, and a machine that can't
+// --all-machines` lists every machine's runs, and another machine that can't
 // answer shows as offline instead of failing the whole list.
 import type { Machine, RunState } from "@aio/contracts";
-import { ApiCallError, ServerUnreachableError, type ServerClient } from "./client.js";
+import { ApiCallError, type ServerClient } from "./client.js";
 import { table } from "./format.js";
 
 /** The error codes that mean a machine can't be reached through the hub. */
@@ -26,8 +26,13 @@ export interface FleetMachineRuns {
 /**
  * Lists the runs of each machine in `machines`, which must hold this one
  * first and no revoked machine. The calls run in parallel; a machine the
- * hub reports offline gets no call, and one that fails gets its error
- * instead of runs. `clientFor` gives the client for a machine.
+ * hub reports offline gets no call, and another machine that answers with an
+ * API error gets that error instead of runs. `clientFor` gives the client for
+ * a machine.
+ *
+ * @throws Any failure of this server's own call, and any failure that isn't an
+ *   API error, such as an interrupt or an unreachable server. Every call goes
+ *   through this server, so those failures aren't one machine's.
  */
 export async function listFleetRuns(
   machines: FleetMachine[],
@@ -44,13 +49,11 @@ export async function listFleetRuns(
         const { runs } = await clientFor(m).call("runs.list", { query });
         return { ...base, status: "online", error: null, runs };
       } catch (err) {
-        const unreachable =
-          (err instanceof ApiCallError && UNREACHABLE_CODES.has(err.code)) ||
-          err instanceof ServerUnreachableError;
+        if (m.isLocal || !(err instanceof ApiCallError)) throw err;
         return {
           ...base,
-          status: unreachable ? "offline" : "error",
-          error: err instanceof Error ? err.message : String(err),
+          status: UNREACHABLE_CODES.has(err.code) ? "offline" : "error",
+          error: err.message,
           runs: [],
         };
       }

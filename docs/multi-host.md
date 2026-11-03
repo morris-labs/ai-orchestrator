@@ -307,7 +307,9 @@ aio review status --all-machines
 
 The output is a table with a `MACHINE` column, followed by a line for each
 machine that has no current list, such as `laptop: offline`. The command
-succeeds while any machine is offline.
+succeeds while any machine is offline. The command exits with code 1 when
+another machine answers with any other error, and prints no list when this
+machine's own server fails or can't be reached.
 
 ## The link port
 
