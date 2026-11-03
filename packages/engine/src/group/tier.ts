@@ -176,10 +176,15 @@ export function roleTier(
 /**
  * The tier of one call at the `standard` depth, with no moves up. A call takes
  * its group's tier. A disprover on a docs-only group can stay small; a fixer
- * and a confirmer stay at medium or above, and a sweeper at medium or below.
+ * stays at medium or above, a confirmer takes large, and a sweeper stays at
+ * medium or below.
  */
 function standardRoleTier(from: TierChoice, role: AgentRole): TierChoice {
-  if (role === "fixer" || role === "confirmer") {
+  // One call checks every fix of the round, so it costs little and matters most.
+  if (role === "confirmer") {
+    return { tier: "large", reason: `${from.reason}; a confirmer takes large` };
+  }
+  if (role === "fixer") {
     const tier = higherTier(from.tier, "medium");
     return { tier, reason: `${from.reason}; a ${role} takes medium or above` };
   }
