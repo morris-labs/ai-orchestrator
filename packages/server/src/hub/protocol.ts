@@ -125,7 +125,13 @@ export const LinkFrameSchema = z.discriminatedUnion("type", [
     message: z.string(),
   }),
   z.object({ type: z.literal("data"), id: z.string(), binary: z.boolean(), data: z.string() }),
-  z.object({ type: z.literal("end"), id: z.string(), code: z.number().int(), reason: z.string() }),
+  // A long reason still ends the stream, so it's trimmed instead of refused.
+  z.object({
+    type: z.literal("end"),
+    id: z.string(),
+    code: z.number().int(),
+    reason: z.string().transform(closeReason),
+  }),
   z.object({ type: z.literal("credit"), id: z.string(), bytes: z.number().int().positive() }),
 ]);
 export type LinkFrame = z.infer<typeof LinkFrameSchema>;

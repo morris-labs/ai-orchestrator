@@ -31,7 +31,12 @@ import {
   readDefaultRouteInterface,
   withoutTunnels,
 } from "../../src/hub/lan.js";
-import { protocolMismatch, sendableCloseCode, closeReason } from "../../src/hub/protocol.js";
+import {
+  closeReason,
+  parseFrame,
+  protocolMismatch,
+  sendableCloseCode,
+} from "../../src/hub/protocol.js";
 import {
   MachineRegistry,
   codeKey,
@@ -123,6 +128,16 @@ describe("protocol helpers", () => {
     const started = Date.now();
     expect(closeReason("x".repeat(2 * 1024 * 1024))).toHaveLength(120);
     expect(Date.now() - started).toBeLessThan(1000);
+  });
+
+  it("bounds the reason of an end frame from the other end", () => {
+    const text = JSON.stringify({ type: "end", id: "n1", code: 1000, reason: "x".repeat(4096) });
+    expect(parseFrame(text)).toEqual({
+      type: "end",
+      id: "n1",
+      code: 1000,
+      reason: "x".repeat(120),
+    });
   });
 
   it("parses roles, names machines after the host, and limits node calls", () => {
