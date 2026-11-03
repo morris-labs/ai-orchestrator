@@ -213,6 +213,70 @@ class RuntimeStagingTest(unittest.TestCase):
         self.assertEqual(out, f"{runtime.resolve()}/cli/dist/main.js|box|a b|")
 
 
+class StageNpmTest(unittest.TestCase):
+    def _stage(self, target_os, top, node_dir):
+        node(
+            'import { stageNpm } from "./scripts/stage-runtime.mjs";'
+            f"stageNpm({json.dumps(target_os)}, {json.dumps(str(top))}, {json.dumps(str(node_dir))});"
+        )
+
+    def test_mac_runtime_runs_npm_with_the_bundled_node(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            top = pathlib.Path(tmp, "release")
+            cli = top / "lib/node_modules/npm/bin/npm-cli.js"
+            cli.parent.mkdir(parents=True)
+            cli.write_text("")
+            (top / "bin").mkdir()
+            (top / "bin/npm").symlink_to("../lib/node_modules/npm/bin/npm-cli.js")
+            node_dir = pathlib.Path(tmp, "My Runtime/node")
+            (node_dir / "bin").mkdir(parents=True)
+            fake_node = node_dir / "bin/node"
+            fake_node.write_text('#!/bin/sh\nprintf "%s|" "$@"\n')
+            fake_node.chmod(0o755)
+            self._stage("mac", top, node_dir)
+            npm = node_dir / "bin/npm"
+            # An app bundle can't hold the archive's symbolic link.
+            self.assertFalse(npm.is_symlink())
+            self.assertTrue(os.access(npm, os.X_OK))
+            out = subprocess.run(
+                [str(npm), "view", "a b"], check=True, capture_output=True, text=True
+            ).stdout
+            bin_dir = (node_dir / "bin").resolve()
+            self.assertEqual(out, f"{bin_dir}/../lib/node_modules/npm/bin/npm-cli.js|view|a b|")
+            self.assertTrue((node_dir / "lib/node_modules/npm/bin/npm-cli.js").is_file())
+
+    def test_windows_runtime_has_npm_for_bash_and_cmd(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            top = pathlib.Path(tmp, "release")
+            (top / "node_modules/npm/bin").mkdir(parents=True)
+            (top / "node_modules/npm/bin/npm-cli.js").write_text("")
+            (top / "npm").write_text("#!/bin/sh\n")
+            (top / "npm.cmd").write_text("@echo off\r\n")
+            node_dir = pathlib.Path(tmp, "node")
+            node_dir.mkdir()
+            self._stage("win", top, node_dir)
+            for name in ("npm", "npm.cmd", "node_modules/npm/bin/npm-cli.js"):
+                self.assertTrue((node_dir / name).is_file(), name)
+
+
+class StageRuntimeEntryTest(unittest.TestCase):
+    def test_main_runs_when_the_path_goes_through_a_symbolic_link(self):
+        if shutil.which("node") is None:
+            self.skipTest("node is not on PATH")
+        with tempfile.TemporaryDirectory() as tmp:
+            scripts = pathlib.Path(tmp, "scripts")
+            scripts.symlink_to(ROOT / "scripts")
+            file_link = pathlib.Path(tmp, "stage.mjs")
+            file_link.symlink_to(ROOT / "scripts/stage-runtime.mjs")
+            for script in (scripts / "stage-runtime.mjs", file_link):
+                # parseArgs refuses the option before main() changes anything.
+                result = subprocess.run(
+                    ["node", str(script), "--no-such-option"], capture_output=True, text=True
+                )
+                self.assertEqual(result.returncode, 1, script)
+                self.assertIn("unknown option", result.stderr)
+
+
 class PeSubsystemTest(unittest.TestCase):
     @staticmethod
     def fake_pe(magic):

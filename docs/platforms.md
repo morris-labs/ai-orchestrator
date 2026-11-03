@@ -192,7 +192,9 @@ for these reasons:
 The Boxes app carries the runtime in its resources folder:
 `AI Orchestrator.app/Contents/Resources/runtime` on macOS and
 `resources\runtime` in the install folder on Windows. The runtime holds
-Node.js, the server, the CLI, the image build context, and the web bundles.
+Node.js, npm, the server, the CLI, the image build context, and the web
+bundles. The `build-image.sh --update-cli` option uses the bundled npm to look
+up the agent CLI versions, so the host doesn't need its own Node.js.
 Its `bin` folder holds the `aio` and `aio-server` launchers (`aio.cmd` and
 `aio-server.cmd` on Windows).
 

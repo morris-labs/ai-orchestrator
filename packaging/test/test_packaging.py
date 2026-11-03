@@ -688,6 +688,10 @@ class ScriptsTest(unittest.TestCase):
         workspace = load_yaml(ROOT / "pnpm-workspace.yaml")
         self.assertIn("better-sqlite3", workspace["onlyBuiltDependencies"])
 
+    def _installed_layout_in(self, tmp):
+        tmp.mkdir(parents=True)
+        return self._installed_layout(tmp)
+
     def _installed_layout(self, tmp):
         """Mimics /usr/share/ai-orchestrator in TMP and returns the engine version."""
         shutil.copytree(ROOT / "scripts", tmp / "scripts")
@@ -701,10 +705,10 @@ class ScriptsTest(unittest.TestCase):
         (tmp / f"image/dist/aio-engine-{version}.tgz").write_bytes(b"")
         return version
 
-    def _fake_npm(self, tmp, failing="@aio/no-such-package"):
-        """Installs an npm in TMP that fails for the package FAILING and returns the environment."""
-        bin_dir = tmp / "bin"
-        bin_dir.mkdir()
+    def _fake_npm(self, tmp, failing="@aio/no-such-package", bin_dir=None):
+        """Installs an npm in BIN_DIR (default TMP/bin) that fails for the package FAILING and returns the environment."""
+        bin_dir = bin_dir or tmp / "bin"
+        bin_dir.mkdir(parents=True)
         fake = bin_dir / "npm"
         fake.write_text(
             "#!/bin/sh\n"
@@ -793,6 +797,38 @@ class ScriptsTest(unittest.TestCase):
                     self.assertIn(f"npm view {package} failed", result.stderr)
                     self.assertEqual(result.stdout, "")
                     self.assertEqual((tmp / "image/versions.env").read_text(), VERSIONS.read_text())
+
+    def test_build_image_update_cli_uses_the_npm_in_a_bundled_runtime(self):
+        # launchd and Task Scheduler start the server with a minimal PATH, and
+        # the host might have no Node.js.
+        for layout in ("node/bin", "node"):
+            with self.subTest(layout=layout), tempfile.TemporaryDirectory() as tmp:
+                # A host folder can hold npm beside bash, so link every other tool.
+                tools = pathlib.Path(tmp, "tools")
+                tools.mkdir()
+                for folder in os.environ["PATH"].split(":"):
+                    for tool in pathlib.Path(folder).glob("*"):
+                        link = tools / tool.name
+                        if tool.name != "npm" and not link.is_symlink():
+                            link.symlink_to(tool)
+                env = {**os.environ, "PATH": str(tools)}
+                runtime = pathlib.Path(tmp, "My Runtime")
+                self._installed_layout_in(runtime / "share")
+                self._fake_npm(runtime, bin_dir=runtime / layout)
+                script = str(runtime / "share/scripts/build-image.sh")
+                # Only a staged runtime has runtime.json, so a source checkout
+                # never picks up a sibling folder named node.
+                missing = subprocess.run(
+                    [script, "--update-cli", "--print"], capture_output=True, text=True, env=env
+                )
+                self.assertEqual(missing.returncode, 1, missing.stderr)
+                self.assertIn("npm is not installed", missing.stderr)
+                (runtime / "runtime.json").write_text("{}\n")
+                out = subprocess.run(
+                    [script, "--update-cli", "--print"],
+                    check=True, capture_output=True, text=True, env=env,
+                ).stdout
+                self.assertIn("--build-arg CLAUDE_CODE_VERSION=9.1.0", out)
 
     def test_build_image_update_cli_is_documented_in_help(self):
         out = subprocess.run(

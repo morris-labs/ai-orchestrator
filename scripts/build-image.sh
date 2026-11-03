@@ -109,6 +109,17 @@ override_of() {
 }
 
 if ((UPDATE_CLI && !PACK_ONLY)); then
+  # The macOS and Windows packages bundle npm in the runtime that holds this
+  # script's share folder, and the host might have no Node.js. The
+  # runtime.json file marks such a runtime.
+  if [[ -f "$ROOT/../runtime.json" ]]; then
+    for dir in "$ROOT/../node/bin" "$ROOT/../node"; do
+      if [[ -f "$dir/npm" ]]; then
+        PATH="$(cd "$dir" && pwd):$PATH"
+        break
+      fi
+    done
+  fi
   require_tool npm "Install Node.js 22, which includes npm."
   OVERRIDE_KEYS=(CLAUDE_CODE_VERSION CODEX_VERSION COPILOT_VERSION)
   # npm_latest exits only its command substitution when it fails. A simple

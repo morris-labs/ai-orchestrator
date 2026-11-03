@@ -7,8 +7,10 @@
 // Layout of OUT (packaging/build/runtime/OS-ARCH by default):
 //
 //   node/bin/node         Node.js (macOS, Linux)
+//   node/bin/npm          npm, in node/lib/node_modules/npm (macOS, Linux)
 //   node/node.exe         Node.js (Windows)
 //   node/aio-serverw.exe  The same Node.js without a console (Windows)
+//   node/npm, npm.cmd     npm, in node/node_modules/npm (Windows)
 //   server/               @aio/server with production dependencies
 //   cli/                  @aio/cli with production dependencies
 //   bin/aio, aio-server   Launchers (aio.cmd and aio-server.cmd on Windows)
@@ -128,6 +130,21 @@ export function posixLauncher(entry) {
   ].join("\n");
 }
 
+/**
+ * The text of the POSIX launcher for the bundled npm. The Node.js archive has
+ * `bin/npm` as a symbolic link, which the app bundles can't hold, so the
+ * runtime gets this script instead.
+ */
+export function posixNpmLauncher() {
+  return [
+    "#!/bin/sh",
+    "# Runs the npm in this runtime with the Node.js beside this script.",
+    'dir="$(cd "$(dirname "$0")" && pwd -P)"',
+    'exec "$dir/node" "$dir/../lib/node_modules/npm/bin/npm-cli.js" "$@"',
+    "",
+  ].join("\n");
+}
+
 /** The text of the Windows launcher that runs `entry` with the bundled Node.js. */
 export function windowsLauncher(entry) {
   return [
@@ -203,6 +220,28 @@ async function download(url, file) {
   fs.writeFileSync(file, Buffer.from(await res.arrayBuffer()));
 }
 
+/**
+ * Copies npm from the extracted Node.js release `top` to `nodeDir`. The
+ * server's CLI update build runs `build-image.sh --update-cli`, which needs
+ * npm, and the packaged install doesn't require Node.js on the host.
+ */
+export function stageNpm(targetOs, top, nodeDir) {
+  const copy = (from, to) =>
+    fs.cpSync(path.join(top, from), path.join(nodeDir, to), {
+      recursive: true,
+      verbatimSymlinks: true,
+    });
+  if (targetOs === "win") {
+    copy(path.join("node_modules", "npm"), path.join("node_modules", "npm"));
+    // `npm` is the script for Git for Windows' bash, which runs the build.
+    for (const launcher of ["npm", "npm.cmd"]) copy(launcher, launcher);
+  } else {
+    const npm = path.join("lib", "node_modules", "npm");
+    copy(npm, npm);
+    fs.writeFileSync(path.join(nodeDir, "bin", "npm"), posixNpmLauncher(), { mode: 0o755 });
+  }
+}
+
 async function stageNode(opts, version, out, work) {
   const name = nodeArchiveName(version, opts.os, opts.arch);
   const base = `https://nodejs.org/dist/v${version}`;
@@ -244,6 +283,7 @@ async function stageNode(opts, version, out, work) {
     fs.copyFileSync(path.join(top, "bin", "node"), path.join(nodeDir, "bin", "node"));
     fs.chmodSync(path.join(nodeDir, "bin", "node"), 0o755);
   }
+  stageNpm(opts.os, top, nodeDir);
   fs.copyFileSync(path.join(top, "LICENSE"), path.join(nodeDir, "LICENSE"));
 }
 
@@ -336,6 +376,9 @@ async function main() {
   log(`Staged the runtime in ${opts.out}`);
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// The ES module loader resolves symbolic links in import.meta.url, so resolve
+// them in the invoked path too. Otherwise a checkout reached through a link
+// skips main() and exits 0.
+if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main().catch((err) => die(err.message));
 }
