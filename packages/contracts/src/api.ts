@@ -105,7 +105,7 @@ import {
   CeilingsOverrideSchema,
   GlobalSettingsPatchSchema,
   GlobalSettingsSchema,
-  MachineNameSchema,
+  EnrollMachineNameSchema,
   MountSchema,
   OpReferenceSchema,
   ProjectSchema,
@@ -1073,7 +1073,7 @@ export const NodeJoinSchema = z
     /** The one-time enrollment code the hub issued. */
     code: z.string().trim().min(1),
     /** The name to enroll under. Default: the `machineName` setting, else the host name. */
-    name: MachineNameSchema.optional(),
+    name: EnrollMachineNameSchema.optional(),
     /**
      * Lets a machine whose stored role is `hub` and that has no enrolled
      * machines join. The role changes from `hub` to `node` only when the join

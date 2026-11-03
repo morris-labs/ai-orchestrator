@@ -623,6 +623,16 @@ export const MachineNameSchema = z
   .regex(/^[A-Za-z0-9][A-Za-z0-9.-]{0,62}$/, "Use letters, digits, dots, and hyphens.");
 
 /**
+ * A name a machine can enroll under. It refuses `local` and `hub`, which
+ * name this machine and the hub in machine-qualified box IDs. Use it for
+ * input only: stored names keep parsing through `MachineNameSchema`.
+ */
+export const EnrollMachineNameSchema = MachineNameSchema.refine(
+  (name) => !["local", "hub"].includes(name.toLowerCase()),
+  "The names local and hub are reserved. Use another name.",
+);
+
+/**
  * Global settings. The server stores them in its database. On the first
  * start, when the database holds no settings yet, the server seeds them from
  * `~/.ai-orchestrator/config.json` through `GlobalSettingsInputSchema`, and reads

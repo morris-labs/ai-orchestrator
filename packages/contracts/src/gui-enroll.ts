@@ -10,7 +10,7 @@
 // code too, so the app pins a certificate only from the hub that issued the code.
 import { createHash, createHmac } from "node:crypto";
 import { z } from "zod";
-import { MachineNameSchema } from "./records.js";
+import { EnrollMachineNameSchema } from "./records.js";
 
 /** The prefix of a GUI client certificate's common name; the client ID follows. */
 export const GUI_CERT_PREFIX = "aio-gui:";
@@ -59,7 +59,7 @@ export function guiHubProof(
 }
 
 export const GuiEnrollRequestSchema = z.object({
-  name: MachineNameSchema,
+  name: EnrollMachineNameSchema,
   publicKey: z.string().min(1).max(4096),
   nonce: z.string().regex(/^[0-9a-f]{32,128}$/),
   proof: z.string().regex(/^[0-9a-f]{64}$/),

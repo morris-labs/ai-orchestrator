@@ -18,7 +18,7 @@ import type http from "node:http";
 import type { Duplex } from "node:stream";
 import type { TLSSocket } from "node:tls";
 import {
-  MachineNameSchema,
+  EnrollMachineNameSchema,
   type EnrollmentCode,
   type GuiClient,
   type GuiClientList,
@@ -456,7 +456,7 @@ export class GuiListener {
 
   /** Checks an enrollment against the live codes, and signs the app's certificate. */
   async enroll(req: GuiEnrollRequest): Promise<GuiEnrollResponse> {
-    const name = MachineNameSchema.parse(req.name);
+    const name = EnrollMachineNameSchema.parse(req.name);
     const identity = await this.opts.identity();
     const key = this.registry.liveCodeKeys().find((k) =>
       sameHex(
