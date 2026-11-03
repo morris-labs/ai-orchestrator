@@ -332,6 +332,8 @@ function same(a: string, b: string): boolean {
 /** True for what a page needs before it has a token: the pages and the health route. */
 function isPublic(method: string, path: string): boolean {
   if (method !== "GET" && method !== "HEAD") return false;
+  // A dot segment or an escape could turn a page path into an API path on the hub.
+  if (path.includes("..") || path.includes("%") || path.includes("\\")) return false;
   return path.startsWith("/boxes/") || path.startsWith("/review/") || path === "/api/v1/health";
 }
 

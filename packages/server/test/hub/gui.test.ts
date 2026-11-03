@@ -2,6 +2,7 @@
 // node over the real mutual TLS link, and a GUI app's side from the code the
 // Electron main process runs: enrollment and the loopback proxy.
 import fs from "node:fs";
+import http from "node:http";
 import https from "node:https";
 import path from "node:path";
 import { GUI_ENROLL_PATH, guiClientProof, guiCodeKey } from "@aio/contracts/gui-enroll";
@@ -332,6 +333,18 @@ describe("GUI to hub to node to box", () => {
       });
     expect((await fetchProxy("/api/v1/boxes", {}, null)).status).toBe(401);
     expect((await fetchProxy("/api/v1/boxes", {}, "wrong")).status).toBe(401);
+    // A raw request, because `fetch` would resolve the dot segments first.
+    for (const raw of ["/boxes/../api/v1/boxes", "/boxes/%2e%2e/api/v1/boxes"]) {
+      const status = await new Promise<number>((resolve, reject) => {
+        http
+          .get(`${proxy.url}/`, { path: raw }, (res) => {
+            res.resume();
+            resolve(res.statusCode ?? 0);
+          })
+          .on("error", reject);
+      });
+      expect(status, raw).toBe(401);
+    }
 
     // The same token gets a cookie from the proxy, not a credential for the hub.
     const session = await fetchProxy("/api/v1/auth/session", { method: "POST" });
