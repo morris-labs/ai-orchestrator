@@ -291,4 +291,25 @@ describe("SetupWizard machine role", () => {
     expect(screen.queryByRole("group", { name: "This machine" })).not.toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
+
+  it("says so when the role can't be read, instead of hiding the step", async () => {
+    const server = new FakeServer();
+    server.on("node.get", () => {
+      throw new Error("server down");
+    });
+    renderWithServer(<SetupWizard onClose={() => undefined} />, server);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't read this machine's role");
+  });
+
+  it("lets a node that hasn't joined finish setup without a code", async () => {
+    const user = userEvent.setup();
+    const server = serverWith(status({ role: "node" }));
+    const onClose = vi.fn();
+    renderWithServer(<SetupWizard onClose={onClose} />, server);
+    expect(await screen.findByRole("radio", { name: /Node: join a hub/ })).toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(server.callsTo("node.join")).toHaveLength(0);
+    expect(server.state.settings.role).not.toBe("both");
+  });
 });

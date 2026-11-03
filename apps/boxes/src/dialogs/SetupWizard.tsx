@@ -5,7 +5,7 @@
 import type { Job, NodeStatus, SetupCheck } from "@aio/contracts";
 import { Button, Dialog, StatusDot, errorMessage, useApiClient } from "@aio/ui";
 import { useCallback, useEffect, useState } from "react";
-import { parseJoinInput } from "../logic/machines";
+import { machinesUnsupported, parseJoinInput } from "../logic/machines";
 import { JobDialog } from "./JobDialog";
 
 /**
@@ -65,6 +65,8 @@ export function SetupWizard({ onClose, onDone, stacked }: SetupWizardProps) {
   const [machineName, setMachineName] = useState("");
   // True while Done runs. A second run could spend the code twice.
   const [saving, setSaving] = useState(false);
+  // Kept apart from `error`, which a recheck clears.
+  const [roleError, setRoleError] = useState<string | null>(null);
 
   const recheck = useCallback(() => {
     setChecks(null);
@@ -98,7 +100,14 @@ export function SetupWizard({ onClose, onDone, stacked }: SetupWizardProps) {
         setNode(s);
         setChoice(choiceFor(s.role));
       })
-      .catch(() => setNode(null));
+      .catch((err: unknown) => {
+        // A server without machine routes has no role section. Any other failure
+        // says so, so the section doesn't vanish unexplained.
+        setNode(null);
+        if (!machinesUnsupported(err)) {
+          setRoleError(`Couldn't read this machine's role: ${errorMessage(err)}`);
+        }
+      });
   }, [client]);
 
   /** True when the wizard offers the role choice: this machine hasn't joined a hub. */
@@ -116,6 +125,8 @@ export function SetupWizard({ onClose, onDone, stacked }: SetupWizardProps) {
       }
       return;
     }
+    // A node that hasn't joined yet can finish setup and join later.
+    if (node.role === "node" && !hubUrl.trim() && !code.trim()) return;
     const target = parseJoinInput(hubUrl);
     if (!target) {
       throw new Error(
@@ -252,6 +263,11 @@ export function SetupWizard({ onClose, onDone, stacked }: SetupWizardProps) {
           )}
         </div>
       ))}
+      {roleError && (
+        <div role="alert" className="ab-error-text">
+          {roleError}
+        </div>
+      )}
       {node !== null && (
         <MachineRoleSection
           node={node}
@@ -324,6 +340,9 @@ function MachineRoleSection(p: MachineRoleSectionProps) {
         <div>This machine</div>
         <div className="bx-dim">
           {`A node of the hub at ${node.hubUrl}, as ${node.name}. Link: ${node.link}.`}
+          {node.role === "hub"
+            ? " This server has the hub role, so it doesn't link to the hub."
+            : ""}
           {node.error ? ` ${node.error}` : ""}
         </div>
       </div>
