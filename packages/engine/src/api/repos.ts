@@ -17,6 +17,7 @@ export interface RepoInfo {
 export interface RepoRefs {
   localBranches: string[];
   remoteBranches: string[];
+  fetchError?: string;
   tags: string[];
   recentCommits: { sha: string; subject: string; author: string; time: string }[];
   pullRequests: { number: number; title: string; headRef: string; baseRef: string; url: string }[];
@@ -90,8 +91,15 @@ export class RepoService {
     return found;
   }
 
-  async refs(repo: string): Promise<RepoRefs> {
+  async refs(repo: string, fetch = false): Promise<RepoRefs> {
     const dir = this.resolve(repo);
+    let fetchError: string | undefined;
+    if (fetch) {
+      const fetched = await this.git(dir, ["fetch", "--all", "--prune"]);
+      if (fetched.code !== 0) {
+        fetchError = (fetched.stderr ?? "").trim().slice(-500) || "git fetch failed.";
+      }
+    }
     const [heads, remotes, tags, log, pullRequests] = await Promise.all([
       this.git(dir, ["for-each-ref", "--format=%(refname:short)", "refs/heads"]),
       this.git(dir, ["for-each-ref", "--format=%(refname)", "refs/remotes"]),
@@ -111,6 +119,7 @@ export class RepoService {
       this.pullRequests(dir),
     ]);
     return {
+      ...(fetchError ? { fetchError } : {}),
       localBranches: lines(heads.stdout),
       remoteBranches: lines(remotes.stdout)
         .map((r) => r.replace(/^refs\/remotes\//, ""))

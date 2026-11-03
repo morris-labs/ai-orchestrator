@@ -45,6 +45,7 @@ export function Launcher({ prefill }: { prefill: { project: string | null; box: 
   // tick can't start a second request.
   const inFlight = useRef<"preview" | "start" | null>(null);
   const [customBase, setCustomBase] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const formRef = useRef<HTMLFormElement>(null);
   // Disabling the fieldset drops focus; it goes back to the same control after.
   useRestoreFocusAfterBusy(formRef, busy !== null);
@@ -150,6 +151,18 @@ export function Launcher({ prefill }: { prefill: { project: string | null; box: 
     } finally {
       inFlight.current = null;
       setBusy(null);
+    }
+  }
+
+  async function refreshRefs() {
+    if (!form.projectId || !form.repoPath) return;
+    setRefreshing(true);
+    try {
+      setRefs((await listRefs(api, form.projectId, form.repoPath, true)).refs);
+    } catch (err) {
+      setError(err);
+    } finally {
+      setRefreshing(false);
     }
   }
 
@@ -346,8 +359,20 @@ export function Launcher({ prefill }: { prefill: { project: string | null; box: 
                 {refs.localBranches.map((b) => (
                   <option key={b} value={b} />
                 ))}
+                {form.readOnly
+                  ? refs.remoteBranches.map((b) => <option key={`r-${b}`} value={b} />)
+                  : null}
               </datalist>
             </Field>
+            <button type="button" disabled={refreshing} onClick={() => void refreshRefs()}>
+              {refreshing ? "Fetching..." : "Refresh branches"}
+            </button>
+            {refs.fetchError ? (
+              <p role="alert">Couldn't fetch, so the lists can be out of date: {refs.fetchError}</p>
+            ) : null}
+            {!form.readOnly && refs.remoteBranches.length > 0 ? (
+              <p className="hint">Turn on read-only to choose a remote branch as the tip.</p>
+            ) : null}
           </fieldset>
 
           <fieldset>

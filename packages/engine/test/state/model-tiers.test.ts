@@ -93,6 +93,19 @@ describe("the model of a call", () => {
     expect(codex.models).toEqual(["gpt-6-sol"]);
   });
 
+  it("keeps the built-in large model for a confirmer when the policy lowers that tier", async () => {
+    const codex = recording("codex");
+    const { ctx } = await makeRun({ adapters: { codex: codex.adapter } });
+    ctx.policy = { ...DEFAULT_POLICY, tierModels: { codex: { large: "gpt-6.1-terra" } } };
+    await ctx.callAgent<ReviewOutput>(call("codex", "large"));
+    await ctx.callAgent<ReviewOutput>({
+      ...call("codex", "large"),
+      key: "confirm-call",
+      role: "confirmer",
+    });
+    expect(codex.models).toEqual(["gpt-6.1-terra", "gpt-6.1-sol"]);
+  });
+
   it("never lets a tierless Claude call reach the CLI default", async () => {
     const claude = recording("claude");
     const { ctx } = await makeRun({ adapters: { claude: claude.adapter } });

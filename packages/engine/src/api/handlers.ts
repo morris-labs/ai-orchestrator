@@ -44,7 +44,7 @@ export interface HealthInfo {
 
 export interface HandlerDeps {
   runs: RunManager;
-  repos: { list(): Promise<RepoInfo[]>; refs(repo: string): Promise<RepoRefs> };
+  repos: { list(): Promise<RepoInfo[]>; refs(repo: string, fetch?: boolean): Promise<RepoRefs> };
   ports: { list(): Listener[] };
   health: () => HealthInfo;
 }
@@ -70,7 +70,7 @@ export function createHandlers(deps: HandlerDeps): EngineHandlers {
   return {
     "engine.health": () => deps.health(),
     "engine.repos.list": async () => ({ repos: await deps.repos.list() }),
-    "engine.repos.refs": (i) => deps.repos.refs(i.query.repo),
+    "engine.repos.refs": (i) => deps.repos.refs(i.query.repo, i.query.fetch === "true"),
     "engine.runs.list": async (i) => ({ runs: await runs.list(i.query) }),
     "engine.runs.preview": (i) => runs.preview(i.body),
     "engine.runs.create": (i) => runs.start(i.body),

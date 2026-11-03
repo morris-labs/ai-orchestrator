@@ -54,9 +54,13 @@ export async function listRefs(
   api: ApiClient,
   projectId: string,
   repo: string,
+  fetch = false,
 ): Promise<{ refs: RepoRefs; fromServer: boolean }> {
   try {
-    const refs = await api.call("projects.repos.refs", { params: { projectId }, query: { repo } });
+    const refs = await api.call("projects.repos.refs", {
+      params: { projectId },
+      query: { repo, ...(fetch ? { fetch: "true" as const } : {}) },
+    });
     return { refs, fromServer: true };
   } catch (err) {
     if (engineUnavailable(err)) return { refs: EMPTY_REFS, fromServer: false };

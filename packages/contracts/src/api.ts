@@ -836,9 +836,15 @@ export const RepoInfoSchema = z.object({
 
 export const RepoListSchema = z.object({ repos: z.array(RepoInfoSchema) });
 
-export const RepoRefsQuerySchema = z.object({ repo: z.string().min(1) });
+export const RepoRefsQuerySchema = z.object({
+  repo: z.string().min(1),
+  /** `true` fetches from the repository's remotes first. */
+  fetch: z.enum(["true", "false"]).optional(),
+});
 
 export const RepoRefsSchema = z.object({
+  /** Why a requested fetch failed, so the lists can be out of date. */
+  fetchError: z.string().optional(),
   localBranches: z.array(z.string()),
   remoteBranches: z.array(z.string()),
   tags: z.array(z.string()),
