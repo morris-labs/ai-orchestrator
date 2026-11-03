@@ -73,6 +73,41 @@ function cli(args: string[], cwd?: string, onErr?: () => void) {
   });
 }
 
+describe("aio gui", () => {
+  it("issues a code, lists the apps, and revokes one on this machine only", async () => {
+    const T = "2026-11-01T10:00:00.000Z";
+    server.on("POST /api/v1/gui-clients/enrollment-codes", {
+      status: 201,
+      body: { code: "ABCD-1234", expiresAt: T, hubUrl: "https://hub.example.com:21403" },
+    });
+    server.on("GET /api/v1/gui-clients", {
+      body: {
+        port: 21403,
+        clients: [
+          {
+            id: "g1",
+            name: "desk-pc",
+            status: "active",
+            createdAt: T,
+            lastSeen: null,
+            revokedAt: null,
+          },
+        ],
+      },
+    });
+    server.on("DELETE /api/v1/gui-clients/g1", { body: { ok: true } });
+    expect(await cli(["gui", "code"])).toBe(0);
+    expect(out).toContain("ABCD-1234");
+    expect(out).toContain("https://hub.example.com:21403");
+    out = "";
+    expect(await cli(["gui", "list"])).toBe(0);
+    expect(out).toContain("desk-pc");
+    expect(await cli(["gui", "revoke", "g1"])).toBe(0);
+    expect(calls()).toContain("DELETE /api/v1/gui-clients/g1");
+    expect(await cli(["--machine", NODE, "gui", "list"])).not.toBe(0);
+  });
+});
+
 /** Every request but the machine list, as `METHOD /path`. */
 const calls = () =>
   server.requests.filter((r) => r.path !== "/api/v1/machines").map((r) => `${r.method} ${r.path}`);

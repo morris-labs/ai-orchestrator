@@ -1835,6 +1835,46 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
       print(r, () => `Revoked ${id}.\n`);
     });
 
+  const gui = thisMachineOnly(
+    program
+      .command("gui")
+      .description("On the hub, enroll, list, and revoke GUI apps on other PCs."),
+  );
+
+  gui
+    .command("code")
+    .description("Issue a one-time code for a GUI app on another PC to enroll with this hub.")
+    .action(async () => {
+      const r = await client().call("gui.enroll");
+      print(
+        r,
+        () =>
+          `GUI enrollment code: ${r.code}\nIt works once, until ${r.expiresAt}. In the app on the other PC, open the connection window, and enter the following hub URL and the code:\n\n  ${r.hubUrl}\n`,
+      );
+    });
+
+  gui
+    .command("list")
+    .description("List the GUI apps enrolled with this hub.")
+    .action(async () => {
+      const r = await client().call("gui.list");
+      print(r, () =>
+        table(
+          ["ID", "NAME", "STATUS", "LAST SEEN", "ENROLLED"],
+          r.clients.map((c) => [c.id, c.name, c.status, c.lastSeen ?? "-", c.createdAt]),
+        ),
+      );
+    });
+
+  gui
+    .command("revoke")
+    .description("Revoke a GUI app's certificate and close its connections.")
+    .argument("<id>", "The client ID, from aio gui list.")
+    .action(async (id: string) => {
+      const r = await client().call("gui.revoke", { params: { id } });
+      print(r, () => `Revoked ${id}.\n`);
+    });
+
   const node = thisMachineOnly(
     program.command("node").description("Show this machine's link to a hub, or join a hub."),
   );
