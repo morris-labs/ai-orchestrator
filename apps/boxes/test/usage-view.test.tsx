@@ -1,7 +1,7 @@
 // The Model usage panel: polling, a failed refresh, and clearing a block.
 import type { VendorUsageSchema } from "@aio/contracts";
 import { FakeServer } from "@aio/ui/testing";
-import { act, screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { z } from "zod";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -34,6 +34,11 @@ const vendor = (over: boolean): Usage =>
     window: "5h",
   }) as Usage;
 
+const confirmYes = async () =>
+  within(await screen.findByRole("dialog", { name: "Clear Block" })).getByRole("button", {
+    name: "Yes",
+  });
+
 afterEach(() => {
   vi.useRealTimers();
 });
@@ -49,6 +54,7 @@ describe("UsageView", () => {
     });
     renderWithServer(<UsageView boxes={[]} disk={new Map()} />, server);
     await userEvent.click(await screen.findByRole("button", { name: "Clear block" }));
+    await userEvent.click(await confirmYes());
     await waitFor(() =>
       expect(screen.queryByRole("button", { name: "Clear block" })).not.toBeInTheDocument(),
     );
@@ -91,5 +97,35 @@ describe("UsageView", () => {
     unmount();
     await vi.advanceTimersByTimeAsync(120_000);
     expect(server.callsTo("usage.get")).toHaveLength(before);
+  });
+
+  it("asks first, and clears nothing when you say no", async () => {
+    const server = new FakeServer();
+    server.on("usage.get", () => ({ vendors: [vendor(true)], time: "2029-12-31T23:30:00.000Z" }));
+    server.on("usage.clear", () => ({ vendors: [vendor(false)], cleared: 1 }));
+    renderWithServer(<UsageView boxes={[]} disk={new Map()} />, server);
+    await userEvent.click(await screen.findByRole("button", { name: "Clear block" }));
+    const dialog = await screen.findByRole("dialog", { name: "Clear Block" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "No" }));
+    expect(server.callsTo("usage.clear")).toHaveLength(0);
+  });
+
+  it("says when the server clears nothing, and when the clear fails", async () => {
+    const server = new FakeServer();
+    server.on("usage.get", () => ({ vendors: [vendor(true)], time: "2029-12-31T23:30:00.000Z" }));
+    let fail = false;
+    server.on("usage.clear", () => {
+      if (fail) throw new Error("server down");
+      return { vendors: [vendor(true)], cleared: 0 };
+    });
+    renderWithServer(<UsageView boxes={[]} disk={new Map()} />, server);
+    await userEvent.click(await screen.findByRole("button", { name: "Clear block" }));
+    await userEvent.click(await confirmYes());
+    expect(await screen.findByText(/cleared nothing/)).toBeInTheDocument();
+    fail = true;
+    await userEvent.click(await screen.findByRole("button", { name: "Clear block" }));
+    await userEvent.click(await confirmYes());
+    expect(await screen.findByText(/Couldn't clear the block/)).toBeInTheDocument();
+    expect(screen.queryByText(/Couldn't refresh usage/)).not.toBeInTheDocument();
   });
 });

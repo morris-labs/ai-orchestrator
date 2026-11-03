@@ -1,7 +1,7 @@
 // The Usage tab: CPU and memory totals, one card per running container with
 // its boxes, and each vendor account's usage windows.
 import type { BoxView, Vendor } from "@aio/contracts";
-import { ProgressBar, useApiClient } from "@aio/ui";
+import { ProgressBar, errorMessage, useApiClient, useMessageBox } from "@aio/ui";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { formatBytes } from "../logic/format";
 import { displayName } from "../logic/status";
@@ -18,9 +18,13 @@ export function UsageView({
   disk: ReadonlyMap<string, number>;
 }) {
   const client = useApiClient();
+  const { confirm } = useMessageBox();
   const [vendors, setVendors] = useState<VendorUsageInput[] | null>(null);
   const [now, setNow] = useState(() => new Date());
   const [failed, setFailed] = useState(false);
+  // The outcome of the last Clear block; a refresh doesn't erase it.
+  const [clearNote, setClearNote] = useState<string | null>(null);
+  const [clearing, setClearing] = useState(false);
   const live = useRef(true);
   const requests = useRef(0);
   const load = useCallback(() => {
@@ -56,11 +60,32 @@ export function UsageView({
       document.removeEventListener("visibilitychange", tick);
     };
   }, [load]);
-  const clearBlock = (vendor: string, account: string) => {
-    client
-      .call("usage.clear", { body: { vendor: vendor as Vendor, account } })
-      .then(load)
-      .catch(() => setFailed(true));
+  const clearBlock = async (vendor: string, account: string) => {
+    if (clearing) return;
+    const ok = await confirm(
+      "Clear Block",
+      `Clear the block on ${account}?`,
+      "Use this only after you buy a reset. The server then treats the account as under its ceiling, and boxes can use it again until the next real sample replaces this one.",
+      true,
+    );
+    if (!ok || !live.current) return;
+    setClearing(true);
+    setClearNote(null);
+    try {
+      const r = await client.call("usage.clear", { body: { vendor: vendor as Vendor, account } });
+      if (!live.current) return;
+      const still = r.vendors.find((v) => v.vendor === vendor && v.account === account)?.overCeiling;
+      if (r.cleared === 0) {
+        setClearNote(`The server cleared nothing for ${account}. The block stays.`);
+      } else if (still) {
+        setClearNote(`The block on ${account} cleared, but the account is still over its ceiling.`);
+      }
+    } catch (err) {
+      if (live.current) setClearNote(`Couldn't clear the block on ${account}: ${errorMessage(err)}`);
+    } finally {
+      if (live.current) setClearing(false);
+    }
+    load();
   };
 
   const running = boxes.filter((b) => b.status === "running");
@@ -139,6 +164,11 @@ export function UsageView({
             Couldn&apos;t refresh usage. These readings can be out of date.
           </div>
         ) : null}
+        {clearNote ? (
+          <div className="bx-dim" role="status">
+            {clearNote}
+          </div>
+        ) : null}
         {vendors === null ? (
           <div className="bx-dim">Loading...</div>
         ) : vendors.length === 0 ? (
@@ -152,8 +182,10 @@ export function UsageView({
                 {v.over ? (
                   <button
                     type="button"
+                    className="ab-button"
+                    disabled={clearing}
                     title="Use this after you buy a reset. The next real sample replaces this."
-                    onClick={() => clearBlock(v.vendor, v.account)}
+                    onClick={() => void clearBlock(v.vendor, v.account)}
                   >
                     Clear block
                   </button>
