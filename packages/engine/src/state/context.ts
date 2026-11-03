@@ -283,10 +283,17 @@ export class RunContext {
   private chooseModel(
     vendor: Vendor,
     tier: ModelTier | undefined,
+    role?: AgentRole,
   ): { model: string | undefined; note: string | null } {
     const existing = this.deps.models?.[vendor] ?? BLOCKED_DEFAULT_FALLBACK[vendor];
     if (!tier) return { model: existing, note: null };
-    const mapped = this.policy.tierModels?.[vendor]?.[tier] ?? DEFAULT_TIER_MODELS[vendor]?.[tier];
+    // A large confirmer reads the round's whole fix diff, so a policy that lowers
+    // the large tier for per-group calls doesn't lower it.
+    const builtIn = DEFAULT_TIER_MODELS[vendor]?.[tier];
+    const mapped =
+      role === "confirmer" && tier === "large" && builtIn
+        ? builtIn
+        : (this.policy.tierModels?.[vendor]?.[tier] ?? builtIn);
     if (mapped) return { model: mapped, note: null };
     return {
       model: existing,
@@ -936,7 +943,7 @@ export class RunContext {
         tier = tier === "small" ? "medium" : "large";
         tierReason = `${tierReason}; the last answer was malformed, so one tier up`;
       }
-      const choice = this.chooseModel(vendor, tier);
+      const choice = this.chooseModel(vendor, tier, spec.role);
       if (choice.note) tierReason = `${tierReason}; ${choice.note}`;
       if (choice.model !== undefined && isBlockedRequestedModel(vendor, choice.model)) {
         await this.settle(lease.leaseId, vendor, spec.role, ZERO_USE);

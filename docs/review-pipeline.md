@@ -236,7 +236,7 @@ reason says so. These signals only raise a tier.
 | Sweeper | The group's tier, at medium at most |
 
 At the `standard` depth, none of these moves up apply: a call takes its group's
-tier, a fixer stays at medium or above, a confirmer takes large, a sweeper stays at medium or
+tier, a fixer stays at medium or above, a confirmer takes the built-in large model even when `tierModels` lowers that tier, a sweeper stays at medium or
 below, and a disprover on a docs-only group can use the small tier. A malformed
 answer still retries one tier up.
 
