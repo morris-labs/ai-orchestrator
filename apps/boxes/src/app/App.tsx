@@ -252,13 +252,20 @@ export function App() {
   });
 
   // Notification clicks from the Electron main process select the box. The
-  // notifications come from this PC's server, so only its view listens.
+  // main process raises the notifications of this PC's server. A remote view
+  // raises its own, through the bridge, and names its machine in the click.
   const activateRef = useRef(machine.activate);
   activateRef.current = machine.activate;
-  const listensForNotifications = machine.id === LOCAL_MACHINE_ID;
+  const machineId = machine.id;
   useEffect(
     () =>
-      (listensForNotifications ? bridge() : undefined)?.onSelectBox((boxId) => {
+      bridge()?.onSelectBox((boxId, from, notificationId) => {
+        if ((from ?? LOCAL_MACHINE_ID) !== machineId) return;
+        if (notificationId) {
+          void client
+            .call("notifications.read", { params: { notificationId } })
+            .catch(() => undefined);
+        }
         // An open dialog is modal: its view stays in front until the user
         // answers it, and this view shows the box after that.
         if (!hasOpenDialog()) activateRef.current();
@@ -267,8 +274,23 @@ export function App() {
         setFilter("");
         setSelected(new Set([boxId]));
       }),
-    [listensForNotifications],
+    [machineId, client],
   );
+
+  // A remote machine's boxes raise desktop notifications through the bridge,
+  // as this PC's boxes do through the main process.
+  useEvent("notification", (ev) => {
+    if (machine.isLocal || !ev.boxId) return;
+    if (ev.kind !== "box_ended" && ev.runId !== null) return;
+    bridge()?.notify?.({
+      title: ev.title,
+      body: ev.body,
+      urgent: ev.severity === "error",
+      boxId: ev.boxId,
+      machineId: machine.id,
+      notificationId: ev.notificationId,
+    });
+  });
 
   // -------------------------------------------------------------------------
   // Helpers
@@ -550,6 +572,9 @@ export function App() {
     if (!machine.isLocal) {
       // A host terminal here can't reach a container on another PC, so the
       // terminal opens in a tab, through the hub.
+      // The tabs sit on the Boxes page, so show it: on the Usage page the
+      // terminal would open out of sight.
+      setPage("boxes");
       if (kind === "shell")
         setTabs((t) =>
           openTab(t, { boxId: view.box.id, kind, title: `${displayName(view)} (shell)` }),
@@ -1407,7 +1432,7 @@ export function App() {
           : data.error.code === "unreachable"
             ? machine.isLocal
               ? `The AI Orchestrator server is not reachable. Check that aio-server runs (systemctl --user status aio-server). ${data.error.message}`
-              : `${machine.name} is not reachable through the hub. ${data.error.message}`
+              : `This PC's AI Orchestrator server, which relays ${machine.name}, is not reachable. Check that aio-server runs (systemctl --user status aio-server). ${data.error.message}`
             : data.error.message
       : null;
   const selectedRemotes = single
