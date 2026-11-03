@@ -235,9 +235,9 @@ The following rules apply to the CLI on another machine:
 
 - A path, such as the directory of `aio box new`, must be absolute on that
   machine, because the current directory exists only on this machine.
-- `aio box attach`, `aio box shell`, and `aio box open` refuse another
-  machine's box, because they run the terminal on this machine. Open the
-  box's terminal in the Boxes app instead.
+- `aio box open` refuses another machine's box, because it opens the box
+  in a program on this machine. `aio box attach` and `aio box shell` work
+  on another machine's box; see "Terminals on other machines".
 - `aio machines`, `aio node`, and `aio doctor` work on this machine only.
 
 ## Remove a machine
@@ -400,24 +400,35 @@ secrets broker. The following data crosses the link:
 - **Machine information**: names, versions, platforms, and capabilities.
 - **Requests between machines**: the hub can call a node's API. A node can
   call the hub's machine list, its health, and the routes that relay to
-  other machines. When the hub's role is `both`, a node can also list,
-  get, start, stop, and restart the hub's boxes, open their terminals and
-  the hub's event stream, and list the hub's projects and directories, so
-  the hub's tab in the Boxes app works. A node can't reach the hub's
-  settings, secrets, accounts, machine enrollment or revocation, or node
-  routes, and can't create, edit, or remove anything on the hub. With the
-  role `hub`, a node can reach only the machine list and health.
+  other machines. The relay routes accept any method and any API route on
+  the target node, so a node can call another node's API through the hub.
+  When the hub's role is `both`, a node can also list, get, start, stop, and
+  restart the hub's boxes, open their terminals (including a shell inside a
+  box's container) and the hub's event stream, and list the hub's projects
+  and directories, so the hub's tab in the Boxes app works. Because of this,
+  a compromised node can run commands in the hub's boxes. Use the role
+  `hub` on a hub that you don't want nodes to operate. A node can't reach
+  the hub's settings, accounts, machine enrollment or revocation, or node
+  routes through the API, and can't create, edit, or remove anything on the
+  hub through it. With the role `hub`, a node can reach only the machine
+  list, health, and relay routes.
 - **Secret values**: only the hub holds the 1Password service account
   token. A node's secrets broker asks the hub for each value and keeps it in
-  memory for the same 5 minutes as on a hub. While the hub is unreachable, a
-  node can't read a secret that it hasn't cached.
+  memory for the same 5 minutes as on a hub. The hub doesn't limit which
+  `op://` references an enrolled node can request, so a compromised node can
+  read any 1Password value that the hub's service account can read. While
+  the hub is unreachable, a node can't read a secret that it hasn't cached.
 - **Agent sign-ins**: the hub's Claude and Codex sign-in files, from the host
   folders (`~/.claude/.credentials.json` and `~/.codex/auth.json`) and from
   account folders. A node copies them from the hub when its link comes up.
   When an agent CLI on a node refreshes its sign-in, the node sends the file
-  to the hub, which sends it to every other node. A file arrives only where
-  its folder exists, so create the same accounts on each node. GitHub
-  Copilot keeps its token beside its settings, so its sign-in isn't copied.
+  to the hub, which overwrites its own copy and sends it to every other
+  node, so a compromised node can replace the sign-ins on every machine.
+  Revoking a machine closes its link but doesn't delete the sign-in files
+  that it already copied; sign out on that machine, or remove the files. A
+  file arrives only where its folder exists, so create the same accounts on
+  each node. GitHub Copilot keeps its token beside its settings, so its
+  sign-in isn't copied.
 
 If copied sign-ins keep signing machines out, sign in on each node instead.
 
