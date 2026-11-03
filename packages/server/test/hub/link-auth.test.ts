@@ -18,7 +18,12 @@ import {
   type HubIdentity,
 } from "../../src/hub/ca.js";
 import { Hub, refuseUpgrade } from "../../src/hub/hub.js";
-import { LINK_CAPABILITIES, LINK_PATHS, LINK_PROTOCOL } from "../../src/hub/protocol.js";
+import {
+  LINK_CAPABILITIES,
+  LINK_CLOSE,
+  LINK_PATHS,
+  LINK_PROTOCOL,
+} from "../../src/hub/protocol.js";
 import { ENROLLMENT_CODE_TTL_MS, codeKey, nodeProof } from "../../src/hub/registry.js";
 import { waitFor } from "../events/fake-engine.js";
 import { tempDir } from "../tmp.js";
@@ -293,6 +298,66 @@ describe("the link upgrade", () => {
     await closed;
     await waitFor(() => logged.some((m) => /m0000000000000004/.test(m)));
     expect(hub.port).not.toBeNull();
+  });
+
+  /** Links an enrolled machine, sends `hello`, and resolves with the hub's close code, if any. */
+  async function sendHello(
+    t: TestHub,
+    machineId: string,
+    hello: Record<string, unknown>,
+  ): Promise<{ ws: WebSocket; closed: Promise<number> }> {
+    await t.hub.issueCode();
+    const key = newNodeKey();
+    const cert = issueNodeCertificate(t.identity.ca, machineId, key.publicKey);
+    t.hub.registry.add({
+      id: machineId,
+      name: "node-hello",
+      certFingerprint: new X509Certificate(cert).fingerprint256,
+    });
+    const ws = new WebSocket(`wss://127.0.0.1:${t.hub.port!}${LINK_PATHS.connect}`, {
+      rejectUnauthorized: false,
+      key: key.key,
+      cert,
+    });
+    ws.on("error", () => undefined);
+    const closed = new Promise<number>((resolve) => ws.once("close", (code) => resolve(code)));
+    await new Promise<void>((resolve) => ws.once("open", () => resolve()));
+    ws.send(
+      JSON.stringify({
+        type: "hello",
+        protocol: LINK_PROTOCOL,
+        capabilities: [...LINK_CAPABILITIES],
+        serverVersion: "1.0.0-test",
+        platform: "linux",
+        name: "node-hello",
+        role: "node",
+        ...hello,
+      }),
+    );
+    return { ws, closed };
+  }
+
+  it("keeps an enrolled machine a node when its hello claims the hub role", async () => {
+    const t = await startHub();
+    const id = "m0000000000000005";
+    const { ws } = await sendHello(t, id, { role: "hub" });
+    await waitFor(() => t.hub.get(id) !== undefined);
+    expect(t.hub.registry.get(id)).toMatchObject({ role: "node", serverVersion: "1.0.0-test" });
+    expect(t.hub.machines().find((m) => m.id === id)?.role).toBe("node");
+    ws.terminate();
+  });
+
+  it.each([
+    ["serverVersion", { serverVersion: "x".repeat(1024 * 1024) }],
+    ["capability", { capabilities: ["x".repeat(1024 * 1024)] }],
+    ["capability count", { capabilities: Array.from({ length: 1000 }, (_, i) => `c${i}`) }],
+  ])("refuses a hello with an oversized %s and stores none of it", async (_field, hello) => {
+    const t = await startHub();
+    const id = "m0000000000000006";
+    const { closed } = await sendHello(t, id, hello);
+    expect(await closed).toBe(LINK_CLOSE.helloTimeout);
+    expect(t.hub.get(id)).toBeUndefined();
+    expect(t.hub.registry.get(id)).toMatchObject({ serverVersion: null, capabilities: [] });
   });
 });
 

@@ -110,11 +110,12 @@ function toRow(r: RawMachine): MachineRow {
   }
   const platform =
     r.platform === "linux" || r.platform === "darwin" || r.platform === "win32" ? r.platform : null;
-  const role = r.role === "hub" || r.role === "both" ? r.role : "node";
   return {
     id: r.id,
     name: r.name,
-    role,
+    // Every enrolled machine is a node of this hub, whatever an older server
+    // stored from the machine's own hello.
+    role: "node",
     certFingerprint: r.cert_fingerprint,
     revokedAt: r.revoked_at,
     serverVersion: r.server_version,
@@ -182,11 +183,14 @@ export class MachineRegistry {
       .run(machine.id, machine.name, machine.certFingerprint, at, at);
   }
 
-  /** Records what a machine said in its hello, and that it was seen now. */
+  /**
+   * Records what a machine said in its hello, and that it was seen now. A
+   * node's hello can't change its role: the hub doesn't trust a node's claim
+   * about its own standing.
+   */
   seen(
     id: string,
     hello?: {
-      role: Machine["role"];
       serverVersion: string;
       protocol: number;
       capabilities: string[];
@@ -197,10 +201,9 @@ export class MachineRegistry {
     if (hello) {
       this.db
         .prepare(
-          "UPDATE machines SET role = ?, server_version = ?, protocol = ?, capabilities = ?, platform = ?, last_seen = ?, updated_at = ? WHERE id = ?",
+          "UPDATE machines SET server_version = ?, protocol = ?, capabilities = ?, platform = ?, last_seen = ?, updated_at = ? WHERE id = ?",
         )
         .run(
-          hello.role,
           hello.serverVersion,
           hello.protocol,
           JSON.stringify(hello.capabilities),

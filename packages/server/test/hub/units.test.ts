@@ -92,7 +92,6 @@ describe("the machine registry", () => {
     expect(registry.byLiveName("NODE-ONE")?.id).toBe("m1");
     expect(registry.liveCount()).toBe(1);
     registry.seen("m1", {
-      role: "node",
       serverVersion: "1.0.0",
       protocol: 1,
       capabilities: ["http.v1"],

@@ -601,7 +601,6 @@ export class Hub {
     this.peers.set(machine.id, peer);
     old?.close(LINK_CLOSE.replaced, "A newer link from this machine replaced this one.");
     this.registry.seen(machine.id, {
-      role: hello.role,
       serverVersion: hello.serverVersion,
       protocol: hello.protocol,
       capabilities: hello.capabilities,

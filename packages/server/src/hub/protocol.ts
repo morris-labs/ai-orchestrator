@@ -78,13 +78,24 @@ export const LINK_CALLER_HEADER = "x-aio-link-caller";
 /** Paths under this prefix reach a link end's own handlers, never its API. */
 export const LINK_INTERNAL_PREFIX = "/link/v1/";
 
+/**
+ * The limits of a hello's text fields. The hub stores a node's hello and
+ * returns it in every machine list, so the frame limit is far too large for
+ * these fields. Each limit leaves ample room for what a real server sends.
+ */
+export const MAX_HELLO_CAPABILITIES = 64;
+export const MAX_HELLO_CAPABILITY = 64;
+export const MAX_HELLO_VERSION = 128;
+export const MAX_HELLO_PLATFORM = 32;
+export const MAX_HELLO_NAME = 256;
+
 export const LinkHelloSchema = z.object({
   type: z.literal("hello"),
   protocol: z.number().int(),
-  capabilities: z.array(z.string()),
-  serverVersion: z.string(),
-  platform: z.string(),
-  name: z.string(),
+  capabilities: z.array(z.string().max(MAX_HELLO_CAPABILITY)).max(MAX_HELLO_CAPABILITIES),
+  serverVersion: z.string().max(MAX_HELLO_VERSION),
+  platform: z.string().max(MAX_HELLO_PLATFORM),
+  name: z.string().max(MAX_HELLO_NAME),
   role: MachineRoleSchema,
 });
 export type LinkHello = z.infer<typeof LinkHelloSchema>;
