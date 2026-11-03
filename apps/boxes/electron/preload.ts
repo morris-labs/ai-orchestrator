@@ -7,7 +7,10 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { AioBridge } from "../src/bridge";
 
-const init = ipcRenderer.sendSync("aio:init") as { serverUrl: string };
+const init = ipcRenderer.sendSync("aio:init") as {
+  serverUrl: string;
+  remoteHub: boolean;
+};
 let tokenTaken = false;
 
 const api: AioBridge = {
@@ -19,6 +22,7 @@ const api: AioBridge = {
     return ipcRenderer.sendSync("aio:token") as string | null;
   },
   serverUrl: init.serverUrl,
+  remoteHub: init.remoteHub,
   openExternalTerminal: (req) => ipcRenderer.invoke("aio:open-external-terminal", req),
   launchReview: (req) => ipcRenderer.invoke("aio:launch-review", req),
   pickDirectory: (defaultPath) => ipcRenderer.invoke("aio:pick-directory", defaultPath),

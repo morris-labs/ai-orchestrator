@@ -23,6 +23,11 @@ export interface AioBridge {
   takeToken: () => string | null;
   /** The server origin, such as `https://127.0.0.1:21400`. */
   serverUrl: string;
+  /**
+   * True when the app controls an enrolled hub on another PC, so the server's
+   * files and containers aren't on this PC.
+   */
+  remoteHub?: boolean;
   /** Opens a host terminal attached to a box, through the attach-command route. */
   openExternalTerminal: (req: ExternalTerminalRequest) => Promise<BridgeResult>;
   /**

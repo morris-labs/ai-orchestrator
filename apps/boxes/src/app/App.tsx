@@ -1,6 +1,7 @@
 // The main window: menu bar, toolbar, update bars, the Boxes and Usage
 // tabs, the project list, the box table, the details panel, the terminal
 // tabs, and the status bar.
+import { LOCAL_MACHINE_ID } from "@aio/contracts";
 import {
   type BoxView,
   type ConvertToWorktreeResult,
@@ -254,7 +255,7 @@ export function App() {
   // notifications come from this PC's server, so only its view listens.
   const activateRef = useRef(machine.activate);
   activateRef.current = machine.activate;
-  const listensForNotifications = machine.isLocal;
+  const listensForNotifications = machine.id === LOCAL_MACHINE_ID;
   useEffect(
     () =>
       (listensForNotifications ? bridge() : undefined)?.onSelectBox((boxId) => {

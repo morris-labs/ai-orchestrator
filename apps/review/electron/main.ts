@@ -3,18 +3,25 @@
 // desktop notifications for the review kinds from those machines, a single
 // instance, and `aio-review://` deep links.
 import { readFileSync } from "node:fs";
+import { hostname } from "node:os";
 import { join } from "node:path";
 import { HOME_PATHS, type NotificationToggles } from "@aio/contracts";
+import type { HubProxy } from "@aio/contracts/gui-client";
 import {
   ApiClient,
   EventsConnection,
+  type WebSocketCtor,
   createMachineClient,
   isAppPage,
   isWebUrl,
 } from "@aio/ui/core";
 import {
+  CONNECTION_ARG,
   certificateVerdict,
   dataFile,
+  guiClientDir,
+  openConnectionWindow,
+  prepareConnection,
   pinReader,
   pinnedTransport,
   serverUrl,
@@ -52,6 +59,8 @@ import {
 
 /** The token, read again for every use, so a server set up after the app started still works. */
 function readToken(): string | null {
+  // With a hub, this is the token that works only on this app's own proxy.
+  if (hubProxy) return hubProxy.token;
   if (process.env.AIO_SERVER_TOKEN) return process.env.AIO_SERVER_TOKEN;
   try {
     return readFileSync(dataFile(HOME_PATHS.serverToken), "utf8").trim() || null;
@@ -68,10 +77,12 @@ function readToken(): string | null {
  */
 const readPin = pinReader(dataFile(HOME_PATHS.serverCert));
 
+/** The proxy to an enrolled hub, or `null` for the local server. */
+let hubProxy: HubProxy | null = null;
 const config = { serverUrl: serverUrl() };
 const DEV_URL = process.env.AIO_REVIEW_DEV_URL;
 /** The pages that get the token; anything else is foreign. */
-const APP_PAGES = [rendererUrl(config.serverUrl, null), ...(DEV_URL ? [DEV_URL] : [])];
+let APP_PAGES = [rendererUrl(config.serverUrl, null), ...(DEV_URL ? [DEV_URL] : [])];
 
 /** The client options with the current token. */
 function clientOptions() {
@@ -80,7 +91,9 @@ function clientOptions() {
   return {
     baseUrl: config.serverUrl,
     token: readToken(),
-    ...pinnedTransport(WebSocket, readPin),
+    ...(hubProxy
+      ? { WebSocket: WebSocket as unknown as WebSocketCtor }
+      : pinnedTransport(WebSocket, readPin)),
     socketAuth: "header" as const,
   };
 }
@@ -136,6 +149,7 @@ function updateTray() {
       { label: "Open", click: () => show() },
       { label: "Dashboard", click: () => show("#/dashboard") },
       { label: "Start a run", click: () => show("#/launch") },
+      { label: "Connection...", click: () => showConnection() },
       { type: "separator" },
       { label: "Quit", click: () => app.quit() },
     ]),
@@ -187,6 +201,30 @@ function retryServerPage() {
       .then(() => void win?.loadURL(pageUrl))
       .catch(retryServerPage);
   }, 5000);
+}
+
+/** Opens the window with the local or hub connection setting. */
+function showConnection(notice: string | null = null) {
+  openConnectionWindow(
+    {
+      createWindow: () =>
+        new BrowserWindow({
+          width: 520,
+          height: 560,
+          title: "Connection",
+          backgroundColor: "#0d0d0d",
+          webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false },
+        }),
+      relaunch: () => {
+        quitting = true;
+        app.relaunch({ args: process.argv.slice(1).filter((a) => a !== CONNECTION_ARG) });
+        app.quit();
+      },
+    },
+    guiClientDir(app.getPath("appData")),
+    hostname().split(".")[0] || "this-pc",
+    notice,
+  );
 }
 
 function createWindow(link: ReturnType<typeof parseDeepLink>) {
@@ -350,6 +388,7 @@ if (!app.requestSingleInstanceLock()) {
   if (exe === undefined) app.setAsDefaultProtocolClient(scheme);
   else app.setAsDefaultProtocolClient(scheme, exe, exeArgs);
   app.on("second-instance", (_e, argv) => {
+    if (argv.includes(CONNECTION_ARG)) return showConnection();
     const link = parseDeepLink(argv);
     show(link ? launcherHash(link) : undefined);
   });
@@ -373,7 +412,16 @@ if (!app.requestSingleInstanceLock()) {
     const trusted = typeof url === "string" && isAppPage(url, APP_PAGES);
     e.returnValue = trusted ? readToken() : null;
   });
-  void app.whenReady().then(() => {
+  void app.whenReady().then(async () => {
+    const { proxy, notice } = await prepareConnection(
+      guiClientDir(app.getPath("appData")),
+      hostname().split(".")[0] || "this-pc",
+    );
+    if (proxy) {
+      hubProxy = proxy;
+      config.serverUrl = proxy.url;
+      APP_PAGES = [rendererUrl(proxy.url, null), ...(DEV_URL ? [DEV_URL] : [])];
+    }
     // Windows only: ties notifications to the installer's Start menu shortcut.
     if (HOST_OS === "win32") app.setAppUserModelId(APP_USER_MODEL_ID);
     // Pages and their sockets on the server's host load only from a server
@@ -386,5 +434,9 @@ if (!app.requestSingleInstanceLock()) {
     updateTray();
     createWindow(parseDeepLink(process.argv));
     connectEvents();
+    // A PC with no server and no enrollment has nothing else to connect to.
+    if (notice || process.argv.includes(CONNECTION_ARG) || (!hubProxy && !readToken())) {
+      showConnection(notice);
+    }
   });
 }

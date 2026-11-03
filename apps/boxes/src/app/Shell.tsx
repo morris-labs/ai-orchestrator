@@ -27,6 +27,7 @@ import {
 } from "../logic/machines";
 import { App } from "./App";
 import { CHORDS } from "./chords";
+import { bridge } from "../bridge";
 import { MachineProvider, MachineScope, type MachineInfo } from "./machine";
 import { useMachines } from "./useMachines";
 
@@ -108,7 +109,9 @@ export function Shell({ machineClient, pollMs }: ShellProps) {
     activate: () => setView(id),
     openMachines,
   });
-  const localInfo = infoFor(LOCAL_MACHINE_ID, local?.name ?? "This PC", true);
+  // With an enrolled hub, the server's machine isn't this PC, so its terminals
+  // and directories go through the server, as another machine's do.
+  const localInfo = infoFor(LOCAL_MACHINE_ID, local?.name ?? "This PC", !bridge()?.remoteHub);
 
   return (
     <div className="bx-shell">

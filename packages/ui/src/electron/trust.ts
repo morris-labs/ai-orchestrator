@@ -12,6 +12,7 @@ import {
 import type { WebSocketCtor } from "../api/client";
 
 export { dataFile, serverUrl } from "./server-config";
+export * from "./connection";
 
 /**
  * Returns a function that reads the certificate in `certFile` each time it

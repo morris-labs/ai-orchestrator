@@ -3,23 +3,30 @@
 // notifications for box events, a single-instance lock, and the bridge
 // calls that need the host (external terminals, the review app, pickers).
 import { HOME_PATHS, boxWorkDir, type BoxView } from "@aio/contracts";
+import type { HubProxy } from "@aio/contracts/gui-client";
 import {
   ApiClient,
   EventsConnection,
+  type WebSocketCtor,
   errorMessage,
   isAllowedOpenPath,
   isAppPage,
   isWebUrl,
 } from "@aio/ui/core";
 import {
+  CONNECTION_ARG,
   certificateVerdict,
   dataFile,
+  guiClientDir,
+  openConnectionWindow,
+  prepareConnection,
   pinReader,
   pinnedTransport,
   serverUrl,
 } from "@aio/ui/electron-main";
 import { execFileSync, spawn } from "node:child_process";
 import { accessSync, constants, readFileSync, statSync } from "node:fs";
+import { hostname } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import WebSocket from "ws";
@@ -65,12 +72,14 @@ import {
 } from "./logic";
 
 const HOST_OS = hostOsOf(process.platform);
-const SERVER_URL = serverUrl();
-const BOXES_URL = process.env.AIO_BOXES_URL ?? `${SERVER_URL}/boxes/`;
+let SERVER_URL = serverUrl();
+let BOXES_URL = process.env.AIO_BOXES_URL ?? `${SERVER_URL}/boxes/`;
+/** The proxy to an enrolled hub, or `null` for the local server. */
+let hubProxy: HubProxy | null = null;
 /** The copy of the page built into the app, shown when the server doesn't answer. */
 const LOCAL_PAGE = join(__dirname, "../renderer/index.html");
 /** The pages that get the token and the bridge; anything else is foreign. */
-const APP_PAGES = [BOXES_URL, pathToFileURL(LOCAL_PAGE).href];
+let APP_PAGES = [BOXES_URL, pathToFileURL(LOCAL_PAGE).href];
 
 /** True when an IPC message comes from one of the app's own pages. */
 function fromApp(e: IpcMainEvent | IpcMainInvokeEvent): boolean {
@@ -89,6 +98,8 @@ let quitting = false;
 let counts: TrayCounts | null = null;
 
 function readToken(): string | null {
+  // With a hub, this is the token that works only on this app's own proxy.
+  if (hubProxy) return hubProxy.token;
   // A test or a wrapper can hand the token over without the file.
   if (process.env.AIO_SERVER_TOKEN) return process.env.AIO_SERVER_TOKEN;
   try {
@@ -112,7 +123,9 @@ function client(): ApiClient {
   return new ApiClient({
     baseUrl: SERVER_URL,
     token: readToken(),
-    ...pinnedTransport(WebSocket, readPin),
+    ...(hubProxy
+      ? { WebSocket: WebSocket as unknown as WebSocketCtor }
+      : pinnedTransport(WebSocket, readPin)),
     socketAuth: "header",
   });
 }
@@ -154,6 +167,30 @@ function showWindow() {
   if (win.isMinimized()) win.restore();
   win.show();
   win.focus();
+}
+
+/** Opens the window with the local or hub connection setting. */
+function showConnection(notice: string | null = null) {
+  openConnectionWindow(
+    {
+      createWindow: () =>
+        new BrowserWindow({
+          width: 520,
+          height: 560,
+          title: "Connection",
+          backgroundColor: "#1b1c1e",
+          webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false },
+        }),
+      relaunch: () => {
+        quitting = true;
+        app.relaunch({ args: process.argv.slice(1).filter((a) => a !== CONNECTION_ARG) });
+        app.quit();
+      },
+    },
+    guiClientDir(app.getPath("appData")),
+    hostname().split(".")[0] || "this-pc",
+    notice,
+  );
 }
 
 function createWindow() {
@@ -312,6 +349,7 @@ function updateTray() {
       { label: trayText(counts), enabled: false },
       { type: "separator" },
       { label: "Show AI Orchestrator", click: showWindow },
+      { label: "Connection...", click: () => showConnection() },
       {
         label: "Review",
         click: () => {
@@ -400,7 +438,7 @@ async function reportedDirectories(): Promise<string[]> {
 
 function registerIpc() {
   ipcMain.on("aio:init", (e) => {
-    e.returnValue = { serverUrl: SERVER_URL };
+    e.returnValue = { serverUrl: SERVER_URL, remoteHub: hubProxy !== null };
   });
   // The preload asks once per page load and hands the token to the page once.
   ipcMain.on("aio:token", (e) => {
@@ -503,13 +541,26 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.setName("AI Orchestrator");
-  app.on("second-instance", showWindow);
+  app.on("second-instance", (_e, argv) => {
+    if (argv.includes(CONNECTION_ARG)) showConnection();
+    else showWindow();
+  });
   // macOS: a click on the Dock icon of a running app with no visible window.
   app.on("activate", showWindow);
   app.on("before-quit", () => {
     quitting = true;
   });
-  void app.whenReady().then(() => {
+  void app.whenReady().then(async () => {
+    const { proxy, notice } = await prepareConnection(
+      guiClientDir(app.getPath("appData")),
+      hostname().split(".")[0] || "this-pc",
+    );
+    if (proxy) {
+      hubProxy = proxy;
+      SERVER_URL = proxy.url;
+      BOXES_URL = `${proxy.url}/boxes/`;
+      APP_PAGES = [BOXES_URL, pathToFileURL(LOCAL_PAGE).href];
+    }
     const menu = applicationMenuTemplate(HOST_OS);
     Menu.setApplicationMenu(menu ? Menu.buildFromTemplate(menu) : null);
     // Windows ties notifications to the Start menu shortcut with this id.
@@ -534,6 +585,10 @@ if (!app.requestSingleInstanceLock()) {
     updateTray();
     refreshCounts();
     watchEvents();
+    // A PC with no server and no enrollment has nothing else to connect to.
+    if (notice || process.argv.includes(CONNECTION_ARG) || (!hubProxy && !readToken())) {
+      showConnection(notice);
+    }
   });
   app.on("window-all-closed", () => {
     if (!tray || !hideToTray) app.quit();

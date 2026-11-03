@@ -1,7 +1,7 @@
 // The machine tabs and the Machines page, against one fake server per
 // machine behind a fake hub that forwards /api/v1/machines/ID/proxy/REST
 // to machine ID's /api/v1/REST.
-import type { EnrollmentCode, Machine } from "@aio/contracts";
+import type { EnrollmentCode, GuiClient, Machine } from "@aio/contracts";
 import { ApiClient, createMachineClient } from "@aio/ui";
 import { FakeApiError, FakeServer, makeBoxView, makeEvent } from "@aio/ui/testing";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
@@ -53,6 +53,8 @@ interface Hub {
   socketPaths: string[];
   revoked: string[];
   codes: number;
+  /** The GUI apps; absent means the server refuses the route. */
+  guiClients?: GuiClient[];
 }
 
 /** Renders the shell against a fake hub with `servers` behind it; `local` is this PC. */
@@ -61,8 +63,16 @@ function renderHub(opts: {
   servers?: Record<string, FakeServer>;
   machines: Machine[] | "unsupported";
   pollMs?: number;
+  guiClients?: GuiClient[];
 }) {
-  const hub: Hub = { machines: opts.machines, paths: [], socketPaths: [], revoked: [], codes: 0 };
+  const hub: Hub = {
+    machines: opts.machines,
+    paths: [],
+    socketPaths: [],
+    revoked: [],
+    codes: 0,
+    guiClients: opts.guiClients,
+  };
   const servers = opts.servers ?? {};
   const json = (status: number, body: unknown) =>
     new Response(body === undefined ? "" : JSON.stringify(body), {
@@ -85,6 +95,25 @@ function renderHub(opts: {
       if (hub.machines === "unsupported")
         return json(404, { error: { code: "not_found", message: "No route." } });
       return json(200, { machines: hub.machines });
+    }
+    if (url.pathname === "/api/v1/gui-clients" && method === "GET") {
+      if (!hub.guiClients) return json(403, { error: { code: "unauthorized", message: "No." } });
+      return json(200, { clients: hub.guiClients, port: 21403 });
+    }
+    if (url.pathname === "/api/v1/gui-clients/enrollment-codes" && method === "POST") {
+      return json(201, {
+        code: "WXYZ-5678",
+        expiresAt: "2026-11-01T12:10:00.000Z",
+        hubUrl: "https://hub.example.com:21403",
+      });
+    }
+    if (/^\/api\/v1\/gui-clients\/[^/]+$/.test(url.pathname) && method === "DELETE") {
+      hub.guiClients = (hub.guiClients ?? []).map((c) => ({
+        ...c,
+        status: "revoked" as const,
+        revokedAt: T_SEEN,
+      }));
+      return json(200, { ok: true });
     }
     if (url.pathname === "/api/v1/machines/enrollment-codes" && method === "POST") {
       hub.codes += 1;
@@ -635,9 +664,14 @@ describe("machine tabs", () => {
 });
 
 describe("Machines page", () => {
-  async function openPage(machines: Machine[]) {
+  async function openPage(machines: Machine[], options: { guiClients?: GuiClient[] } = {}) {
     const user = userEvent.setup();
-    const utils = renderHub({ local: siteServer(), servers: { "node-b": nodeServer() }, machines });
+    const utils = renderHub({
+      local: siteServer(),
+      servers: { "node-b": nodeServer() },
+      machines,
+      ...options,
+    });
     await user.click(
       await within(await screen.findByRole("tablist", { name: "Machines" })).findByRole("tab", {
         name: "Machines",
@@ -697,6 +731,35 @@ describe("Machines page", () => {
     await user.click(within(machineTabs()).getByRole("tab", { name: "main-pc (this PC)" }));
     await screen.findByRole("cell", { name: "Site work" });
     expect(screen.queryByRole("tablist", { name: "Machines" })).toBeNull();
+  });
+
+  it("hides the GUI apps section when the server refuses it", async () => {
+    await openPage([LOCAL, machine({ id: "node-b", name: "node-b" })]);
+    expect(screen.queryByRole("button", { name: "Add GUI App..." })).toBeNull();
+  });
+
+  it("issues a GUI code, and lists and revokes GUI apps", async () => {
+    const { user } = await openPage([LOCAL, machine({ id: "node-b", name: "node-b" })], {
+      guiClients: [
+        {
+          id: "g1",
+          name: "desk-pc",
+          status: "active",
+          createdAt: T_SEEN,
+          lastSeen: null,
+          revokedAt: null,
+        },
+      ],
+    });
+    await user.click(await screen.findByRole("button", { name: "Add GUI App..." }));
+    const dialog = await screen.findByRole("dialog", { name: "Add GUI App" });
+    expect(within(dialog).getByLabelText("GUI enrollment code")).toHaveTextContent("WXYZ-5678");
+    await user.click(within(dialog).getByRole("button", { name: "Close" }));
+    expect(await screen.findByRole("cell", { name: "desk-pc" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Revoke" }));
+    const confirm = await screen.findByRole("dialog", { name: "Revoke GUI App" });
+    await user.click(within(confirm).getByRole("button", { name: "Yes" }));
+    expect(await screen.findByRole("cell", { name: "Revoked" })).toBeInTheDocument();
   });
 
   it("shows an enrollment code with the join command", async () => {

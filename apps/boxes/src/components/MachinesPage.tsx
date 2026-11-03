@@ -17,6 +17,8 @@ import {
   type SortState,
 } from "@aio/ui";
 import { useMemo, useState } from "react";
+import { bridge } from "../bridge";
+import { GuiClientsSection } from "./GuiClientsSection";
 import {
   createEnrollmentCode,
   diskText,
@@ -67,7 +69,9 @@ export function MachinesPage(props: MachinesPageProps) {
           <span className="bx-status">
             <StatusDot state={machineDot(m)} title={machineStatusLabel[m.status]} />
             {m.name}
-            {m.isLocal && <span className="bx-badge">this PC</span>}
+            {m.isLocal && (
+              <span className="bx-badge">{bridge()?.remoteHub ? "hub" : "this PC"}</span>
+            )}
           </span>
         ),
       },
@@ -253,6 +257,7 @@ export function MachinesPage(props: MachinesPageProps) {
         sort={sort}
         onSortChange={setSort}
       />
+      <GuiClientsSection client={props.client} />
       {menu.element}
       {code && <EnrollmentDialog code={code} onClose={() => setCode(null)} />}
     </div>
