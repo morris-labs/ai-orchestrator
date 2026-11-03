@@ -60,11 +60,15 @@ home directory, your Docker access, and your 1Password sign-in.
   the server 5 seconds after it exits with an error, keeps the umask 077 of
   the systemd unit, and logs to `~/Library/Logs/aio-server.log`. Its `PATH`
   adds Homebrew, `/usr/local/bin`, and Docker Desktop's `bin` folder, since
-  launchd starts agents with only the system folders.
+  launchd starts agents with only the system folders. When you run the
+  setup fix from a server that already runs as this agent, the fix writes the
+  plist but doesn't reload the agent, because a reload stops the server
+  before the agent loads again. launchd reads the plist at the next login, or
+  when you run `aio-server install-service` in a terminal.
 - **Windows**: the `aio-server` task in the Task Scheduler library root,
-  which starts the server at your logon and again every 5 minutes. A start
-  while the server runs is ignored, so a server that exited comes back
-  within 5 minutes. The task has no time limit, keeps running on battery,
+  which starts the server at your logon and, from the install onward, every
+  5 minutes while you're logged on. A start while the server runs is ignored,
+  so a server that exited comes back within 5 minutes. The task has no time limit, keeps running on battery,
   and runs without elevation. It runs `aio-serverw.exe`, a copy of Node.js
   without a console window, and the server appends its log to
   `~\.ai-orchestrator\server.log` (`--log-file`).
@@ -327,7 +331,9 @@ handling yet.
 
 None of the following ran on a real Mac or Windows PC:
 
-- `launchctl bootstrap` of the generated plist, and the restart behavior.
+- `launchctl bootstrap` of the generated plist, the restart behavior, the
+  `bootstrap` retry after `bootout`, and the `XPC_SERVICE_NAME` check that
+  detects a server running as its own agent.
 - `schtasks /Create /XML` with the generated task, as a standard user, and
   the 5-minute restart.
 - `aio-serverw.exe` starting without a console, and the server writing to

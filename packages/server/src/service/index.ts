@@ -15,6 +15,7 @@ import {
   launchAgentInstalled,
   launchAgentLogPath,
   launchAgentPath,
+  runningAsLaunchAgent,
 } from "./launchd.js";
 import { installScheduledTask, scheduledTaskInstalled, TASK_NAME, taskUser } from "./schtasks.js";
 
@@ -81,6 +82,7 @@ export async function installServerService(opts: ServerServiceOptions): Promise<
         pathDirs: [path.posix.dirname(program)],
         runner: opts.runner,
         log: opts.log,
+        runningAsAgent: runningAsLaunchAgent(p.env),
       });
     case "schtasks": {
       const dataDir = opts.dataDir ?? defaultDataDir(p);

@@ -1,6 +1,7 @@
 // The launchd LaunchAgent that runs `aio-server` on macOS.
 import { access, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { ApiError } from "../api/errors.js";
 import type { ProcessRunner } from "../jobs/process.js";
 
@@ -113,6 +114,10 @@ export function launchAgentPlist(opts: {
  * clears a disabled state that `launchctl disable` left behind, and
  * `bootstrap` loads the plist, which starts the server through
  * `RunAtLoad`.
+ *
+ * `bootout` can return while launchd still tears the old agent down, and a
+ * `bootstrap` in that window fails with `5: Input/output error`, so
+ * `installLaunchAgent` retries `bootstrap`.
  */
 export function launchctlCommands(
   uid: number,
@@ -126,10 +131,27 @@ export function launchctlCommands(
   ];
 }
 
+/** How many times `installLaunchAgent` tries `bootstrap`, about 1 second apart. */
+const BOOTSTRAP_ATTEMPTS = 10;
+
+/**
+ * True when this process descends from the loaded agent: launchd sets
+ * `XPC_SERVICE_NAME` to the label of the job that it starts.
+ */
+export function runningAsLaunchAgent(env: NodeJS.ProcessEnv): boolean {
+  return env.XPC_SERVICE_NAME === LAUNCHD_LABEL;
+}
+
 /**
  * Writes the LaunchAgent plist, then loads and starts it with
  * `launchctl`. Throws `conflict` with launchctl's output when a step that
  * must succeed fails.
+ *
+ * With `runningAsAgent`, the plist is written but `launchctl` doesn't run:
+ * `bootout` would stop this process before it runs `bootstrap`, which
+ * leaves the agent unloaded, and `KeepAlive` doesn't restart an unloaded
+ * agent. The running agent stays loaded, and launchd reads the plist at the
+ * next login.
  */
 export async function installLaunchAgent(opts: {
   home: string;
@@ -138,21 +160,36 @@ export async function installLaunchAgent(opts: {
   pathDirs?: readonly string[];
   runner: ProcessRunner;
   log?: (s: string) => void;
+  runningAsAgent?: boolean;
+  bootstrapRetryMs?: number;
 }): Promise<{ path: string }> {
   const plist = launchAgentPath(opts.home);
   await mkdir(path.posix.dirname(plist), { recursive: true });
   await mkdir(path.posix.dirname(launchAgentLogPath(opts.home)), { recursive: true });
   await writeFile(plist, launchAgentPlist(opts), { mode: 0o644 });
   opts.log?.(`Wrote ${plist}.\r\n`);
+  if (opts.runningAsAgent) {
+    opts.log?.(
+      "The server runs as this agent, so it stays loaded: reloading it would stop the server " +
+        "before the agent loads again. launchd reads the plist at the next login. To load it " +
+        "sooner, run aio-server install-service in a terminal.\r\n",
+    );
+    return { path: plist };
+  }
   for (const { args, mayFail } of launchctlCommands(opts.uid, plist)) {
-    opts.log?.(`Running: launchctl ${args.join(" ")}\r\n`);
-    const result = await opts.runner.run("launchctl", args, { timeoutMs: 30_000 });
-    if (result.code !== 0 && !mayFail) {
+    const attempts = args[0] === "bootstrap" ? BOOTSTRAP_ATTEMPTS : 1;
+    for (let attempt = 1; ; attempt++) {
+      opts.log?.(`Running: launchctl ${args.join(" ")}\r\n`);
+      const result = await opts.runner.run("launchctl", args, { timeoutMs: 30_000 });
+      if (result.code === 0 || mayFail) break;
       const output = (result.stderr || result.stdout).trim();
-      throw new ApiError(
-        "conflict",
-        `launchctl ${args.join(" ")} failed${output ? `: ${output}` : "."}`,
-      );
+      if (attempt >= attempts) {
+        throw new ApiError(
+          "conflict",
+          `launchctl ${args.join(" ")} failed${output ? `: ${output}` : "."}`,
+        );
+      }
+      await delay(opts.bootstrapRetryMs ?? 1000);
     }
   }
   return { path: plist };

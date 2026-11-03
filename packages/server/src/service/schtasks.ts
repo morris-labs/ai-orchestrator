@@ -58,11 +58,16 @@ export function taskUser(env: NodeJS.ProcessEnv): string | undefined {
 /**
  * The task definition, in Task Scheduler's XML schema.
  *
- * - The logon trigger starts the server when the user logs on. It repeats
- *   every 5 minutes, and `IgnoreNew` drops a start while the server runs,
- *   so a server that exited comes back within 5 minutes. Task Scheduler's
- *   own `RestartOnFailure` covers only a task that fails to start, not a
- *   program that exits with an error.
+ * - The logon trigger starts the server when the user logs on. A separate
+ *   time trigger, which begins at `start` (the install time by default),
+ *   repeats every 5 minutes, and `IgnoreNew` drops a start while the server
+ *   runs, so a server that exited comes back within 5 minutes. A logon
+ *   trigger's repetition begins only when that trigger fires, which would
+ *   leave the server that install starts with `/Run` without a restart
+ *   until the next logon. An `InteractiveToken` task doesn't start while
+ *   the user is logged off. Task Scheduler's own `RestartOnFailure` covers
+ *   only a task that fails to start, not a program that exits with an
+ *   error.
  * - `ExecutionTimeLimit` `PT0S` turns off the default 72-hour limit,
  *   after which Task Scheduler would stop the server.
  * - The battery settings keep the server running on a laptop that
@@ -76,7 +81,9 @@ export function taskXml(opts: {
   workingDirectory: string;
   user?: string;
   description?: string;
+  start?: Date;
 }): string {
+  const startBoundary = (opts.start ?? new Date()).toISOString().replace(/\.\d+Z$/, "Z");
   const user = opts.user ? `<UserId>${xml(opts.user)}</UserId>` : "";
   return [
     '<?xml version="1.0" encoding="UTF-16"?>',
@@ -88,11 +95,15 @@ export function taskXml(opts: {
     "    <LogonTrigger>",
     "      <Enabled>true</Enabled>",
     ...(user ? [`      ${user}`] : []),
+    "    </LogonTrigger>",
+    "    <TimeTrigger>",
+    "      <Enabled>true</Enabled>",
+    `      <StartBoundary>${startBoundary}</StartBoundary>`,
     "      <Repetition>",
     "        <Interval>PT5M</Interval>",
     "        <StopAtDurationEnd>false</StopAtDurationEnd>",
     "      </Repetition>",
-    "    </LogonTrigger>",
+    "    </TimeTrigger>",
     "  </Triggers>",
     "  <Principals>",
     '    <Principal id="Author">',
@@ -158,6 +169,7 @@ export async function installScheduledTask(opts: {
   args: readonly string[];
   workingDirectory: string;
   user?: string;
+  start?: Date;
   runner: ProcessRunner;
   log?: (s: string) => void;
 }): Promise<{ path: string }> {

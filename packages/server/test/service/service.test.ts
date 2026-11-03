@@ -111,8 +111,45 @@ describe("the launchd agent", () => {
         uid: 501,
         programArguments: ["/n"],
         runner,
+        bootstrapRetryMs: 0,
       }),
     ).rejects.toMatchObject({ code: "conflict", message: expect.stringContaining("Input/output") });
+    expect(runner.runs.filter((r) => r.argv[1] === "bootstrap")).toHaveLength(10);
+    expect(runner.runs.filter((r) => r.argv[1] === "bootout")).toHaveLength(1);
+  });
+
+  it("retries bootstrap while launchd tears the old agent down", async () => {
+    let bootstraps = 0;
+    const runner = new FakeRunner((argv) =>
+      argv[1] === "bootstrap" && ++bootstraps < 3
+        ? { code: 5, stderr: "Bootstrap failed: 5: Input/output error" }
+        : {},
+    );
+    await installLaunchAgent({
+      home: tempDir("aio-launchd-"),
+      uid: 501,
+      programArguments: ["/n"],
+      runner,
+      bootstrapRetryMs: 0,
+    });
+    expect(bootstraps).toBe(3);
+    expect(runner.runs.filter((r) => r.argv[1] === "enable")).toHaveLength(1);
+  });
+
+  it("retries only bootstrap, not a failed enable", async () => {
+    const runner = new FakeRunner((argv) =>
+      argv[1] === "enable" ? { code: 1, stderr: "denied" } : {},
+    );
+    await expect(
+      installLaunchAgent({
+        home: tempDir("aio-launchd-"),
+        uid: 501,
+        programArguments: ["/n"],
+        runner,
+        bootstrapRetryMs: 0,
+      }),
+    ).rejects.toMatchObject({ code: "conflict" });
+    expect(runner.runs.map((r) => r.argv[1])).toEqual(["bootout", "enable"]);
   });
 });
 
@@ -141,6 +178,31 @@ describe("the Windows logon task", () => {
     ],
     workingDirectory: "C:\\Users\\alex",
     user: "WORKSTATION\\alex",
+  });
+
+  /** The names of the child elements of a trigger, in order. */
+  function triggerChildren(text: string, trigger: string): string[] {
+    const body = text.split(`<${trigger}>`)[1]?.split(`</${trigger}>`)[0] ?? "";
+    return [...body.matchAll(/^ {6}<(\w+)>/gm)].map((m) => m[1] as string);
+  }
+
+  it("orders each trigger's children the way the Task Scheduler schema does", () => {
+    expect(triggerChildren(xml, "LogonTrigger")).toEqual(["Enabled", "UserId"]);
+    expect(triggerChildren(xml, "TimeTrigger")).toEqual(["Enabled", "StartBoundary", "Repetition"]);
+  });
+
+  it("repeats from the install time, not from a logon that hasn't happened", () => {
+    const at = taskXml({
+      command: "n.exe",
+      args: [],
+      workingDirectory: "C:\\",
+      start: new Date("2030-01-02T03:04:05.678Z"),
+    });
+    expect(at).toContain("<StartBoundary>2030-01-02T03:04:05Z</StartBoundary>");
+    expect(at.split("<LogonTrigger>")[1]?.split("</LogonTrigger>")[0]).not.toContain("Repetition");
+    expect(at.split("<TimeTrigger>")[1]?.split("</TimeTrigger>")[0]).toContain(
+      "<Interval>PT5M</Interval>",
+    );
   });
 
   it("starts at the user's logon and again every 5 minutes, without a time limit", () => {
@@ -249,6 +311,39 @@ describe("install-service on each host", () => {
     expect(await readFile(path, "utf8")).toContain("<string>/opt/aio/node/bin:/opt/homebrew/bin:");
     expect(runner.runs.at(-1)?.argv).toEqual(["launchctl", "bootstrap", "gui/502", path]);
     expect(await serverServiceInstalled(p, runner)).toBe(true);
+  });
+
+  it("leaves the agent loaded when the server runs as that agent", async () => {
+    const home = tempDir("aio-svc-mac-");
+    const runner = new FakeRunner();
+    const logs: string[] = [];
+    const { path } = await installServerService({
+      platform: hostPlatform("darwin", {
+        home,
+        uid: 502,
+        env: { XPC_SERVICE_NAME: LAUNCHD_LABEL },
+      }),
+      command: ["/opt/aio/node/bin/node", "/opt/aio/server/dist/main.js"],
+      runner,
+      log: (s) => logs.push(s),
+    });
+    expect(runner.runs).toEqual([]);
+    expect(await readFile(path, "utf8")).toContain("<string>/opt/aio/server/dist/main.js</string>");
+    expect(logs.join("")).toContain("in a terminal");
+  });
+
+  it("reloads the agent when another job or a terminal runs the install", async () => {
+    const runner = new FakeRunner();
+    await installServerService({
+      platform: hostPlatform("darwin", {
+        home: tempDir("aio-svc-mac-"),
+        uid: 502,
+        env: { XPC_SERVICE_NAME: "application.com.apple.Terminal.1" },
+      }),
+      command: ["/n", "/m.js"],
+      runner,
+    });
+    expect(runner.runs.map((r) => r.argv[1])).toEqual(["bootout", "enable", "bootstrap"]);
   });
 
   it("refuses a macOS host without a user id", async () => {
