@@ -1,5 +1,5 @@
 // Installs a window-level handler for application chords.
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import { findBinding, isApplicationChord, type ChordBinding } from "./chords";
 
 /**
@@ -9,7 +9,9 @@ import { findBinding, isApplicationChord, type ChordBinding } from "./chords";
  */
 export function useChords(bindings: readonly ChordBinding[]): void {
   const ref = useRef(bindings);
-  useEffect(() => {
+  // A key pressed right after a commit runs the bindings of that commit, not
+  // those of an earlier render, so this doesn't wait for passive effects.
+  useLayoutEffect(() => {
     ref.current = bindings;
   });
   useEffect(() => {

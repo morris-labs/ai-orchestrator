@@ -158,7 +158,13 @@ export class SettingsService {
       if (p.brokerTransport === null || p.brokerTransport === "auto") delete next.brokerTransport;
       else next.brokerTransport = p.brokerTransport;
     }
-    for (const key of ["machineName", "linkPort", "linkHost", "linkAddress", "nodeGrants"] as const) {
+    for (const key of [
+      "machineName",
+      "linkPort",
+      "linkHost",
+      "linkAddress",
+      "nodeGrants",
+    ] as const) {
       const v = p[key];
       if (v === undefined) continue;
       if (v === null) delete next[key];

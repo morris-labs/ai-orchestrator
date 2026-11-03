@@ -1,6 +1,7 @@
 // useChords against a focused terminal: application chords go to the app,
 // and every other key, plain Ctrl ones included, reaches the terminal.
 import { fireEvent, render, screen } from "@testing-library/react";
+import { useLayoutEffect } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { useChords, type ChordBinding } from "../src/index";
 
@@ -25,6 +26,26 @@ function setup(bindings: ChordBinding[]) {
 }
 
 describe("useChords", () => {
+  it("runs the bindings of the latest commit before passive effects flush", () => {
+    const stale = vi.fn();
+    const latest = vi.fn();
+    const Pressing = ({ run, press }: { run: () => void; press: boolean }) => {
+      useChords([{ chord: "Ctrl+Shift+N", run }]);
+      useLayoutEffect(() => {
+        if (press) {
+          window.dispatchEvent(
+            new KeyboardEvent("keydown", { key: "N", code: "KeyN", ctrlKey: true, shiftKey: true }),
+          );
+        }
+      });
+      return null;
+    };
+    const { rerender } = render(<Pressing run={stale} press={false} />);
+    rerender(<Pressing run={latest} press />);
+    expect(stale).not.toHaveBeenCalled();
+    expect(latest).toHaveBeenCalledTimes(1);
+  });
+
   it("runs a bound Ctrl+Shift chord and keeps it from the focused terminal", () => {
     const run = vi.fn();
     const { terminal, terminalKeys } = setup([{ chord: "Ctrl+Shift+N", run }]);
