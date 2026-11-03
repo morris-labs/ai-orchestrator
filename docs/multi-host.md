@@ -610,8 +610,15 @@ A copy works as follows:
 - The hub and nodes refuse a file that isn't a non-empty JSON object.
 - A file arrives only where its folder exists, so create the same accounts on
   each node.
+- Sign-outs don't sync. If you sign out or delete a sign-in file on the hub,
+  the nodes keep their copies, and a node that deleted its copy gets the
+  hub's file again at the next pull. To remove a sign-in everywhere, sign out
+  or delete the file on the hub and on each node.
 - Revoking a machine closes its link but doesn't delete the sign-in files that
-  it already copied. Sign out on that machine, or remove the files.
+  it already copied, and the machine keeps working with them. After you
+  revoke a machine, or when one leaves, rotate the sign-ins by hand: sign
+  in again on the hub and on each remaining machine, or sign out at the
+  provider, so the old copies stop working.
 - GitHub Copilot keeps its token beside its settings, so its sign-in isn't
   copied.
 
