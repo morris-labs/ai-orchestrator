@@ -515,6 +515,12 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
       await multiHost().revoke(params.id);
       return { ok: true };
     },
+    "gui.list": async () => multiHost().guiClients(),
+    "gui.enroll": async () => multiHost().enrollGui(),
+    "gui.revoke": async ({ params }) => {
+      await multiHost().revokeGui(params.id);
+      return { ok: true };
+    },
     "node.get": async () => multiHost().status(),
     "node.health": async () => multiHost().health(),
     "node.join": async ({ body }) => multiHost().join(body),

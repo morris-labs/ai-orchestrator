@@ -48,3 +48,19 @@ export const EnrollmentCodeSchema = z.object({
   hubUrl: z.string(),
 });
 export type EnrollmentCode = z.infer<typeof EnrollmentCodeSchema>;
+/** A GUI app that enrolled with this hub to control it from another PC. */
+export const GuiClientSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  status: z.enum(["active", "revoked"]),
+  createdAt: z.string(),
+  lastSeen: z.string().nullable(),
+  revokedAt: z.string().nullable(),
+});
+export type GuiClient = z.infer<typeof GuiClientSchema>;
+export const GuiClientListSchema = z.object({
+  clients: z.array(GuiClientSchema),
+  /** The port of the hub's GUI listener, or `null` while it's off. */
+  port: z.number().int().nullable(),
+});
+export type GuiClientList = z.infer<typeof GuiClientListSchema>;

@@ -200,7 +200,7 @@ describe("migrations 5 to 7", () => {
   }
 
   it("keeps the usage index at 5, the broker port at 6, and the machines at 7", () => {
-    expect(MIGRATIONS).toHaveLength(7);
+    expect(MIGRATIONS).toHaveLength(8);
     expect(MIGRATIONS[4]).toContain("svc_usage_samples_account");
     const six = databaseAt(6);
     expect(engineColumns(six)).toContain("broker_port");
@@ -208,6 +208,21 @@ describe("migrations 5 to 7", () => {
     expect(schemaNames(databaseAt(7), "table")).toEqual(
       expect.arrayContaining(["machines", "enrollment_codes"]),
     );
+  });
+
+  it("adds the GUI clients at 8 and keeps the enrolled machines", () => {
+    const db = databaseAt(7);
+    db.prepare(
+      "INSERT INTO machines (id, name, role, cert_fingerprint, capabilities, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    ).run("m1", "node-one", "node", "AA:BB", "[]", "2026-01-01", "2026-01-01");
+    expect(schemaNames(db, "table")).not.toContain("gui_clients");
+
+    expect(migrate(db)).toBe(MIGRATIONS.length);
+
+    expect(schemaNames(db, "table")).toEqual(
+      expect.arrayContaining(["gui_clients", "gui_enrollment_codes"]),
+    );
+    expect(db.prepare("SELECT id FROM machines").all()).toEqual([{ id: "m1" }]);
   });
 
   it("brings a version 5 database from main to version 7 and keeps its rows", () => {
@@ -219,9 +234,9 @@ describe("migrations 5 to 7", () => {
       "INSERT INTO accounts (id, vendor, name, data, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
     ).run("claude/work", "claude", "work", "{}", "2026-01-01", "2026-01-01");
 
-    expect(migrate(db)).toBe(7);
+    expect(migrate(db)).toBe(MIGRATIONS.length);
 
-    expect(db.pragma("user_version", { simple: true })).toBe(7);
+    expect(db.pragma("user_version", { simple: true })).toBe(MIGRATIONS.length);
     expect(schemaNames(db, "index")).toContain("svc_usage_samples_account");
     expect(engineColumns(db)).toContain("broker_port");
     expect(schemaNames(db, "table")).toEqual(
@@ -266,7 +281,7 @@ describe("migrations 5 to 7", () => {
     }
 
     function expectFullSchema(db: Database.Database): void {
-      expect(db.pragma("user_version", { simple: true })).toBe(7);
+      expect(db.pragma("user_version", { simple: true })).toBe(MIGRATIONS.length);
       expect(schemaNames(db, "index")).toEqual(
         expect.arrayContaining(["svc_usage_samples_account", "machines_live_name"]),
       );
@@ -282,7 +297,7 @@ describe("migrations 5 to 7", () => {
         "INSERT INTO machines (id, name, role, cert_fingerprint, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
       ).run("m1", "node-a", "node", "fp", "2026-01-01", "2026-01-01");
 
-      expect(migrate(db)).toBe(7);
+      expect(migrate(db)).toBe(MIGRATIONS.length);
 
       expectFullSchema(db);
       expect(db.prepare("SELECT id FROM machines").all()).toEqual([{ id: "m1" }]);
@@ -297,7 +312,7 @@ describe("migrations 5 to 7", () => {
         "INSERT INTO engine_endpoints (project_id, container, host_port, token, updated_at, broker_port) VALUES (?, ?, ?, ?, ?, ?)",
       ).run("p1", "aio-agent-p1", 40001, "test-token", "2026-01-01", 40002);
 
-      expect(migrate(db)).toBe(7);
+      expect(migrate(db)).toBe(MIGRATIONS.length);
 
       expectFullSchema(db);
       expect(db.prepare("SELECT broker_port FROM engine_endpoints").all()).toEqual([
@@ -308,7 +323,7 @@ describe("migrations 5 to 7", () => {
     it("upgrades version 5 with only the machines", () => {
       const db = legacyDatabase(5, [MACHINES]);
 
-      expect(migrate(db)).toBe(7);
+      expect(migrate(db)).toBe(MIGRATIONS.length);
 
       expectFullSchema(db);
     });
@@ -318,7 +333,7 @@ describe("migrations 5 to 7", () => {
     const db = databaseAt(4);
     expect(schemaNames(db, "index")).not.toContain("svc_usage_samples_account");
 
-    expect(migrate(db)).toBe(7);
+    expect(migrate(db)).toBe(MIGRATIONS.length);
 
     expect(schemaNames(db, "index")).toContain("svc_usage_samples_account");
     expect(engineColumns(db)).toContain("broker_port");

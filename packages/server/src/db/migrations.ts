@@ -265,4 +265,25 @@ export const MIGRATIONS: readonly Migration[] = [
     created_at TEXT NOT NULL
   );
 `,
+  // 8: on a hub, the GUI apps enrolled from other PCs and their one-time codes.
+  // A code is kept only as the key derived from it. Node and GUI enrollment
+  // don't share a table, so a code for one can't serve the other.
+  `
+  CREATE TABLE IF NOT EXISTS gui_clients (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    cert_fingerprint TEXT NOT NULL UNIQUE,
+    revoked_at TEXT,
+    last_seen TEXT,
+    created_at TEXT NOT NULL
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS gui_clients_live_name ON gui_clients (name) WHERE revoked_at IS NULL;
+
+  CREATE TABLE IF NOT EXISTS gui_enrollment_codes (
+    code_key TEXT PRIMARY KEY,
+    expires_at TEXT NOT NULL,
+    used_at TEXT,
+    created_at TEXT NOT NULL
+  );
+`,
 ];

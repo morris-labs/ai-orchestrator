@@ -711,6 +711,11 @@ export const GlobalSettingsSchema = z
      */
     linkPort: PortSchema.optional(),
     /**
+     * The port a hub listens on for GUI apps on other PCs. Absent means
+     * `DEFAULT_GUI_PORT`, 21403.
+     */
+    guiPort: PortSchema.optional(),
+    /**
      * The address a hub's link listener binds. Absent means the primary LAN
      * IPv4 address: the private address of the interface that holds the
      * default route. With no such address, the listener doesn't start.
@@ -730,6 +735,8 @@ export type GlobalSettings = z.infer<typeof GlobalSettingsSchema>;
 
 /** The port a hub listens on for node links when the settings name none. */
 export const DEFAULT_LINK_PORT = 21402;
+/** The port a hub's GUI listener uses by default. */
+export const DEFAULT_GUI_PORT = 21403;
 
 /**
  * The dev-server proxy's port: `proxyPort`, else the port after
@@ -848,6 +855,8 @@ export const GlobalSettingsPatchSchema = z
     machineName: MachineNameSchema.nullable(),
     /** `null` goes back to 21402. Takes effect when the link listener next starts. */
     linkPort: PortSchema.nullable(),
+    /** `null` goes back to 21403. Takes effect when the GUI listener next starts. */
+    guiPort: PortSchema.nullable(),
     /** `null` goes back to the LAN address. Takes effect when the link listener next starts. */
     linkHost: z.string().min(1).nullable(),
     /** `null` goes back to the address the link listener binds. */

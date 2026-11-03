@@ -189,7 +189,8 @@ export function helpText(platform: HostPlatform): string {
     "  --log-file FILE         Append standard error to FILE. The Windows logon task uses it.\n" +
     "  --role ROLE             This run's multi-host role: hub, node, or both. Default: the role\n" +
     "                          in the settings, else both. A hub listens for node links on port\n" +
-    "                          21402 on every interface once it has issued an enrollment code.\n\n" +
+    "                          21402 on its LAN address once it has issued an enrollment code, and\n" +
+    "                          for GUI apps on port 21403 once it has issued a GUI code.\n\n" +
     "Environment:\n" +
     "  AIO_DATA_DIR       The data directory, when --data-dir isn't given.\n" +
     "  AIO_ROLE           The role, when --role isn't given.\n" +
@@ -296,6 +297,8 @@ export async function main(argv: string[]): Promise<number> {
   const linkPort = app.multiHost.hub.port;
   if (linkPort !== null)
     process.stderr.write(`Hub listening for node links on port ${linkPort}.\n`);
+  const guiPort = app.multiHost.gui.port;
+  if (guiPort !== null) process.stderr.write(`Hub listening for GUI apps on port ${guiPort}.\n`);
 
   await new Promise<void>((resolve) => {
     let closing = false;

@@ -334,6 +334,15 @@ export async function createHarness(
       revoke: async (id) => {
         if (id !== "m1") throw new ApiError("not_found", `No machine has the id ${id}.`);
       },
+      guiClients: () => ({ clients: [], port: null }),
+      enrollGui: async () => ({
+        code: "7K2Q-M9XD-4HPA-R3TC",
+        expiresAt: T1,
+        hubUrl: "https://hub.example.com:21403",
+      }),
+      revokeGui: async (id) => {
+        if (id !== "g1") throw new ApiError("not_found", `No GUI client has the id ${id}.`);
+      },
       status: () => ({ ...NODE_STATUS }),
       health: async () => ({
         engineVersion: "1.0.0-dev",

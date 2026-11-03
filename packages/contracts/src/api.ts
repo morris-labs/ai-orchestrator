@@ -93,6 +93,7 @@ import {
 import { FindingSchema, SeveritySchema, VerdictSchema } from "./findings.js";
 import {
   EnrollmentCodeSchema,
+  GuiClientListSchema,
   MachineHealthSchema,
   MachineListSchema,
   MachineRoleSchema,
@@ -1710,6 +1711,28 @@ export const serverRoutes = {
     method: "DELETE",
     path: `${V1}/machines/:id`,
     summary: "Revoke a machine's certificate and close its link. Hub only.",
+    response: OkSchema,
+    errors: ["invalid_state"],
+  }),
+  "gui.list": http({
+    method: "GET",
+    path: `${V1}/gui-clients`,
+    summary: "List the GUI apps enrolled with this hub, and the GUI listener's port. Hub only.",
+    response: GuiClientListSchema,
+    errors: ["invalid_state"],
+  }),
+  "gui.enroll": http({
+    method: "POST",
+    path: `${V1}/gui-clients/enrollment-codes`,
+    summary: "Issue a one-time code for a GUI app on another PC to enroll with this hub. Hub only.",
+    response: EnrollmentCodeSchema,
+    status: 201,
+    errors: ["invalid_state"],
+  }),
+  "gui.revoke": http({
+    method: "DELETE",
+    path: `${V1}/gui-clients/:id`,
+    summary: "Revoke a GUI app's certificate and close its connections. Hub only.",
     response: OkSchema,
     errors: ["invalid_state"],
   }),

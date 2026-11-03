@@ -20,6 +20,7 @@ import type {
   SshRemote,
   ImageBuildSchema,
   EnrollmentCode,
+  GuiClientList,
   Machine,
   MachineHealth,
   NodeJoin,
@@ -40,6 +41,9 @@ export interface ApiMultiHost {
   machines(): Promise<Machine[]>;
   enroll(): Promise<EnrollmentCode>;
   revoke(id: string): Promise<void>;
+  guiClients(): GuiClientList;
+  enrollGui(): Promise<EnrollmentCode>;
+  revokeGui(id: string): Promise<void>;
   status(): NodeStatus;
   /** This machine's health, which the hub shows on the Machines page. */
   health(): Promise<MachineHealth>;

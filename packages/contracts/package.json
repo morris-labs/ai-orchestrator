@@ -15,6 +15,14 @@
       "types": "./dist/tls.d.ts",
       "import": "./dist/tls.js"
     },
+    "./gui-enroll": {
+      "types": "./dist/gui-enroll.d.ts",
+      "import": "./dist/gui-enroll.js"
+    },
+    "./gui-client": {
+      "types": "./dist/gui-client.d.ts",
+      "import": "./dist/gui-client.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [

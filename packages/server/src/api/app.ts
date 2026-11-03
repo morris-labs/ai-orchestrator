@@ -82,6 +82,8 @@ export interface AppOptions {
   role?: MachineRole;
   /** Overrides the hub's link port; 0 picks a free one (tests). */
   linkPort?: number;
+  /** Overrides the hub's GUI port; 0 picks a free one (tests). */
+  guiPort?: number;
   /** The address the hub's link listener binds, which wins over the setting. Default: the LAN address. */
   linkHost?: string;
   /** Finds the primary LAN IPv4 address for the link listener (tests). */
@@ -214,6 +216,7 @@ export async function startApp(options: AppOptions): Promise<App> {
     linkHost: options.linkHost,
     lanAddress: options.lanAddress,
     linkPort: options.linkPort,
+    guiPort: options.guiPort,
     linkAddress: options.linkAddress,
     protocol: options.linkProtocol,
     timing: options.linkTiming,

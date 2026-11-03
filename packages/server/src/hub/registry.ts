@@ -11,6 +11,7 @@
 // its code.
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import type { Machine } from "@aio/contracts";
+import { normalizeEnrollmentCode } from "@aio/contracts/gui-enroll";
 import type { SqlDatabase } from "../api/core-interface.js";
 
 /** How long an enrollment code is valid: 10 minutes. */
@@ -31,9 +32,7 @@ export function newEnrollmentCode(): string {
 }
 
 /** The code as typed, with case, spaces, and hyphens removed and look-alike letters mapped. */
-export function normalizeCode(code: string): string {
-  return code.toUpperCase().replace(/[\s-]/g, "").replace(/[IL]/g, "1").replace(/O/g, "0");
-}
+export const normalizeCode = normalizeEnrollmentCode;
 
 /** The key derived from a code, which is all the hub stores of it. */
 export function codeKey(code: string): string {

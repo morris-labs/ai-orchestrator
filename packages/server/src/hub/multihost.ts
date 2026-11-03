@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   API_PREFIX,
+  DEFAULT_GUI_PORT,
   DEFAULT_LINK_PORT,
   HUB_MACHINE_ID,
   LOCAL_MACHINE_ID,
@@ -13,6 +14,7 @@ import {
   type EnrollmentCode,
   type GlobalSettings,
   type GlobalSettingsPatch,
+  type GuiClientList,
   type ImageStatus,
   type Machine,
   type MachineHealth,
@@ -33,6 +35,7 @@ import {
   type CredentialEntry,
 } from "./credentials.js";
 import { jsonBody, jsonResponse, safely, type InternalHandler } from "./dispatch.js";
+import { GuiListener } from "./gui.js";
 import { HealthCache, fetchHealth, measureHealth } from "./health.js";
 import { Hub, type LinkTiming } from "./hub.js";
 import { detectLanAddress } from "./lan.js";
@@ -200,6 +203,8 @@ export interface MultiHostOptions {
   lanAddress?: () => string | undefined;
   /** The link port, which wins over the setting; 0 picks a free one. */
   linkPort?: number;
+  /** The GUI listener's port, which wins over the setting; 0 picks a free one. */
+  guiPort?: number;
   /** The host name in hub URLs, which wins over the setting. Default: the bound address. */
   linkAddress?: string;
   /** The protocol version to speak; tests change it. Default `LINK_PROTOCOL`. */
@@ -227,6 +232,8 @@ export function nameFromHost(host: string): string {
 export class MultiHost {
   readonly hub: Hub;
   readonly node: NodeAgent;
+  /** The listener for GUI apps on other PCs. */
+  readonly gui: GuiListener;
   readonly links: LinkRegistry;
   /** The op client the secrets service uses: the hub's while this machine is a plain node. */
   readonly op: OpClient;
@@ -290,6 +297,18 @@ export class MultiHost {
             this.role() === "both",
           )),
       timing: opts.timing,
+      log: opts.log,
+    });
+    this.gui = new GuiListener({
+      db: opts.db,
+      isHub: () => this.role() !== "node",
+      identity: () => this.hub.ensureIdentity(),
+      port: () => opts.guiPort ?? opts.settings().guiPort ?? DEFAULT_GUI_PORT,
+      bindHost: () =>
+        opts.linkHost ?? opts.settings().linkHost ?? (opts.lanAddress ?? detectLanAddress)(),
+      address: () => opts.linkAddress ?? opts.settings().linkAddress,
+      token: opts.token,
+      api: opts.api,
       log: opts.log,
     });
     this.node = new NodeAgent({
@@ -361,6 +380,7 @@ export class MultiHost {
     // On a joined node, a file with no copy record is the node's own sign-in.
     if (!this.node.joined) await this.credentials.prime();
     await this.hub.start();
+    await this.gui.start();
     const pollMs = this.opts.credentialPollMs ?? 30_000;
     if (pollMs > 0) {
       this.credentialTimer = setInterval(() => void this.syncCredentials(), pollMs);
@@ -371,6 +391,7 @@ export class MultiHost {
   async close(): Promise<void> {
     if (this.credentialTimer) clearInterval(this.credentialTimer);
     await this.credentialSync;
+    await this.gui.close();
     await this.node.close();
     await this.hub.close();
   }
@@ -623,6 +644,18 @@ export class MultiHost {
   revoke(id: string): Promise<void> {
     if (id === LOCAL_ID) throw new ApiError("validation", "A machine can't revoke itself.");
     return this.hub.revoke(id);
+  }
+
+  guiClients(): GuiClientList {
+    return this.gui.list();
+  }
+
+  enrollGui(): Promise<EnrollmentCode> {
+    return this.gui.issueCode();
+  }
+
+  revokeGui(id: string): Promise<void> {
+    return this.gui.revoke(id);
   }
 
   status(): NodeStatus {

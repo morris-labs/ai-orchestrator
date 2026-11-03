@@ -22,6 +22,7 @@ import {
 } from "node:crypto";
 import { chmod, mkdir, open, readFile, rename, rm, stat } from "node:fs/promises";
 import path from "node:path";
+import { GUI_CERT_PREFIX } from "@aio/contracts/gui-enroll";
 import { createCertificate } from "@aio/contracts/tls";
 import { z } from "zod";
 
@@ -198,21 +199,41 @@ export function issueNodeCertificate(
   publicKeyPem: string,
   now = new Date(),
 ): string {
+  return issueClientCertificate(ca, `${NODE_CERT_PREFIX}${machineId}`, "node", publicKeyPem, now);
+}
+
+/** Signs a GUI app's client certificate for `publicKeyPem`, as `issueNodeCertificate` does. */
+export function issueGuiCertificate(
+  ca: PemIdentity,
+  clientId: string,
+  publicKeyPem: string,
+  now = new Date(),
+): string {
+  return issueClientCertificate(ca, `${GUI_CERT_PREFIX}${clientId}`, "app", publicKeyPem, now);
+}
+
+function issueClientCertificate(
+  ca: PemIdentity,
+  commonName: string,
+  holder: string,
+  publicKeyPem: string,
+  now: Date,
+): string {
   let publicKey;
   try {
     publicKey = createPublicKey(publicKeyPem);
   } catch {
-    throw new Error("The node's public key isn't a PEM public key.");
+    throw new Error(`The ${holder}'s public key isn't a PEM public key.`);
   }
   if (
     publicKey.asymmetricKeyType !== "ec" ||
     publicKey.asymmetricKeyDetails?.namedCurve !== "prime256v1"
   ) {
-    throw new Error("The node's public key must be an ECDSA P-256 key.");
+    throw new Error(`The ${holder}'s public key must be an ECDSA P-256 key.`);
   }
   const caPrivate = createPrivateKey(ca.key);
   return createCertificate({
-    commonName: `${NODE_CERT_PREFIX}${machineId}`,
+    commonName,
     publicKey,
     signingKey: caPrivate,
     issuer: { commonName: HUB_CA_NAME, publicKey: createPublicKey(caPrivate) },

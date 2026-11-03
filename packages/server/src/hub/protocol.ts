@@ -75,6 +75,13 @@ export const LINK_PATHS = {
  */
 export const LINK_CALLER_HEADER = "x-aio-link-caller";
 
+/**
+ * The start of the caller header's value for a call from a GUI app through the
+ * hub's GUI listener. The client ID follows. Calls from a node never have it,
+ * because a machine ID starts with `m`.
+ */
+export const GUI_CALLER_PREFIX = "gui:";
+
 /** Paths under this prefix reach a link end's own handlers, never its API. */
 export const LINK_INTERNAL_PREFIX = "/link/v1/";
 

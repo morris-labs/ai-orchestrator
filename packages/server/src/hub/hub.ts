@@ -124,7 +124,7 @@ export function refuseUpgrade(socket: Duplex, status: number, message: string): 
 }
 
 /** The path of a request, or `null` when its target isn't a valid URL. */
-function requestPath(req: http.IncomingMessage): string | null {
+export function requestPath(req: http.IncomingMessage): string | null {
   try {
     return new URL(req.url ?? "/", "https://hub.invalid").pathname;
   } catch {
@@ -132,7 +132,7 @@ function requestPath(req: http.IncomingMessage): string | null {
   }
 }
 
-function sendJson(res: http.ServerResponse, status: number, body: unknown): void {
+export function sendJson(res: http.ServerResponse, status: number, body: unknown): void {
   const text = JSON.stringify(body);
   res.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
@@ -141,7 +141,7 @@ function sendJson(res: http.ServerResponse, status: number, body: unknown): void
   res.end(text);
 }
 
-function readBody(req: http.IncomingMessage, limit: number): Promise<Buffer> {
+export function readBody(req: http.IncomingMessage, limit: number): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let size = 0;
@@ -194,7 +194,7 @@ export function awaitHello(
 export class Hub {
   readonly registry: MachineRegistry;
   private readonly peers = new Map<string, LinkPeer>();
-  private identity: HubIdentity | null = null;
+  private identity: Promise<HubIdentity> | null = null;
   private server: https.Server | null = null;
   private wss: WebSocketServer | null = null;
   /** The listener's open connections, including upgraded ones and unfinished TLS handshakes. */
@@ -355,8 +355,13 @@ export class Hub {
     await this.stopListening();
   }
 
-  private async ensureIdentity(): Promise<HubIdentity> {
-    this.identity ??= await loadOrCreateHubIdentity(this.opts.dir);
+  /** The hub's authority and link certificate, which the GUI listener shares. */
+  ensureIdentity(): Promise<HubIdentity> {
+    // One promise, so that two first callers can't each create an authority.
+    this.identity ??= loadOrCreateHubIdentity(this.opts.dir).catch((err: unknown) => {
+      this.identity = null;
+      throw err;
+    });
     return this.identity;
   }
 

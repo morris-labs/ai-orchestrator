@@ -355,6 +355,9 @@ const cases: Case[] = [
   { key: "machines.list", method: "GET", url: `${V1}/machines`, status: 200 },
   { key: "machines.enroll", method: "POST", url: `${V1}/machines/enrollment-codes`, status: 201 },
   { key: "machines.revoke", method: "DELETE", url: `${V1}/machines/m1`, status: 200 },
+  { key: "gui.list", method: "GET", url: `${V1}/gui-clients`, status: 200 },
+  { key: "gui.enroll", method: "POST", url: `${V1}/gui-clients/enrollment-codes`, status: 201 },
+  { key: "gui.revoke", method: "DELETE", url: `${V1}/gui-clients/g1`, status: 200 },
   { key: "node.get", method: "GET", url: `${V1}/node`, status: 200 },
   { key: "node.health", method: "GET", url: `${V1}/node/health`, status: 200 },
   {

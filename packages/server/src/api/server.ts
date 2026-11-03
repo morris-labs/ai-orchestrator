@@ -30,7 +30,7 @@ import type { ApiDeps } from "./deps.js";
 import { ApiError, toApiError } from "./errors.js";
 import { createHandlers, type HttpHandlers, type HttpRouteKey } from "./handlers.js";
 import { localMachineRewrite, registerMachineProxy } from "./machines.js";
-import { LINK_CALLER_HEADER } from "../hub/protocol.js";
+import { GUI_CALLER_PREFIX, LINK_CALLER_HEADER } from "../hub/protocol.js";
 import { attachCmd, shellCmd, sideSessionName } from "../terminals/attach.js";
 import type { ExecRequest } from "../terminals/exec.js";
 import { sendControl, serveTerminal } from "../terminals/terminal-socket.js";
@@ -40,6 +40,34 @@ const LINK_REFUSED_ROUTES: ReadonlySet<string> = new Set([
   serverRoutes["node.join"].path,
   serverRoutes["auth.session"].path,
 ]);
+
+/**
+ * The routes that a GUI app on another PC can't reach, by their route pattern,
+ * beyond `LINK_REFUSED_ROUTES`. Enrollment and revocation stay on the hub, so a
+ * stolen GUI key can't enroll another client, or revoke the ones that could
+ * remove it.
+ */
+const GUI_REFUSED_ROUTES: ReadonlySet<string> = new Set([
+  serverRoutes["machines.enroll"].path,
+  serverRoutes["machines.revoke"].path,
+  serverRoutes["gui.list"].path,
+  serverRoutes["gui.enroll"].path,
+  serverRoutes["gui.revoke"].path,
+]);
+
+/**
+ * The settings a GUI app on another PC can't change. They decide what the hub
+ * trusts and where it listens: a grant hands 1Password values and sign-ins to a
+ * machine.
+ */
+const GUI_REFUSED_SETTINGS = [
+  "role",
+  "nodeGrants",
+  "linkPort",
+  "guiPort",
+  "linkHost",
+  "linkAddress",
+];
 
 interface RouteConfig {
   auth: boolean;
@@ -196,12 +224,46 @@ export async function createApiServer(deps: ApiDeps & { tls?: TlsIdentity }): Pr
         new ApiError("unauthorized", "This route can't be called over a link.", undefined, 403),
       );
     }
+    const caller = request.headers[LINK_CALLER_HEADER];
+    if (
+      typeof caller === "string" &&
+      caller.startsWith(GUI_CALLER_PREFIX) &&
+      GUI_REFUSED_ROUTES.has(request.routeOptions.url ?? "")
+    ) {
+      return sendFailure(
+        reply,
+        new ApiError(
+          "unauthorized",
+          "Manage enrollment on the hub. A GUI app on another PC can't.",
+          undefined,
+          403,
+        ),
+      );
+    }
     if (!config?.auth) return;
     if (!isAuthorized(authInput(request), deps.token)) {
       // A refused upgrade leaves no HTTP connection worth keeping.
       if (ws) reply.header("connection", "close");
       return sendFailure(reply, new ApiError("unauthorized", "Missing or wrong bearer token."));
     }
+  });
+
+  app.addHook("preHandler", async (request, reply) => {
+    const caller = request.headers[LINK_CALLER_HEADER];
+    if (typeof caller !== "string" || !caller.startsWith(GUI_CALLER_PREFIX)) return;
+    if (request.routeOptions.url !== serverRoutes["settings.patch"].path) return;
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const refused = GUI_REFUSED_SETTINGS.filter((name) => name in body);
+    if (refused.length === 0) return;
+    return sendFailure(
+      reply,
+      new ApiError(
+        "unauthorized",
+        `Change ${refused.join(", ")} on the hub. A GUI app on another PC can't.`,
+        undefined,
+        403,
+      ),
+    );
   });
 
   // An upgrade request answered with a plain HTTP response keeps a detached
