@@ -226,8 +226,10 @@ aio review clear-usage VENDOR
 ```
 
 Replace `VENDOR` with `claude`, `codex`, or `copilot`. To clear one account,
-add `--account VENDOR/NAME`. The vendor's next real sample replaces the cleared
-reading. A run waiting on the ceiling asks the server again every minute, so it
+add `--account VENDOR/NAME`. The command also clears a block that comes from a
+project's ceiling override. The **Model usage** panel compares against the
+global ceilings, so it shows **Clear block** only for a block at the global
+ceiling. The vendor's next real sample replaces the cleared reading. A run waiting on the ceiling asks the server again every minute, so it
 continues on its own. A run waiting after the vendor's CLI reported a limit
 keeps waiting until you resume it:
 

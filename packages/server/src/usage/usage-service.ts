@@ -6,6 +6,7 @@ import {
   type AioEvent,
   type Ceiling,
   type Ceilings,
+  type CeilingsOverride,
   type GlobalSettings,
   type TimedUsageSample,
   type UsageWindow,
@@ -149,27 +150,35 @@ export class UsageService {
   }
 
   /**
-   * Clears a stale block: for each of the vendor's accounts that is over its
-   * ceiling, or the one named, records a zero reading in the ceiling's window.
+   * Clears a stale block: for each of the vendor's accounts, or the one named,
+   * records a zero reading in every window where the newest sample is over the
+   * global ceiling or a project's override, as the scheduler blocks on either.
    * A stored sample can say 100% until its old reset time even after a person
    * buys a reset, and a blocked vendor gets no call that could correct it. The
-   * vendor's next real sample replaces this one. Returns how many it cleared.
+   * vendor's next real sample replaces this one. A ceiling of zero is a choice
+   * not to use the vendor, not a stale sample, so it clears nothing. Returns how
+   * many samples it cleared.
    */
-  clear(vendor: Vendor, account?: string): number {
-    const ceilings = this.opts.settings().ceilings;
-    const window = ceilingWindow(ceilings[vendor]);
+  clear(vendor: Vendor, account?: string, overrides: readonly CeilingsOverride[] = []): number {
+    const ceilings = [
+      this.opts.settings().ceilings[vendor],
+      ...overrides.flatMap((o) => o[vendor] ?? []),
+    ].filter((c) => ceilingLimit(c) > 0);
+    const windows = new Set(ceilings.map(ceilingWindow));
     let cleared = 0;
     for (const name of account === undefined ? this.opts.store.accounts(vendor) : [account]) {
-      const latest = this.opts.store.latest(vendor, window, name);
-      if (!latest || !sampleIsOver(latest, ceilings[vendor], this.nowMs())) continue;
-      this.recordSample({
-        ...latest,
-        utilization: 0,
-        spendUsd: latest.spendUsd === null ? null : 0,
-        sampleSource: "manual_clear",
-        time: new Date(this.nowMs()).toISOString(),
-      });
-      cleared += 1;
+      for (const window of windows) {
+        const latest = this.opts.store.latest(vendor, window, name);
+        if (!latest || !ceilings.some((c) => sampleIsOver(latest, c, this.nowMs()))) continue;
+        this.recordSample({
+          ...latest,
+          utilization: 0,
+          spendUsd: latest.spendUsd === null ? null : 0,
+          sampleSource: "manual_clear",
+          time: new Date(this.nowMs()).toISOString(),
+        });
+        cleared += 1;
+      }
     }
     return cleared;
   }

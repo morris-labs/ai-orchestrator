@@ -493,7 +493,7 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
     "usage.samples": async ({ query }) => ({ samples: deps.usage.samples(query) }),
     "usage.get": async () => ({ vendors: deps.usage.vendors(), time: new Date().toISOString() }),
     "usage.clear": async ({ body }) => ({
-      cleared: deps.usage.clear(body.vendor, body.account),
+      cleared: await deps.usage.clear(body.vendor, body.account),
       vendors: deps.usage.vendors(),
     }),
 

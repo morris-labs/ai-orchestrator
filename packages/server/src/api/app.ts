@@ -397,7 +397,12 @@ export async function startApp(options: AppOptions): Promise<App> {
     engines,
     usage: {
       vendors: () => usage.vendors(),
-      clear: (vendor, account) => usage.clear(vendor, account),
+      clear: async (vendor, account) =>
+        usage.clear(
+          vendor,
+          account,
+          (await core.projects.list()).flatMap((p) => p.project.ceilingsOverride ?? []),
+        ),
       samples: (q) => usageStore.samples(q),
     },
     notifications: notifier,

@@ -233,7 +233,7 @@ export async function createHarness(
     runs,
     engines: new FakeEngines([engine]),
     usage: {
-      clear: () => 0,
+      clear: async () => 0,
       vendors: () => [
         {
           vendor: "claude",

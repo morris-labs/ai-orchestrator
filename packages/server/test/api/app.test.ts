@@ -10,7 +10,7 @@ import type { OpClient } from "../../src/secrets/op.js";
 import { ENGINE_TOKEN, FakeEngineServer, waitFor } from "../events/fake-engine.js";
 import { FakeRunner } from "../setup/fake-runner.js";
 import { createFakeCore, type FakeCore } from "./fake-core.js";
-import { CONTAINER, PROJECT_ID, RUN, runState } from "./fixtures.js";
+import { CONTAINER, PROJECT_ID, RUN, projectSummary, runState } from "./fixtures.js";
 import { FakeExec } from "./harness.js";
 import { tempDir } from "../tmp.js";
 
@@ -210,6 +210,55 @@ describe("startApp", () => {
     expect(usage.json.vendors).toEqual(
       expect.arrayContaining([expect.objectContaining({ vendor: "claude", overCeiling: true })]),
     );
+  });
+
+  it("clears a usage block that comes from a project's ceiling override", async () => {
+    const summary = {
+      ...projectSummary,
+      project: {
+        ...projectSummary.project,
+        ceilingsOverride: { claude: { kind: "utilization", window: "5h", max: 0.4 } } as const,
+      },
+    };
+    core.projects.list = async () => [summary];
+    core.projects.get = async () => summary;
+    await waitFor(() => engine.sockets.length === 1);
+    engine.sendRaw({
+      type: "usage.sample",
+      id: "u1",
+      time: new Date().toISOString(),
+      streamId: engine.streamId,
+      seq: 1,
+      sourceSeq: 1,
+      vendor: "claude",
+      account: "user@example.com",
+      window: "5h",
+      utilization: 0.5,
+      spendUsd: null,
+      ceiling: { kind: "utilization", window: "5h", max: 0.6 },
+      resetAt: "2099-01-01T00:00:00.000Z",
+      source: `engine:${CONTAINER}`,
+      sampleSource: "rate_limit_event",
+    });
+    await waitFor(() => app.hub.lastSeq >= 1);
+    const request = (leaseId: string) => ({
+      type: "lease.request",
+      leaseId,
+      runId: RUN,
+      vendor: "claude",
+      role: "reviewer",
+      estimate: { tokens: 10 },
+    });
+    engine.sendRaw(request("L-1"));
+    await waitFor(() => engine.leaseResponses.length === 1);
+    expect(engine.leaseResponses[0]).toMatchObject({ vendor: "codex", redirectedFrom: "claude" });
+
+    const cleared = await api("POST", "/api/v1/usage/clear", { vendor: "claude" });
+    expect(cleared.json.cleared).toBe(1);
+
+    engine.sendRaw(request("L-2"));
+    await waitFor(() => engine.leaseResponses.length === 2);
+    expect(engine.leaseResponses[1]).toMatchObject({ vendor: "claude", redirectedFrom: null });
   });
 
   it("starts an SSH tunnel for a running box's remote", async () => {

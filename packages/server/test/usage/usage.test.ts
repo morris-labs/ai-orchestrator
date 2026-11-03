@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { mergeCeilings } from "../../src/scheduler/scheduler.js";
 import { UsageService } from "../../src/usage/usage-service.js";
 import { MIN, T0, iso, setup } from "./helpers.js";
 
@@ -37,6 +38,62 @@ describe("clearing a usage block", () => {
     const t = setup();
     t.sample("codex", { utilization: 0.1, resetAt: iso(T0 + 60 * MIN) });
     expect(t.usage.clear("codex")).toBe(0);
+  });
+
+  it("clears a block from a project override in another window", () => {
+    const t = setup();
+    t.settings.value = {
+      ...t.settings.value,
+      ceilings: {
+        ...t.settings.value.ceilings,
+        claude: { kind: "utilization", window: "7d", max: 1 },
+      },
+    };
+    const override = { claude: { kind: "utilization", window: "5h", max: 0.8 } } as const;
+    const merged = mergeCeilings(t.settings.value.ceilings, override);
+    t.sample("claude", { window: "5h", utilization: 0.9 });
+    expect(t.usage.isOver("claude", merged).over).toBe(true);
+    expect(t.usage.clear("claude")).toBe(0);
+    expect(t.usage.clear("claude", undefined, [override])).toBe(1);
+    expect(t.usage.isOver("claude", merged).over).toBe(false);
+    expect(t.store.latest("claude", "5h")).toMatchObject({
+      utilization: 0,
+      sampleSource: "manual_clear",
+    });
+  });
+
+  it("clears a block from a project override below the global ceiling", () => {
+    const t = setup();
+    t.settings.value = {
+      ...t.settings.value,
+      ceilings: {
+        ...t.settings.value.ceilings,
+        claude: { kind: "utilization", window: "7d", max: 1 },
+      },
+    };
+    const override = { claude: { kind: "utilization", window: "7d", max: 0.8 } } as const;
+    const merged = mergeCeilings(t.settings.value.ceilings, override);
+    t.sample("claude", { window: "7d", utilization: 0.9 });
+    expect(t.usage.isOver("claude", merged).over).toBe(true);
+    expect(t.usage.clear("claude", undefined, [override])).toBe(1);
+    expect(t.usage.isOver("claude", merged).over).toBe(false);
+  });
+
+  it("clears one account when an override and the global ceiling share a sample", () => {
+    const t = setup();
+    const override = { codex: { kind: "utilization", window: "5h", max: 0.2 } } as const;
+    t.sample("codex", { utilization: 1, account: "codex/work", resetAt: iso(T0 + 60 * MIN) });
+    t.sample("codex", { utilization: 1, account: "codex/spare", resetAt: iso(T0 + 60 * MIN) });
+    expect(t.usage.clear("codex", "codex/work", [override])).toBe(1);
+    expect(t.store.latest("codex", "5h", "codex/spare")?.utilization).toBe(1);
+  });
+
+  it("leaves a real reading alone when an override's ceiling is zero", () => {
+    const t = setup();
+    const override = { claude: { kind: "utilization", window: "5h", max: 0 } } as const;
+    t.sample("claude", { utilization: 0.3 });
+    expect(t.usage.clear("claude", undefined, [override])).toBe(0);
+    expect(t.store.latest("claude", "5h")?.utilization).toBe(0.3);
   });
 });
 
