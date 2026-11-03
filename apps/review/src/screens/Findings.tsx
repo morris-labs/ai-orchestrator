@@ -121,6 +121,7 @@ function FindingDetail({
           {f.verdict}
           {f.verification ? ` (${f.verification})` : ""}
           {f.unverifiedReason ? ` (${NOT_VERIFIED_LABEL})` : ""}
+          {f.followUpReason ? " (needs follow-up: no vendor would check it)" : ""}
           {f.fixHeldReason ? ` (${FIX_HELD_LABEL})` : ""}
         </dd>
         <dt>Raised by</dt>

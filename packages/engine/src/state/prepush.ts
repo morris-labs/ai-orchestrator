@@ -230,6 +230,9 @@ export async function endRound(ctx: RunContext): Promise<StopReason | null> {
   if (ctx.eng.cleanRounds >= 2 && openFindings(ctx).length === 0) {
     // Findings below the floor don't hold the run open, but nothing checked
     // or fixed them, so the run can't call itself clean.
+    if (ctx.findings.some((f) => f.verdict === "pending" && f.followUpReason !== undefined)) {
+      return "clean_with_followups";
+    }
     return belowFloorPending(ctx).length > 0 || heldByFloor(ctx).length > 0
       ? "clean_above_floor"
       : "clean";
@@ -250,7 +253,9 @@ export function openFindings(ctx: RunContext): Finding[] {
   const fixes = !ctx.state.request.readOnly;
   return ctx.findings.filter(
     (f) =>
-      (f.verdict === "pending" && !belowVerifyFloor(f, ctx.state.request.verifyFloor)) ||
+      (f.verdict === "pending" &&
+        f.followUpReason === undefined &&
+        !belowVerifyFloor(f, ctx.state.request.verifyFloor)) ||
       (fixes &&
         f.verdict === "confirmed" &&
         aboveNit(f) &&

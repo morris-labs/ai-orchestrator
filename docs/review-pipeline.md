@@ -384,6 +384,7 @@ A run ends, or stops for you, when one of the following holds:
 |---|---|
 | Clean | Two rounds in a row confirm no finding above `nit`. The branch is ready to push. |
 | Clean above the floor | The same test as clean, with findings below the verification floor left unchecked. The result is `clean_above_floor`, not `clean`. |
+| Clean with follow-ups | The same test as clean, with findings that no vendor would check. The result is `clean_with_followups`. Check those findings yourself before you push. |
 | Round cap | The run reaches its round limit, 25 by default. The run stops and asks you. |
 | Oscillation | A finding that a fix closed comes back. The run stops and asks you. |
 | Ceiling or limit | A vendor is over its ceiling or reported a limit, and no other vendor can take the role. The run pauses until the reset, or asks you when no reset time is known. |
@@ -427,6 +428,18 @@ Replace `RUN_ID` with the run's ID. Both options are optional:
   in the run view while the run is failed, then retry.
 - `--verify-floor SEVERITY`: sets the verification floor. Use `all` to remove the
   floor. Without the option, the run keeps its floor.
+
+To stop relying on other vendors, click **Finish with Claude** in the run view, or
+add `--finish-with-claude`. Claude takes the reviewer, disprover, and fixer roles,
+and the cross-vendor rule stays off for the rest of the run, so Claude checks its
+own findings. The run shows a notice that says so.
+
+When a vendor's safety filter refuses a disprover call, the engine doesn't fail the
+run or repeat the call. It tries Codex's small model, then Claude, and adds a notice
+when Claude answers, because that check isn't independent. If they fail too, the
+finding stays `pending` with `followUpReason`, the run goes on, and a run that would
+stop clean stops with `clean_with_followups`. A retry checks those findings again.
+A refused confirmer call moves the same way, and fails the run if nothing answers.
 
 A retry works as follows:
 

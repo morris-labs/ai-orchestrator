@@ -397,3 +397,88 @@ describe("retry refuses", () => {
     expect(run.status).toBe("failed");
   });
 });
+
+describe("a safety refusal on a disprover call", () => {
+  const REFUSED = "This content was flagged for possible cybersecurity risk.";
+
+  /** A disprover that refuses on the listed models and records the model of each call. */
+  function refusing(vendor: Vendor, refuse: (model?: string) => boolean, calls: string[]) {
+    const base = disprover(vendor, "ok", []);
+    return {
+      ...base,
+      verify: (request: { model?: string }) => {
+        calls.push(`${vendor}:${request.model ?? ""}`);
+        return refuse(request.model)
+          ? Promise.reject(new Error(REFUSED))
+          : base.verify(request as never);
+      },
+    } as unknown as VendorAdapter;
+  }
+
+  const tiered = async (run: RunController) => {
+    contextOf(run).state.request.modelTier = "auto";
+    await contextOf(run).persist();
+  };
+
+  it("moves to the small model, without repeating the refused call", async () => {
+    const calls: string[] = [];
+    const { run } = await failedRun({
+      claude: disprover("claude", "ok", []),
+      codex: refusing("codex", (m) => m !== "gpt-6-luna", calls),
+    });
+    await tiered(run);
+    await run.retry({ verifyFloor: "P1" });
+    await run.settled();
+    expect(calls).toContain("codex:gpt-6-luna");
+    expect(run.findings[1]?.verdict).toBe("disproved");
+    expect(calls.filter((c) => c === "codex:gpt-6-sol")).toHaveLength(1);
+  });
+
+  it("moves to Claude even when a person assigned the role to Codex", async () => {
+    const claude: Vendor[] = [];
+    const { run } = await failedRun({
+      claude: disprover("claude", "ok", claude),
+      codex: refusing("codex", () => true, []),
+    });
+    await tiered(run);
+    const started = await run.retry({ verifyFloor: "P1", roles: { disprover: "codex" } });
+    expect(started.status).toBe("running");
+    const done = await run.settled();
+    expect(claude.length).toBeGreaterThan(0);
+    expect(run.findings[1]?.verdict).toBe("disproved");
+    expect(done.notices?.join(" ")).toMatch(/Claude answered for finding F-0002/);
+  });
+
+  it("flags the finding for follow-up and goes on when Claude fails too", async () => {
+    const { run } = await failedRun({
+      claude: refusing("claude", () => true, []),
+      codex: refusing("codex", () => true, []),
+    });
+    await tiered(run);
+    await run.retry({ verifyFloor: "P1" });
+    const done = await run.settled();
+    expect(done.status).toBe("finished");
+    const flagged = run.findings[1];
+    expect(flagged?.verdict).toBe("pending");
+    expect(flagged?.followUpReason).toMatch(/flagged/);
+    expect(done.notices?.join(" ")).toMatch(/F-0002 needs follow-up/);
+  });
+});
+
+describe("finish with Claude", () => {
+  it("gives Claude the roles and turns off the cross-vendor rule", async () => {
+    const claude: Vendor[] = [];
+    const codex: Vendor[] = [];
+    const { run } = await failedRun({
+      claude: disprover("claude", "ok", claude),
+      codex: disprover("codex", "quota", codex),
+    });
+    const started = await run.retry({ finishWithClaude: true });
+    expect(started.request.crossVendor).toBe(false);
+    expect(started.roles.disprover).toBe("claude");
+    expect(started.notices?.join(" ")).toMatch(/checks its own work/);
+    await run.settled();
+    expect(codex).toEqual([]);
+    expect(claude).toHaveLength(4);
+  });
+});

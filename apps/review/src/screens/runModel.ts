@@ -176,7 +176,9 @@ export function runControls(run: RunState): Controls {
       run.request.pipeline === "pre-push" &&
       !run.request.readOnly &&
       run.status === "finished" &&
-      (run.stopReason === "clean" || run.stopReason === "clean_above_floor") &&
+      (run.stopReason === "clean" ||
+        run.stopReason === "clean_above_floor" ||
+        run.stopReason === "clean_with_followups") &&
       !run.prUrl,
     // A retry can replace the vendor that a failed run stopped on.
     steer: active || run.status === "failed",

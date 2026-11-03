@@ -78,6 +78,17 @@ export class AgentFailed extends Error {
   }
 }
 
+/** A vendor's safety filter refused the request. Repeating the call gets the same answer. */
+const SAFETY_REFUSAL = /flagged for possible cybersecurity risk|cyber permissive safeguards/i;
+
+/** Thrown when a vendor's safety filter refused a call. */
+export class SafetyRefused extends AgentFailed {
+  constructor(role: AgentRole, vendor: Vendor, message: string) {
+    super(role, vendor, message);
+    this.name = "SafetyRefused";
+  }
+}
+
 /** Thrown when the server denied a lease with `fail_role`. */
 export class RoleDenied extends Error {
   constructor(
@@ -133,6 +144,8 @@ export interface AgentCallSpec {
    * server grant that redirects to one stops the run for a decision instead.
    */
   avoid?: readonly Vendor[];
+  /** Keep this vendor even when a person assigned the role to another one. */
+  pinVendor?: boolean;
 }
 
 export interface AgentOutcome<T> {
@@ -677,7 +690,8 @@ export class RunContext {
    * continuation stays with the vendor that holds its session.
    */
   private assignedVendor(spec: AgentCallSpec, vendor: Vendor): Vendor {
-    if (spec.method === "continueReview" || spec.role === "sweeper") return vendor;
+    if (spec.pinVendor || spec.method === "continueReview" || spec.role === "sweeper")
+      return vendor;
     const role = ROLE_FOR_AGENT[spec.role];
     const manual = this.eng.manualRoles[role];
     if (manual === undefined) return vendor;
@@ -1013,6 +1027,14 @@ export class RunContext {
           this.noteLimit(vendor, limit);
           await this.persist();
           continue;
+        }
+        const text = (error as Error).message ?? String(error);
+        if (SAFETY_REFUSAL.test(text)) {
+          throw new SafetyRefused(
+            spec.role,
+            vendor,
+            `The ${spec.role} call on ${vendor} was refused by the vendor's safety filter: ${text}`,
+          );
         }
         failures += 1;
         malformed = isMalformedOutput(error);

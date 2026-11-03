@@ -21,6 +21,7 @@ const FINDING_NUMBER = /^F-(\d+)$/;
 export async function retryProblems(
   ctx: RunContext,
   floor: Severity | undefined,
+  crossVendor: boolean = ctx.state.request.crossVendor,
 ): Promise<string[]> {
   const { state, eng, store, findings } = ctx;
   const problems: string[] = [];
@@ -65,7 +66,7 @@ export async function retryProblems(
       `The finding counter ${eng.counters.finding} is behind the highest finding, ${highest}.`,
     );
   }
-  if (state.request.crossVendor) {
+  if (crossVendor) {
     const stuck = findings.filter(
       (f) =>
         f.verdict === "pending" &&

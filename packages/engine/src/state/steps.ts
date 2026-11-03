@@ -55,8 +55,11 @@ import {
   type CheckoutState,
 } from "./checkout.js";
 import {
+  AgentFailed,
   DecisionNeeded,
   RunCancelled,
+  SafetyRefused,
+  type AgentCallSpec,
   type AgentOutcome,
   type CallTier,
   type RunContext,
@@ -796,6 +799,74 @@ export async function syncFloorLabels(ctx: RunContext): Promise<void> {
   }
 }
 
+/** Thrown when a refused call found no model or vendor that would answer. */
+class RefusalFallbackFailed extends Error {
+  constructor(readonly reasons: readonly string[]) {
+    super(reasons.join(" "));
+    this.name = "RefusalFallbackFailed";
+  }
+}
+
+/**
+ * Makes a call, and moves it when a vendor's safety filter refuses: to Codex's
+ * small model, then to Claude. Claude can be the finding's reporter or the
+ * fixer, so its answer waives the cross-vendor rule for this call, and the run
+ * gets a notice. Other failures of the first call stay as they are.
+ */
+async function callWithRefusalFallback<T>(
+  ctx: RunContext,
+  spec: AgentCallSpec,
+  subject: string,
+): Promise<AgentOutcome<T>> {
+  let refused: SafetyRefused;
+  try {
+    return await ctx.callAgent<T>(spec);
+  } catch (error) {
+    if (!(error instanceof SafetyRefused)) throw error;
+    refused = error;
+  }
+  const reasons = [refused.message];
+  const pinned = { ...spec, allowFallback: false, pinVendor: true };
+  const attempts: AgentCallSpec[] = [];
+  if (refused.vendor === "codex") {
+    attempts.push({
+      ...pinned,
+      key: `${spec.key}-small`,
+      tier: { tier: "small", reason: "A larger model's call was refused", fixed: true },
+    });
+  }
+  if (refused.vendor !== "claude" && ctx.usable("claude")) {
+    const { avoid: _reporterOrFixer, ...rest } = pinned;
+    attempts.push({
+      ...rest,
+      key: `${spec.key}-claude`,
+      vendor: "claude",
+      avoid: [refused.vendor],
+    });
+  }
+  for (const attempt of attempts) {
+    try {
+      const out = await ctx.callAgent<T>(attempt);
+      if (out.vendor === "claude") {
+        await addNotice(
+          ctx,
+          `Claude answered for ${subject} after a safety refusal, so that check isn't independent.`,
+        );
+      }
+      return out;
+    } catch (error) {
+      if (!(error instanceof AgentFailed)) throw error;
+      reasons.push(error.message);
+    }
+  }
+  throw new RefusalFallbackFailed(reasons);
+}
+
+async function addNotice(ctx: RunContext, notice: string): Promise<void> {
+  ctx.state.notices = [...(ctx.state.notices ?? []), notice];
+  await ctx.persist();
+}
+
 /**
  * Verifies every pending finding at or above the verification floor with a
  * disprover from another vendor. The rest stay pending and labeled.
@@ -803,7 +874,8 @@ export async function syncFloorLabels(ctx: RunContext): Promise<void> {
 export async function verifyPending(ctx: RunContext, stageFile: string): Promise<VerifyResult[]> {
   await syncFloorLabels(ctx);
   const pending = ctx.findings.filter(
-    (f) => f.verdict === "pending" && f.unverifiedReason === undefined,
+    (f) =>
+      f.verdict === "pending" && f.unverifiedReason === undefined && f.followUpReason === undefined,
   );
   const repoPath = pending.length > 0 ? await readOnlyRepo(ctx) : ctx.state.request.repoPath;
   const tipState = pending.length > 0 ? await readOnlyState(ctx) : null;
@@ -814,7 +886,7 @@ export async function verifyPending(ctx: RunContext, stageFile: string): Promise
       available: ctx.availableVendors,
       profile: ctx.state.profile,
     });
-    const result = await verifyFinding(finding, vendor, {
+    const verified = verifyFinding(finding, vendor, {
       runner: ctx.deps.runner,
       range: ctx.range(repoPath),
       policy: ctx.policy,
@@ -829,18 +901,22 @@ export async function verifyPending(ctx: RunContext, stageFile: string): Promise
       timeoutMs: ctx.timeouts.disprover,
       callDisprover: async (v, f, request) => {
         const tier = callTier(ctx, "disprover", groups, f.file ? [f.file] : []);
-        const out = await ctx.callAgent<VerifyOutput>({
-          key: `verify-${f.id}`,
-          role: "disprover",
-          vendor: v,
-          method: "verify",
-          request,
-          groupId: f.groupId,
-          estimateTokens: estimateTokens(request.prompt) + 6000,
-          allowFallback: true,
-          ...(tier ? { tier } : {}),
-          ...(ctx.state.request.crossVendor ? { avoid: avoidFor(f) } : {}),
-        });
+        const out = await callWithRefusalFallback<VerifyOutput>(
+          ctx,
+          {
+            key: `verify-${f.id}`,
+            role: "disprover",
+            vendor: v,
+            method: "verify",
+            request,
+            groupId: f.groupId,
+            estimateTokens: estimateTokens(request.prompt) + 6000,
+            allowFallback: true,
+            ...(tier ? { tier } : {}),
+            ...(ctx.state.request.crossVendor ? { avoid: avoidFor(f) } : {}),
+          },
+          `finding ${f.id}`,
+        );
         return {
           vendor: out.vendor,
           model: out.model,
@@ -849,6 +925,22 @@ export async function verifyPending(ctx: RunContext, stageFile: string): Promise
         };
       },
     });
+    let result: Awaited<typeof verified>;
+    try {
+      result = await verified;
+    } catch (error) {
+      if (!(error instanceof RefusalFallbackFailed)) throw error;
+      // Nothing can check this finding, so it waits for a person, and the run goes on.
+      finding.followUpReason = error.reasons.join(" ").slice(0, 2000);
+      await addNotice(ctx, `Finding ${finding.id} needs follow-up: no vendor would check it.`);
+      await ctx.emit({
+        type: "finding.changed",
+        runId: ctx.state.id,
+        finding: structuredClone(finding),
+        previousVerdict: finding.verdict,
+      });
+      return null;
+    }
     if (!result) return result;
     const d = result.decision;
     if (d.verdict === "unverified") {
@@ -1295,18 +1387,29 @@ export async function runConfirm(
       ...parseDiff(fixDiff).map((f) => f.path),
     ]),
   ]);
-  const out = await ctx.callAgent<ConfirmOutput>({
-    key: "confirm",
-    role: "confirmer",
-    vendor,
-    method: "confirm",
-    request: { prompt, repoPath, toolPolicy: "read-only" },
-    groupId: null,
-    estimateTokens: estimateTokens(prompt) + 3000,
-    allowFallback: true,
-    ...(confirmTier ? { tier: confirmTier } : {}),
-    ...(crossVendor ? { avoid: [fixer] } : {}),
-  });
+  let out: AgentOutcome<ConfirmOutput>;
+  try {
+    out = await callWithRefusalFallback<ConfirmOutput>(
+      ctx,
+      {
+        key: "confirm",
+        role: "confirmer",
+        vendor,
+        method: "confirm",
+        request: { prompt, repoPath, toolPolicy: "read-only" },
+        groupId: null,
+        estimateTokens: estimateTokens(prompt) + 3000,
+        allowFallback: true,
+        // Without the rule, the fixer confirms, whoever holds the confirmer role.
+        ...(crossVendor ? { avoid: [fixer] } : { pinVendor: true }),
+        ...(confirmTier ? { tier: confirmTier } : {}),
+      },
+      "the fix confirmation",
+    );
+  } catch (error) {
+    if (!(error instanceof RefusalFallbackFailed)) throw error;
+    throw new AgentFailed("confirmer", vendor, error.message);
+  }
   const actor = { kind: "agent" as const, vendor: out.vendor, model: out.model, role: "confirmer" };
   const incomplete = new Map(out.output.incomplete.map((i) => [i.id, i.reason]));
   const fixedIds: string[] = [];

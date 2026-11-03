@@ -222,7 +222,7 @@ function RetryControl({
 }: {
   run: RunState;
   busy: boolean;
-  onRetry: (verifyFloor: Severity | "all") => void;
+  onRetry: (verifyFloor: Severity | "all", finishWithClaude?: boolean) => void;
 }) {
   const [floor, setFloor] = useState<Severity | "all">(run.request.verifyFloor ?? "all");
   return (
@@ -243,6 +243,14 @@ function RetryControl({
       </label>
       <button type="button" className="primary" disabled={busy} onClick={() => onRetry(floor)}>
         Retry
+      </button>
+      <button
+        type="button"
+        disabled={busy}
+        title="Gives the remaining work to Claude and turns off the cross-vendor rule, so Claude checks its own findings."
+        onClick={() => onRetry(floor, true)}
+      >
+        Finish with Claude
       </button>
     </>
   );
@@ -477,8 +485,10 @@ export function RunView({ runId }: { runId: string }) {
           <RetryControl
             run={run}
             busy={busy}
-            onRetry={(verifyFloor) =>
-              void act(() => api.call("runs.retry", { params, body: { verifyFloor } }))
+            onRetry={(verifyFloor, finishWithClaude) =>
+              void act(() =>
+                api.call("runs.retry", { params, body: { verifyFloor, finishWithClaude } }),
+              )
             }
           />
         ) : null}

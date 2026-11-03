@@ -121,6 +121,11 @@ const findingFields = {
    */
   unverifiedReason: z.enum(["below_verify_floor"]).optional(),
   /**
+   * Why a pending finding waits for a person: every vendor that could check it
+   * refused or failed. It doesn't hold the run open. A retry checks it again.
+   */
+  followUpReason: z.string().optional(),
+  /**
    * Why a confirmed finding doesn't go to the fixer. `below_verify_floor`:
    * its severity is below the run's verification floor. Absent otherwise and
    * on findings stored before the field existed.

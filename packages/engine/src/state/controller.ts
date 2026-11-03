@@ -474,21 +474,39 @@ export class RunController {
     }
     this.retrying = true;
     try {
-      const roles = startingRoles(options.roles, ctx.availableVendors);
+      const finish = options.finishWithClaude === true;
+      if (finish && !ctx.availableVendors.includes("claude")) {
+        throw new InvalidStateError("Can't finish with Claude: no Claude adapter is configured.");
+      }
+      const roles = startingRoles(
+        finish
+          ? { ...options.roles, reviewer: ["claude"], disprover: "claude", fixer: "claude" }
+          : options.roles,
+        ctx.availableVendors,
+      );
       const floor =
         options.verifyFloor === undefined
           ? ctx.state.request.verifyFloor
           : options.verifyFloor === "all"
             ? undefined
             : options.verifyFloor;
-      const problems = await retryProblems(ctx, floor);
+      const problems = await retryProblems(
+        ctx,
+        floor,
+        finish ? false : ctx.state.request.crossVendor,
+      );
       if (problems.length > 0) {
         throw new InvalidStateError(`Can't retry this run: ${problems.join(" ")}`);
       }
       const notices = [
         `Retried from the ${ctx.state.stage} stage after: ${ctx.state.error ?? "an unknown error"}`,
         ...(await tipMovedNotice(ctx)),
+        ...(finish
+          ? ["Claude finishes this run with the cross-vendor rule off, so it checks its own work."]
+          : []),
       ];
+      if (finish) ctx.state.request.crossVendor = false;
+      for (const f of ctx.findings) delete f.followUpReason;
       if (floor) ctx.state.request.verifyFloor = floor;
       else delete ctx.state.request.verifyFloor;
       ctx.clearVendorLimits();
@@ -533,6 +551,7 @@ export class RunController {
       ctx.state.status === "finished" &&
       ctx.state.stopReason !== "clean" &&
       ctx.state.stopReason !== "clean_above_floor" &&
+      ctx.state.stopReason !== "clean_with_followups" &&
       ctx.state.stopReason !== "round_cap"
     ) {
       throw new InvalidStateError(

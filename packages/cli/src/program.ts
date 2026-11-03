@@ -284,11 +284,13 @@ function findingRows(findings: Finding[]) {
     findings.map((f) => [
       f.id,
       f.severity,
-      f.unverifiedReason
-        ? `${f.verdict} (not verified: below floor)`
-        : f.fixHeldReason
-          ? `${f.verdict} (not sent to the fixer: below floor)`
-          : f.verdict,
+      f.followUpReason
+        ? `${f.verdict} (needs follow-up)`
+        : f.unverifiedReason
+          ? `${f.verdict} (not verified: below floor)`
+          : f.fixHeldReason
+            ? `${f.verdict} (not sent to the fixer: below floor)`
+            : f.verdict,
       f.round,
       f.file ? (f.lines ? `${f.file}:${f.lines[0]}-${f.lines[1]}` : f.file) : null,
       f.title,
@@ -956,13 +958,26 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
         "Send only findings at or above this severity to a disprover. Use all to remove the run's floor. Default: keep the run's floor.",
       ).choices([...SEVERITIES, "all"]),
     )
-    .action(async (runId: string, o: { role: string[]; verifyFloor?: string }) => {
-      const r = await client().call("runs.retry", {
-        params: { runId },
-        body: { roles: rolesOf(o.role), verifyFloor: o.verifyFloor as "P1" | "all" | undefined },
-      });
-      print(r, () => `Retried run ${r.id}; status ${r.status}, stage ${r.stage}.\n`);
-    });
+    .option(
+      "--finish-with-claude",
+      "Give the remaining work to Claude and turn off the cross-vendor rule, so Claude checks its own findings.",
+    )
+    .action(
+      async (
+        runId: string,
+        o: { role: string[]; verifyFloor?: string; finishWithClaude?: boolean },
+      ) => {
+        const r = await client().call("runs.retry", {
+          params: { runId },
+          body: {
+            roles: rolesOf(o.role),
+            verifyFloor: o.verifyFloor as "P1" | "all" | undefined,
+            ...(o.finishWithClaude ? { finishWithClaude: true } : {}),
+          },
+        });
+        print(r, () => `Retried run ${r.id}; status ${r.status}, stage ${r.stage}.\n`);
+      },
+    );
 
   review
     .command("push")
