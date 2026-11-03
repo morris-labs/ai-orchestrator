@@ -55,13 +55,16 @@ afterEach(async () => {
   rmSync(home, { recursive: true, force: true });
 });
 
-function cli(args: string[], cwd?: string) {
+function cli(args: string[], cwd?: string, onErr?: () => void) {
   return runCli(args, {
     cwd,
     env: { AIO_SERVER: server.url, AIO_TOKEN: TOKEN },
     home,
     out: (t) => (out += t),
-    err: (t) => (err += t),
+    err: (t) => {
+      err += t;
+      onErr?.();
+    },
     pollMs: 5,
     exec: async (argv) => {
       execs.push(argv);
@@ -357,5 +360,37 @@ describe("events", () => {
       .map((l) => JSON.parse(l) as { type: string; machine?: string });
     const events = lines.filter((l) => l.type !== "hello");
     expect(events.map((l) => l.machine ?? "local").sort()).toEqual(["local", NODE].sort());
+    expect(err).not.toContain("no more events");
+  });
+
+  it.each([
+    [1000, "Its event stream closed."],
+    [1001, "Its event stream closed."],
+    [1014, "The server closed the event stream: The link to the machine closed. (code 1014)."],
+  ])(
+    "warns, keeps tailing, and exits 1 when another machine's stream closes with %i",
+    async (code, why) => {
+      server.eventsByPath["/api/v1/events"] = [];
+      server.closeEventsByPath[`${PROXY}/events`] = {
+        code,
+        reason: code === 1014 ? "The link to the machine closed." : "",
+      };
+      // This server's event arrives only after the warning, so `--count` ends
+      // the command on a stream that outlived the lost machine.
+      const args = ["events", "--all-machines", "--count", "1"];
+      const exit = await cli(args, undefined, () => {
+        server.pushEvent("/api/v1/events", event(1));
+      });
+      expect(exit).toBe(1);
+      expect(err).toContain(`Warning: no more events from build-server: ${why}`);
+      expect(out).toContain('"ports.changed"');
+    },
+  );
+
+  it("exits 0 and warns about nothing when this server's stream ends first", async () => {
+    server.closeEventsByPath["/api/v1/events"] = { code: 1000, reason: "" };
+    server.eventsByPath[`${PROXY}/events`] = [event(1, { machine: NODE })];
+    expect(await cli(["events", "--all-machines", "--count", "1"])).toBe(0);
+    expect(err).not.toContain("no more events");
   });
 });

@@ -431,6 +431,19 @@ describe("node to hub to node", () => {
     s.ws.close();
   });
 
+  it("tags the hub's own events, which a node's client gets through the proxy", async () => {
+    const ws = fleet.nodeBUrl.replace(/^http/, "ws");
+    const s = await connect(`${ws}/machines/hub-pc/proxy/events`, AUTH_B);
+    s.ws.send(JSON.stringify({ type: "hello", streamId: null, lastSeq: null }));
+    await s.until((x) => x.texts.length === 1);
+    expect(s.texts[0]).toMatchObject({ type: "hello", streamId: fleet.hub.hub.streamId });
+    expect(s.texts[0]).not.toHaveProperty("machine");
+    fleet.hub.hub.emit({ type: "box.changed", boxId: box.id, status: "stopped", box: null });
+    await s.until((x) => x.texts.length === 2);
+    expect(s.texts[1]).toMatchObject({ type: "box.changed", seq: 1, machine: "hub-pc" });
+    s.ws.close();
+  });
+
   it("answers 503 on a plain node without a hub link", async () => {
     const lonely = await createHarness({ links: new FakeRegistry(), machines: { role: "node" } });
     const port = await lonely.server.listen(0);

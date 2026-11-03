@@ -36,6 +36,10 @@ export interface FakeServer {
   lastEventsQuery: Record<string, string> | null;
   /** Closes each event socket at once with this code and reason, like a refused query. */
   closeEventsWith: { code: number; reason: string } | null;
+  /** Like `closeEventsWith`, for the event socket at one path. */
+  closeEventsByPath: Record<string, { code: number; reason: string }>;
+  /** Sends a frame to the event sockets at `path`, and to any that says hello later. */
+  pushEvent(path: string, frame: unknown): void;
   /**
    * Serves terminal sockets, at `/api/v1/terminals` and under the machine
    * proxy prefix; `null` refuses them. `refuseTerminal` refuses them with
@@ -83,6 +87,7 @@ export async function startFakeServer(
       res.end(JSON.stringify(a.body));
     });
   });
+  const greeted = new Map<string, WebSocket[]>();
   const fake: FakeServer = {
     url: "",
     cert: identity.cert,
@@ -92,6 +97,11 @@ export async function startFakeServer(
     eventPaths: [],
     lastEventsQuery: null,
     closeEventsWith: null,
+    closeEventsByPath: {},
+    pushEvent: (path, frame) => {
+      (fake.eventsByPath[path] ??= []).push(frame);
+      for (const ws of greeted.get(path) ?? []) ws.send(JSON.stringify(frame));
+    },
     onTerminal: null,
     refuseTerminal: null,
     on: (route, answer) => void answers.set(route, answer),
@@ -135,8 +145,9 @@ export async function startFakeServer(
     fake.eventPaths.push(url.pathname);
     const frames = fake.eventsByPath[url.pathname] ?? fake.events;
     wss.handleUpgrade(req, socket, head, (ws) => {
-      if (fake.closeEventsWith) {
-        ws.close(fake.closeEventsWith.code, fake.closeEventsWith.reason);
+      const close = fake.closeEventsByPath[url.pathname] ?? fake.closeEventsWith;
+      if (close) {
+        ws.close(close.code, close.reason);
         return;
       }
       ws.on("message", (m) => {
@@ -144,6 +155,7 @@ export async function startFakeServer(
         if (hello.type !== "hello") return;
         ws.send(JSON.stringify({ type: "hello", streamId: "srv-1", lastSeq: 0, replaying: false }));
         for (const frame of frames) ws.send(JSON.stringify(frame));
+        greeted.set(url.pathname, [...(greeted.get(url.pathname) ?? []), ws]);
       });
     });
   });

@@ -1994,21 +1994,28 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
         seen += 1;
         if (o.count !== undefined && seen >= o.count) done.abort();
       };
+      // Another machine's stream that ends early, cleanly or not, leaves the
+      // merged stream partial: warn, keep tailing the others, and exit 1.
+      const lost = (name: string, why: string) => {
+        state.code = 1;
+        deps.err(terminalText(`Warning: no more events from ${name}: ${why}\n`));
+      };
       await Promise.all(
         machines.map((m) =>
-          tail(m.isLocal ? null : m.id, write, signal, onEvent).catch((err: unknown) => {
-            // This server's own stream must work; another machine's failure
-            // ends only its own stream.
-            if (m.isLocal) {
-              done.abort();
-              throw err;
-            }
-            deps.err(
-              terminalText(
-                `Warning: no more events from ${m.name}: ${err instanceof Error ? err.message : String(err)}\n`,
-              ),
-            );
-          }),
+          tail(m.isLocal ? null : m.id, write, signal, onEvent).then(
+            () => {
+              if (!m.isLocal && !signal.aborted) lost(m.name, "Its event stream closed.");
+            },
+            (err: unknown) => {
+              // This server's own stream must work; another machine's failure
+              // ends only its own stream.
+              if (m.isLocal) {
+                done.abort();
+                throw err;
+              }
+              lost(m.name, err instanceof Error ? err.message : String(err));
+            },
+          ),
         ),
       );
     });

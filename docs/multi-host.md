@@ -229,7 +229,9 @@ aio events --all-machines
 
 The box list shows another machine's boxes as `MACHINE/BOX`, and it warns
 about each machine that is offline. Each event from another machine carries
-that machine's ID in its `machine` field.
+that machine's ID in its `machine` field. When another machine's event stream
+ends before the command does, `aio events --all-machines` warns about that
+machine, keeps printing the other machines' events, and exits with status 1.
 
 The following rules apply to the CLI on another machine:
 

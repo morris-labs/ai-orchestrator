@@ -172,8 +172,6 @@ interface Resolved {
   link: NodeLink;
   /** The path to send over the link. */
   path: string;
-  /** True on a hub, which tags relayed events with the machine. */
-  viaHub: boolean;
 }
 
 /** Finds the link for a call to `machineId`, or throws the API error to answer. */
@@ -199,7 +197,7 @@ export function resolveMachine(
         `The hub isn't connected, so machine ${id} can't be reached. Try again once the link to the hub is back.`,
       );
     }
-    return { link: hub, path: originalPath, viaHub: false };
+    return { link: hub, path: originalPath };
   }
   const link = links.get(id);
   if (!link) {
@@ -208,7 +206,7 @@ export function resolveMachine(
     }
     throw new ApiError("not_found", `No machine has the ID ${id}.`);
   }
-  return { link, path: `${API_PREFIX}/${target.rest}`, viaHub: true };
+  return { link, path: `${API_PREFIX}/${target.rest}` };
 }
 
 /** The `x-aio-forwarded-by` value after this server adds itself. */
@@ -477,7 +475,9 @@ async function openRelay(deps: Deps, request: FastifyRequest): Promise<void> {
   } catch (err) {
     throw linkFailure(err, target.machineId);
   }
-  const events = resolved.viaHub && target.rest.replace(/\/$/, "") === "events";
+  // A node tags too: the hub serves its own events as plain frames, and
+  // `tagEventFrame` leaves a frame the hub already tagged as it is.
+  const events = target.rest.replace(/\/$/, "") === "events";
   const relay = new PendingRelay(
     stream,
     target.machineId,
