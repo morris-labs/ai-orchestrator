@@ -441,6 +441,24 @@ describe("multi-host", () => {
     expect(local.json.error.message).toMatch(/hub refused the enrollment/);
   });
 
+  it("drops the link when the role becomes hub, and starts it when the role changes back", async () => {
+    const { hub, node, joined } = await linkedPair();
+    const machineId = joined.json.machineId as string;
+    await waitFor(() => node.app.multiHost.node.status().link === "connected");
+    await waitFor(() => hub.app.multiHost.hub.get(machineId) !== undefined);
+
+    expect((await node.api("PATCH", "/api/v1/settings", { role: "hub" })).status).toBe(200);
+    expect(node.app.multiHost.node.status().link).toBe("none");
+    await waitFor(() => hub.app.multiHost.hub.get(machineId) === undefined);
+    // No retry brings it back while the role stays hub.
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(hub.app.multiHost.hub.get(machineId)).toBeUndefined();
+
+    expect((await node.api("PATCH", "/api/v1/settings", { role: "node" })).status).toBe(200);
+    await waitFor(() => node.app.multiHost.node.status().link === "connected");
+    await waitFor(() => hub.app.multiHost.hub.get(machineId) !== undefined);
+  });
+
   it("refuses a second join without spending the code, until the caller replaces the hub", async () => {
     const { hub, node, code, joined } = await linkedPair();
     const other = await startServer("other-hub", { signedIn: true });

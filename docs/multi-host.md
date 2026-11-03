@@ -61,9 +61,11 @@ To set up the hub, do the following on the machine that hosts it:
 
     ```
 
-    A role change in the settings applies at the next server start. To pin
-    the role in the service instead, run `systemctl --user edit aio-server`,
-    add the following lines, and restart the server:
+    A role change in the settings applies at the next server start, except
+    for the link to a hub: a joined machine drops that link when its role
+    becomes `hub`, and starts it when its role stops being `hub`. To pin the
+    role in the service instead, run `systemctl --user edit aio-server`, add
+    the following lines, and restart the server:
 
     ```ini
     [Service]

@@ -302,6 +302,23 @@ export class NodeAgent {
     this.restart();
   }
 
+  /**
+   * Makes the link follow the role. The link drops when this machine may no
+   * longer link, and starts when it may and has no link or retry under way. A
+   * revoked machine stays down until it joins again.
+   */
+  reconcile(): void {
+    if (!this.files || this.stopped) return;
+    if (!this.opts.mayLink()) {
+      this.dropSocket();
+      if (this.state !== "revoked") this.setState("none", null);
+      return;
+    }
+    if (this.state === "revoked" || this.socket || this.retryTimer) return;
+    this.backoff = 0;
+    this.connect();
+  }
+
   /** Drops the link and connects again with the current files, when allowed. */
   restart(): void {
     this.dropSocket();
@@ -350,7 +367,7 @@ export class NodeAgent {
 
   private connect(): void {
     const files = this.files;
-    if (!files || this.stopped) return;
+    if (!files || this.stopped || !this.opts.mayLink()) return;
     const gen = ++this.generation;
     const current = () => gen === this.generation;
     this.setState("connecting", this.error);
@@ -361,11 +378,15 @@ export class NodeAgent {
     } as unknown as WebSocket.ClientOptions);
     this.socket = ws;
     let terminal: { state: NodeLinkState; error: string } | null = null;
+    /** True once the hub's non-101 answer set the state and error. */
+    let answered = false;
 
     ws.on("unexpected-response", (_req, res) => {
       const chunks: Buffer[] = [];
       res.on("data", (c: Buffer) => chunks.push(c));
-      res.on("end", () => {
+      // `close`, not `end`: a response that the connection cuts off never ends.
+      res.on("close", () => {
+        answered = true;
         const message =
           Buffer.concat(chunks).toString().slice(0, 300) || `status ${res.statusCode}`;
         if (current()) {
@@ -383,12 +404,13 @@ export class NodeAgent {
           }
         }
         // The close handler schedules the retry, unless the machine is revoked.
+        // During the handshake, `terminate` also makes `ws` emit an error.
         ws.terminate();
       });
     });
 
     ws.on("error", (err) => {
-      if (!current() || terminal) return;
+      if (!current() || terminal || answered) return;
       this.error = `Can't reach the hub at ${files.config.hubUrl}: ${err.message}`;
     });
 

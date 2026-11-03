@@ -353,6 +353,9 @@ export async function startApp(options: AppOptions): Promise<App> {
     vendorHealth.ingest(event);
     notifier.ingest(event);
     if (event.type === "box.changed") syncTunnels();
+    if (event.type === "settings.changed" && event.changedKeys.includes("role")) {
+      multiHost.node.reconcile();
+    }
     if (event.type === "container.changed") {
       if (event.state !== "running") ports.delete(event.container);
       void engines.refresh();
