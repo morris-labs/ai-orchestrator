@@ -1,7 +1,76 @@
+import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, rmSync } from "node:fs";
 import os from "node:os";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import path from "node:path";
-import { execStartLine, main, parseServerArgs, serverHome } from "../src/main.js";
+import { execStartLine, logToFile, main, parseServerArgs, serverHome } from "../src/main.js";
+
+describe("logToFile", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(path.join(os.tmpdir(), "aio-log-"));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  /** A stand-in for `process.stderr` that records what reaches it. */
+  function fakeStderr() {
+    const seen: string[] = [];
+    const stderr = {
+      write: ((chunk: string | Uint8Array, done?: () => void) => {
+        seen.push(chunk.toString());
+        done?.();
+        return true;
+      }) as NodeJS.WriteStream["write"],
+    };
+    return { seen, stderr };
+  }
+
+  it("has a message in the file when the write returns", () => {
+    const { seen, stderr } = fakeStderr();
+    const file = path.join(dir, "logs", "server.log");
+    logToFile(file, stderr);
+    stderr.write("one\n");
+    expect(readFileSync(file, "utf8")).toBe("one\n");
+    stderr.write(Buffer.from("two\n"));
+    stderr.write("74687265650a", "hex");
+    expect(readFileSync(file, "utf8")).toBe("one\ntwo\nthree\n");
+    expect(seen).toEqual([]);
+  });
+
+  it("calls a write's callback in both call forms", async () => {
+    const { stderr } = fakeStderr();
+    logToFile(path.join(dir, "server.log"), stderr);
+    await new Promise<void>((resolve) => stderr.write("a\n", () => resolve()));
+    await new Promise<void>((resolve) => stderr.write("b\n", "utf8", () => resolve()));
+  });
+
+  it("runs on when the file can't be opened", () => {
+    const { seen, stderr } = fakeStderr();
+    const original = stderr.write;
+    logToFile(dir, stderr); // A directory.
+    expect(seen.join("")).toContain(`can't write to the log file ${dir}`);
+    expect(stderr.write).toBe(original);
+  });
+
+  it("runs on when the file's parent can't be created", () => {
+    const { seen, stderr } = fakeStderr();
+    const blocker = path.join(dir, "blocker");
+    closeSync(openSync(blocker, "w"));
+    logToFile(path.join(blocker, "server.log"), stderr);
+    expect(seen.join("")).toContain("can't write to the log file");
+  });
+
+  // On Linux, every write to /dev/full fails with ENOSPC.
+  it.skipIf(!existsSync("/dev/full"))("falls back when a write fails, and reports it once", () => {
+    const { seen, stderr } = fakeStderr();
+    logToFile("/dev/full", stderr);
+    stderr.write("first\n");
+    stderr.write("second\n");
+    expect(seen.filter((s) => s.includes("can't write to the log file"))).toHaveLength(1);
+    expect(seen.filter((s) => !s.includes("can't write"))).toEqual(["first\n", "second\n"]);
+  });
+});
 
 describe("main", () => {
   it("uses AIO_HOME when set, else the home directory", () => {

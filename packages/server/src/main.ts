@@ -9,7 +9,7 @@
 //
 // `--data-dir PATH` (or `AIO_DATA_DIR`) moves the data directory away
 // from `~/.ai-orchestrator`.
-import { createWriteStream, mkdirSync, readFileSync, realpathSync } from "node:fs";
+import { appendFileSync, mkdirSync, openSync, readFileSync, realpathSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -122,11 +122,50 @@ export function parseServerArgs(
 /**
  * Sends standard error to `file`, appending. The Windows logon task runs
  * the server without a console, so this is where its messages go.
+ *
+ * Each write is synchronous, so a message written just before `process.exit`
+ * reaches the file. A file that the server can't open or write costs only the
+ * log: the message goes to the original standard error, and the server runs on.
  */
-function logToFile(file: string): void {
-  mkdirSync(path.dirname(file), { recursive: true });
-  const stream = createWriteStream(file, { flags: "a" });
-  process.stderr.write = stream.write.bind(stream) as typeof process.stderr.write;
+export function logToFile(
+  file: string,
+  stderr: Pick<NodeJS.WriteStream, "write"> = process.stderr,
+): void {
+  const original = stderr.write.bind(stderr) as (
+    chunk: string | Uint8Array,
+    done?: (err?: Error | null) => void,
+  ) => boolean;
+  const complain = (err: unknown) =>
+    original(
+      `aio-server can't write to the log file ${file}: ${(err as Error).message}. Messages go to standard error instead.\n`,
+    );
+  let fd: number;
+  try {
+    mkdirSync(path.dirname(file), { recursive: true });
+    fd = openSync(file, "a");
+  } catch (err) {
+    complain(err);
+    return;
+  }
+  let complained = false;
+  stderr.write = ((
+    chunk: string | Uint8Array,
+    encodingOrDone?: BufferEncoding | ((err?: Error | null) => void),
+    maybeDone?: (err?: Error | null) => void,
+  ) => {
+    const encoding = typeof encodingOrDone === "string" ? encodingOrDone : undefined;
+    const done = typeof encodingOrDone === "function" ? encodingOrDone : maybeDone;
+    const bytes = typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk;
+    try {
+      appendFileSync(fd, bytes);
+    } catch (err) {
+      if (!complained) complain(err);
+      complained = true;
+      return original(bytes, done);
+    }
+    if (done) process.nextTick(done);
+    return true;
+  }) as typeof stderr.write;
 }
 
 /** The help text, with the service that `install-service` writes on `platform`. */
