@@ -701,13 +701,15 @@ class ScriptsTest(unittest.TestCase):
         (tmp / f"image/dist/aio-engine-{version}.tgz").write_bytes(b"")
         return version
 
-    def _fake_npm(self, tmp):
+    def _fake_npm(self, tmp, failing="@aio/no-such-package"):
+        """Installs an npm in TMP that fails for the package FAILING and returns the environment."""
         bin_dir = tmp / "bin"
         bin_dir.mkdir()
         fake = bin_dir / "npm"
         fake.write_text(
             "#!/bin/sh\n"
             'case "$2" in\n'
+            f"  {failing}) exit 1 ;;\n"
             "  @anthropic-ai/claude-code) echo 9.1.0 ;;\n"
             "  @openai/codex) echo 9.2.0 ;;\n"
             "  @github/copilot) echo 9.3.0 ;;\n"
@@ -769,6 +771,28 @@ class ScriptsTest(unittest.TestCase):
             self.assertIn("CLAUDE_CODE_VERSION=9.1.0", result.stdout)
             self.assertIn("isn't writable", result.stderr)
             self.assertEqual((tmp / "image/versions.env").read_text(), VERSIONS.read_text())
+
+    def test_build_image_update_cli_stops_when_a_lookup_fails(self):
+        # A failed lookup must stop the script before it writes an empty pin
+        # or builds with the old pins.
+        packages = ("@anthropic-ai/claude-code", "@openai/codex", "@github/copilot")
+        for package in packages:
+            for flags in ([], ["--print"]):
+                with self.subTest(package=package, flags=flags), tempfile.TemporaryDirectory() as tmp:
+                    tmp = pathlib.Path(tmp)
+                    self._installed_layout(tmp)
+                    env = self._fake_npm(tmp, failing=package)
+                    # A fake docker shows whether the script reaches its build step.
+                    (tmp / "bin/docker").write_text('#!/bin/sh\necho built\n')
+                    (tmp / "bin/docker").chmod(0o755)
+                    result = subprocess.run(
+                        [str(tmp / "scripts/build-image.sh"), "--update-cli", *flags],
+                        capture_output=True, text=True, env=env,
+                    )
+                    self.assertEqual(result.returncode, 1, result.stderr)
+                    self.assertIn(f"npm view {package} failed", result.stderr)
+                    self.assertEqual(result.stdout, "")
+                    self.assertEqual((tmp / "image/versions.env").read_text(), VERSIONS.read_text())
 
     def test_build_image_update_cli_is_documented_in_help(self):
         out = subprocess.run(

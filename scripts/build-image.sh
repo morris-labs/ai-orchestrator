@@ -111,11 +111,12 @@ override_of() {
 if ((UPDATE_CLI && !PACK_ONLY)); then
   require_tool npm "Install Node.js 22, which includes npm."
   OVERRIDE_KEYS=(CLAUDE_CODE_VERSION CODEX_VERSION COPILOT_VERSION)
-  OVERRIDE_VALUES=(
-    "$(npm_latest @anthropic-ai/claude-code)"
-    "$(npm_latest @openai/codex)"
-    "$(npm_latest @github/copilot)"
-  )
+  # npm_latest exits only its command substitution when it fails. A simple
+  # assignment passes that failure to set -e; an array assignment hides it.
+  claude_code_version="$(npm_latest @anthropic-ai/claude-code)"
+  codex_version="$(npm_latest @openai/codex)"
+  copilot_version="$(npm_latest @github/copilot)"
+  OVERRIDE_VALUES=("$claude_code_version" "$codex_version" "$copilot_version")
   if ((PRINT)); then
     log "Not saving the versions to $VERSIONS because of --print"
   elif [[ -w "$VERSIONS" ]]; then
