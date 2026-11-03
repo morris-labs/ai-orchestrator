@@ -78,6 +78,24 @@ def read_pins(path):
     return pairs
 
 
+def runs_ufw(script):
+    """Returns whether shell SCRIPT names ufw outside a comment line or a here-document."""
+    terminator = None
+    for line in script.splitlines():
+        if terminator is not None:
+            if line.lstrip("\t") == terminator:
+                terminator = None
+            continue
+        if line.lstrip().startswith("#"):
+            continue
+        heredoc = re.search(r"(?<!<)<<(?!<)-?\s*['\"\\]?([A-Za-z_]\w*)", line)
+        if heredoc:
+            terminator = heredoc.group(1)
+        if re.search(r"\bufw\b", line):
+            return True
+    return False
+
+
 def workflow_triggers(doc):
     # PyYAML reads the bare key `on` as the boolean True.
     return doc.get("on", doc.get(True))
@@ -157,7 +175,22 @@ class NfpmConfigTest(unittest.TestCase):
         # The package opens nothing on its own.
         for script in ("postinst", "prerm", "postrm"):
             text = (ROOT / "packaging/deb/scripts" / script).read_text()
-            self.assertNotRegex(text, r"^\s*ufw ", script)
+            self.assertFalse(runs_ufw(text), f"{script} runs ufw")
+
+    def test_runs_ufw_finds_a_command_anywhere_in_a_script(self):
+        for command in (
+            "ufw allow 21402/tcp",
+            "    ufw allow 21402/tcp",
+            "sudo ufw allow 21402/tcp",
+            "true && ufw enable",
+            "/usr/sbin/ufw enable",
+        ):
+            self.assertTrue(runs_ufw(f"#!/bin/sh\nset -e\n{command}\nexit 0\n"), command)
+
+    def test_runs_ufw_ignores_comments_and_here_documents(self):
+        message = "cat <<'MSG'\n  sudo ufw allow from LAN_CIDR to any app aio-hub\nMSG\n"
+        self.assertFalse(runs_ufw(f"#!/bin/sh\n# ufw stays closed.\n{message}exit 0\n"))
+        self.assertTrue(runs_ufw(f"#!/bin/sh\n{message}ufw enable\n"))
 
     def test_maintainer_scripts_exist(self):
         for key, src in self.config["scripts"].items():

@@ -244,7 +244,7 @@ class BuildScriptsTest(unittest.TestCase):
             if os.environ.get("AIO_REQUIRE_TOOLS") == "1":
                 raise AssertionError("shellcheck is required (AIO_REQUIRE_TOOLS=1) but not on PATH")
             self.skipTest("shellcheck is not on PATH")
-        subprocess.run([shellcheck, str(ROOT / "scripts/build-mac.sh")], check=True)
+        subprocess.run([shellcheck, "-x", str(ROOT / "scripts/build-mac.sh")], check=True, cwd=ROOT)
 
 
 if __name__ == "__main__":
