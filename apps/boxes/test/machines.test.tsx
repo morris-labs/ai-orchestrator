@@ -823,7 +823,7 @@ describe("Machines page", () => {
       machine({ id: "node-b", name: "node-b", protocol: 1, capabilities: ["boxes"] }),
     ]);
     expect(screen.getByRole("note")).toHaveTextContent(
-      "node-b runs a different server version from this PC.",
+      "node-b might run a different server version from this PC.",
     );
     const row = machineRow("node-b");
     expect(row).toHaveTextContent("Update aio-server on node-b");
@@ -866,6 +866,12 @@ describe("machine logic", () => {
   it("finds no skew for matching machines or this PC", () => {
     expect(skewNotes(machine({ id: "b", name: "b" }), { ...LOCAL })).toEqual([]);
     expect(skewNotes(LOCAL, LOCAL)).toEqual([]);
+    expect(
+      skewNotes(machine({ id: "b", name: "b", status: "revoked", protocol: 1 }), {
+        ...LOCAL,
+        protocol: 2,
+      }),
+    ).toEqual([]);
     expect(
       skewNotes(machine({ id: "b", name: "b", protocol: 3 }), { ...LOCAL, protocol: 2 })[0],
     ).toContain("Update aio-server on this PC.");

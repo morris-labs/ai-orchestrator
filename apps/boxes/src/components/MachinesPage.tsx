@@ -233,8 +233,8 @@ export function MachinesPage(props: MachinesPageProps) {
       {skewed.length > 0 && (
         <div role="note" className="bx-machines-note bx-machine-skew">
           {skewed.length === 1
-            ? `${skewed[0]?.name} runs a different server version from this PC. See Notes.`
-            : `${skewed.length} machines run a different server version from this PC. See Notes.`}
+            ? `${skewed[0]?.name} might run a different server version from this PC. See Notes.`
+            : `${skewed.length} machines might run a different server version from this PC. See Notes.`}
         </div>
       )}
       <DataTable

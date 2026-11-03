@@ -22,21 +22,23 @@ export function UsageView({
   const [now, setNow] = useState(() => new Date());
   const [failed, setFailed] = useState(false);
   const live = useRef(true);
+  const requests = useRef(0);
   const load = useCallback(() => {
+    // An older response must not overwrite a newer one, such as the reload after Clear block.
+    const request = ++requests.current;
     client
       .call("usage.get", {})
       .then((r) => {
-        if (!live.current) return;
+        if (!live.current || request !== requests.current) return;
         setVendors(r.vendors);
         setFailed(false);
         // The server's clock decides resets, so the panel agrees with `overCeiling`.
         setNow(r.time ? new Date(r.time) : new Date());
       })
       .catch(() => {
-        if (!live.current) return;
+        if (!live.current || request !== requests.current) return;
         setVendors((previous) => previous ?? []);
         setFailed(true);
-        setNow(new Date());
       });
   }, [client]);
   useEffect(() => {

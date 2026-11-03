@@ -113,10 +113,10 @@ export function lastSeenText(m: Machine, now: Date = new Date()): string {
  * lacks. Empty when the machine matches, or for this server itself.
  */
 export function skewNotes(m: Machine, local: Machine | undefined): string[] {
-  if (m.isLocal || !local) return [];
+  if (m.isLocal || !local || m.status === "revoked") return [];
   const notes: string[] = [];
   if (m.protocol === null) {
-    if (m.status !== "revoked") notes.push("Its link protocol is unknown until it connects.");
+    notes.push("Its link protocol is unknown until it connects.");
   } else if (local.protocol !== null && m.protocol !== local.protocol) {
     const older = m.protocol < local.protocol ? m.name : "this PC";
     notes.push(

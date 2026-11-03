@@ -61,7 +61,9 @@ export function Shell({ machineClient, pollMs }: ShellProps) {
   useEffect(() => {
     if (view !== LOCAL_MACHINE_ID && view !== MACHINES_VIEW && !remotes.some((m) => m.id === view))
       setView(LOCAL_MACHINE_ID);
-  }, [view, remotes]);
+    // Without machine routes the strip is gone, so the Machines page has no way out.
+    if (view === MACHINES_VIEW && supported === false) setView(LOCAL_MACHINE_ID);
+  }, [view, remotes, supported]);
 
   // A dialog can't keep focus while its view is hidden, so it takes focus back
   // when the view returns. This effect runs after the effects of the views.
