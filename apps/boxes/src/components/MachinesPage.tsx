@@ -264,10 +264,10 @@ export function EnrollmentDialog({ code, onClose }: { code: EnrollmentCode; onCl
   const toast = useToast();
   const command = joinCommand(code);
   const expires = new Date(code.expiresAt);
-  const copy = () => {
+  const copy = (text: string, what: string) => {
     void navigator.clipboard
-      ?.writeText(command)
-      .then(() => toast("The command is on the clipboard."))
+      ?.writeText(text)
+      .then(() => toast(`The ${what} is on the clipboard.`))
       .catch(() => undefined);
   };
   return (
@@ -277,7 +277,8 @@ export function EnrollmentDialog({ code, onClose }: { code: EnrollmentCode; onCl
       onClose={onClose}
       buttons={
         <>
-          <Button onClick={copy}>Copy Command</Button>
+          <Button onClick={() => copy(command, "command")}>Copy Command</Button>
+          <Button onClick={() => copy(code.code, "code")}>Copy Code</Button>
           <Button primary onClick={onClose}>
             Close
           </Button>
@@ -285,8 +286,8 @@ export function EnrollmentDialog({ code, onClose }: { code: EnrollmentCode; onCl
       }
     >
       <p>
-        On the PC to add, install AI Orchestrator, and then run this command in a terminal. The code
-        works once.
+        On the PC to add, install AI Orchestrator, and then run this command in a terminal. Enter
+        the code when the command asks for it. The code works once.
       </p>
       <input
         className="ab-input bx-machine-command"

@@ -48,7 +48,7 @@ import {
 import { tailEvents, type WebSocketCtor } from "./events.js";
 import { fleetRunText, listFleetRuns } from "./fleet.js";
 import { jsonText, keyValues, percent, table, terminalText } from "./format.js";
-import { attachRemote, type TerminalIo } from "./terminal.js";
+import { attachRemote, readSecretLine, type TerminalIo } from "./terminal.js";
 import {
   checkAttachArgv,
   checkServerUrl,
@@ -68,7 +68,10 @@ export interface CliDeps {
   /** Runs an attach command with the terminal; resolves with its exit code. */
   exec?: (argv: string[]) => Promise<number>;
   WebSocket?: WebSocketCtor;
-  /** The terminal that `box attach MACHINE/BOX` attaches. Default: standard input and output. */
+  /**
+   * The terminal that `box attach MACHINE/BOX` attaches and that `node join`
+   * reads its code from. Default: standard input and output.
+   */
   terminal?: TerminalIo;
   /** How often `box new` and `accounts seed` poll their job. */
   pollMs?: number;
@@ -1760,7 +1763,7 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
       print(
         r,
         () =>
-          `Enrollment code: ${r.code}\nIt works once, until ${r.expiresAt}. On the machine to add, run:\n\n  aio node join ${r.hubUrl} ${r.code}\n`,
+          `Enrollment code: ${r.code}\nIt works once, until ${r.expiresAt}. On the machine to add, run the following command, and then enter the code when the command asks for it:\n\n  aio node join ${r.hubUrl}\n`,
       );
     });
 
@@ -1798,15 +1801,29 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
 
   node
     .command("join")
-    .description("Join a hub with a one-time enrollment code from aio machines enroll.")
+    .description(
+      "Join a hub with a one-time enrollment code from aio machines enroll. The command reads the code from a prompt, or from standard input when it isn't a terminal.",
+    )
     .argument(
       "<hub-url>",
       "The hub URL that came with the code, such as https://hub.example.com:21402.",
     )
-    .argument("<code>", "The enrollment code.")
     .option("--name <name>", "The name to enroll under. Default: this machine's host name.")
-    .action(async (hubUrl: string, code: string, o: { name?: string }) => {
-      const r = await client().call("node.join", { body: { hubUrl, code, name: o.name } });
+    .action(async (hubUrl: string, o: { name?: string }) => {
+      const c = client();
+      // The code never goes on the command line, where the process list and
+      // the shell history would show it.
+      const input = (deps.terminal ?? { input: process.stdin }).input;
+      const prompted = Boolean(input.isTTY && input.setRawMode);
+      if (prompted) deps.err("Enrollment code: ");
+      let code: string;
+      try {
+        code = (await readSecretLine(input, deps.signal)).trim();
+      } finally {
+        if (prompted) deps.err("\n");
+      }
+      if (!code) throw new UsageError("Enter the enrollment code from the hub.");
+      const r = await c.call("node.join", { body: { hubUrl, code, name: o.name } });
       print(r, () => `Joined ${r.hubUrl} as ${r.name} (${r.machineId}).\n${nodeText(r)}`);
     });
 

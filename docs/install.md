@@ -230,7 +230,8 @@ machine as this page describes, then do the following:
 
 1. On the machine to add, open the setup wizard, choose **Node: join a hub
    with an enrollment code**, paste the `aio node join` command from the hub
-   into **Hub URL**, and click **Done**. Or run that command in a terminal.
+   into **Hub URL**, enter the code, and click **Done**. Or run that command in
+   a terminal, and enter the code when the command asks for it.
 
 For the roles, the firewall rules, and what crosses the link, see
 [Multi-host](multi-host.md).

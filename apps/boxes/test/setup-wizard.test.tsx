@@ -45,6 +45,7 @@ function serverWith(node: NodeStatus): FakeServer {
 describe("parseJoinInput", () => {
   it("reads a hub URL alone or the whole join command", () => {
     expect(parseJoinInput(` ${HUB} `)).toEqual({ hubUrl: HUB });
+    expect(parseJoinInput(`aio node join ${HUB}`)).toEqual({ hubUrl: HUB });
     expect(parseJoinInput(`aio node join ${HUB} ${CODE}`)).toEqual({ hubUrl: HUB, code: CODE });
     expect(parseJoinInput(`${HUB} ${CODE}`)).toEqual({ hubUrl: HUB, code: CODE });
   });
@@ -80,9 +81,10 @@ describe("SetupWizard machine role", () => {
     renderWithServer(<SetupWizard onClose={onClose} />, server);
     await user.click(await screen.findByRole("radio", { name: /Node: join a hub/ }));
     await user.click(screen.getByLabelText("Hub URL"));
-    await user.paste(`aio node join ${HUB} ${CODE}`);
+    await user.paste(`aio node join ${HUB}`);
     expect(screen.getByLabelText("Hub URL")).toHaveValue(HUB);
-    expect(screen.getByLabelText("Enrollment code")).toHaveValue(CODE);
+    expect(screen.getByLabelText("Enrollment code")).toHaveValue("");
+    await user.type(screen.getByLabelText("Enrollment code"), CODE);
     await user.type(screen.getByLabelText("Machine name (optional)"), "build-node");
     await user.click(screen.getByRole("button", { name: "Done" }));
     await waitFor(() => expect(onClose).toHaveBeenCalled());

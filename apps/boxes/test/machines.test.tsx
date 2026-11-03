@@ -127,7 +127,10 @@ function renderHub(opts: {
   const client = new ApiClient(options);
   const utils = render(
     <Root client={client}>
-      <Shell pollMs={opts.pollMs ?? 60_000} machineClient={(id) => createMachineClient(options, id)} />
+      <Shell
+        pollMs={opts.pollMs ?? 60_000}
+        machineClient={(id) => createMachineClient(options, id)}
+      />
     </Root>,
   );
   return { hub, client, ...utils };
@@ -701,13 +704,17 @@ describe("Machines page", () => {
     await user.click(screen.getByRole("button", { name: "Add Machine..." }));
     const dialog = await screen.findByRole("dialog", { name: "Add Machine" });
     expect(hub.codes).toBe(1);
+    // The code stays out of the command, where the process list would show it.
     expect(within(dialog).getByLabelText("Enrollment command")).toHaveValue(
-      "aio node join https://hub.example.com:21400 ABCD-1234",
+      "aio node join https://hub.example.com:21400",
     );
+    expect(within(dialog).getByLabelText("Enrollment code")).toHaveTextContent("ABCD-1234");
     await user.click(within(dialog).getByRole("button", { name: "Copy Command" }));
     expect(await navigator.clipboard.readText()).toBe(
-      "aio node join https://hub.example.com:21400 ABCD-1234",
+      "aio node join https://hub.example.com:21400",
     );
+    await user.click(within(dialog).getByRole("button", { name: "Copy Code" }));
+    expect(await navigator.clipboard.readText()).toBe("ABCD-1234");
   });
 
   it("revokes a machine after confirmation", async () => {

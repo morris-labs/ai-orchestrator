@@ -12,7 +12,7 @@ import {
 } from "@aio/contracts";
 import { asIdentityError } from "@aio/contracts/tls";
 import WebSocket from "ws";
-import { ApiCallError } from "./client.js";
+import { ApiCallError, InterruptedError } from "./client.js";
 import type { WebSocketCtor } from "./events.js";
 
 /** The byte of Ctrl+]. Pressed twice in a row, it detaches, as `docker exec` does locally. */
@@ -28,6 +28,47 @@ export interface TerminalIo {
     on?(event: "resize", cb: () => void): unknown;
     off?(event: "resize", cb: () => void): unknown;
   };
+}
+
+/**
+ * Reads one line of secret text from `input`, such as an enrollment code. On
+ * a terminal, raw mode keeps the text off the screen, and Ctrl+C throws
+ * `InterruptedError`. End of input ends the line.
+ */
+export function readSecretLine(input: TerminalIo["input"], signal?: AbortSignal): Promise<string> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(new InterruptedError());
+    const raw = Boolean(input.isTTY && input.setRawMode);
+    let text = "";
+    const finish = (settle: () => void) => {
+      input.off("data", onData);
+      input.off("end", onEnd);
+      input.off("error", onError);
+      signal?.removeEventListener("abort", onAbort);
+      if (raw) input.setRawMode?.(false);
+      // A stream that stays in flowing mode keeps the process alive.
+      input.pause();
+      settle();
+    };
+    const onEnd = () => finish(() => resolve(text));
+    const onError = (err: Error) => finish(() => reject(err));
+    const onAbort = () => finish(() => reject(new InterruptedError()));
+    const onData = (chunk: Buffer | string) => {
+      for (const ch of chunk.toString()) {
+        if (ch === "\n" || ch === "\r") return onEnd();
+        if (raw && ch === "\x03") return onAbort();
+        if (raw && ch === "\x04") return onEnd();
+        if (raw && (ch === "\x7f" || ch === "\b")) text = text.slice(0, -1);
+        else text += ch;
+      }
+    };
+    input.on("data", onData);
+    input.on("end", onEnd);
+    input.on("error", onError);
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (raw) input.setRawMode?.(true);
+    input.resume();
+  });
 }
 
 export interface RemoteAttachOptions {

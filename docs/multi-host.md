@@ -89,9 +89,9 @@ machine:
 
     ```
     Enrollment code: 7K2Q-M9XD-4HPA-R3TB
-    It works once, until 2026-11-01T10:10:00.000Z. On the machine to add, run:
+    It works once, until 2026-11-01T10:10:00.000Z. On the machine to add, run the following command, and then enter the code when the command asks for it:
 
-      aio node join https://hub.example.com:21402 7K2Q-M9XD-4HPA-R3TB
+      aio node join https://hub.example.com:21402
     ```
 
     The code works once and expires after 10 minutes. Issuing the first code
@@ -103,19 +103,23 @@ machine:
 
     - In the setup wizard, choose **Node: join a hub with an enrollment
       code**. Paste the `aio node join` command from the hub into **Hub
-      URL**, which fills in **Enrollment code** too. Optionally, enter a
+      URL**, and enter the code in **Enrollment code**. Optionally, enter a
       **Machine name**, then click **Done**.
     - In a terminal, run the following command:
 
       ```bash
-      aio node join HUB_URL CODE --name NAME
+      aio node join HUB_URL --name NAME
 
       ```
+
+      The command asks for the enrollment code and hides what you type. To
+      script the join, pipe the code to its standard input. The command
+      doesn't take the code as an argument, because the process list and the
+      shell history would show it.
 
     Replace the following:
 
     - `HUB_URL`: the hub URL from the enrollment code
-    - `CODE`: the enrollment code
     - `NAME`: the name the machine shows under, such as `build-server`.
       Optional; the default is the machine's host name. Names are unique
       among the hub's machines.

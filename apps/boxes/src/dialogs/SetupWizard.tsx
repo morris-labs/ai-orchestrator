@@ -137,15 +137,11 @@ export function SetupWizard({ onClose, onDone, stacked }: SetupWizardProps) {
     }
   };
 
-  /** Splits a pasted `aio node join HUB_URL CODE` command into its two fields. */
+  /** Takes the hub URL, and a code if one follows it, from a pasted join command. */
   const changeHubUrl = (value: string) => {
     const parsed = parseJoinInput(value);
-    if (parsed?.code) {
-      setHubUrl(parsed.hubUrl);
-      setCode(parsed.code);
-    } else {
-      setHubUrl(value);
-    }
+    setHubUrl(parsed?.hubUrl ?? value);
+    if (parsed?.code) setCode(parsed.code);
   };
 
   const run = async (title: string, start: () => Promise<Job>) => {
@@ -406,7 +402,7 @@ function MachineRoleSection(p: MachineRoleSectionProps) {
           />
           <div className="bx-dim">
             On the hub, issue a code on the Machines page or with aio machines enroll. You can paste
-            the whole aio node join command into Hub URL. Done joins the hub; the code works once.
+            the aio node join command into Hub URL. Done joins the hub; the code works once.
           </div>
         </>
       )}

@@ -161,16 +161,19 @@ export function diskText(m: Machine): string {
     : `${formatBytes(h.diskFreeBytes)} of ${formatBytes(h.diskTotalBytes)}`;
 }
 
-/** The command that enrolls a machine with a code. */
+/**
+ * The command that enrolls a machine. It asks for the code itself, because a
+ * command-line argument shows in the process list and the shell history.
+ */
 export function joinCommand(code: EnrollmentCode): string {
-  return `aio node join ${code.hubUrl} ${code.code}`;
+  return `aio node join ${code.hubUrl}`;
 }
 
 /**
  * Reads the hub URL and code from what the user pastes into the setup
- * wizard: either the whole `aio node join HUB_URL CODE` command that the
- * Machines page copies, or the hub URL alone. Returns `null` for anything
- * else.
+ * wizard: the `aio node join HUB_URL` command that the Machines page copies,
+ * or the hub URL alone, either one optionally followed by the code. Returns
+ * `null` for anything else.
  */
 export function parseJoinInput(text: string): { hubUrl: string; code?: string } | null {
   const words = text.trim().split(/\s+/).filter(Boolean);

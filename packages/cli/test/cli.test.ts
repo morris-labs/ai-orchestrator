@@ -6,6 +6,7 @@ import path from "node:path";
 import { PassThrough } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { childEnv, runCli } from "../src/program.js";
+import type { TerminalIo } from "../src/terminal.js";
 import type WebSocket from "ws";
 import { startFakeServer, type FakeServer } from "./fake-server.js";
 import {
@@ -542,7 +543,8 @@ describe("machines and node", () => {
       },
     });
     await cli(["machines", "enroll"]);
-    expect(out).toContain("aio node join https://hub.example.com:21402 7K2Q-M9XD-4HPA-R3TB");
+    expect(out).toContain("Enrollment code: 7K2Q-M9XD-4HPA-R3TB");
+    expect(out).toMatch(/aio node join https:\/\/hub\.example\.com:21402\n/);
 
     server.on("DELETE /api/v1/machines/m1", { body: { ok: true } });
     await cli(["machines", "revoke", "m1"]);
@@ -550,16 +552,22 @@ describe("machines and node", () => {
     expect(out).toContain("Revoked m1.");
   });
 
+  function joinCli(args: string[], input: TerminalIo["input"]) {
+    return runCli(["node", "join", ...args], {
+      env: { AIO_SERVER: server.url, AIO_TOKEN: TOKEN },
+      home,
+      out: (t) => (out += t),
+      err: (t) => (err += t),
+      terminal: { input, output: { write: () => true } },
+    });
+  }
+
   it("joins a hub and shows the link", async () => {
     server.on("POST /api/v1/node/join", { body: nodeStatus });
-    await cli([
-      "node",
-      "join",
-      "https://hub.example.com:21402",
-      "7K2Q-M9XD-4HPA-R3TB",
-      "--name",
-      "node-one",
-    ]);
+    const input = new PassThrough();
+    input.end("7K2Q-M9XD-4HPA-R3TB\n");
+    await joinCli(["https://hub.example.com:21402", "--name", "node-one"], input);
+    expect(err).toBe("");
     expect(last()?.body).toEqual({
       hubUrl: "https://hub.example.com:21402",
       code: "7K2Q-M9XD-4HPA-R3TB",
@@ -571,6 +579,59 @@ describe("machines and node", () => {
     server.on("GET /api/v1/node", { body: nodeStatus });
     await cli(["node", "status"]);
     expect(out).toMatch(/Link:\s+connecting/);
+  });
+
+  /** A terminal's keyboard, in raw mode or not. */
+  const keyboard = () => {
+    const rawModes: boolean[] = [];
+    const input = Object.assign(new PassThrough(), {
+      isTTY: true,
+      setRawMode(raw: boolean) {
+        rawModes.push(raw);
+      },
+    });
+    return { input, rawModes };
+  };
+
+  it("prompts for the enrollment code on a terminal without showing it", async () => {
+    server.on("POST /api/v1/node/join", { body: nodeStatus });
+    const { input, rawModes } = keyboard();
+    const joined = joinCli(["https://hub.example.com:21402"], input);
+    input.write("7K2Q-M9XD-4HPA-XX\x7f\x7fR3TB\r");
+    expect(await joined).toBe(0);
+    expect(last()?.body).toEqual({
+      hubUrl: "https://hub.example.com:21402",
+      code: "7K2Q-M9XD-4HPA-R3TB",
+    });
+    expect(rawModes).toEqual([true, false]);
+    expect(err).toBe("Enrollment code: \n");
+    expect(out).not.toContain("7K2Q");
+  });
+
+  it("stops at Ctrl+C in the prompt without joining", async () => {
+    const { input, rawModes } = keyboard();
+    const joined = joinCli(["https://hub.example.com:21402"], input);
+    input.write("7K2Q\x03");
+    expect(await joined).toBe(130);
+    expect(rawModes).toEqual([true, false]);
+    expect(server.requests).toEqual([]);
+  });
+
+  it("refuses an empty enrollment code", async () => {
+    const input = new PassThrough();
+    input.end("");
+    expect(await joinCli(["https://hub.example.com:21402"], input)).toBe(2);
+    expect(err).toContain("Enter the enrollment code");
+    expect(server.requests).toEqual([]);
+  });
+
+  it("refuses an enrollment code on the command line", async () => {
+    const input = new PassThrough();
+    input.end("");
+    const args = ["https://hub.example.com:21402", "7K2Q-M9XD-4HPA-R3TB"];
+    expect(await joinCli(args, input)).toBe(2);
+    expect(err).not.toContain("7K2Q");
+    expect(server.requests).toEqual([]);
   });
 });
 
