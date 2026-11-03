@@ -34,6 +34,9 @@ const UNREACHABLE_CODES: ClientErrorCode[] = [
   "unreachable",
 ];
 
+/** Why a machine has no current list when the machine list itself failed. */
+const LIST_FAILED = "The machine list didn't load, so this machine's state is unknown.";
+
 /** How one machine answered the last run list. */
 export type MachineReach = "loading" | "online" | "offline" | "error";
 
@@ -58,7 +61,10 @@ export interface FleetState {
   machines: FleetMachine[];
   /** The machine the screens show. */
   selected: string;
-  /** Why the last machine list failed, or `null`. The last good list stays in place. */
+  /**
+   * Why the last machine list failed, or `null`. The last good list stays in
+   * place, with each machine marked as having no current list.
+   */
   error: string | null;
   /**
    * The viewer's choice to show the last runs of a machine without a
@@ -81,7 +87,7 @@ export function isMulti(state: FleetState): boolean {
   return state.supported === true && state.machines.length > 1;
 }
 
-/** True unless the machine failed its last run list, so its runs are current. */
+/** True unless the last run list or machine list failed, so the machine's runs are current. */
 export function isCurrent(m: FleetMachine): boolean {
   return m.reach === "online" || m.reach === "loading";
 }
@@ -167,6 +173,10 @@ export class MachineFleet {
   private readonly follows = new Map<string, () => void>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private loads = 0;
+  /** The newest load that each kind of answer has applied, by `answer()` key. */
+  private readonly answered = new Map<string, number>();
+  /** The fleet ignores answers from this load and earlier ones. */
+  private cutoff = 0;
 
   /**
    * `root` is this server's store. `makeClient` makes the API client of a
@@ -279,25 +289,46 @@ export class MachineFleet {
     if (this.state.selected !== machineId) this.set({ selected: machineId });
   }
 
-  /** Reloads the machine list, then every shown machine's runs in parallel. */
+  /**
+   * True when an answer from `load` is newer than the last one applied for
+   * `key`, and records it. Loads overlap when an answer takes longer than a
+   * poll, so a slow answer still applies unless a newer one came first.
+   */
+  private answer(key: string, load: number): boolean {
+    if (load <= this.cutoff || load <= (this.answered.get(key) ?? 0)) return false;
+    this.answered.set(key, load);
+    return true;
+  }
+
+  /**
+   * Reloads the machine list, then every shown machine's runs in parallel.
+   * Each machine's answer applies when it arrives, so a slow machine holds up
+   * only itself.
+   */
   async refresh(): Promise<void> {
     const load = ++this.loads;
     let machines: Machine[];
     try {
       ({ machines } = await this.root.api.call("machines.list"));
     } catch (err) {
-      if (load !== this.loads) return;
+      if (!this.answer("machines", load)) return;
       if (unsupported(err)) {
         // An older server: one machine, as before, and no more polling.
         this.stopPolling();
+        this.cutoff = this.loads;
         this.set({ supported: false, machines: [], selected: LOCAL_MACHINE_ID, error: null });
         this.dropStores(new Set());
       } else {
-        this.set({ error: errorText(err) });
+        // Without a list, no machine's runs are known to be current.
+        const reach = isApiError(err, ...UNREACHABLE_CODES) ? "offline" : "error";
+        this.set({
+          error: errorText(err),
+          machines: this.state.machines.map((m) => ({ ...m, reach, error: LIST_FAILED })),
+        });
       }
       return;
     }
-    if (load !== this.loads) return;
+    if (!this.answer("machines", load)) return;
     const list = sortMachines(machines.filter(shown));
     const previous = new Map(this.state.machines.map((m) => [m.machine.id, m]));
     const entries = list.map((machine): FleetMachine => ({
@@ -313,15 +344,21 @@ export class MachineFleet {
     this.set({ supported: true, machines: entries, selected, error: null });
     this.dropStores(new Set(list.map((m) => m.id)));
     const startedAt = new Date(this.now()).toISOString();
-    const results = await Promise.all(list.map((m) => this.loadRuns(m)));
-    if (load !== this.loads) return;
-    const byId = new Map(results.map((r) => [r.machine.id, r]));
+    await Promise.all(
+      list.map(async (m) => this.applyRuns(load, startedAt, await this.loadRuns(m))),
+    );
+  }
+
+  /** Applies one machine's answer from `load`, unless a newer answer came first. */
+  private applyRuns(load: number, startedAt: string, r: FleetMachine): void {
+    if (!this.answer(`runs:${r.machine.id}`, load)) return;
     this.set({
       machines: this.state.machines.map((m) => {
-        const r = byId.get(m.machine.id);
-        if (!r) return m;
-        if (r.reach !== "online") return { ...r, runs: m.runs };
-        return { ...r, runs: mergeRuns(r.runs, m.runs, startedAt) };
+        if (m.machine.id !== r.machine.id) return m;
+        if (r.reach !== "online") {
+          return { ...r, machine: m.machine, runs: m.runs, loadedAt: m.loadedAt };
+        }
+        return { ...r, machine: m.machine, runs: mergeRuns(r.runs, m.runs, startedAt) };
       }),
     });
   }
@@ -382,7 +419,7 @@ export class MachineFleet {
   /** Stops polling and every other machine's store; the root store keeps running. */
   stop(): void {
     this.stopPolling();
-    this.loads += 1;
+    this.cutoff = this.loads;
     this.dropStores(new Set());
     this.follows.get(LOCAL_MACHINE_ID)?.();
     this.follows.delete(LOCAL_MACHINE_ID);

@@ -21,11 +21,22 @@ export function machine(over: Partial<Machine> & Pick<Machine, "id" | "name">): 
   };
 }
 
+/** The key of the machine list in `FakeHub.failing` and `FakeHub.held`. */
+export const MACHINE_LIST = "machine-list";
+
 export interface FakeHub {
   /** The machine list the hub answers, or `unsupported` for a 404. */
   machines: Machine[] | "unsupported";
-  /** Machines whose calls answer with this error, as an unreachable node does. */
+  /**
+   * Machines whose calls answer with this error, as an unreachable node does.
+   * The `MACHINE_LIST` key fails the machine list.
+   */
   failing: Record<string, { status: number; code: string; message: string }>;
+  /**
+   * Machines whose calls wait for this promise before they answer, as a hung
+   * node does. The `MACHINE_LIST` key holds the machine list.
+   */
+  held: Record<string, Promise<void>>;
   /** Every request as `METHOD /path`, before forwarding. */
   paths: string[];
   /** Every WebSocket path, before forwarding. */
@@ -58,6 +69,7 @@ export function fakeHub(opts: {
   const hub: FakeHub = {
     machines: opts.machines,
     failing: {},
+    held: {},
     paths: [],
     socketPaths: [],
     client: null as unknown as ApiClient,
@@ -68,6 +80,11 @@ export function fakeHub(opts: {
     const method = (init.method ?? "GET").toUpperCase();
     hub.paths.push(`${method} ${url.pathname}`);
     if (url.pathname === "/api/v1/machines" && method === "GET") {
+      await hub.held[MACHINE_LIST];
+      const failed = hub.failing[MACHINE_LIST];
+      if (failed) {
+        return json(failed.status, { error: { code: failed.code, message: failed.message } });
+      }
       if (hub.machines === "unsupported")
         return json(404, { error: { code: "not_found", message: "No route." } });
       return json(200, { machines: hub.machines });
@@ -77,6 +94,7 @@ export function fakeHub(opts: {
       return json(503, {
         error: { code: "machine_offline", message: "The machine is not connected." },
       });
+    await hub.held[target.id];
     const failure = hub.failing[target.id];
     if (failure) {
       return json(failure.status, { error: { code: failure.code, message: failure.message } });

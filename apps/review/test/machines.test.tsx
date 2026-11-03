@@ -12,7 +12,7 @@ import { fleetRuns, MachineFleet, mergeRuns, SHOW_OFFLINE_RUNS_KEY } from "../sr
 import { Launcher } from "../src/screens/Launcher.js";
 import { AppStore, StoreProvider } from "../src/state/store.js";
 import { lastRun, loadDemoEvents, project } from "./helpers/data.js";
-import { fakeHub, machine } from "./helpers/hub.js";
+import { fakeHub, machine, MACHINE_LIST } from "./helpers/hub.js";
 
 const LOCAL = machine({ id: "local", name: "main-pc", role: "both", isLocal: true });
 const BUILD = machine({ id: "m1", name: "build-server" });
@@ -51,6 +51,15 @@ afterEach(() => {
   window.location.hash = "";
   localStorage.clear();
 });
+
+/** A promise for `FakeHub.held`, and the function that releases it. */
+function gate(): { promise: Promise<void>; release: () => void } {
+  let release = () => {};
+  const promise = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return { promise, release };
+}
 
 function setup(machines = [LOCAL, BUILD, LAPTOP, OLD]) {
   const local = server([lastRun()]);
@@ -225,6 +234,126 @@ describe("the machine fleet", () => {
         "finished",
       ),
     );
+  });
+
+  describe("when answers take longer than a poll", () => {
+    const TIMEOUT = { status: 504, code: "machine_timeout", message: "No answer in time." };
+    const entry = (fleet: MachineFleet, id: string) =>
+      fleet.getState().machines.find((m) => m.machine.id === id)!;
+
+    it("applies the other machines' runs while one machine stalls across polls", async () => {
+      const { hub, fleet } = setup();
+      const hung = gate();
+      hub.held.m1 = hung.promise;
+      const polls = [fleet.refresh()];
+      await waitFor(() => expect(entry(fleet, "local").reach).toBe("online"));
+      expect(entry(fleet, "local").runs.map((r) => r.id)).toEqual([lastRun().id]);
+      expect(entry(fleet, "m1").reach).toBe("loading");
+
+      // Later polls supersede nothing: the stalled call still reports its failure.
+      polls.push(fleet.refresh(), fleet.refresh());
+      hub.failing.m1 = TIMEOUT;
+      hung.release();
+      await Promise.all(polls);
+      expect(entry(fleet, "m1")).toMatchObject({ reach: "offline", error: TIMEOUT.message });
+      expect(entry(fleet, "local").reach).toBe("online");
+    });
+
+    it("applies a slow machine's runs when a later poll is under way", async () => {
+      const { hub, fleet } = setup();
+      const calls = () =>
+        hub.paths.filter((p) => p === "GET /api/v1/machines/m1/proxy/runs").length;
+      const [slow, slower] = [gate(), gate()];
+      hub.held.m1 = slow.promise;
+      const first = fleet.refresh();
+      await waitFor(() => expect(calls()).toBe(1));
+      hub.held.m1 = slower.promise;
+      const second = fleet.refresh();
+      await waitFor(() => expect(calls()).toBe(2));
+      slow.release();
+      await first;
+      expect(entry(fleet, "m1").reach).toBe("online");
+      expect(entry(fleet, "m1").runs.map((r) => r.id)).toEqual([REMOTE_RUN_ID]);
+      slower.release();
+      await second;
+    });
+
+    it("ignores an older answer that arrives after a newer one", async () => {
+      const { hub, fleet } = setup();
+      const slow = gate();
+      hub.held.m1 = slow.promise;
+      const first = fleet.refresh();
+      await waitFor(() => expect(hub.paths).toContain("GET /api/v1/machines/m1/proxy/runs"));
+      delete hub.held.m1;
+      hub.failing.m1 = TIMEOUT;
+      await fleet.refresh();
+      expect(entry(fleet, "m1").reach).toBe("offline");
+
+      delete hub.failing.m1;
+      slow.release();
+      await first;
+      expect(entry(fleet, "m1").reach).toBe("offline");
+    });
+
+    it("applies no answer after the fleet stops", async () => {
+      const { hub, fleet } = setup();
+      const slow = gate();
+      hub.held.m1 = slow.promise;
+      const first = fleet.refresh();
+      await waitFor(() => expect(entry(fleet, "m1")?.reach).toBe("loading"));
+      fleet.stop();
+      slow.release();
+      await first;
+      expect(entry(fleet, "m1").reach).toBe("loading");
+    });
+
+    it("reports a hung machine list even though later polls started", async () => {
+      const { hub, fleet } = setup();
+      const [hung, later] = [gate(), gate()];
+      hub.held[MACHINE_LIST] = hung.promise;
+      const first = fleet.refresh();
+      hub.held[MACHINE_LIST] = later.promise;
+      const second = fleet.refresh();
+      hub.failing[MACHINE_LIST] = { status: 500, code: "internal", message: "List failed." };
+      hung.release();
+      await first;
+      expect(fleet.getState()).toMatchObject({ supported: null, error: "List failed." });
+      later.release();
+      await second;
+    });
+  });
+
+  describe("when the machine list fails", () => {
+    it.each([
+      [503, "hub_unreachable", "offline"],
+      [401, "unauthorized", "error"],
+    ])("hides the last runs after a %i %s answer", async (status, code, reach) => {
+      const { hub, fleet } = setup();
+      await fleet.refresh();
+      hub.failing[MACHINE_LIST] = { status, code, message: "No list." };
+      await fleet.refresh();
+      const s = fleet.getState();
+      expect(s.error).toBe("No list.");
+      expect(s.machines.map((m) => m.reach)).toEqual([reach, reach, reach]);
+      expect(fleetRuns(s)).toEqual([]);
+
+      // The last runs and their times stay for a viewer who asks for them.
+      fleet.setShowOfflineRuns(true);
+      expect(fleetRuns(fleet.getState())).toHaveLength(2);
+      expect(fleet.getState().machines[0]!.loadedAt).not.toBeNull();
+
+      // The next good list brings them back whatever the choice.
+      fleet.setShowOfflineRuns(false);
+      delete hub.failing[MACHINE_LIST];
+      await fleet.refresh();
+      expect(fleet.getState().error).toBeNull();
+      expect(fleet.getState().machines.map((m) => m.reach)).toEqual([
+        "online",
+        "online",
+        "offline",
+      ]);
+      expect(fleetRuns(fleet.getState())).toHaveLength(2);
+    });
   });
 
   it("merges a list with newer runs from events", () => {
