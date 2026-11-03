@@ -60,6 +60,7 @@ function renderHub(opts: {
   local: FakeServer;
   servers?: Record<string, FakeServer>;
   machines: Machine[] | "unsupported";
+  pollMs?: number;
 }) {
   const hub: Hub = { machines: opts.machines, paths: [], socketPaths: [], revoked: [], codes: 0 };
   const servers = opts.servers ?? {};
@@ -126,7 +127,7 @@ function renderHub(opts: {
   const client = new ApiClient(options);
   const utils = render(
     <Root client={client}>
-      <Shell pollMs={60_000} machineClient={(id) => createMachineClient(options, id)} />
+      <Shell pollMs={opts.pollMs ?? 60_000} machineClient={(id) => createMachineClient(options, id)} />
     </Root>,
   );
   return { hub, client, ...utils };
@@ -195,6 +196,44 @@ describe("machine tabs", () => {
     expect(screen.queryByRole("menuitem", { name: /^Machines\.\.\./ })).toBeNull();
     // Every request went to this server's own API.
     expect(hub.paths.filter((p) => p.includes("/proxy"))).toEqual([]);
+  });
+
+  it("keeps the machine tabs when a poll that once listed machines gets a 404", async () => {
+    const machines = [LOCAL, machine({ id: "node-b", name: "node-b" })];
+    const { hub } = renderHub({
+      local: siteServer(),
+      servers: { "node-b": nodeServer() },
+      machines,
+      pollMs: 20,
+    });
+    const listCalls = () => hub.paths.filter((p) => p === "GET /api/v1/machines").length;
+    await within(await screen.findByRole("tablist", { name: "Machines" })).findByRole("tab", {
+      name: "node-b",
+    });
+
+    hub.machines = "unsupported";
+    const before = listCalls();
+    await waitFor(() => expect(listCalls()).toBeGreaterThan(before + 1));
+    expect(within(machineTabs()).getByRole("tab", { name: "node-b" })).toBeInTheDocument();
+
+    // The polling goes on, so the next good answer needs no window reload.
+    hub.machines = [...machines, machine({ id: "node-c", name: "node-c", status: "offline" })];
+    expect(await within(machineTabs()).findByRole("tab", { name: "node-c" })).toBeInTheDocument();
+  });
+
+  it("finds the machine routes after an older server is upgraded", async () => {
+    const { hub } = renderHub({
+      local: siteServer(),
+      servers: { "node-b": nodeServer() },
+      machines: "unsupported",
+      pollMs: 20,
+    });
+    await waitFor(() => expect(hub.paths).toContain("GET /api/v1/machines"));
+    expect(screen.queryByRole("tablist", { name: "Machines" })).toBeNull();
+
+    hub.machines = [LOCAL, machine({ id: "node-b", name: "node-b" })];
+    const tabs = await screen.findByRole("tablist", { name: "Machines" });
+    expect(within(tabs).getByRole("tab", { name: "node-b" })).toBeInTheDocument();
   });
 
   it("lists this PC first, then each machine, then the Machines page", async () => {
