@@ -11,6 +11,8 @@ import {
   changedSymbols,
   changesExport,
   isDocOrLockfile,
+  isLockfile,
+  lockfileSourceChanged,
   isSchemaPath,
   languageOf,
   riskyChange,
@@ -115,6 +117,7 @@ export async function assignTiers(
     counts.set(symbol, found);
     return found;
   };
+  let lockDiffs: Promise<Map<string, string[]>> | undefined;
   const measured = new Map<string, FileSignals>();
   const measure = async (path: string): Promise<FileSignals> => {
     const known = measured.get(path);
@@ -125,6 +128,15 @@ export async function assignTiers(
     const noCode = isDocOrLockfile(path) && (!file?.oldPath || isDocOrLockfile(file.oldPath));
     const lines = diffs.get(path) ?? [];
     const code = fileKind(path) === "test" ? [] : changedCode(lines);
+    // A lockfile that points a dependency at another source isn't only a version bump.
+    let lockSource = false;
+    if (noCode && isLockfile(path) && !pinnedTier(policy, path)) {
+      lockDiffs ??= git
+        .diff(diffBase, tip)
+        .then(splitFunctionDiff)
+        .catch(() => new Map<string, string[]>());
+      lockSource = lockfileSourceChanged((await lockDiffs).get(path)?.join("\n") ?? "");
+    }
     let references: FileSignals["references"] = null;
     let referencesSkipped: FileSignals["referencesSkipped"] = auto && diffFailed ? "diff" : null;
     if (auto && !noCode && language && fileKind(path) !== "test") {
@@ -141,6 +153,7 @@ export async function assignTiers(
     const signals: FileSignals = {
       path,
       noCode,
+      lockSource,
       references,
       referencesSkipped,
       exportedChange: changesExport(path, language, code),

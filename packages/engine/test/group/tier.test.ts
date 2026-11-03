@@ -5,6 +5,7 @@ function signals(patch: Partial<FileSignals>): FileSignals {
   return {
     path: "src/a.ts",
     noCode: false,
+    lockSource: false,
     references: null,
     referencesSkipped: null,
     exportedChange: false,

@@ -98,6 +98,19 @@ describe("assignTiers", () => {
     expect(agent.tier).toBe("medium");
   });
 
+  it("raises a lockfile that adds a dependency source on a new host", async () => {
+    const before = { "pnpm-lock.yaml": "a:\n  resolved: https://registry.npmjs.org/a-1.tgz\n" };
+    const bump = await tier(before, {
+      "pnpm-lock.yaml": "a:\n  resolved: https://registry.npmjs.org/a-2.tgz\n",
+    });
+    expect(bump.tier).toBe("small");
+    const moved = await tier(before, {
+      "pnpm-lock.yaml": "a:\n  resolved: https://example.com/a-2.tgz\n",
+    });
+    expect(moved.tier).toBe("medium");
+    expect(moved.tierReason).toMatch(/source/);
+  });
+
   it("treats a rename from code to a doc name as code", async () => {
     const renamed = await tier(
       { "deploy.py": "run()\nrun()\nrun()\n" },

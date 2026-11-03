@@ -15,6 +15,8 @@ export interface FileSignals {
   path: string;
   /** Docs or a lockfile, by path. */
   noCode: boolean;
+  /** A lockfile whose diff adds a URL on a host that it didn't use before. */
+  lockSource: boolean;
   /** The changed symbol that the most other files mention, when one was counted. */
   references: { symbol: string; files: number } | null;
   /**
@@ -79,6 +81,7 @@ function currentPathTier(s: FileSignals): TierChoice {
       : at(s.pinned, "the policy's tierPaths sets this tier");
   }
   if (s.riskPath) return at("large", "matches a risk path");
+  if (s.noCode && s.lockSource) return at("medium", "a lockfile that changes a dependency's source");
   if (s.noCode) return at("small", "only docs or a lockfile");
   const skipped = SKIPPED_NOTES[s.referencesSkipped ?? "none"];
   const used = s.references?.files ?? 0;
@@ -118,7 +121,7 @@ export function groupTier(
   choice: ModelTierChoice,
   depth: RunDepth = "thorough",
 ): TierChoice {
-  if (choice === "small" && (files.length === 0 || files.some((f) => !f.noCode))) {
+  if (choice === "small" && (files.length === 0 || files.some((f) => !f.noCode || f.lockSource))) {
     return {
       tier: "medium",
       reason: "The run uses the small tier, but code stays at medium or above.",

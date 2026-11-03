@@ -215,6 +215,7 @@ first row that matches a file decides:
 |---|---|
 | A `tierPaths` rule in the policy file matches | The rule's tier |
 | A risk path matches | Large |
+| A lockfile that adds a dependency source on a new host | Medium |
 | A documentation file or a lockfile, by path | Small, whatever the size |
 | An exported API changes, and a changed symbol appears in 3 or more other files | Large |
 | A schema changes | Large |
@@ -261,8 +262,10 @@ comment or formatting change in a code file counts as code. So do MDX files,
 other text files, and Markdown that instructs an agent, such as `CLAUDE.md`,
 `AGENTS.md`, `SKILL.md`, `*.prompt.md`, and files under `prompts`, `skills`,
 `.claude`, or `.github` folders. A file renamed from code to a documentation
-name also counts as code. A lockfile stays small even when it changes a
-dependency's source; to review lockfiles more closely, add them to `riskPaths`
+name also counts as code. A lockfile stays small for a version bump, but
+goes to medium when its diff adds a URL on a host that no removed line names
+and that isn't a common package registry, because that can move a dependency
+to another source. To review lockfiles more closely, add them to `riskPaths`
 or `tierPaths` in the policy file.
 
 The run view lists each group's tier and reason. Each `agent.started` event

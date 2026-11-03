@@ -196,6 +196,55 @@ function isDocPath(path: string): boolean {
   return /\.(md|rst|adoc)$/i.test(name) || DOC_NAMES.test(name);
 }
 
+/** True for a known lockfile, by name. */
+export function isLockfile(path: string): boolean {
+  return LOCKFILES.has(posix.basename(path));
+}
+
+/** Hosts that a lockfile commonly names for registry packages. */
+const COMMON_REGISTRIES: ReadonlySet<string> = new Set([
+  "registry.npmjs.org",
+  "registry.yarnpkg.com",
+  "pypi.org",
+  "files.pythonhosted.org",
+  "static.crates.io",
+  "index.crates.io",
+  "crates.io",
+  "proxy.golang.org",
+  "rubygems.org",
+  "repo.packagist.org",
+]);
+const URL_RE = /(?:[a-z][a-z0-9+.-]*\+)?(?:https?|git|ssh):\/\/(?:[^@\s/"']*@)?([^\s/"':]+)/gi;
+
+function urlHosts(lines: readonly string[]): Set<string> {
+  const hosts = new Set<string>();
+  for (const line of lines) {
+    for (const m of line.matchAll(URL_RE)) hosts.add(m[1]!.toLowerCase());
+  }
+  return hosts;
+}
+
+/**
+ * True when a lockfile diff adds a URL on a host that no removed line names
+ * and that isn't a common registry. A changed source URL can pull in code
+ * from another place, so such a change isn't only a version bump. Takes a
+ * unified diff of one file.
+ */
+export function lockfileSourceChanged(diff: string): boolean {
+  const added: string[] = [];
+  const removed: string[] = [];
+  for (const line of diff.split("\n")) {
+    if (line.startsWith("+++") || line.startsWith("---")) continue;
+    if (line.startsWith("+")) added.push(line.slice(1));
+    else if (line.startsWith("-")) removed.push(line.slice(1));
+  }
+  const before = urlHosts(removed);
+  for (const host of urlHosts(added)) {
+    if (!before.has(host) && !COMMON_REGISTRIES.has(host)) return true;
+  }
+  return false;
+}
+
 /**
  * True for a documentation file or lockfile, by path alone. These are the only
  * files that can take the small tier. Anything else counts as code, including
