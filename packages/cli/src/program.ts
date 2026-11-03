@@ -1428,7 +1428,7 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
       const parsed = VendorSchema.safeParse(vendor);
       if (!parsed.success) throw new UsageError(`Unknown vendor ${vendor}.`);
       const r = await client().call("usage.clear", {
-        body: { vendor: parsed.data, ...(o.account ? { account: o.account } : {}) },
+        body: { vendor: parsed.data, ...(o.account !== undefined ? { account: o.account } : {}) },
       });
       print(r, () => `Cleared ${r.cleared} usage blocks for ${vendor}.\n`);
     });

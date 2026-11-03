@@ -317,7 +317,9 @@ export function attachRemote(options: RemoteAttachOptions): Promise<number> {
         options.note("\r\nDetached. The box keeps running.\n");
         return;
       }
-      if (exitCode !== null || code === 1000) return finish(null, exitCode ?? 0);
+      // An exit frame with a null code means a signal ended the process.
+      if (exited) return finish(null, exitCode ?? 1);
+      if (code === 1000) return finish(null, 0);
       const why = unanswered
         ? "the server stopped answering pings"
         : reason.toString() || `close code ${code}`;
