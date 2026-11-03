@@ -8,11 +8,15 @@ import {
   Collapsible,
   DataTable,
   Dialog,
+  focusOpenDialog,
+  hasOpenDialog,
   MenuList,
+  MessageBoxLabel,
   MessageBoxProvider,
   resizePanes,
   sortRows,
   Splitter,
+  ToastLabel,
   ToastProvider,
   useContextMenu,
   useInFlight,
@@ -222,6 +226,70 @@ describe("Dialog", () => {
       </>
     );
   }
+
+  it("leaves Tab alone while its only dialog sits in a hidden view", () => {
+    const view = (hidden: boolean) => (
+      <>
+        <button type="button">Outside</button>
+        <div hidden={hidden}>
+          <Dialog title="Hidden" buttons={<Button>Inside</Button>}>
+            <input aria-label="Field" />
+          </Dialog>
+        </div>
+      </>
+    );
+    const { rerender } = render(view(false));
+    expect(hasOpenDialog()).toBe(true);
+    rerender(view(true));
+    expect(hasOpenDialog()).toBe(false);
+    const outside = screen.getByText("Outside");
+    outside.focus();
+    expect(fireEvent.keyDown(outside, { key: "Tab" })).toBe(true);
+    expect(document.activeElement).toBe(outside);
+
+    // Back in front, the dialog traps Tab and takes focus back.
+    rerender(view(false));
+    expect(hasOpenDialog()).toBe(true);
+    focusOpenDialog();
+    expect(document.activeElement).toBe(screen.getByLabelText("Field"));
+    expect(fireEvent.keyDown(outside, { key: "Tab" })).toBe(true);
+    outside.focus();
+    expect(fireEvent.keyDown(outside, { key: "Tab" })).toBe(false);
+    expect(document.activeElement).toBe(screen.getByLabelText("Field"));
+  });
+
+  it("names the source of labelled message boxes and toasts", async () => {
+    const user = userEvent.setup();
+    function Source() {
+      const { inform } = useMessageBox();
+      const toast = useToast();
+      return (
+        <button
+          type="button"
+          onClick={() => {
+            void inform("Start", "It failed.");
+            toast("Created.");
+          }}
+        >
+          Go
+        </button>
+      );
+    }
+    render(
+      <ToastProvider>
+        <MessageBoxProvider>
+          <MessageBoxLabel label="node-b">
+            <ToastLabel label="node-b">
+              <Source />
+            </ToastLabel>
+          </MessageBoxLabel>
+        </MessageBoxProvider>
+      </ToastProvider>,
+    );
+    await user.click(screen.getByText("Go"));
+    expect(screen.getByRole("dialog", { name: "node-b: Start" })).toBeInTheDocument();
+    expect(screen.getByText("node-b: Created.")).toBeInTheDocument();
+  });
 
   it("keeps Tab inside the dialog and returns focus when it closes", async () => {
     const user = userEvent.setup();

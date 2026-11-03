@@ -6,7 +6,15 @@
 // one machine, or a server without machine routes, the window is the
 // boxes view alone, as before.
 import type { Machine } from "@aio/contracts";
-import { StatusDot, useApiClient, useChords, useMessageBoxOpen, type ApiClient } from "@aio/ui";
+import {
+  StatusDot,
+  focusOpenDialog,
+  hasOpenDialog,
+  useApiClient,
+  useChords,
+  useMessageBoxOpen,
+  type ApiClient,
+} from "@aio/ui";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { MachinesPage } from "../components/MachinesPage";
 import {
@@ -54,6 +62,10 @@ export function Shell({ machineClient, pollMs }: ShellProps) {
       setView(LOCAL_MACHINE_ID);
   }, [view, remotes]);
 
+  // A dialog can't keep focus while its view is hidden, so it takes focus back
+  // when the view returns. This effect runs after the effects of the views.
+  useEffect(() => focusOpenDialog(), [view]);
+
   // One client per machine, kept across reloads so a view never reconnects
   // just because the list was polled.
   const clients = useRef(new Map<string, ApiClient>());
@@ -73,6 +85,8 @@ export function Shell({ machineClient, pollMs }: ShellProps) {
 
   const openMachines = supported === true ? () => setView(MACHINES_VIEW) : null;
   const step = (delta: number) => {
+    // A dialog is modal: the user answers it before leaving its view.
+    if (hasOpenDialog()) return;
     const i = Math.max(0, views.indexOf(view));
     setView(views[(i + delta + views.length) % views.length] ?? LOCAL_MACHINE_ID);
   };

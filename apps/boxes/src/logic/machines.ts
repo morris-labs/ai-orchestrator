@@ -185,3 +185,23 @@ export function parseJoinInput(text: string): { hubUrl: string; code?: string } 
   }
   return code ? { hubUrl, code } : { hubUrl };
 }
+
+/**
+ * True when `url` names a loopback host, which reaches only the PC that opens
+ * it. That covers the dev-server proxy's `*.localhost` names.
+ */
+export function isLoopbackUrl(url: string): boolean {
+  let host: string;
+  try {
+    host = new URL(url).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  return (
+    host === "localhost" ||
+    host.endsWith(".localhost") ||
+    host === "[::1]" ||
+    host === "0.0.0.0" ||
+    /^127\.\d+\.\d+\.\d+$/.test(host)
+  );
+}

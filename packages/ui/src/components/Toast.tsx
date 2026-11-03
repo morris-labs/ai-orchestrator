@@ -1,5 +1,13 @@
 // Short-lived messages in the corner, in place of the Qt status-bar messages.
-import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 
 export type ToastKind = "info" | "success" | "error";
 
@@ -44,6 +52,20 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       </div>
     </ToastContext.Provider>
   );
+}
+
+/**
+ * Starts every toast that `children` show with `label`. Toasts show over the
+ * whole window, so a view that isn't in front uses this to name itself.
+ * Without `label`, toasts stay as they are.
+ */
+export function ToastLabel({ label, children }: { label?: string; children: ReactNode }) {
+  const show = useContext(ToastContext);
+  const labelled = useMemo<ShowToast | null>(
+    () => (show && label ? (text, options) => show(`${label}: ${text}`, options) : show),
+    [show, label],
+  );
+  return <ToastContext.Provider value={labelled}>{children}</ToastContext.Provider>;
 }
 
 /** Returns the function that shows a toast. Needs a `ToastProvider`. */

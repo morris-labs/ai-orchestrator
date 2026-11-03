@@ -1,9 +1,12 @@
 // TerminalView with a stand-in for xterm.js, and the bell.
 import { act, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { Dialog } from "../src/components/Dialog";
 import { ApiClient } from "../src/core";
 import { TerminalView } from "../src/terminal/TerminalView";
 import { FakeServer, type FakeSocket } from "../src/testing";
+
+const focusTerminal = vi.hoisted(() => vi.fn());
 
 // jsdom has no canvas for the real xterm.js.
 vi.mock("@xterm/xterm", () => {
@@ -19,7 +22,9 @@ vi.mock("@xterm/xterm", () => {
     onResize = disposable;
     onBell = disposable;
     write() {}
-    focus() {}
+    focus() {
+      focusTerminal();
+    }
     dispose() {}
     getSelection() {
       return "";
@@ -39,6 +44,50 @@ afterEach(() => {
 });
 
 describe("TerminalView", () => {
+  it("leaves focus with a visible dialog when it becomes active", () => {
+    const server = new FakeServer();
+    const client = new ApiClient({ fetch: server.fetch, token: "t", WebSocket: server.WebSocket });
+    const view = (active: boolean, hidden: boolean) => (
+      <div hidden={hidden}>
+        <TerminalView
+          active={active}
+          client={client}
+          target={{ kind: "job", jobId: "SYNTHETIC_one" }}
+        />
+        <Dialog title="Rename">
+          <input aria-label="Name" />
+        </Dialog>
+      </div>
+    );
+    focusTerminal.mockClear();
+    const { rerender } = render(view(false, true));
+    rerender(view(true, false));
+    expect(focusTerminal).not.toHaveBeenCalled();
+  });
+
+  it("takes focus when it becomes active with no dialog in front", () => {
+    const server = new FakeServer();
+    const client = new ApiClient({ fetch: server.fetch, token: "t", WebSocket: server.WebSocket });
+    const view = (active: boolean) => (
+      <>
+        <TerminalView
+          active={active}
+          client={client}
+          target={{ kind: "job", jobId: "SYNTHETIC_one" }}
+        />
+        <div hidden>
+          <Dialog title="Hidden">
+            <input aria-label="Name" />
+          </Dialog>
+        </div>
+      </>
+    );
+    focusTerminal.mockClear();
+    const { rerender } = render(view(false));
+    rerender(view(true));
+    expect(focusTerminal).toHaveBeenCalledTimes(1);
+  });
+
   it("drops the ended banner when its target changes to a new session", () => {
     const server = new FakeServer();
     const client = new ApiClient({ fetch: server.fetch, token: "t", WebSocket: server.WebSocket });

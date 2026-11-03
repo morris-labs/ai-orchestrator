@@ -17,6 +17,7 @@ import {
   MenuBar,
   Splitter,
   errorMessage,
+  hasOpenDialog,
   isApiError,
   useApiClient,
   useChords,
@@ -49,6 +50,7 @@ import { actionStates } from "../logic/enablement";
 import { visibleBoxes } from "../logic/filter";
 import { formatBytes } from "../logic/format";
 import { purgePreviewList, resumableBoxes, resumeDetail, runningOnDir } from "../logic/lists";
+import { isLoopbackUrl } from "../logic/machines";
 import { createBody, normalizeDir, projectForDir, updateBody, type BoxForm } from "../logic/newBox";
 import { PLATFORMS, displayName, platformLabel, statusBarText, updatedText } from "../logic/status";
 import { settleTransient, withTransient } from "../logic/store";
@@ -229,7 +231,7 @@ export function App() {
         {
           id: "rebuild",
           label: "Rebuild Image...",
-          onClick: () => setDialog({ kind: "setup", stacked: true }),
+          onClick: () => openFromPrompt({ kind: "setup", stacked: true }),
         },
         { id: "yes", label: "Yes", primary: true },
         { id: "no", label: "No", cancel: true },
@@ -256,7 +258,9 @@ export function App() {
   useEffect(
     () =>
       (listensForNotifications ? bridge() : undefined)?.onSelectBox((boxId) => {
-        activateRef.current();
+        // An open dialog is modal: its view stays in front until the user
+        // answers it, and this view shows the box after that.
+        if (!hasOpenDialog()) activateRef.current();
         setPage("boxes");
         setProjectId(null);
         setFilter("");
@@ -292,6 +296,16 @@ export function App() {
     );
 
   const openLink = (url: string) => {
+    // A loopback link from another machine names that machine, but this PC
+    // would open it on itself, and the hub doesn't carry dev-server traffic.
+    if (!machine.isLocal && isLoopbackUrl(url)) {
+      void inform(
+        "Open Link",
+        `This link points to a loopback address on ${machine.name}, which this PC can't reach. Open it on ${machine.name}.`,
+        url,
+      );
+      return;
+    }
     const b = bridge();
     if (!b) {
       window.open(url, "_blank", "noopener");
@@ -316,6 +330,15 @@ export function App() {
         res.failed.map((f) => `${f.boxId}: ${f.error.message}`).join("\n"),
       );
     }
+  };
+
+  /**
+   * Opens a dialog that a message box button asked for. The message box can
+   * come from a hidden view, so that view comes to the front with its dialog.
+   */
+  const openFromPrompt = (next: DialogState) => {
+    activateRef.current();
+    setDialog(next);
   };
 
   /**
@@ -366,7 +389,7 @@ export function App() {
           { id: "ok", label: "Close", cancel: true },
         ],
       });
-      if (answer.button === "setup") setDialog({ kind: "setup" });
+      if (answer.button === "setup") openFromPrompt({ kind: "setup" });
       return false;
     }
     await inform(title, errorMessage(err));
@@ -483,7 +506,7 @@ export function App() {
         {
           id: "rebuild",
           label: "Rebuild Image...",
-          onClick: () => setDialog({ kind: "setup", stacked: true }),
+          onClick: () => openFromPrompt({ kind: "setup", stacked: true }),
         },
         { id: "yes", label: "Yes", primary: true },
         { id: "no", label: "No", cancel: true },

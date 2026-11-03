@@ -8,6 +8,7 @@ import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
 import type { ApiClient } from "../api/client";
+import { dialogBlocksFocus } from "../components/Dialog";
 import { useContextMenu } from "../components/Menu";
 import { terminalTheme } from "../theme/tokens";
 import { beep } from "./beep";
@@ -31,7 +32,7 @@ export interface TerminalHandle {
 export interface TerminalViewProps {
   client: ApiClient;
   target: TerminalTarget;
-  /** Focuses the terminal when it becomes true. */
+  /** Focuses the terminal when it becomes true, unless a dialog in front holds focus. */
   active?: boolean;
   onExit?: (exitCode: number | null) => void;
   onReady?: (terminalId: string) => void;
@@ -165,7 +166,7 @@ export function TerminalView(props: TerminalViewProps) {
   }, [client, targetKey]);
 
   useEffect(() => {
-    if (props.active) termRef.current?.focus();
+    if (props.active && !dialogBlocksFocus(hostRef.current)) termRef.current?.focus();
   }, [props.active]);
 
   return (

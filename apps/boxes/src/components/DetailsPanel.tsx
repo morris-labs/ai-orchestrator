@@ -134,6 +134,12 @@ export function DetailsPanel(props: DetailsPanelProps) {
                     e.preventDefault();
                     props.onOpenLink(p.url);
                   }}
+                  onAuxClick={(e) => {
+                    // A middle click opens through the same check as a click.
+                    if (e.button !== 1) return;
+                    e.preventDefault();
+                    props.onOpenLink(p.url);
+                  }}
                 >
                   {p.url}
                 </a>

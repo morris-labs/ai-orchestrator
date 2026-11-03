@@ -7,6 +7,8 @@ import {
   EventHub,
   EventHubProvider,
   EventsConnection,
+  MessageBoxLabel,
+  ToastLabel,
   type ApiClient,
 } from "@aio/ui";
 import { createContext, useContext, useEffect, useMemo, type ReactNode } from "react";
@@ -53,7 +55,16 @@ export const SINGLE_MACHINE: MachineInfo = {
 const MachineContext = createContext<MachineInfo>(SINGLE_MACHINE);
 
 export function MachineProvider({ value, children }: { value: MachineInfo; children: ReactNode }) {
-  return <MachineContext.Provider value={value}>{children}</MachineContext.Provider>;
+  // Message boxes and toasts show over every view, so in a multi-machine
+  // window they name the machine they came from.
+  const label = value.multi ? value.name : undefined;
+  return (
+    <MachineContext.Provider value={value}>
+      <MessageBoxLabel label={label}>
+        <ToastLabel label={label}>{children}</ToastLabel>
+      </MessageBoxLabel>
+    </MachineContext.Provider>
+  );
 }
 
 /** The machine of the nearest `MachineProvider`; this server alone without one. */

@@ -3,7 +3,7 @@
 // to machine ID's /api/v1/REST.
 import type { EnrollmentCode, Machine } from "@aio/contracts";
 import { ApiClient, createMachineClient } from "@aio/ui";
-import { FakeServer, makeBoxView, makeEvent } from "@aio/ui/testing";
+import { FakeApiError, FakeServer, makeBoxView, makeEvent } from "@aio/ui/testing";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -12,6 +12,7 @@ import { Shell } from "../src/app/Shell";
 import {
   diskText,
   imageText,
+  isLoopbackUrl,
   lastSeenText,
   relativeTime,
   skewNotes,
@@ -288,6 +289,112 @@ describe("machine tabs", () => {
     );
   });
 
+  it("keeps a machine's view in front while its dialog is open", async () => {
+    const user = userEvent.setup();
+    let selectBox: (boxId: string) => void = () => undefined;
+    window.aio = {
+      takeToken: () => null,
+      serverUrl: "http://127.0.0.1:21400",
+      openExternalTerminal: async () => ({ ok: true }),
+      launchReview: async () => ({ ok: true }),
+      pickDirectory: async () => null,
+      readClipboardText: async () => "",
+      openPath: async () => ({ ok: true }),
+      openExternal: async () => ({ ok: true }),
+      onSelectBox: (listener) => {
+        selectBox = listener;
+        return () => undefined;
+      },
+      quit: () => undefined,
+    };
+    renderHub({
+      local: siteServer(),
+      servers: { "node-b": nodeServer() },
+      machines: [LOCAL, machine({ id: "node-b", name: "node-b" })],
+    });
+    await user.click(await screen.findByRole("tab", { name: "node-b" }));
+    await screen.findByRole("cell", { name: "Node site" });
+    const selectedTab = (name: string) =>
+      within(machineTabs()).getByRole("tab", { name, selected: true });
+
+    await user.keyboard("{Control>}{Shift>}N{/Shift}{/Control}");
+    await screen.findByRole("dialog", { name: "New Box" });
+    fireEvent.keyDown(window, { key: "PageUp", code: "PageUp", ctrlKey: true, shiftKey: true });
+    expect(selectedTab("node-b")).toBeInTheDocument();
+    act(() => selectBox("aio-agent-site"));
+    expect(selectedTab("node-b")).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "New Box" })).toBeVisible();
+  });
+
+  it("names the machine on a prompt from a hidden view and shows its setup dialog", async () => {
+    const user = userEvent.setup();
+    const node = nodeServer();
+    let fail: (err: Error) => void = () => undefined;
+    node.on(
+      "boxes.start",
+      () =>
+        new Promise((_resolve, reject) => {
+          fail = reject;
+        }),
+    );
+    renderHub({
+      local: siteServer(),
+      servers: { "node-b": node },
+      machines: [LOCAL, machine({ id: "node-b", name: "node-b" })],
+    });
+    await user.click(await screen.findByRole("tab", { name: "node-b" }));
+    fireEvent.doubleClick(await screen.findByRole("cell", { name: "Batch" }));
+    await waitFor(() => expect(node.callsTo("boxes.start")).toHaveLength(1));
+
+    // The user moves to this PC before the start fails.
+    await user.click(screen.getByRole("tab", { name: "main-pc (this PC)" }));
+    act(() => fail(new FakeApiError("image_missing", "The image is missing.")));
+    const prompt = await screen.findByRole("dialog", { name: "node-b: Start" });
+    await user.click(within(prompt).getByRole("button", { name: "Rebuild Image..." }));
+
+    await waitFor(() =>
+      expect(
+        within(machineTabs()).getByRole("tab", { name: "node-b", selected: true }),
+      ).toBeInTheDocument(),
+    );
+    expect(await screen.findByRole("dialog", { name: "Setup" })).toBeVisible();
+  });
+
+  it("opens no loopback link of a remote machine on this PC", async () => {
+    const user = userEvent.setup();
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
+    const proxied = (url: string, conversationName: string) =>
+      new FakeServer({
+        boxes: [
+          {
+            ...makeBoxView({
+              box: { id: "aio-agent-site", targetDir: "/w/site", conversationName },
+              status: "running",
+            }),
+            proxyUrls: [{ port: 5173, url }],
+          },
+        ],
+      });
+    const url = "http://5173.demo.localhost:21401/";
+    renderHub({
+      local: proxied(url, "Local site"),
+      servers: { "node-b": proxied(url, "Node site") },
+      machines: [LOCAL, machine({ id: "node-b", name: "node-b" })],
+    });
+
+    await user.click(await screen.findByRole("link", { name: url }));
+    expect(open).toHaveBeenCalledWith(url, "_blank", "noopener");
+    open.mockClear();
+
+    await user.click(screen.getByRole("tab", { name: "node-b" }));
+    await screen.findByRole("cell", { name: "Node site" });
+    await user.click(await screen.findByRole("link", { name: url }));
+    const dialog = await screen.findByRole("dialog", { name: "node-b: Open Link" });
+    expect(dialog).toHaveTextContent(/loopback address on node-b/);
+    expect(open).not.toHaveBeenCalled();
+    open.mockRestore();
+  });
+
   it("opens a remote machine's shell in a tab and browses its directories, not this PC's", async () => {
     const user = userEvent.setup();
     const pickDirectory = vi.fn(async () => "/local/dir");
@@ -395,7 +502,7 @@ describe("machine tabs", () => {
     // Remove the stopped one.
     fireEvent.mouseDown(rowOf("Batch renamed"), { button: 0 });
     await user.click(within(toolbar).getByRole("button", { name: "Remove" }));
-    const remove = await screen.findByRole("dialog", { name: "Remove" });
+    const remove = await screen.findByRole("dialog", { name: "node-b: Remove" });
     await user.click(within(remove).getByRole("button", { name: "Yes" }));
     await waitFor(() => expect(node.callsTo("boxes.remove")).toHaveLength(1));
 
@@ -616,6 +723,19 @@ describe("Machines page", () => {
 });
 
 describe("machine logic", () => {
+  it("tells loopback links from others", () => {
+    for (const url of [
+      "http://localhost:5173/",
+      "http://5173.demo.localhost:21401/",
+      "http://127.0.0.1:3000/",
+      "http://[::1]:3000/",
+      "http://0.0.0.0:3000/",
+    ])
+      expect(isLoopbackUrl(url)).toBe(true);
+    for (const url of ["https://example.com/", "http://localhost.example.com/", "not a url"])
+      expect(isLoopbackUrl(url)).toBe(false);
+  });
+
   it("sorts this PC first, then by name", () => {
     expect(
       sortMachines([machine({ id: "b", name: "b" }), LOCAL, machine({ id: "a", name: "a" })]).map(

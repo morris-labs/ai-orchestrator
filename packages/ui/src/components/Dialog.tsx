@@ -6,6 +6,7 @@ import {
   useContext,
   useEffect,
   useId,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -38,6 +39,47 @@ const FOCUSABLE =
 /** The open dialogs, innermost last; only the innermost one keeps focus. */
 const openDialogs: HTMLElement[] = [];
 
+/**
+ * The innermost dialog the user can see. A dialog in a hidden view stays
+ * mounted and open, but it doesn't hold focus until its view returns.
+ */
+function topDialog(): HTMLElement | undefined {
+  return openDialogs.filter((el) => el.closest("[hidden]") === null).at(-1);
+}
+
+/** True while the user can see a modal dialog. */
+export function hasOpenDialog(): boolean {
+  return topDialog() !== undefined;
+}
+
+/** True when a visible dialog that doesn't contain `el` must keep focus from it. */
+export function dialogBlocksFocus(el: Element | null): boolean {
+  const top = topDialog();
+  return top !== undefined && !top.contains(el);
+}
+
+function initialFocus(el: HTMLElement): HTMLElement | null {
+  return (
+    el.querySelector<HTMLElement>("[data-autofocus]") ??
+    el.querySelector<HTMLElement>(
+      ".ab-dialog-body input:not(:disabled), .ab-dialog-body select:not(:disabled), .ab-dialog-body textarea:not(:disabled)",
+    ) ??
+    el.querySelector<HTMLElement>(".ab-dialog-buttons .ab-default") ??
+    el.querySelector<HTMLElement>("button")
+  );
+}
+
+/**
+ * Moves focus into the innermost visible dialog, unless it already holds
+ * focus. Call it when a hidden view returns: a dialog can't keep focus while
+ * its view is hidden.
+ */
+export function focusOpenDialog(): void {
+  const el = topDialog();
+  if (!el || el.contains(document.activeElement)) return;
+  (initialFocus(el) ?? el).focus();
+}
+
 function focusables(el: HTMLElement): HTMLElement[] {
   return [...el.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
     (x) => !x.hidden && x.getAttribute("aria-hidden") !== "true" && x.tabIndex >= 0,
@@ -50,7 +92,7 @@ function focusables(el: HTMLElement): HTMLElement[] {
  */
 function trapTab(e: KeyboardEvent) {
   if (e.key !== "Tab" || e.defaultPrevented) return;
-  const el = openDialogs[openDialogs.length - 1];
+  const el = topDialog();
   if (!el) return;
   const list = focusables(el);
   const active = document.activeElement as HTMLElement | null;
@@ -114,14 +156,7 @@ export function Dialog({
     const previous = document.activeElement as HTMLElement | null;
     openDialogs.push(el);
     if (openDialogs.length === 1) document.addEventListener("keydown", trapTab, true);
-    const first =
-      el.querySelector<HTMLElement>("[data-autofocus]") ??
-      el.querySelector<HTMLElement>(
-        ".ab-dialog-body input:not(:disabled), .ab-dialog-body select:not(:disabled), .ab-dialog-body textarea:not(:disabled)",
-      ) ??
-      el.querySelector<HTMLElement>(".ab-dialog-buttons .ab-default") ??
-      el.querySelector<HTMLElement>("button");
-    first?.focus();
+    initialFocus(el)?.focus();
     return () => {
       const i = openDialogs.indexOf(el);
       if (i >= 0) openDialogs.splice(i, 1);
@@ -273,6 +308,21 @@ export function MessageBoxProvider({ children }: { children: ReactNode }) {
       )}
     </MessageContext.Provider>
   );
+}
+
+/**
+ * Starts the title of every message box that `children` open with `label`.
+ * Message boxes show over the whole window, so a view that isn't in front
+ * uses this to name itself. Without `label`, titles stay as they are.
+ */
+export function MessageBoxLabel({ label, children }: { label?: string; children: ReactNode }) {
+  const ask = useContext(MessageContext);
+  const labelled = useMemo<Ask | null>(
+    () =>
+      ask && label ? (options) => ask({ ...options, title: `${label}: ${options.title}` }) : ask,
+    [ask, label],
+  );
+  return <MessageContext.Provider value={labelled}>{children}</MessageContext.Provider>;
 }
 
 function MessageBox({
