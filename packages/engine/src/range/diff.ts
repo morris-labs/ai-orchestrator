@@ -174,3 +174,45 @@ export function parseDiff(text: string): DiffFile[] {
   }
   return files.filter((f) => f.path !== "");
 }
+
+/**
+ * Parses `git diff --numstat -z --no-renames` from an empty tree into added
+ * files, which gives what `parseDiff` gives for the same diff with `-U0`
+ * without holding the project's text. Git prints `-` counts for a binary file.
+ */
+export function parseAddedNumstat(text: string): DiffFile[] {
+  const files: DiffFile[] = [];
+  for (const entry of text.split("\0")) {
+    const first = entry.indexOf("\t");
+    const second = entry.indexOf("\t", first + 1);
+    if (first < 0 || second < 0) continue;
+    const path = entry.slice(second + 1);
+    const count = entry.slice(0, first);
+    const added = Number(count);
+    const binary = count === "-";
+    files.push({
+      path,
+      oldPath: null,
+      status: "added",
+      binary,
+      added: binary ? 0 : added,
+      removed: 0,
+      hunks:
+        binary || added === 0
+          ? []
+          : [
+              {
+                oldStart: 0,
+                oldCount: 0,
+                newStart: 1,
+                newCount: added,
+                start: 1,
+                end: added,
+                added,
+                removed: 0,
+              },
+            ],
+    });
+  }
+  return files;
+}

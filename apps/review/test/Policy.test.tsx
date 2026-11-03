@@ -68,6 +68,19 @@ describe("Policy", () => {
     expect(await screen.findByText(/Saved/)).toBeInTheDocument();
   });
 
+  it("edits the exclude paths", async () => {
+    const { server } = renderWithStore(<Policy projectId={PROJECT} />, handlers());
+    await waitFor(() => expect(screen.getByLabelText(/^Risk paths/)).toHaveValue("src/auth/**"));
+    fireEvent.change(screen.getByLabelText(/^Exclude paths/), {
+      target: { value: "fixtures/**\n" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(server.callsTo("projects.policy.put")).toHaveLength(1));
+    expect(sent(server.callsTo("projects.policy.put")[0]!.body)).toMatchObject({
+      excludePaths: ["fixtures/**"],
+    });
+  });
+
   it("leaves groupSizeLimit out of the file when it is the default or unchanged", async () => {
     const file = "version: 1\nriskPaths:\n  - src/auth/**\n";
     const { server } = renderWithStore(<Policy projectId={PROJECT} />, handlers(file));

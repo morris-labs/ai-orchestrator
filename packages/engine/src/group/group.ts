@@ -2,7 +2,7 @@
 import type { FileGroup, Hunk, PolicyFile } from "@aio/contracts";
 import { isRiskPath } from "../policy/rules.js";
 import type { DiffFile, DiffHunk } from "../range/diff.js";
-import { fileKind, importedModules, importsFile, stem } from "./classify.js";
+import { ImportIndex, fileKind, importedModules, stem } from "./classify.js";
 
 /** A group with at least this many changed lines is major. */
 export const DEFAULT_MAJOR_LINES = 50;
@@ -19,6 +19,25 @@ export interface GroupOptions {
   coarse?: boolean;
   /** The size limit, over the policy's `groupSizeLimit`. */
   sizeLimit?: number;
+}
+
+/** How many files grouping reads from Git at one time. */
+const READ_CONCURRENCY = 8;
+
+/** The most doc and source pairs that grouping compares by reading the doc. */
+export const DOC_SCAN_LIMIT = 250_000;
+
+async function forEachLimit<T>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T) => Promise<void>,
+): Promise<void> {
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, async () => {
+      while (next < items.length) await fn(items[next++] as T);
+    }),
+  );
 }
 
 class UnionFind {
@@ -164,24 +183,30 @@ export async function groupFiles(
   const docs = paths.filter((p) => fileKind(p) === "doc");
 
   const imports = new Map<string, string[]>();
-  for (const p of [...sources, ...tests]) {
+  await forEachLimit([...sources, ...tests], READ_CONCURRENCY, async (p) => {
     const content = byPath.get(p)?.status === "deleted" ? null : await options.readFile(p);
     imports.set(p, content ? importedModules(p, content) : []);
-  }
+  });
+
+  const index = new ImportIndex(sources);
+  const firstByStem = new Map<string, string>();
+  for (const s of sources) if (!firstByStem.has(stem(s))) firstByStem.set(stem(s), s);
 
   const uf = new UnionFind();
   for (const p of paths) uf.find(p);
   for (const a of sources) {
-    for (const b of sources) {
-      if (a !== b && importsFile(imports.get(a) ?? [], b)) uf.union(a, b);
-    }
+    for (const b of index.targetsOf(imports.get(a) ?? [])) if (a !== b) uf.union(a, b);
   }
 
   const testsDirRoot = new Map<string, string>();
   for (const t of tests) {
-    const match =
-      sources.find((s) => importsFile(imports.get(t) ?? [], s)) ??
-      sources.find((s) => stem(s) === stem(t));
+    const imported = index.targetsOf(imports.get(t) ?? []);
+    // The first source in path order, whichever way the index lists them.
+    const first = imported.reduce<string | undefined>(
+      (best, s) => (best === undefined || s < best ? s : best),
+      undefined,
+    );
+    const match = first ?? firstByStem.get(stem(t));
     if (match) uf.union(match, t);
     else {
       // Tests with no changed source group together by directory.
@@ -192,16 +217,29 @@ export async function groupFiles(
     }
   }
 
-  let docsRoot: string | null = null;
-  for (const d of docs) {
+  // Past the limit, a doc joins a source only by its name, so reading every
+  // doc for every source's name can't stall a large preview.
+  const scanDocs = docs.length * sources.length <= DOC_SCAN_LIMIT;
+  const docMatches = new Map<string, string | undefined>();
+  await forEachLimit(docs, READ_CONCURRENCY, async (d) => {
+    const named = firstByStem.get(stem(d));
+    if (named || !scanDocs) {
+      docMatches.set(d, named);
+      return;
+    }
     const content = byPath.get(d)?.status === "deleted" ? "" : ((await options.readFile(d)) ?? "");
     const lower = content.toLowerCase();
-    const match =
-      sources.find((s) => stem(s) === stem(d)) ??
+    docMatches.set(
+      d,
       sources.find(
         (s) =>
           stem(s).length >= 4 && (lower.includes(s.toLowerCase()) || lower.includes(`${stem(s)}.`)),
-      );
+      ),
+    );
+  });
+  let docsRoot: string | null = null;
+  for (const d of docs) {
+    const match = docMatches.get(d);
     if (match) uf.union(match, d);
     else if (docsRoot) uf.union(docsRoot, d);
     else docsRoot = d;

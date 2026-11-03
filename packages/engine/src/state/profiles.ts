@@ -94,12 +94,18 @@ export function planReviews(
   reviewers: readonly Vendor[],
   groups: readonly FileGroup[],
   profile: Profile,
-  options: { depth?: RunDepth; named?: readonly Vendor[] | undefined } = {},
+  options: {
+    depth?: RunDepth;
+    named?: readonly Vendor[] | undefined;
+    /** Every reviewer takes groups, because the diff is too large for one call to read. */
+    groupsOnly?: boolean;
+  } = {},
 ): ReviewTask[] {
   const tasks: ReviewTask[] = [];
-  const perGroup = reviewers.filter((v) => v !== "copilot");
+  const perGroup = options.groupsOnly ? [...reviewers] : reviewers.filter((v) => v !== "copilot");
   const standard = options.depth === "standard";
   const wholeDiff =
+    !options.groupsOnly &&
     reviewers.includes("copilot") &&
     (!standard || perGroup.length === 0 || options.named?.includes("copilot") === true);
   // With no groups the diff is empty, and a whole-diff review has nothing to read.

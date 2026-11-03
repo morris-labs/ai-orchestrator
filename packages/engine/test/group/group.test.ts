@@ -1,7 +1,7 @@
 import { DEFAULT_POLICY, PolicyFileSchema } from "@aio/contracts";
 import { describe, expect, it } from "vitest";
 import { fileKind, importedModules, importsFile, stem } from "../../src/group/classify.js";
-import { groupFiles, splitSlice } from "../../src/group/group.js";
+import { DOC_SCAN_LIMIT, groupFiles, splitSlice } from "../../src/group/group.js";
 import type { DiffFile, DiffHunk } from "../../src/range/diff.js";
 
 function hunk(start: number, added: number): DiffHunk {
@@ -168,5 +168,64 @@ describe("groupFiles", () => {
     expect(splitSlice(slice, 100)).toHaveLength(1);
     const parts = splitSlice(slice, 35);
     expect(parts.map((p) => p.hunks.length)).toEqual([1, 1, 1]);
+  });
+});
+
+describe("groupFiles on a large diff", () => {
+  const added = (path: string): DiffFile => ({
+    path,
+    oldPath: null,
+    status: "added",
+    binary: false,
+    added: 1,
+    removed: 0,
+    hunks: [
+      {
+        oldStart: 0,
+        oldCount: 0,
+        newStart: 1,
+        newCount: 1,
+        start: 1,
+        end: 1,
+        added: 1,
+        removed: 0,
+      },
+    ],
+  });
+
+  it("stops reading docs for source names past the scan limit", async () => {
+    const count = Math.ceil(Math.sqrt(DOC_SCAN_LIMIT)) + 1;
+    const files = [
+      ...Array.from({ length: count }, (_, i) => added(`pkg/mod${i}/code${i}.js`)),
+      ...Array.from({ length: count }, (_, i) => added(`docs/page${i}.md`)),
+    ];
+    const reads: string[] = [];
+    const started = Date.now();
+    const groups = await groupFiles(files, {
+      policy: DEFAULT_POLICY,
+      coarse: true,
+      sizeLimit: 1500,
+      readFile: (path) => {
+        reads.push(path);
+        return Promise.resolve("text");
+      },
+    });
+    expect(reads.filter((p) => p.endsWith(".md"))).toEqual([]);
+    expect(groups.flatMap((g) => g.files)).toHaveLength(count * 2);
+    expect(Date.now() - started).toBeLessThan(5000);
+  });
+
+  it("joins a Python import by its path suffix, and a test to the first source it imports", async () => {
+    const groups = await groupFiles(
+      [added("lib/shop/orders.py"), added("lib/shop/cart.py"), added("test/test_x.py")],
+      {
+        policy: DEFAULT_POLICY,
+        readFile: (path) =>
+          Promise.resolve(
+            path.endsWith("cart.py") ? "from shop import orders\n" : "from shop.cart import y\n",
+          ),
+      },
+    );
+    expect(groups).toHaveLength(1);
   });
 });

@@ -101,6 +101,7 @@ export async function rebaseBase(ctx: RunContext): Promise<void> {
       tip: ctx.eng.tipRef ?? ctx.state.tipSha,
       mergeBase: ctx.state.request.mergeBase,
       exactBase: ctx.state.request.exactBase,
+      scope: ctx.state.request.scope,
       readOnly: ctx.state.request.readOnly,
       // The tree may have changed since the run started; a new base doesn't
       // make a clean-tree run start reviewing uncommitted changes.

@@ -20,6 +20,7 @@ import {
   formRoles,
   setFormProfile,
   setFormRole,
+  setFormWholeProject,
   type LauncherForm,
   VERIFY_FLOOR_OPTIONS,
 } from "./launcherModel.js";
@@ -252,99 +253,120 @@ export function Launcher({ prefill }: { prefill: { project: string | null; box: 
 
           <fieldset>
             <legend>Range</legend>
-            <Field label="Base">
-              <select
-                value={baseIsCustom ? "__custom" : form.base}
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={form.wholeProject}
                 onChange={(e) => {
-                  if (e.target.value === "__custom") {
-                    setCustomBase(true);
-                  } else {
-                    setCustomBase(false);
-                    update({ base: e.target.value });
-                  }
+                  const on = e.target.checked;
+                  setForm((f) => setFormWholeProject(f, on));
+                  setPreview(null);
                 }}
-              >
-                <option value="origin/main">origin/main</option>
-                <option value="pr">Base of the open pull request</option>
-                {refs.remoteBranches.length > 0 ? (
-                  <optgroup label="Remote branches">
-                    {refs.remoteBranches
-                      .filter((b) => b !== "origin/main")
-                      .map((b) => (
-                        <option key={`r-${b}`} value={b}>
-                          {b}
-                        </option>
-                      ))}
-                  </optgroup>
+              />{" "}
+              Whole project
+            </label>
+            {form.wholeProject ? (
+              <p className="muted small">
+                The run reviews the project as it ships at the tip, with no base, and counts every
+                finding as introduced. It starts read-only, and you can clear that to allow fixes.
+              </p>
+            ) : (
+              <>
+                <Field label="Base">
+                  <select
+                    value={baseIsCustom ? "__custom" : form.base}
+                    onChange={(e) => {
+                      if (e.target.value === "__custom") {
+                        setCustomBase(true);
+                      } else {
+                        setCustomBase(false);
+                        update({ base: e.target.value });
+                      }
+                    }}
+                  >
+                    <option value="origin/main">origin/main</option>
+                    <option value="pr">Base of the open pull request</option>
+                    {refs.remoteBranches.length > 0 ? (
+                      <optgroup label="Remote branches">
+                        {refs.remoteBranches
+                          .filter((b) => b !== "origin/main")
+                          .map((b) => (
+                            <option key={`r-${b}`} value={b}>
+                              {b}
+                            </option>
+                          ))}
+                      </optgroup>
+                    ) : null}
+                    {refs.localBranches.length > 0 ? (
+                      <optgroup label="Local branches">
+                        {refs.localBranches.map((b) => (
+                          <option key={`l-${b}`} value={b}>
+                            {b}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ) : null}
+                    {refs.tags.length > 0 ? (
+                      <optgroup label="Tags">
+                        {refs.tags.map((t) => (
+                          <option key={`t-${t}`} value={t}>
+                            {t}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ) : null}
+                    {refs.recentCommits.length > 0 ? (
+                      <optgroup label="Recent commits">
+                        {refs.recentCommits.map((c) => (
+                          <option key={`c-${c.sha}`} value={c.sha}>
+                            {c.sha.slice(0, 8)} {c.subject}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ) : null}
+                    {refs.pullRequests.length > 0 ? (
+                      <optgroup label="Open pull request bases">
+                        {refs.pullRequests.map((p) => (
+                          <option key={`p-${p.number}`} value={p.baseRef}>
+                            #{p.number} base: {p.baseRef}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ) : null}
+                    <option value="__custom">Another ref…</option>
+                  </select>
+                </Field>
+                {baseIsCustom ? (
+                  <Field label="Base ref">
+                    <input
+                      value={form.base}
+                      onChange={(e) => update({ base: e.target.value })}
+                      placeholder="feature/shared-modules"
+                    />
+                  </Field>
                 ) : null}
-                {refs.localBranches.length > 0 ? (
-                  <optgroup label="Local branches">
-                    {refs.localBranches.map((b) => (
-                      <option key={`l-${b}`} value={b}>
-                        {b}
-                      </option>
-                    ))}
-                  </optgroup>
-                ) : null}
-                {refs.tags.length > 0 ? (
-                  <optgroup label="Tags">
-                    {refs.tags.map((t) => (
-                      <option key={`t-${t}`} value={t}>
-                        {t}
-                      </option>
-                    ))}
-                  </optgroup>
-                ) : null}
-                {refs.recentCommits.length > 0 ? (
-                  <optgroup label="Recent commits">
-                    {refs.recentCommits.map((c) => (
-                      <option key={`c-${c.sha}`} value={c.sha}>
-                        {c.sha.slice(0, 8)} {c.subject}
-                      </option>
-                    ))}
-                  </optgroup>
-                ) : null}
-                {refs.pullRequests.length > 0 ? (
-                  <optgroup label="Open pull request bases">
-                    {refs.pullRequests.map((p) => (
-                      <option key={`p-${p.number}`} value={p.baseRef}>
-                        #{p.number} base: {p.baseRef}
-                      </option>
-                    ))}
-                  </optgroup>
-                ) : null}
-                <option value="__custom">Another ref…</option>
-              </select>
-            </Field>
-            {baseIsCustom ? (
-              <Field label="Base ref">
-                <input
-                  value={form.base}
-                  onChange={(e) => update({ base: e.target.value })}
-                  placeholder="feature/shared-modules"
-                />
-              </Field>
-            ) : null}
-            <div role="radiogroup" aria-label="Diff start" className="radio-row">
-              <label>
-                <input
-                  type="radio"
-                  name="baseMode"
-                  checked={form.baseMode === "merge-base"}
-                  onChange={() => update({ baseMode: "merge-base" })}
-                />{" "}
-                Merge base (default)
-              </label>
-              <label>
-                <input
-                  type="radio"
-                  name="baseMode"
-                  checked={form.baseMode === "exact"}
-                  onChange={() => update({ baseMode: "exact" })}
-                />{" "}
-                Exact base
-              </label>
-            </div>
+                <div role="radiogroup" aria-label="Diff start" className="radio-row">
+                  <label>
+                    <input
+                      type="radio"
+                      name="baseMode"
+                      checked={form.baseMode === "merge-base"}
+                      onChange={() => update({ baseMode: "merge-base" })}
+                    />{" "}
+                    Merge base (default)
+                  </label>
+                  <label>
+                    <input
+                      type="radio"
+                      name="baseMode"
+                      checked={form.baseMode === "exact"}
+                      onChange={() => update({ baseMode: "exact" })}
+                    />{" "}
+                    Exact base
+                  </label>
+                </div>
+              </>
+            )}
             <Field
               label="Tip branch"
               hint={form.readOnly ? "With read-only, the tip can be a commit." : undefined}
@@ -392,6 +414,7 @@ export function Launcher({ prefill }: { prefill: { project: string | null; box: 
                   type="radio"
                   name="pipeline"
                   checked={form.pipeline === "post-push"}
+                  disabled={form.wholeProject}
                   onChange={() => update({ pipeline: "post-push" })}
                 />{" "}
                 Post-push
@@ -545,6 +568,17 @@ export function Launcher({ prefill }: { prefill: { project: string | null; box: 
               />{" "}
               Include uncommitted changes
             </label>
+            <Field
+              label="Exclude paths"
+              hint="Globs of files this run never groups or reviews, one per line, added to the policy's excludePaths."
+            >
+              <textarea
+                rows={2}
+                value={form.excludePaths}
+                onChange={(e) => update({ excludePaths: e.target.value })}
+                placeholder="fixtures/**"
+              />
+            </Field>
             <Field label="Round cap">
               <input
                 type="number"
@@ -571,10 +605,35 @@ export function Launcher({ prefill }: { prefill: { project: string | null; box: 
         <section className="card" aria-label="Group preview">
           <h3>Preview</h3>
           <p>
-            {preview.groups.length} groups, {preview.changedLines} changed lines, from{" "}
-            <code>{preview.diffBaseSha.slice(0, 8)}</code> to{" "}
-            <code>{preview.tipSha.slice(0, 8)}</code>.
+            {preview.groups.length} groups, {preview.changedLines} changed lines,{" "}
+            {form.wholeProject ? (
+              <>
+                the whole project at <code>{preview.tipSha.slice(0, 8)}</code>.
+              </>
+            ) : (
+              <>
+                from <code>{preview.diffBaseSha.slice(0, 8)}</code> to{" "}
+                <code>{preview.tipSha.slice(0, 8)}</code>.
+              </>
+            )}
           </p>
+          {preview.excluded ? (
+            <details aria-label="Excluded files">
+              <summary>Excluded files: {preview.excluded.count}</summary>
+              {preview.excluded.count > preview.excluded.files.length ? (
+                <p className="muted small">
+                  Showing the first {preview.excluded.files.length} files.
+                </p>
+              ) : null}
+              <ul className="ab-mono">
+                {preview.excluded.files.map((f) => (
+                  <li key={f.path}>
+                    {f.path} ({f.source})
+                  </li>
+                ))}
+              </ul>
+            </details>
+          ) : null}
           {preview.tokenEstimate ? (
             <p aria-label="Token estimate">
               Estimated tokens: about {preview.tokenEstimate.tokens.toLocaleString("en-US")}. This

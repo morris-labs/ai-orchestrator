@@ -40,6 +40,41 @@ function handlers() {
 }
 
 describe("Launcher", () => {
+  it("hides the base for a whole project, selects read-only, and shows exclusions", async () => {
+    const { server } = renderWithStore(<Launcher prefill={{ project: null, box: BOX }} />, {
+      ...handlers(),
+      "runs.preview": () => ({
+        ...preview,
+        excluded: { count: 1, files: [{ path: "vendor/a.js", source: "built-in" }] },
+      }),
+    });
+    await waitFor(() =>
+      expect(screen.getByLabelText("Tip branch")).toHaveValue("claude/Emails_not_sending"),
+    );
+    await waitFor(() => expect(screen.getByLabelText(/^Repository/)).not.toHaveValue(""));
+    expect(screen.getByLabelText("Base")).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText("Whole project"));
+    expect(screen.queryByLabelText("Base")).toBeNull();
+    expect(screen.queryByRole("radiogroup", { name: "Diff start" })).toBeNull();
+    expect(screen.getByLabelText(/^Read-only/)).toBeChecked();
+    fireEvent.change(screen.getByLabelText(/^Exclude paths/), {
+      target: { value: "fixtures/**\n" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Preview groups" }));
+    expect(await screen.findByText("Excluded files: 1")).toBeInTheDocument();
+    expect(screen.getByText("vendor/a.js (built-in)")).toBeInTheDocument();
+    expect(server.callsTo("runs.preview")[0]).toMatchObject({
+      body: { scope: "whole", readOnly: true, excludePaths: ["fixtures/**"] },
+    });
+    // Fixes stay possible.
+    fireEvent.click(screen.getByLabelText(/^Read-only/));
+    fireEvent.click(screen.getByRole("button", { name: "Start" }));
+    await waitFor(() => expect(server.callsTo("runs.create")).toHaveLength(1));
+    expect(server.callsTo("runs.create")[0]).toMatchObject({
+      body: { scope: "whole", readOnly: false },
+    });
+  });
+
   it("prefills from the deep link box and starts a run", async () => {
     const { server } = renderWithStore(
       <Launcher prefill={{ project: null, box: BOX }} />,

@@ -95,6 +95,46 @@ export const VENDOR_ROLES: Record<z.infer<typeof VendorSchema>, readonly AgentRo
 export const RunDepthSchema = z.enum(["standard", "thorough"]);
 export type RunDepth = z.infer<typeof RunDepthSchema>;
 
+/**
+ * What a run reviews. Absent means the change from a base to the tip. `whole`
+ * reviews the project at the tip, from Git's empty tree, and ignores `base`.
+ */
+export const RunScopeSchema = z.enum(["whole"]);
+export type RunScope = z.infer<typeof RunScopeSchema>;
+
+/**
+ * Paths that a `whole` run leaves out by default: lockfiles, and minified,
+ * vendored, and generated files. The preview lists what they match.
+ */
+export const WHOLE_PROJECT_EXCLUDES: readonly string[] = [
+  "pnpm-lock.yaml",
+  "package-lock.json",
+  "npm-shrinkwrap.json",
+  "yarn.lock",
+  "bun.lock",
+  "bun.lockb",
+  "Cargo.lock",
+  "Gemfile.lock",
+  "Pipfile.lock",
+  "poetry.lock",
+  "uv.lock",
+  "composer.lock",
+  "go.sum",
+  "flake.lock",
+  "*.min.js",
+  "*.min.css",
+  "*.map",
+  "*.pb.go",
+  "*_pb2.py",
+  "*.generated.*",
+  "**/.aio/**",
+  "**/dist/**",
+  "**/vendor/**",
+  "**/node_modules/**",
+  "**/third_party/**",
+  "**/__generated__/**",
+];
+
 /** What each depth gives a request that leaves a setting out. */
 export const DEPTH_DEFAULTS: Record<
   RunDepth,
@@ -204,6 +244,10 @@ export const ResolvedRunRequestSchema = z.object({
   verifyFloor: SeveritySchema.optional(),
   /** Absent in runs that predate depths, which stay `thorough`. See `runDepth`. */
   depth: RunDepthSchema.optional(),
+  /** What the run reviews. Absent in runs that review a range, and in older runs. */
+  scope: RunScopeSchema.optional(),
+  /** Globs of files this run never groups or reviews, added to the policy's `excludePaths`. */
+  excludePaths: z.array(z.string().min(1)).optional(),
 });
 export type ResolvedRunRequest = z.infer<typeof ResolvedRunRequestSchema>;
 
@@ -238,6 +282,7 @@ function resolveRequest<
     roundCap?: number | undefined;
     continuationCap?: number | undefined;
     verifyFloor?: Severity | undefined;
+    scope?: RunScope | undefined;
   },
 >(r: T): T & { roundCap: number; continuationCap: number } {
   const defaults = DEPTH_DEFAULTS[r.depth];
@@ -245,7 +290,7 @@ function resolveRequest<
   const verifyFloor = r.verifyFloor ?? defaults.verifyFloor;
   return {
     ...r,
-    ...(r.exactBase ? { mergeBase: false } : {}),
+    ...(r.exactBase || r.scope === "whole" ? { mergeBase: false } : {}),
     roundCap: r.roundCap ?? (postPush ? POST_PUSH_ROUND_CAP : defaults.roundCap),
     continuationCap: r.continuationCap ?? defaults.continuationCap,
     ...(verifyFloor ? { verifyFloor } : {}),
@@ -261,10 +306,26 @@ export function isReadOnlyPostPush(r: { readOnly: boolean; pipeline: Pipeline })
   return r.readOnly && r.pipeline === "post-push";
 }
 
+/** The reason every layer gives when it refuses a whole-project post-push request. */
+export const WHOLE_POST_PUSH_MESSAGE =
+  "A whole-project run can't use the post-push pipeline, which answers a pull request's diff.";
+
+/** True when a request asks for a whole-project run of the post-push pipeline. */
+export function isWholePostPush(r: { scope?: RunScope | undefined; pipeline: Pipeline }): boolean {
+  return r.scope === "whole" && r.pipeline === "post-push";
+}
+
 function refuseReadOnlyPostPush(
-  r: { readOnly: boolean; pipeline: Pipeline },
+  r: { readOnly: boolean; pipeline: Pipeline; scope?: RunScope | undefined },
   ctx: z.RefinementCtx,
 ): void {
+  if (isWholePostPush(r)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["scope"],
+      message: WHOLE_POST_PUSH_MESSAGE,
+    });
+  }
   if (isReadOnlyPostPush(r)) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,

@@ -126,6 +126,9 @@ call, using the `TOKEN_ESTIMATE` figures in `packages/contracts/src/runs.ts`. Th
 groups. The `standard` figures are planning guesses until runs measure them. The
 number of findings moves the real figure the most, and the estimate can't see it.
 
+The estimate works the same way for a whole-project run, where every line in a
+reviewed file counts as changed, so expect a large number.
+
 ## Vendors and roles
 
 Claude writes and fixes all code. The other roles move between vendors
@@ -413,6 +416,52 @@ A run reviews the changes between a base and a tip:
 - **Read-only**: reviews without fixing. Use it with a commit as the tip.
 - **Uncommitted changes**: a run refuses a dirty working tree unless you
   turn on **Include uncommitted changes**.
+
+### Review the whole project
+
+To review what ships at a tip instead of a change, select **Whole project** in
+the launcher, or pass `--whole-project` to the `aio review start` command:
+
+```bash
+aio review start --box BOX_ID --whole-project --read-only --tip origin/main
+
+```
+
+Replace `BOX_ID` with the box to review. The tip works as usual, and a read-only
+run can take a remote branch or a commit. The launcher selects read-only when you
+choose the scope, and you can clear it to allow fixes. A whole-project run can't
+use the post-push pipeline.
+
+A whole-project run behaves differently in the following ways:
+
+- **Base**: the engine ignores the base and diffs from a commit of Git's empty
+  tree. The commit has fixed names and dates, so it needs no Git identity and
+  always has the same SHA. No branch or tag points at it. If a garbage collection
+  removes it, the engine recreates it when the run resumes or opens a round.
+- **Findings**: every finding counts as introduced. The engine makes no base
+  checkout, runs reproduction scripts at the tip only, and never labels a finding
+  `pre-existing`.
+- **Rounds**: round 1 reviews the project, in file groups only, and later rounds
+  review only the fixer's diff, at both depths. Copilot takes groups instead of a
+  whole-diff call, and a sweep searches the checkout instead of reading a diff.
+- **Tiers**: at the `thorough` depth, `auto` skips the function diff and reference
+  counts in round 1, because every symbol changed.
+- **Exclusions**: the built-in list applies, as the next section describes.
+
+### Exclude paths
+
+Excluded files never join a group, at any scope. A file is excluded when it
+matches one of the following lists:
+
+- The `excludePaths` globs in the [policy file](policy.md).
+- The globs for the run: **Exclude paths** in the launcher, or `--exclude` on the
+  `aio review start` command.
+- In a whole-project run only, the built-in list: lockfiles, `*.min.js`, `*.min.css`,
+  `*.map`, `*.pb.go`, `*_pb2.py`, `*.generated.*`, and anything under a `dist`,
+  `vendor`, `node_modules`, `third_party`, or `__generated__` folder.
+
+The preview shows the number of excluded files. Expand **Excluded files** to see
+each file and the list that excludes it, for up to 1,000 files.
 
 ## Pre-push stages
 

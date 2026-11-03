@@ -75,6 +75,7 @@ export interface RunPreview {
   changedLines: number;
   dirty: boolean;
   tokenEstimate?: { tokens: number; basis: string };
+  excluded?: { count: number; files: { path: string; source: "built-in" | "policy" | "run" }[] };
 }
 
 export interface FindingDetail {

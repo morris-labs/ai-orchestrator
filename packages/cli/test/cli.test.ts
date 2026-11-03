@@ -587,6 +587,18 @@ describe("review", () => {
     expect(out).toBe(`Started run ${RUN}.\n`);
   });
 
+  it("starts a whole-project run with exclusions, and refuses post-push", async () => {
+    server.on("POST /api/v1/runs", { status: 201, body: runState });
+    const args = ["review", "start", "--project", PROJECT_ID, "--repo", "/r", "--whole-project"];
+    expect(await cli([...args, "--read-only", "--exclude", "a/**", "b/**"])).toBe(0);
+    expect(last()?.body).toMatchObject({
+      scope: "whole",
+      readOnly: true,
+      excludePaths: ["a/**", "b/**"],
+    });
+    expect(await cli([...args, "--pipeline", "post-push", "--pr", "1"])).not.toBe(0);
+  });
+
   it("passes the round and continuation caps", async () => {
     server.on("POST /api/v1/runs", { status: 201, body: runState });
     const args = ["review", "start", "--project", PROJECT_ID, "--repo", "/r", "--read-only"];

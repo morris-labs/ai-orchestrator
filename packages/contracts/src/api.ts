@@ -745,6 +745,15 @@ export const RunPreviewSchema = z.object({
   dirty: z.boolean(),
   /** A rough estimate from code, with no model call. Absent from an older engine. */
   tokenEstimate: z.object({ tokens: z.number().nonnegative(), basis: z.string() }).optional(),
+  /** The files the run leaves out. Absent from an older engine. */
+  excluded: z
+    .object({
+      /** Every excluded file, which can be more than `files` lists. */
+      count: z.number().int().nonnegative(),
+      /** The first excluded files by path, each with the list that excludes it. */
+      files: z.array(z.object({ path: z.string(), source: z.enum(["built-in", "policy", "run"]) })),
+    })
+    .optional(),
 });
 
 export const FindingListQuerySchema = z.object({

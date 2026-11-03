@@ -308,6 +308,7 @@ export class RunContext {
       baseSha: this.state.baseSha ?? "",
       tipSha: this.state.tipSha ?? "",
       tipRef: this.eng.tipRef,
+      ...(this.state.request.scope === "whole" ? { wholeProject: true } : {}),
     };
   }
 
@@ -438,6 +439,8 @@ export class RunContext {
   ): Promise<void> {
     const previous = finding.verdict;
     Object.assign(finding, patch, { verdict });
+    // A whole-project run has no base, so nothing in it predates the review.
+    if (this.state.request.scope === "whole") finding.introduced = true;
     if (evidence) finding.evidence = evidence;
     finding.history.push({
       time: this.nowIso(),

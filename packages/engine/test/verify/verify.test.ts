@@ -486,3 +486,29 @@ describe("verifyFinding", () => {
     expect(Date.now() - started).toBeLessThan(10_000);
   });
 });
+
+describe("decideVerdict with no base", () => {
+  const confirmed = {
+    verdict: "confirmed",
+    verification: "code-reading",
+    evidence: "The flaw is in the code at the tip.",
+    presentAtBase: true,
+    script: null,
+  } as const;
+  const reproduced = { exitCode: 1, timedOut: false, output: "" };
+
+  it("never gives pre-existing, whatever the disprover or a script says", () => {
+    expect(decideVerdict(confirmed, null, null, [], true)).toMatchObject({
+      verdict: "confirmed",
+      introduced: true,
+    });
+    const scripted = decideVerdict(confirmed, reproduced, null, [], true);
+    expect(scripted).toMatchObject({
+      verdict: "confirmed",
+      verification: "script",
+      introduced: true,
+    });
+    expect(scripted.evidence).not.toMatch(/base/);
+    expect(decideVerdict(confirmed, null, null, [], false).verdict).toBe("pre-existing");
+  });
+});

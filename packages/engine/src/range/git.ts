@@ -2,6 +2,7 @@
 import { appendFile, copyFile, mkdir, readFile, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import type { CommandRunner } from "../core.js";
+import { parseAddedNumstat, type DiffFile } from "./diff.js";
 
 /** The `info/exclude` line that hides the engine's own directory. */
 const ENGINE_DIR_PATTERN = ".aio/";
@@ -97,6 +98,43 @@ export class Git {
 
   async mergeBase(a: string, b: string): Promise<string> {
     return (await this.run(["merge-base", a, b])).trim();
+  }
+
+  /**
+   * The commit a whole-project run starts from: Git's empty tree, with no
+   * parent. It needs no Git identity. Fixed names and dates give the same SHA
+   * every time, so a run can recreate it after a garbage collection, and no
+   * ref points at it.
+   */
+  async emptyBaseCommit(): Promise<string> {
+    const tree = (
+      await this.run(["hash-object", "-t", "tree", "-w", "--stdin"], { input: "" })
+    ).trim();
+    const commit = await this.run(["commit-tree", tree, "-m", "AI Orchestrator empty base"], {
+      env: EMPTY_BASE_IDENTITY,
+    });
+    return commit.trim();
+  }
+
+  /**
+   * The files of `to` as a diff from an empty `from`, one whole-file hunk each.
+   * It asks Git only for counts, so the diff of a large project stays small.
+   */
+  async addedFiles(from: string, to: string): Promise<DiffFile[]> {
+    const args = [
+      "diff",
+      "--no-color",
+      "--no-ext-diff",
+      "--no-textconv",
+      "--no-renames",
+      "--numstat",
+      "-z",
+      from,
+      to,
+    ];
+    const result = await this.exec(args, { timeoutMs: 280_000 });
+    if (result.exitCode !== 0) throw new GitError(args, result.exitCode, result.stderr);
+    return parseAddedNumstat(result.stdout);
   }
 
   /**
@@ -336,4 +374,11 @@ const SNAPSHOT_IDENTITY: Record<string, string> = {
   GIT_AUTHOR_EMAIL: "aio@localhost",
   GIT_COMMITTER_NAME: "AI Orchestrator",
   GIT_COMMITTER_EMAIL: "aio@localhost",
+};
+
+/** The identity and dates of the whole-project base commit, which fix its SHA. */
+const EMPTY_BASE_IDENTITY: Record<string, string> = {
+  ...SNAPSHOT_IDENTITY,
+  GIT_AUTHOR_DATE: "2000-01-01T00:00:00Z",
+  GIT_COMMITTER_DATE: "2000-01-01T00:00:00Z",
 };

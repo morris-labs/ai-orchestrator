@@ -30,6 +30,8 @@ export interface TierInputs {
   choice: ModelTierChoice;
   /** `standard` reads no history, since only risk paths and policy rules raise a tier. */
   depth?: RunDepth;
+  /** Reads no function diff or references, when the whole project is the diff. */
+  skipHistory?: boolean;
   now?: () => number;
   budgetMs?: number;
 }
@@ -73,7 +75,7 @@ export async function assignTiers(
 ): Promise<FileGroup[]> {
   const { git, policy, diffBase, tip, choice } = inputs;
   const depth = inputs.depth ?? "thorough";
-  const auto = choice === "auto" && depth !== "standard";
+  const auto = choice === "auto" && depth !== "standard" && inputs.skipHistory !== true;
   const now = inputs.now ?? Date.now;
   const byPath = new Map(files.map((f) => [f.path, f]));
   // A fixed tier needs only each file's path, so it reads no history.

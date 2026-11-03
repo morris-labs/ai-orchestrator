@@ -12,6 +12,14 @@ the upgrade steps, see `docs/migration-3x.md`.
 
 ### Added
 
+- A whole-project review scope, as **Whole project** in the launcher and
+  `--whole-project` on `aio review start`. The run reviews the tip from Git's empty
+  tree, counts every finding as introduced, and adds no branch, tag, or other ref.
+- `excludePaths` globs in the policy file, and per-run exclusions in the launcher and
+  as `--exclude`. A whole-project run also leaves out lockfiles and minified,
+  vendored, and generated files. The preview counts and lists excluded files.
+- A faster group preview on large diffs: grouping reads files in parallel and no
+  longer compares every file with every other file.
 - A `depth` setting for review runs, on the launcher and as `--depth`. The default
   `standard` asks for P1 and P2 findings, with coarser groups, one reviewer pass per
   group, batched verification, and at most 2 rounds, with round 2 on the fixer's diff.

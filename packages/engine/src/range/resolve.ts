@@ -1,4 +1,5 @@
 // Review range resolution, as design.md "Review range" describes it.
+import type { RunScope } from "@aio/contracts";
 import type { CommandRunner } from "../core.js";
 import type { GitHubClient } from "../postpush/github.js";
 import { Git } from "./git.js";
@@ -14,6 +15,8 @@ export interface RangeInput {
   readOnly: boolean;
   includeWorktree: boolean;
   prNumber?: number;
+  /** `whole` starts the diff at the empty base and ignores `base`. */
+  scope?: RunScope | undefined;
 }
 
 export interface ResolvedRange {
@@ -99,8 +102,10 @@ export async function resolveRange(
   github?: GitHubClient,
 ): Promise<ResolvedRange> {
   const git = new Git(runner, input.repoPath);
-  const baseRef = await resolveBaseRef(git, input, github);
-  const baseSha = await git.tryRevParse(baseRef);
+  const whole = input.scope === "whole";
+  if (input.tip !== undefined) refuseOptionLike("tip", input.tip);
+  const baseRef = whole ? "(empty tree)" : await resolveBaseRef(git, input, github);
+  const baseSha = whole ? await git.emptyBaseCommit() : await git.tryRevParse(baseRef);
   if (!baseSha) throw new RangeError("bad_ref", `The base ${baseRef} doesn't name a commit.`);
 
   const current = await git.currentBranch();
@@ -149,7 +154,7 @@ export async function resolveRange(
     );
   }
 
-  const useMergeBase = input.mergeBase && !input.exactBase;
+  const useMergeBase = !whole && input.mergeBase && !input.exactBase;
   const diffBaseSha = useMergeBase ? await git.mergeBase(baseSha, tipSha) : baseSha;
   // Uncommitted changes only make sense on the checked-out tip.
   const includeWorktree =

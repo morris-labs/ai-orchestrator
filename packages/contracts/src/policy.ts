@@ -44,6 +44,8 @@ export const PolicyFileSchema = z
     commentAuthors: z.array(z.string().min(1)).optional(),
     /** Models per vendor and tier, over the built-in mappings. Refuses a blocked model. */
     tierModels: TierModelsSchema.optional(),
+    /** Globs of files that no run groups or reviews, at every scope. */
+    excludePaths: z.array(z.string().min(1)).optional(),
     /** Tiers for paths; the first rule that matches a file wins. */
     tierPaths: z.array(TierPathRuleSchema).optional(),
   })

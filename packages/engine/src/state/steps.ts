@@ -27,6 +27,7 @@ import type {
   VerifyOutput,
 } from "../core.js";
 import { compareGate, formatRegressions, runGate, type GateRun } from "../gate/gate.js";
+import { hasExclusions, selectFiles } from "../group/exclude.js";
 import { groupFiles } from "../group/group.js";
 import { assignTiers } from "../group/signals.js";
 import { roleTier, tierRank, type TierChoice } from "../group/tier.js";
@@ -247,15 +248,39 @@ export async function readOnlyRepo(ctx: RunContext): Promise<string> {
  * round 2 and later review what changed after the last review, not the branch.
  */
 function reviewDiffBase(ctx: RunContext): string {
-  if (runDepth(ctx.state.request) === "standard" && ctx.round > 1 && ctx.eng.reviewFrom) {
-    return ctx.eng.reviewFrom;
-  }
+  if (reviewsFixDiffOnly(ctx)) return ctx.eng.reviewFrom as string;
   return ctx.eng.diffBaseSha ?? ctx.state.baseSha ?? "";
 }
 
 /** True when the round reviews only the change since the last review. */
 function reviewsFixDiffOnly(ctx: RunContext): boolean {
-  return runDepth(ctx.state.request) === "standard" && ctx.round > 1 && !!ctx.eng.reviewFrom;
+  // A whole-project run never reviews the project twice, at any depth.
+  const narrows = runDepth(ctx.state.request) === "standard" || isWholeProject(ctx);
+  return narrows && ctx.round > 1 && !!ctx.eng.reviewFrom;
+}
+
+function isWholeProject(ctx: RunContext): boolean {
+  return ctx.state.request.scope === "whole";
+}
+
+/** True when the round's diff is the whole project, not a fixer's diff. */
+function reviewsWholeProject(ctx: RunContext): boolean {
+  return isWholeProject(ctx) && !reviewsFixDiffOnly(ctx);
+}
+
+/**
+ * Recreates the empty base of a whole-project run, which no ref keeps. The
+ * commit has a fixed SHA, so after a garbage collection the run goes on as if
+ * nothing happened, and writing it again restarts the object's prune clock.
+ */
+export async function ensureWholeBase(ctx: RunContext): Promise<void> {
+  if (isWholeProject(ctx)) await ctx.git.emptyBaseCommit();
+}
+
+/** The range of a round that reviews only the fixer's diff. */
+function fixDiffRange(ctx: RunContext, repoPath: string, diffBase: string) {
+  const { wholeProject: _wholeProject, ...range } = ctx.range(repoPath);
+  return { ...range, baseSha: diffBase };
 }
 
 /** Computes the file groups for the current tip. */
@@ -264,7 +289,22 @@ export async function computeGroups(ctx: RunContext): Promise<FileGroup[]> {
   const tip = await diffTip(ctx);
   const depth = runDepth(ctx.state.request);
   const standard = depth === "standard";
-  const files = parseDiff(await ctx.git.diff(diffBase, tip));
+  const wholeDiff = reviewsWholeProject(ctx);
+  await ensureWholeBase(ctx);
+  const { files, excluded } = selectFiles(
+    wholeDiff
+      ? await ctx.git.addedFiles(diffBase, tip)
+      : parseDiff(await ctx.git.diff(diffBase, tip)),
+    ctx.state.request,
+    ctx.policy,
+  );
+  if (excluded.length > 0) {
+    ctx.deps.log?.info?.("Left files out of the review", {
+      runId: ctx.state.id,
+      round: ctx.round,
+      count: excluded.length,
+    });
+  }
   const groups = await groupFiles(files, {
     policy: ctx.policy,
     readFile: (path) => ctx.git.show(tip, path),
@@ -281,6 +321,7 @@ export async function computeGroups(ctx: RunContext): Promise<FileGroup[]> {
     tip,
     choice,
     depth,
+    skipHistory: wholeDiff,
     now: () => ctx.clock.now(),
   });
   for (const g of tiered) {
@@ -408,7 +449,7 @@ async function runReviewTask(
   const diff = await ctx.git.diffForPrompt(diffBase, await diffTip(ctx), files);
   const repoPath = await readOnlyRepo(ctx);
   const prompt = finderPrompt({
-    range: fixDiffOnly ? { ...ctx.range(repoPath), baseSha: diffBase } : ctx.range(repoPath),
+    range: fixDiffOnly ? fixDiffRange(ctx, repoPath, diffBase) : ctx.range(repoPath),
     round: ctx.round,
     groupId: task.groupId,
     files,
@@ -535,6 +576,7 @@ export async function runFind(ctx: RunContext, groups: readonly FileGroup[]): Pr
   const tasks = planReviews(ctx.state.roles.reviewer, groups, ctx.state.profile, {
     depth: runDepth(ctx.state.request),
     named: ctx.eng.manualRoles.reviewer,
+    groupsOnly: reviewsWholeProject(ctx),
   });
   const results = await runPerVendor(tasks, FIND_CONCURRENCY_PER_VENDOR, (t) =>
     runReviewTask(ctx, t, groups),
@@ -1038,7 +1080,7 @@ export async function verifyPending(ctx: RunContext, stageFile: string): Promise
     runner: ctx.deps.runner,
     range: ctx.range(repoPath),
     policy: ctx.policy,
-    baseWorktree: baseWorktreeFor(ctx),
+    baseWorktree: isWholeProject(ctx) ? null : baseWorktreeFor(ctx),
     signal: ctx.signal,
     inScriptCheckout: <T>(side: "tip" | "base", fn: (dir: string) => Promise<T>) => {
       const base = ctx.state.baseSha ?? "HEAD";
@@ -1139,7 +1181,7 @@ export async function verifyPending(ctx: RunContext, stageFile: string): Promise
     const key = `verify-batch-${batchKey(batch.ids)}`;
     const scratchDir = ctx.store.scratchDir(`batch-${batchKey(batch.ids)}`);
     await mkdir(scratchDir, { recursive: true });
-    const baseDir = await baseWorktreeFor(ctx).ensure();
+    const baseDir = isWholeProject(ctx) ? null : await baseWorktreeFor(ctx).ensure();
     const files = [...new Set(findings.flatMap((f) => (f.file ? [f.file] : [])))];
     const prompt = batchDisproverPrompt({
       range: ctx.range(repoPath),
@@ -1166,7 +1208,7 @@ export async function verifyPending(ctx: RunContext, stageFile: string): Promise
           request: {
             prompt,
             repoPath,
-            extraDirs: [baseDir],
+            ...(baseDir ? { extraDirs: [baseDir] } : {}),
             scratchDir,
             toolPolicy: "read-only",
             timeoutMs: Math.round(ctx.timeouts.disprover * growth),
@@ -1375,13 +1417,21 @@ export async function runSweep(
   const vendor =
     ctx.state.roles.reviewer.find((v) => v !== "claude") ?? ctx.state.roles.reviewer[0] ?? "codex";
   const diffBase = reviewDiffBase(ctx);
-  const diff = await ctx.git.diffForPrompt(diffBase, await diffTip(ctx));
+  // The whole project doesn't fit a prompt, so a sweep of it reads the checkout.
+  // Otherwise, excluded files stay out of the diff the sweep reads.
+  const diff = reviewsWholeProject(ctx)
+    ? ""
+    : await ctx.git.diffForPrompt(
+        diffBase,
+        await diffTip(ctx),
+        hasExclusions(ctx.state.request, ctx.policy)
+          ? [...new Set(groups.flatMap((g) => g.files))]
+          : [],
+      );
   const repoPath = await readOnlyRepo(ctx);
   const prompt = sweepPrompt({
     standard: runDepth(ctx.state.request) === "standard",
-    range: reviewsFixDiffOnly(ctx)
-      ? { ...ctx.range(repoPath), baseSha: diffBase }
-      : ctx.range(repoPath),
+    range: reviewsFixDiffOnly(ctx) ? fixDiffRange(ctx, repoPath, diffBase) : ctx.range(repoPath),
     patterns,
     diff,
     policySection: policyPromptSection(ctx.policy),

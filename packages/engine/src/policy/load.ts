@@ -89,6 +89,7 @@ export function parsePolicy(text: string, path = "policy.yaml"): PolicyFile {
     ...policy.rules.flatMap((rule, r) =>
       (rule.appliesTo ?? []).map((g, i): [string, string] => [`rules.${r}.appliesTo.${i}`, g]),
     ),
+    ...(policy.excludePaths ?? []).map((g, i): [string, string] => [`excludePaths.${i}`, g]),
     ...(policy.tierPaths ?? []).flatMap((rule, r) =>
       rule.paths.map((g, i): [string, string] => [`tierPaths.${r}.paths.${i}`, g]),
     ),

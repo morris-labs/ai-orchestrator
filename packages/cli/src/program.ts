@@ -11,6 +11,8 @@ import {
   PlatformSchema,
   ProfileSchema,
   READ_ONLY_POST_PUSH_MESSAGE,
+  WHOLE_POST_PUSH_MESSAGE,
+  isWholePostPush,
   RoleSchema,
   SeveritySchema,
   VerdictSchema,
@@ -263,7 +265,13 @@ function runDetail(r: RunState): string {
     ["Project", r.projectId],
     ["Box", r.boxId],
     ["Repository", r.request.repoPath],
-    ["Range", `${r.request.base}${r.request.mergeBase ? "..." : ".."}${r.request.tip ?? "HEAD"}`],
+    [
+      "Range",
+      r.request.scope === "whole"
+        ? `whole project at ${r.request.tip ?? "HEAD"}`
+        : `${r.request.base}${r.request.mergeBase ? "..." : ".."}${r.request.tip ?? "HEAD"}`,
+    ],
+    ["Excludes", r.request.excludePaths?.join(", ")],
     ["Model tier", r.request.modelTier],
     ["Depth", runDepth(r.request)],
     ["Verification floor", r.request.verifyFloor],
@@ -849,6 +857,11 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
         "Send only findings at or above this severity to a disprover. The rest stay pending, unchecked, and away from the fixer. Use all to check every severity. Default: P2 with --depth standard, and every severity with --depth thorough.",
       ).choices([...SEVERITIES, "all"]),
     )
+    .option(
+      "--whole-project",
+      "Review the project at the tip instead of a range. The base and --exact-base don't apply.",
+    )
+    .option("--exclude <glob...>", "Never group or review the files that match these globs.")
     .option("--no-cross-vendor", "Let the same vendor disprove and confirm its own work.")
     .option("--round-cap <n>", "Stop after this many rounds.", positiveInt)
     .option(
@@ -859,6 +872,10 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
     .action(async (o) => {
       if (isReadOnlyPostPush({ readOnly: o.readOnly ?? false, pipeline: o.pipeline })) {
         throw new UsageError(READ_ONLY_POST_PUSH_MESSAGE);
+      }
+      const scope = o.wholeProject ? ("whole" as const) : undefined;
+      if (isWholePostPush({ scope, pipeline: o.pipeline })) {
+        throw new UsageError(WHOLE_POST_PUSH_MESSAGE);
       }
       const roles = rolesOf(o.role);
       const c = client();
@@ -895,6 +912,8 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
           crossVendor: o.crossVendor,
           roundCap: o.roundCap,
           continuationCap: o.continuationCap,
+          scope,
+          excludePaths: o.exclude,
         },
       });
       print(run, () => `Started run ${run.id}.\n`);

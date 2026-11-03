@@ -208,3 +208,30 @@ describe("postPushRoundCap", () => {
     expect(postPushRoundCap({ pipeline: "post-push", roundCap: 7 })).toBe(7);
   });
 });
+
+describe("the whole-project scope", () => {
+  const body = { projectId: "p", repoPath: "/repo" };
+
+  it("is optional, and a stored run without it still parses", () => {
+    const parsed = RunRequestSchema.parse(body);
+    expect(parsed.scope).toBeUndefined();
+    expect(parsed.excludePaths).toBeUndefined();
+    expect(parsed.mergeBase).toBe(true);
+  });
+
+  it("turns the merge base off, and parsing again changes nothing", () => {
+    const parsed = RunRequestSchema.parse({ ...body, scope: "whole", excludePaths: ["a/**"] });
+    expect(parsed).toMatchObject({ scope: "whole", mergeBase: false, excludePaths: ["a/**"] });
+    expect(RunRequestSchema.parse(parsed)).toEqual(parsed);
+  });
+
+  it("refuses the post-push pipeline", () => {
+    const parsed = RunRequestSchema.safeParse({
+      ...body,
+      scope: "whole",
+      pipeline: "post-push",
+      prNumber: 1,
+    });
+    expect(parsed.success).toBe(false);
+  });
+});
