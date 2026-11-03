@@ -126,8 +126,9 @@ checks a token; see
 Check the following:
 
 - **The container uses the Unix socket.** In the box, run
-  `echo "$AIO_BROKER_URL"; cat /run/aio-broker/broker.url`. When both are
-  empty, the container was created with the Unix socket, which can't
+  `echo "$AIO_BROKER_URL"; cat /run/aio-broker/broker.url`. When the first
+  command prints an empty line and the second reports that the file doesn't
+  exist, the container was created with the Unix socket, which can't
   cross the Docker Desktop virtual machine. Restart the project container.
   If the server chose the socket for a Docker Desktop engine, set
   `brokerTransport` to `tcp`.

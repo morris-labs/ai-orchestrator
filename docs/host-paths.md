@@ -55,6 +55,10 @@ container path. On Windows, a box that works in `C:\Users\dana\src\app` keeps
 its transcripts in the `-mnt-host-c-Users-dana-src-app` folder of the
 transcript store. The server looks up transcripts with the same rule.
 
+When the encoded name is longer than 200 characters, Claude Code cuts it to
+200 characters and appends a hyphen and the base-36 hash of the unencoded
+path. The server applies the same cap and hash.
+
 ## Project roots on Windows
 
 The server stores a Windows project root with an uppercase drive letter and
@@ -114,5 +118,5 @@ The following parts of a Windows host are untested or incomplete:
   stale until it restarts.
 - **The secrets broker.** The broker listens on a Unix socket, which Docker
   Desktop can't share with a container from a Windows host.
-- **Host Git.** Host Git calls set `core.hooksPath` to `/dev/null`, which
-  Git for Windows might not accept.
+- **Host Git.** Host Git calls set `core.hooksPath` to `NUL` on Windows and
+  to `/dev/null` elsewhere.
