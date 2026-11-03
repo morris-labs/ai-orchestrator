@@ -20,7 +20,11 @@ ARG USER_NAME=user
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # Install curl first so the GitHub CLI apt repo step can run.
+# Includes a virtual display and the libraries Electron needs, so that an agent
+# can run and screenshot the apps without a monitor.
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    xvfb xauth imagemagick libgtk-3-0t64 libnss3 libasound2t64 libgbm1 libxss1 \
+    libatk-bridge2.0-0t64 libdrm2 libxkbcommon0 \
     curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
