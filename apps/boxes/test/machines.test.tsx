@@ -422,6 +422,39 @@ describe("machine tabs", () => {
     }
   });
 
+  it("leaves the hub's own boxes to the main process in a remote-hub app", async () => {
+    const notify = vi.fn();
+    const original = window.aio;
+    window.aio = { notify, remoteHub: true, onSelectBox: () => () => undefined } as never;
+    try {
+      const local = siteServer();
+      renderHub({
+        local,
+        servers: { "node-b": nodeServer() },
+        machines: [LOCAL, machine({ id: "node-b", name: "node-b" })],
+      });
+      await waitFor(() => expect(local.socketsFor("/api/v1/events")).toHaveLength(1));
+      act(() => {
+        local.emit(
+          makeEvent("notification", {
+            notificationId: "n2",
+            kind: "box_ended",
+            severity: "error",
+            read: false,
+            title: "Box ended",
+            body: "Hub site stopped.",
+            runId: null,
+            boxId: "aio-agent-site",
+          }),
+        );
+      });
+      await new Promise((r) => setTimeout(r, 50));
+      expect(notify).not.toHaveBeenCalled();
+    } finally {
+      window.aio = original;
+    }
+  });
+
   it("keeps a machine's view in front while its dialog is open", async () => {
     const user = userEvent.setup();
     let selectBox: (boxId: string) => void = () => undefined;

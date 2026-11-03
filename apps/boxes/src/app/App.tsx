@@ -278,9 +278,11 @@ export function App() {
   );
 
   // A remote machine's boxes raise desktop notifications through the bridge,
-  // as this PC's boxes do through the main process.
+  // as this PC's boxes do through the main process. The main process also
+  // watches the server this app connects to, so the primary view never
+  // notifies, even when that server is an enrolled hub and not this PC.
   useEvent("notification", (ev) => {
-    if (machine.isLocal || !ev.boxId) return;
+    if (machine.id === LOCAL_MACHINE_ID || !ev.boxId) return;
     if (ev.kind !== "box_ended" && ev.runId !== null) return;
     bridge()?.notify?.({
       title: ev.title,
