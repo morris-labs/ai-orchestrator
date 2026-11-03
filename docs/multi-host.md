@@ -58,14 +58,12 @@ To set up the hub, do the following on the machine that hosts it:
         -H "Content-Type: application/json" \
         -X PATCH -d '{"role": "hub"}' \
         https://127.0.0.1:21400/api/v1/settings
-    systemctl --user restart aio-server
-
     ```
 
-    A role change in the settings applies at the next server start, except
-    for the link to a hub: a joined machine drops that link when its role
-    becomes `hub`, and starts it when its role stops being `hub`. To pin the
-    role in the service instead, run `systemctl --user edit aio-server`, add
+    A role change in the settings applies at once, without a restart. A
+    joined machine drops its link to a hub when its role becomes `hub`, and
+    starts it when its role stops being `hub`. To pin the role in the
+    service instead, run `systemctl --user edit aio-server`, add
     the following lines, and restart the server:
 
     ```ini

@@ -371,8 +371,7 @@ function MachineRoleSection(p: MachineRoleSectionProps) {
       )}
       {p.choice === "single" && node.role !== "both" && !override && (
         <div className="bx-dim">
-          This server runs as a {node.role}. Done sets its role to both, which applies at the next
-          server start.
+          This server runs as a {node.role}. Done sets its role to both, which applies at once.
         </div>
       )}
       {p.choice === "hub" && (
@@ -382,7 +381,7 @@ function MachineRoleSection(p: MachineRoleSectionProps) {
           machine. To add a machine, issue an enrollment code on the Machines page.
           {node.role !== "hub" &&
             !override &&
-            " Done sets the role to hub, which applies at the next server start."}
+            " Done sets the role to hub, which applies at once."}
         </div>
       )}
       {p.choice === "join" && (

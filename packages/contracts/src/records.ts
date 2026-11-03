@@ -859,7 +859,7 @@ export const GlobalSettingsPatchSchema = z
     transcriptRetentionDays: z.number().int().positive().nullable(),
     /** `0` turns snapshots off; `null` goes back to the default, 7. */
     transcriptBackupKeep: z.number().int().nonnegative().nullable(),
-    /** Takes effect at the next server start, except for the node link. */
+    /** Takes effect at once, unless `--role` or `AIO_ROLE` overrides it. */
     role: MachineRoleSchema,
     /** `null` goes back to the host name. */
     machineName: MachineNameSchema.nullable(),

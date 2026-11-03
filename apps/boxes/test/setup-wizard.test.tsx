@@ -142,7 +142,7 @@ describe("SetupWizard machine role", () => {
     renderWithServer(<SetupWizard onClose={onClose} />, server);
     await user.click(await screen.findByRole("radio", { name: /^Hub:/ }));
     expect(screen.getByText(/Nodes can't see or reach boxes on a hub/)).toBeVisible();
-    expect(screen.getByText(/applies at the next server start/)).toBeInTheDocument();
+    expect(screen.getByText(/applies at once/)).toBeInTheDocument();
     expect(screen.queryByLabelText("Hub URL")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Done" }));
     await waitFor(() => expect(onClose).toHaveBeenCalled());
@@ -159,7 +159,7 @@ describe("SetupWizard machine role", () => {
     renderWithServer(<SetupWizard onClose={onClose} />, server);
     expect(await screen.findByRole("radio", { name: /^Hub:/ })).toBeChecked();
     expect(screen.getByText(/issue an enrollment code on the Machines page/)).toBeVisible();
-    expect(screen.queryByText(/applies at the next server start/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/applies at once/)).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Done" }));
     await waitFor(() => expect(onClose).toHaveBeenCalled());
     expect(server.callsTo("settings.patch")).toHaveLength(0);
@@ -246,7 +246,7 @@ describe("SetupWizard machine role", () => {
         await screen.findByRole("radio", { name: choice === "hub" ? /^Hub:/ : /Single machine/ }),
       );
       expect(screen.getByText(/runs with --role/)).toBeVisible();
-      expect(screen.queryByText(/next server start/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/applies at once/)).not.toBeInTheDocument();
       await user.click(screen.getByRole("button", { name: "Done" }));
       await waitFor(() => expect(onClose).toHaveBeenCalled());
       expect(server.callsTo("settings.patch")).toHaveLength(0);
@@ -277,7 +277,7 @@ describe("SetupWizard machine role", () => {
     renderWithServer(<SetupWizard onClose={onClose} />, server);
     expect(await screen.findByRole("radio", { name: /Node: join a hub/ })).toBeChecked();
     await user.click(screen.getByRole("radio", { name: /Single machine/ }));
-    expect(screen.getByText(/applies at the next server start/)).toBeInTheDocument();
+    expect(screen.getByText(/applies at once/)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Done" }));
     await waitFor(() => expect(onClose).toHaveBeenCalled());
     expect(server.state.settings.role).toBe("both");
