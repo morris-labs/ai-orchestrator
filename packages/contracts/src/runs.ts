@@ -10,7 +10,7 @@ import {
   RunIdSchema,
   VendorSchema,
 } from "./common.js";
-import { SeveritySchema } from "./findings.js";
+import { SeveritySchema, type Severity } from "./findings.js";
 import { ModelTierChoiceSchema, ModelTierSchema } from "./tiers.js";
 
 export const PipelineSchema = z.enum(["pre-push", "post-push"]);
@@ -86,6 +86,31 @@ export const VENDOR_ROLES: Record<z.infer<typeof VendorSchema>, readonly AgentRo
   codex: ["reviewer", "disprover", "confirmer", "sweeper"],
   copilot: ["reviewer", "disprover", "sweeper"],
 };
+
+/**
+ * How much a run spends looking for problems. `standard` asks for P1 and P2
+ * findings with coarser groups, one reviewer pass per group, batched
+ * verification, and at most two rounds. `thorough` is the full pipeline.
+ */
+export const RunDepthSchema = z.enum(["standard", "thorough"]);
+export type RunDepth = z.infer<typeof RunDepthSchema>;
+
+/** What each depth gives a request that leaves a setting out. */
+export const DEPTH_DEFAULTS: Record<
+  RunDepth,
+  { roundCap: number; continuationCap: number; verifyFloor?: Severity }
+> = {
+  standard: { roundCap: 2, continuationCap: 0, verifyFloor: "P2" },
+  thorough: { roundCap: 25, continuationCap: 3 },
+};
+
+/** The round cap of a post-push request, whose rounds answer pull request comments. */
+export const POST_PUSH_ROUND_CAP = 25;
+
+/** A run's depth. A stored run without the field predates depths and stays `thorough`. */
+export function runDepth(request: { depth?: RunDepth | undefined }): RunDepth {
+  return request.depth ?? "thorough";
+}
 
 /** The roles a profile gives in a round, before availability and manual changes. */
 export function profileRoles(profile: Profile, round: number): RoleAssignment {
@@ -169,6 +194,8 @@ export const ResolvedRunRequestSchema = z.object({
    * means every severity.
    */
   verifyFloor: SeveritySchema.optional(),
+  /** Absent in runs that predate depths, which stay `thorough`. See `runDepth`. */
+  depth: RunDepthSchema.optional(),
 });
 export type ResolvedRunRequest = z.infer<typeof ResolvedRunRequestSchema>;
 
@@ -182,13 +209,40 @@ export const RunRequestFieldsSchema = ResolvedRunRequestSchema.extend({
   readOnly: z.boolean().default(false),
   includeWorktree: z.boolean().default(false),
   crossVendor: z.boolean().default(true),
-  roundCap: z.number().int().positive().default(25),
+  roundCap: z.number().int().positive().optional(),
   overlapThreshold: FractionSchema.default(0.5),
-  continuationCap: z.number().int().nonnegative().default(3),
+  continuationCap: z.number().int().nonnegative().optional(),
+  depth: RunDepthSchema.default("standard"),
 });
 
-const foldExactBase = <T extends { exactBase: boolean; mergeBase: boolean }>(r: T): T =>
-  r.exactBase ? { ...r, mergeBase: false } : r;
+/**
+ * Fills what the depth decides and folds `exactBase` in. Settings a request
+ * names win. Parsing a request again changes nothing, because the server and
+ * the engine both parse it. To check every severity at `standard`, name the
+ * `nit` floor: no severity ranks below it.
+ */
+function resolveRequest<
+  T extends {
+    exactBase: boolean;
+    mergeBase: boolean;
+    depth: RunDepth;
+    pipeline: Pipeline;
+    roundCap?: number | undefined;
+    continuationCap?: number | undefined;
+    verifyFloor?: Severity | undefined;
+  },
+>(r: T): T & { roundCap: number; continuationCap: number } {
+  const defaults = DEPTH_DEFAULTS[r.depth];
+  const postPush = r.pipeline === "post-push";
+  const verifyFloor = r.verifyFloor ?? defaults.verifyFloor;
+  return {
+    ...r,
+    ...(r.exactBase ? { mergeBase: false } : {}),
+    roundCap: r.roundCap ?? (postPush ? POST_PUSH_ROUND_CAP : defaults.roundCap),
+    continuationCap: r.continuationCap ?? defaults.continuationCap,
+    ...(verifyFloor ? { verifyFloor } : {}),
+  };
+}
 
 /** The reason every layer gives when it refuses a read-only post-push request. */
 export const READ_ONLY_POST_PUSH_MESSAGE =
@@ -217,7 +271,7 @@ function refuseReadOnlyPostPush(
  * design.md. A read-only request can't use the post-push pipeline.
  */
 export const RunRequestSchema =
-  RunRequestFieldsSchema.superRefine(refuseReadOnlyPostPush).transform(foldExactBase);
+  RunRequestFieldsSchema.superRefine(refuseReadOnlyPostPush).transform(resolveRequest);
 export type RunRequest = z.infer<typeof RunRequestSchema>;
 export type RunRequestInput = z.input<typeof RunRequestSchema>;
 
@@ -229,7 +283,7 @@ export const EngineRunCreateSchema = RunRequestFieldsSchema.extend({
   runId: RunIdSchema,
 })
   .superRefine(refuseReadOnlyPostPush)
-  .transform(foldExactBase);
+  .transform(resolveRequest);
 export type EngineRunCreate = z.infer<typeof EngineRunCreateSchema>;
 
 export const StopReasonSchema = z.enum([
@@ -374,3 +428,42 @@ export const RoundSummarySchema = z.object({
   finishedAt: IsoDateTimeSchema,
 });
 export type RoundSummary = z.infer<typeof RoundSummarySchema>;
+
+/** The default group size limit at `standard`, unless the policy file sets one. */
+export const STANDARD_GROUP_SIZE_LIMIT = 1500;
+
+/**
+ * Per-group and per-line token figures behind `estimateRunTokens`. They start
+ * from one real `thorough` run of 140 million tokens over 107 groups, about
+ * 1.3 million per group. The `standard` figures are planning guesses, because
+ * no `standard` run has been measured. Change them from logged data.
+ */
+export const TOKEN_ESTIMATE = {
+  thorough: { perGroup: 1_200_000, perLine: 100 },
+  standard: { perGroup: 500_000, perLine: 75 },
+} as const;
+
+export interface RunTokenEstimate {
+  /** The estimated tokens of the whole run, to two significant figures. */
+  tokens: number;
+  /** What the number comes from, for a person to read. */
+  basis: string;
+}
+
+/**
+ * A rough token estimate for a run, from its changed lines and group count.
+ * Plain arithmetic: it calls no model, and it can't know how many findings a
+ * run gets, which moves the real number the most.
+ */
+export function estimateRunTokens(input: {
+  depth: RunDepth;
+  groups: number;
+  changedLines: number;
+}): RunTokenEstimate {
+  const { perGroup, perLine } = TOKEN_ESTIMATE[input.depth];
+  const raw = input.groups * perGroup + input.changedLines * perLine;
+  return {
+    tokens: Number(raw.toPrecision(2)),
+    basis: `${input.groups} groups at ${perGroup.toLocaleString("en-US")} tokens each, plus ${input.changedLines} changed lines at ${perLine} tokens each, for the ${input.depth} depth. Real runs can differ a lot, mostly with the number of findings.`,
+  };
+}

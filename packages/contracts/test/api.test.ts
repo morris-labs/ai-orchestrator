@@ -178,7 +178,7 @@ describe("route catalog", () => {
 
 describe("request schemas", () => {
   it("validates run bodies, with the run id on the engine only", () => {
-    expect(routes["runs.create"].body.parse(runRequest).roundCap).toBe(25);
+    expect(routes["runs.create"].body.parse(runRequest).roundCap).toBe(2);
     expect(routes["engine.runs.create"].body.safeParse(runRequest).success).toBe(false);
     expect(routes["engine.runs.create"].body.parse({ ...runRequest, runId: RUN }).runId).toBe(RUN);
     expect(routes["runs.assign"].body.safeParse({ role: "reviewer", vendors: [] }).success).toBe(
@@ -383,7 +383,8 @@ describe("the verification floor and retry", () => {
     expect(routes["runs.retry"].body.parse({ verifyFloor: "all" }).verifyFloor).toBe("all");
     expect(routes["runs.retry"].body.safeParse({ verifyFloor: "P0" }).success).toBe(false);
     const request = { projectId: "p", repoPath: "/r" };
-    expect(create.parse(request).verifyFloor).toBeUndefined();
+    expect(create.parse(request).verifyFloor).toBe("P2");
+    expect(create.parse({ ...request, depth: "thorough" }).verifyFloor).toBeUndefined();
     expect(create.parse({ ...request, verifyFloor: "P2" }).verifyFloor).toBe("P2");
     expect(create.safeParse({ ...request, verifyFloor: "P0" }).success).toBe(false);
   });

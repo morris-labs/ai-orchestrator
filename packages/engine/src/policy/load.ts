@@ -35,9 +35,14 @@ export interface PolicyExtras {
    * Absent means the repository's collaborators (see `postpush/loop.ts`).
    */
   commentAuthors: string[] | null;
+  /**
+   * The `groupSizeLimit` the file names, or `null` when it names none and the
+   * run's depth picks the limit.
+   */
+  groupSizeLimit: number | null;
 }
 
-export const NO_EXTRAS: PolicyExtras = { commentAuthors: null };
+export const NO_EXTRAS: PolicyExtras = { commentAuthors: null, groupSizeLimit: null };
 
 function readYaml(text: string, path: string): Record<string, unknown> | null {
   let raw: unknown;
@@ -55,7 +60,12 @@ function readYaml(text: string, path: string): Record<string, unknown> | null {
 
 /** Reads the engine-only settings from policy YAML text. Throws `PolicyError` on a bad value. */
 export function parsePolicyExtras(text: string, path = "policy.yaml"): PolicyExtras {
-  return { commentAuthors: parsePolicy(text, path).commentAuthors ?? null };
+  const policy = parsePolicy(text, path);
+  const named = readYaml(text, path)?.groupSizeLimit !== undefined;
+  return {
+    commentAuthors: policy.commentAuthors ?? null,
+    groupSizeLimit: named ? policy.groupSizeLimit : null,
+  };
 }
 
 /** Parses policy YAML text, filling defaults. Throws `PolicyError` on bad YAML or schema. */

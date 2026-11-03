@@ -53,6 +53,7 @@ describe("EngineRunManager", () => {
     await ctx.runs.start({
       runId: RUN_A,
       projectId: "sample",
+      depth: "thorough",
       repoPath: repo,
       base: "origin/main",
       readOnly: true,
@@ -108,6 +109,7 @@ describe("EngineRunManager", () => {
   it("previews the range with groups and a clean tree", async () => {
     const preview = await ctx.runs.preview({
       projectId: "sample",
+      depth: "thorough",
       repoPath: repo,
       base: "origin/main",
       readOnly: true,
@@ -119,7 +121,12 @@ describe("EngineRunManager", () => {
 
   it("refuses a duplicate run id and actions on unknown runs", async () => {
     await expect(
-      ctx.runs.start({ runId: RUN_A, projectId: "sample", repoPath: repo } as never),
+      ctx.runs.start({
+        runId: RUN_A,
+        projectId: "sample",
+        repoPath: repo,
+        depth: "thorough",
+      } as never),
     ).rejects.toMatchObject({ code: "conflict" });
     await expect(ctx.runs.pause(RUN_B)).rejects.toMatchObject({ code: "run_not_found" });
     await expect(ctx.runs.waive(RUN_A, "F-9999", "x")).rejects.toMatchObject({ code: "not_found" });
@@ -131,6 +138,7 @@ describe("EngineRunManager", () => {
       ctx.runs.start({
         runId: RUN_B,
         projectId: "sample",
+        depth: "thorough",
         repoPath: repo,
         base: "no-such-ref",
         readOnly: true,

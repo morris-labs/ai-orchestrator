@@ -17,6 +17,9 @@ import {
   type RunState,
   type TimedUsageSample,
   type Vendor,
+  STANDARD_GROUP_SIZE_LIMIT,
+  estimateRunTokens,
+  runDepth,
 } from "@aio/contracts";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
@@ -35,7 +38,7 @@ import {
 import type { EngineDeps } from "../core.js";
 import { groupFiles } from "../group/group.js";
 import { assignTiers } from "../group/signals.js";
-import { PolicyError, loadPolicy } from "../policy/load.js";
+import { PolicyError, loadPolicy, loadPolicyExtras } from "../policy/load.js";
 import { GhCliClient } from "../postpush/github.js";
 import { parseDiff } from "../range/diff.js";
 import { ExecaRunner } from "../range/exec.js";
@@ -289,9 +292,14 @@ export class EngineRunManager implements RunManager {
         : range.tipSha;
       const files = parseDiff(await git.diff(range.diffBaseSha, tip));
       const policy = await loadPolicy(this.location.projectRoot, this.location.policyPath);
+      const depth = runDepth(request);
+      const extras = await loadPolicyExtras(this.location.projectRoot, this.location.policyPath);
       const grouped = await groupFiles(files, {
         policy,
         readFile: (path) => git.show(tip, path),
+        ...(depth === "standard"
+          ? { coarse: true, sizeLimit: extras.groupSizeLimit ?? STANDARD_GROUP_SIZE_LIMIT }
+          : {}),
       });
       const groups = await assignTiers(grouped, files, {
         git,
@@ -299,15 +307,18 @@ export class EngineRunManager implements RunManager {
         diffBase: range.diffBaseSha,
         tip,
         choice: request.modelTier ?? "auto",
+        depth,
       });
+      const changedLines = groups.reduce((n, g) => n + g.changedLines, 0);
       return {
         vendors: Object.keys(this.deps.adapters) as Vendor[],
         baseSha: range.baseSha,
         tipSha: range.tipSha,
         diffBaseSha: range.diffBaseSha,
         groups,
-        changedLines: groups.reduce((n, g) => n + g.changedLines, 0),
+        changedLines,
         dirty: range.dirty,
+        tokenEstimate: estimateRunTokens({ depth, groups: groups.length, changedLines }),
       };
     });
   }

@@ -12,6 +12,13 @@ the upgrade steps, see `docs/migration-3x.md`.
 
 ### Added
 
+- A `depth` setting for review runs, on the launcher and as `--depth`. The default
+  `standard` asks for P1 and P2 findings, with coarser groups, one reviewer pass per
+  group, batched verification, and at most 2 rounds, with round 2 on the fixer's diff.
+  `thorough` keeps the full pipeline, and stored runs with no depth stay `thorough`.
+- A rough token estimate in the launcher's group preview, computed with no model
+  call.
+- The Codex medium tier maps to `gpt-6.1-terra`.
 - Retry for a failed review run, with **Retry** in the run view and
   `aio review retry RUN_ID`. It resumes at the failed stage from saved state,
   reuses saved calls, and can change roles and the verification floor.

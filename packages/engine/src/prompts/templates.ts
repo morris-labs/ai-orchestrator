@@ -11,6 +11,7 @@ import {
   FIX_OUTPUT_JSON_SCHEMA,
   REVIEW_OUTPUT_JSON_SCHEMA,
   SWEEP_OUTPUT_JSON_SCHEMA,
+  VERIFY_BATCH_OUTPUT_JSON_SCHEMA,
   VERIFY_OUTPUT_JSON_SCHEMA,
   jsonInstruction,
 } from "./schema.js";
@@ -29,6 +30,19 @@ export const PRECISION_RULES = [
   "Style, naming, and preference are not defects.",
   "A flaw in code the change didn't touch still counts, but say so: report whether it exists at the base.",
 ];
+
+/** What the `standard` depth asks reviewers for. It doesn't cap the number of findings. */
+export const STANDARD_REPORT_RULES = [
+  "Report only P1 and P2 findings: bugs that break real use, and security flaws that are easy to exploit.",
+  "An easy flaw is one an unskilled attacker could use with a public script or simple tampering: a missing auth check, injection from outside input, path traversal, a leaked or logged secret, an unsafe default, or an exposed port without auth.",
+  "Assume a trusted owner and trusted machines. Don't construct targeted attack chains, compromised-node or hostile-container scenarios, or exploit scripts.",
+  "Don't report nits, style, naming, or preference.",
+  "There is no cap on the number of findings: report every P1 and P2 issue you find.",
+];
+
+/** What the `standard` depth tells a disprover about scope. */
+const STANDARD_DISPROVER_RULE =
+  "Assume a trusted owner and trusted machines. Disprove a finding that needs a targeted attack chain, a compromised node, or a hostile container.";
 
 export interface RangeInfo {
   repoPath: string;
@@ -52,6 +66,10 @@ export interface FinderPromptInput {
   findingsLog: readonly FindingsLogEntry[];
   /** From `policyPromptSection`. */
   policySection: string;
+  /** Asks for P1 and P2 findings only (`STANDARD_REPORT_RULES`). */
+  standard?: boolean;
+  /** The diff holds only the fixer's change from an earlier round. */
+  fixDiffOnly?: boolean;
 }
 
 function hunkList(hunks: readonly Hunk[]): string {
@@ -117,22 +135,31 @@ export function finderPrompt(input: FinderPromptInput): string {
   const focus = input.focusAreas
     ? `Concentrate on ${input.focusAreas.join(", ")}. Another reviewer covers the other areas, but report anything else you notice too.`
     : "Cover every area: correctness, error handling, security, data exposure, resource handling, concurrency, and performance.";
-  return join([
-    `You are a code reviewer in round ${input.round} of an automated review. Review ${scope} of the change from ${input.range.baseSha} to ${input.range.tipSha} in the repository at ${input.range.repoPath}.`,
-    "",
-    "You are read-only: don't edit files, commit, or run commands that change the repository. You can read any file and run read-only commands.",
-    "",
-    section(
-      "How to report",
-      [
+  const report = input.standard
+    ? [
+        ...STANDARD_REPORT_RULES,
+        "A separate verifier checks each finding, so report an issue that meets this bar even when you aren't certain.",
+        "Keep reading until you have examined every hunk below.",
+        "For each finding, give the failure case: the input or state, and the wrong behavior it leads to.",
+        "Set `introduced` to false when the flaw already exists in the base version.",
+      ]
+    : [
         "Report every plausible issue you find. There is no cap on the number of findings.",
         "A separate verifier checks each finding and removes false positives, so don't hold back an issue because you aren't certain. A missed bug costs more than a finding the verifier rejects.",
         "Keep reading until you have examined every hunk below. Don't stop after the first few issues.",
         focus,
         "For each finding, give the failure case: the input or state, and the wrong behavior it leads to.",
         "Set `introduced` to false when the flaw already exists in the base version.",
-      ].join("\n"),
-    ),
+      ];
+  return join([
+    `You are a code reviewer in round ${input.round} of an automated review. Review ${scope} of the change from ${input.range.baseSha} to ${input.range.tipSha} in the repository at ${input.range.repoPath}.`,
+    input.fixDiffOnly
+      ? "This diff holds only what the fixer changed after the last review. Check whether those changes are correct, and don't review the rest of the branch."
+      : "",
+    "",
+    "You are read-only: don't edit files, commit, or run commands that change the repository. You can read any file and run read-only commands.",
+    "",
+    section("How to report", report.join("\n")),
     section(
       "Coverage ledger",
       [
@@ -159,6 +186,8 @@ export function finderPrompt(input: FinderPromptInput): string {
 export interface ContinuationPromptInput {
   /** Titles you already reported in this session, to exclude. */
   reported: readonly string[];
+  /** Asks for P1 and P2 findings only. */
+  standard?: boolean;
 }
 
 /** Resumes the same reviewer to drain what it hasn't reported yet. */
@@ -166,7 +195,9 @@ export function continuationPrompt(input: ContinuationPromptInput): string {
   return join([
     "Keep reviewing the same change. List issues that are not yet on your list.",
     "Look again at the hunks where you found problems: bugs cluster. Then look at the hunks you marked sound with fresh eyes.",
-    "Report every plausible issue; the verifier removes false positives. Return an empty `findings` array only when nothing new remains.",
+    input.standard
+      ? "Report only P1 and P2 issues; the verifier removes false positives. Return an empty `findings` array only when nothing new remains."
+      : "Report every plausible issue; the verifier removes false positives. Return an empty `findings` array only when nothing new remains.",
     "",
     "Already reported:",
     input.reported.length > 0 ? input.reported.map((t) => `- ${t}`).join("\n") : "- (nothing)",
@@ -261,6 +292,53 @@ export function disproverPrompt(input: DisproverPromptInput): string {
   ]);
 }
 
+export interface BatchDisproverPromptInput {
+  range: RangeInfo;
+  findings: readonly Finding[];
+  scratchDir: string;
+  baseWorktree: string;
+  policySection: string;
+}
+
+/** One finding's text in a batch prompt. Its length decides when a batch splits. */
+export function batchFindingBlock(f: Finding): string {
+  return [
+    `### ${f.id}`,
+    `Severity: ${f.severity}`,
+    `Title: ${f.title}`,
+    `Location: ${f.file ?? "(none)"}${f.lines ? ` lines ${f.lines[0]}-${f.lines[1]}` : ""}`,
+    `Category: ${f.category}`,
+    isExternal(f) ? `Source: ${f.origin} [external]` : `Failure case: ${f.failureCase}`,
+    isExternal(f) ? untrusted(`${f.failureCase}\n\n${f.evidence}`) : "",
+  ]
+    .filter((line) => line !== "")
+    .join("\n");
+}
+
+/** The disprover at the `standard` depth: checks every finding of a batch in one call. */
+export function batchDisproverPrompt(input: BatchDisproverPromptInput): string {
+  return join([
+    "You verify the findings below from another reviewer. Try to disprove each one. Confirm a finding only when the evidence holds. Return one entry in `verdicts` for every finding id. Findings in one call often share code, so read that code once.",
+    "",
+    section("Findings", input.findings.map(batchFindingBlock).join("\n\n")),
+    input.findings.some(isExternal) ? UNTRUSTED_FRAME : "",
+    section("Rules", [...PRECISION_RULES, STANDARD_DISPROVER_RULE].map((r) => `- ${r}`).join("\n")),
+    section(
+      "How to verify",
+      [
+        `The repository at the tip is ${input.range.repoPath}. Don't edit it.`,
+        `A checkout of the base (${input.range.baseSha}) is at ${input.baseWorktree}. Don't edit it.`,
+        `Where a finding is worth it, write a reproduction script in the scratch directory ${input.scratchDir}, the only place you may write, with a file name unique to that finding. The script must exit 1 when the flaw reproduces and 0 when it doesn't, must let any other failure exit with a different code, and must take the repository directory as its first argument, so it runs against both checkouts.`,
+        "The engine runs each script against the tip and the base; you might not be able to run it yourself. In that finding's verdict, return its path relative to the scratch directory, or `null` when you verified by reading the code. When you can't write the file, put its text in `script.content` and the engine writes it.",
+        "Base each verdict and `presentAtBase` on your own reading too: a script that doesn't run counts for nothing.",
+        "Set `presentAtBase` to true when the same flaw exists in the base checkout.",
+      ].join("\n"),
+    ),
+    section("Repository policy", input.policySection),
+    jsonInstruction(VERIFY_BATCH_OUTPUT_JSON_SCHEMA),
+  ]);
+}
+
 export interface FixerPromptInput {
   range: RangeInfo;
   findings: readonly Finding[];
@@ -306,6 +384,8 @@ export interface ConfirmerPromptInput {
   /** The diff of the fix commits. */
   fixDiff: string;
   policySection: string;
+  /** Asks for P1 and P2 issues only. */
+  standard?: boolean;
 }
 
 /** The confirmer: reviews the fix diff for incomplete fixes and new issues. */
@@ -321,7 +401,9 @@ export function confirmerPrompt(input: ConfirmerPromptInput): string {
     `Another agent fixed the findings below in ${input.range.repoPath}. Review the fix diff. You are read-only.`,
     "",
     "- List under `incomplete` every finding whose fix doesn't remove the failure case, with the reason.",
-    "- List under `findings` every regression or new issue the fix introduced. Report every plausible one; a verifier checks them.",
+    input.standard
+      ? "- List under `findings` every P1 or P2 regression or new issue the fix introduced: a bug that breaks real use, or a security flaw that is easy to exploit. A verifier checks them."
+      : "- List under `findings` every regression or new issue the fix introduced. Report every plausible one; a verifier checks them.",
     "",
     input.findings.some(isExternal) ? UNTRUSTED_FRAME : "",
     section("Fixed findings", list),

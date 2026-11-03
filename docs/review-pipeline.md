@@ -11,6 +11,102 @@ writes its output as JSON under `PROJECT/.aio/runs/RUN_ID/`, so a run
 can resume from any stage. Replace `PROJECT` with the project root and
 `RUN_ID` with the run's ID.
 
+## Depth
+
+A run's depth sets how much it spends looking for problems. You pick it when a
+run starts, in the **Depth** dropdown of the run launcher, or with `--depth`:
+
+```bash
+aio review start --box BOX_ID --depth thorough
+
+```
+
+Replace `BOX_ID` with the box whose branch you want to review. The run view and
+`aio review status RUN_ID` show the depth. A run from before depths existed has
+no `depth` field and stays `thorough`.
+
+| Setting | `standard` (default) | `thorough` |
+|---|---|---|
+| Reviewer asks for | P1 and P2 only | Every plausible issue |
+| Reviewer passes | One per group, with no follow-up or continuation | Two on major groups, with ledger follow-ups and continuations |
+| Group size limit | 1500 changed lines, with groups joined by feature | 400 changed lines, with no joining |
+| Disprover | One call per batch | One call per finding |
+| Tiers in **Auto** | Medium; large for risk paths; small for docs only | The signals in [How a group gets its tier](#how-a-group-gets-its-tier) |
+| Round cap | 2 | 25 |
+| Rounds after the first | Review only what changed since the last review | Review the whole range |
+| Clean | One round confirms nothing above `nit` | Two rounds in a row |
+| Verification floor | `P2` | None |
+
+Settings you name win over the depth: `--round-cap`, `--continuation-cap`,
+`--verify-floor`, `--tier`, `--role`, and `groupSizeLimit` in the policy file. To
+check every severity at `standard`, pass `--verify-floor all`, which the request
+stores as the `nit` floor. A post-push request keeps the cap of 25 unless you
+name one.
+
+### Reviewers at the standard depth
+
+A `standard` reviewer reports only bugs that break real use and security flaws
+that are easy to exploit, the kind an unskilled attacker could use with a public
+script or simple tampering: missing auth checks, injection from outside input,
+path traversal, leaked or logged secrets, unsafe defaults, and exposed ports
+without auth. It assumes a trusted owner and trusted machines, and doesn't
+construct targeted attack chains, compromised-node or hostile-container scenarios,
+or exploit scripts. There is no cap on the number of findings.
+
+Each group gets one reviewer, in turn among the role's vendors. Copilot reviews
+the whole diff only when it is the only reviewer or you named it with `--role`.
+A reviewer that reports a P3 or a `nit` anyway gets the ordinary
+[verification floor](#verification-floor) treatment.
+
+### Groups at the standard depth
+
+The engine first groups each file with its tests and matched docs, then joins
+neighboring groups of one feature area while they fit the limit. The area is the
+first two folders of the path, without `src`, `lib`, and test folders. Docs-only
+groups and risk-path groups join only their own kind, so the first keep the small
+tier and the second don't raise other code to the large tier.
+
+### Batched verification
+
+A `standard` disprover checks all of a group's pending findings in one call and
+returns a verdict for each finding ID, so the same code isn't read once per
+finding. The batches work as follows:
+
+- **Partitions**: one batch per group, disprover vendor, and reporter vendor, so
+  the cross-vendor rule holds for every member.
+- **Size**: a batch splits only when its finding text and expected verdicts pass
+  40,000 estimated tokens. It never splits on the number of findings.
+- **Duplicates**: a finding with the root cause of another, by the merge's test or
+  by close text in one file, stays out of the prompt and takes the other's verdict.
+- **Missing verdicts**: a finding with no verdict stays pending, and the next round
+  checks it.
+- **Resume**: the stage saves its batch plan before any call, and each call's key
+  comes from the planned finding IDs, so a saved call still answers after a restart.
+- **Scripts**: a verdict can name a reproduction script, which the engine reruns
+  for that finding at the tip and the base.
+- **Refusals**: a refused batch goes through the fallback in
+  [Retry a failed run](#retry-a-failed-run). If nothing answers, each of its
+  findings tries alone before the engine flags it, so one finding can't flag a whole
+  group.
+
+A `thorough` run makes one call per finding.
+
+### Rounds at the standard depth
+
+Round 1 reviews the branch and fixes what the disprover confirms. If it confirms
+nothing, the run stops. Round 2 reviews only the fixer's diff, not the whole
+branch, verifies what is still pending, and can stop clean. When the fixer changed
+nothing, round 2 makes no reviewer call.
+
+### Estimate the tokens of a run
+
+**Preview groups** in the run launcher shows a rough token estimate for the chosen
+depth. Code computes it from the changed lines and the group count, with no model
+call, using the `TOKEN_ESTIMATE` figures in `packages/contracts/src/runs.ts`. The
+`thorough` figures start from one real run of about 140 million tokens over 107
+groups. The `standard` figures are planning guesses until runs measure them. The
+number of findings moves the real figure the most, and the estimate can't see it.
+
 ## Vendors and roles
 
 Claude writes and fixes all code. The other roles move between vendors
@@ -120,6 +216,11 @@ reason says so. These signals only raise a tier.
 | Fixer | The group's tier, at medium or above |
 | Sweeper | The group's tier, at medium at most |
 
+At the `standard` depth, none of these moves up apply: a call takes its group's
+tier, a fixer and a confirmer stay at medium or above, a sweeper stays at medium or
+below, and a disprover on a docs-only group can use the small tier. A malformed
+answer still retries one tier up.
+
 A call moves one more tier up when its files have findings that persist from
 an earlier round, and when the retry follows a malformed answer. A fixed tier
 turns off these moves and applies to every role, except that disprovers,
@@ -147,7 +248,7 @@ The built-in mappings are the following:
 | Vendor | Small | Medium | Large |
 |---|---|---|---|
 | Claude | `claude-haiku-5-5` | `claude-sonnet-5-5` | `claude-opus-5-5` |
-| Codex | `gpt-6-luna` | `gpt-6-sol` | `gpt-6.1-sol` |
+| Codex | `gpt-6-luna` | `gpt-6.1-terra` | `gpt-6.1-sol` |
 
 GitHub Copilot has no mapping and keeps its automatic model selection
 (`--model auto`). To change a mapping, set `tierModels` in the
@@ -296,7 +397,9 @@ A run reviews the changes between a base and a tip:
 
 ## Pre-push stages
 
-Each round of a pre-push run goes through the following stages:
+Each round of a pre-push run goes through the following stages. The list
+describes the `thorough` [depth](#depth), and the `standard` depth changes some
+of them.
 
 1. **Preflight**: resolves the range and records a baseline run of the
    repository's tests and lint commands from the policy file.
@@ -336,7 +439,8 @@ Each round of a pre-push run goes through the following stages:
 To limit how many findings go to a disprover, set a verification floor. The
 floor is the lowest severity that a disprover checks. The severities, from the
 strongest, are `P1`, `P2`, `P3`, and `nit`. No severity ranks above `P1`. With
-no floor, a disprover checks every severity.
+no floor, a disprover checks every severity. The `standard` [depth](#depth) sets a
+floor of `P2` unless you name another.
 
 Set the floor in the **Verification** section of the run launcher, or pass
 `--verify-floor` to `aio review start`:
@@ -382,10 +486,10 @@ A run ends, or stops for you, when one of the following holds:
 
 | Condition | Result |
 |---|---|
-| Clean | Two rounds in a row confirm no finding above `nit`. The branch is ready to push. |
+| Clean | Two rounds in a row, or one at the `standard` depth, confirm no finding above `nit`. The branch is ready to push. |
 | Clean above the floor | The same test as clean, with findings below the verification floor left unchecked. The result is `clean_above_floor`, not `clean`. |
 | Clean with follow-ups | The same test as clean, with findings that no vendor would check. The result is `clean_with_followups`. Check those findings yourself before you push. |
-| Round cap | The run reaches its round limit, 25 by default. The run stops and asks you. |
+| Round cap | The run reaches its round limit: 2 by default at the `standard` depth, and 25 at `thorough`. The run stops and asks you. |
 | Oscillation | A finding that a fix closed comes back. The run stops and asks you. |
 | Ceiling or limit | A vendor is over its ceiling or reported a limit, and no other vendor can take the role. The run pauses until the reset, or asks you when no reset time is known. |
 | Gate failed | Tests or lint stay broken after the fix stage. The run asks you. |

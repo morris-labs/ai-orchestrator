@@ -202,7 +202,13 @@ describe("post-push loop", () => {
     ];
     const d = deps(scenario, gh);
     const run = await RunController.create(
-      { runId: nextRunId(), projectId: "sample", repoPath: repo, pipeline: "post-push" },
+      {
+        runId: nextRunId(),
+        projectId: "sample",
+        repoPath: repo,
+        depth: "thorough",
+        pipeline: "post-push",
+      },
       { projectRoot: repo },
       d,
     );
@@ -249,7 +255,13 @@ describe("post-push loop", () => {
       },
     ];
     const run = await RunController.create(
-      { runId: nextRunId(), projectId: "sample", repoPath: repo, pipeline: "post-push" },
+      {
+        runId: nextRunId(),
+        projectId: "sample",
+        repoPath: repo,
+        depth: "thorough",
+        pipeline: "post-push",
+      },
       { projectRoot: repo },
       deps(scenario, gh),
     );
@@ -278,7 +290,13 @@ describe("post-push loop", () => {
     const gh = new FakeGitHub(join(dirname(repo), "origin.git"));
     gh.checks = [{ name: "tests", bucket: "pass", link: null, workflow: "ci" }];
     const run = await RunController.create(
-      { runId: nextRunId(), projectId: "sample", repoPath: repo, pipeline: "post-push" },
+      {
+        runId: nextRunId(),
+        projectId: "sample",
+        repoPath: repo,
+        depth: "thorough",
+        pipeline: "post-push",
+      },
       { projectRoot: repo },
       deps(new Scenario(), gh),
     );
@@ -298,7 +316,13 @@ describe("post-push loop", () => {
     const d = deps(new Scenario(), gh);
     const started = d.clock!.now();
     const run = await RunController.create(
-      { runId: nextRunId(), projectId: "sample", repoPath: repo, pipeline: "post-push" },
+      {
+        runId: nextRunId(),
+        projectId: "sample",
+        repoPath: repo,
+        depth: "thorough",
+        pipeline: "post-push",
+      },
       { projectRoot: repo },
       d,
     );
@@ -325,7 +349,13 @@ describe("post-push loop", () => {
     gh.checks = [{ name: "tests", bucket: "pass", link: null, workflow: "ci" }];
     gh.refuseReviewRequests = true;
     const run = await RunController.create(
-      { runId: nextRunId(), projectId: "sample", repoPath: repo, pipeline: "post-push" },
+      {
+        runId: nextRunId(),
+        projectId: "sample",
+        repoPath: repo,
+        depth: "thorough",
+        pipeline: "post-push",
+      },
       { projectRoot: repo },
       deps(new Scenario(), gh),
     );
@@ -345,7 +375,13 @@ describe("post-push loop", () => {
     gh.checks = [];
     gh.neverReview = true;
     const run = await RunController.create(
-      { runId: nextRunId(), projectId: "sample", repoPath: repo, pipeline: "post-push" },
+      {
+        runId: nextRunId(),
+        projectId: "sample",
+        repoPath: repo,
+        depth: "thorough",
+        pipeline: "post-push",
+      },
       { projectRoot: repo },
       deps(new Scenario(), gh),
     );
@@ -366,7 +402,13 @@ describe("post-push loop", () => {
       if (ref.run?.state.status === "running") void ref.run.pause();
     };
     const run = await RunController.create(
-      { runId: nextRunId(), projectId: "sample", repoPath: repo, pipeline: "post-push" },
+      {
+        runId: nextRunId(),
+        projectId: "sample",
+        repoPath: repo,
+        depth: "thorough",
+        pipeline: "post-push",
+      },
       { projectRoot: repo },
       deps(new Scenario(), gh),
     );
@@ -390,7 +432,13 @@ describe("post-push loop", () => {
     gh.checks = [{ name: "tests", bucket: "pass", link: null, workflow: "ci" }];
     gh.confirmOnTimelineOnly = true;
     const run = await RunController.create(
-      { runId: nextRunId(), projectId: "sample", repoPath: repo, pipeline: "post-push" },
+      {
+        runId: nextRunId(),
+        projectId: "sample",
+        repoPath: repo,
+        depth: "thorough",
+        pipeline: "post-push",
+      },
       { projectRoot: repo },
       deps(new Scenario(), gh),
     );
@@ -406,7 +454,13 @@ describe("post-push loop", () => {
     git(repo, "checkout", "-q", "main");
     const gh = new FakeGitHub(join(dirname(repo), "origin.git"));
     const run = await RunController.create(
-      { runId: nextRunId(), projectId: "sample", repoPath: repo, pipeline: "post-push" },
+      {
+        runId: nextRunId(),
+        projectId: "sample",
+        repoPath: repo,
+        depth: "thorough",
+        pipeline: "post-push",
+      },
       { projectRoot: repo },
       deps(new Scenario(), gh),
     );
@@ -440,7 +494,13 @@ describe("post-push loop", () => {
     git(clone, "push", "-q", "origin", "feature");
     const theirs = git(origin, "rev-parse", "refs/heads/feature");
     const run = await RunController.create(
-      { runId: nextRunId(), projectId: "sample", repoPath: repo, pipeline: "post-push" },
+      {
+        runId: nextRunId(),
+        projectId: "sample",
+        repoPath: repo,
+        depth: "thorough",
+        pipeline: "post-push",
+      },
       { projectRoot: repo },
       deps(new Scenario(), new FakeGitHub(origin)),
     );
@@ -456,7 +516,12 @@ describe("post-push loop", () => {
     const origin = join(dirname(repo), "origin.git");
     const gh = new FakeGitHub(origin);
     const d = deps(new Scenario(), gh);
-    const request = { projectId: "sample", repoPath: repo, pipeline: "post-push" as const };
+    const request = {
+      projectId: "sample",
+      repoPath: repo,
+      depth: "thorough" as const,
+      pipeline: "post-push" as const,
+    };
     await expect(
       RunController.create(
         { runId: nextRunId(), ...request, readOnly: true },
@@ -491,7 +556,7 @@ describe("post-push loop", () => {
     gh.checks = [];
     const scenario = new Scenario();
     const run = await RunController.create(
-      { runId: nextRunId(), projectId: "sample", repoPath: repo },
+      { runId: nextRunId(), projectId: "sample", repoPath: repo, depth: "thorough" },
       { projectRoot: repo },
       deps(scenario, gh),
     );
@@ -509,7 +574,7 @@ describe("post-push loop", () => {
     const gh = new FakeGitHub(join(dirname(repo), "origin.git"));
     gh.checks = [];
     const run = await RunController.create(
-      { runId: nextRunId(), projectId: "sample", repoPath: repo },
+      { runId: nextRunId(), projectId: "sample", repoPath: repo, depth: "thorough" },
       { projectRoot: repo },
       deps(new Scenario(), gh),
     );
@@ -528,7 +593,14 @@ describe("post-push pull request choice", () => {
     extra: { base?: string; prNumber?: number } = {},
   ) {
     const run = await RunController.create(
-      { runId: nextRunId(), projectId: "sample", repoPath: repo, pipeline: "post-push", ...extra },
+      {
+        runId: nextRunId(),
+        projectId: "sample",
+        repoPath: repo,
+        depth: "thorough",
+        pipeline: "post-push",
+        ...extra,
+      },
       { projectRoot: repo },
       deps(new Scenario(), gh),
     );
@@ -885,6 +957,7 @@ describe("post-push ordering", () => {
       {
         runId: nextRunId(),
         projectId: "sample",
+        depth: "thorough",
         repoPath: repo,
         pipeline: "post-push",
         roundCap: 1,
@@ -907,7 +980,7 @@ describe("post-push ordering", () => {
     gh.checks = [{ name: "tests", bucket: "pass", link: null, workflow: "ci" }];
     const scenario = new Scenario();
     const run = await RunController.create(
-      { runId: nextRunId(), projectId: "sample", repoPath: repo, roundCap: 2 },
+      { runId: nextRunId(), projectId: "sample", repoPath: repo, depth: "thorough", roundCap: 2 },
       { projectRoot: repo },
       deps(scenario, gh),
     );
@@ -955,7 +1028,13 @@ describe("post-push ordering", () => {
       return resolve(r, thread);
     };
     const run = await RunController.create(
-      { runId: nextRunId(), projectId: "sample", repoPath: repo, pipeline: "post-push" },
+      {
+        runId: nextRunId(),
+        projectId: "sample",
+        repoPath: repo,
+        depth: "thorough",
+        pipeline: "post-push",
+      },
       { projectRoot: repo },
       deps(scenario, gh),
     );
@@ -984,7 +1063,13 @@ describe("untrusted pull request comments", () => {
   async function importOnly(gh: FakeGitHub, repo: string) {
     const scenario = new Scenario();
     const run = await RunController.create(
-      { runId: nextRunId(), projectId: "sample", repoPath: repo, pipeline: "post-push" },
+      {
+        runId: nextRunId(),
+        projectId: "sample",
+        repoPath: repo,
+        depth: "thorough",
+        pipeline: "post-push",
+      },
       { projectRoot: repo },
       deps(scenario, gh),
     );

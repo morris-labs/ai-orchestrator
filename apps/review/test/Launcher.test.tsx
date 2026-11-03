@@ -11,6 +11,7 @@ const preview = {
   tipSha: "a1b2c3d4e5f6",
   diffBaseSha: "4e1c2a9b7d3f",
   changedLines: 312,
+  tokenEstimate: { tokens: 3_200_000, basis: "2 groups and 312 changed lines." },
   dirty: true,
   groups: [
     {
@@ -59,10 +60,15 @@ describe("Launcher", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Preview groups" }));
     expect(await screen.findByText(/2 groups, 312 changed lines/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/^Depth/)).toHaveValue("standard");
+    expect(screen.getByLabelText("Token estimate")).toHaveTextContent(
+      /about 3,200,000.*rough estimate.*2 groups/,
+    );
     expect(screen.getByText(/The working tree has uncommitted changes/)).toBeInTheDocument();
     expect(screen.getByText("major (risk path)")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("radio", { name: /Exact base/ }));
+    fireEvent.change(screen.getByLabelText(/^Depth/), { target: { value: "thorough" } });
     fireEvent.change(screen.getByLabelText("Profile"), { target: { value: "fast" } });
     fireEvent.click(screen.getByRole("button", { name: "Start" }));
     await waitFor(() => expect(server.callsTo("runs.create")).toHaveLength(1));
@@ -74,6 +80,7 @@ describe("Launcher", () => {
       mergeBase: false,
       exactBase: true,
       profile: "fast",
+      depth: "thorough",
       pipeline: "pre-push",
     });
     await waitFor(() => expect(window.location.hash).toBe(`#/runs/${lastRun().id}`));

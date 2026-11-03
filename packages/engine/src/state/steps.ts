@@ -2,9 +2,10 @@
 // reads its inputs from the run context, writes its output file to the run
 // directory, and emits handoff events with counts.
 import { createHash } from "node:crypto";
+import { mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { belowVerifyFloor } from "@aio/contracts";
+import { STANDARD_GROUP_SIZE_LIMIT, belowVerifyFloor, runDepth } from "@aio/contracts";
 import type {
   AgentRole,
   FileGroup,
@@ -17,7 +18,14 @@ import type {
   VendorFinding,
   VendorRoundStats,
 } from "@aio/contracts";
-import type { ConfirmOutput, FixOutput, ReviewOutput, SweepOutput, VerifyOutput } from "../core.js";
+import type {
+  ConfirmOutput,
+  FixOutput,
+  ReviewOutput,
+  SweepOutput,
+  VerifyBatchOutput,
+  VerifyOutput,
+} from "../core.js";
 import { compareGate, formatRegressions, runGate, type GateRun } from "../gate/gate.js";
 import { groupFiles } from "../group/group.js";
 import { assignTiers } from "../group/signals.js";
@@ -31,8 +39,10 @@ import {
 } from "../ledger/ledger.js";
 import { enclosingSymbol, fingerprint } from "../merge/fingerprint.js";
 import { findingsLog, mergeCandidates, type Candidate, type MergeResult } from "../merge/merge.js";
-import { policyPromptSection } from "../policy/rules.js";
+import { isRiskPath, policyPromptSection } from "../policy/rules.js";
 import {
+  batchDisproverPrompt,
+  batchFindingBlock,
   confirmerPrompt,
   continuationPrompt,
   finderPrompt,
@@ -41,10 +51,12 @@ import {
   sweepPrompt,
 } from "../prompts/templates.js";
 import { parseDiff } from "../range/diff.js";
+import { planVerifyBatches, rootCauseDuplicates, type VerifyBatch } from "../verify/batch.js";
 import {
   BaseWorktree,
   baseWorktreePath,
   chooseDisprover,
+  judgeAnswer,
   verifyFinding,
   type VerifyResult,
 } from "../verify/verify.js";
@@ -73,6 +85,8 @@ export const LEDGER_FOLLOW_UPS = 2;
 export const GATE_ATTEMPTS = 3;
 /** Parallel disprover calls. */
 const VERIFY_CONCURRENCY = 4;
+/** The most a batched disprover call's time limit grows over one finding's. */
+const BATCH_TIMEOUT_FACTOR = 4;
 /**
  * Parallel reviewer tasks per vendor in the find stage. Each task is one
  * CLI agent; without a limit a large range starts one per group at once,
@@ -218,14 +232,35 @@ export async function readOnlyRepo(ctx: RunContext): Promise<string> {
   return ctx.readOnlyCheckout.ensure(await readOnlyState(ctx));
 }
 
+/**
+ * The commit the round's review diff starts from. At the `standard` depth,
+ * round 2 and later review what changed after the last review, not the branch.
+ */
+function reviewDiffBase(ctx: RunContext): string {
+  if (runDepth(ctx.state.request) === "standard" && ctx.round > 1 && ctx.eng.reviewFrom) {
+    return ctx.eng.reviewFrom;
+  }
+  return ctx.eng.diffBaseSha ?? ctx.state.baseSha ?? "";
+}
+
+/** True when the round reviews only the change since the last review. */
+function reviewsFixDiffOnly(ctx: RunContext): boolean {
+  return runDepth(ctx.state.request) === "standard" && ctx.round > 1 && !!ctx.eng.reviewFrom;
+}
+
 /** Computes the file groups for the current tip. */
 export async function computeGroups(ctx: RunContext): Promise<FileGroup[]> {
-  const diffBase = ctx.eng.diffBaseSha ?? ctx.state.baseSha ?? "";
+  const diffBase = reviewDiffBase(ctx);
   const tip = await diffTip(ctx);
+  const depth = runDepth(ctx.state.request);
+  const standard = depth === "standard";
   const files = parseDiff(await ctx.git.diff(diffBase, tip));
   const groups = await groupFiles(files, {
     policy: ctx.policy,
     readFile: (path) => ctx.git.show(tip, path),
+    ...(standard
+      ? { coarse: true, sizeLimit: ctx.extras.groupSizeLimit ?? STANDARD_GROUP_SIZE_LIMIT }
+      : {}),
   });
   const choice = ctx.state.request.modelTier;
   if (!choice) return groups;
@@ -235,6 +270,7 @@ export async function computeGroups(ctx: RunContext): Promise<FileGroup[]> {
     diffBase,
     tip,
     choice,
+    depth,
     now: () => ctx.clock.now(),
   });
   for (const g of tiered) {
@@ -268,6 +304,17 @@ export function callTier(
     if (g.tier && (!base || tierRank(g.tier) > tierRank(base.tier))) {
       base = { tier: g.tier, reason: g.tierReason ?? `Group ${g.id}.` };
     }
+  }
+  if (runDepth(ctx.state.request) === "standard") {
+    // A finding from an earlier round can sit in a file this round's groups
+    // leave out, and a risk path keeps its tier there too.
+    if (!base && files?.some((f) => isRiskPath(ctx.policy, f))) {
+      base = { tier: "large", reason: "A file of the call matches a risk path." };
+    }
+    return {
+      ...roleTier(base, role, { choice, persisting: false, depth: "standard" }),
+      fixed: choice !== "auto",
+    };
   }
   const declined = new Set(ctx.eng.declined);
   const scope = new Set(files ?? groups.flatMap((g) => g.files));
@@ -345,11 +392,13 @@ async function runReviewTask(
   const group = task.groupId ? groups.find((g) => g.id === task.groupId) : undefined;
   const files = group ? group.files : [...new Set(groups.flatMap((g) => g.files))];
   const hunks: Hunk[] = group ? group.hunks : groups.flatMap((g) => g.hunks);
-  const diffBase = ctx.eng.diffBaseSha ?? ctx.state.baseSha ?? "";
+  const standard = runDepth(ctx.state.request) === "standard";
+  const fixDiffOnly = reviewsFixDiffOnly(ctx);
+  const diffBase = reviewDiffBase(ctx);
   const diff = await ctx.git.diffForPrompt(diffBase, await diffTip(ctx), files);
   const repoPath = await readOnlyRepo(ctx);
   const prompt = finderPrompt({
-    range: ctx.range(repoPath),
+    range: fixDiffOnly ? { ...ctx.range(repoPath), baseSha: diffBase } : ctx.range(repoPath),
     round: ctx.round,
     groupId: task.groupId,
     files,
@@ -358,6 +407,8 @@ async function runReviewTask(
     focusAreas: task.focusAreas,
     findingsLog: findingsLog(ctx.findings),
     policySection: policyPromptSection(ctx.policy, files),
+    standard,
+    fixDiffOnly,
   });
   const tier = callTier(ctx, "reviewer", groups, group ? group.files : undefined);
   const base = {
@@ -407,7 +458,8 @@ async function runReviewTask(
   };
 
   if (sessionId) {
-    for (let i = 0; i < LEDGER_FOLLOW_UPS; i++) {
+    // At `standard`, a hunk with no verdict goes without one: one pass per group.
+    for (let i = 0; i < (standard ? 0 : LEDGER_FOLLOW_UPS); i++) {
       const missing = missingHunks(ledger, hunks);
       if (missing.length === 0) break;
       const followUp = ledgerFollowUpPrompt(missing);
@@ -431,7 +483,7 @@ async function runReviewTask(
       absorb(out.output);
     }
     for (let i = 0; i < ctx.state.request.continuationCap; i++) {
-      const more = continuationPrompt({ reported: collected.map((f) => f.title) });
+      const more = continuationPrompt({ reported: collected.map((f) => f.title), standard });
       const out = await ctx.callAgent<ReviewOutput>({
         ...base,
         ...(sessionTier ? { tier: sessionTier } : {}),
@@ -470,7 +522,10 @@ export async function runFind(ctx: RunContext, groups: readonly FileGroup[]): Pr
   const file = ctx.store.roundFile(ctx.round, "find");
   const saved = await ctx.store.readJson<FindOutput>(file);
   if (saved) return saved;
-  const tasks = planReviews(ctx.state.roles.reviewer, groups, ctx.state.profile);
+  const tasks = planReviews(ctx.state.roles.reviewer, groups, ctx.state.profile, {
+    depth: runDepth(ctx.state.request),
+    named: ctx.eng.manualRoles.reviewer,
+  });
   const results = await runPerVendor(tasks, FIND_CONCURRENCY_PER_VENDOR, (t) =>
     runReviewTask(ctx, t, groups),
   );
@@ -867,6 +922,95 @@ async function addNotice(ctx: RunContext, notice: string): Promise<void> {
   await ctx.persist();
 }
 
+interface VerifyBatchPlan {
+  batches: VerifyBatch[];
+  /** Duplicate finding id to the id of the finding that a disprover reads. */
+  duplicates: Record<string, string>;
+}
+
+/**
+ * The stage's batches, saved before any call, so a resumed stage keeps the same
+ * batches and call keys. Findings the plan doesn't hold yet get new batches.
+ */
+async function planBatchesFor(
+  ctx: RunContext,
+  pending: readonly Finding[],
+  stageFile: string,
+): Promise<VerifyBatchPlan> {
+  const file = stageFile.replace(/\.json$/, "-batches.json");
+  const plan = (await ctx.store.readJson<VerifyBatchPlan>(file)) ?? { batches: [], duplicates: {} };
+  const planned = new Set([...plan.batches.flatMap((b) => b.ids), ...Object.keys(plan.duplicates)]);
+  const fresh = pending.filter((f) => !planned.has(f.id));
+  if (fresh.length === 0) return plan;
+  const duplicates = rootCauseDuplicates(fresh);
+  const reported = fresh.filter((f) => !duplicates.has(f.id));
+  plan.batches.push(
+    ...planVerifyBatches(reported, {
+      vendorFor: (f) =>
+        chooseDisprover(reporterVendor(f), ctx.state.roles, {
+          crossVendor: ctx.state.request.crossVendor,
+          available: ctx.availableVendors,
+          profile: ctx.state.profile,
+        }),
+      reporterFor: reporterVendor,
+      tokensFor: (f) => estimateTokens(batchFindingBlock(f)),
+    }),
+  );
+  plan.duplicates = { ...plan.duplicates, ...Object.fromEntries(duplicates) };
+  await ctx.store.writeJson(file, plan);
+  return plan;
+}
+
+/**
+ * Gives each duplicate its primary's outcome. A primary with no verdict leaves
+ * its duplicate pending, or flagged like itself, and the next round looks again.
+ */
+async function followPrimaries(
+  ctx: RunContext,
+  duplicates: Readonly<Record<string, string>>,
+): Promise<VerifyResult[]> {
+  const out: VerifyResult[] = [];
+  for (const [id, primaryId] of Object.entries(duplicates)) {
+    const finding = ctx.findingById(id);
+    const primary = ctx.findingById(primaryId);
+    if (!finding || !primary || finding.verdict !== "pending") continue;
+    if (primary.verdict === "pending") {
+      if (primary.followUpReason && !finding.followUpReason) {
+        finding.followUpReason = primary.followUpReason;
+        await ctx.emit({
+          type: "finding.changed",
+          runId: ctx.state.id,
+          finding: structuredClone(finding),
+          previousVerdict: finding.verdict,
+        });
+      }
+      continue;
+    }
+    const last = [...primary.history].reverse().find((h) => h.verdict === primary.verdict);
+    if (!last || last.actor.kind !== "agent" || last.actor.role !== "disprover") continue;
+    const evidence = `The same root cause as ${primary.id}. ${primary.evidence}`;
+    const verdict = primary.verdict as "confirmed" | "disproved" | "pre-existing";
+    await ctx.setVerdict(finding, verdict, last.actor, evidence, {
+      ...(primary.verification ? { verification: primary.verification } : {}),
+      introduced: primary.introduced,
+    });
+    out.push({
+      findingId: id,
+      vendor: last.actor.vendor as Vendor,
+      model: last.actor.model ?? "",
+      decision: {
+        verdict,
+        verification: primary.verification === "script" ? "script" : "code-reading",
+        introduced: primary.introduced,
+        evidence,
+      },
+      tipRun: null,
+      baseRun: null,
+    });
+  }
+  return out;
+}
+
 /**
  * Verifies every pending finding at or above the verification floor with a
  * disprover from another vendor. The rest stay pending and labeled.
@@ -880,68 +1024,31 @@ export async function verifyPending(ctx: RunContext, stageFile: string): Promise
   const repoPath = pending.length > 0 ? await readOnlyRepo(ctx) : ctx.state.request.repoPath;
   const tipState = pending.length > 0 ? await readOnlyState(ctx) : null;
   const groups = await roundGroups(ctx);
-  const results = await mapLimit(pending, VERIFY_CONCURRENCY, async (finding) => {
-    const vendor = chooseDisprover(reporterVendor(finding), ctx.state.roles, {
-      crossVendor: ctx.state.request.crossVendor,
-      available: ctx.availableVendors,
-      profile: ctx.state.profile,
+  const deps = (id: string) => ({
+    runner: ctx.deps.runner,
+    range: ctx.range(repoPath),
+    policy: ctx.policy,
+    baseWorktree: baseWorktreeFor(ctx),
+    signal: ctx.signal,
+    inScriptCheckout: <T>(side: "tip" | "base", fn: (dir: string) => Promise<T>) => {
+      const base = ctx.state.baseSha ?? "HEAD";
+      const state = side === "tip" && tipState ? tipState : { commit: base, head: base };
+      return inScriptCheckout(ctx, `${id}-${side}`, state, fn);
+    },
+  });
+  /** Records why nothing can check this finding, so it waits for a person, and the run goes on. */
+  const flag = async (finding: Finding, error: RefusalFallbackFailed): Promise<null> => {
+    finding.followUpReason = error.reasons.join(" ").slice(0, 2000);
+    await addNotice(ctx, `Finding ${finding.id} needs follow-up: no vendor would check it.`);
+    await ctx.emit({
+      type: "finding.changed",
+      runId: ctx.state.id,
+      finding: structuredClone(finding),
+      previousVerdict: finding.verdict,
     });
-    const verified = verifyFinding(finding, vendor, {
-      runner: ctx.deps.runner,
-      range: ctx.range(repoPath),
-      policy: ctx.policy,
-      baseWorktree: baseWorktreeFor(ctx),
-      signal: ctx.signal,
-      inScriptCheckout: (side, fn) => {
-        const base = ctx.state.baseSha ?? "HEAD";
-        const state = side === "tip" && tipState ? tipState : { commit: base, head: base };
-        return inScriptCheckout(ctx, `${finding.id}-${side}`, state, fn);
-      },
-      scratchDirFor: (id) => ctx.store.scratchDir(id),
-      timeoutMs: ctx.timeouts.disprover,
-      callDisprover: async (v, f, request) => {
-        const tier = callTier(ctx, "disprover", groups, f.file ? [f.file] : []);
-        const out = await callWithRefusalFallback<VerifyOutput>(
-          ctx,
-          {
-            key: `verify-${f.id}`,
-            role: "disprover",
-            vendor: v,
-            method: "verify",
-            request,
-            groupId: f.groupId,
-            estimateTokens: estimateTokens(request.prompt) + 6000,
-            allowFallback: true,
-            ...(tier ? { tier } : {}),
-            ...(ctx.state.request.crossVendor ? { avoid: avoidFor(f) } : {}),
-          },
-          `finding ${f.id}`,
-        );
-        return {
-          vendor: out.vendor,
-          model: out.model,
-          output: out.output,
-          ...(out.toolErrors ? { toolErrors: out.toolErrors } : {}),
-        };
-      },
-    });
-    let result: Awaited<typeof verified>;
-    try {
-      result = await verified;
-    } catch (error) {
-      if (!(error instanceof RefusalFallbackFailed)) throw error;
-      // Nothing can check this finding, so it waits for a person, and the run goes on.
-      finding.followUpReason = error.reasons.join(" ").slice(0, 2000);
-      await addNotice(ctx, `Finding ${finding.id} needs follow-up: no vendor would check it.`);
-      await ctx.emit({
-        type: "finding.changed",
-        runId: ctx.state.id,
-        finding: structuredClone(finding),
-        previousVerdict: finding.verdict,
-      });
-      return null;
-    }
-    if (!result) return result;
+    return null;
+  };
+  const apply = async (finding: Finding, result: VerifyResult): Promise<VerifyResult> => {
     const d = result.decision;
     if (d.verdict === "unverified") {
       // The finding stays pending: the run can't stop clean, and the next
@@ -962,7 +1069,148 @@ export async function verifyPending(ctx: RunContext, stageFile: string): Promise
       );
     }
     return result;
-  });
+  };
+  /** Checks one finding in its own call. */
+  const verifyOne = async (finding: Finding): Promise<VerifyResult | null> => {
+    const vendor = chooseDisprover(reporterVendor(finding), ctx.state.roles, {
+      crossVendor: ctx.state.request.crossVendor,
+      available: ctx.availableVendors,
+      profile: ctx.state.profile,
+    });
+    let result: VerifyResult | null;
+    try {
+      result = await verifyFinding(finding, vendor, {
+        ...deps(finding.id),
+        scratchDirFor: (id) => ctx.store.scratchDir(id),
+        timeoutMs: ctx.timeouts.disprover,
+        callDisprover: async (v, f, request) => {
+          const tier = callTier(ctx, "disprover", groups, f.file ? [f.file] : []);
+          const out = await callWithRefusalFallback<VerifyOutput>(
+            ctx,
+            {
+              key: `verify-${f.id}`,
+              role: "disprover",
+              vendor: v,
+              method: "verify",
+              request,
+              groupId: f.groupId,
+              estimateTokens: estimateTokens(request.prompt) + 6000,
+              allowFallback: true,
+              ...(tier ? { tier } : {}),
+              ...(ctx.state.request.crossVendor ? { avoid: avoidFor(f) } : {}),
+            },
+            `finding ${f.id}`,
+          );
+          return {
+            vendor: out.vendor,
+            model: out.model,
+            output: out.output,
+            ...(out.toolErrors ? { toolErrors: out.toolErrors } : {}),
+          };
+        },
+      });
+    } catch (error) {
+      if (!(error instanceof RefusalFallbackFailed)) throw error;
+      return flag(finding, error);
+    }
+    return result ? apply(finding, result) : null;
+  };
+  /** Checks a batch's findings that are still open in one call, under a key that outlives a restart. */
+  const verifyBatch = async (batch: VerifyBatch): Promise<Array<VerifyResult | null>> => {
+    const findings = batch.ids.flatMap((id) => {
+      const f = ctx.findingById(id);
+      return f && pending.includes(f) ? [f] : [];
+    });
+    const first = findings[0];
+    if (!first) return [];
+    // The key names the batch as planned, so a saved call still answers when
+    // some of its verdicts were applied before a restart.
+    const key = `verify-batch-${batchKey(batch.ids)}`;
+    const scratchDir = ctx.store.scratchDir(`batch-${batchKey(batch.ids)}`);
+    await mkdir(scratchDir, { recursive: true });
+    const baseDir = await baseWorktreeFor(ctx).ensure();
+    const files = [...new Set(findings.flatMap((f) => (f.file ? [f.file] : [])))];
+    const prompt = batchDisproverPrompt({
+      range: ctx.range(repoPath),
+      findings,
+      scratchDir,
+      baseWorktree: baseDir,
+      policySection: policyPromptSection(ctx.policy, files.length > 0 ? files : undefined),
+    });
+    const tier = callTier(ctx, "disprover", groups, files);
+    const growth = Math.min(BATCH_TIMEOUT_FACTOR, 1 + (findings.length - 1) / 4);
+    let out: AgentOutcome<VerifyBatchOutput>;
+    try {
+      out = await callWithRefusalFallback<VerifyBatchOutput>(
+        ctx,
+        {
+          key,
+          role: "disprover",
+          vendor: chooseDisprover(reporterVendor(first), ctx.state.roles, {
+            crossVendor: ctx.state.request.crossVendor,
+            available: ctx.availableVendors,
+            profile: ctx.state.profile,
+          }),
+          method: "verifyBatch",
+          request: {
+            prompt,
+            repoPath,
+            extraDirs: [baseDir],
+            scratchDir,
+            toolPolicy: "read-only",
+            timeoutMs: Math.round(ctx.timeouts.disprover * growth),
+          },
+          groupId: batch.groupId,
+          estimateTokens: estimateTokens(prompt) + 6000 * growth,
+          allowFallback: true,
+          ...(tier ? { tier } : {}),
+          ...(ctx.state.request.crossVendor ? { avoid: avoidFor(first) } : {}),
+        },
+        `the findings ${findings.map((f) => f.id).join(", ")}`,
+      );
+    } catch (error) {
+      if (!(error instanceof RefusalFallbackFailed)) throw error;
+      // One finding must not flag its whole group, so each one tries alone
+      // before anything is flagged.
+      if (findings.length === 1) return [await flag(first, error)];
+      return mapLimit(findings, VERIFY_CONCURRENCY, verifyOne);
+    }
+    const results: Array<VerifyResult | null> = [];
+    for (const finding of findings) {
+      const verdict = out.output.verdicts.find((v) => v.id === finding.id);
+      if (!verdict) {
+        ctx.deps.log?.warn("A disprover gave no verdict for a finding; it stays pending", {
+          runId: ctx.state.id,
+          findingId: finding.id,
+          vendor: out.vendor,
+        });
+        results.push(null);
+        continue;
+      }
+      const { id: _id, ...output } = verdict;
+      const result = await judgeAnswer(
+        finding,
+        {
+          vendor: out.vendor,
+          model: out.model,
+          output,
+          ...(out.toolErrors ? { toolErrors: out.toolErrors } : {}),
+        },
+        scratchDir,
+        deps(finding.id),
+      );
+      results.push(await apply(finding, result));
+    }
+    return results;
+  };
+  let results: Array<VerifyResult | null>;
+  if (runDepth(ctx.state.request) === "standard") {
+    const plan = await planBatchesFor(ctx, pending, stageFile);
+    const perBatch = await mapLimit(plan.batches, VERIFY_CONCURRENCY, verifyBatch);
+    results = [...perBatch.flat(), ...(await followPrimaries(ctx, plan.duplicates))];
+  } else {
+    results = await mapLimit(pending, VERIFY_CONCURRENCY, verifyOne);
+  }
   const done = results.filter((r): r is VerifyResult => r !== null);
   // A resumed stage verifies only what is still pending, so the results
   // from before the restart are kept in the stage file.
@@ -1008,11 +1256,13 @@ export async function runSweep(
   }
   const vendor =
     ctx.state.roles.reviewer.find((v) => v !== "claude") ?? ctx.state.roles.reviewer[0] ?? "codex";
-  const diffBase = ctx.eng.diffBaseSha ?? ctx.state.baseSha ?? "";
+  const diffBase = reviewDiffBase(ctx);
   const diff = await ctx.git.diffForPrompt(diffBase, await diffTip(ctx));
   const repoPath = await readOnlyRepo(ctx);
   const prompt = sweepPrompt({
-    range: ctx.range(repoPath),
+    range: reviewsFixDiffOnly(ctx)
+      ? { ...ctx.range(repoPath), baseSha: diffBase }
+      : ctx.range(repoPath),
     patterns,
     diff,
     policySection: policyPromptSection(ctx.policy),
@@ -1376,6 +1626,7 @@ export async function runConfirm(
     findings: fixed,
     fixDiff,
     policySection: policyPromptSection(ctx.policy),
+    standard: runDepth(ctx.state.request) === "standard",
   });
   const crossVendor = ctx.state.request.crossVendor;
   const fixer = ctx.state.roles.fixer;

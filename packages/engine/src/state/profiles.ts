@@ -1,6 +1,13 @@
 // Profiles and role assignment (design.md, "Profiles" and "Vendor roles").
 import { BALANCED_CLAUDE_ROUNDS, VENDOR_ROLES, profileRoles } from "@aio/contracts";
-import type { AgentRole, FileGroup, Profile, RoleAssignment, Vendor } from "@aio/contracts";
+import type {
+  AgentRole,
+  FileGroup,
+  Profile,
+  RoleAssignment,
+  RunDepth,
+  Vendor,
+} from "@aio/contracts";
 import { FOCUS_AREAS } from "../prompts/templates.js";
 
 // The profile defaults live in the contracts, so the Review app can show them.
@@ -78,21 +85,30 @@ export interface ReviewTask {
  * reviewers take the groups: a major group gets two of them with split focus
  * areas, and a minor group gets one, in turn. In the `fast` profile every
  * group gets two.
+ *
+ * At the `standard` depth each group gets one reviewer, in turn among the
+ * reviewers that take groups. Copilot reviews the whole diff only when it's
+ * the only reviewer or a person named it, in `named`.
  */
 export function planReviews(
   reviewers: readonly Vendor[],
   groups: readonly FileGroup[],
   profile: Profile,
+  options: { depth?: RunDepth; named?: readonly Vendor[] | undefined } = {},
 ): ReviewTask[] {
   const tasks: ReviewTask[] = [];
   const perGroup = reviewers.filter((v) => v !== "copilot");
+  const standard = options.depth === "standard";
+  const wholeDiff =
+    reviewers.includes("copilot") &&
+    (!standard || perGroup.length === 0 || options.named?.includes("copilot") === true);
   // With no groups the diff is empty, and a whole-diff review has nothing to read.
-  if (reviewers.includes("copilot") && groups.length > 0) {
+  if (wholeDiff && groups.length > 0) {
     tasks.push({ key: "all-copilot", vendor: "copilot", groupId: null, focusAreas: null });
   }
   groups.forEach((group, index) => {
     if (perGroup.length === 0) return;
-    const two = perGroup.length >= 2 && (group.kind === "major" || profile === "fast");
+    const two = !standard && perGroup.length >= 2 && (group.kind === "major" || profile === "fast");
     if (two) {
       for (let i = 0; i < 2; i++) {
         const vendor = perGroup[i] as Vendor;

@@ -12,6 +12,13 @@ export interface GroupOptions {
   /** Reads a file at the tip, or returns `null`. Used for import heuristics. */
   readFile: (path: string) => Promise<string | null>;
   majorLines?: number;
+  /**
+   * Joins groups by feature or directory, up to the size limit, so a run has
+   * far fewer of them. A file stays with its tests and matched docs.
+   */
+  coarse?: boolean;
+  /** The size limit, over the policy's `groupSizeLimit`. */
+  sizeLimit?: number;
 }
 
 class UnionFind {
@@ -78,6 +85,63 @@ export function splitSlice(slice: Slice, limit: number): Slice[] {
     size += fileSize;
   }
   flush();
+  return out;
+}
+
+const TEST_OR_SOURCE_ROOT = new Set(["src", "lib", "test", "tests", "__tests__", "spec", "specs"]);
+
+/** The feature a path belongs to: its folder path without source and test roots. */
+export function featureFolder(path: string): string[] {
+  return path
+    .split("/")
+    .slice(0, -1)
+    .filter((part) => !TEST_OR_SOURCE_ROOT.has(part));
+}
+
+/** How many leading folders name a feature area. Groups never join across areas. */
+const AREA_DEPTH = 2;
+
+/**
+ * Joins neighboring slices of one area while they fit the limit. An area keeps
+ * docs-only slices and risk-path slices to themselves, so the first keep the
+ * small tier and the second don't raise a whole group to the large tier.
+ */
+function joinSlices(
+  slices: readonly Slice[],
+  limit: number,
+  isRisk: (path: string) => boolean,
+): Slice[] {
+  const keyed = slices.map((slice) => {
+    const anchor = slice.files[0] as string;
+    const docsOnly = slice.files.every((f) => fileKind(f) === "doc");
+    const risk = slice.files.some(isRisk);
+    const folder = featureFolder(anchor);
+    return {
+      slice,
+      folder: folder.join("/"),
+      area: `${docsOnly ? "docs:" : ""}${risk ? "risk:" : ""}${folder.slice(0, AREA_DEPTH).join("/")}`,
+    };
+  });
+  keyed.sort(
+    (a, b) =>
+      a.area.localeCompare(b.area) ||
+      a.folder.localeCompare(b.folder) ||
+      (a.slice.files[0] as string).localeCompare(b.slice.files[0] as string),
+  );
+  const out: Slice[] = [];
+  let current: Slice | null = null;
+  let area = "";
+  for (const item of keyed) {
+    if (current && area === item.area && sliceLines(current) + sliceLines(item.slice) <= limit) {
+      // A file that split by hunks can already be here.
+      for (const f of item.slice.files) if (!current.files.includes(f)) current.files.push(f);
+      current.hunks.push(...item.slice.hunks);
+      continue;
+    }
+    current = { files: [...item.slice.files], hunks: [...item.slice.hunks] };
+    area = item.area;
+    out.push(current);
+  }
   return out;
 }
 
@@ -152,7 +216,8 @@ export async function groupFiles(
   }
 
   const kindOrder = { source: 0, test: 1, doc: 2 } as const;
-  const slices: Slice[] = [];
+  const limit = options.sizeLimit ?? options.policy.groupSizeLimit;
+  let slices: Slice[] = [];
   const ordered = [...components.values()].map((list) =>
     list.sort((a, b) => kindOrder[fileKind(a)] - kindOrder[fileKind(b)] || a.localeCompare(b)),
   );
@@ -163,8 +228,9 @@ export async function groupFiles(
       const f = byPath.get(p);
       for (const h of f?.hunks ?? []) slice.hunks.push({ file: p, hunk: h });
     }
-    slices.push(...splitSlice(slice, options.policy.groupSizeLimit));
+    slices.push(...splitSlice(slice, limit));
   }
+  if (options.coarse) slices = joinSlices(slices, limit, (f) => isRiskPath(options.policy, f));
 
   return slices.map((slice, index) => {
     const id = `G${String(index + 1).padStart(2, "0")}`;

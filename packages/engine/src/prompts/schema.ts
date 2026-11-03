@@ -98,6 +98,25 @@ export const VERIFY_OUTPUT_JSON_SCHEMA = {
   },
 } as const;
 
+export const VERIFY_BATCH_OUTPUT_JSON_SCHEMA = {
+  type: "object",
+  required: ["verdicts"],
+  properties: {
+    verdicts: {
+      type: "array",
+      description: "One entry for each finding id you were given.",
+      items: {
+        type: "object",
+        required: ["id", ...VERIFY_OUTPUT_JSON_SCHEMA.required],
+        properties: {
+          id: { type: "string", description: "The finding id." },
+          ...VERIFY_OUTPUT_JSON_SCHEMA.properties,
+        },
+      },
+    },
+  },
+} as const;
+
 export const FIX_OUTPUT_JSON_SCHEMA = {
   type: "object",
   required: ["fixed", "notFixed", "summary"],

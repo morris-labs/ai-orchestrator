@@ -51,7 +51,13 @@ export async function makeRun(
     ...options.deps,
   };
   const run = await RunController.create(
-    { runId: nextRunId(), projectId: "sample", repoPath: repo, ...options.request },
+    {
+      runId: nextRunId(),
+      projectId: "sample",
+      repoPath: repo,
+      depth: "thorough",
+      ...options.request,
+    },
     { projectRoot: repo },
     deps,
   );

@@ -49,7 +49,7 @@ describe("blocked review models", () => {
     });
     expect(DEFAULT_TIER_MODELS.codex).toEqual({
       small: "gpt-6-luna",
-      medium: "gpt-6-sol",
+      medium: "gpt-6.1-terra",
       large: "gpt-6.1-sol",
     });
     expect(DEFAULT_TIER_MODELS.copilot).toBeUndefined();

@@ -107,6 +107,11 @@ describe("DecisionPanel", () => {
 });
 
 describe("RunView", () => {
+  it("shows the run's depth, and thorough for a run with no depth", async () => {
+    renderWithStore(<RunView runId={RUN_ID} />, handlers());
+    expect(await screen.findByText(/depth thorough/)).toBeInTheDocument();
+  });
+
   it("shows each group's tier and reason", async () => {
     const { server } = renderWithStore(<RunView runId={RUN_ID} />, {
       ...handlers(),

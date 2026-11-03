@@ -16,6 +16,30 @@ function signals(patch: Partial<FileSignals>): FileSignals {
   };
 }
 
+describe("the standard depth", () => {
+  it("raises a group only for a risk path or a policy rule", () => {
+    const big = signals({ schemaPath: true, risky: "parsing", exportedChange: true });
+    expect(groupTier([big], "auto", "standard").tier).toBe("medium");
+    expect(groupTier([big], "auto").tier).toBe("large");
+    expect(groupTier([signals({ riskPath: true })], "auto", "standard").tier).toBe("large");
+    expect(groupTier([signals({ pinned: "large" })], "auto", "standard").tier).toBe("large");
+    expect(groupTier([signals({ noCode: true })], "auto", "standard").tier).toBe("small");
+  });
+
+  it("moves no role up, and lets a disprover stay small on a docs-only group", () => {
+    const options = { choice: "auto", persisting: true, depth: "standard" } as const;
+    const at = (tier: "small" | "medium" | "large") => ({ tier, reason: "group" });
+    expect(roleTier(at("medium"), "disprover", options).tier).toBe("medium");
+    expect(roleTier(at("medium"), "confirmer", options).tier).toBe("medium");
+    expect(roleTier(at("small"), "disprover", options).tier).toBe("small");
+    expect(roleTier(at("small"), "fixer", options).tier).toBe("medium");
+    expect(roleTier(at("small"), "confirmer", options).tier).toBe("medium");
+    expect(roleTier(at("large"), "fixer", options).tier).toBe("large");
+    expect(roleTier(at("large"), "sweeper", options).tier).toBe("medium");
+    expect(roleTier(null, "disprover", options).tier).toBe("medium");
+  });
+});
+
 describe("fileTier", () => {
   it.each<[string, Partial<FileSignals>, string, RegExp]>([
     ["code", {}, "medium", /changes code/],

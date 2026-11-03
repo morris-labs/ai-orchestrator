@@ -75,6 +75,13 @@ export const EngineStateSchema = z.object({
   roundOpen: z.boolean().default(false),
   /** HEAD before the round's first fix, for the confirmer's diff. */
   preFixSha: z.string().nullable().default(null),
+  /**
+   * At the `standard` depth, the commit the current round's review diff starts
+   * from: where the last round's fixes began. `null` reviews the whole range.
+   */
+  reviewFrom: z.string().nullable().default(null),
+  /** At the `standard` depth, the commit the current round reviewed up to. */
+  reviewedHead: z.string().nullable().default(null),
   /** The gate's last failure report, for the next fix attempt. */
   lastGateFailure: z.string().nullable().default(null),
   /** Merges whose findings are saved, by commit file; a resumed stage never applies one twice. */

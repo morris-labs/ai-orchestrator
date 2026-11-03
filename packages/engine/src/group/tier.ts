@@ -1,6 +1,6 @@
 // Chooses model tiers. Pure and deterministic: the same signals always give
 // the same tier, and nothing here calls a model or runs a command.
-import type { AgentRole, ModelTier, ModelTierChoice } from "@aio/contracts";
+import type { AgentRole, ModelTier, ModelTierChoice, RunDepth } from "@aio/contracts";
 
 /** Starting guesses from the plan; change them from logged data. */
 export const TIER_THRESHOLDS = {
@@ -93,8 +93,21 @@ export function fileTier(s: FileSignals): TierChoice {
   return at("medium", `changes code${skipped}`);
 }
 
+/**
+ * The tier one changed file asks for at the `standard` depth: only a policy
+ * rule or a risk path goes above medium, and docs and lockfiles stay small.
+ */
+export function standardFileTier(s: FileSignals): TierChoice {
+  if (s.pinned || s.riskPath || s.noCode) return fileTier(s);
+  return { tier: "medium", reason: `${s.path}: changes code` };
+}
+
 /** A group's tier: its strongest file's tier, or the run's fixed tier. */
-export function groupTier(files: readonly FileSignals[], choice: ModelTierChoice): TierChoice {
+export function groupTier(
+  files: readonly FileSignals[],
+  choice: ModelTierChoice,
+  depth: RunDepth = "thorough",
+): TierChoice {
   if (choice === "small" && (files.length === 0 || files.some((f) => !f.noCode))) {
     return {
       tier: "medium",
@@ -104,7 +117,7 @@ export function groupTier(files: readonly FileSignals[], choice: ModelTierChoice
   if (choice !== "auto") return { tier: choice, reason: `The run uses the ${choice} tier.` };
   let best: TierChoice | null = null;
   for (const file of [...files].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))) {
-    const next = fileTier(file);
+    const next = depth === "standard" ? standardFileTier(file) : fileTier(file);
     if (!best || tierRank(next.tier) > tierRank(best.tier)) best = next;
   }
   return best ?? { tier: "medium", reason: "The group has no measured file." };
@@ -120,7 +133,7 @@ const AT_LEAST_MEDIUM: readonly AgentRole[] = ["disprover", "confirmer", "fixer"
 export function roleTier(
   base: TierChoice | null,
   role: AgentRole,
-  options: { choice: ModelTierChoice; persisting: boolean },
+  options: { choice: ModelTierChoice; persisting: boolean; depth?: RunDepth },
 ): TierChoice {
   const { choice, persisting } = options;
   const floor = AT_LEAST_MEDIUM.includes(role);
@@ -137,6 +150,7 @@ export function roleTier(
     };
   }
   const from = base ?? { tier: "medium" as const, reason: "No group covers the call." };
+  if (options.depth === "standard") return standardRoleTier(from, role);
   let tier = from.tier;
   const notes = [from.reason];
   if (role === "disprover" || role === "confirmer") {
@@ -157,4 +171,20 @@ export function roleTier(
     notes.push("a sweeper takes medium at most");
   }
   return { tier, reason: notes.join("; ") };
+}
+
+/**
+ * The tier of one call at the `standard` depth, with no moves up. A call takes
+ * its group's tier. A disprover on a docs-only group can stay small; a fixer
+ * and a confirmer stay at medium or above, and a sweeper at medium or below.
+ */
+function standardRoleTier(from: TierChoice, role: AgentRole): TierChoice {
+  if (role === "fixer" || role === "confirmer") {
+    const tier = higherTier(from.tier, "medium");
+    return { tier, reason: `${from.reason}; a ${role} takes medium or above` };
+  }
+  if (role === "sweeper" && tierRank(from.tier) > tierRank("medium")) {
+    return { tier: "medium", reason: `${from.reason}; a sweeper takes medium at most` };
+  }
+  return from;
 }

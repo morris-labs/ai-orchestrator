@@ -14,6 +14,7 @@ import {
   FixOutputSchema,
   ReviewOutputSchema,
   SweepOutputSchema,
+  VerifyBatchOutputSchema,
   VerifyOutputSchema,
   type AdapterMethod,
   type AdapterRequest,
@@ -29,6 +30,7 @@ import {
   FIX_OUTPUT_JSON_SCHEMA,
   REVIEW_OUTPUT_JSON_SCHEMA,
   SWEEP_OUTPUT_JSON_SCHEMA,
+  VERIFY_BATCH_OUTPUT_JSON_SCHEMA,
   VERIFY_OUTPUT_JSON_SCHEMA,
 } from "../prompts/schema.js";
 import { isRetryable } from "./retry.js";
@@ -45,6 +47,7 @@ export const METHOD_SCHEMAS: Record<AdapterMethod, MethodSchema> = {
   review: { output: ReviewOutputSchema, json: REVIEW_OUTPUT_JSON_SCHEMA },
   continueReview: { output: ReviewOutputSchema, json: REVIEW_OUTPUT_JSON_SCHEMA },
   verify: { output: VerifyOutputSchema, json: VERIFY_OUTPUT_JSON_SCHEMA },
+  verifyBatch: { output: VerifyBatchOutputSchema, json: VERIFY_BATCH_OUTPUT_JSON_SCHEMA },
   fix: { output: FixOutputSchema, json: FIX_OUTPUT_JSON_SCHEMA },
   confirm: { output: ConfirmOutputSchema, json: CONFIRM_OUTPUT_JSON_SCHEMA },
   sweep: { output: SweepOutputSchema, json: SWEEP_OUTPUT_JSON_SCHEMA },
@@ -118,6 +121,10 @@ export class BridgedAdapter implements VendorAdapter {
 
   verify(request: AdapterRequest) {
     return this.call<z.infer<typeof VerifyOutputSchema>>("verify", request);
+  }
+
+  verifyBatch(request: AdapterRequest) {
+    return this.call<z.infer<typeof VerifyBatchOutputSchema>>("verifyBatch", request);
   }
 
   fix(request: AdapterRequest) {
