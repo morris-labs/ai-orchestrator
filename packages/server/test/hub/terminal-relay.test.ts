@@ -317,40 +317,15 @@ describe("terminal attach through the hub", () => {
     client.ws.close();
   }, 30_000);
 
-  it("relays a terminal from one node through the hub to another node", async () => {
+  it("refuses a terminal from one node to another node's box", async () => {
     const hub = await startServer("hub");
     const one = await startServer("one");
     const two = await startServer("two");
     const oneId = await join(hub, one, "node-one");
-    const twoId = await join(hub, two, "node-two");
+    await join(hub, two, "node-two");
     const box = await createBox(one);
 
-    // No machine opens another machine's terminal until its grant names that machine.
     await expect(two.open(terminalUrl(oneId, box))).rejects.toThrow();
     expect(one.exec.requests).toHaveLength(0);
-    const grants = { nodeGrants: { [twoId]: { machineAccess: [oneId] } } };
-    expect((await hub.api("PATCH", "/api/v1/settings", grants)).status).toBe(200);
-
-    const client = await two.open(terminalUrl(oneId, box));
-    await client.until(() => client.texts.length === 1);
-    expect(client.texts[0]).toMatchObject({ type: "ready" });
-    expect(one.exec.requests).toHaveLength(1);
-    expect(two.exec.requests).toHaveLength(0);
-    expect(hub.exec.requests).toHaveLength(0);
-
-    const container = one.exec.sessions[0]!.container;
-    container.write("from node one");
-    await client.until(() => Buffer.concat(client.output).toString() === "from node one");
-    const received: Buffer[] = [];
-    container.on("data", (d: Buffer) => received.push(d));
-    client.ws.send(Buffer.from("echo\r"));
-    client.ws.send(JSON.stringify({ type: "resize", cols: 90, rows: 20 }));
-    await client.until(
-      () => Buffer.concat(received).toString() === "echo\r" && one.exec.sizes.length === 1,
-    );
-    expect(one.exec.sizes).toEqual([[90, 20]]);
-
-    client.ws.close(1000, "detach");
-    await waitFor(() => one.exec.sessions[0]!.closed, 5000);
   });
 });

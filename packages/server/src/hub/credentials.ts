@@ -218,6 +218,23 @@ export class CredentialStore {
     });
   }
 
+  /** The saved hashes, so that a refused join can put them back. */
+  hashes(): Promise<Map<string, string>> {
+    return this.locked(async () => {
+      await this.load();
+      return new Map(this.known);
+    });
+  }
+
+  /** Puts back hashes from `hashes()`, so changes that were waiting to send still count. */
+  restoreHashes(hashes: ReadonlyMap<string, string>): Promise<void> {
+    return this.locked(async () => {
+      this.known.clear();
+      for (const [key, hash] of hashes) this.known.set(key, hash);
+      await this.save();
+    });
+  }
+
   /**
    * The files that differ from what last synced. A file stays in this list
    * until `markSynced`, so a failed send is sent again. A half-written file

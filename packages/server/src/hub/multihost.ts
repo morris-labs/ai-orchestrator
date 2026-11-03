@@ -56,23 +56,16 @@ export const LOCAL_ID = "local";
 
 /**
  * The routes a node may call on a hub whose role is `both`, so that it can
- * show the hub's boxes in a machine tab and operate them: list, get, start,
- * stop, and restart boxes, their terminals and the event stream, and the
- * project list and directory browser that the tab uses. The
- * `MACHINE_ACCESS_ROUTES` among them also need a grant. Settings, secrets,
- * accounts, machine enrollment and revocation, node routes, and every
- * route that creates, edits, or removes something stay refused.
+ * show the hub's boxes and projects in a machine tab. They only read: a node
+ * controls only its own boxes. Terminals, directories, the event stream,
+ * settings, secrets, accounts, machine enrollment and revocation, node routes,
+ * and every route that starts, stops, creates, edits, or removes something
+ * stay refused.
  */
 export const HUB_BOX_ROUTES = [
   "boxes.list",
   "boxes.get",
-  "boxes.start",
-  "boxes.stop",
-  "boxes.restart",
-  "events.stream",
-  "terminals.open",
   "projects.list",
-  "fs.dirs",
 ] as const satisfies readonly (keyof typeof serverRoutes)[];
 
 /**
@@ -92,19 +85,6 @@ export const NODE_RELAY_ROUTES = [
 ] as const satisfies readonly (keyof typeof serverRoutes)[];
 
 /**
- * The relayed routes that reach inside the machine they name. A terminal runs
- * commands in a project's container, which holds its brokered secrets and
- * mounted sign-ins, a directory listing reads the host, and the event stream
- * carries every server and engine event. So a node calls these only on a
- * machine that its grant lists in `machineAccess`.
- */
-export const MACHINE_ACCESS_ROUTES = [
-  "events.stream",
-  "terminals.open",
-  "fs.dirs",
-] as const satisfies readonly (typeof NODE_RELAY_ROUTES)[number][];
-
-/**
  * A route's method and a pattern for its path. Each `:param` matches one
  * segment with no query, fragment, or leading dot, so that no dot segment
  * can turn an allowed path into another route.
@@ -122,12 +102,6 @@ function routeMatcher(name: (typeof NODE_RELAY_ROUTES)[number]): { method: strin
 
 const hubBoxMatchers = HUB_BOX_ROUTES.map(routeMatcher);
 const nodeRelayMatchers = NODE_RELAY_ROUTES.map(routeMatcher);
-const machineAccessMatchers = MACHINE_ACCESS_ROUTES.map(routeMatcher);
-
-/** True when `req` is one of the `MACHINE_ACCESS_ROUTES`. */
-function needsMachineAccess(req: { method: string; path: string }): boolean {
-  return machineAccessMatchers.some((m) => m.method === req.method && m.path.test(req.path));
-}
 
 /** True when a node may call `req` on a hub whose role is `both`. */
 export function isHubBoxRoute(req: { method: string; path: string }): boolean {
@@ -167,16 +141,11 @@ function isCanonicalPath(path: string): boolean {
  * whatever `isHub` accepts) is served by the hub, so the path after the
  * prefix must pass the same check. Without that, a node could reach every
  * hub route as `/api/v1/machines/local/proxy/<rest>`.
- *
- * `hasMachineAccess` says whether the caller's grant covers a machine, named
- * `hub` for this hub. Without it, the `MACHINE_ACCESS_ROUTES` stay refused.
  */
 export function defaultAllowNodeRequest(
   req: { method: string; path: string },
-  caller?: string,
   isHub: (id: string) => boolean = (id) => id === LOCAL_MACHINE_ID || id === HUB_MACHINE_ID,
   sharesBoxes = false,
-  hasMachineAccess: (caller: string | undefined, machineId: string) => boolean = () => false,
 ): boolean {
   if (!isCanonicalPath(req.path)) return false;
   const method = req.method.toUpperCase();
@@ -184,25 +153,17 @@ export function defaultAllowNodeRequest(
     return true;
   }
   if (sharesBoxes && isHubBoxRoute({ method, path: req.path })) {
-    return (
-      !needsMachineAccess({ method, path: req.path }) || hasMachineAccess(caller, HUB_MACHINE_ID)
-    );
+    return true;
   }
   const target = parseProxyUrl(req.path);
   if (!target) return false;
   if (!isHub(target.machineId)) {
-    const relayed = { method, path: `${API_PREFIX}/${target.rest}` };
-    return (
-      isNodeRelayRoute(relayed) &&
-      (!needsMachineAccess(relayed) || hasMachineAccess(caller, target.machineId))
-    );
+    return isNodeRelayRoute({ method, path: `${API_PREFIX}/${target.rest}` });
   }
   return defaultAllowNodeRequest(
     { method, path: `${API_PREFIX}/${target.rest}` },
-    caller,
     isHub,
     sharesBoxes,
-    hasMachineAccess,
   );
 }
 
@@ -321,18 +282,14 @@ export class MultiHost {
       internal: hubInternal,
       allowNodeRequest:
         opts.allowNodeRequest ??
-        ((req, caller) =>
+        ((req) =>
           defaultAllowNodeRequest(
             req,
-            caller,
             (id) =>
               id === LOCAL_MACHINE_ID ||
               id === HUB_MACHINE_ID ||
               isThisMachine(id, { role: this.role(), machineId: this.machineId() }),
             this.role() === "both",
-            (machineId, target) =>
-              machineId !== undefined &&
-              this.grantOf(machineId)?.machineAccess.includes(target) === true,
           )),
       timing: opts.timing,
       log: opts.log,
@@ -779,13 +736,20 @@ export class MultiHost {
       );
     }
     // What this machine has now isn't a change to send: the new hub's copies win.
+    const hashes = await this.credentials.hashes();
     await this.credentials.prime({ reset: true });
-    await this.node.join({
-      hubUrl: input.hubUrl,
-      code: input.code,
-      name: input.name ?? this.name(),
-      replaceHub: input.replaceHub,
-    });
+    try {
+      await this.node.join({
+        hubUrl: input.hubUrl,
+        code: input.code,
+        name: input.name ?? this.name(),
+        replaceHub: input.replaceHub,
+      });
+    } catch (error) {
+      // The machine stays with its old hub, or none, so its waiting changes still count.
+      await this.credentials.restoreHashes(hashes);
+      throw error;
+    }
     if (this.opts.settings().role !== "node" && this.opts.roleOverride === undefined) {
       await this.opts.patchSettings({ role: "node" });
       await this.hub.reconcile();

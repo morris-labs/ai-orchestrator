@@ -173,6 +173,8 @@ export class MachineFleet {
   private readonly follows = new Map<string, () => void>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private loads = 0;
+  /** The newest load whose machine list failed. */
+  private listFailedLoad = 0;
   /** The newest load that each kind of answer has applied, by `answer()` key. */
   private readonly answered = new Map<string, number>();
   /** The fleet ignores answers from this load and earlier ones. */
@@ -319,7 +321,9 @@ export class MachineFleet {
         this.set({ supported: false, machines: [], selected: LOCAL_MACHINE_ID, error: null });
         this.dropStores(new Set());
       } else {
-        // Without a list, no machine's runs are known to be current.
+        // Without a list, no machine's runs are known to be current, and a run
+        // list that an earlier load started mustn't say otherwise.
+        this.listFailedLoad = load;
         const reach = isApiError(err, ...UNREACHABLE_CODES) ? "offline" : "error";
         this.set({
           error: errorText(err),
@@ -351,6 +355,7 @@ export class MachineFleet {
 
   /** Applies one machine's answer from `load`, unless a newer answer came first. */
   private applyRuns(load: number, startedAt: string, r: FleetMachine): void {
+    if (load < this.listFailedLoad) return;
     if (!this.answer(`runs:${r.machine.id}`, load)) return;
     this.set({
       machines: this.state.machines.map((m) => {

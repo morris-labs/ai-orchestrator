@@ -16,7 +16,7 @@ Every `aio-server` has one of the following roles:
 
 | Role | Does | Use it on |
 |---|---|---|
-| `both` | Runs boxes and can act as a hub, whose nodes can see and operate its boxes. The default, which behaves like a single machine until you issue an enrollment code. | A single machine, or the machine that hosts the hub |
+| `both` | Runs boxes and can act as a hub, whose nodes can see its boxes. The default, which behaves like a single machine until you issue an enrollment code. | A single machine, or the machine that hosts the hub |
 | `hub` | Acts as a hub and never joins another hub. Nodes can't see or reach boxes on it. | An always-on machine that serves only as the hub |
 | `node` | Runs boxes and links to a hub. | Every other machine |
 
@@ -195,10 +195,14 @@ machine.
 The apps and the CLI on any machine reach another machine's boxes through
 the server on their own machine, which relays each call through the hub.
 
-In the Boxes app, each other machine has its own tab, with that machine's
-boxes, projects, events, and terminals. On another machine's tab,
-**Browse** lists that machine's directories, and the box dialogs use that
-machine's projects.
+On the hub, the apps and the CLI operate every machine's boxes. A node controls
+only its own boxes: it can see another machine's boxes, projects, runs, and
+findings, but can't start, stop, or restart those boxes, open their terminals,
+browse their directories, or follow their event stream.
+
+In the Boxes app, each other machine has its own tab. On the hub, the tab has
+that machine's boxes, projects, events, and terminals, **Browse** lists its
+directories, and the box dialogs use its projects.
 
 In the CLI, the `--machine` option sends a command to another machine. It
 takes a machine ID or name from `aio machines list`:
@@ -240,8 +244,9 @@ The following rules apply to the CLI on another machine:
 - A path, such as the directory of `aio box new`, must be absolute on that
   machine, because the current directory exists only on this machine.
 - `aio box open` refuses another machine's box, because it opens the box
-  in a program on this machine. `aio box attach` and `aio box shell` work
-  on another machine's box; see "Terminals on other machines".
+  in a program on this machine. On the hub, `aio box attach` and
+  `aio box shell` work on another machine's box; see "Terminals on other
+  machines".
 - `aio machines`, `aio node`, and `aio doctor` work on this machine only.
 
 ## Remove a machine
@@ -430,22 +435,12 @@ secrets broker. The following data crosses the link:
 - **Machine information**: names, versions, platforms, and capabilities.
 - **Requests between machines**: the hub can call a node's API. A node can
   call the hub's machine list, its health, and the routes that relay to
-  other machines. Through the hub, a node can list, get, start, stop, and
-  restart another node's boxes, list its projects, and read its runs and
-  findings. A node can't reach any other route on another node, such as
-  settings, secrets, or accounts, and can't create, edit, or remove anything
-  there; do that on the hub or on that node.
-  When the hub's role is `both`, a node can also list, get, start, stop, and
-  restart the hub's boxes and list the hub's projects, so the hub's tab in the
-  Boxes app works. Use the role `hub` on a hub that you don't want nodes to
-  operate.
-  A node can open terminals (including a shell inside a box's container), list
-  directories, and open the event stream only on the machines that its grant
-  lists in `machineAccess`; see
-  [Grant a machine secrets and sign-ins](#grant-a-machine-secrets-and-sign-ins).
-  A compromised node can run commands in those machines' containers and use
-  the secrets and sign-ins there, so grant this only where you need it. A
-  node can't reach the hub's settings, accounts, machine enrollment or
+  other machines. Through the hub, a node can only read another node's
+  boxes, projects, runs, and findings. When the hub's role is `both`, a node
+  can also read the hub's boxes and projects. A node controls only its own
+  boxes: it can't start, stop, or restart another machine's boxes, open its
+  terminals, list its directories, open its event stream, or create, edit, or
+  remove anything there. A node can't reach the hub's settings, accounts, machine enrollment or
   revocation, or node
   routes through the API, and can't create, edit, or remove anything on the
   hub through it. With the role `hub`, a node can reach only the machine
@@ -490,8 +485,7 @@ curl --cacert ~/.ai-orchestrator/server.crt \
         "opRefs": ["op://VAULT/ITEM/FIELD"],
         "opVaults": ["VAULT"],
         "signInCopies": ["host/claude/.credentials.json"],
-        "signInUpdates": ["host/claude/.credentials.json"],
-        "machineAccess": ["hub", "OTHER_MACHINE_ID"]
+        "signInUpdates": ["host/claude/.credentials.json"]
     }}}' \
     https://127.0.0.1:21400/api/v1/settings
 
@@ -501,8 +495,6 @@ Replace the following:
 
 - `MACHINE_ID`: the machine's ID, from `aio machines list`
 - `VAULT`, `ITEM`, and `FIELD`: the parts of a 1Password reference
-- `OTHER_MACHINE_ID`: the ID of another enrolled machine that this machine can
-  operate
 
 Each field is optional and defaults to an empty list:
 
@@ -514,12 +506,6 @@ Each field is optional and defaults to an empty list:
 - `signInUpdates`: the sign-in files that the machine can overwrite on the
   hub and on the machines that copy them. List a key here when the machine's
   agent CLI rotates a refresh token that other machines share.
-- `machineAccess`: the machines whose terminals, directories, and event stream
-  this machine can open through the hub: enrolled machine IDs, or `hub` for the
-  hub itself. A terminal runs commands in that machine's project containers,
-  which hold their brokered secrets and mounted sign-ins, so a compromised
-  machine gains them too. Without an entry, that machine's tab still lists,
-  starts, and stops boxes, but its terminals and live updates are refused.
 
 A sign-in key is `host/claude/.credentials.json`, `host/codex/auth.json`,
 `account/claude/NAME/.credentials.json`, or `account/codex/NAME/auth.json`,
@@ -542,14 +528,11 @@ project's box doesn't start, and the error names the reference.
 
 ## Terminals on other machines
 
-On a node, a terminal on another machine needs that machine in the node's
-`machineAccess` grant; see
-[Grant a machine secrets and sign-ins](#grant-a-machine-secrets-and-sign-ins).
-On the hub, you need no grant.
+Only the hub opens terminals on other machines. A node opens terminals only on
+its own boxes.
 
 A terminal on a box that runs on another machine travels through the hub:
-the server on your machine relays it to the hub, and the hub relays it to
-the machine that runs the box. Keys, output, and terminal size changes
+the hub relays it to the machine that runs the box. Keys, output, and terminal size changes
 cross the link; the box's container never leaves its machine.
 
 - **Boxes app**: open the machine's tab and attach to the box as you do on
