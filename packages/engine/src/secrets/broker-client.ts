@@ -285,7 +285,7 @@ export class BrokerClient {
               );
               return;
             }
-            const error = (body as { error?: { code?: unknown; message?: unknown } }).error;
+            const error = (body as { error?: { code?: unknown; message?: unknown } } | null)?.error;
             const code = BROKER_CODES.has(error?.code as BrokerClientErrorCode)
               ? (error!.code as BrokerClientErrorCode)
               : "internal";

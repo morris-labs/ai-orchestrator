@@ -212,7 +212,17 @@ export class Git {
   /** The diff with whole functions as context, for reading which symbols changed. */
   async functionDiff(from: string, to: string, timeoutMs: number): Promise<string> {
     const result = await this.exec(
-      ["diff", "--no-color", "--no-ext-diff", "--no-textconv", "--find-renames", "-W", from, to],
+      [
+        "diff",
+        "--no-color",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--find-renames",
+        "-W",
+        from,
+        to,
+        "--",
+      ],
       { timeoutMs },
     );
     if (result.timedOut || result.exitCode !== 0) {
