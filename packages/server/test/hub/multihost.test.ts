@@ -4,11 +4,12 @@
 // revocation, and protocol refusal.
 import fs from "node:fs";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { MachineListSchema, NodeStatusSchema, type OpStatus } from "@aio/contracts";
 import { pinFromPem, pinnedFetch, pinnedTlsOptions } from "@aio/contracts/tls";
 import WebSocket from "ws";
 import { startApp, type App } from "../../src/api/app.js";
+import { ApiError } from "../../src/api/errors.js";
 import { createCore } from "../../src/core.js";
 import { MemoryDocker } from "../../src/docker/memory.js";
 import type { OpClient } from "../../src/secrets/op.js";
@@ -397,8 +398,96 @@ describe("multi-host", () => {
     const local = await node.api("POST", "/api/v1/machines/local/proxy/node/join", {
       hubUrl: code.hubUrl,
       code: "0000-0000-0000-0000",
+      replaceHub: true,
     });
     expect(local.json.error.message).toMatch(/hub refused the enrollment/);
+  });
+
+  it("refuses a second join without spending the code, until the caller replaces the hub", async () => {
+    const { hub, node, code, joined } = await linkedPair();
+    const other = await startServer("other-hub", { signedIn: true });
+    const next = (await other.api("POST", "/api/v1/machines/enrollment-codes")).json;
+    const linkFiles = () => fs.readFileSync(path.join(node.dataDir, "link", "client.key"), "utf8");
+    const before = linkFiles();
+
+    const refused = await node.api("POST", "/api/v1/node/join", {
+      hubUrl: next.hubUrl,
+      code: next.code,
+      name: "node-one",
+    });
+    expect([refused.status, refused.json.error.code]).toEqual([409, "conflict"]);
+    expect(refused.json.error.message).toContain(code.hubUrl);
+    expect(refused.json.error.message).toMatch(/--replace-hub/);
+    expect(linkFiles()).toBe(before);
+    const status = (await node.api("GET", "/api/v1/node")).json;
+    expect(status).toMatchObject({ hubUrl: code.hubUrl, machineId: joined.json.machineId });
+    await waitFor(() => node.app.multiHost.status().link === "connected", 5000);
+    expect((await hub.api("GET", "/api/v1/machines")).json.machines).toHaveLength(2);
+
+    // The refusal left the code usable.
+    const replaced = await node.api("POST", "/api/v1/node/join", {
+      hubUrl: next.hubUrl,
+      code: next.code,
+      name: "node-one",
+      replaceHub: true,
+    });
+    expect(replaced.status).toBe(200);
+    expect(replaced.json.hubUrl).toBe(next.hubUrl);
+    expect(linkFiles()).not.toBe(before);
+    await waitFor(() => node.app.multiHost.status().link === "connected", 5000);
+  });
+
+  it("lets a revoked machine join again without replacing the hub", async () => {
+    const { hub, node, joined } = await linkedPair();
+    await waitFor(() => node.app.multiHost.status().link === "connected", 5000);
+    await hub.api("DELETE", `/api/v1/machines/${joined.json.machineId}`);
+    await waitFor(() => node.app.multiHost.status().link === "revoked", 5000);
+
+    const next = (await hub.api("POST", "/api/v1/machines/enrollment-codes")).json;
+    const again = await node.api("POST", "/api/v1/node/join", {
+      hubUrl: next.hubUrl,
+      code: next.code,
+      name: "node-one",
+    });
+    expect(again.status).toBe(200);
+    expect(again.json.machineId).not.toBe(joined.json.machineId);
+  });
+
+  it("lets one of two concurrent joins through", async () => {
+    const hub = await startServer("hub", { signedIn: true });
+    const other = await startServer("other-hub", { signedIn: true });
+    const node = await startServer("node");
+    const results = await Promise.all(
+      [hub, other].map(async (target) => {
+        const code = (await target.api("POST", "/api/v1/machines/enrollment-codes")).json;
+        return node.api("POST", "/api/v1/node/join", {
+          hubUrl: code.hubUrl,
+          code: code.code,
+          name: "node-one",
+        });
+      }),
+    );
+    expect(results.map((r) => r.status).sort()).toEqual([200, 409]);
+    expect(results.find((r) => r.status === 409)?.json.error.code).toBe("conflict");
+  });
+
+  it("reports a failure on the hub as unreachable, not as a refused code or token", async () => {
+    const hub = await startServer("hub", { signedIn: true });
+    const node = await startServer("node");
+    const code = (await hub.api("POST", "/api/v1/machines/enrollment-codes")).json;
+    const enroll = vi
+      .spyOn(hub.app.multiHost.hub, "enroll")
+      .mockRejectedValue(new ApiError("internal", "The hub's disk is full."));
+
+    const res = await node.api("POST", "/api/v1/node/join", {
+      hubUrl: code.hubUrl,
+      code: code.code,
+      name: "node-one",
+    });
+    enroll.mockRestore();
+    expect([res.status, res.json.error.code]).toEqual([503, "hub_unreachable"]);
+    expect(res.json.error.message).toMatch(/hub's disk is full/);
+    expect((await node.api("GET", "/api/v1/node")).json.hubUrl).toBeNull();
   });
 
   it("reports a role override, and refuses a join under a hub override without storing a role", async () => {

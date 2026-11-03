@@ -581,6 +581,18 @@ describe("machines and node", () => {
     expect(out).toMatch(/Link:\s+connecting/);
   });
 
+  it("asks to replace the hub only with --replace-hub", async () => {
+    server.on("POST /api/v1/node/join", { body: nodeStatus });
+    const input = new PassThrough();
+    input.end("7K2Q-M9XD-4HPA-R3TB\n");
+    await joinCli(["https://hub.example.com:21402", "--replace-hub"], input);
+    expect(last()?.body).toEqual({
+      hubUrl: "https://hub.example.com:21402",
+      code: "7K2Q-M9XD-4HPA-R3TB",
+      replaceHub: true,
+    });
+  });
+
   it("shows the hub's reason when the hub refuses the enrollment code", async () => {
     const message = "The hub refused the enrollment: Issue a new code on the hub.";
     server.on("POST /api/v1/node/join", {

@@ -1068,6 +1068,12 @@ export const NodeJoinSchema = z
      * succeeds. Default: a `hub` machine can't join.
      */
     leaveHubRole: z.boolean().optional(),
+    /**
+     * Lets a machine that has joined a hub replace that enrollment. The old
+     * hub keeps listing the machine until you revoke it there. Default: the
+     * join fails with `conflict`, unless the old hub revoked this machine.
+     */
+    replaceHub: z.boolean().optional(),
   })
   .strict();
 export type NodeJoin = z.infer<typeof NodeJoinSchema>;

@@ -81,6 +81,8 @@ export class NodeAgent {
   private stopped = false;
   /** Bumped on every (re)start, so a stale socket's events change nothing. */
   private generation = 0;
+  /** True while a join runs, so that a second one can't race on the link files. */
+  private joining = false;
 
   constructor(private readonly opts: NodeAgentOptions) {}
 
@@ -107,8 +109,36 @@ export class NodeAgent {
    * Joins the hub at `hubUrl` with a one-time `code`: creates this machine's
    * key, proves the code over the certificate the hub presents, pins that
    * certificate, stores the client certificate the hub signs, and connects.
+   *
+   * A machine that has joined a hub keeps that enrollment: the join fails with
+   * `conflict` before it spends the code, unless the hub revoked this machine
+   * or the caller sets `replaceHub`.
    */
-  async join(input: { hubUrl: string; code: string; name: string }): Promise<void> {
+  async join(input: {
+    hubUrl: string;
+    code: string;
+    name: string;
+    replaceHub?: boolean;
+  }): Promise<void> {
+    if (this.joining) {
+      throw new ApiError("conflict", "This machine is joining a hub. Wait for that join to end.");
+    }
+    const joined = this.joined;
+    if (joined && this.state !== "revoked" && !input.replaceHub) {
+      throw new ApiError(
+        "conflict",
+        `This machine already joined the hub at ${joined.hubUrl} as ${joined.name}, and the code is still unused. To move this machine, revoke ${joined.machineId} on that hub first, or run aio node join with --replace-hub.`,
+      );
+    }
+    this.joining = true;
+    try {
+      await this.enroll(input);
+    } finally {
+      this.joining = false;
+    }
+  }
+
+  private async enroll(input: { hubUrl: string; code: string; name: string }): Promise<void> {
     let url: URL;
     try {
       url = new URL(input.hubUrl);
@@ -199,19 +229,21 @@ export class NodeAgent {
       );
     }
     if (status !== 200) {
-      const err = (json as { error?: { code?: string; message?: string } }).error;
-      const code =
-        err?.code === "conflict"
-          ? "conflict"
-          : err?.code === "validation"
-            ? "validation"
-            : "unauthorized";
-      throw new ApiError(
-        code,
-        `The hub refused the enrollment: ${err?.message ?? `status ${status}`}`,
-        undefined,
-        code === "unauthorized" ? ENROLLMENT_REFUSED_STATUS : undefined,
-      );
+      const err = (json as { error?: { code?: string; message?: string } } | null)?.error;
+      const reason = err?.message ?? `status ${status}`;
+      if (err?.code === "conflict" || err?.code === "validation") {
+        throw new ApiError(err.code, `The hub refused the enrollment: ${reason}`);
+      }
+      if (err?.code === "unauthorized") {
+        throw new ApiError(
+          "unauthorized",
+          `The hub refused the enrollment: ${reason}`,
+          undefined,
+          ENROLLMENT_REFUSED_STATUS,
+        );
+      }
+      // Any other answer says nothing about the code, such as a failure on the hub.
+      throw new ApiError("hub_unreachable", `The hub couldn't process the enrollment: ${reason}`);
     }
     const parsed = EnrollResponseSchema.safeParse(json);
     if (!parsed.success)

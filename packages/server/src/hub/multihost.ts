@@ -645,7 +645,9 @@ export class MultiHost {
    * to leave that role, nor can a machine that has enrolled machines of its
    * own. A `both` or `hub` machine becomes a `node`, so it stops acting as a
    * hub and asks the new hub for secrets. A `hub` machine keeps its role until
-   * the join succeeds, so that its nodes never reach its boxes on the way.
+   * the join succeeds, so that its nodes never reach its boxes on the way. A
+   * machine that has joined a hub stays with it unless `NodeAgent.join` allows
+   * the change.
    */
   async join(input: NodeJoin): Promise<NodeStatus> {
     const role = this.role();
@@ -677,6 +679,7 @@ export class MultiHost {
       hubUrl: input.hubUrl,
       code: input.code,
       name: input.name ?? this.name(),
+      replaceHub: input.replaceHub,
     });
     if (this.opts.settings().role !== "node" && this.opts.roleOverride === undefined) {
       await this.opts.patchSettings({ role: "node" });

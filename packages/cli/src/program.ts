@@ -1815,7 +1815,11 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
       "The hub URL that came with the code, such as https://hub.example.com:21402.",
     )
     .option("--name <name>", "The name to enroll under. Default: this machine's host name.")
-    .action(async (hubUrl: string, o: { name?: string }) => {
+    .option(
+      "--replace-hub",
+      "Replace this machine's enrollment with a hub it already joined. The old hub lists the machine until you revoke it there.",
+    )
+    .action(async (hubUrl: string, o: { name?: string; replaceHub?: boolean }) => {
       const c = client();
       // The code never goes on the command line, where the process list and
       // the shell history would show it.
@@ -1829,7 +1833,9 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
         if (prompted) deps.err("\n");
       }
       if (!code) throw new UsageError("Enter the enrollment code from the hub.");
-      const r = await c.call("node.join", { body: { hubUrl, code, name: o.name } });
+      const r = await c.call("node.join", {
+        body: { hubUrl, code, name: o.name, ...(o.replaceHub ? { replaceHub: true } : {}) },
+      });
       print(r, () => `Joined ${r.hubUrl} as ${r.name} (${r.machineId}).\n${nodeText(r)}`);
     });
 

@@ -256,6 +256,25 @@ The hub closes the machine's link and refuses its certificate from then on.
 The node shows the link as `revoked` and stops reconnecting. To add the
 machine again, issue a code and join again.
 
+## Move a machine to another hub
+
+A machine that has joined a hub refuses another join with a `conflict` error,
+and the join doesn't spend the code. The refusal also covers a retry against
+the same hub. To move the machine, do one of the following:
+
+- While the old hub is reachable, revoke the machine on the old hub, wait for
+  the node to show the link as `revoked`, and then join the other hub.
+- When the old hub is gone or its certificate changed, run the following
+  command on the machine:
+
+  ```bash
+  aio node join HUB_URL --replace-hub
+
+  ```
+
+  Replace `HUB_URL` with the hub URL that came with the code. The old hub
+  lists the machine until you revoke it there.
+
 ## Review runs on other machines
 
 A review run executes on the machine that holds the box or repository it
