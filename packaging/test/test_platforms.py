@@ -371,3 +371,16 @@ class BuildScriptsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PlatformsDocTest(unittest.TestCase):
+    def setUp(self):
+        self.text = (ROOT / "docs/platforms.md").read_text(encoding="utf-8")
+
+    def test_names_no_development_branches(self):
+        self.assertNotIn("other branch", self.text)
+        self.assertNotRegex(self.text, r"claude/[a-z-]+")
+
+    def test_windows_stop_disables_the_repeating_trigger(self):
+        row = next(l for l in self.text.splitlines() if l.startswith("| Stop |"))
+        self.assertIn("/Change /TN aio-server /DISABLE", row)

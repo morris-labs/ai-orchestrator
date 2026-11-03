@@ -16,8 +16,8 @@ The following table summarizes each part on each host:
 | Package | `.deb` with system Node.js 22 | dmg and zip, Node.js bundled | Per-user NSIS installer, Node.js bundled |
 | Docker | Docker Engine socket | Docker Desktop, Colima, OrbStack, or Rancher Desktop socket | Docker Desktop named pipe, WSL 2 backend |
 | Image build | `build-image.sh` | `build-image.sh` with the system bash 3.2 | `build-image.sh` under Git for Windows' bash |
-| Secrets broker | Unix socket | TCP (other branch) | TCP (other branch) |
-| Host paths in containers | Same path | Same path | Mapped (other branch) |
+| Secrets broker | Unix socket | Not supported | Not supported |
+| Host paths in containers | Same path | Same path | Not supported |
 | Multi-host hub or node | Yes | Untested | Untested |
 | Tested on the host | Yes | No | No |
 
@@ -85,7 +85,8 @@ host:
 | Check that it runs | `systemctl --user status aio-server` | `launchctl print gui/$(id -u)/dev.aio.server` | `schtasks /Query /TN aio-server /V /FO LIST` |
 | Read the log | `journalctl --user -u aio-server -n 100` | `tail -n 100 ~/Library/Logs/aio-server.log` | `Get-Content ~\.ai-orchestrator\server.log -Tail 100` |
 | Restart | `systemctl --user restart aio-server` | `launchctl kickstart -k gui/$(id -u)/dev.aio.server` | `schtasks /End /TN aio-server; schtasks /Run /TN aio-server` |
-| Stop until the next login | `systemctl --user stop aio-server` | `launchctl bootout gui/$(id -u)/dev.aio.server` | `schtasks /End /TN aio-server` |
+| Stop | `systemctl --user stop aio-server` | `launchctl bootout gui/$(id -u)/dev.aio.server` | `schtasks /Change /TN aio-server /DISABLE; schtasks /End /TN aio-server` |
+| Start after a stop | `systemctl --user start aio-server` | `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/dev.aio.server.plist` | `schtasks /Change /TN aio-server /ENABLE; schtasks /Run /TN aio-server` |
 | Remove | `systemctl --user disable --now aio-server` | `launchctl bootout gui/$(id -u)/dev.aio.server`, then delete the plist file | `schtasks /Delete /TN aio-server /F` |
 
 ### 1Password service account token
@@ -244,18 +245,18 @@ These steps aren't tested on either host yet.
 ## Linux assumptions in the code
 
 The following list is the full needs analysis: every place where the code
-assumed Linux, and how it's handled. Items marked *other branch* belong to
-the `claude/win-paths` or `claude/docker-desktop-broker` work.
+assumed Linux, and how it's handled. Items marked *not supported* have no
+handling yet.
 
 - **Data directory and `~`**: `~/.ai-orchestrator` and `os.homedir()` work
   on all three hosts. The server's `~/` expansion in folder pickers and the
-  3.x import is POSIX-only (*other branch*: `claude/win-paths`).
+  3.x import is POSIX-only (*not supported*).
 - **Host and container paths**: the server mounts projects, the transcript
   store, and the data directory at the same path inside containers. A
-  Windows path can't be a container path (*other branch*:
-  `claude/win-paths`, which maps `C:\...` to a container path).
+  Windows path can't be a container path (*not supported*:
+  the server doesn't map `C:\...` to a container path).
 - **Transcript store encoding**: Claude Code encodes the container's working
-  directory, not the host path (*other branch*: `claude/win-paths`).
+  directory, not the host path (*not supported*).
 - **systemd**: the only service manager. Handled: launchd and Task
   Scheduler behind `aio-server install-service`.
 - **AppArmor and `chrome-sandbox`**: Linux packaging only. Handled: no
@@ -267,9 +268,8 @@ the `claude/win-paths` or `claude/docker-desktop-broker` work.
   rely on the profile's access control list.
 - **Unix sockets the server opens**: the secrets broker listens on a Unix
   socket that containers mount. Docker Desktop can't pass a host Unix
-  socket into a Linux container (*other branch*:
-  `claude/docker-desktop-broker`, which adds the `brokerTransport` setting,
-  where `auto` picks TCP on macOS and Windows). Handled here: the socket
+  socket into a Linux container (*not supported*: the broker has no TCP transport).
+  Handled: the socket
   path limit is 103 bytes on macOS and 107 on Linux and Windows.
 - **Signals**: Windows delivers no `SIGTERM`. Handled: the server also
   stops on `SIGBREAK`. Task Scheduler's **End** command terminates the
@@ -294,8 +294,7 @@ the `claude/win-paths` or `claude/docker-desktop-broker` work.
 - **Container user name**: handled, as described in
   [The container user](#the-container-user).
 - **Path separators**: the server's own paths use `path`. Paths stored in
-  records and compared as strings assume `/` (*other branch*:
-  `claude/win-paths`).
+  records and compared as strings assume `/` (*not supported*).
 - **Line endings**: the server writes LF files. The Windows task
   definition uses CRLF and UTF-16, and the `.cmd` launchers use CRLF. Git
   for Windows' `core.autocrlf` can rewrite the keeper scripts in a checkout
@@ -369,10 +368,3 @@ Signing isn't set up. Until it is, the following applies:
   certificate.
 - The staging script checks Node.js against `SHASUMS256.txt`, but doesn't
   verify that file's signature yet.
-
-## Work that depends on other branches
-
-- `claude/win-paths`: host path to container path mapping on Windows, for
-  mounts, working directories, and transcripts.
-- `claude/docker-desktop-broker`: the secrets broker over TCP (the
-  `brokerTransport` setting) and other Docker Desktop container issues.
