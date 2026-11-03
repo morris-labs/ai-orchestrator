@@ -202,6 +202,11 @@ export const NodeGrantSchema = z
     signInCopies: z.array(z.string().min(1)).default([]),
     /** The keys of the sign-in files the machine may overwrite on the hub and on other machines. */
     signInUpdates: z.array(z.string().min(1)).default([]),
+    /**
+     * The machines whose terminals, directories, and event stream the machine
+     * may open through the hub: enrolled machine IDs, or `hub` for the hub itself.
+     */
+    machineAccess: z.array(z.string().min(1)).default([]),
   })
   .strict();
 export type NodeGrant = z.infer<typeof NodeGrantSchema>;

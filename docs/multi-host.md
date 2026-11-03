@@ -429,19 +429,22 @@ secrets broker. The following data crosses the link:
 - **Requests between machines**: the hub can call a node's API. A node can
   call the hub's machine list, its health, and the routes that relay to
   other machines. Through the hub, a node can list, get, start, stop, and
-  restart another node's boxes, open their terminals (including a shell
-  inside a box's container) and its event stream, list its projects and
-  directories, and read its runs and findings. Because of this, a compromised
-  node can run commands in other nodes' boxes. A node can't reach any other
-  route on another node, such as settings, secrets, or accounts, and can't
-  create, edit, or remove anything there; do that on the hub or on that node.
+  restart another node's boxes, list its projects, and read its runs and
+  findings. A node can't reach any other route on another node, such as
+  settings, secrets, or accounts, and can't create, edit, or remove anything
+  there; do that on the hub or on that node.
   When the hub's role is `both`, a node can also list, get, start, stop, and
-  restart the hub's boxes, open their terminals (including a shell inside a
-  box's container) and the hub's event stream, and list the hub's projects
-  and directories, so the hub's tab in the Boxes app works. Because of this,
-  a compromised node can run commands in the hub's boxes. Use the role
-  `hub` on a hub that you don't want nodes to operate. A node can't reach
-  the hub's settings, accounts, machine enrollment or revocation, or node
+  restart the hub's boxes and list the hub's projects, so the hub's tab in the
+  Boxes app works. Use the role `hub` on a hub that you don't want nodes to
+  operate.
+  A node can open terminals (including a shell inside a box's container), list
+  directories, and open the event stream only on the machines that its grant
+  lists in `machineAccess`; see
+  [Grant a machine secrets and sign-ins](#grant-a-machine-secrets-and-sign-ins).
+  A compromised node can run commands in those machines' containers and use
+  the secrets and sign-ins there, so grant this only where you need it. A
+  node can't reach the hub's settings, accounts, machine enrollment or
+  revocation, or node
   routes through the API, and can't create, edit, or remove anything on the
   hub through it. With the role `hub`, a node can reach only the machine
   list, health, and relay routes.
@@ -485,7 +488,8 @@ curl --cacert ~/.ai-orchestrator/server.crt \
         "opRefs": ["op://VAULT/ITEM/FIELD"],
         "opVaults": ["VAULT"],
         "signInCopies": ["host/claude/.credentials.json"],
-        "signInUpdates": ["host/claude/.credentials.json"]
+        "signInUpdates": ["host/claude/.credentials.json"],
+        "machineAccess": ["hub", "OTHER_MACHINE_ID"]
     }}}' \
     https://127.0.0.1:21400/api/v1/settings
 
@@ -495,6 +499,8 @@ Replace the following:
 
 - `MACHINE_ID`: the machine's ID, from `aio machines list`
 - `VAULT`, `ITEM`, and `FIELD`: the parts of a 1Password reference
+- `OTHER_MACHINE_ID`: the ID of another enrolled machine that this machine can
+  operate
 
 Each field is optional and defaults to an empty list:
 
@@ -506,6 +512,12 @@ Each field is optional and defaults to an empty list:
 - `signInUpdates`: the sign-in files that the machine can overwrite on the
   hub and on the machines that copy them. List a key here when the machine's
   agent CLI rotates a refresh token that other machines share.
+- `machineAccess`: the machines whose terminals, directories, and event stream
+  this machine can open through the hub: enrolled machine IDs, or `hub` for the
+  hub itself. A terminal runs commands in that machine's project containers,
+  which hold their brokered secrets and mounted sign-ins, so a compromised
+  machine gains them too. Without an entry, that machine's tab still lists,
+  starts, and stops boxes, but its terminals and live updates are refused.
 
 A sign-in key is `host/claude/.credentials.json`, `host/codex/auth.json`,
 `account/claude/NAME/.credentials.json`, or `account/codex/NAME/auth.json`,
@@ -527,6 +539,11 @@ When a grant leaves out a reference that a project on the machine uses, the
 project's box doesn't start, and the error names the reference.
 
 ## Terminals on other machines
+
+On a node, a terminal on another machine needs that machine in the node's
+`machineAccess` grant; see
+[Grant a machine secrets and sign-ins](#grant-a-machine-secrets-and-sign-ins).
+On the hub, you need no grant.
 
 A terminal on a box that runs on another machine travels through the hub:
 the server on your machine relays it to the hub, and the hub relays it to

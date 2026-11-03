@@ -322,8 +322,14 @@ describe("terminal attach through the hub", () => {
     const one = await startServer("one");
     const two = await startServer("two");
     const oneId = await join(hub, one, "node-one");
-    await join(hub, two, "node-two");
+    const twoId = await join(hub, two, "node-two");
     const box = await createBox(one);
+
+    // No machine opens another machine's terminal until its grant names that machine.
+    await expect(two.open(terminalUrl(oneId, box))).rejects.toThrow();
+    expect(one.exec.requests).toHaveLength(0);
+    const grants = { nodeGrants: { [twoId]: { machineAccess: [oneId] } } };
+    expect((await hub.api("PATCH", "/api/v1/settings", grants)).status).toBe(200);
 
     const client = await two.open(terminalUrl(oneId, box));
     await client.until(() => client.texts.length === 1);

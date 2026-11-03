@@ -591,7 +591,7 @@ describe("multi-host", () => {
   });
 
   it("lets a node reach the boxes of a hub whose role is both, and not of a hub-only one", async () => {
-    const { hub, node } = await linkedPair();
+    const { hub, node, joined } = await linkedPair();
     await waitFor(() => node.app.multiHost.status().link === "connected", 5000);
     const root = fs.realpathSync(tempDir("aio-mh-project-"));
     expect((await hub.api("POST", "/api/v1/projects", { root })).status).toBe(201);
@@ -606,6 +606,28 @@ describe("multi-host", () => {
     expect(
       projects.json.projects.map((p: { project: { root: string } }) => p.project.root),
     ).toEqual([root]);
+
+    // Without a grant, directories, events, and terminals stay refused.
+    const hello = { type: "hello", streamId: null, lastSeq: null };
+    const toHub = node.app.multiHost.links.get("hub")!;
+    expect(
+      (await node.api("GET", `${via("fs/dirs")}?path=${encodeURIComponent(root)}`)).status,
+    ).toBe(403);
+    await expect(node.firstFrame(via("events"), hello)).rejects.toThrow();
+    await expect(toHub.openStream({ path: "/api/v1/terminals", headers: {} })).rejects.toThrow(
+      /doesn't serve/,
+    );
+    await expect(
+      toHub.openStream({ path: via("terminals"), query: "kind=shell", headers: {} }),
+    ).rejects.toThrow(/doesn't serve/);
+    expect(
+      (
+        await hub.api("PATCH", "/api/v1/settings", {
+          nodeGrants: { [joined.json.machineId as string]: { machineAccess: ["hub"] } },
+        })
+      ).status,
+    ).toBe(200);
+
     expect(
       (await node.api("GET", `${via("fs/dirs")}?path=${encodeURIComponent(root)}`)).status,
     ).toBe(200);
@@ -614,11 +636,9 @@ describe("multi-host", () => {
       expect([res.status, res.json.error.code]).toEqual([404, "not_found"]);
     }
     expect((await node.api("GET", via("boxes/no-such-box"))).status).toBe(404);
-    const hello = { type: "hello", streamId: null, lastSeq: null };
     const hubStream = await hub.firstFrame("/api/v1/events", hello);
     const relayed = await node.firstFrame(via("events"), hello);
     expect(relayed).toMatchObject({ type: "hello", streamId: hubStream.streamId });
-    const toHub = node.app.multiHost.links.get("hub")!;
     // The hub serves the terminal upgrade; the terminal itself answers
     // the attach message, which this test doesn't send.
     const terminal = await toHub.openStream({ path: "/api/v1/terminals", headers: {} });

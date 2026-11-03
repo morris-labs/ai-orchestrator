@@ -193,12 +193,33 @@ describe("what a node may call on a hub that runs boxes", () => {
     ["GET", "/api/v1/boxes/b-1/sub"],
   ];
 
+  const granted = (caller: string | undefined, target: string) =>
+    caller === "m1" && target === "hub";
+
   it("allows the box, terminal, and event routes only when the role is both", () => {
     for (const [method, path] of allowed) {
-      expect(defaultAllowNodeRequest({ method, path }, "m1", isHub, true), path).toBe(true);
-      expect(defaultAllowNodeRequest({ method, path }, "m1", isHub, false), path).toBe(false);
+      expect(defaultAllowNodeRequest({ method, path }, "m1", isHub, true, granted), path).toBe(
+        true,
+      );
+      expect(defaultAllowNodeRequest({ method, path }, "m1", isHub, false, granted), path).toBe(
+        false,
+      );
       expect(isHubBoxRoute({ method: method.toLowerCase(), path }), path).toBe(true);
     }
+  });
+
+  it("refuses terminals, directories, and events on the hub without a grant", () => {
+    for (const path of ["/api/v1/terminals", "/api/v1/fs/dirs", "/api/v1/events"]) {
+      for (const url of [path, `/api/v1/machines/hub/proxy/${path.slice("/api/v1/".length)}`]) {
+        const req = { method: "GET", path: url };
+        expect(defaultAllowNodeRequest(req, "m1", isHub, true), url).toBe(false);
+        expect(defaultAllowNodeRequest(req, "m2", isHub, true, granted), url).toBe(false);
+        expect(defaultAllowNodeRequest(req, "m1", isHub, true, granted), url).toBe(true);
+      }
+    }
+    expect(
+      defaultAllowNodeRequest({ method: "GET", path: "/api/v1/boxes" }, "m2", isHub, true),
+    ).toBe(true);
   });
 
   it("keeps settings, secrets, accounts, machines, node, and edit routes refused", () => {
@@ -255,15 +276,33 @@ describe("what a node may call on another node", () => {
     ["GET", "boxes/../settings"],
   ];
 
+  const granted = (caller: string | undefined, target: string) =>
+    caller === "m1" && target === "m2";
+  const allow = (method: string, rest: string) =>
+    defaultAllowNodeRequest({ method, path: via(rest) }, "m1", undefined, false, granted);
+
   it("allows the box, terminal, event, and read-only review routes", () => {
     for (const [method, rest] of allowed) {
-      expect(defaultAllowNodeRequest({ method, path: via(rest) }), rest).toBe(true);
+      expect(allow(method, rest), rest).toBe(true);
     }
+  });
+
+  it("refuses terminals, directories, and events unless the caller's grant names the machine", () => {
+    for (const rest of ["terminals", "fs/dirs", "events"]) {
+      const req = { method: "GET", path: via(rest) };
+      expect(defaultAllowNodeRequest(req, "m1"), rest).toBe(false);
+      expect(defaultAllowNodeRequest(req, "m3", undefined, false, granted), rest).toBe(false);
+      const other = { method: "GET", path: `/api/v1/machines/m4/proxy/${rest}` };
+      expect(defaultAllowNodeRequest(other, "m1", undefined, false, granted), rest).toBe(false);
+      const encoded = { method: "GET", path: `/api/v1/machines/m%32/proxy/${rest}` };
+      expect(defaultAllowNodeRequest(encoded, "m1", undefined, false, granted), rest).toBe(true);
+    }
+    expect(defaultAllowNodeRequest({ method: "GET", path: via("boxes") }, "m3")).toBe(true);
   });
 
   it("refuses every other route", () => {
     for (const [method, rest] of refused) {
-      expect(defaultAllowNodeRequest({ method, path: via(rest) }), rest).toBe(false);
+      expect(allow(method, rest), rest).toBe(false);
     }
   });
 
