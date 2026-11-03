@@ -18,9 +18,8 @@ section's heading must have the form `## [X.Y.Z]`.
   own certificate authority, issues one-time enrollment codes, and links to
   each node over mutual TLS. The hub keeps a machine registry, relays
   1Password reads to its nodes, and copies agent sign-ins from the hub to the nodes you grant,
-  limited to what the `nodeGrants` setting gives each machine. A node opens
-  terminals, directory listings, and event streams only on the machines that
-  its grant lists in `machineAccess`.
+  limited to what the `nodeGrants` setting gives each machine. A node
+  controls only its own boxes and can only read other machines' boxes, projects, and runs.
   Use `aio machines` on a hub and `aio node` on a node. See
   `docs/multi-host.md`.
 - Machine routing: every server route also answers under
