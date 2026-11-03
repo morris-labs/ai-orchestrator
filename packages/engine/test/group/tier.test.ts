@@ -12,6 +12,7 @@ function signals(patch: Partial<FileSignals>): FileSignals {
     risky: null,
     riskPath: false,
     pinned: null,
+    oldPathTier: null,
     ...patch,
   };
 }
@@ -46,6 +47,18 @@ describe("fileTier", () => {
     ["small pin on docs", { pinned: "small", noCode: true, riskPath: true }, "small", /tierPaths/],
     ["small pin on code", { pinned: "small" }, "medium", /code stays/],
     ["large pin", { pinned: "large", noCode: true }, "large", /tierPaths/],
+    [
+      "old path above the current path",
+      { pinned: "small", oldPathTier: { tier: "large", why: "renamed from src/b.ts" } },
+      "large",
+      /renamed from/,
+    ],
+    [
+      "old path below the current path",
+      { riskPath: true, oldPathTier: { tier: "small", why: "renamed from src/b.ts" } },
+      "large",
+      /risk path/,
+    ],
   ])("%s", (_name, patch, tier, reason) => {
     const got = fileTier(signals(patch));
     expect(got.tier).toBe(tier);

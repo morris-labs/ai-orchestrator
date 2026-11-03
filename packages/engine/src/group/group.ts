@@ -175,7 +175,10 @@ export async function groupFiles(
       end: h.hunk.end,
     }));
     const changedLines = sliceLines(slice);
-    const riskPath = slice.files.some((f) => isRiskPath(options.policy, f));
+    // A renamed file stays risky when either of its paths matches.
+    const riskPath = slice.files.some((f) =>
+      [f, byPath.get(f)?.oldPath].some((p) => p && isRiskPath(options.policy, p)),
+    );
     return {
       id,
       files: slice.files,

@@ -111,6 +111,18 @@ describe("groupFiles", () => {
     expect(groups.filter((g) => g.files.includes("src/orders.ts"))).toHaveLength(2);
   });
 
+  it("makes a file renamed out of a risk path major", async () => {
+    const policy = PolicyFileSchema.parse({ version: 1, riskPaths: ["src/auth/**"] });
+    const renamed: DiffFile = {
+      ...file("src/misc/tokens.ts", hunk(1, 1)),
+      oldPath: "src/auth/tokens.ts",
+      status: "renamed",
+    };
+    const [group] = await groupFiles([renamed], { policy, readFile: async () => null });
+    expect(group?.kind).toBe("major");
+    expect(group?.riskPath).toBe(true);
+  });
+
   it("splits by file, then by hunk", () => {
     const slice = {
       files: ["a", "b"],

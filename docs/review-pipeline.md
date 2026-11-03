@@ -107,6 +107,9 @@ first row that matches a file decides:
 | The changed code involves concurrency, migrations, or parsing | Large |
 | Any other code | Medium |
 
+A renamed file also keeps what its old path asks for: a `tierPaths` rule, a risk
+path, or a schema path. The old path can only raise the file's tier.
+
 Changed symbols come from `git diff -W` and per-language patterns for
 TypeScript, JavaScript, Python, Go, Java, C, C++, and shell. Other languages
 skip this signal. `git grep -l -w` counts the files at the tip that hold each

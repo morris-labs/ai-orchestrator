@@ -35,7 +35,9 @@ export interface TierInputs {
 /** Splits `git diff -W` output by file path, with each file's lines from its first hunk on. */
 export function splitFunctionDiff(text: string): Map<string, string[]> {
   const out = new Map<string, string[]>();
-  for (const chunk of text.split(/^(?=diff --git )/m)) {
+  // Only `\n` ends a line of git's output. The `m` flag also breaks lines at a
+  // carriage return, U+2028, or U+2029, which file content can hold.
+  for (const chunk of text.split(/(?<=^|\n)(?=diff --git )/)) {
     const path = parseDiff(chunk)[0]?.path;
     if (!path) continue;
     const lines = chunk.split("\n");
@@ -61,6 +63,23 @@ function excluded(path: string, other: string): boolean {
 
 function pinnedTier(policy: PolicyFile, path: string) {
   return policy.tierPaths?.find((rule) => matchesAny(path, rule.paths))?.tier ?? null;
+}
+
+/** What a renamed file's old path asks for, by the same order as its current path. */
+function oldPathTier(
+  policy: PolicyFile,
+  path: string,
+  file: DiffFile | undefined,
+  noCode: boolean,
+): FileSignals["oldPathTier"] {
+  const old = file?.oldPath;
+  if (!old || old === path) return null;
+  const from = `renamed from ${old}, which`;
+  const pinned = pinnedTier(policy, old);
+  if (pinned) return { tier: pinned, why: `${from} the policy's tierPaths sets to this tier` };
+  if (isRiskPath(policy, old)) return { tier: "large", why: `${from} matches a risk path` };
+  if (!noCode && isSchemaPath(old)) return { tier: "large", why: `${from} is a schema` };
+  return null;
 }
 
 /** Gives every group its tier and reason. */
@@ -126,6 +145,7 @@ export async function assignTiers(
       risky: noCode ? null : riskyChange(path, code),
       riskPath: isRiskPath(policy, path),
       pinned: pinnedTier(policy, path),
+      oldPathTier: oldPathTier(policy, path, file, noCode),
     };
     measured.set(path, signals);
     return signals;

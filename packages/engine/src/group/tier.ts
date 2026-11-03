@@ -30,6 +30,8 @@ export interface FileSignals {
   riskPath: boolean;
   /** The tier a policy `tierPaths` rule gives the file. */
   pinned: ModelTier | null;
+  /** What a renamed file's old path asks for, so a rename can't lower the tier. */
+  oldPathTier: { tier: ModelTier; why: string } | null;
 }
 
 export interface TierChoice {
@@ -59,6 +61,14 @@ const SKIPPED_NOTES: Record<NonNullable<FileSignals["referencesSkipped"]> | "non
 
 /** The tier one changed file asks for. */
 export function fileTier(s: FileSignals): TierChoice {
+  const own = currentPathTier(s);
+  const old = s.oldPathTier;
+  return old && tierRank(old.tier) > tierRank(own.tier)
+    ? { tier: old.tier, reason: `${s.path}: ${old.why}` }
+    : own;
+}
+
+function currentPathTier(s: FileSignals): TierChoice {
   const at = (tier: ModelTier, why: string): TierChoice => ({
     tier,
     reason: `${s.path}: ${why}`,

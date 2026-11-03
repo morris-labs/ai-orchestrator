@@ -169,6 +169,59 @@ describe("assignTiers", () => {
   });
 });
 
+describe("renames", () => {
+  const text = "first();\nsecond();\nthird();\nfourth();\nfifth();\nsixth();\n";
+  const moved = (from: string, to: string) =>
+    [{ [from]: text }, { [from]: null, [to]: `${text}seventh();\n` }] as const;
+
+  it("keeps the large tier of an old risk path", async () => {
+    const policy = { ...DEFAULT_POLICY, riskPaths: ["src/auth/**"] };
+    const g = await tier(...moved("src/auth/tokens.ts", "src/misc/tokens.ts"), policy);
+    expect(g.tier).toBe("large");
+    expect(g.tierReason).toMatch(/renamed from src\/auth\/tokens\.ts.*risk path/);
+  });
+
+  it("keeps the large tier of an old schema path", async () => {
+    const g = await tier(...moved("schemas/user.ts", "src/user.ts"));
+    expect(g.tier).toBe("large");
+    expect(g.tierReason).toMatch(/renamed from schemas\/user\.ts/);
+  });
+
+  it("keeps the large tier of an old tierPaths rule", async () => {
+    const policy = {
+      ...DEFAULT_POLICY,
+      tierPaths: [{ paths: ["core/**"], tier: "large" as const }],
+    };
+    const g = await tier(...moved("core/a.ts", "src/a.ts"), policy);
+    expect(g.tier).toBe("large");
+  });
+
+  it("keeps an old risk path's tier under a small rule on the current path", async () => {
+    const policy = {
+      ...DEFAULT_POLICY,
+      riskPaths: ["src/auth/**"],
+      tierPaths: [{ paths: ["gen/**"], tier: "small" as const }],
+    };
+    const g = await tier(...moved("src/auth/a.ts", "gen/a.ts"), policy);
+    expect(g.tier).toBe("large");
+  });
+
+  it("doesn't let an old small rule lower the current path's tier", async () => {
+    const policy = {
+      ...DEFAULT_POLICY,
+      riskPaths: ["src/auth/**"],
+      tierPaths: [{ paths: ["gen/**"], tier: "small" as const }],
+    };
+    const g = await tier(...moved("gen/a.ts", "src/auth/a.ts"), policy);
+    expect(g.tier).toBe("large");
+  });
+
+  it("leaves other renames at medium", async () => {
+    const g = await tier(...moved("src/a.ts", "src/b.ts"));
+    expect(g.tier).toBe("medium");
+  });
+});
+
 describe("code floor", () => {
   it("keeps code at medium under a small tierPaths rule", async () => {
     const policy = { ...DEFAULT_POLICY, tierPaths: [{ paths: ["**"], tier: "small" as const }] };
@@ -227,5 +280,15 @@ describe("splitFunctionDiff", () => {
     const out = splitFunctionDiff(text);
     expect(out.get("x.ts")?.slice(0, 3)).toEqual(["@@ -1 +1 @@", "-a", "+b"]);
     expect(out.get("y.ts")?.[2]).toBe("+d");
+  });
+
+  it.each(["\r", "\u2028", "\u2029"])("keeps a file boundary out of content after %j", (sep) => {
+    const forged = `+x${sep}diff --git a/x.ts b/x.ts`;
+    const text =
+      "diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n@@ -1 +1 @@\n-a\n+b\n" +
+      `diff --git a/y.ts b/y.ts\n--- a/y.ts\n+++ b/y.ts\n@@ -1 +1 @@\n-c\n${forged}\n+d\n`;
+    const out = splitFunctionDiff(text);
+    expect(out.get("x.ts")?.slice(0, 3)).toEqual(["@@ -1 +1 @@", "-a", "+b"]);
+    expect(out.get("y.ts")?.slice(0, 4)).toEqual(["@@ -1 +1 @@", "-c", forged, "+d"]);
   });
 });
