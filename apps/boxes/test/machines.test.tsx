@@ -335,6 +335,25 @@ describe("machine tabs", () => {
     expect(local.socketsFor("/api/v1/terminals")[0]?.query.get("boxId")).toBe("aio-agent-site");
   });
 
+  it("keeps Quit and Refresh working on the Machines page", async () => {
+    const quit = vi.fn();
+    const original = (window as { aio?: unknown }).aio;
+    (window as { aio?: unknown }).aio = { quit, onSelectBox: () => () => undefined };
+    try {
+      const user = userEvent.setup();
+      renderHub({
+        local: siteServer(),
+        servers: { "node-b": nodeServer() },
+        machines: [LOCAL, machine({ id: "node-b", name: "node-b" })],
+      });
+      await user.click(await screen.findByRole("tab", { name: "Machines" }));
+      fireEvent.keyDown(window, { key: "Q", code: "KeyQ", ctrlKey: true, shiftKey: true });
+      expect(quit).toHaveBeenCalled();
+    } finally {
+      (window as { aio?: unknown }).aio = original;
+    }
+  });
+
   it("switches machine tabs with Ctrl+Shift+PageDown and Ctrl+Shift+PageUp", async () => {
     renderHub({
       local: siteServer(),

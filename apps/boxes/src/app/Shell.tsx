@@ -26,8 +26,8 @@ import {
   skewNotes,
 } from "../logic/machines";
 import { App } from "./App";
-import { CHORDS } from "./chords";
 import { bridge } from "../bridge";
+import { CHORDS } from "./chords";
 import { MachineProvider, MachineScope, type MachineInfo } from "./machine";
 import { useMachines } from "./useMachines";
 
@@ -98,6 +98,27 @@ export function Shell({ machineClient, pollMs }: ShellProps) {
       ? [
           { chord: CHORDS.nextMachine, run: () => step(1) },
           { chord: CHORDS.prevMachine, run: () => step(-1) },
+          // No App is active on the Machines page, so the application chords
+          // that still make sense there are bound here.
+          ...(view === MACHINES_VIEW
+            ? [
+                {
+                  chord: CHORDS.quit,
+                  run: () => {
+                    if (hasOpenDialog()) return;
+                    const b = bridge();
+                    if (b) b.quit();
+                    else window.close();
+                  },
+                },
+                {
+                  chord: CHORDS.refresh,
+                  run: () => {
+                    if (!hasOpenDialog()) void reload();
+                  },
+                },
+              ]
+            : []),
         ]
       : [],
   );
