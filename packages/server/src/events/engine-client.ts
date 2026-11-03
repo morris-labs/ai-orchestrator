@@ -59,6 +59,14 @@ export interface EngineCallInput {
 
 const DEFAULT_BACKOFF = [500, 1000, 2000, 5000, 10_000, 30_000];
 
+/** Routes that do slow Git work: a preview of a large range, or a fetch. */
+const SLOW_ROUTES: ReadonlySet<string> = new Set([
+  "engine.runs.preview",
+  "engine.runs.create",
+  "engine.repos.refs",
+]);
+const SLOW_ROUTE_TIMEOUT_MS = 300_000;
+
 export class EngineClient {
   private ws: WebSocket | null = null;
   /** Sockets closed after a failed relay; their remaining event frames are dropped. */
@@ -148,11 +156,21 @@ export class EngineClient {
       if (value !== undefined && value !== null) query.set(name, String(value));
     }
     const qs = query.size > 0 ? `?${query.toString()}` : "";
-    const body = await this.request(route.method, `${path}${qs}`, input.body);
+    const body = await this.request(
+      route.method,
+      `${path}${qs}`,
+      input.body,
+      SLOW_ROUTES.has(key) ? SLOW_ROUTE_TIMEOUT_MS : undefined,
+    );
     return route.response.parse(body);
   }
 
-  private async request(method: string, path: string, body?: unknown): Promise<unknown> {
+  private async request(
+    method: string,
+    path: string,
+    body?: unknown,
+    slowTimeoutMs?: number,
+  ): Promise<unknown> {
     const doFetch = this.options.fetch ?? fetch;
     let res: Response;
     try {
@@ -163,7 +181,7 @@ export class EngineClient {
           ...(body === undefined ? {} : { "content-type": "application/json" }),
         },
         body: body === undefined ? undefined : JSON.stringify(body),
-        signal: AbortSignal.timeout(this.options.timeoutMs ?? 30_000),
+        signal: AbortSignal.timeout(this.options.timeoutMs ?? slowTimeoutMs ?? 30_000),
       });
     } catch (err) {
       if (err instanceof ApiError) throw err;
