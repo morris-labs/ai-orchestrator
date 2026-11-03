@@ -81,6 +81,7 @@ export function createHandlers(deps: HandlerDeps): EngineHandlers {
     "engine.runs.profile": (i) => runs.profile(run(i), i.body.profile),
     "engine.runs.assign": (i) => runs.assign(run(i), i.body.role, i.body.vendors),
     "engine.runs.rebaseBase": (i) => runs.rebaseBase(run(i)),
+    "engine.runs.retry": (i) => runs.retry(run(i), i.body),
     "engine.runs.decide": (i) => runs.decide(run(i), i.body),
     "engine.runs.push": (i) => runs.push(run(i), i.body),
     "engine.runs.groups": async (i) => ({ groups: await runs.groups(run(i)) }),

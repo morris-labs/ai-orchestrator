@@ -24,6 +24,8 @@ import {
   filterFindings,
   findingVendors,
   type FindingFilter,
+  FIX_HELD_LABEL,
+  NOT_VERIFIED_LABEL,
 } from "./findingsModel.js";
 import { commitUrl } from "./runModel.js";
 
@@ -118,6 +120,9 @@ function FindingDetail({
         <dd>
           {f.verdict}
           {f.verification ? ` (${f.verification})` : ""}
+          {f.unverifiedReason ? ` (${NOT_VERIFIED_LABEL})` : ""}
+          {f.followUpReason ? " (needs follow-up: no vendor would check it)" : ""}
+          {f.fixHeldReason ? ` (${FIX_HELD_LABEL})` : ""}
         </dd>
         <dt>Raised by</dt>
         <dd>{[f.reportedBy, ...f.alsoReportedBy].join(", ")}</dd>
@@ -360,7 +365,9 @@ export function Findings({ runId, findingId }: { runId: string | null; findingId
                   <span className={`sev sev-${f.severity}`}>{f.severity}</span>
                   <span className="finding-title">{f.title}</span>
                   <span className="muted small">
-                    {f.id} · round {f.round} · {f.verdict} ·{" "}
+                    {f.id} · round {f.round} · {f.verdict}
+                    {f.unverifiedReason ? ` (${NOT_VERIFIED_LABEL})` : ""}
+                    {f.fixHeldReason ? ` (${FIX_HELD_LABEL})` : ""} ·{" "}
                     {findingVendors(f)
                       .map((v) => VENDOR_LABELS[v])
                       .join(", ")}

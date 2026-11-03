@@ -11,9 +11,9 @@ import { ExecaRunner } from "../../src/range/exec.js";
 import type { RunContext } from "../../src/state/context.js";
 import { RunController } from "../../src/state/controller.js";
 import { Scenario, buildSampleRepo } from "./scenario.js";
+import { uniqueRunId } from "./run-ids.js";
 
-let seq = 500;
-export const nextRunId = (): string => `01JD${String(++seq).padStart(22, "0")}`;
+export const nextRunId = uniqueRunId;
 
 export interface Harness {
   repo: string;

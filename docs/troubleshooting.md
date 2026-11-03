@@ -229,6 +229,39 @@ The following errors can stop a run before its first stage:
 - The policy file doesn't parse: the preflight stage names the field. For the
   format, see [Policy file](policy.md).
 
+## A review run failed or waits after a vendor's limit
+
+A vendor's limit no longer fails a run: the run moves the role, pauses until the
+reset, or stops with a `ceiling` decision when the vendor gave no reset time. For
+the rules, see
+[When a vendor reports a limit](review-pipeline.md#when-a-vendor-reports-a-limit).
+
+To continue a run that waits for a decision, give the role to a vendor that has
+room, then resume:
+
+```bash
+aio review assign RUN_ID disprover codex
+aio review resume RUN_ID
+
+```
+
+Replace `RUN_ID` with the run's ID. If the decision names a vendor over its
+ceiling after you bought a reset, first run `aio review clear-usage VENDOR`,
+replacing `VENDOR` with the vendor's name.
+
+A run that an older engine failed has the error `VENDOR kept hitting its limit`.
+To resume it from the stage that failed, without repeating saved calls, run the
+following command:
+
+```bash
+aio review retry RUN_ID --role disprover=codex
+
+```
+
+To check fewer findings, add `--verify-floor P2`. If the command refuses the run,
+its message names what is wrong with the stored state. For more information, see
+[Retry a failed run](review-pipeline.md#retry-a-failed-run).
+
 ## A reviewer call fails with "Not logged in"
 
 A run stops with an error like `The reviewer call on claude failed: ...

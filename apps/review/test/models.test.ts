@@ -296,5 +296,8 @@ describe("buildRunRequest model tier", () => {
     expect(auto.ok && auto.request.modelTier).toBe("auto");
     const fixed = buildRunRequest({ ...form, modelTier: "medium" });
     expect(fixed.ok && fixed.request.modelTier).toBe("medium");
+    expect(auto.ok && auto.request.verifyFloor).toBeUndefined();
+    const floor = buildRunRequest({ ...form, verifyFloor: "P2" });
+    expect(floor.ok && floor.request.verifyFloor).toBe("P2");
   });
 });

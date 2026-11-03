@@ -80,6 +80,13 @@ the upgrade steps, see `docs/migration-3x.md`.
 
 ### Added
 
+- Retry for a failed review run, with **Retry** in the run view and
+  `aio review retry RUN_ID`. It resumes at the failed stage from saved state,
+  reuses saved calls, and can change roles and the verification floor.
+- A verification floor for review runs, on the launcher and as `--verify-floor`.
+  Findings below it stay labeled and away from the fixer and the sweep, even when
+  already confirmed; unchecked ones stay pending. A run with
+  such findings stops with `clean_above_floor` instead of `clean`.
 - Model tiers for review runs: code in the engine picks a small, medium, or
   large model for each group and role, with **Auto** or a fixed tier on the
   launcher and `aio review start --tier`, and `tierModels` and `tierPaths` in
@@ -122,6 +129,10 @@ the upgrade steps, see `docs/migration-3x.md`.
 
 ### Changed
 
+- A vendor's limit no longer fails a review run. The engine stops calling that
+  vendor, tells the server not to redirect calls to it, moves the role, and pauses
+  or asks for a decision when no vendor can take it.
+- A role assignment and a profile switch work on a failed run, ahead of a retry.
 - The **Model usage** panel in the Boxes app shows each usage window
   that a vendor's CLI reports on its own line, with its own percentage, reset
   time, and sample age. A window whose reset time has passed shows **No recent

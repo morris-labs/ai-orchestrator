@@ -27,9 +27,9 @@ import { RunController } from "../../src/state/controller.js";
 import { contextOf } from "../state/harness.js";
 import { Scenario, buildSampleRepo } from "../state/scenario.js";
 import { tempDir } from "../tmp.js";
+import { uniqueRunId } from "../state/run-ids.js";
 
-let seq = 500;
-const nextRunId = () => `01JD${String(++seq).padStart(22, "0")}`;
+const nextRunId = uniqueRunId;
 const git = (cwd: string, ...args: string[]) =>
   execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
 

@@ -52,6 +52,7 @@ const RUN_PROXY_KEYS = [
   "runs.profile",
   "runs.assign",
   "runs.rebaseBase",
+  "runs.retry",
   "runs.decide",
   "runs.push",
   "runs.groups",

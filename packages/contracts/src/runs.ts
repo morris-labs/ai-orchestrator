@@ -10,6 +10,7 @@ import {
   RunIdSchema,
   VendorSchema,
 } from "./common.js";
+import { SeveritySchema } from "./findings.js";
 import { ModelTierChoiceSchema, ModelTierSchema } from "./tiers.js";
 
 export const PipelineSchema = z.enum(["pre-push", "post-push"]);
@@ -162,6 +163,12 @@ export const ResolvedRunRequestSchema = z.object({
    * it uses the safe fallback model instead.
    */
   modelTier: ModelTierChoiceSchema.optional(),
+  /**
+   * The lowest severity that a disprover checks. Findings below it stay
+   * `pending`, never count as confirmed, and never reach the fixer. Absent
+   * means every severity.
+   */
+  verifyFloor: SeveritySchema.optional(),
 });
 export type ResolvedRunRequest = z.infer<typeof ResolvedRunRequestSchema>;
 
@@ -227,6 +234,10 @@ export type EngineRunCreate = z.infer<typeof EngineRunCreateSchema>;
 
 export const StopReasonSchema = z.enum([
   "clean",
+  /** Clean at and above the verification floor, with findings below it left unchecked. */
+  "clean_above_floor",
+  /** Clean except for findings that no vendor would check; they wait for a person. */
+  "clean_with_followups",
   "round_cap",
   "oscillation",
   "ceiling",
@@ -259,6 +270,20 @@ export const DecisionAnswerSchema = z.object({
   reason: z.string().optional(),
 });
 export type DecisionAnswer = z.infer<typeof DecisionAnswerSchema>;
+
+/**
+ * The body of `runs.retry`. Roles replace the run's roles for calls that
+ * haven't started. A verification floor replaces the run's floor; `all`
+ * removes it, and absent keeps it. `finishWithClaude` gives every role that
+ * Claude can take to Claude and turns off the cross-vendor rule for the rest of
+ * the run, so Claude checks its own work.
+ */
+export const RunRetrySchema = z.object({
+  roles: RoleOverridesSchema.optional(),
+  verifyFloor: z.union([SeveritySchema, z.literal("all")]).optional(),
+  finishWithClaude: z.boolean().optional(),
+});
+export type RunRetry = z.infer<typeof RunRetrySchema>;
 
 export const RunStateSchema = z.object({
   /**

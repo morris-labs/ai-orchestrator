@@ -14,10 +14,11 @@ import { EngineRunManager, createRunManager, toApiError } from "../../src/state/
 import { EngineError } from "../../src/api/core-interface.js";
 import { PolicyError } from "../../src/policy/load.js";
 import { buildSampleRepo } from "./scenario.js";
+import { uniqueRunId } from "./run-ids.js";
 
 const SCRIPT = join(import.meta.dirname, "../smoke/mock-script.json");
-const RUN_A = "01JB0000000000000000000M01";
-const RUN_B = "01JB0000000000000000000M02";
+const RUN_A = uniqueRunId();
+const RUN_B = uniqueRunId();
 
 function manager(repo: string) {
   const events = new MemoryEventSink("engine:test", "stream-test");

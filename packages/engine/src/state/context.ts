@@ -35,6 +35,7 @@ import {
   type EngineDeps,
   type EventDraft,
   type LeaseActual,
+  type LimitInfo,
   type RoleTimeouts,
   type VendorAdapter,
 } from "../core.js";
@@ -74,6 +75,17 @@ export class AgentFailed extends Error {
   ) {
     super(message);
     this.name = "AgentFailed";
+  }
+}
+
+/** A vendor's safety filter refused the request. Repeating the call gets the same answer. */
+const SAFETY_REFUSAL = /flagged for possible cybersecurity risk|cyber permissive safeguards/i;
+
+/** Thrown when a vendor's safety filter refused a call. */
+export class SafetyRefused extends AgentFailed {
+  constructor(role: AgentRole, vendor: Vendor, message: string) {
+    super(role, vendor, message);
+    this.name = "SafetyRefused";
   }
 }
 
@@ -132,6 +144,8 @@ export interface AgentCallSpec {
    * server grant that redirects to one stops the run for a decision instead.
    */
   avoid?: readonly Vendor[];
+  /** Keep this vendor even when a person assigned the role to another one. */
+  pinVendor?: boolean;
 }
 
 export interface AgentOutcome<T> {
@@ -148,6 +162,15 @@ export interface AgentOutcome<T> {
 
 /** How often a run waiting out a ceiling asks the server again. */
 const LEASE_RECHECK_MS = 60_000;
+
+/** How long a rate limit with no usable reset time keeps a vendor out of the run. */
+const RATE_LIMIT_BLOCK_MS = 15 * 60_000;
+
+/** The shortest block after a limit, so a reset time in the past can't make a tight loop. */
+const MIN_LIMIT_BLOCK_MS = 60_000;
+
+/** The longest single sleep: a longer timer fires at once. */
+const MAX_SLEEP_MS = 2_000_000_000;
 
 const ROLE_FOR_AGENT: Record<AgentRole, Role> = {
   reviewer: "reviewer",
@@ -171,8 +194,12 @@ export class RunContext {
   readonly shell: CommandRunner;
   readonly timeouts: RoleTimeouts;
   private abort = new AbortController();
-  /** End the timed waits early: one controller for each parallel call that waits. */
+  /** Ends the waits of pauses for a usage limit early; parallel calls wait separately. */
   private readonly pauseWakes = new Set<AbortController>();
+  /** Agent calls in progress, including ones that outlive a stopped driver. */
+  private readonly calls = new Set<Promise<unknown>>();
+  /** True from when the driver stops until the next one starts: leftover calls start nothing. */
+  private stopped = false;
   private pauseRequested = false;
   private cancelRequested = false;
   /** Every parallel call waits on the same gate while the run is paused. */
@@ -450,6 +477,7 @@ export class RunContext {
 
   /** Called between agent calls: honors a pause or a cancel. */
   async checkpoint(): Promise<void> {
+    this.throwIfStopped();
     if (this.cancelRequested) throw new RunCancelled();
     if (!this.pauseRequested) return;
     let gate = this.pauseGate;
@@ -464,12 +492,14 @@ export class RunContext {
       await this.setStatus("paused", { pausedUntil: undefined });
     }
     await gate.promise;
+    this.throwIfStopped();
     if (this.cancelRequested) throw new RunCancelled();
     if (this.state.status === "paused") await this.setStatus("running", { pausedUntil: undefined });
   }
 
   /** Pauses the run until `until` (ISO time), as a ceiling or a limit asks. */
   async pauseUntil(until: string): Promise<void> {
+    this.throwIfStopped();
     await this.waitOut(Date.parse(until) - this.clock.now(), () =>
       this.setStatus("paused", { pausedUntil: until }),
     );
@@ -482,6 +512,7 @@ export class RunContext {
    * a person's pause holds it, so a closed gate never sits under `running`.
    */
   private async endPause(): Promise<void> {
+    this.throwIfStopped();
     if (this.cancelRequested) throw new RunCancelled();
     if (this.pauseWakes.size > 0 || this.pauseRequested) return;
     this.state.pausedUntil = undefined;
@@ -503,7 +534,7 @@ export class RunContext {
       await announce?.();
       if (ms <= 0) return;
       try {
-        await this.clock.sleep(ms, wake.signal);
+        await this.clock.sleep(Math.min(ms, MAX_SLEEP_MS), wake.signal);
       } catch {
         if (this.signal.aborted) throw new RunCancelled();
       }
@@ -513,9 +544,110 @@ export class RunContext {
     }
   }
 
-  /** Ends every timed wait now, such as after a person resumes the run. */
+  /** Ends every wait for a usage limit now, such as after a person resumes the run. */
   wakePause(): void {
     for (const wake of this.pauseWakes) wake.abort();
+  }
+
+  /**
+   * Marks the driver as stopped. Parallel calls that outlive it can finish a
+   * CLI call that is under way, since its answer is paid for, but they start
+   * nothing, wait for nothing, and change no status or role.
+   */
+  stopCalls(): void {
+    this.stopped = true;
+    this.requestResume();
+    this.wakePause();
+  }
+
+  /** Stops what is left of the last driver's calls, then lets calls start again. */
+  async beginDrive(): Promise<void> {
+    if (this.calls.size > 0) {
+      this.stopped = true;
+      this.abort.abort(new RunCancelled());
+      await Promise.allSettled([...this.calls]);
+    }
+    if (this.abort.signal.aborted && !this.cancelRequested) this.abort = new AbortController();
+    this.stopped = false;
+  }
+
+  private throwIfStopped(): void {
+    if (this.stopped) throw new RunCancelled();
+  }
+
+  /** Forgets the limits vendors reported. A person acted, so the next call finds out afresh. */
+  clearVendorLimits(): void {
+    this.eng.limitedVendors = {};
+  }
+
+  /** The vendor's limit in this run, or `null` when it has none or it passed. */
+  private limitOf(vendor: Vendor): { until: string | null; message: string } | null {
+    const limit = this.eng.limitedVendors[vendor];
+    if (!limit) return null;
+    if (limit.until !== null && Date.parse(limit.until) <= this.clock.now()) {
+      delete this.eng.limitedVendors[vendor];
+      return null;
+    }
+    return limit;
+  }
+
+  /** Records a limit. A quota with no reset time blocks the vendor until a person acts. */
+  private noteLimit(vendor: Vendor, limit: LimitInfo): void {
+    const now = this.clock.now();
+    const reset = limit.resetAt ? Date.parse(limit.resetAt) : Number.NaN;
+    let until: number | null;
+    if (!Number.isNaN(reset) && reset > now) until = Math.max(reset, now + MIN_LIMIT_BLOCK_MS);
+    else if (limit.kind === "rate_limit" || !Number.isNaN(reset)) until = now + RATE_LIMIT_BLOCK_MS;
+    else until = null;
+    this.eng.limitedVendors[vendor] = {
+      until: until === null ? null : new Date(until).toISOString(),
+      message: limit.message,
+    };
+  }
+
+  /**
+   * The vendor a call may use given the limits seen in this run. It moves the
+   * call to another vendor that can take the role. With none, it pauses until
+   * the first known reset, or asks a person when no reset time is known, so
+   * no call goes to a vendor that just reported a limit.
+   */
+  private async routeAroundLimits(spec: AgentCallSpec, start: Vendor): Promise<Vendor> {
+    let vendor = start;
+    for (;;) {
+      await this.checkpoint();
+      vendor = this.assignedVendor(spec, vendor);
+      const limit = this.limitOf(vendor);
+      if (!limit) return vendor;
+      const movable =
+        spec.allowFallback !== false && spec.role !== "fixer" && spec.method !== "continueReview";
+      if (movable) {
+        const next = this.fallbackVendor(spec.role, spec.avoid);
+        if (next) {
+          await this.reassign(spec.role, vendor, next, "limit");
+          return next;
+        }
+      }
+      const others = movable
+        ? FALLBACK_ORDER.filter(
+            (v) =>
+              v !== vendor &&
+              VENDOR_ROLES[v].includes(spec.role) &&
+              !spec.avoid?.includes(v) &&
+              this.usable(v),
+          )
+        : [];
+      const resets = [vendor, ...others].flatMap((v) => this.limitOf(v)?.until ?? []);
+      if (resets.length === 0) {
+        throw new DecisionNeeded({
+          kind: "ceiling",
+          findingIds: [],
+          options: ["resume", "cancel"],
+          message: `${vendor} reported a limit with no reset time: ${limit.message}. No other usable vendor can take the ${spec.role} call. Assign the role to another vendor, or resume when ${vendor} has room again.`,
+        });
+      }
+      const earliest = resets.reduce((a, b) => (Date.parse(a) <= Date.parse(b) ? a : b));
+      await this.pauseUntil(earliest);
+    }
   }
 
   /**
@@ -528,6 +660,19 @@ export class RunContext {
     this.eng.pendingAssign.push({ role, vendors });
     if (role === "reviewer") this.eng.manualRoles.reviewer = vendors;
     else this.eng.manualRoles[role] = vendors[0] as Vendor;
+    // Naming a vendor overrides what the run remembers about its limit.
+    for (const v of vendors) delete this.eng.limitedVendors[v];
+    await this.refreshRoles([role]);
+    this.wakePause();
+  }
+
+  /**
+   * Works out the roles again from the profile and the manual roles, which
+   * drops any move a limit made, and announces the changes to `roles`.
+   */
+  async refreshRoles(
+    roles: readonly Role[] = ["reviewer", "disprover", "confirmer", "fixer"],
+  ): Promise<void> {
     const before = this.state.roles;
     const after = assignRoles({
       profile: this.state.profile,
@@ -539,9 +684,10 @@ export class RunContext {
     });
     this.state.roles = after;
     await this.persist();
-    const from = role === "reviewer" ? before.reviewer : [before[role]];
-    const to = role === "reviewer" ? after.reviewer : [after[role]];
-    if (from.join() !== to.join()) {
+    for (const role of roles) {
+      const from = role === "reviewer" ? before.reviewer : [before[role]];
+      const to = role === "reviewer" ? after.reviewer : [after[role]];
+      if (from.join() === to.join()) continue;
       await this.emit({
         type: "role.reassigned",
         runId: this.state.id,
@@ -552,24 +698,23 @@ export class RunContext {
         effectiveRound: Math.max(this.round, 1),
       });
     }
-    this.wakePause();
   }
 
   /**
    * The vendor a pending call uses after a person's assignment: the assigned
-   * vendor, unless the call may not use it or already tried it. A continuation
-   * stays with the vendor that holds its session.
+   * vendor, unless the call may not use it or it reported a limit. A
+   * continuation stays with the vendor that holds its session.
    */
-  private assignedVendor(spec: AgentCallSpec, vendor: Vendor, tried: readonly Vendor[]): Vendor {
-    if (spec.method === "continueReview" || spec.role === "sweeper") return vendor;
+  private assignedVendor(spec: AgentCallSpec, vendor: Vendor): Vendor {
+    if (spec.pinVendor || spec.method === "continueReview" || spec.role === "sweeper")
+      return vendor;
     const role = ROLE_FOR_AGENT[spec.role];
     const manual = this.eng.manualRoles[role];
     if (manual === undefined) return vendor;
     const assigned = Array.isArray(manual) ? manual : [manual];
     if (assigned.includes(vendor)) return vendor;
     return (
-      assigned.find((v) => !tried.includes(v) && !spec.avoid?.includes(v) && this.usable(v)) ??
-      vendor
+      assigned.find((v) => !this.limitOf(v) && !spec.avoid?.includes(v) && this.usable(v)) ?? vendor
     );
   }
 
@@ -633,6 +778,11 @@ export class RunContext {
     let waiting = false;
     for (;;) {
       await this.checkpoint();
+      // A redirect to one of these would only stop the call, so the server
+      // leaves them out and pauses when nothing is left.
+      const exclude = FALLBACK_ORDER.filter(
+        (v) => v !== vendor && (avoid.includes(v) || !this.usable(v) || this.limitOf(v) !== null),
+      );
       this.eng.counters.lease += 1;
       const requested = `${this.state.id}-L${this.eng.counters.lease}`;
       // Saved before the request: the server answers a repeated lease id
@@ -648,12 +798,19 @@ export class RunContext {
             vendor,
             role,
             estimate: { tokens: Math.max(0, Math.round(estimateTokens)) },
+            ...(exclude.length > 0 ? { exclude } : {}),
           },
           this.signal,
         );
       } catch (error) {
         if (this.cancelRequested) throw new RunCancelled();
         throw error;
+      }
+      if (this.stopped) {
+        if (response.decision === "granted") {
+          await this.settle(response.leaseId, response.vendor, role, ZERO_USE);
+        }
+        throw new RunCancelled();
       }
       if (response.decision === "granted") {
         if (waiting) await this.endPause();
@@ -670,6 +827,17 @@ export class RunContext {
               findingIds: [],
               options: ["resume", "cancel"],
               message: `The server moved the ${role} call from ${vendor}, which is over its ceiling, to ${response.vendor}, but ${why}. No usable vendor can take the call. Resume when ${vendor} has room again, raise its ceiling, or fix ${response.vendor}'s setup.`,
+            });
+          }
+          const limited = this.limitOf(response.vendor);
+          if (limited) {
+            // Only a server that ignores `exclude` does this.
+            await this.settle(leaseId, response.vendor, role, ZERO_USE);
+            throw new DecisionNeeded({
+              kind: "ceiling",
+              findingIds: [],
+              options: ["resume", "cancel"],
+              message: `The server moved the ${role} call from ${vendor} to ${response.vendor}, but ${response.vendor} reported a limit: ${limited.message}. Resume when ${vendor} has room again, or assign the role to another vendor.`,
             });
           }
           if (avoid.includes(response.vendor)) {
@@ -713,17 +881,13 @@ export class RunContext {
     }
   }
 
-  private fallbackVendor(
-    role: AgentRole,
-    tried: readonly Vendor[],
-    avoid: readonly Vendor[] = [],
-  ): Vendor | null {
+  private fallbackVendor(role: AgentRole, avoid: readonly Vendor[] = []): Vendor | null {
     if (role === "fixer") return null;
     return (
       FALLBACK_ORDER.find(
         (v) =>
           VENDOR_ROLES[v].includes(role) &&
-          !tried.includes(v) &&
+          !this.limitOf(v) &&
           !avoid.includes(v) &&
           this.usable(v),
       ) ?? null
@@ -735,7 +899,15 @@ export class RunContext {
    * limit handling. A call already finished under the same key in this
    * round returns its saved result instead.
    */
-  async callAgent<T>(spec: AgentCallSpec): Promise<AgentOutcome<T>> {
+  callAgent<T>(spec: AgentCallSpec): Promise<AgentOutcome<T>> {
+    const call = this.runCall<T>(spec);
+    this.calls.add(call);
+    const done = () => this.calls.delete(call);
+    call.then(done, done);
+    return call;
+  }
+
+  private async runCall<T>(spec: AgentCallSpec): Promise<AgentOutcome<T>> {
     const cached = await this.store.readJson<AgentOutcome<T>>(this.callFile(spec.key));
     if (cached) {
       if (!cached.model || !isBlockedReviewModel(cached.vendor, cached.model)) return cached;
@@ -751,18 +923,16 @@ export class RunContext {
     }
 
     let vendor = spec.vendor;
-    const tried: Vendor[] = [];
     let failures = 0;
-    let limitHits = 0;
     let malformed = false;
     for (;;) {
-      vendor = this.assignedVendor(spec, vendor, tried);
+      vendor = await this.routeAroundLimits(spec, vendor);
       const lease = await this.acquireLease(
         vendor,
         spec.role,
         spec.estimateTokens,
         spec.avoid,
-        (v) => this.assignedVendor(spec, v, tried),
+        (v) => this.assignedVendor(spec, v),
       );
       vendor = lease.vendor;
       const adapter: VendorAdapter | undefined = this.deps.adapters[vendor];
@@ -874,25 +1044,18 @@ export class RunContext {
           error: describeError(error),
         });
         if (limit) {
-          limitHits += 1;
-          if (limitHits > 4)
-            throw new AgentFailed(
-              spec.role,
-              vendor,
-              `${vendor} kept hitting its limit: ${limit.message}`,
-            );
-          tried.push(vendor);
-          const next =
-            spec.allowFallback === false ? null : this.fallbackVendor(spec.role, tried, spec.avoid);
-          if (next) {
-            await this.reassign(spec.role, vendor, next, "limit");
-            vendor = next;
-          } else {
-            await this.pauseUntil(
-              limit.resetAt ?? new Date(this.clock.now() + 15 * 60_000).toISOString(),
-            );
-          }
+          // The next pass of this loop moves the call, pauses, or asks a person.
+          this.noteLimit(vendor, limit);
+          await this.persist();
           continue;
+        }
+        const text = (error as Error).message ?? String(error);
+        if (SAFETY_REFUSAL.test(text)) {
+          throw new SafetyRefused(
+            spec.role,
+            vendor,
+            `The ${spec.role} call on ${vendor} was refused by the vendor's safety filter: ${text}`,
+          );
         }
         failures += 1;
         malformed = isMalformedOutput(error);

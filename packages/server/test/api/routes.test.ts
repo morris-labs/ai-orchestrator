@@ -321,6 +321,7 @@ const cases: Case[] = [
     status: 200,
   },
   { key: "runs.rebaseBase", method: "POST", url: `${R}/rebase-base`, status: 200 },
+  { key: "runs.retry", method: "POST", url: `${R}/retry`, body: {}, status: 200 },
   {
     key: "runs.decide",
     method: "POST",

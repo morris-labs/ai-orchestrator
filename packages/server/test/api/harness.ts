@@ -132,6 +132,7 @@ export function defaultEngine(): FakeEngine {
       "engine.runs.profile": runFor,
       "engine.runs.assign": runFor,
       "engine.runs.rebaseBase": runFor,
+      "engine.runs.retry": runFor,
       "engine.runs.decide": runFor,
       "engine.runs.push": runFor,
       "engine.runs.groups": (i) => (runFor(i), { groups: [] }),

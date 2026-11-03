@@ -4,7 +4,7 @@
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { VENDOR_ROLES } from "@aio/contracts";
+import { VENDOR_ROLES, belowVerifyFloor } from "@aio/contracts";
 import type {
   AgentRole,
   FileGroup,
@@ -56,8 +56,11 @@ import {
   type CheckoutState,
 } from "./checkout.js";
 import {
+  AgentFailed,
   DecisionNeeded,
   RunCancelled,
+  SafetyRefused,
+  type AgentCallSpec,
   type AgentOutcome,
   type CallTier,
   type RunContext,
@@ -277,6 +280,7 @@ export function callTier(
       (f) =>
         f.verdict === "confirmed" &&
         aboveNit(f) &&
+        !belowVerifyFloor(f, ctx.state.request.verifyFloor) &&
         f.round < ctx.round &&
         !declined.has(f.id) &&
         f.file !== null &&
@@ -740,9 +744,140 @@ export async function disposeCheckouts(ctx: RunContext): Promise<void> {
   await removeCheckout(ctx.git, scriptCheckoutsDir(ctx.state.id));
 }
 
-/** Verifies every pending finding with a disprover from another vendor. */
+/** Pending findings that no disprover checks, because of the verification floor. */
+export function belowFloorPending(ctx: RunContext): Finding[] {
+  const floor = ctx.state.request.verifyFloor;
+  return ctx.findings.filter((f) => f.verdict === "pending" && belowVerifyFloor(f, floor));
+}
+
+/**
+ * Confirmed findings that would go to the fixer without the verification
+ * floor. They stay confirmed. A fix that already exists still reaches the
+ * confirmer, and a finding the fixer declined is already left to a person.
+ */
+export function heldByFloor(ctx: RunContext): Finding[] {
+  if (ctx.state.request.readOnly) return [];
+  const floor = ctx.state.request.verifyFloor;
+  const declined = new Set(ctx.eng.declined);
+  return ctx.findings.filter(
+    (f) =>
+      f.verdict === "confirmed" &&
+      aboveNit(f) &&
+      !f.fixCommit &&
+      !declined.has(f.id) &&
+      belowVerifyFloor(f, floor),
+  );
+}
+
+/**
+ * Makes each finding's floor labels match the run's floor and the finding's
+ * verdict, and announces the findings that changed. A retry can move the
+ * floor, and a person can waive a finding.
+ */
+export async function syncFloorLabels(ctx: RunContext): Promise<void> {
+  const below = new Set(belowFloorPending(ctx));
+  const held = new Set(heldByFloor(ctx));
+  const changed: Finding[] = [];
+  for (const f of ctx.findings) {
+    const unverified = below.has(f) !== (f.unverifiedReason !== undefined);
+    const fixHeld = held.has(f) !== (f.fixHeldReason !== undefined);
+    if (!unverified && !fixHeld) continue;
+    if (below.has(f)) f.unverifiedReason = "below_verify_floor";
+    else delete f.unverifiedReason;
+    if (held.has(f)) f.fixHeldReason = "below_verify_floor";
+    else delete f.fixHeldReason;
+    changed.push(f);
+  }
+  if (changed.length === 0) return;
+  await ctx.persist();
+  for (const f of changed) {
+    await ctx.emit({
+      type: "finding.changed",
+      runId: ctx.state.id,
+      finding: structuredClone(f),
+      previousVerdict: f.verdict,
+    });
+  }
+}
+
+/** Thrown when a refused call found no model or vendor that would answer. */
+class RefusalFallbackFailed extends Error {
+  constructor(readonly reasons: readonly string[]) {
+    super(reasons.join(" "));
+    this.name = "RefusalFallbackFailed";
+  }
+}
+
+/**
+ * Makes a call, and moves it when a vendor's safety filter refuses: to Codex's
+ * small model, then to Claude. Claude can be the finding's reporter or the
+ * fixer, so its answer waives the cross-vendor rule for this call, and the run
+ * gets a notice. Other failures of the first call stay as they are.
+ */
+async function callWithRefusalFallback<T>(
+  ctx: RunContext,
+  spec: AgentCallSpec,
+  subject: string,
+): Promise<AgentOutcome<T>> {
+  let refused: SafetyRefused;
+  try {
+    return await ctx.callAgent<T>(spec);
+  } catch (error) {
+    if (!(error instanceof SafetyRefused)) throw error;
+    refused = error;
+  }
+  const reasons = [refused.message];
+  const pinned = { ...spec, allowFallback: false, pinVendor: true };
+  const attempts: AgentCallSpec[] = [];
+  if (refused.vendor === "codex") {
+    attempts.push({
+      ...pinned,
+      key: `${spec.key}-small`,
+      tier: { tier: "small", reason: "A larger model's call was refused", fixed: true },
+    });
+  }
+  if (refused.vendor !== "claude" && ctx.usable("claude")) {
+    const { avoid: _reporterOrFixer, ...rest } = pinned;
+    attempts.push({
+      ...rest,
+      key: `${spec.key}-claude`,
+      vendor: "claude",
+      avoid: [refused.vendor],
+    });
+  }
+  for (const attempt of attempts) {
+    try {
+      const out = await ctx.callAgent<T>(attempt);
+      if (out.vendor === "claude") {
+        await addNotice(
+          ctx,
+          `Claude answered for ${subject} after a safety refusal, so that check isn't independent.`,
+        );
+      }
+      return out;
+    } catch (error) {
+      if (!(error instanceof AgentFailed)) throw error;
+      reasons.push(error.message);
+    }
+  }
+  throw new RefusalFallbackFailed(reasons);
+}
+
+async function addNotice(ctx: RunContext, notice: string): Promise<void> {
+  ctx.state.notices = [...(ctx.state.notices ?? []), notice];
+  await ctx.persist();
+}
+
+/**
+ * Verifies every pending finding at or above the verification floor with a
+ * disprover from another vendor. The rest stay pending and labeled.
+ */
 export async function verifyPending(ctx: RunContext, stageFile: string): Promise<VerifyResult[]> {
-  const pending = ctx.findings.filter((f) => f.verdict === "pending");
+  await syncFloorLabels(ctx);
+  const pending = ctx.findings.filter(
+    (f) =>
+      f.verdict === "pending" && f.unverifiedReason === undefined && f.followUpReason === undefined,
+  );
   const repoPath = pending.length > 0 ? await readOnlyRepo(ctx) : ctx.state.request.repoPath;
   const tipState = pending.length > 0 ? await readOnlyState(ctx) : null;
   const groups = await roundGroups(ctx);
@@ -752,7 +887,7 @@ export async function verifyPending(ctx: RunContext, stageFile: string): Promise
       available: ctx.availableVendors,
       profile: ctx.state.profile,
     });
-    const result = await verifyFinding(finding, vendor, {
+    const verified = verifyFinding(finding, vendor, {
       runner: ctx.deps.runner,
       range: ctx.range(repoPath),
       policy: ctx.policy,
@@ -767,18 +902,22 @@ export async function verifyPending(ctx: RunContext, stageFile: string): Promise
       timeoutMs: ctx.timeouts.disprover,
       callDisprover: async (v, f, request) => {
         const tier = callTier(ctx, "disprover", groups, f.file ? [f.file] : []);
-        const out = await ctx.callAgent<VerifyOutput>({
-          key: `verify-${f.id}`,
-          role: "disprover",
-          vendor: v,
-          method: "verify",
-          request,
-          groupId: f.groupId,
-          estimateTokens: estimateTokens(request.prompt) + 6000,
-          allowFallback: true,
-          ...(tier ? { tier } : {}),
-          ...(ctx.state.request.crossVendor ? { avoid: avoidFor(f) } : {}),
-        });
+        const out = await callWithRefusalFallback<VerifyOutput>(
+          ctx,
+          {
+            key: `verify-${f.id}`,
+            role: "disprover",
+            vendor: v,
+            method: "verify",
+            request,
+            groupId: f.groupId,
+            estimateTokens: estimateTokens(request.prompt) + 6000,
+            allowFallback: true,
+            ...(tier ? { tier } : {}),
+            ...(ctx.state.request.crossVendor ? { avoid: avoidFor(f) } : {}),
+          },
+          `finding ${f.id}`,
+        );
         return {
           vendor: out.vendor,
           model: out.model,
@@ -787,6 +926,22 @@ export async function verifyPending(ctx: RunContext, stageFile: string): Promise
         };
       },
     });
+    let result: Awaited<typeof verified>;
+    try {
+      result = await verified;
+    } catch (error) {
+      if (!(error instanceof RefusalFallbackFailed)) throw error;
+      // Nothing can check this finding, so it waits for a person, and the run goes on.
+      finding.followUpReason = error.reasons.join(" ").slice(0, 2000);
+      await addNotice(ctx, `Finding ${finding.id} needs follow-up: no vendor would check it.`);
+      await ctx.emit({
+        type: "finding.changed",
+        runId: ctx.state.id,
+        finding: structuredClone(finding),
+        previousVerdict: finding.verdict,
+      });
+      return null;
+    }
     if (!result) return result;
     const d = result.decision;
     if (d.verdict === "unverified") {
@@ -845,6 +1000,7 @@ export async function runSweep(
   const patterns = ctx.findings.filter(
     (f) =>
       f.verdict === "confirmed" &&
+      !belowVerifyFloor(f, ctx.state.request.verifyFloor) &&
       f.history.some((h) => h.verdict === "confirmed" && h.round === ctx.round),
   );
   if (patterns.length === 0) {
@@ -918,11 +1074,16 @@ export interface FixRecord {
   batches: FixBatchRecord[];
 }
 
-/** Findings the fixer should work on: confirmed, above `nit`, and not declined. */
+/** Findings the fixer should work on: confirmed, above `nit`, at or above the floor, and not declined. */
 export function fixTargets(ctx: RunContext): Finding[] {
   const declined = new Set(ctx.eng.declined);
+  const floor = ctx.state.request.verifyFloor;
   return ctx.findings.filter(
-    (f) => f.verdict === "confirmed" && aboveNit(f) && !declined.has(f.id),
+    (f) =>
+      f.verdict === "confirmed" &&
+      aboveNit(f) &&
+      !declined.has(f.id) &&
+      !belowVerifyFloor(f, floor),
   );
 }
 
@@ -1023,6 +1184,21 @@ export async function runFix(
   if (!plan) {
     plan = planBatches(targets, gateFailure);
     await ctx.store.writeJson(planFile, plan);
+  }
+  // A retry can raise the floor after the plan was saved. A batch the fixer
+  // already finished stays, and the others lose what the floor now holds.
+  const held = new Set(heldByFloor(ctx).map((f) => f.id));
+  if (held.size > 0) {
+    const kept: string[][] = [];
+    for (const ids of plan) {
+      const key = `${name}-${batchKey(ids)}`;
+      const finished =
+        (await ctx.store.readJson(ctx.store.roundFile(ctx.round, key))) ??
+        (await ctx.store.readJson(ctx.store.roundFile(ctx.round, `calls/${key}`)));
+      const rest = finished ? ids : ids.filter((id) => !held.has(id));
+      if (rest.length > 0) kept.push(rest);
+    }
+    plan = kept;
   }
 
   const record: FixRecord = { attempt: ctx.eng.gateAttempts + 1, preFixSha, batches: [] };
@@ -1244,18 +1420,29 @@ export async function runConfirm(
       ...parseDiff(fixDiff).map((f) => f.path),
     ]),
   ]);
-  const out = await ctx.callAgent<ConfirmOutput>({
-    key: "confirm",
-    role: "confirmer",
-    vendor,
-    method: "confirm",
-    request: { prompt, repoPath, toolPolicy: "read-only" },
-    groupId: null,
-    estimateTokens: estimateTokens(prompt) + 3000,
-    allowFallback: true,
-    ...(confirmTier ? { tier: confirmTier } : {}),
-    ...(crossVendor ? { avoid: writers } : {}),
-  });
+  let out: AgentOutcome<ConfirmOutput>;
+  try {
+    out = await callWithRefusalFallback<ConfirmOutput>(
+      ctx,
+      {
+        key: "confirm",
+        role: "confirmer",
+        vendor,
+        method: "confirm",
+        request: { prompt, repoPath, toolPolicy: "read-only" },
+        groupId: null,
+        estimateTokens: estimateTokens(prompt) + 3000,
+        allowFallback: true,
+        // Without the rule, the fixer confirms, whoever holds the confirmer role.
+        ...(crossVendor ? { avoid: writers } : { pinVendor: true }),
+        ...(confirmTier ? { tier: confirmTier } : {}),
+      },
+      "the fix confirmation",
+    );
+  } catch (error) {
+    if (!(error instanceof RefusalFallbackFailed)) throw error;
+    throw new AgentFailed("confirmer", vendor, error.message);
+  }
   const actor = { kind: "agent" as const, vendor: out.vendor, model: out.model, role: "confirmer" };
   const incomplete = new Map(out.output.incomplete.map((i) => [i.id, i.reason]));
   const fixedIds: string[] = [];
@@ -1370,6 +1557,7 @@ export function confirmedThisRound(ctx: RunContext): Finding[] {
   return ctx.findings.filter(
     (f) =>
       aboveNit(f) &&
+      !belowVerifyFloor(f, ctx.state.request.verifyFloor) &&
       f.history.some(
         (h) => h.round === ctx.round && h.verdict === "confirmed" && h.actor.role === "disprover",
       ),

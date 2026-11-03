@@ -1,6 +1,7 @@
 // The pre-push state machine (design.md, "Pre-push pipeline"). Each stage
 // reads the files the previous stage wrote, so the driver can start at any
 // stage after a crash, a pause, or a decision.
+import { belowVerifyFloor } from "@aio/contracts";
 import type { Finding, Role, RoleAssignment, StopReason, Vendor } from "@aio/contracts";
 import { runGate } from "../gate/gate.js";
 import { resolveRange } from "../range/resolve.js";
@@ -9,12 +10,14 @@ import { assignRoles } from "./profiles.js";
 import {
   GATE_ATTEMPTS,
   aboveNit,
+  belowFloorPending,
   buildRoundSummary,
   computeGroups,
   confirmedThisRound,
   disposeBaseWorktree,
   disposeCheckouts,
   fixTargets,
+  heldByFloor,
   oscillationDecision,
   runConfirm,
   runFind,
@@ -22,6 +25,7 @@ import {
   runGateStage,
   runMerge,
   runSweep,
+  syncFloorLabels,
   verifyPending,
   warnLeftovers,
   type MergeOutput,
@@ -224,14 +228,23 @@ export async function endRound(ctx: RunContext): Promise<StopReason | null> {
   await ctx.persist();
   await ctx.emitRun(summary);
 
-  if (ctx.eng.cleanRounds >= 2 && openFindings(ctx).length === 0) return "clean";
+  if (ctx.eng.cleanRounds >= 2 && openFindings(ctx).length === 0) {
+    // Findings below the floor don't hold the run open, but nothing checked
+    // or fixed them, so the run can't call itself clean.
+    if (ctx.findings.some((f) => f.verdict === "pending" && f.followUpReason !== undefined)) {
+      return "clean_with_followups";
+    }
+    return belowFloorPending(ctx).length > 0 || heldByFloor(ctx).length > 0
+      ? "clean_above_floor"
+      : "clean";
+  }
   if (ctx.round >= ctx.state.request.roundCap) return "round_cap";
   return null;
 }
 
 /**
- * Findings that keep a run from stopping clean: any finding still waiting
- * for its disprover, and, in a run that fixes, any confirmed finding above
+ * Findings that keep a run from stopping clean: any finding at or above the
+ * verification floor still waiting for its disprover, and, in a run that fixes, any confirmed finding above
  * `nit` that the fixer still has to work on, such as one whose fix the
  * confirmer found incomplete. A finding the fixer declined is
  * left to a person.
@@ -241,13 +254,34 @@ export function openFindings(ctx: RunContext): Finding[] {
   const fixes = !ctx.state.request.readOnly;
   return ctx.findings.filter(
     (f) =>
-      f.verdict === "pending" ||
-      (fixes && f.verdict === "confirmed" && aboveNit(f) && !declined.has(f.id)),
+      (f.verdict === "pending" &&
+        f.followUpReason === undefined &&
+        !belowVerifyFloor(f, ctx.state.request.verifyFloor)) ||
+      (fixes &&
+        f.verdict === "confirmed" &&
+        aboveNit(f) &&
+        !declined.has(f.id) &&
+        !belowVerifyFloor(f, ctx.state.request.verifyFloor)),
   );
 }
 
 /** Finishes the run with a stop reason. */
 export async function finish(ctx: RunContext, reason: StopReason): Promise<void> {
+  await syncFloorLabels(ctx);
+  const unchecked = belowFloorPending(ctx).length;
+  if (unchecked > 0) {
+    const notice = `${unchecked} ${unchecked === 1 ? "finding" : "findings"} below the ${ctx.state.request.verifyFloor} verification floor stayed pending: no disprover checked them, and the fixer didn't work on them.`;
+    if (!ctx.state.notices?.includes(notice)) {
+      ctx.state.notices = [...(ctx.state.notices ?? []), notice];
+    }
+  }
+  const held = heldByFloor(ctx).length;
+  if (held > 0) {
+    const notice = `${held} confirmed ${held === 1 ? "finding" : "findings"} below the ${ctx.state.request.verifyFloor} verification floor didn't go to the fixer.`;
+    if (!ctx.state.notices?.includes(notice)) {
+      ctx.state.notices = [...(ctx.state.notices ?? []), notice];
+    }
+  }
   await disposeCheckouts(ctx);
   await ctx.setStage("done");
   await ctx.setStatus("finished", { stopReason: reason, decision: null });

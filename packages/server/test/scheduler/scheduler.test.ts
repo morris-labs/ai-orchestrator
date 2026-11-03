@@ -35,6 +35,28 @@ function make(override?: CeilingsOverride, health?: VendorHealth) {
 }
 
 describe("Scheduler", () => {
+  it("doesn't move a call to a vendor the engine excludes, and pauses for the requested vendor", async () => {
+    const t = make();
+    t.sample("codex", { utilization: 1, resetAt: iso(T0 + 60 * MIN) });
+    const res = await t.scheduler.decide(
+      "engine:a",
+      "p",
+      t.req({ role: "disprover", exclude: ["copilot", "claude"] }),
+    );
+    expect(res).toMatchObject({ decision: "pause", resumeAt: iso(T0 + 60 * MIN) });
+  });
+
+  it("still moves a call to a vendor that isn't excluded", async () => {
+    const t = make();
+    t.sample("codex", { utilization: 1, resetAt: iso(T0 + 60 * MIN) });
+    const res = await t.scheduler.decide(
+      "engine:a",
+      "p",
+      t.req({ role: "disprover", exclude: ["copilot"] }),
+    );
+    expect(res).toMatchObject({ decision: "granted", vendor: "claude" });
+  });
+
   it("grants a vendor under its ceiling", async () => {
     const t = make();
     t.sample("codex", { utilization: 0.3 });

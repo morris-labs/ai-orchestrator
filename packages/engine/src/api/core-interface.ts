@@ -7,6 +7,7 @@
 import type {
   ApiErrorCode,
   DecisionAnswer,
+  RunRetry,
   EngineRunCreate,
   FileGroup,
   Finding,
@@ -99,6 +100,7 @@ export interface RunManager {
   profile(runId: string, profile: Profile): Promise<RunState>;
   assign(runId: string, role: Role, vendors: Vendor[]): Promise<RunState>;
   rebaseBase(runId: string): Promise<RunState>;
+  retry(runId: string, options: RunRetry): Promise<RunState>;
   decide(runId: string, answer: DecisionAnswer): Promise<RunState>;
   push(runId: string, options: { title?: string; draft: boolean }): Promise<RunState>;
   groups(runId: string): Promise<FileGroup[]>;
