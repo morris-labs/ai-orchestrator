@@ -101,6 +101,38 @@ describe("EventsConnection", () => {
     expect(onResync).toHaveBeenCalledTimes(1);
   });
 
+  it("resumes from an earlier connection's position", async () => {
+    const { server, conn } = setup();
+    conn.start();
+    await flush();
+    server.emit(boxEvent());
+    const position = conn.position;
+    conn.stop();
+    server.emit(boxEvent());
+
+    const events: string[] = [];
+    const onResync = vi.fn();
+    const next = new EventsConnection({
+      client: new ApiClient({
+        baseUrl: "http://h",
+        token: "t",
+        fetch: server.fetch,
+        WebSocket: server.WebSocket,
+      }),
+      position,
+      onEvent: (e) => events.push(`${e.type}#${e.seq}`),
+      onResync,
+      helloTimeoutMs: 0,
+    });
+    next.start();
+    await flush();
+    const sock = server.socketsFor("/api/v1/events")[0] as FakeSocket;
+    expect(sock.sentJson[0]).toEqual({ type: "hello", streamId: "fake-stream", lastSeq: 1 });
+    expect(events).toEqual(["box.changed#2"]);
+    expect(onResync).not.toHaveBeenCalled();
+    next.stop();
+  });
+
   it("resyncs when the stream id changes", () => {
     const { conn, onResync } = setup();
     conn.handleFrame({ type: "hello", streamId: "a", lastSeq: 5, replaying: false });

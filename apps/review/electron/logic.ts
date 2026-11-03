@@ -3,6 +3,7 @@
 // machine, which notifications to show, and the tray bitmap.
 import { ACTIVE_STATUSES_FOR_TRAY, type DeepLink } from "./types.js";
 import type { AioEvent, Machine, NotificationToggles, RunState } from "@aio/contracts";
+import type { StreamPosition } from "@aio/ui/core";
 
 export { ACTIVE_STATUSES_FOR_TRAY, type DeepLink };
 
@@ -174,6 +175,13 @@ export function noticeFor(
 /** How often the app reloads the machine list. */
 export const MACHINE_POLL_MS = 10_000;
 
+/** A machine's open event stream. */
+export interface MachineStream {
+  stop: () => void;
+  /** The position the stream would resume from. */
+  position: StreamPosition;
+}
+
 /** The handlers a machine's event stream calls. */
 export interface MachineStreamHandlers {
   onEvent: (event: AioEvent) => void;
@@ -183,12 +191,19 @@ export interface MachineStreamHandlers {
 
 /** What `FleetActiveRuns` needs from the outside world, so tests can fake it. */
 export interface FleetDeps {
-  /** This server's machine list; rejects with a 404 on a server without machine routes. */
+  /** This server's machine list. */
   listMachines: () => Promise<Machine[]>;
   /** `runs.list` on another machine, through the hub. */
   listRuns: (machineId: string) => Promise<RunState[]>;
-  /** Opens another machine's event stream through the hub. */
-  connect: (machineId: string, handlers: MachineStreamHandlers) => { stop: () => void };
+  /**
+   * Opens another machine's event stream through the hub, resuming from
+   * `position` when the app followed the machine before.
+   */
+  connect: (
+    machineId: string,
+    handlers: MachineStreamHandlers,
+    position: StreamPosition | undefined,
+  ) => MachineStream;
   /** The active-run count changed. */
   onCount: () => void;
   /** Another machine sent a `notification` event. */
@@ -203,14 +218,8 @@ export interface FleetDeps {
 interface Followed {
   machine: NoticeMachine;
   runs: ActiveRuns;
-  stream: { stop: () => void };
+  stream: MachineStream;
   reloader: Reloader;
-}
-
-/** True when an error is an HTTP status that means the server has no machine routes. */
-function noMachineRoutes(err: unknown): boolean {
-  const status = (err as { status?: unknown } | null)?.status;
-  return typeof status === "number" && [404, 405, 501].includes(status);
 }
 
 /**
@@ -218,7 +227,9 @@ function noMachineRoutes(err: unknown): boolean {
  * the tray, and the notifications of the other machines. It polls the
  * machine list, and follows each online machine's event stream through the
  * hub while the machine stays online. A machine that goes offline or is
- * revoked stops counting at once: its runs show only while it's online.
+ * revoked stops counting at once: its runs show only while it's online. The
+ * app keeps the stream position of an offline machine, so a notification sent
+ * while the machine was out of reach still arrives when it's back.
  */
 export class FleetActiveRuns {
   /** This machine's runs, which the app's own event stream keeps current. */
@@ -227,6 +238,10 @@ export class FleetActiveRuns {
   private readonly followed = new Map<string, Followed>();
   private timer: unknown = null;
   private polls = 0;
+  /** The machine list load in flight, which every poll shares until it settles. */
+  private listing: Promise<void> | null = null;
+  /** Where to resume the stream of each machine that is offline. */
+  private readonly positions = new Map<string, StreamPosition>();
   private stopped = false;
 
   constructor(private readonly deps: FleetDeps) {}
@@ -252,16 +267,22 @@ export class FleetActiveRuns {
   }
 
   /** Reloads the machine list, then follows the online machines and drops the rest. */
-  async refresh(): Promise<void> {
-    const poll = ++this.polls;
+  refresh(): Promise<void> {
+    if (this.listing) return this.listing;
+    const listing = this.load(++this.polls).finally(() => {
+      if (this.listing === listing) this.listing = null;
+    });
+    this.listing = listing;
+    return listing;
+  }
+
+  private async load(poll: number): Promise<void> {
     let machines: Machine[];
     try {
       machines = await this.deps.listMachines();
-    } catch (err) {
-      if (poll !== this.polls || this.stopped) return;
-      // A server without machine routes is a single machine: stop asking.
-      if (noMachineRoutes(err)) this.stopPolling();
-      // Otherwise keep the machines as they are until a list comes back.
+    } catch {
+      // Keep the machines as they are and keep asking. A 404 can come from a
+      // server without machine routes, or from a proxy or an update under way.
       return;
     }
     if (poll !== this.polls || this.stopped) return;
@@ -277,7 +298,13 @@ export class FleetActiveRuns {
         continue;
       }
       changed ||= f.runs.count > 0;
+      this.positions.set(id, f.stream.position);
       this.unfollow(id);
+    }
+    // A revoked or removed machine won't resume.
+    const enrolled = new Set(machines.filter((m) => m.status !== "revoked").map((m) => m.id));
+    for (const id of this.positions.keys()) {
+      if (!enrolled.has(id)) this.positions.delete(id);
     }
     for (const m of online.values()) {
       if (!this.followed.has(m.id)) this.follow(m);
@@ -300,17 +327,23 @@ export class FleetActiveRuns {
       machine,
       runs,
       reloader,
-      stream: { stop: () => undefined },
+      stream: { stop: () => undefined, position: { streamId: null, lastSeq: null } },
     };
     this.followed.set(m.id, entry);
-    entry.stream = this.deps.connect(m.id, {
-      onEvent: (event) => {
-        if (this.followed.get(m.id) !== entry) return;
-        if (runs.apply(event)) this.deps.onCount();
-        if (event.type === "notification") this.deps.onNotification(entry.machine, event);
+    const position = this.positions.get(m.id);
+    this.positions.delete(m.id);
+    entry.stream = this.deps.connect(
+      m.id,
+      {
+        onEvent: (event) => {
+          if (this.followed.get(m.id) !== entry) return;
+          if (runs.apply(event)) this.deps.onCount();
+          if (event.type === "notification") this.deps.onNotification(entry.machine, event);
+        },
+        onResync: () => reloader.request(),
       },
-      onResync: () => reloader.request(),
-    });
+      position,
+    );
     reloader.request();
   }
 
@@ -343,6 +376,7 @@ export class FleetActiveRuns {
   stop(): void {
     this.stopped = true;
     this.polls += 1;
+    this.listing = null;
     this.stopPolling();
     for (const id of [...this.followed.keys()]) this.unfollow(id);
   }

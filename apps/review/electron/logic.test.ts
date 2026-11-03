@@ -1,4 +1,5 @@
 import type { AioEvent, Machine, RunState } from "@aio/contracts";
+import type { StreamPosition } from "@aio/ui/core";
 import { describe, expect, it } from "vitest";
 import {
   ActiveRuns,
@@ -283,25 +284,43 @@ describe("FleetActiveRuns", () => {
   const settle = () => new Promise((r) => setTimeout(r, 0));
 
   function setup(machines: Machine[] | Error, runs: Record<string, RunState[]>) {
-    const streams = new Map<string, { handlers: MachineStreamHandlers; stopped: boolean }>();
+    const streams = new Map<
+      string,
+      {
+        handlers: MachineStreamHandlers;
+        stopped: boolean;
+        position: StreamPosition;
+        resumedFrom: StreamPosition | undefined;
+      }
+    >();
     const notices: [string, AioEvent][] = [];
     const listed: string[] = [];
     let counts = 0;
     const intervals: { fn: () => void; cleared: boolean }[] = [];
-    const state = { machines };
+    const state: { machines: Machine[] | Error | (() => Promise<Machine[]>) } = { machines };
     const fleet = new FleetActiveRuns({
       listMachines: async () => {
         if (state.machines instanceof Error) throw state.machines;
-        return state.machines;
+        return typeof state.machines === "function" ? state.machines() : state.machines;
       },
       listRuns: async (id) => {
         listed.push(id);
         return runs[id] ?? [];
       },
-      connect: (id, handlers) => {
-        const s = { handlers, stopped: false };
+      connect: (id, handlers, resumedFrom) => {
+        const s = {
+          handlers,
+          stopped: false,
+          position: { streamId: `stream-${id}`, lastSeq: 7 },
+          resumedFrom,
+        };
         streams.set(id, s);
-        return { stop: () => void (s.stopped = true) };
+        return {
+          stop: () => void (s.stopped = true),
+          get position() {
+            return s.position;
+          },
+        };
       },
       onCount: () => void (counts += 1),
       onNotification: (m, e) => void notices.push([m.name, e]),
@@ -398,15 +417,89 @@ describe("FleetActiveRuns", () => {
     expect(fleet.machineIds).toEqual([]);
   });
 
-  it("stops polling a server without machine routes", async () => {
-    const { fleet, intervals, streams } = setup(
-      Object.assign(new Error("Not found."), { status: 404 }),
-      {},
-    );
+  it.each([404, 405, 501])(
+    "finds machines again after a %i from the machine list",
+    async (status) => {
+      const { fleet, intervals, streams, state } = setup(
+        Object.assign(new Error("No route."), { status }),
+        {},
+      );
+      fleet.start();
+      await settle();
+      expect(intervals[0]!.cleared).toBe(false);
+      expect(streams.size).toBe(0);
+
+      state.machines = [LOCAL, BUILD];
+      intervals[0]!.fn();
+      await settle();
+      expect(fleet.machineIds).toEqual(["m1"]);
+      fleet.stop();
+    },
+  );
+
+  it("resumes a stream from its position when the machine comes back online", async () => {
+    const { fleet, streams, state } = setup([LOCAL, BUILD], {});
+    await fleet.refresh();
+    expect(streams.get("m1")!.resumedFrom).toBeUndefined();
+
+    state.machines = [LOCAL, { ...BUILD, status: "offline" }];
+    await fleet.refresh();
+    state.machines = [LOCAL, BUILD];
+    await fleet.refresh();
+    expect(streams.get("m1")!.resumedFrom).toEqual({ streamId: "stream-m1", lastSeq: 7 });
+  });
+
+  it.each([
+    ["revoked", [LOCAL, { ...BUILD, status: "revoked" }]],
+    ["removed", [LOCAL]],
+  ] as [string, Machine[]][])("forgets the position of a %s machine", async (_name, gone) => {
+    const { fleet, streams, state } = setup([LOCAL, BUILD], {});
+    await fleet.refresh();
+    state.machines = [LOCAL, { ...BUILD, status: "offline" }];
+    await fleet.refresh();
+    state.machines = gone;
+    await fleet.refresh();
+    state.machines = [LOCAL, BUILD];
+    await fleet.refresh();
+    expect(streams.get("m1")!.resumedFrom).toBeUndefined();
+  });
+
+  it("applies a slow machine list instead of starting a poll over it", async () => {
+    const { fleet, intervals, state } = setup([LOCAL], {});
+    const pending: ((m: Machine[]) => void)[] = [];
+    state.machines = () => new Promise((resolve) => pending.push(resolve));
     fleet.start();
+    // Ticks of the poll timer while the first list is still loading.
+    intervals[0]!.fn();
+    intervals[0]!.fn();
+    expect(pending).toHaveLength(1);
+
+    pending[0]!([LOCAL, BUILD]);
     await settle();
-    expect(intervals[0]!.cleared).toBe(true);
-    expect(streams.size).toBe(0);
+    expect(fleet.machineIds).toEqual(["m1"]);
+
+    // The next tick asks again.
+    intervals[0]!.fn();
+    expect(pending).toHaveLength(2);
+    fleet.stop();
+  });
+
+  it("ignores a list that loads after stop, and asks again on start", async () => {
+    const { fleet, state } = setup([LOCAL], {});
+    const pending: ((m: Machine[]) => void)[] = [];
+    state.machines = () => new Promise((resolve) => pending.push(resolve));
+    fleet.start();
+    fleet.stop();
+    fleet.start();
+    expect(pending).toHaveLength(2);
+
+    pending[0]!([LOCAL, BUILD]);
+    await settle();
+    expect(fleet.machineIds).toEqual([]);
+    pending[1]!([LOCAL, BUILD]);
+    await settle();
+    expect(fleet.machineIds).toEqual(["m1"]);
+    fleet.stop();
   });
 });
 

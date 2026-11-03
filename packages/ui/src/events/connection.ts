@@ -16,6 +16,12 @@ import type { ApiClient } from "../api/client";
 
 export type StreamStatus = "connecting" | "open" | "closed";
 
+/** Where a connection is in a stream: the position a `hello` resumes from. */
+export interface StreamPosition {
+  streamId: string | null;
+  lastSeq: number | null;
+}
+
 export interface EventsConnectionOptions {
   /**
    * The client, or a function that returns one for each connection attempt,
@@ -25,6 +31,12 @@ export interface EventsConnectionOptions {
   client: ApiClient | (() => ApiClient);
   /** Event types to receive; absent means all. */
   types?: readonly EventType[];
+  /**
+   * Where to resume, from an earlier connection's `position`, so the server
+   * replays what that connection missed. Absent means the first `hello` asks
+   * for no replay. The earlier connection must use the same `types`.
+   */
+  position?: StreamPosition;
   onEvent: (event: AioEvent) => void;
   /** Called after the server says it can't replay: reload state through REST. */
   onResync: () => void;
@@ -87,10 +99,12 @@ export class EventsConnection {
       random: Math.random,
       ...options,
     };
+    this.streamId = options.position?.streamId ?? null;
+    this.lastSeq = options.position?.lastSeq ?? null;
   }
 
   /** The position the next `hello` asks to resume from. */
-  get position(): { streamId: string | null; lastSeq: number | null } {
+  get position(): StreamPosition {
     return { streamId: this.streamId, lastSeq: this.lastSeq };
   }
 

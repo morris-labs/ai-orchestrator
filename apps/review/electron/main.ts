@@ -100,11 +100,12 @@ let tray: Tray | null = null;
 const fleet = new FleetActiveRuns({
   listMachines: async () => (await client().call("machines.list", {})).machines,
   listRuns: async (machineId) => (await machineClient(machineId).call("runs.list", {})).runs,
-  connect: (machineId, handlers) => {
+  connect: (machineId, handlers, position) => {
     const conn = new EventsConnection({
       // A factory, so a reconnect reads the token and the certificate again.
       client: () => machineClient(machineId),
       types: ["run.changed", "notification"],
+      position,
       ...handlers,
     });
     conn.start();
