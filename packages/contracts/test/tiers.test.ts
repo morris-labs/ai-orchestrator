@@ -41,6 +41,25 @@ describe("blocked review models", () => {
     ).toBe(true);
   });
 
+  it.each(["claude-fable-5-1", "GPT-6-Astra"])(
+    "refuses %s named through Copilot in the policy",
+    (model) => {
+      const parsed = PolicyFileSchema.safeParse({
+        version: 1,
+        tierModels: { copilot: { large: model } },
+      });
+      expect(parsed.success).toBe(false);
+      expect(parsed.error?.issues[0]?.path).toEqual(["tierModels", "copilot", "large"]);
+      expect(parsed.error?.issues[0]?.message).toContain(model);
+    },
+  );
+
+  it("accepts an allowed model and automatic selection through Copilot", () => {
+    for (const model of ["auto", "gpt-6-sol"]) {
+      expect(TierModelsSchema.safeParse({ copilot: { large: model } }).success).toBe(true);
+    }
+  });
+
   it("keeps the defaults clear of the list", () => {
     expect(DEFAULT_TIER_MODELS.claude).toEqual({
       small: "claude-haiku-5-5",

@@ -69,7 +69,7 @@ export const TierModelsSchema = z
   .superRefine((map, ctx) => {
     for (const [vendor, tiers] of Object.entries(map) as [Vendor, Record<string, string>][]) {
       for (const [tier, model] of Object.entries(tiers)) {
-        if (isBlockedReviewModel(vendor, model)) {
+        if (isBlockedRequestedModel(vendor, model)) {
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
             path: [vendor, tier],

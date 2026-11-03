@@ -176,8 +176,10 @@ names. The engine enforces the rule in the following places:
   catches an alias that resolves to a blocked model. For Codex, the report
   comes from the session's rollout file.
 
-The rule doesn't cover GitHub Copilot: it has no block list, and its automatic
-selection chooses the model.
+GitHub Copilot has no block list of its own, and the rule doesn't cover its
+automatic selection. Copilot serves other vendors' models, so the policy schema
+and the per-call checks refuse a Copilot model name that contains any blocked
+text.
 
 ## Accounts
 
