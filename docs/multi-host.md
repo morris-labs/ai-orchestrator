@@ -452,23 +452,45 @@ secrets broker. The following data crosses the link:
   see [Grant a machine secrets and sign-ins](#grant-a-machine-secrets-and-sign-ins).
   A compromised node can read only what its grant names. While the hub is
   unreachable, a node can't read a secret that it hasn't cached.
-- **Agent sign-ins**: the hub's Claude and Codex sign-in files, from the host
-  folders (`~/.claude/.credentials.json` and `~/.codex/auth.json`) and from
-  account folders, for only the keys in that machine's grant. A node copies
-  the files that its grant lists when its link comes up. When an agent CLI on
-  a node refreshes its sign-in, the node sends the file to the hub. If the
-  grant lists the key for updates, the hub overwrites its own copy and sends
-  the file to every other node whose grant lists it, so a compromised node
-  can replace those sign-ins and no others. A node keeps sending a change
-  until the hub takes it, including one made while the server was stopped, and
-  copying from the hub doesn't overwrite a change that the hub hasn't taken.
-  The hub and nodes refuse a file that isn't a non-empty JSON object. Revoking a machine closes its link but doesn't delete the sign-in files
-  that it already copied; sign out on that machine, or remove the files. A
-  file arrives only where its folder exists, so create the same accounts on
-  each node. GitHub Copilot keeps its token beside its settings, so its
-  sign-in isn't copied.
+- **Agent sign-ins**: by default, nothing. A node signs in by itself, as
+  [Sign in on a node](#sign-in-on-a-node) describes, and never sends a sign-in
+  to the hub. As an option, the hub copies its Claude and Codex sign-in files,
+  from the host folders (`~/.claude/.credentials.json` and
+  `~/.codex/auth.json`) and from account folders, for only the keys in that
+  machine's grant.
 
-If copied sign-ins keep signing machines out, sign in on each node instead.
+## Sign in on a node
+
+A node signs in by itself: run the agent CLI's sign-in on the node, as you do
+on a single machine. Sign-ins flow only from the hub to the nodes, so a node
+can't change a sign-in on the hub or on another node.
+
+To copy a sign-in from the hub instead, list its key in the machine's
+`signInCopies` grant. For more information, see
+[Grant a machine secrets and sign-ins](#grant-a-machine-secrets-and-sign-ins).
+
+**Warning**: A provider can rotate its refresh token each time an agent CLI
+uses it. When two machines use copies of one sign-in, a refresh on one machine
+can sign out the other. Prefer a separate sign-in on each machine.
+
+A copy works as follows:
+
+- A node copies the files that its grant lists when its link comes up. The hub
+  also checks its own files every 30 seconds, and sends a changed file to the
+  linked nodes whose grant lists it.
+- A copy replaces a node's file only when the file is missing, or when it's
+  still the last copy from the hub. A copy never replaces a sign-in the node
+  had when it joined, a sign-in made on the node, or a file that the node's agent CLI
+  refreshed. That file stays, and stops following the hub.
+- To take the hub's copy again, remove the file on the node and restart the
+  server on the node.
+- The hub and nodes refuse a file that isn't a non-empty JSON object.
+- A file arrives only where its folder exists, so create the same accounts on
+  each node.
+- Revoking a machine closes its link but doesn't delete the sign-in files that
+  it already copied. Sign out on that machine, or remove the files.
+- GitHub Copilot keeps its token beside its settings, so its sign-in isn't
+  copied.
 
 ## Grant a machine secrets and sign-ins
 
@@ -484,8 +506,7 @@ curl --cacert ~/.ai-orchestrator/server.crt \
     -X PATCH -d '{"nodeGrants": {"MACHINE_ID": {
         "opRefs": ["op://VAULT/ITEM/FIELD"],
         "opVaults": ["VAULT"],
-        "signInCopies": ["host/claude/.credentials.json"],
-        "signInUpdates": ["host/claude/.credentials.json"]
+        "signInCopies": ["host/claude/.credentials.json"]
     }}}' \
     https://127.0.0.1:21400/api/v1/settings
 
@@ -502,10 +523,9 @@ Each field is optional and defaults to an empty list:
   reference that its projects and global settings use.
 - `opVaults`: the vaults whose item and field names the machine's secrets
   picker can list. This field doesn't grant any value.
-- `signInCopies`: the sign-in files that the hub copies to the machine.
-- `signInUpdates`: the sign-in files that the machine can overwrite on the
-  hub and on the machines that copy them. List a key here when the machine's
-  agent CLI rotates a refresh token that other machines share.
+- `signInCopies`: the sign-in files that the hub copies to the machine. Leave
+  it empty when the machine signs in by itself. For the risk of a shared
+  sign-in, see [Sign in on a node](#sign-in-on-a-node).
 
 A sign-in key is `host/claude/.credentials.json`, `host/codex/auth.json`,
 `account/claude/NAME/.credentials.json`, or `account/codex/NAME/auth.json`,

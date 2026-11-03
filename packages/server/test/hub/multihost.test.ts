@@ -803,7 +803,7 @@ describe("multi-host", () => {
     const key = "host/claude/.credentials.json";
     const [idOne, idTwo] = ids as [string, string];
 
-    // With no grant, the hub copies nothing and takes nothing.
+    // With no grant, the hub copies nothing, and it never takes a file from a node.
     const pull = (s: Server) =>
       s.app.multiHost.links
         .get("hub")!
@@ -815,14 +815,14 @@ describe("multi-host", () => {
       headers: { "content-type": "application/json" },
       body: Buffer.from(JSON.stringify(entryOf(key, '{"token":"forged"}'))),
     });
-    expect(push.status).toBe(403);
+    expect(push.status).toBe(404);
     expect(read(hub)).toBe('{"token":"synthetic-1"}');
     expect(read(one)).toBeNull();
     expect(read(two)).toBeNull();
 
     const patched = await hub.api("PATCH", "/api/v1/settings", {
       nodeGrants: {
-        [idOne]: { signInCopies: [key], signInUpdates: [key] },
+        [idOne]: { signInCopies: [key] },
         [idTwo]: { signInCopies: [key] },
       },
     });
@@ -832,18 +832,20 @@ describe("multi-host", () => {
     await waitFor(() => read(one) === '{"token":"synthetic-1"}' && read(two) === read(one), 5000);
     expect(fs.statSync(credFile(one.home)).mode & 0o777).toBe(0o600);
 
-    // A copy grant doesn't let a machine overwrite the file for anyone else.
-    fs.writeFileSync(credFile(two.home), '{"token":"forged"}');
+    // A file that changed on a node stays on that node and goes nowhere else.
+    fs.writeFileSync(credFile(two.home), '{"token":"node-own"}');
     await two.app.multiHost.syncCredentials();
     expect(read(hub)).toBe('{"token":"synthetic-1"}');
     expect(read(one)).toBe('{"token":"synthetic-1"}');
-    fs.writeFileSync(credFile(two.home), '{"token":"synthetic-1"}');
-    await two.app.multiHost.syncCredentials();
 
-    // Node one's CLI refreshes its token.
-    fs.writeFileSync(credFile(one.home), '{"token":"synthetic-2"}');
-    await one.app.multiHost.syncCredentials();
-    await waitFor(() => read(hub) === '{"token":"synthetic-2"}' && read(two) === read(hub), 5000);
+    // The next copy doesn't replace it, and removing the file takes the copy again.
+    fs.writeFileSync(credFile(hub.home), '{"token":"synthetic-2"}');
+    await hub.app.multiHost.syncCredentials();
+    await waitFor(() => read(one) === '{"token":"synthetic-2"}', 5000);
+    expect(read(two)).toBe('{"token":"node-own"}');
+    fs.rmSync(credFile(two.home));
+    two.app.multiHost.node.restart();
+    await waitFor(() => read(two) === '{"token":"synthetic-2"}', 5000);
 
     // The hub refreshes its own.
     fs.writeFileSync(credFile(hub.home), '{"token":"synthetic-3"}');
@@ -907,8 +909,9 @@ describe("multi-host", () => {
     await hub.app.multiHost.syncCredentials();
     await waitFor(() => read(two) === '{"token":"v2"}', 5000);
 
-    // A node that the hub refused keeps its rotated token through a relink, and
-    // sends it once the grant allows that.
+    await waitFor(() => read(one) === '{"token":"v2"}', 5000);
+
+    // A node's refreshed token stays through a relink, and the hub never takes it.
     fs.writeFileSync(file(one), '{"token":"rotated"}');
     await one.app.multiHost.syncCredentials();
     expect(read(hub)).toBe('{"token":"v2"}');
@@ -918,41 +921,21 @@ describe("multi-host", () => {
       const link = one.app.multiHost.links.get("hub");
       return link !== undefined && link !== hubLink;
     }, 5000);
-    // The second check runs after the pull that the link-up queued.
-    await one.app.multiHost.syncCredentials();
     await one.app.multiHost.syncCredentials();
     expect(read(one)).toBe('{"token":"rotated"}');
-    await hub.api("PATCH", "/api/v1/settings", {
-      nodeGrants: {
-        [idOne]: { signInCopies: [key], signInUpdates: [key] },
-        [idTwo]: { signInCopies: [key] },
-      },
-    });
-    await one.app.multiHost.syncCredentials();
-    await waitFor(() => read(hub) === '{"token":"rotated"}', 5000);
-    await waitFor(() => read(two) === '{"token":"rotated"}', 5000);
+    expect(read(two)).toBe('{"token":"v2"}');
 
     // A hub that can't write to a node sends the file again on a later check.
     fs.chmodSync(claudeDir(two), 0o555);
     try {
       fs.writeFileSync(file(hub), '{"token":"v3"}');
       await hub.app.multiHost.syncCredentials();
-      expect(read(two)).toBe('{"token":"rotated"}');
+      expect(read(two)).toBe('{"token":"v2"}');
     } finally {
       fs.chmodSync(claudeDir(two), 0o755);
     }
     await hub.app.multiHost.syncCredentials();
     await waitFor(() => read(two) === '{"token":"v3"}', 5000);
-
-    // A bad entry from a granted node changes nothing.
-    const bad = await one.app.multiHost.links.get("hub")!.request({
-      method: "POST",
-      path: "/link/v1/credentials/push",
-      headers: { "content-type": "application/json" },
-      body: Buffer.from(JSON.stringify({ ...entryOf(key, '{"token":"x"}'), content: "" })),
-    });
-    expect(bad.status).toBe(400);
-    expect(read(hub)).toBe('{"token":"v3"}');
   });
 
   it("gives no session cookie over a link, whatever form the path takes", async () => {

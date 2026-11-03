@@ -192,18 +192,26 @@ export const OpReferenceSchema = z.string().regex(/^op:\/\/[^/]+\/[^/]+\/.+$/, {
  * What a hub lets one enrolled machine reach over the link. The hub refuses
  * everything that the grant doesn't name. See docs/multi-host.md.
  */
-export const NodeGrantSchema = z
-  .object({
-    /** The exact `op://` references the machine may read through the hub. */
-    opRefs: z.array(OpReferenceSchema).default([]),
-    /** The vaults whose item and field names the machine may list through the hub. */
-    opVaults: z.array(z.string().min(1)).default([]),
-    /** The keys of the sign-in files the hub copies to the machine. */
-    signInCopies: z.array(z.string().min(1)).default([]),
-    /** The keys of the sign-in files the machine may overwrite on the hub and on other machines. */
-    signInUpdates: z.array(z.string().min(1)).default([]),
-  })
-  .strict();
+export const NodeGrantSchema = z.preprocess(
+  (value) => {
+    // Older settings can hold `signInUpdates`, from when a node could overwrite
+    // the hub's sign-ins. Sign-ins only flow from the hub now, so the field
+    // means nothing and must not stop stored settings from parsing.
+    if (typeof value !== "object" || value === null || !("signInUpdates" in value)) return value;
+    const { signInUpdates: _removed, ...rest } = value as Record<string, unknown>;
+    return rest;
+  },
+  z
+    .object({
+      /** The exact `op://` references the machine may read through the hub. */
+      opRefs: z.array(OpReferenceSchema).default([]),
+      /** The vaults whose item and field names the machine may list through the hub. */
+      opVaults: z.array(z.string().min(1)).default([]),
+      /** The keys of the sign-in files the hub copies to the machine. */
+      signInCopies: z.array(z.string().min(1)).default([]),
+    })
+    .strict(),
+);
 export type NodeGrant = z.infer<typeof NodeGrantSchema>;
 
 /**

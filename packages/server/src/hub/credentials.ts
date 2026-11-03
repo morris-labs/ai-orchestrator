@@ -1,20 +1,18 @@
-// Agent sign-in sync. The hub is the source of truth for the agent CLIs'
-// sign-in files; a node copies them from the hub when its link comes up.
-// An agent CLI that refreshes its OAuth token rewrites its file, and might
-// rotate the refresh token, which would sign out every other copy. So each
-// end checks its files on a timer: a node sends a changed file to the hub,
-// and the hub writes it and sends it to every other node. The last change
-// wins.
+// Agent sign-in copies. Sign-ins flow only from the hub to its nodes, and only
+// for the keys in a machine's `signInCopies` grant. A node signs in by itself
+// by default, and never sends a sign-in to the hub, because the hub is more
+// trusted than a node.
 //
-// A node is less trusted than the hub, so the hub copies a file to a machine
-// only when that machine's grant lists the key in `signInCopies`, and takes a
-// file from it only when the grant lists the key in `signInUpdates`.
+// The hub checks its files on a timer and sends a changed file to the nodes
+// whose grant lists it. A node also copies the granted files when its link
+// comes up.
 //
-// A file counts as synced only after it reaches the other end, or after this
-// end wrote it from the other end. Those hashes stay on disk, so a change made
-// while the server was stopped is still a change. A local change that hasn't
-// synced is the only copy of a rotated token, so copying from the hub leaves
-// it in place; only a live update from the hub replaces it, as the last change.
+// `known` holds the hash of each file as a machine last sent it or copied it.
+// On a node, a file with another hash, or with no hash, is the node's own: its
+// own sign-in, or a token that its agent CLI rotated. It can be the only valid
+// copy, so a copy from the hub never replaces it. To take the hub's copy again,
+// remove the file on the node and let the link come up again. The hashes stay
+// on disk, so a change made while the server was stopped still counts.
 //
 // Synced files, by key:
 //
@@ -33,15 +31,13 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { writeAtomic } from "./ca.js";
 
-/** The file that holds the synced hashes, inside the data directory. */
+/** The file that holds the copied hashes, inside the data directory. */
 const SYNC_STATE_FILE = "credential-sync.json";
 
 /** The link paths of the sync. */
 export const CREDENTIAL_PATHS = {
   /** Node to hub: every synced file the hub has. */
   pull: "/link/v1/credentials/pull",
-  /** Node to hub: a file the node's agent CLI changed. */
-  push: "/link/v1/credentials/push",
   /** Hub to node: a file to write. */
   update: "/link/v1/credentials/update",
 } as const;
@@ -202,18 +198,27 @@ export class CredentialStore {
   }
 
   /**
-   * Loads the saved hashes and treats a file with none as synced, so that a
-   * machine's first check doesn't send what it already had. A saved hash stays,
-   * so a change made while the server was stopped still counts. With `reset`,
-   * every file counts as synced, for a machine that is about to join a hub.
+   * For a hub: loads the saved hashes and treats a file with none as sent, so
+   * that the first check doesn't send every file. A saved hash stays, so a change
+   * made while the server was stopped still counts. A joined node doesn't call
+   * this, because a file with no hash is the node's own.
    */
-  prime(options: { reset?: boolean } = {}): Promise<void> {
+  prime(): Promise<void> {
     return this.locked(async () => {
       await this.load();
       for (const key of await this.candidateKeys()) {
         const bytes = await this.read(key);
-        if (bytes && (options.reset || !this.known.has(key))) this.known.set(key, sha(bytes));
+        if (bytes && !this.known.has(key)) this.known.set(key, sha(bytes));
       }
+      await this.save();
+    });
+  }
+
+  /** For a machine about to join a hub: every file it has counts as its own. */
+  forget(): Promise<void> {
+    return this.locked(async () => {
+      await this.load();
+      this.known.clear();
       await this.save();
     });
   }
@@ -226,7 +231,7 @@ export class CredentialStore {
     });
   }
 
-  /** Puts back hashes from `hashes()`, so changes that were waiting to send still count. */
+  /** Puts back hashes from `hashes()`, after a join that a hub refused. */
   restoreHashes(hashes: ReadonlyMap<string, string>): Promise<void> {
     return this.locked(async () => {
       this.known.clear();
@@ -236,9 +241,8 @@ export class CredentialStore {
   }
 
   /**
-   * The files that differ from what last synced. A file stays in this list
-   * until `markSynced`, so a failed send is sent again. A half-written file
-   * waits for the next check.
+   * The hub's files that differ from what it last sent. A file stays in this
+   * list until `markSynced`. A half-written file waits for the next check.
    */
   changes(): Promise<CredentialEntry[]> {
     return this.locked(async () => {
@@ -252,7 +256,7 @@ export class CredentialStore {
     });
   }
 
-  /** Records that the other end has the file with this hash. */
+  /** Records that the hub sent the file with this hash. */
   markSynced(key: string, hash: string): Promise<void> {
     return this.locked(async () => {
       await this.load();
@@ -265,8 +269,8 @@ export class CredentialStore {
    * Writes a synced file with mode 0600, when its folder exists and its
    * content differs. Returns whether it wrote. Throws for a key the sync
    * doesn't allow, for content that `entryBytes` refuses, and when the write
-   * fails, which leaves the file and its synced hash as they were. With
-   * `keepLocalChange`, a file that changed here since it last synced stays.
+   * fails, which leaves the file and its hash as they were. With
+   * `keepLocalChange`, a file that isn't the last copy from the hub stays.
    */
   write(entry: CredentialEntry, options: { keepLocalChange?: boolean } = {}): Promise<boolean> {
     return this.locked(async () => {

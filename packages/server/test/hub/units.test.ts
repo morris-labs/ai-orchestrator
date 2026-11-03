@@ -508,8 +508,22 @@ describe("the sign-in store", () => {
     const restarted = open();
     await restarted.prime();
     expect((await restarted.changes()).map((e) => e.key)).toEqual([key]);
-    await restarted.prime({ reset: true });
-    expect(await restarted.changes()).toEqual([]);
+  });
+
+  it("treats every file as a node's own after a join, so a copy doesn't replace it", async () => {
+    const { file, open } = setup();
+    fs.writeFileSync(file, '{"t":"own"}');
+    const store = open();
+    await store.prime();
+    await store.forget();
+    expect(await store.write(entryOf(key, '{"t":"hub"}'), { keepLocalChange: true })).toBe(false);
+    expect(fs.readFileSync(file, "utf8")).toBe('{"t":"own"}');
+
+    // A missing file takes the copy, and then counts as the hub's.
+    fs.rmSync(file);
+    expect(await store.write(entryOf(key, '{"t":"hub"}'), { keepLocalChange: true })).toBe(true);
+    expect(await store.write(entryOf(key, '{"t":"hub2"}'), { keepLocalChange: true })).toBe(true);
+    expect(fs.readFileSync(file, "utf8")).toBe('{"t":"hub2"}');
   });
 
   it("sends nothing for what a machine already has on its first start", async () => {

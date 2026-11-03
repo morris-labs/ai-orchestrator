@@ -172,7 +172,7 @@ export interface MultiHostOptions {
   home: string;
   /** The absolute data directory. */
   dataDir: string;
-  /** Milliseconds between checks of the synced sign-in files. Default 30 seconds; 0 turns the timer off. */
+  /** Milliseconds between the hub's checks of its sign-in files. Default 30 seconds; 0 turns the timer off. */
   credentialPollMs?: number;
   db: SqlDatabase;
   settings: () => GlobalSettings;
@@ -238,8 +238,6 @@ export class MultiHost {
   private credentialSync: Promise<void> = Promise.resolve();
   /** On a hub, the sign-in keys each linked node failed to receive, to send again. */
   private readonly undelivered = new Map<string, Set<string>>();
-  /** On a node, the hash of each change whose failure to send is already logged. */
-  private readonly reportedPushFailures = new Map<string, string>();
 
   constructor(private readonly opts: MultiHostOptions) {
     const hello = (): LinkHello => ({
@@ -307,8 +305,7 @@ export class MultiHost {
         if (!this.node.link) return;
         // Keep the hub's list at hand for while the hub is unreachable.
         void this.machines().catch(() => undefined);
-        // Send what changed here while the link was down, then take the hub's.
-        void this.syncCredentials().then(() => this.pullCredentials());
+        void this.pullCredentials();
       },
     });
     const hub = this.hub;
@@ -355,13 +352,14 @@ export class MultiHost {
   }
 
   async start(): Promise<void> {
-    await this.credentials.prime();
     // A broken link to this machine's own hub must not stop the hub it serves.
     try {
       await this.node.start();
     } catch (err) {
       this.opts.log(`The node's link didn't start: ${(err as Error).message}`);
     }
+    // On a joined node, a file with no copy record is the node's own sign-in.
+    if (!this.node.joined) await this.credentials.prime();
     await this.hub.start();
     const pollMs = this.opts.credentialPollMs ?? 30_000;
     if (pollMs > 0) {
@@ -395,25 +393,6 @@ export class MultiHost {
           return jsonResponse(200, { entries: entries.filter((e) => allowed.includes(e.key)) });
         }),
       ],
-      [
-        `POST ${CREDENTIAL_PATHS.push}`,
-        safely(async (req, caller) => {
-          const entry = parseEntry(jsonBody(req));
-          if (!this.grantOf(caller)?.signInUpdates.includes(entry.key)) {
-            throw new ApiError(
-              "unauthorized",
-              `The hub doesn't take ${entry.key} from machine ${caller}. To allow it, add the key to signInUpdates in that machine's entry in the nodeGrants setting on the hub.`,
-              undefined,
-              403,
-            );
-          }
-          if (await this.credentials.write(entry)) {
-            this.opts.log(`Took a refreshed sign-in, ${entry.key}, from ${caller}.`);
-          }
-          await this.broadcastCredential(entry, caller);
-          return jsonResponse(200, { ok: true });
-        }),
-      ],
     ]);
   }
 
@@ -425,18 +404,17 @@ export class MultiHost {
           if (caller !== HUB_LINK_ID) {
             throw new ApiError("unauthorized", "Only the hub sends sign-ins.");
           }
-          await this.credentials.write(parseEntry(jsonBody(req)));
+          // A file that changed here stays: it can be the only valid copy.
+          await this.credentials.write(parseEntry(jsonBody(req)), { keepLocalChange: true });
           return jsonResponse(200, { ok: true });
         }),
       ],
     ]);
   }
 
-  /** Sends one sign-in file to every linked node whose grant lists it, except `except`. */
-  private async broadcastCredential(entry: CredentialEntry, except?: string): Promise<void> {
-    for (const id of this.hub.list()) {
-      if (id !== except) await this.deliverCredential(id, entry);
-    }
+  /** Sends one sign-in file to every linked node whose grant lists it. */
+  private async broadcastCredential(entry: CredentialEntry): Promise<void> {
+    for (const id of this.hub.list()) await this.deliverCredential(id, entry);
   }
 
   /**
@@ -485,7 +463,7 @@ export class MultiHost {
     }
   }
 
-  /** Copies every sign-in file from the hub, which is the source of truth. */
+  /** Copies the granted sign-in files from the hub, except files that changed here. */
   private pullCredentials(): Promise<void> {
     this.credentialSync = this.credentialSync.then(async () => {
       const link = this.node.link;
@@ -501,7 +479,7 @@ export class MultiHost {
         let wrote = 0;
         for (const raw of entries) {
           try {
-            // A change the hub refused or never got stays: it can be the only valid copy.
+            // A file that changed here stays: it can be the only valid copy.
             const entry = parseEntry(raw);
             if (await this.credentials.write(entry, { keepLocalChange: true })) wrote += 1;
           } catch (err) {
@@ -516,55 +494,17 @@ export class MultiHost {
     return this.credentialSync;
   }
 
-  /**
-   * Checks the sign-in files once: a node sends what changed to the hub, and
-   * a hub sends what changed to its nodes.
-   */
+  /** On a hub, sends the sign-in files that changed to the nodes whose grant lists them. */
   syncCredentials(): Promise<void> {
     this.credentialSync = this.credentialSync.then(async () => {
-      // A machine that joined a hub syncs with it; a hub syncs with its nodes.
-      const link = this.node.joined ? this.node.link : undefined;
-      if (this.node.joined && !link) return;
-      if (!link && (this.role() === "node" || this.hub.list().length === 0)) return;
-      if (!link) await this.retryUndelivered();
-      const changes = await this.credentials.changes();
-      for (const entry of changes) {
-        if (!link) {
-          await this.broadcastCredential(entry);
-          await this.credentials.markSynced(entry.key, entry.sha256);
-          continue;
-        }
-        if (!link.can("credentials.v1")) continue;
-        await this.pushCredential(link, entry);
+      if (this.node.joined || this.role() === "node" || this.hub.list().length === 0) return;
+      await this.retryUndelivered();
+      for (const entry of await this.credentials.changes()) {
+        await this.broadcastCredential(entry);
+        await this.credentials.markSynced(entry.key, entry.sha256);
       }
     });
     return this.credentialSync;
-  }
-
-  /** Sends one changed file to the hub, and counts it as synced only if the hub took it. */
-  private async pushCredential(link: NodeLink, entry: CredentialEntry): Promise<void> {
-    const failed = (why: string) => {
-      if (this.reportedPushFailures.get(entry.key) === entry.sha256) return;
-      this.reportedPushFailures.set(entry.key, entry.sha256);
-      this.opts.log(why);
-    };
-    try {
-      const res = await link.request({
-        method: "POST",
-        path: CREDENTIAL_PATHS.push,
-        headers: { "content-type": "application/json" },
-        body: Buffer.from(JSON.stringify(entry)),
-      });
-      if (res.status !== 200) {
-        failed(`The hub didn't take ${entry.key}: status ${res.status}.`);
-        return;
-      }
-      await this.credentials.markSynced(entry.key, entry.sha256);
-      this.reportedPushFailures.delete(entry.key);
-      this.opts.log(`Sent a refreshed sign-in, ${entry.key}, to the hub.`);
-    } catch (err) {
-      failed(`Couldn't send ${entry.key} to the hub: ${(err as Error).message}`);
-    }
   }
 
   private localMachine(): Machine {
@@ -735,9 +675,9 @@ export class MultiHost {
         `This server runs with --role both or ${ROLE_ENV}=both. Start it without that override, or with node, to join a hub.`,
       );
     }
-    // What this machine has now isn't a change to send: the new hub's copies win.
+    // What this machine has now is its own, so the new hub's copies don't replace it.
     const hashes = await this.credentials.hashes();
-    await this.credentials.prime({ reset: true });
+    await this.credentials.forget();
     try {
       await this.node.join({
         hubUrl: input.hubUrl,
@@ -746,7 +686,7 @@ export class MultiHost {
         replaceHub: input.replaceHub,
       });
     } catch (error) {
-      // The machine stays with its old hub, or none, so its waiting changes still count.
+      // The machine stays with its old hub, or none, so its copy records still count.
       await this.credentials.restoreHashes(hashes);
       throw error;
     }
