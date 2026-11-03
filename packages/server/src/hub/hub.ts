@@ -25,6 +25,7 @@ import { LinkPeer, rawText } from "./peer.js";
 import {
   LINK_CLOSE,
   LINK_PATHS,
+  MAX_LINK_FRAME,
   machinePlatform,
   parseFrame,
   protocolMismatch,
@@ -42,8 +43,7 @@ import type { SqlDatabase } from "../api/core-interface.js";
 
 /** The largest enrollment body the hub reads. */
 const MAX_ENROLL_BODY = 64 * 1024;
-/** The largest link frame either end accepts. */
-export const MAX_LINK_FRAME = 64 * 1024 * 1024;
+export { MAX_LINK_FRAME };
 /** Milliseconds a refused upgrade's socket can stay open to finish its answer. */
 const REFUSE_GRACE_MS = 5000;
 

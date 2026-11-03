@@ -38,6 +38,17 @@ export const LINK_CAPABILITIES: readonly string[] = [
  */
 export const STREAM_WINDOW = 1024 * 1024;
 
+/** The largest link frame either end accepts. */
+export const MAX_LINK_FRAME = 64 * 1024 * 1024;
+
+/**
+ * The largest body or stream message one frame can carry. Base64 turns 3 bytes
+ * into 4, and 1 MiB stays free for the rest of the frame. A sender refuses
+ * anything larger, because the receiver closes the whole link on a frame over
+ * `MAX_LINK_FRAME`.
+ */
+export const MAX_LINK_PAYLOAD = Math.floor((MAX_LINK_FRAME - 1024 * 1024) / 4) * 3;
+
 /** WebSocket close codes the link uses. */
 export const LINK_CLOSE = {
   /** The other end speaks another protocol major version. */

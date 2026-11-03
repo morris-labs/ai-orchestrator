@@ -407,6 +407,9 @@ export class PendingRelay {
 
   attach(socket: WebSocket): void {
     this.socket = socket;
+    // A node that grants no credit stops the relay reading this client, so
+    // the client's messages can't pile up in the link's queue.
+    this.stream.setSource?.({ pause: () => socket.pause(), resume: () => socket.resume() });
     socket.on("message", (data, isBinary) => {
       if (this.remoteClose) return;
       const buf = Array.isArray(data)

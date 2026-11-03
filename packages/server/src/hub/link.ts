@@ -22,6 +22,12 @@ export interface LinkStream {
    * window, so a slow sink holds the sender back instead of filling memory.
    */
   setSinkBacklog?(backlog: () => number): void;
+  /**
+   * Names the source of the messages passed to `send`, such as a relayed
+   * client socket. A stream with flow control pauses the source while the
+   * receiver grants no credit, so a stalled receiver can't fill memory.
+   */
+  setSource?(source: { pause(): void; resume(): void }): void;
 }
 export interface NodeLink {
   readonly machineId: string;

@@ -5,6 +5,8 @@
 import type WebSocket from "ws";
 import type { LinkRequest, LinkResponse, LinkStream, NodeLink } from "./link.js";
 import {
+  MAX_LINK_FRAME,
+  MAX_LINK_PAYLOAD,
   STREAM_WINDOW,
   closeReason,
   parseFrame,
@@ -114,6 +116,8 @@ interface Incoming {
   /** Bytes the local stream took that this end hasn't granted back yet. */
   owed: number;
   timer: NodeJS.Timeout | null;
+  /** How the local stream closed, while its last messages wait for credit. */
+  closing: { code: number; reason: string } | null;
 }
 
 interface Pending {
@@ -121,6 +125,9 @@ interface Pending {
   reject(err: Error): void;
   timer: NodeJS.Timeout;
 }
+
+/** The close reason of a stream whose message doesn't fit in a link frame. */
+const TOO_LARGE_FOR_LINK = "The message is too large for the link.";
 
 /**
  * A stream whose bytes travel over the link. Messages and the close that
@@ -136,6 +143,7 @@ class PeerStream implements LinkStream {
   /** Bytes the callbacks took that this end hasn't granted back yet. */
   private owed = 0;
   private settleTimer: NodeJS.Timeout | null = null;
+  private source: { pause(): void; resume(): void } | null = null;
   readonly out: CreditSender;
 
   constructor(
@@ -146,12 +154,23 @@ class PeerStream implements LinkStream {
       (bytes, binary) =>
         peer.sendFrame({ type: "data", id, binary, data: bytes.toString("base64") }),
       peer.flow,
+      () => this.source?.pause(),
+      () => this.source?.resume(),
     );
   }
 
   send(data: Buffer | string, binary: boolean): void {
     if (this.ended) return;
-    this.out.push(typeof data === "string" ? Buffer.from(data) : data, binary);
+    const bytes = typeof data === "string" ? Buffer.from(data) : data;
+    if (bytes.length > MAX_LINK_PAYLOAD) {
+      this.close(1009, TOO_LARGE_FOR_LINK);
+      return;
+    }
+    this.out.push(bytes, binary);
+  }
+
+  setSource(source: { pause(): void; resume(): void }): void {
+    this.source = source;
   }
 
   onMessage(cb: (data: Buffer, binary: boolean) => void): void {
@@ -221,6 +240,8 @@ class PeerStream implements LinkStream {
     if (this.settleTimer) clearTimeout(this.settleTimer);
     this.settleTimer = null;
     this.peer.forgetStream(this.id);
+    // No more credit can arrive, and a paused source can't finish closing.
+    if (this.out.queuedBytes > 0) this.source?.resume();
     const cbs = this.closeCbs;
     this.closeCbs = [];
     for (const cb of cbs) cb(code, reason);
@@ -236,6 +257,8 @@ export class LinkPeer implements NodeLink {
   private readonly outgoing = new Map<string, PeerStream>();
   /** Streams the other end opened, served by a local stream, by id. */
   private readonly incoming = new Map<string, Incoming>();
+  /** Ids of the other end's streams that the local server is still opening. */
+  private readonly opening = new Set<string>();
   /** True when both ends speak `flow.v1`, so streams send within granted credit. */
   readonly flow: boolean;
   private closeCbs: (() => void)[] = [];
@@ -256,7 +279,10 @@ export class LinkPeer implements NodeLink {
       if (frame) this.receive(frame);
     });
     socket.on("close", () => this.shutdown());
-    socket.on("error", () => this.shutdown());
+    socket.on("error", (err) => {
+      opts.log?.(`The link to ${this.machineId} failed: ${err.message}`);
+      this.shutdown();
+    });
     socket.on("pong", () => {
       this.awaitingPong = false;
     });
@@ -287,6 +313,15 @@ export class LinkPeer implements NodeLink {
   }
 
   request(req: LinkRequest, options?: { timeoutMs?: number }): Promise<LinkResponse> {
+    if (req.body && req.body.length > MAX_LINK_PAYLOAD) {
+      return Promise.reject(
+        new LinkError(
+          `The body of ${req.method} ${req.path} is ${req.body.length} bytes; a link carries at most ${MAX_LINK_PAYLOAD}.`,
+          413,
+          "validation",
+        ),
+      );
+    }
     const id = this.newId();
     const answer = this.await(id, `${req.method} ${req.path}`, options?.timeoutMs);
     this.sendFrame({
@@ -345,10 +380,18 @@ export class LinkPeer implements NodeLink {
     this.shutdown();
   }
 
-  /** Sends one frame; a closed link drops it. */
+  /**
+   * Sends one frame; a closed link drops it. A frame over the limit is also
+   * dropped, because the other end would close the link for every stream.
+   */
   sendFrame(frame: LinkFrame): void {
     if (this.closed || this.opts.socket.readyState !== this.opts.socket.OPEN) return;
-    this.opts.socket.send(JSON.stringify(frame));
+    const text = JSON.stringify(frame);
+    if (Buffer.byteLength(text) > MAX_LINK_FRAME) {
+      this.opts.log?.(`Dropped a ${frame.type} frame too large for the link to ${this.machineId}.`);
+      return;
+    }
+    this.opts.socket.send(text);
   }
 
   forgetStream(id: string): void {
@@ -421,8 +464,21 @@ export class LinkPeer implements NodeLink {
 
   private receive(frame: LinkFrame): void {
     switch (frame.type) {
-      case "res":
       case "opened":
+        // The open timed out here, so nothing reads this stream: close it,
+        // or it stays open on the other end for the life of the link.
+        if (!this.pending.has(frame.id) && !this.outgoing.has(frame.id)) {
+          this.sendFrame({
+            type: "end",
+            id: frame.id,
+            code: 1001,
+            reason: "The opener stopped waiting for the stream.",
+          });
+          return;
+        }
+        this.settle(frame.id, frame);
+        return;
+      case "res":
       case "openFailed":
         this.settle(frame.id, frame);
         return;
@@ -484,6 +540,11 @@ export class LinkPeer implements NodeLink {
     } catch (err) {
       res = errorResponse(err);
     }
+    if (res.body.length > MAX_LINK_PAYLOAD) {
+      const message = `The response to ${frame.method} ${frame.path} is ${res.body.length} bytes; a link carries at most ${MAX_LINK_PAYLOAD}.`;
+      this.opts.log?.(message);
+      res = errorResponse(new LinkError(message, 502));
+    }
     this.sendFrame({
       type: "res",
       id: frame.id,
@@ -494,6 +555,20 @@ export class LinkPeer implements NodeLink {
   }
 
   private async serveStream(frame: Extract<LinkFrame, { type: "open" }>): Promise<void> {
+    // Each end numbers its own streams, so an id without the other end's prefix
+    // or one in use comes from a bad peer. Serving it would orphan the stream
+    // that holds the id, or send the data to one of this end's own streams.
+    const prefix = this.opts.side === "h" ? "n" : "h";
+    if (!frame.id.startsWith(prefix) || this.incoming.has(frame.id) || this.opening.has(frame.id)) {
+      this.sendFrame({
+        type: "openFailed",
+        id: frame.id,
+        status: 400,
+        message: `The stream id ${frame.id} is not valid here.`,
+      });
+      return;
+    }
+    this.opening.add(frame.id);
     let local: FlowStream;
     try {
       local = await this.opts.server.openStream({
@@ -510,27 +585,14 @@ export class LinkPeer implements NodeLink {
         message: (err as Error).message ?? String(err),
       });
       return;
+    } finally {
+      this.opening.delete(frame.id);
     }
     if (this.closed) {
       local.close(1001, "The link closed.");
       return;
     }
-    const entry: Incoming = {
-      local,
-      owed: 0,
-      timer: null,
-      out: new CreditSender(
-        (data, binary) =>
-          this.sendFrame({ type: "data", id: frame.id, binary, data: data.toString("base64") }),
-        this.flow,
-        () => local.pause?.(),
-        () => local.resume?.(),
-      ),
-    };
-    this.incoming.set(frame.id, entry);
-    this.sendFrame({ type: "opened", id: frame.id });
-    local.onMessage((data, binary) => entry.out.push(data, binary));
-    local.onClose((code, reason) => {
+    const end = (code: number, reason: string) => {
       if (this.incoming.get(frame.id) !== entry) return;
       this.incoming.delete(frame.id);
       this.sendFrame({
@@ -539,6 +601,39 @@ export class LinkPeer implements NodeLink {
         code: sendableCloseCode(code),
         reason: closeReason(reason),
       });
+    };
+    const entry: Incoming = {
+      local,
+      owed: 0,
+      timer: null,
+      closing: null,
+      out: new CreditSender(
+        (data, binary) =>
+          this.sendFrame({ type: "data", id: frame.id, binary, data: data.toString("base64") }),
+        this.flow,
+        () => local.pause?.(),
+        () => {
+          local.resume?.();
+          if (entry.closing) end(entry.closing.code, entry.closing.reason);
+        },
+      ),
+    };
+    this.incoming.set(frame.id, entry);
+    this.sendFrame({ type: "opened", id: frame.id });
+    local.onMessage((data, binary) => {
+      if (data.length > MAX_LINK_PAYLOAD) {
+        this.opts.log?.(
+          `Closed the stream ${frame.path}: a ${data.length}-byte message doesn't fit on the link.`,
+        );
+        local.close(1009, TOO_LARGE_FOR_LINK);
+        return;
+      }
+      entry.out.push(data, binary);
+    });
+    local.onClose((code, reason) => {
+      // The end follows the output still waiting for credit, not overtakes it.
+      if (entry.out.queuedBytes > 0) entry.closing = { code, reason };
+      else end(code, reason);
     });
   }
 
