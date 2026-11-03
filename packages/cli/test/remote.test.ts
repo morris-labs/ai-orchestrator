@@ -80,6 +80,21 @@ const remoteBox = () => ({
 });
 
 describe("--machine", () => {
+  it("takes the live machine when a revoked machine has the same name", async () => {
+    server.on("GET /api/v1/machines", {
+      body: {
+        machines: [
+          MACHINES[0],
+          machine({ id: "m-old", name: "build-server", status: "revoked" }),
+          machine({ id: NODE, name: "build-server" }),
+        ],
+      },
+    });
+    server.on(`POST ${PROXY}/usage/clear`, { body: { vendors: [], cleared: 1 } });
+    expect(await cli(["--machine", "build-server", "review", "clear-usage", "codex"])).toBe(0);
+    expect(calls()).toEqual([`POST ${PROXY}/usage/clear`]);
+  });
+
   it("sends a review's roles, tier, and cross-vendor choice to the machine", async () => {
     server.on(`POST ${PROXY}/runs`, { status: 201, body: runState });
     const flags = ["--role", "reviewer=codex", "--tier", "large", "--no-cross-vendor"];

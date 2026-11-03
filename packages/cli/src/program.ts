@@ -534,7 +534,12 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
       }
       throw err;
     }
-    const m = machines.find((x) => x.id === want) ?? machines.find((x) => x.name === want);
+    // A revoked machine's name is free to enroll again, so the name means the
+    // live machine when there is one, and an older revoked row can't shadow it.
+    const m =
+      machines.find((x) => x.id === want) ??
+      machines.find((x) => x.name === want && x.status !== "revoked") ??
+      machines.find((x) => x.name === want);
     if (!m) {
       throw new UsageError(
         `No machine has the ID or name ${want}. List the machines with: aio machines list`,
