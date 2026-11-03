@@ -13,6 +13,8 @@ import type {
 
 export class FakeNodeLink implements NodeLink {
   readonly requests: LinkRequest[] = [];
+  /** The options of the most recent `request`. */
+  lastOptions: { timeoutMs?: number } | undefined;
   readonly streams: Omit<LinkRequest, "body" | "method">[] = [];
   private readonly closeListeners: (() => void)[] = [];
   /** When set, `request` and `openStream` wait this long before they start. */
@@ -36,8 +38,9 @@ export class FakeNodeLink implements NodeLink {
     if (this.fail) throw this.fail;
   }
 
-  async request(req: LinkRequest): Promise<LinkResponse> {
+  async request(req: LinkRequest, options?: { timeoutMs?: number }): Promise<LinkResponse> {
     this.requests.push(req);
+    this.lastOptions = options;
     await this.gate();
     const res = await fetch(this.url(req, "http"), {
       method: req.method,

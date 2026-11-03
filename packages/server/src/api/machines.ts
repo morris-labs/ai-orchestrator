@@ -18,9 +18,11 @@ import {
   LOCAL_MACHINE_ID,
   MACHINE_PROXY_PATH,
 } from "@aio/contracts";
+import { validateHeaderName, validateHeaderValue } from "node:http";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type WebSocket from "ws";
 import type { LinkRegistry, LinkRequest, LinkStream, NodeLink } from "../hub/link.js";
+import { closeReason } from "../hub/protocol.js";
 import { ApiError, isApiErrorCode } from "./errors.js";
 
 /** What this server is in a fleet. */
@@ -277,6 +279,31 @@ function targetOf(request: FastifyRequest): { target: ProxyTarget; path: string 
   return { target, path: url.split("?")[0] as string };
 }
 
+/**
+ * The headers to answer with, or a 502 when the node's response can't be sent
+ * as HTTP: a link frame can hold a status or header that Node refuses to write.
+ * An informational status is also refused, because it can't end a response.
+ */
+function sendableResponse(
+  status: number,
+  headers: Record<string, string>,
+  machineId: string,
+): Record<string, string> {
+  const fail = (what: string) =>
+    new ApiError("internal", `Machine ${machineId} sent ${what}.`, undefined, 502);
+  if (status < 200 || status > 599) throw fail(`the invalid HTTP status ${status}`);
+  const out = forwardableHeaders(headers, "response");
+  for (const [name, value] of Object.entries(out)) {
+    try {
+      validateHeaderName(name);
+      validateHeaderValue(name, value);
+    } catch {
+      throw fail("an invalid HTTP response header");
+    }
+  }
+  return out;
+}
+
 async function forwardHttp(deps: Deps, request: FastifyRequest, reply: FastifyReply) {
   const { target, path } = targetOf(request);
   const resolved = resolveMachine(deps.links, deps.machines, target, path);
@@ -293,17 +320,16 @@ async function forwardHttp(deps: Deps, request: FastifyRequest, reply: FastifyRe
   let res;
   try {
     res = await withTimeout(
-      resolved.link.request(req),
+      resolved.link.request(req, { timeoutMs: ms }),
       ms,
       `Machine ${target.machineId} didn't answer ${request.method} /${target.rest} within ${Math.round(ms / 1000)} seconds.`,
     );
   } catch (err) {
     throw linkFailure(err, target.machineId);
   }
+  const responseHeaders = sendableResponse(res.status, res.headers, target.machineId);
   reply.code(res.status);
-  for (const [name, value] of Object.entries(forwardableHeaders(res.headers, "response"))) {
-    reply.header(name, value);
-  }
+  for (const [name, value] of Object.entries(responseHeaders)) reply.header(name, value);
   return reply.send(res.body);
 }
 
@@ -416,13 +442,6 @@ export function sendableCode(code: number): number {
   return 1011;
 }
 
-/** Trims a close reason to the 123 bytes a close frame can carry. */
-function closeReason(reason: string): string {
-  let out = reason;
-  while (Buffer.byteLength(out) > 123) out = out.slice(0, -1);
-  return out;
-}
-
 /**
  * Tags each event frame of a relayed event stream with the machine it came
  * from, so a client can merge several machines' streams. `hello` frames and
@@ -485,7 +504,11 @@ async function openRelay(deps: Deps, request: FastifyRequest): Promise<void> {
   );
   pendingRelays.set(request, relay);
   // An upgrade that fails after this point must not leave the stream open.
-  request.raw.socket?.once("close", () => relay.cancel());
+  // A socket that ended during the open fires no more events, and `ws` drops
+  // it without calling back, so it's checked here as well.
+  const socket = request.raw.socket;
+  if (socket && (socket.destroyed || !socket.readable || !socket.writable)) relay.cancel();
+  else socket?.once("close", () => relay.cancel());
 }
 
 /**

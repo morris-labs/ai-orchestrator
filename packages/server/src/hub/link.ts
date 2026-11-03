@@ -25,7 +25,8 @@ export interface LinkStream {
 }
 export interface NodeLink {
   readonly machineId: string;
-  request(req: LinkRequest): Promise<LinkResponse>;
+  /** Sends a request. `timeoutMs` replaces the link's default wait for the answer. */
+  request(req: LinkRequest, options?: { timeoutMs?: number }): Promise<LinkResponse>;
   openStream(req: Omit<LinkRequest, "body" | "method">): Promise<LinkStream>;
   onClose(cb: () => void): void;
 }

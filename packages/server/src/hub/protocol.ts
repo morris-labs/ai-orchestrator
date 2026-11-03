@@ -162,7 +162,9 @@ export function sendableCloseCode(code: number | undefined): number {
 
 /** A close reason short enough for a close frame, which holds 123 bytes. */
 export function closeReason(reason: string): string {
-  let out = reason;
+  // Each UTF-16 code unit takes at least one byte, so this bounds the loop
+  // however long a reason the other end sent.
+  let out = reason.slice(0, 120);
   while (Buffer.byteLength(out) > 120) out = out.slice(0, -1);
   return out;
 }

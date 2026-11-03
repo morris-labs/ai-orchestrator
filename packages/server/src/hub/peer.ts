@@ -83,6 +83,7 @@ export class LinkError extends Error {
   constructor(
     message: string,
     readonly status = 503,
+    readonly code?: string,
   ) {
     super(message);
     this.name = "LinkError";
@@ -98,7 +99,7 @@ export interface LinkPeerOptions {
   /** The other end's hello. */
   hello: LinkHello;
   server: LinkServer;
-  /** Milliseconds a request or stream open waits for its answer. Default 60 seconds. */
+  /** Milliseconds a request or stream open waits for its answer, unless the request sets its own. Default 60 seconds. */
   timeoutMs?: number;
   /** Milliseconds between pings; a ping without a pong by the next one ends the link. Default 15 seconds. */
   pingMs?: number;
@@ -283,9 +284,9 @@ export class LinkPeer implements NodeLink {
     return this.hello.capabilities.includes(capability);
   }
 
-  request(req: LinkRequest): Promise<LinkResponse> {
+  request(req: LinkRequest, options?: { timeoutMs?: number }): Promise<LinkResponse> {
     const id = this.newId();
-    const answer = this.await(id, `${req.method} ${req.path}`);
+    const answer = this.await(id, `${req.method} ${req.path}`, options?.timeoutMs);
     this.sendFrame({
       type: "req",
       id,
@@ -386,14 +387,23 @@ export class LinkPeer implements NodeLink {
     return `${this.opts.side}${this.nextId++}`;
   }
 
-  private await(id: string, what: string): Promise<LinkFrame> {
+  private await(id: string, what: string, timeoutMs?: number): Promise<LinkFrame> {
     if (this.closed)
       return Promise.reject(new LinkError(`The link to ${this.machineId} is closed.`));
     return new Promise<LinkFrame>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(id);
-        reject(new LinkError(`${this.machineId} didn't answer ${what} in time.`, 504));
-      }, this.opts.timeoutMs ?? 60_000);
+      const timer = setTimeout(
+        () => {
+          this.pending.delete(id);
+          reject(
+            new LinkError(
+              `${this.machineId} didn't answer ${what} in time.`,
+              504,
+              "machine_timeout",
+            ),
+          );
+        },
+        timeoutMs ?? this.opts.timeoutMs ?? 60_000,
+      );
       timer.unref();
       this.pending.set(id, { resolve, reject, timer });
     });

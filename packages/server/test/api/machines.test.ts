@@ -1,7 +1,8 @@
 import { EventEmitter } from "node:events";
+import net, { type AddressInfo } from "node:net";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import WebSocket from "ws";
-import type { LinkStream } from "../../src/hub/link.js";
+import type { LinkResponse, LinkStream, NodeLink } from "../../src/hub/link.js";
 import {
   PendingRelay,
   RELAY_MAX_BUFFERED,
@@ -16,6 +17,7 @@ import { AUTH, TOKEN, createHarness, type Harness } from "./harness.js";
 import { FakeNodeLink, FakeRegistry } from "./fake-link.js";
 import { connect } from "./ws-client.js";
 import { attachCmd } from "../../src/terminals/attach.js";
+import { waitFor } from "../events/fake-engine.js";
 
 const TOKEN_A = "a".repeat(64);
 const TOKEN_B = "b".repeat(64);
@@ -267,6 +269,102 @@ describe("hub to node", () => {
     expect(await json(slow)).toMatchObject({
       error: { code: "machine_timeout", message: expect.stringContaining("node-a") },
     });
+  });
+
+  it("gives the link the route's timeout and reports a link timeout as 504", async () => {
+    const res = await fetch(`${fleet.hubUrl}/machines/node-a/proxy/boxes`, {
+      method: "POST",
+      headers: { ...AUTH, "content-type": "application/json" },
+      body: "{}",
+    });
+    await res.text();
+    expect(fleet.linkA.lastOptions).toEqual({ timeoutMs: 300 });
+    fleet.linkA.fail = Object.assign(new Error("node-a didn't answer in time."), {
+      status: 504,
+      code: "machine_timeout",
+    });
+    const slow = await fetch(`${fleet.hubUrl}/machines/node-a/proxy/boxes`, { headers: AUTH });
+    expect(slow.status).toBe(504);
+    expect(await json(slow)).toMatchObject({ error: { code: "machine_timeout" } });
+  });
+
+  it("answers 502 for a node response that can't be sent as HTTP", async () => {
+    const ok = { status: 200, headers: {}, body: Buffer.from("{}") };
+    const bad: LinkResponse[] = [
+      { ...ok, headers: { "bad name": "x" } },
+      { ...ok, headers: { "x-split": "a\r\nset-cookie: b=c" } },
+      { ...ok, status: 101 },
+      { ...ok, status: 100 },
+      { ...ok, status: 99 },
+      { ...ok, status: 600 },
+    ];
+    for (const answer of bad) {
+      const link: NodeLink = {
+        machineId: "node-bad",
+        request: async () => answer,
+        openStream: async () => {
+          throw new Error("No streams here.");
+        },
+        onClose: () => undefined,
+      };
+      fleet.hubLinks.links.set("node-bad", link);
+      const res = await fetch(`${fleet.hubUrl}/machines/node-bad/proxy/boxes`, { headers: AUTH });
+      expect(res.status, JSON.stringify(answer.headers) + answer.status).toBe(502);
+      expect(await json(res)).toMatchObject({
+        error: { message: expect.stringContaining("node-bad") },
+      });
+    }
+  });
+
+  it("closes the stream when the client leaves while it opens", async () => {
+    const closes: (number | undefined)[] = [];
+    const stream: LinkStream = {
+      send: () => undefined,
+      onMessage: () => undefined,
+      close: (code) => void closes.push(code),
+      onClose: () => undefined,
+    };
+    let release: () => void = () => undefined;
+    let opening = false;
+    fleet.hubLinks.links.set("node-open", {
+      machineId: "node-open",
+      request: async () => {
+        throw new Error("No requests here.");
+      },
+      openStream: async () => {
+        opening = true;
+        await new Promise<void>((r) => (release = r));
+        return stream;
+      },
+      onClose: () => undefined,
+    });
+    const app = fleet.hub.server.app;
+    let serverSide: net.Socket | undefined;
+    app.server.once("upgrade", (_req, socket) => (serverSide = socket as net.Socket));
+    const { port } = app.server.address() as AddressInfo;
+    const client = net.connect(port, "127.0.0.1");
+    client.on("error", () => undefined);
+    client.write(
+      [
+        "GET /api/v1/machines/node-open/proxy/events HTTP/1.1",
+        "Host: 127.0.0.1",
+        `Authorization: ${AUTH.authorization}`,
+        "Connection: Upgrade",
+        "Upgrade: websocket",
+        "Sec-WebSocket-Version: 13",
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
+        "",
+        "",
+      ].join("\r\n"),
+    );
+    await waitFor(() => opening);
+    const gone = new Promise((r) => serverSide?.once("close", r));
+    client.destroy();
+    serverSide?.destroy();
+    await gone;
+    release();
+    await waitFor(() => closes.length > 0);
+    expect(closes).toEqual([1001]);
   });
 
   it("refuses a body over the API's size limit", async () => {
@@ -536,6 +634,18 @@ describe("relay backpressure", () => {
     expect(socket.frames).toEqual(["last words"]);
     expect(socket.closedWith).toEqual([4002, "box removed"]);
     expect(f.closes).toEqual([]);
+  });
+
+  it("trims a long close reason from the node without blocking", () => {
+    const f = fakeStream();
+    const relay = new PendingRelay(f.stream, "node-a", null);
+    const socket = new FakeSocket();
+    relay.attach(socket as unknown as WebSocket);
+    const started = Date.now();
+    f.close(1000, "x".repeat(2 * 1024 * 1024));
+    expect(Date.now() - started).toBeLessThan(1000);
+    expect(socket.closedWith?.[0]).toBe(1000);
+    expect(Buffer.byteLength(socket.closedWith?.[1] ?? "")).toBeLessThanOrEqual(123);
   });
 
   it("closes the stream when the upgrade never completes", () => {

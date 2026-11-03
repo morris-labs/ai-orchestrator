@@ -59,7 +59,7 @@ afterEach(async () => {
   for (const c of cleanups.splice(0)) await c();
 });
 
-async function pair(server: LinkServer, capabilities?: string[]) {
+async function pair(server: LinkServer, capabilities?: string[], timeoutMs?: number) {
   const wss = new WebSocketServer({ port: 0, host: "127.0.0.1" });
   await new Promise<void>((r) => wss.once("listening", () => r()));
   const accepted = new Promise<WebSocket>((r) => wss.once("connection", r));
@@ -78,6 +78,7 @@ async function pair(server: LinkServer, capabilities?: string[]) {
     side: "h",
     hello: hello(capabilities),
     server: unused,
+    timeoutMs,
   });
   const nodeSide = new LinkPeer({
     socket: client,
@@ -130,6 +131,32 @@ describe("link peers", () => {
     await expect(slow).rejects.toThrow(/closed/);
     await waitFor(() => closed);
     release();
+  });
+
+  it("lets a request set its own timeout, and names a timeout's error code", async () => {
+    let finish: () => void = () => undefined;
+    const { hubSide } = await pair(
+      {
+        request: async () => {
+          await new Promise<void>((r) => (finish = r));
+          return { status: 200, headers: {}, body: Buffer.alloc(0) };
+        },
+        openStream: async () => {
+          throw new Error("No streams here.");
+        },
+      },
+      undefined,
+      20,
+    );
+    const req = { method: "POST", path: "/slow", headers: {} };
+    await expect(hubSide.request(req)).rejects.toMatchObject({
+      status: 504,
+      code: "machine_timeout",
+    });
+    const long = hubSide.request(req, { timeoutMs: 5000 });
+    await new Promise((r) => setTimeout(r, 100));
+    finish();
+    await expect(long).resolves.toMatchObject({ status: 200 });
   });
 
   it("holds a sender back until the receiver's sink drains", async () => {

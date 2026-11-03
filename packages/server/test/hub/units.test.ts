@@ -108,6 +108,11 @@ describe("protocol helpers", () => {
     expect(sendableCloseCode(4403)).toBe(4403);
     expect(sendableCloseCode(42)).toBe(1011);
     expect(Buffer.byteLength(closeReason("x".repeat(500)))).toBeLessThanOrEqual(120);
+    expect(Buffer.byteLength(closeReason("\u00e9".repeat(500)))).toBeLessThanOrEqual(120);
+    // A reason from the other end can be megabytes long; the trim stays quick.
+    const started = Date.now();
+    expect(closeReason("x".repeat(2 * 1024 * 1024))).toHaveLength(120);
+    expect(Date.now() - started).toBeLessThan(1000);
   });
 
   it("parses roles, names machines after the host, and limits node calls", () => {
