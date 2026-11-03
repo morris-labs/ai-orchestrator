@@ -161,6 +161,21 @@ class NfpmConfigTest(unittest.TestCase):
         self.assertTrue(profile["aio-hub"]["title"])
         self.assertTrue(profile["aio-hub"]["description"])
 
+    def test_the_gui_ufw_profile_matches_the_default_port(self):
+        records = (ROOT / "packages/contracts/src/records.ts").read_text()
+        port = re.search(r"export const DEFAULT_GUI_PORT = (\d+);", records).group(1)
+        profile = configparser.ConfigParser(interpolation=None, comment_prefixes=("#",))
+        profile.read(ROOT / "packaging/ufw/aio-hub-gui")
+        self.assertEqual(profile.sections(), ["aio-hub-gui"])
+        self.assertEqual(profile["aio-hub-gui"]["ports"], f"{port}/tcp")
+        entry = next(
+            (c for c in self.config["contents"] if c["dst"] == "/etc/ufw/applications.d/aio-hub-gui"),
+            None,
+        )
+        self.assertIsNotNone(entry, "the nfpm config doesn't install the GUI ufw profile")
+        build = (ROOT / "scripts/build-deb.sh").read_text()
+        self.assertIn('"$ROOT/packaging/ufw/aio-hub-gui" "$R/etc/ufw/applications.d/"', build)
+
     def test_nfpm_installs_the_ufw_profile(self):
         entry = next(
             (c for c in self.config["contents"] if c["dst"] == "/etc/ufw/applications.d/aio-hub"),

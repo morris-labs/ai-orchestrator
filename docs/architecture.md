@@ -84,6 +84,8 @@ usage scheduler, and terminals.
   project container and closes those of containers that are gone. See
   [Secrets](secrets.md#the-secrets-broker).
 - It's the only client of each engine.
+- In a multi-host setup, a hub also listens for enrolled GUI apps on other PCs on
+  port `21403`, once it has issued a GUI code. See `docs/multi-host.md`.
 - In a multi-host setup, a hub also listens for node links on port `21402`
   on its LAN address only, over mutual TLS, once it has enrolled a machine or
   issued an enrollment code. Each node dials out to its hub and keeps one

@@ -8,11 +8,16 @@ section's heading must have the form `## [X.Y.Z]`.
 
 ### Added
 
+- GUI enrollment: the Boxes and Review apps on another PC can control a hub and
+  its nodes. `aio gui code` or **Add GUI App** on the hub issues a one-time code,
+  the app generates its own key and gets a client certificate, and a new listener
+  on TCP port `21403` accepts only that certificate. Use `aio gui list` and
+  `aio gui revoke` on the hub. See `docs/multi-host.md`.
 - Multi-host support. A machine runs as a `hub`, a `node`, or `both`, set
   with the `role` setting, `aio-server --role`, or `AIO_ROLE`. A hub has its
   own certificate authority, issues one-time enrollment codes, and links to
   each node over mutual TLS. The hub keeps a machine registry, relays
-  1Password reads to its nodes, and syncs agent sign-ins between machines,
+  1Password reads to its nodes, and copies agent sign-ins from the hub to the nodes you grant,
   limited to what the `nodeGrants` setting gives each machine. A node opens
   terminals, directory listings, and event streams only on the machines that
   its grant lists in `machineAccess`.
@@ -67,6 +72,9 @@ section's heading must have the form `## [X.Y.Z]`.
 
 ### Changed
 
+- Agent sign-ins flow only from the hub to the nodes that a grant's `signInCopies`
+  lists. The `signInUpdates` grant is gone; stored settings that hold it still
+  load. A copy doesn't replace a file that the node signed in or refreshed itself.
 - The database schema is at version 7. Migration 6 adds the broker port to
   `engine_endpoints`, and migration 7 adds the `machines` and
   `enrollment_codes` tables. The server applies both at its next start, after

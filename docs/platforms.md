@@ -162,7 +162,8 @@ Windows:
 
 ### Multi-host
 
-A hub on any host listens for node links on TCP port `21402`; for the
+A hub on any host listens for enrolled GUI apps on TCP port `21403` once it has
+issued a GUI code, and for node links on TCP port `21402`; for the
 roles and the enrollment steps, see [Multi-host](multi-host.md). No package
 opens the port in a firewall:
 

@@ -4,7 +4,8 @@ AI Orchestrator can manage boxes on several machines. One machine runs the
 *hub*: the machine registry, the certificate authority, and the link that
 every other machine keeps open to it. Each other machine runs a *node*,
 which owns its own Docker, containers, transcripts, and accounts. The apps
-and the CLI on any machine talk only to the server on that machine.
+and the CLI on a machine talk to the server on that machine, unless you
+[enroll the apps with a hub](#control-a-hub-from-another-pc).
 
 This page describes roles, how to set up a hub and add a machine to it,
 review runs on other machines, the hub's link port, and what crosses the
@@ -249,6 +250,115 @@ The following rules apply to the CLI on another machine:
   machines".
 - `aio machines`, `aio node`, and `aio doctor` work on this machine only.
 
+## Control a hub from another PC
+
+The Boxes and Review apps on any PC can control every box and machine through
+the path app, hub, node, box. The PC needs no server of its own and no link. The
+hub's API stays on `127.0.0.1`, so the app connects to a separate listener on the
+hub, which accepts only a client certificate that the hub signed for that app.
+
+To enroll an app, do the following:
+
+1.  On the hub, issue a GUI code. In the Boxes app, open the **Machines** tab
+    (Ctrl+Shift+M) and click **Add GUI App**, or run the following command:
+
+    ```bash
+    aio gui code
+
+    ```
+
+    The code works once and expires after 10 minutes. Issuing the first code
+    starts the GUI listener.
+
+1.  If the hub runs a firewall, allow the GUI port. For more information, see
+    [Open the link port in a firewall](#open-the-link-port-in-a-firewall).
+
+1.  On the other PC, start the Boxes or Review app. On a PC with no local server,
+    the **Connection** window opens by itself. Otherwise, choose **Connection**
+    from the tray menu, or run the following command:
+
+    ```bash
+    aio-boxes --connection
+
+    ```
+
+1.  Enter the hub URL, the code, and a name for this PC, and then click **Enroll**.
+    The app restarts and connects to the hub.
+
+One enrollment serves both apps on the PC. To use the local server again, open the
+**Connection** window and click **Use Local Server**. The enrollment stays until
+you click **Remove Enrollment**.
+
+An installer can enroll the PC without the window. Write the following file, and
+then start an app:
+
+```json
+{"hubUrl": "HUB_URL", "code": "CODE", "name": "NAME"}
+```
+
+Save the file as `enrollment.json`, with mode `0600`, in the
+`ai-orchestrator-hub-client` folder of the OS's application data folder, such as
+`~/.config/ai-orchestrator-hub-client/enrollment.json` on Linux. Replace the
+following:
+
+- `HUB_URL`: the hub URL that came with the code
+- `CODE`: the GUI code, which authorizes only this exchange
+- `NAME`: the name the PC shows under on the hub. Optional; the default is the
+  PC's host name.
+
+The app removes the file when it reads it, whether the enrollment works or not.
+
+### What an enrolled app can do
+
+An enrolled app gets the same API, event streams, and terminals as the app on the
+hub, including every machine's boxes. **Treat its key as an administrator's
+credential**: it can open a shell in any box, and change most settings.
+
+The following stay on the hub. The listener refuses them with status 403, in every
+path form:
+
+- Enrolling and revoking machines and GUI apps, and listing GUI apps. A stolen key
+  can't enroll another client, or remove the record of itself.
+- `POST /api/v1/auth/session` and every other way to get the hub's token or
+  session cookie. No route returns the token.
+- Joining another hub.
+- The settings that decide what the hub trusts and where it listens: `role`,
+  `nodeGrants`, `linkPort`, `guiPort`, `linkHost`, and `linkAddress`.
+
+On a remote hub, the app treats the hub's machine as it treats any other machine:
+terminals open in tabs and **Browse** lists the hub's directories.
+
+### How the app keeps its key
+
+The app generates its private key, and only the public key and a proof of the code
+leave the PC. As with a node, the proof binds the code to the certificate that the
+app saw, so a program in the middle can't enroll or pose as the hub. The app pins
+the hub's certificate and authority.
+
+Chromium can't present a client certificate from a file, so the Electron main
+process holds the key and runs a small proxy on a random `127.0.0.1` port. The
+window loads its page from that proxy. The renderer never holds the key. It gets a
+token that works only on the proxy and only until the app quits, and it trades that
+token for a session cookie. The proxy refuses a call without the token or the
+cookie, a request for another host name, and a socket from another origin.
+
+### Revoke a GUI app
+
+To see the enrolled apps and revoke one, use the **GUI apps on other PCs** section
+of the **Machines** page on the hub, or run the following commands on the hub:
+
+```bash
+aio gui list
+aio gui revoke CLIENT_ID
+
+```
+
+Replace `CLIENT_ID` with the client's ID from `aio gui list`.
+
+A revocation applies to the app's next request, and it closes the app's open
+connections and terminals with the WebSocket close code `4403`. When the last
+enrolled app is revoked and no code is live, the GUI listener stops.
+
 ## Remove a machine
 
 To revoke a machine, run the following command on the hub:
@@ -383,8 +493,13 @@ enrolled a machine or issued a code. A machine on its own never opens it.
 To use another port, set the `linkPort` setting on the hub; the change
 applies the next time the listener starts.
 
+The GUI listener uses port `21403` and the same address as the link. It runs only
+when the role is `hub` or `both` and a GUI code is live or a GUI app is enrolled. To
+use another port, set the `guiPort` setting on the hub; the change applies the next
+time the listener starts.
+
 **Warning**: Keep the hub on your LAN or on a VPN such as Tailscale. Don't
-expose the link port to the internet.
+expose the link port or the GUI port to the internet.
 
 ### Open the link port in a firewall
 
@@ -413,6 +528,16 @@ sudo ufw allow from LAN_CIDR to any port PORT proto tcp
 ```
 
 Replace `PORT` with the `linkPort` value.
+
+For GUI apps on other PCs, the package also installs the `aio-hub-gui` profile for
+TCP port `21403`. To allow your LAN with `ufw`, run the following command:
+
+```bash
+sudo ufw allow from LAN_CIDR to any app aio-hub-gui
+
+```
+
+If you set the `guiPort` setting, allow that port instead.
 
 The link uses mutual TLS. The hub serves a certificate that its authority
 signs, and every node pins that exact certificate. Each node presents a
@@ -604,5 +729,14 @@ A node keeps its side in `DATA_DIR/link/`:
   certificate.
 - `node.json`: the hub URL, the machine ID, and the name.
 
-The hub's database holds the machine registry and a key derived from each
-enrollment code, never the code itself.
+An app enrolled with a hub keeps its side in the `ai-orchestrator-hub-client`
+folder of the OS's application data folder, such as
+`~/.config/ai-orchestrator-hub-client/` on Linux. The folder has mode `0700`:
+
+- `client.key` and `client.crt`: the app's client certificate. The key has mode
+  `0600`. The apps don't use the OS keychain.
+- `hub-ca.crt` and `hub.crt`: the hub's authority and its pinned certificate.
+- `connection.json`: the local or hub setting, the hub URL, and the client ID.
+
+The hub's database holds the machine registry, the enrolled GUI apps, and a key
+derived from each enrollment code, never the code itself.

@@ -1,0 +1,9 @@
+# ufw application profile for GUI apps that control an AI Orchestrator hub from
+# other PCs. The package installs it to /etc/ufw/applications.d/ but opens nothing.
+# To allow the apps from your LAN, run:
+#   sudo ufw allow from LAN_CIDR to any app aio-hub-gui
+# The port matches DEFAULT_GUI_PORT in packages/contracts/src/records.ts.
+[aio-hub-gui]
+title=AI Orchestrator hub GUI listener
+description=The mutual TLS listener that enrolled AI Orchestrator GUI apps on other PCs connect to.
+ports=21403/tcp

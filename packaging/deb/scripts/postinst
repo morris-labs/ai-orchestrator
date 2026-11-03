@@ -88,6 +88,9 @@ LAN_CIDR is its range, such as 192.0.2.0/24:
 
   sudo ufw allow from LAN_CIDR to any app aio-hub
 
+Once it has issued a GUI code, a hub also accepts enrolled GUI apps on TCP port
+21403. For that port, use the application profile aio-hub-gui.
+
 For more information, see
 https://github.com/morris-labs/ai-orchestrator/blob/main/docs/multi-host.md
 

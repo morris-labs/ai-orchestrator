@@ -136,6 +136,7 @@ done
 
 install -m 0644 "$UNIT" "$R/usr/lib/systemd/user/"
 install -m 0644 "$ROOT/packaging/ufw/aio-hub" "$R/etc/ufw/applications.d/"
+install -m 0644 "$ROOT/packaging/ufw/aio-hub-gui" "$R/etc/ufw/applications.d/"
 
 log "Staging the image build context"
 "$SCRIPT_DIR/build-image.sh" --pack-only
