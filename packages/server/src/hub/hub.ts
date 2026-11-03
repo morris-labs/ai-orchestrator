@@ -44,6 +44,8 @@ import type { SqlDatabase } from "../api/core-interface.js";
 const MAX_ENROLL_BODY = 64 * 1024;
 /** The largest link frame either end accepts. */
 export const MAX_LINK_FRAME = 64 * 1024 * 1024;
+/** Milliseconds a refused upgrade's socket can stay open to finish its answer. */
+const REFUSE_GRACE_MS = 5000;
 
 export const EnrollRequestSchema = z.object({
   name: MachineNameSchema,
@@ -103,12 +105,31 @@ export interface HubOptions {
   now?: () => Date;
 }
 
-/** The answer to a refused upgrade. */
-function refuseUpgrade(socket: Duplex, status: number, message: string): void {
+/**
+ * The answer to a refused upgrade. The HTTP server has handed the socket over,
+ * so its error listener and timeouts are gone, and this function must end the
+ * socket itself: `end` closes only this side, and the client might never close
+ * the other.
+ */
+export function refuseUpgrade(socket: Duplex, status: number, message: string): void {
   const reason = { 401: "Unauthorized", 403: "Forbidden", 404: "Not Found" }[status] ?? "Error";
+  socket.on("error", () => socket.destroy());
+  socket.once("finish", () => socket.destroy());
+  const grace = setTimeout(() => socket.destroy(), REFUSE_GRACE_MS);
+  grace.unref();
+  socket.once("close", () => clearTimeout(grace));
   socket.end(
     `HTTP/1.1 ${status} ${reason}\r\nConnection: close\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: ${Buffer.byteLength(message)}\r\n\r\n${message}`,
   );
+}
+
+/** The path of a request, or `null` when its target isn't a valid URL. */
+function requestPath(req: http.IncomingMessage): string | null {
+  try {
+    return new URL(req.url ?? "/", "https://hub.invalid").pathname;
+  } catch {
+    return null;
+  }
 }
 
 function sendJson(res: http.ServerResponse, status: number, body: unknown): void {
@@ -176,6 +197,8 @@ export class Hub {
   private identity: HubIdentity | null = null;
   private server: https.Server | null = null;
   private wss: WebSocketServer | null = null;
+  /** The listener's open connections, including upgraded ones and unfinished TLS handshakes. */
+  private readonly sockets = new Set<Duplex>();
   private listenPort: number | null = null;
   private boundHost: string | null = null;
   private listenError: string | null = null;
@@ -338,10 +361,26 @@ export class Hub {
         rejectUnauthorized: false,
         minVersion: "TLSv1.2",
       },
-      (req, res) => void this.serveHttp(req, res),
+      (req, res) => {
+        this.serveHttp(req, res).catch((err: unknown) => {
+          this.opts.log(`A hub link request failed: ${(err as Error).message}`);
+          res.destroy();
+        });
+      },
     );
+    server.on("connection", (socket) => {
+      this.sockets.add(socket);
+      socket.once("close", () => this.sockets.delete(socket));
+    });
     const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_LINK_FRAME });
-    server.on("upgrade", (req, socket, head) => this.serveUpgrade(wss, req, socket, head));
+    server.on("upgrade", (req, socket, head) => {
+      try {
+        this.serveUpgrade(wss, req, socket, head);
+      } catch (err) {
+        this.opts.log(`A hub link upgrade failed: ${(err as Error).message}`);
+        socket.destroy();
+      }
+    });
     server.on("tlsClientError", () => undefined);
     const wanted = this.opts.port();
     const host = this.opts.bindHost();
@@ -376,13 +415,15 @@ export class Hub {
     for (const client of this.wss?.clients ?? []) client.terminate();
     this.wss?.close();
     this.wss = null;
+    // `closeAllConnections` misses a refused upgrade and an unfinished TLS
+    // handshake, and `close` waits for every connection to end.
     server.closeAllConnections();
+    for (const socket of this.sockets) socket.destroy();
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 
   private async serveHttp(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-    const url = new URL(req.url ?? "/", "https://hub.invalid");
-    if (url.pathname !== LINK_PATHS.enroll) {
+    if (requestPath(req) !== LINK_PATHS.enroll) {
       sendJson(res, 404, { error: { code: "not_found", message: "No such link route." } });
       return;
     }
@@ -472,8 +513,7 @@ export class Hub {
     socket: Duplex,
     head: Buffer,
   ): void {
-    const url = new URL(req.url ?? "/", "https://hub.invalid");
-    if (url.pathname !== LINK_PATHS.connect)
+    if (requestPath(req) !== LINK_PATHS.connect)
       return refuseUpgrade(socket, 404, "No such link route.");
     const tls = req.socket as TLSSocket;
     const cert = tls.getPeerCertificate?.();
@@ -489,7 +529,18 @@ export class Hub {
     if (machine.revokedAt !== null) {
       return refuseUpgrade(socket, 403, "This machine's certificate was revoked.");
     }
-    wss.handleUpgrade(req, socket, head, (ws) => void this.serveLink(ws, machine));
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      // A bad frame can arrive at any time, and a socket error without a
+      // listener ends the process. `LinkPeer` only exists after the hello.
+      ws.on("error", (err) => {
+        this.opts.log(`The link from ${machine.id} failed: ${err.message}`);
+        ws.terminate();
+      });
+      this.serveLink(ws, machine).catch((err: unknown) => {
+        this.opts.log(`The link from ${machine.id} failed: ${(err as Error).message}`);
+        ws.terminate();
+      });
+    });
   }
 
   private async serveLink(ws: WebSocket, machine: MachineRow): Promise<void> {

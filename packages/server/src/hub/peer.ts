@@ -249,7 +249,9 @@ export class LinkPeer implements NodeLink {
     this.flow = opts.hello.capabilities.includes("flow.v1");
     const socket = opts.socket;
     socket.on("message", (data, isBinary) => {
-      if (isBinary) return;
+      // A closing socket still reads until the close handshake ends, and the
+      // other end must not get anything served after this end closes the link.
+      if (isBinary || this.closed) return;
       const frame = parseFrame(rawText(data));
       if (frame) this.receive(frame);
     });

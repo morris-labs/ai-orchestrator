@@ -3,8 +3,12 @@
 // upgrade accepts only a client certificate that this hub's authority signed
 // for an enrolled machine that isn't revoked.
 import { X509Certificate, randomBytes } from "node:crypto";
+import type https from "node:https";
+import net from "node:net";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { Duplex, PassThrough } from "node:stream";
+import tls from "node:tls";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import WebSocket from "ws";
 import { openDatabase } from "../../src/db/index.js";
 import {
@@ -13,9 +17,10 @@ import {
   newNodeKey,
   type HubIdentity,
 } from "../../src/hub/ca.js";
-import { Hub } from "../../src/hub/hub.js";
+import { Hub, refuseUpgrade } from "../../src/hub/hub.js";
 import { LINK_CAPABILITIES, LINK_PATHS, LINK_PROTOCOL } from "../../src/hub/protocol.js";
 import { ENROLLMENT_CODE_TTL_MS, codeKey, nodeProof } from "../../src/hub/registry.js";
+import { waitFor } from "../events/fake-engine.js";
 import { tempDir } from "../tmp.js";
 
 const hubs: Hub[] = [];
@@ -114,6 +119,39 @@ function connect(
   });
 }
 
+/**
+ * Connects over TLS without a client certificate and sends `head` as a raw
+ * request. The socket stays half open when the hub ends its side.
+ */
+async function rawRequest(
+  port: number,
+  head: string,
+): Promise<{ socket: tls.TLSSocket; answer: Promise<string> }> {
+  // `tls.connect` honors `allowHalfOpen`, which its option type leaves out.
+  const options: tls.ConnectionOptions & { allowHalfOpen: boolean } = {
+    port,
+    host: "127.0.0.1",
+    rejectUnauthorized: false,
+    allowHalfOpen: true,
+  };
+  const socket = tls.connect(options);
+  socket.on("error", () => undefined);
+  await new Promise<void>((resolve) => socket.once("secureConnect", () => resolve()));
+  const answer = new Promise<string>((resolve) => {
+    socket.once("data", (chunk: Buffer) => resolve(chunk.toString()));
+  });
+  socket.write(head);
+  return { socket, answer };
+}
+
+/** The number of connections the hub's listener holds. */
+function connectionCount(hub: Hub): Promise<number> {
+  const { server } = hub as unknown as { server: https.Server };
+  return new Promise((resolve, reject) => {
+    server.getConnections((err, count) => (err ? reject(err) : resolve(count)));
+  });
+}
+
 describe("enrollment codes", () => {
   it("work once", async () => {
     const { hub, identity } = await startHub();
@@ -206,5 +244,111 @@ describe("the link upgrade", () => {
     await hub.revoke("m0000000000000003");
     const res = await connect(hub.port!, { key: key.key, cert });
     expect(res).toMatchObject({ status: 403, body: expect.stringMatching(/revoked/) });
+  });
+
+  it("answers a request whose target isn't a valid URL", async () => {
+    const { hub } = await startHub();
+    await hub.issueCode();
+    const { socket, answer } = await rawRequest(
+      hub.port!,
+      "GET // HTTP/1.1\r\nHost: hub.example.com\r\nConnection: close\r\n\r\n",
+    );
+    expect(await answer).toMatch(/^HTTP\/1\.1 404 /);
+    socket.destroy();
+  });
+
+  it("refuses an upgrade whose target isn't a valid URL", async () => {
+    const { hub } = await startHub();
+    await hub.issueCode();
+    const { socket, answer } = await rawRequest(
+      hub.port!,
+      "GET // HTTP/1.1\r\nHost: hub.example.com\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n",
+    );
+    expect(await answer).toMatch(/^HTTP\/1\.1 404 /);
+    socket.destroy();
+  });
+
+  it("survives an invalid frame before the hello", async () => {
+    const { hub, identity } = await startHub();
+    await hub.issueCode();
+    const key = newNodeKey();
+    const cert = issueNodeCertificate(identity.ca, "m0000000000000004", key.publicKey);
+    hub.registry.add({
+      id: "m0000000000000004",
+      name: "node-four",
+      certFingerprint: new X509Certificate(cert).fingerprint256,
+    });
+    const logged: string[] = [];
+    (hub as unknown as { opts: { log: (m: string) => void } }).opts.log = (m) => logged.push(m);
+    const ws = new WebSocket(`wss://127.0.0.1:${hub.port!}${LINK_PATHS.connect}`, {
+      rejectUnauthorized: false,
+      key: key.key,
+      cert,
+    });
+    ws.on("error", () => undefined);
+    await new Promise<void>((resolve) => ws.once("open", () => resolve()));
+    const closed = new Promise<void>((resolve) => ws.once("close", () => resolve()));
+    // A frame with the reserved bits set, which no WebSocket peer may send.
+    (ws as unknown as { _socket: Duplex })._socket.write(Buffer.from([0xf1, 0x00]));
+    await closed;
+    await waitFor(() => logged.some((m) => /m0000000000000004/.test(m)));
+    expect(hub.port).not.toBeNull();
+  });
+});
+
+describe("a refused upgrade", () => {
+  it("closes a socket whose client never closes its side", async () => {
+    const { hub } = await startHub();
+    await hub.issueCode();
+    const { socket, answer } = await rawRequest(
+      hub.port!,
+      `GET ${LINK_PATHS.connect} HTTP/1.1\r\nHost: hub.example.com\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n`,
+    );
+    expect(await answer).toMatch(/^HTTP\/1\.1 401 /);
+    await expect.poll(() => connectionCount(hub), { timeout: 2000, interval: 20 }).toBe(0);
+    socket.destroy();
+  });
+
+  it("handles an error on the socket", () => {
+    const socket = new PassThrough();
+    refuseUpgrade(socket, 401, "No.");
+    expect(() => socket.emit("error", new Error("read ECONNRESET"))).not.toThrow();
+    expect(socket.destroyed).toBe(true);
+  });
+
+  it("destroys a socket that can't finish its answer", () => {
+    vi.useFakeTimers();
+    try {
+      const stuck = new Duplex({ read() {}, write() {} });
+      refuseUpgrade(stuck, 401, "No.");
+      expect(stuck.destroyed).toBe(false);
+      vi.advanceTimersByTime(60_000);
+      expect(stuck.destroyed).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("closing the hub", () => {
+  it("doesn't wait for an unfinished TLS handshake or a refused socket", async () => {
+    const { hub } = await startHub();
+    await hub.issueCode();
+    // Holds a connection that never starts its TLS handshake.
+    const idle = net.connect({ port: hub.port!, host: "127.0.0.1" });
+    idle.on("error", () => undefined);
+    await new Promise<void>((resolve) => idle.once("connect", () => resolve()));
+    const { socket, answer } = await rawRequest(
+      hub.port!,
+      `GET ${LINK_PATHS.connect} HTTP/1.1\r\nHost: hub.example.com\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n`,
+    );
+    await answer;
+    const stopped = await Promise.race([
+      hub.close().then(() => true),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 2000)),
+    ]);
+    idle.destroy();
+    socket.destroy();
+    expect(stopped).toBe(true);
   });
 });

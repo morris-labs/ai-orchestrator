@@ -133,6 +133,47 @@ describe("link peers", () => {
     release();
   });
 
+  it("drops the other end's requests and streams once it closes the link", async () => {
+    const wss = new WebSocketServer({ port: 0, host: "127.0.0.1" });
+    await new Promise<void>((r) => wss.once("listening", () => r()));
+    const accepted = new Promise<WebSocket>((r) => wss.once("connection", r));
+    const client = new WebSocket(`ws://127.0.0.1:${(wss.address() as AddressInfo).port}`);
+    await new Promise<void>((r) => client.once("open", () => r()));
+    const socket = await accepted;
+    cleanups.push(() => {
+      client.terminate();
+      wss.close();
+    });
+    const served: string[] = [];
+    const peer = new LinkPeer({
+      socket,
+      machineId: "m1",
+      side: "h",
+      hello: hello(),
+      server: {
+        request: async (req) => {
+          served.push(req.path);
+          return { status: 200, headers: {}, body: Buffer.alloc(0) };
+        },
+        openStream: async (req) => {
+          served.push(req.path);
+          throw new Error("No streams here.");
+        },
+      },
+    });
+    const req = (path: string) =>
+      JSON.stringify({ type: "req", id: path, method: "GET", path, headers: {} });
+    // The first request proves that frames arrive; the rest follow the close.
+    client.send(req("/before"));
+    await waitFor(() => served.length === 1);
+    const clientClosed = new Promise<void>((r) => client.once("close", () => r()));
+    peer.close(4403, "Revoked.");
+    client.send(req("/after"));
+    client.send(JSON.stringify({ type: "open", id: "o1", path: "/after-stream", headers: {} }));
+    await clientClosed;
+    expect(served).toEqual(["/before"]);
+  });
+
   it("lets a request set its own timeout, and names a timeout's error code", async () => {
     let finish: () => void = () => undefined;
     const { hubSide } = await pair(
