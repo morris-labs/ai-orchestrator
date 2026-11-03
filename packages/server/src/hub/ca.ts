@@ -18,8 +18,9 @@ import {
   createPrivateKey,
   createPublicKey,
   generateKeyPairSync,
+  randomBytes,
 } from "node:crypto";
-import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, open, readFile, rename, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { createCertificate } from "@aio/contracts/tls";
 import { z } from "zod";
@@ -33,17 +34,40 @@ export const NODE_CERT_PREFIX = "aio-node:";
 /** How long the authority and the certificates it signs are valid: 10 years. */
 const CERT_DAYS = 3650;
 
-/** Writes `text` to `file` with `mode` through a temporary file, so a reader never sees half. */
+/**
+ * Writes `text` to `file` with `mode` through a temporary file, so a reader
+ * never sees half. A container can write some of these folders, such as an
+ * account folder, so the temporary name is random and the mode goes through the
+ * open handle: neither a planted path nor a swapped link can redirect them. A
+ * rename replaces a link at `file` rather than following it, and a directory in
+ * the way is removed first.
+ */
 export async function writeAtomic(
   file: string,
   text: string | Buffer,
   mode: number,
 ): Promise<void> {
-  const tmp = `${file}.${process.pid}.tmp`;
-  await rm(tmp, { force: true });
-  await writeFile(tmp, text, { mode, flag: "wx" });
-  await chmod(tmp, mode);
-  await rename(tmp, file);
+  const tmp = `${file}.${randomBytes(6).toString("hex")}.tmp`;
+  const handle = await open(tmp, "wx", mode);
+  try {
+    try {
+      await handle.writeFile(text);
+      await handle.chmod(mode);
+    } finally {
+      await handle.close();
+    }
+    try {
+      await rename(tmp, file);
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== "EISDIR" && code !== "ENOTEMPTY" && code !== "EEXIST") throw err;
+      await rm(file, { recursive: true, force: true });
+      await rename(tmp, file);
+    }
+  } catch (err) {
+    await rm(tmp, { recursive: true, force: true }).catch(() => undefined);
+    throw err;
+  }
 }
 
 /** Makes `dir` with mode 0700, and tightens an existing one that others can read. */
@@ -229,16 +253,32 @@ export interface NodeLinkFiles {
   hubCert: string;
 }
 
-/** Reads the node's link files from `dir`, or returns `null` when the node hasn't joined a hub. */
-export async function readNodeLinkFiles(dir: string): Promise<NodeLinkFiles | null> {
+/**
+ * Reads the node's link files from `dir`, or returns `null` when the node hasn't
+ * joined a hub. A damaged `node.json` file also returns `null`, and `warn` names
+ * the file.
+ */
+export async function readNodeLinkFiles(
+  dir: string,
+  warn?: (message: string) => void,
+): Promise<NodeLinkFiles | null> {
   const [json, clientKey, clientCert, hubCa, hubCert] = await Promise.all(
     ["node.json", "client.key", "client.crt", "hub-ca.crt", "hub.crt"].map((f) =>
       readOptional(path.join(dir, f)),
     ),
   );
   if (!json || !clientKey || !clientCert || !hubCa || !hubCert) return null;
-  const parsed = NodeLinkConfigSchema.safeParse(JSON.parse(json));
-  if (!parsed.success) return null;
+  let value: unknown;
+  try {
+    value = JSON.parse(json);
+  } catch {
+    value = undefined;
+  }
+  const parsed = NodeLinkConfigSchema.safeParse(value);
+  if (!parsed.success) {
+    warn?.(`${path.join(dir, "node.json")} isn't valid, so this machine counts as not joined.`);
+    return null;
+  }
   return { config: parsed.data, clientKey, clientCert, hubCa, hubCert };
 }
 

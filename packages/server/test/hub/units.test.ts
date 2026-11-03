@@ -5,7 +5,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { openDatabase } from "../../src/db/index.js";
-import { issueNodeCertificate, loadOrCreateHubIdentity, newNodeKey } from "../../src/hub/ca.js";
+import {
+  issueNodeCertificate,
+  loadOrCreateHubIdentity,
+  newNodeKey,
+  readNodeLinkFiles,
+  writeAtomic,
+} from "../../src/hub/ca.js";
 import { HealthCache, measureHealth } from "../../src/hub/health.js";
 import {
   HUB_BOX_ROUTES,
@@ -302,6 +308,57 @@ describe("hub certificates", () => {
     expect(again.linkFingerprint).toBe(identity.linkFingerprint);
     expect(again.ca.cert).toBe(identity.ca.cert);
   });
+});
+
+describe("the atomic writer", () => {
+  it("ignores a directory planted at the process's temporary name", async () => {
+    const dir = tempDir("aio-atomic-");
+    const file = path.join(dir, "auth.json");
+    fs.mkdirSync(`${file}.${process.pid}.tmp`);
+    await writeAtomic(file, "content", 0o600);
+    expect(fs.readFileSync(file, "utf8")).toBe("content");
+    expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+  });
+
+  it("replaces a link at the file without following it and leaves no temporary file", async () => {
+    const dir = tempDir("aio-atomic-");
+    const file = path.join(dir, "auth.json");
+    const outside = path.join(dir, "outside");
+    fs.writeFileSync(outside, "keep");
+    fs.chmodSync(outside, 0o644);
+    fs.symlinkSync(outside, file);
+    await writeAtomic(file, Buffer.from("content"), 0o600);
+    expect(fs.lstatSync(file).isFile()).toBe(true);
+    expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+    expect(fs.readFileSync(outside, "utf8")).toBe("keep");
+    expect(fs.statSync(outside).mode & 0o777).toBe(0o644);
+    expect(fs.readdirSync(dir).sort()).toEqual(["auth.json", "outside"]);
+  });
+
+  it("replaces a directory in the way of the file", async () => {
+    const dir = tempDir("aio-atomic-");
+    const file = path.join(dir, "auth.json");
+    fs.mkdirSync(path.join(file, "nested"), { recursive: true });
+    await writeAtomic(file, "content", 0o600);
+    expect(fs.readFileSync(file, "utf8")).toBe("content");
+    expect(fs.readdirSync(dir)).toEqual(["auth.json"]);
+  });
+});
+
+describe("the node's link files", () => {
+  it.each(["{ not json", "[]"])(
+    "treats a damaged node.json file, %s, as not joined",
+    async (text) => {
+      const dir = tempDir("aio-link-");
+      for (const name of ["client.key", "client.crt", "hub-ca.crt", "hub.crt"]) {
+        fs.writeFileSync(path.join(dir, name), "pem");
+      }
+      fs.writeFileSync(path.join(dir, "node.json"), text);
+      const warnings: string[] = [];
+      await expect(readNodeLinkFiles(dir, (m) => warnings.push(m))).resolves.toBeNull();
+      expect(warnings).toEqual([expect.stringContaining(path.join(dir, "node.json"))]);
+    },
+  );
 });
 
 describe("sign-in sync keys", () => {

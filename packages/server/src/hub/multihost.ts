@@ -349,7 +349,12 @@ export class MultiHost {
 
   async start(): Promise<void> {
     await this.credentials.prime();
-    await this.node.start();
+    // A broken link to this machine's own hub must not stop the hub it serves.
+    try {
+      await this.node.start();
+    } catch (err) {
+      this.opts.log(`The node's link didn't start: ${(err as Error).message}`);
+    }
     await this.hub.start();
     const pollMs = this.opts.credentialPollMs ?? 30_000;
     if (pollMs > 0) {

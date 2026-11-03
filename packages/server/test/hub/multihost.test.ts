@@ -11,6 +11,7 @@ import WebSocket from "ws";
 import { startApp, type App } from "../../src/api/app.js";
 import { ApiError } from "../../src/api/errors.js";
 import { createCore } from "../../src/core.js";
+import { Hub } from "../../src/hub/hub.js";
 import { MemoryDocker } from "../../src/docker/memory.js";
 import type { OpClient } from "../../src/secrets/op.js";
 import { waitFor } from "../events/fake-engine.js";
@@ -159,6 +160,30 @@ describe("multi-host", () => {
     expect(list.machines).toHaveLength(1);
     expect(list.machines[0]).toMatchObject({ id: "local", isLocal: true, status: "online" });
     expect(fs.existsSync(path.join(solo.dataDir, "hub"))).toBe(false);
+  });
+
+  it.each([
+    ["holds invalid JSON", (file: string) => fs.writeFileSync(file, "{ not json")],
+    ["can't be read", (file: string) => fs.mkdirSync(file)],
+  ])("starts the hub when the node.json file %s", async (_name, damage) => {
+    const hubStart = vi.spyOn(Hub.prototype, "start");
+    try {
+      const server = await startServer("damaged", {
+        before: (home) => {
+          const dir = path.join(home, "data", "link");
+          fs.mkdirSync(dir, { recursive: true });
+          for (const name of ["client.key", "client.crt", "hub-ca.crt", "hub.crt"]) {
+            fs.writeFileSync(path.join(dir, name), "pem");
+          }
+          damage(path.join(dir, "node.json"));
+        },
+      });
+      expect(hubStart).toHaveBeenCalledOnce();
+      const status = NodeStatusSchema.parse((await server.api("GET", "/api/v1/node")).json);
+      expect(status).toMatchObject({ link: "none", machineId: null });
+    } finally {
+      hubStart.mockRestore();
+    }
   });
 
   it("enrolls a node, links over mutual TLS, and lists machines on both ends", async () => {

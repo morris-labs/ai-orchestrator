@@ -88,7 +88,7 @@ export class NodeAgent {
 
   /** Reads the link files and connects when this machine has joined a hub. */
   async start(): Promise<void> {
-    this.files = await readNodeLinkFiles(this.opts.dir);
+    this.files = await readNodeLinkFiles(this.opts.dir, this.opts.log);
     if (this.files && this.opts.mayLink()) this.connect();
   }
 
