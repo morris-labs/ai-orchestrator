@@ -142,6 +142,8 @@ describe("helpers", () => {
     const tag = tagEventFrame("node-a");
     const event = JSON.parse(tag(Buffer.from('{"type":"box.changed","seq":3}')).toString());
     expect(event).toEqual({ type: "box.changed", seq: 3, machine: "node-a" });
+    const spoofed = tag(Buffer.from('{"type":"box.changed","seq":4,"machine":"node-b"}'));
+    expect(JSON.parse(spoofed.toString()).machine).toBe("node-a");
     const hello = '{"type":"hello","streamId":"s","lastSeq":0,"replaying":false}';
     expect(tag(Buffer.from(hello)).toString()).toBe(hello);
   });
@@ -232,6 +234,8 @@ describe("hub to node", () => {
     expect(sent.method).toBe("PATCH");
     expect(sent.body?.toString()).toBe(JSON.stringify(body));
     expect(sent.headers["content-type"]).toBe("application/json");
+    expect(patch.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(patch.headers.get("content-security-policy")).toContain("sandbox");
     // Whatever the node answers, the hub relays it unchanged.
     const direct = await fleet.linkA.request({
       method: "PATCH",

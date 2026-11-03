@@ -330,6 +330,10 @@ async function forwardHttp(deps: Deps, request: FastifyRequest, reply: FastifyRe
   const responseHeaders = sendableResponse(res.status, res.headers, target.machineId);
   reply.code(res.status);
   for (const [name, value] of Object.entries(responseHeaders)) reply.header(name, value);
+  // A node's body is untrusted. Stop a browser from running it as a page in the
+  // hub's origin, whatever content type the node claims.
+  reply.header("x-content-type-options", "nosniff");
+  reply.header("content-security-policy", "sandbox; default-src 'none'");
   return reply.send(res.body);
 }
 
@@ -447,8 +451,9 @@ export function sendableCode(code: number): number {
 
 /**
  * Tags each event frame of a relayed event stream with the machine it came
- * from, so a client can merge several machines' streams. `hello` frames and
- * frames that aren't JSON pass through unchanged.
+ * from, so a client can merge several machines' streams. The hub overwrites a
+ * `machine` value that the node supplies, so a node can't claim to be another
+ * machine. `hello` frames and frames that aren't JSON pass through unchanged.
  */
 export function tagEventFrame(machineId: string) {
   return (data: Buffer): Buffer => {
@@ -463,8 +468,7 @@ export function tagEventFrame(machineId: string) {
       frame === null ||
       Array.isArray(frame) ||
       (frame as { type?: unknown }).type === "hello" ||
-      typeof (frame as { seq?: unknown }).seq !== "number" ||
-      (frame as { machine?: unknown }).machine !== undefined
+      typeof (frame as { seq?: unknown }).seq !== "number"
     ) {
       return data;
     }
