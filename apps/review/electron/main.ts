@@ -4,7 +4,7 @@
 // instance, and `aio-review://` deep links.
 import { readFileSync } from "node:fs";
 import { hostname } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { HOME_PATHS, type NotificationToggles } from "@aio/contracts";
 import type { HubProxy } from "@aio/contracts/gui-client";
 import {
@@ -383,7 +383,7 @@ if (!app.requestSingleInstanceLock()) {
     HOST_OS,
     process.defaultApp === true,
     process.execPath,
-    process.argv[1],
+    process.argv[1] === undefined ? undefined : resolve(process.argv[1]),
   );
   if (exe === undefined) app.setAsDefaultProtocolClient(scheme);
   else app.setAsDefaultProtocolClient(scheme, exe, exeArgs);

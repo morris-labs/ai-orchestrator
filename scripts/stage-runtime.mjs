@@ -207,7 +207,16 @@ function deploy(pkg, dir) {
   log(`Deploying ${pkg}`);
   // A hoisted node_modules has real directories instead of links into
   // .pnpm, which the Windows installer and app bundles can't hold.
-  pnpm(["--config.node-linker=hoisted", "--filter", pkg, "deploy", "--legacy", "--prod", dir]);
+  pnpm([
+    "--config.node-linker=hoisted",
+    "--filter",
+    pkg,
+    "deploy",
+    "--legacy",
+    "--prod",
+    "--frozen-lockfile",
+    dir,
+  ]);
   // Every .bin folder holds links (or .cmd shims) to package binaries that
   // nothing in the runtime runs.
   removeBinDirs(path.join(dir, "node_modules"));
