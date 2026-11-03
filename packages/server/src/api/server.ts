@@ -30,6 +30,7 @@ import type { ApiDeps } from "./deps.js";
 import { ApiError, toApiError } from "./errors.js";
 import { createHandlers, type HttpHandlers, type HttpRouteKey } from "./handlers.js";
 import { localMachineRewrite, registerMachineProxy } from "./machines.js";
+import { LINK_CALLER_HEADER } from "../hub/protocol.js";
 import { attachCmd, shellCmd, sideSessionName } from "../terminals/attach.js";
 import type { ExecRequest } from "../terminals/exec.js";
 import { sendControl, serveTerminal } from "../terminals/terminal-socket.js";
@@ -182,6 +183,17 @@ export async function createApiServer(deps: ApiDeps & { tls?: TlsIdentity }): Pr
       // A refused upgrade leaves no HTTP connection worth keeping.
       if (ws) reply.header("connection", "close");
       return sendFailure(reply, new ApiError("unauthorized", "Missing or wrong bearer token."));
+    }
+    // The check runs on the matched route, so no path form gets around it. The
+    // hub may call this machine's API, but not make it join another hub.
+    if (
+      request.routeOptions.url === serverRoutes["node.join"].path &&
+      request.headers[LINK_CALLER_HEADER] !== undefined
+    ) {
+      return sendFailure(
+        reply,
+        new ApiError("unauthorized", "A join can't come over a link.", undefined, 403),
+      );
     }
   });
 

@@ -16,6 +16,12 @@ import { LinkPeer } from "./peer.js";
 import { LINK_CLOSE, LINK_PATHS, protocolMismatch, type LinkHello } from "./protocol.js";
 import { codeKey, hubProof, nodeProof, sameHex } from "./registry.js";
 
+/**
+ * The status of a refused enrollment. Not 401: the caller's token for this
+ * server is fine, and clients read a 401 as a bad token.
+ */
+const ENROLLMENT_REFUSED_STATUS = 403;
+
 /** The id a plain node's registry gives its hub. */
 export const HUB_LINK_ID = HUB_MACHINE_ID;
 
@@ -203,6 +209,8 @@ export class NodeAgent {
       throw new ApiError(
         code,
         `The hub refused the enrollment: ${err?.message ?? `status ${status}`}`,
+        undefined,
+        code === "unauthorized" ? ENROLLMENT_REFUSED_STATUS : undefined,
       );
     }
     const parsed = EnrollResponseSchema.safeParse(json);
@@ -222,6 +230,8 @@ export class NodeAgent {
       throw new ApiError(
         "unauthorized",
         "The hub couldn't prove it issued this code, so this machine didn't trust it. Check the hub URL.",
+        undefined,
+        ENROLLMENT_REFUSED_STATUS,
       );
     }
     try {
@@ -237,6 +247,8 @@ export class NodeAgent {
       throw new ApiError(
         "unauthorized",
         "The certificates the hub returned don't match the connection or this machine's key.",
+        undefined,
+        ENROLLMENT_REFUSED_STATUS,
       );
     }
     const files: NodeLinkFiles = {
@@ -383,8 +395,6 @@ export class NodeAgent {
               token: this.opts.token,
               caller: HUB_LINK_ID,
               internal: this.opts.internal,
-              // The hub may call this machine's API, but not make it join another hub.
-              allow: (req) => !req.path.startsWith("/api/v1/node/join"),
             }),
             timeoutMs: this.opts.timing?.timeoutMs,
             pingMs: this.opts.timing?.pingMs,

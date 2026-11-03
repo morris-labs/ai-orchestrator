@@ -581,6 +581,19 @@ describe("machines and node", () => {
     expect(out).toMatch(/Link:\s+connecting/);
   });
 
+  it("shows the hub's reason when the hub refuses the enrollment code", async () => {
+    const message = "The hub refused the enrollment: Issue a new code on the hub.";
+    server.on("POST /api/v1/node/join", {
+      status: 403,
+      body: { error: { code: "unauthorized", message } },
+    });
+    const input = new PassThrough();
+    input.end("7K2Q-M9XD-4HPA-R3TB\n");
+    expect(await joinCli(["https://hub.example.com:21402"], input)).not.toBe(0);
+    expect(err).toContain(message);
+    expect(err).not.toContain("server.token");
+  });
+
   /** A terminal's keyboard, in raw mode or not. */
   const keyboard = () => {
     const rawModes: boolean[] = [];

@@ -404,8 +404,13 @@ secrets broker. The following data crosses the link:
 - **Machine information**: names, versions, platforms, and capabilities.
 - **Requests between machines**: the hub can call a node's API. A node can
   call the hub's machine list, its health, and the routes that relay to
-  other machines. The relay routes accept any method and any API route on
-  the target node, so a node can call another node's API through the hub.
+  other machines. Through the hub, a node can list, get, start, stop, and
+  restart another node's boxes, open their terminals (including a shell
+  inside a box's container) and its event stream, list its projects and
+  directories, and read its runs and findings. Because of this, a compromised
+  node can run commands in other nodes' boxes. A node can't reach any other
+  route on another node, such as settings, secrets, or accounts, and can't
+  create, edit, or remove anything there; do that on the hub or on that node.
   When the hub's role is `both`, a node can also list, get, start, stop, and
   restart the hub's boxes, open their terminals (including a shell inside a
   box's container) and the hub's event stream, and list the hub's projects

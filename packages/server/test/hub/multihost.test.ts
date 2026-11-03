@@ -202,8 +202,10 @@ describe("multi-host", () => {
       code: code.code,
       name: "node-two",
     });
-    expect(reuse.status).toBe(401);
+    // 403, not 401: the local token is fine, and the CLI blames it on a 401.
+    expect(reuse.status).toBe(403);
     expect(reuse.json.error.code).toBe("unauthorized");
+    expect(reuse.json.error.message).toMatch(/Issue a new code on the hub/);
   });
 
   it("shows each machine's health on both ends", async () => {
@@ -362,6 +364,41 @@ describe("multi-host", () => {
     // The hub still refuses a path that defaultAllowNodeRequest doesn't allow.
     const refused = await node.api("GET", "/api/v1/machines/hub/proxy/settings");
     expect(refused.status).toBe(403);
+  });
+
+  it("refuses a join that comes over the link, whatever form the path takes", async () => {
+    const { hub, node, joined } = await linkedPair();
+    const machineId = joined.json.machineId as string;
+    await waitFor(() => hub.app.multiHost.links.get(machineId) !== undefined, 5000);
+    const toNode = hub.app.multiHost.links.get(machineId)!;
+    const upstream = await startServer("upstream", { signedIn: true });
+    const code = (await upstream.api("POST", "/api/v1/machines/enrollment-codes")).json;
+    const before = node.app.multiHost.status().hubUrl;
+    const body = Buffer.from(JSON.stringify({ hubUrl: code.hubUrl, code: code.code }));
+    for (const path of [
+      "/api/v1/node/join",
+      "/api/v1/node/%6Aoin",
+      "/api/v1/machines/local/proxy/node/join",
+      `/api/v1/machines/${machineId}/proxy/node/join`,
+      "/api/v1/machines/local/proxy/machines/local/proxy/node/join",
+      "/api/v1/boxes/../node/join",
+    ]) {
+      const res = await toNode.request({
+        method: "POST",
+        path,
+        headers: { "content-type": "application/json", "x-aio-link-caller": "" },
+        body,
+      });
+      expect(res.status, path).toBe(403);
+    }
+    expect(node.app.multiHost.status().hubUrl).toBe(before);
+    expect((await upstream.api("GET", "/api/v1/machines")).json.machines).toHaveLength(1);
+    // A local client can still reach the route; only the link is refused.
+    const local = await node.api("POST", "/api/v1/machines/local/proxy/node/join", {
+      hubUrl: code.hubUrl,
+      code: "0000-0000-0000-0000",
+    });
+    expect(local.json.error.message).toMatch(/hub refused the enrollment/);
   });
 
   it("reports a role override, and refuses a join under a hub override without storing a role", async () => {
@@ -544,7 +581,7 @@ describe("multi-host", () => {
       code: "0000-0000-0000-0000",
       name: "node-two",
     });
-    expect(wrong.status).toBe(401);
+    expect(wrong.status).toBe(403);
     const fresh = await hub.api("POST", "/api/v1/machines/enrollment-codes");
     const taken = await other.api("POST", "/api/v1/node/join", {
       hubUrl: fresh.json.hubUrl,

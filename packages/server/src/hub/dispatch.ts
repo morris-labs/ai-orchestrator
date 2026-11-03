@@ -10,7 +10,12 @@ import { ApiError, toApiError } from "../api/errors.js";
 import { injectWebSocket } from "./inject.js";
 import type { LinkRequest, LinkResponse, LinkStream } from "./link.js";
 import { LinkError, errorResponse, type LinkServer } from "./peer.js";
-import { LINK_INTERNAL_PREFIX, closeReason, sendableCloseCode } from "./protocol.js";
+import {
+  LINK_CALLER_HEADER,
+  LINK_INTERNAL_PREFIX,
+  closeReason,
+  sendableCloseCode,
+} from "./protocol.js";
 
 /** A handler for one `/link/v1/` path; `caller` is the other end's machine id. */
 export type InternalHandler = (req: LinkRequest, caller: string) => Promise<LinkResponse>;
@@ -31,13 +36,18 @@ const DROPPED_HEADERS = new Set([
   "sec-websocket-protocol",
 ]);
 
-/** The headers to pass on, with the server's own token. */
-function forwardHeaders(headers: Record<string, string>, token: string): Record<string, string> {
+/** The headers to pass on, with the server's own token and the link's caller. */
+function forwardHeaders(
+  headers: Record<string, string>,
+  token: string,
+  caller: string,
+): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [name, value] of Object.entries(headers)) {
     if (!DROPPED_HEADERS.has(name.toLowerCase())) out[name.toLowerCase()] = value;
   }
   out.authorization = `Bearer ${token}`;
+  out[LINK_CALLER_HEADER] = caller;
   return out;
 }
 
@@ -185,7 +195,7 @@ export function createDispatcher(opts: DispatcherOptions): LinkServer {
       const res = await api.inject({
         method: req.method.toUpperCase() as "GET",
         url: linkUrl(req),
-        headers: forwardHeaders(req.headers, opts.token),
+        headers: forwardHeaders(req.headers, opts.token, opts.caller),
         ...(req.body && req.body.length > 0 ? { payload: req.body } : {}),
       });
       const headers: Record<string, string> = {};
@@ -203,7 +213,11 @@ export function createDispatcher(opts: DispatcherOptions): LinkServer {
       if (!api) throw new LinkError("This machine's API isn't ready yet.");
       let ws: WebSocket;
       try {
-        ws = await injectWebSocket(api, linkUrl(req), forwardHeaders(req.headers, opts.token));
+        ws = await injectWebSocket(
+          api,
+          linkUrl(req),
+          forwardHeaders(req.headers, opts.token, opts.caller),
+        );
       } catch (err) {
         const m = /response: (\d+)/.exec((err as Error).message);
         throw new LinkError(

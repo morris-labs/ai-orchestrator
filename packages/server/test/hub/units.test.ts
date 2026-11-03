@@ -118,9 +118,6 @@ describe("protocol helpers", () => {
     expect(defaultAllowNodeRequest({ method: "GET", path: "/api/v1/machines" })).toBe(true);
     expect(defaultAllowNodeRequest({ method: "POST", path: "/api/v1/machines" })).toBe(false);
     expect(defaultAllowNodeRequest({ method: "GET", path: "/api/v1/settings" })).toBe(false);
-    expect(
-      defaultAllowNodeRequest({ method: "POST", path: "/api/v1/machines/m1/proxy/api/v1/boxes" }),
-    ).toBe(true);
     // A per-machine route that names the hub is held to the same list.
     for (const id of ["local", "hub", "%6Cocal"]) {
       expect(
@@ -209,6 +206,67 @@ describe("what a node may call on a hub that runs boxes", () => {
       ).toBe(false);
     }
     expect(HUB_BOX_ROUTES).toContain("terminals.open");
+  });
+});
+
+describe("what a node may call on another node", () => {
+  const via = (rest: string) => `/api/v1/machines/m2/proxy/${rest}`;
+  const allowed: [string, string][] = [
+    ["GET", "health"],
+    ["GET", "boxes"],
+    ["POST", "boxes/b-1/start"],
+    ["GET", "terminals"],
+    ["GET", "events"],
+    ["GET", "projects"],
+    ["GET", "fs/dirs"],
+    ["GET", "runs"],
+    ["GET", "runs/r-1/findings"],
+  ];
+  const refused: [string, string][] = [
+    ["GET", "settings"],
+    ["PATCH", "settings"],
+    ["GET", "secrets"],
+    ["GET", "secrets/available"],
+    ["GET", "accounts"],
+    ["GET", "node"],
+    ["POST", "node/join"],
+    ["POST", "machines/enrollment-codes"],
+    ["POST", "boxes"],
+    ["DELETE", "boxes/b-1"],
+    ["PATCH", "boxes/b-1"],
+    ["POST", "runs"],
+    ["GET", "machines/m3/proxy/settings"],
+    ["GET", "machines/local/proxy/boxes"],
+    ["GET", "boxes/../settings"],
+  ];
+
+  it("allows the box, terminal, event, and read-only review routes", () => {
+    for (const [method, rest] of allowed) {
+      expect(defaultAllowNodeRequest({ method, path: via(rest) }), rest).toBe(true);
+    }
+  });
+
+  it("refuses every other route", () => {
+    for (const [method, rest] of refused) {
+      expect(defaultAllowNodeRequest({ method, path: via(rest) }), rest).toBe(false);
+    }
+  });
+
+  it("refuses a path that a URL parser would rewrite into another route", () => {
+    for (const path of [
+      "/api/v1/machines/m2/proxy/../../../settings",
+      "/api/v1/machines/m2/proxy/%2e%2e/%2e%2e/%2e%2e/settings",
+      "/api/v1/machines/m2/proxy/..\\..\\..\\settings",
+      "/api/v1/boxes/a\\..\\..\\settings",
+      "/api/v1/machines/x\\..\\local/proxy/boxes",
+      "/api/v1/machines/lo\tcal/proxy/boxes",
+      "//link.example.com/api/v1/health",
+    ]) {
+      expect(defaultAllowNodeRequest({ method: "GET", path }, "m1"), path).toBe(false);
+      expect(defaultAllowNodeRequest({ method: "GET", path }, "m1", undefined, true), path).toBe(
+        false,
+      );
+    }
   });
 });
 

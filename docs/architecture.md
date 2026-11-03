@@ -63,7 +63,8 @@ usage scheduler, and terminals.
   connected node: the hub forwards the call over that node's link as
   `/api/v1/REST`, keeps the query, drops the hop-by-hop headers and the
   client's credentials, and adds `x-aio-forwarded-by`. On a plain node, the
-  call goes to the hub unchanged, and the hub routes it on. WebSocket routes
+  call goes to the hub unchanged, and the hub routes it on, for the routes
+  that [Multi-host](multi-host.md#what-crosses-the-link) lists. WebSocket routes
   work the same way: the server relays frames, binary flags, and close codes
   in both directions, and on an event stream it tags each event with
   `machine`. An unknown machine answers `not_found` (404), an enrolled one

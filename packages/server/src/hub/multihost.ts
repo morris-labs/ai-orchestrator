@@ -68,11 +68,27 @@ export const HUB_BOX_ROUTES = [
 ] as const satisfies readonly (keyof typeof serverRoutes)[];
 
 /**
+ * The routes a node may call on another node through the hub, so that its
+ * machine tabs and fleet views work: the `HUB_BOX_ROUTES`, and the read-only
+ * run and finding routes. Settings, secrets, accounts, enrollment, node
+ * routes, and every other route on the other node stay refused.
+ */
+export const NODE_RELAY_ROUTES = [
+  ...HUB_BOX_ROUTES,
+  "runs.list",
+  "runs.get",
+  "runs.groups",
+  "runs.rounds",
+  "findings.list",
+  "findings.get",
+] as const satisfies readonly (keyof typeof serverRoutes)[];
+
+/**
  * A route's method and a pattern for its path. Each `:param` matches one
  * segment with no query, fragment, or leading dot, so that no dot segment
  * can turn an allowed path into another route.
  */
-function routeMatcher(name: (typeof HUB_BOX_ROUTES)[number]): { method: string; path: RegExp } {
+function routeMatcher(name: (typeof NODE_RELAY_ROUTES)[number]): { method: string; path: RegExp } {
   const route = serverRoutes[name];
   const source = route.path
     .split("/")
@@ -84,6 +100,7 @@ function routeMatcher(name: (typeof HUB_BOX_ROUTES)[number]): { method: string; 
 }
 
 const hubBoxMatchers = HUB_BOX_ROUTES.map(routeMatcher);
+const nodeRelayMatchers = NODE_RELAY_ROUTES.map(routeMatcher);
 
 /** True when a node may call `req` on a hub whose role is `both`. */
 export function isHubBoxRoute(req: { method: string; path: string }): boolean {
@@ -91,10 +108,31 @@ export function isHubBoxRoute(req: { method: string; path: string }): boolean {
   return hubBoxMatchers.some((m) => m.method === method && m.path.test(req.path));
 }
 
+/** True when a node may call `req` on another node through the hub. */
+export function isNodeRelayRoute(req: { method: string; path: string }): boolean {
+  const method = req.method.toUpperCase();
+  if (method === "GET" && req.path === `${API_PREFIX}/health`) return true;
+  return nodeRelayMatchers.some((m) => m.method === method && m.path.test(req.path));
+}
+
+/**
+ * True when a URL parser leaves `path` as it is. A parser resolves dot
+ * segments, turns backslashes into slashes, and drops tabs and newlines, so
+ * any other path can reach a different route from the one it reads as.
+ */
+function isCanonicalPath(path: string): boolean {
+  try {
+    const url = new URL(path, "http://link.invalid");
+    return url.pathname + url.search + url.hash === path;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * The API paths a node may call on its hub over the link: the machine list,
  * the health route, and the per-machine routes under `/api/v1/machines/ID/`
- * that relay to other machines. When the hub runs boxes itself (`sharesBoxes`,
+ * that relay the `NODE_RELAY_ROUTES` to other machines. When the hub runs boxes itself (`sharesBoxes`,
  * role `both`), also the `HUB_BOX_ROUTES`. Everything else on the hub stays
  * local.
  *
@@ -109,6 +147,7 @@ export function defaultAllowNodeRequest(
   isHub: (id: string) => boolean = (id) => id === LOCAL_MACHINE_ID || id === HUB_MACHINE_ID,
   sharesBoxes = false,
 ): boolean {
+  if (!isCanonicalPath(req.path)) return false;
   const method = req.method.toUpperCase();
   if (method === "GET" && (req.path === "/api/v1/machines" || req.path === "/api/v1/health")) {
     return true;
@@ -116,7 +155,9 @@ export function defaultAllowNodeRequest(
   if (sharesBoxes && isHubBoxRoute({ method, path: req.path })) return true;
   const target = parseProxyUrl(req.path);
   if (!target) return false;
-  if (!isHub(target.machineId)) return true;
+  if (!isHub(target.machineId)) {
+    return isNodeRelayRoute({ method, path: `${API_PREFIX}/${target.rest}` });
+  }
   return defaultAllowNodeRequest(
     { method, path: `${API_PREFIX}/${target.rest}` },
     caller,

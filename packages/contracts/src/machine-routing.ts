@@ -8,7 +8,8 @@
 // - On a hub, any other ID is a connected node; the hub forwards the call
 //   over that node's link as `/api/v1/<rest>`.
 // - On a plain node, any other ID goes to the hub unchanged, and the hub
-//   routes it on. `hub` names the hub, which serves the call itself.
+//   routes it on. `hub` names the hub, which serves the call itself. The hub
+//   limits which routes a node can reach this way; see `docs/multi-host.md`.
 //
 // WebSocket routes work the same way: the server relays the frames.
 

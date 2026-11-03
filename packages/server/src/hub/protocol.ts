@@ -56,6 +56,14 @@ export const LINK_PATHS = {
   connect: "/link/v1/connect",
 } as const;
 
+/**
+ * The header that a link's dispatcher sets on every call it injects into the
+ * API, naming the other end. The dispatcher overwrites any value that the
+ * other end sends, so a route can refuse link callers whatever form the path
+ * took on its way to the route.
+ */
+export const LINK_CALLER_HEADER = "x-aio-link-caller";
+
 /** Paths under this prefix reach a link end's own handlers, never its API. */
 export const LINK_INTERNAL_PREFIX = "/link/v1/";
 
