@@ -45,7 +45,22 @@ export interface AioBridge {
   openPath: (path: string) => Promise<BridgeResult>;
   openExternal: (url: string) => Promise<BridgeResult>;
   /** Calls `listener` with the box id when a notification is clicked. */
-  onSelectBox: (listener: (boxId: string) => void) => () => void;
+  onSelectBox: (
+    listener: (boxId: string, machineId?: string, notificationId?: string) => void,
+  ) => () => void;
+  /**
+   * Raises a desktop notification for a box on another machine, whose events
+   * the main process doesn't watch. A click selects the box, through
+   * `onSelectBox`, with the machine and notification ids.
+   */
+  notify?: (n: {
+    title: string;
+    body: string;
+    urgent: boolean;
+    boxId: string;
+    machineId: string;
+    notificationId: string;
+  }) => void;
   quit: () => void;
 }
 

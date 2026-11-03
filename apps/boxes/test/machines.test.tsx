@@ -379,6 +379,49 @@ describe("machine tabs", () => {
     );
   });
 
+  it("raises a desktop notification for a box on a remote machine", async () => {
+    const user = userEvent.setup();
+    const notify = vi.fn();
+    const original = window.aio;
+    window.aio = { notify, onSelectBox: () => () => undefined } as never;
+    try {
+      const node = nodeServer();
+      renderHub({
+        local: siteServer(),
+        servers: { "node-b": node },
+        machines: [LOCAL, machine({ id: "node-b", name: "node-b" })],
+      });
+      await user.click(await screen.findByRole("tab", { name: "node-b" }));
+      await waitFor(() => expect(node.socketsFor("/api/v1/events")).toHaveLength(1));
+      act(() => {
+        node.emit(
+          makeEvent("notification", {
+            notificationId: "n1",
+            kind: "box_ended",
+            severity: "error",
+            read: false,
+            title: "Box ended",
+            body: "Node site stopped.",
+            runId: null,
+            boxId: "aio-agent-site",
+          }),
+        );
+      });
+      await waitFor(() =>
+        expect(notify).toHaveBeenCalledWith({
+          title: "Box ended",
+          body: "Node site stopped.",
+          urgent: true,
+          boxId: "aio-agent-site",
+          machineId: "node-b",
+          notificationId: "n1",
+        }),
+      );
+    } finally {
+      window.aio = original;
+    }
+  });
+
   it("keeps a machine's view in front while its dialog is open", async () => {
     const user = userEvent.setup();
     let selectBox: (boxId: string) => void = () => undefined;

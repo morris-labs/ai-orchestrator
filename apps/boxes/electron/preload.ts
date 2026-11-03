@@ -30,10 +30,12 @@ const api: AioBridge = {
   openPath: (path) => ipcRenderer.invoke("aio:open-path", path),
   openExternal: (url) => ipcRenderer.invoke("aio:open-external", url),
   onSelectBox: (listener) => {
-    const handler = (_e: unknown, boxId: string) => listener(boxId);
+    const handler = (_e: unknown, boxId: string, machineId?: string, notificationId?: string) =>
+      listener(boxId, machineId, notificationId);
     ipcRenderer.on("aio:select-box", handler);
     return () => ipcRenderer.removeListener("aio:select-box", handler);
   },
+  notify: (n) => ipcRenderer.send("aio:notify", n),
   quit: () => ipcRenderer.send("aio:quit"),
 };
 

@@ -525,6 +525,24 @@ function registerIpc() {
       return { ok: false, error: errorMessage(err) };
     }
   });
+  ipcMain.on("aio:notify", (e, n: unknown) => {
+    if (!fromApp(e) || !Notification.isSupported() || typeof n !== "object" || n === null) return;
+    const { title, body, urgent, boxId, machineId, notificationId } = n as Record<string, unknown>;
+    if (
+      typeof title !== "string" ||
+      typeof body !== "string" ||
+      typeof boxId !== "string" ||
+      typeof machineId !== "string" ||
+      typeof notificationId !== "string"
+    )
+      return;
+    const note = new Notification({ title, body, urgency: urgent === true ? "critical" : "normal" });
+    note.on("click", () => {
+      showWindow();
+      win?.webContents.send("aio:select-box", boxId, machineId, notificationId);
+    });
+    note.show();
+  });
   ipcMain.on("aio:quit", (e) => {
     if (!fromApp(e)) return;
     quitting = true;
