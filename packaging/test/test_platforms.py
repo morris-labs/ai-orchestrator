@@ -15,6 +15,7 @@ import os
 import pathlib
 import plistlib
 import re
+import shlex
 import shutil
 import struct
 import subprocess
@@ -150,6 +151,45 @@ class RuntimeStagingTest(unittest.TestCase):
         self.assertIn("\r\n", out)
         self.assertIn('"%~dp0..\\node\\node.exe" "%~dp0..\\cli\\dist\\main.js" %*', out)
 
+    def test_pnpm_keeps_a_path_with_spaces_whole_on_windows(self):
+        args = [
+            "--filter",
+            "@aio/server",
+            "deploy",
+            "C:\\Users\\Example User\\repo (x86)\\a&b\\server",
+            "C:\\Example Dir\\",
+        ]
+        out = node(
+            'import { pnpmInvocation } from "./scripts/stage-runtime.mjs";'
+            f"console.log(JSON.stringify(pnpmInvocation({json.dumps(args)}, \"win32\")));"
+        )
+        invocation = json.loads(out)
+        self.assertEqual(invocation["command"], "corepack.cmd")
+        self.assertTrue(invocation["options"]["shell"])
+        for arg in invocation["args"]:
+            self.assertRegex(arg, r'^"[^"]*"$')
+        # Node.js joins these with spaces. POSIX double-quote rules match the C
+        # runtime's for these arguments, so the split shows what corepack reads.
+        self.assertEqual(shlex.split(" ".join(invocation["args"])), ["pnpm", *args])
+
+    def test_pnpm_refuses_what_cmd_cannot_quote_on_windows(self):
+        for arg in ("C:\\%TEMP%\\out", 'C:\\a"b'):
+            with self.assertRaises(subprocess.CalledProcessError):
+                node(
+                    'import { pnpmInvocation } from "./scripts/stage-runtime.mjs";'
+                    f'pnpmInvocation([{json.dumps(arg)}], "win32");'
+                )
+
+    def test_pnpm_passes_arguments_untouched_without_a_shell_elsewhere(self):
+        out = node(
+            'import { pnpmInvocation } from "./scripts/stage-runtime.mjs";'
+            'console.log(JSON.stringify(pnpmInvocation(["deploy", "/a b/c"], "linux")));'
+        )
+        self.assertEqual(
+            json.loads(out),
+            {"command": "corepack", "args": ["pnpm", "deploy", "/a b/c"], "options": {}},
+        )
+
     def test_posix_launcher_follows_a_symbolic_link(self):
         launcher = node(
             'import { posixLauncher } from "./scripts/stage-runtime.mjs";'
@@ -237,6 +277,24 @@ class BuildScriptsTest(unittest.TestCase):
         self.assertIn("'scripts/stage-runtime.mjs', '--os', 'win'", text)
         self.assertIn("'scripts/build-image.sh', '--pack-only'", text)
         self.assertIn("Set-StrictMode -Version Latest", text)
+
+    def test_build_win_node_probe_survives_windows_powershell(self):
+        text = (ROOT / "scripts/build-win.ps1").read_text()
+        match = re.search(r"& node -p '([^']*)'\)\n\s*if \(\$LASTEXITCODE -ne 0\)", text)
+        self.assertIsNotNone(match, "the probe must check $LASTEXITCODE")
+        expression = match.group(1)
+        # Windows PowerShell 5.1 strips embedded double quotes, and a space would
+        # make it wrap the argument in quotes of its own.
+        self.assertNotRegex(expression, r'["\s]')
+        if shutil.which("node") is None:
+            self.skipTest("node is not on PATH")
+        major = subprocess.run(
+            ["node", "-p", expression], check=True, capture_output=True, text=True
+        ).stdout.strip()
+        version = subprocess.run(
+            ["node", "-p", "process.version"], check=True, capture_output=True, text=True
+        ).stdout.strip()
+        self.assertEqual(major, version[1:].split(".")[0])
 
     def test_shellcheck(self):
         shellcheck = shutil.which("shellcheck")

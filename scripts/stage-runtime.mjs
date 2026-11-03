@@ -142,10 +142,31 @@ function run(command, args, options = {}) {
   execFileSync(command, args, { stdio: ["ignore", "inherit", "inherit"], cwd: ROOT, ...options });
 }
 
+/**
+ * Quotes an argument for a cmd.exe command line. Inside double quotes, cmd.exe
+ * keeps spaces and its special characters. It can't escape `"` or stop `%VAR%`
+ * from expanding, so the function refuses both. The C runtime reads a backslash
+ * before a closing quote as an escape, so trailing backslashes are doubled.
+ */
+export function quoteForCmd(arg) {
+  if (/["%]/.test(arg)) die(`stage-runtime can't pass " or % to corepack on Windows: ${arg}`);
+  return `"${arg.replace(/\\+$/, "$&$&")}"`;
+}
+
+/** The command, arguments, and spawn options that run pnpm on `platform`. */
+export function pnpmInvocation(args, platform = process.platform) {
+  const all = ["pnpm", ...args];
+  // corepack.cmd on Windows; spawning it needs a shell there. With a shell,
+  // Node.js joins the arguments with spaces and doesn't quote them.
+  if (platform === "win32") {
+    return { command: "corepack.cmd", args: all.map(quoteForCmd), options: { shell: true } };
+  }
+  return { command: "corepack", args: all, options: {} };
+}
+
 function pnpm(args) {
-  // corepack.cmd on Windows; spawning it needs a shell there.
-  const win = process.platform === "win32";
-  run(win ? "corepack.cmd" : "corepack", ["pnpm", ...args], { shell: win });
+  const { command, args: argv, options } = pnpmInvocation(args);
+  run(command, argv, options);
 }
 
 function copyDir(from, to) {

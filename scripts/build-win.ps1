@@ -76,7 +76,10 @@ if (-not $Print) {
     if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
         throw 'Build Windows installers on Windows. Use -Print to see the steps.'
     }
-    $nodeMajor = (& node -p 'process.versions.node.split(".")[0]')
+    # Keep double quotes out of this expression: Windows PowerShell 5.1 and pwsh
+    # before 7.3 don't escape them for native programs, so node never sees them.
+    $nodeMajor = (& node -p 'parseInt(process.versions.node)')
+    if ($LASTEXITCODE -ne 0) { throw "node exited with $LASTEXITCODE while the script read its version." }
     if ($nodeMajor -ne $RequiredNodeMajor) {
         throw "Node.js $nodeMajor is active, but the build needs Node.js $RequiredNodeMajor, the version the bundled runtime and its native module use."
     }
