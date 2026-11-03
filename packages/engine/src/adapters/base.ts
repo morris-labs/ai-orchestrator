@@ -125,7 +125,12 @@ export abstract class CliAdapter implements CliVendorAdapter {
    * is an account's (`VENDOR/NAME`), or a fallback name.
    */
   protected get account(): string {
-    return this.options.account ?? this.accountIn(this.configDir()) ?? `${this.vendor}-default`;
+    return this.accountFor();
+  }
+
+  /** The usage label of one call, from the folder `dispatch` chose for it. */
+  protected accountFor(req?: CliRequest<unknown>): string {
+    return this.options.account ?? this.accountIn(this.configDir(req)) ?? `${this.vendor}-default`;
   }
 
   /** The account id of a config folder, or `undefined` for any other folder. */
@@ -200,8 +205,12 @@ export abstract class CliAdapter implements CliVendorAdapter {
     // left a session id on the request. The folder is read once, so a change
     // of default during a call can't split it.
     const continuing = method === "continueReview" && req.sessionId !== undefined;
-    const known = continuing ? this.sessionFolders.get(req.sessionId as string) : undefined;
-    const accountFolder = known ?? this.accountDir();
+    // A session started on the home folder is saved as `undefined`, which is
+    // a known folder, not a reason to read the default.
+    const pinned = continuing && this.sessionFolders.has(req.sessionId as string);
+    const accountFolder = pinned
+      ? this.sessionFolders.get(req.sessionId as string)
+      : this.accountDir();
     const request = {
       ...req,
       accountFolder,

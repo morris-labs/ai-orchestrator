@@ -138,7 +138,9 @@ export class CodexAdapter extends CliAdapter {
       // Read before any failure check: a failed or limited call's reading is
       // the freshest usage there is, and the only way to learn a limit reset.
       const rollout = summary.threadId ? this.readRollout(summary.threadId, req) : null;
-      const usage = rollout ? codexRateLimitSamples(rollout, this.account, this.ceiling) : [];
+      const usage = rollout
+        ? codexRateLimitSamples(rollout, this.accountFor(req), this.ceiling)
+        : [];
       for (const sample of usage) req.onUsage?.(sample);
       const failure = this.processFailure(result, req);
       if (failure) throw failure;

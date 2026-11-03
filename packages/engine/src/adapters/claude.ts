@@ -122,9 +122,9 @@ export class ClaudeAdapter extends CliAdapter {
    * The usage label: `options.account`, else the email in `.claude.json`
    * of the folder the call uses (`CLAUDE_CONFIG_DIR`, else the home folder).
    */
-  protected override get account(): string {
+  protected override accountFor(req?: CliRequest<unknown>): string {
     if (this.options.account !== undefined) return this.options.account;
-    const dir = this.configDir();
+    const dir = this.configDir(req);
     return (dir ? claudeAccount(join(dir, ".claude.json")) : claudeAccount()) ?? "claude-default";
   }
 
@@ -173,7 +173,7 @@ export class ClaudeAdapter extends CliAdapter {
   }
 
   protected async call<T>(req: CliRequest<T>, _ctx: CallContext): Promise<CliResult<T>> {
-    const parser = new ClaudeStreamParser(this.account, this.ceiling);
+    const parser = new ClaudeStreamParser(this.accountFor(req), this.ceiling);
     const credentials = await credentialsFor(`vendor:${this.vendor}`, this.command);
     const result = await runProcess({
       command: this.command,

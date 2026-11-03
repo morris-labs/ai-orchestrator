@@ -4,7 +4,12 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { ACCOUNT_DIR_ENV, ENGINE_ACCOUNT_DIRS_FILE, type Vendor } from "@aio/contracts";
+import {
+  ACCOUNT_DIR_ENV,
+  ENGINE_ACCOUNT_DIRS_FILE,
+  type UsageSample,
+  type Vendor,
+} from "@aio/contracts";
 import {
   accountDirSources,
   accountDirsFileIn,
@@ -183,5 +188,139 @@ describe("Claude usage label", () => {
     current = work;
     expect(probe.label()).toBe("work@example.com");
     expect(new LabelProbe({ accountDir: work, account: "label" }).label()).toBe("label");
+  });
+});
+
+/** A Claude CLI that records its folder, reports one rate-limit window, and succeeds. */
+function claudeCli(dir: string): { cli: string; seen: string } {
+  const seen = join(dir, "seen.txt");
+  const cli = join(dir, "claude-cli");
+  const events = [
+    { type: "system", subtype: "init", session_id: "session-1", model: "m" },
+    {
+      type: "rate_limit_event",
+      rate_limit_info: { rateLimitType: "five_hour", utilization: 0.5, resetsAt: 1793170800 },
+    },
+    { type: "result", subtype: "success", session_id: "session-1", structured_output: {} },
+  ];
+  writeFileSync(
+    cli,
+    "#!/bin/sh\n" +
+      `printf '%s\\n' "\${CLAUDE_CONFIG_DIR:-unset}" >> '${seen}'\n` +
+      events.map((event) => `echo '${JSON.stringify(event)}'\n`).join(""),
+    { mode: 0o755 },
+  );
+  return { cli, seen };
+}
+
+/** A folder holding a `.claude.json` file that names `email`. */
+function claudeFolder(root: string, name: string, email: string): string {
+  const folder = join(root, name);
+  mkdirSync(folder);
+  writeFileSync(
+    join(folder, ".claude.json"),
+    JSON.stringify({ oauthAccount: { emailAddress: email } }),
+  );
+  return folder;
+}
+
+/**
+ * A Codex CLI that writes a rollout with one rate-limit reading to its
+ * `CODEX_HOME` and succeeds. `during`, if set, runs before the CLI exits.
+ */
+function codexCli(dir: string, during = ""): string {
+  const cli = join(dir, "codex-cli");
+  const reading = {
+    payload: {
+      type: "token_count",
+      rate_limits: { primary: { used_percent: 12, window_minutes: 300, resets_at: 1793170800 } },
+    },
+  };
+  const events = [
+    { type: "thread.started", thread_id: "thread-1" },
+    { type: "item.completed", item: { type: "agent_message", text: "{}" } },
+  ];
+  writeFileSync(
+    cli,
+    "#!/bin/sh\n" +
+      'day="$CODEX_HOME/sessions/2026/10/28"\n' +
+      'mkdir -p "$day"\n' +
+      `echo '${JSON.stringify(reading)}' > "$day/rollout-x-thread-1.jsonl"\n` +
+      events.map((event) => `echo '${JSON.stringify(event)}'\n`).join("") +
+      `${during}\n`,
+    { mode: 0o755 },
+  );
+  return cli;
+}
+
+describe("the folder a call runs on", () => {
+  it("labels Claude usage from a continuation's folder after the default moves", async () => {
+    const root = tempDir("account-pin-");
+    const { cli, seen } = claudeCli(root);
+    const personal = claudeFolder(root, "personal", "personal@example.com");
+    const work = claudeFolder(root, "work", "work@example.com");
+    let current = personal;
+    const adapter = new ClaudeAdapter({ command: cli, accountDir: () => current });
+
+    const first = await adapter.review(request(root));
+    expect(first.sessionId).toBe("session-1");
+    current = work;
+    const samples: UsageSample[] = [];
+    await adapter.continueReview({
+      ...request(root),
+      sessionId: "session-1",
+      onUsage: (sample) => samples.push(sample),
+    });
+
+    expect(seenFor(seen, "claude").at(-1)).toBe(personal);
+    expect(samples.map((sample) => sample.account)).toEqual(["personal@example.com"]);
+  });
+
+  it("labels Codex usage from a continuation's folder after the default moves", async () => {
+    const root = tempDir("account-pin-");
+    const personal = join(root, "accounts", "codex", "personal");
+    const work = join(root, "accounts", "codex", "work");
+    let current = personal;
+    const adapter = new CodexAdapter({ command: codexCli(root), accountDir: () => current });
+
+    await adapter.review(request(root));
+    current = work;
+    const more = await adapter.continueReview({ ...request(root), sessionId: "thread-1" });
+
+    expect(more.usage.map((sample) => sample.account)).toEqual(["codex/personal"]);
+  });
+
+  it("labels Codex usage from the call's folder when the default moves during it", async () => {
+    const root = tempDir("account-pin-");
+    const personal = join(root, "accounts", "codex", "personal");
+    const work = join(root, "accounts", "codex", "work");
+    const file = join(root, ENGINE_ACCOUNT_DIRS_FILE);
+    writeFileSync(file, JSON.stringify({ codex: personal }));
+    const moveDefault = `echo '${JSON.stringify({ codex: work })}' > '${file}'`;
+    const adapter = new CodexAdapter({
+      command: codexCli(root, moveDefault),
+      accountDir: accountDirSources(file).codex,
+    });
+
+    const result = await adapter.review(request(root));
+
+    expect(result.usage.map((sample) => sample.account)).toEqual(["codex/personal"]);
+  });
+
+  it("resumes a session started on the home folder there after a default appears", async () => {
+    const root = tempDir("account-pin-");
+    const { cli, seen } = claudeCli(root);
+    let current: string | undefined = undefined;
+    const adapter = new ClaudeAdapter({ command: cli, accountDir: () => current });
+
+    await adapter.review(request(root));
+    current = "/data/accounts/claude/work";
+    await adapter.continueReview({ ...request(root), sessionId: "session-1" });
+    await adapter.continueReview({ ...request(root), sessionId: "unknown-session" });
+
+    expect(seenFor(seen, "claude").slice(1)).toEqual([
+      inherited(ACCOUNT_DIR_ENV.claude),
+      "/data/accounts/claude/work",
+    ]);
   });
 });
