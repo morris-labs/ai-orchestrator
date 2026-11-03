@@ -35,6 +35,12 @@ import { attachCmd, shellCmd, sideSessionName } from "../terminals/attach.js";
 import type { ExecRequest } from "../terminals/exec.js";
 import { sendControl, serveTerminal } from "../terminals/terminal-socket.js";
 
+/** The routes that no call over a link reaches, by their route pattern. */
+const LINK_REFUSED_ROUTES: ReadonlySet<string> = new Set([
+  serverRoutes["node.join"].path,
+  serverRoutes["auth.session"].path,
+]);
+
 interface RouteConfig {
   auth: boolean;
   /**
@@ -178,22 +184,23 @@ export async function createApiServer(deps: ApiDeps & { tls?: TlsIdentity }): Pr
         new ApiError("unauthorized", "The upgrade came from another origin.", undefined, 403),
       );
     }
+    // The check runs on the matched route, so no path form gets around it. The
+    // hub may call this machine's API, but not make it join another hub or hand
+    // out a session cookie, which would outlast the link.
+    if (
+      request.headers[LINK_CALLER_HEADER] !== undefined &&
+      LINK_REFUSED_ROUTES.has(request.routeOptions.url ?? "")
+    ) {
+      return sendFailure(
+        reply,
+        new ApiError("unauthorized", "This route can't be called over a link.", undefined, 403),
+      );
+    }
     if (!config?.auth) return;
     if (!isAuthorized(authInput(request), deps.token)) {
       // A refused upgrade leaves no HTTP connection worth keeping.
       if (ws) reply.header("connection", "close");
       return sendFailure(reply, new ApiError("unauthorized", "Missing or wrong bearer token."));
-    }
-    // The check runs on the matched route, so no path form gets around it. The
-    // hub may call this machine's API, but not make it join another hub.
-    if (
-      request.routeOptions.url === serverRoutes["node.join"].path &&
-      request.headers[LINK_CALLER_HEADER] !== undefined
-    ) {
-      return sendFailure(
-        reply,
-        new ApiError("unauthorized", "A join can't come over a link.", undefined, 403),
-      );
     }
   });
 

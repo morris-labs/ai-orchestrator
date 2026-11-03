@@ -1,8 +1,9 @@
 // Unit tests for the multi-host pieces: codes and proofs, the registry, the
 // protocol helpers, the certificates, and the secret relay's clients.
-import { X509Certificate } from "node:crypto";
+import { X509Certificate, createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import Fastify from "fastify";
 import { describe, expect, it } from "vitest";
 import { openDatabase } from "../../src/db/index.js";
 import {
@@ -40,6 +41,7 @@ import {
 } from "../../src/hub/registry.js";
 import { HubOpClient, RoleOpClient } from "../../src/hub/secrets-relay.js";
 import { CredentialStore, isCredentialKey } from "../../src/hub/credentials.js";
+import { createDispatcher } from "../../src/hub/dispatch.js";
 import type { OpClient } from "../../src/secrets/op.js";
 import { tempDir } from "../tmp.js";
 
@@ -361,6 +363,37 @@ describe("the node's link files", () => {
   );
 });
 
+describe("the link dispatcher", () => {
+  it("keeps a session cookie out of the response it sends over the link", async () => {
+    const api = Fastify();
+    api.get("/cookie", async (_request, reply) => {
+      reply.header("set-cookie", "aio_session=synthetic").header("x-kept", "yes");
+      return { ok: true };
+    });
+    const dispatcher = createDispatcher({
+      api: () => api,
+      token: "synthetic-token",
+      caller: "m1",
+      internal: new Map(),
+    });
+    const res = await dispatcher.request({ method: "GET", path: "/cookie", headers: {} });
+    await api.close();
+    expect(res.status).toBe(200);
+    expect(res.headers["x-kept"]).toBe("yes");
+    expect(res.headers["set-cookie"]).toBeUndefined();
+  });
+});
+
+/** A sync entry for `text`, with its hash. */
+function entryOf(key: string, text: string) {
+  const bytes = Buffer.from(text);
+  return {
+    key,
+    content: bytes.toString("base64"),
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+  };
+}
+
 describe("sign-in sync keys", () => {
   it("allows only the known sign-in files, with no way out of their folders", async () => {
     expect(isCredentialKey("host/claude/.credentials.json")).toBe(true);
@@ -375,8 +408,102 @@ describe("sign-in sync keys", () => {
       path.join(home, "data", "accounts", "claude", "work", ".credentials.json"),
     );
     // No folder, no file.
-    expect(await store.write({ key: "host/codex/auth.json", content: "e30=" })).toBe(false);
-    await expect(store.write({ key: "host/../../etc/passwd", content: "" })).rejects.toThrow();
+    expect(await store.write(entryOf("host/codex/auth.json", '{"t":"a"}'))).toBe(false);
+    await expect(store.write(entryOf("host/../../etc/passwd", '{"t":"a"}'))).rejects.toThrow();
+  });
+});
+
+describe("the sign-in store", () => {
+  const key = "host/claude/.credentials.json";
+  const setup = () => {
+    const home = tempDir("aio-cred-");
+    fs.mkdirSync(path.join(home, ".claude"));
+    const file = path.join(home, ".claude", ".credentials.json");
+    const open = () => new CredentialStore({ home, dataDir: path.join(home, "data") });
+    return { home, file, open };
+  };
+
+  it("refuses an entry that is empty, malformed, or doesn't match its hash", async () => {
+    const { file, open } = setup();
+    fs.writeFileSync(file, '{"t":"good"}');
+    const store = open();
+    const valid = entryOf(key, '{"t":"next"}');
+    for (const bad of [
+      { key, content: "", sha256: createHash("sha256").update("").digest("hex") },
+      { ...valid, content: "!!!!" },
+      { ...valid, sha256: "0".repeat(64) },
+      entryOf(key, "not json"),
+      entryOf(key, "[]"),
+      entryOf(key, "{}"),
+    ]) {
+      await expect(store.write(bad), bad.content).rejects.toThrow(/valid sign-in/);
+    }
+    expect(fs.readFileSync(file, "utf8")).toBe('{"t":"good"}');
+  });
+
+  it("doesn't count a listed file as synced", async () => {
+    const { file, open } = setup();
+    fs.writeFileSync(file, '{"t":"1"}');
+    const store = open();
+    await store.prime();
+    fs.writeFileSync(file, '{"t":"2"}');
+    await store.list();
+    expect((await store.changes()).map((e) => e.key)).toEqual([key]);
+  });
+
+  it("keeps reporting a change until it syncs, and copying keeps it in place", async () => {
+    const { file, open } = setup();
+    fs.writeFileSync(file, '{"t":"1"}');
+    const store = open();
+    await store.prime();
+    fs.writeFileSync(file, '{"t":"2"}');
+    const [change] = await store.changes();
+    expect(await store.changes()).toHaveLength(1);
+
+    const older = entryOf(key, '{"t":"1"}');
+    expect(await store.write(older, { keepLocalChange: true })).toBe(false);
+    expect(fs.readFileSync(file, "utf8")).toBe('{"t":"2"}');
+
+    await store.markSynced(key, change!.sha256);
+    expect(await store.changes()).toEqual([]);
+    expect(await store.write(older, { keepLocalChange: true })).toBe(true);
+    expect(fs.readFileSync(file, "utf8")).toBe('{"t":"1"}');
+    expect(await store.changes()).toEqual([]);
+  });
+
+  it("finds a change made while the server was stopped", async () => {
+    const { file, open } = setup();
+    fs.writeFileSync(file, '{"t":"1"}');
+    await open().prime();
+    fs.writeFileSync(file, '{"t":"2"}');
+    const restarted = open();
+    await restarted.prime();
+    expect((await restarted.changes()).map((e) => e.key)).toEqual([key]);
+    await restarted.prime({ reset: true });
+    expect(await restarted.changes()).toEqual([]);
+  });
+
+  it("sends nothing for what a machine already has on its first start", async () => {
+    const { file, open } = setup();
+    fs.writeFileSync(file, '{"t":"1"}');
+    const store = open();
+    await store.prime();
+    expect(await store.changes()).toEqual([]);
+  });
+
+  it("leaves a failed write looking unchanged, so the old file isn't sent back", async () => {
+    const { home, file, open } = setup();
+    fs.writeFileSync(file, '{"t":"1"}');
+    const store = open();
+    await store.prime();
+    fs.chmodSync(path.join(home, ".claude"), 0o555);
+    try {
+      await expect(store.write(entryOf(key, '{"t":"2"}'))).rejects.toThrow();
+    } finally {
+      fs.chmodSync(path.join(home, ".claude"), 0o755);
+    }
+    expect(fs.readFileSync(file, "utf8")).toBe('{"t":"1"}');
+    expect(await store.changes()).toEqual([]);
   });
 });
 

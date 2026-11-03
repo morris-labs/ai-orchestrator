@@ -200,7 +200,8 @@ export function createDispatcher(opts: DispatcherOptions): LinkServer {
       });
       const headers: Record<string, string> = {};
       for (const [name, value] of Object.entries(res.headers)) {
-        if (value === undefined) continue;
+        // A session cookie is a working credential for this machine's API.
+        if (value === undefined || name.toLowerCase() === "set-cookie") continue;
         headers[name] = Array.isArray(value) ? value.join(", ") : String(value);
       }
       return { status: res.statusCode, headers, body: res.rawPayload };

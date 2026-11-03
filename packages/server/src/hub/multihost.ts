@@ -25,7 +25,13 @@ import { ApiError } from "../api/errors.js";
 import { isThisMachine, parseProxyUrl } from "../api/machines.js";
 import type { SqlDatabase } from "../api/core-interface.js";
 import type { OpClient } from "../secrets/op.js";
-import { CREDENTIAL_PATHS, CredentialStore, isCredentialKey } from "./credentials.js";
+import {
+  CREDENTIAL_PATHS,
+  CredentialStore,
+  entryBytes,
+  isCredentialKey,
+  type CredentialEntry,
+} from "./credentials.js";
 import { jsonBody, jsonResponse, safely, type InternalHandler } from "./dispatch.js";
 import { HealthCache, fetchHealth, measureHealth } from "./health.js";
 import { Hub, type LinkTiming } from "./hub.js";
@@ -236,6 +242,10 @@ export class MultiHost {
   private lastHubList: Machine[] = [];
   private credentialTimer: NodeJS.Timeout | null = null;
   private credentialSync: Promise<void> = Promise.resolve();
+  /** On a hub, the sign-in keys each linked node failed to receive, to send again. */
+  private readonly undelivered = new Map<string, Set<string>>();
+  /** On a node, the hash of each change whose failure to send is already logged. */
+  private readonly reportedPushFailures = new Map<string, string>();
 
   constructor(private readonly opts: MultiHostOptions) {
     const hello = (): LinkHello => ({
@@ -247,7 +257,11 @@ export class MultiHost {
       name: this.name(),
       role: this.role(),
     });
-    this.credentials = new CredentialStore({ home: opts.home, dataDir: opts.dataDir });
+    this.credentials = new CredentialStore({
+      home: opts.home,
+      dataDir: opts.dataDir,
+      log: opts.log,
+    });
     const hubInternal = new Map<string, InternalHandler>([
       ...opRelayHandlers(
         () => opts.op,
@@ -426,22 +440,54 @@ export class MultiHost {
   }
 
   /** Sends one sign-in file to every linked node whose grant lists it, except `except`. */
-  private async broadcastCredential(
-    entry: { key: string; content: string },
-    except?: string,
-  ): Promise<void> {
+  private async broadcastCredential(entry: CredentialEntry, except?: string): Promise<void> {
     for (const id of this.hub.list()) {
-      if (id === except || !this.hub.helloOf(id)?.capabilities.includes("credentials.v1")) continue;
-      if (!this.grantOf(id)?.signInCopies.includes(entry.key)) continue;
-      try {
-        await this.hub.get(id)?.request({
-          method: "POST",
-          path: CREDENTIAL_PATHS.update,
-          headers: { "content-type": "application/json" },
-          body: Buffer.from(JSON.stringify({ key: entry.key, content: entry.content })),
-        });
-      } catch (err) {
-        this.opts.log(`Couldn't send ${entry.key} to ${id}: ${(err as Error).message}`);
+      if (id !== except) await this.deliverCredential(id, entry);
+    }
+  }
+
+  /**
+   * Sends one sign-in file to one node. A node without the capability or the
+   * grant isn't due the file. A failure leaves the key for the next check.
+   */
+  private async deliverCredential(id: string, entry: CredentialEntry): Promise<void> {
+    const pending = this.undelivered.get(id);
+    if (
+      !this.hub.helloOf(id)?.capabilities.includes("credentials.v1") ||
+      !this.grantOf(id)?.signInCopies.includes(entry.key)
+    ) {
+      pending?.delete(entry.key);
+      return;
+    }
+    const failed = (why: string) => {
+      if (!pending?.has(entry.key)) this.opts.log(`Couldn't send ${entry.key} to ${id}: ${why}`);
+      this.undelivered.set(id, (pending ?? new Set<string>()).add(entry.key));
+    };
+    try {
+      const res = await this.hub.get(id)?.request({
+        method: "POST",
+        path: CREDENTIAL_PATHS.update,
+        headers: { "content-type": "application/json" },
+        body: Buffer.from(JSON.stringify(entry)),
+      });
+      if (res && res.status !== 200) failed(`status ${res.status}`);
+      else pending?.delete(entry.key);
+    } catch (err) {
+      failed((err as Error).message);
+    }
+  }
+
+  /** Sends again what a linked node failed to receive. A node that relinks pulls it instead. */
+  private async retryUndelivered(): Promise<void> {
+    for (const [id, keys] of this.undelivered) {
+      if (!this.hub.get(id)) {
+        this.undelivered.delete(id);
+        continue;
+      }
+      for (const key of keys) {
+        const entry = await this.credentials.entry(key);
+        if (entry) await this.deliverCredential(id, entry);
+        else keys.delete(key);
       }
     }
   }
@@ -462,9 +508,11 @@ export class MultiHost {
         let wrote = 0;
         for (const raw of entries) {
           try {
-            if (await this.credentials.write(parseEntry(raw))) wrote += 1;
-          } catch {
-            // A key this machine doesn't allow; skip it.
+            // A change the hub refused or never got stays: it can be the only valid copy.
+            const entry = parseEntry(raw);
+            if (await this.credentials.write(entry, { keepLocalChange: true })) wrote += 1;
+          } catch (err) {
+            this.opts.log(`Skipped a sign-in from the hub: ${(err as Error).message}`);
           }
         }
         if (wrote > 0) this.opts.log(`Copied ${wrote} sign-in file(s) from the hub.`);
@@ -485,31 +533,45 @@ export class MultiHost {
       const link = this.node.joined ? this.node.link : undefined;
       if (this.node.joined && !link) return;
       if (!link && (this.role() === "node" || this.hub.list().length === 0)) return;
+      if (!link) await this.retryUndelivered();
       const changes = await this.credentials.changes();
       for (const entry of changes) {
         if (!link) {
           await this.broadcastCredential(entry);
+          await this.credentials.markSynced(entry.key, entry.sha256);
           continue;
         }
-        if (!link?.can("credentials.v1")) continue;
-        try {
-          const res = await link.request({
-            method: "POST",
-            path: CREDENTIAL_PATHS.push,
-            headers: { "content-type": "application/json" },
-            body: Buffer.from(JSON.stringify({ key: entry.key, content: entry.content })),
-          });
-          this.opts.log(
-            res.status === 200
-              ? `Sent a refreshed sign-in, ${entry.key}, to the hub.`
-              : `The hub didn't take ${entry.key}: status ${res.status}.`,
-          );
-        } catch (err) {
-          this.opts.log(`Couldn't send ${entry.key} to the hub: ${(err as Error).message}`);
-        }
+        if (!link.can("credentials.v1")) continue;
+        await this.pushCredential(link, entry);
       }
     });
     return this.credentialSync;
+  }
+
+  /** Sends one changed file to the hub, and counts it as synced only if the hub took it. */
+  private async pushCredential(link: NodeLink, entry: CredentialEntry): Promise<void> {
+    const failed = (why: string) => {
+      if (this.reportedPushFailures.get(entry.key) === entry.sha256) return;
+      this.reportedPushFailures.set(entry.key, entry.sha256);
+      this.opts.log(why);
+    };
+    try {
+      const res = await link.request({
+        method: "POST",
+        path: CREDENTIAL_PATHS.push,
+        headers: { "content-type": "application/json" },
+        body: Buffer.from(JSON.stringify(entry)),
+      });
+      if (res.status !== 200) {
+        failed(`The hub didn't take ${entry.key}: status ${res.status}.`);
+        return;
+      }
+      await this.credentials.markSynced(entry.key, entry.sha256);
+      this.reportedPushFailures.delete(entry.key);
+      this.opts.log(`Sent a refreshed sign-in, ${entry.key}, to the hub.`);
+    } catch (err) {
+      failed(`Couldn't send ${entry.key} to the hub: ${(err as Error).message}`);
+    }
   }
 
   private localMachine(): Machine {
@@ -680,6 +742,8 @@ export class MultiHost {
         `This server runs with --role both or ${ROLE_ENV}=both. Start it without that override, or with node, to join a hub.`,
       );
     }
+    // What this machine has now isn't a change to send: the new hub's copies win.
+    await this.credentials.prime({ reset: true });
     await this.node.join({
       hubUrl: input.hubUrl,
       code: input.code,
@@ -697,10 +761,14 @@ export class MultiHost {
 }
 
 /** Checks a synced file from the other end. */
-function parseEntry(raw: unknown): { key: string; content: string } {
-  const { key, content } = (raw ?? {}) as { key?: unknown; content?: unknown };
-  if (typeof key !== "string" || !isCredentialKey(key) || typeof content !== "string") {
+function parseEntry(raw: unknown): CredentialEntry {
+  const { key, content, sha256 } = (raw ?? {}) as Record<string, unknown>;
+  if (typeof key !== "string" || !isCredentialKey(key)) {
     throw new ApiError("validation", "The sign-in entry names no file the sync allows.");
   }
-  return { key, content };
+  const entry = { key, content, sha256 } as CredentialEntry;
+  if (typeof content !== "string" || typeof sha256 !== "string" || !entryBytes(entry)) {
+    throw new ApiError("validation", `The content for ${key} isn't a valid sign-in file.`);
+  }
+  return entry;
 }

@@ -2,6 +2,7 @@
 // temporary home and data directory passed as arguments: enrollment, the
 // mutual TLS link, request and stream round trips, the secret relay,
 // revocation, and protocol refusal.
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -134,6 +135,16 @@ async function startServer(
       });
       return { status: res.status, json: await res.json() };
     },
+  };
+}
+
+/** A sign-in sync entry for `text`, with its hash. */
+function entryOf(key: string, text: string) {
+  const bytes = Buffer.from(text);
+  return {
+    key,
+    content: bytes.toString("base64"),
+    sha256: createHash("sha256").update(bytes).digest("hex"),
   };
 }
 
@@ -404,6 +415,8 @@ describe("multi-host", () => {
     for (const path of [
       "/api/v1/node/join",
       "/api/v1/node/%6Aoin",
+      "/api/v1/%6eode/join",
+      "/api/v1/./node/join",
       "/api/v1/machines/local/proxy/node/join",
       `/api/v1/machines/${machineId}/proxy/node/join`,
       "/api/v1/machines/local/proxy/machines/local/proxy/node/join",
@@ -780,9 +793,7 @@ describe("multi-host", () => {
       method: "POST",
       path: "/link/v1/credentials/push",
       headers: { "content-type": "application/json" },
-      body: Buffer.from(
-        JSON.stringify({ key, content: Buffer.from('{"token":"forged"}').toString("base64") }),
-      ),
+      body: Buffer.from(JSON.stringify(entryOf(key, '{"token":"forged"}'))),
     });
     expect(push.status).toBe(403);
     expect(read(hub)).toBe('{"token":"synthetic-1"}');
@@ -830,5 +841,113 @@ describe("multi-host", () => {
     const cleared = await hub.api("PATCH", "/api/v1/settings", { nodeGrants: null });
     expect(cleared.json.nodeGrants).toBeUndefined();
     expect(JSON.parse((await pull(one)).body.toString())).toEqual({ entries: [] });
+  });
+
+  it("delivers a sign-in change despite a pull, a refusal, or a failed send", async () => {
+    const key = "host/claude/.credentials.json";
+    const claudeDir = (s: Server) => path.join(s.home, ".claude");
+    const file = (s: Server) => path.join(claudeDir(s), ".credentials.json");
+    const read = (s: Server) => fs.readFileSync(file(s), "utf8");
+    const hub = await startServer("hub", {
+      signedIn: true,
+      before: (home) => {
+        fs.mkdirSync(path.join(home, ".claude"));
+        fs.writeFileSync(path.join(home, ".claude", ".credentials.json"), '{"token":"v1"}');
+      },
+    });
+    const withDir = (home: string) => fs.mkdirSync(path.join(home, ".claude"));
+    const one = await startServer("one", { before: withDir });
+    const two = await startServer("two", { before: withDir });
+    const ids: string[] = [];
+    for (const node of [one, two]) {
+      const code = (await hub.api("POST", "/api/v1/machines/enrollment-codes")).json;
+      const joined = await node.api("POST", "/api/v1/node/join", {
+        hubUrl: code.hubUrl,
+        code: code.code,
+        name: `node-${node === one ? "one" : "two"}`,
+      });
+      ids.push(joined.json.machineId as string);
+    }
+    const [idOne, idTwo] = ids as [string, string];
+    await hub.api("PATCH", "/api/v1/settings", {
+      nodeGrants: { [idOne]: { signInCopies: [key] }, [idTwo]: { signInCopies: [key] } },
+    });
+    one.app.multiHost.node.restart();
+    two.app.multiHost.node.restart();
+    await waitFor(() => fs.existsSync(file(one)) && fs.existsSync(file(two)), 5000);
+    await waitFor(() => one.app.multiHost.status().link === "connected", 5000);
+    await waitFor(() => two.app.multiHost.status().link === "connected", 5000);
+
+    // A hub-side change survives a node's pull before the next check.
+    fs.writeFileSync(file(hub), '{"token":"v2"}');
+    const pulled = await one.app.multiHost.links
+      .get("hub")!
+      .request({ method: "POST", path: "/link/v1/credentials/pull", headers: {} });
+    expect(pulled.status).toBe(200);
+    await hub.app.multiHost.syncCredentials();
+    await waitFor(() => read(two) === '{"token":"v2"}', 5000);
+
+    // A node that the hub refused keeps its rotated token through a relink, and
+    // sends it once the grant allows that.
+    fs.writeFileSync(file(one), '{"token":"rotated"}');
+    await one.app.multiHost.syncCredentials();
+    expect(read(hub)).toBe('{"token":"v2"}');
+    const hubLink = one.app.multiHost.links.get("hub");
+    one.app.multiHost.node.restart();
+    await waitFor(() => {
+      const link = one.app.multiHost.links.get("hub");
+      return link !== undefined && link !== hubLink;
+    }, 5000);
+    // The second check runs after the pull that the link-up queued.
+    await one.app.multiHost.syncCredentials();
+    await one.app.multiHost.syncCredentials();
+    expect(read(one)).toBe('{"token":"rotated"}');
+    await hub.api("PATCH", "/api/v1/settings", {
+      nodeGrants: {
+        [idOne]: { signInCopies: [key], signInUpdates: [key] },
+        [idTwo]: { signInCopies: [key] },
+      },
+    });
+    await one.app.multiHost.syncCredentials();
+    await waitFor(() => read(hub) === '{"token":"rotated"}', 5000);
+    await waitFor(() => read(two) === '{"token":"rotated"}', 5000);
+
+    // A hub that can't write to a node sends the file again on a later check.
+    fs.chmodSync(claudeDir(two), 0o555);
+    try {
+      fs.writeFileSync(file(hub), '{"token":"v3"}');
+      await hub.app.multiHost.syncCredentials();
+      expect(read(two)).toBe('{"token":"rotated"}');
+    } finally {
+      fs.chmodSync(claudeDir(two), 0o755);
+    }
+    await hub.app.multiHost.syncCredentials();
+    await waitFor(() => read(two) === '{"token":"v3"}', 5000);
+
+    // A bad entry from a granted node changes nothing.
+    const bad = await one.app.multiHost.links.get("hub")!.request({
+      method: "POST",
+      path: "/link/v1/credentials/push",
+      headers: { "content-type": "application/json" },
+      body: Buffer.from(JSON.stringify({ ...entryOf(key, '{"token":"x"}'), content: "" })),
+    });
+    expect(bad.status).toBe(400);
+    expect(read(hub)).toBe('{"token":"v3"}');
+  });
+
+  it("gives no session cookie over a link, whatever form the path takes", async () => {
+    const { hub, joined } = await linkedPair();
+    const machineId = joined.json.machineId as string;
+    await waitFor(() => hub.app.multiHost.links.get(machineId) !== undefined, 5000);
+    const toNode = hub.app.multiHost.links.get(machineId)!;
+    for (const path of [
+      "/api/v1/auth/session",
+      "/api/v1/auth/%73ession",
+      "/api/v1/machines/local/proxy/auth/session",
+    ]) {
+      const res = await toNode.request({ method: "POST", path, headers: {} });
+      expect(res.status, path).toBe(403);
+      expect(res.headers["set-cookie"], path).toBeUndefined();
+    }
   });
 });

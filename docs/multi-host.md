@@ -454,7 +454,10 @@ secrets broker. The following data crosses the link:
   a node refreshes its sign-in, the node sends the file to the hub. If the
   grant lists the key for updates, the hub overwrites its own copy and sends
   the file to every other node whose grant lists it, so a compromised node
-  can replace those sign-ins and no others. Revoking a machine closes its link but doesn't delete the sign-in files
+  can replace those sign-ins and no others. A node keeps sending a change
+  until the hub takes it, including one made while the server was stopped, and
+  copying from the hub doesn't overwrite a change that the hub hasn't taken.
+  The hub and nodes refuse a file that isn't a non-empty JSON object. Revoking a machine closes its link but doesn't delete the sign-in files
   that it already copied; sign out on that machine, or remove the files. A
   file arrives only where its folder exists, so create the same accounts on
   each node. GitHub Copilot keeps its token beside its settings, so its
