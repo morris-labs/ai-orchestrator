@@ -47,6 +47,7 @@ async function leftRun(repo: string, patch: Partial<RunState>): Promise<string> 
   await runs.start({
     runId: id,
     projectId: "sample",
+    depth: "thorough",
     repoPath: repo,
     base: "origin/main",
     readOnly: true,
@@ -178,6 +179,7 @@ describe("engine shutdown", () => {
     await runs.start({
       runId: id,
       projectId: "sample",
+      depth: "thorough",
       repoPath: repo,
       base: "origin/main",
       readOnly: true,

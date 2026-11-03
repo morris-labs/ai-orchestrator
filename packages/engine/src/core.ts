@@ -17,6 +17,7 @@ import {
   type LeaseResponse,
   type UsageSample,
   type Vendor,
+  type Effort,
 } from "@aio/contracts";
 import { z } from "zod";
 import type { EnvProfile } from "./process/env.js";
@@ -83,6 +84,8 @@ export interface AdapterRequest {
   timeoutMs: number;
   /** A model name for the vendor's CLI, or absent for the vendor's default. */
   model?: string;
+  /** The reasoning effort, or absent for the vendor's default. */
+  effort?: Effort;
   /** Aborted when the run is cancelled. The adapter must stop the CLI. */
   signal?: AbortSignal;
 }
@@ -181,6 +184,15 @@ export const VerifyOutputSchema = z.object({
 });
 export type VerifyOutput = z.infer<typeof VerifyOutputSchema>;
 
+/**
+ * A disprover's answer for a batch of findings: one verdict per finding id.
+ * A finding with no verdict stays pending, and the next round checks it.
+ */
+export const VerifyBatchOutputSchema = z.object({
+  verdicts: z.array(VerifyOutputSchema.extend({ id: z.string().min(1) })),
+});
+export type VerifyBatchOutput = z.infer<typeof VerifyBatchOutputSchema>;
+
 /** The fixer's answer for one batch. The engine reads the commits from git. */
 export const FixOutputSchema = z.object({
   fixed: z.array(z.string()),
@@ -207,6 +219,8 @@ export interface VendorAdapter {
   /** Resumes the reviewer's session with a follow-up prompt. */
   continueReview(request: ContinueRequest): Promise<AdapterResult<ReviewOutput>>;
   verify(request: AdapterRequest): Promise<AdapterResult<VerifyOutput>>;
+  /** Checks several findings in one call. */
+  verifyBatch(request: AdapterRequest): Promise<AdapterResult<VerifyBatchOutput>>;
   fix(request: AdapterRequest): Promise<AdapterResult<FixOutput>>;
   confirm(request: AdapterRequest): Promise<AdapterResult<ConfirmOutput>>;
   sweep(request: AdapterRequest): Promise<AdapterResult<SweepOutput>>;
@@ -220,7 +234,8 @@ export interface VendorAdapter {
   isRetryable?(error: unknown): boolean;
 }
 
-export type AdapterMethod = "review" | "continueReview" | "verify" | "fix" | "confirm" | "sweep";
+export type AdapterMethod =
+  "review" | "continueReview" | "verify" | "verifyBatch" | "fix" | "confirm" | "sweep";
 
 export type AdapterSet = Partial<Record<Vendor, VendorAdapter>>;
 

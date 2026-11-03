@@ -7,6 +7,7 @@ import {
   type Pipeline,
   type Profile,
   type Role,
+  type RunDepth,
   type RunRequest,
   type Severity,
   type Vendor,
@@ -39,9 +40,12 @@ export interface LauncherForm {
   /** When true, a vendor never disproves its own findings or confirms its own fixes. */
   crossVendor: boolean;
   modelTier: ModelTierChoice;
-  verifyFloor: Severity | "all";
+  /** `default` takes the depth's floor; `all` checks every severity. */
+  verifyFloor: Severity | "all" | "default";
+  depth: RunDepth;
   readOnly: boolean;
   includeWorktree: boolean;
+  /** Empty takes the depth's round cap. */
   roundCap: string;
 }
 
@@ -67,10 +71,11 @@ export const DEFAULT_FORM: LauncherForm = {
   roles: null,
   crossVendor: true,
   modelTier: "auto",
-  verifyFloor: "all",
+  verifyFloor: "default",
+  depth: "standard",
   readOnly: false,
   includeWorktree: false,
-  roundCap: "25",
+  roundCap: "",
 };
 
 /**
@@ -126,8 +131,8 @@ export function buildRunRequest(form: LauncherForm): BuildResult {
   if (!form.projectId) errors.push("Select a container.");
   if (!form.repoPath) errors.push("Select a repository.");
   if (!form.base.trim()) errors.push("Select a base.");
-  const roundCap = Number(form.roundCap);
-  if (!Number.isInteger(roundCap) || roundCap < 1)
+  const roundCap = form.roundCap.trim() === "" ? undefined : Number(form.roundCap);
+  if (roundCap !== undefined && (!Number.isInteger(roundCap) || roundCap < 1))
     errors.push("The round cap must be a whole number of 1 or more.");
   let prNumber: number | undefined;
   if (form.pipeline === "post-push") {
@@ -159,11 +164,15 @@ export function buildRunRequest(form: LauncherForm): BuildResult {
     profile: form.profile,
     ...(Object.keys(overrides).length > 0 ? { roles: overrides } : {}),
     modelTier: form.modelTier,
-    ...(form.verifyFloor !== "all" ? { verifyFloor: form.verifyFloor } : {}),
+    depth: form.depth,
+    // No severity ranks below `nit`, so that floor checks everything.
+    ...(form.verifyFloor === "default"
+      ? {}
+      : { verifyFloor: form.verifyFloor === "all" ? "nit" : form.verifyFloor }),
     crossVendor: form.crossVendor,
     readOnly: form.readOnly,
     includeWorktree: form.includeWorktree,
-    roundCap,
+    ...(roundCap !== undefined ? { roundCap } : {}),
   });
   if (!parsed.success)
     return {

@@ -74,6 +74,7 @@ export interface RunPreview {
   groups: FileGroup[];
   changedLines: number;
   dirty: boolean;
+  tokenEstimate?: { tokens: number; basis: string };
 }
 
 export interface FindingDetail {

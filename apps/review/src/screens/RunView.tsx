@@ -2,6 +2,7 @@
 // profile switch, controls, the decision panel, round summaries, the run's
 // live agents, and cost per round.
 import {
+  runDepth,
   type Decision,
   type DecisionOption,
   type FileGroup,
@@ -408,13 +409,16 @@ export function RunView({ runId }: { runId: string }) {
             {run.request.pipeline} · {run.request.repoPath} · base {run.request.base}
             {run.baseSha ? ` (${run.baseSha.slice(0, 8)})` : ""} · tip{" "}
             {run.request.tip ?? "checked-out branch"}
-            {run.request.readOnly ? " · read-only" : ""}
+            {run.request.readOnly ? " · read-only" : ""} · depth {runDepth(run.request)}
           </p>
         </div>
         <div className="round-counter" aria-label="Round">
           <span className="tile-label">Round</span>
           <span className="tile-value">
-            {run.round} <span className="muted">of {run.request.roundCap}</span>
+            {run.round} {/* A run that continued after a push has its own cap past this one. */}
+            {run.round > run.request.roundCap ? null : (
+              <span className="muted">of {run.request.roundCap}</span>
+            )}
           </span>
           {currentRoundCost !== undefined ? (
             <span className="muted small">{formatUsd(currentRoundCost)} so far this round</span>

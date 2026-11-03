@@ -123,6 +123,51 @@ describe("groupFiles", () => {
     expect(group?.riskPath).toBe(true);
   });
 
+  it("joins groups by feature up to the limit and keeps a file with its test", async () => {
+    const coarseFiles = [
+      file("packages/a/src/x/one.ts", hunk(1, 30)),
+      file("packages/a/test/x/one.test.ts", hunk(1, 20)),
+      file("packages/a/src/y/two.ts", hunk(1, 30)),
+      file("packages/b/src/three.ts", hunk(1, 30)),
+      file("docs/guide.md", hunk(1, 5)),
+    ];
+    const risky = PolicyFileSchema.parse({ version: 1, riskPaths: ["packages/a/src/y/**"] });
+    const read = (path: string) =>
+      Promise.resolve(path.endsWith("one.test.ts") ? 'import "../../src/x/one";' : "");
+    const fine = await groupFiles(coarseFiles, { policy: DEFAULT_POLICY, readFile: read });
+    const coarse = await groupFiles(coarseFiles, {
+      policy: DEFAULT_POLICY,
+      readFile: read,
+      coarse: true,
+      sizeLimit: 1500,
+    });
+    expect(coarse.length).toBeLessThan(fine.length);
+    const feature = coarse.find((g) => g.files.includes("packages/a/src/x/one.ts"));
+    expect(feature?.files).toEqual(
+      expect.arrayContaining([
+        "packages/a/src/x/one.ts",
+        "packages/a/test/x/one.test.ts",
+        "packages/a/src/y/two.ts",
+      ]),
+    );
+    expect(coarse.find((g) => g.files.includes("packages/b/src/three.ts"))?.files).toHaveLength(1);
+    expect(coarse.find((g) => g.files.includes("docs/guide.md"))?.files).toEqual(["docs/guide.md"]);
+    const apart = await groupFiles(coarseFiles, {
+      policy: risky,
+      readFile: read,
+      coarse: true,
+      sizeLimit: 1500,
+    });
+    expect(apart.find((g) => g.files.includes("packages/a/src/y/two.ts"))?.files).toHaveLength(1);
+    const tight = await groupFiles(coarseFiles, {
+      policy: DEFAULT_POLICY,
+      readFile: read,
+      coarse: true,
+      sizeLimit: 60,
+    });
+    for (const g of tight) expect(g.changedLines).toBeLessThanOrEqual(60);
+  });
+
   it("splits by file, then by hunk", () => {
     const slice = {
       files: ["a", "b"],

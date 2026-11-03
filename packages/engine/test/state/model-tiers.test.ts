@@ -75,7 +75,7 @@ describe("the model of a call", () => {
     for (const tier of ["small", "medium", "large"] as const) {
       await ctx.callAgent<ReviewOutput>(call("codex", tier));
     }
-    expect(codex.models).toEqual(["gpt-6-luna", "gpt-6-sol", "gpt-6.1-sol"]);
+    expect(codex.models).toEqual(["gpt-6-luna", "gpt-6.1-terra", "gpt-6.1-sol"]);
   });
 
   it("never lets a tierless Codex call reach the CLI default", async () => {

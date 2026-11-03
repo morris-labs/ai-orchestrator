@@ -1,6 +1,12 @@
 // Run launcher: container, repository, base, tip, pipeline, profile and
 // roles, options, a group preview, and Start. A deep link `?project=&box=` prefills it.
-import type { ModelTierChoice, ProjectSummary, RouteOf, Severity } from "@aio/contracts";
+import {
+  DEPTH_DEFAULTS,
+  type ModelTierChoice,
+  type ProjectSummary,
+  type RouteOf,
+  type RunDepth,
+} from "@aio/contracts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ErrorBanner, Field } from "../components/common.js";
 import { listRefs, listRepos, EMPTY_REFS, type RepoInfo, type RepoRefs } from "../lib/repos.js";
@@ -439,6 +445,22 @@ export function Launcher({ prefill }: { prefill: { project: string | null; box: 
           </fieldset>
 
           <fieldset>
+            <legend>Depth</legend>
+            <Field
+              label="Depth"
+              hint="Standard asks for P1 and P2 findings, with one reviewer pass per group, batched verification, and at most 2 rounds. Thorough asks for every severity, with continuation passes, a disprover call per finding, and at most 25 rounds."
+            >
+              <select
+                value={form.depth}
+                onChange={(e) => update({ depth: e.target.value as RunDepth })}
+              >
+                <option value="standard">Standard</option>
+                <option value="thorough">Thorough</option>
+              </select>
+            </Field>
+          </fieldset>
+
+          <fieldset>
             <legend>Verification</legend>
             <Field
               label="Verification floor"
@@ -446,8 +468,13 @@ export function Launcher({ prefill }: { prefill: { project: string | null; box: 
             >
               <select
                 value={form.verifyFloor}
-                onChange={(e) => update({ verifyFloor: e.target.value as Severity | "all" })}
+                onChange={(e) =>
+                  update({ verifyFloor: e.target.value as LauncherForm["verifyFloor"] })
+                }
               >
+                <option value="default">
+                  Depth default ({form.depth === "standard" ? "P2 and above" : "all severities"})
+                </option>
                 {VERIFY_FLOOR_OPTIONS.map((o) => (
                   <option key={o.value} value={o.value}>
                     {o.label}
@@ -498,6 +525,7 @@ export function Launcher({ prefill }: { prefill: { project: string | null; box: 
                 type="number"
                 min={1}
                 value={form.roundCap}
+                placeholder={`Depth default: ${DEPTH_DEFAULTS[form.depth].roundCap}`}
                 onChange={(e) => update({ roundCap: e.target.value })}
               />
             </Field>
@@ -522,6 +550,12 @@ export function Launcher({ prefill }: { prefill: { project: string | null; box: 
             <code>{preview.diffBaseSha.slice(0, 8)}</code> to{" "}
             <code>{preview.tipSha.slice(0, 8)}</code>.
           </p>
+          {preview.tokenEstimate ? (
+            <p aria-label="Token estimate">
+              Estimated tokens: about {preview.tokenEstimate.tokens.toLocaleString("en-US")}. This
+              is a rough estimate, not a measurement. {preview.tokenEstimate.basis}
+            </p>
+          ) : null}
           {preview.dirty && !form.includeWorktree ? (
             <p role="alert" className="banner banner-warning">
               ▲ The working tree has uncommitted changes. Commit them, or select Include uncommitted

@@ -22,6 +22,7 @@ import type {
   ReviewOutput,
   SweepOutput,
   VendorAdapter,
+  VerifyBatchOutput,
   VerifyOutput,
 } from "../../src/core.js";
 import { tempDir } from "../tmp.js";
@@ -353,6 +354,18 @@ export class ScenarioAdapter implements VendorAdapter {
     return result(this.vendor, request.prompt, {
       findings: found.map((b) => toVendorFinding(b, request.repoPath)),
     });
+  }
+
+  /** Answers each finding of a batch as `verify` answers it alone. */
+  async verifyBatch(request: AdapterRequest): Promise<AdapterResult<VerifyBatchOutput>> {
+    const blocks = request.prompt.split(/^### /m).slice(1);
+    const verdicts: VerifyBatchOutput["verdicts"] = [];
+    for (const block of blocks) {
+      const id = block.split("\n")[0] as string;
+      const one = await this.verify({ ...request, prompt: block });
+      verdicts.push({ id, ...one.output });
+    }
+    return result(this.vendor, request.prompt, { verdicts });
   }
 
   async verify(request: AdapterRequest): Promise<AdapterResult<VerifyOutput>> {

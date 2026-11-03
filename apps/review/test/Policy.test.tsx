@@ -68,6 +68,17 @@ describe("Policy", () => {
     expect(await screen.findByText(/Saved/)).toBeInTheDocument();
   });
 
+  it("leaves groupSizeLimit out of the file when it is the default or unchanged", async () => {
+    const file = "version: 1\nriskPaths:\n  - src/auth/**\n";
+    const { server } = renderWithStore(<Policy projectId={PROJECT} />, handlers(file));
+    await waitFor(() => expect(screen.getByLabelText(/^Risk paths/)).toHaveValue("src/auth/**"));
+    fireEvent.change(screen.getByLabelText(/^Risk paths/), { target: { value: "src/**" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(server.callsTo("projects.policy.put")).toHaveLength(1));
+    const put = server.callsTo("projects.policy.put")[0]!;
+    expect((put.body as { text: string }).text).not.toContain("groupSizeLimit");
+  });
+
   it("edits raw YAML and refuses an invalid file", async () => {
     const { server } = renderWithStore(<Policy projectId={PROJECT} />, handlers());
     await waitFor(() => expect(screen.getByLabelText(/^Risk paths/)).toHaveValue("src/auth/**"));

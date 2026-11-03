@@ -947,6 +947,11 @@ describe("review", () => {
     expect(await cli([...args, "--tier", "small"])).toBe(0);
     expect(last()?.body).toMatchObject({ modelTier: "small" });
     expect(await cli([...args, "--tier", "fable"])).not.toBe(0);
+    expect(await cli(args)).toBe(0);
+    expect(last()?.body).toMatchObject({ depth: "standard" });
+    expect(await cli([...args, "--depth", "thorough", "--verify-floor", "all"])).toBe(0);
+    expect(last()?.body).toMatchObject({ depth: "thorough", verifyFloor: "nit" });
+    expect(await cli([...args, "--depth", "deep"])).not.toBe(0);
   });
 
   it("passes starting roles and refuses a bad role", async () => {

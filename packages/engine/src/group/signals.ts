@@ -1,6 +1,6 @@
 // Measures each changed file for the tier choice with git, and gives each
 // group its tier. Never calls a model, and a git failure only drops a signal.
-import type { FileGroup, ModelTierChoice, PolicyFile } from "@aio/contracts";
+import type { FileGroup, ModelTierChoice, PolicyFile, RunDepth } from "@aio/contracts";
 import { matchesAny } from "../policy/glob.js";
 import { isRiskPath } from "../policy/rules.js";
 import { parseDiff, type DiffFile } from "../range/diff.js";
@@ -28,6 +28,8 @@ export interface TierInputs {
   diffBase: string;
   tip: string;
   choice: ModelTierChoice;
+  /** `standard` reads no history, since only risk paths and policy rules raise a tier. */
+  depth?: RunDepth;
   now?: () => number;
   budgetMs?: number;
 }
@@ -89,7 +91,8 @@ export async function assignTiers(
   inputs: TierInputs,
 ): Promise<FileGroup[]> {
   const { git, policy, diffBase, tip, choice } = inputs;
-  const auto = choice === "auto";
+  const depth = inputs.depth ?? "thorough";
+  const auto = choice === "auto" && depth !== "standard";
   const now = inputs.now ?? Date.now;
   const byPath = new Map(files.map((f) => [f.path, f]));
   // A fixed tier needs only each file's path, so it reads no history.
@@ -154,12 +157,17 @@ export async function assignTiers(
   for (const group of groups) {
     const signals: FileSignals[] = [];
     for (const path of group.files) signals.push(await measure(path));
-    out.push({ ...group, ...tierFields(group, signals, choice) });
+    out.push({ ...group, ...tierFields(group, signals, choice, depth) });
   }
   return out;
 }
 
-function tierFields(_group: FileGroup, signals: FileSignals[], choice: ModelTierChoice) {
-  const { tier, reason } = groupTier(signals, choice);
+function tierFields(
+  _group: FileGroup,
+  signals: FileSignals[],
+  choice: ModelTierChoice,
+  depth: RunDepth,
+) {
+  const { tier, reason } = groupTier(signals, choice, depth);
   return { tier, tierReason: reason };
 }

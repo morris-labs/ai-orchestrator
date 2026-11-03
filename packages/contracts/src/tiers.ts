@@ -87,7 +87,7 @@ export type TierModels = z.infer<typeof TierModelsSchema>;
  */
 export const DEFAULT_TIER_MODELS: TierModels = {
   claude: { small: "claude-haiku-5-5", medium: "claude-sonnet-5-5", large: "claude-opus-5-5" },
-  codex: { small: "gpt-6-luna", medium: "gpt-6-sol", large: "gpt-6.1-sol" },
+  codex: { small: "gpt-6-luna", medium: "gpt-6.1-terra", large: "gpt-6.1-sol" },
 };
 
 /**

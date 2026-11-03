@@ -66,6 +66,8 @@ describe("policy file", () => {
     expect(writePolicy(file, { ...DEFAULT_POLICY, groupSizeLimit: 9 }).policy.groupSizeLimit).toBe(
       9,
     );
+    // A default limit stays out of a file written from a policy object.
+    expect(writePolicy(file, DEFAULT_POLICY).text).not.toContain("groupSizeLimit");
     // A put against a missing file's revision fails once the file exists.
     const other = tempFile();
     const missing = readPolicy(other).revision;

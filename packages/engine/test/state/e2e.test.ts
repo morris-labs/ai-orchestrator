@@ -34,7 +34,14 @@ function deps(
 
 async function start(repo: string, d: EngineDeps, overrides: Record<string, unknown> = {}) {
   const run = await RunController.create(
-    { runId: runId(), projectId: "sample", repoPath: repo, base: "origin/main", ...overrides },
+    {
+      runId: runId(),
+      projectId: "sample",
+      repoPath: repo,
+      depth: "thorough",
+      base: "origin/main",
+      ...overrides,
+    },
     { projectRoot: repo },
     d,
   );

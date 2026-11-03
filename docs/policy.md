@@ -19,8 +19,9 @@ edit the file in any text editor; the engine reads it at the start of each
 run.
 
 A repository without a policy file gets the defaults: no risk paths, no
-extra rules, no test or lint commands, and a group size limit of 400 changed
-lines.
+extra rules, no test or lint commands, and a group size limit from the run's
+[depth](review-pipeline.md#depth): 1500 changed lines at `standard`, and 400 at
+`thorough`.
 
 ## Example
 
@@ -79,7 +80,7 @@ names the field that holds it.
 | `tests` | List of commands | `[]` | Test commands for the gate. Each has a `command` and an optional `cwd` relative to the repository root. |
 | `lint` | List of commands | `[]` | Lint commands for the gate, in the same form as `tests`. |
 | `environmentLimits` | List of strings | `[]` | Facts about where the code runs, added to every reviewer and disprover prompt. |
-| `groupSizeLimit` | Positive integer | `400` | The changed-line count above which a file group splits. |
+| `groupSizeLimit` | Positive integer | Set by the run's depth | The changed-line count above which a file group splits. A value in the file wins at every depth. The **Policy** editor writes this field when it saves, so a file it saved names a limit. |
 | `commentAuthors` | List of strings | Absent | GitHub logins whose pull request comments the post-push loop imports. The loop always imports Copilot's comments. When you set this field, the loop imports comments from these logins instead of from the repository's collaborators. Logins are case-insensitive. |
 | `tierModels` | Map | Absent | Models per vendor and tier, such as `claude: { small: claude-haiku-5-5 }`, over the built-in mappings. The engine refuses a model that [review runs must not use](review-pipeline.md#blocked-models). |
 | `tierPaths` | List of rules | Absent | Model tiers for paths. Each rule has a `paths` list of globs and a `tier` of `small`, `medium`, or `large`. The first rule that matches a file wins. A `small` rule gives a file that holds code the `medium` tier. |

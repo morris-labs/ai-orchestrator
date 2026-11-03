@@ -399,6 +399,8 @@ export function decideVerdict(
 }
 
 export interface VerifyDeps {
+  /** Uses the compact prompt of the `standard` depth. */
+  standard?: boolean;
   runner: CommandRunner;
   range: RangeInfo;
   policy: PolicyFile;
@@ -453,6 +455,7 @@ export async function verifyFinding(
   await mkdir(scratchDir, { recursive: true });
   const baseDir = await deps.baseWorktree.ensure();
   const prompt = disproverPrompt({
+    ...(deps.standard ? { standard: true } : {}),
     range: deps.range,
     finding,
     scratchDir,
@@ -468,6 +471,24 @@ export async function verifyFinding(
     timeoutMs: deps.timeoutMs,
   });
   if (!answer) return null;
+  return judgeAnswer(finding, answer, scratchDir, deps);
+}
+
+/**
+ * Turns a disprover's answer for one finding into a result: reruns the
+ * reproduction script the answer names, and combines the two.
+ */
+export async function judgeAnswer(
+  finding: Finding,
+  answer: {
+    vendor: Vendor;
+    model: string;
+    output: VerifyOutput;
+    toolErrors?: string[];
+  },
+  scratchDir: string,
+  deps: Pick<VerifyDeps, "runner" | "signal" | "inScriptCheckout">,
+): Promise<VerifyResult> {
   let tipRun: ScriptRun | null = null;
   let baseRun: ScriptRun | null = null;
   if (answer.output.script && answer.output.verdict === "confirmed") {

@@ -14,7 +14,13 @@ import {
   setFormProfile,
   setFormRole,
 } from "../src/screens/launcherModel.js";
-import { commaList, lines, parsePolicyYaml, policyToYaml } from "../src/screens/policyModel.js";
+import {
+  commaList,
+  lines,
+  mergePolicyYaml,
+  parsePolicyYaml,
+  policyToYaml,
+} from "../src/screens/policyModel.js";
 import {
   draftFrom,
   settingsPatch,
@@ -36,7 +42,8 @@ describe("buildRunRequest", () => {
         mergeBase: true,
         exactBase: false,
         profile: "offload",
-        roundCap: 25,
+        depth: "standard",
+        roundCap: 2,
         crossVendor: true,
       },
     });
@@ -296,8 +303,33 @@ describe("buildRunRequest model tier", () => {
     expect(auto.ok && auto.request.modelTier).toBe("auto");
     const fixed = buildRunRequest({ ...form, modelTier: "medium" });
     expect(fixed.ok && fixed.request.modelTier).toBe("medium");
-    expect(auto.ok && auto.request.verifyFloor).toBeUndefined();
+    expect(auto.ok && auto.request.verifyFloor).toBe("P2");
+    const all = buildRunRequest({ ...form, verifyFloor: "all" });
+    expect(all.ok && all.request.verifyFloor).toBe("nit");
+    const thorough = buildRunRequest({ ...form, depth: "thorough" });
+    expect(thorough.ok && thorough.request.verifyFloor).toBeUndefined();
+    expect(thorough.ok && thorough.request.roundCap).toBe(25);
+    const capped = buildRunRequest({ ...form, roundCap: "9" });
+    expect(capped.ok && capped.request.roundCap).toBe(9);
     const floor = buildRunRequest({ ...form, verifyFloor: "P2" });
     expect(floor.ok && floor.request.verifyFloor).toBe("P2");
+  });
+});
+
+describe("the policy file's groupSizeLimit", () => {
+  it("stays out of a file written from the default", () => {
+    expect(policyToYaml(DEFAULT_POLICY)).not.toContain("groupSizeLimit");
+    expect(mergePolicyYaml("", DEFAULT_POLICY)).not.toContain("groupSizeLimit");
+  });
+
+  it("is written when it differs, and removed when it returns to the default", () => {
+    const text = mergePolicyYaml("version: 1\n", { ...DEFAULT_POLICY, groupSizeLimit: 77 });
+    expect(text).toContain("groupSizeLimit: 77");
+    expect(mergePolicyYaml(text, DEFAULT_POLICY)).not.toContain("groupSizeLimit");
+  });
+
+  it("keeps a named value that didn't change", () => {
+    const text = `version: 1\ngroupSizeLimit: ${DEFAULT_POLICY.groupSizeLimit}\n`;
+    expect(mergePolicyYaml(text, DEFAULT_POLICY)).toBe(text);
   });
 });

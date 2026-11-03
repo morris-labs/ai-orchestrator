@@ -431,7 +431,7 @@ describe("a safety refusal on a disprover call", () => {
     await run.settled();
     expect(calls).toContain("codex:gpt-6-luna");
     expect(run.findings[1]?.verdict).toBe("disproved");
-    expect(calls.filter((c) => c === "codex:gpt-6-sol")).toHaveLength(1);
+    expect(calls.filter((c) => c === "codex:gpt-6.1-terra")).toHaveLength(1);
   });
 
   it("moves to Claude even when a person assigned the role to Codex", async () => {

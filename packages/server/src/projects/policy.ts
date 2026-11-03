@@ -4,7 +4,13 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { DEFAULT_POLICY, PolicyFileSchema, type PolicyFile, type PolicyPut } from "@aio/contracts";
+import {
+  DEFAULT_GROUP_SIZE_LIMIT,
+  DEFAULT_POLICY,
+  PolicyFileSchema,
+  type PolicyFile,
+  type PolicyPut,
+} from "@aio/contracts";
 import { parse, stringify } from "yaml";
 import { ApiError, messageOf } from "../records/errors.js";
 
@@ -103,7 +109,9 @@ export function writePolicy(
       });
     }
     policy = parsed.data;
-    text = stringify(policy);
+    // A file that names the key overrides the limit of the run's depth.
+    const { groupSizeLimit, ...rest } = policy;
+    text = stringify(groupSizeLimit === DEFAULT_GROUP_SIZE_LIMIT ? rest : policy);
   }
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, text);

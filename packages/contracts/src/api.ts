@@ -761,6 +761,8 @@ export const RunPreviewSchema = z.object({
   groups: z.array(FileGroupSchema),
   changedLines: z.number().int().nonnegative(),
   dirty: z.boolean(),
+  /** A rough estimate from code, with no model call. Absent from an older engine. */
+  tokenEstimate: z.object({ tokens: z.number().nonnegative(), basis: z.string() }).optional(),
 });
 
 export const FindingListQuerySchema = z.object({

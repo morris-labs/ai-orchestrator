@@ -168,6 +168,10 @@ export abstract class CliAdapter implements CliVendorAdapter {
     return this.dispatch("verify", req);
   }
 
+  verifyBatch<T>(req: CliRequest<T>): Promise<CliResult<T>> {
+    return this.dispatch("verifyBatch", req);
+  }
+
   fix<T>(req: CliRequest<T>): Promise<CliResult<T>> {
     return this.dispatch("fix", req);
   }

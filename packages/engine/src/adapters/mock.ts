@@ -15,7 +15,15 @@ import {
   type CliVendorAdapter,
 } from "./types.js";
 
-const MethodSchema = z.enum(["review", "continueReview", "verify", "fix", "confirm", "sweep"]);
+const MethodSchema = z.enum([
+  "review",
+  "continueReview",
+  "verify",
+  "verifyBatch",
+  "fix",
+  "confirm",
+  "sweep",
+]);
 
 const LimitInfoSchema = z.object({
   kind: z.enum(["usage_limit", "rate_limit"]),
@@ -94,6 +102,10 @@ export class MockAdapter implements CliVendorAdapter {
   }
   verify<T>(req: CliRequest<T>): Promise<CliResult<T>> {
     return this.answer("verify", req);
+  }
+
+  verifyBatch<T>(req: CliRequest<T>): Promise<CliResult<T>> {
+    return this.answer("verifyBatch", req);
   }
   fix<T>(req: CliRequest<T>): Promise<CliResult<T>> {
     return this.answer("fix", req);

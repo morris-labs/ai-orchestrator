@@ -20,10 +20,10 @@ const SEVERITY_ORDER: readonly Severity[] = ["P1", "P2", "P3", "nit"];
  * never below the floor, because the post-push loop has to answer it.
  */
 export function belowVerifyFloor(
-  finding: { severity: Severity; origin?: string },
+  finding: { severity: Severity; origin?: string; floorBypassReason?: string | undefined },
   floor: Severity | undefined,
 ): boolean {
-  if (!floor) return false;
+  if (!floor || finding.floorBypassReason !== undefined) return false;
   if (finding.origin === "pr_comment" || finding.origin === "check_run") return false;
   return SEVERITY_ORDER.indexOf(finding.severity) > SEVERITY_ORDER.indexOf(floor);
 }
@@ -131,6 +131,11 @@ const findingFields = {
    * on findings stored before the field existed.
    */
   fixHeldReason: z.enum(["below_verify_floor"]).optional(),
+  /**
+   * Why a confirmed finding below the verification floor goes to the fixer
+   * anyway: a bulk triage call selected it. Absent otherwise.
+   */
+  floorBypassReason: z.string().optional(),
   /** Reviewer label, such as `claude-opus` or `codex-gpt-5`. */
   reportedBy: z.string().min(1),
   /** Other reviewers whose findings merged into this one; drives the overlap rate. */

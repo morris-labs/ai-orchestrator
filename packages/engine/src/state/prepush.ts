@@ -1,7 +1,7 @@
 // The pre-push state machine (design.md, "Pre-push pipeline"). Each stage
 // reads the files the previous stage wrote, so the driver can start at any
 // stage after a crash, a pause, or a decision.
-import { belowVerifyFloor } from "@aio/contracts";
+import { belowVerifyFloor, runDepth } from "@aio/contracts";
 import type { Finding, Role, RoleAssignment, StopReason, Vendor } from "@aio/contracts";
 import { runGate } from "../gate/gate.js";
 import { resolveRange } from "../range/resolve.js";
@@ -26,6 +26,7 @@ import {
   runMerge,
   runSweep,
   syncFloorLabels,
+  triageBelowFloor,
   verifyPending,
   warnLeftovers,
   type MergeOutput,
@@ -133,8 +134,12 @@ export async function startRound(ctx: RunContext): Promise<void> {
       });
     }
   }
+  // The next round's review starts where this round's fixes began, or, with no
+  // fix, where this round's review ended.
+  const reviewFrom = ctx.eng.preFixSha ?? ctx.eng.reviewedHead;
   ctx.state.round += 1;
   const round = ctx.state.round;
+  ctx.eng.reviewFrom = reviewFrom;
   ctx.eng.roundStartedAt = ctx.nowIso();
   ctx.eng.roundUsage = {};
   ctx.eng.gateAttempts = 0;
@@ -173,6 +178,7 @@ export async function startRound(ctx: RunContext): Promise<void> {
   if (round > 1) await emitRoleChanges(ctx, before, after, reason, round);
 
   ctx.state.tipSha = ctx.state.request.readOnly ? ctx.state.tipSha : await ctx.git.head();
+  ctx.eng.reviewedHead = ctx.state.tipSha ?? null;
   const reuse = round === 1 ? await ctx.store.loadGroups() : undefined;
   const groups = reuse ?? (await computeGroups(ctx));
   await ctx.store.saveGroups(groups, round);
@@ -228,7 +234,9 @@ export async function endRound(ctx: RunContext): Promise<StopReason | null> {
   await ctx.persist();
   await ctx.emitRun(summary);
 
-  if (ctx.eng.cleanRounds >= 2 && openFindings(ctx).length === 0) {
+  // At `standard`, nothing changed after a clean round, so one is enough.
+  const cleanNeeded = runDepth(ctx.state.request) === "standard" ? 1 : 2;
+  if (ctx.eng.cleanRounds >= cleanNeeded && openFindings(ctx).length === 0) {
     // Findings below the floor don't hold the run open, but nothing checked
     // or fixed them, so the run can't call itself clean.
     if (ctx.findings.some((f) => f.verdict === "pending" && f.followUpReason !== undefined)) {
@@ -368,6 +376,7 @@ export async function drivePrePush(ctx: RunContext): Promise<void> {
         if (sweep && sweep.created.length > 0) {
           await verifyPending(ctx, ctx.store.roundFile(ctx.round, "sweep-verify"));
         }
+        await triageBelowFloor(ctx);
         const decision = openOscillations(ctx, sweep);
         if (ctx.state.request.readOnly || fixTargets(ctx).length === 0) {
           if (await closeRound(ctx, decision)) return;

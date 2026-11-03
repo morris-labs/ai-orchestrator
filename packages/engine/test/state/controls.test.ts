@@ -47,7 +47,7 @@ function setup(scenario: Scenario, hook?: Hook, adapters?: EngineDeps["adapters"
 
 async function create(repo: string, deps: EngineDeps, extra: Record<string, unknown> = {}) {
   return RunController.create(
-    { runId: nextRunId(), projectId: "sample", repoPath: repo, ...extra },
+    { runId: nextRunId(), projectId: "sample", repoPath: repo, depth: "thorough", ...extra },
     { projectRoot: repo },
     deps,
   );
@@ -358,6 +358,7 @@ describe("run controls", () => {
       review: codex.review.bind(codex),
       continueReview: codex.continueReview.bind(codex),
       verify: codex.verify.bind(codex),
+      verifyBatch: codex.verifyBatch.bind(codex),
       fix: codex.fix.bind(codex),
       sweep: codex.sweep.bind(codex),
       detectLimit: codex.detectLimit.bind(codex),
@@ -427,6 +428,7 @@ describe("run controls", () => {
       },
       continueReview: codex.continueReview.bind(codex),
       verify: codex.verify.bind(codex),
+      verifyBatch: codex.verifyBatch.bind(codex),
       fix: codex.fix.bind(codex),
       confirm: codex.confirm.bind(codex),
       sweep: codex.sweep.bind(codex),
@@ -463,6 +465,7 @@ describe("run controls", () => {
       review: withCredits((req) => copilot.review(req)),
       continueReview: copilot.continueReview.bind(copilot),
       verify: withCredits((req) => copilot.verify(req)),
+      verifyBatch: copilot.verifyBatch.bind(copilot),
       fix: copilot.fix.bind(copilot),
       confirm: copilot.confirm.bind(copilot),
       sweep: copilot.sweep.bind(copilot),
@@ -529,6 +532,7 @@ describe("run controls", () => {
             presentAtBase: false,
             script: null,
           }),
+        verifyBatch: () => Promise.reject(new Error("A thorough run makes no batched call.")),
         fix: async () => res({ fixed: [], notFixed: [], summary: "" }),
         confirm: async () => res({ incomplete: [], findings: [] }),
         sweep: async () => res({ findings: [] }),

@@ -151,6 +151,8 @@ export interface CliVendorAdapter {
   continueReview<T>(req: CliRequest<T> & { sessionId: string }): Promise<CliResult<T>>;
   /** The disprover. */
   verify<T>(req: CliRequest<T>): Promise<CliResult<T>>;
+  /** The disprover for several findings in one call. */
+  verifyBatch<T>(req: CliRequest<T>): Promise<CliResult<T>>;
   /** The fixer; normally with `tools: "write"`. */
   fix<T>(req: CliRequest<T>): Promise<CliResult<T>>;
   /** The fix confirmer. */
@@ -167,6 +169,7 @@ export const METHOD_ROLES = {
   review: "reviewer",
   continueReview: "reviewer",
   verify: "disprover",
+  verifyBatch: "disprover",
   fix: "fixer",
   confirm: "confirmer",
   sweep: "sweeper",

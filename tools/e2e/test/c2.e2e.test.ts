@@ -101,7 +101,17 @@ function runEvents(runId: string): Array<Record<string, unknown>> {
 
 async function startReview(): Promise<string> {
   const run = await cliJson<RunState>(
-    ["review", "start", "--project", projectId, "--repo", repo, "--read-only"],
+    [
+      "review",
+      "start",
+      "--project",
+      projectId,
+      "--repo",
+      repo,
+      "--read-only",
+      "--depth",
+      "thorough",
+    ],
     cliEnv,
   );
   expect(run.projectId).toBe(projectId);

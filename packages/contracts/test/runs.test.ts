@@ -6,13 +6,17 @@ import {
   LeaseRequestSchema,
   LeaseResponseFrameSchema,
   LeaseResponseSchema,
+  POST_PUSH_ROUND_CAP,
   READ_ONLY_POST_PUSH_MESSAGE,
   ResolvedRunRequestSchema,
   RoleOverridesSchema,
   RoundSummarySchema,
   RunRequestSchema,
   RunStateSchema,
+  postPushRoundCap,
+  estimateRunTokens,
   profileRoles,
+  runDepth,
 } from "../src/index.js";
 import {
   RUN,
@@ -39,11 +43,51 @@ describe("runs", () => {
       readOnly: false,
       includeWorktree: false,
       crossVendor: true,
-      roundCap: 25,
+      roundCap: 2,
       overlapThreshold: 0.5,
-      continuationCap: 3,
+      continuationCap: 0,
+      depth: "standard",
+      verifyFloor: "P2",
     });
     expect(ResolvedRunRequestSchema.parse(parsed)).toEqual(parsed);
+  });
+
+  it("gives each depth its defaults, and lets a named setting win", () => {
+    const thorough = RunRequestSchema.parse({ ...runRequest, depth: "thorough" });
+    expect(thorough).toMatchObject({ roundCap: 25, continuationCap: 3 });
+    expect(thorough.verifyFloor).toBeUndefined();
+    const named = RunRequestSchema.parse({
+      ...runRequest,
+      roundCap: 7,
+      continuationCap: 1,
+      verifyFloor: "nit",
+    });
+    expect(named).toMatchObject({
+      depth: "standard",
+      roundCap: 7,
+      continuationCap: 1,
+      verifyFloor: "nit",
+    });
+    expect(RunRequestSchema.parse(named)).toEqual(named);
+    expect(RunRequestSchema.parse({ ...runRequest, pipeline: "post-push" }).roundCap).toBe(25);
+  });
+
+  it("parses a stored request with no depth, and keeps it thorough", () => {
+    const { depth: _depth, ...stored } = RunRequestSchema.parse({
+      ...runRequest,
+      depth: "thorough",
+    });
+    const parsed = ResolvedRunRequestSchema.parse(stored);
+    expect(parsed.depth).toBeUndefined();
+    expect(runDepth(parsed)).toBe("thorough");
+  });
+
+  it("estimates tokens from groups and changed lines, with its basis", () => {
+    const standard = estimateRunTokens({ depth: "standard", groups: 10, changedLines: 2000 });
+    const thorough = estimateRunTokens({ depth: "thorough", groups: 10, changedLines: 2000 });
+    expect(standard.tokens).toBe(5_200_000);
+    expect(thorough.tokens).toBe(12_000_000);
+    expect(standard.basis).toMatch(/10 groups.*2000 changed lines.*standard/);
   });
 
   it("has no defaults on the resolved request", () => {
@@ -155,5 +199,12 @@ describe("leases", () => {
       LeaseResponseFrameSchema.parse({ type: "lease.response", response: leaseResponses[0] })
         .response.decision,
     ).toBe("granted");
+  });
+});
+
+describe("postPushRoundCap", () => {
+  it("gives a pre-push run its own cap after a push, and keeps a post-push request's", () => {
+    expect(postPushRoundCap({ pipeline: "pre-push", roundCap: 2 })).toBe(POST_PUSH_ROUND_CAP);
+    expect(postPushRoundCap({ pipeline: "post-push", roundCap: 7 })).toBe(7);
   });
 });

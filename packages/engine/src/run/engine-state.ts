@@ -77,12 +77,21 @@ export const EngineStateSchema = z.object({
   preFixSha: z.string().nullable().default(null),
   /** Vendors the engine called as the fixer this round; the confirmer must be another. */
   roundFixers: z.array(VendorSchema).default([]),
+  /**
+   * At the `standard` depth, the commit the current round's review diff starts
+   * from: where the last round's fixes began. `null` reviews the whole range.
+   */
+  reviewFrom: z.string().nullable().default(null),
+  /** At the `standard` depth, the commit the current round reviewed up to. */
+  reviewedHead: z.string().nullable().default(null),
   /** The gate's last failure report, for the next fix attempt. */
   lastGateFailure: z.string().nullable().default(null),
   /** Merges whose findings are saved, by commit file; a resumed stage never applies one twice. */
   appliedMerges: z.array(z.string()).default([]),
   /** Findings the fixer declined to fix; not sent to it again. */
   declined: z.array(z.string()).default([]),
+  /** Below-floor findings a triage call already covered; none is asked about twice. */
+  triaged: z.array(z.string()).default([]),
   /** Usage of the current round per vendor. */
   roundUsage: z.record(VendorSchema, VendorStatsSchema).default({}),
   /** Post-push: external references already imported as findings. */

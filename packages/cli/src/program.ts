@@ -21,6 +21,7 @@ import {
   type AccountSeedReport,
   VendorSchema,
   type AccountSignIn,
+  runDepth,
   type AccountView,
   type BoxView,
   type Ceiling,
@@ -364,6 +365,7 @@ function runDetail(r: RunState): string {
     ["Repository", r.request.repoPath],
     ["Range", `${r.request.base}${r.request.mergeBase ? "..." : ".."}${r.request.tip ?? "HEAD"}`],
     ["Model tier", r.request.modelTier],
+    ["Depth", runDepth(r.request)],
     ["Verification floor", r.request.verifyFloor],
     ["Reviewers", r.roles.reviewer.join(", ")],
     ["Disprover", r.roles.disprover],
@@ -390,7 +392,9 @@ function findingRows(findings: Finding[]) {
           ? `${f.verdict} (not verified: below floor)`
           : f.fixHeldReason
             ? `${f.verdict} (not sent to the fixer: below floor)`
-            : f.verdict,
+            : f.floorBypassReason
+              ? `${f.verdict} (triage: sent to the fixer)`
+              : f.verdict,
       f.round,
       f.file ? (f.lines ? `${f.file}:${f.lines[0]}-${f.lines[1]}` : f.file) : null,
       f.title,
@@ -1153,9 +1157,17 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
     )
     .addOption(
       new Option(
+        "--depth <depth>",
+        "Use standard for P1 and P2 findings, one reviewer pass per group, batched verification, and at most 2 rounds, or thorough for every severity, per-finding verification, and at most 25 rounds.",
+      )
+        .choices(["standard", "thorough"])
+        .default("standard"),
+    )
+    .addOption(
+      new Option(
         "--verify-floor <severity>",
-        "Send only findings at or above this severity to a disprover. The rest stay pending, unchecked, and away from the fixer.",
-      ).choices(SEVERITIES),
+        "Send only findings at or above this severity to a disprover. The rest stay pending, unchecked, and away from the fixer. Use all to check every severity. Default: P2 with --depth standard, and every severity with --depth thorough.",
+      ).choices([...SEVERITIES, "all"]),
     )
     .option("--no-cross-vendor", "Let the same vendor disprove and confirm its own work.")
     .option("--round-cap <n>", "Stop after this many rounds.", positiveInt)
@@ -1228,7 +1240,9 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
           profile: o.profile,
           roles,
           modelTier: o.tier,
-          verifyFloor: o.verifyFloor,
+          depth: o.depth,
+          // No severity ranks below `nit`, so that floor checks everything.
+          verifyFloor: o.verifyFloor === "all" ? "nit" : o.verifyFloor,
           pipeline: o.pipeline,
           prNumber: o.pr,
           crossVendor: o.crossVendor,

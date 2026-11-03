@@ -7,6 +7,7 @@ import {
   DEFAULT_TIER_MODELS,
   blockedModelMessage,
   isBlockedReviewModel,
+  type Effort,
   type ModelTier,
   type Actor,
   type AgentRole,
@@ -171,6 +172,12 @@ const MIN_LIMIT_BLOCK_MS = 60_000;
 
 /** The longest single sleep: a longer timer fires at once. */
 const MAX_SLEEP_MS = 2_000_000_000;
+
+/**
+ * Vendors whose review calls take a reasoning effort. Copilot's automatic model
+ * selection isn't known to honor one, so a call to it uses Copilot's default.
+ */
+const EFFORT_VENDORS: readonly Vendor[] = ["claude", "codex"];
 
 const ROLE_FOR_AGENT: Record<AgentRole, Role> = {
   reviewer: "reviewer",
@@ -953,6 +960,8 @@ export class RunContext {
         throw new AgentFailed(spec.role, vendor, blockedModelMessage(vendor, choice.model));
       }
       const requestModel = choice.model;
+      const effort = EFFORT_VENDORS.includes(vendor) ? spec.request.effort : undefined;
+      if (effort && tierReason) tierReason = `${tierReason}; ${effort} effort`;
       const model = requestModel ?? vendor;
       const common = {
         runId: this.state.id,
@@ -966,7 +975,7 @@ export class RunContext {
         ...(tier ? { tier } : {}),
         ...(tierReason ? { tierReason } : {}),
       };
-      if (tier) {
+      if (tier || effort) {
         this.deps.log?.info?.("Chose a call's model", {
           runId: this.state.id,
           agentId,
@@ -975,6 +984,7 @@ export class RunContext {
           role: spec.role,
           tier,
           model,
+          ...(effort ? { effort } : {}),
           reason: tierReason,
         });
       }
@@ -993,7 +1003,7 @@ export class RunContext {
         result =
           spec.request.toolPolicy === "read-only"
             ? await this.treeGuardFor(spec.request.repoPath).run(
-                () => this.invoke<T>(adapter, spec, timeoutMs, requestModel),
+                () => this.invoke<T>(adapter, spec, timeoutMs, requestModel, effort),
                 (message) =>
                   this.deps.log?.warn("A failed read-only call changed the worktree", {
                     runId: this.state.id,
@@ -1002,7 +1012,7 @@ export class RunContext {
                     error: message,
                   }),
               )
-            : await this.invoke<T>(adapter, spec, timeoutMs, requestModel);
+            : await this.invoke<T>(adapter, spec, timeoutMs, requestModel, effort);
       } catch (error) {
         const elapsedMs = Math.max(0, this.clock.now() - started);
         const limit = this.signal.aborted ? null : adapter.detectLimit(error);
@@ -1138,6 +1148,7 @@ export class RunContext {
     spec: AgentCallSpec,
     timeoutMs: number,
     model: string | undefined,
+    effort: Effort | undefined,
   ): Promise<AdapterResult<T>> {
     const controller = new AbortController();
     let rejectAborted: (error: Error) => void = () => undefined;
@@ -1163,9 +1174,10 @@ export class RunContext {
       }, timeoutMs + 30_000);
       timer.unref?.();
     });
-    const { sessionId, timeoutMs: _t, ...rest } = spec.request;
+    const { sessionId, timeoutMs: _t, effort: _e, ...rest } = spec.request;
     const request = {
       ...rest,
+      ...(effort ? { effort } : {}),
       timeoutMs,
       model,
       signal: controller.signal,
