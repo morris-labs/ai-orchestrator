@@ -177,7 +177,7 @@ describe("SetupWizard machine role", () => {
     expect(server.state.settings.role).toBe("both");
   });
 
-  it("joins from a hub through both, and keeps the hub role when the join fails", async () => {
+  it("joins from a hub without patching the role, and retries after a failed join", async () => {
     const user = userEvent.setup();
     const server = serverWith(status({ role: "hub" }));
     server.state.settings.role = "hub";
@@ -188,16 +188,86 @@ describe("SetupWizard machine role", () => {
     await user.type(screen.getByLabelText("Enrollment code"), "WRONG-CODE");
     await user.click(screen.getByRole("button", { name: "Done" }));
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("The code is wrong."));
-    expect(server.callsTo("settings.patch").map((c) => c.body)).toEqual([
-      { role: "both" },
-      { role: "hub" },
-    ]);
+    expect(server.callsTo("settings.patch")).toHaveLength(0);
     expect(server.state.settings.role).toBe("hub");
     await user.clear(screen.getByLabelText("Enrollment code"));
     await user.type(screen.getByLabelText("Enrollment code"), CODE);
     await user.click(screen.getByRole("button", { name: "Done" }));
     await waitFor(() => expect(onClose).toHaveBeenCalled());
-    expect(server.callsTo("node.join")).toHaveLength(2);
+    expect(server.callsTo("node.join").map((c) => c.body)).toEqual([
+      { hubUrl: HUB, code: "WRONG-CODE", leaveHubRole: true },
+      { hubUrl: HUB, code: CODE, leaveHubRole: true },
+    ]);
+    expect(server.callsTo("settings.patch")).toHaveLength(0);
+  });
+
+  it("sends one join and turns Done off while the join runs", async () => {
+    const user = userEvent.setup();
+    const server = serverWith(status({ role: "hub" }));
+    let finish: (value: NodeStatus) => void = () => undefined;
+    server.on("node.join", () => new Promise<NodeStatus>((resolve) => (finish = resolve)));
+    const onClose = vi.fn();
+    renderWithServer(<SetupWizard onClose={onClose} />, server);
+    await user.click(await screen.findByRole("radio", { name: /Node: join a hub/ }));
+    await user.type(screen.getByLabelText("Hub URL"), HUB);
+    await user.type(screen.getByLabelText("Enrollment code"), CODE);
+    const done = screen.getByRole("button", { name: "Done" });
+    await user.dblClick(done);
+    await waitFor(() => expect(server.callsTo("node.join")).toHaveLength(1));
+    expect(done).toBeDisabled();
+    await user.click(done);
+    finish(status({ role: "node", machineId: "m1", hubUrl: HUB, link: "connected" }));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(server.callsTo("node.join")).toHaveLength(1);
+    expect(server.callsTo("settings.patch")).toHaveLength(0);
+  });
+
+  it("turns Done on again after a failed save", async () => {
+    const user = userEvent.setup();
+    renderWithServer(
+      <SetupWizard onClose={() => undefined} />,
+      serverWith(status({ role: "hub" })),
+    );
+    await user.click(await screen.findByRole("radio", { name: /Node: join a hub/ }));
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    await screen.findByRole("alert");
+    expect(screen.getByRole("button", { name: "Done" })).toBeEnabled();
+  });
+
+  it.each(["single", "hub"] as const)(
+    "stores no role for the %s choice under a role override",
+    async (choice) => {
+      const user = userEvent.setup();
+      const role = choice === "hub" ? "node" : "hub";
+      const server = serverWith(status({ role, roleOverride: role }));
+      const onClose = vi.fn();
+      renderWithServer(<SetupWizard onClose={onClose} />, server);
+      await user.click(
+        await screen.findByRole("radio", { name: choice === "hub" ? /^Hub:/ : /Single machine/ }),
+      );
+      expect(screen.getByText(/runs with --role/)).toBeVisible();
+      expect(screen.queryByText(/next server start/)).not.toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "Done" }));
+      await waitFor(() => expect(onClose).toHaveBeenCalled());
+      expect(server.callsTo("settings.patch")).toHaveLength(0);
+    },
+  );
+
+  it("patches no role when a join fails under a role override", async () => {
+    const user = userEvent.setup();
+    const server = serverWith(status({ role: "hub", roleOverride: "hub" }));
+    server.on("node.join", () => {
+      throw new FakeApiError("invalid_state", "This server runs with --role hub.", 409);
+    });
+    const onClose = vi.fn();
+    renderWithServer(<SetupWizard onClose={onClose} />, server);
+    await user.click(await screen.findByRole("radio", { name: /Node: join a hub/ }));
+    await user.type(screen.getByLabelText("Hub URL"), HUB);
+    await user.type(screen.getByLabelText("Enrollment code"), CODE);
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("runs with --role hub");
+    expect(server.callsTo("settings.patch")).toHaveLength(0);
+    expect(onClose).not.toHaveBeenCalled();
   });
 
   it("sets a node that never joined back to both when the user picks a single machine", async () => {

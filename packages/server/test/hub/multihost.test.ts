@@ -64,6 +64,7 @@ async function startServer(
   options: {
     signedIn?: boolean;
     linkProtocol?: number;
+    role?: "hub" | "node" | "both";
     before?: (home: string) => void;
     /** Replaces the fixed loopback link address of the other tests. */
     link?: { linkHost?: string; linkAddress?: string; lanAddress?: () => string | undefined };
@@ -89,6 +90,7 @@ async function startServer(
     linkPort: 0,
     ...(options.link ?? { linkHost: "127.0.0.1", linkAddress: "127.0.0.1" }),
     linkProtocol: options.linkProtocol,
+    role: options.role,
     credentialPollMs: 0,
     linkTiming: { pingMs: 1000, timeoutMs: 5000, backoffMinMs: 50, backoffMaxMs: 200 },
     log: (m) => process.env.MH_DEBUG && console.error(`[${name}] ${m}`),
@@ -360,6 +362,68 @@ describe("multi-host", () => {
     // The hub still refuses a path that defaultAllowNodeRequest doesn't allow.
     const refused = await node.api("GET", "/api/v1/machines/hub/proxy/settings");
     expect(refused.status).toBe(403);
+  });
+
+  it("reports a role override, and refuses a join under a hub override without storing a role", async () => {
+    const hub = await startServer("hub", { signedIn: true });
+    const code = (await hub.api("POST", "/api/v1/machines/enrollment-codes")).json;
+    const pinned = await startServer("pinned", { role: "hub" });
+    const status = NodeStatusSchema.parse((await pinned.api("GET", "/api/v1/node")).json);
+    expect(status).toMatchObject({ role: "hub", roleOverride: "hub" });
+    const res = await pinned.api("POST", "/api/v1/node/join", {
+      hubUrl: code.hubUrl,
+      code: code.code,
+      leaveHubRole: true,
+    });
+    expect([res.status, res.json.error.code]).toEqual([409, "invalid_state"]);
+    expect(res.json.error.message).toMatch(/--role hub/);
+    expect((await pinned.api("GET", "/api/v1/settings")).json.role ?? "both").toBe("both");
+    const plain = await startServer("plain");
+    expect((await plain.api("GET", "/api/v1/node")).json).not.toHaveProperty("roleOverride");
+  });
+
+  it("joins from role hub only when asked, keeping the role until the join succeeds", async () => {
+    const upstream = await startServer("upstream", { signedIn: true });
+    const code = (await upstream.api("POST", "/api/v1/machines/enrollment-codes")).json;
+    const former = await startServer("former");
+    expect((await former.api("PATCH", "/api/v1/settings", { role: "hub" })).status).toBe(200);
+    const body = { hubUrl: code.hubUrl, code: code.code };
+
+    const refused = await former.api("POST", "/api/v1/node/join", body);
+    expect([refused.status, refused.json.error.code]).toEqual([409, "invalid_state"]);
+
+    // A failed join leaves the role alone.
+    const wrong = await former.api("POST", "/api/v1/node/join", {
+      ...body,
+      code: "0000-0000-0000-0000",
+      leaveHubRole: true,
+    });
+    expect(wrong.status).toBeGreaterThanOrEqual(400);
+    expect((await former.api("GET", "/api/v1/settings")).json.role).toBe("hub");
+
+    const joined = await former.api("POST", "/api/v1/node/join", { ...body, leaveHubRole: true });
+    expect(joined.status).toBe(200);
+    expect(joined.json).toMatchObject({ role: "node", hubUrl: code.hubUrl });
+    expect((await former.api("GET", "/api/v1/settings")).json.role).toBe("node");
+    // The link comes up without a server restart.
+    await waitFor(() => former.app.multiHost.status().link === "connected", 5000);
+  });
+
+  it("refuses a join from role hub with enrolled machines, and never opens its boxes", async () => {
+    const { hub, node } = await linkedPair();
+    await waitFor(() => node.app.multiHost.status().link === "connected", 5000);
+    expect((await hub.api("PATCH", "/api/v1/settings", { role: "hub" })).status).toBe(200);
+    const upstream = await startServer("upstream", { signedIn: true });
+    const code = (await upstream.api("POST", "/api/v1/machines/enrollment-codes")).json;
+    const res = await hub.api("POST", "/api/v1/node/join", {
+      hubUrl: code.hubUrl,
+      code: code.code,
+      leaveHubRole: true,
+    });
+    expect([res.status, res.json.error.code]).toEqual([409, "invalid_state"]);
+    expect(res.json.error.message).toMatch(/enrolled machines/);
+    expect(hub.app.multiHost.role()).toBe("hub");
+    expect((await node.api("GET", "/api/v1/machines/hub/proxy/boxes")).status).toBe(403);
   });
 
   it("lets a node reach the boxes of a hub whose role is both, and not of a hub-only one", async () => {

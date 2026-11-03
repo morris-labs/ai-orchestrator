@@ -1045,6 +1045,11 @@ export const NodeStatusSchema = z.object({
   error: z.string().nullable(),
   /** The port the hub listens on for node links, or `null` while it doesn't. */
   linkPort: PortSchema.nullable(),
+  /**
+   * The role from `--role` or `AIO_ROLE`, when the server runs with one. It
+   * sets `role`, and a stored role has no effect until the override goes.
+   */
+  roleOverride: MachineRoleSchema.optional(),
 });
 export type NodeStatus = z.infer<typeof NodeStatusSchema>;
 
@@ -1057,6 +1062,12 @@ export const NodeJoinSchema = z
     code: z.string().trim().min(1),
     /** The name to enroll under. Default: the `machineName` setting, else the host name. */
     name: MachineNameSchema.optional(),
+    /**
+     * Lets a machine whose stored role is `hub` and that has no enrolled
+     * machines join. The role changes from `hub` to `node` only when the join
+     * succeeds. Default: a `hub` machine can't join.
+     */
+    leaveHubRole: z.boolean().optional(),
   })
   .strict();
 export type NodeJoin = z.infer<typeof NodeJoinSchema>;

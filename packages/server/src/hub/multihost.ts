@@ -569,23 +569,32 @@ export class MultiHost {
       link: this.role() === "hub" ? "none" : link,
       error: this.role() === "hub" ? null : error,
       linkPort: this.hub.port,
+      ...(this.opts.roleOverride ? { roleOverride: this.opts.roleOverride } : {}),
     };
   }
 
   /**
-   * Joins a hub. A machine whose role is `hub` can't, nor can a `both`
-   * machine that has enrolled machines of its own. A `both` machine becomes
-   * a `node`, so it stops acting as a hub and asks the new hub for secrets.
+   * Joins a hub. A machine whose role is `hub` can't unless the caller asks
+   * to leave that role, nor can a machine that has enrolled machines of its
+   * own. A `both` or `hub` machine becomes a `node`, so it stops acting as a
+   * hub and asks the new hub for secrets. A `hub` machine keeps its role until
+   * the join succeeds, so that its nodes never reach its boxes on the way.
    */
   async join(input: NodeJoin): Promise<NodeStatus> {
     const role = this.role();
-    if (role === "hub") {
+    if (role === "hub" && this.opts.roleOverride === "hub") {
+      throw new ApiError(
+        "invalid_state",
+        `This server runs with --role hub or ${ROLE_ENV}=hub. Start it without that override, or with node, to join a hub.`,
+      );
+    }
+    if (role === "hub" && !input.leaveHubRole) {
       throw new ApiError(
         "invalid_state",
         "This machine's role is hub, so it can't join another hub.",
       );
     }
-    if (role === "both" && this.hub.registry.liveCount() > 0) {
+    if (role !== "node" && this.hub.registry.liveCount() > 0) {
       throw new ApiError(
         "invalid_state",
         "This machine is a hub with enrolled machines. Revoke them first, or set its role to node.",
@@ -605,6 +614,8 @@ export class MultiHost {
     if (this.opts.settings().role !== "node" && this.opts.roleOverride === undefined) {
       await this.opts.patchSettings({ role: "node" });
       await this.hub.reconcile();
+      // The agent couldn't link while the role was hub.
+      if (role === "hub") this.node.restart();
     }
     return this.status();
   }

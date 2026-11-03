@@ -22,7 +22,12 @@ Every `aio-server` has one of the following roles:
 
 The server stores the role in its settings. To change it for one run, start
 the server with `--role ROLE` or set `AIO_ROLE=ROLE`, where `ROLE` is `hub`,
-`node`, or `both`. A machine that joins a hub stores the `node` role.
+`node`, or `both`. A machine that joins a hub stores the `node` role. While
+an override is in effect, the setup wizard doesn't store a role.
+
+A machine with the `hub` role and no enrolled machines can become a node when
+you choose **Node: join a hub with an enrollment code** in the setup wizard. It
+keeps the `hub` role until the join succeeds.
 
 To see a machine's role and its link, run the following command:
 

@@ -63,6 +63,8 @@ export function SetupWizard({ onClose, onDone, stacked }: SetupWizardProps) {
   const [hubUrl, setHubUrl] = useState("");
   const [code, setCode] = useState("");
   const [machineName, setMachineName] = useState("");
+  // True while Done runs. A second run could spend the code twice.
+  const [saving, setSaving] = useState(false);
 
   const recheck = useCallback(() => {
     setChecks(null);
@@ -107,7 +109,8 @@ export function SetupWizard({ onClose, onDone, stacked }: SetupWizardProps) {
     if (!canChoose || node === null) return;
     if (choice !== "join") {
       const role = choice === "hub" ? "hub" : "both";
-      if (node.role !== role) {
+      // A stored role has no effect under an override.
+      if (node.role !== role && !node.roleOverride) {
         await client.call("settings.patch", { body: { role } });
         setNode({ ...node, role });
       }
@@ -122,19 +125,17 @@ export function SetupWizard({ onClose, onDone, stacked }: SetupWizardProps) {
     const joinCode = code.trim() || target.code;
     if (!joinCode) throw new Error("Enter the enrollment code from the hub.");
     const name = machineName.trim();
-    // A hub can't join another hub, so it becomes a single machine first,
-    // and goes back to a hub when the join fails.
-    if (node.role === "hub") await client.call("settings.patch", { body: { role: "both" } });
-    try {
-      setNode(
-        await client.call("node.join", {
-          body: { hubUrl: target.hubUrl, code: joinCode, ...(name ? { name } : {}) },
-        }),
-      );
-    } catch (err) {
-      if (node.role === "hub") await client.call("settings.patch", { body: { role: "hub" } });
-      throw err;
-    }
+    setNode(
+      await client.call("node.join", {
+        body: {
+          hubUrl: target.hubUrl,
+          code: joinCode,
+          ...(name ? { name } : {}),
+          // A hub can't join another hub, so the server changes its role when the join succeeds.
+          ...(node.role === "hub" ? { leaveHubRole: true } : {}),
+        },
+      }),
+    );
   };
 
   /** Takes the hub URL, and a code if one follows it, from a pasted join command. */
@@ -156,6 +157,7 @@ export function SetupWizard({ onClose, onDone, stacked }: SetupWizardProps) {
     run(title, () => client.call("image.build", { body: { kind } }));
 
   const done = async () => {
+    setSaving(true);
     try {
       await applyRole();
       const ref = sudoRef?.trim();
@@ -170,6 +172,8 @@ export function SetupWizard({ onClose, onDone, stacked }: SetupWizardProps) {
       onClose();
     } catch (err) {
       setError(errorMessage(err));
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -199,7 +203,7 @@ export function SetupWizard({ onClose, onDone, stacked }: SetupWizardProps) {
             Recheck
           </Button>
           <Button onClick={onClose}>Cancel</Button>
-          <Button primary onClick={() => void done()}>
+          <Button primary disabled={saving} onClick={() => void done()}>
             Done
           </Button>
         </>
@@ -313,6 +317,7 @@ interface MachineRoleSectionProps {
 /** This machine's role: a summary once it joined a hub, else the choice. */
 function MachineRoleSection(p: MachineRoleSectionProps) {
   const { node } = p;
+  const override = node.roleOverride;
   if (node.hubUrl !== null) {
     return (
       <div className="ab-field" aria-label="This machine">
@@ -358,7 +363,13 @@ function MachineRoleSection(p: MachineRoleSectionProps) {
         />
         Node: join a hub with an enrollment code
       </label>
-      {p.choice === "single" && node.role !== "both" && (
+      {override && (
+        <div className="bx-dim">
+          This server runs with --role {override} or AIO_ROLE={override}, so Done doesn&apos;t
+          change its role. To use another role, start the server without that override.
+        </div>
+      )}
+      {p.choice === "single" && node.role !== "both" && !override && (
         <div className="bx-dim">
           This server runs as a {node.role}. Done sets its role to both, which applies at the next
           server start.
@@ -370,6 +381,7 @@ function MachineRoleSection(p: MachineRoleSectionProps) {
           see or reach boxes on a hub; to share this computer&apos;s boxes with them, choose Single
           machine. To add a machine, issue an enrollment code on the Machines page.
           {node.role !== "hub" &&
+            !override &&
             " Done sets the role to hub, which applies at the next server start."}
         </div>
       )}
