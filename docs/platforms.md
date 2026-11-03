@@ -177,8 +177,7 @@ opens the port in a firewall:
 
 A node dials out to the hub, so it needs no inbound rule on any host. A
 node on macOS or Windows runs boxes the same way as a single machine on
-that host, with the secrets broker's TCP transport and, on Windows, the
-host path mapping.
+that host, with the limits that the support status table lists.
 
 ### Packages
 

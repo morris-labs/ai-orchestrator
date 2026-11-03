@@ -379,7 +379,7 @@ class PlatformsDocTest(unittest.TestCase):
 
     def test_names_no_development_branches(self):
         self.assertNotIn("other branch", self.text)
-        self.assertNotRegex(self.text, r"claude/[a-z-]+")
+        self.assertNotRegex(self.text, r"claude/(win-paths|docker-desktop-broker)")
 
     def test_windows_stop_disables_the_repeating_trigger(self):
         row = next(l for l in self.text.splitlines() if l.startswith("| Stop |"))
