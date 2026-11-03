@@ -398,9 +398,7 @@ function MachineRoleSection(p: MachineRoleSectionProps) {
           A hub enrolls nodes and relays between them, and never joins another hub. Nodes can&apos;t
           see or reach boxes on a hub; to share this computer&apos;s boxes with them, choose Single
           machine. To add a machine, issue an enrollment code on the Machines page.
-          {node.role !== "hub" &&
-            !override &&
-            " Done sets the role to hub, which applies at once."}
+          {node.role !== "hub" && !override && " Done sets the role to hub, which applies at once."}
         </div>
       )}
       {p.choice === "join" && (

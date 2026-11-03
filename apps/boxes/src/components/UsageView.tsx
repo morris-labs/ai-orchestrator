@@ -74,14 +74,17 @@ export function UsageView({
     try {
       const r = await client.call("usage.clear", { body: { vendor: vendor as Vendor, account } });
       if (!live.current) return;
-      const still = r.vendors.find((v) => v.vendor === vendor && v.account === account)?.overCeiling;
+      const still = r.vendors.find(
+        (v) => v.vendor === vendor && v.account === account,
+      )?.overCeiling;
       if (r.cleared === 0) {
         setClearNote(`The server cleared nothing for ${account}. The block stays.`);
       } else if (still) {
         setClearNote(`The block on ${account} cleared, but the account is still over its ceiling.`);
       }
     } catch (err) {
-      if (live.current) setClearNote(`Couldn't clear the block on ${account}: ${errorMessage(err)}`);
+      if (live.current)
+        setClearNote(`Couldn't clear the block on ${account}: ${errorMessage(err)}`);
     } finally {
       if (live.current) setClearing(false);
     }

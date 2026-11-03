@@ -81,7 +81,8 @@ function currentPathTier(s: FileSignals): TierChoice {
       : at(s.pinned, "the policy's tierPaths sets this tier");
   }
   if (s.riskPath) return at("large", "matches a risk path");
-  if (s.noCode && s.lockSource) return at("medium", "a lockfile that changes a dependency's source");
+  if (s.noCode && s.lockSource)
+    return at("medium", "a lockfile that changes a dependency's source");
   if (s.noCode) return at("small", "only docs or a lockfile");
   const skipped = SKIPPED_NOTES[s.referencesSkipped ?? "none"];
   const used = s.references?.files ?? 0;

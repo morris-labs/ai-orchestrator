@@ -536,7 +536,11 @@ function registerIpc() {
       typeof notificationId !== "string"
     )
       return;
-    const note = new Notification({ title, body, urgency: urgent === true ? "critical" : "normal" });
+    const note = new Notification({
+      title,
+      body,
+      urgency: urgent === true ? "critical" : "normal",
+    });
     note.on("click", () => {
       showWindow();
       win?.webContents.send("aio:select-box", boxId, machineId, notificationId);
