@@ -472,6 +472,10 @@ If the link to the box's machine drops, the terminal closes with the
 WebSocket close code `1014` and a reason that names the machine. The box
 keeps running; attach again once the machine is back online.
 
+The `aio box attach` and `aio box shell` commands ping the server every 15
+seconds. When the server stops answering, the command ends with an error
+within 30 seconds and restores your terminal.
+
 ## Files
 
 The hub keeps its certificate authority in `DATA_DIR/hub/`, where

@@ -18,10 +18,29 @@ import type { WebSocketCtor } from "./events.js";
 /** The byte of Ctrl+]. Pressed twice in a row, it detaches, as `docker exec` does locally. */
 export const DETACH_KEY = 0x1d;
 
+/** How often the CLI pings the server. Two silent intervals in a row end the attach. */
+const PING_MS = 15_000;
+/** How long the opening handshake can stall. It outlasts the hub's wait for a machine. */
+const HANDSHAKE_MS = 45_000;
+/** How long a detach waits for the server to answer the close. */
+const DETACH_CLOSE_MS = 2_000;
+
+/**
+ * Turns off the modes tmux sets on the terminal it attaches to, then leaves
+ * the alternate screen: mouse tracking, focus events, bracketed paste, cursor
+ * and keypad application modes, extended keys, the scroll region, text
+ * attributes, cursor visibility and style, and autowrap.
+ */
+export const TERMINAL_RESTORE =
+  "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l" +
+  "\x1b[?1004l\x1b[?2004l\x1b[?1l\x1b>\x1b[>4m\x1b[r\x1b[0m" +
+  "\x1b[?25h\x1b[0 q\x1b[?7h\x1b[?1049l";
+
 /** The terminal the CLI runs in: its keys, its screen, and its size. */
 export interface TerminalIo {
   input: NodeJS.ReadableStream & { isTTY?: boolean; setRawMode?(raw: boolean): unknown };
   output: {
+    isTTY?: boolean;
     write(data: Uint8Array | string): unknown;
     columns?: number;
     rows?: number;
@@ -85,6 +104,12 @@ export interface RemoteAttachOptions {
   WebSocket?: WebSocketCtor;
   /** TLS options for the connection, such as `pinnedTlsOptions()` for a pinned server. */
   tls?: object;
+  /** Overrides the ping interval, in milliseconds. */
+  pingMs?: number;
+  /** Overrides the opening handshake timeout, in milliseconds. */
+  handshakeMs?: number;
+  /** Overrides how long a detach waits for the server, in milliseconds. */
+  detachCloseMs?: number;
 }
 
 /** Builds the `terminals.open` URL for `machineId`. The token never goes in it. */
@@ -148,12 +173,13 @@ function upgradeError(status: number, body: string): ApiCallError {
  * Attaches `io` to the box's terminal until the box's process exits, the
  * connection closes, or the person detaches. Resolves with the exit code:
  * the process's own, or 0 after a detach. Rejects when the server refuses
- * the terminal or the connection drops.
+ * the terminal, the connection drops, or the server stops answering pings.
  */
 export function attachRemote(options: RemoteAttachOptions): Promise<number> {
   const { io } = options;
   const Ctor = options.WebSocket ?? WebSocket;
-  const size = () => ({ cols: io.output.columns ?? 80, rows: io.output.rows ?? 24 });
+  // A pty without a window size reports 0, which the server refuses.
+  const size = () => ({ cols: io.output.columns || 80, rows: io.output.rows || 24 });
   const query: Record<string, string | number> = {
     kind: options.kind,
     boxId: options.boxId,
@@ -163,11 +189,19 @@ export function attachRemote(options: RemoteAttachOptions): Promise<number> {
 
   return new Promise<number>((resolve, reject) => {
     const socket = new Ctor(terminalUrl(options.baseUrl, options.machineId, query), {
+      handshakeTimeout: options.handshakeMs ?? HANDSHAKE_MS,
       ...options.tls,
       headers: { authorization: `Bearer ${options.token}` },
     });
     let exitCode: number | null = null;
+    let exited = false;
+    let ready = false;
+    let sawOutput = false;
     let detached = false;
+    let awaitingPong = false;
+    let unanswered = false;
+    let pingTimer: NodeJS.Timeout | undefined;
+    let detachTimer: NodeJS.Timeout | undefined;
     let serverError: ApiCallError | null = null;
     let raw = false;
     let pending = false;
@@ -183,6 +217,10 @@ export function attachRemote(options: RemoteAttachOptions): Promise<number> {
       if (scan.detach) {
         detached = true;
         socket.close(1000, "detached");
+        detachTimer = setTimeout(
+          () => socket.terminate(),
+          options.detachCloseMs ?? DETACH_CLOSE_MS,
+        );
       }
     };
     const onResize = () => {
@@ -191,6 +229,10 @@ export function attachRemote(options: RemoteAttachOptions): Promise<number> {
       }
     };
     const cleanup = () => {
+      clearInterval(pingTimer);
+      clearTimeout(detachTimer);
+      // Without an exit frame, tmux never got to send its own restore sequences.
+      if (sawOutput && !exited && io.output.isTTY) io.output.write(TERMINAL_RESTORE);
       io.input.off("data", onKeys);
       io.output.off?.("resize", onResize);
       if (raw) io.input.setRawMode?.(false);
@@ -224,10 +266,26 @@ export function attachRemote(options: RemoteAttachOptions): Promise<number> {
       io.input.resume();
       io.output.on?.("resize", onResize);
       options.note("Attached. To detach, press Ctrl+] twice.\r\n");
+      pingTimer = setInterval(() => {
+        if (socket.readyState !== socket.OPEN) return;
+        if (awaitingPong) {
+          unanswered = true;
+          socket.terminate();
+          return;
+        }
+        awaitingPong = true;
+        socket.ping();
+      }, options.pingMs ?? PING_MS);
+    });
+    socket.on("pong", () => {
+      awaitingPong = false;
     });
     socket.on("message", (data, isBinary) => {
+      // A pong can queue behind a burst of output on a slow link.
+      awaitingPong = false;
       const bytes = Array.isArray(data) ? Buffer.concat(data) : Buffer.from(data as Buffer);
       if (isBinary) {
+        sawOutput = true;
         io.output.write(bytes);
         return;
       }
@@ -240,19 +298,29 @@ export function attachRemote(options: RemoteAttachOptions): Promise<number> {
       const parsed = TerminalServerMessageSchema.safeParse(json);
       if (!parsed.success) return;
       const msg = parsed.data;
-      if (msg.type === "exit") exitCode = msg.exitCode;
-      else if (msg.type === "error") {
+      if (msg.type === "ready") ready = true;
+      else if (msg.type === "exit") {
+        exited = true;
+        exitCode = msg.exitCode;
+      } else if (ready) {
+        // The terminal keeps running after an error about one frame.
+        options.note(`\r\nThe server refused a terminal frame: ${msg.error.message}\r\n`);
+      } else {
         serverError = new ApiCallError(0, msg.error.code, msg.error.message, msg.error.details);
       }
     });
     socket.on("close", (code, reason) => {
       if (serverError) return finish(serverError);
       if (detached) {
+        // The note follows the restore so that it lands on the main screen.
+        finish(null, 0);
         options.note("\r\nDetached. The box keeps running.\n");
-        return finish(null, 0);
+        return;
       }
       if (exitCode !== null || code === 1000) return finish(null, exitCode ?? 0);
-      const why = reason.toString() || `close code ${code}`;
+      const why = unanswered
+        ? "the server stopped answering pings"
+        : reason.toString() || `close code ${code}`;
       finish(new Error(`The terminal connection closed: ${why}`));
     });
   });
