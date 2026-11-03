@@ -13,7 +13,7 @@ import type http from "node:http";
 import type { Duplex } from "node:stream";
 import type { TLSSocket } from "node:tls";
 import { X509Certificate } from "node:crypto";
-import { MachineNameSchema, type EnrollmentCode, type Machine } from "@aio/contracts";
+import { EnrollMachineNameSchema, type EnrollmentCode, type Machine } from "@aio/contracts";
 import { WebSocketServer, type WebSocket } from "ws";
 import { z } from "zod";
 import type { FastifyInstance } from "fastify";
@@ -48,7 +48,7 @@ export { MAX_LINK_FRAME };
 const REFUSE_GRACE_MS = 5000;
 
 export const EnrollRequestSchema = z.object({
-  name: MachineNameSchema,
+  name: EnrollMachineNameSchema,
   publicKey: z.string().min(1).max(4096),
   nonce: z.string().regex(/^[0-9a-f]{32,128}$/),
   proof: z.string().regex(/^[0-9a-f]{64}$/),
@@ -448,7 +448,13 @@ export class Hub {
     }
     try {
       const raw = await readBody(req, MAX_ENROLL_BODY);
-      const parsed = EnrollRequestSchema.safeParse(JSON.parse(raw.toString() || "{}"));
+      let json: unknown;
+      try {
+        json = JSON.parse(raw.toString() || "{}");
+      } catch {
+        throw new ApiError("validation", "The enrollment request isn't valid JSON.");
+      }
+      const parsed = EnrollRequestSchema.safeParse(json);
       if (!parsed.success) {
         throw new ApiError("validation", "The enrollment request doesn't match its schema.");
       }
@@ -457,7 +463,7 @@ export class Hub {
       const failure =
         err instanceof ApiError
           ? err
-          : new ApiError("validation", "The enrollment request isn't valid JSON.");
+          : new ApiError("internal", "The hub failed to process the enrollment request.");
       sendJson(res, failure.status, failure.toBody());
     }
   }
@@ -489,15 +495,17 @@ export class Hub {
         `A machine named ${req.name} is already enrolled. Join with another name, or revoke ${taken.id} on the hub first.`,
       );
     }
-    if (!this.registry.useCode(key)) {
-      throw new ApiError("unauthorized", "The enrollment code was used by another machine.");
-    }
     const machineId = `m${randomBytes(8).toString("hex")}`;
     let clientCert: string;
     try {
       clientCert = issueNodeCertificate(identity.ca, machineId, req.publicKey);
     } catch (err) {
       throw new ApiError("validation", (err as Error).message);
+    }
+    // Consume the code only after the certificate exists, so a malformed key
+    // doesn't burn it.
+    if (!this.registry.useCode(key)) {
+      throw new ApiError("unauthorized", "The enrollment code was used by another machine.");
     }
     this.registry.add({
       id: machineId,
