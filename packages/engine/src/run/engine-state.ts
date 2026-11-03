@@ -67,6 +67,8 @@ export const EngineStateSchema = z.object({
   roundOpen: z.boolean().default(false),
   /** HEAD before the round's first fix, for the confirmer's diff. */
   preFixSha: z.string().nullable().default(null),
+  /** Vendors the engine called as the fixer this round; the confirmer must be another. */
+  roundFixers: z.array(VendorSchema).default([]),
   /** The gate's last failure report, for the next fix attempt. */
   lastGateFailure: z.string().nullable().default(null),
   /** Merges whose findings are saved, by commit file; a resumed stage never applies one twice. */

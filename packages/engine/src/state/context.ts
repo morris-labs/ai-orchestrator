@@ -171,8 +171,8 @@ export class RunContext {
   readonly shell: CommandRunner;
   readonly timeouts: RoleTimeouts;
   private abort = new AbortController();
-  /** Ends the wait of a pause for a usage limit early. */
-  private pauseWake: AbortController | null = null;
+  /** End the timed waits early: one controller for each parallel call that waits. */
+  private readonly pauseWakes = new Set<AbortController>();
   private pauseRequested = false;
   private cancelRequested = false;
   /** Every parallel call waits on the same gate while the run is paused. */
@@ -460,7 +460,8 @@ export class RunContext {
       });
       gate = { promise, open };
       this.pauseGate = gate;
-      await this.setStatus("paused");
+      // A person's pause has no end time, even when it follows a timed wait.
+      await this.setStatus("paused", { pausedUntil: undefined });
     }
     await gate.promise;
     if (this.cancelRequested) throw new RunCancelled();
@@ -469,37 +470,52 @@ export class RunContext {
 
   /** Pauses the run until `until` (ISO time), as a ceiling or a limit asks. */
   async pauseUntil(until: string): Promise<void> {
-    await this.setStatus("paused", { pausedUntil: until });
-    await this.waitOut(Date.parse(until) - this.clock.now());
+    await this.waitOut(Date.parse(until) - this.clock.now(), () =>
+      this.setStatus("paused", { pausedUntil: until }),
+    );
     await this.endPause();
   }
 
+  /**
+   * Returns the run to `running` after a timed wait. The run stays paused
+   * while another call still waits, so a person can still resume it, or while
+   * a person's pause holds it, so a closed gate never sits under `running`.
+   */
   private async endPause(): Promise<void> {
     if (this.cancelRequested) throw new RunCancelled();
+    if (this.pauseWakes.size > 0 || this.pauseRequested) return;
     this.state.pausedUntil = undefined;
     await this.setStatus("running");
   }
 
-  /** Waits for `ms`, or until a person wakes the pause. */
-  private async waitOut(ms: number): Promise<void> {
-    if (ms <= 0) return;
+  /**
+   * Runs `announce`, then waits for `ms`, or until a person wakes the pause.
+   * The wait registers before `announce` starts, so a cancel or a wake that
+   * lands during `announce` ends the wait at once.
+   */
+  private async waitOut(ms: number, announce?: () => Promise<void>): Promise<void> {
+    if (this.signal.aborted) throw new RunCancelled();
     const wake = new AbortController();
-    this.pauseWake = wake;
+    this.pauseWakes.add(wake);
     const onCancel = () => wake.abort();
     this.signal.addEventListener("abort", onCancel, { once: true });
     try {
-      await this.clock.sleep(ms, wake.signal);
-    } catch {
-      if (this.signal.aborted) throw new RunCancelled();
+      await announce?.();
+      if (ms <= 0) return;
+      try {
+        await this.clock.sleep(ms, wake.signal);
+      } catch {
+        if (this.signal.aborted) throw new RunCancelled();
+      }
     } finally {
       this.signal.removeEventListener("abort", onCancel);
-      if (this.pauseWake === wake) this.pauseWake = null;
+      this.pauseWakes.delete(wake);
     }
   }
 
-  /** Ends a wait for a usage limit now, such as after a person resumes the run. */
+  /** Ends every timed wait now, such as after a person resumes the run. */
   wakePause(): void {
-    this.pauseWake?.abort();
+    for (const wake of this.pauseWakes) wake.abort();
   }
 
   /**
@@ -677,10 +693,11 @@ export class RunContext {
         // sample, or a raised ceiling can make room, and only a new lease
         // sees that.
         const until = Date.parse(response.resumeAt) - this.clock.now();
-        if (!waiting || this.state.pausedUntil !== response.resumeAt) {
-          await this.setStatus("paused", { pausedUntil: response.resumeAt });
-        }
-        await this.waitOut(Math.min(until, LEASE_RECHECK_MS));
+        const announce =
+          !waiting || this.state.pausedUntil !== response.resumeAt
+            ? () => this.setStatus("paused", { pausedUntil: response.resumeAt })
+            : undefined;
+        await this.waitOut(Math.min(until, LEASE_RECHECK_MS), announce);
         if (this.cancelRequested) throw new RunCancelled();
         waiting = true;
         vendor = current?.(vendor) ?? vendor;
@@ -790,6 +807,10 @@ export class RunContext {
           model,
           reason: tierReason,
         });
+      }
+      // Saved before the call: a fixer can commit and then fail or stop.
+      if (spec.role === "fixer" && !this.eng.roundFixers.includes(vendor)) {
+        this.eng.roundFixers.push(vendor);
       }
       await this.persist();
       await this.emit({ type: "agent.started", ...common });

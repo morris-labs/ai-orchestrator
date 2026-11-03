@@ -8,6 +8,7 @@ import {
   MemoryEventSink,
   type AdapterRequest,
   type AdapterResult,
+  type Clock,
   type EngineDeps,
   type LimitInfo,
   type ReviewOutput,
@@ -182,6 +183,76 @@ describe("run controls", () => {
     await run.start();
     await until(() => run.state.status === "paused");
     await expect(run.pause()).rejects.toBeInstanceOf(InvalidStateError);
+    await run.resume();
+    const state = await run.settled();
+    expect(state.status).toBe("finished");
+  });
+
+  /**
+   * A run with a person's pause in force when a call gets a lease `pause`
+   * answer, so a timed wait and the pause overlap. Sleeps end only when the
+   * test releases them or a person wakes them.
+   */
+  async function overlappingPause() {
+    const repo = buildSampleRepo();
+    const ref: { run?: RunController } = {};
+    const sleepers: Array<() => void> = [];
+    const clock: Clock = {
+      now: () => Date.parse("2026-10-28T09:00:00Z"),
+      sleep: (_ms, signal) =>
+        new Promise((resolve, reject) => {
+          if (signal?.aborted) {
+            reject(new Error("aborted"));
+            return;
+          }
+          sleepers.push(resolve);
+          signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+        }),
+    };
+    const granting = new GrantingBroker(clock);
+    let asked = false;
+    const deps: EngineDeps = {
+      adapters: new Scenario().adapters(),
+      broker: {
+        settle: granting.settle.bind(granting),
+        acquire: async (req: LeaseRequest): Promise<LeaseResponse> => {
+          if (req.role !== "fixer" || asked) return granting.acquire(req);
+          asked = true;
+          await ref.run?.pause();
+          return {
+            decision: "pause",
+            leaseId: req.leaseId,
+            resumeAt: "2026-10-28T12:00:00.000Z",
+            reason: "Over its ceiling.",
+          };
+        },
+      },
+      events: new MemoryEventSink("engine:test", "s", clock),
+      runner: new ExecaRunner(),
+      clock,
+      container: "c",
+    };
+    const run = await create(repo, deps);
+    ref.run = run;
+    await run.start();
+    await until(() => sleepers.length === 1);
+    return { run, sleepers };
+  }
+
+  it("finishes after one resume during a timed wait under a person's pause", async () => {
+    const { run } = await overlappingPause();
+    expect(run.state.status).toBe("paused");
+    await run.resume();
+    const state = await run.settled();
+    expect(state.status).toBe("finished");
+  });
+
+  it("finishes after one resume when the timed wait ran out under a person's pause", async () => {
+    const { run, sleepers } = await overlappingPause();
+    sleepers[0]?.();
+    // The call stops at the pause gate, which has no end time.
+    await until(() => run.state.pausedUntil === undefined);
+    expect(run.state.status).toBe("paused");
     await run.resume();
     const state = await run.settled();
     expect(state.status).toBe("finished");

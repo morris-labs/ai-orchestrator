@@ -1,18 +1,19 @@
 // RunContext: agent calls, leases, and persistence.
 import { getEventListeners } from "node:events";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { LeaseRequest, LeaseResponse, Vendor } from "@aio/contracts";
 import {
   GrantingBroker,
   type AdapterRequest,
   type AdapterResult,
+  type Clock,
   type LeaseActual,
   type LeaseBroker,
   type ReviewOutput,
   type VendorAdapter,
 } from "../../src/core.js";
 import { EngineLeaseBroker } from "../../src/events/leases.js";
-import { DecisionNeeded, describeError } from "../../src/state/context.js";
+import { DecisionNeeded, RunCancelled, describeError } from "../../src/state/context.js";
 import { disposeCheckouts, readOnlyRepo } from "../../src/state/steps.js";
 import { makeRun } from "./harness.js";
 
@@ -523,6 +524,137 @@ describe("waiting out a ceiling", () => {
     expect(asks).toBe(2);
     expect(ctx.state.status).toBe("running");
     expect(ctx.state.pausedUntil).toBeUndefined();
+  });
+});
+
+/** A clock whose sleeps end only when a test releases them or their signal aborts. */
+class ManualClock implements Clock {
+  readonly sleepers: Array<() => void> = [];
+
+  now(): number {
+    return Date.parse("2026-10-28T09:00:00Z");
+  }
+
+  sleep(_ms: number, signal?: AbortSignal): Promise<void> {
+    return new Promise((resolve, reject) => {
+      if (signal?.aborted) {
+        reject(new Error("aborted"));
+        return;
+      }
+      this.sleepers.push(resolve);
+      signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+    });
+  }
+}
+
+const LATER = "2026-10-28T12:00:00.000Z";
+
+const pausingBroker: LeaseBroker = {
+  acquire: (req) =>
+    Promise.resolve({
+      decision: "pause",
+      leaseId: req.leaseId,
+      resumeAt: LATER,
+      reason: "Over its ceiling.",
+    }),
+  settle: () => undefined,
+};
+
+describe("timed waits", () => {
+  /** Runs `act` while the run saves its `paused` status, before the wait can start. */
+  function duringPausedSave(ctx: Awaited<ReturnType<typeof makeRun>>["ctx"], act: () => void) {
+    const saveState = ctx.store.saveState.bind(ctx.store);
+    ctx.store.saveState = (state) => {
+      if (state.status === "paused") act();
+      return saveState(state);
+    };
+  }
+
+  it("ends pauseUntil at once for a cancel that lands while the status saves", async () => {
+    const clock = new ManualClock();
+    const { ctx } = await makeRun({ adapters: {}, deps: { clock } });
+    duringPausedSave(ctx, () => ctx.requestCancel());
+    await expect(ctx.pauseUntil(LATER)).rejects.toBeInstanceOf(RunCancelled);
+    expect(clock.sleepers).toHaveLength(0);
+  });
+
+  it("ends acquireLease at once for a cancel that lands while the status saves", async () => {
+    const clock = new ManualClock();
+    const { ctx } = await makeRun({ adapters: {}, broker: pausingBroker, deps: { clock } });
+    duringPausedSave(ctx, () => ctx.requestCancel());
+    await expect(ctx.acquireLease("codex", "reviewer", 1)).rejects.toBeInstanceOf(RunCancelled);
+    expect(clock.sleepers).toHaveLength(0);
+  });
+
+  it("doesn't sleep after a cancel that came before the wait", async () => {
+    const clock = new ManualClock();
+    const { ctx } = await makeRun({ adapters: {}, deps: { clock } });
+    ctx.requestCancel();
+    await expect(ctx.pauseUntil(LATER)).rejects.toBeInstanceOf(RunCancelled);
+  });
+
+  it("doesn't lose a wake that lands while the status saves", async () => {
+    const clock = new ManualClock();
+    const { ctx } = await makeRun({ adapters: {}, deps: { clock } });
+    duringPausedSave(ctx, () => ctx.wakePause());
+    await ctx.pauseUntil(LATER);
+    expect(ctx.state.status).toBe("running");
+    expect(clock.sleepers).toHaveLength(0);
+  });
+
+  it("wakes every parallel wait", async () => {
+    const clock = new ManualClock();
+    const { ctx } = await makeRun({ adapters: {}, deps: { clock } });
+    const waits = [ctx.pauseUntil(LATER), ctx.pauseUntil(LATER), ctx.pauseUntil(LATER)];
+    await vi.waitFor(() => expect(clock.sleepers).toHaveLength(3));
+    ctx.wakePause();
+    await Promise.all(waits);
+    expect(ctx.state.status).toBe("running");
+    expect(ctx.state.pausedUntil).toBeUndefined();
+  });
+
+  it("stays paused until the last parallel wait ends", async () => {
+    const clock = new ManualClock();
+    const { ctx } = await makeRun({ adapters: {}, deps: { clock } });
+    const first = ctx.pauseUntil(LATER);
+    const second = ctx.pauseUntil(LATER);
+    await vi.waitFor(() => expect(clock.sleepers).toHaveLength(2));
+    clock.sleepers[0]?.();
+    await first;
+    expect(ctx.state).toMatchObject({ status: "paused", pausedUntil: LATER });
+    ctx.wakePause();
+    await second;
+    expect(ctx.state.status).toBe("running");
+    expect(ctx.state.pausedUntil).toBeUndefined();
+  });
+
+  it("stays paused when a wait ends under a person's pause", async () => {
+    const clock = new ManualClock();
+    const { ctx } = await makeRun({ adapters: {}, deps: { clock } });
+    ctx.requestPause();
+    const atGate = ctx.checkpoint();
+    const wait = ctx.pauseUntil(LATER);
+    await vi.waitFor(() => expect(clock.sleepers).toHaveLength(1));
+    clock.sleepers[0]?.();
+    await wait;
+    expect(ctx.state.status).toBe("paused");
+    // The call that waited reaches the gate next, and doesn't announce it again.
+    const alsoAtGate = ctx.checkpoint();
+    ctx.requestResume();
+    await Promise.all([atGate, alsoAtGate]);
+    expect(ctx.state.status).toBe("running");
+    expect(ctx.state.pausedUntil).toBeUndefined();
+  });
+
+  it("clears the end time when a person's pause follows a timed wait", async () => {
+    const clock = new ManualClock();
+    const { ctx } = await makeRun({ adapters: {}, deps: { clock } });
+    await ctx.setStatus("paused", { pausedUntil: LATER });
+    ctx.requestPause();
+    const atGate = ctx.checkpoint();
+    await vi.waitFor(() => expect(ctx.state.pausedUntil).toBeUndefined());
+    ctx.requestResume();
+    await atGate;
   });
 });
 

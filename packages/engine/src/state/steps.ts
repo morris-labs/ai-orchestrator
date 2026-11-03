@@ -4,6 +4,7 @@
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { VENDOR_ROLES } from "@aio/contracts";
 import type {
   AgentRole,
   FileGroup,
@@ -42,6 +43,7 @@ import {
 import { parseDiff } from "../range/diff.js";
 import {
   BaseWorktree,
+  FALLBACK_ORDER,
   baseWorktreePath,
   chooseDisprover,
   verifyFinding,
@@ -1163,6 +1165,22 @@ export interface ConfirmRecord {
   created: string[];
 }
 
+/**
+ * The vendor that confirms fixes the `writers` wrote: the round's confirmer
+ * when it wrote none of them, or the next available vendor in the fallback
+ * order, preferring one that can take the role. `null` when every available
+ * vendor wrote some.
+ */
+export function chooseConfirmer(
+  confirmer: Vendor,
+  writers: readonly Vendor[],
+  available: readonly Vendor[],
+): Vendor | null {
+  if (!writers.includes(confirmer)) return confirmer;
+  const others = FALLBACK_ORDER.filter((v) => available.includes(v) && !writers.includes(v));
+  return others.find((v) => VENDOR_ROLES[v].includes("confirmer")) ?? others[0] ?? null;
+}
+
 /** The confirm stage: a reviewer from another vendor checks the fix diff. */
 export async function runConfirm(
   ctx: RunContext,
@@ -1202,7 +1220,23 @@ export async function runConfirm(
   });
   const crossVendor = ctx.state.request.crossVendor;
   const fixer = ctx.state.roles.fixer;
-  const vendor = crossVendor ? ctx.state.roles.confirmer : fixer;
+  // An assignment during the round can move the fixer role away from the
+  // vendor that wrote the fixes, so the rule follows the vendors that wrote them.
+  const writers = ctx.eng.roundFixers.length > 0 ? ctx.eng.roundFixers : [fixer];
+  let vendor = fixer;
+  if (crossVendor) {
+    const chosen = chooseConfirmer(ctx.state.roles.confirmer, writers, ctx.availableVendors);
+    if (!chosen && writers.length > 1) {
+      throw new DecisionNeeded({
+        kind: "ceiling",
+        findingIds: [],
+        options: ["resume", "cancel"],
+        message: `${writers.join(" and ")} both wrote fixes this round, and no other vendor can confirm them: a fix is never checked by the vendor that wrote it. Resume to start the next round, where one vendor writes the fixes, or cancel.`,
+      });
+    }
+    // A run with one vendor still gets its confirmer, as `assignRoles` allows.
+    vendor = chosen ?? ctx.state.roles.confirmer;
+  }
   // The confirmer reads the whole fix diff, which can reach past the findings' files.
   const confirmTier = callTier(ctx, "confirmer", groups, [
     ...new Set([
@@ -1220,7 +1254,7 @@ export async function runConfirm(
     estimateTokens: estimateTokens(prompt) + 3000,
     allowFallback: true,
     ...(confirmTier ? { tier: confirmTier } : {}),
-    ...(crossVendor ? { avoid: [fixer] } : {}),
+    ...(crossVendor ? { avoid: writers } : {}),
   });
   const actor = { kind: "agent" as const, vendor: out.vendor, model: out.model, role: "confirmer" };
   const incomplete = new Map(out.output.incomplete.map((i) => [i.id, i.reason]));

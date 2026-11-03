@@ -343,12 +343,10 @@ export class RunController {
   async resume(): Promise<RunState> {
     if (this.ctx.state.status !== "paused")
       throw new InvalidStateError(`Can't resume a ${this.ctx.state.status} run.`);
-    // A person who bought a reset can end the wait; a vendor still at its
-    // limit only pauses the run again.
-    if (this.ctx.state.pausedUntil && this.active) {
-      this.ctx.wakePause();
-      return this.state;
-    }
+    // A resume ends a person's pause and every timed wait, since both can
+    // overlap. A person who bought a reset can end the wait; a vendor still
+    // at its limit only pauses the run again.
+    this.ctx.wakePause();
     this.ctx.requestResume();
     if (!this.active) this.drive();
     return this.state;

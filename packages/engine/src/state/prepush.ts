@@ -135,6 +135,7 @@ export async function startRound(ctx: RunContext): Promise<void> {
   ctx.eng.roundUsage = {};
   ctx.eng.gateAttempts = 0;
   ctx.eng.preFixSha = null;
+  ctx.eng.roundFixers = [];
   ctx.eng.lastGateFailure = null;
 
   if (ctx.eng.pendingRebase) {

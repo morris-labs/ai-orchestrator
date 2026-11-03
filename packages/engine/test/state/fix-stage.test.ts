@@ -12,7 +12,8 @@ import {
   type FixOutput,
   type VendorAdapter,
 } from "../../src/core.js";
-import { fixTargets, runFix } from "../../src/state/steps.js";
+import { DecisionNeeded } from "../../src/state/context.js";
+import { chooseConfirmer, fixTargets, runConfirm, runFix } from "../../src/state/steps.js";
 import { makeRun } from "./harness.js";
 import { Scenario, buildSampleRepo } from "./scenario.js";
 import { tempDir } from "../tmp.js";
@@ -88,6 +89,96 @@ async function fixRun(plan: FixPlan) {
   );
   return { ...h, fixer: f };
 }
+
+describe("the confirmer after a mid-round fixer assignment", () => {
+  /** An adapter that fixes like `fixer` and records its confirm calls. */
+  function vendorWith(plan: FixPlan): { adapter: VendorAdapter; confirms: number[] } {
+    const confirms: number[] = [];
+    const adapter = {
+      ...fixer(plan).adapter,
+      confirm: () => {
+        confirms.push(1);
+        return Promise.resolve({
+          output: { incomplete: [], findings: [] },
+          model: "m",
+          sessionId: null,
+          tokens: { in: 1, out: 1 },
+          usage: [],
+          premiumRequests: 0,
+          costEstimate: 0,
+        });
+      },
+    } as unknown as VendorAdapter;
+    return { adapter, confirms };
+  }
+
+  const fixAll: FixPlan = (ids) => ({ fixed: ids, notFixed: [], summary: "" });
+
+  async function fixedRun(extra: Parameters<typeof makeRun>[0] = {}) {
+    const claude = vendorWith(fixAll);
+    const codex = vendorWith(fixAll);
+    const h = await makeRun({
+      request: { profile: "offload" },
+      ...extra,
+      adapters: { claude: claude.adapter, codex: codex.adapter, ...extra.adapters },
+    });
+    h.ctx.state.round = 1;
+    h.ctx.state.roles = { ...h.ctx.state.roles, fixer: "claude", confirmer: "codex" };
+    return { ...h, claude, codex };
+  }
+
+  it("keeps the vendor that wrote the fixes away from its own fixes", async () => {
+    const { ctx, claude, codex } = await fixedRun();
+    ctx.findings.push(confirmed("F-0001", "G1", ctx.state.id));
+    await runFix(ctx, ctx.findings);
+    await ctx.assignNow("fixer", ["codex"]);
+    // The assignment leaves claude as the only vendor other than the new fixer.
+    expect(ctx.state.roles).toMatchObject({ fixer: "codex", confirmer: "claude" });
+    const record = await runConfirm(ctx, []);
+    expect(record.confirmer).toBe("codex");
+    expect(claude.confirms).toHaveLength(0);
+    expect(codex.confirms).toHaveLength(1);
+  });
+
+  it("stops for a person when every vendor wrote some of the fixes", async () => {
+    const ref: { assign?: () => void } = {};
+    const claude = vendorWith((ids) => {
+      ref.assign?.();
+      return fixAll(ids, 0);
+    });
+    const { ctx, codex } = await fixedRun({ adapters: { claude: claude.adapter } });
+    ref.assign = () => void ctx.assignNow("fixer", ["codex"]);
+    ctx.findings.push(
+      confirmed("F-0001", "G1", ctx.state.id),
+      confirmed("F-0002", "G2", ctx.state.id),
+    );
+    await runFix(ctx, ctx.findings);
+    expect(ctx.eng.roundFixers).toEqual(["claude", "codex"]);
+    await expect(runConfirm(ctx, [])).rejects.toBeInstanceOf(DecisionNeeded);
+    expect(claude.confirms).toHaveLength(0);
+    expect(codex.confirms).toHaveLength(0);
+  });
+
+  it("moves to a vendor that wrote nothing when one is available", () => {
+    expect(chooseConfirmer("codex", ["claude"], ["claude", "codex"])).toBe("codex");
+    expect(chooseConfirmer("claude", ["claude"], ["claude", "codex", "copilot"])).toBe("codex");
+    expect(chooseConfirmer("codex", ["claude", "codex"], ["claude", "codex", "copilot"])).toBe(
+      "copilot",
+    );
+    expect(chooseConfirmer("codex", ["claude", "codex"], ["claude", "codex"])).toBeNull();
+  });
+
+  it("avoids the fixer role for a run saved before the engine recorded fixers", async () => {
+    const { ctx, codex } = await fixedRun();
+    const head = await ctx.git.head();
+    ctx.findings.push({ ...confirmed("F-0001", "G1", ctx.state.id), fixCommit: head });
+    ctx.eng.preFixSha = head;
+    // A run saved before the engine recorded fixers falls back to the role.
+    expect(ctx.eng.roundFixers).toEqual([]);
+    await runConfirm(ctx, []);
+    expect(codex.confirms).toHaveLength(1);
+  });
+});
 
 describe("runFix", () => {
   it("stops before the gate when the fixer leaves edits it didn't commit", async () => {
