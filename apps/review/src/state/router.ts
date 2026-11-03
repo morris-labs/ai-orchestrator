@@ -68,6 +68,14 @@ export function setLeaveGuard(guard: () => boolean): () => void {
   };
 }
 
+/**
+ * Runs the leave check for a change that doesn't start with a route change,
+ * such as a machine switch. Returns false to keep the current screen.
+ */
+export function confirmLeave(): boolean {
+  return !leaveGuard || leaveGuard();
+}
+
 export function useRoute(): Route {
   const [hash, setHash] = useState(() => window.location.hash);
   const current = useRef(hash);

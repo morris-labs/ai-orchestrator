@@ -11,7 +11,7 @@ import {
   type FleetState,
   type MachineFleet,
 } from "../state/fleet.js";
-import { href, navigate } from "../state/router.js";
+import { confirmLeave, href, navigate } from "../state/router.js";
 import { RunStatusBadge, shortId } from "./common.js";
 
 const FleetContext = createContext<MachineFleet | null>(null);
@@ -78,6 +78,8 @@ export function MachinePicker({ onSwitch }: { onSwitch?: () => void }) {
       <select
         value={state.selected}
         onChange={(e) => {
+          // The switch remounts the screens, so unsaved edits need a check.
+          if (!confirmLeave()) return;
           // Leave a machine's run first, so the next machine's screens
           // mount on the plain route.
           onSwitch?.();
@@ -94,10 +96,17 @@ export function MachinePicker({ onSwitch }: { onSwitch?: () => void }) {
   );
 }
 
+/** The link to a run. It names another machine, so a reload or a new tab finds the run. */
+function runLink(machineId: string, runId: string): string {
+  return href(`/runs/${runId}`, {
+    machine: machineId === LOCAL_MACHINE_ID ? undefined : machineId,
+  });
+}
+
 /** Opens a run on its machine. */
 export function openRun(fleet: MachineFleet | null, machineId: string, runId: string): void {
   fleet?.select(machineId);
-  navigate(href(`/runs/${runId}`));
+  navigate(runLink(machineId, runId));
 }
 
 /**
@@ -169,7 +178,7 @@ export function FleetRuns() {
                 <td>
                   <a
                     className="mono"
-                    href={href(`/runs/${r.run.id}`)}
+                    href={runLink(r.machineId, r.run.id)}
                     onClick={(e) => {
                       e.preventDefault();
                       openRun(fleet, r.machineId, r.run.id);

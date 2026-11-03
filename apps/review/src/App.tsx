@@ -17,6 +17,7 @@ import { RunList, RunView } from "./screens/RunView.js";
 import { Settings } from "./screens/Settings.js";
 import { isMulti } from "./state/fleet.js";
 import {
+  confirmLeave,
   href,
   linkedMachine,
   moveDeepLinkToHash,
@@ -109,8 +110,13 @@ function AppShell() {
   useEffect(
     () =>
       bridge()?.onNavigate?.((hash) => {
-        const machine = linkedMachine(parseHash(hash));
-        fleet?.select(machine ?? LOCAL_MACHINE_ID);
+        const machine = linkedMachine(parseHash(hash)) ?? LOCAL_MACHINE_ID;
+        // A switch remounts the screens before the route's own leave check
+        // can run, so it asks first.
+        if (fleet?.canSelect(machine) && machine !== fleet.getState().selected) {
+          if (!confirmLeave()) return;
+          fleet.select(machine);
+        }
         navigate(hash);
       }),
     [fleet],

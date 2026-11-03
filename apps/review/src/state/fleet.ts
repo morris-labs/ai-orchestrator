@@ -255,8 +255,26 @@ export class MachineFleet {
     );
   }
 
-  /** Shows `machineId` in the screens. */
+  /**
+   * True when the screens can show `machineId`: this machine, a machine in
+   * the last list, or any machine before the first answer, which then
+   * corrects a wrong choice.
+   */
+  canSelect(machineId: string): boolean {
+    const { supported, machines } = this.state;
+    return (
+      machineId === LOCAL_MACHINE_ID ||
+      supported === null ||
+      machines.some((m) => m.machine.id === machineId)
+    );
+  }
+
+  /**
+   * Shows `machineId` in the screens. Ignores a machine that `canSelect()`
+   * refuses, such as a revoked one that a link still names.
+   */
   select(machineId: string): void {
+    if (!this.canSelect(machineId)) return;
     this.storeFor(machineId);
     if (this.state.selected !== machineId) this.set({ selected: machineId });
   }
@@ -273,6 +291,7 @@ export class MachineFleet {
         // An older server: one machine, as before, and no more polling.
         this.stopPolling();
         this.set({ supported: false, machines: [], selected: LOCAL_MACHINE_ID, error: null });
+        this.dropStores(new Set());
       } else {
         this.set({ error: errorText(err) });
       }

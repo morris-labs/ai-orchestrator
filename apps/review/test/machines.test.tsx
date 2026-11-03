@@ -1,10 +1,10 @@
 // Review runs across machines: the fleet store, the machine picker, and the
 // all-machines run table, against one fake server per machine behind a fake
 // hub.
-import type { RunState } from "@aio/contracts";
+import { DEFAULT_POLICY, type RunState } from "@aio/contracts";
 import { FakeServer, makeBoxView } from "@aio/ui/testing";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import { App } from "../src/App.js";
 import { EMPTY_REFS } from "../src/lib/repos.js";
 import { FleetProvider } from "../src/components/machines.js";
@@ -327,8 +327,12 @@ describe("the Review app on several machines", () => {
     const row = link.closest("tr")!;
     expect(row).toHaveTextContent("build-server");
     expect(row).toHaveTextContent("/srv/src/build-app");
+    // The link names the machine, so a new tab or a reload finds the run.
+    expect(link).toHaveAttribute("href", `#/runs/${REMOTE_RUN_ID}?machine=m1`);
+    const localLink = within(table).getByRole("link", { name: lastRun().id.slice(-6) });
+    expect(localLink).toHaveAttribute("href", `#/runs/${lastRun().id}`);
     fireEvent.click(link);
-    await waitFor(() => expect(window.location.hash).toBe(`#/runs/${REMOTE_RUN_ID}`));
+    await waitFor(() => expect(window.location.hash).toBe(`#/runs/${REMOTE_RUN_ID}?machine=m1`));
     expect(fleet.getState().selected).toBe("m1");
     await waitFor(() =>
       expect(hub.paths).toContain(`GET /api/v1/machines/m1/proxy/runs/${REMOTE_RUN_ID}`),
@@ -400,6 +404,144 @@ describe("the Review app on several machines", () => {
     );
     // This machine never hears of the other machine's box.
     expect(hub.paths).not.toContain("GET /api/v1/boxes/aio-agent-build");
+  });
+
+  it("restores a remote run's machine when its link loads in a new page", async () => {
+    const { store, fleet, hub } = setup();
+    store.start();
+    fleet.start();
+    go(`#/runs/${REMOTE_RUN_ID}?machine=m1`);
+    renderApp(fleet, store);
+    expect(fleet.getState().selected).toBe("m1");
+    await waitFor(() =>
+      expect(hub.paths).toContain(`GET /api/v1/machines/m1/proxy/runs/${REMOTE_RUN_ID}`),
+    );
+    expect(hub.paths).not.toContain(`GET /api/v1/runs/${REMOTE_RUN_ID}`);
+  });
+
+  it.each([
+    ["unknown", "ghost"],
+    ["revoked", "m3"],
+  ])("stays on this machine when a link names a machine that is %s", async (_kind, id) => {
+    const { store, fleet, hub } = setup();
+    store.start();
+    go(`#/runs?machine=${id}`);
+    renderApp(fleet, store);
+    expect(fleet.getState().selected).toBe(id);
+    await act(() => fleet.refresh());
+    expect(fleet.getState().selected).toBe("local");
+
+    // Later polls change nothing: the screens stay mounted and no store returns.
+    const nav = screen.getByRole("link", { name: /^Runs/ });
+    const sockets = hub.socketPaths.length;
+    await act(() => fleet.refresh());
+    await act(() => fleet.refresh());
+    expect(fleet.getState().selected).toBe("local");
+    expect(screen.getByRole("link", { name: /^Runs/ })).toBe(nav);
+    expect(hub.socketPaths.length).toBe(sockets);
+  });
+
+  it("drops a linked machine for good on a server without machine routes", async () => {
+    const { store, fleet } = setup("unsupported" as never);
+    store.start();
+    go("#/launch?machine=m1");
+    renderApp(fleet, store);
+    expect(fleet.getState().selected).toBe("m1");
+    const linkedStore = fleet.storeFor("m1");
+    await act(() => fleet.refresh());
+    await waitFor(() => expect(fleet.getState().selected).toBe("local"));
+    expect(linkedStore.getState().connection).toBe("closed");
+    expect(screen.queryByRole("combobox", { name: "Machine" })).not.toBeInTheDocument();
+    act(() => fleet.select("m1"));
+    expect(fleet.getState().selected).toBe("local");
+  });
+
+  describe("with unsaved policy edits", () => {
+    function dirtyPolicy(hash: string) {
+      const { store, fleet, local } = setup();
+      local.on("projects.list", () => ({ projects: [project] }));
+      local.on("projects.policy.get", () => ({
+        path: "/home/user/src/example-app/.aio/policy.yaml",
+        exists: true,
+        policy: DEFAULT_POLICY,
+      }));
+      store.start();
+      fleet.start();
+      go(hash);
+      renderApp(fleet, store);
+      return { fleet };
+    }
+
+    async function edit(): Promise<HTMLElement> {
+      await screen.findByRole("combobox", { name: "Machine" });
+      const risk = await screen.findByLabelText(/^Risk paths/);
+      await waitFor(() => expect(risk).toBeEnabled());
+      fireEvent.change(risk, { target: { value: "src/edited/**" } });
+      return risk;
+    }
+
+    const url = `#/policy?project=${project.project.id}`;
+    let confirm: MockInstance<(message?: string) => boolean>;
+    beforeEach(() => {
+      confirm = vi.spyOn(window, "confirm");
+    });
+    afterEach(() => {
+      confirm.mockRestore();
+      vi.unstubAllGlobals();
+    });
+
+    it("keeps the edits when the viewer refuses a switch in the picker", async () => {
+      const { fleet } = dirtyPolicy("#/policy");
+      await edit();
+      confirm.mockReturnValue(false);
+      fireEvent.change(screen.getByRole("combobox", { name: "Machine" }), {
+        target: { value: "m1" },
+      });
+      expect(confirm).toHaveBeenCalledTimes(1);
+      expect(fleet.getState().selected).toBe("local");
+      expect(screen.getByRole("combobox", { name: "Machine" })).toHaveValue("local");
+      expect(screen.getByLabelText(/^Risk paths/)).toHaveValue("src/edited/**");
+    });
+
+    it("switches once the viewer agrees in the picker, with one prompt", async () => {
+      const { fleet } = dirtyPolicy(url);
+      await edit();
+      confirm.mockReturnValue(true);
+      fireEvent.change(screen.getByRole("combobox", { name: "Machine" }), {
+        target: { value: "m1" },
+      });
+      expect(fleet.getState().selected).toBe("m1");
+      await waitFor(() => expect(window.location.hash).toBe("#/policy"));
+      await act(() => new Promise((r) => setTimeout(r, 0)));
+      expect(confirm).toHaveBeenCalledTimes(1);
+    });
+
+    it("asks before a delivered link switches machines", async () => {
+      let deliver: (hash: string) => void = () => undefined;
+      vi.stubGlobal("aio", {
+        takeToken: () => null,
+        serverUrl: null,
+        onNavigate: (fn: (hash: string) => void) => {
+          deliver = fn;
+          return () => undefined;
+        },
+      });
+      const { fleet } = dirtyPolicy(url);
+      await edit();
+      confirm.mockReturnValue(false);
+      act(() => deliver("#/launch?machine=m1"));
+      expect(confirm).toHaveBeenCalledTimes(1);
+      expect(fleet.getState().selected).toBe("local");
+      expect(window.location.hash).toBe(url);
+      expect(screen.getByLabelText(/^Risk paths/)).toHaveValue("src/edited/**");
+
+      confirm.mockReturnValue(true);
+      act(() => deliver("#/launch?machine=m1"));
+      expect(confirm).toHaveBeenCalledTimes(2);
+      expect(fleet.getState().selected).toBe("m1");
+      await act(() => new Promise((r) => setTimeout(r, 0)));
+      expect(confirm).toHaveBeenCalledTimes(2);
+    });
   });
 
   it("looks like a single machine without machine routes", async () => {
