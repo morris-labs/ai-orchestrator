@@ -35,6 +35,13 @@ export function rekeyDuplicateHostKeys(db: Sqlite): void {
   }
 }
 
+/** Adds the broker port column, which a database from an earlier order already has. */
+function addBrokerPort(db: Sqlite): void {
+  const columns = db.pragma("table_info(engine_endpoints)") as { name: string }[];
+  if (columns.some((column) => column.name === "broker_port")) return;
+  db.exec("ALTER TABLE engine_endpoints ADD COLUMN broker_port INTEGER");
+}
+
 export const MIGRATIONS: readonly Migration[] = [
   // 1: records, settings, the engine registry, the review mirror, jobs, imports.
   `
@@ -220,13 +227,22 @@ export const MIGRATIONS: readonly Migration[] = [
   CREATE INDEX IF NOT EXISTS svc_usage_samples_account
     ON svc_usage_samples (vendor, account, window, time_ms);
 `,
+  // Migrations 6 and 7 tolerate work that a database already has. Multi-host
+  // builds from before the merge with main ran the broker port and the machines
+  // as migrations 5 and 6, or either one alone as migration 5, so the version
+  // doesn't say which of these changes a database at version 5 or 6 lacks.
+  //
   // 6: the host port of a container's TCP secrets broker, for Docker
   // Desktop; NULL for a container that uses the Unix socket.
-  "ALTER TABLE engine_endpoints ADD COLUMN broker_port INTEGER",
+  addBrokerPort,
   // 7: multi-host. On a hub, the enrolled machines and the one-time
-  // enrollment codes. A code is kept only as the key derived from it.
+  // enrollment codes. A code is kept only as the key derived from it. The
+  // index repeats migration 5 for a database that took another change in its slot.
   `
-  CREATE TABLE machines (
+  CREATE INDEX IF NOT EXISTS svc_usage_samples_account
+    ON svc_usage_samples (vendor, account, window, time_ms);
+
+  CREATE TABLE IF NOT EXISTS machines (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     role TEXT NOT NULL,
@@ -240,9 +256,9 @@ export const MIGRATIONS: readonly Migration[] = [
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   );
-  CREATE UNIQUE INDEX machines_live_name ON machines (name) WHERE revoked_at IS NULL;
+  CREATE UNIQUE INDEX IF NOT EXISTS machines_live_name ON machines (name) WHERE revoked_at IS NULL;
 
-  CREATE TABLE enrollment_codes (
+  CREATE TABLE IF NOT EXISTS enrollment_codes (
     code_key TEXT PRIMARY KEY,
     expires_at TEXT NOT NULL,
     used_at TEXT,

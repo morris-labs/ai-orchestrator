@@ -202,9 +202,12 @@ describe("migrations 5 to 7", () => {
   it("keeps the usage index at 5, the broker port at 6, and the machines at 7", () => {
     expect(MIGRATIONS).toHaveLength(7);
     expect(MIGRATIONS[4]).toContain("svc_usage_samples_account");
-    expect(MIGRATIONS[5]).toContain("broker_port");
-    expect(MIGRATIONS[6]).toContain("CREATE TABLE machines");
-    expect(MIGRATIONS[6]).toContain("CREATE TABLE enrollment_codes");
+    const six = databaseAt(6);
+    expect(engineColumns(six)).toContain("broker_port");
+    expect(schemaNames(six, "table")).not.toContain("machines");
+    expect(schemaNames(databaseAt(7), "table")).toEqual(
+      expect.arrayContaining(["machines", "enrollment_codes"]),
+    );
   });
 
   it("brings a version 5 database from main to version 7 and keeps its rows", () => {
@@ -225,6 +228,90 @@ describe("migrations 5 to 7", () => {
       expect.arrayContaining(["machines", "enrollment_codes"]),
     );
     expect(db.prepare("SELECT id FROM accounts").all()).toEqual([{ id: "claude/work" }]);
+  });
+
+  describe("a database from a multi-host build before the merge with main", () => {
+    const BROKER_PORT = "ALTER TABLE engine_endpoints ADD COLUMN broker_port INTEGER";
+    // Migration 7's tables, as those builds created them.
+    const MACHINES = `
+      CREATE TABLE machines (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        role TEXT NOT NULL,
+        cert_fingerprint TEXT NOT NULL UNIQUE,
+        revoked_at TEXT,
+        server_version TEXT,
+        protocol INTEGER,
+        capabilities TEXT NOT NULL DEFAULT '[]',
+        platform TEXT,
+        last_seen TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE UNIQUE INDEX machines_live_name ON machines (name) WHERE revoked_at IS NULL;
+      CREATE TABLE enrollment_codes (
+        code_key TEXT PRIMARY KEY,
+        expires_at TEXT NOT NULL,
+        used_at TEXT,
+        created_at TEXT NOT NULL
+      );
+    `;
+
+    /** A database at `version` that ran `steps` after the first four migrations. */
+    function legacyDatabase(version: number, steps: string[]): Database.Database {
+      const db = databaseAt(4);
+      for (const step of steps) db.exec(step);
+      db.pragma(`user_version = ${version}`);
+      return db;
+    }
+
+    function expectFullSchema(db: Database.Database): void {
+      expect(db.pragma("user_version", { simple: true })).toBe(7);
+      expect(schemaNames(db, "index")).toEqual(
+        expect.arrayContaining(["svc_usage_samples_account", "machines_live_name"]),
+      );
+      expect(engineColumns(db)).toContain("broker_port");
+      expect(schemaNames(db, "table")).toEqual(
+        expect.arrayContaining(["machines", "enrollment_codes"]),
+      );
+    }
+
+    it("upgrades version 6 with the broker port and the machines, and keeps the rows", () => {
+      const db = legacyDatabase(6, [BROKER_PORT, MACHINES]);
+      db.prepare(
+        "INSERT INTO machines (id, name, role, cert_fingerprint, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+      ).run("m1", "node-a", "node", "fp", "2026-01-01", "2026-01-01");
+
+      expect(migrate(db)).toBe(7);
+
+      expectFullSchema(db);
+      expect(db.prepare("SELECT id FROM machines").all()).toEqual([{ id: "m1" }]);
+    });
+
+    it("upgrades version 5 with only the broker port, and keeps the port", () => {
+      const db = legacyDatabase(5, [BROKER_PORT]);
+      db.prepare(
+        "INSERT INTO projects (id, root, data, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+      ).run("p1", "/srv/project", "{}", "2026-01-01", "2026-01-01");
+      db.prepare(
+        "INSERT INTO engine_endpoints (project_id, container, host_port, token, updated_at, broker_port) VALUES (?, ?, ?, ?, ?, ?)",
+      ).run("p1", "aio-agent-p1", 40001, "test-token", "2026-01-01", 40002);
+
+      expect(migrate(db)).toBe(7);
+
+      expectFullSchema(db);
+      expect(db.prepare("SELECT broker_port FROM engine_endpoints").all()).toEqual([
+        { broker_port: 40002 },
+      ]);
+    });
+
+    it("upgrades version 5 with only the machines", () => {
+      const db = legacyDatabase(5, [MACHINES]);
+
+      expect(migrate(db)).toBe(7);
+
+      expectFullSchema(db);
+    });
   });
 
   it("brings a version 4 database through all three changes", () => {
