@@ -40,6 +40,10 @@ export function injectWebSocket(
   const toServer = new PassThrough();
   const serverSide = Duplex.from({ readable: toServer, writable: toClient });
   const clientSide = Duplex.from({ readable: toClient, writable: toServer });
+  // Destroying a duplex made this way emits an `AbortError`, and an `error`
+  // event without a listener ends the process. A refused upgrade destroys
+  // `serverSide`, and the route's upgrade handler might not listen on it.
+  serverSide.on("error", () => undefined);
   // The constructor with no address makes a socket that waits for `setSocket`.
   const ws = new WebSocket(null as unknown as string, undefined, {
     isServer: false,

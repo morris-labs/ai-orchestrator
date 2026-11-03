@@ -36,7 +36,7 @@ interface TestHub {
   advance(ms: number): void;
 }
 
-async function startHub(): Promise<TestHub> {
+async function startHub(bindHost: () => string | undefined = () => "127.0.0.1"): Promise<TestHub> {
   const dir = path.join(tempDir("aio-link-auth-"), "hub");
   // The hub loads the same authority from `dir`.
   const identity = await loadOrCreateHubIdentity(dir);
@@ -55,8 +55,8 @@ async function startHub(): Promise<TestHub> {
       role: "both",
     }),
     port: () => 0,
-    bindHost: () => "127.0.0.1",
-    address: () => "127.0.0.1",
+    bindHost,
+    address: () => undefined,
     token: "synthetic-token",
     api: () => null,
     internal: new Map(),
@@ -327,6 +327,53 @@ describe("a refused upgrade", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("the listener's address", () => {
+  /** Resolves with the error code of a TCP connection, or `connected`. */
+  const reach = (host: string, port: number): Promise<string> =>
+    new Promise((resolve) => {
+      const socket = net.connect(port, host, () => {
+        socket.destroy();
+        resolve("connected");
+      });
+      socket.once("error", (err: NodeJS.ErrnoException) => resolve(err.code ?? "error"));
+    });
+
+  it("follows the bind address and stays put while it doesn't change", async () => {
+    let bind: string | undefined = "127.0.0.1";
+    const { hub } = await startHub(() => bind);
+    const first = await hub.issueCode();
+    const port = hub.port!;
+    expect(first.hubUrl).toBe(`https://127.0.0.1:${port}`);
+
+    // The test port is 0, so a listener that restarted has another port.
+    await hub.reconcile();
+    expect(hub.port).toBe(port);
+
+    bind = "127.0.0.2";
+    await hub.reconcile();
+    const moved = hub.port!;
+    expect((await hub.issueCode()).hubUrl).toBe(`https://127.0.0.2:${moved}`);
+    expect(await reach("127.0.0.2", moved)).toBe("connected");
+    expect(await reach("127.0.0.1", moved)).toBe("ECONNREFUSED");
+  });
+
+  it("stops listening when the address goes away, and starts when it returns", async () => {
+    let bind: string | undefined = "127.0.0.1";
+    const { hub } = await startHub(() => bind);
+    await hub.issueCode();
+    const port = hub.port!;
+
+    bind = undefined;
+    await hub.reconcile();
+    expect(hub.port).toBeNull();
+    expect(await reach("127.0.0.1", port)).toBe("ECONNREFUSED");
+
+    bind = "127.0.0.1";
+    await hub.reconcile();
+    expect(hub.port).not.toBeNull();
   });
 });
 

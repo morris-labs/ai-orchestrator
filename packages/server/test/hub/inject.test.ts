@@ -1,5 +1,6 @@
 // The in-process WebSocket upgrade that serves link streams.
 import fastifyWebsocket from "@fastify/websocket";
+import type { Duplex } from "node:stream";
 import Fastify, { type FastifyInstance } from "fastify";
 import { afterEach, describe, expect, it } from "vitest";
 import { injectWebSocket } from "../../src/hub/inject.js";
@@ -60,5 +61,23 @@ describe("injectWebSocket", () => {
     await expect(injectWebSocket(api, "/nowhere", {})).rejects.toThrow(
       "Unexpected server response: 404",
     );
+  });
+
+  it("guards the server stream when the upgrade handler adds no error listener", async () => {
+    // A bare handler, like `@fastify/websocket` before 11.3, refuses the upgrade.
+    const api = Fastify();
+    let listeners = -1;
+    let closed: Promise<void> = Promise.resolve();
+    api.server.on("upgrade", (_req, socket: Duplex) => {
+      closed = new Promise((resolve) => socket.once("close", () => resolve()));
+      listeners = socket.listenerCount("error");
+      socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+    });
+    await expect(injectWebSocket(api, "/guarded", {})).rejects.toThrow(
+      "Unexpected server response: 403",
+    );
+    await closed;
+    // Without a listener, the `AbortError` from the destroy is an uncaught exception.
+    expect(listeners).toBeGreaterThan(0);
   });
 });

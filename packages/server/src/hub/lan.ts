@@ -1,8 +1,9 @@
 // The address a hub's link listener binds by default: this machine's
 // primary LAN IPv4 address. The hub listens on the LAN only, so it never
-// binds every interface, a Docker bridge, or Tailscale.
+// binds every interface, a Docker bridge, Tailscale, or a VPN tunnel.
 import fs from "node:fs";
 import os from "node:os";
+import path from "node:path";
 
 /** One address of a network interface, as `os.networkInterfaces()` gives it. */
 export interface InterfaceAddress {
@@ -13,8 +14,11 @@ export interface InterfaceAddress {
 
 export type InterfaceTable = Record<string, InterfaceAddress[] | undefined>;
 
-/** Interface names that are never the LAN: Docker bridges and Tailscale. */
-const IGNORED_INTERFACE = /^(docker|br-|veth|tailscale)/;
+/** Interface names that are never the LAN: Docker bridges, Tailscale, and VPN tunnels. */
+const IGNORED_INTERFACE = /^(docker|br-|veth|tailscale|tun|tap|wg|ppp|ipsec|utun|zt)/;
+
+/** The value of `/sys/class/net/NAME/type` for Ethernet and Wi-Fi: `ARPHRD_ETHER`. */
+const ARPHRD_ETHER = "1";
 
 function ipv4Octets(address: string): number[] | undefined {
   const parts = address.split(".");
@@ -56,11 +60,37 @@ export function lanCandidates(interfaces: InterfaceTable): { name: string; addre
 }
 
 /**
+ * True when the kernel reports `name` as a tunnel: a TUN or TAP device, or a
+ * link type other than Ethernet, as WireGuard and PPP have. This finds a VPN
+ * whose name doesn't give it away. Returns `false` when `sysRoot` has no entry
+ * for the interface, as on a platform without sysfs.
+ */
+export function isTunnelInterface(name: string, sysRoot = "/sys/class/net"): boolean {
+  const dir = path.join(sysRoot, name);
+  try {
+    if (fs.existsSync(path.join(dir, "tun_flags"))) return true;
+    return fs.readFileSync(path.join(dir, "type"), "utf8").trim() !== ARPHRD_ETHER;
+  } catch {
+    return false;
+  }
+}
+
+/** The interfaces of `interfaces` that the kernel doesn't report as tunnels. */
+export function withoutTunnels(
+  interfaces: InterfaceTable,
+  sysRoot = "/sys/class/net",
+): InterfaceTable {
+  return Object.fromEntries(
+    Object.entries(interfaces).filter(([name]) => !isTunnelInterface(name, sysRoot)),
+  );
+}
+
+/**
  * Chooses the primary LAN IPv4 address: the private (RFC 1918) address of
  * the interface that holds the default route. Loopback, Docker bridges,
- * and Tailscale never count. When the default route goes through an
- * interface with no LAN address, such as a VPN, or no default route is
- * known, the only LAN address on the machine wins. Returns `undefined`
+ * Tailscale, and VPN tunnels never count, even with a private address. When
+ * the default route goes through one of those, or no default route is known,
+ * the only LAN address on the machine wins. Returns `undefined`
  * when there is none, or more than one and none of them on the default
  * route.
  */
@@ -101,5 +131,5 @@ export function readDefaultRouteInterface(file = "/proc/net/route"): string | un
 
 /** This machine's primary LAN IPv4 address, or `undefined` when it has none. */
 export function detectLanAddress(): string | undefined {
-  return primaryLanAddress(os.networkInterfaces(), readDefaultRouteInterface());
+  return primaryLanAddress(withoutTunnels(os.networkInterfaces()), readDefaultRouteInterface());
 }

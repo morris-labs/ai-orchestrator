@@ -341,15 +341,17 @@ The local API stays on `127.0.0.1:21400` on every machine.
 By default, the hub binds its primary LAN IPv4 address: the private
 address (in `10.0.0.0/8`, `172.16.0.0/12`, or `192.168.0.0/16`) of the
 network interface that holds the default route. Loopback, Docker bridges
-(`docker*`, `br-*`, and `veth*` interfaces), and Tailscale (`tailscale*`
-interfaces and `100.64.0.0/10`) never count. If the default route has no
-LAN address, such as when it goes through a VPN, the hub binds the
-machine's only LAN address. The hub never listens on every interface. If it
+(`docker*`, `br-*`, and `veth*` interfaces), Tailscale (`tailscale*`
+interfaces and `100.64.0.0/10`), and VPN tunnels never count, even with a
+private address. A VPN tunnel is an interface named `tun*`, `tap*`, `wg*`,
+`ppp*`, `ipsec*`, `utun*`, or `zt*`, or one that the kernel reports as a
+TUN or TAP device or as a link type other than Ethernet. If the default
+route has no LAN address, such as when it goes through a VPN, the hub binds
+the machine's only LAN address. The hub never listens on every interface. If it
 finds no LAN address, or several and none on the default route, it doesn't
 start the link listener, logs why, and refuses to issue enrollment codes.
 
-To choose the address, set the `linkHost` setting on the hub, then restart
-the server:
+To choose the address, set the `linkHost` setting on the hub:
 
 ```bash
 curl --cacert ~/.ai-orchestrator/server.crt \
@@ -357,14 +359,17 @@ curl --cacert ~/.ai-orchestrator/server.crt \
     -H "Content-Type: application/json" \
     -X PATCH -d '{"linkHost": "192.0.2.10"}' \
     https://127.0.0.1:21400/api/v1/settings
-systemctl --user restart aio-server
 
 ```
 
 Replace `192.0.2.10` with the hub's address on the network your nodes are
-on. To go back to the detected address, send `{"linkHost": null}`. The hub
-reads the address when the listener starts, so after the LAN address
-changes, restart the server.
+on. To go back to the detected address, send `{"linkHost": null}`.
+
+The hub checks the address every minute. When the address changes, the hub
+closes its links and listens on the new address. If the hub finds no address,
+it stops listening until it finds one. A node keeps the hub URL that it
+joined with, so if the hub's address can change, set the `linkAddress`
+setting to a host name before you enroll machines.
 
 The hub opens the port only when its role is `hub` or `both` and it has
 enrolled a machine or issued a code. A machine on its own never opens it.

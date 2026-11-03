@@ -85,8 +85,8 @@ export interface HubOptions {
   /** The port to listen on; 0 picks a free one. */
   port: () => number;
   /**
-   * The address to bind, read each time the listener starts. `undefined`
-   * means no LAN address was found, so the listener doesn't start.
+   * The address to bind, read at each reconcile. `undefined` means no LAN
+   * address was found, so the listener doesn't run.
    */
   bindHost: () => string | undefined;
   /** The host name nodes use in the hub URL; `undefined` means the bound address. */
@@ -242,7 +242,8 @@ export class Hub {
    * Starts or stops the listener: it runs while this machine is a hub and
    * at least one machine was enrolled or one code is live. A revoked machine
    * counts, so that it hears that it was revoked rather than finding no
-   * listener.
+   * listener. A running listener moves when its bind address changes, which
+   * also closes the links that it holds.
    */
   reconcile(): Promise<void> {
     this.reconciling = this.reconciling.then(async () => {
@@ -250,6 +251,15 @@ export class Hub {
       const want =
         this.opts.isHub() && (this.registry.count() > 0 || this.registry.liveCodeKeys().length > 0);
       try {
+        if (want && this.server) {
+          const host = this.opts.bindHost();
+          if (host !== this.boundHost) {
+            this.opts.log(
+              `The hub link address changed from ${this.boundHost} to ${host ?? "none"}, so the hub stops listening on the old address.`,
+            );
+            await this.stopListening();
+          }
+        }
         if (want && !this.server) await this.listen();
         else if (!want && this.server) await this.stopListening();
         this.listenError = null;

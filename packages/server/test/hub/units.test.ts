@@ -24,10 +24,12 @@ import {
 import {
   isCgnatIpv4,
   isPrivateIpv4,
+  isTunnelInterface,
   lanCandidates,
   parseDefaultRoute,
   primaryLanAddress,
   readDefaultRouteInterface,
+  withoutTunnels,
 } from "../../src/hub/lan.js";
 import { protocolMismatch, sendableCloseCode, closeReason } from "../../src/hub/protocol.js";
 import {
@@ -641,6 +643,40 @@ describe("the link listener's LAN address", () => {
       primaryLanAddress({ tailscale0: table.tailscale0, docker0: table.docker0 }, "tailscale0"),
     ).toBeUndefined();
     expect(primaryLanAddress({ wg0: [v4("100.64.0.9")] }, "wg0")).toBeUndefined();
+  });
+
+  it("doesn't bind a VPN with a private address on the default route", () => {
+    const eth0 = [v4("192.168.1.20")];
+    for (const vpn of ["tun0", "tap0", "wg0", "ppp0"]) {
+      const hosts = { eth0, [vpn]: [v4("10.8.0.2")] };
+      expect(lanCandidates(hosts)).toEqual([{ name: "eth0", address: "192.168.1.20" }]);
+      expect(primaryLanAddress(hosts, vpn)).toBe("192.168.1.20");
+    }
+  });
+
+  it("finds a VPN from the kernel's link type when its name doesn't show it", () => {
+    const sys = tempDir("aio-sysfs-");
+    const add = (name: string, type: string, tunFlags = false) => {
+      fs.mkdirSync(path.join(sys, name));
+      fs.writeFileSync(path.join(sys, name, "type"), `${type}\n`);
+      if (tunFlags) fs.writeFileSync(path.join(sys, name, "tun_flags"), "0x1002\n");
+    };
+    add("eth0", "1");
+    add("office", "65534"); // WireGuard or TUN, under a custom name.
+    add("vpntap", "1", true); // TAP has an Ethernet link type.
+    const hosts = {
+      eth0: [v4("192.168.1.20")],
+      office: [v4("10.8.0.2")],
+      vpntap: [v4("10.9.0.2")],
+      unknown: [v4("10.10.0.2")],
+    };
+    expect(isTunnelInterface("office", sys)).toBe(true);
+    expect(isTunnelInterface("vpntap", sys)).toBe(true);
+    expect(isTunnelInterface("eth0", sys)).toBe(false);
+    expect(isTunnelInterface("unknown", sys)).toBe(false);
+    expect(Object.keys(withoutTunnels(hosts, sys))).toEqual(["eth0", "unknown"]);
+    const { unknown: _, ...known } = hosts;
+    expect(primaryLanAddress(withoutTunnels(known, sys), "office")).toBe("192.168.1.20");
   });
 
   it("takes the only LAN address when the default route has none", () => {
