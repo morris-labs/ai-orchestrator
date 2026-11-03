@@ -91,6 +91,24 @@ class ElectronBuilderTest(unittest.TestCase):
         self.assertTrue(entitlements["com.apple.security.cs.allow-jit"])
         self.assertTrue(entitlements["com.apple.security.cs.disable-library-validation"])
 
+    def test_only_the_boxes_main_process_may_send_apple_events(self):
+        key = "com.apple.security.automation.apple-events"
+
+        def entitlements(app, setting):
+            with open(ROOT / "apps" / app / builder_config(app)["mac"][setting], "rb") as f:
+                return plistlib.load(f)
+
+        boxes = entitlements("boxes", "entitlements")
+        self.assertTrue(boxes[key])
+        self.assertEqual({k: v for k, v in boxes.items() if k != key},
+                         entitlements("review", "entitlements"))
+        self.assertNotIn(key, entitlements("boxes", "entitlementsInherit"))
+        self.assertNotIn(key, entitlements("review", "entitlements"))
+
+    def test_boxes_explains_why_it_sends_apple_events(self):
+        info = builder_config("boxes")["mac"]["extendInfo"]
+        self.assertIn("Terminal", info["NSAppleEventsUsageDescription"])
+
 
 class RuntimeStagingTest(unittest.TestCase):
     def test_the_bundled_node_is_major_version_22_like_the_deb(self):

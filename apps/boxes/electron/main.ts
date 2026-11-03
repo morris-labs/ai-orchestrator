@@ -56,6 +56,7 @@ import {
   isMachineIdArg,
   terminalCommand,
   usesWindowClass,
+  windowsBundledCli,
   windowsTerminalCommand,
   trayCounts,
   trayIconBitmap,
@@ -244,13 +245,13 @@ async function launchReview(link: {
  * The `aio` CLI for consoles on Windows: the one in the package's runtime,
  * else `aio` on PATH.
  */
-function windowsCli(): string {
-  const bundled = join(process.resourcesPath, "runtime", "bin", "aio.cmd");
+function windowsCli(): string[] {
+  const bundled = windowsBundledCli(process.resourcesPath);
   try {
-    statSync(bundled);
+    for (const file of bundled) statSync(file);
     return bundled;
   } catch {
-    return "aio.cmd";
+    return ["aio.cmd"];
   }
 }
 

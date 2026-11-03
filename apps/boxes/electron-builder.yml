@@ -25,8 +25,11 @@ mac:
   # Signing and notarization are TODO; see docs/platforms.md. Without an
   # identity, scripts/build-mac.sh builds an ad hoc signed app.
   hardenedRuntime: true
-  entitlements: ../../packaging/mac/entitlements.plist
+  # Only the app's main process sends Apple Events, to open Terminal.app.
+  entitlements: ../../packaging/mac/entitlements-boxes.plist
   entitlementsInherit: ../../packaging/mac/entitlements.plist
+  extendInfo:
+    NSAppleEventsUsageDescription: AI Orchestrator opens boxes in Terminal.
   # The server, the CLI, and Node.js that scripts/stage-runtime.mjs staged
   # for this OS and architecture. ${os} is mac or win.
   extraResources:

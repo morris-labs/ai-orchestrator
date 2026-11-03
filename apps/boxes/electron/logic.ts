@@ -1,5 +1,6 @@
 // Pure logic of the Electron main process, kept apart from `electron` so
 // that tests can run it under Node.
+import { win32 } from "node:path";
 import type { BoxView, Notification, NotificationKind } from "@aio/contracts";
 import { isAppPage } from "@aio/ui/core";
 
@@ -377,36 +378,59 @@ export function cliAttachArgs(req: {
 const WINDOWS_SAFE = /^[A-Za-z0-9._:\\/ -]+$/;
 
 /**
+ * Characters that stay special in a quoted path: `%` because `cmd.exe` and
+ * Windows Terminal expand variables, `;` because Windows Terminal splits
+ * subcommands on it, and `"` and control characters because they end or
+ * break the quoting. Any other character that a Windows path can hold is
+ * safe, including parentheses, apostrophes, and non-ASCII letters.
+ */
+const WINDOWS_PATH_UNSAFE = /[";%\p{Cc}]/u;
+
+/**
+ * The bundled `aio` CLI as Node.js and its entry point, under the package's
+ * resources folder. A console runs these directly, because Windows starts
+ * `aio.cmd` through `cmd.exe /c`, which drops the quotes around a path with
+ * both a space and a parenthesis, such as `C:\\Program Files (x86)`.
+ */
+export function windowsBundledCli(resourcesPath: string): string[] {
+  const runtime = win32.join(resourcesPath, "runtime");
+  return [win32.join(runtime, "node", "node.exe"), win32.join(runtime, "cli", "dist", "main.js")];
+}
+
+/**
  * The command that opens a box in a new console on Windows. The server's
  * attach argv holds a bash script with `&&`, quotes, and `;`, which
  * `cmd.exe` and Windows Terminal would both parse, so the console runs the
- * `aio` CLI instead, whose arguments are plain words. Windows Terminal
- * (`wt.exe`) opens it when it's installed; otherwise `cmd.exe start` opens
- * a console window. `verbatim` means the caller must pass the arguments
- * without Node.js quoting them (`windowsVerbatimArguments`).
+ * `aio` CLI instead, whose arguments are plain words. `cli` holds the
+ * program and any script it runs. Windows Terminal (`wt.exe`) opens it when
+ * it's installed; otherwise `cmd.exe start` opens a console window.
+ * `verbatim` means the caller must pass the arguments without Node.js
+ * quoting them (`windowsVerbatimArguments`).
  *
  * Returns `null` when an argument has a character either one would parse.
  */
 export function windowsTerminalCommand(
-  cli: string,
+  cli: readonly string[],
   args: readonly string[],
   title: string,
   hasWindowsTerminal: boolean,
 ): { file: string; args: string[]; verbatim: boolean } | null {
-  if (![cli, title, ...args].every((a) => WINDOWS_SAFE.test(a))) return null;
+  if (cli.some((p) => WINDOWS_PATH_UNSAFE.test(p))) return null;
+  if (![title, ...args].every((a) => WINDOWS_SAFE.test(a))) return null;
   if (hasWindowsTerminal) {
     return {
       file: "wt.exe",
-      args: ["-w", "new", "new-tab", "--title", title, cli, ...args],
+      args: ["-w", "new", "new-tab", "--title", title, ...cli, ...args],
       verbatim: false,
     };
   }
   // cmd /s /c "start "TITLE" "CLI" ARGS": /s strips the outer quotes, and
   // start reads the first quoted word as the window title.
   const quoted = (s: string) => `"${s}"`;
+  const command = [quoted(title), ...cli.map(quoted), ...args].join(" ");
   return {
     file: "cmd.exe",
-    args: ["/d", "/s", "/c", quoted(`start ${quoted(title)} ${quoted(cli)} ${args.join(" ")}`)],
+    args: ["/d", "/s", "/c", quoted(`start ${command}`)],
     verbatim: true,
   };
 }

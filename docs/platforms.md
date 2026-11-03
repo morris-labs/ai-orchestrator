@@ -146,7 +146,8 @@ Windows:
   Dock icon shows its window.
 - On Windows each app sets its AppUserModelID to its `appId`, so
   notifications belong to the Start menu shortcut.
-- External terminals open in Terminal.app on macOS. On Windows they open
+- External terminals open in Terminal.app on macOS, and macOS asks you to
+  allow the Boxes app to control Terminal the first time. On Windows they open
   the `aio` CLI in Windows Terminal, or in a console window when Windows
   Terminal isn't installed.
 - The Boxes app starts the Review app through its `aio-review://` link on
@@ -355,7 +356,9 @@ Signing isn't set up. Until it is, the following applies:
   or `CSC_NAME` isn't set. Gatekeeper refuses them on another Mac. To sign,
   set those variables to a Developer ID Application certificate; to
   notarize, add `notarize` settings and an App Store Connect API key. The
-  hardened runtime entitlements are in `packaging/mac/entitlements.plist`.
+  hardened runtime entitlements are in `packaging/mac/entitlements.plist`,
+  and the Boxes app's main process adds Apple Events to them in
+  `packaging/mac/entitlements-boxes.plist`.
   The bundled `node` binary must be signed with the app's identity too.
 - Windows: the installers and `aio-serverw.exe` are unsigned, and
   SmartScreen warns. Changing the PE subsystem of `node.exe` removes the
