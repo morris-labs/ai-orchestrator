@@ -435,6 +435,14 @@ export async function startHubProxy(hub: HubEnrollment): Promise<HubProxy> {
       return refuse("403 Forbidden");
     }
     if (!authorized(req)) return refuse("401 Unauthorized");
+    // Nothing else reads the app's socket until the hub answers, and a socket
+    // that isn't read never reports its close. Read it now and keep the bytes.
+    const early: Buffer[] = head.length > 0 ? [head] : [];
+    const keepEarly = (chunk: Buffer) => early.push(chunk);
+    const closeOnEnd = () => socket.destroy();
+    socket.on("data", keepEarly);
+    socket.once("end", closeOnEnd);
+    open.add(socket);
     const out = https.request({
       ...upstream,
       ...tlsOptions,
@@ -447,16 +455,20 @@ export async function startHubProxy(hub: HubEnrollment): Promise<HubProxy> {
         upgrade: "websocket",
       },
     });
+    socket.once("close", () => {
+      open.delete(socket);
+      out.destroy();
+    });
     out.on("upgrade", (answer, hubSocket, hubHead) => {
+      socket.off("data", keepEarly);
+      socket.off("end", closeOnEnd);
       const lines = ["HTTP/1.1 101 Switching Protocols"];
       for (let i = 0; i < answer.rawHeaders.length; i += 2) {
         lines.push(`${answer.rawHeaders[i]}: ${answer.rawHeaders[i + 1]}`);
       }
       socket.write(`${lines.join("\r\n")}\r\n\r\n`);
       if (hubHead.length > 0) socket.write(hubHead);
-      if (head.length > 0) hubSocket.write(head);
-      open.add(socket);
-      socket.once("close", () => open.delete(socket));
+      for (const chunk of early) hubSocket.write(chunk);
       hubSocket.on("error", () => socket.destroy());
       hubSocket.once("close", () => socket.destroy());
       socket.once("close", () => hubSocket.destroy());

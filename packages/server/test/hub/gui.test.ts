@@ -4,6 +4,8 @@
 import fs from "node:fs";
 import http from "node:http";
 import https from "node:https";
+import net from "node:net";
+import type { Duplex } from "node:stream";
 import path from "node:path";
 import { GUI_ENROLL_PATH, guiClientProof, guiCodeKey } from "@aio/contracts/gui-enroll";
 import { pinFromPem, pinnedFetch } from "@aio/contracts/tls";
@@ -19,7 +21,12 @@ import {
 import { startApp, type App } from "../../src/api/app.js";
 import { createCore } from "../../src/core.js";
 import { MemoryDocker } from "../../src/docker/memory.js";
-import { issueNodeCertificate, newNodeKey } from "../../src/hub/ca.js";
+import {
+  issueGuiCertificate,
+  issueNodeCertificate,
+  loadOrCreateHubIdentity,
+  newNodeKey,
+} from "../../src/hub/ca.js";
 import { waitFor } from "../events/fake-engine.js";
 import { FakeExec } from "../api/harness.js";
 import { FakeRunner } from "../setup/fake-runner.js";
@@ -33,11 +40,18 @@ type Json = any;
 const apps: App[] = [];
 const proxies: HubProxy[] = [];
 const sockets: WebSocket[] = [];
+const hubs: https.Server[] = [];
+const hubSockets: Duplex[] = [];
 
 afterEach(async () => {
   for (const ws of sockets.splice(0)) ws.terminate();
   for (const proxy of proxies.splice(0)) await proxy.close();
   for (const app of apps.splice(0)) await app.close();
+  for (const socket of hubSockets.splice(0)) socket.destroy();
+  for (const hub of hubs.splice(0)) {
+    hub.closeAllConnections();
+    await new Promise((resolve) => hub.close(resolve));
+  }
 });
 
 interface Server {
@@ -441,5 +455,73 @@ describe("GUI to hub to node to box", () => {
       headers: { authorization: `Bearer ${proxy.token}` },
     });
     expect(res.status).toBe(502);
+  });
+});
+
+describe("a socket upgrade the hub hasn't answered", () => {
+  /** A hub that accepts upgrades and never answers them, and a proxy to it. */
+  async function silentHub() {
+    const dir = fs.realpathSync(tempDir("aio-gui-silent-"));
+    const identity = await loadOrCreateHubIdentity(dir);
+    const pending: Duplex[] = [];
+    const hub = https.createServer({ key: identity.link.key, cert: identity.link.cert });
+    hub.on("upgrade", (_req, socket: Duplex) => {
+      socket.on("error", () => undefined);
+      pending.push(socket);
+      hubSockets.push(socket);
+    });
+    await new Promise<void>((resolve) => hub.listen(0, "127.0.0.1", resolve));
+    hubs.push(hub);
+    const { key, publicKey } = newNodeKey();
+    const proxy = await startHubProxy({
+      hubUrl: `https://127.0.0.1:${(hub.address() as net.AddressInfo).port}`,
+      clientId: "client-1",
+      name: "desk-pc",
+      clientKey: key,
+      clientCert: issueGuiCertificate(identity.ca, "client-1", publicKey),
+      caCert: identity.ca.cert,
+      hubCert: identity.link.cert,
+    });
+    proxies.push(proxy);
+    return { pending, proxy };
+  }
+
+  /** Sends an upgrade request to the proxy and waits for the hub to receive it. */
+  async function openPending(pending: Duplex[], proxy: HubProxy): Promise<net.Socket> {
+    const { hostname, port } = new URL(proxy.url);
+    const app = net.connect(Number(port), hostname);
+    app.on("error", () => undefined);
+    app.write(
+      `GET /api/v1/events HTTP/1.1\r\nHost: ${hostname}:${port}\r\n` +
+        `Authorization: Bearer ${proxy.token}\r\nConnection: Upgrade\r\n` +
+        "Upgrade: websocket\r\n\r\n",
+    );
+    await waitFor(() => pending.length === 1);
+    return app;
+  }
+
+  it("aborts the hub request when the app destroys its socket", async () => {
+    const { pending, proxy } = await silentHub();
+    const app = await openPending(pending, proxy);
+    app.destroy();
+    await waitFor(() => pending[0]?.destroyed === true);
+  });
+
+  it("aborts the hub request when the app ends its socket", async () => {
+    const { pending, proxy } = await silentHub();
+    const app = await openPending(pending, proxy);
+    app.end();
+    await waitFor(() => pending[0]?.destroyed === true);
+    await waitFor(() => app.destroyed);
+  });
+
+  it("closes both sockets when the proxy closes", async () => {
+    const { pending, proxy } = await silentHub();
+    const app = await openPending(pending, proxy);
+    const closed = new Promise<void>((resolve) => app.once("close", () => resolve()));
+    app.resume();
+    await proxy.close();
+    await closed;
+    await waitFor(() => pending[0]?.destroyed === true);
   });
 });
