@@ -84,6 +84,19 @@ describe("adoptTranscripts", () => {
     expect(r).toMatchObject({ status: "unchanged", moved: 0 });
   });
 
+  it("keeps a store that is itself a link", () => {
+    const l = layout();
+    const real = path.join(l.home, "real-store");
+    write(path.join(real, "-a", "u.jsonl"), "x");
+    fs.mkdirSync(path.dirname(l.store), { recursive: true });
+    fs.symlinkSync(real, l.store);
+    fs.symlinkSync(l.store, l.projects);
+    const r = adoptTranscripts({ home: l.home, store: l.store, dryRun: false });
+    expect(r).toMatchObject({ status: "unchanged", moved: 0 });
+    expect(fs.lstatSync(l.store).isSymbolicLink()).toBe(true);
+    expect(fs.readFileSync(path.join(l.projects, "-a", "u.jsonl"), "utf8")).toBe("x");
+  });
+
   it("merges without overwriting and treats identical files as duplicates", () => {
     const l = layout();
     write(path.join(l.projects, "-a", "same.jsonl"), "same");

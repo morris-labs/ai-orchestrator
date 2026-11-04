@@ -202,15 +202,16 @@ export function adoptTranscripts(input: AdoptInput): AdoptReport {
 
   const directLink =
     st?.isSymbolicLink() === true &&
-    chain.length === 1 &&
     path.resolve(path.dirname(projects), fs.readlinkSync(projects)) === path.resolve(store);
   const needsMove = report.source !== undefined;
   const needsLink = !directLink;
-  // An intermediate link goes only when it points at the store itself.
+  // An intermediate link goes only when it points at the store itself. The
+  // store's own path stays, even as a link, because `projects` ends up on it.
   const redundant = chain
     .slice(1)
     .filter(
       (l) =>
+        path.resolve(l) !== path.resolve(store) &&
         lstatOrUndefined(l)?.isSymbolicLink() === true &&
         sameLocation(path.resolve(path.dirname(l), fs.readlinkSync(l)), realStore),
     );
