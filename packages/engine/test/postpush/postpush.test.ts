@@ -678,6 +678,8 @@ describe("post-push helpers", () => {
     expect(severityFromText("This looks wrong")).toBe("P2");
     expect(isCopilotLogin("Copilot")).toBe(true);
     expect(isCopilotLogin("copilot-pull-request-reviewer[bot]")).toBe(true);
+    expect(isCopilotLogin("copilot-pull-request-reviewer")).toBe(true);
+    expect(isCopilotLogin("copilot-pull-request-reviewer-x")).toBe(false);
     expect(isCopilotLogin("octocat")).toBe(false);
   });
 });

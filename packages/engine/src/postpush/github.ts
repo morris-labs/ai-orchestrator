@@ -99,7 +99,9 @@ export const COPILOT_REVIEWER = "copilot-pull-request-reviewer[bot]";
 /** True when `login` is Copilot's reviewer, in any of the forms GitHub returns. */
 export function isCopilotLogin(login: string): boolean {
   const l = login.toLowerCase();
-  return l === "copilot" || l.startsWith("copilot-pull-request-reviewer");
+  return (
+    l === "copilot" || l === "copilot-pull-request-reviewer" || l === COPILOT_REVIEWER.toLowerCase()
+  );
 }
 
 const PR_FIELDS = "number,url,headRefName,baseRefName,headRefOid,state,author,isCrossRepository";
