@@ -33,6 +33,8 @@ depends:
   - nodejs (>= 22)
   - nodejs (<< 23)
   - docker.io | docker-ce
+  # The image's Dockerfile uses COPY --chmod, which needs BuildKit.
+  - docker-buildx | docker-buildx-plugin
   - tmux
   - git
   - openssh-client

@@ -19,7 +19,8 @@ You need the following:
   depends on Node.js 22 exactly: the server's SQLite module is compiled for
   that version.
 - Docker Engine, from the `docker.io` or `docker-ce` package, with your user
-  in the `docker` group.
+  in the `docker` group, and BuildKit, from the `docker-buildx` or
+  `docker-buildx-plugin` package. The package depends on both.
 - A Claude account signed in to Claude Code on the host, so that
   `~/.claude` and `~/.claude.json` exist. Every container mounts them.
 - Optional: the 1Password CLI (`op`), if your projects use secrets. For more

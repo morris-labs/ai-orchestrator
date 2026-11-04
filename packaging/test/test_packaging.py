@@ -112,7 +112,7 @@ class NfpmConfigTest(unittest.TestCase):
 
     def test_depends(self):
         depends = self.config["depends"]
-        for dep in ("nodejs (>= 22)", "docker.io | docker-ce", "tmux", "git", "openssh-client"):
+        for dep in ("nodejs (>= 22)", "docker.io | docker-ce", "docker-buildx | docker-buildx-plugin", "tmux", "git", "openssh-client"):
             self.assertIn(dep, depends)
 
     def test_contents_are_unique_and_staged(self):
@@ -1221,7 +1221,7 @@ class NfpmBuildTest(unittest.TestCase):
             info = subprocess.run([dpkg_deb, "--field", str(deb)], check=True, capture_output=True, text=True).stdout
             self.assertIn("Package: ai-orchestrator", info)
             self.assertIn("Version: 1.0.0~test", info)
-            self.assertIn("Depends: nodejs (>= 22), nodejs (<< 23), docker.io | docker-ce, tmux, git, openssh-client", info)
+            self.assertIn("Depends: nodejs (>= 22), nodejs (<< 23), docker.io | docker-ce, docker-buildx | docker-buildx-plugin, tmux, git, openssh-client", info)
             listing = subprocess.run([dpkg_deb, "--contents", str(deb)], check=True, capture_output=True, text=True).stdout
             self.assertIn("./usr/bin/aio-boxes -> /usr/lib/ai-orchestrator/boxes/aio-boxes", listing)
             self.assertIn("./usr/lib/ai-orchestrator/server/link -> placeholder.txt", listing)

@@ -206,6 +206,9 @@ if ((PRINT)); then
 fi
 
 require_tool docker "Install Docker Engine (docker.io or docker-ce) and add your user to the docker group."
+# The Dockerfile uses COPY --chmod, which the legacy builder rejects.
+docker buildx version > /dev/null 2>&1 ||
+  die "The image build needs BuildKit. Install the docker-buildx or docker-buildx-plugin package."
 log "Building image $TAG for user $USER_NAME"
 # Replace this shell with the docker client, so a signal to the job reaches it.
 exec "${CMD[@]}"
