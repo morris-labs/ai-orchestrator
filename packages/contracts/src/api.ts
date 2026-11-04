@@ -67,6 +67,7 @@ import {
 import {
   ApiErrorSchema,
   CommitShaSchema,
+  AccountIdSchema,
   EffortSchema,
   EnvVarNameSchema,
   IsoDateTimeSchema,
@@ -1418,7 +1419,7 @@ export const serverRoutes = {
     query: z.object({
       dir: z.string().optional(),
       /** A Claude account id; absent means the default account. */
-      account: z.string().optional(),
+      account: AccountIdSchema.optional(),
     }),
     response: ModelsResultSchema,
   }),

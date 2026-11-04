@@ -5,7 +5,7 @@
 // listens on a port itself.
 import fs from "node:fs";
 import path from "node:path";
-import type { ImageStatus, Platform } from "@aio/contracts";
+import { AccountIdSchema, type ImageStatus, type Platform } from "@aio/contracts";
 import { apiCoreOf, relayEvents, wireHooks } from "./api/core-adapter.js";
 import type { Core as ApiCore, CoreFactoryOptions } from "./api/core-interface.js";
 import { AccountService } from "./accounts/service.js";
@@ -187,7 +187,7 @@ export function createServerCore(options: CoreOptions): ServerCore {
     claudeHome: (account) => {
       if (settings.get().accountsMode !== "accounts") return undefined;
       const id = account ?? settings.get().accountDefaults.claude;
-      if (!id?.startsWith("claude/")) return undefined;
+      if (!id?.startsWith("claude/") || !AccountIdSchema.safeParse(id).success) return undefined;
       const dir = accountDirFor(env, "claude", id.slice("claude/".length));
       return { dir, json: path.join(dir, ".claude.json") };
     },
