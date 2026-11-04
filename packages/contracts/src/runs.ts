@@ -600,23 +600,17 @@ interface Rate {
   runs: Set<string>;
 }
 
-function median(values: readonly number[]): number {
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = sorted.length >> 1;
-  return sorted.length % 2
-    ? (sorted[mid] as number)
-    : ((sorted[mid - 1] as number) + (sorted[mid] as number)) / 2;
-}
-
 /** A rate from per-group figures of past runs, or from one figure with a spread. */
 function rateFrom(
-  samples: readonly { runId: string; perGroup: number }[],
+  samples: readonly { runId: string; perGroup: number; groups: number }[],
   spread: { low: number; high: number },
 ): Rate | null {
   const recent = samples.slice(-SAMPLE_LIMIT);
   if (recent.length === 0) return null;
   const values = recent.map((s) => s.perGroup);
-  const value = median(values);
+  // Weighted by groups, so a small run can't outvote a large one.
+  const groups = recent.reduce((n, s) => n + s.groups, 0);
+  const value = recent.reduce((n, s) => n + s.perGroup * s.groups, 0) / groups;
   const runs = new Set(recent.map((s) => s.runId));
   return recent.length === 1
     ? { value, low: value * spread.low, high: value * spread.high, runs }
@@ -657,7 +651,7 @@ export function estimateRunTokens(input: RunTokenEstimateInput): RunTokenEstimat
     const measured = matching.flatMap((s) =>
       s.review
         .filter((r) => r.vendor === vendor && r.tier === (tier ?? null) && r.groups > 0)
-        .map((r) => ({ runId: s.runId, perGroup: r.tokens / r.groups })),
+        .map((r) => ({ runId: s.runId, perGroup: r.tokens / r.groups, groups: r.groups })),
     );
     const own = rateFrom(measured, REVIEW_SPREAD);
     if (own) return own;
@@ -725,7 +719,7 @@ export function estimateRunTokens(input: RunTokenEstimateInput): RunTokenEstimat
   const staged = input.groups.length - older.groups;
   const stageLine = (
     label: string,
-    measured: readonly { runId: string; perGroup: number }[],
+    measured: readonly { runId: string; perGroup: number; groups: number }[],
     starting: number,
   ): void => {
     if (staged === 0) return;
@@ -740,7 +734,9 @@ export function estimateRunTokens(input: RunTokenEstimateInput): RunTokenEstimat
     });
   };
   const perGroup = (pick: (s: RunTokenSample) => number, from: readonly RunTokenSample[]) =>
-    from.filter((s) => s.groups > 0).map((s) => ({ runId: s.runId, perGroup: pick(s) / s.groups }));
+    from
+      .filter((s) => s.groups > 0)
+      .map((s) => ({ runId: s.runId, perGroup: pick(s) / s.groups, groups: s.groups }));
   stageLine(
     "Verification",
     perGroup((s) => s.verificationTokens, matching),

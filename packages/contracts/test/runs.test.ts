@@ -132,6 +132,22 @@ describe("runs", () => {
       expect(made.basis).toMatch(/based on 3 runs/);
     });
 
+    it("weights history by each run's groups", () => {
+      const small = { ...sample("a", 900_000), groups: 1 };
+      small.review = [{ vendor: "claude", tier: "medium", tokens: 900_000, groups: 1 }];
+      const large = { ...sample("b", 100_000), groups: 99 };
+      large.review = [{ vendor: "claude", tier: "medium", tokens: 9_900_000, groups: 99 }];
+      const made = estimateRunTokens({
+        depth: "standard",
+        scope: "whole",
+        effort: "high",
+        readOnly: true,
+        groups: groups(10),
+        history: [small, large],
+      });
+      expect(made.lines[0]?.tokens).toBe(1_080_000);
+    });
+
     it("ignores runs with another effort, scope, or depth", () => {
       const made = estimateRunTokens({
         depth: "standard",
