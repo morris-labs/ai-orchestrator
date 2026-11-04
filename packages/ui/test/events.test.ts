@@ -84,6 +84,20 @@ describe("EventsConnection", () => {
     expect(events).toEqual(["box.changed#1", "box.changed#2"]);
   });
 
+  it("steps past an event it can't decode instead of asking for it again", async () => {
+    const { server, conn, events } = setup();
+    conn.start();
+    await flush();
+    const sock = server.socketsFor("/api/v1/events")[0] as FakeSocket;
+    server.emit(boxEvent());
+    const { streamId } = conn as unknown as { streamId: string };
+    conn.handleFrame({ type: "from.the.future", streamId, seq: 2 });
+    const sent = sock.sentJson.length;
+    conn.handleFrame({ ...boxEvent(), streamId, seq: 3 });
+    expect(sock.sentJson).toHaveLength(sent);
+    expect(events).toHaveLength(2);
+  });
+
   it("replays after a reconnect without resyncing", async () => {
     const { server, conn, events, onResync, timers } = setup();
     conn.start();

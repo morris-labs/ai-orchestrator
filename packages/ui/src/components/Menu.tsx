@@ -86,6 +86,8 @@ export function MenuList({ entries, x, y, onClose, label, nested }: MenuListProp
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
     e.preventDefault();
+    // A submenu sits inside its parent's list; keep the parent from moving focus too.
+    e.stopPropagation();
     const items = [
       ...(ref.current?.querySelectorAll<HTMLButtonElement>(":scope > button:not(:disabled)") ?? []),
     ];
