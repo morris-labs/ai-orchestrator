@@ -46,6 +46,9 @@ describe("parseDevEngines", () => {
       `${A}=127.0.0.1:20599:short`,
       `${A}=${TOKEN}`,
       `${A}=127.0.0.1:20599:${TOKEN},${A}=127.0.0.1:20600:${TOKEN}`,
+      `127.0.0.1:20599:${TOKEN}=`,
+      `${A}=127.0.0.1:${TOKEN}:more`,
+      `${A}=${TOKEN}:1:more`,
     ];
     for (const value of bad) {
       let message = "";

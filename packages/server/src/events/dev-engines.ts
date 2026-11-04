@@ -40,7 +40,7 @@ export function parseDevEngines(value: string | undefined): EngineEndpoint[] {
     if (eq <= 0) throw new Error(`${where} must have the form projectId=host:port:token.`);
     const projectId = entry.slice(0, eq);
     if (!PROJECT_ID.test(projectId)) {
-      throw new Error(`${where} has an invalid project id, ${projectId}.`);
+      throw new Error(`${where} has an invalid project id.`);
     }
     const rest = entry.slice(eq + 1);
     const tokenAt = rest.lastIndexOf(":");
@@ -50,11 +50,11 @@ export function parseDevEngines(value: string | undefined): EngineEndpoint[] {
     const portText = rest.slice(portAt + 1, tokenAt);
     const token = rest.slice(tokenAt + 1);
     if (!isLoopbackHost(host)) {
-      throw new Error(`${where} names ${host}; a development engine must be on a loopback host.`);
+      throw new Error(`${where} must name a loopback host.`);
     }
     const port = Number(portText);
     if (!/^\d+$/.test(portText) || port < 1 || port > 65535) {
-      throw new Error(`${where} has an invalid port, ${portText}.`);
+      throw new Error(`${where} has an invalid port.`);
     }
     if (token.length < 16) {
       throw new Error(`${where} has a token shorter than 16 characters.`);
