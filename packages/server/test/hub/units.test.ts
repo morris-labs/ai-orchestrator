@@ -470,6 +470,17 @@ describe("the sign-in store", () => {
     expect(fs.readFileSync(file, "utf8")).toBe('{"t":"good"}');
   });
 
+  it("keeps a node's linked sign-in file when told to keep local changes", async () => {
+    const { file, open } = setup();
+    const target = `${file}.target`;
+    fs.writeFileSync(target, '{"t":"mine"}');
+    fs.symlinkSync(target, file);
+    const store = open();
+    expect(await store.write(entryOf(key, '{"t":"hub"}'), { keepLocalChange: true })).toBe(false);
+    expect(fs.lstatSync(file).isSymbolicLink()).toBe(true);
+    expect(fs.readFileSync(target, "utf8")).toBe('{"t":"mine"}');
+  });
+
   it("doesn't count a listed file as synced", async () => {
     const { file, open } = setup();
     fs.writeFileSync(file, '{"t":"1"}');

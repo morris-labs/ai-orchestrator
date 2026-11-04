@@ -96,6 +96,16 @@ export interface CredentialStoreOptions {
 }
 
 /** The synced files on one machine, and the version of each it last synced. */
+/** True unless nothing exists at `file`. A failed check counts as something there. */
+async function occupied(file: string): Promise<boolean> {
+  try {
+    await fs.lstat(file);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code !== "ENOENT";
+  }
+}
+
 export class CredentialStore {
   /** The hash of each file as it last synced, or as `prime` first found it. */
   private readonly known = new Map<string, string>();
@@ -287,8 +297,10 @@ export class CredentialStore {
       const current = await this.read(entry.key);
       const currentHash = current && sha(current);
       if (currentHash !== entry.sha256) {
-        if (options.keepLocalChange && currentHash && currentHash !== this.known.get(entry.key)) {
-          return false;
+        if (options.keepLocalChange) {
+          if (currentHash && currentHash !== this.known.get(entry.key)) return false;
+          // A link or an unreadable file reads as null but is still the node's own.
+          if (!current && (await occupied(file))) return false;
         }
         // The rename replaces a link in the file's place rather than following it.
         await writeAtomic(file, bytes, 0o600);
