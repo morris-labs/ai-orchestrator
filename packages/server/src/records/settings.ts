@@ -79,9 +79,11 @@ export class SettingsService {
 
   /**
    * Seeds the database from `~/.ai-orchestrator/config.json` the first time, when
-   * that file exists and no settings were saved yet. Returns whether it did.
+   * that file exists and no settings were saved yet. Returns whether it did. A
+   * file that isn't valid doesn't stop the server: `warn` gets a message, the
+   * defaults apply, and the next start tries the file again.
    */
-  seedFromConfigFile(): boolean {
+  seedFromConfigFile(warn?: (message: string) => void): boolean {
     if (this.repo.exists()) return false;
     const file = homePaths(this.env).config;
     let raw: string;
@@ -90,7 +92,14 @@ export class SettingsService {
     } catch {
       return false;
     }
-    this.repo.put(parseConfig(JSON.parse(raw)), this.env.now());
+    let config: ReturnType<typeof parseConfig>;
+    try {
+      config = parseConfig(JSON.parse(raw));
+    } catch {
+      warn?.(`The config file ${file} isn't valid, so the server uses default settings.`);
+      return false;
+    }
+    this.repo.put(config, this.env.now());
     return true;
   }
 

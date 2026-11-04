@@ -233,7 +233,7 @@ export function createServerCore(options: CoreOptions): ServerCore {
     },
     async start(startOptions = {}) {
       fs.mkdirSync(homePaths(env).dataDir, { recursive: true });
-      settings.seedFromConfigFile();
+      settings.seedFromConfigFile(options.log);
       let imported: ImportReport | null = null;
       if ((startOptions.importLegacy ?? true) && needsImport(env, db)) {
         imported = runImport({ env, repos: db });

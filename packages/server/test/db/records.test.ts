@@ -295,6 +295,16 @@ describe("SettingsService", () => {
     expect(repos.settings.get().serverPort).toBe(20450);
     expect(settings.seedFromConfigFile()).toBe(false);
   });
+
+  it.each(["{not json", '{"unknownKey":1}'])("warns and starts with defaults: %s", (text) => {
+    const { env, repos, settings } = setup();
+    fs.mkdirSync(path.join(env.home, ".ai-orchestrator"), { recursive: true });
+    fs.writeFileSync(path.join(env.home, ".ai-orchestrator", "config.json"), text);
+    const warnings: string[] = [];
+    expect(settings.seedFromConfigFile((m) => warnings.push(m))).toBe(false);
+    expect(warnings).toHaveLength(1);
+    expect(repos.settings.exists()).toBe(false);
+  });
 });
 
 describe("SshRemoteService", () => {
