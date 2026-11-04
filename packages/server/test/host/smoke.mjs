@@ -18,7 +18,7 @@ import {
   defaultHostEnv,
   homePaths,
   liveSessions,
-  projectsSymlinkTarget,
+  projectsLinkMounts,
   sessionStartCmd,
   toDockerRunArgs,
 } from "../../dist/core.js";
@@ -111,7 +111,7 @@ try {
       engine: { hostPort: 1, token: "x", version: engineVersion },
       secretNames: [],
     },
-    { projectsSymlinkTarget: projectsSymlinkTarget(env), hasGitconfig: false },
+    { projectsLinkMounts: projectsLinkMounts(env), hasGitconfig: false },
   );
   console.log(["docker", ...toDockerRunArgs(preview)].join(" "));
 

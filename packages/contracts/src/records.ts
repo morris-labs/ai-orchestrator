@@ -286,7 +286,8 @@ export const ProjectSettingsSchema = z.object({
   /** Bind mounts on top of the project root and the global mounts. */
   mounts: z.array(MountSchema),
   /** Secrets injected into the project's container at launch. */
-  secretRefs: z.array(SecretRefSchema),
+  // A stored row from before this field existed has none.
+  secretRefs: z.array(SecretRefSchema).default([]),
   /** Per-vendor ceilings that replace the global ones for runs in this project. */
   ceilingsOverride: CeilingsOverrideSchema.optional(),
   /** Policy file path, relative to `root` unless absolute. */

@@ -1,5 +1,4 @@
-// The finding schema from the review pipeline design
-// (`~/Bin/Code Review Pipeline/docs/design.md`, "Finding schema"), extended
+// The finding schema from the review pipeline design, extended
 // with the run, round, file group, hunk ledger, and verdict history.
 //
 // Vendors return findings in the design's snake_case JSON
