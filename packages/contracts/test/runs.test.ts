@@ -145,7 +145,8 @@ describe("runs", () => {
         groups: groups(10),
         history: [small, large],
       });
-      expect(made.lines[0]?.tokens).toBe(1_080_000);
+      // 108,000 per group, rounded to two figures. Unweighted, it would be 5,000,000.
+      expect(made.lines[0]?.tokens).toBe(1_100_000);
     });
 
     it("ignores runs with another effort, scope, or depth", () => {
