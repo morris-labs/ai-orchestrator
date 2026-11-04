@@ -78,7 +78,8 @@ export class RepoService {
       name: path.basename(repo),
       currentBranch: branch.code === 0 && branch.stdout.trim() !== "" ? branch.stdout.trim() : null,
       headSha: head.code === 0 && head.stdout.trim() !== "" ? head.stdout.trim() : null,
-      dirty: status.code === 0 && status.stdout.trim() !== "",
+      // A status that failed or timed out says nothing, so don't call the tree clean.
+      dirty: status.code !== 0 || status.stdout.trim() !== "",
     };
   }
 
