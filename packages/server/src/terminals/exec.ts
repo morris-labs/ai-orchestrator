@@ -98,6 +98,10 @@ export class DockerExecBackend implements ExecBackend {
       Tty: true,
       Env: [...TERMINAL_ENV, `${TERMINAL_ID_ENV}=${terminalId}`, ...(request.env ?? [])],
       WorkingDir: request.workingDir,
+      // Docker's default, Ctrl-P Ctrl-Q, swallows Ctrl-P in the terminal and can
+      // drop the stream. A session has no use for detaching, so pick keys that
+      // nothing presses.
+      DetachKeys: "ctrl-^,ctrl-@",
       ConsoleSize: [request.rows, request.cols],
     });
     const stream = await exec.start({ hijack: true, stdin: true, Tty: true });

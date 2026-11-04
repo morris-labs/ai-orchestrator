@@ -66,6 +66,8 @@ describe("ssh arguments", () => {
       "-o",
       "BatchMode=yes",
       "-o",
+      "ConnectTimeout=15",
+      "-o",
       "ExitOnForwardFailure=yes",
       "-o",
       "ServerAliveInterval=15",
@@ -173,6 +175,7 @@ describe("SshTunnelManager", () => {
       runner,
       remotes: async () => list.remotes,
       reconnectDelaysMs: [10, 20],
+      upAfterMs: 0,
     });
     return { runner, list };
   }
@@ -210,6 +213,14 @@ describe("SshTunnelManager", () => {
     expect(runner.spawned).toHaveLength(2);
     expect(runner.spawned[0]?.killed).toBe(true);
     expect(runner.spawned[1]?.argv).not.toContain("-L");
+  });
+
+  it("doesn't call a tunnel up until ssh has run for a while", async () => {
+    const { runner, list } = setup([remote]);
+    manager = new SshTunnelManager({ runner, remotes: async () => list.remotes, upAfterMs: 20 });
+    await manager.sync([{ id: "aio-agent-a", sshRemoteRefs: ["dev"] }]);
+    expect(manager.status("dev").tunnelUp).toBe(false);
+    await waitFor(() => manager.status("dev").tunnelUp);
   });
 
   it("reconnects with backoff and keeps the error", async () => {

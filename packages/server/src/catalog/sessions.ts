@@ -129,6 +129,8 @@ export async function liveModelAndEffort(
         continue; // a partial first line
       }
       if (obj === null || typeof obj !== "object" || obj.type !== "assistant") continue;
+      // A subagent's line names the subagent's model, not the box's.
+      if (obj.isSidechain === true) continue;
       let model = str(obj.requestedModel);
       if (model === "") {
         const message = obj.message;

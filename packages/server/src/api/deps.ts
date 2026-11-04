@@ -6,6 +6,7 @@ import type {
   EventType,
   Job,
   Notification,
+  Finding,
   RunState,
   SetupCheck,
   TimedUsageSample,
@@ -82,6 +83,7 @@ export interface ApiRuns {
   /** Why `run` doesn't belong to the engine at `endpoint`, or `null` when it does. */
   foreignReason(endpoint: ApiEngine["endpoint"], run: RunState): string | null;
   get(runId: string): RunState | undefined;
+  findings?(runId: string): Finding[];
   list(query: { projectId?: string; boxId?: string; status?: RunState["status"] }): RunState[];
 }
 
@@ -100,6 +102,7 @@ export interface ApiDeps {
     vendors(): z.infer<typeof VendorUsageSchema>[];
     clear(vendor: Vendor, account?: string): Promise<number>;
     samples(query: { vendor?: Vendor; since?: string; until?: string }): TimedUsageSample[];
+    forgetAccount?(vendor: Vendor, account: string): void;
   };
   notifications: {
     list(query: { unread?: boolean }): Notification[];

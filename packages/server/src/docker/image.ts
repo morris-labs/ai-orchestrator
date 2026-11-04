@@ -91,6 +91,7 @@ export class ImageVersions {
       const v = info.labels[IMAGE_LABELS[key]];
       if (v) versions[key] = v.trim();
     }
+    let settled = true;
     if (Object.keys(versions).length < Object.keys(VERSION_FILES).length) {
       try {
         const r = await this.docker.runOnce({
@@ -106,12 +107,16 @@ export class ImageVersions {
           ][]) {
             versions[k] ??= v;
           }
+        } else {
+          settled = false;
         }
       } catch {
         // An image that cannot run keeps what its labels said.
+        settled = false;
       }
     }
-    this.cache.set(info.id, versions);
+    // A failed probe says nothing about the image, so the next read tries again.
+    if (settled) this.cache.set(info.id, versions);
     return { imageId: info.id, versions };
   }
 }

@@ -233,7 +233,8 @@ export function createServerCore(options: CoreOptions): ServerCore {
     },
     async start(startOptions = {}) {
       fs.mkdirSync(homePaths(env).dataDir, { recursive: true });
-      settings.seedFromConfigFile(options.log);
+      // A bad config file means the defaults apply, so always say so.
+      settings.seedFromConfigFile(options.log ?? ((message) => console.warn(message)));
       let imported: ImportReport | null = null;
       if ((startOptions.importLegacy ?? true) && needsImport(env, db)) {
         imported = runImport({ env, repos: db });

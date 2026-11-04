@@ -34,6 +34,7 @@ import { brokerDirFor, dataDirOf, dataPath } from "../records/env.js";
 import { MultiHost, type MachineRole, type MultiHostOptions } from "../hub/multihost.js";
 import { SetupService } from "../setup/setup-service.js";
 import { UpdateChecker } from "../setup/updates.js";
+import { RELEASE_EDITS_MESSAGE } from "./handlers.js";
 import { SshTunnelManager, startCopyIdJob, testConnection } from "../ssh/tunnels.js";
 import { currentPlatform, serviceManagerOf, type HostPlatform } from "../platform/host.js";
 import { installServerService, serverServiceInstalled } from "../service/index.js";
@@ -197,7 +198,16 @@ export async function startApp(options: AppOptions): Promise<App> {
     runRound: (runId) => runMirror.round(runId),
     emit: (e) => hub.emit(e),
   });
-  const notifier = new Notifier({ db: core.db, settings, emit: (e) => hub.emit(e) });
+  const notifier = new Notifier({
+    db: core.db,
+    settings,
+    emit: (e) => hub.emit(e),
+    releaseBox: (boxId) => {
+      void core.boxes.message(boxId, RELEASE_EDITS_MESSAGE).catch((err: unknown) => {
+        log(`Telling ${boxId} that the run ended failed: ${(err as Error).message}`);
+      });
+    },
+  });
   let apiServer: ApiServer | null = null;
   const multiHost = new MultiHost({
     home: options.home,
@@ -292,6 +302,7 @@ export async function startApp(options: AppOptions): Promise<App> {
     decideLease: (engineKey, projectId, request) => scheduler.decide(engineKey, projectId, request),
     onRuns: (list) => list.forEach((run) => runMirror.upsert(run)),
     onFindings: (runId, findings) => runMirror.replaceFindings(runId, findings),
+    onPorts: (container, listeners) => ports.set(container, listeners),
     onStreamReset: (engineKey) => scheduler.forget(engineKey),
     log,
     intervalMs: options.engineIntervalMs,
@@ -400,6 +411,7 @@ export async function startApp(options: AppOptions): Promise<App> {
     engines,
     usage: {
       vendors: () => usage.vendors(),
+      forgetAccount: (vendor, account) => void usageStore.removeAccount(vendor, account),
       clear: async (vendor, account) =>
         usage.clear(
           vendor,

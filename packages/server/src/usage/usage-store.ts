@@ -148,6 +148,14 @@ export class UsageStore {
     return Number(r.changes);
   }
 
+  /** Removes the samples of an account that no longer exists. */
+  removeAccount(vendor: Vendor, account: string): number {
+    const r = this.db
+      .prepare("DELETE FROM svc_usage_samples WHERE vendor = ? AND account = ?")
+      .run(vendor, account);
+    return Number(r.changes);
+  }
+
   /** The accounts a vendor has samples for, sorted. */
   accounts(vendor: Vendor): string[] {
     return (

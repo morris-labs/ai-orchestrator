@@ -43,11 +43,13 @@ export function ceilingLimit(ceiling: Ceiling): number {
 
 /**
  * Whether a sample is at or over its ceiling. A sample whose `resetAt` has
- * passed counts as reset, so it is never over.
+ * passed counts as reset, so it is never over, except against a ceiling of
+ * zero, which is a choice not to use the vendor at all.
  */
 export function sampleIsOver(sample: TimedUsageSample, ceiling: Ceiling, nowMs: number): boolean {
   if (sample.window !== ceilingWindow(ceiling)) return false;
-  if (sample.resetAt !== null && Date.parse(sample.resetAt) <= nowMs) return false;
+  if (ceilingLimit(ceiling) > 0 && sample.resetAt !== null && Date.parse(sample.resetAt) <= nowMs)
+    return false;
   const { value, limit } = scale(sample, ceiling);
   return value >= limit;
 }

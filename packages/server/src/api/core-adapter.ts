@@ -196,7 +196,11 @@ export function apiCoreOf(server: ServerCore, dockerApi: Docker): Core {
       list: async () => {
         const endpoints: EngineEndpoint[] = [];
         for (const e of server.db.engines.list()) {
-          const inspect = await server.docker.inspectContainer(e.container).catch(() => null);
+          // `inspectContainer` answers null for a missing container. A failed
+          // inspect says nothing, so a Docker blip keeps the engine's client.
+          const inspect = await server.docker
+            .inspectContainer(e.container)
+            .catch(() => ({ running: true }));
           if (!inspect?.running) continue;
           endpoints.push({
             container: e.container,

@@ -16,6 +16,8 @@ export interface NotifierOptions {
   db: SqlDatabase;
   settings: () => GlobalSettings;
   emit: (event: EventInput) => AioEvent;
+  /** Tells a box's session that the run holding its edits has ended. */
+  releaseBox?: (boxId: string) => void;
   idFn?: () => string;
 }
 
@@ -48,6 +50,9 @@ export class Notifier {
     const label = run.request.tip ?? run.request.repoPath;
 
     if (run.status !== previous) {
+      if (run.boxId && ["finished", "failed", "cancelled"].includes(run.status)) {
+        this.opts.releaseBox?.(run.boxId);
+      }
       if (run.status === "waiting_decision" && toggles.decisionNeeded) {
         this.notify({
           kind: "decision_needed",
