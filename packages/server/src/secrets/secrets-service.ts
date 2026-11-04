@@ -299,15 +299,30 @@ function vaultOf(ref: string): string | null {
   return m ? m[1]! : null;
 }
 
+/** What a segment of a 1Password secret reference can hold. */
+const REF_SEGMENT = /^[A-Za-z0-9_. -]+$/;
+
 /** Turns the items of a vault into candidates, skipping any whose reference can't be written. */
 export function candidatesFor(vault: string, items: OpItemInfo[]): SecretCandidate[] {
-  if (vault.includes("/")) return [];
+  if (!REF_SEGMENT.test(vault)) return [];
   const out: SecretCandidate[] = [];
+  const titles = new Map<string, number>();
+  for (const item of items) titles.set(item.title, (titles.get(item.title) ?? 0) + 1);
   for (const item of items) {
-    const itemSeg = item.title.includes("/") ? item.id : item.title;
+    // `op read` refuses other characters and reports a repeated name as
+    // ambiguous; an id always works.
+    const itemSeg =
+      REF_SEGMENT.test(item.title) && titles.get(item.title) === 1 ? item.title : item.id;
+    const fieldNames = new Map<string, number>();
     for (const f of item.fields) {
-      // A label or section with a slash can't sit in a reference; the field id can.
-      const plain = !f.label.includes("/") && !(f.section?.includes("/") ?? false);
+      const name = `${f.section ?? ""}/${f.label}`;
+      fieldNames.set(name, (fieldNames.get(name) ?? 0) + 1);
+    }
+    for (const f of item.fields) {
+      const plain =
+        REF_SEGMENT.test(f.label) &&
+        (f.section === undefined || f.section === "" || REF_SEGMENT.test(f.section)) &&
+        fieldNames.get(`${f.section ?? ""}/${f.label}`) === 1;
       const fieldSeg = plain ? (f.section ? `${f.section}/${f.label}` : f.label) : f.id;
       out.push({
         vault,

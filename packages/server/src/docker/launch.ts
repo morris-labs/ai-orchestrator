@@ -326,6 +326,12 @@ export function prepareLaunchHost(
   };
 }
 
+/** The container path of a `host:container[:mode]` bind. A Windows host path holds a colon. */
+function bindDestination(bind: string): string {
+  const match = /:(\/[^:]*?)\/?(?::(?:ro|rw))?$/.exec(bind);
+  return match?.[1] || bind;
+}
+
 /** Builds the container's create body. Pure: every host fact comes in through `facts`. */
 export function buildLaunchSpec(
   env: HostEnv,
@@ -389,7 +395,8 @@ export function buildLaunchSpec(
     }
     binds.push(bindOf(sessionsDirFor(env, input.container), `${home}/.claude/sessions`));
   }
-  for (const m of merged) binds.push(mountBind(m, hostOs));
+  const userBinds = new Set(merged.map((m) => mountBind(m, hostOs)));
+  binds.push(...userBinds);
   binds.push(bindOf(path.join(paths.stateDir, input.container), STATE_MOUNT));
   // Read-only, so the container can't remove or replace the socket or the
   // TCP token; connecting to the socket needs no write access. The
@@ -399,6 +406,13 @@ export function buildLaunchSpec(
   // Read-only for the same reason: the account folders this names decide
   // which configuration every vendor CLI loads.
   binds.push(bindOf(engineConfigDirFor(env, input.container), ENGINE_CONFIG_MOUNT, "ro"));
+  // Docker refuses a container with two mounts at one path, so a person's mount
+  // gives way to a fixed one or to an earlier mount at the same path.
+  const destinations = new Set(binds.filter((b) => !userBinds.has(b)).map(bindDestination));
+  for (const b of userBinds) {
+    if (destinations.has(bindDestination(b))) binds.splice(binds.indexOf(b), 1);
+    else destinations.add(bindDestination(b));
+  }
 
   const envList = ["IS_SANDBOX=1", "DISABLE_AUTOUPDATER=1"];
   if (facts.hasGitconfig) envList.push(`GIT_CONFIG_GLOBAL=${containerDir}/gitconfig`);

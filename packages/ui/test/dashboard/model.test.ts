@@ -372,6 +372,20 @@ describe("agents that never report agent.finished", () => {
     expect(running(s)).toBe(0);
   });
 
+  it("reopens the agents when the engine comes back", () => {
+    const engine = { hostPort: 20412, version: "1.0.0-dev", versionMatches: true };
+    const change = (healthy: boolean) =>
+      makeEvent("container.changed", {
+        container: CONTAINER,
+        projectId: run.request.projectId,
+        state: "running",
+        engine: { ...engine, healthy },
+      });
+    const lost = applyEvent(withRunningAgent(), change(false));
+    expect(running(lost)).toBe(0);
+    expect(running(applyEvent(lost, change(true)))).toBe(1);
+  });
+
   it("leaves other projects' agents running", () => {
     const s = applyEvent(
       withRunningAgent(),

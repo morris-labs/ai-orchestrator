@@ -466,6 +466,12 @@ export class AccountService {
     if (from === accountsRoot || from.startsWith(`${accountsRoot}/`)) {
       throw new ApiError("validation", `${req.from} is already inside the accounts folder.`);
     }
+    if (!req.copy && this.isHostVendorFolder(from)) {
+      throw new ApiError(
+        "validation",
+        `${req.from} is the host's own folder, and other accounts link to it. Import it as a copy, or seed an account from it.`,
+      );
+    }
     if (this.exists(id)) throw new ApiError("conflict", `The account ${id} exists.`);
     if (present(dest)) {
       throw new ApiError(
@@ -548,6 +554,18 @@ export class AccountService {
     if (p.ceiling === null) delete next.ceiling;
     else if (p.ceiling !== undefined) next.ceiling = p.ceiling;
     return this.view(this.options.repo.put(next));
+  }
+
+  /** True when `folder` is the host user's own vendor folder, which accounts link to. */
+  private isHostVendorFolder(folder: string): boolean {
+    const p = homePaths(this.options.env);
+    return [p.claudeDir, p.codexDir, p.copilotDir].some((dir) => {
+      try {
+        return fs.realpathSync(dir) === folder;
+      } catch {
+        return false;
+      }
+    });
   }
 
   /**

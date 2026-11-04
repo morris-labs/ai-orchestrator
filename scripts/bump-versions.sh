@@ -42,9 +42,18 @@ require_tool npm "Install Node.js 22, which includes npm."
 require_tool curl "Install curl: sudo apt-get install curl"
 require_tool node "Install Node.js 22."
 
-set_pin "$VERSIONS" CLAUDE_CODE_VERSION "$(npm_latest @anthropic-ai/claude-code)"
-set_pin "$VERSIONS" CODEX_VERSION "$(npm_latest @openai/codex)"
-set_pin "$VERSIONS" COPILOT_VERSION "$(npm_latest @github/copilot)"
+# A failed command substitution in an argument doesn't stop the script, so read
+# each version first: a failed lookup must not write an empty pin.
+pin_npm_latest() {
+  local key="$1" package="$2" version
+  version="$(npm_latest "$package")" || die "could not read the latest version of $package"
+  [ -n "$version" ] || die "npm returned no version for $package"
+  set_pin "$VERSIONS" "$key" "$version"
+}
+
+pin_npm_latest CLAUDE_CODE_VERSION @anthropic-ai/claude-code
+pin_npm_latest CODEX_VERSION @openai/codex
+pin_npm_latest COPILOT_VERSION @github/copilot
 
 nvm_tag="$(curl -fsSL https://api.github.com/repos/nvm-sh/nvm/releases/latest |
   node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).tag_name))')" ||

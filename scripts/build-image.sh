@@ -197,7 +197,8 @@ while IFS= read -r pair; do
   [[ -n "$override" ]] && pair="${pair%%=*}=$override"
   CMD+=(--build-arg "$pair")
 done < <(read_versions "$VERSIONS")
-CMD+=("${BUILD_ARGS[@]}" "$IMAGE_DIR")
+# Bash 3.2 treats an empty array as unset under `set -u`.
+CMD+=(${BUILD_ARGS[@]+"${BUILD_ARGS[@]}"} "$IMAGE_DIR")
 
 if ((PRINT)); then
   printf '%q ' "${CMD[@]}"

@@ -215,6 +215,11 @@ export class DevServerProxy {
       (up) => {
         res.writeHead(up.statusCode ?? 502, up.statusMessage, up.headers);
         up.pipe(res);
+        // `pipe` doesn't end the response when the engine drops mid-stream, so
+        // destroy it to let the browser see the failure and reconnect.
+        up.once("close", () => {
+          if (!up.complete) res.destroy();
+        });
       },
     );
     upstream.on("socket", (socket) => this.track(socket));
@@ -230,6 +235,9 @@ export class DevServerProxy {
 
   async handleUpgrade(req: http.IncomingMessage, socket: Duplex, head: Buffer): Promise<void> {
     this.track(socket);
+    // Node removes its own socket error listener before `upgrade`, so a client
+    // reset during routing would otherwise stop the server.
+    socket.on("error", () => socket.destroy());
     const found = await this.route(req);
     if (!found.ok) {
       socket.end(`HTTP/1.1 ${STATUS_LINES[found.status]}\r\nConnection: close\r\n\r\n`);

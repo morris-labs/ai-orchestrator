@@ -6,6 +6,8 @@ import {
   READ_ONLY_POST_PUSH_MESSAGE,
   isReadOnlyPostPush,
   type EngineRouteKey,
+  type Finding,
+  type Vendor,
   type PathParams,
   type RunState,
   type ServerRoutes,
@@ -42,6 +44,10 @@ export type HttpHandlers = {
 /** The message a box's interactive session receives when a run starts on its tree. */
 export const HOLD_EDITS_MESSAGE =
   "A review run has started on this branch. Hold all edits to the working tree until the run finishes; you will get a message when it does.";
+
+/** The message a box's interactive session receives when that run ends. */
+export const RELEASE_EDITS_MESSAGE =
+  "The review run on this branch has ended. You can edit the working tree again.";
 
 /** The run routes that the server forwards to an engine unchanged. */
 const RUN_PROXY_KEYS = [
@@ -165,9 +171,26 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
     throw new ApiError("run_not_found", `No run has the id ${runId}.`);
   }
 
+  /** A run's mirrored findings, with the filters of `findings.list`. */
+  function mirroredFindings(runId: string, query: unknown): Finding[] {
+    const q = (query ?? {}) as { verdict?: string; severity?: string; round?: number };
+    return (deps.runs.findings?.(runId) ?? []).filter(
+      (f) =>
+        (q.verdict === undefined || f.verdict === q.verdict) &&
+        (q.severity === undefined || f.severity === q.severity) &&
+        (q.round === undefined || f.round === q.round),
+    );
+  }
+
   function proxyRun<K extends RunProxyKey>(key: K): HttpHandlers[K] {
     return (async (ctx: HandlerContext<K>) => {
       const params = ctx.params as Record<string, string>;
+      // A stopped container's run stays readable from the mirror.
+      const known = deps.runs.get(params.runId as string);
+      if (known && !deps.engines.get(known.container)) {
+        if (key === "runs.get") return known;
+        if (key === "findings.list") return { findings: mirroredFindings(known.id, ctx.query) };
+      }
       const engine = await engineForRun(params.runId as string);
       const result = await engine.call(`engine.${key}` as EngineRouteKey, {
         params,
@@ -417,8 +440,13 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
     "accounts.get": async ({ params }) => core.accounts.get(`${params.vendor}/${params.name}`),
     "accounts.update": async ({ params, body }) =>
       core.accounts.update(`${params.vendor}/${params.name}`, body),
-    "accounts.remove": async ({ params }) =>
-      core.accounts.remove(`${params.vendor}/${params.name}`),
+    "accounts.remove": async ({ params }) => {
+      const id = `${params.vendor}/${params.name}`;
+      const removed = await core.accounts.remove(id);
+      // Its last sample could otherwise keep blocking the whole vendor.
+      await deps.usage.forgetAccount?.(params.vendor as Vendor, id);
+      return removed;
+    },
     "accounts.check": async ({ params }) => core.accounts.check(`${params.vendor}/${params.name}`),
 
     "globalMounts.get": async () => ({ mounts: core.settings.get().globalMounts }),

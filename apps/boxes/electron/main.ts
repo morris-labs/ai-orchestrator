@@ -384,6 +384,9 @@ function refreshCounts() {
   }, 300);
 }
 
+/** Desktop notifications on screen. */
+const shownNotifications = new Set<Notification>();
+
 function watchEvents() {
   const conn = new EventsConnection({
     // A factory, so a reconnect reads the token and the certificate again.
@@ -395,6 +398,8 @@ function watchEvents() {
         counts = null;
         updateTray();
       }
+      // A reconnect that replays gets no resync, and the close cleared the counts.
+      if (s === "open") refreshCounts();
     },
     onEvent: (ev) => {
       if (ev.type === "box.changed") refreshCounts();
@@ -404,7 +409,11 @@ function watchEvents() {
           body: ev.body,
           urgency: ev.severity === "error" ? "critical" : "normal",
         });
+        // A collected notification no longer emits `click`.
+        shownNotifications.add(n);
+        n.on("close", () => shownNotifications.delete(n));
         n.on("click", () => {
+          shownNotifications.delete(n);
           showWindow();
           if (ev.boxId) win?.webContents.send("aio:select-box", ev.boxId);
           void client()

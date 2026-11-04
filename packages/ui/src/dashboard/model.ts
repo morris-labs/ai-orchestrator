@@ -48,6 +48,8 @@ export interface AgentView {
   round: number;
   startedAt: string;
   finishedAt: string | null;
+  /** Set when a lost engine, not `agent.finished`, ended the agent. */
+  endedByEngine?: boolean;
   outcome: EventOf<"agent.finished">["outcome"] | null;
   elapsedMs: number | null;
   tokens: { in: number; out: number } | null;
@@ -263,12 +265,27 @@ function endAgents(
   state: DashboardState,
   ends: (runId: string) => boolean,
   time: string,
+  byEngine = false,
 ): DashboardState {
   let agents: Record<string, AgentView> | null = null;
   for (const [key, a] of Object.entries(state.agents)) {
     if (a.finishedAt !== null || !ends(a.runId)) continue;
     agents ??= { ...state.agents };
-    agents[key] = { ...a, finishedAt: time };
+    agents[key] = { ...a, finishedAt: time, ...(byEngine ? { endedByEngine: true } : {}) };
+  }
+  return agents ? { ...state, agents } : state;
+}
+
+/** Reopens the agents of a project's open runs that a lost engine ended. */
+function reopenAgents(state: DashboardState, projectId: string): DashboardState {
+  let agents: Record<string, AgentView> | null = null;
+  for (const [key, a] of Object.entries(state.agents)) {
+    const run = state.runs[a.runId]?.run;
+    if (!a.endedByEngine || !run || run.request.projectId !== projectId || !isOpen(run.status))
+      continue;
+    const { endedByEngine: _ended, ...open } = a;
+    agents ??= { ...state.agents };
+    agents[key] = { ...open, finishedAt: null };
   }
   return agents ? { ...state, agents } : state;
 }
@@ -448,7 +465,8 @@ export function applyEvent(prev: DashboardState, event: AioEvent): DashboardStat
     case "container.changed": {
       const c = container(state, event.container, event.projectId, event.time);
       // Without a running, healthy engine, the project's agents have stopped
-      // reporting. A crashed engine never sends their `agent.finished`.
+      // reporting. A crashed engine never sends their `agent.finished`. An
+      // engine that comes back reopens them, since a blip doesn't end a call.
       const engineGone =
         event.state !== "running" || event.engine === null || !event.engine.healthy;
       const ended = engineGone
@@ -456,8 +474,9 @@ export function applyEvent(prev: DashboardState, event: AioEvent): DashboardStat
             state,
             (id) => state.runs[id]?.run?.request.projectId === event.projectId,
             event.time,
+            true,
           )
-        : state;
+        : reopenAgents(state, event.projectId);
       if (event.state === "removed") {
         const { [event.container]: _gone, ...containers } = ended.containers;
         return { ...ended, containers };

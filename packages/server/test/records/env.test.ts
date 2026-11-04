@@ -62,7 +62,7 @@ describe("broker directory", () => {
 
   it("keeps the socket path within a Unix socket's limit for a long project name", () => {
     // A project directory whose name slugs to 60 characters, under the
-    // default data directory of a home as long as the round 5 host's.
+    // default data directory of a typical home.
     const container = `aio-agent-proj-${"a".repeat(60)}-bb805ac3`;
     const socket = path.join(brokerDirFor({ home: "/home/user" }, container), BROKER_SOCKET_NAME);
     expect(Buffer.byteLength(socket)).toBeLessThanOrEqual(MAX_SOCKET_PATH_BYTES);

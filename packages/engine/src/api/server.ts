@@ -154,13 +154,19 @@ export async function buildEngineApp(options: EngineAppOptions): Promise<Fastify
   // WebSockets: the event stream and proxied upgrades.
   const eventsPath = engineRoutes["engine.events"].path;
   const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
+  const proxySockets = new Set<Duplex>();
   app.server.on("upgrade", (req: IncomingMessage, socket: Duplex, head: Buffer) => {
+    // Node removes its own socket error listener before it emits `upgrade`, so
+    // a client reset would otherwise be an uncaught exception.
+    socket.on("error", () => socket.destroy());
     const url = req.url ?? "/";
     const pathname = url.split("?")[0];
     if (url.startsWith(PROXY_PREFIX)) {
       const target = parseProxyUrl(url);
       if (target === null) return rejectUpgrade(socket, 404, "Not Found");
       if (!isProxyAuthorized(req, token)) return rejectUpgrade(socket, 401, "Unauthorized");
+      proxySockets.add(socket);
+      socket.once("close", () => proxySockets.delete(socket));
       return proxyUpgrade(req, socket, head, target, proxyOptions);
     }
     if (pathname !== eventsPath) return rejectUpgrade(socket, 404, "Not Found");
@@ -184,6 +190,7 @@ export async function buildEngineApp(options: EngineAppOptions): Promise<Fastify
   // for every open connection, upgraded ones included, so closing them in
   // `onClose` would wait for the shutdown that waits for them.
   app.addHook("preClose", (done) => {
+    for (const socket of proxySockets) socket.destroy();
     for (const client of wss.clients) client.close(1001, "The engine is shutting down.");
     const force = setTimeout(() => {
       for (const client of wss.clients) client.terminate();

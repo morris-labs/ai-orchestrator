@@ -243,11 +243,24 @@ export class EventsConnection {
     this.socket?.send(JSON.stringify(hello));
   }
 
+  /**
+   * Counts a frame this client can't decode, such as a newer server's event.
+   * Otherwise the next event looks like a gap, and each replay repeats the frame.
+   */
+  private skipUnknownEvent(raw: unknown): void {
+    if (this.awaitingHello || typeof raw !== "object" || raw === null) return;
+    const { streamId, seq } = raw as { streamId?: unknown; seq?: unknown };
+    if (streamId === this.streamId && this.lastSeq !== null && seq === this.lastSeq + 1) {
+      this.lastSeq = seq;
+    }
+  }
+
   /** Handles one parsed JSON frame. Public for tests. */
   handleFrame(raw: unknown): void {
     const parsed = ServerStreamFrameSchema.safeParse(raw);
     if (!parsed.success) {
       this.opts.onInvalidFrame?.(raw, parsed.error.issues[0]?.message ?? "invalid frame");
+      this.skipUnknownEvent(raw);
       return;
     }
     const frame = parsed.data;

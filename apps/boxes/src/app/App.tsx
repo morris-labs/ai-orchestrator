@@ -510,9 +510,11 @@ export function App() {
     try {
       const res = await client.call("boxes.startAll", { body: { onlyWasRunning: true } });
       reportBulk("Start All Stopped", res);
-      await data.reload();
+      void data.reload();
+      // `data.boxes` is this render's list, from before the boxes started.
+      const { boxes } = await client.call("boxes.list", {});
       for (const id of res.done) {
-        const v = data.boxes.find((b) => b.box.id === id);
+        const v = boxes.find((b) => b.box.id === id);
         if (v) openTerminal(v);
       }
     } catch (err) {

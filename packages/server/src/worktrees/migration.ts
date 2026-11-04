@@ -31,6 +31,7 @@ import {
   topLevel,
   worktreeNotesDir,
   worktreePath,
+  notesDir,
 } from "./worktrees.js";
 
 /** The notes files an agent keeps at a folder's top level. */
@@ -590,6 +591,19 @@ export async function executeMigration(input: {
   // 5. PLAN.md and STATUS.md go to the worktree's notes folder; INFRA.md is
   // the project's shared file.
   await mkdirOrFail(plan.notesDir);
+  // A workspace box keeps its live notes in its conversation folder, so those
+  // win over any copy in the clone.
+  const liveNotes = notesDir(box.targetDir, plan.slug);
+  for (const n of NOTES_NAMES.filter((name) => name !== "INFRA.md")) {
+    const from = `${liveNotes}/${n}`;
+    const dst = `${plan.notesDir}/${n}`;
+    if (!fs.existsSync(from) || fs.existsSync(dst)) continue;
+    try {
+      fs.copyFileSync(from, dst);
+    } catch {
+      await failAfter(`could not copy ${n}`);
+    }
+  }
   for (const n of plan.notesFiles) {
     const dst = n === "INFRA.md" ? infraFile(box.targetDir) : `${plan.notesDir}/${n}`;
     await mkdirOrFail(path.dirname(dst));

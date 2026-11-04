@@ -52,11 +52,9 @@ client and server messages. Fill path parameters with `buildPath()`.
 
 ## Change a contract
 
-Contracts freeze at integration checkpoint C1. After that, any change to a
-schema, a default, a route, or an event is a plan change: it goes through an
-integration checkpoint, and every consuming package must pull it and pass
-its own contract tests before the change counts as done. Don't change a
-contract from inside another package's branch.
+A change to a schema, a default, a route, or an event affects every package
+that consumes it. Each consuming package must pass its own contract tests
+before the change counts as done.
 
 The prompt template defaults must stay byte for byte equal to the 3.3.5
 templates in `gui/src/PromptTemplates.cpp` at tag `v3.3.5`. The `test/prompts.test.ts` file holds

@@ -7,6 +7,7 @@ import type {
   Finding,
   LeaseRequest,
   LeaseResponse,
+  Listener,
   RunState,
 } from "@aio/contracts";
 import type { CoreEngines, EngineEndpoint, SqlDatabase } from "../api/core-interface.js";
@@ -32,6 +33,10 @@ export interface EngineSupervisorOptions {
    */
   onStreamReset?(engineKey: string): void;
   onInfo?(container: string, info: EngineInfo): void;
+  /** Receives a new client's current listeners. */
+  onPorts?(container: string, listeners: Listener[]): void;
+  /** The wait before a failed resync runs again. Default: 10 seconds. */
+  resyncRetryMs?: number;
   log?(message: string): void;
   /** How often to look for added or removed containers. */
   intervalMs?: number;
@@ -188,6 +193,7 @@ export class EngineSupervisor {
       const client = this.build(endpoint);
       this.clients.set(endpoint.container, client);
       client.start();
+      void this.loadPorts(client);
     }
   }
 
@@ -213,6 +219,22 @@ export class EngineSupervisor {
     return this.options.createClient?.(options) ?? new EngineClient(options);
   }
 
+  /**
+   * Loads a new client's listeners. A restarted server has none in memory, and
+   * listeners that haven't changed send no `ports.changed`.
+   */
+  private async loadPorts(client: EngineClient): Promise<void> {
+    if (!this.options.onPorts) return;
+    try {
+      const { listeners } = (await client.call("engine.ports")) as { listeners: Listener[] };
+      this.options.onPorts(client.endpoint.container, listeners);
+    } catch (err) {
+      this.options.log?.(
+        `Loading the listeners of ${client.endpoint.container} failed: ${(err as Error).message}`,
+      );
+    }
+  }
+
   /** Reloads an engine's runs and their findings after its stream starts over. */
   private async resync(container: string): Promise<void> {
     const client = this.clients.get(container);
@@ -229,6 +251,11 @@ export class EngineSupervisor {
       this.options.onRuns?.(runs);
     } catch (err) {
       this.options.log?.(`Resync of ${container} failed: ${(err as Error).message}`);
+      // The cursor has moved, so the stream won't ask again: without a retry,
+      // later events for runs missing from the mirror get dropped.
+      setTimeout(() => {
+        if (this.clients.get(container) === client) void this.resync(container);
+      }, this.options.resyncRetryMs ?? 10_000).unref();
       return;
     }
     if (!this.options.onFindings) return;

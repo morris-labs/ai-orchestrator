@@ -159,7 +159,7 @@ describe("events.stream", () => {
     r.ws.close();
   });
 
-  // Host round 9: the notifier emits a notification from inside the hub's
+  // The notifier emits a notification from inside the hub's
   // delivery of a `run.changed`. A socket subscribed after the notifier got
   // the notification first, took its `seq` as sent, and dropped the
   // `run.changed`, so the live stream lost it and numbered the rest without

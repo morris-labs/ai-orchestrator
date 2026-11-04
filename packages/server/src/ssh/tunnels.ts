@@ -9,6 +9,7 @@ import {
   type SshRemote,
   type SshTestResultSchema,
 } from "@aio/contracts";
+import os from "node:os";
 import { ApiError } from "../records/errors.js";
 import type { z } from "zod";
 import { processJob, type JobManager } from "../jobs/jobs.js";
@@ -72,6 +73,8 @@ export function tunnelArgs(remote: SshRemote): string[] {
     "-o",
     "BatchMode=yes",
     "-o",
+    "ConnectTimeout=15",
+    "-o",
     "ExitOnForwardFailure=yes",
     "-o",
     "ServerAliveInterval=15",
@@ -112,6 +115,8 @@ export interface SshTunnelManagerOptions {
   remotes: () => Promise<SshRemote[]>;
   /** Delays before each reconnect attempt; the last one repeats. */
   reconnectDelaysMs?: number[];
+  /** How long `ssh` must run before the tunnel counts as up. Default: 20 seconds. */
+  upAfterMs?: number;
   /** How long a tunnel must stay up before the backoff resets. */
   stableAfterMs?: number;
   log?: (msg: string) => void;
@@ -218,7 +223,16 @@ export class SshTunnelManager {
     this.opts.log?.(`Starting the SSH tunnel for ${tunnel.name}.`);
     const proc = this.opts.runner.spawn("ssh", args);
     tunnel.proc = proc;
-    tunnel.up = true;
+    // `ssh -N` prints nothing when it connects. With ConnectTimeout and
+    // ExitOnForwardFailure set, a process alive past that timeout is connected.
+    const upAfterMs = this.opts.upAfterMs ?? 20_000;
+    const markUp = () => {
+      if (generation !== tunnel.generation || tunnel.proc !== proc) return;
+      tunnel.up = true;
+      tunnel.error = null;
+    };
+    if (upAfterMs > 0) setTimeout(markUp, upAfterMs).unref();
+    else markUp();
     const startedAt = Date.now();
     proc.onData((chunk) => {
       tunnel.output = (tunnel.output + chunk.toString()).slice(-ERROR_TAIL);
@@ -287,12 +301,18 @@ export async function testConnection(
 }
 
 /** The `ssh-copy-id` argv that installs the remote's public key. */
-export function copyIdArgv(remote: SshRemote): string[] {
+export function copyIdArgv(remote: SshRemote, home: string = os.homedir()): string[] {
   const problem = remoteProblem(remote);
   if (problem) throw new ApiError("validation", problem);
   const { target, port } = parseSshHost(remote.host);
   const argv = ["ssh-copy-id"];
-  if (remote.identity) argv.push("-i", `${remote.identity}.pub`);
+  // No shell expands this argument, and `ssh-copy-id` checks the literal path.
+  if (remote.identity) {
+    const identity = remote.identity.startsWith("~/")
+      ? `${home}/${remote.identity.slice(2)}`
+      : remote.identity;
+    argv.push("-i", `${identity}.pub`);
+  }
   if (port !== null) argv.push("-p", String(port));
   argv.push("--", target);
   return argv;

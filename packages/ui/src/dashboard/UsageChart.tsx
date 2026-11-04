@@ -239,7 +239,9 @@ function UsagePanel({ series, now }: { series: UsageSeries; now?: number }) {
           ? "The ceiling applies to another window."
           : series.forecastAt !== null
             ? `Reaches the ceiling about ${formatClock(series.forecastAt, now)}${series.serverForecast ? "" : " (local estimate)"}.`
-            : "Stays under the ceiling at this rate."}{" "}
+            : over
+              ? "Already at or over the ceiling."
+              : "Stays under the ceiling at this rate."}{" "}
         {series.resetAt !== null ? `Window resets ${formatClock(series.resetAt, now)}.` : ""}
       </p>
     </figure>

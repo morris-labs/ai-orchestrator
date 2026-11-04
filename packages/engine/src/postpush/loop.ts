@@ -20,6 +20,7 @@ import {
   runFix,
   runGateStage,
   verifyPending,
+  aboveNit,
 } from "../state/steps.js";
 import { titleSimilarity } from "../merge/fingerprint.js";
 import { NO_HOOKS } from "../range/git.js";
@@ -44,6 +45,20 @@ export const POLL_TIMEOUT_MS = 2 * 60 * 60_000;
 export const REVIEW_CHECK_INTERVAL_MS = 10_000;
 export const REVIEW_CHECK_ATTEMPTS = 3;
 
+/**
+ * How long the poll waits for checks to appear when no review is coming.
+ * GitHub can list none right after a push, and a repository can have none.
+ */
+export const CHECKS_REGISTER_MS = 5 * 60_000;
+
+/** Git's sign-in for github.com: the token from the `github` environment profile. */
+const GITHUB_PUSH_CREDENTIALS = [
+  "-c",
+  "credential.https://github.com.helper=",
+  "-c",
+  'credential.https://github.com.helper=!f() { echo username=x-access-token; echo "password=$GH_TOKEN"; }; f',
+];
+
 /** Log patterns of check failures that code changes can't fix. */
 const NON_CODE_PATTERNS: RegExp[] = [
   /secret[s]? .*(not set|missing|not found|unavailable)/i,
@@ -54,7 +69,9 @@ const NON_CODE_PATTERNS: RegExp[] = [
   /exceeded the maximum execution time/i,
   /api rate limit exceeded/i,
   /could not resolve host|network is unreachable|connection (timed out|reset)/i,
-  /(quota|billing|spending limit)/i,
+  /recent account payments have failed|spending limit (needs|must) (to )?be increased/i,
+  /(quota|spending limit|billing limit) (has been |was |is )?(exceeded|reached)/i,
+  /(exceeded|reached|over) (your |the |its )?(\w+ )?(quota|spending limit|billing limit)/i,
 ];
 
 /** True when a failing check's log shows a cause outside the code, such as a missing secret. */
@@ -165,7 +182,13 @@ async function stagePush(ctx: RunContext, requestReview = true): Promise<PrInfo>
   // has already run the policy's tests.
   const push = await ctx.deps.runner.run(
     "git",
-    [...NO_HOOKS, "push", "origin", `refs/heads/${branch}:refs/heads/${branch}`],
+    [
+      ...NO_HOOKS,
+      ...GITHUB_PUSH_CREDENTIALS,
+      "push",
+      "origin",
+      `refs/heads/${branch}:refs/heads/${branch}`,
+    ],
     {
       cwd: repo,
       timeoutMs: 300_000,
@@ -288,16 +311,31 @@ async function stagePoll(ctx: RunContext): Promise<PollResult> {
   let result: PollResult;
   for (;;) {
     await ctx.checkpoint();
-    const reviews = await gh.listReviews(repo, pr);
-    const reviewed = reviews.some(
-      (r) => isCopilotLogin(r.author) && (r.commitId === null || r.commitId === head),
-    );
-    const checks = await gh.listChecks(repo, pr);
-    const pending = checks.some((c) => c.bucket === "pending");
-    const timedOut = ctx.clock.now() - started >= POLL_TIMEOUT_MS;
-    if (((reviewed || reviewDropped) && !pending) || timedOut) {
-      result = { reviewed, checks, timedOut, ...(reviewDropped ? { reviewDropped } : {}) };
-      break;
+    const elapsed = ctx.clock.now() - started;
+    const timedOut = elapsed >= POLL_TIMEOUT_MS;
+    try {
+      const reviews = await gh.listReviews(repo, pr);
+      const reviewed = reviews.some(
+        (r) => isCopilotLogin(r.author) && (r.commitId === null || r.commitId === head),
+      );
+      const checks = await gh.listChecks(repo, pr);
+      const pending = checks.some((c) => c.bucket === "pending");
+      // Without a review to wait for, an empty list can just mean too early.
+      const settled =
+        reviewed || (reviewDropped && (checks.length > 0 || elapsed >= CHECKS_REGISTER_MS));
+      if ((settled && !pending) || timedOut) {
+        result = { reviewed, checks, timedOut, ...(reviewDropped ? { reviewDropped } : {}) };
+        break;
+      }
+    } catch (error) {
+      // One failed call in hours of polling doesn't end the run; the next tick
+      // asks again. An error that lasts until the deadline does.
+      if (!(error instanceof GhError) || timedOut) throw error;
+      ctx.deps.log?.warn("A GitHub call failed while polling; trying again", {
+        runId: ctx.state.id,
+        pr,
+        error: error.message,
+      });
     }
     try {
       await ctx.clock.sleep(POLL_INTERVAL_MS, ctx.signal);
@@ -432,7 +470,7 @@ async function stageImport(ctx: RunContext, poll: PollResult): Promise<ImportRec
     imported: imported.map((f) => f.id),
     nonCode: commit.nonCode,
     failingCode: commit.failingCode,
-    checksPassed: poll.checks.every((c) => c.bucket !== "fail" && c.bucket !== "pending"),
+    checksPassed: poll.checks.every((c) => c.bucket === "pass" || c.bucket === "skipping"),
   };
   await ctx.store.writeJson(file, record);
   await ctx.handoff(
@@ -648,7 +686,11 @@ export async function drivePostPush(ctx: RunContext): Promise<void> {
           record.imported.length > 0 ||
           ctx.findings.some(
             (f) =>
-              f.verdict === "pending" && (f.origin === "pr_comment" || f.origin === "check_run"),
+              f.verdict === "pending" &&
+              // Parked findings never reach a disprover, so another round can't settle them.
+              f.unverifiedReason === undefined &&
+              f.followUpReason === undefined &&
+              (f.origin === "pr_comment" || f.origin === "check_run"),
           );
         if (!actionable) {
           await closePostPushRound(ctx);
@@ -660,6 +702,20 @@ export async function drivePostPush(ctx: RunContext): Promise<void> {
               findingIds: [],
               options: ["resume", "cancel"],
               message: `Copilot didn't review ${head || "the pull request's head"} within ${POLL_TIMEOUT_MS / 3_600_000} hours. Resume to poll again, or cancel.`,
+            });
+          }
+          const unfixed = ctx.findings.filter(
+            (f) =>
+              f.verdict === "confirmed" &&
+              aboveNit(f) &&
+              (f.origin === "pr_comment" || f.origin === "check_run"),
+          );
+          if (unfixed.length > 0) {
+            throw new DecisionNeeded({
+              kind: "gate_failed",
+              findingIds: unfixed.map((f) => f.id),
+              options: ["resume", "cancel"],
+              message: `The fixer left ${unfixed.length} confirmed finding(s) unfixed, so the pull request isn't clean: ${unfixed.map((f) => f.id).join(", ")}.`,
             });
           }
           if (record.failingCode.length === 0 && record.checksPassed) {
@@ -679,7 +735,8 @@ export async function drivePostPush(ctx: RunContext): Promise<void> {
               kind: "gate_failed",
               findingIds: [],
               options: ["resume", "cancel"],
-              message: "The checks didn't finish before the poll timed out. Resume to poll again.",
+              message:
+                "The checks were cancelled, or didn't finish before the poll timed out. Resume to poll again.",
             });
           }
           // A failing check already imported and not fixable: stop for a person.

@@ -47,7 +47,7 @@ RUN echo "packages cache key: ${CACHEBUST_PACKAGES}" && \
     apt-get update && apt-get install -y --no-install-recommends \
     # core utilities; iproute2 provides the `ss` command the engine's port
     # discovery polls
-    git wget zip unzip sudo tmux jq iproute2 \
+    git openssh-client wget zip unzip sudo tmux jq iproute2 \
     # GitHub CLI and git extras
     gh tig lazygit git-delta bat git-lfs git-filter-repo pre-commit \
     # C and C++ toolchain
@@ -94,6 +94,9 @@ RUN test -n "${NVM_VERSION}" || { echo "NVM_VERSION is not set; build with scrip
 # SDKMAN and Gradle, the default Gradle release at build time.
 RUN curl -fsSL https://get.sdkman.io | bash && \
     bash -c 'source "$HOME/.sdkman/bin/sdkman-init.sh" && sdk install gradle'
+
+# Without a UTF-8 locale, tmux renders non-ASCII characters as underscores.
+ENV LANG=C.UTF-8
 
 # nvm and SDKMAN only add their PATH lines to ~/.bashrc, which a
 # non-interactive `bash -c` never reads. Expose both toolchains through
