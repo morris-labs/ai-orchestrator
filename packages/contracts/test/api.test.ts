@@ -413,3 +413,12 @@ it("keeps a stored run and finding without the optional fields parsing", () => {
   expect(stored).toBe(RunStateSchema);
   expect(StopReasonSchema.parse("clean_above_floor")).toBe("clean_above_floor");
 });
+
+describe("models.list query", () => {
+  const query = routes["models.list"].query;
+
+  it("takes an account id and refuses a path", () => {
+    expect(query.safeParse({ account: "claude/work" }).success).toBe(true);
+    expect(query.safeParse({ account: "claude/../../../x" }).success).toBe(false);
+  });
+});

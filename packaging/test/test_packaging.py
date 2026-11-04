@@ -761,6 +761,21 @@ class ScriptsTest(unittest.TestCase):
             # --print leaves the pins alone.
             self.assertEqual((tmp / "image/versions.env").read_text(), VERSIONS.read_text())
 
+    def test_build_image_stops_without_buildkit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = pathlib.Path(tmp)
+            self._installed_layout(tmp)
+            env = self._fake_npm(tmp)
+            (tmp / "bin/docker").write_text('#!/bin/sh\n[ "$1" = buildx ] && exit 1\necho built\n')
+            (tmp / "bin/docker").chmod(0o755)
+            result = subprocess.run(
+                [str(tmp / "scripts/build-image.sh")],
+                capture_output=True, text=True, env=env,
+            )
+            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertIn("needs BuildKit", result.stderr)
+            self.assertNotIn("built", result.stdout)
+
     def test_build_image_update_cli_saves_pins_and_survives_a_read_only_file(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = pathlib.Path(tmp)
