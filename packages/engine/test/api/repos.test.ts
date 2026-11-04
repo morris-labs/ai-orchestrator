@@ -120,6 +120,21 @@ describe("RepoService", () => {
     for (const s of settings) expect(s).toMatch(/^credential\.https:\/\/github\.com\.helper=/);
   });
 
+  it("gives git longer than the runner's default, and a fetch the longest", async () => {
+    const timeouts = new Map<string, number | undefined>();
+    const capture: CommandRunner = {
+      run: (program, args, options) => {
+        if (program === "git")
+          timeouts.set(args.includes("fetch") ? "fetch" : "read", options?.timeoutMs);
+        return runner.run(program, args, options);
+      },
+    };
+    const repos = new RepoService({ projectRoot: root, runner: capture, log: silentLogger });
+    await repos.refs(root, true);
+    expect(timeouts.get("read")).toBe(60_000);
+    expect(timeouts.get("fetch")).toBe(180_000);
+  });
+
   it("accepts a worktree path relative to the root", async () => {
     const refs = await service().refs(".worktrees/feature");
     expect(refs.localBranches).toContain("claude/feature");

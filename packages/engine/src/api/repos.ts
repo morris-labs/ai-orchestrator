@@ -98,15 +98,19 @@ export class RepoService {
       // The container has no stored Git sign-in. The helper asks the secrets
       // broker when Git needs it, so the token never reaches a command line.
       // It applies to github.com only, so another remote never gets the token.
-      const fetched = await this.git(dir, [
-        "-c",
-        "credential.https://github.com.helper=",
-        "-c",
-        `credential.https://github.com.helper=${BROKER_CREDENTIAL_HELPER}`,
-        "fetch",
-        "--all",
-        "--prune",
-      ]);
+      const fetched = await this.git(
+        dir,
+        [
+          "-c",
+          "credential.https://github.com.helper=",
+          "-c",
+          `credential.https://github.com.helper=${BROKER_CREDENTIAL_HELPER}`,
+          "fetch",
+          "--all",
+          "--prune",
+        ],
+        GIT_FETCH_TIMEOUT_MS,
+      );
       if (fetched.code !== 0) {
         fetchError = (fetched.stderr ?? "").trim().slice(-500) || "git fetch failed.";
       }
@@ -190,10 +194,15 @@ export class RepoService {
     }
   }
 
-  private git(dir: string, args: string[]) {
-    return this.options.runner.run("git", ["-C", dir, ...args]);
+  private git(dir: string, args: string[], timeoutMs = GIT_TIMEOUT_MS) {
+    return this.options.runner.run("git", ["-C", dir, ...args], { timeoutMs });
   }
 }
+
+/** Reads a large repository's state. Longer than the runner's default of 15 seconds. */
+const GIT_TIMEOUT_MS = 60_000;
+/** A fetch of every remote. With the reads after it, stays under the server's 300 second limit. */
+const GIT_FETCH_TIMEOUT_MS = 180_000;
 
 const BROKER_CREDENTIAL_HELPER =
   '!f() { echo "username=x-access-token"; echo "password=$(aio-secret get GH_TOKEN)"; }; f';
