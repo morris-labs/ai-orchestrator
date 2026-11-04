@@ -37,6 +37,11 @@ no `depth` field and stays `thorough`.
 | Clean | One round confirms nothing above `nit` | Two rounds in a row |
 | Verification floor | `P2` | None |
 
+To change how hard reviewers think, set **Reviewer effort** in the launcher or
+pass `--reviewer-effort`, with `low`, `medium`, `high`, `xhigh`, or `max`. Claude
+and Codex use the setting and Copilot ignores it. Without it, each vendor uses
+its own default. Higher effort can find more and costs more.
+
 Settings you name win over the depth: `--round-cap`, `--continuation-cap`,
 `--verify-floor`, `--tier`, `--role`, and `groupSizeLimit` in the policy file. To
 check every severity at `standard`, pass `--verify-floor all`, which the request

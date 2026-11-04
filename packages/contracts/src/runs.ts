@@ -5,6 +5,7 @@ import { z } from "zod";
 import {
   CommitShaSchema,
   CountSchema,
+  EffortSchema,
   FractionSchema,
   IsoDateTimeSchema,
   RunIdSchema,
@@ -244,6 +245,11 @@ export const ResolvedRunRequestSchema = z.object({
   verifyFloor: SeveritySchema.optional(),
   /** Absent in runs that predate depths, which stay `thorough`. See `runDepth`. */
   depth: RunDepthSchema.optional(),
+  /**
+   * The reasoning effort for reviewer calls on vendors that take one. Absent
+   * means each vendor's own default.
+   */
+  reviewerEffort: EffortSchema.optional(),
   /** What the run reviews. Absent in runs that review a range, and in older runs. */
   scope: RunScopeSchema.optional(),
   /** Globs of files this run never groups or reviews, added to the policy's `excludePaths`. */

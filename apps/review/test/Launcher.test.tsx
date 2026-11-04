@@ -1,6 +1,7 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { Launcher } from "../src/screens/Launcher.js";
+import { DEFAULT_FORM, buildRunRequest } from "../src/screens/launcherModel.js";
 import { BOX, PROJECT, boxView, lastRun, project } from "./helpers/data.js";
 import { FakeApiError } from "@aio/ui/testing";
 import { renderWithStore } from "./helpers/render.js";
@@ -119,6 +120,17 @@ describe("Launcher", () => {
       pipeline: "pre-push",
     });
     await waitFor(() => expect(window.location.hash).toBe(`#/runs/${lastRun().id}`));
+  });
+
+  it("sends the reviewer effort only when a person picks one", async () => {
+    const form = { ...DEFAULT_FORM, projectId: PROJECT, repoPath: "/repo", tip: "main" };
+    const request = (f: typeof form) => {
+      const built = buildRunRequest(f);
+      if (!built.ok) throw new Error(built.errors.join("; "));
+      return built.request;
+    };
+    expect(request(form)).not.toHaveProperty("reviewerEffort");
+    expect(request({ ...form, reviewerEffort: "high" })).toMatchObject({ reviewerEffort: "high" });
   });
 
   it("shows the profile's roles and follows a profile switch", async () => {
