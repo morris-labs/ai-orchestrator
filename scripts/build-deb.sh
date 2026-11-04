@@ -149,11 +149,12 @@ mkdir -p "$R/usr/share/ai-orchestrator/scripts/lib"
 install -m 0755 "$SCRIPT_DIR/build-image.sh" "$R/usr/share/ai-orchestrator/scripts/"
 install -m 0644 "$SCRIPT_DIR/lib/common.sh" "$R/usr/share/ai-orchestrator/scripts/lib/"
 
-# The build's umask can leave staged files group-writable. Remove group and
-# other write permission so that only root can write the installed files.
+# The build's umask can leave staged files group-writable or private. Only
+# root can write the installed files, and every user can read them, since the
+# server and the CLI run as ordinary users.
 # chrome-sandbox keeps mode 0755 here; postinst adds the setuid bit only on
 # hosts where the app can't use user namespaces.
-chmod -R go-w "$R"
+chmod -R u+rwX,go+rX,go-w "$R"
 
 install -m 0755 "$ROOT/packaging/deb/scripts/postinst" "$ROOT/packaging/deb/scripts/prerm" \
   "$ROOT/packaging/deb/scripts/postrm" "$STAGE/maint/"

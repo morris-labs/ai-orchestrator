@@ -8,6 +8,7 @@ Exec=/usr/bin/aio-review %U
 Icon=aio-review
 Terminal=false
 Categories=Development;
+MimeType=x-scheme-handler/aio-review;
 Keywords=review;claude;codex;copilot;agent;pipeline;findings;
 # The app keeps one instance and hands a second launch to the first, so the
 # shell has no new window to wait for. StartupNotify stays off to avoid a

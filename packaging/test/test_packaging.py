@@ -1167,7 +1167,7 @@ class DevAppArmorTest(unittest.TestCase):
 class FileModeTest(unittest.TestCase):
     def test_build_script_clears_write_bits_before_nfpm(self):
         text = (ROOT / "scripts/build-deb.sh").read_text()
-        chmod = text.index('chmod -R go-w "$R"')
+        chmod = text.index('chmod -R u+rwX,go+rX,go-w "$R"')
         self.assertLess(chmod, text.index("nfpm package"))
         # Every file staged under $R must exist before the chmod runs.
         self.assertGreater(chmod, text.rindex('"$R/usr/share/ai-orchestrator/scripts/'))
@@ -1193,7 +1193,7 @@ class FileModeTest(unittest.TestCase):
                 (root / "a/b/f").write_text("x")
                 (root / "a/chrome-sandbox").write_text("x")
                 os.chmod(root / "a/chrome-sandbox", 0o775)
-                subprocess.run(["chmod", "-R", "go-w", str(root)], check=True)
+                subprocess.run(["chmod", "-R", "u+rwX,go+rX,go-w", str(root)], check=True)
                 bad = [
                     str(p) for p in [root, *root.rglob("*")]
                     if not p.is_symlink() and p.stat().st_mode & 0o022
