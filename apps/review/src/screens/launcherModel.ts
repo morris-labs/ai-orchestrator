@@ -47,6 +47,10 @@ export interface LauncherForm {
   includeWorktree: boolean;
   /** Empty takes the depth's round cap. */
   roundCap: string;
+  /** Review the project at the tip instead of a range. */
+  wholeProject: boolean;
+  /** Globs of files this run leaves out, one per line. */
+  excludePaths: string;
 }
 
 /** The choices of a verification floor control, from checking everything to the least. */
@@ -76,7 +80,20 @@ export const DEFAULT_FORM: LauncherForm = {
   readOnly: false,
   includeWorktree: false,
   roundCap: "",
+  wholeProject: false,
+  excludePaths: "",
 };
+
+/**
+ * Turns the whole-project scope on or off. Turning it on selects read-only,
+ * which a person can clear to allow fixes, and the pre-push pipeline, the only
+ * one with that scope.
+ */
+export function setFormWholeProject(form: LauncherForm, wholeProject: boolean): LauncherForm {
+  return wholeProject
+    ? { ...form, wholeProject, readOnly: true, pipeline: "pre-push" }
+    : { ...form, wholeProject };
+}
 
 /**
  * Prefills the form from a box: its project, worktree, and branch. The
@@ -130,7 +147,7 @@ export function buildRunRequest(form: LauncherForm): BuildResult {
   const errors: string[] = [];
   if (!form.projectId) errors.push("Select a container.");
   if (!form.repoPath) errors.push("Select a repository.");
-  if (!form.base.trim()) errors.push("Select a base.");
+  if (!form.wholeProject && !form.base.trim()) errors.push("Select a base.");
   const roundCap = form.roundCap.trim() === "" ? undefined : Number(form.roundCap);
   if (roundCap !== undefined && (!Number.isInteger(roundCap) || roundCap < 1))
     errors.push("The round cap must be a whole number of 1 or more.");
@@ -140,7 +157,12 @@ export function buildRunRequest(form: LauncherForm): BuildResult {
     if (!Number.isInteger(prNumber) || prNumber < 1)
       errors.push("A post-push run needs a pull request number.");
   }
-  if (form.base.trim() === "pr" && form.pipeline === "pre-push" && !form.tip.trim()) {
+  if (
+    !form.wholeProject &&
+    form.base.trim() === "pr" &&
+    form.pipeline === "pre-push" &&
+    !form.tip.trim()
+  ) {
     errors.push("The pull request base needs a tip branch with an open pull request.");
   }
   const draft = formRoles(form);
@@ -151,11 +173,16 @@ export function buildRunRequest(form: LauncherForm): BuildResult {
   // stage, so its fixer and confirmer choices don't apply.
   const { fixer: _fixer, confirmer: _confirmer, ...kept } = form.roles ?? {};
   const overrides = roleOverrides(form.readOnly ? kept : (form.roles ?? {}));
+  const excludePaths = form.excludePaths
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
   const parsed = RunRequestSchema.safeParse({
     projectId: form.projectId,
     boxId: form.boxId || undefined,
     repoPath: form.repoPath,
-    base: form.base.trim(),
+    // A whole-project run ignores the base, but a later push still targets it.
+    base: form.base.trim() || DEFAULT_FORM.base,
     tip: form.tip.trim() || undefined,
     mergeBase: form.baseMode === "merge-base",
     exactBase: form.baseMode === "exact",
@@ -173,6 +200,8 @@ export function buildRunRequest(form: LauncherForm): BuildResult {
     readOnly: form.readOnly,
     includeWorktree: form.includeWorktree,
     ...(roundCap !== undefined ? { roundCap } : {}),
+    ...(form.wholeProject ? { scope: "whole" } : {}),
+    ...(excludePaths.length > 0 ? { excludePaths } : {}),
   });
   if (!parsed.success)
     return {

@@ -406,9 +406,14 @@ export function RunView({ runId }: { runId: string }) {
             <RunStatusBadge status={run.status} />
           </h2>
           <p className="muted small">
-            {run.request.pipeline} · {run.request.repoPath} · base {run.request.base}
-            {run.baseSha ? ` (${run.baseSha.slice(0, 8)})` : ""} · tip{" "}
-            {run.request.tip ?? "checked-out branch"}
+            {run.request.pipeline} · {run.request.repoPath} ·{" "}
+            {run.request.scope === "whole"
+              ? "whole project"
+              : `base ${run.request.base}${run.baseSha ? ` (${run.baseSha.slice(0, 8)})` : ""}`}{" "}
+            · tip {run.request.tip ?? "checked-out branch"}
+            {run.request.excludePaths?.length
+              ? ` · excludes ${run.request.excludePaths.join(", ")}`
+              : ""}
             {run.request.readOnly ? " · read-only" : ""} · depth {runDepth(run.request)}
           </p>
         </div>

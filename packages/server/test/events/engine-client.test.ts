@@ -1,6 +1,7 @@
 import { openDatabase } from "../../src/db/index.js";
 import { FindingSchema, type AioEvent, type Finding, type LeaseRequest } from "@aio/contracts";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { engineRoutes } from "@aio/contracts";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EngineClient, type StreamCursor } from "../../src/events/engine-client.js";
 import { EngineSupervisor, engineEventRefusal, sqliteCursor } from "../../src/events/engines.js";
 import { RunMirror } from "../../src/events/run-mirror.js";
@@ -545,5 +546,29 @@ describe("engine event admission", () => {
     await waitFor(() => runs.length > 0);
     expect(runs).toEqual([RUN]);
     await sup.stop();
+  });
+});
+
+describe("EngineClient timeouts", () => {
+  const callWith = async (key: "engine.runs.preview" | "engine.health") => {
+    const spy = vi.spyOn(AbortSignal, "timeout");
+    const fetchStub = (() =>
+      Promise.resolve(new Response("{}", { status: 200 }))) as unknown as typeof fetch;
+    const c = build({ fetch: fetchStub });
+    await c.call(key, key === "engine.runs.preview" ? { body: {} } : {}).catch(() => undefined);
+    const ms = spy.mock.calls[0]?.[0];
+    spy.mockRestore();
+    return ms;
+  };
+
+  it("names only real routes as slow", () => {
+    for (const key of ["engine.runs.preview", "engine.runs.create", "engine.repos.refs"]) {
+      expect(engineRoutes).toHaveProperty([key]);
+    }
+  });
+
+  it("gives a slow route the longer timeout, and other routes the default", async () => {
+    expect(await callWith("engine.runs.preview")).toBe(300_000);
+    expect(await callWith("engine.health")).toBe(30_000);
   });
 });

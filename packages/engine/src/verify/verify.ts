@@ -336,6 +336,8 @@ export function decideVerdict(
   tip: ScriptRun | null,
   base: ScriptRun | null,
   toolErrors: readonly string[] = [],
+  /** A whole-project run has no base, so every flaw it confirms counts as introduced. */
+  noBase = false,
 ): VerdictDecision {
   const parts = [output.evidence.trim()];
   if (output.verdict === "unverified") {
@@ -367,7 +369,7 @@ export function decideVerdict(
     };
   }
   let verification: "script" | "code-reading" = output.verification;
-  let presentAtBase = output.presentAtBase;
+  let presentAtBase = !noBase && output.presentAtBase;
   if (tip) {
     parts.push(describeRun("tip", tip));
     const atTip = classifyRun(tip);
@@ -375,7 +377,9 @@ export function decideVerdict(
       verification = "script";
       const atBase = base ? classifyRun(base) : "failed";
       if (base) parts.push(describeRun("base", base));
-      if (atBase === "failed") {
+      if (noBase) {
+        presentAtBase = false;
+      } else if (atBase === "failed") {
         presentAtBase = false;
         parts.push(
           "The script didn't run at the base, so the engine treats the flaw as introduced.",
@@ -404,7 +408,8 @@ export interface VerifyDeps {
   runner: CommandRunner;
   range: RangeInfo;
   policy: PolicyFile;
-  baseWorktree: BaseWorktree;
+  /** The base checkout, or `null` when the run has no base to compare. */
+  baseWorktree: BaseWorktree | null;
   scratchDirFor: (findingId: string) => string;
   timeoutMs: number;
   /**
@@ -453,7 +458,7 @@ export async function verifyFinding(
 ): Promise<VerifyResult | null> {
   const scratchDir = deps.scratchDirFor(finding.id);
   await mkdir(scratchDir, { recursive: true });
-  const baseDir = await deps.baseWorktree.ensure();
+  const baseDir = deps.baseWorktree ? await deps.baseWorktree.ensure() : null;
   const prompt = disproverPrompt({
     ...(deps.standard ? { standard: true } : {}),
     range: deps.range,
@@ -465,7 +470,7 @@ export async function verifyFinding(
   const answer = await deps.callDisprover(vendor, finding, {
     prompt,
     repoPath: deps.range.repoPath,
-    extraDirs: [baseDir],
+    ...(baseDir ? { extraDirs: [baseDir] } : {}),
     scratchDir,
     toolPolicy: "read-only",
     timeoutMs: deps.timeoutMs,
@@ -487,7 +492,9 @@ export async function judgeAnswer(
     toolErrors?: string[];
   },
   scratchDir: string,
-  deps: Pick<VerifyDeps, "runner" | "signal" | "inScriptCheckout">,
+  deps: Pick<VerifyDeps, "runner" | "signal" | "inScriptCheckout"> & {
+    baseWorktree?: BaseWorktree | null;
+  },
 ): Promise<VerifyResult> {
   let tipRun: ScriptRun | null = null;
   let baseRun: ScriptRun | null = null;
@@ -506,13 +513,21 @@ export async function judgeAnswer(
     };
     tipRun = await run("tip");
     // The base comparison counts only after the script reproduced at the tip.
-    if (classifyRun(tipRun) === "reproduced") baseRun = await run("base");
+    if (deps.baseWorktree !== null && classifyRun(tipRun) === "reproduced") {
+      baseRun = await run("base");
+    }
   }
   return {
     findingId: finding.id,
     vendor: answer.vendor,
     model: answer.model,
-    decision: decideVerdict(answer.output, tipRun, baseRun, answer.toolErrors ?? []),
+    decision: decideVerdict(
+      answer.output,
+      tipRun,
+      baseRun,
+      answer.toolErrors ?? [],
+      deps.baseWorktree === null,
+    ),
     tipRun,
     baseRun,
   };

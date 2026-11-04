@@ -26,6 +26,8 @@ export async function retryProblems(
   const { state, eng, store, findings } = ctx;
   const problems: string[] = [];
   const stage = state.stage;
+  // A garbage collection can drop the empty base; its SHA doesn't change.
+  if (state.request.scope === "whole") await ctx.git.emptyBaseCommit();
   if (!RESUMABLE[eng.phase].includes(stage)) {
     problems.push(`A ${eng.phase} run can't resume from the ${stage} stage.`);
     return problems;

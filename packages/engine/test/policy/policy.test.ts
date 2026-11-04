@@ -118,3 +118,15 @@ describe("engine-only policy settings", () => {
     expect(() => parsePolicy("version: 1\nbogus: 1\n")).toThrow();
   });
 });
+
+describe("excludePaths in the policy", () => {
+  it("parses globs, refuses a bad one, and keeps refusing unknown fields", () => {
+    expect(parsePolicy("version: 1\nexcludePaths:\n  - fixtures/**\n").excludePaths).toEqual([
+      "fixtures/**",
+    ]);
+    expect(() => parsePolicy('version: 1\nexcludePaths:\n  - "{broken"\n')).toThrow(
+      /excludePaths\.0/,
+    );
+    expect(() => parsePolicy("version: 1\nexcludePath:\n  - fixtures/**\n")).toThrow(/excludePath/);
+  });
+});

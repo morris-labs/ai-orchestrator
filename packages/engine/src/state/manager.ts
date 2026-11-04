@@ -36,7 +36,9 @@ import {
   type UsageFilter,
 } from "../api/core-interface.js";
 import type { EngineDeps } from "../core.js";
+import { selectFiles } from "../group/exclude.js";
 import { groupFiles } from "../group/group.js";
+import { globProblem } from "../policy/glob.js";
 import { assignTiers } from "../group/signals.js";
 import { PolicyError, loadPolicy, loadPolicyExtras } from "../policy/load.js";
 import { GhCliClient } from "../postpush/github.js";
@@ -79,6 +81,15 @@ function inWindow(time: string, filter: UsageFilter): boolean {
   if (filter.since !== undefined && t < Date.parse(filter.since)) return false;
   if (filter.until !== undefined && t > Date.parse(filter.until)) return false;
   return true;
+}
+
+/** The most excluded files a preview lists; its count covers them all. */
+const PREVIEW_EXCLUDED_LIMIT = 1000;
+
+/** Refuses a run's exclusion glob that can't compile, before anything starts. */
+function refuseBadExcludes(globs: readonly string[] | undefined): void {
+  const problem = (globs ?? []).map(globProblem).find((p) => p !== null);
+  if (problem) throw new EngineError("validation", problem);
 }
 
 /** How long `close()` waits for a run driver to stop. */
@@ -275,6 +286,7 @@ export class EngineRunManager implements RunManager {
           tip: request.tip,
           mergeBase: request.mergeBase,
           exactBase: request.exactBase,
+          scope: request.scope,
           readOnly: request.readOnly,
           includeWorktree: true,
           prNumber: request.prNumber,
@@ -290,8 +302,17 @@ export class EngineRunManager implements RunManager {
             join(tmpdir(), `aio-index-preview-${process.pid}-${randomUUID()}`),
           )
         : range.tipSha;
-      const files = parseDiff(await git.diff(range.diffBaseSha, tip));
+      const whole = request.scope === "whole";
       const policy = await loadPolicy(this.location.projectRoot, this.location.policyPath);
+      refuseBadExcludes(request.excludePaths);
+      // A whole-project diff needs only counts, so Git never prints the project.
+      const { files, excluded } = selectFiles(
+        whole
+          ? await git.addedFiles(range.diffBaseSha, tip)
+          : parseDiff(await git.diff(range.diffBaseSha, tip)),
+        request,
+        policy,
+      );
       const depth = runDepth(request);
       const extras = await loadPolicyExtras(this.location.projectRoot, this.location.policyPath);
       const grouped = await groupFiles(files, {
@@ -308,6 +329,7 @@ export class EngineRunManager implements RunManager {
         tip,
         choice: request.modelTier ?? "auto",
         depth,
+        skipHistory: whole,
       });
       const changedLines = groups.reduce((n, g) => n + g.changedLines, 0);
       return {
@@ -319,12 +341,17 @@ export class EngineRunManager implements RunManager {
         changedLines,
         dirty: range.dirty,
         tokenEstimate: estimateRunTokens({ depth, groups: groups.length, changedLines }),
+        excluded: {
+          count: excluded.length,
+          files: excluded.slice(0, PREVIEW_EXCLUDED_LIMIT),
+        },
       };
     });
   }
 
   start(request: EngineRunCreate): Promise<RunState> {
     return api(async () => {
+      refuseBadExcludes(request.excludePaths);
       const exists =
         this.controllers.has(request.runId) ||
         (await listRunIds(this.deps.projectRoot)).includes(request.runId);
@@ -405,6 +432,7 @@ export class EngineRunManager implements RunManager {
     const git = new Git(this.engineDeps.runner, state.request.repoPath);
     const store = new RunStore(this.deps.projectRoot, runId);
     const diffBase = (await store.loadEngineState()).diffBaseSha ?? state.baseSha;
+    if (state.request.scope === "whole") await git.emptyBaseCommit().catch(() => undefined);
     const quiet = async (work: () => Promise<string>) => {
       try {
         const text = await work();

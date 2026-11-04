@@ -165,6 +165,7 @@ export function Policy({ projectId }: { projectId: string | null }) {
   const [yamlText, setYamlText] = useState("");
   const [riskText, setRiskText] = useState("");
   const [limitsText, setLimitsText] = useState("");
+  const [excludeText, setExcludeText] = useState("");
   const [errors, setErrors] = useState<string[]>([]);
   const [error, setError] = useState<unknown>(null);
   const [saved, setSaved] = useState(false);
@@ -205,6 +206,7 @@ export function Policy({ projectId }: { projectId: string | null }) {
     setYamlText(r.text ?? policyToYaml(r.policy));
     setRiskText(r.policy.riskPaths.join("\n"));
     setLimitsText(r.policy.environmentLimits.join("\n"));
+    setExcludeText((r.policy.excludePaths ?? []).join("\n"));
     setRevision(r.revision);
     setErrors([]);
     setDirty(false);
@@ -240,6 +242,7 @@ export function Policy({ projectId }: { projectId: string | null }) {
       ...policy,
       riskPaths: lines(riskText),
       environmentLimits: lines(limitsText),
+      excludePaths: lines(excludeText).length > 0 ? lines(excludeText) : undefined,
     });
   }
 
@@ -256,6 +259,7 @@ export function Policy({ projectId }: { projectId: string | null }) {
     setPolicy(r.policy);
     setRiskText(r.policy.riskPaths.join("\n"));
     setLimitsText(r.policy.environmentLimits.join("\n"));
+    setExcludeText((r.policy.excludePaths ?? []).join("\n"));
     setErrors([]);
     setTab(next);
   }
@@ -372,6 +376,19 @@ export function Policy({ projectId }: { projectId: string | null }) {
               onChange={(e) => {
                 edited();
                 setRiskText(e.target.value);
+              }}
+            />
+          </Field>
+          <Field
+            label="Exclude paths"
+            hint="One glob per line. Runs never group or review the files that match."
+          >
+            <textarea
+              rows={3}
+              value={excludeText}
+              onChange={(e) => {
+                edited();
+                setExcludeText(e.target.value);
               }}
             />
           </Field>

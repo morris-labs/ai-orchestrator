@@ -83,3 +83,40 @@ export function importsFile(imports: readonly string[], target: string): boolean
   }
   return false;
 }
+
+/**
+ * Answers `importsFile` for many targets at once: gives the targets an import
+ * list refers to, without testing each import against each target.
+ */
+export class ImportIndex {
+  private readonly exact = new Map<string, string[]>();
+  private readonly python = new Map<string, string[]>();
+
+  constructor(targets: readonly string[]) {
+    const add = (map: Map<string, string[]>, key: string, target: string) => {
+      const list = map.get(key);
+      if (list) list.push(target);
+      else map.set(key, [target]);
+    };
+    for (const target of targets) {
+      const bare = withoutExtension(target);
+      add(this.exact, bare, target);
+      const parts = bare.split("/");
+      for (let i = 0; i < parts.length; i++) add(this.python, parts.slice(i).join("/"), target);
+    }
+  }
+
+  /** The targets that `imports`, from `importedModules`, refer to. */
+  targetsOf(imports: readonly string[]): string[] {
+    const out = new Set<string>();
+    for (const imp of imports) {
+      const found = imp.startsWith("py:")
+        ? imp === "py:"
+          ? undefined
+          : this.python.get(imp.slice(3))
+        : this.exact.get(imp);
+      for (const target of found ?? []) out.add(target);
+    }
+    return [...out];
+  }
+}

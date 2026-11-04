@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { ReviewOutputSchema, VerifyOutputSchema } from "../../src/core.js";
 import {
   PRECISION_RULES,
+  batchDisproverPrompt,
   confirmerPrompt,
   continuationPrompt,
   disproverPrompt,
@@ -163,5 +164,29 @@ describe("untrusted text in prompts", () => {
     const p = fixerPrompt({ range, findings: [finding], policySection: "" });
     expect(p).not.toContain("UNTRUSTED_DATA");
     expect(untrusted("a".repeat(10), 5)).toContain("[cut at 5 characters]");
+  });
+});
+
+describe("disprover prompts of a whole-project run", () => {
+  const wholeRange = {
+    repoPath: "/repo",
+    baseSha: "0000000",
+    tipSha: "1111111",
+    tipRef: "main",
+    wholeProject: true,
+  };
+  const base = { range: wholeRange, scratchDir: "/scratch", baseWorktree: null, policySection: "" };
+  const text = [
+    disproverPrompt({ ...base, finding }),
+    disproverPrompt({ ...base, finding, standard: true }),
+    batchDisproverPrompt({ ...base, findings: [finding] }),
+  ];
+
+  it("doesn't ask about a base", () => {
+    for (const prompt of text) {
+      expect(prompt).not.toMatch(/checkout of the base|Base \(|tip and the base|both checkouts/);
+      expect(prompt).not.toMatch(/in untouched code/);
+      expect(prompt).toContain("set `presentAtBase` to false");
+    }
   });
 });

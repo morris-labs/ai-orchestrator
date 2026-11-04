@@ -39,7 +39,7 @@ import {
 import { readOnlyCheckoutPath, removeCheckout, scriptCheckoutsDir } from "./checkout.js";
 import { drivePrePush } from "./prepush.js";
 import { retryProblems, tipMovedNotice } from "./retry.js";
-import { disposeCheckouts, syncFloorLabels } from "./steps.js";
+import { disposeCheckouts, ensureWholeBase, syncFloorLabels } from "./steps.js";
 import { assignRoles } from "./profiles.js";
 
 /** The action doesn't fit the run's status; the API answers `invalid_state`. */
@@ -122,6 +122,7 @@ export class RunController {
         tip: request.tip,
         mergeBase: request.mergeBase,
         exactBase: request.exactBase,
+        scope: request.scope,
         readOnly: request.readOnly,
         includeWorktree: request.includeWorktree,
         prNumber: request.prNumber,
@@ -254,6 +255,7 @@ export class RunController {
         await ctx.beginDrive();
         ctx.policy = await loadPolicy(this.location.projectRoot, this.location.policyPath);
         ctx.extras = await loadPolicyExtras(this.location.projectRoot, this.location.policyPath);
+        await ensureWholeBase(ctx);
         if (ctx.state.status !== "running") {
           await ctx.setStatus("running", {
             error: undefined,

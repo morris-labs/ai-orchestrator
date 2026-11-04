@@ -72,7 +72,17 @@ export interface RangeInfo {
   tipSha: string;
   /** The tip branch, or `null` for a commit. */
   tipRef: string | null;
+  /** The run reviews the project at the tip, with no base to compare. */
+  wholeProject?: boolean;
 }
+
+/** What a disprover reads in a whole-project run, in place of the base steps. */
+const NO_BASE_RULE =
+  "This run reviews the whole project, so every flaw counts. Judge each finding at the tip alone, and set `presentAtBase` to false.";
+
+/** What a reviewer reads in a whole-project run. */
+const WHOLE_PROJECT_REVIEW =
+  "This run reviews the project as it ships, not a change, and every file appears as new. Set `introduced` to true on every finding.";
 
 export interface FinderPromptInput {
   range: RangeInfo;
@@ -174,7 +184,7 @@ export function finderPrompt(input: FinderPromptInput): string {
         "A separate verifier checks each finding, so report an issue that meets this bar even when you aren't certain.",
         "Keep reading until you have examined every hunk below.",
         "For each finding, give the failure case: the input or state, and the wrong behavior it leads to.",
-        "Set `introduced` to false when the flaw already exists in the base version.",
+        introducedRule(input.range),
       ]
     : [
         "Report every plausible issue you find. There is no cap on the number of findings.",
@@ -182,10 +192,12 @@ export function finderPrompt(input: FinderPromptInput): string {
         "Keep reading until you have examined every hunk below. Don't stop after the first few issues.",
         focus,
         "For each finding, give the failure case: the input or state, and the wrong behavior it leads to.",
-        "Set `introduced` to false when the flaw already exists in the base version.",
+        introducedRule(input.range),
       ];
   return join([
-    `You are a code reviewer in round ${input.round} of an automated review. Review ${scope} of the change from ${input.range.baseSha} to ${input.range.tipSha} in the repository at ${input.range.repoPath}.`,
+    input.range.wholeProject
+      ? `You are a code reviewer in round ${input.round} of an automated review. Review ${scope} of the project at ${input.range.tipSha} in the repository at ${input.range.repoPath}.`
+      : `You are a code reviewer in round ${input.round} of an automated review. Review ${scope} of the change from ${input.range.baseSha} to ${input.range.tipSha} in the repository at ${input.range.repoPath}.`,
     input.fixDiffOnly
       ? "This diff holds only what the fixer changed after the last review. Check whether those changes are correct, and don't review the rest of the branch."
       : "",
@@ -216,11 +228,19 @@ export function finderPrompt(input: FinderPromptInput): string {
   ]);
 }
 
+function introducedRule(range: RangeInfo): string {
+  return range.wholeProject
+    ? WHOLE_PROJECT_REVIEW
+    : "Set `introduced` to false when the flaw already exists in the base version.";
+}
+
 /** The finder prompt at the `standard` depth. */
 function terseFinderPrompt(input: FinderPromptInput): string {
   const scope = input.groupId === null ? "the whole diff" : `file group ${input.groupId}`;
   return join([
-    `Review ${scope} in round ${input.round}: ${input.range.baseSha}..${input.range.tipSha} in ${input.range.repoPath}. You are read-only.`,
+    input.range.wholeProject
+      ? `Review ${scope} in round ${input.round} of the project at ${input.range.tipSha} in ${input.range.repoPath}. You are read-only. ${WHOLE_PROJECT_REVIEW}`
+      : `Review ${scope} in round ${input.round}: ${input.range.baseSha}..${input.range.tipSha} in ${input.range.repoPath}. You are read-only.`,
     input.fixDiffOnly
       ? "The diff holds only what the fixer changed after the last review. Check those changes, not the rest of the branch."
       : "",
@@ -310,7 +330,9 @@ export function sweepPrompt(input: SweepPromptInput): string {
     )
     .join("\n");
   return join([
-    `Each confirmed finding below is a pattern. Search the whole change from ${input.range.baseSha} to ${input.range.tipSha} in ${input.range.repoPath} for other instances of each pattern: the same mistake in another function, file, or call site.`,
+    input.range.wholeProject
+      ? `Each confirmed finding below is a pattern. Search the project at ${input.range.tipSha} in ${input.range.repoPath} for other instances of each pattern: the same mistake in another function, file, or call site.`
+      : `Each confirmed finding below is a pattern. Search the whole change from ${input.range.baseSha} to ${input.range.tipSha} in ${input.range.repoPath} for other instances of each pattern: the same mistake in another function, file, or call site.`,
     "You are read-only. Report every other instance you find, with its own location and failure case. Don't report the instances listed here again.",
     "",
     input.standard ? TERSE_RULE : "",
@@ -328,8 +350,8 @@ export interface DisproverPromptInput {
   finding: Finding;
   /** Where the agent may write reproduction scripts. */
   scratchDir: string;
-  /** A checkout of the pinned base, for the pre-existing check. */
-  baseWorktree: string;
+  /** A checkout of the pinned base, for the pre-existing check. `null` in a whole-project run. */
+  baseWorktree: string | null;
   policySection: string;
   /** Uses the compact prompt. */
   standard?: boolean;
@@ -344,7 +366,12 @@ export function disproverPrompt(input: DisproverPromptInput): string {
       "",
       batchFindingBlock(f),
       isExternal(f) ? UNTRUSTED_FRAME : "",
-      section("Rules", [...TERSE_PRECISION_RULES, TERSE_RULE].map((r) => `- ${r}`).join("\n")),
+      section(
+        "Rules",
+        terseRules(input.baseWorktree)
+          .map((r) => `- ${r}`)
+          .join("\n"),
+      ),
       section("How to verify", terseVerifySteps(input).join("\n")),
       section("Repository policy", input.policySection),
       terseJsonInstruction(TERSE_VERIFY_SCHEMA),
@@ -369,14 +396,22 @@ export function disproverPrompt(input: DisproverPromptInput): string {
     section("Rules", PRECISION_RULES.map((r) => `- ${r}`).join("\n")),
     section(
       "How to verify",
-      [
-        `The repository at the tip is ${input.range.repoPath}. Don't edit it.`,
-        `A checkout of the base (${input.range.baseSha}) is at ${input.baseWorktree}. Don't edit it.`,
-        `Where you can, write a reproduction script in the scratch directory ${input.scratchDir}, the only place you may write. The script must exit 1 when the flaw reproduces and 0 when it doesn't, must let any other failure exit with a different code, and must take the repository directory as its first argument, so it runs against both checkouts.`,
-        "The engine runs your script against the tip and the base; you might not be able to run it yourself. Return its path relative to the scratch directory, or `null` when you verified by reading the code. When you can't write the file, put its text in `script.content` and the engine writes it.",
-        "Base your verdict and `presentAtBase` on your own reading too: a script that doesn't run counts for nothing.",
-        "Set `presentAtBase` to true when the same flaw exists in the base checkout.",
-      ].join("\n"),
+      input.baseWorktree === null
+        ? [
+            `The repository at the tip is ${input.range.repoPath}. Don't edit it.`,
+            `Where you can, write a reproduction script in the scratch directory ${input.scratchDir}, the only place you may write. The script must exit 1 when the flaw reproduces and 0 when it doesn't, must let any other failure exit with a different code, and must take the repository directory as its first argument.`,
+            "The engine runs your script against the tip; you might not be able to run it yourself. Return its path relative to the scratch directory, or `null` when you verified by reading the code. When you can't write the file, put its text in `script.content`.",
+            "Base your verdict on your own reading too: a script that doesn't run counts for nothing.",
+            NO_BASE_RULE,
+          ].join("\n")
+        : [
+            `The repository at the tip is ${input.range.repoPath}. Don't edit it.`,
+            `A checkout of the base (${input.range.baseSha}) is at ${input.baseWorktree}. Don't edit it.`,
+            `Where you can, write a reproduction script in the scratch directory ${input.scratchDir}, the only place you may write. The script must exit 1 when the flaw reproduces and 0 when it doesn't, must let any other failure exit with a different code, and must take the repository directory as its first argument, so it runs against both checkouts.`,
+            "The engine runs your script against the tip and the base; you might not be able to run it yourself. Return its path relative to the scratch directory, or `null` when you verified by reading the code. When you can't write the file, put its text in `script.content` and the engine writes it.",
+            "Base your verdict and `presentAtBase` on your own reading too: a script that doesn't run counts for nothing.",
+            "Set `presentAtBase` to true when the same flaw exists in the base checkout.",
+          ].join("\n"),
     ),
     section("Repository policy", input.policySection),
     jsonInstruction(VERIFY_OUTPUT_JSON_SCHEMA),
@@ -387,7 +422,7 @@ export interface BatchDisproverPromptInput {
   range: RangeInfo;
   findings: readonly Finding[];
   scratchDir: string;
-  baseWorktree: string;
+  baseWorktree: string | null;
   policySection: string;
 }
 
@@ -411,19 +446,41 @@ export function batchDisproverPrompt(input: BatchDisproverPromptInput): string {
     "",
     section("Findings", input.findings.map(batchFindingBlock).join("\n\n")),
     input.findings.some(isExternal) ? UNTRUSTED_FRAME : "",
-    section("Rules", [...TERSE_PRECISION_RULES, TERSE_RULE].map((r) => `- ${r}`).join("\n")),
+    section(
+      "Rules",
+      terseRules(input.baseWorktree)
+        .map((r) => `- ${r}`)
+        .join("\n"),
+    ),
     section("How to verify", terseVerifySteps(input).join("\n")),
     section("Repository policy", input.policySection),
     terseJsonInstruction(TERSE_VERIFY_BATCH_SCHEMA),
   ]);
 }
 
+/** The compact rules. With no base checkout, none of them mentions a base. */
+function terseRules(baseWorktree: string | null): string[] {
+  const rules =
+    baseWorktree === null
+      ? TERSE_PRECISION_RULES.filter((r) => !r.includes("presentAtBase"))
+      : TERSE_PRECISION_RULES;
+  return [...rules, TERSE_RULE];
+}
+
 /** Where a compact disprover prompt's agent works, and what a script must do. */
 function terseVerifySteps(input: {
   range: RangeInfo;
   scratchDir: string;
-  baseWorktree: string;
+  baseWorktree: string | null;
 }): string[] {
+  if (input.baseWorktree === null) {
+    return [
+      `Tip: ${input.range.repoPath}. Don't edit it.`,
+      `Optional reproduction script: write it in ${input.scratchDir}, the only writable place, with a name unique to the finding. Exit 1 when the flaw reproduces, 0 when it doesn't, any other code otherwise. The first argument is the repository directory.`,
+      "The engine runs the script at the tip. Return its path relative to the scratch directory, or `null` for code reading. If you can't write the file, put its text in `script.content`.",
+      NO_BASE_RULE,
+    ];
+  }
   return [
     `Tip: ${input.range.repoPath}. Base (${input.range.baseSha}): ${input.baseWorktree}. Don't edit either.`,
     `Optional reproduction script: write it in ${input.scratchDir}, the only writable place, with a name unique to the finding. Exit 1 when the flaw reproduces, 0 when it doesn't, any other code otherwise. The first argument is the repository directory.`,

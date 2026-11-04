@@ -62,6 +62,10 @@ environmentLimits:
 
 # A file group with more changed lines than this splits into smaller groups.
 groupSizeLimit: 300
+
+# Files that no run groups or reviews.
+excludePaths:
+  - fixtures/**
 ```
 
 ## Fields
@@ -81,6 +85,7 @@ names the field that holds it.
 | `lint` | List of commands | `[]` | Lint commands for the gate, in the same form as `tests`. |
 | `environmentLimits` | List of strings | `[]` | Facts about where the code runs, added to every reviewer and disprover prompt. |
 | `groupSizeLimit` | Positive integer | Set by the run's depth | The changed-line count above which a file group splits. A value in the file wins at every depth. The **Policy** editor writes this field when it saves, so a file it saved names a limit. |
+| `excludePaths` | List of globs | Absent | Files that no run groups or reviews, at every scope. The launcher's preview shows how many files a run excludes, and a run can add its own globs. |
 | `commentAuthors` | List of strings | Absent | GitHub logins whose pull request comments the post-push loop imports. The loop always imports Copilot's comments. When you set this field, the loop imports comments from these logins instead of from the repository's collaborators. Logins are case-insensitive. |
 | `tierModels` | Map | Absent | Models per vendor and tier, such as `claude: { small: claude-haiku-5-5 }`, over the built-in mappings. The engine refuses a model that [review runs must not use](review-pipeline.md#blocked-models). |
 | `tierPaths` | List of rules | Absent | Model tiers for paths. Each rule has a `paths` list of globs and a `tier` of `small`, `medium`, or `large`. The first rule that matches a file wins. A `small` rule gives a file that holds code the `medium` tier. |
@@ -89,7 +94,8 @@ names the field that holds it.
 
 - **Group stage**: a file that matches a `riskPaths` glob makes its group
   major, whatever its size, and `groupSizeLimit` decides when a group
-  splits.
+  splits. A file that matches an `excludePaths` glob never joins a group, so
+  no reviewer gets it in a diff. Reviewers can still read it in the checkout.
 - **Find and verify stages**: each reviewer and disprover prompt includes
   the `rules` that apply to the files under review and every
   `environmentLimits` entry.
