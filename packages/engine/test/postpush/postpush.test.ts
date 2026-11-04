@@ -38,7 +38,7 @@ class FakeGitHub implements GitHubClient {
   pr: PrInfo | null = null;
   created: CreatePrInput[] = [];
   reviewRequests: string[] = [];
-  /** GitHub answers 201 to a review request but drops it, as in host round 4. */
+  /** GitHub answers 201 to a review request but drops it. */
   dropReviewRequests = false;
   droppedRequests: string[] = [];
   /** GitHub refuses the review request, as for a repository without Copilot code review. */
@@ -306,6 +306,54 @@ describe("post-push loop", () => {
       stopReason: "pr_clean",
       round: 1,
     });
+  });
+
+  it("doesn't call a pull request clean when its checks were cancelled", async () => {
+    const repo = buildSampleRepo();
+    const gh = new FakeGitHub(join(dirname(repo), "origin.git"));
+    gh.checks = [{ name: "tests", bucket: "cancel", link: null, workflow: "ci" }];
+    const run = await RunController.create(
+      {
+        runId: nextRunId(),
+        projectId: "sample",
+        repoPath: repo,
+        depth: "thorough",
+        pipeline: "post-push",
+      },
+      { projectRoot: repo },
+      deps(new Scenario(), gh),
+    );
+    await run.start();
+    const state = await run.settled();
+    expect(state.stopReason).not.toBe("pr_clean");
+  });
+
+  it("keeps polling after a failed GitHub call", async () => {
+    const repo = buildSampleRepo();
+    const gh = new FakeGitHub(join(dirname(repo), "origin.git"));
+    gh.checks = [{ name: "tests", bucket: "pass", link: null, workflow: "ci" }];
+    const listChecks = gh.listChecks.bind(gh);
+    let failures = 0;
+    gh.listChecks = async () => {
+      failures += 1;
+      if (failures === 1) throw new GhError(["pr", "checks"], 1, "HTTP 502");
+      return listChecks();
+    };
+    const run = await RunController.create(
+      {
+        runId: nextRunId(),
+        projectId: "sample",
+        repoPath: repo,
+        depth: "thorough",
+        pipeline: "post-push",
+      },
+      { projectRoot: repo },
+      deps(new Scenario(), gh),
+    );
+    await run.start();
+    const state = await run.settled();
+    expect(failures).toBeGreaterThan(1);
+    expect(state).toMatchObject({ status: "finished", stopReason: "pr_clean" });
   });
 
   it("stops waiting for a Copilot review that GitHub dropped, and says why", async () => {
@@ -1176,5 +1224,18 @@ describe("untrusted pull request comments", () => {
       run: async () => ({ exitCode: 1, stdout: "", stderr: "403", timedOut: false }),
     };
     expect(await new GhCliClient(denied).listCollaborators("/r")).toBeNull();
+  });
+});
+
+describe("isNonCodeFailure wording", () => {
+  it("keeps code failures that only mention billing or quota", () => {
+    expect(isNonCodeFailure("FAIL src/billing_test.ts > charges the card")).toBe(false);
+    expect(isNonCodeFailure("expected quota to equal 5")).toBe(false);
+  });
+  it("recognizes real account limits", () => {
+    expect(
+      isNonCodeFailure("The job was not started because recent account payments have failed"),
+    ).toBe(true);
+    expect(isNonCodeFailure("You have exceeded your monthly quota")).toBe(true);
   });
 });
