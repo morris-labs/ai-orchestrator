@@ -255,6 +255,17 @@ describe("AccountService.seed", () => {
     expect(fs.readFileSync(sources.claudeJson, "utf8")).toContain("SYNTHETIC_KEY");
   });
 
+  it("leaves .claude.json backups out of the copy", async () => {
+    const { accounts, sources } = setup();
+    write(sources.claudeJson, '{"fresh":true}');
+    const backup = path.join(sources.claudeDir, "backups", ".claude.json.backup.1");
+    write(backup, '{"primaryApiKey":"SYNTHETIC_KEY"}');
+    await accounts.seed({ vendors: ["claude"] });
+    const dir = accounts.dirOf("claude", "personal");
+    expect(fs.existsSync(path.join(dir, "backups", ".claude.json.backup.1"))).toBe(false);
+    expect(fs.existsSync(backup)).toBe(true);
+  });
+
   it("drops a .claude.json that isn't JSON rather than copying it unchecked", async () => {
     const { accounts, sources } = setup();
     write(sources.claudeJson, '{"primaryApiKey":"SYNTHETIC_KEY"');

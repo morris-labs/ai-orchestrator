@@ -44,7 +44,8 @@ export const SIGN_IN_FILES: Record<Platform, readonly string[]> = {
 /**
  * Files that hold a token, matched by base name at any depth: `agent.env`
  * (the maintainer's GitHub token sits in `~/.claude`), any `.env` or `*.env`
- * file, and the sign-in file names of every vendor.
+ * file, the sign-in file names of every vendor, and `.claude.json` backups,
+ * which can hold the /login API key.
  */
 const DENIED_BASE_NAMES = new Set([
   ".credentials.json",
@@ -58,7 +59,9 @@ const DENIED_BASE_NAMES = new Set([
 
 /** Whether seeding leaves out a file of this base name, at any depth. */
 export function isDeniedName(name: string): boolean {
-  return DENIED_BASE_NAMES.has(name) || name.endsWith(".env");
+  return (
+    DENIED_BASE_NAMES.has(name) || name.endsWith(".env") || name.startsWith(".claude.json.backup")
+  );
 }
 
 /** The `installMethod` of the image's Claude Code, which installs with `npm install -g`. */
