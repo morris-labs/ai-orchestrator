@@ -105,6 +105,21 @@ describe("RepoService", () => {
     expect((await service().refs(root)).pullRequests).toEqual([]);
   });
 
+  it("offers the broker's token to github.com only when it fetches", async () => {
+    const seen: string[][] = [];
+    const capture: CommandRunner = {
+      run: (program, args, options) => {
+        if (args.includes("fetch")) seen.push([...args]);
+        return runner.run(program, args, options);
+      },
+    };
+    const repos = new RepoService({ projectRoot: root, runner: capture, log: silentLogger });
+    await repos.refs(root, true);
+    const settings = seen[0]!.filter((a) => a.startsWith("credential."));
+    expect(settings).toHaveLength(2);
+    for (const s of settings) expect(s).toMatch(/^credential\.https:\/\/github\.com\.helper=/);
+  });
+
   it("accepts a worktree path relative to the root", async () => {
     const refs = await service().refs(".worktrees/feature");
     expect(refs.localBranches).toContain("claude/feature");

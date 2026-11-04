@@ -97,11 +97,12 @@ export class RepoService {
     if (fetch) {
       // The container has no stored Git sign-in. The helper asks the secrets
       // broker when Git needs it, so the token never reaches a command line.
+      // It applies to github.com only, so another remote never gets the token.
       const fetched = await this.git(dir, [
         "-c",
-        "credential.helper=",
+        "credential.https://github.com.helper=",
         "-c",
-        `credential.helper=${BROKER_CREDENTIAL_HELPER}`,
+        `credential.https://github.com.helper=${BROKER_CREDENTIAL_HELPER}`,
         "fetch",
         "--all",
         "--prune",
