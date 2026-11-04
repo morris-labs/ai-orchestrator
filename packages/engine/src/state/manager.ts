@@ -47,7 +47,9 @@ import { ExecaRunner } from "../range/exec.js";
 import { Git, GitError } from "../range/git.js";
 import { RangeError, resolveRange } from "../range/resolve.js";
 import { RunNotFoundError, RunStore, listRunIds } from "../run/store.js";
-import { RunController } from "./controller.js";
+import { loadTokenHistory } from "../run/token-history.js";
+import { RunController, startingRoles } from "./controller.js";
+import { assignRoles } from "./profiles.js";
 
 /**
  * Turns a core error into one the API maps to a status: a dirty tree keeps
@@ -332,6 +334,9 @@ export class EngineRunManager implements RunManager {
         skipHistory: whole,
       });
       const changedLines = groups.reduce((n, g) => n + g.changedLines, 0);
+      const available = (["claude", "codex", "copilot"] as const).filter(
+        (v) => this.deps.adapters[v],
+      );
       return {
         vendors: Object.keys(this.deps.adapters) as Vendor[],
         baseSha: range.baseSha,
@@ -340,7 +345,22 @@ export class EngineRunManager implements RunManager {
         groups,
         changedLines,
         dirty: range.dirty,
-        tokenEstimate: estimateRunTokens({ depth, groups: groups.length, changedLines }),
+        tokenEstimate: estimateRunTokens({
+          depth,
+          scope: whole ? "whole" : "range",
+          effort: request.reviewerEffort,
+          readOnly: request.readOnly,
+          reviewers: assignRoles({
+            // A preview request can leave these out.
+            profile: request.profile ?? "offload",
+            round: 1,
+            available,
+            manual: startingRoles(request.roles, available),
+            crossVendor: request.crossVendor ?? true,
+          }).reviewer,
+          groups,
+          history: await loadTokenHistory(this.location.projectRoot),
+        }),
         excluded: {
           count: excluded.length,
           files: excluded.slice(0, PREVIEW_EXCLUDED_LIMIT),

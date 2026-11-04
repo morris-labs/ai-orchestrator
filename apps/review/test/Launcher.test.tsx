@@ -12,7 +12,16 @@ const preview = {
   tipSha: "a1b2c3d4e5f6",
   diffBaseSha: "4e1c2a9b7d3f",
   changedLines: 312,
-  tokenEstimate: { tokens: 3_200_000, basis: "2 groups and 312 changed lines." },
+  tokenEstimate: {
+    tokens: 3_200_000,
+    low: 1_900_000,
+    high: 5_100_000,
+    basis: "2 groups and 312 changed lines.",
+    lines: [
+      { label: "Review", tokens: 3_000_000, low: 1_800_000, high: 4_800_000, source: "test" },
+      { label: "Verification", tokens: 200_000, low: 100_000, high: 300_000, source: "test" },
+    ],
+  },
   dirty: true,
   groups: [
     {
@@ -98,7 +107,7 @@ describe("Launcher", () => {
     expect(await screen.findByText(/2 groups, 312 changed lines/)).toBeInTheDocument();
     expect(screen.getByLabelText(/^Depth/)).toHaveValue("standard");
     expect(screen.getByLabelText("Token estimate")).toHaveTextContent(
-      /about 3,200,000.*rough estimate.*2 groups/,
+      /about 3,200,000.*likely 1,900,000 to 5,100,000.*rough estimate.*2 groups/,
     );
     expect(screen.getByText(/The working tree has uncommitted changes/)).toBeInTheDocument();
     expect(screen.getByText("major (risk path)")).toBeInTheDocument();

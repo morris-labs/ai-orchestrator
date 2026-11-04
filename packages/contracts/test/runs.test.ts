@@ -15,6 +15,7 @@ import {
   RunStateSchema,
   postPushRoundCap,
   estimateRunTokens,
+  type RunTokenSample,
   profileRoles,
   runDepth,
 } from "../src/index.js";
@@ -82,12 +83,96 @@ describe("runs", () => {
     expect(runDepth(parsed)).toBe("thorough");
   });
 
-  it("estimates tokens from groups and changed lines, with its basis", () => {
-    const standard = estimateRunTokens({ depth: "standard", groups: 10, changedLines: 2000 });
-    const thorough = estimateRunTokens({ depth: "thorough", groups: 10, changedLines: 2000 });
-    expect(standard.tokens).toBe(5_200_000);
-    expect(thorough.tokens).toBe(12_000_000);
-    expect(standard.basis).toMatch(/10 groups.*2000 changed lines.*standard/);
+  describe("estimateRunTokens", () => {
+    const groups = (n: number, tier: "medium" | "large" = "medium") =>
+      Array.from({ length: n }, () => ({ tier, changedLines: 1000 }));
+    const sample = (runId: string, perGroup: number): RunTokenSample => ({
+      runId,
+      depth: "standard",
+      scope: "whole",
+      effort: "high",
+      readOnly: true,
+      groups: 10,
+      review: [{ vendor: "claude", tier: "medium", tokens: perGroup * 10, groups: 10 }],
+      verificationTokens: 100_000,
+      fixingTokens: 0,
+    });
+
+    it("uses starting rates by tier and effort, and leaves fixing out of read-only runs", () => {
+      const input = { depth: "standard", scope: "whole", readOnly: true } as const;
+      const medium = estimateRunTokens({ ...input, groups: groups(10) });
+      const large = estimateRunTokens({ ...input, groups: groups(10, "large") });
+      const high = estimateRunTokens({ ...input, groups: groups(10, "large"), effort: "high" });
+      expect(medium.lines.map((l) => l.label)).toEqual(["Review", "Verification"]);
+      expect(medium.lines[0]?.tokens).toBe(700_000);
+      expect(large.lines[0]?.tokens).toBe(2_900_000);
+      expect(high.lines[0]?.tokens).toBe(5_800_000);
+      expect(medium.low).toBeLessThan(medium.tokens);
+      expect(medium.high).toBeGreaterThan(medium.tokens);
+      expect(medium.basis).toMatch(/starting rates/);
+    });
+
+    it("adds a fixing line when the run can fix", () => {
+      const made = estimateRunTokens({ depth: "standard", scope: "whole", groups: groups(1) });
+      expect(made.lines.map((l) => l.label)).toContain("Fixing");
+    });
+
+    it("prefers matching project runs and says how many", () => {
+      const made = estimateRunTokens({
+        depth: "standard",
+        scope: "whole",
+        effort: "high",
+        readOnly: true,
+        groups: groups(10),
+        history: [sample("a", 100_000), sample("b", 200_000), sample("c", 300_000)],
+      });
+      expect(made.lines[0]?.tokens).toBe(2_000_000);
+      expect(made.lines[0]?.low).toBe(800_000);
+      expect(made.lines[0]?.high).toBe(3_800_000);
+      expect(made.basis).toMatch(/based on 3 runs/);
+    });
+
+    it("ignores runs with another effort, scope, or depth", () => {
+      const made = estimateRunTokens({
+        depth: "standard",
+        scope: "whole",
+        effort: "medium",
+        readOnly: true,
+        groups: groups(10),
+        history: [sample("a", 900_000)],
+      });
+      expect(made.lines[0]?.tokens).toBe(700_000);
+      expect(made.basis).not.toMatch(/based on/);
+    });
+
+    it("keeps the older rate for a vendor or depth with no data, and says so", () => {
+      const codex = estimateRunTokens({
+        depth: "standard",
+        scope: "whole",
+        reviewers: ["codex"],
+        groups: groups(10),
+      });
+      const thorough = estimateRunTokens({ depth: "thorough", groups: groups(10) });
+      expect(codex.tokens).toBe(5_800_000);
+      expect(codex.lines).toHaveLength(1);
+      expect(codex.basis).toMatch(/older rate/);
+      expect(thorough.tokens).toBe(13_000_000);
+    });
+
+    it("splits groups in turn among reviewers", () => {
+      const made = estimateRunTokens({
+        depth: "standard",
+        scope: "whole",
+        readOnly: true,
+        reviewers: ["claude", "codex"],
+        groups: groups(2),
+      });
+      expect(made.lines.map((l) => l.label)).toEqual([
+        "Review",
+        "Whole run, no measurements",
+        "Verification",
+      ]);
+    });
   });
 
   it("has no defaults on the resolved request", () => {

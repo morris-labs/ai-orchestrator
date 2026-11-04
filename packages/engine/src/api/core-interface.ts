@@ -74,7 +74,13 @@ export interface RunPreview {
   groups: FileGroup[];
   changedLines: number;
   dirty: boolean;
-  tokenEstimate?: { tokens: number; basis: string };
+  tokenEstimate?: {
+    tokens: number;
+    low?: number;
+    high?: number;
+    basis: string;
+    lines?: { label: string; tokens: number; low: number; high: number; source: string }[];
+  };
   excluded?: { count: number; files: { path: string; source: "built-in" | "policy" | "run" }[] };
 }
 

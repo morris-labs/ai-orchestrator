@@ -763,7 +763,27 @@ export const RunPreviewSchema = z.object({
   changedLines: z.number().int().nonnegative(),
   dirty: z.boolean(),
   /** A rough estimate from code, with no model call. Absent from an older engine. */
-  tokenEstimate: z.object({ tokens: z.number().nonnegative(), basis: z.string() }).optional(),
+  tokenEstimate: z
+    .object({
+      tokens: z.number().nonnegative(),
+      /** The likely range. Absent from an older engine. */
+      low: z.number().nonnegative().optional(),
+      high: z.number().nonnegative().optional(),
+      basis: z.string(),
+      /** The stages behind the total. Absent from an older engine. */
+      lines: z
+        .array(
+          z.object({
+            label: z.string(),
+            tokens: z.number().nonnegative(),
+            low: z.number().nonnegative(),
+            high: z.number().nonnegative(),
+            source: z.string(),
+          }),
+        )
+        .optional(),
+    })
+    .optional(),
   /** The files the run leaves out. Absent from an older engine. */
   excluded: z
     .object({

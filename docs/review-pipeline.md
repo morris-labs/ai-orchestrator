@@ -129,15 +129,24 @@ nothing, round 2 makes no reviewer call.
 
 ### Estimate the tokens of a run
 
-**Preview groups** in the run launcher shows a rough token estimate for the chosen
-depth. Code computes it from the changed lines and the group count, with no model
-call, using the `TOKEN_ESTIMATE` figures in `packages/contracts/src/runs.ts`. The
-`thorough` figures start from one real run of about 140 million tokens over 107
-groups. The `standard` figures are planning guesses until runs measure them. The
-number of findings moves the real figure the most, and the estimate can't see it.
+**Preview groups** in the run launcher shows a rough token estimate with a likely
+range, and a line each for review, verification, and fixing. A read-only run has
+no fixing line. Code computes the estimate with no model call, in
+`estimateRunTokens` in `packages/contracts/src/runs.ts`.
 
-The estimate works the same way for a whole-project run, where every line in a
-reviewed file counts as changed, so expect a large number.
+Each line takes its figure from the first source that has one:
+
+1. **This project's finished runs:** up to the newest 5 stored in
+   `.aio/runs`, matched on depth, scope, and reviewer effort, and for review also
+   on vendor and tier. The preview says how many runs it uses.
+2. **The starting rates:** measured Claude rates at the `standard` depth.
+3. **The older rate:** for a vendor or depth with neither, such as a Codex
+   reviewer before its first run. The preview says so, and this rate covers
+   verification and fixing too.
+
+Stored token counts include cached reads, so they overstate what counts against a
+subscription allowance. The number of findings moves verification and fixing the
+most, and the estimate can't see it, so those lines have a wide range.
 
 ## Vendors and roles
 

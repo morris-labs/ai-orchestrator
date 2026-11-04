@@ -653,9 +653,22 @@ export function Launcher({ prefill }: { prefill: { project: string | null; box: 
           ) : null}
           {preview.tokenEstimate ? (
             <p aria-label="Token estimate">
-              Estimated tokens: about {preview.tokenEstimate.tokens.toLocaleString("en-US")}. This
-              is a rough estimate, not a measurement. {preview.tokenEstimate.basis}
+              Estimated tokens: about {preview.tokenEstimate.tokens.toLocaleString("en-US")}
+              {preview.tokenEstimate.low !== undefined && preview.tokenEstimate.high !== undefined
+                ? `, likely ${preview.tokenEstimate.low.toLocaleString("en-US")} to ${preview.tokenEstimate.high.toLocaleString("en-US")}`
+                : ""}
+              . This is a rough estimate, not a measurement. {preview.tokenEstimate.basis}
             </p>
+          ) : null}
+          {preview.tokenEstimate?.lines?.length ? (
+            <ul aria-label="Token estimate by stage">
+              {preview.tokenEstimate.lines.map((line) => (
+                <li key={line.label}>
+                  {line.label}: about {line.tokens.toLocaleString("en-US")} (
+                  {line.low.toLocaleString("en-US")} to {line.high.toLocaleString("en-US")})
+                </li>
+              ))}
+            </ul>
           ) : null}
           {preview.dirty && !form.includeWorktree ? (
             <p role="alert" className="banner banner-warning">
