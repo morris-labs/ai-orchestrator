@@ -518,11 +518,16 @@ export class MultiHost {
   /** On a hub, sends the sign-in files that changed to the nodes whose grant lists them. */
   syncCredentials(): Promise<void> {
     this.credentialSync = this.credentialSync.then(async () => {
-      if (this.node.joined || this.role() === "node" || this.hub.list().length === 0) return;
-      await this.retryUndelivered();
-      for (const entry of await this.credentials.changes()) {
-        await this.broadcastCredential(entry);
-        await this.credentials.markSynced(entry.key, entry.sha256);
+      try {
+        if (this.node.joined || this.role() === "node" || this.hub.list().length === 0) return;
+        await this.retryUndelivered();
+        for (const entry of await this.credentials.changes()) {
+          await this.broadcastCredential(entry);
+          await this.credentials.markSynced(entry.key, entry.sha256);
+        }
+      } catch (err) {
+        // A timer calls this, so a rejection would stop the server and every later sync.
+        this.opts.log(`Couldn't send the changed sign-ins to the nodes: ${(err as Error).message}`);
       }
     });
     return this.credentialSync;

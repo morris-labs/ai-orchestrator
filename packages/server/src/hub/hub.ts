@@ -248,9 +248,10 @@ export class Hub {
   reconcile(): Promise<void> {
     this.reconciling = this.reconciling.then(async () => {
       if (this.closed) return;
-      const want =
-        this.opts.isHub() && (this.registry.count() > 0 || this.registry.liveCodeKeys().length > 0);
       try {
+        const want =
+          this.opts.isHub() &&
+          (this.registry.count() > 0 || this.registry.liveCodeKeys().length > 0);
         if (want && this.server) {
           const host = this.opts.bindHost();
           if (host !== this.boundHost) {

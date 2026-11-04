@@ -218,10 +218,10 @@ export class GuiListener {
   reconcile(): Promise<void> {
     this.reconciling = this.reconciling.then(async () => {
       if (this.closed) return;
-      const want =
-        this.opts.isHub() &&
-        (this.registry.liveCount() > 0 || this.registry.liveCodeKeys().length > 0);
       try {
+        const want =
+          this.opts.isHub() &&
+          (this.registry.liveCount() > 0 || this.registry.liveCodeKeys().length > 0);
         if (want && this.server && this.opts.bindHost() !== this.boundHost) {
           await this.stopListening();
         }
