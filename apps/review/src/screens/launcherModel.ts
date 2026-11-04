@@ -3,6 +3,7 @@ import {
   RunRequestSchema,
   defaultContainerPath,
   type Box,
+  type Effort,
   type ModelTierChoice,
   type Pipeline,
   type Profile,
@@ -43,6 +44,8 @@ export interface LauncherForm {
   /** `default` takes the depth's floor; `all` checks every severity. */
   verifyFloor: Severity | "all" | "default";
   depth: RunDepth;
+  /** Empty takes each vendor's default effort. */
+  reviewerEffort: Effort | "";
   readOnly: boolean;
   includeWorktree: boolean;
   /** Empty takes the depth's round cap. */
@@ -77,6 +80,7 @@ export const DEFAULT_FORM: LauncherForm = {
   modelTier: "auto",
   verifyFloor: "default",
   depth: "standard",
+  reviewerEffort: "",
   readOnly: false,
   includeWorktree: false,
   roundCap: "",
@@ -192,6 +196,7 @@ export function buildRunRequest(form: LauncherForm): BuildResult {
     ...(Object.keys(overrides).length > 0 ? { roles: overrides } : {}),
     modelTier: form.modelTier,
     depth: form.depth,
+    ...(form.reviewerEffort ? { reviewerEffort: form.reviewerEffort } : {}),
     // No severity ranks below `nit`, so that floor checks everything.
     ...(form.verifyFloor === "default"
       ? {}

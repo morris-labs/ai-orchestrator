@@ -374,6 +374,7 @@ function runDetail(r: RunState): string {
     ["Excludes", r.request.excludePaths?.join(", ")],
     ["Model tier", r.request.modelTier],
     ["Depth", runDepth(r.request)],
+    ["Reviewer effort", r.request.reviewerEffort],
     ["Verification floor", r.request.verifyFloor],
     ["Reviewers", r.roles.reviewer.join(", ")],
     ["Disprover", r.roles.disprover],
@@ -1173,6 +1174,12 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
     )
     .addOption(
       new Option(
+        "--reviewer-effort <effort>",
+        "Set the reasoning effort for reviewer calls on Claude and Codex. Default: each vendor's own default.",
+      ).choices(["low", "medium", "high", "xhigh", "max"]),
+    )
+    .addOption(
+      new Option(
         "--verify-floor <severity>",
         "Send only findings at or above this severity to a disprover. The rest stay pending, unchecked, and away from the fixer. Use all to check every severity. Default: P2 with --depth standard, and every severity with --depth thorough.",
       ).choices([...SEVERITIES, "all"]),
@@ -1258,6 +1265,7 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
           roles,
           modelTier: o.tier,
           depth: o.depth,
+          reviewerEffort: o.reviewerEffort,
           // No severity ranks below `nit`, so that floor checks everything.
           verifyFloor: o.verifyFloor === "all" ? "nit" : o.verifyFloor,
           pipeline: o.pipeline,

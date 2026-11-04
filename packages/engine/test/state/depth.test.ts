@@ -33,6 +33,7 @@ import {
   syncFloorLabels,
   triageBelowFloor,
   verifyPending,
+  runFind,
 } from "../../src/state/steps.js";
 import { RunStore } from "../../src/run/store.js";
 import { makeRun, nextRunId } from "./harness.js";
@@ -386,6 +387,38 @@ describe("batched verification", () => {
     await ctx.store.saveGroups([], 1);
     await verifyPending(ctx, ctx.store.roundFile(1, "verify"));
     expect(prompts).toHaveLength(2);
+  });
+});
+
+describe("reviewer effort", () => {
+  it.each([
+    [{ reviewerEffort: "high" as const }, "high"],
+    [{}, undefined],
+  ])("passes %j to the reviewer call", async (extra, expected) => {
+    const efforts: unknown[] = [];
+    const { ctx } = await makeRun({
+      adapters: {
+        claude: adapter("claude", {
+          review: (request) => {
+            efforts.push((request as { effort?: unknown }).effort);
+            return { findings: [], ledger: [] };
+          },
+        }),
+      },
+      request: { depth: "standard", ...extra },
+    });
+    ctx.state.round = 1;
+    ctx.state.roles.reviewer = ["claude"];
+    await runFind(ctx, [
+      {
+        id: "G01",
+        kind: "major",
+        reason: "test",
+        files: ["a.ts"],
+        hunks: [],
+      },
+    ] as never);
+    expect(efforts).toEqual([expected]);
   });
 });
 

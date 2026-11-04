@@ -5,6 +5,7 @@ import {
   type ModelTierChoice,
   type ProjectSummary,
   type RouteOf,
+  type Effort,
   type RunDepth,
 } from "@aio/contracts";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -504,6 +505,22 @@ export function Launcher({ prefill }: { prefill: { project: string | null; box: 
               >
                 <option value="standard">Standard</option>
                 <option value="thorough">Thorough</option>
+              </select>
+            </Field>
+            <Field
+              label="Reviewer effort"
+              hint="How hard reviewers think on each group. Higher effort can find more and costs more. Claude and Codex use this; Copilot ignores it."
+            >
+              <select
+                value={form.reviewerEffort}
+                onChange={(e) => update({ reviewerEffort: e.target.value as Effort | "" })}
+              >
+                <option value="">Vendor default</option>
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+                <option value="xhigh">Extra high</option>
+                <option value="max">Max</option>
               </select>
             </Field>
           </fieldset>

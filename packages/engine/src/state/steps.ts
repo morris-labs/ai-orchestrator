@@ -468,6 +468,8 @@ async function runReviewTask(
     fixDiffOnly,
   });
   const tier = callTier(ctx, "reviewer", groups, group ? group.files : undefined);
+  const effort = ctx.state.request.reviewerEffort;
+  const reviewerEffort = effort ? { effort } : {};
   const base = {
     role: "reviewer" as const,
     groupId: task.groupId,
@@ -479,7 +481,7 @@ async function runReviewTask(
     key: `find-${task.key}`,
     vendor: task.vendor,
     method: "review",
-    request: { prompt, repoPath, toolPolicy: "read-only" },
+    request: { prompt, repoPath, toolPolicy: "read-only", ...reviewerEffort },
     estimateTokens: estimateTokens(prompt) + 4000,
   });
   const vendor = first.vendor;
@@ -531,6 +533,7 @@ async function runReviewTask(
           repoPath,
           toolPolicy: "read-only",
           sessionId,
+          ...reviewerEffort,
         },
         estimateTokens: estimateTokens(followUp) + 2000,
         allowFallback: false,
@@ -552,6 +555,7 @@ async function runReviewTask(
           repoPath,
           toolPolicy: "read-only",
           sessionId,
+          ...reviewerEffort,
         },
         estimateTokens: estimateTokens(more) + 2000,
         allowFallback: false,
