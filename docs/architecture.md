@@ -311,11 +311,14 @@ which parts are untested on a real macOS or Windows host:
 - **`host.docker.internal`**: Docker Desktop defines it. The server adds
   `host.docker.internal:host-gateway` only for the TCP transport on Docker
   Engine on Linux.
-- **File ownership**: the image keeps the container user at uid 1000. Docker
-  Desktop maps ownership on bind mounts itself, so the uid doesn't need to
-  match a macOS uid such as 501, and file modes such as `0600` on the token
-  files might read differently inside the container. Untested on a real
-  macOS or Windows host.
+- **File ownership**: on Linux, `scripts/build-image.sh` gives the container
+  user the uid and gid of the user who builds the image, so a host file with
+  mode `0600`, such as a sign-in, stays readable in the container. Build the
+  image as the user who runs the server. On macOS and Windows the uid and gid
+  stay 1000: Docker Desktop maps ownership on bind mounts itself, so the uid
+  doesn't need to match a macOS uid such as 501, and file modes such as
+  `0600` on the token files might read differently inside the container.
+  Untested on a real macOS or Windows host.
 - **Image user name**: `scripts/build-image.sh` names the container user
   after `id -un`, and the server runs containers as `USER`, `LOGNAME`, or
   `USERNAME`, falling back to `user` for a name with whitespace. The two
