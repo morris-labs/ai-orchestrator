@@ -536,7 +536,8 @@ export class RunController {
         decision: null,
         finishedAt: undefined,
         pausedUntil: undefined,
-        notices: [...(ctx.state.notices ?? []), ...notices],
+        // A notice the run already has, such as the same error on a second retry, isn't repeated.
+        notices: [...new Set([...(ctx.state.notices ?? []), ...notices])],
       });
       this.drive();
       return this.state;

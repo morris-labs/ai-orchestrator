@@ -445,6 +445,16 @@ export class RunContext {
     patch: Partial<Finding> = {},
   ): Promise<void> {
     const previous = finding.verdict;
+    // A disprover reading the code can call new code old. When the code
+    // isn't at the base at all, the engine overrules it.
+    if (verdict === "pre-existing" && patch.verification !== "script" && actor.kind === "agent") {
+      const missing = await this.missingAtBase(finding);
+      if (missing) {
+        verdict = "confirmed";
+        patch = { ...patch, introduced: true };
+        evidence = `${evidence}\nThe engine treats the flaw as introduced: ${missing}`.trim();
+      }
+    }
     Object.assign(finding, patch, { verdict });
     // A whole-project run has no base, so whether a flaw is new is unknown.
     if (this.state.request.scope === "whole") finding.introduced = null;
@@ -463,6 +473,28 @@ export class RunContext {
       finding: structuredClone(finding),
       previousVerdict: previous,
     });
+  }
+
+  /**
+   * Why a finding's code can't be at the run's base, or `null` when it can
+   * be or the engine can't tell: the file is missing there, or the
+   * finding's symbol doesn't appear in the base version of the file.
+   */
+  private async missingAtBase(finding: Finding): Promise<string | null> {
+    const base = this.eng.diffBaseSha;
+    if (!base || !finding.file || this.state.request.scope === "whole") return null;
+    let text: string | null;
+    try {
+      text = await this.git.show(base, finding.file);
+    } catch {
+      return null;
+    }
+    if (text === null) return `${finding.file} doesn't exist at the base ${base.slice(0, 12)}.`;
+    const name = finding.symbol?.split(/[.#:]/).pop()?.trim();
+    if (name && name.length >= 3 && /^[\w$-]+$/.test(name) && !text.includes(name)) {
+      return `${name} doesn't appear in ${finding.file} at the base ${base.slice(0, 12)}.`;
+    }
+    return null;
   }
 
   /** Emits `finding.changed` for a finding that the merge just created. */
