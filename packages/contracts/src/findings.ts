@@ -111,8 +111,21 @@ const findingFields = {
   linesAt: z.string().min(1).optional(),
   failureCase: z.string(),
   category: z.string().min(1),
-  /** False when the flaw already exists at the pinned base. */
-  introduced: z.boolean(),
+  /**
+   * False when the flaw already exists at the pinned base. `null` means
+   * unknown: a whole-project run has no base to compare. Findings stored
+   * before `null` existed hold a boolean.
+   */
+  introduced: z.boolean().nullable(),
+  /**
+   * The finding this one duplicates: the same root cause at the same or an
+   * adjacent location. A duplicate takes its primary's verdict, and no
+   * disprover reads it. Absent on primaries and on older findings.
+   */
+  duplicateOf: z
+    .string()
+    .regex(/^F-\d{4,}$/)
+    .optional(),
   /**
    * Why a pending finding has no verdict. `below_verify_floor`: its severity
    * is below the run's verification floor, so no disprover checked it.
@@ -225,6 +238,39 @@ export interface FindingContext {
   /** The code version the lines count in; see `Finding.linesAt`. */
   linesAt?: string;
 }
+
+/** Says whether a finding is new on the branch, in words, for screens and exports. */
+export function introducedLabel(introduced: boolean | null): string {
+  if (introduced === null) return "Unknown: the run has no base to compare";
+  return introduced ? "Yes, on this branch" : "No, it exists at the base";
+}
+
+/** One root cause in a run's root-cause summary. */
+export const RootCauseSchema = z.object({
+  /** A short name for the root cause. */
+  title: z.string().min(1),
+  /** What the findings under it share, in one or two sentences. */
+  summary: z.string(),
+  /** The confirmed findings that share this root cause. */
+  findingIds: z.array(z.string().regex(/^F-\d{4,}$/)).min(1),
+  /** Where this cause falls in the suggested fix order: 1 is the first fix. */
+  fixOrder: z.number().int().positive(),
+});
+export type RootCause = z.infer<typeof RootCauseSchema>;
+
+/**
+ * The optional last step of a run: confirmed findings clustered by root
+ * cause, in a suggested fix order. Stored with the run state.
+ */
+export const RootCauseSummarySchema = z.object({
+  createdAt: IsoDateTimeSchema,
+  round: z.number().int().nonnegative(),
+  /** Root causes, sorted by `fixOrder`. */
+  causes: z.array(RootCauseSchema),
+  /** Why the fix order is what it is, in a sentence or two. */
+  rationale: z.string().default(""),
+});
+export type RootCauseSummary = z.infer<typeof RootCauseSummarySchema>;
 
 /** Converts a vendor's snake_case finding into a `Finding`. */
 export function fromVendorFinding(raw: VendorFinding, ctx: FindingContext): Finding {

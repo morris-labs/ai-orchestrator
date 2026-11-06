@@ -2,6 +2,7 @@
 // verdict; open one for its diff, verdict trail, evidence, fix commit, and
 // the waive action.
 import {
+  introducedLabel,
   SeveritySchema,
   VerdictSchema,
   type Finding,
@@ -135,7 +136,13 @@ function FindingDetail({
         <dt>Raised by</dt>
         <dd>{[f.reportedBy, ...f.alsoReportedBy].join(", ")}</dd>
         <dt>Introduced</dt>
-        <dd>{f.introduced ? "Yes, on this branch" : "No, it exists at the base"}</dd>
+        <dd>{introducedLabel(f.introduced)}</dd>
+        {f.duplicateOf ? (
+          <>
+            <dt>Duplicate of</dt>
+            <dd className="mono">{f.duplicateOf}</dd>
+          </>
+        ) : null}
         <dt>Origin</dt>
         <dd>
           {f.origin}

@@ -7,6 +7,7 @@
 import type { Finding, Hunk } from "@aio/contracts";
 import type { FindingsLogEntry } from "../merge/merge.js";
 import {
+  CLUSTER_OUTPUT_JSON_SCHEMA,
   CONFIRM_OUTPUT_JSON_SCHEMA,
   FIX_OUTPUT_JSON_SCHEMA,
   REVIEW_OUTPUT_JSON_SCHEMA,
@@ -28,13 +29,42 @@ export const FOCUS_AREAS: readonly (readonly string[])[] = [
   ["security", "data exposure", "resource handling", "concurrency"],
 ];
 
+/**
+ * Concrete anchors for each severity, so reviewers and disprovers rank alike.
+ * The contracts' strongest severity is `P1`, so the top anchors sit there.
+ */
+export const SEVERITY_ANCHORS = [
+  "P1: cross-tenant or cross-user data access or writes, remote code execution (including code that runs on every host of a fleet), authentication or authorization bypass, a credential that leaks or that one tenant can use against another, and silent loss or corruption of stored data.",
+  "P2: a bug that breaks a real use case or returns wrong results, a crash or hang on reachable input, a security flaw limited to one tenant's own data, and a resource leak that builds up in normal use.",
+  "P3: a bug on a rare edge case with a workaround, misleading errors or logs, and a missing check that only a trusted operator can reach.",
+  "nit: style, naming, comments, and preference. These are not defects.",
+  "Rank by the worst realistic outcome, not by how sure you are. Don't put every finding at the same severity: two findings with different outcomes get different severities.",
+];
+
+/** The severity anchors as one compact line. */
+const TERSE_SEVERITY_ANCHORS =
+  "Severity: P1 cross-tenant access or writes, remote or fleet-wide code execution, auth bypass, cross-tenant credential, data loss; P2 breaks real use, crash on reachable input, single-tenant security flaw; P3 rare edge case, operator-only gap; nit style. Rank by worst realistic outcome, and don't flatten.";
+
+/**
+ * A dismissal that rests on trust needs evidence in the code. Without it, the
+ * finding stays open (`unverified`) for a person to judge.
+ */
+export const TRUST_RULE =
+  "A disproof that rests on a trust assumption (a trusted caller, a trusted machine, an internal-only network, or a trusted owner) needs evidence in the code of how the credential or access is issued and scoped: per tenant, per user, or per host. A credential shared by every tenant or install, or one that sits in install scripts, config, or images, isn't trusted. When you can't find that evidence, answer `unverified`, never `disproved`.";
+
+/** Keeps verdicts on findings about the same code consistent. */
+export const CONSISTENCY_RULE =
+  "Related findings at the same or nearby lines are listed with their verdicts. When a finding describes the same flaw as a related one, give it the same verdict. When your verdict differs, say in the evidence what makes the two findings different.";
+
 /** The precision rules. They appear in the disprover prompt and nowhere else. */
 export const PRECISION_RULES = [
   "Zero confirmed findings is an acceptable outcome. Disprove anything you can't support.",
   "Disproving needs positive evidence: the code, input, or run that shows the failure case can't happen. When your tools fail (a command can't start, the sandbox refuses it, or a file can't be read) and the code alone doesn't settle the finding, answer `unverified`, never `disproved`.",
+  TRUST_RULE,
   "No speculative flaws: confirm only when you can name the input or state that triggers the failure.",
   "Style, naming, and preference are not defects.",
   "A flaw in code the change didn't touch still counts, but say so: report whether it exists at the base.",
+  "When you confirm a finding, check its severity against the severity anchors and return `severity` when it differs.",
 ];
 
 /** What the `standard` depth asks reviewers for. It doesn't cap the number of findings. */
@@ -42,6 +72,7 @@ export const STANDARD_REPORT_RULES = [
   "Report only P1 and P2 findings: bugs that break real use, and security flaws that are easy to exploit.",
   "An easy flaw is one an unskilled attacker could use with a public script or simple tampering: a missing auth check, injection from outside input, path traversal, a leaked or logged secret, an unsafe default, or an exposed port without auth.",
   "Assume a trusted owner and trusted machines. Don't construct targeted attack chains, compromised-node or hostile-container scenarios, or exploit scripts.",
+  "The trusted-owner assumption doesn't cover credentials: report a token or key that every tenant or install shares, or that ships in scripts, config, or images.",
   "Don't report nits, style, naming, or preference.",
   "There is no cap on the number of findings: report every P1 and P2 issue you find.",
 ];
@@ -60,6 +91,8 @@ const TERSE_PRECISION_RULES = [
   "Style, naming, and preference aren't defects.",
   "A flaw in untouched code still counts; set `presentAtBase`.",
   "Assume a trusted owner and machines. Disprove a finding that needs a targeted attack chain, a compromised node, or a hostile container.",
+  "A disproof that rests on trust (trusted caller, trusted machine, internal-only) needs code evidence of how the credential is issued and scoped. A credential shared by every tenant or install, or one in install scripts or config, isn't trusted. Without that evidence, answer `unverified`.",
+  "When you confirm, return `severity` if the severity anchors give a different one.",
 ];
 
 function location(f: Finding): string {
@@ -82,7 +115,7 @@ const NO_BASE_RULE =
 
 /** What a reviewer reads in a whole-project run. */
 const WHOLE_PROJECT_REVIEW =
-  "This run reviews the project as it ships, not a change, and every file appears as new. Set `introduced` to true on every finding.";
+  "This run reviews the project as it ships, not a change, and every file appears as new. Set `introduced` to true on every finding; with no base to compare, the engine records it as unknown.";
 
 export interface FinderPromptInput {
   range: RangeInfo;
@@ -205,6 +238,7 @@ export function finderPrompt(input: FinderPromptInput): string {
     "You are read-only: don't edit files, commit, or run commands that change the repository. You can read any file and run read-only commands.",
     "",
     section("How to report", report.join("\n")),
+    section("Severity", SEVERITY_ANCHORS.map((r) => `- ${r}`).join("\n")),
     section(
       "Coverage ledger",
       [
@@ -249,6 +283,7 @@ function terseFinderPrompt(input: FinderPromptInput): string {
       [
         ...STANDARD_REPORT_RULES,
         "A verifier checks each finding, so report what meets this bar even when unsure. Examine every hunk.",
+        TERSE_SEVERITY_ANCHORS,
         TERSE_RULE,
       ].join("\n"),
     ),
@@ -334,6 +369,7 @@ export function sweepPrompt(input: SweepPromptInput): string {
       ? `Each confirmed finding below is a pattern. Search the project at ${input.range.tipSha} in ${input.range.repoPath} for other instances of each pattern: the same mistake in another function, file, or call site.`
       : `Each confirmed finding below is a pattern. Search the whole change from ${input.range.baseSha} to ${input.range.tipSha} in ${input.range.repoPath} for other instances of each pattern: the same mistake in another function, file, or call site.`,
     "You are read-only. Report every other instance you find, with its own location and failure case. Don't report the instances listed here again.",
+    TERSE_SEVERITY_ANCHORS,
     "",
     input.standard ? TERSE_RULE : "",
     section("Patterns", patterns),
@@ -355,6 +391,21 @@ export interface DisproverPromptInput {
   policySection: string;
   /** Uses the compact prompt. */
   standard?: boolean;
+  /** Other findings at the same or nearby lines, for consistent verdicts (`relatedFindings`). */
+  related?: readonly Finding[];
+}
+
+/**
+ * Lists findings related to the ones a disprover checks, with their verdicts,
+ * and the rule that keeps verdicts on one flaw consistent. Empty without any.
+ */
+export function relatedSection(related: readonly Finding[] | undefined): string {
+  if (!related || related.length === 0) return "";
+  const lines = related.map(
+    (f) =>
+      `- ${f.id} [${f.verdict}] ${f.severity} ${location(f)} ${f.title}${isExternal(f) ? " [external]" : ""}`,
+  );
+  return section("Related findings", [CONSISTENCY_RULE, "", ...lines].join("\n"));
 }
 
 /** The disprover: tries to disprove one finding, with the precision rules. */
@@ -366,6 +417,7 @@ export function disproverPrompt(input: DisproverPromptInput): string {
       "",
       batchFindingBlock(f),
       isExternal(f) ? UNTRUSTED_FRAME : "",
+      relatedSection(input.related),
       section(
         "Rules",
         terseRules(input.baseWorktree)
@@ -393,7 +445,9 @@ export function disproverPrompt(input: DisproverPromptInput): string {
       ].join("\n"),
     ),
     isExternal(f) ? UNTRUSTED_FRAME : "",
+    relatedSection(input.related),
     section("Rules", PRECISION_RULES.map((r) => `- ${r}`).join("\n")),
+    section("Severity", SEVERITY_ANCHORS.map((r) => `- ${r}`).join("\n")),
     section(
       "How to verify",
       input.baseWorktree === null
@@ -424,6 +478,8 @@ export interface BatchDisproverPromptInput {
   scratchDir: string;
   baseWorktree: string | null;
   policySection: string;
+  /** Findings outside the batch at the same or nearby lines (`relatedFindings`). */
+  related?: readonly Finding[];
 }
 
 /** One finding's text in a batch prompt. Its length decides when a batch splits. */
@@ -442,10 +498,11 @@ export function batchFindingBlock(f: Finding): string {
 /** The disprover at the `standard` depth: checks every finding of a batch in one call. */
 export function batchDisproverPrompt(input: BatchDisproverPromptInput): string {
   return join([
-    "Try to disprove each finding below. Confirm one only when the evidence holds. Return one `verdicts` entry per id. Findings here often share code, so read it once.",
+    "Try to disprove each finding below. Confirm one only when the evidence holds. Return one `verdicts` entry per id. Findings here often share code, so read it once. Findings that describe the same flaw get the same verdict.",
     "",
     section("Findings", input.findings.map(batchFindingBlock).join("\n\n")),
     input.findings.some(isExternal) ? UNTRUSTED_FRAME : "",
+    relatedSection(input.related),
     section(
       "Rules",
       terseRules(input.baseWorktree)
@@ -464,7 +521,7 @@ function terseRules(baseWorktree: string | null): string[] {
     baseWorktree === null
       ? TERSE_PRECISION_RULES.filter((r) => !r.includes("presentAtBase"))
       : TERSE_PRECISION_RULES;
-  return [...rules, TERSE_RULE];
+  return [...rules, TERSE_SEVERITY_ANCHORS, TERSE_RULE];
 }
 
 /** Where a compact disprover prompt's agent works, and what a script must do. */
@@ -625,5 +682,32 @@ export function confirmerPrompt(input: ConfirmerPromptInput): string {
     section("Repository policy", input.policySection),
     section("Fix diff", `\`\`\`diff\n${input.fixDiff.trimEnd()}\n\`\`\``),
     jsonInstruction(CONFIRM_OUTPUT_JSON_SCHEMA),
+  ]);
+}
+
+export interface ClusterPromptInput {
+  /** The confirmed findings to cluster. */
+  findings: readonly Finding[];
+}
+
+/** One finding's line in the root-cause prompt: id, severity, location, title, and failure case. */
+export function clusterLine(f: Finding): string {
+  if (isExternal(f)) return `- ${f.id} ${f.severity} ${location(f)} [external]`;
+  const failure = f.failureCase.replace(/\s+/g, " ").slice(0, 300);
+  return `- ${f.id} ${f.severity} ${location(f)} ${f.title} | ${failure}`;
+}
+
+/**
+ * The optional root-cause step: one call over confirmed findings' titles,
+ * failure cases, and locations. It reads no code.
+ */
+export function clusterPrompt(input: ClusterPromptInput): string {
+  return join([
+    "Group these confirmed findings by root cause: the one design flaw or missing control that a single fix removes. Don't read or run anything; work from this list alone.",
+    "- Put every id under exactly one root cause. A finding with a cause of its own gets its own entry.",
+    "- Number the causes in the order to fix them: the most severe outcome first, then causes whose fix removes the most findings, then causes that other fixes depend on.",
+    `- ${TERSE_RULE}`,
+    section("Findings", input.findings.map(clusterLine).join("\n")),
+    terseJsonInstruction(CLUSTER_OUTPUT_JSON_SCHEMA),
   ]);
 }

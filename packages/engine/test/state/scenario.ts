@@ -20,6 +20,7 @@ import type {
   HunkVerdict,
   LimitInfo,
   ReviewOutput,
+  ClusterOutput,
   SweepOutput,
   VendorAdapter,
   VerifyBatchOutput,
@@ -353,6 +354,17 @@ export class ScenarioAdapter implements VendorAdapter {
     );
     return result(this.vendor, request.prompt, {
       findings: found.map((b) => toVendorFinding(b, request.repoPath)),
+    });
+  }
+
+  /** Puts every finding id in the prompt under one root cause. */
+  async cluster(request: AdapterRequest): Promise<AdapterResult<ClusterOutput>> {
+    await this.scenario.enter(this.vendor, "cluster", request.prompt);
+    const ids = [...new Set(request.prompt.match(/\bF-\d{4,}\b/g) ?? [])];
+    return result(this.vendor, request.prompt, {
+      causes:
+        ids.length > 0 ? [{ title: "One cause", summary: "", findingIds: ids, fixOrder: 1 }] : [],
+      rationale: "",
     });
   }
 

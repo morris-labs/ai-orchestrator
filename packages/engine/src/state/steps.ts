@@ -14,6 +14,7 @@ import {
 } from "@aio/contracts";
 import type {
   AgentRole,
+  RootCause,
   FileGroup,
   Finding,
   FindingOrigin,
@@ -25,6 +26,7 @@ import type {
   VendorRoundStats,
 } from "@aio/contracts";
 import type {
+  ClusterOutput,
   ConfirmOutput,
   FixOutput,
   ReviewOutput,
@@ -49,6 +51,7 @@ import { findingsLog, mergeCandidates, type Candidate, type MergeResult } from "
 import { isRiskPath, policyPromptSection } from "../policy/rules.js";
 import {
   batchDisproverPrompt,
+  clusterPrompt,
   isExternal,
   triageLine,
   triagePrompt,
@@ -64,6 +67,7 @@ import { parseDiff } from "../range/diff.js";
 import {
   batchEffort,
   planVerifyBatches,
+  relatedFindings,
   rootCauseDuplicates,
   splitByTokens,
   type VerifyBatch,
@@ -724,6 +728,7 @@ export async function mergeInto(
         acceptedOscillations: ctx.eng.acceptedOscillations,
         now: () => ctx.nowIso(),
         ...linesVersion(ctx),
+        ...(ctx.state.request.scope === "whole" ? { noBase: true } : {}),
       },
       await symbolsOfFixed(ctx),
     );
@@ -1012,6 +1017,8 @@ async function planBatchesFor(
   ctx: RunContext,
   pending: readonly Finding[],
   stageFile: string,
+  /** False plans only the duplicates, for depths that verify each finding alone. */
+  batch = true,
 ): Promise<VerifyBatchPlan> {
   const file = stageFile.replace(/\.json$/, "-batches.json");
   const plan = (await ctx.store.readJson<VerifyBatchPlan>(file)) ?? { batches: [], duplicates: {} };
@@ -1020,6 +1027,12 @@ async function planBatchesFor(
   if (fresh.length === 0) return plan;
   const duplicates = rootCauseDuplicates(fresh);
   const reported = fresh.filter((f) => !duplicates.has(f.id));
+  await markDuplicates(ctx, duplicates);
+  if (!batch) {
+    plan.duplicates = { ...plan.duplicates, ...Object.fromEntries(duplicates) };
+    await ctx.store.writeJson(file, plan);
+    return plan;
+  }
   plan.batches.push(
     ...planVerifyBatches(reported, {
       vendorFor: (f) =>
@@ -1035,6 +1048,34 @@ async function planBatchesFor(
   plan.duplicates = { ...plan.duplicates, ...Object.fromEntries(duplicates) };
   await ctx.store.writeJson(file, plan);
   return plan;
+}
+
+/**
+ * The dedup pass after review: records on each duplicate the finding it
+ * duplicates, so screens and exports can fold it under its primary.
+ */
+async function markDuplicates(
+  ctx: RunContext,
+  duplicates: ReadonlyMap<string, string>,
+): Promise<void> {
+  if (duplicates.size === 0) return;
+  for (const [id, primaryId] of duplicates) {
+    const finding = ctx.findingById(id);
+    if (!finding || finding.duplicateOf === primaryId) continue;
+    finding.duplicateOf = primaryId;
+    await ctx.emit({
+      type: "finding.changed",
+      runId: ctx.state.id,
+      finding: structuredClone(finding),
+      previousVerdict: finding.verdict,
+    });
+  }
+  const pairs = [...duplicates].map(([id, primaryId]) => `${id} into ${primaryId}`).join(", ");
+  const count = duplicates.size;
+  await addNotice(
+    ctx,
+    `The dedup pass folded ${count} ${count === 1 ? "finding" : "findings"} with the same root cause into another: ${pairs}.`,
+  );
 }
 
 /**
@@ -1136,12 +1177,23 @@ export async function verifyPending(ctx: RunContext, stageFile: string): Promise
         evidence: d.evidence.slice(0, 500),
       });
     } else {
+      const rerank =
+        d.verdict === "confirmed" && d.severity !== undefined && d.severity !== finding.severity
+          ? d.severity
+          : null;
+      const evidence = rerank
+        ? `${d.evidence}\nThe disprover ranked it ${rerank} against the severity anchors; the reporter said ${finding.severity}.`
+        : d.evidence;
       await ctx.setVerdict(
         finding,
         d.verdict,
         { kind: "agent", vendor: result.vendor, model: result.model, role: "disprover" },
-        d.evidence,
-        { verification: d.verification, introduced: d.introduced },
+        evidence,
+        {
+          verification: d.verification,
+          introduced: d.introduced,
+          ...(rerank ? { severity: rerank } : {}),
+        },
       );
     }
     return result;
@@ -1157,6 +1209,7 @@ export async function verifyPending(ctx: RunContext, stageFile: string): Promise
     try {
       result = await verifyFinding(finding, vendor, {
         ...deps(finding.id),
+        related: relatedFindings([finding], ctx.findings),
         ...(runDepth(ctx.state.request) === "standard" ? { standard: true } : {}),
         scratchDirFor: (id) => ctx.store.scratchDir(id),
         timeoutMs: ctx.timeouts.disprover,
@@ -1210,6 +1263,7 @@ export async function verifyPending(ctx: RunContext, stageFile: string): Promise
     const prompt = batchDisproverPrompt({
       range: ctx.range(repoPath),
       findings,
+      related: relatedFindings(findings, ctx.findings),
       scratchDir,
       baseWorktree: baseDir,
       policySection: policyPromptSection(ctx.policy, files.length > 0 ? files : undefined),
@@ -1287,7 +1341,14 @@ export async function verifyPending(ctx: RunContext, stageFile: string): Promise
     const perBatch = await mapLimit(plan.batches, VERIFY_CONCURRENCY, verifyBatch);
     results = [...perBatch.flat(), ...(await followPrimaries(ctx, plan.duplicates))];
   } else {
-    results = await mapLimit(pending, VERIFY_CONCURRENCY, verifyOne);
+    // Each finding gets its own call, but a duplicate still takes its
+    // primary's verdict, so one root cause can't get two verdicts.
+    const plan = await planBatchesFor(ctx, pending, stageFile, false);
+    const primaries = pending.filter((f) => plan.duplicates[f.id] === undefined);
+    results = [
+      ...(await mapLimit(primaries, VERIFY_CONCURRENCY, verifyOne)),
+      ...(await followPrimaries(ctx, plan.duplicates)),
+    ];
   }
   const done = results.filter((r): r is VerifyResult => r !== null);
   // A resumed stage verifies only what is still pending, so the results
@@ -2022,3 +2083,100 @@ export function confirmedThisRound(ctx: RunContext): Finding[] {
 }
 
 export { computeGroups as regroup };
+
+// ---------------------------------------------------------------------------
+// Root causes
+
+/**
+ * The optional last step of a run (`request.rootCauses`): one read-only call
+ * that clusters the confirmed and fixed findings by root cause, in a
+ * suggested fix order, stored as `state.rootCauses`. It reads only the
+ * findings' titles, failure cases, and locations. A duplicate goes under its
+ * primary's cause. A failed call leaves a notice and never fails the run.
+ */
+export async function summarizeRootCauses(ctx: RunContext): Promise<void> {
+  if (!ctx.state.request.rootCauses || ctx.state.rootCauses) return;
+  const confirmed = ctx.findings.filter(
+    (f) => (f.verdict === "confirmed" || f.verdict === "fixed") && f.duplicateOf === undefined,
+  );
+  if (confirmed.length === 0) return;
+  const prompt = clusterPrompt({ findings: confirmed });
+  let out: AgentOutcome<ClusterOutput>;
+  try {
+    out = await ctx.callAgent<ClusterOutput>({
+      key: "root-causes",
+      role: "sweeper",
+      vendor:
+        ctx.state.roles.reviewer.find((v) => v !== "claude") ??
+        ctx.state.roles.reviewer[0] ??
+        "codex",
+      method: "cluster",
+      request: {
+        prompt,
+        repoPath: ctx.state.request.repoPath,
+        toolPolicy: "read-only",
+        effort: "low",
+      },
+      groupId: null,
+      estimateTokens: estimateTokens(prompt) + 40 * confirmed.length + 1000,
+      allowFallback: true,
+      ...(ctx.state.request.modelTier
+        ? { tier: { tier: "small" as const, reason: "The root-cause summary", fixed: true } }
+        : {}),
+    });
+  } catch (error) {
+    if (
+      !(error instanceof AgentFailed) &&
+      !(error instanceof RoleDenied) &&
+      !(error instanceof SafetyRefused)
+    ) {
+      throw error;
+    }
+    ctx.deps.log?.warn("The root-cause call failed; the run has no root-cause summary", {
+      runId: ctx.state.id,
+      error: (error as Error).message.slice(0, 500),
+    });
+    await addNotice(ctx, "The root-cause summary call failed, so the run has no summary.");
+    return;
+  }
+  const causes = rootCausesFrom(out.output, confirmed, ctx.findings);
+  ctx.state.rootCauses = {
+    createdAt: ctx.nowIso(),
+    round: Math.max(0, ctx.round),
+    causes,
+    rationale: out.output.rationale,
+  };
+  await ctx.persist();
+}
+
+/**
+ * Checks a root-cause answer against the findings sent: drops unknown and
+ * repeated ids and empty causes, puts each missed finding under a cause of
+ * its own, adds duplicates under their primary's cause, and numbers the
+ * causes 1 and up in the answer's order.
+ */
+export function rootCausesFrom(
+  output: ClusterOutput,
+  sent: readonly Finding[],
+  all: readonly Finding[],
+): RootCause[] {
+  const known = new Set(sent.map((f) => f.id));
+  const placed = new Set<string>();
+  const causes: Array<Omit<RootCause, "fixOrder"> & { order: number }> = [];
+  for (const c of [...output.causes].sort((a, b) => a.fixOrder - b.fixOrder)) {
+    const ids = c.findingIds.filter((id) => known.has(id) && !placed.has(id));
+    if (ids.length === 0) continue;
+    for (const id of ids) placed.add(id);
+    causes.push({ title: c.title, summary: c.summary, findingIds: ids, order: c.fixOrder });
+  }
+  for (const f of sent) {
+    if (placed.has(f.id)) continue;
+    causes.push({ title: f.title, summary: "", findingIds: [f.id], order: Infinity });
+  }
+  for (const f of all) {
+    if (f.duplicateOf === undefined) continue;
+    const cause = causes.find((c) => c.findingIds.includes(f.duplicateOf as string));
+    if (cause && !cause.findingIds.includes(f.id)) cause.findingIds.push(f.id);
+  }
+  return causes.map(({ order: _order, ...c }, i) => ({ ...c, fixOrder: i + 1 }));
+}

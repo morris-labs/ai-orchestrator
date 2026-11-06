@@ -264,8 +264,14 @@ export interface VerdictDecision {
    */
   verdict: "confirmed" | "disproved" | "pre-existing" | "unverified";
   verification: "script" | "code-reading";
-  introduced: boolean;
+  /** `null` when the run has no base, so whether the flaw is new is unknown. */
+  introduced: boolean | null;
   evidence: string;
+  /**
+   * The severity the disprover gives a confirmed finding against the
+   * severity anchors, when it differs from the reporter's. Absent otherwise.
+   */
+  severity?: Finding["severity"];
 }
 
 function describeRun(where: string, run: ScriptRun): string {
@@ -336,15 +342,16 @@ export function decideVerdict(
   tip: ScriptRun | null,
   base: ScriptRun | null,
   toolErrors: readonly string[] = [],
-  /** A whole-project run has no base, so every flaw it confirms counts as introduced. */
+  /** A whole-project run has no base, so `introduced` is unknown (`null`). */
   noBase = false,
 ): VerdictDecision {
   const parts = [output.evidence.trim()];
+  const newFlaw = noBase ? null : true;
   if (output.verdict === "unverified") {
     return {
       verdict: "unverified",
       verification: output.verification,
-      introduced: true,
+      introduced: newFlaw,
       evidence: parts.join("\n"),
     };
   }
@@ -357,14 +364,14 @@ export function decideVerdict(
       return {
         verdict: "unverified",
         verification: output.verification,
-        introduced: true,
+        introduced: newFlaw,
         evidence: parts.join("\n").trim(),
       };
     }
     return {
       verdict: "disproved",
       verification: output.verification,
-      introduced: true,
+      introduced: newFlaw,
       evidence: parts.join("\n"),
     };
   }
@@ -399,12 +406,20 @@ export function decideVerdict(
   if (presentAtBase) {
     return { verdict: "pre-existing", verification, introduced: false, evidence: parts.join("\n") };
   }
-  return { verdict: "confirmed", verification, introduced: true, evidence: parts.join("\n") };
+  return {
+    verdict: "confirmed",
+    verification,
+    introduced: newFlaw,
+    evidence: parts.join("\n"),
+    ...(output.severity ? { severity: output.severity } : {}),
+  };
 }
 
 export interface VerifyDeps {
   /** Uses the compact prompt of the `standard` depth. */
   standard?: boolean;
+  /** Findings at the same or nearby lines, which the prompt lists for consistent verdicts. */
+  related?: readonly Finding[];
   runner: CommandRunner;
   range: RangeInfo;
   policy: PolicyFile;
@@ -466,6 +481,7 @@ export async function verifyFinding(
     scratchDir,
     baseWorktree: baseDir,
     policySection: policyPromptSection(deps.policy, finding.file ? [finding.file] : undefined),
+    ...(deps.related ? { related: deps.related } : {}),
   });
   const answer = await deps.callDisprover(vendor, finding, {
     prompt,

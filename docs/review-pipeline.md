@@ -105,7 +105,8 @@ finding. The batches work as follows:
   findings tries alone before the engine flags it, so one finding can't flag a whole
   group.
 
-A `thorough` run makes one call per finding.
+A `thorough` run makes one call per finding, but a duplicate still takes its
+primary's verdict instead of getting its own call.
 
 ### Compact findings
 
@@ -481,7 +482,9 @@ A whole-project run behaves differently in the following ways:
   tree. The commit has fixed names and dates, so it needs no Git identity and
   always has the same SHA. No branch or tag points at it. If a garbage collection
   removes it, the engine recreates it when the run resumes or opens a round.
-- **Findings**: every finding counts as introduced. The engine makes no base
+- **Findings**: whether a finding is new is unknown, so the engine records
+  `introduced` as `null`, and the Findings screen and exports show "Unknown".
+  Runs stored before this change show `true`. The engine makes no base
   checkout, runs reproduction scripts at the tip only, and never labels a finding
   `pre-existing`.
 - **Rounds**: round 1 reviews the project, in file groups only, and later rounds
@@ -526,13 +529,33 @@ of them.
    while they run.
 1. **Merge**: removes duplicate findings, and records the overlap rate
    between reviewers. Two findings are duplicates when they have the same
-   fingerprint, or when their lines overlap in the same commit and their
-   titles or failure cases share at least half their words.
+   fingerprint, or when their lines overlap or sit within 3 lines of each
+   other in the same commit and their titles or failure cases share at least
+   half their words.
 1. **Verify**: a disprover from another vendor tries to disprove each
    finding, with a reproduction script where it can, and checks whether the
    flaw already exists at the base. The engine reruns each script in a
    throwaway checkout of the tip and of the base, and stops it when you
-   cancel the run.
+   cancel the run. Verification works as follows:
+   - **Dedup pass**: before any call, a finding with the root cause of
+     another, by the merge's test, by close text within 5 lines, or by very
+     close text anywhere in one file, gets `duplicateOf` set to the other
+     finding's ID and takes that finding's verdict. A run notice lists every
+     merged ID.
+   - **Related findings**: each disprover call lists the other findings
+     within 20 lines in the same file, with their verdicts, and must give a
+     finding that describes the same flaw the same verdict, or say what
+     differs.
+   - **Trust**: a disproof that rests on a trusted caller, a trusted machine,
+     or an internal-only network needs evidence in the code of how the
+     credential is issued and scoped. Without it, the finding stays pending.
+   - **Severity**: reviewers and disprovers rank against fixed anchors.
+     `P1` covers cross-tenant data access or writes, remote or fleet-wide code
+     execution, authentication bypass, and a credential one tenant can use
+     against another. `nit` covers style. A disprover that confirms a finding
+     can return another severity, and the engine applies it and notes the
+     change in the evidence. The contracts have no `P0`, so the top anchors
+     sit at `P1`.
 1. **Fix**: Claude fixes the confirmed findings on the tip branch and commits
    each batch.
 1. **Gate**: reruns tests and lint in your checkout, where the dependencies
@@ -544,6 +567,18 @@ of them.
    diff for incomplete fixes and regressions.
 1. **Sweep**: turns each confirmed finding into a pattern and searches the
    whole diff for other instances.
+
+### Root-cause summary
+
+To end a run with a short list of root causes, pass `--root-causes` to the
+`aio review start` command, or set `rootCauses` to `true` in the run request.
+It is off by default. When the run finishes, one read-only call on a small
+model reads the confirmed and fixed findings' IDs, severities, locations,
+titles, and failure cases, and reads no code. The engine stores the answer as
+`rootCauses` in the run state: each root cause with its finding IDs, in a
+suggested fix order. Duplicates go under their primary's root cause. A failed
+call adds a run notice and doesn't fail the run. The `aio review status RUN_ID`
+command lists the root causes.
 
 ## Verification floor
 

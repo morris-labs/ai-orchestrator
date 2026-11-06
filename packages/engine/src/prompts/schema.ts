@@ -77,6 +77,11 @@ export const VERIFY_OUTPUT_JSON_SCHEMA = {
       type: "boolean",
       description: "True when the same flaw exists in the base worktree.",
     },
+    severity: {
+      enum: ["P1", "P2", "P3", "nit"],
+      description:
+        "For a confirmed finding only: its severity by the severity anchors, when it differs from the reported one. Omit to keep the reported severity.",
+    },
     script: {
       anyOf: [
         { type: "null" },
@@ -114,6 +119,30 @@ export const VERIFY_BATCH_OUTPUT_JSON_SCHEMA = {
         },
       },
     },
+  },
+} as const;
+
+export const CLUSTER_OUTPUT_JSON_SCHEMA = {
+  type: "object",
+  required: ["causes", "rationale"],
+  properties: {
+    causes: {
+      type: "array",
+      items: {
+        type: "object",
+        required: ["title", "summary", "findingIds", "fixOrder"],
+        properties: {
+          title: { type: "string", description: "Short name of the root cause. Max 80 chars." },
+          summary: {
+            type: "string",
+            description: "What the findings share and the fix. Max 200 chars.",
+          },
+          findingIds: { type: "array", items: { type: "string", description: "Finding id." } },
+          fixOrder: { type: "integer", minimum: 1, description: "1 is the first fix." },
+        },
+      },
+    },
+    rationale: { type: "string", description: "Why this fix order. Max 200 chars." },
   },
 } as const;
 

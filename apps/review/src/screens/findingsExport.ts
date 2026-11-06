@@ -1,7 +1,7 @@
 // Exports of a run's findings: JSON for tools, Markdown for a person or
 // another agent to read, and a single HTML file that works like the findings
 // screen with no server behind it.
-import type { Finding, RunState, Severity } from "@aio/contracts";
+import { introducedLabel, type Finding, type RunState, type Severity } from "@aio/contracts";
 import { themeCss, VENDOR_LABELS } from "@aio/ui/dashboard";
 import {
   filterFindings,
@@ -129,7 +129,8 @@ export function findingsMarkdown(e: FindingsExport): string {
       `- Category: ${f.category}, round ${f.round}, group ${f.groupId ?? "none"}`,
       `- Verdict: ${verdictText(f)}`,
       `- Raised by: ${[f.reportedBy, ...f.alsoReportedBy].join(", ")}`,
-      `- Introduced: ${f.introduced ? "yes, on this branch" : "no, it exists at the base"}`,
+      `- Introduced: ${introducedLabel(f.introduced)}`,
+      ...(f.duplicateOf ? [`- Duplicate of: ${f.duplicateOf}`] : []),
       ...(f.fixCommit ? [`- Fix commit: \`${f.fixCommit}\``] : []),
       "",
       "### Failure case",
@@ -293,7 +294,8 @@ const REPORT_SCRIPT = `
     if (f.symbol) fact(dl, "Symbol", el("span", { className: "mono", text: f.symbol }));
     fact(dl, "Verdict", item.verdictText);
     fact(dl, "Raised by", [f.reportedBy].concat(f.alsoReportedBy || []).join(", "));
-    fact(dl, "Introduced", f.introduced ? "Yes, on this branch" : "No, it exists at the base");
+    fact(dl, "Introduced", f.introduced === null || f.introduced === undefined ? "Unknown: the run has no base to compare" : f.introduced ? "Yes, on this branch" : "No, it exists at the base");
+    if (f.duplicateOf) fact(dl, "Duplicate of", el("span", { className: "mono", text: f.duplicateOf }));
     fact(dl, "Origin", el("span", null, [f.origin, item.sourceLink ? " " : null, item.sourceLink ? link(item.sourceLink, "source") : null]));
     fact(dl, "Fix commit", f.fixCommit ? link(item.commitLink, f.fixCommit.slice(0, 10), "mono") : "None");
     card.appendChild(dl);

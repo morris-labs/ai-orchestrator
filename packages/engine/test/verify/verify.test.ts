@@ -500,13 +500,13 @@ describe("decideVerdict with no base", () => {
   it("never gives pre-existing, whatever the disprover or a script says", () => {
     expect(decideVerdict(confirmed, null, null, [], true)).toMatchObject({
       verdict: "confirmed",
-      introduced: true,
+      introduced: null,
     });
     const scripted = decideVerdict(confirmed, reproduced, null, [], true);
     expect(scripted).toMatchObject({
       verdict: "confirmed",
       verification: "script",
-      introduced: true,
+      introduced: null,
     });
     expect(scripted.evidence).not.toMatch(/base/);
     expect(decideVerdict(confirmed, null, null, [], false).verdict).toBe("pre-existing");
