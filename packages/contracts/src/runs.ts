@@ -26,6 +26,9 @@ export const RoleSchema = z.enum(["reviewer", "disprover", "confirmer", "fixer"]
 export type Role = z.infer<typeof RoleSchema>;
 
 /** The kind of agent call. `sweeper` is the pattern sweep's cheap agent. */
+/** The most calls a run can make at once in one stage. */
+export const MAX_CONCURRENCY = 20;
+
 export const AgentRoleSchema = z.enum(["reviewer", "disprover", "confirmer", "fixer", "sweeper"]);
 export type AgentRole = z.infer<typeof AgentRoleSchema>;
 
@@ -251,6 +254,12 @@ export const ResolvedRunRequestSchema = z.object({
    * means each vendor's own default.
    */
   reviewerEffort: EffortSchema.optional(),
+  /**
+   * How many review calls run at once on each vendor, and how many
+   * verification calls run at once. Absent means 6 review calls per vendor
+   * and 4 verification calls.
+   */
+  concurrency: z.number().int().min(1).max(MAX_CONCURRENCY).optional(),
   /** What the run reviews. Absent in runs that review a range, and in older runs. */
   scope: RunScopeSchema.optional(),
   /** Globs of files this run never groups or reviews, added to the policy's `excludePaths`. */

@@ -375,6 +375,7 @@ function runDetail(r: RunState): string {
     ["Model tier", r.request.modelTier],
     ["Depth", runDepth(r.request)],
     ["Reviewer effort", r.request.reviewerEffort],
+    ["Parallel calls", r.request.concurrency],
     ["Verification floor", r.request.verifyFloor],
     ["Reviewers", r.roles.reviewer.join(", ")],
     ["Disprover", r.roles.disprover],
@@ -1176,6 +1177,16 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
         .choices(["standard", "thorough"])
         .default("standard"),
     )
+    .option(
+      "--concurrency <n>",
+      "Set how many review calls run at once on each vendor, and how many verification calls run at once, from 1 to 20. Default: 6 and 4.",
+      (v: string) => {
+        const n = Number(v);
+        if (!Number.isInteger(n) || n < 1 || n > 20)
+          throw new InvalidArgumentError("Give a whole number from 1 to 20.");
+        return n;
+      },
+    )
     .addOption(
       new Option(
         "--reviewer-effort <effort>",
@@ -1274,6 +1285,7 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
           modelTier: o.tier,
           depth: o.depth,
           reviewerEffort: o.reviewerEffort,
+          ...(o.concurrency !== undefined ? { concurrency: o.concurrency } : {}),
           // No severity ranks below `nit`, so that floor checks everything.
           verifyFloor: o.verifyFloor === "all" ? "nit" : o.verifyFloor,
           pipeline: o.pipeline,

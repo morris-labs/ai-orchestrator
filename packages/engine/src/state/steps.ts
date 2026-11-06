@@ -608,8 +608,10 @@ export async function runFind(ctx: RunContext, groups: readonly FileGroup[]): Pr
     })),
     "find",
   );
-  const results = await runPerVendor(tasks, FIND_CONCURRENCY_PER_VENDOR, (t) =>
-    runReviewTask(ctx, t, groups),
+  const results = await runPerVendor(
+    tasks,
+    ctx.state.request.concurrency ?? FIND_CONCURRENCY_PER_VENDOR,
+    (t) => runReviewTask(ctx, t, groups),
   );
   const output: FindOutput = { round: ctx.round, tasks: results };
   await ctx.store.writeJson(file, output);
@@ -1307,7 +1309,7 @@ export async function verifyPending(ctx: RunContext, stageFile: string): Promise
       // One finding must not flag its whole group, so each one tries alone
       // before anything is flagged.
       if (findings.length === 1) return [await flag(first, error)];
-      return mapLimit(findings, VERIFY_CONCURRENCY, verifyOne);
+      return mapLimit(findings, ctx.state.request.concurrency ?? VERIFY_CONCURRENCY, verifyOne);
     }
     const results: Array<VerifyResult | null> = [];
     for (const finding of findings) {
@@ -1340,7 +1342,11 @@ export async function verifyPending(ctx: RunContext, stageFile: string): Promise
   let results: Array<VerifyResult | null>;
   if (runDepth(ctx.state.request) === "standard") {
     const plan = await planBatchesFor(ctx, pending, stageFile);
-    const perBatch = await mapLimit(plan.batches, VERIFY_CONCURRENCY, verifyBatch);
+    const perBatch = await mapLimit(
+      plan.batches,
+      ctx.state.request.concurrency ?? VERIFY_CONCURRENCY,
+      verifyBatch,
+    );
     results = [...perBatch.flat(), ...(await followPrimaries(ctx, plan.duplicates))];
   } else {
     // Each finding gets its own call, but a duplicate still takes its
@@ -1348,7 +1354,11 @@ export async function verifyPending(ctx: RunContext, stageFile: string): Promise
     const plan = await planBatchesFor(ctx, pending, stageFile, false);
     const primaries = pending.filter((f) => plan.duplicates[f.id] === undefined);
     results = [
-      ...(await mapLimit(primaries, VERIFY_CONCURRENCY, verifyOne)),
+      ...(await mapLimit(
+        primaries,
+        ctx.state.request.concurrency ?? VERIFY_CONCURRENCY,
+        verifyOne,
+      )),
       ...(await followPrimaries(ctx, plan.duplicates)),
     ];
   }

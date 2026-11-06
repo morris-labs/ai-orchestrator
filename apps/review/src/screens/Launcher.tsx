@@ -6,6 +6,7 @@ import {
   type ProjectSummary,
   type RouteOf,
   type Effort,
+  MAX_CONCURRENCY,
   stageEfforts,
   type RunDepth,
 } from "@aio/contracts";
@@ -507,6 +508,19 @@ export function Launcher({ prefill }: { prefill: { project: string | null; box: 
                 <option value="standard">Standard</option>
                 <option value="thorough">Thorough</option>
               </select>
+            </Field>
+            <Field
+              label="Parallel calls"
+              hint={`How many review calls run at once on each vendor, and how many verification calls run at once, from 1 to ${MAX_CONCURRENCY}. More finishes sooner but uses your usage window faster. Default: 6 review calls per vendor and 4 verification calls.`}
+            >
+              <input
+                type="number"
+                min={1}
+                max={MAX_CONCURRENCY}
+                value={form.concurrency}
+                placeholder="Default"
+                onChange={(e) => update({ concurrency: e.target.value })}
+              />
             </Field>
             <Field
               label="Reviewer effort"
