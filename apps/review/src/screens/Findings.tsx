@@ -28,6 +28,13 @@ import {
   NOT_VERIFIED_LABEL,
 } from "./findingsModel.js";
 import { commitUrl } from "./runModel.js";
+import {
+  EXPORT_FORMATS,
+  exportFileName,
+  renderExport,
+  type ExportedFinding,
+  type ExportFormat,
+} from "./findingsExport.js";
 
 type Detail = RouteOf<"findings.get">["response"];
 
@@ -207,6 +214,80 @@ function FindingDetail({
   );
 }
 
+/** How many finding details the export loads at once. */
+const EXPORT_CONCURRENCY = 6;
+
+/** Saves text as a file through the browser's download, which Electron asks where to save. */
+function saveFile(name: string, text: string, mime: string): void {
+  const url = URL.createObjectURL(new Blob([text], { type: `${mime};charset=utf-8` }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  // Revoke after the download has taken the blob.
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
+function ExportBar({ run, findings }: { run: RunState; findings: readonly Finding[] }) {
+  const api = useApiClient();
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  async function exportAs(format: ExportFormat) {
+    setError(null);
+    setProgress({ done: 0, total: findings.length });
+    try {
+      // Every format carries the diffs, which only the detail call returns.
+      const out: ExportedFinding[] = new Array(findings.length);
+      let next = 0;
+      let done = 0;
+      const worker = async () => {
+        while (next < findings.length) {
+          const i = next++;
+          const f = findings[i] as Finding;
+          const d = await api.call("findings.get", { params: { runId: run.id, findingId: f.id } });
+          out[i] = { finding: d.finding, diff: d.diff, fixDiff: d.fixDiff };
+          done += 1;
+          setProgress({ done, total: findings.length });
+        }
+      };
+      await Promise.all(Array.from({ length: EXPORT_CONCURRENCY }, worker));
+      const text = renderExport(format, {
+        run,
+        findings: out,
+        exportedAt: new Date().toISOString(),
+      });
+      saveFile(exportFileName(run, format), text, EXPORT_FORMATS[format].mime);
+    } catch (err) {
+      setError(err);
+    } finally {
+      setProgress(null);
+    }
+  }
+  return (
+    <div className="export-row" role="group" aria-label="Export findings">
+      <span className="field-label">Export all {findings.length} findings</span>
+      {(Object.keys(EXPORT_FORMATS) as ExportFormat[]).map((format) => (
+        <button
+          key={format}
+          type="button"
+          disabled={progress !== null || findings.length === 0}
+          onClick={() => void exportAs(format)}
+        >
+          {EXPORT_FORMATS[format].label}
+        </button>
+      ))}
+      {progress ? (
+        <span className="muted small" role="status">
+          Loading {progress.done} of {progress.total}…
+        </span>
+      ) : null}
+      <ErrorBanner error={error} />
+    </div>
+  );
+}
+
 export function Findings({ runId, findingId }: { runId: string | null; findingId: string | null }) {
   const api = useApiClient();
   const [runs, setRuns] = useState<RunState[]>([]);
@@ -349,6 +430,7 @@ export function Findings({ runId, findingId }: { runId: string | null; findingId
           </select>
         </Field>
       </div>
+      {run ? <ExportBar run={run} findings={findings} /> : null}
       <div className="split">
         <div className="list-pane">
           <p className="muted small">
