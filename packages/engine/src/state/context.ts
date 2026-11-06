@@ -24,6 +24,12 @@ import {
   type UsageSample,
   isBlockedRequestedModel,
   VENDOR_ROLES,
+  markTask,
+  planTasks,
+  skipQueued,
+  taskLabel,
+  type RunTaskState,
+  type TaskInput,
 } from "@aio/contracts";
 import {
   DEFAULT_TIMEOUTS,
@@ -356,6 +362,7 @@ export class RunContext {
     const previous = this.state.stage;
     if (previous === stage) return;
     this.state.stage = stage;
+    if (this.state.tasks) this.state.tasks = skipQueued(this.state.tasks, this.round, previous);
     await this.persist();
     await this.emit({
       type: "stage.changed",
@@ -917,11 +924,58 @@ export class RunContext {
    * round returns its saved result instead.
    */
   callAgent<T>(spec: AgentCallSpec): Promise<AgentOutcome<T>> {
-    const call = this.runCall<T>(spec);
+    const call = this.runCall<T>(spec).then(
+      async (outcome) => {
+        await this.updateTask(spec, "done", { vendor: outcome.vendor });
+        return outcome;
+      },
+      async (error: unknown) => {
+        await this.updateTask(spec, error instanceof RunCancelled ? "skipped" : "failed");
+        throw error;
+      },
+    );
     this.calls.add(call);
     const done = () => this.calls.delete(call);
     call.then(done, done);
     return call;
+  }
+
+  /** Adds planned calls to the run's task list as queued tasks, and announces the list. */
+  async planTasks(
+    planned: readonly Omit<TaskInput, "round" | "stage">[],
+    stage?: Stage,
+  ): Promise<void> {
+    if (planned.length === 0) return;
+    const at = { round: this.round, stage: stage ?? this.state.stage };
+    this.state.tasks = planTasks(
+      this.state.tasks ?? [],
+      planned.map((p) => ({ ...at, ...p })),
+    );
+    await this.persist();
+    await this.emitRun();
+  }
+
+  /** Sets the state of a call's task, adding the task when nothing planned it. */
+  private async updateTask(
+    spec: AgentCallSpec,
+    state: RunTaskState,
+    extra: { vendor?: Vendor; effort?: string | undefined } = {},
+  ): Promise<void> {
+    this.state.tasks = markTask(
+      this.state.tasks ?? [],
+      {
+        key: spec.key,
+        round: this.round,
+        stage: this.state.stage,
+        role: spec.role,
+        groupId: spec.groupId,
+        label: taskLabel(spec.role, spec.key, spec.groupId),
+        ...extra,
+      },
+      state,
+    );
+    await this.persist();
+    await this.emitRun();
   }
 
   private async runCall<T>(spec: AgentCallSpec): Promise<AgentOutcome<T>> {
@@ -984,6 +1038,7 @@ export class RunContext {
         round: this.round,
         ...(tier ? { tier } : {}),
         ...(tierReason ? { tierReason } : {}),
+        ...(effort ? { effort } : {}),
       };
       if (tier || effort) {
         this.deps.log?.info?.("Chose a call's model", {
@@ -1004,6 +1059,7 @@ export class RunContext {
       }
       await this.persist();
       await this.emit({ type: "agent.started", ...common });
+      await this.updateTask(spec, "running", { vendor, effort });
       const started = this.clock.now();
       const timeoutMs = spec.request.timeoutMs ?? this.timeouts[spec.role];
       // A write call that turns out to have used a blocked model loses its commits.

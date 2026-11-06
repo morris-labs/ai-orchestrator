@@ -415,6 +415,34 @@ export const RunRetrySchema = z.object({
 });
 export type RunRetry = z.infer<typeof RunRetrySchema>;
 
+/** Where a task in a run's task list stands. */
+export const RunTaskStateSchema = z.enum(["queued", "running", "done", "failed", "skipped"]);
+export type RunTaskState = z.infer<typeof RunTaskStateSchema>;
+
+/**
+ * One agent call in a run's task list. The engine adds a task when it plans
+ * the call, or when the call starts if nothing planned it, and keeps the
+ * list in pipeline order.
+ */
+export const RunTaskSchema = z.object({
+  /** The call's cache key, unique in the round. */
+  key: z.string().min(1),
+  round: CountSchema,
+  stage: StageSchema,
+  role: AgentRoleSchema,
+  groupId: z.string().min(1).nullable(),
+  /** A short description for a person to read. */
+  label: z.string().min(1),
+  /** The vendor that takes or took the call. Absent until it's assigned. */
+  vendor: VendorSchema.optional(),
+  /** The reasoning effort the call asks for. Absent means the vendor's own default. */
+  effort: z.string().min(1).optional(),
+  state: RunTaskStateSchema,
+  /** The order the engine added it in, which breaks ties within a stage. */
+  seq: CountSchema,
+});
+export type RunTask = z.infer<typeof RunTaskSchema>;
+
 export const RunStateSchema = z.object({
   /**
    * A ULID the server mints and passes to the engine in `engine.runs.create`.
@@ -447,6 +475,8 @@ export const RunStateSchema = z.object({
    * review request that GitHub dropped. Oldest first.
    */
   notices: z.array(z.string()).optional(),
+  /** Every planned and started agent call, in pipeline order. Absent on runs from before task lists. */
+  tasks: z.array(RunTaskSchema).optional(),
   createdAt: IsoDateTimeSchema,
   updatedAt: IsoDateTimeSchema,
   finishedAt: IsoDateTimeSchema.optional(),

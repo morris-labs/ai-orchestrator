@@ -183,6 +183,8 @@ const agentFields = {
   tier: ModelTierSchema.optional(),
   /** Why the call has its tier and model. */
   tierReason: z.string().optional(),
+  /** The reasoning effort the call asked for. Absent means the vendor's own default. */
+  effort: z.string().min(1).optional(),
 };
 
 export const AgentStartedEventSchema = z.object({

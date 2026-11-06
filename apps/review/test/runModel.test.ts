@@ -7,6 +7,7 @@ import {
   oscillationPairs,
   runControls,
   stepStates,
+  taskRows,
   vendorOfLabel,
 } from "../src/screens/runModel.js";
 import { demoFindings, lastRun } from "./helpers/data.js";
@@ -137,5 +138,58 @@ describe("links and labels", () => {
     ["gemini", null],
   ])("vendorOfLabel(%s)", (label, want) => {
     expect(vendorOfLabel(label)).toBe(want);
+  });
+});
+
+describe("taskRows", () => {
+  it("lists tasks, then the remaining stages, with queue positions", () => {
+    const base = lastRun();
+    const rows = taskRows({
+      ...base,
+      status: "running",
+      stage: "find",
+      round: 1,
+      request: { ...base.request, pipeline: "pre-push", reviewerEffort: "high" },
+      tasks: [
+        {
+          key: "find-G01",
+          round: 1,
+          stage: "find",
+          role: "reviewer",
+          groupId: "G01",
+          label: "Review G01",
+          vendor: "claude",
+          effort: "high",
+          state: "running",
+          seq: 0,
+        },
+        {
+          key: "find-G02",
+          round: 1,
+          stage: "find",
+          role: "reviewer",
+          groupId: "G02",
+          label: "Review G02",
+          vendor: "codex",
+          effort: "high",
+          state: "queued",
+          seq: 1,
+        },
+      ],
+    });
+    expect(rows.map((r) => [r.stage, r.state, r.position])).toEqual([
+      ["find", "running", null],
+      ["find", "queued", 1],
+      ["verify", "planned later", 2],
+      ["sweep", "planned later", 3],
+      ["fix", "planned later", 4],
+      ["confirm", "planned later", 5],
+    ]);
+    expect(rows[0]?.effort).toBe("high");
+  });
+
+  it("shows no planned stages for a finished run", () => {
+    const base = lastRun();
+    expect(taskRows({ ...base, status: "finished", round: 1, tasks: [] })).toEqual([]);
   });
 });

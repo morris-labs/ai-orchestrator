@@ -7,6 +7,7 @@ import type {
   Pipeline,
   RunState,
   RunStatus,
+  RunTask,
   Stage,
 } from "@aio/contracts";
 
@@ -196,4 +197,82 @@ export function commitUrl(prUrl: string | undefined, sha: string): string | null
 export function vendorOfLabel(label: string): "claude" | "codex" | "copilot" | null {
   const head = label.toLowerCase().split(/[-_:/ ]/)[0];
   return head === "claude" || head === "codex" || head === "copilot" ? head : null;
+}
+
+/** The stages whose work is agent calls, so they appear in the task list. */
+const CALL_STAGES: readonly Stage[] = ["find", "verify", "sweep", "fix", "confirm"];
+
+const STAGE_LABELS: Partial<Record<Stage, string>> = {
+  find: "Review",
+  verify: "Verification",
+  sweep: "Sweep",
+  fix: "Fixing",
+  confirm: "Confirm fixes",
+};
+
+/** One row of the run's task list: a task, or a stage that isn't planned yet. */
+export interface TaskRow {
+  key: string;
+  round: number;
+  stage: Stage;
+  label: string;
+  vendor: string | null;
+  effort: string;
+  state: RunTask["state"] | "planned later";
+  /** The place in the queue, counting only work that hasn't started. */
+  position: number | null;
+}
+
+/**
+ * The full task list of a run: every task the engine planned or started, then
+ * one row per remaining stage of the current round that has no tasks yet. A
+ * task the engine adds later takes its place in pipeline order, and the
+ * queue positions after it move down.
+ */
+export function taskRows(
+  run: Pick<RunState, "tasks" | "stage" | "status" | "round" | "request">,
+): TaskRow[] {
+  const tasks = run.tasks ?? [];
+  const rows: TaskRow[] = tasks.map((t) => ({
+    key: `${t.round}/${t.key}`,
+    round: t.round,
+    stage: t.stage,
+    label: t.label,
+    vendor: t.vendor ?? null,
+    effort: t.effort ?? "Default",
+    state: t.state,
+    position: null,
+  }));
+  const ended = ["finished", "failed", "cancelled"].includes(run.status);
+  if (!ended && run.round > 0) {
+    const steps = PIPELINE_STEPS[run.request.pipeline];
+    const current = steps.indexOf(run.stage);
+    const planned = new Set(tasks.filter((t) => t.round === run.round).map((t) => t.stage));
+    for (const stage of steps.slice(Math.max(current, 0))) {
+      if (!CALL_STAGES.includes(stage) || planned.has(stage)) continue;
+      rows.push({
+        key: `${run.round}/${stage}-later`,
+        round: run.round,
+        stage,
+        label: `${STAGE_LABELS[stage] ?? stage}: the engine plans these calls when the stage starts`,
+        vendor: null,
+        effort: stage === "find" ? (run.request.reviewerEffort ?? "Default") : "Default",
+        state: "planned later",
+        position: null,
+      });
+    }
+  }
+  const order = (s: Stage) => {
+    const i = PIPELINE_STEPS[run.request.pipeline].indexOf(s);
+    return i < 0 ? CALL_STAGES.indexOf(s) : i;
+  };
+  // Stable: tasks keep the engine's order within a stage.
+  const sorted = rows
+    .map((r, i) => ({ r, i }))
+    .sort((a, b) => a.r.round - b.r.round || order(a.r.stage) - order(b.r.stage) || a.i - b.i)
+    .map(({ r }) => r);
+  let position = 0;
+  return sorted.map((r) =>
+    r.state === "queued" || r.state === "planned later" ? { ...r, position: ++position } : r,
+  );
 }

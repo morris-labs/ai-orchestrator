@@ -10,6 +10,7 @@ import {
   VENDOR_ROLES,
   belowVerifyFloor,
   runDepth,
+  taskLabel,
 } from "@aio/contracts";
 import type {
   AgentRole,
@@ -588,6 +589,19 @@ export async function runFind(ctx: RunContext, groups: readonly FileGroup[]): Pr
     named: ctx.eng.manualRoles.reviewer,
     groupsOnly: reviewsWholeProject(ctx),
   });
+  const effort = ctx.state.request.reviewerEffort;
+  await ctx.planTasks(
+    tasks.map((t) => ({
+      key: `find-${t.key}`,
+      role: "reviewer" as const,
+      groupId: t.groupId,
+      label: taskLabel("reviewer", `find-${t.key}`, t.groupId),
+      vendor: t.vendor,
+      // Copilot takes no effort setting.
+      effort: t.vendor === "copilot" ? undefined : effort,
+    })),
+    "find",
+  );
   const results = await runPerVendor(tasks, FIND_CONCURRENCY_PER_VENDOR, (t) =>
     runReviewTask(ctx, t, groups),
   );
@@ -1629,6 +1643,19 @@ export async function runFix(
     plan = kept;
   }
 
+  await ctx.planTasks(
+    plan.map((ids) => {
+      const groupId = ctx.findingById(ids[0] ?? "")?.groupId ?? null;
+      return {
+        key: `${name}-${batchKey(ids)}`,
+        role: "fixer" as const,
+        groupId,
+        label: `Fix ${ids.length === 1 ? ids[0] : `${ids.length} findings`}`,
+        vendor: ctx.state.roles.fixer,
+      };
+    }),
+    "fix",
+  );
   const record: FixRecord = { attempt: ctx.eng.gateAttempts + 1, preFixSha, batches: [] };
   for (const ids of plan) {
     const key = `${name}-${batchKey(ids)}`;

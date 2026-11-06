@@ -6,6 +6,7 @@ import {
   type ProjectSummary,
   type RouteOf,
   type Effort,
+  stageEfforts,
   type RunDepth,
 } from "@aio/contracts";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -670,6 +671,13 @@ export function Launcher({ prefill }: { prefill: { project: string | null; box: 
               ))}
             </ul>
           ) : null}
+          <ul aria-label="Effort by stage">
+            {stageEfforts(form.reviewerEffort || undefined).map((e) => (
+              <li key={e.stage}>
+                {e.stage} effort: {e.effort}
+              </li>
+            ))}
+          </ul>
           {preview.dirty && !form.includeWorktree ? (
             <p role="alert" className="banner banner-warning">
               ▲ The working tree has uncommitted changes. Commit them, or select Include uncommitted

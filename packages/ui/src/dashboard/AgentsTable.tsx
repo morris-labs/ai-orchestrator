@@ -56,6 +56,7 @@ export function AgentsTable({
                 <th scope="col">Vendor</th>
                 <th scope="col">Model</th>
                 <th scope="col">Role</th>
+                <th scope="col">Effort</th>
                 <th scope="col">Group</th>
                 <th scope="col">Round</th>
                 <th scope="col">Elapsed</th>
@@ -72,6 +73,7 @@ export function AgentsTable({
                   </td>
                   <td className="ab-mono">{a.model}</td>
                   <td>{a.role}</td>
+                  <td>{a.effort ?? "Default"}</td>
                   <td>{a.groupId ?? "Whole diff"}</td>
                   <td className="ab-num">{a.round}</td>
                   <td className="ab-num">{formatDuration(agentElapsed(a, now))}</td>
