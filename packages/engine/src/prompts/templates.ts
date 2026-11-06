@@ -351,6 +351,8 @@ export interface SweepPromptInput {
   patterns: readonly Finding[];
   /** The whole diff with context. */
   diff: string;
+  /** The changed files, in place of a diff too large to include. */
+  changedFiles?: readonly string[];
   policySection: string;
   /** Uses the compact prompt. */
   standard?: boolean;
@@ -374,7 +376,12 @@ export function sweepPrompt(input: SweepPromptInput): string {
     input.standard ? TERSE_RULE : "",
     section("Patterns", patterns),
     section("Repository policy", input.policySection),
-    section("Diff", `\`\`\`diff\n${input.diff.trimEnd()}\n\`\`\``),
+    input.changedFiles
+      ? section(
+          "Changed files",
+          `The diff is too large to include. Read it with \`git -C ${input.range.repoPath} diff ${input.range.baseSha} ${input.range.tipSha} -- FILE\`, one file or a few at a time.\n\n${input.changedFiles.map((f) => `- ${f}`).join("\n")}`,
+        )
+      : section("Diff", `\`\`\`diff\n${input.diff.trimEnd()}\n\`\`\``),
     input.standard
       ? terseJsonInstruction(TERSE_SWEEP_SCHEMA)
       : jsonInstruction(SWEEP_OUTPUT_JSON_SCHEMA),

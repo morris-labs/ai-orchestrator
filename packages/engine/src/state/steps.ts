@@ -114,6 +114,8 @@ const BATCH_TIMEOUT_FACTOR = 4;
  * CLI agent; without a limit a large range starts one per group at once,
  * which spends a usage window before a ceiling or a cancel can react.
  */
+/** The largest diff, in estimated tokens, that a sweep prompt carries inline. */
+export const SWEEP_DIFF_TOKEN_LIMIT = 150_000;
 export const FIND_CONCURRENCY_PER_VENDOR = 6;
 
 const SEVERITY_ABOVE_NIT = new Set(["P1", "P2", "P3"]);
@@ -1514,11 +1516,15 @@ export async function runSweep(
           : [],
       );
   const repoPath = await readOnlyRepo(ctx);
+  // A large diff can push the prompt past a model's context limit, so the
+  // sweeper reads it with Git instead.
+  const inline = estimateTokens(diff) <= SWEEP_DIFF_TOKEN_LIMIT;
   const prompt = sweepPrompt({
     standard: runDepth(ctx.state.request) === "standard",
     range: reviewsFixDiffOnly(ctx) ? fixDiffRange(ctx, repoPath, diffBase) : ctx.range(repoPath),
     patterns,
-    diff,
+    diff: inline ? diff : "",
+    ...(inline ? {} : { changedFiles: [...new Set(groups.flatMap((g) => g.files))] }),
     policySection: policyPromptSection(ctx.policy),
   });
   const sweepTier = callTier(ctx, "sweeper", groups);
