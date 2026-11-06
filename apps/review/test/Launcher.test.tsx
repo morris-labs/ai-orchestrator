@@ -21,6 +21,10 @@ const preview = {
       { label: "Review", tokens: 3_000_000, low: 1_800_000, high: 4_800_000, source: "test" },
       { label: "Verification", tokens: 200_000, low: 100_000, high: 300_000, source: "test" },
     ],
+    windows: [
+      { vendor: "claude", window: "5h", low: 0.15, high: 0.25, measured: true, source: "test" },
+      { vendor: "codex", window: "5h", low: 0.004, high: 0.03, measured: false, source: "test" },
+    ],
   },
   dirty: true,
   groups: [
@@ -109,6 +113,11 @@ describe("Launcher", () => {
     expect(screen.getByLabelText("Token estimate")).toHaveTextContent(
       /about 3,200,000.*likely 1,900,000 to 5,100,000.*rough estimate.*2 groups/,
     );
+    const windows = within(screen.getByLabelText("Usage window estimate")).getAllByRole("listitem");
+    expect(windows.map((li) => li.textContent)).toEqual([
+      "Usage: about 15 to 25% of your 5-hour Claude window.",
+      "Usage: up to 3% of your 5-hour Codex window (rough, no measurements yet).",
+    ]);
     expect(screen.getByText(/The working tree has uncommitted changes/)).toBeInTheDocument();
     expect(screen.getByText("major (risk path)")).toBeInTheDocument();
 

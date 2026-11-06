@@ -160,7 +160,7 @@ export interface AgentOutcome<T> {
   model: string;
   sessionId: string | null;
   output: T;
-  tokens: { in: number; out: number };
+  tokens: { in: number; out: number; fresh?: number; cacheWrite?: number; cacheRead?: number };
   /** Tool calls that failed during the call, when the vendor reported any. */
   toolErrors?: string[];
   /** The tier the call ended up using, after any move. */
@@ -1183,7 +1183,7 @@ export class RunContext {
       }
       const elapsedMs = Math.max(0, this.clock.now() - started);
       const actual: LeaseActual = {
-        tokens: { in: result.tokens.in, out: result.tokens.out },
+        tokens: { ...result.tokens },
         premiumRequests: result.premiumRequests,
         ...(result.aiCredits !== undefined ? { aiCredits: result.aiCredits } : {}),
         costEstimate: result.costEstimate,

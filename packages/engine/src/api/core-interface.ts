@@ -21,6 +21,7 @@ import type {
   TimedUsageSample,
   Vendor,
   Verdict,
+  WindowShareLine,
 } from "@aio/contracts";
 import type { AdapterSet, Clock, CommandRunner, EventSink, LeaseBroker } from "../core.js";
 import type { GitHubClient } from "../postpush/github.js";
@@ -80,6 +81,7 @@ export interface RunPreview {
     high?: number;
     basis: string;
     lines?: { label: string; tokens: number; low: number; high: number; source: string }[];
+    windows?: WindowShareLine[];
   };
   excluded?: { count: number; files: { path: string; source: "built-in" | "policy" | "run" }[] };
 }

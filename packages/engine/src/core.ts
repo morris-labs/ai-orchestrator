@@ -105,7 +105,7 @@ export interface AdapterResult<T> {
   model: string;
   /** The vendor session, for `continueReview`; `null` when the CLI has none. */
   sessionId: string | null;
-  tokens: { in: number; out: number };
+  tokens: { in: number; out: number; fresh?: number; cacheWrite?: number; cacheRead?: number };
   /** Usage readings the call produced, such as Claude's `rate_limit_event`. */
   usage: RawUsageSample[];
   /** Copilot premium requests; 0 for other vendors. */
@@ -270,7 +270,7 @@ export type AdapterSet = Partial<Record<Vendor, VendorAdapter>>;
 
 /** The actual use of a call, reported after it finishes. */
 export interface LeaseActual {
-  tokens: { in: number; out: number };
+  tokens: { in: number; out: number; fresh?: number; cacheWrite?: number; cacheRead?: number };
   premiumRequests: number;
   /** Copilot AI credits, when the CLI reports them. */
   aiCredits?: number;

@@ -19,7 +19,13 @@ import { parseStructured, parseStructuredText } from "./output.js";
 import { credentialsFor } from "../process/credentials.js";
 import { childEnv } from "../process/env.js";
 import { runProcess } from "./process.js";
-import { AdapterError, type CliRequest, type CliResult, type CliLimitInfo } from "./types.js";
+import {
+  AdapterError,
+  type CliRequest,
+  type CliResult,
+  type CliLimitInfo,
+  type TokenCounts,
+} from "./types.js";
 
 /** Tools a read-only Claude role gets. */
 export const CLAUDE_READ_ONLY_TOOLS = ["Read", "Grep", "Glob", "Bash"];
@@ -458,20 +464,25 @@ function assistantText(message: Record<string, unknown> | undefined): string | n
 /**
  * Totals tokens across `modelUsage`, which covers every model the call used,
  * subagents included. Input counts cache reads and writes, since they count
- * against the plan's limits too.
+ * against the plan's limits too, and the breakdown keeps each kind apart,
+ * since a cache read counts far less than fresh input.
  */
 export function claudeTokens(
   result: Record<string, unknown>,
   fallbackModel: string | null,
-): { tokens: { input: number; output: number }; model: string | null } {
+): { tokens: Required<TokenCounts>; model: string | null } {
   const usageByModel = result.modelUsage as Record<string, Record<string, unknown>> | undefined;
-  let input = 0;
+  let fresh = 0;
+  let cacheWrite = 0;
+  let cacheRead = 0;
   let output = 0;
   let model = fallbackModel;
   let topCost = -1;
   if (usageByModel && typeof usageByModel === "object" && Object.keys(usageByModel).length > 0) {
     for (const [name, u] of Object.entries(usageByModel)) {
-      input += num(u.inputTokens) + num(u.cacheReadInputTokens) + num(u.cacheCreationInputTokens);
+      fresh += num(u.inputTokens);
+      cacheRead += num(u.cacheReadInputTokens);
+      cacheWrite += num(u.cacheCreationInputTokens);
       output += num(u.outputTokens);
       if (num(u.costUSD) > topCost) {
         topCost = num(u.costUSD);
@@ -480,11 +491,15 @@ export function claudeTokens(
     }
   } else {
     const u = (result.usage ?? {}) as Record<string, unknown>;
-    input =
-      num(u.input_tokens) + num(u.cache_read_input_tokens) + num(u.cache_creation_input_tokens);
+    fresh = num(u.input_tokens);
+    cacheRead = num(u.cache_read_input_tokens);
+    cacheWrite = num(u.cache_creation_input_tokens);
     output = num(u.output_tokens);
   }
-  return { tokens: { input, output }, model };
+  return {
+    tokens: { input: fresh + cacheWrite + cacheRead, output, fresh, cacheWrite, cacheRead },
+    model,
+  };
 }
 
 function num(value: unknown): number {
