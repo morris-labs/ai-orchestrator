@@ -361,6 +361,7 @@ describe("run controls", () => {
       verifyBatch: codex.verifyBatch.bind(codex),
       fix: codex.fix.bind(codex),
       sweep: codex.sweep.bind(codex),
+      cluster: codex.cluster.bind(codex),
       detectLimit: codex.detectLimit.bind(codex),
       confirm: (req) =>
         failures-- > 0 ? Promise.reject(new Error("CLI crashed")) : codex.confirm(req),
@@ -432,6 +433,7 @@ describe("run controls", () => {
       fix: codex.fix.bind(codex),
       confirm: codex.confirm.bind(codex),
       sweep: codex.sweep.bind(codex),
+      cluster: codex.cluster.bind(codex),
       detectLimit: () => null,
       isRetryable: () => false,
     };
@@ -469,6 +471,7 @@ describe("run controls", () => {
       fix: copilot.fix.bind(copilot),
       confirm: copilot.confirm.bind(copilot),
       sweep: copilot.sweep.bind(copilot),
+      cluster: copilot.cluster.bind(copilot),
       detectLimit: copilot.detectLimit.bind(copilot),
     };
     const { deps, events } = setup(scenario, undefined, adapters);
@@ -536,6 +539,7 @@ describe("run controls", () => {
         fix: async () => res({ fixed: [], notFixed: [], summary: "" }),
         confirm: async () => res({ incomplete: [], findings: [] }),
         sweep: async () => res({ findings: [] }),
+        cluster: async () => res({ causes: [], rationale: "" }),
         detectLimit: (): LimitInfo | null => null,
       };
     };

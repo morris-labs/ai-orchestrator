@@ -26,6 +26,7 @@ import {
   runMerge,
   runSweep,
   syncFloorLabels,
+  summarizeRootCauses,
   triageBelowFloor,
   verifyPending,
   warnLeftovers,
@@ -291,6 +292,7 @@ export async function finish(ctx: RunContext, reason: StopReason): Promise<void>
       ctx.state.notices = [...(ctx.state.notices ?? []), notice];
     }
   }
+  await summarizeRootCauses(ctx);
   await disposeCheckouts(ctx);
   await ctx.setStage("done");
   await ctx.setStatus("finished", { stopReason: reason, decision: null });

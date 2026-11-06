@@ -184,6 +184,10 @@ export abstract class CliAdapter implements CliVendorAdapter {
     return this.dispatch("sweep", req);
   }
 
+  cluster<T>(req: CliRequest<T>): Promise<CliResult<T>> {
+    return this.dispatch("cluster", req);
+  }
+
   async health(): Promise<AdapterHealth> {
     const result = await runProcess({
       command: this.command,

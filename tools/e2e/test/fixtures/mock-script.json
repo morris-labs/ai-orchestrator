@@ -68,7 +68,7 @@
       },
       {
         "method": "verify",
-        "match": "average_price|bulk_discount|page skips",
+        "match": "(?:Title: |\\n)(?:average_price|bulk_discount|page skips)",
         "output": {
           "verdict": "confirmed",
           "verification": "code-reading",
@@ -122,7 +122,7 @@
       },
       {
         "method": "verify",
-        "match": "average_price|bulk_discount|page skips",
+        "match": "(?:Title: |\\n)(?:average_price|bulk_discount|page skips)",
         "output": {
           "verdict": "confirmed",
           "verification": "code-reading",
@@ -138,7 +138,7 @@
     "responses": [
       {
         "method": "verify",
-        "match": "average_price|bulk_discount|page skips",
+        "match": "(?:Title: |\\n)(?:average_price|bulk_discount|page skips)",
         "output": {
           "verdict": "confirmed",
           "verification": "code-reading",

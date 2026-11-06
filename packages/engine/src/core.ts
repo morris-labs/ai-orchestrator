@@ -9,6 +9,7 @@
 // vendor for exactly these shapes.
 import {
   EventSchema,
+  SeveritySchema,
   VendorFindingSchema,
   type AioEvent,
   type AgentRole,
@@ -163,6 +164,12 @@ export const VerifyOutputSchema = z.object({
   /** Whether the flaw exists in the base worktree too, by the agent's reading. */
   presentAtBase: z.boolean().default(false),
   /**
+   * The severity the disprover gives a confirmed finding against the
+   * severity anchors. The engine applies it in place of the reporter's.
+   * Absent keeps the reporter's severity.
+   */
+  severity: SeveritySchema.optional(),
+  /**
    * A reproduction script the agent wrote in the scratch directory. It exits
    * 1 when the flaw reproduces and 0 when it doesn't. The engine reruns it at
    * the tip and at the base.
@@ -192,6 +199,23 @@ export const VerifyBatchOutputSchema = z.object({
   verdicts: z.array(VerifyOutputSchema.extend({ id: z.string().min(1) })),
 });
 export type VerifyBatchOutput = z.infer<typeof VerifyBatchOutputSchema>;
+
+/**
+ * The root-cause step's answer: confirmed findings clustered by root cause,
+ * in a suggested fix order. The engine drops ids it didn't send.
+ */
+export const ClusterOutputSchema = z.object({
+  causes: z.array(
+    z.object({
+      title: z.string().min(1),
+      summary: z.string().default(""),
+      findingIds: z.array(z.string().min(1)),
+      fixOrder: z.number().int().positive(),
+    }),
+  ),
+  rationale: z.string().default(""),
+});
+export type ClusterOutput = z.infer<typeof ClusterOutputSchema>;
 
 /** The fixer's answer for one batch. The engine reads the commits from git. */
 export const FixOutputSchema = z.object({
@@ -224,6 +248,8 @@ export interface VendorAdapter {
   fix(request: AdapterRequest): Promise<AdapterResult<FixOutput>>;
   confirm(request: AdapterRequest): Promise<AdapterResult<ConfirmOutput>>;
   sweep(request: AdapterRequest): Promise<AdapterResult<SweepOutput>>;
+  /** Clusters confirmed findings by root cause, in one cheap call. */
+  cluster(request: AdapterRequest): Promise<AdapterResult<ClusterOutput>>;
   /** Returns limit details when `error` came from a usage or rate limit, or `null`. */
   detectLimit(error: unknown): LimitInfo | null;
   /**
@@ -235,7 +261,7 @@ export interface VendorAdapter {
 }
 
 export type AdapterMethod =
-  "review" | "continueReview" | "verify" | "verifyBatch" | "fix" | "confirm" | "sweep";
+  "review" | "continueReview" | "verify" | "verifyBatch" | "fix" | "confirm" | "sweep" | "cluster";
 
 export type AdapterSet = Partial<Record<Vendor, VendorAdapter>>;
 

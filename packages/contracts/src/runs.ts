@@ -12,7 +12,7 @@ import {
   VendorSchema,
   type Vendor,
 } from "./common.js";
-import { SeveritySchema, type Severity } from "./findings.js";
+import { RootCauseSummarySchema, SeveritySchema, type Severity } from "./findings.js";
 import { ModelTierChoiceSchema, ModelTierSchema, type ModelTier } from "./tiers.js";
 
 export const PipelineSchema = z.enum(["pre-push", "post-push"]);
@@ -255,6 +255,11 @@ export const ResolvedRunRequestSchema = z.object({
   scope: RunScopeSchema.optional(),
   /** Globs of files this run never groups or reviews, added to the policy's `excludePaths`. */
   excludePaths: z.array(z.string().min(1)).optional(),
+  /**
+   * Ends the run with one cheap call that clusters confirmed findings by
+   * root cause (`RunState.rootCauses`). Absent or false skips it.
+   */
+  rootCauses: z.boolean().optional(),
 });
 export type ResolvedRunRequest = z.infer<typeof ResolvedRunRequestSchema>;
 
@@ -447,6 +452,8 @@ export const RunStateSchema = z.object({
    * review request that GitHub dropped. Oldest first.
    */
   notices: z.array(z.string()).optional(),
+  /** Confirmed findings by root cause, when the request asked for `rootCauses`. */
+  rootCauses: RootCauseSummarySchema.optional(),
   createdAt: IsoDateTimeSchema,
   updatedAt: IsoDateTimeSchema,
   finishedAt: IsoDateTimeSchema.optional(),

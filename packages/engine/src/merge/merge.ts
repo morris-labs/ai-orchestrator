@@ -37,6 +37,8 @@ export interface MergeContext {
    * compared, only fingerprints.
    */
   linesAt?: string;
+  /** The run has no base, such as a whole-project run, so `introduced` is unknown. */
+  noBase?: boolean;
 }
 
 export interface Oscillation {
@@ -66,6 +68,22 @@ export function moreSevere(a: Severity, b: Severity): Severity {
   return SEVERITY_RANK[a] <= SEVERITY_RANK[b] ? a : b;
 }
 
+/**
+ * How many lines apart two findings' ranges can be and still count as one
+ * location: a bug and its neighbor report often point a line or two apart.
+ */
+export const NEAR_LINE_GAP = 3;
+
+/** True when two line ranges overlap or sit within `gap` lines of each other. */
+export function linesNear(
+  a: readonly [number, number] | null,
+  b: readonly [number, number] | null,
+  gap = NEAR_LINE_GAP,
+): boolean {
+  if (!a || !b) return false;
+  return a[0] <= b[1] + gap && b[0] <= a[1] + gap;
+}
+
 export function linesOverlap(
   a: readonly [number, number] | null,
   b: readonly [number, number] | null,
@@ -92,15 +110,15 @@ interface Comparable {
 
 /**
  * Two findings describe the same issue: they have the same fingerprint, or
- * their lines overlap in the same code version and their titles or failure
- * cases are similar. The category plays no part, since unrelated bugs often
+ * their lines overlap or sit within `NEAR_LINE_GAP` lines in the same code
+ * version and their titles or failure cases are similar. The category plays no part, since unrelated bugs often
  * share one.
  */
 export function sameIssue(a: Comparable, b: Comparable): boolean {
   if (a.fingerprint === b.fingerprint) return true;
   if (a.file === null || a.file !== b.file) return false;
   if (a.linesAt === undefined || a.linesAt !== b.linesAt) return false;
-  if (!linesOverlap(a.lines, b.lines)) return false;
+  if (!linesNear(a.lines, b.lines)) return false;
   return (
     titleSimilarity(a.title, b.title) >= SAME_ISSUE_SIMILARITY ||
     textSimilarity(a.failureCase, b.failureCase) >= SAME_ISSUE_SIMILARITY
@@ -210,6 +228,7 @@ export function mergeCandidates(
         ...(ctx.linesAt === undefined ? {} : { linesAt: ctx.linesAt }),
       },
     );
+    if (ctx.noBase) finding.introduced = null;
     finding.history.push({
       time: ctx.now(),
       verdict: "pending",

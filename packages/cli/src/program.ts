@@ -386,6 +386,10 @@ function runDetail(r: RunState): string {
     ["Pull request", r.prUrl],
     ["Error", r.error],
     ...(r.notices ?? []).map((n): [string, string] => ["Notice", n]),
+    ...(r.rootCauses?.causes ?? []).map((c): [string, string] => [
+      `Root cause ${c.fixOrder}`,
+      `${c.title} (${c.findingIds.join(", ")})`,
+    ]),
   ]);
 }
 
@@ -1190,6 +1194,10 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
     )
     .option("--exclude <glob...>", "Never group or review the files that match these globs.")
     .option("--no-cross-vendor", "Let the same vendor disprove and confirm its own work.")
+    .option(
+      "--root-causes",
+      "End the run with one cheap call that groups confirmed findings by root cause and suggests a fix order.",
+    )
     .option("--round-cap <n>", "Stop after this many rounds.", positiveInt)
     .option(
       "--continuation-cap <n>",
@@ -1275,6 +1283,7 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
           continuationCap: o.continuationCap,
           scope,
           excludePaths: o.exclude,
+          ...(o.rootCauses ? { rootCauses: true } : {}),
         },
       });
       print(run, () => `Started run ${run.id}.\n`);

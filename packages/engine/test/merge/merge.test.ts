@@ -196,7 +196,9 @@ describe("merge", () => {
     expect(sameIssue(base, { ...other, linesAt: "2".repeat(40) })).toBe(false);
     expect(sameIssue(base, { ...other, linesAt: undefined })).toBe(false);
     expect(sameIssue(base, { ...base, linesAt: "2".repeat(40), lines: [90, 99] })).toBe(true);
-    expect(sameIssue(base, { ...other, lines: [4, 9] })).toBe(false);
+    // Lines within NEAR_LINE_GAP of each other count as one location; farther ones don't.
+    expect(sameIssue(base, { ...other, lines: [4, 9] })).toBe(true);
+    expect(sameIssue(base, { ...other, lines: [8, 12] })).toBe(false);
   });
 
   it("keeps unrelated findings in one category whose lines overlap", () => {

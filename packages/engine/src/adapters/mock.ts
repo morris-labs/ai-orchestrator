@@ -23,6 +23,7 @@ const MethodSchema = z.enum([
   "fix",
   "confirm",
   "sweep",
+  "cluster",
 ]);
 
 const LimitInfoSchema = z.object({
@@ -115,6 +116,9 @@ export class MockAdapter implements CliVendorAdapter {
   }
   sweep<T>(req: CliRequest<T>): Promise<CliResult<T>> {
     return this.answer("sweep", req);
+  }
+  cluster<T>(req: CliRequest<T>): Promise<CliResult<T>> {
+    return this.answer("cluster", req);
   }
 
   detectLimit(error: unknown): CliLimitInfo | null {

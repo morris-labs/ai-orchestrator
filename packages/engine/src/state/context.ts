@@ -439,8 +439,8 @@ export class RunContext {
   ): Promise<void> {
     const previous = finding.verdict;
     Object.assign(finding, patch, { verdict });
-    // A whole-project run has no base, so nothing in it predates the review.
-    if (this.state.request.scope === "whole") finding.introduced = true;
+    // A whole-project run has no base, so whether a flaw is new is unknown.
+    if (this.state.request.scope === "whole") finding.introduced = null;
     if (evidence) finding.evidence = evidence;
     finding.history.push({
       time: this.nowIso(),

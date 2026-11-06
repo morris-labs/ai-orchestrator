@@ -51,16 +51,19 @@ function disprover(vendor: Vendor, mode: "ok" | "quota", calls: Vendor[]): Vendo
   } as unknown as VendorAdapter;
 }
 
+const SUBJECTS = ["totals", "refunds", "taxes", "stock", "dates", "coupons", "shipping"];
+
 function finding(n: number, severity: Severity, runId: string): Finding {
   const id = `F-${String(n).padStart(4, "0")}`;
   return FindingInputSchema.parse({
     id,
     fingerprint: id,
     severity,
-    title: `Bug ${id}`,
+    // Distinct titles, failure cases, and lines, so the dedup pass keeps each one.
+    title: `${SUBJECTS[n - 1] ?? "other"} goes wrong`,
     file: "shop/cart.py",
-    lines: [1, 2],
-    failureCase: "It breaks.",
+    lines: [n * 40, n * 40 + 1],
+    failureCase: `A ${SUBJECTS[n - 1] ?? "other"} input gives a wrong ${SUBJECTS[n - 1] ?? "other"}.`,
     category: "logic",
     introduced: true,
     reportedBy: "claude-sonnet-5-5",

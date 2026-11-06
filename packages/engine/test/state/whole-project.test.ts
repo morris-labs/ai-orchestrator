@@ -78,6 +78,7 @@ function answer<T>(output: T): AdapterResult<T> {
 interface Log {
   reviews: string[];
   verifies: AdapterRequest[];
+  clusters: string[];
   failVerify: boolean;
 }
 
@@ -151,6 +152,16 @@ function adapter(vendor: "claude" | "codex" | "copilot", log: Log): VendorAdapte
     },
     confirm: () => Promise.resolve(answer({ incomplete: [], findings: [] })),
     sweep: () => Promise.resolve(answer({ findings: [] })),
+    cluster: (request: AdapterRequest) => {
+      log.clusters.push(request.prompt);
+      const ids = [...new Set(request.prompt.match(/\bF-\d{4,}\b/g) ?? [])];
+      return Promise.resolve(
+        answer({
+          causes: [{ title: "One cause", summary: "Shared.", findingIds: ids, fixOrder: 1 }],
+          rationale: "Only one.",
+        }),
+      );
+    },
     detectLimit: () => null,
   } as unknown as VendorAdapter;
 }
@@ -163,7 +174,7 @@ function adapters(log: Log): EngineDeps["adapters"] {
   };
 }
 
-const newLog = (): Log => ({ reviews: [], verifies: [], failVerify: false });
+const newLog = (): Log => ({ reviews: [], verifies: [], clusters: [], failVerify: false });
 
 const refs = (repo: string) => git(repo, "for-each-ref");
 
@@ -270,7 +281,7 @@ describe("the preview of a whole-project run", () => {
 });
 
 describe("a whole-project run", () => {
-  it("confirms a flaw at the base as introduced, and reviews only the fix in round 2", async () => {
+  it("confirms a flaw at the base with introduced unknown, and reviews only the fix in round 2", async () => {
     const repo = makeRepo();
     const before = refs(repo);
     const log = newLog();
@@ -278,7 +289,7 @@ describe("a whole-project run", () => {
     await run.settled();
     expect(ctx.state.status).toBe("finished");
     const finding = ctx.findings[0];
-    expect(finding).toMatchObject({ verdict: "fixed", introduced: true });
+    expect(finding).toMatchObject({ verdict: "fixed", introduced: null });
     expect(finding?.history.some((h) => h.verdict === "pre-existing")).toBe(false);
 
     const first = log.reviews.filter((p) => /in round 1 /.test(p)).join("\n");
@@ -311,9 +322,29 @@ describe("a whole-project run", () => {
     });
     await run.settled();
     expect(ctx.state.status).toBe("finished");
-    expect(ctx.findings[0]).toMatchObject({ verdict: "confirmed", introduced: true });
+    expect(ctx.findings[0]).toMatchObject({ verdict: "confirmed", introduced: null });
     expect(log.reviews.join("\n")).not.toContain("the whole diff");
     expect(refs(repo)).toBe(before);
+  });
+
+  it("ends with a root-cause summary only when the request asks for one", async () => {
+    const log = newLog();
+    const { run, ctx } = await start(makeRepo(), log, {
+      depth: "thorough",
+      readOnly: true,
+      rootCauses: true,
+    });
+    await run.settled();
+    expect(ctx.state.status).toBe("finished");
+    expect(log.clusters).toHaveLength(1);
+    expect(ctx.state.rootCauses?.causes).toEqual([
+      { title: "One cause", summary: "Shared.", findingIds: ["F-0001"], fixOrder: 1 },
+    ]);
+    const plain = newLog();
+    const other = await start(makeRepo(), plain, { depth: "thorough", readOnly: true });
+    await other.run.settled();
+    expect(plain.clusters).toHaveLength(0);
+    expect(other.ctx.state.rootCauses).toBeUndefined();
   });
 
   it("retries after a garbage collection removed the base", async () => {
@@ -338,7 +369,7 @@ describe("a whole-project run", () => {
     await loaded.settled();
     expect(contextOf(loaded).state.status).toBe("finished");
     expect(contextOf(loaded).state.baseSha).toBe(baseSha);
-    expect(contextOf(loaded).findings[0]).toMatchObject({ verdict: "fixed", introduced: true });
+    expect(contextOf(loaded).findings[0]).toMatchObject({ verdict: "fixed", introduced: null });
     git(repo, "cat-file", "-e", baseSha);
   });
 });

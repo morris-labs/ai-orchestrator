@@ -10,6 +10,7 @@ import {
 } from "@aio/contracts";
 import type { z } from "zod";
 import {
+  ClusterOutputSchema,
   ConfirmOutputSchema,
   FixOutputSchema,
   ReviewOutputSchema,
@@ -26,6 +27,7 @@ import {
   type VendorAdapter,
 } from "../core.js";
 import {
+  CLUSTER_OUTPUT_JSON_SCHEMA,
   CONFIRM_OUTPUT_JSON_SCHEMA,
   FIX_OUTPUT_JSON_SCHEMA,
   REVIEW_OUTPUT_JSON_SCHEMA,
@@ -51,6 +53,7 @@ export const METHOD_SCHEMAS: Record<AdapterMethod, MethodSchema> = {
   fix: { output: FixOutputSchema, json: FIX_OUTPUT_JSON_SCHEMA },
   confirm: { output: ConfirmOutputSchema, json: CONFIRM_OUTPUT_JSON_SCHEMA },
   sweep: { output: SweepOutputSchema, json: SWEEP_OUTPUT_JSON_SCHEMA },
+  cluster: { output: ClusterOutputSchema, json: CLUSTER_OUTPUT_JSON_SCHEMA },
 };
 
 /** Maps a core request to a CLI request for `method`. */
@@ -138,6 +141,10 @@ export class BridgedAdapter implements VendorAdapter {
 
   sweep(request: AdapterRequest) {
     return this.call<z.infer<typeof SweepOutputSchema>>("sweep", request);
+  }
+
+  cluster(request: AdapterRequest) {
+    return this.call<z.infer<typeof ClusterOutputSchema>>("cluster", request);
   }
 
   detectLimit(error: unknown): LimitInfo | null {
