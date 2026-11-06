@@ -179,4 +179,31 @@ describe("Findings with out-of-order responses", () => {
     );
     expect(within(detail).queryByRole("button", { name: "Waive" })).toBeNull();
   });
+
+  it("exports every finding with its diffs as an HTML file", async () => {
+    const created: Blob[] = [];
+    const names: string[] = [];
+    const origCreate = URL.createObjectURL;
+    URL.createObjectURL = (b: Blob) => {
+      created.push(b);
+      return "blob:test";
+    };
+    const click = HTMLAnchorElement.prototype.click;
+    HTMLAnchorElement.prototype.click = function (this: HTMLAnchorElement) {
+      names.push(this.download);
+    };
+    try {
+      const { server } = renderWithStore(<Findings runId={RUN_ID} findingId={null} />, handlers());
+      await screen.findByText("6 of 6 findings");
+      fireEvent.click(screen.getByRole("button", { name: "HTML report" }));
+      await waitFor(() => expect(names).toHaveLength(1));
+      expect(names[0]).toMatch(/\.html$/);
+      expect(server.callsTo("findings.get")).toHaveLength(6);
+      const text = await created[0]!.text();
+      expect(text).toContain("retry(limit);");
+    } finally {
+      URL.createObjectURL = origCreate;
+      HTMLAnchorElement.prototype.click = click;
+    }
+  });
 });
