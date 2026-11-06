@@ -783,6 +783,20 @@ export const RunPreviewSchema = z.object({
           }),
         )
         .optional(),
+      /** The estimated share of each vendor's usage windows. Absent from an older engine. */
+      windows: z
+        .array(
+          z.object({
+            vendor: VendorSchema,
+            window: z.enum(["5h", "7d", "month"]),
+            /** Fractions, where 1 is the whole window. */
+            low: z.number().nonnegative(),
+            high: z.number().nonnegative(),
+            measured: z.boolean(),
+            source: z.string(),
+          }),
+        )
+        .optional(),
     })
     .optional(),
   /** The files the run leaves out. Absent from an older engine. */

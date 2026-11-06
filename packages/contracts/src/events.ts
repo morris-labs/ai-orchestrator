@@ -100,7 +100,20 @@ export const UsageSampleSchema = z.object({
 });
 export type UsageSample = z.infer<typeof UsageSampleSchema>;
 
-export const TokensSchema = z.object({ in: CountSchema, out: CountSchema });
+/**
+ * A call's tokens. `in` counts every input token, cache reads and writes
+ * included, and `out` the output. The optional breakdown splits `in` into
+ * fresh input, cache writes, and cache reads, when the CLI reports them.
+ * Calls stored before the breakdown existed, and vendors that don't report
+ * it, leave those fields out.
+ */
+export const TokensSchema = z.object({
+  in: CountSchema,
+  out: CountSchema,
+  fresh: CountSchema.optional(),
+  cacheWrite: CountSchema.optional(),
+  cacheRead: CountSchema.optional(),
+});
 
 /** A stage, optionally narrowed to one vendor's lane, for data-flow edges. */
 export const FlowEndpointSchema = z.object({

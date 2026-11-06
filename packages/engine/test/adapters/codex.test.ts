@@ -32,7 +32,13 @@ describe("CodexStreamParser", () => {
   it("reads the thread, tokens, and last agent message", () => {
     const s = parse("codex-review.jsonl");
     expect(s.threadId).toBe("0199a213-81c0-7800-8aa1-bbab2a035a53");
-    expect(s.tokens).toEqual({ input: 24763, output: 122 });
+    expect(s.tokens).toEqual({
+      input: 24763,
+      output: 122,
+      fresh: 315,
+      cacheWrite: 0,
+      cacheRead: 24448,
+    });
     expect(s.errors).toEqual([]);
     expect(s.turnsCompleted).toBe(1);
     const output = parseStructuredText("codex", VendorFindingsOutputSchema, s.lastMessage!, "");

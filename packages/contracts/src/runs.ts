@@ -613,6 +613,81 @@ export const HOST_TOKEN_SAMPLE_LIMIT = 200;
 /** The file in a finished run folder that holds the run's `RunTokenSample`. */
 export const TOKEN_SAMPLE_FILE = "token-sample.json";
 
+/** The usage windows a vendor reports, as in `UsageWindowSchema` in `events.ts`. */
+const SampleWindowSchema = z.enum(["5h", "7d", "month"]);
+type SampleWindow = z.infer<typeof SampleWindowSchema>;
+
+/**
+ * Starting weights for each token kind, relative to one fresh input token,
+ * in how much it counts toward a subscription's usage window. They are the
+ * vendors' API price ratios: Anthropic charges 1.25 times the input price for
+ * a 5-minute cache write, 0.1 times for a cache read, and 5 times for output;
+ * OpenAI charges 0.1 times the input price for cached input and 8 times for
+ * output. The vendors don't publish how plans count tokens, so a run's
+ * measured rate per weighted token absorbs the rest.
+ */
+export const USAGE_WEIGHTS = {
+  claude: { fresh: 1, cacheWrite: 1.25, cacheRead: 0.1, out: 5 },
+  codex: { fresh: 1, cacheWrite: 1, cacheRead: 0.1, out: 8 },
+  copilot: { fresh: 1, cacheWrite: 1.25, cacheRead: 0.1, out: 5 },
+} as const satisfies Record<
+  Vendor,
+  { fresh: number; cacheWrite: number; cacheRead: number; out: number }
+>;
+
+/** Tokens by kind. */
+export interface TokenKinds {
+  fresh: number;
+  cacheWrite: number;
+  cacheRead: number;
+  out: number;
+}
+
+/** Tokens by kind, weighted by `USAGE_WEIGHTS` into fresh-input equivalents. */
+export function weightedTokens(vendor: Vendor, kinds: TokenKinds): number {
+  const w = USAGE_WEIGHTS[vendor];
+  return (
+    kinds.fresh * w.fresh +
+    kinds.cacheWrite * w.cacheWrite +
+    kinds.cacheRead * w.cacheRead +
+    kinds.out * w.out
+  );
+}
+
+/**
+ * How one run moved one usage window: the share of the window it used, and
+ * the weighted tokens of the calls over the same stretch. `rate` is `used`
+ * divided by `weighted`.
+ */
+export const WindowRateSchema = z.object({
+  window: SampleWindowSchema,
+  /** Share of the window used over the measured stretch: 1 means the whole window. */
+  used: z.number().nonnegative(),
+  /** Weighted tokens of the calls in the measured stretch. */
+  weighted: z.number().nonnegative(),
+  /** `used` per weighted token. */
+  rate: z.number().nonnegative(),
+  /** The length of the measured stretch, in milliseconds. */
+  durationMs: CountSchema,
+  /** How many times the window reset during the run. Stretches across a reset don't count. */
+  resets: CountSchema,
+});
+export type WindowRate = z.infer<typeof WindowRateSchema>;
+
+/** One vendor's tokens by kind over a run, and the windows they moved. */
+export const VendorUsageSampleSchema = z.object({
+  vendor: VendorSchema,
+  /** Tokens of the calls that reported a breakdown, by kind. */
+  fresh: CountSchema,
+  cacheWrite: CountSchema,
+  cacheRead: CountSchema,
+  out: CountSchema,
+  /** Every token of those calls, as `tokens.in` plus `tokens.out` counts them. */
+  raw: CountSchema,
+  windows: z.array(WindowRateSchema).max(3).default([]),
+});
+export type VendorUsageSample = z.input<typeof VendorUsageSampleSchema>;
+
 /**
  * One finished run's measured tokens, reduced to what an estimate can match
  * on. It holds numbers and settings only, never a name, a path, or content,
@@ -651,6 +726,11 @@ export const RunTokenSampleSchema = z.object({
   /** Disprover, confirmer, and sweep tokens. */
   verificationTokens: CountSchema,
   fixingTokens: CountSchema,
+  /**
+   * Each vendor's tokens by kind and what they did to its usage windows.
+   * Absent from a sample saved before the breakdown existed.
+   */
+  usage: z.array(VendorUsageSampleSchema).max(4).optional(),
 });
 export type RunTokenSample = z.input<typeof RunTokenSampleSchema>;
 
@@ -683,6 +763,26 @@ export interface RunTokenEstimate {
   /** What the number comes from, for a person to read. */
   basis: string;
   lines: TokenEstimateLine[];
+  /**
+   * Each vendor's share of the estimate. Verification and fixing are split
+   * in proportion to each vendor's review tokens, since the estimate can't
+   * know which vendor takes them.
+   */
+  byVendor: { vendor: Vendor; tokens: number; low: number; high: number }[];
+  /** The estimated share of each vendor's usage windows. */
+  windows: WindowShareLine[];
+}
+
+/** An estimated share of one vendor's usage window, as fractions where 1 is the whole window. */
+export interface WindowShareLine {
+  vendor: Vendor;
+  window: SampleWindow;
+  low: number;
+  high: number;
+  /** Whether finished runs measured the rate, rather than the rough starting rate. */
+  measured: boolean;
+  /** Where the figures come from, for a person to read. */
+  source: string;
 }
 
 export interface RunTokenEstimateInput {
@@ -951,10 +1051,17 @@ export function estimateRunTokens(input: RunTokenEstimateInput): RunTokenEstimat
   let review = { tokens: 0, low: 0, high: 0 };
   let older = { tokens: 0, groups: 0, lines: 0 };
   const sources = new Map<string, number>();
+  const perVendor = new Map<Vendor, { tokens: number; low: number; high: number }>();
+  const addVendor = (vendor: Vendor, tokens: number, low: number, high: number) => {
+    const v = perVendor.get(vendor) ?? { tokens: 0, low: 0, high: 0 };
+    perVendor.set(vendor, { tokens: v.tokens + tokens, low: v.low + low, high: v.high + high });
+  };
   input.groups.forEach((group, index) => {
-    const rate = reviewRate(reviewers[index % reviewers.length] as Vendor, group.tier);
+    const vendor = reviewers[index % reviewers.length] as Vendor;
+    const rate = reviewRate(vendor, group.tier);
     if (!rate) {
       const tokens = fallback.perGroup + group.changedLines * fallback.perLine;
+      addVendor(vendor, tokens, tokens * REVIEW_SPREAD.low, tokens * REVIEW_SPREAD.high);
       older = {
         tokens: older.tokens + tokens,
         groups: older.groups + 1,
@@ -963,6 +1070,7 @@ export function estimateRunTokens(input: RunTokenEstimateInput): RunTokenEstimat
       return;
     }
     const tokens = rate.base + rate.perLine * group.changedLines;
+    addVendor(vendor, tokens, tokens * rate.low, tokens * rate.high);
     review = {
       tokens: review.tokens + tokens,
       low: review.low + tokens * rate.low,
@@ -1043,11 +1151,168 @@ export function estimateRunTokens(input: RunTokenEstimateInput): RunTokenEstimat
     high: twoFigures(l.high),
   }));
   const changed = input.groups.reduce((n, g) => n + g.changedLines, 0);
+  // Verification and fixing go to each vendor by its share of review tokens.
+  const reviewed = [...perVendor.values()].reduce((n, v) => n + v.tokens, 0);
+  const stages = lines.filter((l) => l.label === "Verification" || l.label === "Fixing");
+  const byVendor = [...perVendor].map(([vendor, v]) => {
+    const share = reviewed > 0 ? v.tokens / reviewed : 0;
+    const add = (key: "tokens" | "low" | "high") =>
+      twoFigures(v[key] + share * stages.reduce((n, l) => n + l[key], 0));
+    return { vendor, tokens: add("tokens"), low: add("low"), high: add("high") };
+  });
   return {
     tokens: twoFigures(sum("tokens")),
     low: twoFigures(sum("low")),
     high: twoFigures(sum("high")),
     basis: `${plural(input.groups.length, "group")} with ${changed.toLocaleString("en-US")} changed lines at the ${input.depth} depth. ${rounded.map((l) => `${l.label}: ${l.source}.`).join(" ")} Real runs can differ a lot, mostly with the number of findings.`,
     lines: rounded,
+    byVendor,
+    windows: estimateWindowShare(byVendor, input.history ?? [], input.hostHistory ?? []),
   };
+}
+
+/**
+ * The rough rate for Claude's 5-hour window with no measured run, as a share
+ * of the window per raw token (`tokens.in` plus `tokens.out`). It comes from
+ * one observed whole-project run of 47.7 million tokens that used about 60%
+ * of a 5-hour window. A smaller run, at 35 million tokens, used about 10%
+ * partway through, so the low end reaches well below the rate.
+ */
+export const STARTING_WINDOW_RATE = {
+  vendor: "claude",
+  window: "5h",
+  perRawToken: 0.6 / 47_700_000,
+  low: 0.25,
+  high: 1.5,
+} as const;
+/** The margins around one measured rate. */
+const WINDOW_SPREAD_SINGLE = { low: 0.5, high: 2 };
+
+/**
+ * Estimates the share of each vendor's usage windows that a run takes, from
+ * the vendor's token estimate and the rates finished runs measured.
+ *
+ * A measured rate is the share of a window used per weighted token. Moving
+ * from the estimate's raw tokens to weighted tokens uses the ratio the same
+ * runs measured. Every rate includes any other use of the account during
+ * those runs, such as an interactive session, so a measured rate errs high,
+ * and the share it gives is conservative. With no measured run, Claude's
+ * 5-hour window gets the rough `STARTING_WINDOW_RATE`, labeled as such; other
+ * vendors and windows get no line until a run measures them.
+ */
+export function estimateWindowShare(
+  byVendor: readonly { vendor: Vendor; tokens: number; low: number; high: number }[],
+  history: readonly RunTokenSample[],
+  hostHistory: readonly RunTokenSample[],
+): WindowShareLine[] {
+  const out: WindowShareLine[] = [];
+  const weighted = [...weigh(history, "project"), ...weigh(hostHistory, "host")];
+  for (const est of byVendor) {
+    if (est.tokens <= 0) continue;
+    const measured = new Map<
+      SampleWindow,
+      { w: Weighted; usage: VendorUsageSample; rate: WindowRate }[]
+    >();
+    for (const w of weighted) {
+      const usage = w.sample.usage?.find((u) => u.vendor === est.vendor);
+      if (!usage || usage.raw <= 0) continue;
+      for (const rate of usage.windows ?? []) {
+        if (rate.weighted <= 0) continue;
+        const list = measured.get(rate.window) ?? [];
+        list.push({ w, usage, rate });
+        measured.set(rate.window, list);
+      }
+    }
+    for (const [window, runs] of measured) {
+      // Pooled over runs, so a run with more tokens counts more.
+      let used = 0;
+      let weightedSum = 0;
+      let weightedOfRaw = 0;
+      let raw = 0;
+      for (const { w, usage, rate } of runs) {
+        used += w.weight * rate.used;
+        weightedSum += w.weight * rate.weighted;
+        weightedOfRaw += w.weight * weightedTokensOf(est.vendor, usage);
+        raw += w.weight * usage.raw;
+      }
+      if (weightedSum <= 0 || raw <= 0) continue;
+      const rate = used / weightedSum;
+      const ratio = weightedOfRaw / raw;
+      const spread = spreadOf(
+        runs.map((r) => r.rate.rate / rate).filter((r) => Number.isFinite(r)),
+        WINDOW_SPREAD_SINGLE,
+      );
+      const from = provenance(runs.map((r) => r.w));
+      out.push({
+        vendor: est.vendor,
+        window,
+        low: est.low * ratio * rate * spread.low,
+        high: est.high * ratio * rate * spread.high,
+        measured: true,
+        source: `${describe(from)}, which include any other use of the account at the time, so the share errs high`,
+      });
+    }
+    const start = STARTING_WINDOW_RATE;
+    if (est.vendor === start.vendor && !measured.has(start.window)) {
+      out.push({
+        vendor: est.vendor,
+        window: start.window,
+        low: est.low * start.perRawToken * start.low,
+        high: est.high * start.perRawToken * start.high,
+        measured: false,
+        source:
+          "rough, no measurements yet: from one observed run of 47.7 million tokens that used about 60% of the window",
+      });
+    }
+  }
+  return out;
+}
+
+function weightedTokensOf(vendor: Vendor, usage: VendorUsageSample): number {
+  return weightedTokens(vendor, {
+    fresh: usage.fresh,
+    cacheWrite: usage.cacheWrite,
+    cacheRead: usage.cacheRead,
+    out: usage.out,
+  });
+}
+
+const WINDOW_NAMES: Record<SampleWindow, string> = {
+  "5h": "5-hour",
+  "7d": "7-day",
+  month: "monthly",
+};
+const VENDOR_NAMES: Record<Vendor, string> = {
+  claude: "Claude",
+  codex: "Codex",
+  copilot: "Copilot",
+};
+
+/** A share as a whole percent: one figure under 10%, else to the nearest 5%. */
+function percent(share: number): number {
+  const p = share * 100;
+  return p < 10 ? Math.max(1, Math.round(p)) : Math.round(p / 5) * 5;
+}
+
+/**
+ * One window share as a sentence fragment, such as "about 15 to 25% of your
+ * 5-hour Claude window", with a "(rough, no measurements yet)" suffix for the
+ * starting rate.
+ */
+export function describeWindowShare(
+  line: Pick<WindowShareLine, "vendor" | "window" | "low" | "high" | "measured">,
+): string {
+  const name = `your ${WINDOW_NAMES[line.window]} ${VENDOR_NAMES[line.vendor]} window`;
+  const rough = line.measured ? "" : " (rough, no measurements yet)";
+  if (line.low >= 1) return `more than all of ${name}${rough}`;
+  if (line.high < 0.01) return `under 1% of ${name}${rough}`;
+  if (line.high >= 1) {
+    const from = line.low < 0.01 ? "under 1" : String(percent(line.low));
+    return `from ${from}% to more than all of ${name}${rough}`;
+  }
+  const high = String(percent(line.high));
+  if (line.low < 0.01) return `up to ${high}% of ${name}${rough}`;
+  const low = String(percent(line.low));
+  const range = low === high ? `${low}%` : `${low} to ${high}%`;
+  return `about ${range} of ${name}${rough}`;
 }

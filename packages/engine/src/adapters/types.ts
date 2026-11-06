@@ -52,9 +52,30 @@ export interface CliRequest<T = unknown> {
   accountFolder?: string | undefined;
 }
 
+/**
+ * A call's tokens. `input` counts every input token, cache reads and writes
+ * included. The breakdown splits `input` into fresh input, cache writes, and
+ * cache reads, when the CLI reports them.
+ */
 export interface TokenCounts {
   input: number;
   output: number;
+  fresh?: number;
+  cacheWrite?: number;
+  cacheRead?: number;
+}
+
+/** The breakdown fields of `tokens`, for a result that keeps `in` and `out`. */
+export function tokenBreakdown(tokens: TokenCounts): {
+  fresh?: number;
+  cacheWrite?: number;
+  cacheRead?: number;
+} {
+  return {
+    ...(tokens.fresh !== undefined ? { fresh: tokens.fresh } : {}),
+    ...(tokens.cacheWrite !== undefined ? { cacheWrite: tokens.cacheWrite } : {}),
+    ...(tokens.cacheRead !== undefined ? { cacheRead: tokens.cacheRead } : {}),
+  };
 }
 
 /** The result of a successful call. */

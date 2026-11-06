@@ -43,7 +43,13 @@ export const MockResponseSchema = z.object({
   sessionId: z.string().nullable().optional(),
   model: z.string().nullable().optional(),
   tokens: z
-    .object({ input: z.number().int().nonnegative(), output: z.number().int().nonnegative() })
+    .object({
+      input: z.number().int().nonnegative(),
+      output: z.number().int().nonnegative(),
+      fresh: z.number().int().nonnegative().optional(),
+      cacheWrite: z.number().int().nonnegative().optional(),
+      cacheRead: z.number().int().nonnegative().optional(),
+    })
     .default({ input: 0, output: 0 }),
   costUsd: z.number().nonnegative().optional(),
   premiumRequests: z.number().nonnegative().default(0),

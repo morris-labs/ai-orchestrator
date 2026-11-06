@@ -36,7 +36,13 @@ import {
   VERIFY_OUTPUT_JSON_SCHEMA,
 } from "../prompts/schema.js";
 import { isRetryable } from "./retry.js";
-import { AdapterError, type CliRequest, type CliResult, type CliVendorAdapter } from "./types.js";
+import {
+  AdapterError,
+  tokenBreakdown,
+  type CliRequest,
+  type CliResult,
+  type CliVendorAdapter,
+} from "./types.js";
 
 interface MethodSchema {
   output: z.ZodType<unknown, z.ZodTypeDef, unknown>;
@@ -98,7 +104,11 @@ export function toCoreResult<T>(
     output: result.output as T,
     model: result.model ?? requestedModel ?? vendor,
     sessionId: result.sessionId,
-    tokens: { in: result.tokens.input, out: result.tokens.output },
+    tokens: {
+      in: result.tokens.input,
+      out: result.tokens.output,
+      ...tokenBreakdown(result.tokens),
+    },
     usage,
     premiumRequests: result.premiumRequests,
     ...(result.aiCredits !== undefined ? { aiCredits: result.aiCredits } : {}),
