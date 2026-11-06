@@ -576,25 +576,79 @@ const REVIEW_SPREAD = { low: 0.6, high: 1.6 };
 const FINDINGS_SPREAD = { low: 0.3, high: 3 };
 /** The margins around the lowest and highest of several measured runs. */
 const SAMPLE_MARGIN = { low: 0.8, high: 1.25 };
-/** The newest runs that a project's rate comes from. */
-const SAMPLE_LIMIT = 5;
+/** The newest runs of each origin, this project or the others, that a rate comes from. */
+const SAMPLE_LIMIT = 12;
+/** Each run counts this share of the next newer run of its origin. */
+const RECENCY_DECAY = 0.8;
+/** How much a run in another project counts next to a run in this project. */
+const HOST_WEIGHT = 0.5;
+/** With fewer matching runs in this project, runs in other projects join them. */
+const ENOUGH_RUNS = 2;
+/**
+ * Reviewer tokens per changed line on top of a base per group, for samples
+ * whose group sizes are too alike to fit a rate of their own. Measured over
+ * 236 groups of one whole-project run.
+ */
+const PRIOR_PER_LINE = 30;
+/** The most per-group points that one sample keeps. */
+export const TOKEN_SAMPLE_POINT_LIMIT = 500;
+/** The most samples from other projects that a preview takes. */
+export const HOST_TOKEN_SAMPLE_LIMIT = 200;
+/** The file in a finished run folder that holds the run's `RunTokenSample`. */
+export const TOKEN_SAMPLE_FILE = "token-sample.json";
 
-/** One finished run's measured tokens, reduced to what an estimate can match on. */
-export interface RunTokenSample {
-  runId: string;
-  depth: RunDepth;
-  scope: "whole" | "range";
+/**
+ * One finished run's measured tokens, reduced to what an estimate can match
+ * on. It holds numbers and settings only, never a name, a path, or content,
+ * so samples can pass between projects.
+ */
+export const RunTokenSampleSchema = z.object({
+  runId: z.string().min(1).max(64),
+  depth: RunDepthSchema,
+  scope: z.enum(["whole", "range"]),
   /** The reviewer effort, or `default` for each vendor's own. */
-  effort: string;
-  readOnly: boolean;
+  effort: z.string().min(1).max(16),
+  readOnly: z.boolean(),
   /** How many groups the run had. */
-  groups: number;
-  /** Reviewer tokens and reviewed groups, by vendor and tier. */
-  review: { vendor: Vendor; tier: ModelTier | null; tokens: number; groups: number }[];
+  groups: CountSchema,
+  /** The changed lines over every group. */
+  lines: CountSchema.default(0),
+  /** The files over every group. */
+  files: CountSchema.default(0),
+  /** Reviewer tokens, reviewed groups and their changed lines, by vendor and tier. */
+  review: z
+    .array(
+      z.object({
+        vendor: VendorSchema,
+        tier: ModelTierSchema.nullable(),
+        tokens: CountSchema,
+        groups: CountSchema,
+        lines: CountSchema.default(0),
+        /** Each reviewed group as `[changed lines, tokens]`, when known. */
+        points: z
+          .array(z.tuple([CountSchema, CountSchema]))
+          .max(TOKEN_SAMPLE_POINT_LIMIT)
+          .optional(),
+      }),
+    )
+    .max(16),
   /** Disprover, confirmer, and sweep tokens. */
-  verificationTokens: number;
-  fixingTokens: number;
-}
+  verificationTokens: CountSchema,
+  fixingTokens: CountSchema,
+});
+export type RunTokenSample = z.input<typeof RunTokenSampleSchema>;
+
+/**
+ * The body of the engine's `engine.runs.preview`: the request plus the
+ * samples of finished runs in the other projects on this host, which the
+ * server reads, since the engine sees only its own project.
+ */
+export const EngineRunPreviewSchema = RunRequestFieldsSchema.extend({
+  hostTokenSamples: z.array(RunTokenSampleSchema).max(HOST_TOKEN_SAMPLE_LIMIT).optional(),
+})
+  .superRefine(refuseReadOnlyPostPush)
+  .transform(resolveRequest);
+export type EngineRunPreview = z.infer<typeof EngineRunPreviewSchema>;
 
 export interface TokenEstimateLine {
   label: string;
@@ -623,92 +677,264 @@ export interface RunTokenEstimateInput {
   /** The reviewers in turn, as the groups take them. */
   reviewers?: readonly Vendor[];
   groups: readonly { tier?: ModelTier | undefined; changedLines: number }[];
-  /** This project's finished runs, oldest first. */
+  /** This project's finished runs. */
   history?: readonly RunTokenSample[];
+  /** Finished runs in the other projects on this host. */
+  hostHistory?: readonly RunTokenSample[];
 }
 
-interface Rate {
-  value: number;
+type Origin = "project" | "host";
+
+/** A sample with where it came from and how much it counts. */
+interface Weighted {
+  sample: RunTokenSample;
+  origin: Origin;
+  weight: number;
+}
+
+/** Which runs a figure comes from, and whether it was moved from another effort. */
+interface Provenance {
+  project: Set<string>;
+  host: Set<string>;
+  /** The effort ratio applied, and whether a measurement or the starting rates gave it. */
+  adjusted?: { ratio: number; measured: boolean };
+}
+
+/** Reviewer tokens for one group: `base + perLine * changed lines`, with multipliers for the range. */
+interface ReviewRate {
+  base: number;
+  perLine: number;
   low: number;
   high: number;
-  runs: Set<string>;
+  from: Provenance | null;
 }
 
-/** A rate from per-group figures of past runs, or from one figure with a spread. */
-function rateFrom(
-  samples: readonly { runId: string; perGroup: number; groups: number }[],
-  spread: { low: number; high: number },
-): Rate | null {
-  const recent = samples.slice(-SAMPLE_LIMIT);
-  if (recent.length === 0) return null;
-  const values = recent.map((s) => s.perGroup);
-  // Weighted by groups, so a small run can't outvote a large one.
-  const groups = recent.reduce((n, s) => n + s.groups, 0);
-  const value = recent.reduce((n, s) => n + s.perGroup * s.groups, 0) / groups;
-  const runs = new Set(recent.map((s) => s.runId));
-  return recent.length === 1
-    ? { value, low: value * spread.low, high: value * spread.high, runs }
-    : {
-        value,
-        low: Math.min(...values) * SAMPLE_MARGIN.low,
-        high: Math.max(...values) * SAMPLE_MARGIN.high,
-        runs,
-      };
+/** `high`, `xhigh`, and `max` cost about the same, and so do the rest. */
+function effortClass(effort: string): "high" | "base" {
+  return effort === "high" || effort === "xhigh" || effort === "max" ? "high" : "base";
+}
+
+/** The starting ratio between `high` and lower efforts, from the whole-project rates. */
+const STARTING_EFFORT_RATIO =
+  STARTING_REVIEW_RATES.whole.medium.high / STARTING_REVIEW_RATES.whole.medium.base;
+
+/**
+ * The newest samples of each origin, weighted so that newer runs and this
+ * project's runs count more. Run ids are ULIDs, so they sort by time.
+ */
+function weigh(samples: readonly RunTokenSample[], origin: Origin): Weighted[] {
+  const newest = [...samples].sort((a, b) => b.runId.localeCompare(a.runId)).slice(0, SAMPLE_LIMIT);
+  const factor = origin === "project" ? 1 : HOST_WEIGHT;
+  return newest.map((sample, i) => ({ sample, origin, weight: factor * RECENCY_DECAY ** i }));
+}
+
+function provenance(used: readonly Weighted[]): Provenance {
+  const from: Provenance = { project: new Set(), host: new Set() };
+  for (const w of used) from[w.origin].add(w.sample.runId);
+  return from;
+}
+
+/**
+ * Picks the samples a figure comes from: this project's exact matches, joined
+ * by other projects' exact matches while this project has few, else every
+ * sample of the same depth and scope at any effort.
+ */
+function pickSamples(
+  exact: { project: Weighted[]; host: Weighted[] },
+  nearby: { project: Weighted[]; host: Weighted[] },
+  usable: (w: Weighted) => boolean,
+): { used: Weighted[]; exact: boolean } {
+  const own = exact.project.filter(usable);
+  if (own.length >= ENOUGH_RUNS) return { used: own, exact: true };
+  const joined = [...own, ...exact.host.filter(usable)];
+  if (joined.length > 0) return { used: joined, exact: true };
+  return { used: [...nearby.project, ...nearby.host].filter(usable), exact: false };
+}
+
+/** The low and high multipliers from how far each run sits from the fitted figure. */
+function spreadOf(
+  ratios: readonly number[],
+  single: { low: number; high: number },
+): { low: number; high: number } {
+  if (ratios.length < 2) return single;
+  return {
+    low: Math.min(1, ...ratios) * SAMPLE_MARGIN.low,
+    high: Math.max(1, ...ratios) * SAMPLE_MARGIN.high,
+  };
+}
+
+/**
+ * Fits `tokens = base + perLine * lines` to weighted points by least squares.
+ * When the points' sizes are too alike to show a slope, the slope is the prior
+ * one. Neither figure goes below zero.
+ */
+function fitLine(points: readonly { lines: number; tokens: number; weight: number }[]): {
+  base: number;
+  perLine: number;
+} {
+  const total = points.reduce((n, p) => n + p.weight, 0);
+  if (total <= 0) return { base: 0, perLine: 0 };
+  const mx = points.reduce((n, p) => n + p.weight * p.lines, 0) / total;
+  const my = points.reduce((n, p) => n + p.weight * p.tokens, 0) / total;
+  if (mx <= 0) return { base: my, perLine: 0 };
+  const sxx = points.reduce((n, p) => n + p.weight * (p.lines - mx) ** 2, 0);
+  const sxy = points.reduce((n, p) => n + p.weight * (p.lines - mx) * (p.tokens - my), 0);
+  // A spread of sizes under a tenth of the mean says little about the slope.
+  const spread = Math.sqrt(sxx / total);
+  const slope = spread >= mx * 0.1 && sxx > 0 ? sxy / sxx : PRIOR_PER_LINE;
+  const perLine = Math.min(Math.max(slope, 0), my / mx);
+  return { base: my - perLine * mx, perLine };
 }
 
 function twoFigures(n: number): number {
   return n === 0 ? 0 : Number(n.toPrecision(2));
 }
 
-function fromRuns(runs: Set<string>): string {
-  return `based on ${runs.size} ${runs.size === 1 ? "run" : "runs"} in this project`;
+function plural(n: number, word: string): string {
+  return `${n} ${n === 1 ? word : `${word}s`}`;
+}
+
+/** Says which runs a figure comes from, for a person to read. */
+function describe(from: Provenance): string {
+  const parts = [
+    ...(from.project.size > 0 ? [`${plural(from.project.size, "run")} in this project`] : []),
+    ...(from.host.size > 0 ? [`${plural(from.host.size, "run")} in other projects`] : []),
+  ];
+  const adjusted = from.adjusted
+    ? `, adjusted from another effort by ${from.adjusted.ratio.toFixed(2)} times (a ${from.adjusted.measured ? "measured" : "starting"} ratio)`
+    : "";
+  return `based on ${parts.join(" and ")}${adjusted}`;
 }
 
 /**
  * A rough token estimate for a run: reviewer tokens per group by vendor, tier,
- * and effort, plus verification and fixing as their own lines. Each figure comes
- * from this project's matching runs, then from the starting rates, then, for a
- * vendor or depth with neither, from the fallback in `TOKEN_ESTIMATE`. Plain
- * arithmetic: it calls no model, and it can't know how many findings a run gets.
+ * effort and group size, plus verification and fixing as their own lines.
+ *
+ * Each figure comes from the first of these that has data: this project's runs
+ * with the same depth, scope and effort (joined by other projects' matching
+ * runs while this project has fewer than two), then runs of the same depth and
+ * scope at another effort, moved by the ratio between the efforts, then the
+ * starting rates, then, for a vendor or depth with none of these, the fallback
+ * in `TOKEN_ESTIMATE`. Newer runs count more. Reviewer tokens are fitted as a
+ * base per group plus a rate per changed line, so a policy with smaller groups
+ * gets a smaller figure per group. Plain arithmetic: it calls no model, and it
+ * can't know how many findings a run gets.
  */
 export function estimateRunTokens(input: RunTokenEstimateInput): RunTokenEstimate {
   const scope = input.scope ?? "range";
   const effort = input.effort ?? "default";
   const reviewers = input.reviewers?.length ? input.reviewers : (["claude"] as const);
   const readOnly = input.readOnly ?? false;
-  const matching = (input.history ?? []).filter(
-    (s) => s.depth === input.depth && s.scope === scope && s.effort === effort,
-  );
   const fallback = TOKEN_ESTIMATE[input.depth];
 
-  const reviewRate = (vendor: Vendor, tier: ModelTier | undefined): Rate | null => {
-    const measured = matching.flatMap((s) =>
-      s.review
-        .filter((r) => r.vendor === vendor && r.tier === (tier ?? null) && r.groups > 0)
-        .map((r) => ({ runId: s.runId, perGroup: r.tokens / r.groups, groups: r.groups })),
-    );
-    const own = rateFrom(measured, REVIEW_SPREAD);
-    if (own) return own;
+  const sameRun = (s: RunTokenSample) => s.depth === input.depth && s.scope === scope;
+  const split = (samples: readonly RunTokenSample[], origin: Origin) => {
+    const alike = samples.filter(sameRun);
+    return {
+      exact: weigh(
+        alike.filter((s) => s.effort === effort),
+        origin,
+      ),
+      other: weigh(
+        alike.filter((s) => s.effort !== effort),
+        origin,
+      ),
+    };
+  };
+  const own = split(input.history ?? [], "project");
+  const host = split(input.hostHistory ?? [], "host");
+  const exact = { project: own.exact, host: host.exact };
+  const nearby = { project: own.other, host: host.other };
+
+  const entryOf = (s: RunTokenSample, vendor: Vendor, tier: ModelTier | null) =>
+    s.review.find((r) => r.vendor === vendor && r.tier === tier && r.groups > 0);
+
+  /** The ratio that moves a figure measured at `from` to this run's effort. */
+  const effortRatio = (
+    vendor: Vendor,
+    tier: ModelTier | null,
+    from: string,
+  ): { ratio: number; measured: boolean } => {
+    const target = effortClass(effort);
+    const source = effortClass(from);
+    if (target === source) return { ratio: 1, measured: false };
+    const perGroupAt = (cls: "high" | "base") => {
+      let tokens = 0;
+      let groups = 0;
+      for (const w of [...exact.project, ...exact.host, ...nearby.project, ...nearby.host]) {
+        if (effortClass(w.sample.effort) !== cls) continue;
+        const entry = entryOf(w.sample, vendor, tier);
+        if (!entry) continue;
+        tokens += entry.tokens;
+        groups += entry.groups;
+      }
+      return groups > 0 ? tokens / groups : null;
+    };
+    const at = perGroupAt(target);
+    const was = perGroupAt(source);
+    if (at !== null && was !== null && was > 0) return { ratio: at / was, measured: true };
+    const ratio = target === "high" ? STARTING_EFFORT_RATIO : 1 / STARTING_EFFORT_RATIO;
+    return { ratio, measured: false };
+  };
+
+  const rates = new Map<string, ReviewRate | null>();
+  const reviewRate = (vendor: Vendor, tier: ModelTier | undefined): ReviewRate | null => {
+    const key = `${vendor}/${tier ?? null}`;
+    if (rates.has(key)) return rates.get(key) ?? null;
+    const rate = fitReview(vendor, tier ?? null);
+    rates.set(key, rate);
+    return rate;
+  };
+  const fitReview = (vendor: Vendor, tier: ModelTier | null): ReviewRate | null => {
+    const picked = pickSamples(exact, nearby, (w) => entryOf(w.sample, vendor, tier) !== undefined);
+    if (picked.used.length > 0) {
+      const points: { lines: number; tokens: number; weight: number }[] = [];
+      const runs: { weight: number; groups: number; lines: number; tokens: number }[] = [];
+      let adjusted: Provenance["adjusted"];
+      for (const w of picked.used) {
+        const entry = entryOf(w.sample, vendor, tier);
+        if (!entry) continue;
+        const move = picked.exact
+          ? { ratio: 1, measured: false }
+          : effortRatio(vendor, tier, w.sample.effort);
+        if (move.ratio !== 1) adjusted = move;
+        const tokens = entry.tokens * move.ratio;
+        const lines = entry.lines ?? 0;
+        runs.push({ weight: w.weight, groups: entry.groups, lines, tokens });
+        // Each group is a point. Without per-group points, the run's mean
+        // group stands for all of them.
+        if (entry.points?.length) {
+          const each = (w.weight * entry.groups) / entry.points.length;
+          for (const [l, t] of entry.points)
+            points.push({ lines: l, tokens: t * move.ratio, weight: each });
+        } else {
+          points.push({
+            lines: lines / entry.groups,
+            tokens: tokens / entry.groups,
+            weight: w.weight * entry.groups,
+          });
+        }
+      }
+      const fit = fitLine(points);
+      const ratios = runs
+        .map((r) => r.tokens / (fit.base * r.groups + fit.perLine * r.lines))
+        .filter((r) => Number.isFinite(r));
+      const spread = spreadOf(ratios, REVIEW_SPREAD);
+      const from = provenance(picked.used);
+      if (adjusted) from.adjusted = adjusted;
+      return { ...fit, ...spread, from };
+    }
     if (vendor !== "claude" || input.depth !== "standard") return null;
-    const value =
+    const base =
       scope === "range"
         ? STARTING_REVIEW_RATES.range.perGroup
-        : STARTING_REVIEW_RATES.whole[tier ?? "medium"][
-            effort === "high" || effort === "xhigh" || effort === "max" ? "high" : "base"
-          ];
-    return {
-      value,
-      low: value * REVIEW_SPREAD.low,
-      high: value * REVIEW_SPREAD.high,
-      runs: new Set(),
-    };
+        : STARTING_REVIEW_RATES.whole[tier ?? "medium"][effortClass(effort)];
+    return { base, perLine: 0, ...REVIEW_SPREAD, from: null };
   };
 
   let review = { tokens: 0, low: 0, high: 0 };
   let older = { tokens: 0, groups: 0, lines: 0 };
-  let measuredGroups = 0;
-  let startingGroups = 0;
-  const reviewRuns = new Set<string>();
+  const sources = new Map<string, number>();
   input.groups.forEach((group, index) => {
     const rate = reviewRate(reviewers[index % reviewers.length] as Vendor, group.tier);
     if (!rate) {
@@ -720,24 +946,23 @@ export function estimateRunTokens(input: RunTokenEstimateInput): RunTokenEstimat
       };
       return;
     }
+    const tokens = rate.base + rate.perLine * group.changedLines;
     review = {
-      tokens: review.tokens + rate.value,
-      low: review.low + rate.low,
-      high: review.high + rate.high,
+      tokens: review.tokens + tokens,
+      low: review.low + tokens * rate.low,
+      high: review.high + tokens * rate.high,
     };
-    if (rate.runs.size > 0) {
-      measuredGroups += 1;
-      for (const id of rate.runs) reviewRuns.add(id);
-    } else startingGroups += 1;
+    const source = rate.from ? describe(rate.from) : "at the starting rates";
+    sources.set(source, (sources.get(source) ?? 0) + 1);
   });
 
   const lines: TokenEstimateLine[] = [];
-  if (measuredGroups + startingGroups > 0) {
-    const sources = [
-      ...(measuredGroups > 0 ? [`${measuredGroups} groups ${fromRuns(reviewRuns)}`] : []),
-      ...(startingGroups > 0 ? [`${startingGroups} groups at the starting rates`] : []),
-    ];
-    lines.push({ label: "Review", ...review, source: sources.join(", ") });
+  if (sources.size > 0) {
+    lines.push({
+      label: "Review",
+      ...review,
+      source: [...sources].map(([source, n]) => `${plural(n, "group")} ${source}`).join("; "),
+    });
   }
   if (older.groups > 0) {
     lines.push({
@@ -745,7 +970,7 @@ export function estimateRunTokens(input: RunTokenEstimateInput): RunTokenEstimat
       tokens: older.tokens,
       low: older.tokens * REVIEW_SPREAD.low,
       high: older.tokens * REVIEW_SPREAD.high,
-      source: `no runs measure this vendor or depth, so ${older.groups} groups use the older rate of ${fallback.perGroup.toLocaleString("en-US")} tokens each plus ${fallback.perLine} per changed line, which includes verification and fixing`,
+      source: `no runs measure this vendor or depth, so ${plural(older.groups, "group")} use the older rate of ${fallback.perGroup.toLocaleString("en-US")} tokens each plus ${fallback.perLine} per changed line, which includes verification and fixing`,
     });
   }
 
@@ -753,36 +978,43 @@ export function estimateRunTokens(input: RunTokenEstimateInput): RunTokenEstimat
   const staged = input.groups.length - older.groups;
   const stageLine = (
     label: string,
-    measured: readonly { runId: string; perGroup: number; groups: number }[],
+    pick: (s: RunTokenSample) => number,
+    usable: (s: RunTokenSample) => boolean,
     starting: number,
   ): void => {
     if (staged === 0) return;
-    const rate = rateFrom(measured, FINDINGS_SPREAD);
-    const value = rate?.value ?? starting;
+    // Findings drive these stages more than effort does, so a run at another
+    // effort counts as it is.
+    const picked = pickSamples(exact, nearby, (w) => w.sample.groups > 0 && usable(w.sample));
+    let value = starting;
+    let spread = FINDINGS_SPREAD;
+    let source = "the starting rate, and findings move it the most";
+    if (picked.used.length > 0) {
+      const weight = picked.used.reduce((n, w) => n + w.weight * w.sample.groups, 0);
+      value = picked.used.reduce((n, w) => n + w.weight * pick(w.sample), 0) / weight;
+      const ratios = picked.used.map((w) => pick(w.sample) / w.sample.groups / value);
+      spread = value > 0 ? spreadOf(ratios, FINDINGS_SPREAD) : FINDINGS_SPREAD;
+      source = describe(provenance(picked.used));
+    }
     lines.push({
       label,
       tokens: value * staged,
-      low: (rate?.low ?? value * FINDINGS_SPREAD.low) * staged,
-      high: (rate?.high ?? value * FINDINGS_SPREAD.high) * staged,
-      source: rate ? fromRuns(rate.runs) : "the starting rate, and findings move it the most",
+      low: value * spread.low * staged,
+      high: value * spread.high * staged,
+      source,
     });
   };
-  const perGroup = (pick: (s: RunTokenSample) => number, from: readonly RunTokenSample[]) =>
-    from
-      .filter((s) => s.groups > 0)
-      .map((s) => ({ runId: s.runId, perGroup: pick(s) / s.groups, groups: s.groups }));
   stageLine(
     "Verification",
-    perGroup((s) => s.verificationTokens, matching),
+    (s) => s.verificationTokens,
+    () => true,
     STARTING_STAGE_RATES.verification,
   );
   if (!readOnly) {
     stageLine(
       "Fixing",
-      perGroup(
-        (s) => s.fixingTokens,
-        matching.filter((s) => !s.readOnly),
-      ),
+      (s) => s.fixingTokens,
+      (s) => !s.readOnly,
       STARTING_STAGE_RATES.fixing,
     );
   }
@@ -794,11 +1026,12 @@ export function estimateRunTokens(input: RunTokenEstimateInput): RunTokenEstimat
     low: twoFigures(l.low),
     high: twoFigures(l.high),
   }));
+  const changed = input.groups.reduce((n, g) => n + g.changedLines, 0);
   return {
     tokens: twoFigures(sum("tokens")),
     low: twoFigures(sum("low")),
     high: twoFigures(sum("high")),
-    basis: `${input.groups.length} groups at the ${input.depth} depth. ${rounded.map((l) => `${l.label}: ${l.source}.`).join(" ")} Real runs can differ a lot, mostly with the number of findings.`,
+    basis: `${plural(input.groups.length, "group")} with ${changed.toLocaleString("en-US")} changed lines at the ${input.depth} depth. ${rounded.map((l) => `${l.label}: ${l.source}.`).join(" ")} Real runs can differ a lot, mostly with the number of findings.`,
     lines: rounded,
   };
 }

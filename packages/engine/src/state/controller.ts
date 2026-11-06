@@ -28,6 +28,7 @@ import { drivePostPush } from "../postpush/loop.js";
 import { resolveRange } from "../range/resolve.js";
 import { newEngineState } from "../run/engine-state.js";
 import { RunStore } from "../run/store.js";
+import { saveTokenSample } from "../run/token-history.js";
 import {
   AgentFailed,
   DecisionNeeded,
@@ -271,6 +272,7 @@ export class RunController {
       } catch (error) {
         await this.stopOn(error);
       } finally {
+        if (ctx.state.status === "finished") await this.recordTokens();
         this.active = null;
       }
     })().catch((error: unknown) => {
@@ -298,6 +300,18 @@ export class RunController {
       }),
     ]);
     clearTimeout(timer);
+  }
+
+  /** Stores the finished run's token sample for later estimates. Never rejects. */
+  private async recordTokens(): Promise<void> {
+    try {
+      await saveTokenSample(this.location.projectRoot, this.ctx.state.id);
+    } catch (error) {
+      this.ctx.deps.log?.warn("Recording the run's token sample failed", {
+        runId: this.ctx.state.id,
+        error: String(error),
+      });
+    }
   }
 
   /** Records why the driver stopped. Never rejects, even when the run directory can't be written. */
