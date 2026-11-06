@@ -134,15 +134,29 @@ range, and a line each for review, verification, and fixing. A read-only run has
 no fixing line. Code computes the estimate with no model call, in
 `estimateRunTokens` in `packages/contracts/src/runs.ts`.
 
-Each line takes its figure from the first source that has one:
+When a run finishes, the engine stores its measured tokens, group sizes, and
+settings in a `token-sample.json` file in the run folder. The file holds numbers
+and settings only, never names, paths, or file contents. Each line takes its
+figure from the first source that has one:
 
-1. **This project's finished runs:** up to the newest 5 stored in
-   `.aio/runs`, matched on depth, scope, and reviewer effort, and for review also
-   on vendor and tier. The preview says how many runs it uses.
-2. **The starting rates:** measured Claude rates at the `standard` depth.
-3. **The older rate:** for a vendor or depth with neither, such as a Codex
+1. **Matching runs:** finished runs with the same depth, scope, and reviewer
+   effort, and for review also the same vendor and tier. This project's runs come
+   first. While it has fewer than 2, runs in the other projects on this host join
+   them at half weight. The server reads those runs' sample files on the host and
+   passes them into the preview, so no container sees another project's files.
+2. **Runs at another effort:** runs with the same depth and scope, moved to this
+   run's effort by the ratio between the efforts. The ratio is measured when runs
+   at both efforts exist, and comes from the starting rates otherwise.
+3. **The starting rates:** measured Claude rates at the `standard` depth.
+4. **The older rate:** for a vendor or depth with none of these, such as a Codex
    reviewer before its first run. The preview says so, and this rate covers
    verification and fixing too.
+
+Up to the newest 12 runs of each source count, and each run counts 0.8 times
+the next newer one. Review tokens are fitted as a base per group plus a rate per
+changed line, so a policy with a smaller group size limit gets a smaller figure
+per group. Each line says where its figure comes from: this project, other
+projects, or the starting rates, and how many runs.
 
 Stored token counts include cached reads, so they overstate what counts against a
 subscription allowance. The number of findings moves verification and fixing the

@@ -1,8 +1,8 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { loadTokenHistory } from "../../src/run/token-history.js";
+import { loadTokenHistory, saveTokenSample } from "../../src/run/token-history.js";
 
 function writeRun(root: string, id: string, status: string): void {
   const calls = join(root, ".aio", "runs", id, "rounds", "1", "calls");
@@ -16,7 +16,10 @@ function writeRun(root: string, id: string, status: string): void {
   );
   writeFileSync(
     join(root, ".aio", "runs", id, "rounds", "1", "groups.json"),
-    JSON.stringify([{ id: "G01" }, { id: "G02" }]),
+    JSON.stringify([
+      { id: "G01", changedLines: 40, files: ["a.ts", "b.ts"] },
+      { id: "G02", changedLines: 60, files: ["c.ts"] },
+    ]),
   );
   const call = (tokens: number) =>
     JSON.stringify({
@@ -47,11 +50,41 @@ describe("loadTokenHistory", () => {
         effort: "high",
         readOnly: true,
         groups: 2,
-        review: [{ vendor: "claude", tier: "large", tokens: 313, groups: 2 }],
+        lines: 100,
+        files: 3,
+        review: [
+          {
+            vendor: "claude",
+            tier: "large",
+            tokens: 313,
+            groups: 2,
+            lines: 100,
+            points: [
+              [40, 112],
+              [60, 201],
+            ],
+          },
+        ],
         verificationTokens: 72,
         fixingTokens: 51,
       },
     ]);
+  });
+
+  it("stores each finished run's sample and reads it back", async () => {
+    const root = mkdtempSync(join(tmpdir(), "aio-token-history-"));
+    writeRun(root, "01A", "finished");
+    writeRun(root, "01B", "cancelled");
+    const file = (id: string) => join(root, ".aio", "runs", id, "token-sample.json");
+    const [first] = await loadTokenHistory(root);
+    expect(existsSync(file("01B"))).toBe(false);
+    const stored = JSON.parse(readFileSync(file("01A"), "utf8")) as unknown;
+    expect(stored).toEqual(first);
+    // The stored sample wins over the calls, which a finished run never changes.
+    writeFileSync(file("01A"), JSON.stringify({ ...first, fixingTokens: 7 }));
+    expect((await loadTokenHistory(root))[0]?.fixingTokens).toBe(7);
+    await expect(saveTokenSample(root, "01B")).resolves.toBeNull();
+    expect((await saveTokenSample(root, "01A"))?.fixingTokens).toBe(51);
   });
 
   it("returns nothing for a project with no runs", async () => {

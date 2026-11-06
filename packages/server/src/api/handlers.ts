@@ -10,6 +10,7 @@ import {
   type Vendor,
   type PathParams,
   type RunState,
+  type RunTokenSample,
   type ServerRoutes,
 } from "@aio/contracts";
 import path from "node:path";
@@ -20,6 +21,7 @@ import type { ApiDeps, ApiEngine } from "./deps.js";
 import { ApiError } from "./errors.js";
 import { listDirs } from "./fs-dirs.js";
 import { ulid } from "./ulid.js";
+import { readHostTokenSamples } from "../usage/token-samples.js";
 import { commandLine } from "../jobs/process.js";
 import { externalAttachArgv } from "../terminals/attach.js";
 
@@ -113,6 +115,24 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
     }
     return deps.multiHost;
   };
+
+  /**
+   * The token samples of every other project on this host, for an estimate.
+   * Reading them can't fail a preview: a failure means no samples.
+   */
+  async function hostTokenSamples(projectId: string): Promise<RunTokenSample[]> {
+    try {
+      const projects = (await core.projects.list()).map((p) => p.project);
+      const own = projects.find((p) => p.id === projectId)?.root ?? "";
+      return await readHostTokenSamples(
+        projects.map((p) => p.root),
+        own,
+      );
+    } catch (err) {
+      deps.log?.(`Reading token samples failed: ${(err as Error).message}`);
+      return [];
+    }
+  }
 
   /**
    * Refuses a run whose box is in another project: the run would hold that
@@ -496,9 +516,10 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
     "runs.preview": async ({ body }) => {
       requireAbsolute(body.repoPath, "The repository path", "container");
       await requireBoxInProject(body.boxId, body.projectId);
-      return deps.engines
-        .requireProject(body.projectId)
-        .call("engine.runs.preview", { body }) as never;
+      const engine = deps.engines.requireProject(body.projectId);
+      return engine.call("engine.runs.preview", {
+        body: { ...body, hostTokenSamples: await hostTokenSamples(body.projectId) },
+      }) as never;
     },
     "runs.create": async ({ body, reply }) => {
       // The request schema refuses this too; the check here keeps the refusal if the schema changes.

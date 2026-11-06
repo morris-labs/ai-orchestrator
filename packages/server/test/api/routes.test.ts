@@ -655,6 +655,18 @@ describe("review routes", () => {
     expect(h.core.calls).toContain(`message:${box.id}:${HOLD_EDITS_MESSAGE.slice(0, 20)}`);
   });
 
+  it("passes other projects' token samples into a preview", async () => {
+    const res = await h.server.app.inject({
+      method: "POST",
+      url: `${V1}/runs/preview`,
+      headers: AUTH,
+      payload: { projectId: "example-app-1a2b3c4d", repoPath: "/work/example-app" },
+    });
+    expect(res.statusCode).toBe(200);
+    const sent = h.engine.calls.filter((c) => c.key === "engine.runs.preview").at(-1);
+    expect((sent?.input.body as { hostTokenSamples: unknown }).hostTokenSamples).toEqual([]);
+  });
+
   it("passes a request's starting roles to the engine and refuses a bad shape", async () => {
     const payload = { projectId: "example-app-1a2b3c4d", repoPath: "/work/example-app" };
     const roles = { reviewer: ["codex"], disprover: "copilot" };
