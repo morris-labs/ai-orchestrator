@@ -13,7 +13,15 @@ import {
   type RunState,
   type Vendor,
 } from "@aio/contracts";
-import { AgentsTable, VENDOR_LABELS, VENDORS, agentRows, formatUsd } from "@aio/ui/dashboard";
+import {
+  AgentsTable,
+  VENDOR_LABELS,
+  VENDORS,
+  agentRows,
+  formatDuration,
+  formatUsd,
+  useNow,
+} from "@aio/ui/dashboard";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ErrorBanner, RunStatusBadge, shortId } from "../components/common.js";
 import { ProfileSelect, RoleTable } from "../components/roles.js";
@@ -23,7 +31,16 @@ import { href } from "../state/router.js";
 import { useApiClient, useAnyEvent } from "@aio/ui/hooks";
 import { useStore } from "../state/store.js";
 import { VERIFY_FLOOR_OPTIONS } from "./launcherModel.js";
-import { decisionView, isNewerRun, oscillationPairs, runControls, stepStates } from "./runModel.js";
+import {
+  decisionView,
+  isNewerRun,
+  oscillationPairs,
+  runControls,
+  runProgress,
+  stepStates,
+  taskRows,
+  type TaskRow,
+} from "./runModel.js";
 
 export function StageStepper({ run }: { run: Pick<RunState, "stage" | "status" | "request"> }) {
   const steps = stepStates(run.request.pipeline, run.stage, run.status);
@@ -254,6 +271,86 @@ function RetryControl({
         Finish with Claude
       </button>
     </>
+  );
+}
+
+const TASK_STATE_LABELS: Record<TaskRow["state"], string> = {
+  queued: "○ Queued",
+  running: "◐ Running",
+  done: "✓ Done",
+  failed: "▲ Failed",
+  skipped: "– Skipped",
+  "planned later": "… Planned later",
+};
+
+/** Every task of the run in pipeline order, with what remains and each call's effort. */
+export function TaskList({ run }: { run: RunState }) {
+  const rows = taskRows(run);
+  const active = !["finished", "failed", "cancelled"].includes(run.status);
+  const now = useNow(active);
+  const progress = runProgress(run, now);
+  const count = (state: TaskRow["state"]) => rows.filter((r) => r.state === state).length;
+  return (
+    <section className="card" aria-label="Task list">
+      <h3>Task list</h3>
+      {rows.length === 0 ? (
+        <p className="muted">The engine lists the tasks when the first round starts.</p>
+      ) : (
+        <>
+          <div className="task-progress">
+            <progress
+              max={Math.max(progress.total, 1)}
+              value={progress.finished}
+              aria-label="Tasks finished"
+            />
+            <span className="ab-num">{Math.round(progress.fraction * 100)}%</span>
+            <span>Elapsed {formatDuration(progress.elapsedMs)}</span>
+            <span>
+              {progress.remainingMs === null
+                ? "Remaining: known after the first task finishes"
+                : active
+                  ? `About ${formatDuration(progress.remainingMs)} remaining${progress.moreLater ? ", plus stages planned later" : ""}`
+                  : "Ended"}
+            </span>
+          </div>
+          <p className="muted small">
+            {count("done")} done, {count("running")} running, {count("queued")} queued
+            {count("planned later") ? `, ${count("planned later")} stages planned later` : ""}
+            {count("failed") ? `, ${count("failed")} failed` : ""}. The engine adds a task it plans
+            later in pipeline order, and the queue positions after it move down.
+          </p>
+          <div className="ab-table-wrap">
+            <table className="ab-table">
+              <thead>
+                <tr>
+                  <th scope="col">Queue</th>
+                  <th scope="col">Round</th>
+                  <th scope="col">Task</th>
+                  <th scope="col">Vendor</th>
+                  <th scope="col">Effort</th>
+                  <th scope="col">State</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr
+                    key={r.key}
+                    className={r.state === "done" || r.state === "skipped" ? "muted" : ""}
+                  >
+                    <td className="ab-num">{r.position ?? ""}</td>
+                    <td className="ab-num">{r.round}</td>
+                    <td>{r.label}</td>
+                    <td>{r.vendor ?? "To be assigned"}</td>
+                    <td>{r.effort}</td>
+                    <td>{TASK_STATE_LABELS[r.state]}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </section>
   );
 }
 
@@ -596,6 +693,8 @@ export function RunView({ runId }: { runId: string }) {
           </table>
         </section>
       ) : null}
+
+      <TaskList run={run} />
 
       <AgentsTable agents={agents} title="Agents in this run" />
     </div>

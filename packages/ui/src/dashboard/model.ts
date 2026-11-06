@@ -46,6 +46,8 @@ export interface AgentView {
   role: AgentRole;
   groupId: string | null;
   round: number;
+  /** The reasoning effort the call asked for. Absent means the vendor's own default. */
+  effort?: string;
   startedAt: string;
   finishedAt: string | null;
   /** Set when a lost engine, not `agent.finished`, ended the agent. */
@@ -332,6 +334,7 @@ export function applyEvent(prev: DashboardState, event: AioEvent): DashboardStat
             role: event.role,
             groupId: event.groupId,
             round: event.round,
+            ...(event.effort ? { effort: event.effort } : {}),
             startedAt: event.time,
             finishedAt: null,
             outcome: null,

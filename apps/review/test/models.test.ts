@@ -33,6 +33,17 @@ import { demoBox, demoFindings } from "./helpers/data.js";
 
 describe("buildRunRequest", () => {
   const ok = { ...DEFAULT_FORM, projectId: "p", repoPath: "/r" };
+  it("passes parallel calls from 1 to 20 and refuses others", () => {
+    expect(buildRunRequest({ ...ok, concurrency: "12" })).toMatchObject({
+      ok: true,
+      request: { concurrency: 12 },
+    });
+    for (const bad of ["0", "21", "2.5"]) {
+      expect(buildRunRequest({ ...ok, concurrency: bad }).ok).toBe(false);
+    }
+    const plain = buildRunRequest(ok);
+    expect(plain.ok && "concurrency" in plain.request).toBe(false);
+  });
   it("applies the design defaults", () => {
     const r = buildRunRequest(ok);
     expect(r).toMatchObject({

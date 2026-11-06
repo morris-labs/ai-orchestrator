@@ -3,7 +3,7 @@
 // deterministic, so a plan can be saved and resumed.
 import type { Effort, Finding, Vendor } from "@aio/contracts";
 import { textSimilarity, titleSimilarity } from "../merge/fingerprint.js";
-import { sameIssue } from "../merge/merge.js";
+import { linesNear, SAME_ISSUE_SIMILARITY, sameIssue } from "../merge/merge.js";
 
 /** The most tokens of finding text and expected answers one disprover call carries. */
 export const VERIFY_BATCH_TOKEN_LIMIT = 40_000;
@@ -13,6 +13,12 @@ export const VERDICT_TOKEN_RESERVE = 400;
 
 /** How similar two findings in one file must be to share a root cause at any lines. */
 export const ROOT_CAUSE_SIMILARITY = 0.8;
+
+/** How many lines apart two findings in one file can be and still be related. */
+export const RELATED_LINE_WINDOW = 20;
+
+/** How many related findings one disprover call lists, at most. */
+export const RELATED_LIMIT = 8;
 
 /** The number of findings at which a batch's disprover call takes high effort. */
 export const HIGH_EFFORT_BATCH_SIZE = 5;
@@ -61,10 +67,41 @@ function sameRootCause(a: Finding, b: Finding): boolean {
   if (b.origin === "pr_comment" || b.origin === "check_run") return false;
   if (sameIssue(a, b)) return true;
   if (a.file === null || a.file !== b.file) return false;
+  // Lines in one code version that sit close together need less similar text.
+  const sameVersion = a.linesAt !== undefined && a.linesAt === b.linesAt;
+  const near = sameVersion && linesNear(a.lines, b.lines, RELATED_LINE_WINDOW / 4);
+  const threshold = near ? SAME_ISSUE_SIMILARITY : ROOT_CAUSE_SIMILARITY;
   return (
-    titleSimilarity(a.title, b.title) >= ROOT_CAUSE_SIMILARITY ||
-    textSimilarity(a.failureCase, b.failureCase) >= ROOT_CAUSE_SIMILARITY
+    titleSimilarity(a.title, b.title) >= threshold ||
+    textSimilarity(a.failureCase, b.failureCase) >= threshold
   );
+}
+
+/**
+ * The findings in `among` related to `subject`: in the same file, with lines
+ * within `RELATED_LINE_WINDOW` of each other, and not in `exclude`. The
+ * disprover sees them with their verdicts, so it keeps verdicts consistent.
+ * Nearest first, at most `RELATED_LIMIT`.
+ */
+export function relatedFindings(
+  subjects: readonly Finding[],
+  among: readonly Finding[],
+): Finding[] {
+  const exclude = new Set(subjects.map((f) => f.id));
+  const distance = (a: Finding, b: Finding): number => {
+    if (!a.lines || !b.lines) return Number.POSITIVE_INFINITY;
+    return Math.max(0, a.lines[0] - b.lines[1], b.lines[0] - a.lines[1]);
+  };
+  const scored: Array<{ f: Finding; d: number }> = [];
+  for (const f of among) {
+    if (exclude.has(f.id) || f.file === null || f.duplicateOf !== undefined) continue;
+    const d = Math.min(
+      ...subjects.map((s) => (s.file === f.file ? distance(s, f) : Number.POSITIVE_INFINITY)),
+    );
+    if (d <= RELATED_LINE_WINDOW) scored.push({ f, d });
+  }
+  scored.sort((a, b) => a.d - b.d || a.f.id.localeCompare(b.f.id));
+  return scored.slice(0, RELATED_LIMIT).map((s) => s.f);
 }
 
 /**

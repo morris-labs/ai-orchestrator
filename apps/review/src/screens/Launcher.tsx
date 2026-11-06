@@ -6,6 +6,8 @@ import {
   type ProjectSummary,
   type RouteOf,
   type Effort,
+  MAX_CONCURRENCY,
+  stageEfforts,
   type RunDepth,
 } from "@aio/contracts";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -508,6 +510,19 @@ export function Launcher({ prefill }: { prefill: { project: string | null; box: 
               </select>
             </Field>
             <Field
+              label="Parallel calls"
+              hint={`How many review calls run at once on each vendor, and how many verification calls run at once, from 1 to ${MAX_CONCURRENCY}. More finishes sooner but uses your usage window faster. Default: 6 review calls per vendor and 4 verification calls.`}
+            >
+              <input
+                type="number"
+                min={1}
+                max={MAX_CONCURRENCY}
+                value={form.concurrency}
+                placeholder="Default"
+                onChange={(e) => update({ concurrency: e.target.value })}
+              />
+            </Field>
+            <Field
               label="Reviewer effort"
               hint="How hard reviewers think on each group. Higher effort can find more and costs more. Claude and Codex use this; Copilot ignores it."
             >
@@ -670,6 +685,13 @@ export function Launcher({ prefill }: { prefill: { project: string | null; box: 
               ))}
             </ul>
           ) : null}
+          <ul aria-label="Effort by stage">
+            {stageEfforts(form.reviewerEffort || undefined).map((e) => (
+              <li key={e.stage}>
+                {e.stage} effort: {e.effort}
+              </li>
+            ))}
+          </ul>
           {preview.dirty && !form.includeWorktree ? (
             <p role="alert" className="banner banner-warning">
               ▲ The working tree has uncommitted changes. Commit them, or select Include uncommitted

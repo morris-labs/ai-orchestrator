@@ -1,5 +1,6 @@
 // The run launcher's form and its conversion into a `RunRequest`.
 import {
+  MAX_CONCURRENCY,
   RunRequestSchema,
   defaultContainerPath,
   type Box,
@@ -50,6 +51,8 @@ export interface LauncherForm {
   includeWorktree: boolean;
   /** Empty takes the depth's round cap. */
   roundCap: string;
+  /** Parallel calls, as typed; empty means the defaults. */
+  concurrency: string;
   /** Review the project at the tip instead of a range. */
   wholeProject: boolean;
   /** Globs of files this run leaves out, one per line. */
@@ -84,6 +87,7 @@ export const DEFAULT_FORM: LauncherForm = {
   readOnly: false,
   includeWorktree: false,
   roundCap: "",
+  concurrency: "",
   wholeProject: false,
   excludePaths: "",
 };
@@ -155,6 +159,12 @@ export function buildRunRequest(form: LauncherForm): BuildResult {
   const roundCap = form.roundCap.trim() === "" ? undefined : Number(form.roundCap);
   if (roundCap !== undefined && (!Number.isInteger(roundCap) || roundCap < 1))
     errors.push("The round cap must be a whole number of 1 or more.");
+  const concurrency = form.concurrency.trim() === "" ? undefined : Number(form.concurrency);
+  if (
+    concurrency !== undefined &&
+    (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > MAX_CONCURRENCY)
+  )
+    errors.push(`Parallel calls must be a whole number from 1 to ${MAX_CONCURRENCY}.`);
   let prNumber: number | undefined;
   if (form.pipeline === "post-push") {
     prNumber = Number(form.prNumber);
@@ -205,6 +215,7 @@ export function buildRunRequest(form: LauncherForm): BuildResult {
     readOnly: form.readOnly,
     includeWorktree: form.includeWorktree,
     ...(roundCap !== undefined ? { roundCap } : {}),
+    ...(concurrency !== undefined ? { concurrency } : {}),
     ...(form.wholeProject ? { scope: "whole" } : {}),
     ...(excludePaths.length > 0 ? { excludePaths } : {}),
   });

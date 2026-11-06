@@ -121,6 +121,7 @@ import {
 import {
   DecisionAnswerSchema,
   EngineRunCreateSchema,
+  EngineRunPreviewSchema,
   FileGroupSchema,
   ProfileSchema,
   RoleSchema,
@@ -900,9 +901,10 @@ export const RepoRefsSchema = z.object({
 // ---------------------------------------------------------------------------
 // Routes shared by the server (proxied) and the engine: runs, findings, usage samples
 
-function reviewRoutes<const P extends string, B extends z.ZodTypeAny>(
+function reviewRoutes<const P extends string, B extends z.ZodTypeAny, V extends z.ZodTypeAny>(
   prefix: P,
   createBody: B,
+  previewBody: V,
   usageSummary: string,
 ) {
   const runs = `${prefix}/runs`;
@@ -919,7 +921,7 @@ function reviewRoutes<const P extends string, B extends z.ZodTypeAny>(
       method: "POST",
       path: `${runs}/preview`,
       summary: "Resolve the range and show the file groups without starting.",
-      body: RunRequestSchema,
+      body: previewBody,
       response: RunPreviewSchema,
     }),
     "runs.create": http({
@@ -1708,6 +1710,7 @@ export const serverRoutes = {
   ...reviewRoutes(
     V1,
     RunRequestSchema,
+    RunRequestSchema,
     "List usage samples from the server's SQLite mirror, across every engine.",
   ),
   "usage.get": http({
@@ -1846,7 +1849,12 @@ export const engineRoutes = {
   }),
   ...prefixKeys(
     "engine.",
-    reviewRoutes(V1, EngineRunCreateSchema, "List the engine's usage samples from its run files."),
+    reviewRoutes(
+      V1,
+      EngineRunCreateSchema,
+      EngineRunPreviewSchema,
+      "List the engine's usage samples from its run files.",
+    ),
   ),
   "engine.ports": http({
     method: "GET",

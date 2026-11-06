@@ -14,7 +14,7 @@ import type {
   Profile,
   Role,
   RoundSummary,
-  RunRequest,
+  EngineRunPreview,
   RunState,
   RunStatus,
   Severity,
@@ -98,7 +98,7 @@ export interface FindingDetail {
  */
 export interface RunManager {
   list(filter: RunListFilter): Promise<RunState[]>;
-  preview(request: RunRequest): Promise<RunPreview>;
+  preview(request: EngineRunPreview): Promise<RunPreview>;
   /** Starts a run under the server-minted id. Throws `dirty_tree` or `conflict`. */
   start(request: EngineRunCreate): Promise<RunState>;
   get(runId: string): Promise<RunState | null>;

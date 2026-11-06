@@ -12,7 +12,7 @@ import {
   type Profile,
   type Role,
   type RoundSummary,
-  type RunRequest,
+  type EngineRunPreview,
   type RunRetry,
   type RunState,
   type TimedUsageSample,
@@ -275,7 +275,7 @@ export class EngineRunManager implements RunManager {
     return out;
   }
 
-  preview(request: RunRequest): Promise<RunPreview> {
+  preview(request: EngineRunPreview): Promise<RunPreview> {
     return api(async () => {
       const { runner, github } = this.engineDeps;
       // Resolve as if the working tree were included, so a dirty tree is
@@ -360,6 +360,7 @@ export class EngineRunManager implements RunManager {
           }).reviewer,
           groups,
           history: await loadTokenHistory(this.location.projectRoot),
+          hostHistory: request.hostTokenSamples ?? [],
         }),
         excluded: {
           count: excluded.length,

@@ -159,6 +159,8 @@ export interface CliVendorAdapter {
   confirm<T>(req: CliRequest<T>): Promise<CliResult<T>>;
   /** The pattern sweep's cheap agent. */
   sweep<T>(req: CliRequest<T>): Promise<CliResult<T>>;
+  /** The root-cause step: clusters confirmed findings, read-only and cheap. */
+  cluster<T>(req: CliRequest<T>): Promise<CliResult<T>>;
   /** Returns the limit an error reports, or `null` when it isn't a limit. */
   detectLimit(error: unknown): CliLimitInfo | null;
   health(): Promise<AdapterHealth>;
@@ -173,6 +175,7 @@ export const METHOD_ROLES = {
   fix: "fixer",
   confirm: "confirmer",
   sweep: "sweeper",
+  cluster: "sweeper",
 } as const satisfies Record<AdapterMethod, AgentRole>;
 
 export type { AdapterMethod };

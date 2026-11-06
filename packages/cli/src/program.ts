@@ -375,6 +375,7 @@ function runDetail(r: RunState): string {
     ["Model tier", r.request.modelTier],
     ["Depth", runDepth(r.request)],
     ["Reviewer effort", r.request.reviewerEffort],
+    ["Parallel calls", r.request.concurrency],
     ["Verification floor", r.request.verifyFloor],
     ["Reviewers", r.roles.reviewer.join(", ")],
     ["Disprover", r.roles.disprover],
@@ -386,6 +387,10 @@ function runDetail(r: RunState): string {
     ["Pull request", r.prUrl],
     ["Error", r.error],
     ...(r.notices ?? []).map((n): [string, string] => ["Notice", n]),
+    ...(r.rootCauses?.causes ?? []).map((c): [string, string] => [
+      `Root cause ${c.fixOrder}`,
+      `${c.title} (${c.findingIds.join(", ")})`,
+    ]),
   ]);
 }
 
@@ -1172,6 +1177,16 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
         .choices(["standard", "thorough"])
         .default("standard"),
     )
+    .option(
+      "--concurrency <n>",
+      "Set how many review calls run at once on each vendor, and how many verification calls run at once, from 1 to 20. Default: 6 and 4.",
+      (v: string) => {
+        const n = Number(v);
+        if (!Number.isInteger(n) || n < 1 || n > 20)
+          throw new InvalidArgumentError("Give a whole number from 1 to 20.");
+        return n;
+      },
+    )
     .addOption(
       new Option(
         "--reviewer-effort <effort>",
@@ -1190,6 +1205,10 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
     )
     .option("--exclude <glob...>", "Never group or review the files that match these globs.")
     .option("--no-cross-vendor", "Let the same vendor disprove and confirm its own work.")
+    .option(
+      "--root-causes",
+      "End the run with one cheap call that groups confirmed findings by root cause and suggests a fix order.",
+    )
     .option("--round-cap <n>", "Stop after this many rounds.", positiveInt)
     .option(
       "--continuation-cap <n>",
@@ -1266,6 +1285,7 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
           modelTier: o.tier,
           depth: o.depth,
           reviewerEffort: o.reviewerEffort,
+          ...(o.concurrency !== undefined ? { concurrency: o.concurrency } : {}),
           // No severity ranks below `nit`, so that floor checks everything.
           verifyFloor: o.verifyFloor === "all" ? "nit" : o.verifyFloor,
           pipeline: o.pipeline,
@@ -1275,6 +1295,7 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
           continuationCap: o.continuationCap,
           scope,
           excludePaths: o.exclude,
+          ...(o.rootCauses ? { rootCauses: true } : {}),
         },
       });
       print(run, () => `Started run ${run.id}.\n`);

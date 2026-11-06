@@ -93,7 +93,10 @@ describe("runs", () => {
       effort: "high",
       readOnly: true,
       groups: 10,
-      review: [{ vendor: "claude", tier: "medium", tokens: perGroup * 10, groups: 10 }],
+      lines: 10_000,
+      review: [
+        { vendor: "claude", tier: "medium", tokens: perGroup * 10, groups: 10, lines: 10_000 },
+      ],
       verificationTokens: 100_000,
       fixingTokens: 0,
     });
@@ -126,17 +129,23 @@ describe("runs", () => {
         groups: groups(10),
         history: [sample("a", 100_000), sample("b", 200_000), sample("c", 300_000)],
       });
-      expect(made.lines[0]?.tokens).toBe(2_000_000);
+      // The newest run counts most: (0.64 * 100,000 + 0.8 * 200,000 + 300,000) / 2.44.
+      expect(made.lines[0]?.tokens).toBe(2_100_000);
       expect(made.lines[0]?.low).toBe(800_000);
-      expect(made.lines[0]?.high).toBe(3_800_000);
-      expect(made.basis).toMatch(/based on 3 runs/);
+      expect(made.lines[0]?.high).toBe(3_700_000);
+      expect(made.basis).toMatch(/based on 3 runs in this project/);
+      expect(made.basis).not.toMatch(/other projects/);
     });
 
     it("weights history by each run's groups", () => {
       const small = { ...sample("a", 900_000), groups: 1 };
-      small.review = [{ vendor: "claude", tier: "medium", tokens: 900_000, groups: 1 }];
+      small.review = [
+        { vendor: "claude", tier: "medium", tokens: 900_000, groups: 1, lines: 1000 },
+      ];
       const large = { ...sample("b", 100_000), groups: 99 };
-      large.review = [{ vendor: "claude", tier: "medium", tokens: 9_900_000, groups: 99 }];
+      large.review = [
+        { vendor: "claude", tier: "medium", tokens: 9_900_000, groups: 99, lines: 99_000 },
+      ];
       const made = estimateRunTokens({
         depth: "standard",
         scope: "whole",
@@ -149,17 +158,143 @@ describe("runs", () => {
       expect(made.lines[0]?.tokens).toBe(1_100_000);
     });
 
-    it("ignores runs with another effort, scope, or depth", () => {
+    it("ignores runs with another scope or depth", () => {
+      const made = estimateRunTokens({
+        depth: "standard",
+        scope: "whole",
+        effort: "high",
+        readOnly: true,
+        groups: groups(10),
+        history: [
+          { ...sample("a", 900_000), scope: "range" },
+          { ...sample("b", 900_000), depth: "thorough" },
+        ],
+        hostHistory: [{ ...sample("c", 900_000), scope: "range" }],
+      });
+      expect(made.lines[0]?.tokens).toBe(1_300_000);
+      expect(made.basis).not.toMatch(/based on/);
+    });
+
+    it("moves a run at another effort by the starting ratio", () => {
       const made = estimateRunTokens({
         depth: "standard",
         scope: "whole",
         effort: "medium",
         readOnly: true,
         groups: groups(10),
-        history: [sample("a", 900_000)],
+        history: [sample("a", 130_000)],
       });
+      // 130,000 at high is 70,000 at medium, by the starting rates.
       expect(made.lines[0]?.tokens).toBe(700_000);
-      expect(made.basis).not.toMatch(/based on/);
+      expect(made.lines[0]?.source).toMatch(/1 run in this project, adjusted .* starting ratio/);
+    });
+
+    it("moves a run at another effort by a measured ratio when one exists", () => {
+      const at = (runId: string, effort: string, perGroup: number) => ({
+        ...sample(runId, perGroup),
+        effort,
+      });
+      const made = estimateRunTokens({
+        depth: "standard",
+        scope: "whole",
+        effort: "default",
+        readOnly: true,
+        groups: groups(10),
+        // This project ran at high only; another project measured both efforts.
+        history: [at("c", "high", 300_000)],
+        hostHistory: [at("a", "medium", 100_000), at("b", "high", 200_000)],
+      });
+      expect(made.lines[0]?.source).toMatch(/measured ratio/);
+      expect(made.lines[0]?.tokens).toBeLessThan(2_000_000);
+    });
+
+    it("falls back to other projects' runs before the starting rates", () => {
+      const made = estimateRunTokens({
+        depth: "standard",
+        scope: "whole",
+        effort: "high",
+        readOnly: true,
+        groups: groups(10),
+        hostHistory: [sample("a", 200_000), sample("b", 200_000)],
+      });
+      expect(made.lines[0]?.tokens).toBe(2_000_000);
+      expect(made.basis).toMatch(/based on 2 runs in other projects/);
+      expect(made.lines[1]?.source).toMatch(/2 runs in other projects/);
+    });
+
+    it("joins other projects' runs to one project run, and drops them at two", () => {
+      const input = {
+        depth: "standard",
+        scope: "whole",
+        effort: "high",
+        readOnly: true,
+        groups: groups(10),
+        hostHistory: [sample("a", 400_000)],
+      } as const;
+      const one = estimateRunTokens({ ...input, history: [sample("b", 100_000)] });
+      const two = estimateRunTokens({
+        ...input,
+        history: [sample("b", 100_000), sample("c", 100_000)],
+      });
+      // One project run at weight 1 and one other run at 0.5.
+      expect(one.lines[0]?.tokens).toBe(2_000_000);
+      expect(one.basis).toMatch(/1 run in this project and 1 run in other projects/);
+      expect(two.lines[0]?.tokens).toBe(1_000_000);
+      expect(two.basis).not.toMatch(/other projects/);
+    });
+
+    it("scales reviewer tokens with group size", () => {
+      // 50,000 a group plus 100 a line, over groups of 100 to 1,000 lines.
+      const points = Array.from({ length: 10 }, (_, i): [number, number] => [
+        (i + 1) * 100,
+        50_000 + (i + 1) * 100 * 100,
+      ]);
+      const measured: RunTokenSample = {
+        ...sample("a", 0),
+        lines: 5_500,
+        review: [
+          {
+            vendor: "claude",
+            tier: "medium",
+            tokens: points.reduce((n, [, t]) => n + t, 0),
+            groups: 10,
+            lines: 5_500,
+            points,
+          },
+        ],
+      };
+      const sized = (changedLines: number) =>
+        estimateRunTokens({
+          depth: "standard",
+          scope: "whole",
+          effort: "high",
+          readOnly: true,
+          groups: Array.from({ length: 10 }, () => ({ tier: "medium" as const, changedLines })),
+          history: [measured],
+        });
+      expect(sized(500).lines[0]?.tokens).toBe(1_000_000);
+      expect(sized(1500).lines[0]?.tokens).toBe(2_000_000);
+      expect(sized(500).basis).toMatch(/5,000 changed lines/);
+    });
+
+    it("uses the prior rate per line when group sizes don't vary", () => {
+      // Every group has 1,000 lines and 130,000 tokens: 30 a line, 100,000 a group.
+      const made = estimateRunTokens({
+        depth: "standard",
+        scope: "whole",
+        effort: "high",
+        readOnly: true,
+        groups: [{ tier: "medium", changedLines: 0 }],
+        history: [
+          {
+            ...sample("a", 130_000),
+            review: [
+              { vendor: "claude", tier: "medium", tokens: 1_300_000, groups: 10, lines: 10_000 },
+            ],
+          },
+        ],
+      });
+      expect(made.lines[0]?.tokens).toBe(100_000);
     });
 
     it("keeps the older rate for a vendor or depth with no data, and says so", () => {
