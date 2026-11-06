@@ -225,13 +225,17 @@ export class EngineSupervisor {
    */
   private async loadPorts(client: EngineClient): Promise<void> {
     if (!this.options.onPorts) return;
+    const container = client.endpoint.container;
     try {
       const { listeners } = (await client.call("engine.ports")) as { listeners: Listener[] };
-      this.options.onPorts(client.endpoint.container, listeners);
+      if (this.clients.get(container) === client) this.options.onPorts(container, listeners);
     } catch (err) {
-      this.options.log?.(
-        `Loading the listeners of ${client.endpoint.container} failed: ${(err as Error).message}`,
-      );
+      this.options.log?.(`Loading the listeners of ${container} failed: ${(err as Error).message}`);
+      // An engine that is still starting answers later. Unchanged listeners
+      // send no ports.changed, so without a retry the list stays empty.
+      setTimeout(() => {
+        if (this.clients.get(container) === client) void this.loadPorts(client);
+      }, this.options.resyncRetryMs ?? 10_000).unref();
     }
   }
 
@@ -249,6 +253,8 @@ export class EngineSupervisor {
         return refusal === null;
       });
       this.options.onRuns?.(runs);
+      // A stream that started over can have missed ports.changed events too.
+      void this.loadPorts(client);
     } catch (err) {
       this.options.log?.(`Resync of ${container} failed: ${(err as Error).message}`);
       // The cursor has moved, so the stream won't ask again: without a retry,
