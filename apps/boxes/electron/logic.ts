@@ -459,3 +459,31 @@ export function reviewLaunch(
   const q = query.toString();
   return { url: `aio-review://launch${q ? `?${q}` : ""}` };
 }
+
+// ---------------------------------------------------------------------------
+// Desktop notifications
+
+/** The part of an Electron `Notification` that `showRetained` uses. */
+export interface ShowableNotification {
+  on(event: "click" | "close", listener: () => void): unknown;
+  show(): void;
+}
+
+/**
+ * Shows `note` and keeps it in `retained` until it closes or is clicked.
+ * Electron collects a notification that nothing references, and a collected
+ * notification no longer emits `click`, so `onClick` would never run.
+ */
+export function showRetained<N extends ShowableNotification>(
+  retained: Set<N>,
+  note: N,
+  onClick: () => void,
+): void {
+  retained.add(note);
+  note.on("close", () => retained.delete(note));
+  note.on("click", () => {
+    retained.delete(note);
+    onClick();
+  });
+  note.show();
+}

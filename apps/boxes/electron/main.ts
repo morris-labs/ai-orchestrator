@@ -60,6 +60,7 @@ import {
   needsLocalPage,
   permissionAllowed,
   reviewLaunch,
+  showRetained,
   isMachineIdArg,
   terminalCommand,
   usesWindowClass,
@@ -409,18 +410,13 @@ function watchEvents() {
           body: ev.body,
           urgency: ev.severity === "error" ? "critical" : "normal",
         });
-        // A collected notification no longer emits `click`.
-        shownNotifications.add(n);
-        n.on("close", () => shownNotifications.delete(n));
-        n.on("click", () => {
-          shownNotifications.delete(n);
+        showRetained(shownNotifications, n, () => {
           showWindow();
           if (ev.boxId) win?.webContents.send("aio:select-box", ev.boxId);
           void client()
             .call("notifications.read", { params: { notificationId: ev.notificationId } })
             .catch(() => undefined);
         });
-        n.show();
       }
     },
   });
@@ -550,11 +546,10 @@ function registerIpc() {
       body,
       urgency: urgent === true ? "critical" : "normal",
     });
-    note.on("click", () => {
+    showRetained(shownNotifications, note, () => {
       showWindow();
       win?.webContents.send("aio:select-box", boxId, machineId, notificationId);
     });
-    note.show();
   });
   ipcMain.on("aio:quit", (e) => {
     if (!fromApp(e)) return;
