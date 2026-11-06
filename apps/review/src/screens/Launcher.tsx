@@ -2,6 +2,7 @@
 // roles, options, a group preview, and Start. A deep link `?project=&box=` prefills it.
 import {
   DEPTH_DEFAULTS,
+  describeWindowShare,
   type ModelTierChoice,
   type ProjectSummary,
   type RouteOf,
@@ -674,6 +675,15 @@ export function Launcher({ prefill }: { prefill: { project: string | null; box: 
                 : ""}
               . This is a rough estimate, not a measurement. {preview.tokenEstimate.basis}
             </p>
+          ) : null}
+          {preview.tokenEstimate?.windows?.length ? (
+            <ul aria-label="Usage window estimate">
+              {preview.tokenEstimate.windows.map((line) => (
+                <li key={`${line.vendor}/${line.window}`} title={line.source}>
+                  Usage: {describeWindowShare(line)}.
+                </li>
+              ))}
+            </ul>
           ) : null}
           {preview.tokenEstimate?.lines?.length ? (
             <ul aria-label="Token estimate by stage">

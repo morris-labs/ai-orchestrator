@@ -61,6 +61,20 @@ describe("parseCopilotJson", () => {
     expect(s).not.toHaveProperty("costUsd");
   });
 
+  it("splits input into fresh input and cache reads and writes when the CLI reports them", () => {
+    const stream = JSON.stringify({
+      type: "assistant.usage",
+      data: { inputTokens: 100, outputTokens: 10, cacheReadTokens: 70, cacheWriteTokens: 20 },
+    });
+    expect(parseCopilotJson(stream).tokens).toEqual({
+      input: 100,
+      output: 10,
+      fresh: 10,
+      cacheWrite: 20,
+      cacheRead: 70,
+    });
+  });
+
   it("counts assistant.usage cost as a premium-request multiplier, not dollars", async () => {
     const stream = [
       { type: "assistant.message", data: { content: '{"ok":true}', outputTokens: 9 } },

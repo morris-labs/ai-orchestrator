@@ -22,6 +22,9 @@ export class FakeEngineServer {
   findings: unknown[] = [];
   /** What `runs.list` answers. */
   runs: unknown[] = [runState];
+  /** How many `engine.ports` calls fail before one answers. */
+  portFailures = 0;
+  portCalls = 0;
   /** What the engine itself reports about its version check. */
   versionMatches = true;
 
@@ -45,6 +48,17 @@ export class FakeEngineServer {
       }
       if (req.headers.authorization !== `Bearer ${ENGINE_TOKEN}`) {
         res.writeHead(401).end();
+        return;
+      }
+      if (req.url === "/api/v1/ports") {
+        this.portCalls += 1;
+        if (this.portCalls <= this.portFailures) {
+          res.writeHead(503, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: { code: "unavailable", message: "Starting." } }));
+          return;
+        }
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ listeners: [] }));
         return;
       }
       if (req.url === "/api/v1/runs") {

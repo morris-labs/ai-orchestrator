@@ -340,7 +340,7 @@ describe("claudeTokens", () => {
         "m",
       ),
     ).toEqual({
-      tokens: { input: 5, output: 4 },
+      tokens: { input: 5, output: 4, fresh: 2, cacheWrite: 0, cacheRead: 3 },
       model: "m",
     });
   });

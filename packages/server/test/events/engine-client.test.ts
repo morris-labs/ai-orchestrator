@@ -307,6 +307,37 @@ describe("EngineSupervisor", () => {
     await sup.stop();
   });
 
+  it("loads the listeners again when the first call fails", async () => {
+    engine.portFailures = 1;
+    const loaded: string[] = [];
+    const sup = new EngineSupervisor({
+      engines: {
+        list: async () => [
+          {
+            container: CONTAINER,
+            projectId: PROJECT_ID,
+            hostPort: engine.port,
+            token: ENGINE_TOKEN,
+          },
+        ],
+      },
+      db: openDatabase(":memory:"),
+      expectedVersion: "1.0.0-dev",
+      relay: () => undefined,
+      decideLease: async () => {
+        throw new Error("unused");
+      },
+      onPorts: (container) => loaded.push(container),
+      resyncRetryMs: 20,
+      intervalMs: 50,
+    });
+    sup.start();
+    await waitFor(() => loaded.length >= 1);
+    expect(engine.portCalls).toBeGreaterThanOrEqual(2);
+    expect(loaded[0]).toBe(CONTAINER);
+    await sup.stop();
+  });
+
   it("reloads runs and their findings and drops cached leases when the stream starts over", async () => {
     const db = openDatabase(":memory:");
     const mirror = new RunMirror(db);

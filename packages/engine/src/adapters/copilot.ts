@@ -18,7 +18,13 @@ import { parseStructuredText } from "./output.js";
 import { credentialsFor } from "../process/credentials.js";
 import { copilotTokenProblem } from "../process/env.js";
 import { runProcess } from "./process.js";
-import { AdapterError, type CliRequest, type CliResult, type CliLimitInfo } from "./types.js";
+import {
+  AdapterError,
+  type CliRequest,
+  type CliResult,
+  type CliLimitInfo,
+  type TokenCounts,
+} from "./types.js";
 
 /**
  * Shell commands a read-only Copilot role may run. `git diff`, `log`, and
@@ -78,7 +84,7 @@ export interface CopilotRunSummary {
   model: string | null;
   /** The last assistant message. */
   text: string | null;
-  tokens: { input: number; output: number };
+  tokens: TokenCounts;
   premiumRequests: number | null;
   aiCredits: number | null;
   error: { type: string | null; code: string | null; message: string } | null;
@@ -313,7 +319,8 @@ export function parseCopilotJson(stdout: string, stderr = ""): CopilotRunSummary
   let jsonLines = 0;
   // `assistant.usage` carries both directions; `assistant.message` only output.
   let sawUsage = false;
-  const usage = { input: 0, output: 0 };
+  const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+  let sawCache = false;
   // `assistant.usage`'s `cost` is the call's premium-request multiplier,
   // such as 1 or 0.33, not US dollars (SDK `AssistantUsageData`).
   let multipliers: number | null = null;
@@ -344,6 +351,13 @@ export function parseCopilotJson(stdout: string, stderr = ""): CopilotRunSummary
         sawUsage = true;
         usage.input += num(data.inputTokens);
         usage.output += num(data.outputTokens);
+        // The SDK reports cache reads and writes apart from `inputTokens`,
+        // which counts them too.
+        if (typeof data.cacheReadTokens === "number" || typeof data.cacheWriteTokens === "number") {
+          sawCache = true;
+          usage.cacheRead += num(data.cacheReadTokens);
+          usage.cacheWrite += num(data.cacheWriteTokens);
+        }
         if (typeof data.cost === "number" && Number.isFinite(data.cost))
           multipliers = (multipliers ?? 0) + data.cost;
         if (typeof data.model === "string") s.model = data.model;
@@ -379,7 +393,17 @@ export function parseCopilotJson(stdout: string, stderr = ""): CopilotRunSummary
   }
   // An older CLI without JSON output prints plain text instead.
   if (jsonLines === 0) return parseCopilotText(stdout, stderr);
-  s.tokens = sawUsage ? usage : { input: 0, output: messageOutput };
+  s.tokens = sawUsage
+    ? sawCache
+      ? {
+          input: usage.input,
+          output: usage.output,
+          fresh: Math.max(0, usage.input - usage.cacheRead - usage.cacheWrite),
+          cacheWrite: usage.cacheWrite,
+          cacheRead: usage.cacheRead,
+        }
+      : { input: usage.input, output: usage.output }
+    : { input: 0, output: messageOutput };
   applyExitSummary(s, stderr);
   // A reported total wins; the per-request multipliers sum to the same count.
   if (s.premiumRequests === null && multipliers !== null) s.premiumRequests = round(multipliers);

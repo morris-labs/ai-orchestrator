@@ -297,6 +297,27 @@ describe("batched verification", () => {
     expect(second.verdict).toBe("disproved");
   });
 
+  it("overrules a code-reading pre-existing verdict on code missing at the base", async () => {
+    const { ctx } = await verifyRun(
+      {
+        copilot: adapter("copilot", {
+          verifyBatch: () => ({
+            verdicts: [{ ...verdict("F-0001", "confirmed"), presentAtBase: true }],
+          }),
+        }),
+        codex: adapter("codex", {}),
+      },
+      (id) => [finding(1, id)],
+    );
+    // The base has no shop/file1.py, so the flaw can't predate the change.
+    ctx.eng.diffBaseSha = await ctx.git.head();
+    await verifyPending(ctx, ctx.store.roundFile(1, "verify"));
+    const f = ctx.findings[0] as Finding;
+    expect(f.verdict).toBe("confirmed");
+    expect(f.introduced).toBe(true);
+    expect(f.evidence).toMatch(/shop\/file1\.py doesn't exist at the base/);
+  });
+
   it("reruns a reproduction script that a batch verdict supplies", async () => {
     const script = "#!/bin/sh\nexit 1\n";
     const { ctx } = await verifyRun(

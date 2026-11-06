@@ -1003,6 +1003,7 @@ async function callWithRefusalFallback<T>(
 }
 
 async function addNotice(ctx: RunContext, notice: string): Promise<void> {
+  if (ctx.state.notices?.includes(notice)) return;
   ctx.state.notices = [...(ctx.state.notices ?? []), notice];
   await ctx.persist();
 }

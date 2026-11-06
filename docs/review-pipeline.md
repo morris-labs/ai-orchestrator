@@ -163,6 +163,32 @@ Stored token counts include cached reads, so they overstate what counts against 
 subscription allowance. The number of findings moves verification and fixing the
 most, and the estimate can't see it, so those lines have a wide range.
 
+### Estimate the share of a usage window
+
+Beside the token estimate, the preview shows the share of each vendor's usage
+windows that the run is likely to take, such as "about 15 to 25% of your 5-hour
+Claude window". Each call records its tokens by kind: fresh input, cache writes,
+cache reads, and output. Every kind counts with a weight relative to fresh input.
+The starting weights are the vendors' API price ratios:
+
+| Vendor | Fresh input | Cache write | Cache read | Output |
+|---|---|---|---|---|
+| Claude | 1 | 1.25 | 0.1 | 5 |
+| Codex | 1 | 1 | 0.1 | 8 |
+
+When a run finishes, its `token-sample.json` file also records, for each window,
+how far the window's utilization rose between usage readings and the weighted
+tokens of the calls in between. A stretch over a window reset doesn't count. The
+preview divides the two over recent runs to get a share per weighted token.
+
+The rate counts any other use of the account during the run, such as an
+interactive session, so it errs high and the share is conservative. Until a run
+measures a window, the Claude 5-hour window shows a rough share labeled "rough,
+no measurements yet", from one observed run of 47.7 million tokens that used
+about 60% of the window. Other vendors and windows show no share until a run
+measures them. Copilot counts premium requests, not tokens, so its share comes
+only from measurements.
+
 ## Vendors and roles
 
 Claude writes and fixes all code. The other roles move between vendors
