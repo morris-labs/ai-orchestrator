@@ -42,6 +42,8 @@ PRINT=0
 PACK_ONLY=0
 UPDATE_CLI=0
 USER_NAME=""
+USER_UID=""
+USER_GID=""
 BUILD_ARGS=()
 VERSIONS="$IMAGE_DIR/versions.env"
 
@@ -56,6 +58,12 @@ Options:
   --user NAME            Create the image's user as NAME. Default: \$(id -un). The
                          server passes the name it runs containers with on
                          Windows, where the account name isn't a Linux one.
+  --uid UID              Give the image's user uid UID. Default: \$(id -u) on Linux,
+                         else 1000. On Linux the uid must match the host user's,
+                         so the container can read files such as sign-ins that
+                         only their owner can read.
+  --gid GID              Give the image's user gid GID. Default: \$(id -g) on Linux,
+                         else 1000.
   --update-cli           Update the agent CLIs to their latest versions. Resolves
                          the latest Claude Code, Codex, and Copilot versions from
                          npm, writes them to $VERSIONS
@@ -77,6 +85,8 @@ while (($#)); do
   case "$1" in
     --tag) TAG="${2:?--tag needs a value}"; shift ;;
     --user) USER_NAME="${2:?--user needs a value}"; shift ;;
+    --uid) USER_UID="${2:?--uid needs a value}"; shift ;;
+    --gid) USER_GID="${2:?--gid needs a value}"; shift ;;
     --update-cli) UPDATE_CLI=1; BUILD_ARGS+=(--build-arg "CACHEBUST=$(date +%s)") ;;
     --update-packages) BUILD_ARGS+=(--build-arg "CACHEBUST_PACKAGES=$(date +%s)") ;;
     --no-cache) BUILD_ARGS+=(--no-cache --pull) ;;
@@ -191,7 +201,19 @@ for f in keeper/keeper.sh keeper/start-session.sh; do
 done
 
 [[ -n "$USER_NAME" ]] || USER_NAME="$(id -un)"
-CMD=(docker build -t "$TAG" --build-arg "USER_NAME=$USER_NAME")
+# Docker Desktop on macOS and Windows maps bind mount ownership itself, so
+# the uid and gid stay 1000 there.
+if [[ "$(uname -s)" == Linux ]]; then
+  [[ -n "$USER_UID" ]] || USER_UID="$(id -u)"
+  [[ -n "$USER_GID" ]] || USER_GID="$(id -g)"
+fi
+[[ -n "$USER_UID" ]] || USER_UID=1000
+[[ -n "$USER_GID" ]] || USER_GID=1000
+[[ "$USER_UID" =~ ^[0-9]+$ && "$USER_GID" =~ ^[0-9]+$ ]] || die "--uid and --gid take numbers."
+[[ "$USER_UID" != 0 && "$USER_GID" != 0 ]] ||
+  die "The image's user can't be root. Run this script as the user who runs the server, or pass --uid and --gid."
+CMD=(docker build -t "$TAG" --build-arg "USER_NAME=$USER_NAME"
+  --build-arg "USER_UID=$USER_UID" --build-arg "USER_GID=$USER_GID")
 while IFS= read -r pair; do
   override="$(override_of "${pair%%=*}")"
   [[ -n "$override" ]] && pair="${pair%%=*}=$override"
@@ -210,6 +232,6 @@ require_tool docker "Install Docker Engine (docker.io or docker-ce) and add your
 # The Dockerfile uses COPY --chmod, which the legacy builder rejects.
 docker buildx version > /dev/null 2>&1 ||
   die "The image build needs BuildKit. Install the docker-buildx or docker-buildx-plugin package."
-log "Building image $TAG for user $USER_NAME"
+log "Building image $TAG for user $USER_NAME (uid $USER_UID, gid $USER_GID)"
 # Replace this shell with the docker client, so a signal to the job reaches it.
 exec "${CMD[@]}"

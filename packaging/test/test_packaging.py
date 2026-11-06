@@ -14,6 +14,7 @@ test unless AIO_REQUIRE_TOOLS=1 is set, as CI sets it.
 import configparser
 import json
 import os
+import platform
 import pathlib
 import re
 import shutil
@@ -460,6 +461,21 @@ class ImageTest(unittest.TestCase):
             ).stdout
             self.assertIn("docker build -t aio-test", out)
             self.assertIn("USER_NAME=", out)
+            if platform.system() == "Linux":
+                self.assertIn(f"--build-arg USER_UID={os.getuid()}", out)
+                self.assertIn(f"--build-arg USER_GID={os.getgid()}", out)
+            ids = subprocess.run(
+                [str(tmp / "scripts/build-image.sh"), "--print", "--uid", "1001", "--gid", "100"],
+                check=True, capture_output=True, text=True,
+            ).stdout
+            self.assertIn("--build-arg USER_UID=1001", ids)
+            self.assertIn("--build-arg USER_GID=100", ids)
+            for bad in (["--uid", "0"], ["--gid", "x"]):
+                refused = subprocess.run(
+                    [str(tmp / "scripts/build-image.sh"), "--print", *bad],
+                    capture_output=True, text=True,
+                )
+                self.assertNotEqual(refused.returncode, 0, bad)
             for key, value in read_versions().items():
                 self.assertIn(f"--build-arg {key}={value}", out)
 

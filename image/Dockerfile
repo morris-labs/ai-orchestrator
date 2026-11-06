@@ -12,10 +12,12 @@
 # run scripts/bump-versions.sh --base.
 FROM ubuntu:26.04@sha256:0e73b71479e7bc5f006bca872e25c3cd680dc052a0116f90d63ae363537db0dd
 
-# The container user takes the host user's name, so file ownership in the
-# bind mounts matches the host. The uid and gid stay 1000 (see the remap
-# step).
+# The container user takes the host user's name, uid, and gid, so file
+# ownership in the bind mounts matches the host. scripts/build-image.sh passes
+# them; the uid and gid default to 1000 (see the remap step).
 ARG USER_NAME=user
+ARG USER_UID=1000
+ARG USER_GID=1000
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -59,10 +61,25 @@ RUN echo "packages cache key: ${CACHEBUST_PACKAGES}" && \
     && rm -rf /var/lib/apt/lists/*
 
 # Ubuntu 24.04 and later base images ship a uid and gid 1000 "ubuntu" user.
-# Rename it to match the host user's name.
-RUN usermod -l "${USER_NAME}" ubuntu && \
+# Rename it to match the host user's name, then give it the host user's uid
+# and gid, so a host file with mode 0600, such as a sign-in, stays readable.
+# A gid can match an existing group, such as 100 (users); a uid must be free.
+RUN [[ "${USER_UID}" =~ ^[0-9]+$ && "${USER_GID}" =~ ^[0-9]+$ ]] || \
+      { echo "USER_UID and USER_GID must be numbers." >&2; exit 1; } && \
+    [[ "${USER_UID}" != 0 && "${USER_GID}" != 0 ]] || \
+      { echo "The container user can't be root (uid or gid 0)." >&2; exit 1; } && \
+    usermod -l "${USER_NAME}" ubuntu && \
     groupmod -n "${USER_NAME}" ubuntu && \
-    usermod -d "/home/${USER_NAME}" -m "${USER_NAME}"
+    usermod -d "/home/${USER_NAME}" -m "${USER_NAME}" && \
+    if [[ "${USER_GID}" != 1000 ]]; then groupmod -o -g "${USER_GID}" "${USER_NAME}"; fi && \
+    if [[ "${USER_UID}" != 1000 ]]; then \
+      if getent passwd "${USER_UID}" > /dev/null; then \
+        echo "uid ${USER_UID} belongs to $(getent passwd "${USER_UID}" | cut -d: -f1) in the base image." >&2; exit 1; \
+      fi; \
+      usermod -u "${USER_UID}" "${USER_NAME}"; \
+    fi && \
+    usermod -g "${USER_GID}" "${USER_NAME}" && \
+    chown -R "${USER_UID}:${USER_GID}" "/home/${USER_NAME}"
 
 # No passwordless sudo: container root is host root on the bind mounts (see
 # "Container boundaries" in docs/architecture.md), so an agent must not be
