@@ -9,6 +9,7 @@ import {
   needsLocalPage,
   permissionAllowed,
   reviewCommand,
+  showRetained,
   isMachineIdArg,
   terminalCandidates,
   terminalCommand,
@@ -205,5 +206,43 @@ describe("closing the window", () => {
     expect(needsExtensionList({ XDG_CURRENT_DESKTOP: "GNOME", AIO_CLOSE_TO_TRAY: "0" })).toBe(
       false,
     );
+  });
+});
+
+describe("showRetained", () => {
+  function fakeNote() {
+    const handlers: Record<string, () => void> = {};
+    return {
+      shown: false,
+      on(event: "click" | "close", listener: () => void) {
+        handlers[event] = listener;
+      },
+      show() {
+        this.shown = true;
+      },
+      emit(event: "click" | "close") {
+        handlers[event]?.();
+      },
+    };
+  }
+
+  it("keeps a notification until it is clicked, then runs the click handler", () => {
+    const retained = new Set<ReturnType<typeof fakeNote>>();
+    const note = fakeNote();
+    let clicks = 0;
+    showRetained(retained, note, () => clicks++);
+    expect(note.shown).toBe(true);
+    expect(retained.has(note)).toBe(true);
+    note.emit("click");
+    expect(clicks).toBe(1);
+    expect(retained.has(note)).toBe(false);
+  });
+
+  it("releases a notification that closes without a click", () => {
+    const retained = new Set<ReturnType<typeof fakeNote>>();
+    const note = fakeNote();
+    showRetained(retained, note, () => undefined);
+    note.emit("close");
+    expect(retained.size).toBe(0);
   });
 });
