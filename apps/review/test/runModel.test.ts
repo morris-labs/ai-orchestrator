@@ -6,6 +6,7 @@ import {
   decisionView,
   oscillationPairs,
   runControls,
+  runProgress,
   stepStates,
   taskRows,
   vendorOfLabel,
@@ -191,5 +192,55 @@ describe("taskRows", () => {
   it("shows no planned stages for a finished run", () => {
     const base = lastRun();
     expect(taskRows({ ...base, status: "finished", round: 1, tasks: [] })).toEqual([]);
+  });
+});
+
+describe("runProgress", () => {
+  it("estimates the remaining time from finished calls and the calls running at once", () => {
+    const base = lastRun();
+    const t0 = Date.parse("2026-01-01T00:00:00.000Z");
+    const iso = (s: number) => new Date(t0 + s * 1000).toISOString();
+    const task = (
+      key: string,
+      state: "done" | "running" | "queued",
+      start?: number,
+      end?: number,
+    ) => ({
+      key,
+      round: 1,
+      stage: "find" as const,
+      role: "reviewer" as const,
+      groupId: key,
+      label: key,
+      state,
+      seq: 0,
+      ...(start !== undefined ? { startedAt: iso(start) } : {}),
+      ...(end !== undefined ? { finishedAt: iso(end) } : {}),
+    });
+    const p = runProgress(
+      {
+        ...base,
+        status: "running",
+        stage: "find",
+        round: 1,
+        createdAt: iso(0),
+        request: { ...base.request, pipeline: "pre-push" },
+        tasks: [
+          task("G01", "done", 0, 100),
+          task("G02", "running", 100),
+          task("G03", "running", 140),
+          task("G04", "queued"),
+        ],
+      },
+      t0 + 150_000,
+    );
+    // G02 needs 50 s more, G03 90 s, G04 100 s: 240 s over 2 at once.
+    expect(p).toMatchObject({
+      finished: 1,
+      total: 4,
+      elapsedMs: 150_000,
+      remainingMs: 120_000,
+      moreLater: true,
+    });
   });
 });

@@ -13,7 +13,15 @@ import {
   type RunState,
   type Vendor,
 } from "@aio/contracts";
-import { AgentsTable, VENDOR_LABELS, VENDORS, agentRows, formatUsd } from "@aio/ui/dashboard";
+import {
+  AgentsTable,
+  VENDOR_LABELS,
+  VENDORS,
+  agentRows,
+  formatDuration,
+  formatUsd,
+  useNow,
+} from "@aio/ui/dashboard";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ErrorBanner, RunStatusBadge, shortId } from "../components/common.js";
 import { ProfileSelect, RoleTable } from "../components/roles.js";
@@ -28,6 +36,7 @@ import {
   isNewerRun,
   oscillationPairs,
   runControls,
+  runProgress,
   stepStates,
   taskRows,
   type TaskRow,
@@ -277,6 +286,9 @@ const TASK_STATE_LABELS: Record<TaskRow["state"], string> = {
 /** Every task of the run in pipeline order, with what remains and each call's effort. */
 export function TaskList({ run }: { run: RunState }) {
   const rows = taskRows(run);
+  const active = !["finished", "failed", "cancelled"].includes(run.status);
+  const now = useNow(active);
+  const progress = runProgress(run, now);
   const count = (state: TaskRow["state"]) => rows.filter((r) => r.state === state).length;
   return (
     <section className="card" aria-label="Task list">
@@ -285,6 +297,22 @@ export function TaskList({ run }: { run: RunState }) {
         <p className="muted">The engine lists the tasks when the first round starts.</p>
       ) : (
         <>
+          <div className="task-progress">
+            <progress
+              max={Math.max(progress.total, 1)}
+              value={progress.finished}
+              aria-label="Tasks finished"
+            />
+            <span className="ab-num">{Math.round(progress.fraction * 100)}%</span>
+            <span>Elapsed {formatDuration(progress.elapsedMs)}</span>
+            <span>
+              {progress.remainingMs === null
+                ? "Remaining: known after the first task finishes"
+                : active
+                  ? `About ${formatDuration(progress.remainingMs)} remaining${progress.moreLater ? ", plus stages planned later" : ""}`
+                  : "Ended"}
+            </span>
+          </div>
           <p className="muted small">
             {count("done")} done, {count("running")} running, {count("queued")} queued
             {count("planned later") ? `, ${count("planned later")} stages planned later` : ""}

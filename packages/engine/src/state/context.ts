@@ -973,6 +973,7 @@ export class RunContext {
         ...extra,
       },
       state,
+      this.nowIso(),
     );
     await this.persist();
     await this.emitRun();

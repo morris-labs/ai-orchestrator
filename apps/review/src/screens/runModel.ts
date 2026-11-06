@@ -276,3 +276,75 @@ export function taskRows(
     r.state === "queued" || r.state === "planned later" ? { ...r, position: ++position } : r,
   );
 }
+
+/** The run's progress over its known tasks, and its timing. */
+export interface RunProgress {
+  /** Finished, failed, and skipped tasks over every known task, from 0 to 1. */
+  fraction: number;
+  finished: number;
+  total: number;
+  elapsedMs: number;
+  /**
+   * The time the known tasks still need, or `null` until a task has finished.
+   * It assumes as many calls at once as are running, and can't count stages
+   * the engine hasn't planned yet.
+   */
+  remainingMs: number | null;
+  /** True when stages planned later aren't in `remainingMs`. */
+  moreLater: boolean;
+}
+
+export function runProgress(
+  run: Pick<
+    RunState,
+    "tasks" | "stage" | "status" | "round" | "request" | "createdAt" | "finishedAt"
+  >,
+  now: number,
+): RunProgress {
+  const rows = taskRows(run);
+  const tasks = run.tasks ?? [];
+  const ended = (s: string) => s === "done" || s === "failed" || s === "skipped";
+  const finished = tasks.filter((t) => ended(t.state)).length;
+  const total = tasks.length;
+  const end = run.finishedAt ? Date.parse(run.finishedAt) : now;
+  const elapsedMs = Math.max(0, end - Date.parse(run.createdAt));
+  const moreLater = rows.some((r) => r.state === "planned later");
+
+  // The mean duration of finished calls per stage, and over every stage.
+  const durations = new Map<Stage, number[]>();
+  for (const t of tasks) {
+    if (t.state !== "done" || !t.startedAt || !t.finishedAt) continue;
+    const list = durations.get(t.stage) ?? [];
+    list.push(Date.parse(t.finishedAt) - Date.parse(t.startedAt));
+    durations.set(t.stage, list);
+  }
+  const all = [...durations.values()].flat();
+  const mean = (xs: number[]) => xs.reduce((n, x) => n + x, 0) / xs.length;
+  let remainingMs: number | null = null;
+  if (all.length > 0 && !["finished", "failed", "cancelled"].includes(run.status)) {
+    const overall = mean(all);
+    let work = 0;
+    let running = 0;
+    for (const t of tasks) {
+      const own = durations.get(t.stage);
+      const expected = own?.length ? mean(own) : overall;
+      if (t.state === "queued") work += expected;
+      else if (t.state === "running") {
+        running += 1;
+        const spent = t.startedAt ? now - Date.parse(t.startedAt) : 0;
+        work += Math.max(0, expected - spent);
+      }
+    }
+    remainingMs = work / Math.max(1, running);
+  } else if (["finished", "failed", "cancelled"].includes(run.status)) {
+    remainingMs = 0;
+  }
+  return {
+    fraction: total === 0 ? 0 : finished / total,
+    finished,
+    total,
+    elapsedMs,
+    remainingMs,
+    moreLater,
+  };
+}

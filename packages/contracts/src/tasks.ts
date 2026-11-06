@@ -72,15 +72,32 @@ export function markTask(
   tasks: readonly RunTask[],
   input: TaskInput,
   state: RunTaskState,
+  at?: string,
 ): RunTask[] {
   const out = [...tasks];
+  const times =
+    at === undefined
+      ? {}
+      : state === "running"
+        ? { startedAt: at, finishedAt: undefined }
+        : state === "queued"
+          ? {}
+          : { finishedAt: at };
   const index = out.findIndex((t) => t.round === input.round && t.key === input.key);
   const existing = index >= 0 ? out[index] : undefined;
   if (existing) {
     // A started call knows its stage, vendor, and effort for sure.
-    out[index] = { ...existing, ...withoutUndefined(input), label: existing.label, state };
+    const next: RunTask = {
+      ...existing,
+      ...withoutUndefined(input),
+      label: existing.label,
+      state,
+      ...times,
+    };
+    if (next.finishedAt === undefined) delete next.finishedAt;
+    out[index] = next;
   } else {
-    out.push({ ...withoutUndefined(input), state, seq: nextSeq(out) });
+    out.push({ ...withoutUndefined({ ...input, ...times }), state, seq: nextSeq(out) } as RunTask);
   }
   return sortTasks(out);
 }

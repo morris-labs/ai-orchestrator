@@ -438,6 +438,10 @@ export const RunTaskSchema = z.object({
   /** The reasoning effort the call asks for. Absent means the vendor's own default. */
   effort: z.string().min(1).optional(),
   state: RunTaskStateSchema,
+  /** When the call last started. */
+  startedAt: IsoDateTimeSchema.optional(),
+  /** When the call ended. */
+  finishedAt: IsoDateTimeSchema.optional(),
   /** The order the engine added it in, which breaks ties within a stage. */
   seq: CountSchema,
 });
