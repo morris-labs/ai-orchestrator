@@ -170,6 +170,25 @@ describe("--machine", () => {
     expect(server.requests.at(-1)?.body).toMatchObject({ concurrency: 1 });
   });
 
+  it("refuses --concurrency when this machine's own server can't honour it", async () => {
+    server.on("POST /api/v1/runs", { status: 201, body: runState });
+    const args = ["--project", PROJECT_ID, "--repo", "/srv/site", "--concurrency", "2"];
+    expect(await cli(["review", "start", ...args])).toBe(2);
+    expect(err).toContain("too old to set --concurrency");
+    expect(calls()).toEqual([]);
+  });
+
+  it("sends --concurrency to this machine's server when it honours it", async () => {
+    server.on("GET /api/v1/machines", {
+      body: { machines: [{ ...MACHINES[0], capabilities: ["runs.concurrency.v1"] }] },
+    });
+    server.on("POST /api/v1/runs", { status: 201, body: runState });
+    const args = ["--project", PROJECT_ID, "--repo", "/srv/site", "--concurrency", "2"];
+    expect(await cli(["review", "start", ...args])).toBe(0);
+    expect(calls()).toEqual(["POST /api/v1/runs"]);
+    expect(server.requests.at(-1)?.body).toMatchObject({ concurrency: 2 });
+  });
+
   it("takes the machine of a review's MACHINE/BOX argument", async () => {
     server.on(`GET ${PROXY}/boxes/${BOX_ID}`, { body: remoteBox() });
     server.on(`POST ${PROXY}/runs`, { status: 201, body: runState });

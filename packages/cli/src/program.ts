@@ -578,6 +578,20 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
       : { id: m.id, name: m.name, platform: m.platform, capabilities: m.capabilities };
   };
   /**
+   * The link capabilities this machine's own server lists. A server with no
+   * machine routes predates every capability, so it lists none.
+   */
+  const localCapabilities = async (): Promise<string[]> => {
+    let machines: Machine[];
+    try {
+      machines = (await clientFor(settings(), thisServer).call("machines.list")).machines;
+    } catch (err) {
+      if (noMachineRoutes(err)) return [];
+      throw err;
+    }
+    return machines.find((m) => m.isLocal)?.capabilities ?? [];
+  };
+  /**
    * Reads a box argument, `BOX` or `MACHINE/BOX`, and returns the box ID.
    * Call it before the command's first request, so the machine applies.
    */
@@ -1276,15 +1290,17 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
         throw new UsageError("Give --box, or both --project and --repo.");
       }
       // An older server drops `concurrency` and runs at its defaults, so
-      // refuse the flag rather than start a run that ignores it.
-      if (
-        o.concurrency !== undefined &&
-        remote &&
-        !remote.capabilities.includes(RUN_CONCURRENCY_CAPABILITY)
-      ) {
-        throw new UsageError(
-          `The server on ${remote.name} is too old to set --concurrency. Leave out --concurrency, or update that machine's server.`,
-        );
+      // refuse the flag rather than start a run that ignores it. This
+      // covers this machine's own server too, which might predate the CLI.
+      if (o.concurrency !== undefined) {
+        const capabilities = remote ? remote.capabilities : await localCapabilities();
+        if (!capabilities.includes(RUN_CONCURRENCY_CAPABILITY)) {
+          throw new UsageError(
+            remote
+              ? `The server on ${remote.name} is too old to set --concurrency. Leave out --concurrency, or update that machine's server.`
+              : "This machine's server is too old to set --concurrency. Leave out --concurrency, or restart the aio-server unit to load the updated server.",
+          );
+        }
       }
       const run = await c.call("runs.create", {
         body: {
