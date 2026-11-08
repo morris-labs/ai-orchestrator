@@ -799,6 +799,13 @@ export interface RunTokenEstimateInput {
   readOnly?: boolean;
   /** The reviewers in turn, as the groups take them. */
   reviewers?: readonly Vendor[];
+  /**
+   * The vendor that verifies each reviewer's findings. A reviewer left out
+   * verifies its own findings.
+   */
+  verifiers?: Partial<Record<Vendor, Vendor>>;
+  /** The vendor that fixes the findings. Without it, each reviewer fixes its own. */
+  fixer?: Vendor;
   groups: readonly { tier?: ModelTier | undefined; changedLines: number }[];
   /** This project's finished runs. */
   history?: readonly RunTokenSample[];
@@ -1063,6 +1070,9 @@ export function estimateRunTokens(input: RunTokenEstimateInput): RunTokenEstimat
     const v = perVendor.get(vendor) ?? { tokens: 0, low: 0, high: 0 };
     perVendor.set(vendor, { tokens: v.tokens + tokens, low: v.low + low, high: v.high + high });
   };
+  // Review tokens of the groups that have their own verification and fixing
+  // lines, by reviewer. Groups on the older rate already include those stages.
+  const stagedReview = new Map<Vendor, number>();
   input.groups.forEach((group, index) => {
     const vendor = reviewers[index % reviewers.length] as Vendor;
     const rate = reviewRate(vendor, group.tier);
@@ -1078,6 +1088,7 @@ export function estimateRunTokens(input: RunTokenEstimateInput): RunTokenEstimat
     }
     const tokens = rate.base + rate.perLine * group.changedLines;
     addVendor(vendor, tokens, tokens * rate.low, tokens * rate.high);
+    stagedReview.set(vendor, (stagedReview.get(vendor) ?? 0) + tokens);
     review = {
       tokens: review.tokens + tokens,
       low: review.low + tokens * rate.low,
@@ -1158,15 +1169,27 @@ export function estimateRunTokens(input: RunTokenEstimateInput): RunTokenEstimat
     high: twoFigures(l.high),
   }));
   const changed = input.groups.reduce((n, g) => n + g.changedLines, 0);
-  // Verification and fixing go to each vendor by its share of review tokens.
-  const reviewed = [...perVendor.values()].reduce((n, v) => n + v.tokens, 0);
-  const stages = lines.filter((l) => l.label === "Verification" || l.label === "Fixing");
-  const byVendor = [...perVendor].map(([vendor, v]) => {
-    const share = reviewed > 0 ? v.tokens / reviewed : 0;
-    const add = (key: "tokens" | "low" | "high") =>
-      twoFigures(v[key] + share * stages.reduce((n, l) => n + l[key], 0));
-    return { vendor, tokens: add("tokens"), low: add("low"), high: add("high") };
-  });
+  // Each stage line is split by each reviewer's share of the staged groups'
+  // review tokens, then goes to the vendor that runs that stage for the
+  // reviewer: its verifier, or the fixer.
+  const reviewed = [...stagedReview.values()].reduce((n, t) => n + t, 0);
+  for (const line of lines) {
+    if (line.label !== "Verification" && line.label !== "Fixing") continue;
+    for (const [reviewer, t] of stagedReview) {
+      const share = reviewed > 0 ? t / reviewed : 0;
+      const vendor =
+        line.label === "Fixing"
+          ? (input.fixer ?? reviewer)
+          : (input.verifiers?.[reviewer] ?? reviewer);
+      addVendor(vendor, share * line.tokens, share * line.low, share * line.high);
+    }
+  }
+  const byVendor = [...perVendor].map(([vendor, v]) => ({
+    vendor,
+    tokens: twoFigures(v.tokens),
+    low: twoFigures(v.low),
+    high: twoFigures(v.high),
+  }));
   return {
     tokens: twoFigures(sum("tokens")),
     low: twoFigures(sum("low")),
@@ -1224,7 +1247,10 @@ export function estimateWindowShare(
       const usage = w.sample.usage?.find((u) => u.vendor === est.vendor);
       if (!usage || usage.raw <= 0) continue;
       for (const rate of usage.windows ?? []) {
-        if (rate.weighted <= 0) continue;
+        // A window that didn't move a visible step measures no rate: vendors
+        // report use in coarse steps, so a zero says only that the share was
+        // under one step.
+        if (rate.weighted <= 0 || rate.used <= 0) continue;
         const list = measured.get(rate.window) ?? [];
         list.push({ w, usage, rate });
         measured.set(rate.window, list);

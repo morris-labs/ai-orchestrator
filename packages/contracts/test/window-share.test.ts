@@ -83,6 +83,12 @@ describe("estimateWindowShare", () => {
     expect(line!.high / line!.low).toBeGreaterThan(3);
   });
 
+  it("treats a window that didn't move a step as unmeasured (F-0017)", () => {
+    const [line] = estimateWindowShare(byVendor, [sample("01A", 0, 200_000)], []);
+    expect(line).toMatchObject({ vendor: "claude", window: "5h", measured: false });
+    expect(line?.high).toBeGreaterThan(0);
+  });
+
   it("loads a sample saved before the breakdown existed", () => {
     const { usage: _usage, ...older } = sample("01A", 0.1, 1);
     expect(RunTokenSampleSchema.parse(older).usage).toBeUndefined();
@@ -100,6 +106,40 @@ describe("estimateRunTokens windows", () => {
     const total = estimate.byVendor.reduce((n, v) => n + v.tokens, 0);
     expect(total / estimate.tokens).toBeCloseTo(1, 1);
     expect(estimate.windows.map((w) => `${w.vendor}/${w.window}`)).toEqual(["claude/5h"]);
+  });
+});
+
+describe("estimateRunTokens stage vendors", () => {
+  const stageTokens = (e: ReturnType<typeof estimateRunTokens>) =>
+    e.lines
+      .filter((l) => l.label === "Verification" || l.label === "Fixing")
+      .reduce((n, l) => n + l.tokens, 0);
+
+  it("gives no stage tokens to a vendor on the older rate (F-0016)", () => {
+    const estimate = estimateRunTokens({
+      depth: "standard",
+      reviewers: ["claude", "codex"],
+      groups: [{ changedLines: 10 }, { changedLines: 10 }],
+    });
+    const review = estimate.lines.find((l) => l.label === "Review")!.tokens;
+    const older = estimate.lines.find((l) => l.label === "Whole run, no measurements")!.tokens;
+    const by = Object.fromEntries(estimate.byVendor.map((v) => [v.vendor, v.tokens]));
+    expect(by.codex).toBe(older);
+    expect(by.claude! / (review + stageTokens(estimate))).toBeCloseTo(1, 1);
+  });
+
+  it("charges verification to the verifier and fixing to the fixer (F-0022)", () => {
+    const estimate = estimateRunTokens({
+      depth: "standard",
+      reviewers: ["claude"],
+      verifiers: { claude: "codex" },
+      fixer: "claude",
+      groups: [{ changedLines: 10 }],
+    });
+    const verification = estimate.lines.find((l) => l.label === "Verification")!.tokens;
+    const by = Object.fromEntries(estimate.byVendor.map((v) => [v.vendor, v.tokens]));
+    expect(by.codex! / verification).toBeCloseTo(1, 1);
+    expect((by.claude! + by.codex!) / estimate.tokens).toBeCloseTo(1, 1);
   });
 });
 

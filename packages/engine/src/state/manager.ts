@@ -50,6 +50,7 @@ import { RunNotFoundError, RunStore, listRunIds } from "../run/store.js";
 import { loadTokenHistory } from "../run/token-history.js";
 import { RunController, startingRoles } from "./controller.js";
 import { assignRoles } from "./profiles.js";
+import { chooseDisprover } from "../verify/verify.js";
 
 /**
  * Turns a core error into one the API maps to a status: a dirty tree keeps
@@ -337,6 +338,22 @@ export class EngineRunManager implements RunManager {
       const available = (["claude", "codex", "copilot"] as const).filter(
         (v) => this.deps.adapters[v],
       );
+      // A preview request can leave the profile and the cross-vendor rule out.
+      const profile = request.profile ?? "offload";
+      const crossVendor = request.crossVendor ?? true;
+      const roles = assignRoles({
+        profile,
+        round: 1,
+        available,
+        manual: startingRoles(request.roles, available),
+        crossVendor,
+      });
+      const verifiers = Object.fromEntries(
+        roles.reviewer.map((v) => [
+          v,
+          chooseDisprover(v, roles, { crossVendor, available, profile }),
+        ]),
+      );
       return {
         vendors: Object.keys(this.deps.adapters) as Vendor[],
         baseSha: range.baseSha,
@@ -350,14 +367,9 @@ export class EngineRunManager implements RunManager {
           scope: whole ? "whole" : "range",
           effort: request.reviewerEffort,
           readOnly: request.readOnly,
-          reviewers: assignRoles({
-            // A preview request can leave these out.
-            profile: request.profile ?? "offload",
-            round: 1,
-            available,
-            manual: startingRoles(request.roles, available),
-            crossVendor: request.crossVendor ?? true,
-          }).reviewer,
+          reviewers: roles.reviewer,
+          verifiers,
+          fixer: roles.fixer,
           groups,
           history: await loadTokenHistory(this.location.projectRoot),
           hostHistory: request.hostTokenSamples ?? [],

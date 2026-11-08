@@ -278,6 +278,42 @@ describe("the preview of a whole-project run", () => {
     expect(refs(repo)).toBe(before);
     await runs.close();
   });
+
+  it("charges verification to the cross-vendor verifier (F-0022)", async () => {
+    const repo = makeRepo();
+    git(repo, "update-ref", "refs/remotes/origin/main", "main");
+    const runs = new EngineRunManager({
+      projectRoot: repo,
+      container: "c",
+      events: new MemoryEventSink("engine:test", "s"),
+      leases: new GrantingBroker(),
+      // The preview checks only which vendors have an adapter.
+      adapters: { claude: {} as never, codex: {} as never },
+      log: silentLogger,
+    });
+    const preview = await runs.preview({
+      projectId: "p",
+      repoPath: repo,
+      base: "does-not-exist",
+      tip: "origin/main",
+      readOnly: true,
+      mergeBase: false,
+      exactBase: false,
+      pipeline: "pre-push",
+      profile: "offload",
+      roles: { reviewer: ["claude"] },
+      includeWorktree: false,
+      crossVendor: true,
+      roundCap: 2,
+      continuationCap: 0,
+      overlapThreshold: 0.5,
+      depth: "standard",
+      scope: "whole",
+    });
+    const vendors = preview.tokenEstimate?.byVendor.map((v) => v.vendor);
+    expect(vendors).toEqual(["claude", "codex"]);
+    await runs.close();
+  });
 });
 
 describe("a whole-project run", () => {
