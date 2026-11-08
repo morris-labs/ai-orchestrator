@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -69,6 +77,7 @@ describe("loadTokenHistory", () => {
         verificationStages: { disprove: 31, confirm: 0, sweep: 41 },
         fixingTokens: 51,
         usage: [],
+        usageVersion: 2,
       },
     ]);
   });
@@ -104,6 +113,35 @@ describe("loadTokenHistory", () => {
     expect((await loadTokenHistory(root))[0]).toEqual(older);
   });
 
+  it("measures again a stored sample whose windows came from older logic (F-0122)", async () => {
+    const root = mkdtempSync(join(tmpdir(), "aio-token-history-"));
+    writeRun(root, "01A", "finished");
+    const file = join(root, ".aio", "runs", "01A", "token-sample.json");
+    const [first] = await loadTokenHistory(root);
+    const { usageVersion: _version, ...older } = first!;
+    const stale = { vendor: "claude", fresh: 1, cacheWrite: 0, cacheRead: 0, out: 1, raw: 2 };
+    writeFileSync(file, JSON.stringify({ ...older, usage: [stale] }));
+    expect(await loadTokenHistory(root)).toEqual([first]);
+  });
+
+  it("measures a sample it can't store only once (F-0123)", async () => {
+    const root = mkdtempSync(join(tmpdir(), "aio-token-history-"));
+    writeRun(root, "01A", "finished");
+    const dir = join(root, ".aio", "runs", "01A");
+    const [first] = await loadTokenHistory(root);
+    const { verificationStages: _stages, ...older } = first!;
+    writeFileSync(join(dir, "token-sample.json"), JSON.stringify(older));
+    chmodSync(dir, 0o555);
+    try {
+      expect((await loadTokenHistory(root))[0]).toEqual(first);
+      // A second preview doesn't read the calls again.
+      writeFileSync(join(dir, "rounds", "1", "calls", "fix-G01.json"), "{");
+      expect((await loadTokenHistory(root))[0]).toEqual(first);
+    } finally {
+      chmodSync(dir, 0o755);
+    }
+  });
+
   it("returns nothing for a project with no runs", async () => {
     const root = mkdtempSync(join(tmpdir(), "aio-token-history-"));
     await expect(loadTokenHistory(root)).resolves.toEqual([]);
@@ -130,32 +168,41 @@ describe("usage windows", () => {
         join(calls, name),
         JSON.stringify({ vendor: "claude", tokens, tier: { tier: "large", reason: "test" } }),
       );
-    const finished = { type: "agent.finished", vendor: "claude", tokens };
-    const reading = (utilization: number, resetAt: string, minute: number) => ({
+    const at = (minute: number) => `2026-01-01T00:${String(minute).padStart(2, "0")}:00.000Z`;
+    const finished = (agentId: string, minute: number) => ({
+      type: "agent.finished",
+      vendor: "claude",
+      agentId,
+      tokens,
+      time: at(minute),
+    });
+    const reading = (agentId: string, utilization: number, resetAt: string, minute: number) => ({
       type: "usage.sample",
       vendor: "claude",
+      agentId,
       account: "user@example.com",
       window: "5h",
       utilization,
       spendUsd: null,
       resetAt,
-      time: `2026-01-01T00:${String(minute).padStart(2, "0")}:00.000Z`,
+      sampleSource: "codex_session",
+      time: at(minute),
     });
     const first = "2026-01-01T04:00:00.000Z";
     const second = "2026-01-01T09:00:00.000Z";
     const events = [
-      finished,
-      finished,
-      reading(0.1, first, 1),
-      finished,
-      reading(0.12, first, 2),
-      finished,
-      reading(0.15, first, 3),
+      finished("c1", 0),
+      finished("c2", 1),
+      reading("c2", 0.1, first, 1),
+      finished("c3", 2),
+      reading("c3", 0.12, first, 2),
+      finished("c4", 3),
+      reading("c4", 0.15, first, 3),
       // The window resets: this stretch is unknown, so it is left out.
-      finished,
-      reading(0.01, second, 4),
-      finished,
-      reading(0.03, second, 5),
+      finished("c5", 4),
+      reading("c5", 0.01, second, 4),
+      finished("c6", 5),
+      reading("c6", 0.03, second, 5),
     ];
     writeFileSync(join(dir, "events.jsonl"), events.map((e) => JSON.stringify(e)).join("\n"));
     const sample = await saveTokenSample(root, "01C");
@@ -193,6 +240,7 @@ describe("usage windows", () => {
       utilization: u,
       spendUsd: null,
       resetAt: null,
+      sampleSource: "codex_session",
       time: "2026-01-01T00:00:00.000Z",
     });
     const events = [
@@ -334,23 +382,39 @@ describe("usage windows", () => {
       expect(sample?.usage?.[0]?.windows?.[0]).toEqual(window);
     });
 
-    it("gives an older run's reading from a failed call to that call", async () => {
-      // An older run names no call; a failed call's reading comes before its
-      // `agent.finished` event, and a successful call's after it.
-      const old = (event: Record<string, unknown>) => ({ ...event, agentId: undefined });
+    it.each([
+      [
+        "a successful call or a later failed call",
+        [
+          started("b"),
+          started("a"),
+          { ...finished("a", 1), outcome: "ok" },
+          // Call a's reading, or call b's, which fails next.
+          { ...reading("a", 0.12), agentId: undefined },
+          { ...finished("b", 5), outcome: "error" },
+        ],
+      ],
+      [
+        "either of two successful calls",
+        [
+          started("a"),
+          started("c"),
+          { ...finished("a", 1), outcome: "ok" },
+          { ...finished("c", 5), outcome: "ok" },
+          // Call a's reading, or call c's.
+          { ...reading("a", 0.12), agentId: undefined },
+        ],
+      ],
+    ])("leaves out an older run's reading that could belong to %s (F-0120)", async (_, rest) => {
+      // An older run names calls only in their lifecycle events.
       const { window } = await windowOf("01K", [
-        old({ ...finished("x", 1), outcome: "ok" }),
-        old(reading("x", 0.1, "b@example.com", "codex_session")),
-        old({ ...finished("x", 9), outcome: "ok" }),
-        old(reading("x", 0.5, "a@example.com", "codex_session")),
-        old(reading("x", 0.2, "b@example.com", "codex_session")),
-        old({ ...finished("x", 0), outcome: "error", tokens: { in: 0, out: 0 } }),
-        old({ ...finished("x", 1), outcome: "ok" }),
-        old(reading("x", 0.3, "b@example.com", "codex_session")),
+        started("a0"),
+        { ...finished("a0", 1), outcome: "ok" },
+        { ...reading("a0", 0.1, "user@example.com", "codex_session"), agentId: undefined },
+        ...rest.map((e) => ("sampleSource" in e ? { ...e, sampleSource: "codex_session" } : e)),
       ]);
-      // Account a's call isn't account b's, so only b's calls count.
-      expect(window?.weighted).toBe(2_000);
-      expect(window?.used).toBeCloseTo(0.2);
+      // Placing the reading after call b or c would count their tokens too.
+      expect(window).toBeUndefined();
     });
 
     it("keeps a successful call's pending reading when the next call fails", async () => {
@@ -372,6 +436,80 @@ describe("usage windows", () => {
       // Account a's readings rise over call a1 alone; call b1 is account b's.
       expect(window?.weighted).toBe(2_000);
       expect(window?.rate).toBeCloseTo(0.02 / 2_000);
+    });
+
+    it("leaves out a stretch over a failed call whose tokens are unknown (F-0121)", async () => {
+      const { window } = await windowOf("01M", [
+        started("a"),
+        finished("a", 1),
+        reading("a", 0.1, "user@example.com", "codex_session"),
+        started("b"),
+        // A timed-out call reports no tokens, but it spent some.
+        { ...finished("b", 0), outcome: "timeout", tokens: { in: 0, out: 0 } },
+        started("c"),
+        finished("c", 1),
+        reading("c", 0.3, "user@example.com", "codex_session"),
+        started("d"),
+        finished("d", 1),
+        reading("d", 0.32, "user@example.com", "codex_session"),
+      ]);
+      expect(window?.weighted).toBe(2_000);
+      expect(window?.used).toBeCloseTo(0.02);
+    });
+
+    it("leaves out readings estimated from tokens (F-0126)", async () => {
+      const { window } = await windowOf("01N", [
+        started("a"),
+        finished("a", 1),
+        reading("a", 0.1, "user@example.com", "estimate"),
+        started("b"),
+        finished("b", 1),
+        reading("b", 0.12, "user@example.com", "codex_tokens"),
+      ]);
+      expect(window).toBeUndefined();
+    });
+
+    it("counts one reset when stale readings fall between later ones (F-0127)", async () => {
+      const at = (resetAt: string) => (r: object) => ({ ...r, resetAt });
+      const before = at("2026-01-01T04:00:00.000Z");
+      const after = at("2026-01-01T09:00:00.000Z");
+      const { window } = await windowOf("01P", [
+        started("a"),
+        finished("a", 1),
+        before(reading("a", 0.9, "user@example.com", "codex_session")),
+        started("b"),
+        finished("b", 1),
+        after(reading("b", 0.01, "user@example.com", "codex_session")),
+        started("c"),
+        finished("c", 1),
+        // Taken before the reset, but it came late.
+        before(reading("c", 0.92, "user@example.com", "codex_session")),
+        started("d"),
+        finished("d", 1),
+        after(reading("d", 0.02, "user@example.com", "codex_session")),
+        started("e"),
+        finished("e", 1),
+        after(reading("e", 0.03, "user@example.com", "codex_session")),
+      ]);
+      expect(window).toMatchObject({ resets: 1, weighted: 6_000 });
+      expect(window?.used).toBeCloseTo(0.02);
+    });
+
+    it("times a reading taken as its call starts by that start (F-0128)", async () => {
+      const time = (minute: number) => (e: object) => ({
+        ...e,
+        time: `2026-01-01T00:${String(minute).padStart(2, "0")}:00.000Z`,
+      });
+      const { window } = await windowOf("01Q", [
+        time(0)(started("a")),
+        time(20)(finished("a", 1)),
+        time(20)(reading("a", 0.1)),
+        time(20)(started("b")),
+        time(21)(finished("b", 1)),
+        // The engine writes call b's reading after the call ends.
+        time(21)(reading("b", 0.12)),
+      ]);
+      expect(window?.durationMs).toBe(20 * 60_000);
     });
   });
 });

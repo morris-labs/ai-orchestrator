@@ -757,6 +757,12 @@ export const RunTokenSampleSchema = z.object({
    * Absent from a sample saved before the breakdown existed.
    */
   usage: z.array(VendorUsageSampleSchema).max(4).optional(),
+  /**
+   * The version of the logic that measured `usage`. The engine measures a
+   * sample with another version again. Absent from a sample saved before
+   * the version existed.
+   */
+  usageVersion: CountSchema.optional(),
 });
 export type RunTokenSample = z.input<typeof RunTokenSampleSchema>;
 
