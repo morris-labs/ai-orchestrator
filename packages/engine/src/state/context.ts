@@ -1162,7 +1162,7 @@ export class RunContext {
         // A failed or limited call can still hold the vendor's freshest reading.
         for (const { ceiling: _ignored, ...sample } of usageOfError(error)) {
           const ceiling = (this.deps.ceilings ?? DEFAULT_CEILINGS)[sample.vendor];
-          await this.emit({ type: "usage.sample", ...sample, ceiling });
+          await this.emit({ type: "usage.sample", ...sample, ceiling, agentId });
         }
         const outcome = this.signal.aborted
           ? "cancelled"
@@ -1249,7 +1249,7 @@ export class RunContext {
       await this.settle(lease.leaseId, vendor, spec.role, actual);
       for (const sample of result.usage) {
         const ceiling = (this.deps.ceilings ?? DEFAULT_CEILINGS)[sample.vendor];
-        await this.emit({ type: "usage.sample", ...sample, ceiling });
+        await this.emit({ type: "usage.sample", ...sample, ceiling, agentId });
       }
       if (blocked) {
         const message = blockedModelMessage(vendor, result.model);

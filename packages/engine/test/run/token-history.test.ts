@@ -128,6 +128,7 @@ describe("usage windows", () => {
     const second = "2026-01-01T09:00:00.000Z";
     const events = [
       finished,
+      finished,
       reading(0.1, first, 1),
       finished,
       reading(0.12, first, 2),
@@ -183,5 +184,115 @@ describe("usage windows", () => {
     writeFileSync(join(dir, "events.jsonl"), events.map((e) => JSON.stringify(e)).join("\n"));
     const sample = await saveTokenSample(root, "01D");
     expect(sample?.usage?.[0]?.windows).toEqual([]);
+  });
+
+  describe("with readings that name their call", () => {
+    // Weighted: 1,000 + 9,000 * 0.1 + 20 * 5 = 2,000 per unit.
+    const tokens = (units: number) => ({
+      in: 10_000 * units,
+      out: 20 * units,
+      fresh: 1_000 * units,
+      cacheWrite: 0,
+      cacheRead: 9_000 * units,
+    });
+    const started = (agentId: string) => ({ type: "agent.started", vendor: "claude", agentId });
+    const finished = (agentId: string, units: number) => ({
+      type: "agent.finished",
+      vendor: "claude",
+      agentId,
+      tokens: tokens(units),
+    });
+    const reading = (
+      agentId: string,
+      utilization: number,
+      account = "user@example.com",
+      sampleSource = "rate_limit_event",
+    ) => ({
+      type: "usage.sample",
+      vendor: "claude",
+      agentId,
+      account,
+      window: "5h",
+      utilization,
+      spendUsd: null,
+      resetAt: "2026-01-01T04:00:00.000Z",
+      sampleSource,
+      time: "2026-01-01T00:00:00.000Z",
+    });
+
+    async function windowOf(id: string, events: object[]) {
+      const root = mkdtempSync(join(tmpdir(), "aio-token-history-"));
+      const dir = join(root, ".aio", "runs", id);
+      writeRun(root, id, "finished");
+      writeFileSync(
+        join(dir, "rounds", "1", "calls", "sweep.json"),
+        JSON.stringify({ vendor: "claude", tokens: tokens(1) }),
+      );
+      writeFileSync(join(dir, "events.jsonl"), events.map((e) => JSON.stringify(e)).join("\n"));
+      const sample = await saveTokenSample(root, id);
+      return { usage: sample?.usage?.[0], window: sample?.usage?.[0]?.windows?.[0] };
+    }
+
+    it("credits a reading taken as its call starts with the calls before it", async () => {
+      const { window } = await windowOf("01E", [
+        started("a"),
+        finished("a", 1),
+        reading("a", 0.1),
+        started("b"),
+        finished("b", 3),
+        reading("b", 0.12),
+      ]);
+      // The second reading came before call b's tokens, so the rise is call a's.
+      expect(window?.weighted).toBe(2_000);
+      expect(window?.rate).toBeCloseTo(0.02 / 2_000);
+    });
+
+    it("doesn't count a stale reading from a concurrent call as a rise", async () => {
+      const { window } = await windowOf("01F", [
+        started("a"),
+        started("b"),
+        started("c"),
+        finished("a", 1),
+        reading("a", 0.1, "user@example.com", "codex_session"),
+        finished("b", 1),
+        reading("b", 0.08, "user@example.com", "codex_session"),
+        finished("c", 1),
+        reading("c", 0.12, "user@example.com", "codex_session"),
+      ]);
+      expect(window?.used).toBeCloseTo(0.02);
+    });
+
+    it("counts only the tokens of the account whose readings it uses", async () => {
+      const { window } = await windowOf("01G", [
+        started("a1"),
+        finished("a1", 1),
+        reading("a1", 0.1, "a@example.com", "codex_session"),
+        started("b1"),
+        finished("b1", 9),
+        reading("b1", 0.3, "b@example.com", "codex_session"),
+        started("a2"),
+        finished("a2", 1),
+        reading("a2", 0.12, "a@example.com", "codex_session"),
+        started("a3"),
+        finished("a3", 1),
+        reading("a3", 0.14, "a@example.com", "codex_session"),
+      ]);
+      expect(window?.weighted).toBe(4_000);
+      expect(window?.rate).toBeCloseTo(0.04 / 4_000);
+    });
+
+    it("totals the tokens of a call that wrote no call file", async () => {
+      // Call b used a blocked model: it spent tokens but wrote no call file.
+      const { usage, window } = await windowOf("01H", [
+        started("a"),
+        finished("a", 1),
+        reading("a", 0.1, "user@example.com", "codex_session"),
+        started("b"),
+        finished("b", 1),
+        reading("b", 0.12, "user@example.com", "codex_session"),
+      ]);
+      expect(usage).toMatchObject({ fresh: 2_000, cacheRead: 18_000, raw: 20_040 });
+      expect(window?.weighted).toBe(2_000);
+    });
   });
 });

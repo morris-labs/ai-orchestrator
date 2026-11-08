@@ -256,6 +256,8 @@ export const UsageSampleEventSchema = z.object({
   ...base,
   type: z.literal("usage.sample"),
   ...UsageSampleSchema.shape,
+  /** The agent call that took the reading, when an engine call did. */
+  agentId: z.string().min(1).optional(),
 });
 
 export const CeilingCrossedEventSchema = z.object({

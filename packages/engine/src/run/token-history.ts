@@ -183,8 +183,33 @@ function addKinds(totals: Map<Vendor, Kinds>, vendor: Vendor, tokens: StoredToke
 /** Two reset times this close apart name the same window; some vendors round them. */
 const SAME_RESET_MS = 5 * 60_000;
 
+/** One agent call, in `events.jsonl` order. */
+interface Call {
+  vendor: Vendor;
+  /** The line of the call's `agent.started` event, or of its `agent.finished` event without one. */
+  startSeq: number;
+  endSeq: number;
+  weighted: number;
+  /** The accounts the call's readings named. */
+  accounts: Set<string>;
+}
+
+interface RawReading {
+  vendor: Vendor;
+  window: WindowRate["window"];
+  account: string;
+  utilization: number;
+  resetAt: number | null;
+  time: number;
+  seq: number;
+  /** The call that took the reading, or `undefined` when unknown. */
+  call: Call | undefined;
+  /** Whether the vendor takes the reading as the call starts, before most of its tokens. */
+  early: boolean;
+}
+
 interface Reading {
-  /** The vendor's weighted tokens so far in the run when the reading came. */
+  /** The account's weighted tokens so far in the run when the reading came. */
   weighted: number;
   utilization: number;
   resetAt: number | null;
@@ -198,29 +223,44 @@ function sameWindow(a: Reading, b: Reading): boolean {
 
 /**
  * Measures how each vendor's calls moved its usage windows, from the run's
- * `events.jsonl`: each `agent.finished` event adds the call's weighted
+ * `events.jsonl`: each `agent.finished` event gives a call's weighted
  * tokens, and each `usage.sample` event reads a window. Between two readings
  * of the same window, the rise in utilization goes with the tokens of the
- * calls in between. A stretch over a window reset doesn't count, since the
- * share used before the reset is unknown. Other use of the same account in
- * that time counts as the run's, so the rate errs high.
+ * account's calls in between. A stretch over a window reset doesn't count,
+ * since the share used before the reset is unknown. Other use of the same
+ * account in that time counts as the run's, so the rate errs high.
+ *
+ * A reading counts the tokens of the calls that finished before it was
+ * taken: a Claude `rate_limit_event` comes as its call starts, and a Codex
+ * reading as its call ends. Calls run at once, so readings can arrive out of
+ * order; utilization within one window only rises, so a reading lower than
+ * an earlier one adds nothing. A call belongs to the account its readings
+ * name; a call without readings belongs to the vendor's account when the
+ * run used only one, and otherwise to none, which keeps the rate erring high.
  *
  * A vendor gets windows only when every one of its calls reported a
- * breakdown, since the weighted tokens would otherwise come up short. With
- * readings from more than one account, the account with the most readings
- * counts, since the events don't say which account a call used.
+ * breakdown, since the weighted tokens would otherwise come up short. The
+ * tokens by kind come from the same `agent.finished` events, so they cover
+ * every call the windows do, call files or not; a run without those events
+ * keeps the totals from its call files, `fileKinds`.
  */
-async function measureUsage(dir: string, kinds: Map<Vendor, Kinds>): Promise<VendorUsageSample[]> {
+async function measureUsage(
+  dir: string,
+  fileKinds: Map<Vendor, Kinds>,
+): Promise<VendorUsageSample[]> {
   let text: string;
   try {
     text = await readFile(join(dir, "events.jsonl"), "utf8");
   } catch {
     text = "";
   }
-  const weighted = new Map<Vendor, number>();
+  const eventKinds = new Map<Vendor, Kinds>();
   const partial = new Set<Vendor>();
-  // Keyed by vendor, then window, then account.
-  const readings = new Map<Vendor, Map<WindowRate["window"], Map<string, Reading[]>>>();
+  const calls = new Map<string, Call>();
+  const finished: Call[] = [];
+  const lastFinished = new Map<Vendor, Call>();
+  const raw: RawReading[] = [];
+  let seq = 0;
   for (const line of text.split("\n")) {
     if (!line.trim()) continue;
     let event: Record<string, unknown>;
@@ -229,16 +269,40 @@ async function measureUsage(dir: string, kinds: Map<Vendor, Kinds>): Promise<Ven
     } catch {
       continue;
     }
+    seq += 1;
     const vendor = event.vendor as Vendor | undefined;
     if (vendor !== "claude" && vendor !== "codex" && vendor !== "copilot") continue;
-    if (event.type === "agent.finished") {
+    const agentId = typeof event.agentId === "string" ? event.agentId : null;
+    if (event.type === "agent.started") {
+      if (agentId) {
+        calls.set(agentId, {
+          vendor,
+          startSeq: seq,
+          endSeq: Infinity,
+          weighted: 0,
+          accounts: new Set(),
+        });
+      }
+    } else if (event.type === "agent.finished") {
+      const call = (agentId ? calls.get(agentId) : undefined) ?? {
+        vendor,
+        startSeq: seq,
+        endSeq: seq,
+        weighted: 0,
+        accounts: new Set<string>(),
+      };
+      call.endSeq = seq;
+      if (agentId) calls.set(agentId, call);
+      finished.push(call);
+      lastFinished.set(vendor, call);
       const tokens = event.tokens as StoredTokens | undefined;
       if (!tokens) continue;
       if (!hasBreakdown(tokens)) {
         if ((tokens.in ?? 0) + (tokens.out ?? 0) > 0) partial.add(vendor);
         continue;
       }
-      weighted.set(vendor, (weighted.get(vendor) ?? 0) + weightedTokens(vendor, kindsOf(tokens)));
+      call.weighted = weightedTokens(vendor, kindsOf(tokens));
+      addKinds(eventKinds, vendor, tokens);
     } else if (event.type === "usage.sample") {
       const window = event.window as WindowRate["window"];
       if (window !== "5h" && window !== "7d" && window !== "month") continue;
@@ -246,41 +310,85 @@ async function measureUsage(dir: string, kinds: Map<Vendor, Kinds>): Promise<Ven
       const account = typeof event.account === "string" ? event.account : "";
       const resetAt = typeof event.resetAt === "string" ? Date.parse(event.resetAt) : NaN;
       const time = typeof event.time === "string" ? Date.parse(event.time) : NaN;
-      const byWindow = readings.get(vendor) ?? new Map();
-      const byAccount = byWindow.get(window) ?? new Map<string, Reading[]>();
-      const list = byAccount.get(account) ?? [];
-      list.push({
-        weighted: weighted.get(vendor) ?? 0,
+      // An older run doesn't name the call; its readings follow their call's
+      // `agent.finished` event.
+      const call = agentId ? calls.get(agentId) : lastFinished.get(vendor);
+      call?.accounts.add(account);
+      raw.push({
+        vendor,
+        window,
+        account,
         utilization: event.utilization,
         resetAt: Number.isFinite(resetAt) ? resetAt : null,
         time: Number.isFinite(time) ? time : 0,
+        seq,
+        call,
+        early: event.sampleSource === "rate_limit_event",
       });
-      byAccount.set(account, list);
-      byWindow.set(window, byAccount);
-      readings.set(vendor, byWindow);
     }
   }
+  const accountsOf = new Map<Vendor, Set<string>>();
+  for (const r of raw) {
+    const set = accountsOf.get(r.vendor) ?? new Set<string>();
+    set.add(r.account);
+    accountsOf.set(r.vendor, set);
+  }
+  const belongs = (call: Call, account: string): boolean => {
+    if (call.accounts.size > 0) return call.accounts.has(account);
+    return (accountsOf.get(call.vendor)?.size ?? 0) === 1;
+  };
+  // The weighted tokens of `account`'s calls that finished by line `at`.
+  const weightedBy = (vendor: Vendor, account: string, at: number): number =>
+    finished
+      .filter((c) => c.vendor === vendor && c.endSeq <= at && belongs(c, account))
+      .reduce((n, c) => n + c.weighted, 0);
+  // Keyed by vendor, then window, then account.
+  const readings = new Map<Vendor, Map<WindowRate["window"], Map<string, Reading[]>>>();
+  for (const r of raw) {
+    const at = r.call ? (r.early ? r.call.startSeq : r.call.endSeq) : r.seq;
+    const byWindow = readings.get(r.vendor) ?? new Map();
+    const byAccount = byWindow.get(r.window) ?? new Map<string, Reading[]>();
+    const list = byAccount.get(r.account) ?? [];
+    list.push({
+      weighted: weightedBy(r.vendor, r.account, at),
+      utilization: r.utilization,
+      resetAt: r.resetAt,
+      time: r.time,
+    });
+    byAccount.set(r.account, list);
+    byWindow.set(r.window, byAccount);
+    readings.set(r.vendor, byWindow);
+  }
+  const kinds = new Map(fileKinds);
+  for (const [vendor, k] of eventKinds) kinds.set(vendor, k);
   const out: VendorUsageSample[] = [];
   for (const [vendor, k] of kinds) {
     const windows: WindowRate[] = [];
     const byWindow = partial.has(vendor) ? undefined : readings.get(vendor);
     for (const [window, byAccount] of byWindow ?? []) {
-      const list = [...byAccount.values()].sort((a, b) => b.length - a.length)[0] ?? [];
+      const list =
+        [...byAccount.values()]
+          .sort((a, b) => b.length - a.length)[0]
+          ?.slice()
+          .sort((a, b) => a.weighted - b.weighted || a.time - b.time) ?? [];
       let used = 0;
       let tokens = 0;
       let durationMs = 0;
       let resets = 0;
       let stretches = 0;
+      let peak = list[0]?.utilization ?? 0;
       for (let i = 1; i < list.length; i++) {
         const a = list[i - 1] as Reading;
         const b = list[i] as Reading;
         if (!sameWindow(a, b)) {
           resets += 1;
+          peak = b.utilization;
           continue;
         }
         stretches += 1;
-        used += Math.max(0, b.utilization - a.utilization);
-        tokens += Math.max(0, b.weighted - a.weighted);
+        used += Math.max(0, b.utilization - peak);
+        peak = Math.max(peak, b.utilization);
+        tokens += b.weighted - a.weighted;
         durationMs += Math.max(0, b.time - a.time);
       }
       if (stretches === 0 || tokens <= 0) continue;
