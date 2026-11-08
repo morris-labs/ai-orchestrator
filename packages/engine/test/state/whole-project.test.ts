@@ -3,6 +3,7 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import type { RunTokenEstimate } from "@aio/contracts";
 import { describe, expect, it } from "vitest";
 import type {
   AdapterRequest,
@@ -310,7 +311,9 @@ describe("the preview of a whole-project run", () => {
       depth: "standard",
       scope: "whole",
     });
-    const vendors = preview.tokenEstimate?.byVendor.map((v) => v.vendor);
+    // The API schema leaves `byVendor` out, but the engine's preview keeps it.
+    const estimate = preview.tokenEstimate as RunTokenEstimate | undefined;
+    const vendors = estimate?.byVendor.map((v) => v.vendor);
     expect(vendors).toEqual(["claude", "codex"]);
     await runs.close();
   });
