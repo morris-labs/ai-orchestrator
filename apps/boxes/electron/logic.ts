@@ -479,32 +479,61 @@ export interface ShowableNotification {
  */
 export const NOTIFICATION_RETAIN_LIMIT = 100;
 
+/** How `showRetained` treats one notification. */
+export interface RetainOptions {
+  /**
+   * Whether the notification is critical. Past the limit, `showRetained`
+   * closes the oldest normal notification first, and closes a critical one
+   * only when every retained notification is critical.
+   */
+  urgent?: boolean;
+  /**
+   * Whether a `close` event releases the notification. On Windows, Electron
+   * emits `close` when a toast times out into the Action Center, where the
+   * user can still click it, so pass `false` there and let the limit release
+   * it instead.
+   */
+  releaseOnClose?: boolean;
+  /** The most notifications to keep. */
+  limit?: number;
+}
+
 /**
  * Shows `note` and keeps it in `retained` until it closes, fails, or is
  * clicked. Electron collects a notification that nothing references, and a
  * collected notification no longer emits `click`, so `onClick` would never
- * run. When `retained` holds more than `limit` notifications, this closes the
- * oldest so that no notification stays on screen without a click handler.
+ * run. `retained` maps each notification to whether it is critical. When
+ * `retained` holds more than the limit, this closes the oldest normal
+ * notification, or the oldest critical one when no normal one is left, so
+ * that no notification stays on screen without a click handler.
  */
 export function showRetained<N extends ShowableNotification>(
-  retained: Set<N>,
+  retained: Map<N, boolean>,
   note: N,
   onClick: () => void,
-  limit: number = NOTIFICATION_RETAIN_LIMIT,
+  options: RetainOptions = {},
 ): void {
-  retained.add(note);
+  const { urgent = false, releaseOnClose = true, limit = NOTIFICATION_RETAIN_LIMIT } = options;
+  retained.set(note, urgent);
   const release = () => {
     retained.delete(note);
   };
-  note.on("close", release);
+  if (releaseOnClose) note.on("close", release);
   note.on("failed", release);
   note.on("click", () => {
     release();
     onClick();
   });
   note.show();
-  for (const oldest of retained) {
-    if (retained.size <= limit) break;
+  while (retained.size > limit) {
+    let oldest: N | undefined;
+    for (const [n, isUrgent] of retained) {
+      if (!isUrgent) {
+        oldest = n;
+        break;
+      }
+    }
+    oldest ??= retained.keys().next().value as N;
     retained.delete(oldest);
     oldest.close();
   }

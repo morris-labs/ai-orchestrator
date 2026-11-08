@@ -232,7 +232,7 @@ describe("showRetained", () => {
   }
 
   it("keeps a notification until it is clicked, then runs the click handler", () => {
-    const retained = new Set<ReturnType<typeof fakeNote>>();
+    const retained = new Map<ReturnType<typeof fakeNote>, boolean>();
     const note = fakeNote();
     let clicks = 0;
     showRetained(retained, note, () => clicks++);
@@ -244,7 +244,7 @@ describe("showRetained", () => {
   });
 
   it("releases a notification that closes without a click", () => {
-    const retained = new Set<ReturnType<typeof fakeNote>>();
+    const retained = new Map<ReturnType<typeof fakeNote>, boolean>();
     const note = fakeNote();
     showRetained(retained, note, () => undefined);
     note.emit("close");
@@ -252,7 +252,7 @@ describe("showRetained", () => {
   });
 
   it("releases a notification that fails to show", () => {
-    const retained = new Set<ReturnType<typeof fakeNote>>();
+    const retained = new Map<ReturnType<typeof fakeNote>, boolean>();
     const note = fakeNote();
     showRetained(retained, note, () => undefined);
     note.emit("failed");
@@ -262,7 +262,7 @@ describe("showRetained", () => {
   it("keeps a notification that never reports close or click", () => {
     vi.useFakeTimers();
     try {
-      const retained = new Set<ReturnType<typeof fakeNote>>();
+      const retained = new Map<ReturnType<typeof fakeNote>, boolean>();
       const note = fakeNote();
       let clicks = 0;
       showRetained(retained, note, () => clicks++);
@@ -276,11 +276,44 @@ describe("showRetained", () => {
   });
 
   it("closes and releases the oldest notification past the limit", () => {
-    const retained = new Set<ReturnType<typeof fakeNote>>();
+    const retained = new Map<ReturnType<typeof fakeNote>, boolean>();
     const [first, second, third] = [fakeNote(), fakeNote(), fakeNote()];
-    for (const note of [first, second, third]) showRetained(retained, note, () => undefined, 2);
+    for (const note of [first, second, third])
+      showRetained(retained, note, () => undefined, { limit: 2 });
     expect(first.closed).toBe(true);
-    expect([...retained]).toEqual([second, third]);
+    expect([...retained.keys()]).toEqual([second, third]);
     expect(second.closed).toBe(false);
+  });
+
+  it("closes the oldest normal notification before a critical one", () => {
+    const retained = new Map<ReturnType<typeof fakeNote>, boolean>();
+    const [critical, normal, later] = [fakeNote(), fakeNote(), fakeNote()];
+    showRetained(retained, critical, () => undefined, { urgent: true, limit: 2 });
+    showRetained(retained, normal, () => undefined, { limit: 2 });
+    showRetained(retained, later, () => undefined, { limit: 2 });
+    expect(critical.closed).toBe(false);
+    expect(normal.closed).toBe(true);
+    expect([...retained.keys()]).toEqual([critical, later]);
+  });
+
+  it("closes the oldest critical notification when every one is critical", () => {
+    const retained = new Map<ReturnType<typeof fakeNote>, boolean>();
+    const [first, second] = [fakeNote(), fakeNote()];
+    for (const note of [first, second])
+      showRetained(retained, note, () => undefined, { urgent: true, limit: 1 });
+    expect(first.closed).toBe(true);
+    expect([...retained.keys()]).toEqual([second]);
+  });
+
+  it("keeps a notification clickable after close when close doesn't release it", () => {
+    const retained = new Map<ReturnType<typeof fakeNote>, boolean>();
+    const note = fakeNote();
+    let clicks = 0;
+    showRetained(retained, note, () => clicks++, { releaseOnClose: false });
+    note.emit("close");
+    expect(retained.has(note)).toBe(true);
+    note.emit("click");
+    expect(clicks).toBe(1);
+    expect(retained.size).toBe(0);
   });
 });

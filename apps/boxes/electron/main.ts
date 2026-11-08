@@ -386,7 +386,9 @@ function refreshCounts() {
 }
 
 /** Desktop notifications on screen. */
-const shownNotifications = new Set<Notification>();
+const shownNotifications = new Map<Notification, boolean>();
+// Windows emits `close` when a toast moves to the Action Center, where it stays clickable.
+const releaseOnClose = process.platform !== "win32";
 
 function watchEvents() {
   const conn = new EventsConnection({
@@ -405,18 +407,24 @@ function watchEvents() {
     onEvent: (ev) => {
       if (ev.type === "box.changed") refreshCounts();
       if (ev.type === "notification" && isBoxNotification(ev) && Notification.isSupported()) {
+        const urgent = ev.severity === "error";
         const n = new Notification({
           title: ev.title,
           body: ev.body,
-          urgency: ev.severity === "error" ? "critical" : "normal",
+          urgency: urgent ? "critical" : "normal",
         });
-        showRetained(shownNotifications, n, () => {
-          showWindow();
-          if (ev.boxId) win?.webContents.send("aio:select-box", ev.boxId);
-          void client()
-            .call("notifications.read", { params: { notificationId: ev.notificationId } })
-            .catch(() => undefined);
-        });
+        showRetained(
+          shownNotifications,
+          n,
+          () => {
+            showWindow();
+            if (ev.boxId) win?.webContents.send("aio:select-box", ev.boxId);
+            void client()
+              .call("notifications.read", { params: { notificationId: ev.notificationId } })
+              .catch(() => undefined);
+          },
+          { urgent, releaseOnClose },
+        );
       }
     },
   });
@@ -546,10 +554,15 @@ function registerIpc() {
       body,
       urgency: urgent === true ? "critical" : "normal",
     });
-    showRetained(shownNotifications, note, () => {
-      showWindow();
-      win?.webContents.send("aio:select-box", boxId, machineId, notificationId);
-    });
+    showRetained(
+      shownNotifications,
+      note,
+      () => {
+        showWindow();
+        win?.webContents.send("aio:select-box", boxId, machineId, notificationId);
+      },
+      { urgent: urgent === true, releaseOnClose },
+    );
   });
   ipcMain.on("aio:quit", (e) => {
     if (!fromApp(e)) return;
