@@ -360,6 +360,20 @@ export interface SweepPromptInput {
   standard?: boolean;
 }
 
+/**
+ * The most changed files the large-diff sweep prompt lists. A change to
+ * thousands of files would otherwise put the prompt past a model's
+ * context limit, which the diff file exists to avoid.
+ */
+export const SWEEP_CHANGED_FILES_LIMIT = 500;
+
+function changedFileList(files: readonly string[]): string {
+  const listed = files.slice(0, SWEEP_CHANGED_FILES_LIMIT).map((f) => `- ${f}`);
+  const rest = files.length - listed.length;
+  if (rest > 0) listed.push(`- ...and ${rest} more files. The diff file names every one.`);
+  return listed.join("\n");
+}
+
 /** The pattern sweep: other instances of each confirmed pattern across the whole diff. */
 export function sweepPrompt(input: SweepPromptInput): string {
   const patterns = input.patterns
@@ -383,7 +397,7 @@ export function sweepPrompt(input: SweepPromptInput): string {
           "Changed files",
           // A read-only reviewer can't always run Git, but it can always read a
           // file, and the file holds exactly the diff the engine measured.
-          `The diff is too large to include. Read it from the file \`${input.diffFile ?? ""}\`, a part at a time.\n\n${input.changedFiles.map((f) => `- ${f}`).join("\n")}`,
+          `The diff is too large to include. Read it from the file \`${input.diffFile ?? ""}\`, a part at a time.\n\n${changedFileList(input.changedFiles)}`,
         )
       : section("Diff", `\`\`\`diff\n${input.diff.trimEnd()}\n\`\`\``),
     input.standard

@@ -1554,7 +1554,14 @@ export async function runSweep(
     role: "sweeper",
     vendor,
     method: "sweep",
-    request: { prompt, repoPath, toolPolicy: "read-only" },
+    // The diff file sits outside the checkout, and a CLI reads only the
+    // folders it's given.
+    request: {
+      prompt,
+      repoPath,
+      toolPolicy: "read-only",
+      ...(inline ? {} : { extraDirs: [dirname(diffFile)] }),
+    },
     groupId: null,
     estimateTokens: estimateTokens(prompt) + 3000,
     allowFallback: true,

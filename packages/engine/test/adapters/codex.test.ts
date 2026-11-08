@@ -49,6 +49,14 @@ describe("CodexStreamParser", () => {
     });
   });
 
+  it("leaves out the token breakdown when a turn omits cached_input_tokens", () => {
+    const parser = new CodexStreamParser();
+    parser.push(
+      JSON.stringify({ type: "turn.completed", usage: { input_tokens: 1000, output_tokens: 10 } }),
+    );
+    expect(parser.summary().tokens).toEqual({ input: 1000, output: 10 });
+  });
+
   it("collects turn.failed messages", () => {
     const s = parse("codex-usage-limit.jsonl");
     expect(s.errors).toEqual(["You’ve hit your usage limit. Try again at 3:15 PM."]);

@@ -232,6 +232,8 @@ export class CodexStreamParser {
   private input = 0;
   private output = 0;
   private cached = 0;
+  /** Whether some turn left out `cached_input_tokens`, so the cache split is unknown. */
+  private cacheUnknown = false;
   private readonly errors: string[] = [];
   private turnsCompleted = 0;
   private badLines = 0;
@@ -256,7 +258,11 @@ export class CodexStreamParser {
         this.input += num(usage.input_tokens);
         this.output += num(usage.output_tokens);
         // `input_tokens` includes `cached_input_tokens`, which are cache reads.
-        this.cached += num(usage.cached_input_tokens);
+        if (typeof usage.cached_input_tokens === "number") {
+          this.cached += num(usage.cached_input_tokens);
+        } else {
+          this.cacheUnknown = true;
+        }
         break;
       }
       case "turn.failed": {
@@ -296,13 +302,17 @@ export class CodexStreamParser {
       threadId: this.threadId,
       lastMessage: this.lastMessage,
       toolErrors: [...this.toolErrors],
-      tokens: {
-        input: this.input,
-        output: this.output,
-        fresh: Math.max(0, this.input - this.cached),
-        cacheWrite: 0,
-        cacheRead: Math.min(this.cached, this.input),
-      },
+      // Without a cache count, a breakdown would claim every input token
+      // is fresh, so the summary reports only the totals.
+      tokens: this.cacheUnknown
+        ? { input: this.input, output: this.output }
+        : {
+            input: this.input,
+            output: this.output,
+            fresh: Math.max(0, this.input - this.cached),
+            cacheWrite: 0,
+            cacheRead: Math.min(this.cached, this.input),
+          },
       errors: [...this.errors],
       turnsCompleted: this.turnsCompleted,
       badLines: this.badLines,

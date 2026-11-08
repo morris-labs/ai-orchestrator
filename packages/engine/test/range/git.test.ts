@@ -117,3 +117,52 @@ describe("excludeEngineDir", () => {
     expect(git(linked, "status", "--porcelain", "--untracked-files=all")).toBe("");
   });
 });
+
+describe("Git.pathExists and Git.findStrings", () => {
+  function nestedRepo(): { repo: string; rev: string } {
+    const repo = tempDir("aio-git-");
+    git(repo, "init", "-q", "-b", "main");
+    mkdirSync(join(repo, "pkg", "sub"), { recursive: true });
+    mkdirSync(join(repo, "other"), { recursive: true });
+    writeFileSync(join(repo, "pkg", "sub", "a.ts"), "export const alpha = 1;\n");
+    writeFileSync(
+      join(repo, "other", "b.ts"),
+      "  const SYNTHETIC_moved = compute(); // trailing words\n",
+    );
+    git(repo, "add", ".");
+    git(repo, "commit", "-q", "-m", "base");
+    return { repo, rev: git(repo, "rev-parse", "HEAD") };
+  }
+
+  it("finds a path written with ./ or repeated slashes", async () => {
+    const { repo, rev } = nestedRepo();
+    const g = new Git(new ExecaRunner(), repo);
+    expect(await g.pathExists(rev, "./pkg/sub/a.ts")).toBe(true);
+    expect(await g.pathExists(rev, "pkg//sub/a.ts")).toBe(true);
+    expect(await g.pathExists(rev, "pkg/sub/missing.ts")).toBe(false);
+  });
+
+  it("searches the whole repository from a subfolder", async () => {
+    const { repo, rev } = nestedRepo();
+    const g = new Git(new ExecaRunner(), join(repo, "pkg", "sub"));
+    const found = await g.findStrings(rev, ["SYNTHETIC_moved = compute();", "not anywhere here"]);
+    expect([...found!]).toEqual(["SYNTHETIC_moved = compute();"]);
+  });
+
+  it("reads only the matched text, not whole lines", async () => {
+    const { repo, rev } = nestedRepo();
+    const outputs: string[] = [];
+    const inner = new ExecaRunner();
+    const runner = {
+      run: async (...args: Parameters<ExecaRunner["run"]>) => {
+        const result = await inner.run(...args);
+        outputs.push(result.stdout);
+        return result;
+      },
+    };
+    const g = new Git(runner, repo);
+    const found = await g.findStrings(rev, ["SYNTHETIC_moved", "SYNTHETIC_moved = compute"]);
+    expect(found).toEqual(new Set(["SYNTHETIC_moved", "SYNTHETIC_moved = compute"]));
+    expect(outputs.join("")).not.toContain("trailing words");
+  });
+});

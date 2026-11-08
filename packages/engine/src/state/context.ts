@@ -49,7 +49,7 @@ import {
   type VendorAdapter,
 } from "../core.js";
 import { NO_EXTRAS, type PolicyExtras } from "../policy/load.js";
-import { Git } from "../range/git.js";
+import { Git, normalizeRepoPath } from "../range/git.js";
 import { ShellRunner } from "../range/exec.js";
 import type { EngineState } from "../run/engine-state.js";
 import type { RunStore } from "../run/store.js";
@@ -487,7 +487,7 @@ export class RunContext {
   private async missingAtBase(finding: Finding): Promise<string | null> {
     const base = this.eng.diffBaseSha;
     if (!base || !finding.file || this.state.request.scope === "whole") return null;
-    const file = finding.file;
+    const file = normalizeRepoPath(finding.file);
     const short = base.slice(0, 12);
     let reason: string | null = null;
     const exists = await this.git.pathExists(base, file);

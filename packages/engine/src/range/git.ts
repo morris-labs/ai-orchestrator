@@ -1,6 +1,6 @@
 // A thin `git` client over a `CommandRunner`.
 import { appendFile, copyFile, mkdir, readFile, rm } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, posix, resolve } from "node:path";
 import type { CommandRunner } from "../core.js";
 import { parseAddedNumstat, type DiffFile } from "./diff.js";
 
@@ -25,6 +25,15 @@ export class GitError extends Error {
  * under review.
  */
 export const NO_HOOKS = ["-c", "core.hooksPath=/dev/null"] as const;
+
+/**
+ * `path` as Git prints it: no `./` segments, no repeated or trailing
+ * slashes. A path that leaves the repository keeps its `..` segments.
+ */
+export function normalizeRepoPath(path: string): string {
+  const normalized = posix.normalize(path).replace(/\/+$/, "");
+  return normalized.startsWith("./") ? normalized.slice(2) : normalized;
+}
 
 /** The paths `Git.grepFiles` found, or why it stopped. */
 export type GrepResult = string[] | "timeout" | "error";
@@ -247,6 +256,8 @@ export class Git {
    * through a submodule, whose files the superproject doesn't hold.
    */
   async pathExists(rev: string, path: string): Promise<boolean | null> {
+    // Git prints the normalized path, so compare against the same form.
+    path = normalizeRepoPath(path);
     const parts = path.split("/");
     const prefixes = parts.map((_, i) => parts.slice(0, i + 1).join("/"));
     const args = ["--literal-pathspecs", "ls-tree", "-z", "--full-tree", rev, "--", ...prefixes];
@@ -264,25 +275,36 @@ export class Git {
   }
 
   /**
-   * The strings in `needles` that occur in some file at `rev`, or `null`
-   * when Git fails. Each needle is a literal string, not a pattern.
+   * The strings in `needles` that occur in some file at `rev`, anywhere in
+   * the repository, or `null` when Git fails. Each needle is a literal
+   * string, not a pattern.
    */
   async findStrings(rev: string, needles: readonly string[]): Promise<Set<string> | null> {
     if (needles.length === 0) return new Set();
+    // `-o` prints only the matched text, not whole lines, so the output stays
+    // small when a common needle matches across a large tree. `:/` searches
+    // from the top of the repository, not only below the working directory.
     const args = [
       "grep",
       "-I",
       "-F",
       "-h",
+      "-o",
       "--no-color",
       ...needles.flatMap((n) => ["-e", n]),
       rev,
+      "--",
+      ":/",
     ];
     const result = await this.exec(args, { timeoutMs: 60_000 });
     // git grep exits with 1 when nothing matches.
     if (result.exitCode === 1) return new Set();
     if (result.exitCode !== 0) return null;
-    return new Set(needles.filter((n) => result.stdout.includes(n)));
+    const matched = new Set(result.stdout.split("\n").filter((l) => l !== ""));
+    // A needle inside a longer needle on the same line prints as the longer one.
+    return new Set(
+      needles.filter((n) => matched.has(n) || [...matched].some((m) => m.includes(n))),
+    );
   }
 
   /** The content of `path` at `rev`, or `null` when it doesn't exist there. */

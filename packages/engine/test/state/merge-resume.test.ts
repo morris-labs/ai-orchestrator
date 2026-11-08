@@ -1,7 +1,7 @@
 // The merge stage across a crash: the same candidates never merge twice.
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { Vendor } from "@aio/contracts";
 import { describe, expect, it } from "vitest";
 import type { VendorAdapter } from "../../src/core.js";
@@ -175,11 +175,13 @@ describe("runSweep", () => {
 
   it("hands a large diff to the sweeper in a file that holds the measured diff", async () => {
     const prompts: string[] = [];
+    const extraDirs: (string[] | undefined)[] = [];
     const sweeper = (vendor: Vendor): VendorAdapter =>
       ({
         vendor,
-        sweep: ({ prompt }: { prompt: string }) => {
+        sweep: ({ prompt, extraDirs: dirs }: { prompt: string; extraDirs?: string[] }) => {
           prompts.push(prompt);
+          extraDirs.push(dirs);
           return Promise.resolve({
             output: { findings: [] },
             model: vendor,
@@ -220,6 +222,8 @@ describe("runSweep", () => {
     const path = ctx.store.path("rounds/1/sweep.diff");
     expect(prompt).toContain(path);
     expect(prompt).not.toContain("git -C");
+    // The run store is outside the checkout, so the sweeper must be allowed to read it.
+    expect(extraDirs[0]).toEqual([dirname(path)]);
     const written = readFileSync(path, "utf8");
     expect(written).toBe(await ctx.git.diffForPrompt(ctx.eng.diffBaseSha, ctx.state.tipSha));
     expect(written).not.toContain("upstream only");
