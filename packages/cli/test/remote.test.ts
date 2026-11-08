@@ -155,6 +155,18 @@ describe("--machine", () => {
     expect(calls()).toEqual([]);
   });
 
+  it("reports an offline machine, not an old server, for --concurrency", async () => {
+    server.on("GET /api/v1/machines", {
+      body: { machines: [MACHINES[0], machine({ id: NODE, name: "hub", status: "offline" })] },
+    });
+    server.on(`POST ${PROXY}/runs`, { status: 201, body: runState });
+    const args = ["--project", PROJECT_ID, "--repo", "/srv/site", "--concurrency", "2"];
+    expect(await cli(["--machine", "hub", "review", "start", ...args])).toBe(2);
+    expect(err).toContain("hub is offline");
+    expect(err).not.toContain("too old");
+    expect(calls()).toEqual([]);
+  });
+
   it("sends --concurrency to a machine whose server honours it", async () => {
     server.on("GET /api/v1/machines", {
       body: {

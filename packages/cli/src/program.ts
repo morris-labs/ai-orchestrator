@@ -245,6 +245,8 @@ interface MachineTarget {
   platform: HostOs | null;
   /** The link capabilities the machine's server lists. */
   capabilities: string[];
+  /** The machine's link status; capabilities are only current when it is `online`. */
+  status: Machine["status"];
 }
 
 /** One machine's part of `aio box list --all-machines`. */
@@ -575,7 +577,13 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
     }
     return m.isLocal
       ? null
-      : { id: m.id, name: m.name, platform: m.platform, capabilities: m.capabilities };
+      : {
+          id: m.id,
+          name: m.name,
+          platform: m.platform,
+          capabilities: m.capabilities,
+          status: m.status,
+        };
   };
   /**
    * The link capabilities this machine's own server lists. A server with no
@@ -1293,6 +1301,13 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
       // refuse the flag rather than start a run that ignores it. This
       // covers this machine's own server too, which might predate the CLI.
       if (o.concurrency !== undefined) {
+        // A machine that isn't online might list no capabilities only because
+        // nothing has reached it, so say so rather than call its server old.
+        if (remote && remote.status !== "online") {
+          throw new UsageError(
+            `${remote.name} is ${remote.status}, so aio can't check that its server can set --concurrency. Try again when ${remote.name} is online.`,
+          );
+        }
         const capabilities = remote ? remote.capabilities : await localCapabilities();
         if (!capabilities.includes(RUN_CONCURRENCY_CAPABILITY)) {
           throw new UsageError(
