@@ -352,5 +352,26 @@ describe("usage windows", () => {
       expect(window?.weighted).toBe(2_000);
       expect(window?.used).toBeCloseTo(0.2);
     });
+
+    it("keeps a successful call's pending reading when the next call fails", async () => {
+      // An older run names calls only in their lifecycle events. Call a1
+      // succeeds and its reading follows; call b1 fails and its reading
+      // comes before it finishes.
+      const old = (event: Record<string, unknown>) => ({ ...event, agentId: undefined });
+      const { window } = await windowOf("01L", [
+        started("a0"),
+        { ...finished("a0", 1), outcome: "ok" },
+        old(reading("a0", 0.1, "a@example.com", "codex_session")),
+        started("a1"),
+        { ...finished("a1", 1), outcome: "ok" },
+        old(reading("a1", 0.12, "a@example.com", "codex_session")),
+        started("b1"),
+        old(reading("b1", 0.5, "b@example.com", "codex_session")),
+        { ...finished("b1", 9), outcome: "error" },
+      ]);
+      // Account a's readings rise over call a1 alone; call b1 is account b's.
+      expect(window?.weighted).toBe(2_000);
+      expect(window?.rate).toBeCloseTo(0.02 / 2_000);
+    });
   });
 });

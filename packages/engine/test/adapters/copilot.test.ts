@@ -89,6 +89,23 @@ describe("parseCopilotJson", () => {
     });
   });
 
+  it("adds cache counts to a Claude model's input even when they're smaller", () => {
+    const stream = JSON.stringify({
+      type: "assistant.usage",
+      data: {
+        model: "claude-sonnet-4.5",
+        inputTokens: 5000,
+        outputTokens: 10,
+        cacheReadTokens: 1000,
+      },
+    });
+    expect(parseCopilotJson(stream).tokens).toMatchObject({
+      input: 6000,
+      fresh: 5000,
+      cacheRead: 1000,
+    });
+  });
+
   it("counts assistant.usage cost as a premium-request multiplier, not dollars", async () => {
     const stream = [
       { type: "assistant.message", data: { content: '{"ok":true}', outputTokens: 9 } },

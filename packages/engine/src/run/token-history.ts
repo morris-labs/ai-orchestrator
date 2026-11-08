@@ -274,6 +274,8 @@ async function measureUsage(
   // An older run's readings don't name their call. A successful call's
   // readings follow its `agent.finished` event, and a failed call's come
   // just before it, so they wait for the vendor's next `agent.finished`.
+  // There, a failed call takes the readings that came after it started,
+  // and the call that finished before it takes the rest.
   const unnamed = new Map<Vendor, RawReading[]>();
   const attach = (readings: RawReading[] | undefined, call: Call | undefined) => {
     for (const r of readings ?? []) {
@@ -305,7 +307,8 @@ async function measureUsage(
         });
       }
     } else if (event.type === "agent.finished") {
-      const call = (agentId ? calls.get(agentId) : undefined) ?? {
+      const started = agentId ? calls.get(agentId) : undefined;
+      const call = started ?? {
         vendor,
         startSeq: seq,
         endSeq: seq,
@@ -314,10 +317,11 @@ async function measureUsage(
       };
       call.endSeq = seq;
       if (agentId) calls.set(agentId, call);
-      attach(
-        unnamed.get(vendor),
-        event.outcome === undefined || event.outcome === "ok" ? lastFinished.get(vendor) : call,
-      );
+      const failed = event.outcome !== undefined && event.outcome !== "ok";
+      for (const r of unnamed.get(vendor) ?? []) {
+        const own = failed && (!started || r.seq > started.startSeq);
+        attach([r], own ? call : lastFinished.get(vendor));
+      }
       unnamed.delete(vendor);
       finished.push(call);
       lastFinished.set(vendor, call);

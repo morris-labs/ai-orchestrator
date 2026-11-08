@@ -47,7 +47,7 @@ import {
   type VendorAdapter,
 } from "../core.js";
 import { NO_EXTRAS, type PolicyExtras } from "../policy/load.js";
-import { Git, normalizeRepoPath } from "../range/git.js";
+import { collapseSpace, Git, normalizeRepoPath } from "../range/git.js";
 import { ShellRunner } from "../range/exec.js";
 import type { EngineState } from "../run/engine-state.js";
 import type { RunStore } from "../run/store.js";
@@ -479,8 +479,8 @@ export class RunContext {
    * Why a finding's code can't be at the run's base, or `null` when it can
    * be or the engine can't tell. The file missing there, or the finding's
    * symbol missing from the base version of the file, is a reason only when
-   * the flagged lines are missing from the base as well: a rename or a move
-   * changes a path or a name but keeps the code.
+   * the change wrote the flagged code itself (see `flaggedCodeIsNew`): a
+   * rename or a move changes a path or a name but keeps the code.
    */
   private async missingAtBase(finding: Finding): Promise<string | null> {
     const base = this.eng.diffBaseSha;
@@ -501,35 +501,53 @@ export class RunContext {
       }
     }
     if (!reason) return null;
-    return (await this.flaggedCodeAtBase(base, finding)) === false ? reason : null;
+    return (await this.flaggedCodeIsNew(base, finding, !exists)) ? reason : null;
   }
 
   /**
-   * Whether any of the finding's flagged lines comes from `base`, as
-   * `git blame` traces it through renames and moves, or `null` when the
-   * engine can't read them or they hold no code. A rename or a reformat
-   * leaves the rest of an old flaw's lines at the base, so only code that
-   * the change wrote throughout counts as missing. A range of one or two
-   * lines, such as a renamed declaration alone, extends to the 10 lines
-   * from its start, which hold the body that the rename kept.
+   * Whether the change wrote the finding's flagged lines rather than kept,
+   * renamed, moved, or reworked old code. That takes all of these:
+   *
+   * - `git blame` traces none of the lines to `base`, through renames,
+   *   moves, and whitespace changes.
+   * - No hunk that touches the lines removes or replaces lines. A rename
+   *   that also rewrites the code around an old flaw replaces the old
+   *   declaration, which blame can't trace once most lines changed.
+   * - For a file missing at the base, Git sees the file as added, not
+   *   renamed or copied from another.
+   * - No flagged line matches a line that the change removed elsewhere,
+   *   which catches a move too small for blame to trace.
+   *
+   * A range of one or two lines, such as a declaration alone, extends to the
+   * 10 lines from its start. Any doubt, such as a Git failure or lines with
+   * no code, gives `false`, which keeps the agent's verdict.
    */
-  private async flaggedCodeAtBase(base: string, finding: Finding): Promise<boolean | null> {
-    if (!finding.file || !finding.lines) return null;
+  private async flaggedCodeIsNew(
+    base: string,
+    finding: Finding,
+    fileMissing: boolean,
+  ): Promise<boolean> {
+    if (!finding.file || !finding.lines) return false;
     const rev = this.linesRev(finding.linesAt);
-    if (rev === null) return null;
+    if (rev === null) return false;
     const file = normalizeRepoPath(finding.file);
     const text = await this.git.show(rev, file);
-    if (text === null) return null;
+    if (text === null) return false;
     const all = text.replace(/\n$/, "").split("\n");
     const [first, end] = finding.lines;
     let last = Math.min(end, first + 59, all.length);
-    if (first < 1 || first > last) return null;
+    if (first < 1 || first > last) return false;
     if (all.slice(first - 1, last).filter((l) => /\w/.test(l)).length < 3) {
       last = Math.max(last, Math.min(first + 9, all.length));
     }
     const lines = await this.git.linesFromBase(base, rev, file, first, last);
-    if (!lines || lines.counted === 0) return null;
-    return lines.fromBase > 0;
+    if (!lines || lines.counted === 0 || lines.fromBase > 0) return false;
+    const change = await this.git.changeTo(base, rev, file, first, last);
+    if (!change || change.replaces || (fileMissing && !change.added)) return false;
+    return !all.slice(first - 1, last).some((l) => {
+      const flat = collapseSpace(l);
+      return flat.length >= 8 && /\w/.test(flat) && change.removed.has(flat);
+    });
   }
 
   /**

@@ -35,6 +35,11 @@ export function normalizeRepoPath(path: string): string {
   return normalized.startsWith("./") ? normalized.slice(2) : normalized;
 }
 
+/** `text` trimmed, with each run of whitespace as one space. */
+export function collapseSpace(text: string): string {
+  return text.trim().replace(/\s+/g, " ");
+}
+
 /** The paths `Git.grepFiles` found, or why it stopped. */
 export type GrepResult = string[] | "timeout" | "error";
 
@@ -277,11 +282,18 @@ export class Git {
   /**
    * For lines `first` to `last` of `path` at `rev`, how many hold a word
    * character (`counted`) and how many of those `git blame` traces to
-   * `base` or earlier (`fromBase`), or `null` when Git fails. Blame follows
-   * renames, and ignores whitespace and lines that moved within a file or
-   * from a file that the same commit changed. A short line that occurs
-   * elsewhere doesn't count as old, unlike a text search. `path` is from
-   * the repository root.
+   * `base` (`fromBase`), or `null` when Git fails. Blame follows renames,
+   * and ignores whitespace and lines that moved within a file or from a
+   * file that the change changed. A short line that occurs elsewhere
+   * doesn't count as old, unlike a text search. `path` is from the
+   * repository root.
+   *
+   * Blame reads one commit that puts `rev`'s tree on top of `base`, so a
+   * line counts as old only when `base` itself holds it. Over `base..rev`,
+   * a root commit, a shallow graft, or a common ancestor of a `base` that
+   * isn't an ancestor of `rev` would count as the base too. The commit
+   * gets the current date: an older date makes Git walk the base's history
+   * before it reaches the commit.
    */
   async linesFromBase(
     base: string,
@@ -292,6 +304,8 @@ export class Git {
   ): Promise<{ counted: number; fromBase: number } | null> {
     const top = await this.exec(["rev-parse", "--show-toplevel"]);
     if (top.exitCode !== 0) return null;
+    const change = await this.changeCommit(base, rev);
+    if (change === null) return null;
     const args = [
       "blame",
       "--line-porcelain",
@@ -300,7 +314,7 @@ export class Git {
       "-C",
       "-L",
       `${first},${last}`,
-      `${base}..${rev}`,
+      `${base}..${change}`,
       "--",
       path,
     ];
@@ -319,6 +333,94 @@ export class Git {
       }
     }
     return { counted, fromBase };
+  }
+
+  /**
+   * How the change from `base` to `rev` treats `path`, or `null` when Git
+   * fails: whether it adds the file without renaming or copying another
+   * (`added`), whether a hunk that touches lines `first` to `last` of the
+   * file removes or replaces lines (`replaces`), and every line the change
+   * removes anywhere, with whitespace collapsed (`removed`).
+   */
+  async changeTo(
+    base: string,
+    rev: string,
+    path: string,
+    first: number,
+    last: number,
+  ): Promise<{ added: boolean; replaces: boolean; removed: Set<string> } | null> {
+    const result = await this.exec(
+      [
+        "-c",
+        "core.quotePath=false",
+        "diff",
+        "--no-color",
+        "--no-ext-diff",
+        "--no-textconv",
+        "-U0",
+        "-M",
+        "-C",
+        base,
+        rev,
+      ],
+      { timeoutMs: 60_000 },
+    );
+    if (result.exitCode !== 0) return null;
+    let added = false;
+    let replaces = false;
+    const removed = new Set<string>();
+    let fresh = false;
+    let target = false;
+    let inHunk = false;
+    for (const line of result.stdout.split("\n")) {
+      if (line.startsWith("diff --git ")) {
+        fresh = false;
+        target = false;
+        inHunk = false;
+      } else if (!inHunk && line === "--- /dev/null") {
+        fresh = true;
+      } else if (
+        !inHunk &&
+        (line === `+++ b/${path}` || line === `rename to ${path}` || line === `copy to ${path}`)
+      ) {
+        target = true;
+        if (line.startsWith("+++") && fresh) added = true;
+      } else if (line.startsWith("@@ ")) {
+        inHunk = true;
+        const m = /^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(line);
+        if (!target || !m) continue;
+        const old = m[1] === undefined ? 1 : Number(m[1]);
+        const start = Number(m[2]);
+        const count = m[3] === undefined ? 1 : Number(m[3]);
+        // A hunk that adds nothing removes lines after line `start`.
+        const end = count === 0 ? start + 1 : start + count - 1;
+        if (old > 0 && start <= last && end >= first) replaces = true;
+      } else if (inHunk && line.startsWith("-")) {
+        const text = collapseSpace(line.slice(1));
+        if (text) removed.add(text);
+      }
+    }
+    return { added, replaces, removed };
+  }
+
+  /** A commit that holds `rev`'s tree with `base` as its only parent, or `null` when Git fails. */
+  private async changeCommit(base: string, rev: string): Promise<string | null> {
+    const tree = await this.exec(["rev-parse", "--verify", "--quiet", `${rev}^{tree}`]);
+    if (tree.exitCode !== 0) return null;
+    const parent = await this.exec(["rev-parse", "--verify", "--quiet", `${base}^{commit}`]);
+    if (parent.exitCode !== 0) return null;
+    const commit = await this.exec(
+      [
+        "commit-tree",
+        tree.stdout.trim(),
+        "-p",
+        parent.stdout.trim(),
+        "-m",
+        "AI Orchestrator change for blame",
+      ],
+      { env: ENGINE_IDENTITY },
+    );
+    return commit.exitCode === 0 ? commit.stdout.trim() : null;
   }
 
   /** The content of `path` at `rev`, or `null` when it doesn't exist there. */

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseDiff } from "../../src/range/diff.js";
@@ -182,6 +182,38 @@ describe("Git.linesFromBase", () => {
     const tip = git(repo, "rev-parse", "HEAD");
     const g = new Git(new ExecaRunner(), repo);
     expect(await g.linesFromBase(base, tip, "pkg/fresh.py", 1, 2)).toEqual({
+      counted: 2,
+      fromBase: 0,
+    });
+  });
+
+  it("doesn't count a line from an unrelated root commit as old", async () => {
+    const { repo, base } = baseRepo();
+    git(repo, "checkout", "-q", "--orphan", "other");
+    git(repo, "rm", "-r", "-q", "--cached", ".");
+    rmSync(join(repo, "pkg"), { recursive: true, force: true });
+    writeFileSync(join(repo, "new.txt"), "SYNTHETIC_added_line = 1\n");
+    git(repo, "add", ".");
+    git(repo, "commit", "-q", "-m", "other root");
+    git(repo, "checkout", "-q", "main");
+    git(repo, "merge", "-q", "--allow-unrelated-histories", "-m", "merge", "other");
+    const tip = git(repo, "rev-parse", "HEAD");
+    const g = new Git(new ExecaRunner(), repo);
+    expect(await g.linesFromBase(base, tip, "new.txt", 1, 1)).toEqual({
+      counted: 1,
+      fromBase: 0,
+    });
+  });
+
+  it("doesn't count a line that a base off the tip's history removed", async () => {
+    const { repo, base: shared } = baseRepo();
+    git(repo, "checkout", "-q", "-b", "topic");
+    git(repo, "checkout", "-q", "main");
+    git(repo, "rm", "-q", "pkg/util.py");
+    git(repo, "commit", "-q", "-m", "drop util");
+    const base = git(repo, "rev-parse", "HEAD");
+    const g = new Git(new ExecaRunner(), repo);
+    expect(await g.linesFromBase(base, shared, "pkg/util.py", 1, 2)).toEqual({
       counted: 2,
       fromBase: 0,
     });

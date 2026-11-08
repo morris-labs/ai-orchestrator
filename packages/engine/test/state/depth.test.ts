@@ -467,6 +467,38 @@ describe("batched verification", () => {
     expect(ctx.findings[0]?.verdict).toBe("pre-existing");
   });
 
+  it("keeps a pre-existing verdict when a rename rewrites every flagged line", async () => {
+    const { ctx, repo } = await preExistingRun({ symbol: "bill_card", lines: [1, 7] });
+    ctx.eng.diffBaseSha = commitFiles(repo, { "shop/file1.py": CHARGE });
+    const rewrapped = [
+      "def bill_card(",
+      "    amount,",
+      "    token,",
+      "):",
+      "    return gateway.submit(",
+      "        int(amount * 100), token",
+      "    )",
+      "",
+    ].join("\n");
+    ctx.state.tipSha = commitFiles(repo, { "shop/file1.py": rewrapped });
+    await verifyPending(ctx, ctx.store.roundFile(1, "verify"));
+    expect(ctx.findings[0]?.verdict).toBe("pre-existing");
+  });
+
+  it("keeps a pre-existing verdict for a small function moved into a new file", async () => {
+    const { ctx, repo } = await preExistingRun({ lines: [1, 2] });
+    const small = "def pick(k):\n    return cfg[k]\n";
+    ctx.eng.diffBaseSha = commitFiles(repo, {
+      "shop/billing.py": `${CHARGE}\n${small}`,
+    });
+    ctx.state.tipSha = commitFiles(repo, {
+      "shop/billing.py": CHARGE,
+      "shop/file1.py": small,
+    });
+    await verifyPending(ctx, ctx.store.roundFile(1, "verify"));
+    expect(ctx.findings[0]?.verdict).toBe("pre-existing");
+  });
+
   it("overrules a pre-existing verdict on new code whose lines occur elsewhere at the base", async () => {
     const { ctx, repo } = await preExistingRun({ lines: [1, 4] });
     const generic = [

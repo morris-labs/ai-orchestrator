@@ -351,14 +351,16 @@ export function parseCopilotJson(stdout: string, stderr = ""): CopilotRunSummary
         sawUsage = true;
         usage.output += num(data.outputTokens);
         // The SDK reports cache reads and writes apart from `inputTokens`,
-        // which usually counts them too. A model that reports input the way
-        // Anthropic's API does leaves them out, which shows when the cache
-        // counts exceed the input; then they add to it.
+        // which usually counts them too. A Claude model reports input the
+        // way Anthropic's API does and leaves them out, and so does any model
+        // whose cache counts exceed its input; then they add to it.
         if (typeof data.cacheReadTokens === "number" || typeof data.cacheWriteTokens === "number") {
           sawCache = true;
           const cached = num(data.cacheReadTokens) + num(data.cacheWriteTokens);
           const input = num(data.inputTokens);
-          usage.input += cached > input ? input + cached : input;
+          const model = typeof data.model === "string" ? data.model : s.model;
+          const apart = cached > input || /claude/i.test(model ?? "");
+          usage.input += apart ? input + cached : input;
           usage.cacheRead += num(data.cacheReadTokens);
           usage.cacheWrite += num(data.cacheWriteTokens);
         } else {
