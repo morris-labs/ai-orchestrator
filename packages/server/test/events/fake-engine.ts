@@ -1,7 +1,7 @@
 // A fake engine on a real socket: the health route, a run route, and the
 // event socket with hello, replay, and lease frames.
 import http from "node:http";
-import type { AioEvent, LeaseResponse } from "@aio/contracts";
+import { ApiErrorSchema, type AioEvent, type LeaseResponse } from "@aio/contracts";
 import WebSocket, { WebSocketServer } from "ws";
 import type { EventInput } from "../../src/api/core-interface.js";
 import { RUN, runState } from "../api/fixtures.js";
@@ -54,7 +54,10 @@ export class FakeEngineServer {
         this.portCalls += 1;
         if (this.portCalls <= this.portFailures) {
           res.writeHead(503, { "content-type": "application/json" });
-          res.end(JSON.stringify({ error: { code: "unavailable", message: "Starting." } }));
+          const body = { error: { code: "internal", message: "Starting." } };
+          // Keep the fake inside the API contract so the client parses it.
+          ApiErrorSchema.parse(body);
+          res.end(JSON.stringify(body));
           return;
         }
         res.writeHead(200, { "content-type": "application/json" });
