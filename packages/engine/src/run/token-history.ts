@@ -144,7 +144,9 @@ async function measure(runId: string, dir: string): Promise<RunTokenSample | nul
     verificationTokens,
     verificationStages,
     fixingTokens,
-    ...(usage.length > 0 ? { usage } : {}),
+    // Empty rather than absent, which marks a sample saved before usage
+    // windows existed.
+    usage,
   };
 }
 
@@ -269,6 +271,16 @@ async function measureUsage(
   const finished: Call[] = [];
   const lastFinished = new Map<Vendor, Call>();
   const raw: RawReading[] = [];
+  // An older run's readings don't name their call. A successful call's
+  // readings follow its `agent.finished` event, and a failed call's come
+  // just before it, so they wait for the vendor's next `agent.finished`.
+  const unnamed = new Map<Vendor, RawReading[]>();
+  const attach = (readings: RawReading[] | undefined, call: Call | undefined) => {
+    for (const r of readings ?? []) {
+      r.call = call;
+      call?.accounts.add(r.account);
+    }
+  };
   let seq = 0;
   for (const line of text.split("\n")) {
     if (!line.trim()) continue;
@@ -302,6 +314,11 @@ async function measureUsage(
       };
       call.endSeq = seq;
       if (agentId) calls.set(agentId, call);
+      attach(
+        unnamed.get(vendor),
+        event.outcome === undefined || event.outcome === "ok" ? lastFinished.get(vendor) : call,
+      );
+      unnamed.delete(vendor);
       finished.push(call);
       lastFinished.set(vendor, call);
       const tokens = event.tokens as StoredTokens | undefined;
@@ -319,11 +336,9 @@ async function measureUsage(
       const account = typeof event.account === "string" ? event.account : "";
       const resetAt = typeof event.resetAt === "string" ? Date.parse(event.resetAt) : NaN;
       const time = typeof event.time === "string" ? Date.parse(event.time) : NaN;
-      // An older run doesn't name the call; its readings follow their call's
-      // `agent.finished` event.
-      const call = agentId ? calls.get(agentId) : lastFinished.get(vendor);
+      const call = agentId ? calls.get(agentId) : undefined;
       call?.accounts.add(account);
-      raw.push({
+      const reading: RawReading = {
         vendor,
         window,
         account,
@@ -333,9 +348,12 @@ async function measureUsage(
         seq,
         call,
         early: event.sampleSource === "rate_limit_event",
-      });
+      };
+      raw.push(reading);
+      if (!agentId) unnamed.set(vendor, [...(unnamed.get(vendor) ?? []), reading]);
     }
   }
+  for (const [vendor, readings] of unnamed) attach(readings, lastFinished.get(vendor));
   const accountsOf = new Map<Vendor, Set<string>>();
   for (const r of raw) {
     const set = accountsOf.get(r.vendor) ?? new Set<string>();
@@ -450,7 +468,11 @@ async function sampleOf(projectRoot: string, runId: string): Promise<RunTokenSam
   const stored = RunTokenSampleSchema.safeParse(
     await readJson(join(runsDir(projectRoot), runId, TOKEN_SAMPLE_FILE)),
   );
-  if (stored.success && stored.data.runId === runId) return stored.data;
+  // A sample saved before usage windows existed has no `usage`, so the run
+  // is measured again, since its events can still give window rates.
+  if (stored.success && stored.data.runId === runId && stored.data.usage !== undefined) {
+    return stored.data;
+  }
   // An older run has no sample file yet. Writing it can fail on a read-only
   // folder, and the measured sample still counts.
   const dir = join(runsDir(projectRoot), runId);

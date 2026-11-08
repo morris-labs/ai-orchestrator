@@ -2,6 +2,7 @@
 // reviewer pass, and round 2 on the fixer's diff alone.
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
   FindingInputSchema,
@@ -401,6 +402,80 @@ describe("batched verification", () => {
     const { ctx, repo } = await preExistingRun();
     ctx.state.tipSha = commitFiles(repo, { "shop/file1.py": CHARGE });
     ctx.eng.diffBaseSha = "0123456789abcdef0123456789abcdef01234567";
+    await verifyPending(ctx, ctx.store.roundFile(1, "verify"));
+    expect(ctx.findings[0]?.verdict).toBe("pre-existing");
+  });
+
+  it("keeps a pre-existing verdict that flags only a renamed declaration", async () => {
+    const { ctx, repo } = await preExistingRun({ symbol: "bill_card", lines: [1, 1] });
+    ctx.eng.diffBaseSha = commitFiles(repo, { "shop/billing.py": CHARGE });
+    ctx.state.tipSha = commitFiles(repo, {
+      "shop/billing.py": null,
+      "shop/file1.py": CHARGE.replace("charge_card", "bill_card"),
+    });
+    await verifyPending(ctx, ctx.store.roundFile(1, "verify"));
+    expect(ctx.findings[0]?.verdict).toBe("pre-existing");
+  });
+
+  it("keeps a pre-existing verdict when a rename also edits most flagged lines", async () => {
+    const { ctx, repo } = await preExistingRun({ symbol: "bill_card", lines: [1, 6] });
+    ctx.eng.diffBaseSha = commitFiles(repo, { "shop/file1.py": CHARGE });
+    const edited = [
+      "def bill_card(amount, token):",
+      "    audit_log.record_attempt(token)",
+      "    cents = int(amount * 100)",
+      "    receipt_id = receipts.allocate_identifier()",
+      "    metrics.increment_counter('charges')",
+      "    return gateway.submit(cents, token)",
+      "",
+    ].join("\n");
+    ctx.state.tipSha = commitFiles(repo, { "shop/file1.py": edited });
+    await verifyPending(ctx, ctx.store.roundFile(1, "verify"));
+    expect(ctx.findings[0]?.verdict).toBe("pre-existing");
+  });
+
+  it("overrules a pre-existing verdict on new code whose lines occur elsewhere at the base", async () => {
+    const { ctx, repo } = await preExistingRun({ lines: [1, 4] });
+    const generic = [
+      "def lookup(key):",
+      "    try:",
+      "        return cache_store[key]",
+      "    except KeyError as error:",
+      "        return None",
+      "",
+    ].join("\n");
+    ctx.eng.diffBaseSha = commitFiles(repo, { "shop/other.py": generic });
+    ctx.state.tipSha = commitFiles(repo, { "shop/file1.py": generic.replace("lookup", "fetch") });
+    const file = ctx.store.roundFile(1, "verify");
+    const results = await verifyPending(ctx, file);
+    const f = ctx.findings[0] as Finding;
+    expect(f.verdict).toBe("confirmed");
+    expect(f.introduced).toBe(true);
+    // The stage file and the handoff report the verdict the finding holds.
+    expect(results[0]?.decision).toMatchObject({ verdict: "confirmed", introduced: true });
+    const stored = await ctx.store.readJson<typeof results>(file);
+    expect(stored?.[0]?.decision.verdict).toBe("confirmed");
+  });
+
+  it("reads worktree lines from the round's snapshot, not the live file", async () => {
+    const { ctx, repo } = await preExistingRun({ lines: [1, 3] });
+    const head = await ctx.git.head();
+    ctx.eng.diffBaseSha = commitFiles(repo, { "shop/billing.py": CHARGE });
+    // The round snapshot moves the old code to a new file.
+    writeFileSync(join(repo, "shop", "file1.py"), CHARGE);
+    execFileSync("git", ["rm", "-q", "shop/billing.py"], { cwd: repo });
+    const snapshot = await ctx.git.snapshotWorktree(
+      join(tmpdir(), `aio-index-test-${ctx.state.id}`),
+    );
+    expect(snapshot).not.toBe(head);
+    // Later edits replace the flagged lines in the working tree.
+    writeFileSync(
+      join(repo, "shop", "file1.py"),
+      "brand_new_code = rewrite_everything()\n".repeat(3),
+    );
+    const tip = await ctx.git.head();
+    ctx.state.tipSha = tip;
+    (ctx.findings[0] as Finding).linesAt = `worktree:${tip}:${snapshot}`;
     await verifyPending(ctx, ctx.store.roundFile(1, "verify"));
     expect(ctx.findings[0]?.verdict).toBe("pre-existing");
   });

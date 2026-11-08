@@ -120,7 +120,7 @@ export class Git {
       await this.run(["hash-object", "-t", "tree", "-w", "--stdin"], { input: "" })
     ).trim();
     const commit = await this.run(["commit-tree", tree, "-m", "AI Orchestrator empty base"], {
-      env: EMPTY_BASE_IDENTITY,
+      env: FIXED_IDENTITY,
     });
     return commit.trim();
   }
@@ -275,36 +275,50 @@ export class Git {
   }
 
   /**
-   * The strings in `needles` that occur in some file at `rev`, anywhere in
-   * the repository, or `null` when Git fails. Each needle is a literal
-   * string, not a pattern.
+   * For lines `first` to `last` of `path` at `rev`, how many hold a word
+   * character (`counted`) and how many of those `git blame` traces to
+   * `base` or earlier (`fromBase`), or `null` when Git fails. Blame follows
+   * renames, and ignores whitespace and lines that moved within a file or
+   * from a file that the same commit changed. A short line that occurs
+   * elsewhere doesn't count as old, unlike a text search. `path` is from
+   * the repository root.
    */
-  async findStrings(rev: string, needles: readonly string[]): Promise<Set<string> | null> {
-    if (needles.length === 0) return new Set();
-    // `-o` prints only the matched text, not whole lines, so the output stays
-    // small when a common needle matches across a large tree. `:/` searches
-    // from the top of the repository, not only below the working directory.
+  async linesFromBase(
+    base: string,
+    rev: string,
+    path: string,
+    first: number,
+    last: number,
+  ): Promise<{ counted: number; fromBase: number } | null> {
+    const top = await this.exec(["rev-parse", "--show-toplevel"]);
+    if (top.exitCode !== 0) return null;
     const args = [
-      "grep",
-      "-I",
-      "-F",
-      "-h",
-      "-o",
-      "--no-color",
-      ...needles.flatMap((n) => ["-e", n]),
-      rev,
+      "blame",
+      "--line-porcelain",
+      "-w",
+      "-M",
+      "-C",
+      "-L",
+      `${first},${last}`,
+      `${base}..${rev}`,
       "--",
-      ":/",
+      path,
     ];
-    const result = await this.exec(args, { timeoutMs: 60_000 });
-    // git grep exits with 1 when nothing matches.
-    if (result.exitCode === 1) return new Set();
+    const result = await this.exec(args, { cwd: top.stdout.trim(), timeoutMs: 60_000 });
     if (result.exitCode !== 0) return null;
-    const matched = new Set(result.stdout.split("\n").filter((l) => l !== ""));
-    // A needle inside a longer needle on the same line prints as the longer one.
-    return new Set(
-      needles.filter((n) => matched.has(n) || [...matched].some((m) => m.includes(n))),
-    );
+    let counted = 0;
+    let fromBase = 0;
+    let boundary = false;
+    // Each line is a header, its commit's fields, and a tab before the text.
+    for (const line of result.stdout.split("\n")) {
+      if (/^[0-9a-f]{40,64} \d+ \d+/.test(line)) boundary = false;
+      else if (line === "boundary") boundary = true;
+      else if (line.startsWith("\t") && /\w/.test(line)) {
+        counted += 1;
+        if (boundary) fromBase += 1;
+      }
+    }
+    return { counted, fromBase };
   }
 
   /** The content of `path` at `rev`, or `null` when it doesn't exist there. */
@@ -417,7 +431,7 @@ export class Git {
       if (tree === headTree) return head;
       const commit = await this.run(
         ["commit-tree", tree, "-p", head, "-m", "AI Orchestrator snapshot of the working tree"],
-        { env: SNAPSHOT_IDENTITY },
+        { env: FIXED_IDENTITY },
       );
       return commit.trim();
     } finally {
@@ -444,17 +458,22 @@ export class Git {
   }
 }
 
-/** The author and committer of a snapshot commit, so `commit-tree` needs no user settings. */
-const SNAPSHOT_IDENTITY: Record<string, string> = {
+/** The author and committer of the commits the engine builds, so `commit-tree` needs no user settings. */
+const ENGINE_IDENTITY: Record<string, string> = {
   GIT_AUTHOR_NAME: "AI Orchestrator",
   GIT_AUTHOR_EMAIL: "aio@localhost",
   GIT_COMMITTER_NAME: "AI Orchestrator",
   GIT_COMMITTER_EMAIL: "aio@localhost",
 };
 
-/** The identity and dates of the whole-project base commit, which fix its SHA. */
-const EMPTY_BASE_IDENTITY: Record<string, string> = {
-  ...SNAPSHOT_IDENTITY,
+/**
+ * The identity and dates of the whole-project base commit and of snapshot
+ * commits, which fix their SHAs: the same tree on the same parent always
+ * gives the same commit, so a finding's `linesAt` stays the same across a
+ * resume.
+ */
+const FIXED_IDENTITY: Record<string, string> = {
+  ...ENGINE_IDENTITY,
   GIT_AUTHOR_DATE: "2000-01-01T00:00:00Z",
   GIT_COMMITTER_DATE: "2000-01-01T00:00:00Z",
 };

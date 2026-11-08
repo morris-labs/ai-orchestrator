@@ -118,7 +118,7 @@ describe("excludeEngineDir", () => {
   });
 });
 
-describe("Git.pathExists and Git.findStrings", () => {
+describe("Git.pathExists", () => {
   function nestedRepo(): { repo: string; rev: string } {
     const repo = tempDir("aio-git-");
     git(repo, "init", "-q", "-b", "main");
@@ -141,28 +141,55 @@ describe("Git.pathExists and Git.findStrings", () => {
     expect(await g.pathExists(rev, "pkg//sub/a.ts")).toBe(true);
     expect(await g.pathExists(rev, "pkg/sub/missing.ts")).toBe(false);
   });
+});
 
-  it("searches the whole repository from a subfolder", async () => {
-    const { repo, rev } = nestedRepo();
-    const g = new Git(new ExecaRunner(), join(repo, "pkg", "sub"));
-    const found = await g.findStrings(rev, ["SYNTHETIC_moved = compute();", "not anywhere here"]);
-    expect([...found!]).toEqual(["SYNTHETIC_moved = compute();"]);
+describe("Git.linesFromBase", () => {
+  const OLD = "  total = SYNTHETIC_price * quantity\n";
+
+  function baseRepo(): { repo: string; base: string } {
+    const repo = tempDir("aio-git-");
+    git(repo, "init", "-q", "-b", "main");
+    mkdirSync(join(repo, "pkg"), { recursive: true });
+    writeFileSync(join(repo, "pkg", "cart.py"), `def old_total(quantity):\n${OLD}  return total\n`);
+    writeFileSync(join(repo, "pkg", "util.py"), "def helper():\n  return None\n");
+    git(repo, "add", ".");
+    git(repo, "commit", "-q", "-m", "base");
+    return { repo, base: git(repo, "rev-parse", "HEAD") };
+  }
+
+  it("traces a renamed function in a moved file to the base, from a subfolder", async () => {
+    const { repo, base } = baseRepo();
+    git(repo, "mv", "pkg/cart.py", "pkg/basket.py");
+    writeFileSync(
+      join(repo, "pkg", "basket.py"),
+      `def new_total(quantity):\n${OLD}  return total\n`,
+    );
+    git(repo, "add", ".");
+    git(repo, "commit", "-q", "-m", "rename");
+    const tip = git(repo, "rev-parse", "HEAD");
+    const g = new Git(new ExecaRunner(), join(repo, "pkg"));
+    expect(await g.linesFromBase(base, tip, "pkg/basket.py", 1, 3)).toEqual({
+      counted: 3,
+      fromBase: 2,
+    });
   });
 
-  it("reads only the matched text, not whole lines", async () => {
-    const { repo, rev } = nestedRepo();
-    const outputs: string[] = [];
-    const inner = new ExecaRunner();
-    const runner = {
-      run: async (...args: Parameters<ExecaRunner["run"]>) => {
-        const result = await inner.run(...args);
-        outputs.push(result.stdout);
-        return result;
-      },
-    };
-    const g = new Git(runner, repo);
-    const found = await g.findStrings(rev, ["SYNTHETIC_moved", "SYNTHETIC_moved = compute"]);
-    expect(found).toEqual(new Set(["SYNTHETIC_moved", "SYNTHETIC_moved = compute"]));
-    expect(outputs.join("")).not.toContain("trailing words");
+  it("doesn't count new generic lines as old because they occur elsewhere", async () => {
+    const { repo, base } = baseRepo();
+    writeFileSync(join(repo, "pkg", "fresh.py"), "def fresh():\n  return None\n");
+    git(repo, "add", ".");
+    git(repo, "commit", "-q", "-m", "fresh");
+    const tip = git(repo, "rev-parse", "HEAD");
+    const g = new Git(new ExecaRunner(), repo);
+    expect(await g.linesFromBase(base, tip, "pkg/fresh.py", 1, 2)).toEqual({
+      counted: 2,
+      fromBase: 0,
+    });
+  });
+
+  it("returns null when Git fails", async () => {
+    const { repo, base } = baseRepo();
+    const g = new Git(new ExecaRunner(), repo);
+    expect(await g.linesFromBase(base, base, "pkg/missing.py", 1, 2)).toBeNull();
   });
 });

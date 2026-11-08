@@ -202,13 +202,17 @@ async function diffTip(ctx: RunContext): Promise<string> {
 
 /**
  * The code version that this stage's finding lines count in, for the
- * merge's `linesAt`: the tip SHA, prefixed with `worktree:` when the round
- * reviews uncommitted changes. Empty when the tip isn't known yet.
+ * merge's `linesAt`: the tip SHA, or, when the round reviews uncommitted
+ * changes, `worktree:TIP:SNAPSHOT` with the snapshot commit of the working
+ * tree. Empty when the tip isn't known yet.
  */
-export function linesVersion(ctx: RunContext): { linesAt?: string } {
+export async function linesVersion(ctx: RunContext): Promise<{ linesAt?: string }> {
   const tip = ctx.state.tipSha;
   if (!tip) return {};
-  return { linesAt: reviewsWorktree(ctx) ? `worktree:${tip}` : tip };
+  if (!reviewsWorktree(ctx)) return { linesAt: tip };
+  // The snapshot commit pins the files the lines count in, which the
+  // working tree doesn't: a person or a fixer can change it later.
+  return { linesAt: `worktree:${tip}:${(await readOnlyState(ctx)).commit}` };
 }
 
 /** The live state for one stage's read-only checkout, by run context. */
@@ -731,7 +735,7 @@ export async function mergeInto(
         nextId: () => ctx.nextFindingId(),
         acceptedOscillations: ctx.eng.acceptedOscillations,
         now: () => ctx.nowIso(),
-        ...linesVersion(ctx),
+        ...(await linesVersion(ctx)),
         ...(ctx.state.request.scope === "whole" ? { noBase: true } : {}),
       },
       await symbolsOfFixed(ctx),
@@ -1116,21 +1120,46 @@ async function followPrimaries(
       ...(primary.verification ? { verification: primary.verification } : {}),
       introduced: primary.introduced,
     });
-    out.push({
-      findingId: id,
-      vendor: last.actor.vendor as Vendor,
-      model: last.actor.model ?? "",
-      decision: {
-        verdict,
-        verification: primary.verification === "script" ? "script" : "code-reading",
-        introduced: primary.introduced,
-        evidence,
-      },
-      tipRun: null,
-      baseRun: null,
-    });
+    out.push(
+      asApplied(
+        {
+          findingId: id,
+          vendor: last.actor.vendor as Vendor,
+          model: last.actor.model ?? "",
+          decision: {
+            verdict,
+            verification: primary.verification === "script" ? "script" : "code-reading",
+            introduced: primary.introduced,
+            evidence,
+          },
+          tipRun: null,
+          baseRun: null,
+        },
+        finding,
+      ),
+    );
   }
   return out;
+}
+
+/**
+ * `result` with the verdict that `finding` ended with. The engine can
+ * overrule a disprover's verdict in `setVerdict`, and the stage file and
+ * the fix handoff count must report what the finding holds.
+ */
+function asApplied(result: VerifyResult, finding: Finding): VerifyResult {
+  const d = result.decision;
+  if (finding.verdict === d.verdict || finding.verdict === "pending") return result;
+  const verdict = finding.verdict as VerifyResult["decision"]["verdict"];
+  return {
+    ...result,
+    decision: {
+      ...d,
+      verdict,
+      introduced: finding.introduced ?? null,
+      evidence: finding.evidence,
+    },
+  };
 }
 
 /**
@@ -1201,7 +1230,7 @@ export async function verifyPending(ctx: RunContext, stageFile: string): Promise
         },
       );
     }
-    return result;
+    return asApplied(result, finding);
   };
   /** Checks one finding in its own call. */
   const verifyOne = async (finding: Finding): Promise<VerifyResult | null> => {

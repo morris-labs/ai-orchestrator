@@ -1,8 +1,6 @@
 // The live context of one run: its state files, events, leases, agent calls,
 // and the pause, resume, and cancel controls. The pre-push and post-push
 // drivers build on it.
-import { readFile } from "node:fs/promises";
-import { resolve, sep } from "node:path";
 import {
   BLOCKED_DEFAULT_FALLBACK,
   DEFAULT_CEILINGS,
@@ -507,38 +505,43 @@ export class RunContext {
   }
 
   /**
-   * Whether most of the finding's flagged lines occur somewhere at `base`,
-   * or `null` when the engine can't read them or they're too short to tell.
+   * Whether any of the finding's flagged lines comes from `base`, as
+   * `git blame` traces it through renames and moves, or `null` when the
+   * engine can't read them or they hold no code. A rename or a reformat
+   * leaves the rest of an old flaw's lines at the base, so only code that
+   * the change wrote throughout counts as missing. A range of one or two
+   * lines, such as a renamed declaration alone, extends to the 10 lines
+   * from its start, which hold the body that the rename kept.
    */
   private async flaggedCodeAtBase(base: string, finding: Finding): Promise<boolean | null> {
     if (!finding.file || !finding.lines) return null;
-    const text = await this.tipText(finding.file, finding.linesAt);
+    const rev = this.linesRev(finding.linesAt);
+    if (rev === null) return null;
+    const file = normalizeRepoPath(finding.file);
+    const text = await this.git.show(rev, file);
     if (text === null) return null;
-    const [first, last] = finding.lines;
-    const lines = text
-      .split("\n")
-      .slice(first - 1, Math.min(last, first + 59))
-      .map((l) => l.trim())
-      .filter((l) => l.length >= 10 && /\w/.test(l));
-    const needles = [...new Set(lines)];
-    if (needles.length === 0) return null;
-    const found = await this.git.findStrings(base, needles);
-    if (found === null) return null;
-    return found.size * 2 >= needles.length;
+    const all = text.replace(/\n$/, "").split("\n");
+    const [first, end] = finding.lines;
+    let last = Math.min(end, first + 59, all.length);
+    if (first < 1 || first > last) return null;
+    if (all.slice(first - 1, last).filter((l) => /\w/.test(l)).length < 3) {
+      last = Math.max(last, Math.min(first + 9, all.length));
+    }
+    const lines = await this.git.linesFromBase(base, rev, file, first, last);
+    if (!lines || lines.counted === 0) return null;
+    return lines.fromBase > 0;
   }
 
-  /** The text of `file` in the code version that a finding's lines count in. */
-  private async tipText(file: string, linesAt: string | undefined): Promise<string | null> {
+  /**
+   * The commit that a finding's lines count in, or `null` when the engine
+   * can't tell. A working tree round records `worktree:TIP:SNAPSHOT`; the
+   * snapshot commit holds the files as the round read them. Older runs
+   * recorded only the tip, and the working tree has changed since.
+   */
+  private linesRev(linesAt: string | undefined): string | null {
     const at = linesAt ?? this.state.tipSha ?? "HEAD";
-    if (!at.startsWith("worktree:")) return this.git.show(at, file);
-    const root = resolve(this.state.request.repoPath);
-    const path = resolve(root, file);
-    if (!path.startsWith(`${root}${sep}`)) return null;
-    try {
-      return await readFile(path, "utf8");
-    } catch {
-      return null;
-    }
+    if (!at.startsWith("worktree:")) return at;
+    return at.split(":")[2] || null;
   }
 
   /** Emits `finding.changed` for a finding that the merge just created. */

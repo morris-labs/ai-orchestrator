@@ -68,6 +68,7 @@ describe("loadTokenHistory", () => {
         verificationTokens: 72,
         verificationStages: { disprove: 31, confirm: 0, sweep: 41 },
         fixingTokens: 51,
+        usage: [],
       },
     ]);
   });
@@ -234,7 +235,7 @@ describe("usage windows", () => {
       );
       writeFileSync(join(dir, "events.jsonl"), events.map((e) => JSON.stringify(e)).join("\n"));
       const sample = await saveTokenSample(root, id);
-      return { usage: sample?.usage?.[0], window: sample?.usage?.[0]?.windows?.[0] };
+      return { root, usage: sample?.usage?.[0], window: sample?.usage?.[0]?.windows?.[0] };
     }
 
     it("credits a reading taken as its call starts with the calls before it", async () => {
@@ -297,6 +298,44 @@ describe("usage windows", () => {
       ]);
       expect(usage).toMatchObject({ fresh: 2_000, cacheRead: 18_000, raw: 20_040 });
       expect(window?.weighted).toBe(2_000);
+    });
+
+    it("measures again a stored sample saved before usage windows existed", async () => {
+      const { root, window } = await windowOf("01J", [
+        started("a"),
+        finished("a", 1),
+        reading("a", 0.1, "user@example.com", "codex_session"),
+        started("b"),
+        finished("b", 1),
+        reading("b", 0.12, "user@example.com", "codex_session"),
+      ]);
+      expect(window).toBeDefined();
+      const file = join(root, ".aio", "runs", "01J", "token-sample.json");
+      const { usage: _usage, ...older } = JSON.parse(readFileSync(file, "utf8")) as {
+        usage?: unknown;
+      };
+      writeFileSync(file, JSON.stringify(older));
+      const [sample] = await loadTokenHistory(root);
+      expect(sample?.usage?.[0]?.windows?.[0]).toEqual(window);
+    });
+
+    it("gives an older run's reading from a failed call to that call", async () => {
+      // An older run names no call; a failed call's reading comes before its
+      // `agent.finished` event, and a successful call's after it.
+      const old = (event: Record<string, unknown>) => ({ ...event, agentId: undefined });
+      const { window } = await windowOf("01K", [
+        old({ ...finished("x", 1), outcome: "ok" }),
+        old(reading("x", 0.1, "b@example.com", "codex_session")),
+        old({ ...finished("x", 9), outcome: "ok" }),
+        old(reading("x", 0.5, "a@example.com", "codex_session")),
+        old(reading("x", 0.2, "b@example.com", "codex_session")),
+        old({ ...finished("x", 0), outcome: "error", tokens: { in: 0, out: 0 } }),
+        old({ ...finished("x", 1), outcome: "ok" }),
+        old(reading("x", 0.3, "b@example.com", "codex_session")),
+      ]);
+      // Account a's call isn't account b's, so only b's calls count.
+      expect(window?.weighted).toBe(2_000);
+      expect(window?.used).toBeCloseTo(0.2);
     });
   });
 });
