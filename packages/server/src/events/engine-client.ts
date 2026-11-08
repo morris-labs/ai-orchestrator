@@ -146,6 +146,16 @@ export class EngineClient {
     }
   }
 
+  /**
+   * Throws `engine_mismatch` unless the engine's version is known to match.
+   * When no health check has finished yet, this method runs one first, so a
+   * request never reaches an engine whose version is still unknown.
+   */
+  async confirmVersion(): Promise<void> {
+    if (this.engineInfo.versionMatches === null) await this.health();
+    this.assertVersion();
+  }
+
   /** Calls an engine route and validates the response against its schema. */
   async call(key: EngineRouteKey, input: EngineCallInput = {}): Promise<unknown> {
     const route = engineRoutes[key];

@@ -527,6 +527,10 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
       requireAbsolute(body.repoPath, "The repository path", "container");
       await requireBoxInProject(body.boxId, body.projectId);
       const engine = deps.engines.requireProject(body.projectId);
+      // An older engine drops request fields it doesn't know, such as
+      // `concurrency`, so the server forwards a run only to an engine whose
+      // version it has confirmed.
+      await engine.confirmVersion();
       const run = (await engine.call("engine.runs.create", {
         body: { ...body, runId: ulid() },
       })) as RunState;

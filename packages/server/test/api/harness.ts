@@ -23,12 +23,18 @@ export const AUTH = { authorization: `Bearer ${TOKEN}` };
 export class FakeEngine implements ApiEngine {
   readonly calls: { key: EngineRouteKey; input: EngineCallInput }[] = [];
   mismatch = false;
+  /** True when the health check that `confirmVersion` runs finds another version. */
+  pendingMismatch = false;
   constructor(
     readonly endpoint: { container: string; projectId: string },
     readonly handlers: Partial<Record<EngineRouteKey, (input: EngineCallInput) => unknown>>,
   ) {}
   assertVersion(): void {
     if (this.mismatch) throw new ApiError("engine_mismatch", "Rebuild the image.");
+  }
+  async confirmVersion(): Promise<void> {
+    if (this.pendingMismatch) this.mismatch = true;
+    this.assertVersion();
   }
   async call(key: EngineRouteKey, input: EngineCallInput = {}): Promise<unknown> {
     this.calls.push({ key, input });

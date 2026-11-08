@@ -77,6 +77,15 @@ describe("EngineClient", () => {
     expect(engine.hellos).toHaveLength(0);
   });
 
+  it("checks health before confirming a version that is still unknown", async () => {
+    engine.version = "3.9.0";
+    const c = build();
+    expect(c.info.versionMatches).toBeNull();
+    expect(() => c.assertVersion()).not.toThrow();
+    await expect(c.confirmVersion()).rejects.toMatchObject({ code: "engine_mismatch" });
+    expect(c.info.versionMatches).toBe(false);
+  });
+
   it("raises engine_mismatch when the engine reports its own mismatch", async () => {
     engine.versionMatches = false;
     const c = build();

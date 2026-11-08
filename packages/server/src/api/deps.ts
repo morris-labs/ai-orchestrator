@@ -55,6 +55,8 @@ export interface ApiMultiHost {
 export interface ApiEngine {
   endpoint: { container: string; projectId: string };
   assertVersion(): void;
+  /** Like `assertVersion`, but checks the engine's health first when its version is unknown. */
+  confirmVersion(): Promise<void>;
   call(key: EngineRouteKey, input?: EngineCallInput): Promise<unknown>;
 }
 

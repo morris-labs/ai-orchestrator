@@ -691,6 +691,19 @@ describe("review routes", () => {
     expect(h.engine.calls.length).toBe(before);
   });
 
+  it("refuses a run when the engine's first health check finds another version", async () => {
+    h.engine.pendingMismatch = true;
+    const res = await h.server.app.inject({
+      method: "POST",
+      url: `${V1}/runs`,
+      headers: AUTH,
+      payload: { projectId: "example-app-1a2b3c4d", repoPath: "/work/example-app", concurrency: 1 },
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe("engine_mismatch");
+    expect(h.engine.calls.some((c) => c.key === "engine.runs.create")).toBe(false);
+  });
+
   it("refuses a read-only post-push run before it reaches the engine", async () => {
     const res = await h.server.app.inject({
       method: "POST",
