@@ -145,8 +145,21 @@ function sameEndpoint(a: EngineEndpoint, b: EngineEndpoint): boolean {
   return a.hostPort === b.hostPort && a.token === b.token && a.projectId === b.projectId;
 }
 
+/** How many times in a row a listener load fails before it stops retrying. */
+const PORT_LOAD_ATTEMPTS = 6;
+
+/** The state of one client's listener load chain. */
+interface PortLoad {
+  running: boolean;
+  /** Another load was requested while this one ran. */
+  again: boolean;
+  timer: NodeJS.Timeout | null;
+  failures: number;
+}
+
 export class EngineSupervisor {
   private readonly clients = new Map<string, EngineClient>();
+  private readonly portLoads = new Map<EngineClient, PortLoad>();
   private timer: NodeJS.Timeout | null = null;
   private refreshing: Promise<void> | null = null;
 
@@ -162,8 +175,12 @@ export class EngineSupervisor {
   async stop(): Promise<void> {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
-    await Promise.all([...this.clients.values()].map((c) => c.stop()));
+    // Clearing the map first keeps a pending retry from calling a client
+    // that is stopping.
+    const clients = [...this.clients.values()];
     this.clients.clear();
+    clients.forEach((c) => this.forgetPorts(c));
+    await Promise.all(clients.map((c) => c.stop()));
   }
 
   /** Reconciles the clients with the core's engine list. Concurrent calls share one pass. */
@@ -185,6 +202,7 @@ export class EngineSupervisor {
       const endpoint = wanted.get(container);
       if (!endpoint || !sameEndpoint(endpoint, client.endpoint)) {
         this.clients.delete(container);
+        this.forgetPorts(client);
         await client.stop();
       }
     }
@@ -193,7 +211,7 @@ export class EngineSupervisor {
       const client = this.build(endpoint);
       this.clients.set(endpoint.container, client);
       client.start();
-      void this.loadPorts(client);
+      this.loadPorts(client);
     }
   }
 
@@ -220,23 +238,81 @@ export class EngineSupervisor {
   }
 
   /**
-   * Loads a new client's listeners. A restarted server has none in memory, and
-   * listeners that haven't changed send no `ports.changed`.
+   * Loads a client's listeners. A restarted server has none in memory, and
+   * listeners that haven't changed send no `ports.changed`. Each client has at
+   * most one load chain: a request while a load runs makes it run once more,
+   * and a request while a retry waits runs it at once.
    */
-  private async loadPorts(client: EngineClient): Promise<void> {
+  private loadPorts(client: EngineClient): void {
     if (!this.options.onPorts) return;
+    const load = this.portLoads.get(client);
+    if (!load) {
+      const fresh: PortLoad = { running: false, again: false, timer: null, failures: 0 };
+      this.portLoads.set(client, fresh);
+      void this.runPortLoad(client, fresh);
+    } else if (load.running) {
+      load.again = true;
+    } else {
+      if (load.timer) clearTimeout(load.timer);
+      load.timer = null;
+      load.failures = 0;
+      void this.runPortLoad(client, load);
+    }
+  }
+
+  private async runPortLoad(client: EngineClient, load: PortLoad): Promise<void> {
     const container = client.endpoint.container;
+    const current = () =>
+      this.clients.get(container) === client && this.portLoads.get(client) === load;
+    load.running = true;
+    load.again = false;
     try {
       const { listeners } = (await client.call("engine.ports")) as { listeners: Listener[] };
-      if (this.clients.get(container) === client) this.options.onPorts(container, listeners);
+      load.failures = 0;
+      if (current()) this.options.onPorts?.(container, listeners);
     } catch (err) {
-      this.options.log?.(`Loading the listeners of ${container} failed: ${(err as Error).message}`);
-      // An engine that is still starting answers later. Unchanged listeners
-      // send no ports.changed, so without a retry the list stays empty.
-      setTimeout(() => {
-        if (this.clients.get(container) === client) void this.loadPorts(client);
-      }, this.options.resyncRetryMs ?? 10_000).unref();
+      load.failures += 1;
+      if (current()) {
+        this.options.log?.(
+          `Loading the listeners of ${container} failed: ${(err as Error).message}`,
+        );
+      }
+    } finally {
+      load.running = false;
     }
+    if (!current()) return;
+    if (load.again) {
+      load.failures = 0;
+      void this.runPortLoad(client, load);
+      return;
+    }
+    if (load.failures === 0) {
+      this.portLoads.delete(client);
+      return;
+    }
+    if (load.failures >= PORT_LOAD_ATTEMPTS) {
+      // A failure this persistent is permanent (a missing route, a version
+      // mismatch, a bad response); the next stream reset tries again.
+      this.options.log?.(
+        `Gave up loading the listeners of ${container} after ${load.failures} attempts.`,
+      );
+      this.portLoads.delete(client);
+      return;
+    }
+    // An engine that is still starting answers later. Unchanged listeners
+    // send no ports.changed, so without a retry the list stays empty.
+    load.timer = setTimeout(() => {
+      load.timer = null;
+      if (current()) void this.runPortLoad(client, load);
+    }, this.options.resyncRetryMs ?? 10_000);
+    load.timer.unref();
+  }
+
+  /** Cancels a client's pending listener load. */
+  private forgetPorts(client: EngineClient): void {
+    const load = this.portLoads.get(client);
+    if (load?.timer) clearTimeout(load.timer);
+    this.portLoads.delete(client);
   }
 
   /** Reloads an engine's runs and their findings after its stream starts over. */
@@ -254,7 +330,7 @@ export class EngineSupervisor {
       });
       this.options.onRuns?.(runs);
       // A stream that started over can have missed ports.changed events too.
-      void this.loadPorts(client);
+      this.loadPorts(client);
     } catch (err) {
       this.options.log?.(`Resync of ${container} failed: ${(err as Error).message}`);
       // The cursor has moved, so the stream won't ask again: without a retry,

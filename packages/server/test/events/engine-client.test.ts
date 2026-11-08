@@ -338,6 +338,90 @@ describe("EngineSupervisor", () => {
     await sup.stop();
   });
 
+  it("keeps one listener load per client and stops retrying a permanent failure", async () => {
+    engine.portFailures = Number.POSITIVE_INFINITY;
+    const logs: string[] = [];
+    const runs: unknown[] = [];
+    const sup = new EngineSupervisor({
+      engines: {
+        list: async () => [
+          {
+            container: CONTAINER,
+            projectId: PROJECT_ID,
+            hostPort: engine.port,
+            token: ENGINE_TOKEN,
+          },
+        ],
+      },
+      db: openDatabase(":memory:"),
+      expectedVersion: "1.0.0-dev",
+      relay: () => undefined,
+      decideLease: async () => {
+        throw new Error("unused");
+      },
+      onRuns: (list) => runs.push(...list),
+      onPorts: () => undefined,
+      log: (m) => logs.push(m),
+      resyncRetryMs: 5,
+      intervalMs: 50,
+    });
+    sup.start();
+    await waitFor(() => runs.length === 1);
+    await waitFor(() => logs.some((l) => l.startsWith("Gave up loading the listeners")));
+    const calls = engine.portCalls;
+    await new Promise((r) => setTimeout(r, 100));
+    expect(engine.portCalls).toBe(calls);
+    // The first refresh and the first resync share one chain, which can run
+    // its budget twice at most.
+    expect(calls).toBeLessThanOrEqual(12);
+    expect(logs.filter((l) => l.startsWith("Gave up"))).toHaveLength(1);
+    await sup.stop();
+  });
+
+  it("doesn't retry a listener load on a client that is stopping", async () => {
+    engine.portFailures = Number.POSITIVE_INFINITY;
+    let stopping = false;
+    const sup = new EngineSupervisor({
+      engines: {
+        list: async () => [
+          {
+            container: CONTAINER,
+            projectId: PROJECT_ID,
+            hostPort: engine.port,
+            token: ENGINE_TOKEN,
+          },
+        ],
+      },
+      db: openDatabase(":memory:"),
+      expectedVersion: "1.0.0-dev",
+      relay: () => undefined,
+      decideLease: async () => {
+        throw new Error("unused");
+      },
+      onPorts: () => undefined,
+      resyncRetryMs: 5,
+      intervalMs: 50,
+      createClient: (options) => {
+        const c = new EngineClient(options);
+        const stop = c.stop.bind(c);
+        c.stop = async () => {
+          stopping = true;
+          await new Promise((r) => setTimeout(r, 100));
+          await stop();
+        };
+        return c;
+      },
+    });
+    sup.start();
+    await waitFor(() => engine.portCalls >= 1);
+    const stopped = sup.stop();
+    expect(stopping).toBe(true);
+    const calls = engine.portCalls;
+    await stopped;
+    // A call already in flight can still arrive; no retry starts another.
+    expect(engine.portCalls - calls).toBeLessThanOrEqual(1);
+  });
+
   it("reloads runs and their findings and drops cached leases when the stream starts over", async () => {
     const db = openDatabase(":memory:");
     const mirror = new RunMirror(db);
