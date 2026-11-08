@@ -465,24 +465,41 @@ export function reviewLaunch(
 
 /** The part of an Electron `Notification` that `showRetained` uses. */
 export interface ShowableNotification {
-  on(event: "click" | "close", listener: () => void): unknown;
+  on(event: "click" | "close" | "failed", listener: () => void): unknown;
   show(): void;
 }
 
 /**
- * Shows `note` and keeps it in `retained` until it closes or is clicked.
- * Electron collects a notification that nothing references, and a collected
- * notification no longer emits `click`, so `onClick` would never run.
+ * How long `showRetained` keeps a notification that never reports `close`,
+ * `click`, or `failed`. Electron doesn't promise a `close` event, so without
+ * this limit such a notification stays referenced until the app quits.
+ */
+export const NOTIFICATION_RETAIN_MS = 30 * 60 * 1000;
+
+/**
+ * Shows `note` and keeps it in `retained` until it closes, fails, is clicked,
+ * or `retainMs` passes. Electron collects a notification that nothing
+ * references, and a collected notification no longer emits `click`, so
+ * `onClick` would never run.
  */
 export function showRetained<N extends ShowableNotification>(
   retained: Set<N>,
   note: N,
   onClick: () => void,
+  retainMs: number = NOTIFICATION_RETAIN_MS,
 ): void {
   retained.add(note);
-  note.on("close", () => retained.delete(note));
-  note.on("click", () => {
+  const timer = setTimeout(() => retained.delete(note), retainMs);
+  // A pending release must not keep the process alive.
+  (timer as { unref?: () => void }).unref?.();
+  const release = () => {
+    clearTimeout(timer);
     retained.delete(note);
+  };
+  note.on("close", release);
+  note.on("failed", release);
+  note.on("click", () => {
+    release();
     onClick();
   });
   note.show();

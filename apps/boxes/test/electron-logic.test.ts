@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   childEnv,
   closeHidesToTray,
@@ -214,13 +214,13 @@ describe("showRetained", () => {
     const handlers: Record<string, () => void> = {};
     return {
       shown: false,
-      on(event: "click" | "close", listener: () => void) {
+      on(event: "click" | "close" | "failed", listener: () => void) {
         handlers[event] = listener;
       },
       show() {
         this.shown = true;
       },
-      emit(event: "click" | "close") {
+      emit(event: "click" | "close" | "failed") {
         handlers[event]?.();
       },
     };
@@ -244,5 +244,28 @@ describe("showRetained", () => {
     showRetained(retained, note, () => undefined);
     note.emit("close");
     expect(retained.size).toBe(0);
+  });
+
+  it("releases a notification that fails to show", () => {
+    const retained = new Set<ReturnType<typeof fakeNote>>();
+    const note = fakeNote();
+    showRetained(retained, note, () => undefined);
+    note.emit("failed");
+    expect(retained.size).toBe(0);
+  });
+
+  it("releases a notification that never reports close or click", () => {
+    vi.useFakeTimers();
+    try {
+      const retained = new Set<ReturnType<typeof fakeNote>>();
+      const note = fakeNote();
+      showRetained(retained, note, () => undefined, 1000);
+      vi.advanceTimersByTime(999);
+      expect(retained.has(note)).toBe(true);
+      vi.advanceTimersByTime(1);
+      expect(retained.size).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
