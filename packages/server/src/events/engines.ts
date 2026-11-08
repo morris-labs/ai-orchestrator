@@ -278,7 +278,9 @@ export class EngineSupervisor {
       if (current()) this.options.onPorts?.(container, listeners);
     } catch (err) {
       load.failures += 1;
-      if (current()) {
+      // Past the fast budget, the "retrying less often" line stands for every
+      // later failure, so a route that never answers doesn't log forever.
+      if (current() && load.failures <= PORT_LOAD_ATTEMPTS) {
         this.options.log?.(
           `Loading the listeners of ${container} failed: ${(err as Error).message}`,
         );

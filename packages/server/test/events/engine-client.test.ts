@@ -376,6 +376,11 @@ describe("EngineSupervisor", () => {
     expect(engine.portCalls - calls).toBeLessThanOrEqual(1);
     expect(calls).toBeLessThanOrEqual(12);
     expect(logs.filter((l) => l.includes("retrying less often"))).toHaveLength(1);
+    // Slow retries keep failing without a log line each.
+    const failureLines = logs.filter((l) => l.includes("listeners of")).length;
+    const slowCalls = engine.portCalls;
+    await waitFor(() => engine.portCalls >= slowCalls + 2, 2000);
+    expect(logs.filter((l) => l.includes("listeners of"))).toHaveLength(failureLines);
     // The route recovers while the stream stays connected.
     engine.portFailures = engine.portCalls;
     await waitFor(() => loaded.length >= 1, 2000);
