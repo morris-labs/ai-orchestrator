@@ -1093,6 +1093,32 @@ export function estimateRunTokens(input: RunTokenEstimateInput): RunTokenEstimat
     const v = perVendor.get(vendor) ?? { tokens: 0, low: 0, high: 0 };
     perVendor.set(vendor, { tokens: v.tokens + tokens, low: v.low + low, high: v.high + high });
   };
+  // The share of verification tokens that confirmation takes in a run that
+  // can fix, from the runs that measured the split, else the starting split.
+  // A read-only run has no fixes to confirm, so it leaves this share out of
+  // the verification tokens that runs which could fix measured.
+  const confirmShare = (() => {
+    const total = (s: RunTokenSample) => {
+      const v = s.verificationStages;
+      return v ? v.disprove + v.confirm + v.sweep : 0;
+    };
+    const picked = pickSamples(exact, nearby, (w) => !w.sample.readOnly && total(w.sample) > 0);
+    if (picked.used.length === 0) return STARTING_VERIFICATION_SPLIT.confirm;
+    let confirm = 0;
+    let weight = 0;
+    for (const w of picked.used) {
+      confirm += (w.weight * (w.sample.verificationStages?.confirm ?? 0)) / total(w.sample);
+      weight += w.weight;
+    }
+    return confirm / weight;
+  })();
+  /** The share of a sample's verification tokens that a run like this one spends. */
+  const verificationKept = (s: RunTokenSample): number => {
+    if (!readOnly || s.readOnly) return 1;
+    const v = s.verificationStages;
+    const total = v ? v.disprove + v.confirm + v.sweep : 0;
+    return v && total > 0 ? 1 - v.confirm / total : 1 - confirmShare;
+  };
   // The share of verification tokens that each verification stage takes, from
   // the runs that measured the split. Without one, the starting split applies.
   const verificationSplit = (() => {
@@ -1135,17 +1161,22 @@ export function estimateRunTokens(input: RunTokenEstimateInput): RunTokenEstimat
     }
   };
   // The parts of the older rate that verification and fixing take, as the
-  // starting stage rates are of its figure per group.
-  const olderVerification = STARTING_STAGE_RATES.verification / fallback.perGroup;
-  const olderFixing = readOnly ? 0 : STARTING_STAGE_RATES.fixing / fallback.perGroup;
+  // starting stage rates are of its figure per group. A read-only run spends
+  // no fixing and no confirmation, so its older rate leaves both out.
+  const fullVerification = STARTING_STAGE_RATES.verification / fallback.perGroup;
+  const fullFixing = STARTING_STAGE_RATES.fixing / fallback.perGroup;
+  const olderKept = readOnly ? 1 - fullFixing - fullVerification * confirmShare : 1;
+  const olderVerification = (fullVerification * (readOnly ? 1 - confirmShare : 1)) / olderKept;
+  const olderFixing = readOnly ? 0 : fullFixing;
   // Review tokens of the groups that have their own verification and fixing
   // lines, by reviewer. Groups on the older rate already include those stages.
   const stagedReview = new Map<Vendor, number>();
+  const stagedGroups = new Map<Vendor, number>();
   input.groups.forEach((group, index) => {
     const vendor = reviewers[index % reviewers.length] as Vendor;
     const rate = reviewRate(vendor, group.tier);
     if (!rate) {
-      const tokens = fallback.perGroup + group.changedLines * fallback.perLine;
+      const tokens = (fallback.perGroup + group.changedLines * fallback.perLine) * olderKept;
       // The older rate includes verification and fixing, so those parts go to
       // the vendors that run them.
       const charge = (to: (t: number, l: number, h: number) => void, share: number) =>
@@ -1164,6 +1195,7 @@ export function estimateRunTokens(input: RunTokenEstimateInput): RunTokenEstimat
     const tokens = rate.base + rate.perLine * group.changedLines;
     addVendor(vendor, tokens, tokens * rate.low, tokens * rate.high);
     stagedReview.set(vendor, (stagedReview.get(vendor) ?? 0) + tokens);
+    stagedGroups.set(vendor, (stagedGroups.get(vendor) ?? 0) + 1);
     review = {
       tokens: review.tokens + tokens,
       low: review.low + tokens * rate.low,
@@ -1187,7 +1219,7 @@ export function estimateRunTokens(input: RunTokenEstimateInput): RunTokenEstimat
       tokens: older.tokens,
       low: older.tokens * REVIEW_SPREAD.low,
       high: older.tokens * REVIEW_SPREAD.high,
-      source: `no runs measure this vendor or depth, so ${plural(older.groups, "group")} use the older rate of ${fallback.perGroup.toLocaleString("en-US")} tokens each plus ${fallback.perLine} per changed line, which includes verification and fixing`,
+      source: `no runs measure this vendor or depth, so ${plural(older.groups, "group")} use the older rate of ${fallback.perGroup.toLocaleString("en-US")} tokens each plus ${fallback.perLine} per changed line, which includes verification and fixing${readOnly ? ", less the fixing and confirmation that a read-only run skips" : ""}`,
     });
   }
 
@@ -1223,9 +1255,9 @@ export function estimateRunTokens(input: RunTokenEstimateInput): RunTokenEstimat
   };
   stageLine(
     "Verification",
-    (s) => s.verificationTokens,
+    (s) => s.verificationTokens * verificationKept(s),
     () => true,
-    STARTING_STAGE_RATES.verification,
+    STARTING_STAGE_RATES.verification * (readOnly ? 1 - confirmShare : 1),
   );
   if (!readOnly) {
     stageLine(
@@ -1246,12 +1278,14 @@ export function estimateRunTokens(input: RunTokenEstimateInput): RunTokenEstimat
   const changed = input.groups.reduce((n, g) => n + g.changedLines, 0);
   // Each stage line is split by each reviewer's share of the staged groups'
   // review tokens, then goes to the vendors that run that stage for the
-  // reviewer: its disprover, confirmer, and sweeper, or the fixer.
+  // reviewer: its disprover, confirmer, and sweeper, or the fixer. With no
+  // review tokens to split by, each reviewer's share of the staged groups
+  // splits it, so every stage token goes to some vendor.
   const reviewed = [...stagedReview.values()].reduce((n, t) => n + t, 0);
   for (const line of lines) {
     if (line.label !== "Verification" && line.label !== "Fixing") continue;
     for (const [reviewer, t] of stagedReview) {
-      const share = reviewed > 0 ? t / reviewed : 0;
+      const share = reviewed > 0 ? t / reviewed : (stagedGroups.get(reviewer) ?? 0) / staged;
       if (line.label === "Fixing") {
         const vendor = input.fixer ?? reviewer;
         addVendor(vendor, share * line.tokens, share * line.low, share * line.high);
@@ -1314,9 +1348,19 @@ export function estimateWindowShare(
   hostHistory: readonly RunTokenSample[],
 ): WindowShareLine[] {
   const out: WindowShareLine[] = [];
-  const weighted = [...weigh(history, "project"), ...weigh(hostHistory, "host")];
   for (const est of byVendor) {
     if (est.tokens <= 0) continue;
+    // The newest runs that measured this vendor's windows, so that newer runs
+    // without a measurement don't push older measurements out.
+    const measures = (s: RunTokenSample) =>
+      s.usage?.some(
+        (u) =>
+          u.vendor === est.vendor && u.raw > 0 && (u.windows ?? []).some((r) => r.weighted > 0),
+      ) ?? false;
+    const weighted = [
+      ...weigh(history.filter(measures), "project"),
+      ...weigh(hostHistory.filter(measures), "host"),
+    ];
     const measured = new Map<
       SampleWindow,
       { w: Weighted; usage: VendorUsageSample; rate: WindowRate }[]
@@ -1325,10 +1369,10 @@ export function estimateWindowShare(
       const usage = w.sample.usage?.find((u) => u.vendor === est.vendor);
       if (!usage || usage.raw <= 0) continue;
       for (const rate of usage.windows ?? []) {
-        // A window that didn't move a visible step measures no rate: vendors
-        // report use in coarse steps, so a zero says only that the share was
-        // under one step.
-        if (rate.weighted <= 0 || rate.used <= 0) continue;
+        // Vendors report use in coarse steps, so a run that didn't move a
+        // visible step still pools at zero: dropping it would leave only the
+        // runs that crossed a step, and the pooled rate would err high.
+        if (rate.weighted <= 0) continue;
         const list = measured.get(rate.window) ?? [];
         list.push({ w, usage, rate });
         measured.set(rate.window, list);
@@ -1355,11 +1399,17 @@ export function estimateWindowShare(
         weightedOfRaw += w.weight * weightedTokensOf(est.vendor, usage);
         raw += w.weight * usage.raw;
       }
-      if (weightedSum <= 0 || raw <= 0) continue;
+      // With no run that moved a visible step, the window measures no rate.
+      if (used <= 0 || weightedSum <= 0 || raw <= 0) continue;
       const rate = used / weightedSum;
       const ratio = weightedOfRaw / raw;
+      // A run at zero says only that its share was under one step, so it
+      // doesn't set how far the rate can move.
       const spread = spreadOf(
-        runs.map((r) => r.rate.rate / rate).filter((r) => Number.isFinite(r)),
+        runs
+          .filter((r) => r.rate.used > 0)
+          .map((r) => r.rate.rate / rate)
+          .filter((r) => Number.isFinite(r)),
         WINDOW_SPREAD_SINGLE,
       );
       const from = provenance(runs.map((r) => r.w));

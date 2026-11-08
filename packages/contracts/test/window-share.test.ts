@@ -115,6 +115,25 @@ describe("estimateWindowShare", () => {
     expect(line).toMatchObject({ vendor: "claude", window: "5h", measured: false });
   });
 
+  it("pools runs whose window didn't move a step at zero (F-0107)", () => {
+    // Two runs of equal tokens: one crossed a step, one didn't.
+    const history = [sample("01B", 0.01, 200_000), sample("01A", 0, 200_000)];
+    const [line] = estimateWindowShare(byVendor, history, []);
+    expect(line).toMatchObject({ measured: true });
+    // Weights 1 and 0.8 give (0.01 * 1 + 0) / 1.8 of the window per run.
+    expect(line?.high).toBeCloseTo((0.01 / 1.8) * 2);
+  });
+
+  it("finds an older measurement behind newer runs that measured nothing (F-0108)", () => {
+    const unmeasured = Array.from({ length: 12 }, (_, i) => {
+      const { usage: _usage, ...rest } = sample(`02${String(i).padStart(2, "0")}`, 0.1, 1);
+      return rest;
+    });
+    const [line] = estimateWindowShare(byVendor, [...unmeasured, sample("01A", 0.1, 200_000)], []);
+    expect(line).toMatchObject({ vendor: "claude", window: "5h", measured: true });
+    expect(line?.low).toBeCloseTo(0.1 * 0.5);
+  });
+
   it("loads a sample saved before the breakdown existed", () => {
     const { usage: _usage, ...older } = sample("01A", 0.1, 1);
     expect(RunTokenSampleSchema.parse(older).usage).toBeUndefined();
@@ -233,6 +252,85 @@ describe("estimateRunTokens stage vendors", () => {
     expect(by.claude).toBeGreaterThan(0);
     expect(by.codex).toBeLessThan(older);
     expect((by.codex! + by.copilot! + by.claude!) / older).toBeCloseTo(1, 1);
+  });
+});
+
+describe("estimateRunTokens read-only and empty groups", () => {
+  const byOf = (e: ReturnType<typeof estimateRunTokens>) =>
+    Object.fromEntries(e.byVendor.map((v) => [v.vendor, v.tokens]));
+  const fitting: RunTokenSample = {
+    runId: "01A",
+    depth: "standard",
+    scope: "range",
+    effort: "default",
+    readOnly: false,
+    groups: 2,
+    lines: 30,
+    files: 2,
+    // Tokens in proportion to lines fit a base of zero.
+    review: [
+      {
+        vendor: "claude",
+        tier: null,
+        tokens: 300,
+        groups: 2,
+        lines: 30,
+        points: [
+          [10, 100],
+          [20, 200],
+        ],
+      },
+    ],
+    verificationTokens: 100,
+    verificationStages: { disprove: 50, confirm: 50, sweep: 0 },
+    fixingTokens: 100,
+  };
+
+  it("charges every stage token when the staged review is zero (F-0106)", () => {
+    const estimate = estimateRunTokens({
+      depth: "standard",
+      reviewers: ["claude"],
+      verifiers: { claude: "codex" },
+      groups: [{ changedLines: 0 }],
+      history: [fitting],
+    });
+    const by = byOf(estimate);
+    expect(by.codex).toBeGreaterThan(0);
+    expect((by.claude ?? 0) + by.codex!).toBeCloseTo(estimate.tokens, -1);
+  });
+
+  it("leaves confirm tokens out of a read-only run's verification (F-0111)", () => {
+    const run = (readOnly: boolean) =>
+      estimateRunTokens({
+        depth: "standard",
+        reviewers: ["claude"],
+        verifiers: { claude: "codex" },
+        readOnly,
+        groups: [{ changedLines: 10_000 }],
+        history: [fitting],
+      });
+    const verification = (e: ReturnType<typeof estimateRunTokens>) =>
+      e.lines.find((l) => l.label === "Verification")!.tokens;
+    expect(verification(run(true)) / verification(run(false))).toBeCloseTo(0.5, 1);
+    expect(byOf(run(true)).codex! / verification(run(true))).toBeCloseTo(1, 1);
+  });
+
+  it("leaves fixing and confirm out of a read-only run's older rate (F-0110, F-0148)", () => {
+    const run = (readOnly: boolean) =>
+      estimateRunTokens({
+        depth: "standard",
+        reviewers: ["codex"],
+        verifiers: { codex: "copilot" },
+        readOnly,
+        groups: [{ changedLines: 0 }],
+      });
+    const ro = byOf(run(true));
+    const { confirm } = STARTING_VERIFICATION_SPLIT;
+    // The reviewer keeps only its review part of 500,000: 365,000, not the
+    // 95,000 of fixing that a read-only run never spends.
+    expect(ro.codex).toBe(370_000);
+    expect(ro.copilot! / (40_000 * (1 - confirm))).toBeCloseTo(1, 1);
+    expect(run(true).tokens).toBe(390_000);
   });
 });
 
