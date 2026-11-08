@@ -467,33 +467,33 @@ export function reviewLaunch(
 export interface ShowableNotification {
   on(event: "click" | "close" | "failed", listener: () => void): unknown;
   show(): void;
+  close(): void;
 }
 
 /**
- * How long `showRetained` keeps a notification that never reports `close`,
- * `click`, or `failed`. Electron doesn't promise a `close` event, so without
- * this limit such a notification stays referenced until the app quits.
+ * How many notifications `showRetained` keeps at once. Electron doesn't
+ * promise a `close` event, so without this limit notifications that never
+ * report one stay referenced until the app quits. A limit on count rather
+ * than age keeps a notification that stays in the notification center, such
+ * as a critical one that never expires, clickable for as long as it shows.
  */
-export const NOTIFICATION_RETAIN_MS = 30 * 60 * 1000;
+export const NOTIFICATION_RETAIN_LIMIT = 100;
 
 /**
- * Shows `note` and keeps it in `retained` until it closes, fails, is clicked,
- * or `retainMs` passes. Electron collects a notification that nothing
- * references, and a collected notification no longer emits `click`, so
- * `onClick` would never run.
+ * Shows `note` and keeps it in `retained` until it closes, fails, or is
+ * clicked. Electron collects a notification that nothing references, and a
+ * collected notification no longer emits `click`, so `onClick` would never
+ * run. When `retained` holds more than `limit` notifications, this closes the
+ * oldest so that no notification stays on screen without a click handler.
  */
 export function showRetained<N extends ShowableNotification>(
   retained: Set<N>,
   note: N,
   onClick: () => void,
-  retainMs: number = NOTIFICATION_RETAIN_MS,
+  limit: number = NOTIFICATION_RETAIN_LIMIT,
 ): void {
   retained.add(note);
-  const timer = setTimeout(() => retained.delete(note), retainMs);
-  // A pending release must not keep the process alive.
-  (timer as { unref?: () => void }).unref?.();
   const release = () => {
-    clearTimeout(timer);
     retained.delete(note);
   };
   note.on("close", release);
@@ -503,4 +503,9 @@ export function showRetained<N extends ShowableNotification>(
     onClick();
   });
   note.show();
+  for (const oldest of retained) {
+    if (retained.size <= limit) break;
+    retained.delete(oldest);
+    oldest.close();
+  }
 }

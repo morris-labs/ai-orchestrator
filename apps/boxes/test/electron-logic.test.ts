@@ -217,8 +217,13 @@ describe("showRetained", () => {
       on(event: "click" | "close" | "failed", listener: () => void) {
         handlers[event] = listener;
       },
+      closed: false,
       show() {
         this.shown = true;
+      },
+      close() {
+        this.closed = true;
+        handlers.close?.();
       },
       emit(event: "click" | "close" | "failed") {
         handlers[event]?.();
@@ -254,18 +259,28 @@ describe("showRetained", () => {
     expect(retained.size).toBe(0);
   });
 
-  it("releases a notification that never reports close or click", () => {
+  it("keeps a notification that never reports close or click", () => {
     vi.useFakeTimers();
     try {
       const retained = new Set<ReturnType<typeof fakeNote>>();
       const note = fakeNote();
-      showRetained(retained, note, () => undefined, 1000);
-      vi.advanceTimersByTime(999);
+      let clicks = 0;
+      showRetained(retained, note, () => clicks++);
+      vi.advanceTimersByTime(24 * 60 * 60 * 1000);
       expect(retained.has(note)).toBe(true);
-      vi.advanceTimersByTime(1);
-      expect(retained.size).toBe(0);
+      note.emit("click");
+      expect(clicks).toBe(1);
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("closes and releases the oldest notification past the limit", () => {
+    const retained = new Set<ReturnType<typeof fakeNote>>();
+    const [first, second, third] = [fakeNote(), fakeNote(), fakeNote()];
+    for (const note of [first, second, third]) showRetained(retained, note, () => undefined, 2);
+    expect(first.closed).toBe(true);
+    expect([...retained]).toEqual([second, third]);
+    expect(second.closed).toBe(false);
   });
 });
