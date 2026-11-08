@@ -338,10 +338,11 @@ describe("EngineSupervisor", () => {
     await sup.stop();
   });
 
-  it("keeps one listener load per client and stops retrying a permanent failure", async () => {
+  it("keeps one listener load per client and retries a lasting failure less often", async () => {
     engine.portFailures = Number.POSITIVE_INFINITY;
     const logs: string[] = [];
     const runs: unknown[] = [];
+    const loaded: string[] = [];
     const sup = new EngineSupervisor({
       engines: {
         list: async () => [
@@ -360,21 +361,25 @@ describe("EngineSupervisor", () => {
         throw new Error("unused");
       },
       onRuns: (list) => runs.push(...list),
-      onPorts: () => undefined,
+      onPorts: (container) => loaded.push(container),
       log: (m) => logs.push(m),
       resyncRetryMs: 5,
       intervalMs: 50,
     });
     sup.start();
     await waitFor(() => runs.length === 1);
-    await waitFor(() => logs.some((l) => l.startsWith("Gave up loading the listeners")));
+    await waitFor(() => logs.some((l) => l.includes("retrying less often")));
     const calls = engine.portCalls;
-    await new Promise((r) => setTimeout(r, 100));
-    expect(engine.portCalls).toBe(calls);
+    await new Promise((r) => setTimeout(r, 60));
     // The first refresh and the first resync share one chain, which can run
-    // its budget twice at most.
+    // its fast budget twice at most; after that, retries wait 150 ms.
+    expect(engine.portCalls - calls).toBeLessThanOrEqual(1);
     expect(calls).toBeLessThanOrEqual(12);
-    expect(logs.filter((l) => l.startsWith("Gave up"))).toHaveLength(1);
+    expect(logs.filter((l) => l.includes("retrying less often"))).toHaveLength(1);
+    // The route recovers while the stream stays connected.
+    engine.portFailures = engine.portCalls;
+    await waitFor(() => loaded.length >= 1, 2000);
+    expect(loaded[0]).toBe(CONTAINER);
     await sup.stop();
   });
 

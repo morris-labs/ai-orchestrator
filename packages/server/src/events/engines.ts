@@ -145,8 +145,11 @@ function sameEndpoint(a: EngineEndpoint, b: EngineEndpoint): boolean {
   return a.hostPort === b.hostPort && a.token === b.token && a.projectId === b.projectId;
 }
 
-/** How many times in a row a listener load fails before it stops retrying. */
+/** How many times in a row a listener load fails before it retries less often. */
 const PORT_LOAD_ATTEMPTS = 6;
+
+/** How much longer the wait between retries is once a listener load keeps failing. */
+const PORT_SLOW_RETRY_FACTOR = 30;
 
 /** The state of one client's listener load chain. */
 interface PortLoad {
@@ -290,21 +293,23 @@ export class EngineSupervisor {
       this.portLoads.delete(client);
       return;
     }
-    if (load.failures >= PORT_LOAD_ATTEMPTS) {
-      // A failure this persistent is permanent (a missing route, a version
-      // mismatch, a bad response); the next stream reset tries again.
+    if (load.failures === PORT_LOAD_ATTEMPTS) {
       this.options.log?.(
-        `Gave up loading the listeners of ${container} after ${load.failures} attempts.`,
+        `Loading the listeners of ${container} failed ${load.failures} times in a row; retrying less often.`,
       );
-      this.portLoads.delete(client);
-      return;
     }
     // An engine that is still starting answers later. Unchanged listeners
-    // send no ports.changed, so without a retry the list stays empty.
-    load.timer = setTimeout(() => {
-      load.timer = null;
-      if (current()) void this.runPortLoad(client, load);
-    }, this.options.resyncRetryMs ?? 10_000);
+    // send no ports.changed and the stream can stay connected, so the load
+    // keeps retrying, less often once it keeps failing; without a retry the
+    // list stays empty until the stream resets.
+    const retryMs = this.options.resyncRetryMs ?? 10_000;
+    load.timer = setTimeout(
+      () => {
+        load.timer = null;
+        if (current()) void this.runPortLoad(client, load);
+      },
+      load.failures >= PORT_LOAD_ATTEMPTS ? retryMs * PORT_SLOW_RETRY_FACTOR : retryMs,
+    );
     load.timer.unref();
   }
 
