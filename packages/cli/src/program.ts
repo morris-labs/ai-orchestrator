@@ -9,6 +9,7 @@ import {
   DecisionOptionSchema,
   EffortSchema,
   LOCAL_MACHINE_ID,
+  RUN_CONCURRENCY_CAPABILITY,
   PlatformSchema,
   ProfileSchema,
   READ_ONLY_POST_PUSH_MESSAGE,
@@ -242,6 +243,8 @@ interface MachineTarget {
   name: string;
   /** The machine's host OS, which decides how its paths look; `null` when unknown. */
   platform: HostOs | null;
+  /** The link capabilities the machine's server lists. */
+  capabilities: string[];
 }
 
 /** One machine's part of `aio box list --all-machines`. */
@@ -570,7 +573,9 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
         `No machine has the ID or name ${want}. List the machines with: aio machines list`,
       );
     }
-    return m.isLocal ? null : { id: m.id, name: m.name, platform: m.platform };
+    return m.isLocal
+      ? null
+      : { id: m.id, name: m.name, platform: m.platform, capabilities: m.capabilities };
   };
   /**
    * Reads a box argument, `BOX` or `MACHINE/BOX`, and returns the box ID.
@@ -1269,6 +1274,17 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
       }
       if (!projectId || !repoPath) {
         throw new UsageError("Give --box, or both --project and --repo.");
+      }
+      // An older server drops `concurrency` and runs at its defaults, so
+      // refuse the flag rather than start a run that ignores it.
+      if (
+        o.concurrency !== undefined &&
+        remote &&
+        !remote.capabilities.includes(RUN_CONCURRENCY_CAPABILITY)
+      ) {
+        throw new UsageError(
+          `The server on ${remote.name} is too old to set --concurrency. Leave out --concurrency, or update that machine's server.`,
+        );
       }
       const run = await c.call("runs.create", {
         body: {
