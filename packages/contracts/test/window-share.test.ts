@@ -89,6 +89,31 @@ describe("estimateWindowShare", () => {
     expect(line?.high).toBeGreaterThan(0);
   });
 
+  it("pools only rates of the account this project's newest run used (F-0061)", () => {
+    const keyed = (runId: string, used: number, account: string): RunTokenSample => {
+      const s = sample(runId, used, 200_000);
+      const [usage] = s.usage!;
+      return {
+        ...s,
+        usage: [{ ...usage!, windows: usage!.windows!.map((w) => ({ ...w, account })) }],
+      };
+    };
+    // A small plan in this project, a plan ten times larger in another.
+    const [line] = estimateWindowShare(
+      byVendor,
+      [keyed("01B", 0.1, "small")],
+      [keyed("01C", 0.01, "large"), keyed("01A", 0.1, "small")],
+    );
+    expect(line).toMatchObject({ measured: true });
+    expect(line?.low).toBeCloseTo(0.1 * 0.8);
+    expect(line?.source).toMatch(/1 run in this project and 1 run/);
+  });
+
+  it("takes no measured rate from another project alone (F-0061)", () => {
+    const [line] = estimateWindowShare(byVendor, [], [sample("01A", 0.01, 200_000)]);
+    expect(line).toMatchObject({ vendor: "claude", window: "5h", measured: false });
+  });
+
   it("loads a sample saved before the breakdown existed", () => {
     const { usage: _usage, ...older } = sample("01A", 0.1, 1);
     expect(RunTokenSampleSchema.parse(older).usage).toBeUndefined();
@@ -140,6 +165,56 @@ describe("estimateRunTokens stage vendors", () => {
     const by = Object.fromEntries(estimate.byVendor.map((v) => [v.vendor, v.tokens]));
     expect(by.codex! / verification).toBeCloseTo(1, 1);
     expect((by.claude! + by.codex!) / estimate.tokens).toBeCloseTo(1, 1);
+  });
+
+  it("charges confirmer and sweep tokens to their own vendors (F-0059)", () => {
+    const history: RunTokenSample[] = ["01A", "01B", "01C"].map((runId) => ({
+      runId,
+      depth: "standard",
+      scope: "range",
+      effort: "default",
+      readOnly: false,
+      groups: 1,
+      lines: 10,
+      files: 1,
+      review: [{ vendor: "claude", tier: null, tokens: 100_000, groups: 1, lines: 10 }],
+      verificationTokens: 40_000,
+      verificationStages: { disprove: 20_000, confirm: 10_000, sweep: 10_000 },
+      fixingTokens: 0,
+    }));
+    const estimate = estimateRunTokens({
+      depth: "standard",
+      reviewers: ["claude"],
+      verifiers: { claude: "codex" },
+      confirmer: "claude",
+      sweeper: "copilot",
+      fixer: "claude",
+      groups: [{ changedLines: 10 }],
+      history,
+    });
+    const verification = estimate.lines.find((l) => l.label === "Verification")!.tokens;
+    const fixing = estimate.lines.find((l) => l.label === "Fixing")!.tokens;
+    const review = estimate.lines.find((l) => l.label === "Review")!.tokens;
+    const by = Object.fromEntries(estimate.byVendor.map((v) => [v.vendor, v.tokens]));
+    expect(by.codex! / (verification / 2)).toBeCloseTo(1, 1);
+    expect(by.copilot! / (verification / 4)).toBeCloseTo(1, 1);
+    expect(by.claude! / (review + fixing + verification / 4)).toBeCloseTo(1, 1);
+  });
+
+  it("charges an older-rate group's verification and fixing to their vendors (F-0060)", () => {
+    const estimate = estimateRunTokens({
+      depth: "standard",
+      reviewers: ["codex"],
+      verifiers: { codex: "copilot" },
+      fixer: "claude",
+      groups: [{ changedLines: 0 }],
+    });
+    const older = estimate.lines.find((l) => l.label === "Whole run, no measurements")!.tokens;
+    const by = Object.fromEntries(estimate.byVendor.map((v) => [v.vendor, v.tokens]));
+    expect(by.copilot).toBeGreaterThan(0);
+    expect(by.claude).toBeGreaterThan(0);
+    expect(by.codex).toBeLessThan(older);
+    expect((by.codex! + by.copilot! + by.claude!) / older).toBeCloseTo(1, 1);
   });
 });
 

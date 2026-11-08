@@ -1493,6 +1493,11 @@ export async function triageBelowFloor(ctx: RunContext): Promise<number> {
 // ---------------------------------------------------------------------------
 // Sweep
 
+/** The vendor that runs the pattern sweep: the first reviewer other than Claude. */
+export function chooseSweeper(reviewers: readonly Vendor[]): Vendor {
+  return reviewers.find((v) => v !== "claude") ?? reviewers[0] ?? "codex";
+}
+
 /** The pattern sweep: confirmed findings of this round become patterns. Returns created finding ids. */
 export async function runSweep(
   ctx: RunContext,
@@ -1513,8 +1518,7 @@ export async function runSweep(
     await ctx.store.writeJson(file, { skipped: true });
     return null;
   }
-  const vendor =
-    ctx.state.roles.reviewer.find((v) => v !== "claude") ?? ctx.state.roles.reviewer[0] ?? "codex";
+  const vendor = chooseSweeper(ctx.state.roles.reviewer);
   const diffBase = reviewDiffBase(ctx);
   // The whole project doesn't fit a prompt, so a sweep of it reads the checkout.
   // Otherwise, excluded files stay out of the diff the sweep reads.

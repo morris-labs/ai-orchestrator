@@ -678,6 +678,12 @@ export const WindowRateSchema = z.object({
   durationMs: CountSchema,
   /** How many times the window reset during the run. Stretches across a reset don't count. */
   resets: CountSchema,
+  /**
+   * An opaque key of the account whose readings gave the rate, never the
+   * account's name. Plans differ in size, so rates from different keys don't
+   * pool. Absent from a sample saved before the key existed.
+   */
+  account: z.string().min(1).max(64).optional(),
 });
 export type WindowRate = z.infer<typeof WindowRateSchema>;
 
@@ -732,6 +738,13 @@ export const RunTokenSampleSchema = z.object({
     .max(16),
   /** Disprover, confirmer, and sweep tokens. */
   verificationTokens: CountSchema,
+  /**
+   * `verificationTokens` by stage, since each stage can go to another vendor.
+   * Absent from a sample saved before the split existed.
+   */
+  verificationStages: z
+    .object({ disprove: CountSchema, confirm: CountSchema, sweep: CountSchema })
+    .optional(),
   fixingTokens: CountSchema,
   /**
    * Each vendor's tokens by kind and what they did to its usage windows.
@@ -772,8 +785,8 @@ export interface RunTokenEstimate {
   lines: TokenEstimateLine[];
   /**
    * Each vendor's share of the estimate. Verification and fixing are split
-   * in proportion to each vendor's review tokens, since the estimate can't
-   * know which vendor takes them.
+   * in proportion to each reviewer's review tokens, then charged to the
+   * vendors that run each stage for that reviewer.
    */
   byVendor: { vendor: Vendor; tokens: number; low: number; high: number }[];
   /** The estimated share of each vendor's usage windows. */
@@ -806,6 +819,10 @@ export interface RunTokenEstimateInput {
   verifiers?: Partial<Record<Vendor, Vendor>>;
   /** The vendor that fixes the findings. Without it, each reviewer fixes its own. */
   fixer?: Vendor;
+  /** The vendor that confirms the fixes. Without it, each reviewer's verifier confirms. */
+  confirmer?: Vendor;
+  /** The vendor that runs the pattern sweep. Without it, each reviewer's verifier sweeps. */
+  sweeper?: Vendor;
   groups: readonly { tier?: ModelTier | undefined; changedLines: number }[];
   /** This project's finished runs. */
   history?: readonly RunTokenSample[];
@@ -1070,6 +1087,46 @@ export function estimateRunTokens(input: RunTokenEstimateInput): RunTokenEstimat
     const v = perVendor.get(vendor) ?? { tokens: 0, low: 0, high: 0 };
     perVendor.set(vendor, { tokens: v.tokens + tokens, low: v.low + low, high: v.high + high });
   };
+  // The share of verification tokens that each verification stage takes, from
+  // the runs that measured the split. Without one, the disprover takes it all.
+  const verificationSplit = (() => {
+    const total = (s: RunTokenSample) => {
+      const v = s.verificationStages;
+      return v ? v.disprove + v.confirm + v.sweep : 0;
+    };
+    const picked = pickSamples(exact, nearby, (w) => total(w.sample) > 0);
+    let disprove = 0;
+    let confirm = 0;
+    let sweep = 0;
+    for (const w of picked.used) {
+      const v = w.sample.verificationStages;
+      if (!v) continue;
+      disprove += (w.weight * v.disprove) / total(w.sample);
+      // A read-only run has no fixes to confirm.
+      if (!readOnly) confirm += (w.weight * v.confirm) / total(w.sample);
+      sweep += (w.weight * v.sweep) / total(w.sample);
+    }
+    const sum = disprove + confirm + sweep;
+    return sum > 0
+      ? { disprove: disprove / sum, confirm: confirm / sum, sweep: sweep / sum }
+      : { disprove: 1, confirm: 0, sweep: 0 };
+  })();
+  // Charges a reviewer's verification tokens to the vendor of each stage.
+  const addVerification = (reviewer: Vendor, tokens: number, low: number, high: number) => {
+    const verifier = input.verifiers?.[reviewer] ?? reviewer;
+    const stages: [Vendor, number][] = [
+      [verifier, verificationSplit.disprove],
+      [input.confirmer ?? verifier, verificationSplit.confirm],
+      [input.sweeper ?? verifier, verificationSplit.sweep],
+    ];
+    for (const [vendor, share] of stages) {
+      if (share > 0) addVendor(vendor, tokens * share, low * share, high * share);
+    }
+  };
+  // The parts of the older rate that verification and fixing take, as the
+  // starting stage rates are of its figure per group.
+  const olderVerification = STARTING_STAGE_RATES.verification / fallback.perGroup;
+  const olderFixing = readOnly ? 0 : STARTING_STAGE_RATES.fixing / fallback.perGroup;
   // Review tokens of the groups that have their own verification and fixing
   // lines, by reviewer. Groups on the older rate already include those stages.
   const stagedReview = new Map<Vendor, number>();
@@ -1078,7 +1135,14 @@ export function estimateRunTokens(input: RunTokenEstimateInput): RunTokenEstimat
     const rate = reviewRate(vendor, group.tier);
     if (!rate) {
       const tokens = fallback.perGroup + group.changedLines * fallback.perLine;
-      addVendor(vendor, tokens, tokens * REVIEW_SPREAD.low, tokens * REVIEW_SPREAD.high);
+      // The older rate includes verification and fixing, so those parts go to
+      // the vendors that run them.
+      const charge = (to: (t: number, l: number, h: number) => void, share: number) =>
+        to(tokens * share, tokens * share * REVIEW_SPREAD.low, tokens * share * REVIEW_SPREAD.high);
+      charge((t, l, h) => addVendor(vendor, t, l, h), 1 - olderVerification - olderFixing);
+      charge((t, l, h) => addVerification(vendor, t, l, h), olderVerification);
+      if (olderFixing > 0)
+        charge((t, l, h) => addVendor(input.fixer ?? vendor, t, l, h), olderFixing);
       older = {
         tokens: older.tokens + tokens,
         groups: older.groups + 1,
@@ -1170,18 +1234,19 @@ export function estimateRunTokens(input: RunTokenEstimateInput): RunTokenEstimat
   }));
   const changed = input.groups.reduce((n, g) => n + g.changedLines, 0);
   // Each stage line is split by each reviewer's share of the staged groups'
-  // review tokens, then goes to the vendor that runs that stage for the
-  // reviewer: its verifier, or the fixer.
+  // review tokens, then goes to the vendors that run that stage for the
+  // reviewer: its disprover, confirmer, and sweeper, or the fixer.
   const reviewed = [...stagedReview.values()].reduce((n, t) => n + t, 0);
   for (const line of lines) {
     if (line.label !== "Verification" && line.label !== "Fixing") continue;
     for (const [reviewer, t] of stagedReview) {
       const share = reviewed > 0 ? t / reviewed : 0;
-      const vendor =
-        line.label === "Fixing"
-          ? (input.fixer ?? reviewer)
-          : (input.verifiers?.[reviewer] ?? reviewer);
-      addVendor(vendor, share * line.tokens, share * line.low, share * line.high);
+      if (line.label === "Fixing") {
+        const vendor = input.fixer ?? reviewer;
+        addVendor(vendor, share * line.tokens, share * line.low, share * line.high);
+      } else {
+        addVerification(reviewer, share * line.tokens, share * line.low, share * line.high);
+      }
     }
   }
   const byVendor = [...perVendor].map(([vendor, v]) => ({
@@ -1226,7 +1291,9 @@ const WINDOW_SPREAD_SINGLE = { low: 0.5, high: 2 };
  * from the estimate's raw tokens to weighted tokens uses the ratio the same
  * runs measured. Every rate includes any other use of the account during
  * those runs, such as an interactive session, so a measured rate errs high,
- * and the share it gives is conservative. With no measured run, Claude's
+ * and the share it gives is conservative. A rate pools only runs of the
+ * account that this project's newest measuring run used, so a run in another
+ * project counts only when it names the same account. With no measured run, Claude's
  * 5-hour window gets the rough `STARTING_WINDOW_RATE`, labeled as such; other
  * vendors and windows get no line until a run measures them.
  */
@@ -1256,7 +1323,16 @@ export function estimateWindowShare(
         measured.set(rate.window, list);
       }
     }
-    for (const [window, runs] of measured) {
+    for (const [window, all] of measured) {
+      // Plans differ in size, so only rates of the account this project's
+      // newest measuring run used pool. Another project's run counts only
+      // when its key matches; without a key, nothing ties it to this account.
+      const newest = all.find((r) => r.w.origin === "project");
+      if (!newest) continue;
+      const account = newest.rate.account;
+      const runs = all.filter(
+        (r) => r.rate.account === account && (r.w.origin === "project" || account !== undefined),
+      );
       // Pooled over runs, so a run with more tokens counts more.
       let used = 0;
       let weightedSum = 0;
@@ -1286,7 +1362,10 @@ export function estimateWindowShare(
       });
     }
     const start = STARTING_WINDOW_RATE;
-    if (est.vendor === start.vendor && !measured.has(start.window)) {
+    if (
+      est.vendor === start.vendor &&
+      !out.some((l) => l.vendor === est.vendor && l.window === start.window)
+    ) {
       out.push({
         vendor: est.vendor,
         window: start.window,

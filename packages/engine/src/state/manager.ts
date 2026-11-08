@@ -51,6 +51,7 @@ import { loadTokenHistory } from "../run/token-history.js";
 import { RunController, startingRoles } from "./controller.js";
 import { assignRoles } from "./profiles.js";
 import { chooseDisprover } from "../verify/verify.js";
+import { chooseConfirmer, chooseSweeper } from "./steps.js";
 
 /**
  * Turns a core error into one the API maps to a status: a dirty tree keeps
@@ -370,6 +371,11 @@ export class EngineRunManager implements RunManager {
           reviewers: roles.reviewer,
           verifiers,
           fixer: roles.fixer,
+          // Without the cross-vendor rule, the fixer confirms its own fixes.
+          confirmer: crossVendor
+            ? (chooseConfirmer(roles.confirmer, [roles.fixer], available) ?? roles.confirmer)
+            : roles.fixer,
+          sweeper: chooseSweeper(roles.reviewer),
           groups,
           history: await loadTokenHistory(this.location.projectRoot),
           hostHistory: request.hostTokenSamples ?? [],

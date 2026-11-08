@@ -4,6 +4,7 @@
 // folder. The engine writes the file when the run finishes, or the first time
 // it reads an older run. The server reads these files across projects, so a
 // project with few runs can learn from the others; see docs/architecture.md.
+import { createHash } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import {
@@ -76,6 +77,7 @@ async function measure(runId: string, dir: string): Promise<RunTokenSample | nul
     { vendor: Vendor; tier: ModelTier | null; tokens: number; groups: Map<string, number> }
   >();
   let verificationTokens = 0;
+  const verificationStages = { disprove: 0, confirm: 0, sweep: 0 };
   let fixingTokens = 0;
   let calls = 0;
   const kinds = new Map<Vendor, Kinds>();
@@ -104,6 +106,12 @@ async function measure(runId: string, dir: string): Promise<RunTokenSample | nul
         fixingTokens += tokens;
       } else if (/^(verify|sweep|confirm)/.test(name)) {
         verificationTokens += tokens;
+        const stage = name.startsWith("verify")
+          ? "disprove"
+          : name.startsWith("confirm")
+            ? "confirm"
+            : "sweep";
+        verificationStages[stage] += tokens;
       }
     }
   }
@@ -134,6 +142,7 @@ async function measure(runId: string, dir: string): Promise<RunTokenSample | nul
       };
     }),
     verificationTokens,
+    verificationStages,
     fixingTokens,
     ...(usage.length > 0 ? { usage } : {}),
   };
@@ -366,11 +375,11 @@ async function measureUsage(
     const windows: WindowRate[] = [];
     const byWindow = partial.has(vendor) ? undefined : readings.get(vendor);
     for (const [window, byAccount] of byWindow ?? []) {
-      const list =
-        [...byAccount.values()]
-          .sort((a, b) => b.length - a.length)[0]
-          ?.slice()
-          .sort((a, b) => a.weighted - b.weighted || a.time - b.time) ?? [];
+      const [account, readingsOf] = [...byAccount].sort((a, b) => b[1].length - a[1].length)[0] ?? [
+        "",
+        [],
+      ];
+      const list = readingsOf.slice().sort((a, b) => a.weighted - b.weighted || a.time - b.time);
       let used = 0;
       let tokens = 0;
       let durationMs = 0;
@@ -399,6 +408,7 @@ async function measureUsage(
         rate: used / tokens,
         durationMs,
         resets,
+        ...(account ? { account: accountKey(vendor, account) } : {}),
       });
     }
     out.push({
@@ -412,6 +422,14 @@ async function measureUsage(
     });
   }
   return out;
+}
+
+/**
+ * An opaque key for a vendor's account label, so a sample can tell accounts
+ * apart without holding a name or an email.
+ */
+function accountKey(vendor: Vendor, account: string): string {
+  return createHash("sha256").update(`${vendor}\0${account}`).digest("hex").slice(0, 16);
 }
 
 /**

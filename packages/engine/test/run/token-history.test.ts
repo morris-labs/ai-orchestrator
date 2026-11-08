@@ -66,6 +66,7 @@ describe("loadTokenHistory", () => {
           },
         ],
         verificationTokens: 72,
+        verificationStages: { disprove: 31, confirm: 0, sweep: 41 },
         fixingTokens: 51,
       },
     ]);
@@ -154,6 +155,9 @@ describe("usage windows", () => {
     expect(window).toMatchObject({ window: "5h", weighted: 6_000, resets: 1, durationMs: 180_000 });
     expect(window?.used).toBeCloseTo(0.07);
     expect(window?.rate).toBeCloseTo(0.07 / 6_000);
+    // An opaque key tells the account apart without its name (F-0061).
+    expect(window?.account).toMatch(/^[0-9a-f]{16}$/);
+    expect(JSON.stringify(sample)).not.toContain("example.com");
   });
 
   it("leaves out a window when a call has no breakdown", async () => {
