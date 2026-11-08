@@ -87,6 +87,17 @@ export function isMulti(state: FleetState): boolean {
   return state.supported === true && state.machines.length > 1;
 }
 
+/**
+ * False when `machineId`'s server is known to lack `capability`: the machine
+ * list shows it without one, or the server has no machine routes at all,
+ * which only an older server lacks. True while the fleet doesn't know yet.
+ */
+export function machineSupports(state: FleetState, machineId: string, capability: string): boolean {
+  if (state.supported === false) return false;
+  const m = state.machines.find((e) => e.machine.id === machineId);
+  return m === undefined || m.machine.capabilities.includes(capability);
+}
+
 /** True unless the last run list or machine list failed, so the machine's runs are current. */
 export function isCurrent(m: FleetMachine): boolean {
   return m.reach === "online" || m.reach === "loading";

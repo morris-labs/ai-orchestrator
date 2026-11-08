@@ -255,6 +255,38 @@ describe("batched verification", () => {
     expect(ctx.findings[1]?.followUpReason).toBeUndefined();
   });
 
+  it("keeps split batches within the run's concurrency", async () => {
+    let running = 0;
+    let most = 0;
+    const made = await makeRun({
+      adapters: {
+        copilot: adapter("copilot", {}),
+        codex: adapter("codex", {
+          verifyBatch: () => {
+            throw new Error(REFUSED);
+          },
+          verify: async () => {
+            running += 1;
+            most = Math.max(most, running);
+            await new Promise((resolve) => setTimeout(resolve, 5));
+            running -= 1;
+            return verdict("x");
+          },
+        }),
+      },
+      request: { depth: "standard", concurrency: 2 },
+    });
+    const { ctx } = made;
+    ctx.state.round = 1;
+    ctx.findings = [1, 2, 3, 4, 5, 6].map((n) =>
+      finding(n, ctx.state.id, { reportedBy: "copilot-x", groupId: n <= 3 ? "G01" : "G02" }),
+    );
+    await ctx.store.saveGroups([], 1);
+    await verifyPending(ctx, ctx.store.roundFile(1, "verify"));
+    expect(ctx.findings.map((f) => f.verdict)).toEqual(Array(6).fill("disproved"));
+    expect(most).toBe(2);
+  });
+
   it("flags a lone refused finding without a second round of calls", async () => {
     let batchCalls = 0;
     const { ctx } = await verifyRun(

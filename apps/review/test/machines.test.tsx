@@ -1,7 +1,7 @@
 // Review runs across machines: the fleet store, the machine picker, and the
 // all-machines run table, against one fake server per machine behind a fake
 // hub.
-import { DEFAULT_POLICY, type RunState } from "@aio/contracts";
+import { DEFAULT_POLICY, RUN_CONCURRENCY_CAPABILITY, type RunState } from "@aio/contracts";
 import { FakeServer, makeBoxView } from "@aio/ui/testing";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
@@ -113,6 +113,53 @@ describe("the launcher on another machine", () => {
       crossVendor: false,
     });
     expect(local.callsTo("runs.create")).toHaveLength(0);
+  });
+});
+
+describe("parallel calls on another machine", () => {
+  async function startWithParallelCalls(capabilities: string[]) {
+    const { build, fleet } = setup([LOCAL, { ...BUILD, capabilities }]);
+    build.on("projects.list", () => ({ projects: [project] }));
+    build.on("projects.repos.list", () => ({
+      repos: [
+        {
+          path: "/srv/src/build-app",
+          name: "build-app",
+          currentBranch: "topic",
+          headSha: null,
+          dirty: false,
+        },
+      ],
+    }));
+    build.on("projects.repos.refs", () => EMPTY_REFS);
+    build.on("runs.create", () => remoteRun());
+    await fleet.refresh();
+    fleet.select("m1");
+    render(
+      <FleetProvider fleet={fleet}>
+        <StoreProvider store={fleet.storeFor("m1")}>
+          <Launcher prefill={{ project: project.project.id, box: null }} />
+        </StoreProvider>
+      </FleetProvider>,
+    );
+    await waitFor(() =>
+      expect(screen.getByLabelText(/^Repository/)).toHaveValue("/srv/src/build-app"),
+    );
+    fireEvent.change(screen.getByLabelText(/^Parallel calls/), { target: { value: "1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Start" }));
+    return build;
+  }
+
+  it("refuses the setting for a server that would drop it", async () => {
+    const build = await startWithParallelCalls([]);
+    await screen.findByText(/too old to set parallel calls/);
+    expect(build.callsTo("runs.create")).toHaveLength(0);
+  });
+
+  it("sends the setting to a server that lists the capability", async () => {
+    const build = await startWithParallelCalls([RUN_CONCURRENCY_CAPABILITY]);
+    await waitFor(() => expect(build.callsTo("runs.create")).toHaveLength(1));
+    expect(build.callsTo("runs.create")[0]!.body).toMatchObject({ concurrency: 1 });
   });
 });
 

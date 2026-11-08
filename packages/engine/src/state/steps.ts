@@ -1308,9 +1308,10 @@ export async function verifyPending(ctx: RunContext, stageFile: string): Promise
     } catch (error) {
       if (!(error instanceof RefusalFallbackFailed)) throw error;
       // One finding must not flag its whole group, so each one tries alone
-      // before anything is flagged.
+      // before anything is flagged. They go one at a time in this batch's
+      // slot, so the stage never runs more calls than its concurrency.
       if (findings.length === 1) return [await flag(first, error)];
-      return mapLimit(findings, ctx.state.request.concurrency ?? VERIFY_CONCURRENCY, verifyOne);
+      return mapLimit(findings, 1, verifyOne);
     }
     const results: Array<VerifyResult | null> = [];
     for (const finding of findings) {

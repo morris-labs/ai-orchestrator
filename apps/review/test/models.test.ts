@@ -44,6 +44,12 @@ describe("buildRunRequest", () => {
     const plain = buildRunRequest(ok);
     expect(plain.ok && "concurrency" in plain.request).toBe(false);
   });
+  it("refuses parallel calls for a server that would drop them", () => {
+    const old = { concurrency: false };
+    const refused = buildRunRequest({ ...ok, concurrency: "1" }, old);
+    expect(refused).toMatchObject({ ok: false, errors: [expect.stringMatching(/too old/)] });
+    expect(buildRunRequest(ok, old).ok).toBe(true);
+  });
   it("applies the design defaults", () => {
     const r = buildRunRequest(ok);
     expect(r).toMatchObject({

@@ -8,11 +8,14 @@ import {
   type RouteOf,
   type Effort,
   MAX_CONCURRENCY,
+  RUN_CONCURRENCY_CAPABILITY,
   stageEfforts,
   type RunDepth,
 } from "@aio/contracts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ErrorBanner, Field } from "../components/common.js";
+import { useFleet, useFleetState } from "../components/machines.js";
+import { machineSupports } from "../state/fleet.js";
 import { listRefs, listRepos, EMPTY_REFS, type RepoInfo, type RepoRefs } from "../lib/repos.js";
 import { href, navigate } from "../state/router.js";
 import { useApiClient, useRestoreFocusAfterBusy } from "@aio/ui/hooks";
@@ -34,6 +37,14 @@ type Preview = RouteOf<"runs.preview">["response"];
 
 export function Launcher({ prefill }: { prefill: { project: string | null; box: string | null } }) {
   const api = useApiClient();
+  const fleet = useFleet();
+  const fleetState = useFleetState();
+  // Without a fleet the launcher has one machine and nothing to check.
+  const target = {
+    concurrency:
+      fleet === null ||
+      machineSupports(fleetState, fleetState.selected, RUN_CONCURRENCY_CAPABILITY),
+  };
   const [form, setForm] = useState<LauncherForm>({
     ...DEFAULT_FORM,
     projectId: prefill.project ?? "",
@@ -143,7 +154,7 @@ export function Launcher({ prefill }: { prefill: { project: string | null; box: 
 
   async function doPreview() {
     if (inFlight.current) return;
-    const built = buildRunRequest(form);
+    const built = buildRunRequest(form, target);
     setErrors(built.ok ? [] : built.errors);
     if (!built.ok) return;
     inFlight.current = "preview";
@@ -177,7 +188,7 @@ export function Launcher({ prefill }: { prefill: { project: string | null; box: 
       return;
     }
     if (inFlight.current) return;
-    const built = buildRunRequest(form);
+    const built = buildRunRequest(form, target);
     setErrors(built.ok ? [] : built.errors);
     if (!built.ok) return;
     inFlight.current = "start";
@@ -512,7 +523,7 @@ export function Launcher({ prefill }: { prefill: { project: string | null; box: 
             </Field>
             <Field
               label="Parallel calls"
-              hint={`How many review calls run at once on each vendor, and how many verification calls run at once, from 1 to ${MAX_CONCURRENCY}. More finishes sooner but uses your usage window faster. Default: 6 review calls per vendor and 4 verification calls.`}
+              hint={`How many review calls run at once on each vendor, and how many verification calls run at once, from 1 to ${MAX_CONCURRENCY}. More finishes sooner but uses your usage window faster. Default: 6 review calls per vendor and 4 verification calls.${target.concurrency ? "" : " The selected machine's server is too old to use this setting."}`}
             >
               <input
                 type="number"

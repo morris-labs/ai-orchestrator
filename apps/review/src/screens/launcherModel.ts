@@ -150,8 +150,20 @@ export function setFormProfile(form: LauncherForm, profile: Profile): LauncherFo
 
 export type BuildResult = { ok: true; request: RunRequest } | { ok: false; errors: string[] };
 
+/** What the launcher knows about the server that runs the review. */
+export interface BuildTarget {
+  /**
+   * False when the server drops `concurrency`, as an older one does, so the
+   * launcher refuses the field instead of starting at the defaults.
+   */
+  concurrency: boolean;
+}
+
 /** Validates the form and builds the request body; lists every problem at once. */
-export function buildRunRequest(form: LauncherForm): BuildResult {
+export function buildRunRequest(
+  form: LauncherForm,
+  target: BuildTarget = { concurrency: true },
+): BuildResult {
   const errors: string[] = [];
   if (!form.projectId) errors.push("Select a container.");
   if (!form.repoPath) errors.push("Select a repository.");
@@ -165,6 +177,10 @@ export function buildRunRequest(form: LauncherForm): BuildResult {
     (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > MAX_CONCURRENCY)
   )
     errors.push(`Parallel calls must be a whole number from 1 to ${MAX_CONCURRENCY}.`);
+  else if (concurrency !== undefined && !target.concurrency)
+    errors.push(
+      "The selected machine's server is too old to set parallel calls. Clear Parallel calls, or update that machine's server.",
+    );
   let prNumber: number | undefined;
   if (form.pipeline === "post-push") {
     prNumber = Number(form.prNumber);

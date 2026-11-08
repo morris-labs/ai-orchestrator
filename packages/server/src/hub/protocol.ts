@@ -6,7 +6,7 @@
 // requests and open streams; the side that starts one numbers it with its
 // own prefix (`h` on the hub, `n` on the node), so the two ends never pick
 // the same id.
-import { MachineRoleSchema } from "@aio/contracts";
+import { MachineRoleSchema, RUN_CONCURRENCY_CAPABILITY } from "@aio/contracts";
 import { z } from "zod";
 
 /**
@@ -29,6 +29,7 @@ export const LINK_CAPABILITIES: readonly string[] = [
   "credentials.v1",
   "flow.v1",
   "health.v1",
+  RUN_CONCURRENCY_CAPABILITY,
 ];
 
 /**
