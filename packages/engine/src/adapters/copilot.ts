@@ -349,14 +349,20 @@ export function parseCopilotJson(stdout: string, stderr = ""): CopilotRunSummary
         break;
       case "assistant.usage":
         sawUsage = true;
-        usage.input += num(data.inputTokens);
         usage.output += num(data.outputTokens);
         // The SDK reports cache reads and writes apart from `inputTokens`,
-        // which counts them too.
+        // which usually counts them too. A model that reports input the way
+        // Anthropic's API does leaves them out, which shows when the cache
+        // counts exceed the input; then they add to it.
         if (typeof data.cacheReadTokens === "number" || typeof data.cacheWriteTokens === "number") {
           sawCache = true;
+          const cached = num(data.cacheReadTokens) + num(data.cacheWriteTokens);
+          const input = num(data.inputTokens);
+          usage.input += cached > input ? input + cached : input;
           usage.cacheRead += num(data.cacheReadTokens);
           usage.cacheWrite += num(data.cacheWriteTokens);
+        } else {
+          usage.input += num(data.inputTokens);
         }
         if (typeof data.cost === "number" && Number.isFinite(data.cost))
           multipliers = (multipliers ?? 0) + data.cost;

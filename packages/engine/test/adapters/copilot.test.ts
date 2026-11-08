@@ -75,6 +75,20 @@ describe("parseCopilotJson", () => {
     });
   });
 
+  it("adds cache counts to an input that leaves them out", () => {
+    const stream = JSON.stringify({
+      type: "assistant.usage",
+      data: { inputTokens: 8, outputTokens: 10, cacheReadTokens: 70, cacheWriteTokens: 18 },
+    });
+    expect(parseCopilotJson(stream).tokens).toEqual({
+      input: 96,
+      output: 10,
+      fresh: 8,
+      cacheWrite: 18,
+      cacheRead: 70,
+    });
+  });
+
   it("counts assistant.usage cost as a premium-request multiplier, not dollars", async () => {
     const stream = [
       { type: "assistant.message", data: { content: '{"ok":true}', outputTokens: 9 } },
