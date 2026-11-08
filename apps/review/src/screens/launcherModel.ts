@@ -179,7 +179,7 @@ export function buildRunRequest(
     errors.push(`Parallel calls must be a whole number from 1 to ${MAX_CONCURRENCY}.`);
   else if (concurrency !== undefined && !target.concurrency)
     errors.push(
-      "The selected machine's server is too old to set parallel calls. Clear Parallel calls, or update that machine's server.",
+      "The selected machine's server is too old to set parallel calls, or the machine list hasn't confirmed that it can. Clear Parallel calls, or update that machine's server.",
     );
   let prNumber: number | undefined;
   if (form.pipeline === "post-push") {

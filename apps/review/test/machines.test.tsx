@@ -156,6 +156,47 @@ describe("parallel calls on another machine", () => {
     expect(build.callsTo("runs.create")).toHaveLength(0);
   });
 
+  it.each([
+    ["before the machine list answers", null],
+    ["after the machine list fails", { status: 503, code: "hub_unreachable", message: "No list." }],
+  ])("refuses the setting for a machine the fleet doesn't know %s", async (_when, failure) => {
+    const { build, hub, fleet } = setup([LOCAL, { ...BUILD, capabilities: [] }]);
+    if (failure) {
+      hub.failing[MACHINE_LIST] = failure;
+      await fleet.refresh();
+    }
+    expect(fleet.getState()).toMatchObject({ supported: null, machines: [] });
+    build.on("projects.list", () => ({ projects: [project] }));
+    build.on("projects.repos.list", () => ({
+      repos: [
+        {
+          path: "/srv/src/build-app",
+          name: "build-app",
+          currentBranch: "topic",
+          headSha: null,
+          dirty: false,
+        },
+      ],
+    }));
+    build.on("projects.repos.refs", () => EMPTY_REFS);
+    build.on("runs.create", () => remoteRun());
+    fleet.select("m1");
+    render(
+      <FleetProvider fleet={fleet}>
+        <StoreProvider store={fleet.storeFor("m1")}>
+          <Launcher prefill={{ project: project.project.id, box: null }} />
+        </StoreProvider>
+      </FleetProvider>,
+    );
+    await waitFor(() =>
+      expect(screen.getByLabelText(/^Repository/)).toHaveValue("/srv/src/build-app"),
+    );
+    fireEvent.change(screen.getByLabelText(/^Parallel calls/), { target: { value: "1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Start" }));
+    await screen.findByText(/too old to set parallel calls/);
+    expect(build.callsTo("runs.create")).toHaveLength(0);
+  });
+
   it("sends the setting to a server that lists the capability", async () => {
     const build = await startWithParallelCalls([RUN_CONCURRENCY_CAPABILITY]);
     await waitFor(() => expect(build.callsTo("runs.create")).toHaveLength(1));
