@@ -288,6 +288,39 @@ describe("batched verification", () => {
     expect(most).toBe(2);
   });
 
+  it("runs a refused batch's single calls in the stage's idle slots", async () => {
+    let running = 0;
+    let most = 0;
+    const made = await makeRun({
+      adapters: {
+        copilot: adapter("copilot", {}),
+        codex: adapter("codex", {
+          verifyBatch: () => {
+            throw new Error(REFUSED);
+          },
+          verify: async () => {
+            running += 1;
+            most = Math.max(most, running);
+            await new Promise((resolve) => setTimeout(resolve, 5));
+            running -= 1;
+            return verdict("x");
+          },
+        }),
+      },
+      request: { depth: "standard", concurrency: 4 },
+    });
+    const { ctx } = made;
+    ctx.state.round = 1;
+    ctx.findings = [1, 2, 3, 4].map((n) =>
+      finding(n, ctx.state.id, { reportedBy: "copilot-x", groupId: "G01" }),
+    );
+    await ctx.store.saveGroups([], 1);
+    await verifyPending(ctx, ctx.store.roundFile(1, "verify"));
+    expect(ctx.findings.map((f) => f.verdict)).toEqual(Array(4).fill("disproved"));
+    expect(most).toBeGreaterThan(1);
+    expect(most).toBeLessThanOrEqual(4);
+  });
+
   it("flags a lone refused finding without a second round of calls", async () => {
     let batchCalls = 0;
     const { ctx } = await verifyRun(

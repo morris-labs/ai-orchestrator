@@ -175,6 +175,33 @@ async function mapLimit<T, R>(
   return results;
 }
 
+/**
+ * Returns a function that runs tasks with at most `limit` in flight. After
+ * one task fails, queued tasks never start, as in `mapLimit`.
+ */
+function slotLimiter(limit: number): <R>(task: () => Promise<R>) => Promise<R> {
+  let active = 0;
+  let failed = false;
+  const waiting: Array<() => void> = [];
+  return async <R>(task: () => Promise<R>): Promise<R> => {
+    if (active >= limit) await new Promise<void>((resolve) => waiting.push(resolve));
+    if (failed) {
+      waiting.shift()?.();
+      throw new Error("The stage stopped after an earlier call failed.");
+    }
+    active++;
+    try {
+      return await task();
+    } catch (error) {
+      failed = true;
+      throw error;
+    } finally {
+      active--;
+      waiting.shift()?.();
+    }
+  };
+}
+
 /** Rough token estimate for a prompt: four characters per token. */
 export function estimateTokens(prompt: string): number {
   return Math.ceil(prompt.length / 4);
@@ -1280,7 +1307,9 @@ export async function verifyPending(ctx: RunContext, stageFile: string): Promise
     return result ? apply(finding, result) : null;
   };
   /** Checks a batch's findings that are still open in one call, under a key that outlives a restart. */
-  const verifyBatch = async (batch: VerifyBatch): Promise<Array<VerifyResult | null>> => {
+  const verifyBatch = async (
+    batch: VerifyBatch,
+  ): Promise<Array<VerifyResult | null> | { retryAlone: Finding[] }> => {
     const findings = batch.ids.flatMap((id) => {
       const f = ctx.findingById(id);
       return f && pending.includes(f) ? [f] : [];
@@ -1337,10 +1366,10 @@ export async function verifyPending(ctx: RunContext, stageFile: string): Promise
     } catch (error) {
       if (!(error instanceof RefusalFallbackFailed)) throw error;
       // One finding must not flag its whole group, so each one tries alone
-      // before anything is flagged. They go one at a time in this batch's
-      // slot, so the stage never runs more calls than its concurrency.
+      // before anything is flagged. The caller runs them after this batch
+      // frees its slot, so they share the stage's concurrency.
       if (findings.length === 1) return [await flag(first, error)];
-      return mapLimit(findings, 1, verifyOne);
+      return { retryAlone: findings };
     }
     const results: Array<VerifyResult | null> = [];
     for (const finding of findings) {
@@ -1373,10 +1402,13 @@ export async function verifyPending(ctx: RunContext, stageFile: string): Promise
   let results: Array<VerifyResult | null>;
   if (runDepth(ctx.state.request) === "standard") {
     const plan = await planBatchesFor(ctx, pending, stageFile);
-    const perBatch = await mapLimit(
-      plan.batches,
-      ctx.state.request.concurrency ?? VERIFY_CONCURRENCY,
-      verifyBatch,
+    const slot = slotLimiter(ctx.state.request.concurrency ?? VERIFY_CONCURRENCY);
+    const perBatch = await Promise.all(
+      plan.batches.map(async (batch) => {
+        const out = await slot(() => verifyBatch(batch));
+        if (Array.isArray(out)) return out;
+        return Promise.all(out.retryAlone.map((f) => slot(() => verifyOne(f))));
+      }),
     );
     results = [...perBatch.flat(), ...(await followPrimaries(ctx, plan.duplicates))];
   } else {
