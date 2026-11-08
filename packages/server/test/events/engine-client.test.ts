@@ -427,6 +427,50 @@ describe("EngineSupervisor", () => {
     expect(engine.portCalls - calls).toBeLessThanOrEqual(1);
   });
 
+  it("starts no listener load for a client removed while its resync waited", async () => {
+    let endpoints = [
+      { container: CONTAINER, projectId: PROJECT_ID, hostPort: engine.port, token: ENGINE_TOKEN },
+    ];
+    let listing = false;
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((r) => (release = r));
+    const loaded: string[] = [];
+    const sup = new EngineSupervisor({
+      engines: { list: async () => endpoints },
+      db: openDatabase(":memory:"),
+      expectedVersion: "1.0.0-dev",
+      relay: () => undefined,
+      decideLease: async () => {
+        throw new Error("unused");
+      },
+      onRuns: () => undefined,
+      onPorts: (container) => loaded.push(container),
+      intervalMs: 60_000,
+      createClient: (options) => {
+        const c = new EngineClient(options);
+        const call = c.call.bind(c);
+        c.call = (async (route: string, ...rest: unknown[]) => {
+          if (route === "engine.runs.list") {
+            listing = true;
+            await gate;
+          }
+          return (call as (r: string, ...a: unknown[]) => Promise<unknown>)(route, ...rest);
+        }) as typeof c.call;
+        return c;
+      },
+    });
+    sup.start();
+    await waitFor(() => listing && loaded.length === 1);
+    endpoints = [];
+    await sup.refresh();
+    const calls = engine.portCalls;
+    release();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(engine.portCalls).toBe(calls);
+    expect((sup as unknown as { portLoads: Map<unknown, unknown> }).portLoads.size).toBe(0);
+    await sup.stop();
+  });
+
   it("reloads runs and their findings and drops cached leases when the stream starts over", async () => {
     const db = openDatabase(":memory:");
     const mirror = new RunMirror(db);

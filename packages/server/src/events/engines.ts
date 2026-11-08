@@ -248,6 +248,9 @@ export class EngineSupervisor {
    */
   private loadPorts(client: EngineClient): void {
     if (!this.options.onPorts) return;
+    // A resync that outlived its client must not start a load that nothing
+    // would ever remove.
+    if (this.clients.get(client.endpoint.container) !== client) return;
     const load = this.portLoads.get(client);
     if (!load) {
       const fresh: PortLoad = { running: false, again: false, timer: null, failures: 0 };
@@ -283,7 +286,10 @@ export class EngineSupervisor {
     } finally {
       load.running = false;
     }
-    if (!current()) return;
+    if (!current()) {
+      if (this.portLoads.get(client) === load) this.portLoads.delete(client);
+      return;
+    }
     if (load.again) {
       load.failures = 0;
       void this.runPortLoad(client, load);
