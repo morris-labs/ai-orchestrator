@@ -2,9 +2,9 @@
 // reads its inputs from the run context, writes its output file to the run
 // directory, and emits handoff events with counts.
 import { createHash } from "node:crypto";
-import { mkdir } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   STANDARD_GROUP_SIZE_LIMIT,
   VENDOR_ROLES,
@@ -1531,12 +1531,17 @@ export async function runSweep(
   // A large diff can push the prompt past a model's context limit, so the
   // sweeper reads it with Git instead.
   const inline = estimateTokens(diff) <= SWEEP_DIFF_TOKEN_LIMIT;
+  const diffFile = ctx.store.path(`rounds/${ctx.round}/sweep.diff`);
+  if (!inline) {
+    await mkdir(dirname(diffFile), { recursive: true });
+    await writeFile(diffFile, diff);
+  }
   const prompt = sweepPrompt({
     standard: runDepth(ctx.state.request) === "standard",
     range: reviewsFixDiffOnly(ctx) ? fixDiffRange(ctx, repoPath, diffBase) : ctx.range(repoPath),
     patterns,
     diff: inline ? diff : "",
-    ...(inline ? {} : { changedFiles: [...new Set(groups.flatMap((g) => g.files))] }),
+    ...(inline ? {} : { changedFiles: [...new Set(groups.flatMap((g) => g.files))], diffFile }),
     policySection: policyPromptSection(ctx.policy),
   });
   const sweepTier = callTier(ctx, "sweeper", groups);

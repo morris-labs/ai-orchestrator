@@ -1,4 +1,7 @@
 // The merge stage across a crash: the same candidates never merge twice.
+import { execFileSync } from "node:child_process";
+import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import type { Vendor } from "@aio/contracts";
 import { describe, expect, it } from "vitest";
 import type { VendorAdapter } from "../../src/core.js";
@@ -168,5 +171,57 @@ describe("runSweep", () => {
     expect(await runSweep(ctx, [])).toBeNull();
     expect(await ctx.store.readJson(ctx.store.roundFile(1, "sweep"))).toEqual({ skipped: true });
     expect(await runSweep(ctx, [])).toBeNull();
+  });
+
+  it("hands a large diff to the sweeper in a file that holds the measured diff", async () => {
+    const prompts: string[] = [];
+    const sweeper = (vendor: Vendor): VendorAdapter =>
+      ({
+        vendor,
+        sweep: ({ prompt }: { prompt: string }) => {
+          prompts.push(prompt);
+          return Promise.resolve({
+            output: { findings: [] },
+            model: vendor,
+            sessionId: null,
+            tokens: { in: 1, out: 1 },
+            usage: [],
+            premiumRequests: 0,
+            costEstimate: 0,
+          });
+        },
+        detectLimit: () => null,
+      }) as unknown as VendorAdapter;
+    const { ctx, repo } = await makeRun({
+      adapters: { claude: sweeper("claude"), codex: sweeper("codex"), copilot: sweeper("copilot") },
+    });
+    const commit = (path: string, content: string) => {
+      writeFileSync(join(repo, path), content);
+      const git = (...args: string[]) =>
+        execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.com", ...args], {
+          cwd: repo,
+          encoding: "utf8",
+        });
+      git("add", path);
+      git("commit", "-q", "-m", "change");
+      return git("rev-parse", "HEAD").trim();
+    };
+    ctx.state.baseSha = await ctx.git.head();
+    // An upstream change sits between the base and the merge base.
+    ctx.eng.diffBaseSha = commit("upstream.txt", "upstream only\n");
+    const big = Array.from({ length: 40_000 }, (_, i) => `line ${i} of a large change`).join("\n");
+    ctx.state.tipSha = commit("big.txt", `${big}\n`);
+    ctx.state.round = 1;
+    await mergeInto(ctx, await toCandidates(ctx, raw, "reviewer", []), "merge");
+    const pattern = ctx.findingById("F-0001")!;
+    await ctx.setVerdict(pattern, "confirmed", { kind: "engine" } as never, "Seen.");
+    await runSweep(ctx, []);
+    const prompt = prompts[0] as string;
+    const path = ctx.store.path("rounds/1/sweep.diff");
+    expect(prompt).toContain(path);
+    expect(prompt).not.toContain("git -C");
+    const written = readFileSync(path, "utf8");
+    expect(written).toBe(await ctx.git.diffForPrompt(ctx.eng.diffBaseSha, ctx.state.tipSha));
+    expect(written).not.toContain("upstream only");
   });
 });
