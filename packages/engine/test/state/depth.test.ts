@@ -1,8 +1,8 @@
 // The `standard` depth: batched verification, its fallbacks and resume, one
 // reviewer pass, and round 2 on the fixer's diff alone.
 import { execFileSync } from "node:child_process";
-import { writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import {
   FindingInputSchema,
   RunStateSchema,
@@ -329,8 +329,9 @@ describe("batched verification", () => {
     expect(second.verdict).toBe("disproved");
   });
 
-  it("overrules a code-reading pre-existing verdict on code missing at the base", async () => {
-    const { ctx } = await verifyRun(
+  /** A run whose verifier calls F-0001 pre-existing by reading the code. */
+  async function preExistingRun(patch: Partial<Finding> = {}) {
+    return verifyRun(
       {
         copilot: adapter("copilot", {
           verifyBatch: () => ({
@@ -339,15 +340,69 @@ describe("batched verification", () => {
         }),
         codex: adapter("codex", {}),
       },
-      (id) => [finding(1, id)],
+      (id) => [{ ...finding(1, id), ...patch }],
     );
-    // The base has no shop/file1.py, so the flaw can't predate the change.
+  }
+
+  const CHARGE = [
+    "def charge_card(amount, token):",
+    "    cents = int(amount * 100)",
+    "    return gateway.submit(cents, token)",
+    "",
+  ].join("\n");
+
+  /** Commits `files` (path to content, or `null` to delete) in `repo` and returns the new HEAD. */
+  function commitFiles(repo: string, files: Record<string, string | null>): string {
+    const git = (...args: string[]) =>
+      execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.com", ...args], {
+        cwd: repo,
+        encoding: "utf8",
+      });
+    for (const [path, content] of Object.entries(files)) {
+      if (content === null) {
+        git("rm", "-q", path);
+      } else {
+        mkdirSync(dirname(join(repo, path)), { recursive: true });
+        writeFileSync(join(repo, path), content);
+        git("add", path);
+      }
+    }
+    git("commit", "-q", "-m", "change");
+    return git("rev-parse", "HEAD").trim();
+  }
+
+  it("overrules a code-reading pre-existing verdict on code missing at the base", async () => {
+    const { ctx, repo } = await preExistingRun();
     ctx.eng.diffBaseSha = await ctx.git.head();
+    // The base has no shop/file1.py, so the flaw can't predate the change.
+    ctx.state.tipSha = commitFiles(repo, { "shop/file1.py": CHARGE });
     await verifyPending(ctx, ctx.store.roundFile(1, "verify"));
     const f = ctx.findings[0] as Finding;
     expect(f.verdict).toBe("confirmed");
     expect(f.introduced).toBe(true);
     expect(f.evidence).toMatch(/shop\/file1\.py doesn't exist at the base/);
+  });
+
+  it("keeps a pre-existing verdict for code that the change only moved or renamed", async () => {
+    const { ctx, repo } = await preExistingRun({ symbol: "bill_card", lines: [1, 3] });
+    ctx.eng.diffBaseSha = commitFiles(repo, { "shop/billing.py": CHARGE });
+    // The change moves the file and renames the function.
+    ctx.state.tipSha = commitFiles(repo, {
+      "shop/billing.py": null,
+      "shop/file1.py": CHARGE.replace("charge_card", "bill_card"),
+    });
+    await verifyPending(ctx, ctx.store.roundFile(1, "verify"));
+    const f = ctx.findings[0] as Finding;
+    expect(f.verdict).toBe("pre-existing");
+    expect(f.evidence).not.toMatch(/treats the flaw as introduced/);
+  });
+
+  it("keeps a pre-existing verdict when Git can't read the base", async () => {
+    const { ctx, repo } = await preExistingRun();
+    ctx.state.tipSha = commitFiles(repo, { "shop/file1.py": CHARGE });
+    ctx.eng.diffBaseSha = "0123456789abcdef0123456789abcdef01234567";
+    await verifyPending(ctx, ctx.store.roundFile(1, "verify"));
+    expect(ctx.findings[0]?.verdict).toBe("pre-existing");
   });
 
   it("reruns a reproduction script that a batch verdict supplies", async () => {

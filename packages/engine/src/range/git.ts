@@ -241,6 +241,50 @@ export class Git {
     return sources;
   }
 
+  /**
+   * Whether `path` exists at `rev`, or `null` when Git can't tell: Git
+   * fails, such as for a base that isn't in the clone, or the path runs
+   * through a submodule, whose files the superproject doesn't hold.
+   */
+  async pathExists(rev: string, path: string): Promise<boolean | null> {
+    const parts = path.split("/");
+    const prefixes = parts.map((_, i) => parts.slice(0, i + 1).join("/"));
+    const args = ["--literal-pathspecs", "ls-tree", "-z", "--full-tree", rev, "--", ...prefixes];
+    const result = await this.exec(args, { timeoutMs: 60_000 });
+    if (result.exitCode !== 0) return null;
+    let found = false;
+    // Each entry is "MODE TYPE OBJECT", a tab, and the path.
+    for (const entry of result.stdout.split("\0")) {
+      const tab = entry.indexOf("\t");
+      if (tab < 0) continue;
+      if (entry.slice(0, tab).split(" ")[1] === "commit") return null;
+      if (entry.slice(tab + 1) === path) found = true;
+    }
+    return found;
+  }
+
+  /**
+   * The strings in `needles` that occur in some file at `rev`, or `null`
+   * when Git fails. Each needle is a literal string, not a pattern.
+   */
+  async findStrings(rev: string, needles: readonly string[]): Promise<Set<string> | null> {
+    if (needles.length === 0) return new Set();
+    const args = [
+      "grep",
+      "-I",
+      "-F",
+      "-h",
+      "--no-color",
+      ...needles.flatMap((n) => ["-e", n]),
+      rev,
+    ];
+    const result = await this.exec(args, { timeoutMs: 60_000 });
+    // git grep exits with 1 when nothing matches.
+    if (result.exitCode === 1) return new Set();
+    if (result.exitCode !== 0) return null;
+    return new Set(needles.filter((n) => result.stdout.includes(n)));
+  }
+
   /** The content of `path` at `rev`, or `null` when it doesn't exist there. */
   async show(rev: string, path: string): Promise<string | null> {
     const result = await this.exec(["show", `${rev}:${path}`], { timeoutMs: 60_000 });

@@ -1,6 +1,8 @@
 // The live context of one run: its state files, events, leases, agent calls,
 // and the pause, resume, and cancel controls. The pre-push and post-push
 // drivers build on it.
+import { readFile } from "node:fs/promises";
+import { resolve, sep } from "node:path";
 import {
   BLOCKED_DEFAULT_FALLBACK,
   DEFAULT_CEILINGS,
@@ -477,24 +479,66 @@ export class RunContext {
 
   /**
    * Why a finding's code can't be at the run's base, or `null` when it can
-   * be or the engine can't tell: the file is missing there, or the
-   * finding's symbol doesn't appear in the base version of the file.
+   * be or the engine can't tell. The file missing there, or the finding's
+   * symbol missing from the base version of the file, is a reason only when
+   * the flagged lines are missing from the base as well: a rename or a move
+   * changes a path or a name but keeps the code.
    */
   private async missingAtBase(finding: Finding): Promise<string | null> {
     const base = this.eng.diffBaseSha;
     if (!base || !finding.file || this.state.request.scope === "whole") return null;
-    let text: string | null;
+    const file = finding.file;
+    const short = base.slice(0, 12);
+    let reason: string | null = null;
+    const exists = await this.git.pathExists(base, file);
+    if (exists === null) return null;
+    if (!exists) {
+      reason = `${file} doesn't exist at the base ${short}.`;
+    } else {
+      const text = await this.git.show(base, file);
+      if (text === null) return null;
+      const name = finding.symbol?.split(/[.#:]/).pop()?.trim();
+      if (name && name.length >= 3 && /^[\w$-]+$/.test(name) && !text.includes(name)) {
+        reason = `${name} doesn't appear in ${file} at the base ${short}.`;
+      }
+    }
+    if (!reason) return null;
+    return (await this.flaggedCodeAtBase(base, finding)) === false ? reason : null;
+  }
+
+  /**
+   * Whether most of the finding's flagged lines occur somewhere at `base`,
+   * or `null` when the engine can't read them or they're too short to tell.
+   */
+  private async flaggedCodeAtBase(base: string, finding: Finding): Promise<boolean | null> {
+    if (!finding.file || !finding.lines) return null;
+    const text = await this.tipText(finding.file, finding.linesAt);
+    if (text === null) return null;
+    const [first, last] = finding.lines;
+    const lines = text
+      .split("\n")
+      .slice(first - 1, Math.min(last, first + 59))
+      .map((l) => l.trim())
+      .filter((l) => l.length >= 10 && /\w/.test(l));
+    const needles = [...new Set(lines)];
+    if (needles.length === 0) return null;
+    const found = await this.git.findStrings(base, needles);
+    if (found === null) return null;
+    return found.size * 2 >= needles.length;
+  }
+
+  /** The text of `file` in the code version that a finding's lines count in. */
+  private async tipText(file: string, linesAt: string | undefined): Promise<string | null> {
+    const at = linesAt ?? this.state.tipSha ?? "HEAD";
+    if (!at.startsWith("worktree:")) return this.git.show(at, file);
+    const root = resolve(this.state.request.repoPath);
+    const path = resolve(root, file);
+    if (!path.startsWith(`${root}${sep}`)) return null;
     try {
-      text = await this.git.show(base, finding.file);
+      return await readFile(path, "utf8");
     } catch {
       return null;
     }
-    if (text === null) return `${finding.file} doesn't exist at the base ${base.slice(0, 12)}.`;
-    const name = finding.symbol?.split(/[.#:]/).pop()?.trim();
-    if (name && name.length >= 3 && /^[\w$-]+$/.test(name) && !text.includes(name)) {
-      return `${name} doesn't appear in ${finding.file} at the base ${base.slice(0, 12)}.`;
-    }
-    return null;
   }
 
   /** Emits `finding.changed` for a finding that the merge just created. */
