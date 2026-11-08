@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -87,6 +87,21 @@ describe("loadTokenHistory", () => {
     expect((await loadTokenHistory(root))[0]?.fixingTokens).toBe(7);
     await expect(saveTokenSample(root, "01B")).resolves.toBeNull();
     expect((await saveTokenSample(root, "01A"))?.fixingTokens).toBe(51);
+  });
+
+  it("measures again a stored sample saved before the verification split existed (F-0059)", async () => {
+    const root = mkdtempSync(join(tmpdir(), "aio-token-history-"));
+    writeRun(root, "01A", "finished");
+    const file = join(root, ".aio", "runs", "01A", "token-sample.json");
+    const [first] = await loadTokenHistory(root);
+    const { verificationStages: _stages, ...older } = first!;
+    writeFileSync(file, JSON.stringify(older));
+    const [again] = await loadTokenHistory(root);
+    expect(again?.verificationStages).toEqual({ disprove: 31, confirm: 0, sweep: 41 });
+    // A run whose calls are gone keeps its stored sample.
+    writeFileSync(file, JSON.stringify(older));
+    rmSync(join(root, ".aio", "runs", "01A", "rounds"), { recursive: true });
+    expect((await loadTokenHistory(root))[0]).toEqual(older);
   });
 
   it("returns nothing for a project with no runs", async () => {

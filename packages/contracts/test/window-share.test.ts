@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   RunTokenSampleSchema,
+  STARTING_VERIFICATION_SPLIT,
   STARTING_WINDOW_RATE,
   describeWindowShare,
   estimateRunTokens,
@@ -199,6 +200,23 @@ describe("estimateRunTokens stage vendors", () => {
     expect(by.codex! / (verification / 2)).toBeCloseTo(1, 1);
     expect(by.copilot! / (verification / 4)).toBeCloseTo(1, 1);
     expect(by.claude! / (review + fixing + verification / 4)).toBeCloseTo(1, 1);
+  });
+
+  it("charges confirmer and sweep tokens to their vendors without a measured split (F-0059)", () => {
+    const estimate = estimateRunTokens({
+      depth: "standard",
+      reviewers: ["claude"],
+      verifiers: { claude: "codex" },
+      confirmer: "claude",
+      fixer: "claude",
+      groups: [{ changedLines: 10 }],
+    });
+    const verification = estimate.lines.find((l) => l.label === "Verification")!.tokens;
+    const by = Object.fromEntries(estimate.byVendor.map((v) => [v.vendor, v.tokens]));
+    // Without a sweeper, the disprover's vendor runs the sweep.
+    const { disprove, sweep } = STARTING_VERIFICATION_SPLIT;
+    expect(by.codex! / (verification * (disprove + sweep))).toBeCloseTo(1, 1);
+    expect((by.claude! + by.codex!) / estimate.tokens).toBeCloseTo(1, 1);
   });
 
   it("charges an older-rate group's verification and fixing to their vendors (F-0060)", () => {

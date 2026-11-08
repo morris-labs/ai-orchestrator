@@ -468,17 +468,18 @@ async function sampleOf(projectRoot: string, runId: string): Promise<RunTokenSam
   const stored = RunTokenSampleSchema.safeParse(
     await readJson(join(runsDir(projectRoot), runId, TOKEN_SAMPLE_FILE)),
   );
-  // A sample saved before usage windows existed has no `usage`, so the run
-  // is measured again, since its events can still give window rates.
-  if (stored.success && stored.data.runId === runId && stored.data.usage !== undefined) {
-    return stored.data;
-  }
+  const current = stored.success && stored.data.runId === runId ? stored.data : null;
+  // A sample saved before usage windows or the verification split existed
+  // lacks `usage` or `verificationStages`, so the run is measured again, since
+  // its calls and events can still give them.
+  if (current?.usage !== undefined && current.verificationStages !== undefined) return current;
   // An older run has no sample file yet. Writing it can fail on a read-only
-  // folder, and the measured sample still counts.
+  // folder, and the measured sample still counts. A run whose calls are gone
+  // keeps its stored sample.
   const dir = join(runsDir(projectRoot), runId);
   const sample = await measure(runId, dir);
   if (sample) await writeJsonAtomic(join(dir, TOKEN_SAMPLE_FILE), sample).catch(() => undefined);
-  return sample;
+  return sample ?? current;
 }
 
 /** This project's finished runs with stored calls, oldest first. A damaged run is skipped. */

@@ -592,6 +592,12 @@ export const STARTING_REVIEW_RATES = {
 
 /** Measured tokens per group at the `standard` depth, used until a project has its own runs. */
 export const STARTING_STAGE_RATES = { verification: 40_000, fixing: 95_000 } as const;
+/**
+ * The share of verification tokens that each stage takes when no run
+ * measured the split. The disprover reads every finding, the confirmer only
+ * the fixed ones, and the sweep a pattern at a time.
+ */
+export const STARTING_VERIFICATION_SPLIT = { disprove: 0.5, confirm: 0.3, sweep: 0.2 } as const;
 
 /** How far a line built on one measurement can move, as multiples of its figure. */
 const REVIEW_SPREAD = { low: 0.6, high: 1.6 };
@@ -1088,7 +1094,7 @@ export function estimateRunTokens(input: RunTokenEstimateInput): RunTokenEstimat
     perVendor.set(vendor, { tokens: v.tokens + tokens, low: v.low + low, high: v.high + high });
   };
   // The share of verification tokens that each verification stage takes, from
-  // the runs that measured the split. Without one, the disprover takes it all.
+  // the runs that measured the split. Without one, the starting split applies.
   const verificationSplit = (() => {
     const total = (s: RunTokenSample) => {
       const v = s.verificationStages;
@@ -1105,6 +1111,11 @@ export function estimateRunTokens(input: RunTokenEstimateInput): RunTokenEstimat
       // A read-only run has no fixes to confirm.
       if (!readOnly) confirm += (w.weight * v.confirm) / total(w.sample);
       sweep += (w.weight * v.sweep) / total(w.sample);
+    }
+    if (picked.used.length === 0) {
+      ({ disprove, confirm, sweep } = STARTING_VERIFICATION_SPLIT);
+      // A read-only run has no fixes to confirm.
+      if (readOnly) confirm = 0;
     }
     const sum = disprove + confirm + sweep;
     return sum > 0
