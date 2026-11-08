@@ -150,6 +150,25 @@ describe("working-tree inclusion", () => {
     await computeGroups(ctx);
     expect(snapshots).toHaveBeenCalledTimes(1);
   });
+
+  it("keeps the round's snapshot after a restart, when the working tree changed", async () => {
+    const { writeFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const { buildSampleRepo } = await import("./scenario.js");
+    const { disposeCheckouts, linesVersion, readOnlyRepo } =
+      await import("../../src/state/steps.js");
+    const repo = buildSampleRepo();
+    writeFileSync(join(repo, "SYNTHETIC_untracked.py"), "def f():\n    return 1\n");
+    const { ctx } = await makeRun({ repo, request: { includeWorktree: true } });
+    ctx.state.round = 1;
+    ctx.state.tipSha = await ctx.git.head();
+    await readOnlyRepo(ctx);
+    const before = await linesVersion(ctx);
+    // A restarted engine has no cached state, and a person edited the tree.
+    await disposeCheckouts(ctx);
+    writeFileSync(join(repo, "SYNTHETIC_untracked.py"), "def f():\n    return 2\n");
+    expect(await linesVersion(ctx)).toEqual(before);
+  });
 });
 
 describe("the verification floor", () => {

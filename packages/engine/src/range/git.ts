@@ -340,7 +340,7 @@ export class Git {
    * fails: whether it adds the file without renaming or copying another
    * (`added`), whether a hunk that touches lines `first` to `last` of the
    * file removes or replaces lines (`replaces`), and every line the change
-   * removes anywhere, with whitespace collapsed (`removed`).
+   * removes anywhere, in order, with whitespace collapsed (`removed`).
    */
   async changeTo(
     base: string,
@@ -348,7 +348,7 @@ export class Git {
     path: string,
     first: number,
     last: number,
-  ): Promise<{ added: boolean; replaces: boolean; removed: Set<string> } | null> {
+  ): Promise<{ added: boolean; replaces: boolean; removed: string[] } | null> {
     const result = await this.exec(
       [
         "-c",
@@ -368,7 +368,7 @@ export class Git {
     if (result.exitCode !== 0) return null;
     let added = false;
     let replaces = false;
-    const removed = new Set<string>();
+    const removed: string[] = [];
     let fresh = false;
     let target = false;
     let inHunk = false;
@@ -397,7 +397,7 @@ export class Git {
         if (old > 0 && start <= last && end >= first) replaces = true;
       } else if (inHunk && line.startsWith("-")) {
         const text = collapseSpace(line.slice(1));
-        if (text) removed.add(text);
+        if (text) removed.push(text);
       }
     }
     return { added, replaces, removed };

@@ -385,6 +385,12 @@ describe("batched verification", () => {
     "",
   ].join("\n");
 
+  /** Makes `sha` the run's tip and the version every finding's lines count in. */
+  function atTip(ctx: { state: { tipSha?: string | null }; findings: Finding[] }, sha: string) {
+    ctx.state.tipSha = sha;
+    for (const f of ctx.findings) f.linesAt = sha;
+  }
+
   /** Commits `files` (path to content, or `null` to delete) in `repo` and returns the new HEAD. */
   function commitFiles(repo: string, files: Record<string, string | null>): string {
     const git = (...args: string[]) =>
@@ -409,7 +415,7 @@ describe("batched verification", () => {
     const { ctx, repo } = await preExistingRun();
     ctx.eng.diffBaseSha = await ctx.git.head();
     // The base has no shop/file1.py, so the flaw can't predate the change.
-    ctx.state.tipSha = commitFiles(repo, { "shop/file1.py": CHARGE });
+    atTip(ctx, commitFiles(repo, { "shop/file1.py": CHARGE }));
     await verifyPending(ctx, ctx.store.roundFile(1, "verify"));
     const f = ctx.findings[0] as Finding;
     expect(f.verdict).toBe("confirmed");
@@ -421,10 +427,13 @@ describe("batched verification", () => {
     const { ctx, repo } = await preExistingRun({ symbol: "bill_card", lines: [1, 3] });
     ctx.eng.diffBaseSha = commitFiles(repo, { "shop/billing.py": CHARGE });
     // The change moves the file and renames the function.
-    ctx.state.tipSha = commitFiles(repo, {
-      "shop/billing.py": null,
-      "shop/file1.py": CHARGE.replace("charge_card", "bill_card"),
-    });
+    atTip(
+      ctx,
+      commitFiles(repo, {
+        "shop/billing.py": null,
+        "shop/file1.py": CHARGE.replace("charge_card", "bill_card"),
+      }),
+    );
     await verifyPending(ctx, ctx.store.roundFile(1, "verify"));
     const f = ctx.findings[0] as Finding;
     expect(f.verdict).toBe("pre-existing");
@@ -433,7 +442,7 @@ describe("batched verification", () => {
 
   it("keeps a pre-existing verdict when Git can't read the base", async () => {
     const { ctx, repo } = await preExistingRun();
-    ctx.state.tipSha = commitFiles(repo, { "shop/file1.py": CHARGE });
+    atTip(ctx, commitFiles(repo, { "shop/file1.py": CHARGE }));
     ctx.eng.diffBaseSha = "0123456789abcdef0123456789abcdef01234567";
     await verifyPending(ctx, ctx.store.roundFile(1, "verify"));
     expect(ctx.findings[0]?.verdict).toBe("pre-existing");
@@ -442,10 +451,13 @@ describe("batched verification", () => {
   it("keeps a pre-existing verdict that flags only a renamed declaration", async () => {
     const { ctx, repo } = await preExistingRun({ symbol: "bill_card", lines: [1, 1] });
     ctx.eng.diffBaseSha = commitFiles(repo, { "shop/billing.py": CHARGE });
-    ctx.state.tipSha = commitFiles(repo, {
-      "shop/billing.py": null,
-      "shop/file1.py": CHARGE.replace("charge_card", "bill_card"),
-    });
+    atTip(
+      ctx,
+      commitFiles(repo, {
+        "shop/billing.py": null,
+        "shop/file1.py": CHARGE.replace("charge_card", "bill_card"),
+      }),
+    );
     await verifyPending(ctx, ctx.store.roundFile(1, "verify"));
     expect(ctx.findings[0]?.verdict).toBe("pre-existing");
   });
@@ -462,7 +474,7 @@ describe("batched verification", () => {
       "    return gateway.submit(cents, token)",
       "",
     ].join("\n");
-    ctx.state.tipSha = commitFiles(repo, { "shop/file1.py": edited });
+    atTip(ctx, commitFiles(repo, { "shop/file1.py": edited }));
     await verifyPending(ctx, ctx.store.roundFile(1, "verify"));
     expect(ctx.findings[0]?.verdict).toBe("pre-existing");
   });
@@ -480,7 +492,7 @@ describe("batched verification", () => {
       "    )",
       "",
     ].join("\n");
-    ctx.state.tipSha = commitFiles(repo, { "shop/file1.py": rewrapped });
+    atTip(ctx, commitFiles(repo, { "shop/file1.py": rewrapped }));
     await verifyPending(ctx, ctx.store.roundFile(1, "verify"));
     expect(ctx.findings[0]?.verdict).toBe("pre-existing");
   });
@@ -491,10 +503,13 @@ describe("batched verification", () => {
     ctx.eng.diffBaseSha = commitFiles(repo, {
       "shop/billing.py": `${CHARGE}\n${small}`,
     });
-    ctx.state.tipSha = commitFiles(repo, {
-      "shop/billing.py": CHARGE,
-      "shop/file1.py": small,
-    });
+    atTip(
+      ctx,
+      commitFiles(repo, {
+        "shop/billing.py": CHARGE,
+        "shop/file1.py": small,
+      }),
+    );
     await verifyPending(ctx, ctx.store.roundFile(1, "verify"));
     expect(ctx.findings[0]?.verdict).toBe("pre-existing");
   });
@@ -510,7 +525,7 @@ describe("batched verification", () => {
       "",
     ].join("\n");
     ctx.eng.diffBaseSha = commitFiles(repo, { "shop/other.py": generic });
-    ctx.state.tipSha = commitFiles(repo, { "shop/file1.py": generic.replace("lookup", "fetch") });
+    atTip(ctx, commitFiles(repo, { "shop/file1.py": generic.replace("lookup", "fetch") }));
     const file = ctx.store.roundFile(1, "verify");
     const results = await verifyPending(ctx, file);
     const f = ctx.findings[0] as Finding;
@@ -520,6 +535,48 @@ describe("batched verification", () => {
     expect(results[0]?.decision).toMatchObject({ verdict: "confirmed", introduced: true });
     const stored = await ctx.store.readJson<typeof results>(file);
     expect(stored?.[0]?.decision.verdict).toBe("confirmed");
+  });
+
+  it("keeps a pre-existing verdict when a rename also changes the quote style", async () => {
+    const { ctx, repo } = await preExistingRun({ symbol: "send_receipt", lines: [1, 4] });
+    ctx.eng.diffBaseSha = commitFiles(repo, {
+      "shop/mailer.py": [
+        "def mail_receipt(order):",
+        '    subject = "Receipt for order " + order.number',
+        '    body = render_template("receipt.txt", order=order)',
+        '    return smtp_client.send(order.email, subject, body, retries="3")',
+        "",
+      ].join("\n"),
+    });
+    // Git sees an added file: no flagged line matches its old form exactly.
+    atTip(
+      ctx,
+      commitFiles(repo, {
+        "shop/mailer.py": null,
+        "shop/file1.py": [
+          "def send_receipt(order):",
+          "    subject = 'Receipt for order ' + order.number",
+          "    body = render_template('receipt.txt', order=order)",
+          "    return smtp_client.send(order.email, subject, body, retries='3')",
+          "",
+        ].join("\n"),
+      }),
+    );
+    await verifyPending(ctx, ctx.store.roundFile(1, "verify"));
+    expect(ctx.findings[0]?.verdict).toBe("pre-existing");
+  });
+
+  it("keeps a pre-existing verdict when the finding doesn't say which version its lines count in", async () => {
+    const { ctx, repo } = await preExistingRun({ lines: [1, 3] });
+    // The finding's lines point at old code moved into shop/file1.py, but the
+    // tip holds new code at those lines.
+    ctx.eng.diffBaseSha = await ctx.git.head();
+    ctx.state.tipSha = commitFiles(repo, {
+      "shop/file1.py": "brand_new_code = rewrite_everything()\n".repeat(3),
+    });
+    expect(ctx.findings[0]?.linesAt).toBeUndefined();
+    await verifyPending(ctx, ctx.store.roundFile(1, "verify"));
+    expect(ctx.findings[0]?.verdict).toBe("pre-existing");
   });
 
   it("reads worktree lines from the round's snapshot, not the live file", async () => {

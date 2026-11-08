@@ -47,7 +47,7 @@ import {
   type VendorAdapter,
 } from "../core.js";
 import { NO_EXTRAS, type PolicyExtras } from "../policy/load.js";
-import { collapseSpace, Git, normalizeRepoPath } from "../range/git.js";
+import { Git, normalizeRepoPath } from "../range/git.js";
 import { ShellRunner } from "../range/exec.js";
 import type { EngineState } from "../run/engine-state.js";
 import type { RunStore } from "../run/store.js";
@@ -515,8 +515,10 @@ export class RunContext {
    *   declaration, which blame can't trace once most lines changed.
    * - For a file missing at the base, Git sees the file as added, not
    *   renamed or copied from another.
-   * - No flagged line matches a line that the change removed elsewhere,
-   *   which catches a move too small for blame to trace.
+   * - No flagged line's words occur, in order, among the words of the
+   *   lines that the change removed, which catches a move too small for
+   *   blame to trace, and a move that also changed quotes, punctuation,
+   *   or line wrapping.
    *
    * A range of one or two lines, such as a declaration alone, extends to the
    * 10 lines from its start. Any doubt, such as a Git failure or lines with
@@ -544,9 +546,11 @@ export class RunContext {
     if (!lines || lines.counted === 0 || lines.fromBase > 0) return false;
     const change = await this.git.changeTo(base, rev, file, first, last);
     if (!change || change.replaces || (fileMissing && !change.added)) return false;
+    const words = (l: string) => (l.match(/\w+/g) ?? []).join(" ");
+    const removed = ` ${change.removed.map(words).join(" ")} `;
     return !all.slice(first - 1, last).some((l) => {
-      const flat = collapseSpace(l);
-      return flat.length >= 8 && /\w/.test(flat) && change.removed.has(flat);
+      const flat = words(l);
+      return flat.length >= 8 && removed.includes(` ${flat} `);
     });
   }
 
@@ -554,12 +558,15 @@ export class RunContext {
    * The commit that a finding's lines count in, or `null` when the engine
    * can't tell. A working tree round records `worktree:TIP:SNAPSHOT`; the
    * snapshot commit holds the files as the round read them. Older runs
-   * recorded only the tip, and the working tree has changed since.
+   * recorded only the tip, and the working tree has changed since. A
+   * finding without `linesAt`, such as an imported one or one stored before
+   * the field existed, has lines in an unknown version: the current tip can
+   * hold other code at those lines.
    */
   private linesRev(linesAt: string | undefined): string | null {
-    const at = linesAt ?? this.state.tipSha ?? "HEAD";
-    if (!at.startsWith("worktree:")) return at;
-    return at.split(":")[2] || null;
+    if (linesAt === undefined) return null;
+    if (!linesAt.startsWith("worktree:")) return linesAt;
+    return linesAt.split(":")[2] || null;
   }
 
   /** Emits `finding.changed` for a finding that the merge just created. */

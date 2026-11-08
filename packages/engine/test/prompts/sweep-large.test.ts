@@ -33,3 +33,12 @@ describe("sweepPrompt", () => {
     expect(prompt).toContain("...and 25 more files.");
   });
 });
+
+describe("sweepPromptFits", () => {
+  it("moves a token-dense diff out of the prompt before it fills a 128,000-token window", async () => {
+    const { sweepPromptFits } = await import("../../src/state/steps.js");
+    // About 140,000 tokens at four characters each, but nearer 190,000 at three.
+    expect(sweepPromptFits("x".repeat(560_000))).toBe(false);
+    expect(sweepPromptFits("x".repeat(200_000))).toBe(true);
+  });
+});

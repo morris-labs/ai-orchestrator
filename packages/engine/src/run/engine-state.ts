@@ -86,6 +86,15 @@ export const EngineStateSchema = z.object({
   reviewedHead: z.string().nullable().default(null),
   /** The gate's last failure report, for the next fix attempt. */
   lastGateFailure: z.string().nullable().default(null),
+  /**
+   * The working tree snapshot of the round that reviews it, by round and
+   * tip, so a resumed engine reads, and counts finding lines in, the files
+   * the round's reviewers read rather than a later working tree.
+   */
+  worktreeSnapshot: z
+    .object({ key: z.string(), commit: z.string(), head: z.string() })
+    .nullable()
+    .default(null),
   /** Merges whose findings are saved, by commit file; a resumed stage never applies one twice. */
   appliedMerges: z.array(z.string()).default([]),
   /** Findings the fixer declined to fix; not sent to it again. */

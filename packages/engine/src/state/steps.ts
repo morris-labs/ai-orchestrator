@@ -110,12 +110,16 @@ const VERIFY_CONCURRENCY = 4;
 /** The most a batched disprover call's time limit grows over one finding's. */
 const BATCH_TIMEOUT_FACTOR = 4;
 /**
+ * The largest sweep prompt, in tokens by `strictTokenCount`, that carries
+ * its diff inline. It leaves room for the reply in a 128,000-token context
+ * window, the smallest that a sweeper model has.
+ */
+export const SWEEP_PROMPT_TOKEN_LIMIT = 96_000;
+/**
  * Parallel reviewer tasks per vendor in the find stage. Each task is one
  * CLI agent; without a limit a large range starts one per group at once,
  * which spends a usage window before a ceiling or a cancel can react.
  */
-/** The largest diff, in estimated tokens, that a sweep prompt carries inline. */
-export const SWEEP_DIFF_TOKEN_LIMIT = 150_000;
 export const FIND_CONCURRENCY_PER_VENDOR = 6;
 
 const SEVERITY_ABOVE_NIT = new Set(["P1", "P2", "P3"]);
@@ -207,6 +211,21 @@ export function estimateTokens(prompt: string): number {
   return Math.ceil(prompt.length / 4);
 }
 
+/**
+ * A token count that a prompt is unlikely to exceed: two and a half
+ * characters per token. Code full of symbols and short names takes about
+ * three, so `estimateTokens` can count a prompt well short of what the
+ * model's context window holds.
+ */
+export function strictTokenCount(prompt: string): number {
+  return Math.ceil(prompt.length / 2.5);
+}
+
+/** True when a sweep prompt with its diff inline fits every sweeper's context window. */
+export function sweepPromptFits(prompt: string): boolean {
+  return strictTokenCount(prompt) <= SWEEP_PROMPT_TOKEN_LIMIT;
+}
+
 // ---------------------------------------------------------------------------
 // Diff and groups
 
@@ -249,9 +268,9 @@ const readOnlyStates = new WeakMap<RunContext, { key: string; state: Promise<Che
  * What a read-only call of the current round looks at: the tip commit, or,
  * when the round reviews the working tree, a snapshot commit of it with
  * `HEAD` at the tip, so the uncommitted changes show as uncommitted. The
- * snapshot is taken once per round and tip, so every stage and every
- * parallel call sees the same files, and the read-only checkout isn't
- * rebuilt for each stage. A fix that commits moves the tip, which takes a
+ * snapshot is taken once per round and tip, and saved in the engine state,
+ * so every stage and every parallel call sees the same files, even after a
+ * restart, and the read-only checkout isn't rebuilt for each stage. A fix that commits moves the tip, which takes a
  * new snapshot.
  */
 function readOnlyState(ctx: RunContext): Promise<CheckoutState> {
@@ -264,9 +283,18 @@ function readOnlyState(ctx: RunContext): Promise<CheckoutState> {
       const tip = ctx.state.tipSha ?? (await ctx.git.head());
       return { commit: tip, head: tip };
     }
+    // An engine that restarts mid-round reuses the round's snapshot: the
+    // working tree can have changed since the reviewers read it.
+    const saved = ctx.eng.worktreeSnapshot;
+    if (saved?.key === key && (await ctx.git.tryRevParse(saved.commit))) {
+      return { commit: saved.commit, head: saved.head };
+    }
     const head = await ctx.git.head();
     const index = join(tmpdir(), `aio-index-${ctx.state.id}-${Date.now()}`);
-    return { commit: await ctx.git.snapshotWorktree(index), head };
+    const commit = await ctx.git.snapshotWorktree(index);
+    ctx.eng.worktreeSnapshot = { key, commit, head };
+    await ctx.persist();
+    return { commit, head };
   })();
   readOnlyStates.set(ctx, { key, state });
   state.catch(() => {
@@ -1593,22 +1621,30 @@ export async function runSweep(
           : [],
       );
   const repoPath = await readOnlyRepo(ctx);
+  const promptInput = {
+    standard: runDepth(ctx.state.request) === "standard",
+    range: reviewsFixDiffOnly(ctx) ? fixDiffRange(ctx, repoPath, diffBase) : ctx.range(repoPath),
+    patterns,
+    policySection: policyPromptSection(ctx.policy),
+  };
   // A large diff can push the prompt past a model's context limit, so the
-  // sweeper reads it with Git instead.
-  const inline = estimateTokens(diff) <= SWEEP_DIFF_TOKEN_LIMIT;
+  // sweeper reads it from a file instead. The check measures the whole
+  // prompt, since the patterns and the policy take room too.
+  const inlinePrompt = sweepPrompt({ ...promptInput, diff });
+  const inline = sweepPromptFits(inlinePrompt);
   const diffFile = ctx.store.path(`rounds/${ctx.round}/sweep.diff`);
   if (!inline) {
     await mkdir(dirname(diffFile), { recursive: true });
     await writeFile(diffFile, diff);
   }
-  const prompt = sweepPrompt({
-    standard: runDepth(ctx.state.request) === "standard",
-    range: reviewsFixDiffOnly(ctx) ? fixDiffRange(ctx, repoPath, diffBase) : ctx.range(repoPath),
-    patterns,
-    diff: inline ? diff : "",
-    ...(inline ? {} : { changedFiles: [...new Set(groups.flatMap((g) => g.files))], diffFile }),
-    policySection: policyPromptSection(ctx.policy),
-  });
+  const prompt = inline
+    ? inlinePrompt
+    : sweepPrompt({
+        ...promptInput,
+        diff: "",
+        changedFiles: [...new Set(groups.flatMap((g) => g.files))],
+        diffFile,
+      });
   const sweepTier = callTier(ctx, "sweeper", groups);
   const out = await ctx.callAgent<SweepOutput>({
     key: "sweep",
