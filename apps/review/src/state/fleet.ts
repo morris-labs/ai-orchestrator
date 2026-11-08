@@ -87,20 +87,30 @@ export function isMulti(state: FleetState): boolean {
   return state.supported === true && state.machines.length > 1;
 }
 
+/** Whether a machine's server is known to have a capability. */
+export type CapabilitySupport = "yes" | "no" | "unknown";
+
 /**
- * True when `machineId`'s server is known to have `capability`: the machine
- * list shows it with one. False when the list shows it without one, or the
- * server has no machine routes at all, which only an older server lacks.
- * While the list hasn't named the machine, such as before the first answer
- * or after a failed one, this machine counts as supporting `capability`,
- * since an older server answers the list with 404, and another machine
- * doesn't, since its server might be older and drop the setting.
+ * Whether `machineId`'s server has `capability`. "yes" when the machine list
+ * shows it with one. "no" when the server has no machine routes at all,
+ * which only an older server lacks, or when the list shows a reachable
+ * machine without one. "unknown" when the fleet can't tell: before the first
+ * list answer, after a failed one, while the list doesn't name the machine,
+ * or while the machine is unreachable, since an offline entry can be a
+ * placeholder with no capabilities.
  */
-export function machineSupports(state: FleetState, machineId: string, capability: string): boolean {
-  if (state.supported === false) return false;
+export function machineSupports(
+  state: FleetState,
+  machineId: string,
+  capability: string,
+): CapabilitySupport {
+  if (state.supported === false) return "no";
+  if (state.supported === null) return "unknown";
   const m = state.machines.find((e) => e.machine.id === machineId);
-  if (m === undefined) return machineId === LOCAL_MACHINE_ID;
-  return m.machine.capabilities.includes(capability);
+  if (m === undefined) return "unknown";
+  if (m.machine.capabilities.includes(capability)) return "yes";
+  const offline = !m.machine.isLocal && m.machine.status === "offline";
+  return offline || !isCurrent(m) ? "unknown" : "no";
 }
 
 /** True unless the last run list or machine list failed, so the machine's runs are current. */

@@ -28,10 +28,19 @@ import {
   setFormProfile,
   setFormRole,
   setFormWholeProject,
+  type BuildTarget,
   type LauncherForm,
   VERIFY_FLOOR_OPTIONS,
 } from "./launcherModel.js";
 import { roleConflicts } from "../components/rolesModel.js";
+
+/** What the Parallel calls hint adds for each state of the selected server. */
+const CONCURRENCY_HINTS: Record<BuildTarget["concurrency"], string> = {
+  yes: "",
+  no: " The selected machine's server is too old to use this setting.",
+  unknown:
+    " The app can't yet confirm that the selected machine's server supports this setting, because the machine list hasn't loaded or the machine is unreachable.",
+};
 
 type Preview = RouteOf<"runs.preview">["response"];
 
@@ -40,10 +49,11 @@ export function Launcher({ prefill }: { prefill: { project: string | null; box: 
   const fleet = useFleet();
   const fleetState = useFleetState();
   // Without a fleet the launcher has one machine and nothing to check.
-  const target = {
+  const target: BuildTarget = {
     concurrency:
-      fleet === null ||
-      machineSupports(fleetState, fleetState.selected, RUN_CONCURRENCY_CAPABILITY),
+      fleet === null
+        ? "yes"
+        : machineSupports(fleetState, fleetState.selected, RUN_CONCURRENCY_CAPABILITY),
   };
   const [form, setForm] = useState<LauncherForm>({
     ...DEFAULT_FORM,
@@ -523,7 +533,7 @@ export function Launcher({ prefill }: { prefill: { project: string | null; box: 
             </Field>
             <Field
               label="Parallel calls"
-              hint={`How many review calls run at once on each vendor, and how many verification calls run at once, from 1 to ${MAX_CONCURRENCY}. More finishes sooner but uses your usage window faster. Default: 6 review calls per vendor and 4 verification calls.${target.concurrency ? "" : " The selected machine's server is too old to use this setting."}`}
+              hint={`How many review calls run at once on each vendor, and how many verification calls run at once, from 1 to ${MAX_CONCURRENCY}. More finishes sooner but uses your usage window faster. Default: 6 review calls per vendor and 4 verification calls.${CONCURRENCY_HINTS[target.concurrency]}`}
             >
               <input
                 type="number"

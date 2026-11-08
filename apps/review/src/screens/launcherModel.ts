@@ -20,6 +20,7 @@ import {
   roleOverrides,
   type RoleDraft,
 } from "../components/rolesModel.js";
+import type { CapabilitySupport } from "../state/fleet.js";
 
 export type BaseMode = "merge-base" | "exact";
 
@@ -153,16 +154,17 @@ export type BuildResult = { ok: true; request: RunRequest } | { ok: false; error
 /** What the launcher knows about the server that runs the review. */
 export interface BuildTarget {
   /**
-   * False when the server drops `concurrency`, as an older one does, so the
-   * launcher refuses the field instead of starting at the defaults.
+   * "no" when the server drops `concurrency`, as an older one does, and
+   * "unknown" when the app can't confirm it yet. Either way the launcher
+   * refuses the field instead of starting at the defaults.
    */
-  concurrency: boolean;
+  concurrency: CapabilitySupport;
 }
 
 /** Validates the form and builds the request body; lists every problem at once. */
 export function buildRunRequest(
   form: LauncherForm,
-  target: BuildTarget = { concurrency: true },
+  target: BuildTarget = { concurrency: "yes" },
 ): BuildResult {
   const errors: string[] = [];
   if (!form.projectId) errors.push("Select a container.");
@@ -177,9 +179,13 @@ export function buildRunRequest(
     (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > MAX_CONCURRENCY)
   )
     errors.push(`Parallel calls must be a whole number from 1 to ${MAX_CONCURRENCY}.`);
-  else if (concurrency !== undefined && !target.concurrency)
+  else if (concurrency !== undefined && target.concurrency === "no")
     errors.push(
-      "The selected machine's server is too old to set parallel calls, or the machine list hasn't confirmed that it can. Clear Parallel calls, or update that machine's server.",
+      "The selected machine's server is too old to set parallel calls. Clear Parallel calls, or update that machine's server.",
+    );
+  else if (concurrency !== undefined && target.concurrency === "unknown")
+    errors.push(
+      "The app can't confirm that the selected machine's server can set parallel calls, because the machine list hasn't loaded or the machine is unreachable. Wait for the machine to come online, or clear Parallel calls.",
     );
   let prNumber: number | undefined;
   if (form.pipeline === "post-push") {

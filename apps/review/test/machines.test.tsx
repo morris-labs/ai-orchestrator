@@ -117,8 +117,11 @@ describe("the launcher on another machine", () => {
 });
 
 describe("parallel calls on another machine", () => {
-  async function startWithParallelCalls(capabilities: string[]) {
-    const { build, fleet } = setup([LOCAL, { ...BUILD, capabilities }]);
+  async function startWithParallelCalls(
+    capabilities: string[],
+    status: "online" | "offline" = "online",
+  ) {
+    const { build, fleet } = setup([LOCAL, { ...BUILD, capabilities, status }]);
     build.on("projects.list", () => ({ projects: [project] }));
     build.on("projects.repos.list", () => ({
       repos: [
@@ -191,10 +194,57 @@ describe("parallel calls on another machine", () => {
     await waitFor(() =>
       expect(screen.getByLabelText(/^Repository/)).toHaveValue("/srv/src/build-app"),
     );
+    expect(screen.queryByText(/too old/)).toBeNull();
     fireEvent.change(screen.getByLabelText(/^Parallel calls/), { target: { value: "1" } });
     fireEvent.click(screen.getByRole("button", { name: "Start" }));
-    await screen.findByText(/too old to set parallel calls/);
+    await screen.findByText(
+      /can't confirm that the selected machine's server can set parallel calls/,
+    );
+    expect(screen.queryByText(/too old/)).toBeNull();
     expect(build.callsTo("runs.create")).toHaveLength(0);
+  });
+
+  it("refuses the setting for an offline machine without calling its server too old", async () => {
+    const build = await startWithParallelCalls([], "offline");
+    await screen.findByText(
+      /can't confirm that the selected machine's server can set parallel calls/,
+    );
+    expect(screen.queryByText(/too old/)).toBeNull();
+    expect(build.callsTo("runs.create")).toHaveLength(0);
+  });
+
+  it.each([
+    ["before the machine list answers", null],
+    ["after the machine list fails", { status: 503, code: "hub_unreachable", message: "No list." }],
+  ])("refuses the setting on this machine %s", async (_when, failure) => {
+    const { local, hub, fleet } = setup([LOCAL]);
+    if (failure) {
+      hub.failing[MACHINE_LIST] = failure;
+      await fleet.refresh();
+    }
+    expect(fleet.getState()).toMatchObject({ supported: null, selected: "local" });
+    local.on("projects.list", () => ({ projects: [project] }));
+    local.on("projects.repos.list", () => ({
+      repos: [
+        { path: "/srv/src/app", name: "app", currentBranch: "topic", headSha: null, dirty: false },
+      ],
+    }));
+    local.on("projects.repos.refs", () => EMPTY_REFS);
+    local.on("runs.create", () => remoteRun());
+    render(
+      <FleetProvider fleet={fleet}>
+        <StoreProvider store={fleet.storeFor("local")}>
+          <Launcher prefill={{ project: project.project.id, box: null }} />
+        </StoreProvider>
+      </FleetProvider>,
+    );
+    await waitFor(() => expect(screen.getByLabelText(/^Repository/)).toHaveValue("/srv/src/app"));
+    fireEvent.change(screen.getByLabelText(/^Parallel calls/), { target: { value: "1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Start" }));
+    await screen.findByText(
+      /can't confirm that the selected machine's server can set parallel calls/,
+    );
+    expect(local.callsTo("runs.create")).toHaveLength(0);
   });
 
   it("sends the setting to a server that lists the capability", async () => {
