@@ -368,6 +368,19 @@ describe("estimateRunTokens read-only and empty groups", () => {
     expect(ro.copilot! / (40_000 * (1 - confirm))).toBeCloseTo(1, 1);
     expect(run(true).tokens).toBe(390_000);
   });
+
+  it("keeps the whole per-line review cost in a read-only run's older rate (F-0150)", () => {
+    const run = (readOnly: boolean, changedLines: number) =>
+      estimateRunTokens({
+        depth: "standard",
+        reviewers: ["codex"],
+        readOnly,
+        groups: [{ changedLines }],
+      }).tokens;
+    // 4,000 changed lines at 75 tokens each, in both kinds of run.
+    expect(run(true, 4_000) - run(true, 0)).toBe(300_000);
+    expect(run(false, 4_000) - run(false, 0)).toBe(300_000);
+  });
 });
 
 describe("describeWindowShare", () => {

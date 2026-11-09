@@ -1166,14 +1166,15 @@ export function estimateRunTokens(input: RunTokenEstimateInput): RunTokenEstimat
       if (share > 0) addVendor(vendor, tokens * share, low * share, high * share);
     }
   };
-  // The parts of the older rate that verification and fixing take, as the
-  // starting stage rates are of its figure per group. A read-only run spends
-  // no fixing and no confirmation, so its older rate leaves both out.
-  const fullVerification = STARTING_STAGE_RATES.verification / fallback.perGroup;
-  const fullFixing = STARTING_STAGE_RATES.fixing / fallback.perGroup;
-  const olderKept = readOnly ? 1 - fullFixing - fullVerification * confirmShare : 1;
-  const olderVerification = (fullVerification * (readOnly ? 1 - confirmShare : 1)) / olderKept;
-  const olderFixing = readOnly ? 0 : fullFixing;
+  // The parts of the older rate's figure per group that verification and
+  // fixing take: the starting stage rates. The rate per changed line is
+  // review, which a read-only run still spends. A read-only run spends no
+  // fixing and no confirmation, so its older rate leaves both out of the
+  // figure per group only.
+  const olderVerification = STARTING_STAGE_RATES.verification * (readOnly ? 1 - confirmShare : 1);
+  const olderFixing = readOnly ? 0 : STARTING_STAGE_RATES.fixing;
+  const olderReviewPerGroup =
+    fallback.perGroup - STARTING_STAGE_RATES.verification - STARTING_STAGE_RATES.fixing;
   // Review tokens of the groups that have their own verification and fixing
   // lines, by reviewer. Groups on the older rate already include those stages.
   const stagedReview = new Map<Vendor, number>();
@@ -1182,12 +1183,13 @@ export function estimateRunTokens(input: RunTokenEstimateInput): RunTokenEstimat
     const vendor = reviewers[index % reviewers.length] as Vendor;
     const rate = reviewRate(vendor, group.tier);
     if (!rate) {
-      const tokens = (fallback.perGroup + group.changedLines * fallback.perLine) * olderKept;
+      const reviewed = olderReviewPerGroup + group.changedLines * fallback.perLine;
+      const tokens = reviewed + olderVerification + olderFixing;
       // The older rate includes verification and fixing, so those parts go to
       // the vendors that run them.
-      const charge = (to: (t: number, l: number, h: number) => void, share: number) =>
-        to(tokens * share, tokens * share * REVIEW_SPREAD.low, tokens * share * REVIEW_SPREAD.high);
-      charge((t, l, h) => addVendor(vendor, t, l, h), 1 - olderVerification - olderFixing);
+      const charge = (to: (t: number, l: number, h: number) => void, part: number) =>
+        to(part, part * REVIEW_SPREAD.low, part * REVIEW_SPREAD.high);
+      charge((t, l, h) => addVendor(vendor, t, l, h), reviewed);
       charge((t, l, h) => addVerification(vendor, t, l, h), olderVerification);
       if (olderFixing > 0)
         charge((t, l, h) => addVendor(input.fixer ?? vendor, t, l, h), olderFixing);
