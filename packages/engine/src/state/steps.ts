@@ -62,6 +62,7 @@ import {
   fixerPrompt,
   ledgerFollowUpPrompt,
   sweepPrompt,
+  type SweepPromptInput,
 } from "../prompts/templates.js";
 import { parseDiff } from "../range/diff.js";
 import {
@@ -212,18 +213,51 @@ export function estimateTokens(prompt: string): number {
 }
 
 /**
- * A token count that a prompt is unlikely to exceed: two and a half
- * characters per token. Code full of symbols and short names takes about
- * three, so `estimateTokens` can count a prompt well short of what the
- * model's context window holds.
+ * A token count that a prompt is unlikely to exceed: two and a half ASCII
+ * characters per token, and one token per two UTF-8 bytes of any other
+ * character. Code full of symbols and short names takes about three ASCII
+ * characters per token, so `estimateTokens` can count a prompt well short
+ * of what the model's context window holds. A CJK character takes three
+ * bytes and often one or more tokens, so counting it as a fraction of a
+ * token would let such a diff overflow the window.
  */
 export function strictTokenCount(prompt: string): number {
-  return Math.ceil(prompt.length / 2.5);
+  let ascii = 0;
+  let otherBytes = 0;
+  for (const ch of prompt) {
+    const code = ch.codePointAt(0) ?? 0;
+    if (code < 0x80) ascii += 1;
+    else otherBytes += code < 0x800 ? 2 : code < 0x10000 ? 3 : 4;
+  }
+  return Math.ceil(ascii / 2.5 + otherBytes / 2);
 }
 
-/** True when a sweep prompt with its diff inline fits every sweeper's context window. */
+/** True when a sweep prompt fits every sweeper's context window. */
 export function sweepPromptFits(prompt: string): boolean {
   return strictTokenCount(prompt) <= SWEEP_PROMPT_TOKEN_LIMIT;
+}
+
+/**
+ * The sweep prompt that reads the diff from a file, cut to fit every
+ * sweeper's context window, or `null` when not even one pattern fits. It
+ * drops the policy section first, then the patterns from the end.
+ */
+export function fitSweepFallback(input: SweepPromptInput): {
+  prompt: string;
+  patterns: number;
+} | null {
+  const attempt = (i: SweepPromptInput) => {
+    const prompt = sweepPrompt(i);
+    return sweepPromptFits(prompt) ? { prompt, patterns: i.patterns.length } : null;
+  };
+  const whole = attempt(input);
+  if (whole) return whole;
+  const bare = { ...input, policySection: "" };
+  for (let n = input.patterns.length; n >= 1; n -= 1) {
+    const fits = attempt({ ...bare, patterns: input.patterns.slice(0, n) });
+    if (fits) return fits;
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -1637,14 +1671,21 @@ export async function runSweep(
     await mkdir(dirname(diffFile), { recursive: true });
     await writeFile(diffFile, diff);
   }
-  const prompt = inline
-    ? inlinePrompt
-    : sweepPrompt({
+  // Without the diff, the patterns and the policy can still fill the
+  // window, so the fallback prompt is measured too and cut to fit.
+  const fallback = inline
+    ? null
+    : fitSweepFallback({
         ...promptInput,
         diff: "",
         changedFiles: [...new Set(groups.flatMap((g) => g.files))],
         diffFile,
       });
+  if (!inline && !fallback) {
+    await ctx.store.writeJson(file, { skipped: true });
+    return null;
+  }
+  const prompt = fallback ? fallback.prompt : inlinePrompt;
   const sweepTier = callTier(ctx, "sweeper", groups);
   const out = await ctx.callAgent<SweepOutput>({
     key: "sweep",
