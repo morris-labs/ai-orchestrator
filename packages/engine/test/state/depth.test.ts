@@ -566,6 +566,55 @@ describe("batched verification", () => {
     expect(ctx.findings[0]?.verdict).toBe("pre-existing");
   });
 
+  it("overrules a pre-existing verdict on a new statement beside inherited lines (F-0094)", async () => {
+    const { ctx, repo } = await preExistingRun({ symbol: "bill_card", lines: [2, 4] });
+    ctx.eng.diffBaseSha = commitFiles(repo, { "shop/file1.py": CHARGE });
+    const edited = [
+      "def bill_card(amount, token):",
+      "    ledger.override_limits(token, unlimited=True)",
+      "    refunds.queue_everything(token)",
+      "    cents = int(amount * 100)",
+      "    return gateway.submit(cents, token)",
+      "",
+    ].join("\n");
+    atTip(ctx, commitFiles(repo, { "shop/file1.py": edited }));
+    await verifyPending(ctx, ctx.store.roundFile(1, "verify"));
+    expect(ctx.findings[0]?.verdict).toBe("confirmed");
+  });
+
+  it("overrules a pre-existing verdict on one new line that sits above old code (F-0094)", async () => {
+    const { ctx, repo } = await preExistingRun({ symbol: "bill_card", lines: [2, 2] });
+    ctx.eng.diffBaseSha = commitFiles(repo, { "shop/file1.py": CHARGE });
+    atTip(
+      ctx,
+      commitFiles(repo, {
+        "shop/file1.py": CHARGE.replace("charge_card", "bill_card").replace(
+          "    cents",
+          "    ledger.override_limits(token, unlimited=True)\n    cents",
+        ),
+      }),
+    );
+    await verifyPending(ctx, ctx.store.roundFile(1, "verify"));
+    expect(ctx.findings[0]?.verdict).toBe("confirmed");
+  });
+
+  it("overrules a pre-existing verdict on a replacement hunk that writes new code (F-0149)", async () => {
+    const { ctx, repo } = await preExistingRun({ symbol: "settle_invoice", lines: [1, 4] });
+    ctx.eng.diffBaseSha = commitFiles(repo, { "shop/file1.py": CHARGE });
+    const replaced = [
+      "def settle_invoice(invoice):",
+      "    for line_item in invoice.items:",
+      "        warehouse.release_stock(line_item.sku)",
+      "    return ledger.close(invoice.number)",
+      "",
+    ].join("\n");
+    atTip(ctx, commitFiles(repo, { "shop/file1.py": replaced }));
+    await verifyPending(ctx, ctx.store.roundFile(1, "verify"));
+    const f = ctx.findings[0] as Finding;
+    expect(f.verdict).toBe("confirmed");
+    expect(f.introduced).toBe(true);
+  });
+
   it("keeps a pre-existing verdict when the finding doesn't say which version its lines count in", async () => {
     const { ctx, repo } = await preExistingRun({ lines: [1, 3] });
     // The finding's lines point at old code moved into shop/file1.py, but the
