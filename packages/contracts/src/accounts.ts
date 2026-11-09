@@ -46,6 +46,16 @@ export const ENGINE_ACCOUNT_DIRS_FILE = "account-dirs.json";
  */
 export const ENGINE_CONFIG_MOUNT = "/run/aio-config";
 
+/**
+ * The file in `ENGINE_CONFIG_MOUNT` that holds this host's account key
+ * secret: random hex that the server creates once per install and copies to
+ * every project container. The engine keys each usage sample's account with
+ * an HMAC of this secret, so a sample read in another project or a preview
+ * can't be matched to an email address by hashing guesses, while samples of
+ * one account still pool across the host's projects.
+ */
+export const ENGINE_ACCOUNT_KEY_FILE = "account-key";
+
 /** The content of `ENGINE_ACCOUNT_DIRS_FILE`: an absolute folder per vendor. */
 export const EngineAccountDirsSchema = z
   .object({
