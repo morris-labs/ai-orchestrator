@@ -86,9 +86,12 @@ describe("claude arguments", () => {
     expect(nameArg("-p")).toBe("--name=-p");
   });
 
-  it("adds the project root for a worktree box whose repository is a subdirectory", () => {
+  it("adds the project root for every worktree box", () => {
     const wt = { ...box, worktree: "/home/tester/app/repo/.worktrees/fix" };
-    expect(baseClaudeArgs(wt, project)).not.toContain("--add-dir");
+    expect(baseClaudeArgs(box, project)).not.toContain("--add-dir");
+    expect(baseClaudeArgs(wt, project)).toEqual(
+      expect.arrayContaining(["--add-dir", "/home/tester/app"]),
+    );
     expect(
       baseClaudeArgs(wt, { root: "/home/tester/app", primaryRepo: "/home/tester/app/repo/" }),
     ).toEqual(expect.arrayContaining(["--add-dir", "/home/tester/app"]));

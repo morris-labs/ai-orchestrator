@@ -2,15 +2,16 @@
 // place so creating and reopening a box can't drift apart.
 import type { Box, HostOs, Platform, Project } from "@aio/contracts";
 import { hostToContainer, promptPath, type HostEnv } from "../records/env.js";
-import { normalizeRoot } from "../projects/ids.js";
 import { infraFile, worktreeNotesDir } from "../worktrees/worktrees.js";
 
 /**
  * The `claude` flags shared by creating and reopening a box: remote control
  * (named after the conversation), auto permission mode, the bypass option,
- * the model and effort, and `--add-dir` for the project root when a worktree
- * box's repository is a subdirectory of it. `hostOs` decides how that root
- * maps to its container path.
+ * the model and effort, and `--add-dir` for the project root in a worktree
+ * box. The worktree is the session's working directory, so without the root
+ * Claude treats the project's `.aio` notes and run folders as outside the
+ * workspace and asks before each access. `hostOs` decides how that root maps
+ * to its container path.
  */
 export function baseClaudeArgs(
   box: Box,
@@ -26,11 +27,7 @@ export function baseClaudeArgs(
   if (box.skipPermissions) args.push("--allow-dangerously-skip-permissions");
   if (box.model) args.push("--model", box.model);
   if (box.effort) args.push("--effort", box.effort);
-  if (
-    box.worktree &&
-    project.primaryRepo &&
-    normalizeRoot(project.primaryRepo, hostOs) !== project.root
-  ) {
+  if (box.worktree) {
     args.push("--add-dir", hostToContainer(box.targetDir, hostOs));
   }
   return args;

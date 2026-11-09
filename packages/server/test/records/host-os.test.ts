@@ -178,14 +178,14 @@ describe("box arguments", () => {
       "win32",
     );
     expect(args.slice(-2)).toEqual(["--add-dir", "/mnt/host/c/Users/tester/work"]);
-    // The same repository spelled differently is the root itself: no --add-dir.
+    // A repository at the root itself still gets the root, for the `.aio` notes.
     expect(
       baseClaudeArgs(
         box,
         { root: "C:/Users/tester/work", primaryRepo: "c:\\Users\\tester\\work" },
         "win32",
-      ),
-    ).not.toContain("--add-dir");
+      ).slice(-2),
+    ).toEqual(["--add-dir", "/mnt/host/c/Users/tester/work"]);
   });
 
   it("name container paths in the moved message", () => {
