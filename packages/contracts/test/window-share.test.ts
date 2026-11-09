@@ -134,6 +134,42 @@ describe("estimateWindowShare", () => {
     expect(line?.low).toBeCloseTo(0.1 * 0.5);
   });
 
+  it("finds an older 7-day measurement behind newer runs that measured only 5h (F-0108)", () => {
+    const sevenDay = sample("01A", 0.05, 200_000);
+    const [usage] = sevenDay.usage!;
+    sevenDay.usage = [
+      { ...usage!, windows: usage!.windows!.map((w) => ({ ...w, window: "7d" as const })) },
+    ];
+    const fiveHour = Array.from({ length: 12 }, (_, i) =>
+      sample(`02${String(i).padStart(2, "0")}`, 0.1, 200_000),
+    );
+    const lines = estimateWindowShare(byVendor, [...fiveHour, sevenDay], []);
+    const week = lines.find((l) => l.window === "7d");
+    expect(week).toMatchObject({ vendor: "claude", measured: true });
+    expect(week?.low).toBeCloseTo(0.05 * 0.5);
+  });
+
+  it("pools an older run of this account behind newer runs of another account (F-0108)", () => {
+    const keyed = (runId: string, used: number, account: string): RunTokenSample => {
+      const s = sample(runId, used, 200_000);
+      const [usage] = s.usage!;
+      return {
+        ...s,
+        usage: [{ ...usage!, windows: usage!.windows!.map((w) => ({ ...w, account })) }],
+      };
+    };
+    const others = Array.from({ length: 12 }, (_, i) =>
+      keyed(`02${String(i).padStart(2, "0")}`, 0.01, "large"),
+    );
+    // The host's other-account runs don't push out its older run of this account.
+    const [line] = estimateWindowShare(
+      byVendor,
+      [keyed("03A", 0.1, "small")],
+      [...others, keyed("01A", 0.1, "small")],
+    );
+    expect(line?.source).toMatch(/1 run in this project and 1 run in other projects/);
+  });
+
   it("loads a sample saved before the breakdown existed", () => {
     const { usage: _usage, ...older } = sample("01A", 0.1, 1);
     expect(RunTokenSampleSchema.parse(older).usage).toBeUndefined();

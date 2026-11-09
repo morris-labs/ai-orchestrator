@@ -1356,44 +1356,46 @@ export function estimateWindowShare(
   const out: WindowShareLine[] = [];
   for (const est of byVendor) {
     if (est.tokens <= 0) continue;
-    // The newest runs that measured this vendor's windows, so that newer runs
-    // without a measurement don't push older measurements out.
-    const measures = (s: RunTokenSample) =>
-      s.usage?.some(
-        (u) =>
-          u.vendor === est.vendor && u.raw > 0 && (u.windows ?? []).some((r) => r.weighted > 0),
-      ) ?? false;
-    const weighted = [
-      ...weigh(history.filter(measures), "project"),
-      ...weigh(hostHistory.filter(measures), "host"),
-    ];
-    const measured = new Map<
-      SampleWindow,
-      { w: Weighted; usage: VendorUsageSample; rate: WindowRate }[]
-    >();
-    for (const w of weighted) {
-      const usage = w.sample.usage?.find((u) => u.vendor === est.vendor);
+    // A run's reading of one window of this vendor, when it measured one.
+    const readingOf = (s: RunTokenSample, window: SampleWindow) => {
+      const usage = s.usage?.find((u) => u.vendor === est.vendor);
+      if (!usage || usage.raw <= 0) return undefined;
+      // Vendors report use in coarse steps, so a run that didn't move a
+      // visible step still pools at zero: dropping it would leave only the
+      // runs that crossed a step, and the pooled rate would err high.
+      const rate = (usage.windows ?? []).find((r) => r.window === window && r.weighted > 0);
+      return rate ? { usage, rate } : undefined;
+    };
+    const windows = new Set<SampleWindow>();
+    for (const s of [...history, ...hostHistory]) {
+      const usage = s.usage?.find((u) => u.vendor === est.vendor);
       if (!usage || usage.raw <= 0) continue;
-      for (const rate of usage.windows ?? []) {
-        // Vendors report use in coarse steps, so a run that didn't move a
-        // visible step still pools at zero: dropping it would leave only the
-        // runs that crossed a step, and the pooled rate would err high.
-        if (rate.weighted <= 0) continue;
-        const list = measured.get(rate.window) ?? [];
-        list.push({ w, usage, rate });
-        measured.set(rate.window, list);
-      }
+      for (const r of usage.windows ?? []) if (r.weighted > 0) windows.add(r.window);
     }
-    for (const [window, all] of measured) {
+    for (const window of windows) {
       // Plans differ in size, so only rates of the account this project's
       // newest measuring run used pool. Another project's run counts only
       // when its key matches; without a key, nothing ties it to this account.
-      const newest = all.find((r) => r.w.origin === "project");
-      if (!newest) continue;
-      const account = newest.rate.account;
-      const runs = all.filter(
-        (r) => r.rate.account === account && (r.w.origin === "project" || account !== undefined),
-      );
+      const newestRun = [...history]
+        .filter((s) => readingOf(s, window))
+        .sort((a, b) => b.runId.localeCompare(a.runId))[0];
+      if (!newestRun) continue;
+      const account = readingOf(newestRun, window)?.rate.account;
+      // The newest runs that measured this window of this account, so that
+      // newer runs of other windows, accounts, or vendors don't push older
+      // measurements out.
+      const sameAccount = (s: RunTokenSample) => {
+        const reading = readingOf(s, window);
+        return reading !== undefined && reading.rate.account === account;
+      };
+      const weighted = [
+        ...weigh(history.filter(sameAccount), "project"),
+        ...(account === undefined ? [] : weigh(hostHistory.filter(sameAccount), "host")),
+      ];
+      const runs = weighted.flatMap((w) => {
+        const reading = readingOf(w.sample, window);
+        return reading ? [{ w, ...reading }] : [];
+      });
       // Pooled over runs, so a run with more tokens counts more.
       let used = 0;
       let weightedSum = 0;
