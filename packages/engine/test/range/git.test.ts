@@ -168,7 +168,7 @@ describe("Git.linesFromBase", () => {
     git(repo, "commit", "-q", "-m", "rename");
     const tip = git(repo, "rev-parse", "HEAD");
     const g = new Git(new ExecaRunner(), join(repo, "pkg"));
-    expect(await g.linesFromBase(base, tip, "pkg/basket.py", 1, 3)).toEqual({
+    expect(await g.linesFromBase(base, tip, "pkg/basket.py", 1, 3)).toMatchObject({
       counted: 3,
       fromBase: 2,
     });
@@ -181,7 +181,7 @@ describe("Git.linesFromBase", () => {
     git(repo, "commit", "-q", "-m", "fresh");
     const tip = git(repo, "rev-parse", "HEAD");
     const g = new Git(new ExecaRunner(), repo);
-    expect(await g.linesFromBase(base, tip, "pkg/fresh.py", 1, 2)).toEqual({
+    expect(await g.linesFromBase(base, tip, "pkg/fresh.py", 1, 2)).toMatchObject({
       counted: 2,
       fromBase: 0,
     });
@@ -199,7 +199,7 @@ describe("Git.linesFromBase", () => {
     git(repo, "merge", "-q", "--allow-unrelated-histories", "-m", "merge", "other");
     const tip = git(repo, "rev-parse", "HEAD");
     const g = new Git(new ExecaRunner(), repo);
-    expect(await g.linesFromBase(base, tip, "new.txt", 1, 1)).toEqual({
+    expect(await g.linesFromBase(base, tip, "new.txt", 1, 1)).toMatchObject({
       counted: 1,
       fromBase: 0,
     });
@@ -213,7 +213,7 @@ describe("Git.linesFromBase", () => {
     git(repo, "commit", "-q", "-m", "drop util");
     const base = git(repo, "rev-parse", "HEAD");
     const g = new Git(new ExecaRunner(), repo);
-    expect(await g.linesFromBase(base, shared, "pkg/util.py", 1, 2)).toEqual({
+    expect(await g.linesFromBase(base, shared, "pkg/util.py", 1, 2)).toMatchObject({
       counted: 2,
       fromBase: 0,
     });

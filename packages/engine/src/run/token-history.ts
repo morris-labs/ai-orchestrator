@@ -4,10 +4,13 @@
 // folder. The engine writes the file when the run finishes, or the first time
 // it reads an older run. The server reads these files across projects, so a
 // project with few runs can learn from the others; see docs/architecture.md.
-import { createHash } from "node:crypto";
+import { createHmac } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import {
+  ENGINE_ACCOUNT_KEY_FILE,
+  ENGINE_CONFIG_MOUNT,
   RunTokenSampleSchema,
   TOKEN_SAMPLE_FILE,
   TOKEN_SAMPLE_POINT_LIMIT,
@@ -26,7 +29,7 @@ import { listRunIds, runsDir } from "./store.js";
  * The version of the window logic in `measureUsage()`. A stored sample with
  * another version is measured again. Raise it whenever the logic changes.
  */
-const USAGE_VERSION = 2;
+const USAGE_VERSION = 3;
 
 /** The newest runs to read, so that a long history can't slow a preview. */
 const RUNS_READ = 30;
@@ -322,6 +325,7 @@ async function measureUsage(
   const finished: Call[] = [];
   const raw: RawReading[] = [];
   const accountsOf = new Map<Vendor, Set<string>>();
+  const secret = accountKeySecret();
   // An older run's readings don't name their call. A successful call's
   // readings follow its `agent.finished` event, and a failed call's come
   // before it, so a block of them can belong to a successful call that
@@ -548,7 +552,7 @@ async function measureUsage(
         rate: used / tokens,
         durationMs,
         resets: periods.length - 1,
-        ...(account ? { account: accountKey(vendor, account) } : {}),
+        ...(account && secret ? { account: accountKey(secret, vendor, account) } : {}),
       });
     }
     out.push({
@@ -564,12 +568,31 @@ async function measureUsage(
   return out;
 }
 
+/** Where the engine reads the host's account key secret. Tests point it elsewhere. */
+export const accountKeySource = { file: join(ENGINE_CONFIG_MOUNT, ENGINE_ACCOUNT_KEY_FILE) };
+
+/**
+ * The host's account key secret, or `null` when the server hasn't written
+ * one, as for a container started before the file existed.
+ */
+function accountKeySecret(): string | null {
+  try {
+    const secret = readFileSync(accountKeySource.file, "utf8").trim();
+    return secret.length >= 32 ? secret : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * An opaque key for a vendor's account label, so a sample can tell accounts
- * apart without holding a name or an email.
+ * apart without holding a name or an email. The HMAC takes the host's
+ * secret, so hashing a guessed email can't confirm or recover the account.
+ * Without the secret, a sample keeps no account key: it then pools only
+ * with this project's samples that have none.
  */
-function accountKey(vendor: Vendor, account: string): string {
-  return createHash("sha256").update(`${vendor}\0${account}`).digest("hex").slice(0, 16);
+function accountKey(secret: string, vendor: Vendor, account: string): string {
+  return createHmac("sha256", secret).update(`${vendor}\0${account}`).digest("hex").slice(0, 16);
 }
 
 /**

@@ -42,3 +42,49 @@ describe("sweepPromptFits", () => {
     expect(sweepPromptFits("x".repeat(200_000))).toBe(true);
   });
 });
+
+describe("strictTokenCount", () => {
+  it("counts a CJK diff at more than one token per two characters (F-0129)", async () => {
+    const { strictTokenCount, sweepPromptFits } = await import("../../src/state/steps.js");
+    // 3 UTF-8 bytes each, so 1.5 tokens per character.
+    expect(strictTokenCount("一".repeat(200_000))).toBe(300_000);
+    expect(sweepPromptFits("一".repeat(200_000))).toBe(false);
+    expect(strictTokenCount("x".repeat(250))).toBe(100);
+  });
+});
+
+describe("fitSweepFallback", () => {
+  const range = { baseSha: "a".repeat(40), tipSha: "b".repeat(40), repoPath: "/work/repo" };
+  const pattern = (i: number, failureCase: string) =>
+    ({ id: `F-${i}`, title: `Pattern ${i}`, file: "src/a.ts", failureCase }) as never;
+
+  it("drops the policy and then patterns until the prompt without the diff fits (F-0129)", async () => {
+    const { fitSweepFallback, sweepPromptFits } = await import("../../src/state/steps.js");
+    const big = "y".repeat(150_000);
+    const fitted = fitSweepFallback({
+      range: range as never,
+      patterns: [pattern(1, "short"), pattern(2, big), pattern(3, big)],
+      diff: "",
+      changedFiles: ["src/a.ts"],
+      diffFile: "/work/run/rounds/1/sweep.diff",
+      policySection: "z".repeat(200_000),
+    });
+    expect(fitted?.patterns).toBe(2);
+    expect(sweepPromptFits(fitted?.prompt ?? "")).toBe(true);
+    expect(fitted?.prompt).not.toContain("zzz");
+  });
+
+  it("gives null when not even one pattern fits", async () => {
+    const { fitSweepFallback } = await import("../../src/state/steps.js");
+    expect(
+      fitSweepFallback({
+        range: range as never,
+        patterns: [pattern(1, "y".repeat(400_000))],
+        diff: "",
+        changedFiles: ["src/a.ts"],
+        diffFile: "/work/run/rounds/1/sweep.diff",
+        policySection: "",
+      }),
+    ).toBeNull();
+  });
+});

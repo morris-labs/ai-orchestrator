@@ -282,7 +282,9 @@ export class Git {
   /**
    * For lines `first` to `last` of `path` at `rev`, how many hold a word
    * character (`counted`) and how many of those `git blame` traces to
-   * `base` (`fromBase`), or `null` when Git fails. Blame follows renames,
+   * `base` (`fromBase`), or `null` when Git fails. `lines` lists each
+   * counted line in order, with its text and whether blame traces it to
+   * `base`. Blame follows renames,
    * and ignores whitespace and lines that moved within a file or from a
    * file that the change changed. A short line that occurs elsewhere
    * doesn't count as old, unlike a text search. `path` is from the
@@ -301,7 +303,11 @@ export class Git {
     path: string,
     first: number,
     last: number,
-  ): Promise<{ counted: number; fromBase: number } | null> {
+  ): Promise<{
+    counted: number;
+    fromBase: number;
+    lines: { text: string; fromBase: boolean }[];
+  } | null> {
     const top = await this.exec(["rev-parse", "--show-toplevel"]);
     if (top.exitCode !== 0) return null;
     const change = await this.changeCommit(base, rev);
@@ -323,6 +329,7 @@ export class Git {
     let counted = 0;
     let fromBase = 0;
     let boundary = false;
+    const lines: { text: string; fromBase: boolean }[] = [];
     // Each line is a header, its commit's fields, and a tab before the text.
     for (const line of result.stdout.split("\n")) {
       if (/^[0-9a-f]{40,64} \d+ \d+/.test(line)) boundary = false;
@@ -330,17 +337,19 @@ export class Git {
       else if (line.startsWith("\t") && /\w/.test(line)) {
         counted += 1;
         if (boundary) fromBase += 1;
+        lines.push({ text: line.slice(1), fromBase: boundary });
       }
     }
-    return { counted, fromBase };
+    return { counted, fromBase, lines };
   }
 
   /**
    * How the change from `base` to `rev` treats `path`, or `null` when Git
    * fails: whether it adds the file without renaming or copying another
    * (`added`), whether a hunk that touches lines `first` to `last` of the
-   * file removes or replaces lines (`replaces`), and every line the change
-   * removes anywhere, in order, with whitespace collapsed (`removed`).
+   * file removes or replaces lines (`replaces`), the lines those hunks
+   * remove (`replacedLines`), and every line the change removes anywhere,
+   * in order, with whitespace collapsed (`removed`).
    */
   async changeTo(
     base: string,
@@ -348,7 +357,12 @@ export class Git {
     path: string,
     first: number,
     last: number,
-  ): Promise<{ added: boolean; replaces: boolean; removed: string[] } | null> {
+  ): Promise<{
+    added: boolean;
+    replaces: boolean;
+    replacedLines: string[];
+    removed: string[];
+  } | null> {
     const result = await this.exec(
       [
         "-c",
@@ -369,9 +383,11 @@ export class Git {
     let added = false;
     let replaces = false;
     const removed: string[] = [];
+    const replacedLines: string[] = [];
     let fresh = false;
     let target = false;
     let inHunk = false;
+    let touching = false;
     for (const line of result.stdout.split("\n")) {
       if (line.startsWith("diff --git ")) {
         fresh = false;
@@ -387,6 +403,7 @@ export class Git {
         if (line.startsWith("+++") && fresh) added = true;
       } else if (line.startsWith("@@ ")) {
         inHunk = true;
+        touching = false;
         const m = /^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(line);
         if (!target || !m) continue;
         const old = m[1] === undefined ? 1 : Number(m[1]);
@@ -394,13 +411,17 @@ export class Git {
         const count = m[3] === undefined ? 1 : Number(m[3]);
         // A hunk that adds nothing removes lines after line `start`.
         const end = count === 0 ? start + 1 : start + count - 1;
-        if (old > 0 && start <= last && end >= first) replaces = true;
+        if (old > 0 && start <= last && end >= first) {
+          replaces = true;
+          touching = true;
+        }
       } else if (inHunk && line.startsWith("-")) {
         const text = collapseSpace(line.slice(1));
         if (text) removed.push(text);
+        if (text && touching) replacedLines.push(text);
       }
     }
-    return { added, replaces, removed };
+    return { added, replaces, replacedLines, removed };
   }
 
   /** A commit that holds `rev`'s tree with `base` as its only parent, or `null` when Git fails. */

@@ -506,23 +506,24 @@ export class RunContext {
 
   /**
    * Whether the change wrote the finding's flagged lines rather than kept,
-   * renamed, moved, or reworked old code. That takes all of these:
+   * renamed, moved, or reworked old code. The engine decides on the flagged
+   * lines themselves. A line counts as old when any of these hold:
    *
-   * - `git blame` traces none of the lines to `base`, through renames,
-   *   moves, and whitespace changes.
-   * - No hunk that touches the lines removes or replaces lines. A rename
-   *   that also rewrites the code around an old flaw replaces the old
-   *   declaration, which blame can't trace once most lines changed.
-   * - For a file missing at the base, Git sees the file as added, not
-   *   renamed or copied from another.
-   * - No flagged line's words occur, in order, among the words of the
-   *   lines that the change removed, which catches a move too small for
-   *   blame to trace, and a move that also changed quotes, punctuation,
-   *   or line wrapping.
+   * - `git blame` traces it to `base`, through renames, moves, and
+   *   whitespace changes.
+   * - Its words occur, in order, among the words of the lines that the
+   *   change removed, which catches a move too small for blame to trace,
+   *   and a move that also changed quotes, punctuation, or line wrapping.
+   * - It has at least three words and shares three quarters of them with
+   *   one removed line, such as a renamed declaration.
    *
-   * A range of one or two lines, such as a declaration alone, extends to the
-   * 10 lines from its start. Any doubt, such as a Git failure or lines with
-   * no code, gives `false`, which keeps the agent's verdict.
+   * The code is new only when more flagged lines are new than old, and the
+   * new lines don't mostly reuse the words of the lines that the hunks
+   * touching them removed: a rename that rewraps or reworks an old flaw
+   * keeps its words. For a file missing at the base, Git must also see the
+   * file as added, not renamed or copied from another. Any doubt, such as a
+   * Git failure or lines with no code, gives `false`, which keeps the
+   * agent's verdict.
    */
   private async flaggedCodeIsNew(
     base: string,
@@ -537,21 +538,13 @@ export class RunContext {
     if (text === null) return false;
     const all = text.replace(/\n$/, "").split("\n");
     const [first, end] = finding.lines;
-    let last = Math.min(end, first + 59, all.length);
+    const last = Math.min(end, first + 59, all.length);
     if (first < 1 || first > last) return false;
-    if (all.slice(first - 1, last).filter((l) => /\w/.test(l)).length < 3) {
-      last = Math.max(last, Math.min(first + 9, all.length));
-    }
-    const lines = await this.git.linesFromBase(base, rev, file, first, last);
-    if (!lines || lines.counted === 0 || lines.fromBase > 0) return false;
+    const blamed = await this.git.linesFromBase(base, rev, file, first, last);
+    if (!blamed || blamed.counted === 0) return false;
     const change = await this.git.changeTo(base, rev, file, first, last);
-    if (!change || change.replaces || (fileMissing && !change.added)) return false;
-    const words = (l: string) => (l.match(/\w+/g) ?? []).join(" ");
-    const removed = ` ${change.removed.map(words).join(" ")} `;
-    return !all.slice(first - 1, last).some((l) => {
-      const flat = words(l);
-      return flat.length >= 8 && removed.includes(` ${flat} `);
-    });
+    if (!change || (fileMissing && !change.added)) return false;
+    return flaggedLinesAreNew(blamed.lines, change.removed, change.replacedLines);
   }
 
   /**
@@ -1409,4 +1402,51 @@ export function describeError(error: unknown): string {
   const text = error instanceof Error ? error.message : String(error);
   const line = text.replace(/\s+/g, " ").trim();
   return line.length > 500 ? `${line.slice(0, 497)}...` : line;
+}
+
+const wordsOf = (line: string): string[] => line.match(/\w+/g) ?? [];
+
+/** How many of `words` a multiset of `pool` words holds, each pool word used once. */
+function sharedWords(words: string[], pool: string[]): number {
+  const left = new Map<string, number>();
+  for (const w of pool) left.set(w, (left.get(w) ?? 0) + 1);
+  let shared = 0;
+  for (const w of words) {
+    const n = left.get(w) ?? 0;
+    if (n > 0) {
+      shared += 1;
+      left.set(w, n - 1);
+    }
+  }
+  return shared;
+}
+
+/**
+ * Whether flagged `lines` are mostly code the change wrote, given every line
+ * the change removed (`removed`) and the lines that the hunks touching the
+ * flagged lines removed (`replaced`). See `RunContext.flaggedCodeIsNew`.
+ */
+export function flaggedLinesAreNew(
+  lines: { text: string; fromBase: boolean }[],
+  removed: string[],
+  replaced: string[],
+): boolean {
+  const removedWords = removed.map(wordsOf);
+  const removedFlat = ` ${removedWords.map((w) => w.join(" ")).join(" ")} `;
+  const isOld = (line: { text: string; fromBase: boolean }): boolean => {
+    if (line.fromBase) return true;
+    const words = wordsOf(line.text);
+    const flat = words.join(" ");
+    if (flat.length >= 8 && removedFlat.includes(` ${flat} `)) return true;
+    if (words.length < 3) return false;
+    return removedWords.some(
+      (r) => sharedWords(words, r) * 4 >= Math.max(words.length, r.length) * 3,
+    );
+  };
+  const fresh = lines.filter((l) => !isOld(l));
+  if (fresh.length * 2 <= lines.length) return false;
+  const freshWords = fresh.flatMap((l) => wordsOf(l.text));
+  if (freshWords.length === 0) return false;
+  const reused = sharedWords(freshWords, replaced.flatMap(wordsOf));
+  return reused * 2 < freshWords.length;
 }

@@ -8,9 +8,14 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
-import { loadTokenHistory, saveTokenSample } from "../../src/run/token-history.js";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import {
+  accountKeySource,
+  loadTokenHistory,
+  saveTokenSample,
+} from "../../src/run/token-history.js";
 
 function writeRun(root: string, id: string, status: string): void {
   const calls = join(root, ".aio", "runs", id, "rounds", "1", "calls");
@@ -77,7 +82,7 @@ describe("loadTokenHistory", () => {
         verificationStages: { disprove: 31, confirm: 0, sweep: 41 },
         fixingTokens: 51,
         usage: [],
-        usageVersion: 2,
+        usageVersion: 3,
       },
     ]);
   });
@@ -149,6 +154,16 @@ describe("loadTokenHistory", () => {
 });
 
 describe("usage windows", () => {
+  const defaultKeyFile = accountKeySource.file;
+  beforeEach(() => {
+    const keyDir = mkdtempSync(join(tmpdir(), "aio-account-key-"));
+    accountKeySource.file = join(keyDir, "account-key");
+    writeFileSync(accountKeySource.file, `${"ab".repeat(32)}\n`);
+  });
+  afterEach(() => {
+    accountKeySource.file = defaultKeyFile;
+  });
+
   it("records tokens by kind and the window share per weighted token, skipping a reset", async () => {
     const root = mkdtempSync(join(tmpdir(), "aio-token-history-"));
     const dir = join(root, ".aio", "runs", "01C");
@@ -221,6 +236,14 @@ describe("usage windows", () => {
     // An opaque key tells the account apart without its name (F-0061).
     expect(window?.account).toMatch(/^[0-9a-f]{16}$/);
     expect(JSON.stringify(sample)).not.toContain("example.com");
+    // A plain hash of a guessed email doesn't give the key (F-0124).
+    const guess = createHash("sha256").update("claude\0user@example.com").digest("hex");
+    expect(window?.account).not.toBe(guess.slice(0, 16));
+    // Without the host's secret, the sample keeps no account key.
+    accountKeySource.file = join(root, "missing-account-key");
+    const unkeyed = await saveTokenSample(root, "01C");
+    expect(unkeyed?.usage?.[0]?.windows?.[0]).toBeDefined();
+    expect(unkeyed?.usage?.[0]?.windows?.[0]?.account).toBeUndefined();
   });
 
   it("leaves out a window when a call has no breakdown", async () => {

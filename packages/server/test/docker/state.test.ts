@@ -10,9 +10,11 @@ import {
   prepareStateDir,
   readMountsFile,
   stateFile,
+  hostAccountKeyFile,
+  writeAccountDirsFile,
   writeMountsFile,
 } from "../../src/docker/state.js";
-import type { HostEnv } from "../../src/records/env.js";
+import { engineConfigDirFor, type HostEnv } from "../../src/records/env.js";
 import { tempDir } from "../tmp.js";
 
 function env(now = () => new Date()): HostEnv {
@@ -96,5 +98,20 @@ describe("keeper state", () => {
     fs.mkdirSync(path.join(file, "sub"), { recursive: true });
     writeMountsFile(e, "c1", ["/y:/y"]);
     expect(readMountsFile(e, "c1")).toEqual(["/y:/y"]);
+  });
+});
+
+describe("account key secret", () => {
+  it("creates one host secret and copies it to every container (F-0124)", () => {
+    const e = env();
+    writeAccountDirsFile(e, "c1", {});
+    writeAccountDirsFile(e, "c2", {});
+    const secret = fs.readFileSync(hostAccountKeyFile(e), "utf8").trim();
+    expect(secret).toMatch(/^[0-9a-f]{64}$/);
+    expect(fs.statSync(hostAccountKeyFile(e)).mode & 0o777).toBe(0o600);
+    for (const c of ["c1", "c2"]) {
+      const copy = path.join(engineConfigDirFor(e, c), "account-key");
+      expect(fs.readFileSync(copy, "utf8").trim()).toBe(secret);
+    }
   });
 });

@@ -5,9 +5,14 @@
 // write this directory. `account-dirs.json` (each vendor's default account
 // folder, for the engine) and `layout.json` live in a separate folder that the
 // container mounts read-only.
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { ENGINE_ACCOUNT_DIRS_FILE, type EngineAccountDirs } from "@aio/contracts";
+import {
+  ENGINE_ACCOUNT_DIRS_FILE,
+  ENGINE_ACCOUNT_KEY_FILE,
+  type EngineAccountDirs,
+} from "@aio/contracts";
 import { engineConfigDirFor, homePaths, type HostEnv } from "../records/env.js";
 import { readRegularFileSync, replaceFileSync } from "../records/regular-file.js";
 
@@ -179,4 +184,37 @@ export function writeAccountDirsFile(
   fs.mkdirSync(stateDir(env, container), { recursive: true });
   fs.mkdirSync(engineConfigDirFor(env, container), { recursive: true, mode: 0o700 });
   replaceFileSync(accountDirsFile(env, container), `${JSON.stringify(dirs)}\n`);
+  writeAccountKeyFile(env, container);
+}
+
+/** `DATA_DIR/account-key`: the host's account key secret. */
+export function hostAccountKeyFile(env: HostEnv): string {
+  return path.join(homePaths(env).dataDir, ENGINE_ACCOUNT_KEY_FILE);
+}
+
+/**
+ * The host's account key secret, created once with 32 random bytes and
+ * readable by its owner only. See `ENGINE_ACCOUNT_KEY_FILE`.
+ */
+export function hostAccountKey(env: HostEnv): string {
+  const file = hostAccountKeyFile(env);
+  const existing = readRegularFileSync(file)?.trim();
+  if (existing && /^[0-9a-f]{64}$/.test(existing)) return existing;
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  const secret = crypto.randomBytes(32).toString("hex");
+  replaceFileSync(file, `${secret}\n`, 0o600);
+  return secret;
+}
+
+/**
+ * Copies the host's account key secret into a container's engine config
+ * folder, which the container mounts read-only, so every project's engine
+ * keys usage samples alike.
+ */
+export function writeAccountKeyFile(env: HostEnv, container: string): void {
+  const secret = hostAccountKey(env);
+  const file = path.join(engineConfigDirFor(env, container), ENGINE_ACCOUNT_KEY_FILE);
+  if (readRegularFileSync(file)?.trim() === secret) return;
+  fs.mkdirSync(engineConfigDirFor(env, container), { recursive: true, mode: 0o700 });
+  replaceFileSync(file, `${secret}\n`, 0o600);
 }
