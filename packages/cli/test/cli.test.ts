@@ -2187,12 +2187,20 @@ describe("package upgrade command", () => {
     expect(work.boxes.map((b: { id: string }) => b.id)).toEqual([BOX_ID]);
     expect(out).toContain("Recorded 1 boxes");
   });
-  it("clears a stale record when the server is stopped", async () => {
-    const record = path.join(home, ".ai-orchestrator", "upgrade-open-work.json");
-    writeFileSync(record, JSON.stringify({ boxes: [{ id: "stale", name: "stale" }], runs: [] }));
-    expect(await cli(["upgrade", "prepare"], { AIO_SERVER: "https://127.0.0.1:1" })).toBe(0);
-    expect(JSON.parse(readFileSync(record, "utf8"))).toEqual({ boxes: [], runs: [] });
-  });
+  it.each(["prepared", "recovery"])(
+    "preserves a %s record when the server is stopped",
+    async (phase) => {
+      const record = path.join(home, ".ai-orchestrator", "upgrade-open-work.json");
+      const work = {
+        phase,
+        boxes: [{ id: "box", name: "Box" }],
+        runs: [{ run_id: "run", name: "Run", projectId: "project" }],
+      };
+      writeFileSync(record, JSON.stringify(work));
+      expect(await cli(["upgrade", "prepare"], { AIO_SERVER: "https://127.0.0.1:1" })).toBe(0);
+      expect(JSON.parse(readFileSync(record, "utf8"))).toEqual(work);
+    },
+  );
   it("prints fallback and per-box failure reasons and exits nonzero", async () => {
     server.on("GET /api/v1/health", { body: { version: "1.0.0", uptimeS: 1 } });
     server.on("POST /api/v1/upgrade", {

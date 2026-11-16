@@ -2096,7 +2096,11 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
                 .map((r) => ({ run_id: r.id, name: r.id, projectId: r.projectId }));
             } catch (legacyError) {
               if (!(legacyError instanceof ServerUnreachableError)) throw legacyError;
-              // An enabled but stopped server has no open processes to recover.
+              // A previous attempt may have left work for the next startup.
+              if (fs.existsSync(recordFile)) {
+                deps.out("Preserved previously recorded open work.\n");
+                return;
+              }
             }
             fs.mkdirSync(path.dirname(recordFile), { recursive: true });
             fs.writeFileSync(`${recordFile}.tmp`, JSON.stringify({ boxes, runs }), { mode: 0o600 });
