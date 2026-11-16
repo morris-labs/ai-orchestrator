@@ -49,6 +49,16 @@ describe("app upgrade status", () => {
     );
   });
 
+  it("does not force update checks while polling an image upgrade", async () => {
+    const server = new FakeServer();
+    server.state.image.upgrading = true;
+    mount(server);
+    await waitFor(() => expect(server.callsTo("updates.check").length).toBeGreaterThan(1), {
+      timeout: 3000,
+    });
+    expect(server.callsTo("updates.check").every((call) => call.query.force === false)).toBe(true);
+  });
+
   it("offers to relaunch an app older than the installed package", async () => {
     const server = new FakeServer();
     server.state.updates.installedVersion = "1.1.0";
