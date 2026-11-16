@@ -62,6 +62,7 @@ class CheckoutUpgradeTest(unittest.TestCase):
                 scripts / 'build-deb.sh': 'echo build >> "$CALLS"; mkdir -p "$2"; touch "$2/ai-orchestrator_1.0.0_amd64.deb"',
                 scripts / 'install-server-unit.sh': 'echo migrate >> "$CALLS"',
                 tmp / 'sudo': 'echo "$*" >> "$CALLS"',
+                tmp / 'dpkg-query': "printf 'install ok installed'",
                 tmp / 'git': 'echo unexpected-git >> "$CALLS"; exit 1',
             }
             for path, body in programs.items():

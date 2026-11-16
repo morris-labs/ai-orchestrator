@@ -9,6 +9,7 @@ case "${1:-}" in
     printf 'Remove %s/aio-server.service and %s/aio-server.service.d/source-checkout.conf\n' "$UNIT_DIR" "$UNIT_DIR"
     printf 'Use packaged /usr/bin/aio-server; systemctl --user daemon-reload; systemctl --user enable --now aio-server.service\n'
     exit 0 ;;
+  --remove-only) ;;
   -h|--help)
     echo 'Usage: install-server-unit.sh [--print]'
     echo 'Use the installed package unit, removing the former checkout override.'
@@ -18,4 +19,6 @@ case "${1:-}" in
 esac
 rm -f "$UNIT_DIR/aio-server.service" "$UNIT_DIR/aio-server.service.d/source-checkout.conf"
 systemctl --user daemon-reload
-systemctl --user enable --now aio-server.service
+if [[ "${1:-}" != --remove-only ]]; then
+  systemctl --user enable --now aio-server.service
+fi
