@@ -149,6 +149,29 @@ describe("upgrade deadlines", () => {
 });
 
 describe("upgrade recovery records", () => {
+  it("refreshes a prepared record after a failed build", async () => {
+    const h = makeHarness();
+    const old = await h.core.boxes.create({ targetDir: h.dir("old"), layout: "root", start: true });
+    const core = apiCoreOf(h.core, {} as Docker);
+    const service = new UpgradeService({
+      core,
+      recordFile: path.join(h.home, "prepared.json"),
+      build: async () => {
+        throw new Error("build failed");
+      },
+      runs: () => [],
+      resume: async () => {},
+    });
+    await service.start();
+    await core.boxes.stop(old.id);
+    const fresh = await h.core.boxes.create({
+      targetDir: h.dir("fresh"),
+      layout: "root",
+      start: true,
+    });
+    expect((await service.prepare()).boxes.map((box) => box.id)).toEqual([fresh.id]);
+  });
+
   it("retains timed out work and retries restoration without rebuilding or recreating containers", async () => {
     const h = makeHarness();
     const box = await h.core.boxes.create({ targetDir: h.dir("app"), layout: "root", start: true });
