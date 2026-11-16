@@ -128,6 +128,11 @@ export class UpgradeService {
         }));
         return report;
       }
+      const current = await this.snapshot();
+      work.boxes.push(...current.boxes.filter((box) => !work.boxes.some((b) => b.id === box.id)));
+      work.runs.push(
+        ...current.runs.filter((run) => !work.runs.some((r) => r.run_id === run.run_id)),
+      );
       work.phase = "recovery";
       this.writeRecord(work);
       for (const { project } of await this.opts.core.projects.list()) {

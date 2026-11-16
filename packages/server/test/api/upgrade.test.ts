@@ -149,6 +149,31 @@ describe("upgrade deadlines", () => {
 });
 
 describe("upgrade recovery records", () => {
+  it("captures work opened after a failed build before startup recovery recreates containers", async () => {
+    const h = makeHarness();
+    const core = apiCoreOf(h.core, {} as Docker);
+    const options = {
+      core,
+      recordFile: path.join(h.home, "startup.json"),
+      runs: () => [],
+      resume: async () => {},
+    };
+    await new UpgradeService({
+      ...options,
+      build: async () => {
+        throw new Error("build failed");
+      },
+    }).start();
+    const box = await h.core.boxes.create({
+      targetDir: h.dir("fresh"),
+      layout: "root",
+      start: true,
+    });
+    const report = await new UpgradeService({ ...options, build: async () => "latest" }).start();
+    expect(report.boxes).toContainEqual({ id: box.id, name: box.id, restored: true, reason: null });
+    expect((await core.boxes.get(box.id)).status).toBe("running");
+  });
+
   it("refreshes a prepared record after a failed build", async () => {
     const h = makeHarness();
     const old = await h.core.boxes.create({ targetDir: h.dir("old"), layout: "root", start: true });
