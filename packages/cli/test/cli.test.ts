@@ -2174,6 +2174,10 @@ describe("--role", () => {
 
 describe("package upgrade command", () => {
   it("records open work using an older server before restarting", async () => {
+    writeFileSync(
+      path.join(home, ".ai-orchestrator", "upgrade-open-work.json"),
+      JSON.stringify({ boxes: [{ id: "stale", name: "stale" }], runs: [] }),
+    );
     server.on("GET /api/v1/boxes", { body: { boxes: [{ ...boxView(), status: "running" }] } });
     server.on("GET /api/v1/runs", { body: { runs: [] } });
     expect(await cli(["upgrade", "prepare"])).toBe(0);
@@ -2182,6 +2186,12 @@ describe("package upgrade command", () => {
     );
     expect(work.boxes.map((b: { id: string }) => b.id)).toEqual([BOX_ID]);
     expect(out).toContain("Recorded 1 boxes");
+  });
+  it("clears a stale record when the server is stopped", async () => {
+    const record = path.join(home, ".ai-orchestrator", "upgrade-open-work.json");
+    writeFileSync(record, JSON.stringify({ boxes: [{ id: "stale", name: "stale" }], runs: [] }));
+    expect(await cli(["upgrade", "prepare"], { AIO_SERVER: "https://127.0.0.1:1" })).toBe(0);
+    expect(JSON.parse(readFileSync(record, "utf8"))).toEqual({ boxes: [], runs: [] });
   });
   it("prints fallback and per-box failure reasons and exits nonzero", async () => {
     server.on("GET /api/v1/health", { body: { version: "1.0.0", uptimeS: 1 } });
