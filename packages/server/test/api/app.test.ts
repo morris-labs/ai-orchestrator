@@ -306,10 +306,27 @@ it("startup mismatch reports upgrading and holds box starts until the image is b
     finished = true;
     return result;
   });
+  let additionalFinished = 0;
+  const additional = [
+    api("POST", "/api/v1/boxes/start-all", { onlyWasRunning: false }),
+    api("POST", "/api/v1/boxes/restart-all"),
+    api("POST", `/api/v1/boxes/${id}/restart`),
+    api("POST", `/api/v1/boxes/${id}/side-sessions`, { platform: "codex" }),
+    api("POST", `/api/v1/projects/${PROJECT_ID}/container/restart`),
+  ].map((request) =>
+    request.then((result) => {
+      additionalFinished++;
+      return result;
+    }),
+  );
   await new Promise((resolve) => setTimeout(resolve, 20));
   expect(finished).toBe(false);
+  expect(additionalFinished).toBe(0);
   runner.spawned[0]!.emit("AIO_UPGRADE_IMAGE=latest\n");
   runner.spawned[0]!.exit(0);
   expect((await starting).status).toBe(200);
+  expect((await Promise.all(additional)).map((result) => result.status)).toEqual([
+    200, 200, 200, 200, 200,
+  ]);
   expect((await api("GET", "/api/v1/image")).json.upgrading).toBe(false);
 });

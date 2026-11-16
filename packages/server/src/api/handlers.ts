@@ -255,8 +255,10 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
     },
     "projects.remove": async ({ params, query }) =>
       core.projects.remove(params.projectId, query.force),
-    "projects.restartContainer": async ({ params }) =>
-      core.projects.restartContainer(params.projectId),
+    "projects.restartContainer": async ({ params }) => {
+      await deps.upgrade?.waitReady();
+      return core.projects.restartContainer(params.projectId);
+    },
     "projects.policy.get": async ({ params }) => core.projects.getPolicy(params.projectId),
     "projects.policy.put": async ({ params, query, body }) =>
       core.projects.putPolicy(params.projectId, body, query.baseRevision),
@@ -293,7 +295,10 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
       return core.boxes.start(params.boxId, { force: body.force });
     },
     "boxes.stop": async ({ params }) => core.boxes.stop(params.boxId),
-    "boxes.restart": async ({ params }) => core.boxes.restart(params.boxId),
+    "boxes.restart": async ({ params }) => {
+      await deps.upgrade?.waitReady();
+      return core.boxes.restart(params.boxId);
+    },
     "boxes.remove": async ({ params, query }) =>
       core.boxes.remove(params.boxId, { removeWorktree: query.removeWorktree }),
     "boxes.purge": async ({ params, body }) =>
@@ -338,8 +343,10 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
         }),
       };
     },
-    "boxes.sideSessions.start": async ({ params, body }) =>
-      core.boxes.startSideSession(params.boxId, body.platform),
+    "boxes.sideSessions.start": async ({ params, body }) => {
+      await deps.upgrade?.waitReady();
+      return core.boxes.startSideSession(params.boxId, body.platform);
+    },
     "boxes.sideSessions.stop": async ({ params }) => {
       const platform = params.platform;
       if (platform !== "claude" && platform !== "codex" && platform !== "copilot") {
@@ -348,15 +355,23 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
       await core.boxes.stopSideSession(params.boxId, platform);
       return { ok: true };
     },
-    "boxes.platform": async ({ params, body }) =>
-      core.boxes.setPlatform(params.boxId, body.platform, body.restart),
+    "boxes.platform": async ({ params, body }) => {
+      if (body.restart) await deps.upgrade?.waitReady();
+      return core.boxes.setPlatform(params.boxId, body.platform, body.restart);
+    },
     "boxes.message": async ({ params, body }) => {
       await core.boxes.message(params.boxId, body.text);
       return { ok: true };
     },
-    "boxes.startAll": async ({ body }) => core.boxes.startAll(body.onlyWasRunning),
+    "boxes.startAll": async ({ body }) => {
+      await deps.upgrade?.waitReady();
+      return core.boxes.startAll(body.onlyWasRunning);
+    },
     "boxes.stopAll": async () => core.boxes.stopAll(),
-    "boxes.restartAll": async () => core.boxes.restartAll(),
+    "boxes.restartAll": async () => {
+      await deps.upgrade?.waitReady();
+      return core.boxes.restartAll();
+    },
     "stats.refresh": async () => {
       await core.docker.refreshStats();
       return { ok: true };
