@@ -456,9 +456,10 @@ class ImageTest(unittest.TestCase):
                 (tmp / "image/keeper" / name).write_text("#!/bin/sh\n")
             version = read_versions()["AIO_ENGINE_VERSION"]
             (tmp / f"image/dist/aio-engine-{version}.tgz").write_bytes(b"")
+            env = {**os.environ, "AIO_DATA_DIR": str(tmp / "data")}
             out = subprocess.run(
                 [str(tmp / "scripts/build-image.sh"), "--print", "--tag", "aio-test"],
-                check=True, capture_output=True, text=True,
+                check=True, capture_output=True, text=True, env=env,
             ).stdout
             self.assertIn("docker build -t aio-test", out)
             self.assertIn("USER_NAME=", out)
@@ -467,14 +468,14 @@ class ImageTest(unittest.TestCase):
                 self.assertIn(f"--build-arg USER_GID={os.getgid()}", out)
             ids = subprocess.run(
                 [str(tmp / "scripts/build-image.sh"), "--print", "--uid", "1001", "--gid", "100"],
-                check=True, capture_output=True, text=True,
+                check=True, capture_output=True, text=True, env=env,
             ).stdout
             self.assertIn("--build-arg USER_UID=1001", ids)
             self.assertIn("--build-arg USER_GID=100", ids)
             for bad in (["--uid", "0"], ["--gid", "x"]):
                 refused = subprocess.run(
                     [str(tmp / "scripts/build-image.sh"), "--print", *bad],
-                    capture_output=True, text=True,
+                    capture_output=True, text=True, env=env,
                 )
                 self.assertNotEqual(refused.returncode, 0, bad)
             for key, value in read_versions().items():
@@ -482,7 +483,7 @@ class ImageTest(unittest.TestCase):
 
             (tmp / f"image/dist/aio-engine-{version}.tgz").unlink()
             failed = subprocess.run(
-                [str(tmp / "scripts/build-image.sh"), "--print"], capture_output=True, text=True
+                [str(tmp / "scripts/build-image.sh"), "--print"], env=env, capture_output=True, text=True
             )
             self.assertNotEqual(failed.returncode, 0)
             self.assertIn("is missing", failed.stderr)
@@ -705,7 +706,7 @@ class ScriptsTest(unittest.TestCase):
             fake.chmod(0o755)
             scratch = tmp / "tmpdir"
             scratch.mkdir()
-            env = {**os.environ, "PATH": f"{tmp / 'bin'}:{os.environ['PATH']}", "TMPDIR": str(scratch)}
+            env = {**os.environ, "PATH": f"{tmp / 'bin'}:{os.environ['PATH']}", "TMPDIR": str(scratch), "AIO_DATA_DIR": str(tmp / "data")}
             result = subprocess.run(
                 [str(tmp / "scripts/build-image.sh"), "--pack-only"], env=env, capture_output=True, text=True
             )
@@ -753,7 +754,7 @@ class ScriptsTest(unittest.TestCase):
             "esac\n"
         )
         fake.chmod(0o755)
-        return {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"}
+        return {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "AIO_DATA_DIR": str(tmp / "data")}
 
     def test_build_image_update_cli_writes_the_latest_versions(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -858,7 +859,7 @@ class ScriptsTest(unittest.TestCase):
                         link = tools / tool.name
                         if tool.name != "npm" and not link.is_symlink():
                             link.symlink_to(tool)
-                env = {**os.environ, "PATH": str(tools)}
+                env = {**os.environ, "PATH": str(tools), "AIO_DATA_DIR": str(pathlib.Path(tmp, "data"))}
                 runtime = pathlib.Path(tmp, "My Runtime")
                 self._installed_layout_in(runtime / "share")
                 self._fake_npm(runtime, bin_dir=runtime / layout)
