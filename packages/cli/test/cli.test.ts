@@ -2232,3 +2232,74 @@ it("aborts the upgrade request at the CLI time limit", async () => {
   expect(aborted).toBe(true);
   expect(err).toContain("time limit reached");
 });
+
+it("bounds prepare requests by the CLI deadline", async () => {
+  let aborted = false;
+  const fetcher: typeof fetch = async (_url, options) =>
+    new Promise<Response>((_, reject) => {
+      const timer = setTimeout(() => reject(new Error("stand-in request failed")), 100);
+      options?.signal?.addEventListener(
+        "abort",
+        () => {
+          clearTimeout(timer);
+          aborted = true;
+          reject(new Error("aborted"));
+        },
+        { once: true },
+      );
+    });
+  expect(
+    await runCli(["upgrade", "prepare", "--timeout", "0.02"], {
+      home,
+      env: { AIO_SERVER: server.url, AIO_TOKEN: TOKEN },
+      fetch: fetcher,
+      out: (t) => {
+        out += t;
+      },
+      err: (t) => {
+        err += t;
+      },
+    }),
+  ).toBe(1);
+  expect(aborted).toBe(true);
+  expect(err).toContain("time limit reached");
+});
+
+it("names unconfirmed boxes and runs when server readiness times out", async () => {
+  writeFileSync(
+    path.join(home, ".ai-orchestrator", "upgrade-open-work.json"),
+    JSON.stringify({
+      boxes: [{ id: BOX_ID, name: "Active box" }],
+      runs: [{ run_id: RUN, name: "Review in progress" }],
+    }),
+  );
+  let aborted = false;
+  const fetcher: typeof fetch = async (_url, options) =>
+    new Promise<Response>((_, reject) => {
+      options?.signal?.addEventListener(
+        "abort",
+        () => {
+          aborted = true;
+          reject(new Error("aborted"));
+        },
+        { once: true },
+      );
+    });
+  expect(
+    await runCli(["upgrade", "--timeout", "0.02"], {
+      home,
+      env: { AIO_SERVER: server.url, AIO_TOKEN: TOKEN },
+      fetch: fetcher,
+      out: (t) => {
+        out += t;
+      },
+      err: (t) => {
+        err += t;
+      },
+    }),
+  ).toBe(1);
+  expect(aborted).toBe(true);
+  expect(out).toContain("Active box");
+  expect(out).toContain("Review in progress");
+  expect(out).toContain("restoration unconfirmed");
+});

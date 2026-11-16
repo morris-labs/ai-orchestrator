@@ -2057,49 +2057,6 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
       const seconds = Number(opts.timeout);
       if (!Number.isFinite(seconds) || seconds <= 0)
         throw new UsageError("--timeout must be a positive number.");
-      if (phase === "prepare") {
-        const recordFile = path.join(
-          dataDirFor(deps.env, deps.home, globals().dataDir),
-          "upgrade-open-work.json",
-        );
-        if (fs.existsSync(recordFile)) {
-          deps.out("Open work already recorded.\n");
-          return;
-        }
-        try {
-          const prepared = await client().call("upgrade.prepare");
-          print(
-            prepared,
-            () => `Recorded ${prepared.boxes.length} boxes and ${prepared.runs.length} runs.\n`,
-          );
-          return;
-        } catch (err) {
-          // The first package upgrade is served by a version with no upgrade API.
-          if (
-            !(err instanceof ServerUnreachableError) &&
-            !(err instanceof ApiCallError && err.status === 404)
-          )
-            throw err;
-          let boxes: { id: string; name: string }[] = [];
-          let runs: { run_id: string; name: string; projectId: string }[] = [];
-          try {
-            boxes = (await client().call("boxes.list", { query: {} })).boxes
-              .filter((b) => b.status === "running")
-              .map((b) => ({ id: b.box.id, name: b.box.conversationName || b.box.id }));
-            runs = (await client().call("runs.list", { query: {} })).runs
-              .filter((r) => ["pending", "running", "waiting_decision"].includes(r.status))
-              .map((r) => ({ run_id: r.id, name: r.id, projectId: r.projectId }));
-          } catch (legacyError) {
-            if (!(legacyError instanceof ServerUnreachableError)) throw legacyError;
-            // An enabled but stopped server has no open processes to recover.
-          }
-          fs.mkdirSync(path.dirname(recordFile), { recursive: true });
-          fs.writeFileSync(`${recordFile}.tmp`, JSON.stringify({ boxes, runs }), { mode: 0o600 });
-          fs.renameSync(`${recordFile}.tmp`, recordFile);
-          deps.out(`Recorded ${boxes.length} boxes and ${runs.length} runs.\n`);
-          return;
-        }
-      }
       const deadline = Date.now() + seconds * 1000;
       const controller = new AbortController();
       const signal = AbortSignal.any([
@@ -2108,13 +2065,57 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
         ...(deps.signal ? [deps.signal] : []),
       ]);
       const upgradeClient = () => clientFor(settings(), undefined, signal);
-      while (true) {
+      if (phase === "prepare") {
         try {
-          await upgradeClient().call("health");
-          break;
-        } catch (err) {
-          if (!(err instanceof ServerUnreachableError) || Date.now() >= deadline) throw err;
-          await new Promise((resolve) => setTimeout(resolve, 500));
+          const recordFile = path.join(
+            dataDirFor(deps.env, deps.home, globals().dataDir),
+            "upgrade-open-work.json",
+          );
+          if (fs.existsSync(recordFile)) {
+            deps.out("Open work already recorded.\n");
+            return;
+          }
+          try {
+            const prepared = await upgradeClient().call("upgrade.prepare");
+            print(
+              prepared,
+              () => `Recorded ${prepared.boxes.length} boxes and ${prepared.runs.length} runs.\n`,
+            );
+            return;
+          } catch (err) {
+            // The first package upgrade is served by a version with no upgrade API.
+            if (
+              !(err instanceof ServerUnreachableError) &&
+              !(err instanceof ApiCallError && err.status === 404)
+            )
+              throw err;
+            let boxes: { id: string; name: string }[] = [];
+            let runs: { run_id: string; name: string; projectId: string }[] = [];
+            try {
+              boxes = (await upgradeClient().call("boxes.list", { query: {} })).boxes
+                .filter((b) => b.status === "running")
+                .map((b) => ({ id: b.box.id, name: b.box.conversationName || b.box.id }));
+              runs = (await upgradeClient().call("runs.list", { query: {} })).runs
+                .filter((r) => ["pending", "running", "waiting_decision"].includes(r.status))
+                .map((r) => ({ run_id: r.id, name: r.id, projectId: r.projectId }));
+            } catch (legacyError) {
+              if (!(legacyError instanceof ServerUnreachableError)) throw legacyError;
+              // An enabled but stopped server has no open processes to recover.
+            }
+            fs.mkdirSync(path.dirname(recordFile), { recursive: true });
+            fs.writeFileSync(`${recordFile}.tmp`, JSON.stringify({ boxes, runs }), { mode: 0o600 });
+            fs.renameSync(`${recordFile}.tmp`, recordFile);
+            deps.out(`Recorded ${boxes.length} boxes and ${runs.length} runs.\n`);
+            return;
+          }
+        } catch (error) {
+          if (signal.aborted && !deps.signal?.aborted)
+            throw new Error("Upgrade time limit reached; retry with sudo dpkg --configure -a.", {
+              cause: error,
+            });
+          throw error;
+        } finally {
+          controller.abort();
         }
       }
       let pending = {
@@ -2158,6 +2159,17 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
       let timer: ReturnType<typeof setTimeout> | undefined;
       let printedSummary = false;
       try {
+        while (true) {
+          try {
+            await upgradeClient().call("health");
+            break;
+          } catch (err) {
+            if (!(err instanceof ServerUnreachableError) || Date.now() >= deadline) throw err;
+            await new Promise((resolve) =>
+              setTimeout(resolve, Math.max(1, Math.min(500, deadline - Date.now()))),
+            );
+          }
+        }
         const report = await Promise.race([
           upgradeClient()
             .call("upgrade.start")
@@ -2198,7 +2210,11 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
           throw new Error(
             report.error ?? "Some open work could not be restored; see summary above.",
           );
-      } catch (error) {
+      } catch (caught) {
+        const error =
+          signal.aborted && !deps.signal?.aborted
+            ? new Error("Upgrade time limit reached; retry with sudo dpkg --configure -a.")
+            : caught;
         if (!printedSummary && /time limit/i.test((error as Error).message)) {
           for (const box of pending.boxes)
             deps.out(
