@@ -29,6 +29,7 @@ import {
 } from "@aio/contracts";
 import { z } from "zod";
 import { EngineStateSchema, newEngineState, type EngineState } from "./engine-state.js";
+import { adaptRunState, CURRENT_RUN_STATE_VERSION } from "./state-version.js";
 import { appendJsonLine, readJson, writeJsonAtomic } from "./files.js";
 
 export class RunNotFoundError extends Error {
@@ -92,13 +93,16 @@ export class RunStore {
   }
 
   async saveState(state: RunState): Promise<void> {
-    await this.writeJson("state.json", RunStateSchema.parse(state));
+    await this.writeJson("state.json", {
+      ...RunStateSchema.parse(state),
+      stateVersion: CURRENT_RUN_STATE_VERSION,
+    });
   }
 
   async loadState(): Promise<RunState> {
-    const state = await this.readJson("state.json", RunStateSchema);
+    const state = await this.readJson<unknown>("state.json");
     if (!state) throw new RunNotFoundError(this.runId);
-    return state;
+    return adaptRunState(state);
   }
 
   async saveEngineState(state: EngineState): Promise<void> {

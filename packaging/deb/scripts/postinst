@@ -43,24 +43,30 @@ case "$1" in
       gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor || true
     fi
 
-    # dpkg passes the previously configured version as $2 on an upgrade.
-    # The running server keeps the old code, and the files under it have
-    # changed, so it must be restarted. Root can't reach each user's
-    # systemd user manager, so the package asks instead.
+    # dpkg keeps the last configured version on a failed configure, so
+    # dpkg --configure -a follows this same retry path.
     if [ -n "${2:-}" ]; then
-      cat <<'MSG'
-
-AI Orchestrator is upgraded. A server that was already running still runs the
-old version. As each user who runs the server, restart it:
-
-  systemctl --user daemon-reload && systemctl --user restart aio-server
-
-Then rebuild the container image from the setup wizard, or with
-/usr/share/ai-orchestrator/scripts/build-image.sh, so that its engine matches the
-new server.
-
-MSG
-      exit 0
+      users=$(getent passwd | cut -d: -f1)
+      failed=0
+      for owner in $users; do
+        if systemctl --user --machine="$owner@" is-enabled aio-server > /dev/null 2>&1; then
+          echo "Upgrading AI Orchestrator for $owner"
+          # Capture open work before restarting the old process. The record
+          # lives in the user's data directory and survives a failed retry.
+          if ! runuser -u "$owner" -- aio upgrade prepare; then
+            echo "Could not record open work for $owner; upgrade failed." >&2
+            failed=1
+            continue
+          fi
+          if ! systemctl --user --machine="$owner@" daemon-reload ||
+             ! systemctl --user --machine="$owner@" restart aio-server ||
+             ! runuser -u "$owner" -- aio upgrade --timeout 300; then
+            echo "Upgrade failed for $owner. Retry with sudo dpkg --configure -a." >&2
+            failed=1
+          fi
+        fi
+      done
+      exit "$failed"
     fi
 
     cat <<'MSG'

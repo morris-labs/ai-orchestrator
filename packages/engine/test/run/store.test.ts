@@ -77,6 +77,36 @@ describe("files", () => {
 });
 
 describe("RunStore", () => {
+  for (const fixture of readdirSync(join(import.meta.dirname, "fixtures"))) {
+    it(`loads saved state example ${fixture} without changing the file`, async () => {
+      const store = new RunStore(tmp(), RUN_ID);
+      const saved = JSON.parse(
+        readFileSync(join(import.meta.dirname, "fixtures", fixture), "utf8"),
+      );
+      await store.writeJson("state.json", saved);
+      expect(await store.loadState()).toMatchObject({
+        id: RUN_ID,
+        status: "paused",
+        stage: "preflight",
+      });
+      expect(JSON.parse(readFileSync(store.path("state.json"), "utf8"))).toEqual(saved);
+    });
+  }
+
+  it("refuses newer state before parsing it and leaves every saved byte intact", async () => {
+    const store = new RunStore(tmp(), RUN_ID);
+    await store.writeJson("state.json", { stateVersion: 99, futureState: true });
+    const before = readFileSync(store.path("state.json"), "utf8");
+    await expect(store.loadState()).rejects.toThrow(/state version 99/);
+    expect(readFileSync(store.path("state.json"), "utf8")).toBe(before);
+  });
+
+  it("records the current state version when saving a run", async () => {
+    const store = new RunStore(tmp(), RUN_ID);
+    await store.saveState(state());
+    expect(JSON.parse(readFileSync(store.path("state.json"), "utf8")).stateVersion).toBe(1);
+  });
+
   it("keeps the run under .aio/runs/<id>", () => {
     const store = new RunStore("/project", RUN_ID);
     expect(store.dir).toBe(`/project/.aio/runs/${RUN_ID}`);
