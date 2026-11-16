@@ -41,7 +41,7 @@ if (fs.existsSync(file)) {
   if (dataDir) dataDir = dataDir.replace(/%%/g, "%");
   if (args.length) {
     const tail = line[1].slice(words[prefix].index);
-    const updated = original.replace(line[0], `ExecStart=/usr/bin/aio-server ${tail}`);
+    const updated = original.replace(line[0], () => `ExecStart=/usr/bin/aio-server ${tail}`);
     fs.writeFileSync(`${file}.tmp`, updated, { mode: 0o644 });
     fs.renameSync(`${file}.tmp`, file);
   } else {

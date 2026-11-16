@@ -1002,7 +1002,7 @@ class SourceUnitTest(unittest.TestCase):
 
     def test_migration_preserves_custom_server_arguments_and_upgrade_data_directory(self):
         self.dropin_dir.mkdir(parents=True)
-        data = self.tmp / "custom data % archive"
+        data = self.tmp / "custom data % $& archive"
         escaped_data = str(data).replace("%", "%%")
         command = f'/opt/node/bin/node "/checkout with spaces/packages/server/dist/main.js" --data-dir "{escaped_data}" --role node --log-file "/tmp/aio log"'
         unit = "[Service]\nExecStart=" + command + "\nEnvironment=NODE_ENV=production\n"
