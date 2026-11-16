@@ -200,6 +200,11 @@ export class JobManager {
     }
   }
 
+  /** Stops one running command, for an upgrade whose deadline expired. */
+  stop(jobId: string): void {
+    this.jobs.get(jobId)?.stop?.();
+  }
+
   /**
    * Stops every running job, as at shutdown, and waits until each has
    * finished or `timeoutMs` passes. A job without a stop handler is waited for.

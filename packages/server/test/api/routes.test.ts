@@ -1,3 +1,5 @@
+import path from "node:path";
+import { UpgradeService } from "../../src/setup/upgrade.js";
 import { RunIdSchema, projectContainerName, serverRoutes } from "@aio/contracts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { sessionValue } from "../../src/api/auth.js";
@@ -31,7 +33,31 @@ const policy = { version: 1 };
 
 // One successful call per HTTP route. Each response passes the route's
 // response schema inside the server, or the call fails with a 500.
+const upgradeSetup = (h: Harness) => {
+  h.deps.upgrade = new UpgradeService({
+    core: h.core,
+    recordFile: path.join(h.deps.home, "upgrade.json"),
+    build: async () => "latest",
+    runs: () => [],
+    resume: async () => {},
+  });
+};
 const cases: Case[] = [
+  {
+    key: "upgrade.preview",
+    method: "GET",
+    url: `${V1}/upgrade/preview`,
+    status: 200,
+    setup: upgradeSetup,
+  },
+  {
+    key: "upgrade.prepare",
+    method: "POST",
+    url: `${V1}/upgrade/prepare`,
+    status: 200,
+    setup: upgradeSetup,
+  },
+  { key: "upgrade.start", method: "POST", url: `${V1}/upgrade`, status: 200, setup: upgradeSetup },
   { key: "health", method: "GET", url: `${V1}/health`, status: 200 },
   { key: "auth.session", method: "POST", url: `${V1}/auth/session`, status: 200 },
   { key: "projects.list", method: "GET", url: `${V1}/projects`, status: 200 },

@@ -35,6 +35,7 @@ import type { JobManager } from "../jobs/jobs.js";
 import type { ExecBackend } from "../terminals/exec.js";
 import type { DevServerProxy } from "../proxy/proxy.js";
 import type { LinkRegistry } from "../hub/link.js";
+import type { UpgradeService } from "../setup/upgrade.js";
 import type { MachineRoutingOptions } from "./machines.js";
 
 /** Multi-host as the machine and node routes use it. */
@@ -115,6 +116,8 @@ export interface ApiDeps {
     check(projectId?: string): Promise<z.infer<typeof SecretsCheckResultSchema>>;
     available(refresh: boolean): Promise<SecretsAvailable>;
   };
+  upgrade?: UpgradeService;
+  upgradeBuildJob?: () => string | null;
   setup: {
     status(): Promise<z.infer<typeof SetupStatusSchema>>;
     fix(checkId: SetupCheck["id"] | string): Job;
