@@ -752,7 +752,7 @@ class ScriptsTest(unittest.TestCase):
             "esac\n"
         )
         fake.chmod(0o755)
-        return {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"}
+        return {**os.environ, "AIO_DATA_DIR": str(tmp / "data"), "PATH": f"{bin_dir}:{os.environ['PATH']}"}
 
     def test_build_image_update_cli_writes_the_latest_versions(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -104,6 +104,18 @@ while (($#)); do
   shift
 done
 
+# Jobs stop the script at their deadline. Forward that signal through the
+# upgrade wrapper and its build child so Docker cannot outlive the upgrade.
+run_build() {
+  "$@" &
+  build_pid=$!
+  trap 'kill -TERM "$build_pid" 2>/dev/null || true; wait "$build_pid" 2>/dev/null || true; exit 143' TERM INT
+  local result=0
+  wait "$build_pid" || result=$?
+  trap - TERM INT
+  return "$result"
+}
+
 [[ -f "$IMAGE_DIR/Dockerfile" ]] || die "no Dockerfile in $IMAGE_DIR"
 
 # The same entry point serves package installs, startup recovery and CLI updates.
@@ -112,11 +124,11 @@ if ((UPGRADE)); then
   previous_repo="${TAG%:*}-upgrade"
   old_current="$(docker image inspect --format '{{.Id}}' "$TAG" 2>/dev/null || true)"
   old_previous="$(docker image inspect --format '{{.Id}}' "$previous_repo:previous" 2>/dev/null || true)"
-  if "$0" "${FORWARD_ARGS[@]}" --update-cli; then
+  if run_build "$0" "${FORWARD_ARGS[@]}" --update-cli; then
     echo 'AIO_UPGRADE_IMAGE=latest'
   else
     log "Latest agent CLIs failed; falling back to pinned versions"
-    "$0" "${FORWARD_ARGS[@]}"
+    run_build "$0" "${FORWARD_ARGS[@]}"
     echo 'AIO_UPGRADE_IMAGE=pinned'
   fi
   current="$(docker image inspect --format '{{.Id}}' "$TAG")"
@@ -137,7 +149,7 @@ fi
 # still uses the new versions and the script says it can't save them.
 OVERRIDE_KEYS=()
 OVERRIDE_VALUES=()
-if ((!UPDATE_CLI)); then
+if ((!UPDATE_CLI)) && [[ ! -w "$VERSIONS" ]]; then
   saved_pins="${AIO_DATA_DIR:-$HOME/.ai-orchestrator}/cli-versions.env"
   if [[ -f "$saved_pins" ]]; then
     OVERRIDE_KEYS=(CLAUDE_CODE_VERSION CODEX_VERSION COPILOT_VERSION)
@@ -259,8 +271,8 @@ require_tool docker "Install Docker Engine (docker.io or docker-ce) and add your
 docker buildx version > /dev/null 2>&1 ||
   die "The image build needs BuildKit. Install the docker-buildx or docker-buildx-plugin package."
 log "Building image $TAG for user $USER_NAME (uid $USER_UID, gid $USER_GID)"
-# Replace this shell with the docker client, so a signal to the job reaches it.
-"${CMD[@]}"
+# Keep the process stoppable while retaining the successful pins afterward.
+run_build "${CMD[@]}"
 # A failed build must leave the known working pins intact. Installed packages
 # are root-owned: keep successful CLI pins in the user's data directory too.
 if ((UPDATE_CLI)); then
@@ -270,10 +282,16 @@ if ((UPDATE_CLI)); then
     pin_dir="${AIO_DATA_DIR:-$HOME/.ai-orchestrator}"
     mkdir -p "$pin_dir"
     log "warning: $VERSIONS isn't writable; saving successful CLI pins in $pin_dir"
-    pin_target="$pin_dir/cli-versions.env"
+    saved_pin_target="$pin_dir/cli-versions.env"
+    pin_target="$saved_pin_target.tmp"
     cp "$VERSIONS" "$pin_target"
+    chmod u+w "$pin_target"
   fi
   for ((i = 0; i < ${#OVERRIDE_KEYS[@]}; i++)); do
     set_pin "$pin_target" "${OVERRIDE_KEYS[i]}" "${OVERRIDE_VALUES[i]}"
   done
+fi
+
+if [[ -n "${saved_pin_target:-}" ]]; then
+  mv -f "$pin_target" "$saved_pin_target"
 fi
