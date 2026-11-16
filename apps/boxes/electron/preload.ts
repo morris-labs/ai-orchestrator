@@ -10,6 +10,7 @@ import type { AioBridge } from "../src/bridge";
 const init = ipcRenderer.sendSync("aio:init") as {
   serverUrl: string;
   remoteHub: boolean;
+  appVersion: string;
 };
 let tokenTaken = false;
 
@@ -22,6 +23,8 @@ const api: AioBridge = {
     return ipcRenderer.sendSync("aio:token") as string | null;
   },
   serverUrl: init.serverUrl,
+  appVersion: init.appVersion,
+  relaunch: () => ipcRenderer.send("aio:relaunch"),
   remoteHub: init.remoteHub,
   openExternalTerminal: (req) => ipcRenderer.invoke("aio:open-external-terminal", req),
   launchReview: (req) => ipcRenderer.invoke("aio:launch-review", req),

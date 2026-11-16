@@ -40,6 +40,22 @@ async function renderApp(server: FakeServer) {
 const rowOf = (name: string) => screen.getByRole("cell", { name }).closest("tr") as HTMLElement;
 
 describe("main window", () => {
+  it("refreshes upgrade notices and machine status when the server reconnects", async () => {
+    const server = new FakeServer({ boxes: boxes() });
+    server.state.updates.claudeCode = { latest: "3.0.0", image: "2.0.0", stale: true };
+    await renderApp(server);
+    await screen.findByText(/Claude Code 3.0.0 is available/);
+    const before = server.callsTo("machines.list").length;
+    server.state.updates.claudeCode.stale = false;
+    server.state.image.upgrading = true;
+    server.state.image.buildLogJobId = "upgrade-job";
+    act(() => server.socketsFor("/api/v1/events")[0]!.close());
+    await screen.findByText("Upgrading: building the image");
+    await waitFor(() => expect(screen.queryByText(/Claude Code 3.0.0 is available/)).toBeNull());
+    expect(screen.getByRole("link", { name: "Build log" })).toBeInTheDocument();
+    expect(server.callsTo("machines.list").length).toBeGreaterThan(before);
+  });
+
   it("lists boxes with all four columns, counts, and projects", async () => {
     await renderApp(new FakeServer({ boxes: boxes() }));
     expect(
