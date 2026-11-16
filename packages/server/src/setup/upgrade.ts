@@ -7,6 +7,7 @@ import type { Core } from "../api/core-interface.js";
 
 const RecordSchema = UpgradePreviewSchema.extend({
   runs: z.array(z.object({ run_id: z.string(), name: z.string(), projectId: z.string() })),
+  phase: z.enum(["prepared", "recovery"]).default("prepared"),
 });
 type OpenWork = z.infer<typeof RecordSchema>;
 export interface UpgradeOptions {
@@ -37,6 +38,7 @@ export class UpgradeService {
   }
   private async snapshot(): Promise<OpenWork> {
     return {
+      phase: "prepared",
       boxes: (await this.opts.core.boxes.list({}))
         .filter((b) => b.status === "running")
         .map((b) => ({ id: b.box.id, name: b.box.conversationName || b.box.id })),
@@ -47,18 +49,19 @@ export class UpgradeService {
     };
   }
   async prepare(): Promise<UpgradePreview> {
-    // Preserve the original record on a configure retry or after a restart.
-    let work: OpenWork;
-    if (fs.existsSync(this.opts.recordFile))
-      work = RecordSchema.parse(JSON.parse(fs.readFileSync(this.opts.recordFile, "utf8")));
-    else {
-      work = await this.snapshot();
-      fs.mkdirSync(path.dirname(this.opts.recordFile), { recursive: true });
-      const tmp = `${this.opts.recordFile}.tmp`;
-      fs.writeFileSync(tmp, JSON.stringify(work), { mode: 0o600 });
-      fs.renameSync(tmp, this.opts.recordFile);
-    }
+    const existing = this.hasOpenWork ? this.readRecord() : null;
+    const work = existing?.phase === "prepared" ? existing : await this.snapshot();
+    this.writeRecord(work);
     return { boxes: work.boxes, runs: work.runs.map(({ run_id, name }) => ({ run_id, name })) };
+  }
+  private readRecord(): OpenWork {
+    return RecordSchema.parse(JSON.parse(fs.readFileSync(this.opts.recordFile, "utf8")));
+  }
+  private writeRecord(work: OpenWork): void {
+    fs.mkdirSync(path.dirname(this.opts.recordFile), { recursive: true });
+    const tmp = `${this.opts.recordFile}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(work), { mode: 0o600 });
+    fs.renameSync(tmp, this.opts.recordFile);
   }
   start(): Promise<UpgradeReport> {
     if (this.active) return this.active;
@@ -68,8 +71,8 @@ export class UpgradeService {
     return this.active;
   }
   private async run(): Promise<UpgradeReport> {
-    await this.prepare();
-    const work = RecordSchema.parse(JSON.parse(fs.readFileSync(this.opts.recordFile, "utf8")));
+    if (!this.hasOpenWork) await this.prepare();
+    const work = this.readRecord();
     const controller = new AbortController();
     const deadline = Date.now() + (this.opts.timeoutMs ?? 300_000);
     const withinDeadline = async <T>(operation: Promise<T>): Promise<T> => {
@@ -98,34 +101,39 @@ export class UpgradeService {
       boxes: [],
       runs: [],
     };
-    this.opts.log?.("Upgrading: building the image");
-    try {
-      report.image = await withinDeadline(this.opts.build(controller.signal));
-      report.fallback = report.image === "pinned";
-    } catch (err) {
-      report.error = String((err as Error).message);
-      report.boxes = work.boxes.map((box) => ({ ...box, restored: false, reason: report.error }));
-      report.runs = work.runs.map((run) => ({
-        run_id: run.run_id,
-        name: run.name,
-        restored: false,
-        reason: report.error,
-      }));
-      if (Date.now() >= deadline) fs.rmSync(this.opts.recordFile, { force: true });
-      return report;
-    }
     const failures = new Map<string, string>();
-    for (const { project } of await this.opts.core.projects.list()) {
+    if (work.phase === "prepared") {
+      this.opts.log?.("Upgrading: building the image");
       try {
-        if (Date.now() >= deadline) throw new Error("Upgrade time limit reached");
-        if (!this.opts.core.projects.recreateContainer)
-          throw new Error("Container recreation is unavailable");
-        await withinDeadline(this.opts.core.projects.recreateContainer(project.id));
+        report.image = await withinDeadline(this.opts.build(controller.signal));
+        report.fallback = report.image === "pinned";
       } catch (err) {
-        failures.set(project.id, String((err as Error).message));
+        report.error = String((err as Error).message);
+        report.boxes = work.boxes.map((box) => ({ ...box, restored: false, reason: report.error }));
+        report.runs = work.runs.map((run) => ({
+          run_id: run.run_id,
+          name: run.name,
+          restored: false,
+          reason: report.error,
+        }));
+        return report;
       }
+      work.phase = "recovery";
+      this.writeRecord(work);
+      for (const { project } of await this.opts.core.projects.list()) {
+        try {
+          if (Date.now() >= deadline) throw new Error("Upgrade time limit reached");
+          if (!this.opts.core.projects.recreateContainer)
+            throw new Error("Container recreation is unavailable");
+          await withinDeadline(this.opts.core.projects.recreateContainer(project.id));
+        } catch (err) {
+          failures.set(project.id, String((err as Error).message));
+        }
+      }
+    } else {
+      report.image = "latest";
     }
-    for (const box of work.boxes) {
+    for (const box of [...work.boxes]) {
       let reason: string | null = null;
       try {
         if (Date.now() >= deadline) throw new Error("Upgrade time limit reached");
@@ -137,8 +145,12 @@ export class UpgradeService {
         reason = String((err as Error).message);
       }
       report.boxes.push({ ...box, restored: reason === null, reason });
+      if (reason === null) {
+        work.boxes = work.boxes.filter((item) => item.id !== box.id);
+        this.writeRecord(work);
+      }
     }
-    for (const { projectId, ...run } of work.runs) {
+    for (const { projectId, ...run } of [...work.runs]) {
       let reason: string | null = null;
       try {
         if (Date.now() >= deadline) throw new Error("Upgrade time limit reached");
@@ -149,15 +161,18 @@ export class UpgradeService {
         reason = String((err as Error).message);
       }
       report.runs.push({ ...run, restored: reason === null, reason });
+      if (reason === null) {
+        work.runs = work.runs.filter((item) => item.run_id !== run.run_id);
+        this.writeRecord(work);
+      }
     }
     // A project without open work must still be represented in a failed summary.
     if (failures.size)
       report.error = [...failures].map(([id, reason]) => `${id}: ${reason}`).join("; ");
     if (
-      (!report.boxes.some((b) => !b.restored) &&
-        !report.runs.some((r) => !r.restored) &&
-        !report.error) ||
-      Date.now() >= deadline
+      !report.boxes.some((b) => !b.restored) &&
+      !report.runs.some((r) => !r.restored) &&
+      !report.error
     ) {
       fs.rmSync(this.opts.recordFile, { force: true });
     }

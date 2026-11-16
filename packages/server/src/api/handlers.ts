@@ -404,6 +404,7 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
     },
     "upgrade.start": async () => {
       if (!deps.upgrade) throw new ApiError("conflict", "Upgrade service unavailable");
+      if (!deps.upgrade.upgrading) await deps.upgrade.prepare();
       return deps.upgrade.start();
     },
     "image.status": async () => ({

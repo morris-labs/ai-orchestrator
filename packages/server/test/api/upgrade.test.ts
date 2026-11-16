@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { apiCoreOf } from "../../src/api/core-adapter.js";
 import { UpgradeService } from "../../src/setup/upgrade.js";
 import { makeHarness } from "../boxes/harness.js";
@@ -145,5 +145,71 @@ describe("upgrade deadlines", () => {
     const report = await service.start();
     expect(report.error).toBe("Upgrade time limit reached");
     expect(service.upgrading).toBe(false);
+  });
+});
+
+describe("upgrade recovery records", () => {
+  it("retains timed out work and retries restoration without rebuilding or recreating containers", async () => {
+    const h = makeHarness();
+    const box = await h.core.boxes.create({ targetDir: h.dir("app"), layout: "root", start: true });
+    const core = apiCoreOf(h.core, {} as Docker);
+    const recreate = core.projects.recreateContainer!;
+    let now = 0;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+    const build = vi.fn(async () => "latest" as const);
+    const recreateSpy = vi.fn(async (id: string) => {
+      await recreate(id);
+      now = 100;
+    });
+    core.projects.recreateContainer = recreateSpy;
+    const options = {
+      core,
+      build,
+      recordFile: path.join(h.home, "recovery.json"),
+      timeoutMs: 50,
+      runs: () => [],
+      resume: async () => {},
+    };
+    try {
+      const first = new UpgradeService(options);
+      const report = await first.start();
+      expect(report.boxes[0]).toMatchObject({ id: box.id, restored: false });
+      expect(first.hasOpenWork).toBe(true);
+      const second = new UpgradeService(options);
+      expect((await second.start()).boxes[0]).toMatchObject({ id: box.id, restored: true });
+      expect(build).toHaveBeenCalledTimes(1);
+      expect(recreateSpy).toHaveBeenCalledTimes(1);
+      expect(second.hasOpenWork).toBe(false);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it("uses a fresh snapshot when preparing after a partial recovery", async () => {
+    const h = makeHarness();
+    const old = await h.core.boxes.create({ targetDir: h.dir("app"), layout: "root", start: true });
+    const core = apiCoreOf(h.core, {} as Docker);
+    const start = core.boxes.start;
+    core.boxes.start = async () => {
+      throw new Error("restore failed");
+    };
+    const service = new UpgradeService({
+      core,
+      recordFile: path.join(h.home, "fresh.json"),
+      build: async () => "latest",
+      runs: () => [],
+      resume: async () => {},
+    });
+    await service.start();
+    core.boxes.start = start;
+    const fresh = await h.core.boxes.create({
+      targetDir: h.dir("new"),
+      layout: "root",
+      start: true,
+    });
+    expect((await service.prepare()).boxes.map((box) => box.id)).toEqual([fresh.id]);
+    const report = await service.start();
+    expect(report.boxes.map((box) => box.id)).toEqual([fresh.id]);
+    expect((await core.boxes.get(old.id)).status).not.toBe("running");
   });
 });

@@ -2071,10 +2071,6 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
             dataDirFor(deps.env, deps.home, globals().dataDir),
             "upgrade-open-work.json",
           );
-          if (fs.existsSync(recordFile)) {
-            deps.out("Open work already recorded.\n");
-            return;
-          }
           try {
             const prepared = await upgradeClient().call("upgrade.prepare");
             print(
@@ -2089,6 +2085,10 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
               !(err instanceof ApiCallError && err.status === 404)
             )
               throw err;
+            if (fs.existsSync(recordFile)) {
+              deps.out("Open work already recorded.\n");
+              return;
+            }
             let boxes: { id: string; name: string }[] = [];
             let runs: { run_id: string; name: string; projectId: string }[] = [];
             try {
