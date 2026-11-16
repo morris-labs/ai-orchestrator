@@ -36,6 +36,7 @@ REQUIRE_TOOLS = os.environ.get("AIO_REQUIRE_TOOLS") == "1"
 SHELL_SCRIPTS = [
     ROOT / "scripts/build-image.sh",
     ROOT / "scripts/build-deb.sh",
+    ROOT / "scripts/upgrade.sh",
     ROOT / "scripts/bump-versions.sh",
     ROOT / "scripts/set-version.sh",
     ROOT / "scripts/install-server-unit.sh",
@@ -895,7 +896,7 @@ class ScriptsTest(unittest.TestCase):
         self.assertNotRegex(script, r'-H "Authorization: Bearer')
         self.assertIn("-H @-", script)
 
-    def test_postinst_asks_for_a_restart_on_upgrade(self):
+    def test_postinst_fresh_install_instructions(self):
         # PATH holds only cat, so the script skips AppArmor and the desktop
         # caches; no chrome-sandbox helper exists outside an installed host.
         if pathlib.Path("/usr/lib/ai-orchestrator").exists():
@@ -905,11 +906,6 @@ class ScriptsTest(unittest.TestCase):
             (pathlib.Path(tmp) / "cat").symlink_to(shutil.which("cat"))
             env = {"PATH": tmp}
             postinst = str(ROOT / "packaging/deb/scripts/postinst")
-            upgrade = subprocess.run(
-                [postinst, "configure", "1.0.0"], env=env, check=True, capture_output=True, text=True
-            ).stdout
-            self.assertIn(restart, upgrade)
-            self.assertNotIn("enable --now", upgrade)
             fresh = subprocess.run(
                 [postinst, "configure", ""], env=env, check=True, capture_output=True, text=True
             ).stdout
@@ -997,47 +993,24 @@ class SourceUnitTest(unittest.TestCase):
         )
 
     def test_print_changes_nothing(self):
-        out = self.run_script("--print", "--data-dir", "/srv/data").stdout
-        node = subprocess.run(
-            [self.node, "-p", "process.execPath"], check=True, capture_output=True, text=True
-        ).stdout.strip()
-        self.assertIn(f"# {self.dropin_dir}/source-checkout.conf\n", out)
-        self.assertIn(f'Environment="PATH={os.path.dirname(node)}:%h/.local/bin:', out)
-        self.assertIn(f"{self.MAIN} --data-dir /srv/data install-service", out)
+        out = self.run_script("--print").stdout
+        self.assertIn("/usr/bin/aio-server", out)
+        self.assertNotIn(str(self.MAIN), out)
         self.assertFalse(self.home.exists())
         self.assertFalse(self.systemctl_log.exists())
 
     def test_install_keeps_an_existing_drop_in(self):
-        # The workspace build makes dist/, and the packaging job doesn't run
-        # it, so this test needs no tool and skips even in CI.
-        if not self.MAIN.exists():
-            self.skipTest("packages/server/dist is missing; run corepack pnpm -r build")
         self.dropin_dir.mkdir(parents=True)
         op_conf = "[Service]\nEnvironmentFile=%h/.config/aio/op.env\n"
         (self.dropin_dir / "op.conf").write_text(op_conf)
-
+        (self.unit_dir / "aio-server.service").write_text("old checkout unit")
+        (self.dropin_dir / "source-checkout.conf").write_text("old checkout path")
         self.run_script()
-
         self.assertEqual((self.dropin_dir / "op.conf").read_text(), op_conf)
-        self.assertEqual(
-            self.systemctl_log.read_text().splitlines(),
-            ["--user daemon-reload", "--user enable --now aio-server.service"],
-        )
-        unit = (self.unit_dir / "aio-server.service").read_text().splitlines()
-        exec_start = [line.split("=", 1)[1] for line in unit if line.startswith("ExecStart=")]
-        self.assertEqual(len(exec_start), 1)
-        node, main, *rest = exec_start[0].split(" ")
-        self.assertTrue(os.path.samefile(node, self.node), node)
-        self.assertEqual(main, str(self.MAIN))
-        self.assertEqual(rest, [])
-        # The unit sets no environment file and no PATH, so the drop-ins'
-        # settings are the only ones.
-        self.assertFalse([line for line in unit if line.startswith("EnvironmentFile=")])
-        self.assertEqual(
-            [line for line in unit if line.startswith("Environment=")], ["Environment=NODE_ENV=production"]
-        )
-        path_conf = (self.dropin_dir / "source-checkout.conf").read_text()
-        self.assertIn(f'Environment="PATH={os.path.dirname(node)}:', path_conf)
+        self.assertFalse((self.unit_dir / "aio-server.service").exists())
+        self.assertFalse((self.dropin_dir / "source-checkout.conf").exists())
+        self.assertEqual(self.systemctl_log.read_text().splitlines(),
+                         ["--user daemon-reload", "--user enable --now aio-server.service"])
 
 
 class DevAppArmorTest(unittest.TestCase):
