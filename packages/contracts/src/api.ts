@@ -579,8 +579,22 @@ export const UpgradeReportSchema = z.object({
   image: z.enum(["latest", "pinned", "failed"]),
   fallback: z.boolean(),
   error: z.string().nullable(),
-  boxes: z.array(z.object({ id: z.string(), name: z.string(), restored: z.boolean(), reason: z.string().nullable() })),
-  runs: z.array(z.object({ run_id: z.string(), name: z.string(), restored: z.boolean(), reason: z.string().nullable() })),
+  boxes: z.array(
+    z.object({
+      id: z.string(),
+      name: z.string(),
+      restored: z.boolean(),
+      reason: z.string().nullable(),
+    }),
+  ),
+  runs: z.array(
+    z.object({
+      run_id: z.string(),
+      name: z.string(),
+      restored: z.boolean(),
+      reason: z.string().nullable(),
+    }),
+  ),
 });
 export type UpgradeReport = z.infer<typeof UpgradeReportSchema>;
 
@@ -1483,9 +1497,24 @@ export const serverRoutes = {
     response: ModelsResultSchema,
     errors: ["image_missing"],
   }),
-  "upgrade.preview": http({ method: "GET", path: `${V1}/upgrade/preview`, summary: "Open work a CLI update will stop.", response: UpgradePreviewSchema }),
-  "upgrade.prepare": http({ method: "POST", path: `${V1}/upgrade/prepare`, summary: "Record open work before restarting the server.", response: UpgradePreviewSchema }),
-  "upgrade.start": http({ method: "POST", path: `${V1}/upgrade`, summary: "Build the image and restore open work.", response: UpgradeReportSchema }),
+  "upgrade.preview": http({
+    method: "GET",
+    path: `${V1}/upgrade/preview`,
+    summary: "Open work a CLI update will stop.",
+    response: UpgradePreviewSchema,
+  }),
+  "upgrade.prepare": http({
+    method: "POST",
+    path: `${V1}/upgrade/prepare`,
+    summary: "Record open work before restarting the server.",
+    response: UpgradePreviewSchema,
+  }),
+  "upgrade.start": http({
+    method: "POST",
+    path: `${V1}/upgrade`,
+    summary: "Build the image and restore open work.",
+    response: UpgradeReportSchema,
+  }),
   "image.status": http({
     method: "GET",
     path: `${V1}/image`,

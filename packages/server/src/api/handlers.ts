@@ -274,6 +274,7 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
     // Boxes
     "boxes.list": async ({ query }) => ({ boxes: await core.boxes.list(query) }),
     "boxes.create": async ({ body }) => {
+      await deps.upgrade?.waitReady();
       requireAbsolute(body.targetDir, "The target directory");
       await core.boxes.validateCreate(body);
       const label = body.conversationName.trim() || body.targetDir;
@@ -287,8 +288,10 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
     },
     "boxes.get": async ({ params }) => core.boxes.get(params.boxId),
     "boxes.update": async ({ params, body }) => core.boxes.update(params.boxId, body),
-    "boxes.start": async ({ params, body }) =>
-      core.boxes.start(params.boxId, { force: body.force }),
+    "boxes.start": async ({ params, body }) => {
+      await deps.upgrade?.waitReady();
+      return core.boxes.start(params.boxId, { force: body.force });
+    },
     "boxes.stop": async ({ params }) => core.boxes.stop(params.boxId),
     "boxes.restart": async ({ params }) => core.boxes.restart(params.boxId),
     "boxes.remove": async ({ params, query }) =>
@@ -376,9 +379,28 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
       return core.models.list(query.dir, query.account);
     },
     "models.rescan": async () => core.models.rescan(),
-    "image.status": async () => core.image.status(),
+    "upgrade.preview": async () => {
+      if (!deps.upgrade) throw new ApiError("conflict", "Upgrade service unavailable");
+      return deps.upgrade.preview();
+    },
+    "upgrade.prepare": async () => {
+      if (!deps.upgrade) throw new ApiError("conflict", "Upgrade service unavailable");
+      return deps.upgrade.prepare();
+    },
+    "upgrade.start": async () => {
+      if (!deps.upgrade) throw new ApiError("conflict", "Upgrade service unavailable");
+      return deps.upgrade.start();
+    },
+    "image.status": async () => ({
+      ...(await core.image.status()),
+      upgrading: deps.upgrade?.upgrading ?? false,
+      buildLogJobId: deps.upgradeBuildJob?.() ?? null,
+    }),
     "image.build": async ({ body }) => deps.setup.buildImage(body.kind),
-    "updates.check": async ({ query }) => deps.updates.check(query.force),
+    "updates.check": async ({ query }) => ({
+      ...(await deps.updates.check(query.force)),
+      installedVersion: deps.version,
+    }),
     "setup.get": async () => deps.setup.status(),
     "setup.fix": async ({ params }) => deps.setup.fix(params.checkId),
     "setup.complete": async ({ body }) => {

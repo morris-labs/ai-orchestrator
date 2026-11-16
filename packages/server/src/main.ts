@@ -41,7 +41,10 @@ export function serverVersion(): string {
  * same one as the command that installed it.
  */
 export function serverCommand(dataDir?: string): string[] {
-  const words = [process.execPath, fileURLToPath(import.meta.url)];
+  const words =
+    process.platform === "linux"
+      ? ["/usr/bin/aio-server"]
+      : [process.execPath, fileURLToPath(import.meta.url)];
   if (dataDir) words.push("--data-dir", dataDir);
   return words;
 }

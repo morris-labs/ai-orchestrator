@@ -6,6 +6,7 @@ import http from "node:http";
 import path from "node:path";
 import {
   BROKER_SOCKET_NAME,
+  RunStateSchema,
   HOME_PATHS,
   proxyPortOf,
   type AioEvent,
@@ -32,6 +33,7 @@ import { BROKER_SYNC_INTERVAL_MS, SecretsBroker, assertSocketPathFits } from "..
 import { SecretsService } from "../secrets/secrets-service.js";
 import { brokerDirFor, dataDirOf, dataPath } from "../records/env.js";
 import { MultiHost, type MachineRole, type MultiHostOptions } from "../hub/multihost.js";
+import { UpgradeService } from "../setup/upgrade.js";
 import { SetupService } from "../setup/setup-service.js";
 import { UpdateChecker } from "../setup/updates.js";
 import { RELEASE_EDITS_MESSAGE } from "./handlers.js";
@@ -308,6 +310,68 @@ export async function startApp(options: AppOptions): Promise<App> {
     intervalMs: options.engineIntervalMs,
   });
   engineSupervisor = engines;
+  let upgradeBuildJob: string | null = null;
+  const upgrade = new UpgradeService({
+    core,
+    recordFile: path.join(
+      dataDirOf({ home: options.home, dataDir: options.dataDir }),
+      "upgrade-open-work.json",
+    ),
+    runs: () => runMirror.list(),
+    build: async (signal) => {
+      const job = setup.buildImage("upgrade");
+      upgradeBuildJob = job.id;
+      const stop = () => jobs.stop(job.id);
+      signal?.addEventListener("abort", stop, { once: true });
+      const attachment = jobs.attach(job.id);
+      if (!attachment) throw new Error("Image build job is unavailable");
+      let output = attachment.backlog.toString();
+      attachment.onData((chunk) => {
+        output += chunk.toString();
+      });
+      try {
+        await new Promise<void>((resolve, reject) =>
+          attachment.onDone((done) => {
+            if (done.status === "failed" || done.exitCode !== 0)
+              reject(new Error(done.error?.message ?? "Latest and pinned image builds failed"));
+            else resolve();
+          }),
+        );
+      } finally {
+        signal?.removeEventListener("abort", stop);
+        attachment.detach();
+      }
+      return output.includes("AIO_UPGRADE_IMAGE=pinned") ? "pinned" : "latest";
+    },
+    resume: async (projectId, runId, signal) => {
+      const deadline = Date.now() + 240_000;
+      while (true) {
+        if (signal?.aborted) throw new Error("Upgrade time limit reached");
+        try {
+          await engines.refresh();
+          const engine = engines.requireProject(projectId);
+          await engine.confirmVersion();
+          const state = RunStateSchema.parse(
+            await engine.call("engine.runs.get", { params: { runId } }),
+          );
+          // Boot already resumes saved pending/running work. A paused run
+          // needs resume; newer-state refusals preserve their exact notice.
+          if (state.status === "paused")
+            await engine.call("engine.runs.resume", { params: { runId } });
+          return;
+        } catch (err) {
+          const message = (err as Error).message;
+          if (
+            /state version|newer|saved by|unsupported|cannot resume/i.test(message) ||
+            Date.now() >= deadline
+          )
+            throw err;
+          await new Promise((resolve) => setTimeout(resolve, 500));
+        }
+      }
+    },
+    log,
+  });
 
   let tunnelSync: NodeJS.Timeout | null = null;
   const syncTunnels = () => {
@@ -423,6 +487,8 @@ export async function startApp(options: AppOptions): Promise<App> {
     notifications: notifier,
     secrets,
     setup,
+    upgrade,
+    upgradeBuildJob: () => upgradeBuildJob,
     updates,
     ssh: {
       status: (name) => tunnels.status(name),
@@ -492,6 +558,13 @@ export async function startApp(options: AppOptions): Promise<App> {
   }
 
   engines.start();
+  // Keep the API available while building so apps can show progress and starts wait.
+  void core.image
+    .status()
+    .then((status) => {
+      if (upgrade.hasOpenWork || (status.exists && !status.engineMatches)) return upgrade.start();
+    })
+    .catch((err) => log(`Startup upgrade failed: ${(err as Error).message}`));
   syncTunnels();
   syncBroker();
   try {
