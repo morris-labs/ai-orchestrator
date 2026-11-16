@@ -51,7 +51,7 @@ export class UpgradeService {
   async prepare(): Promise<UpgradePreview> {
     const existing = this.hasOpenWork ? this.readRecord() : null;
     const work = await this.snapshot();
-    if (existing?.phase === "recovery") {
+    if (existing) {
       work.boxes = [
         ...existing.boxes,
         ...work.boxes.filter((box) => !existing.boxes.some((b) => b.id === box.id)),

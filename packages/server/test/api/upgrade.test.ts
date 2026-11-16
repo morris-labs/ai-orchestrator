@@ -174,27 +174,41 @@ describe("upgrade recovery records", () => {
     expect((await core.boxes.get(box.id)).status).toBe("running");
   });
 
-  it("refreshes a prepared record after a failed build", async () => {
+  it("preserves prepared work and adds new work after a failed build", async () => {
     const h = makeHarness();
     const old = await h.core.boxes.create({ targetDir: h.dir("old"), layout: "root", start: true });
     const core = apiCoreOf(h.core, {} as Docker);
-    const service = new UpgradeService({
+    let runs = [{ id: "old-run", projectId: old.projectId, status: "running" }];
+    const resumed: string[] = [];
+    const options = {
       core,
       recordFile: path.join(h.home, "prepared.json"),
+      runs: () => runs,
+      resume: async (_projectId: string, id: string) => {
+        resumed.push(id);
+      },
+    };
+    const service = new UpgradeService({
+      ...options,
       build: async () => {
         throw new Error("build failed");
       },
-      runs: () => [],
-      resume: async () => {},
     });
     await service.start();
     await core.boxes.stop(old.id);
+    runs = [{ id: "fresh-run", projectId: old.projectId, status: "running" }];
     const fresh = await h.core.boxes.create({
       targetDir: h.dir("fresh"),
       layout: "root",
       start: true,
     });
-    expect((await service.prepare()).boxes.map((box) => box.id)).toEqual([fresh.id]);
+    const prepared = await service.prepare();
+    expect(prepared.boxes.map((box) => box.id)).toEqual([old.id, fresh.id]);
+    expect(prepared.runs.map((run) => run.run_id)).toEqual(["old-run", "fresh-run"]);
+    const report = await new UpgradeService({ ...options, build: async () => "latest" }).start();
+    expect(report.boxes.every((box) => box.restored)).toBe(true);
+    expect((await core.boxes.get(old.id)).status).toBe("running");
+    expect(resumed).toEqual(["old-run", "fresh-run"]);
   });
 
   it("retains timed out work and retries restoration without rebuilding or recreating containers", async () => {
