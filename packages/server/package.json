@@ -1,6 +1,6 @@
 {
   "name": "@aio/server",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "The AI Orchestrator host server: Docker, boxes, projects, worktrees, the REST and WebSocket API, terminals, proxy, scheduler, and services.",
   "private": true,
   "type": "module",
