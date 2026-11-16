@@ -2109,7 +2109,7 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
             return;
           }
         } catch (error) {
-          if (signal.aborted && !deps.signal?.aborted)
+          if ((signal.aborted || Date.now() >= deadline) && !deps.signal?.aborted)
             throw new Error("Upgrade time limit reached; retry with sudo dpkg --configure -a.", {
               cause: error,
             });
@@ -2174,7 +2174,7 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
           upgradeClient()
             .call("upgrade.start")
             .catch((err) => {
-              if (signal.aborted && !deps.signal?.aborted)
+              if ((signal.aborted || Date.now() >= deadline) && !deps.signal?.aborted)
                 throw new Error("Upgrade time limit reached; retry with sudo dpkg --configure -a.");
               throw err;
             }),
@@ -2212,7 +2212,7 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
           );
       } catch (caught) {
         const error =
-          signal.aborted && !deps.signal?.aborted
+          (signal.aborted || Date.now() >= deadline) && !deps.signal?.aborted
             ? new Error("Upgrade time limit reached; retry with sudo dpkg --configure -a.")
             : caught;
         if (!printedSummary && /time limit/i.test((error as Error).message)) {
