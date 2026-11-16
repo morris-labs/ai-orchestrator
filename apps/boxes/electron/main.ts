@@ -450,8 +450,20 @@ async function reportedDirectories(): Promise<string[]> {
 }
 
 function registerIpc() {
+  ipcMain.on("aio:relaunch", (e) => {
+    if (!fromApp(e)) return;
+    app.relaunch({
+      execPath: process.platform === "linux" ? "/usr/bin/aio-boxes" : process.execPath,
+    });
+    app.exit(0);
+  });
+
   ipcMain.on("aio:init", (e) => {
-    e.returnValue = { serverUrl: SERVER_URL, remoteHub: hubProxy !== null };
+    e.returnValue = {
+      serverUrl: SERVER_URL,
+      remoteHub: hubProxy !== null,
+      appVersion: app.getVersion(),
+    };
   });
   // The preload asks once per page load and hands the token to the page once.
   ipcMain.on("aio:token", (e) => {

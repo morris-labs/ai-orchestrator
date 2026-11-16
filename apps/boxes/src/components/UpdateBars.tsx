@@ -55,7 +55,7 @@ export function UpdateBars(p: UpdateBarsProps) {
           <Button onClick={p.onRebuildImage}>Rebuild image</Button>
         </div>
       )}
-      {p.image && p.image.exists && !p.image.engineMatches && (
+      {p.image && !p.image.upgrading && p.image.exists && !p.image.engineMatches && (
         <div className="ab-update-bar" role="status">
           <span className="ab-update-text">
             The image carries engine {p.image.engineVersion ?? "unknown"}, but this server needs{" "}
@@ -64,7 +64,7 @@ export function UpdateBars(p: UpdateBarsProps) {
           <Button onClick={p.onRebuildImage}>Rebuild image</Button>
         </div>
       )}
-      {p.image && !p.image.exists && (
+      {p.image && !p.image.upgrading && !p.image.exists && (
         <div className="ab-update-bar" role="status">
           <span className="ab-update-text">
             The {p.image.name} image doesn't exist yet. Build it before you create a box.
