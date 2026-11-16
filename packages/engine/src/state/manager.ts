@@ -46,6 +46,7 @@ import { parseDiff } from "../range/diff.js";
 import { ExecaRunner } from "../range/exec.js";
 import { Git, GitError } from "../range/git.js";
 import { RangeError, resolveRange } from "../range/resolve.js";
+import { NewerRunStateError } from "../run/state-version.js";
 import { RunNotFoundError, RunStore, listRunIds } from "../run/store.js";
 import { loadTokenHistory } from "../run/token-history.js";
 import { RunController, startingRoles } from "./controller.js";
@@ -149,6 +150,7 @@ export class EngineRunManager implements RunManager {
       try {
         run = await this.controller(id);
       } catch (error) {
+        if (error instanceof NewerRunStateError) continue;
         await this.markFailed(state, error);
         continue;
       }
@@ -252,6 +254,7 @@ export class EngineRunManager implements RunManager {
     try {
       return await new RunStore(this.deps.projectRoot, runId).loadState();
     } catch (error) {
+      if (error instanceof NewerRunStateError && error.stoppedState) return error.stoppedState;
       if (!(error instanceof RunNotFoundError)) {
         this.deps.log.warn("Skipped a run whose state.json can't be read", {
           runId,
@@ -403,7 +406,12 @@ export class EngineRunManager implements RunManager {
   }
 
   async get(runId: string): Promise<RunState | null> {
-    return (await this.controller(runId))?.state ?? null;
+    try {
+      return (await this.controller(runId))?.state ?? null;
+    } catch (error) {
+      if (error instanceof NewerRunStateError && error.stoppedState) return error.stoppedState;
+      throw error;
+    }
   }
 
   async pause(runId: string): Promise<RunState> {
