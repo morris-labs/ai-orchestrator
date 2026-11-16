@@ -1000,11 +1000,49 @@ class SourceUnitTest(unittest.TestCase):
         self.assertFalse(self.home.exists())
         self.assertFalse(self.systemctl_log.exists())
 
+    def test_migration_preserves_custom_server_arguments_and_upgrade_data_directory(self):
+        self.dropin_dir.mkdir(parents=True)
+        data = self.tmp / "custom data % archive"
+        escaped_data = str(data).replace("%", "%%")
+        command = f'/opt/node/bin/node "/checkout with spaces/packages/server/dist/main.js" --data-dir "{escaped_data}" --role node --log-file "/tmp/aio log"'
+        unit = "[Service]\nExecStart=" + command + "\nEnvironment=NODE_ENV=production\n"
+        unit_file = self.unit_dir / "aio-server.service"
+        unit_file.write_text(unit)
+        (self.dropin_dir / "source-checkout.conf").write_text("old checkout path")
+        calls = self.tmp / "aio.log"
+        fake = self.tmp / "bin/aio"
+        fake.write_text('#!/bin/sh\nprintf "%s\\n" "$@" >> "' + str(calls) + '"\n')
+        fake.chmod(0o755)
+        self.run_script("--upgrade-prepare")
+        migrated = unit_file.read_text()
+        self.assertIn(f'ExecStart=/usr/bin/aio-server --data-dir "{escaped_data}" --role node --log-file "/tmp/aio log"', migrated)
+        self.assertNotIn("/checkout", migrated)
+        self.assertNotIn("/opt/node", migrated)
+        self.assertFalse((self.dropin_dir / "source-checkout.conf").exists())
+        self.run_script("--upgrade-finish")
+        self.assertEqual(calls.read_text().splitlines(),
+                         ["--data-dir", str(data), "upgrade", "prepare", "--data-dir", str(data), "upgrade", "--timeout", "300"])
+        self.assertEqual(unit_file.read_text(), migrated)
+
+    def test_checkout_prepare_uses_built_cli_and_preserves_custom_data_directory(self):
+        self.unit_dir.mkdir(parents=True)
+        data = self.tmp / "checkout data"
+        unit = self.unit_dir / "aio-server.service"
+        unit.write_text(f'[Service]\nExecStart=/opt/node/bin/node /checkout/main.js --data-dir "{data}"\n')
+        cli = self.tmp / "built-cli.cjs"
+        calls = self.tmp / "built-cli.json"
+        cli.write_text('require("node:fs").writeFileSync(' + json.dumps(str(calls)) + ', JSON.stringify(process.argv.slice(2)));')
+        self.env["AIO_UPGRADE_CLI"] = str(cli)
+        self.run_script("--upgrade-prepare")
+        self.assertEqual(json.loads(calls.read_text()), ["--data-dir", str(data), "upgrade", "prepare"])
+        self.assertIn("ExecStart=/usr/bin/aio-server", unit.read_text())
+        self.assertFalse(self.systemctl_log.exists())
+
     def test_install_keeps_an_existing_drop_in(self):
         self.dropin_dir.mkdir(parents=True)
         op_conf = "[Service]\nEnvironmentFile=%h/.config/aio/op.env\n"
         (self.dropin_dir / "op.conf").write_text(op_conf)
-        (self.unit_dir / "aio-server.service").write_text("old checkout unit")
+        (self.unit_dir / "aio-server.service").write_text("[Service]\nExecStart=/opt/node/bin/node /checkout/packages/server/dist/main.js\n")
         (self.dropin_dir / "source-checkout.conf").write_text("old checkout path")
         self.run_script()
         self.assertEqual((self.dropin_dir / "op.conf").read_text(), op_conf)

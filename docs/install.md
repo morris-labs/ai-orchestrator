@@ -252,8 +252,8 @@ Desktop apps show a relaunch bar when their installed version is newer.
 Remote machines must be upgraded separately.
 
 From a checkout, run `scripts/upgrade.sh`. It builds the workspace and the
-`.deb`, removes the former checkout unit override, and installs the package
-with `sudo apt install --reinstall`. It builds the revision you checked out;
+`.deb`, migrates the former checkout service to the installed command, and
+installs the package with `sudo apt install --reinstall`. It builds the revision you checked out;
 it never runs `git pull`. The server runs from the installed package.
 
 ## Uninstall
@@ -353,11 +353,14 @@ scripts/install-server-unit.sh
 systemctl --user restart aio-server
 ```
 
-The migration removes `~/.config/systemd/user/aio-server.service` and
-`aio-server.service.d/source-checkout.conf`, then reloads systemd and
-enables the packaged unit. Other drop-ins, including credentials, remain.
-Use `--print` to inspect the paths first. Preserve a custom data directory
-in a separate systemd drop-in before migrating. Inspect the resulting unit
+The migration replaces the checkout's Node.js command with `/usr/bin/aio-server`,
+preserving custom arguments such as `--data-dir`, `--role`, and `--log-file`.
+A service with no custom arguments uses the packaged unit. It removes
+`aio-server.service.d/source-checkout.conf`, reloads systemd, and enables the
+service. Other drop-ins, including credentials, remain. Package upgrades
+perform this migration automatically and use the same custom data directory
+for recording and restoring open work. Use `--print` to inspect the paths
+first. Inspect the resulting unit
 with `systemctl --user cat aio-server`.
 
 ### Run the Electron apps from the checkout

@@ -33,8 +33,8 @@ class UpgradeInstallTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         for user in ['alice', 'bob']:
             self.assertIn(f'--user --machine={user}@ restart aio-server', calls)
-            self.assertIn(f'runuser -u {user} -- aio upgrade --timeout 300', calls)
-            self.assertIn(f'runuser -u {user} -- sh -c rm -f', calls)
+            self.assertIn(f'runuser -u {user} -- /usr/share/ai-orchestrator/scripts/install-server-unit.sh --upgrade-finish', calls)
+            self.assertIn(f'runuser -u {user} -- /usr/share/ai-orchestrator/scripts/install-server-unit.sh --upgrade-prepare', calls)
         self.assertNotIn('runuser -u carol', calls)
         self.assertIn('box restored', result.stdout)
 

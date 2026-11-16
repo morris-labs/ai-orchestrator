@@ -15,7 +15,7 @@ if [[ "$(dpkg-query -W -f='${Status}' ai-orchestrator 2>/dev/null || true)" != '
   FIRST_PACKAGE=1
   # The old checkout server may still have work open, even on the first
   # package install. The newly built CLI can snapshot its legacy API.
-  node "$SCRIPT_DIR/../packages/cli/dist/main.js" upgrade prepare
+  AIO_UPGRADE_CLI="$SCRIPT_DIR/../packages/cli/dist/main.js" "$SCRIPT_DIR/install-server-unit.sh" --upgrade-prepare
 fi
 # Drop the old checkout override before postinst restarts the service.
 "$SCRIPT_DIR/install-server-unit.sh" --remove-only
@@ -26,5 +26,5 @@ sudo apt install --reinstall "$UPGRADE_OUT"/ai-orchestrator_*.deb
 if ((FIRST_PACKAGE)); then
   "$SCRIPT_DIR/install-server-unit.sh"
   systemctl --user restart aio-server.service
-  aio upgrade --timeout 300
+  "$SCRIPT_DIR/install-server-unit.sh" --upgrade-finish
 fi

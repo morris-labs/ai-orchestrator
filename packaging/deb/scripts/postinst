@@ -53,17 +53,15 @@ case "$1" in
           echo "Upgrading AI Orchestrator for $owner"
           # Capture open work before restarting the old process. The record
           # lives in the user's data directory and survives a failed retry.
-          if ! runuser -u "$owner" -- aio upgrade prepare; then
+          if ! runuser -u "$owner" -- /usr/share/ai-orchestrator/scripts/install-server-unit.sh --upgrade-prepare; then
             echo "Could not record open work for $owner; upgrade failed." >&2
             failed=1
             continue
           fi
-          # A user unit shadows /usr/lib/systemd/user. Remove the former
-          # checkout unit and its PATH drop-in; keep credentials/role drop-ins.
-          if ! runuser -u "$owner" -- sh -c 'rm -f "$HOME/.config/systemd/user/aio-server.service" "$HOME/.config/systemd/user/aio-server.service.d/source-checkout.conf"' ||
-             ! systemctl --user --machine="$owner@" daemon-reload ||
+          # Migration preserves custom server arguments, including data-dir.
+          if ! systemctl --user --machine="$owner@" daemon-reload ||
              ! systemctl --user --machine="$owner@" restart aio-server ||
-             ! runuser -u "$owner" -- aio upgrade --timeout 300; then
+             ! runuser -u "$owner" -- /usr/share/ai-orchestrator/scripts/install-server-unit.sh --upgrade-finish; then
             echo "Upgrade failed for $owner. Retry with sudo dpkg --configure -a." >&2
             failed=1
           fi

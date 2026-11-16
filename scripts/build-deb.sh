@@ -146,7 +146,7 @@ install -m 0644 "$ROOT/image/Dockerfile" "$ROOT/image/versions.env" "$ROOT/image
 install -m 0755 "$ROOT/image/keeper/keeper.sh" "$ROOT/image/keeper/start-session.sh" "$IMG/keeper/"
 install -m 0644 "$ROOT"/image/dist/*.tgz "$ROOT/image/dist/engine-identity" "$IMG/dist/"
 mkdir -p "$R/usr/share/ai-orchestrator/scripts/lib"
-install -m 0755 "$SCRIPT_DIR/build-image.sh" "$R/usr/share/ai-orchestrator/scripts/"
+install -m 0755 "$SCRIPT_DIR/build-image.sh" "$SCRIPT_DIR/install-server-unit.sh" "$R/usr/share/ai-orchestrator/scripts/"
 install -m 0644 "$SCRIPT_DIR/lib/common.sh" "$R/usr/share/ai-orchestrator/scripts/lib/"
 
 # The build's umask can leave staged files group-writable or private. Only
