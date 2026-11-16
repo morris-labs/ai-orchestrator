@@ -24,6 +24,7 @@ import {
   parseAccountId,
   type AccountSeedReport,
   VendorSchema,
+  UpgradePreviewSchema,
   type AccountSignIn,
   runDepth,
   type AccountView,
@@ -2116,12 +2117,31 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
           await new Promise((resolve) => setTimeout(resolve, 500));
         }
       }
+      let pending = {
+        boxes: [] as { id: string; name: string }[],
+        runs: [] as { run_id: string; name: string }[],
+      };
+      try {
+        pending = UpgradePreviewSchema.parse(
+          JSON.parse(
+            fs.readFileSync(
+              path.join(
+                dataDirFor(deps.env, deps.home, globals().dataDir),
+                "upgrade-open-work.json",
+              ),
+              "utf8",
+            ),
+          ),
+        );
+      } catch {
+        /* A CLI update can have no prepared package-install record. */
+      }
       deps.err("Upgrading: building the image, then restoring open work.\n");
       let progressBusy = false;
       const progress = setInterval(() => {
         if (progressBusy) return;
         progressBusy = true;
-        void client()
+        void upgradeClient()
           .call("image.status")
           .then((status) => {
             deps.err(
@@ -2136,6 +2156,7 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
           });
       }, 5000);
       let timer: ReturnType<typeof setTimeout> | undefined;
+      let printedSummary = false;
       try {
         const report = await Promise.race([
           upgradeClient()
@@ -2168,6 +2189,7 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
               ...report.runs.map((r) => `Run ${r.name}: ${r.restored ? "resumed" : r.reason}`),
             ].join("\n") + "\n",
         );
+        printedSummary = true;
         if (
           report.error ||
           report.boxes.some((b) => !b.restored) ||
@@ -2176,6 +2198,16 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
           throw new Error(
             report.error ?? "Some open work could not be restored; see summary above.",
           );
+      } catch (error) {
+        if (!printedSummary && /time limit/i.test((error as Error).message)) {
+          for (const box of pending.boxes)
+            deps.out(
+              `Box ${box.name} (${box.id}): restoration unconfirmed; upgrade time limit reached.\n`,
+            );
+          for (const run of pending.runs)
+            deps.out(`Run ${run.name}: restoration unconfirmed; upgrade time limit reached.\n`);
+        }
+        throw error;
       } finally {
         controller.abort();
         clearInterval(progress);
