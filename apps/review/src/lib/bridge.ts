@@ -4,6 +4,8 @@
 
 /** What the Electron preload exposes. */
 export interface AioBridge {
+  appVersion?: string;
+  relaunch?: () => void;
   /** The server token on the first call, `null` on every later one. */
   takeToken(): string | null;
   serverUrl: string | null;

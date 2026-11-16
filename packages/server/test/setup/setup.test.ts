@@ -261,6 +261,7 @@ describe("SetupService image builds and fixes", () => {
     ]);
     expect(runner.spawned[0]?.options.pty).toBe(true);
     expect(runner.spawned[0]?.options.env?.BUILDKIT_PROGRESS).toBe("plain");
+    expect(runner.spawned[0]?.options.env?.AIO_DATA_DIR).toBe(join(home, ".ai-orchestrator"));
     runner.spawned[0]!.exit(1);
     await waitFor(() => jobs.get(job.id)?.status === "failed");
   });
@@ -294,6 +295,7 @@ describe("SetupService image builds and fixes", () => {
     const { svc } = make({ imageContext: img, settings: { engineImage: "aio-agent:v4test" } });
     const argv = svc.buildArgv("packages");
     const out = execFileSync(argv[0] as string, [...argv.slice(1), "--print"], {
+      env: { ...process.env, AIO_DATA_DIR: join(home, ".ai-orchestrator") },
       encoding: "utf8",
     });
     expect(out).toContain("docker build -t aio-agent:v4test");

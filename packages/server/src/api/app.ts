@@ -264,6 +264,7 @@ export async function startApp(options: AppOptions): Promise<App> {
     runner,
     op,
     home: options.home,
+    dataDir: options.dataDir,
     imageContext: options.imageContext,
     platform,
     serviceInstalled: () =>

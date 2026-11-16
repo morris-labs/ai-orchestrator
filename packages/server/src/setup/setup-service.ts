@@ -23,7 +23,7 @@ import {
   installHint,
   type HostPlatform,
 } from "../platform/host.js";
-import { containerUsername } from "../records/env.js";
+import { dataDirOf, containerUsername } from "../records/env.js";
 import type { OpClient } from "../secrets/op.js";
 
 export type SetupStatus = z.infer<typeof SetupStatusSchema>;
@@ -35,6 +35,7 @@ export interface SetupServiceOptions {
   runner: ProcessRunner;
   op: OpClient;
   home: string;
+  dataDir?: string;
   /**
    * The directory that holds the image's Dockerfile, named `image`, with
    * `scripts/build-image.sh` beside it in the same parent directory.
@@ -501,7 +502,11 @@ export class SetupService {
     }
     // The script's `docker build` prints one line per step instead of
     // redrawing the terminal, which reads better in the job log.
-    const env = { ...process.env, BUILDKIT_PROGRESS: "plain" };
+    const env = {
+      ...process.env,
+      AIO_DATA_DIR: dataDirOf({ home: this.opts.home, dataDir: this.opts.dataDir }),
+      BUILDKIT_PROGRESS: "plain",
+    };
     return this.opts.jobs.start({ kind: "image_build", command: commandLine(argv) }, (io) =>
       processJob(io, this.opts.runner.spawn(argv[0] as string, argv.slice(1), { pty: true, env })),
     );

@@ -12,6 +12,8 @@ import { createMockAdapters } from "../../src/main/adapters.js";
 import { RangeError } from "../../src/range/resolve.js";
 import { EngineRunManager, createRunManager, toApiError } from "../../src/state/manager.js";
 import { EngineError } from "../../src/api/core-interface.js";
+import { RunStore } from "../../src/run/store.js";
+import { tempDir } from "../tmp.js";
 import { PolicyError } from "../../src/policy/load.js";
 import { buildSampleRepo } from "./scenario.js";
 import { uniqueRunId } from "./run-ids.js";
@@ -42,6 +44,42 @@ async function waitFor(runs: EngineRunManager, runId: string) {
   }
   throw new Error(`run ${runId} didn't settle`);
 }
+
+describe("newer saved run state", () => {
+  it("stays stopped after startup with a visible version notice and refuses resume without rewriting files", async () => {
+    const root = tempDir("aio-newer-state-");
+    const store = new RunStore(root, RUN_A);
+    const saved = JSON.parse(
+      readFileSync(join(import.meta.dirname, "../run/fixtures/v1.json"), "utf8"),
+    );
+    await store.writeJson("state.json", {
+      ...saved,
+      id: RUN_A,
+      status: "running",
+      stateVersion: 99,
+    });
+    await store.writeJson("engine.json", { futureBookkeeping: true });
+    const before = readFileSync(store.path("state.json"), "utf8");
+    const { runs } = manager(root);
+    await runs.init();
+    expect(runs.activeRunCount()).toBe(0);
+    expect(await runs.get(RUN_A)).toMatchObject({
+      status: "paused",
+      error: expect.stringContaining("state version 99"),
+    });
+    expect(await runs.list({})).toMatchObject([
+      { id: RUN_A, status: "paused", error: expect.stringContaining("state version 99") },
+    ]);
+    await expect(runs.resume(RUN_A)).rejects.toMatchObject({
+      code: "invalid_state",
+      message: expect.stringContaining("state version 99"),
+    });
+    expect(readFileSync(store.path("state.json"), "utf8")).toBe(before);
+    expect(JSON.parse(readFileSync(store.path("engine.json"), "utf8"))).toEqual({
+      futureBookkeeping: true,
+    });
+  });
+});
 
 describe("EngineRunManager", () => {
   let repo: string;

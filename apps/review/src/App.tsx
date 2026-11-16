@@ -1,5 +1,7 @@
+import appPackage from "../package.json";
 // The app shell: navigation, the status line, and the routed screens.
 import { LOCAL_MACHINE_ID } from "@aio/contracts";
+import { UpgradeStatus } from "@aio/ui";
 import { Dashboard, dashboardCss, themeCss } from "@aio/ui/dashboard";
 import { useEffect, useState } from "react";
 import {
@@ -199,7 +201,17 @@ function AppShell() {
             ) : null}
           </div>
         </nav>
-        <main className="main">{screen}</main>
+        <main className="main">
+          <UpgradeStatus
+            runningVersion={bridge()?.appVersion ?? appPackage.version}
+            onRelaunch={() => {
+              const b = bridge();
+              if (b?.relaunch) b.relaunch();
+              else window.location.reload();
+            }}
+          />
+          {screen}
+        </main>
       </div>
     </>
   );

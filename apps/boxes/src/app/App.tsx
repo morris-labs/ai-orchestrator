@@ -1,3 +1,4 @@
+import appPackage from "../../package.json";
 // The main window: menu bar, toolbar, update bars, the Boxes and Usage
 // tabs, the project list, the box table, the details panel, the terminal
 // tabs, and the status bar.
@@ -16,6 +17,7 @@ import {
 } from "@aio/contracts";
 import {
   MenuBar,
+  UpgradeStatus,
   Splitter,
   errorMessage,
   hasOpenDialog,
@@ -189,19 +191,10 @@ export function App() {
   // -------------------------------------------------------------------------
   // Start-up: updates, image status, setup, and resume after reboot
 
-  useEffect(() => {
-    const t = setTimeout(() => {
-      client
-        .call("updates.check", {})
-        .then(setUpdates)
-        .catch(() => undefined);
-      client
-        .call("image.status", {})
-        .then(setImage)
-        .catch(() => undefined);
-    }, 3000);
-    return () => clearTimeout(t);
-  }, [client]);
+  const upgradeStatus = useCallback((updates: Updates, image: ImageStatus) => {
+    setUpdates(updates);
+    setImage(image);
+  }, []);
 
   const loadRemotes = useCallback(() => {
     client
@@ -1481,6 +1474,16 @@ export function App() {
         <span className="ab-spacer" />
         {tool("Refresh Now", true, run.refresh, `Refresh Now (${CHORDS.refresh})`)}
       </div>
+      <UpgradeStatus
+        runningVersion={bridge()?.appVersion ?? appPackage.version}
+        onRelaunch={() => {
+          const b = bridge();
+          if (b?.relaunch) b.relaunch();
+          else window.location.reload();
+        }}
+        onStatus={upgradeStatus}
+        showCliNotice={false}
+      />
       <UpdateBars
         updates={updates}
         image={image}
