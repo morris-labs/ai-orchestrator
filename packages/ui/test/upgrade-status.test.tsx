@@ -30,8 +30,10 @@ describe("app upgrade status", () => {
     act(() => hub.setStatus("closed"));
     server.state.updates.claudeCode = { latest: "2.0.0", image: "2.0.0", stale: false };
     act(() => hub.setStatus("open"));
+    act(() => hub.resync());
     await waitFor(() => expect(screen.queryByText(/Claude Code 2.0.0 is available/)).toBeNull());
     expect(server.callsTo("updates.check").length).toBeGreaterThan(1);
+    expect(server.callsTo("updates.check").every((call) => call.query.force === false)).toBe(true);
     expect(server.callsTo("image.status").length).toBeGreaterThan(1);
     expect(server.callsTo("machines.list").length).toBeGreaterThan(before);
   });

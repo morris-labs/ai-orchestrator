@@ -58,10 +58,7 @@ export function UpgradeStatus({
   const [result, setResult] = useState<string | null>(null);
   const [logOpen, setLogOpen] = useState(false);
   const reload = useCallback(() => {
-    void Promise.all([
-      client.call("updates.check", { query: { force: "true" } }),
-      client.call("image.status", {}),
-    ])
+    void Promise.all([client.call("updates.check", {}), client.call("image.status", {})])
       .then(([u, i]) => {
         setUpdates(u);
         setImage(i);

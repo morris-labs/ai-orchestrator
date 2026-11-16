@@ -37,6 +37,26 @@ describe("compareVersions", () => {
 });
 
 describe("UpdateChecker", () => {
+  it("shares concurrent checks and refreshes the image version without fetching releases again", async () => {
+    const calls: string[] = [];
+    let imageVersion = "1.0.0";
+    const checker = new UpdateChecker({
+      fetch: fakeFetch({ [GH]: { tag_name: "v1.0.0" }, [NPM]: { version: "2.0.0" } }, calls),
+      currentVersion: "1.0.0",
+      image: { status: async () => imageStatus(imageVersion) },
+    });
+    const results = await Promise.all([checker.check(false), checker.check(false)]);
+    expect(results[0]?.claudeCode.stale).toBe(true);
+    expect(calls).toHaveLength(2);
+    imageVersion = "2.0.0";
+    expect((await checker.check(false)).claudeCode).toEqual({
+      image: "2.0.0",
+      latest: "2.0.0",
+      stale: false,
+    });
+    expect(calls).toHaveLength(2);
+  });
+
   it("reports available updates", async () => {
     const calls: string[] = [];
     const checker = new UpdateChecker({

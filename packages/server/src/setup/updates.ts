@@ -36,6 +36,7 @@ export function compareVersions(a: string, b: string): number {
 
 export class UpdateChecker {
   private cached: { at: number; value: Updates } | null = null;
+  private pending: Promise<Updates> | null = null;
 
   constructor(private readonly opts: UpdateCheckerOptions) {}
 
@@ -60,8 +61,30 @@ export class UpdateChecker {
   async check(force: boolean): Promise<Updates> {
     const now = this.now();
     const ttl = this.opts.ttlMs ?? 24 * 60 * 60 * 1000;
-    if (!force && this.cached && now.getTime() - this.cached.at < ttl) return this.cached.value;
+    if (!force && this.cached && now.getTime() - this.cached.at < ttl) {
+      const image = await this.opts.image.status().catch(() => null);
+      const imageClaude = image?.exists ? image.cliVersions.claude : null;
+      const latest = this.cached.value.claudeCode.latest;
+      return {
+        ...this.cached.value,
+        claudeCode: {
+          image: imageClaude,
+          latest,
+          stale:
+            imageClaude !== null && latest !== null && compareVersions(latest, imageClaude) > 0,
+        },
+      };
+    }
+    if (this.pending) return this.pending;
+    this.pending = this.refresh(now);
+    try {
+      return await this.pending;
+    } finally {
+      this.pending = null;
+    }
+  }
 
+  private async refresh(now: Date): Promise<Updates> {
     const repo = this.opts.repo ?? "morris-labs/ai-orchestrator";
     const [release, npm, image] = await Promise.all([
       this.json(`https://api.github.com/repos/${repo}/releases/latest`),
