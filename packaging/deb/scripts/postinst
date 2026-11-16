@@ -58,7 +58,10 @@ case "$1" in
             failed=1
             continue
           fi
-          if ! systemctl --user --machine="$owner@" daemon-reload ||
+          # A user unit shadows /usr/lib/systemd/user. Remove the former
+          # checkout unit and its PATH drop-in; keep credentials/role drop-ins.
+          if ! runuser -u "$owner" -- sh -c 'rm -f "$HOME/.config/systemd/user/aio-server.service" "$HOME/.config/systemd/user/aio-server.service.d/source-checkout.conf"' ||
+             ! systemctl --user --machine="$owner@" daemon-reload ||
              ! systemctl --user --machine="$owner@" restart aio-server ||
              ! runuser -u "$owner" -- aio upgrade --timeout 300; then
             echo "Upgrade failed for $owner. Retry with sudo dpkg --configure -a." >&2
