@@ -185,7 +185,7 @@ describe("upgrade recovery records", () => {
     }
   });
 
-  it("uses a fresh snapshot when preparing after a partial recovery", async () => {
+  it("preserves unrestored work and includes newly opened work when preparing again", async () => {
     const h = makeHarness();
     const old = await h.core.boxes.create({ targetDir: h.dir("app"), layout: "root", start: true });
     const core = apiCoreOf(h.core, {} as Docker);
@@ -207,9 +207,9 @@ describe("upgrade recovery records", () => {
       layout: "root",
       start: true,
     });
-    expect((await service.prepare()).boxes.map((box) => box.id)).toEqual([fresh.id]);
+    expect((await service.prepare()).boxes.map((box) => box.id)).toEqual([old.id, fresh.id]);
     const report = await service.start();
-    expect(report.boxes.map((box) => box.id)).toEqual([fresh.id]);
-    expect((await core.boxes.get(old.id)).status).not.toBe("running");
+    expect(report.boxes.map((box) => box.id)).toEqual([old.id, fresh.id]);
+    expect((await core.boxes.get(old.id)).status).toBe("running");
   });
 });

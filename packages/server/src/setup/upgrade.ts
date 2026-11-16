@@ -51,6 +51,16 @@ export class UpgradeService {
   async prepare(): Promise<UpgradePreview> {
     const existing = this.hasOpenWork ? this.readRecord() : null;
     const work = existing?.phase === "prepared" ? existing : await this.snapshot();
+    if (existing?.phase === "recovery") {
+      work.boxes = [
+        ...existing.boxes,
+        ...work.boxes.filter((box) => !existing.boxes.some((b) => b.id === box.id)),
+      ];
+      work.runs = [
+        ...existing.runs,
+        ...work.runs.filter((run) => !existing.runs.some((r) => r.run_id === run.run_id)),
+      ];
+    }
     this.writeRecord(work);
     return { boxes: work.boxes, runs: work.runs.map(({ run_id, name }) => ({ run_id, name })) };
   }
