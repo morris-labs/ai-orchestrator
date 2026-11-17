@@ -445,6 +445,11 @@ describe("sign-in sync keys", () => {
       store.write(entryOf("host/claude/.credentials.json", '{"t":"a"}')),
     ).rejects.toThrow();
     expect(fs.readFileSync(hostFile, "utf8")).toBe('{"token":"synthetic-host"}');
+    const vendorDir = path.join(home, "data/accounts/claude");
+    fs.mkdirSync(vendorDir, { recursive: true });
+    fs.symlinkSync(path.join(home, ".claude"), path.join(vendorDir, "work"));
+    expect(await store.list()).toEqual([]);
+    expect(await store.entry("account/claude/work/.credentials.json")).toBeNull();
     // No folder, no file.
     expect(await store.write(entryOf("account/codex/work/auth.json", '{"t":"a"}'))).toBe(false);
     await expect(store.write(entryOf("host/../../etc/passwd", '{"t":"a"}'))).rejects.toThrow();

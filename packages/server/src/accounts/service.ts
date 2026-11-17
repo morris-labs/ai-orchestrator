@@ -1,8 +1,7 @@
 // Accounts: records in the `accounts` table plus one folder each under
 // `DATA_DIR/accounts/VENDOR/NAME`. See `docs/accounts.md`:
-// the records, their folders, seeding, and the sign-in check. Box launches
-// don't use accounts yet; they mount the host folders whatever
-// `accountsMode` says.
+// the records, their self-contained folders, instructions, explicit seeding,
+// legacy-link migration, and the sign-in check.
 import fs from "node:fs";
 import path from "node:path";
 import {
@@ -62,7 +61,7 @@ import {
   protectedRetentionDays,
   retentionWarnings,
 } from "./retention.js";
-import { copyLinkedConfig } from "./userConfig.js";
+import { copyLinkedConfig, hostConfigLinks } from "./userConfig.js";
 import {
   linkProjectsToStore,
   projectsLinkState,
@@ -198,6 +197,15 @@ export class AccountService {
     }
   }
 
+  private legacyLinks(dir: string): string[] {
+    const host = homePaths(this.env);
+    return hostConfigLinks(dir, [host.claudeDir, host.claudeJson, host.codexDir, host.copilotDir]);
+  }
+
+  private relinkNotice(links: readonly string[]): string {
+    return `Legacy host configuration links need conversion: ${links.join(", ")}. Run "aio accounts relink" before using this account.`;
+  }
+
   private ensureInstructions(vendor: Platform, dir: string): void {
     ensureAccountInstructions(dir, vendor);
   }
@@ -216,6 +224,14 @@ export class AccountService {
     const dir = this.dirOf(vendor, account.name);
     if (!isDirectory(dir))
       throw new ApiError("not_found", `The account folder ${dir} doesn't exist.`);
+    const links = this.legacyLinks(dir);
+    if (links.length) throw new ApiError("invalid_state", this.relinkNotice(links));
+    if (vendor === "claude" && projectsLinkState(dir, this.storeRoot()) !== "ok") {
+      throw new ApiError(
+        "invalid_state",
+        `The account's projects entry does not lead to the shared transcript store. Run "aio accounts relink" before using ${id}.`,
+      );
+    }
     this.ensureInstructions(vendor, dir);
     return { dir, problems: vendor === "claude" ? [] : buildAccountInstructions(dir, vendor) };
   }
@@ -254,11 +270,9 @@ export class AccountService {
   }
 
   /**
-   * Refuses to switch to accounts mode when the boxes would lose their
-   * conversations: the host's `~/.claude/projects` holds transcripts outside
-   * the store, or a Claude account's `projects` doesn't lead to the store.
-   * Both folders are compared by real path, so a chain of links that ends at
-   * the store counts as the store.
+   * Refuses to switch to accounts mode when a Claude account's projects
+   * entry does not lead to the transcript store. Host configuration does
+   * not influence account readiness.
    * Throws `conflict` and names the fix.
    */
   assertCanUseAccounts(next: GlobalSettings): void {
@@ -281,8 +295,8 @@ export class AccountService {
   }
 
   /**
-   * `accounts.relink`: points every Claude account's `projects` entry at the
-   * transcript store, replacing a link that dangles or leads elsewhere. Never
+   * `accounts.relink`: copies legacy host links into account-owned entries
+   * and points Claude accounts' projects at the transcript store. Never
    * deletes a real `projects` folder that holds transcripts; the result says
    * `kept-directory` for it.
    */
@@ -292,12 +306,16 @@ export class AccountService {
     for (const a of this.options.repo.list()) {
       const dir = this.dirOf(a.vendor, a.name);
       if (!isDirectory(dir)) continue;
-      this.ensureInstructions(a.vendor, dir);
-      if (a.vendor !== "claude") continue;
-      const before = projectsLinkState(dir, store.root);
-      const outcome = linkProjectsToStore(dir, store.root);
       const host = homePaths(this.env);
-      const config = copyLinkedConfig(dir, [host.claudeDir, host.codexDir, host.copilotDir]);
+      const config = copyLinkedConfig(dir, [
+        host.claudeDir,
+        host.claudeJson,
+        host.codexDir,
+        host.copilotDir,
+      ]);
+      this.ensureInstructions(a.vendor, dir);
+      const before = a.vendor === "claude" ? projectsLinkState(dir, store.root) : "missing";
+      const outcome = a.vendor === "claude" ? linkProjectsToStore(dir, store.root) : "unchanged";
       accounts.push({ id: a.id, before, outcome, config });
     }
     return { store: store.root, source: store.source, accounts };
@@ -345,8 +363,9 @@ export class AccountService {
   view(account: Account): AccountView {
     const dir = this.dirOf(account.vendor, account.name);
     const dirExists = isDirectory(dir);
-    const warnings: string[] = [];
-    if (account.vendor === "claude" && dirExists) {
+    const links = dirExists ? this.legacyLinks(dir) : [];
+    const warnings: string[] = links.length ? [this.relinkNotice(links)] : [];
+    if (account.vendor === "claude" && dirExists && !links.length) {
       const store = this.storeRoot();
       const warning = projectsLinkWarning(projectsLinkState(dir, store), dir, store);
       if (warning) warnings.push(warning);
@@ -504,12 +523,17 @@ export class AccountService {
     const host = homePaths(this.env);
     const converted = copyLinkedConfig(
       dest,
-      [host.claudeDir, host.codexDir, host.copilotDir],
+      [host.claudeDir, host.claudeJson, host.codexDir, host.copilotDir],
       accountsRoot,
     );
-    warnings.push(
-      ...Object.entries(converted.errors).map(([entry, message]) => `${entry}: ${message}`),
-    );
+    if (Object.keys(converted.errors).length) {
+      throw new ApiError(
+        "validation",
+        `Cannot make the imported account self-contained: ${Object.entries(converted.errors)
+          .map(([entry, message]) => `${entry}: ${message}`)
+          .join("; ")}. Its files are retained at ${dest}; fix the links before importing again.`,
+      );
+    }
     if (req.vendor === "claude") {
       const store = this.storeRoot();
       const note = this.linkNote(linkProjectsToStore(dest, store), store);
@@ -594,6 +618,7 @@ export class AccountService {
     const account = this.get(id);
     const dir = this.dirOf(account.vendor, account.name);
     if (!isDirectory(dir)) throw new ApiError("conflict", `The folder ${dir} doesn't exist.`);
+    if (this.legacyLinks(dir).length) return this.view(account);
     const checkedAt = this.env.now().toISOString();
     const command = signInStatusCommand(account.vendor);
     let signIn: AccountSignIn = { state: "unknown", checkedAt };

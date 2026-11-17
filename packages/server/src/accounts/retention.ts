@@ -60,8 +60,8 @@ export function hostRetentionDays(home: string): number | undefined {
 }
 
 /**
- * The protected retention: the host's value when it sets one, else the
- * `transcriptRetentionDays` setting, else 3650.
+ * The protected retention comes from the orchestrator setting, else 3650.
+ * The home argument remains for callers migrating from the former host policy.
  */
 export function protectedRetentionDays(_home: string, setting: number | undefined): number {
   return setting ?? DEFAULT_RETENTION_DAYS;
