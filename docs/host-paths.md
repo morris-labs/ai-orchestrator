@@ -109,8 +109,7 @@ The following parts of a Windows host are untested or incomplete:
 
 - **Symbolic links.** The container reads a symbolic link's target
   literally. A link whose target is a Windows path, such as an account's
-  `projects` link to the transcript store, or the `~/.claude/projects` link
-  in host mode, dangles in the container even though the server mounts the
+  `projects` link to the transcript store, dangles in the container even though the server mounts the
   target at its container path.
 - **Bind strings.** The server passes Windows bind sources such as
   `C:/Users/dana/src/app` to Docker Desktop, which translates them. If

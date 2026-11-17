@@ -192,11 +192,11 @@ following:
 
 ## Resume says "No conversation found"
 
-Claude Code looks up a transcript under `~/.claude/projects/` by the
-directory the session works in. If `~/.claude/projects` is a symbolic link to
-another directory, the server mounts the link's target at the same path in
-the container. If you moved the target, restart the project container so it
-gets the new mount.
+Claude Code looks up transcripts under the selected account's `projects`
+link, which leads to `DATA_DIR/transcripts/claude`. Run `aio accounts check
+claude/NAME` and `aio accounts relink` to inspect or repair the link. If you
+change the transcript store's target, restart project containers to update
+their mounts.
 
 For a worktree box, the transcript lives under the worktree's encoded path,
 not the project root's. Purging or moving the worktree by hand breaks the
@@ -205,19 +205,11 @@ app instead.
 
 ## A box waits at the folder trust dialog
 
-Claude Code asks whether you trust a folder the first time it runs there,
-and a resumed box asks too when its folder was never trusted. Answer the
-dialog once in the box's terminal. Claude Code records the answer as
-`projects["DIRECTORY"].hasTrustDialogAccepted` in `~/.claude.json`, where
-`DIRECTORY` is the box's working directory, and every later box in that
-folder starts without the dialog. A worktree box works in its own folder,
-so a new worktree can ask once more.
-
-AI Orchestrator doesn't answer the dialog for you. Every box mounts the host's
-`~/.claude.json` as a single file, and the host's and every box's Claude
-Code write it while they run. A rewrite by the server could race those
-writes and lose settings, and an atomic replace swaps the file for a new
-one, which running boxes no longer see.
+Before a Claude account session starts, the server accepts its working folders
+in that account's `.claude.json` and checks the account's `settings.json`.
+If a dialog still appears, check that those files are writable JSON objects
+and that the box selects the intended account. The host user's `.claude.json`
+isn't mounted or updated.
 
 ## A review run doesn't start
 
@@ -269,7 +261,7 @@ A run stops with an error like `The reviewer call on claude failed: ...
 Not logged in · Please run /login`. The vendor CLI that the engine started
 found no sign-in in the folder it used. Check the following:
 
-1. In accounts mode, make sure the vendor has a default account that is
+1. Make sure the vendor has a default account that is
    signed in. To check an account, run the following command, where
    `VENDOR/NAME` is the account's id, such as `claude/personal`:
 
@@ -281,38 +273,13 @@ found no sign-in in the folder it used. Check the following:
    If the account isn't signed in, run `aio accounts login VENDOR/NAME`,
    which prints the command that signs it in, and run that command in a box
    shell.
-1. Make sure the project container runs an image with an engine that reads
-   `account-dirs.json`. An older engine runs `claude` with the container
-   user's `~/.claude`, which in accounts mode can be a real folder that
-   Docker created to hold the shared `CLAUDE.md`, `settings.json`, `skills`,
-   and `plugins` mounts, without the account's sign-in. To check, compare the
-   engine version that `aio doctor` reports with the server's.
-
-   A server log warning that `~/.claude` is a folder, not a link to the
-   default account, doesn't show an older engine. A current engine logs it too
-   and its review runs aren't affected, so don't rebuild for that warning
-   alone.
-
-   If the engine is older, rebuild the image and restart the project
-   container. On a packaged install, run the following:
-
-   ```bash
-   /usr/share/ai-orchestrator/scripts/build-image.sh
-   aio project restart PROJECT_ID
-
-   ```
-
-   Replace `PROJECT_ID` with the project's id, which `aio project list`
-   shows.
-
-   > **Warning:** `aio project restart` stops every running box in the project.
-
-   In a source checkout, run `scripts/build-image.sh` from the repository root
-   instead. If the checkout is newer than the running server, restart the
-   server first: the server refuses an image whose engine differs from its own,
-   and the project stays down with `engine_mismatch` until the versions match.
-1. In host mode, sign in on the host. The containers mount `~/.claude`,
-   `~/.claude.json`, `~/.codex`, and `~/.copilot`.
+1. Check the engine and server versions with `aio doctor`. Upgrade the package
+   or run the CLI update flow to rebuild and recreate containers when they
+   differ. A container from an older installation can retain old mounts until
+   it is recreated.
+1. If the server reports retired `host` mode, set up accounts and run
+   `aio accounts relink`, then `aio accounts mode accounts`. See
+   [Accounts](accounts.md#set-up-accounts).
 
 ## The Electron apps don't open on Ubuntu 24.04 or later
 

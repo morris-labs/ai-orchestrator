@@ -120,15 +120,23 @@ keeper script, the container's first process, starts it.
   account defaults or the accounts mode change and each time it ensures a
   running container. The engine reads it for every vendor call and sets
   `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, or `COPILOT_HOME` from it. A vendor
-  without a valid entry, as in host mode, uses its home folder, and the
+  without a valid entry uses only its container home folder, and the
   engine logs a warning when the file is missing or an entry isn't valid.
-- A running container uses only what it mounts. One launched in host mode stays
-  on its home folders when the mode changes to accounts. One launched in
-  accounts mode keeps its previous Claude account when the default moves to an
-  account made after the launch, because that account has no `sessions` mount
-  there. The server logs this. Restart the container to apply the change. When
-  a default moves, the server also moves the container's home links, so a bare
-  CLI in a shell and the engine use the same account.
+- Accounts are self-contained under `DATA_DIR/accounts`. The container mounts
+  that directory and the shared transcript store, without the host user's
+  `.claude`, `.claude.json`, `.codex`, or `.copilot`. A box configured with
+  the retired `host` setting fails with an account setup error. Existing
+  containers must be recreated after converting their accounts.
+- Global instructions live in `accounts/AGENTS.md`. Claude account instructions
+  live in their own `AGENTS.md`; `CLAUDE.md` includes global text first and
+  account text second. Codex and Copilot use editable `instructions.md` and
+  generated `AGENTS.md` or `copilot-instructions.md`. One builder expands
+  include lines relative to their source, stops at depth 3, reports missing
+  files, and lists sources in the output. The server runs it before box and
+  session starts and through the account preparation operation used by
+  `aio claude`, `aio codex`, and `aio copilot`. These host commands select
+  account folders through vendor environment variables and remove server
+  tokens from the child environment. See [Accounts](accounts.md).
 - These measures control what a process inherits; they aren't isolation.
   Every process in the container runs as one user, so repository code that
   the review runs, such as a test command or a reproduction script, can
@@ -342,14 +350,13 @@ which parts are untested on a real macOS or Windows host:
   The socket's directory is mounted read-only, and the container user can't
   become root, so a process in the container can't remove or replace the
   socket or the `aio-secret` command. See [Secrets](secrets.md).
-- **Vendor sign-ins.** Every container mounts your `~/.claude`,
-  `~/.claude.json`, `~/.codex`, and `~/.copilot`, so any process in any
-  project container can read and change the Claude, Codex, and Copilot
-  sign-ins stored there.
+- **Vendor sign-ins.** Containers mount account folders under
+  `DATA_DIR/accounts`, so processes in a project container can read and
+  change the sign-ins stored in those accounts. The host user's personal
+  vendor folders aren't mounted.
 - **Root in the container.** Docker runs without a user namespace, so
   container root is host root on every bind mount: the project root,
-  `~/.claude`, `~/.claude.json`, `~/.codex`, `~/.copilot`, and every project
-  and global mount. Container root could leave a setuid-root file there, or a
+  account folders, the transcript store, and every project and global mount. Container root could leave a setuid-root file there, or a
   root-owned one you can't change. Docker has no `nosuid` option for bind
   mounts, and a capability drop doesn't help, because root owns the files it
   creates and needs no capability to set the setuid bit on them. For that
