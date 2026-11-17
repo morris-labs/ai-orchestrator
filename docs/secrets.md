@@ -238,10 +238,9 @@ secret from the agent or from repository code. List only the secrets a
 project needs.
 
 The vendor sign-ins aren't 1Password secrets and don't go through the
-broker. Every container mounts your `~/.claude`, `~/.codex`, and `~/.copilot`
-directories, so any process in any project container can read and change
-the Claude, Codex, and Copilot sign-ins stored there, such as
-`~/.claude/.credentials.json` and `~/.codex/auth.json`.
+broker. Containers mount `DATA_DIR/accounts`, so processes in a project
+container can read and change sign-ins in those account folders. The host
+user's personal vendor directories aren't mounted. See [Accounts](accounts.md).
 
 ## Connect 1Password
 
@@ -308,7 +307,7 @@ values in its environment. It shows as stale, with
 The container user has no passwordless `sudo`. Docker runs without a user
 namespace, so root in a container is root on the host's bind mounts, and an
 agent with root could leave a setuid-root file in your project or in
-`~/.claude`. For details, see "Container boundaries" in
+an account folder. For details, see "Container boundaries" in
 [Architecture](architecture.md#container-boundaries).
 
 By default, `sudo` is off in every container: the container has no `sudo`

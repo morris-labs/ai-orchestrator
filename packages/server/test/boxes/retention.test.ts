@@ -105,14 +105,14 @@ describe("ensureRetention", () => {
 });
 
 describe("protected retention value", () => {
-  it("takes the host's value, else the setting, else 3650", () => {
+  it("uses the configured value or 3650 regardless of host settings", () => {
     const home = tempDir("aio-ret-home-");
     expect(protectedRetentionDays(home, undefined)).toBe(3650);
     expect(protectedRetentionDays(home, 500)).toBe(500);
     fs.mkdirSync(path.join(home, ".claude"));
     fs.writeFileSync(path.join(home, ".claude", "settings.json"), '{"cleanupPeriodDays": 9999}');
     expect(hostRetentionDays(home)).toBe(9999);
-    expect(protectedRetentionDays(home, 500)).toBe(9999);
+    expect(protectedRetentionDays(home, 500)).toBe(500);
   });
 
   it("ignores a host value that isn't a positive whole number", () => {
@@ -172,7 +172,7 @@ describe("starting a Claude session on an account", () => {
     expect(sessionStarts(h)).toBe(1);
   });
 
-  it("uses the host's value, and the setting when the host sets none", async () => {
+  it("uses the configured retention even when the host has different settings", async () => {
     const h = makeHarness();
     const dir = addAccount(h, "personal");
     h.core.settings.patch({ transcriptRetentionDays: 400 });
@@ -182,7 +182,7 @@ describe("starting a Claude session on an account", () => {
     fs.mkdirSync(path.join(h.home, ".claude"), { recursive: true });
     fs.writeFileSync(path.join(h.home, ".claude", "settings.json"), '{"cleanupPeriodDays": 5000}');
     await h.core.boxes.start(a.id);
-    expect(readJson(path.join(dir, "settings.json")).cleanupPeriodDays).toBe(5000);
+    expect(readJson(path.join(dir, "settings.json")).cleanupPeriodDays).toBe(400);
   });
 
   it("raises a low value on every start", async () => {
@@ -205,20 +205,18 @@ describe("starting a Claude session on an account", () => {
     expect(sessionStarts(h)).toBe(0);
   });
 
-  it("refuses to start on a settings.json linked to a host file without the key, and leaves that file alone", async () => {
+  it("converts linked settings before launch and leaves the host file alone", async () => {
     const h = makeHarness();
     const dir = addAccount(h, "personal");
     const hostFile = path.join(h.home, ".claude", "settings.json");
     fs.mkdirSync(path.dirname(hostFile), { recursive: true });
     fs.writeFileSync(hostFile, JSON.stringify({ model: "opus" }));
-    const r = h.core.accounts.relink();
-    expect(r.accounts[0]?.config.entries["settings.json"]).toBe("linked");
-    await expect(
-      h.core.boxes.create({ targetDir: h.dir("a"), layout: "root" }),
-    ).rejects.toMatchObject({ code: "invalid_state", message: /doesn't rewrite your host file/ });
-    expect(sessionStarts(h)).toBe(0);
+    fs.symlinkSync(hostFile, path.join(dir, "settings.json"));
+    h.core.accounts.relink();
+    await h.core.boxes.create({ targetDir: h.dir("a"), layout: "root" });
+    expect(sessionStarts(h)).toBe(1);
     expect(readJson(hostFile)).toEqual({ model: "opus" });
-    expect(fs.lstatSync(path.join(dir, "settings.json")).isSymbolicLink()).toBe(true);
+    expect(fs.lstatSync(path.join(dir, "settings.json")).isSymbolicLink()).toBe(false);
   });
 
   it("starts on a linked settings.json whose host file keeps transcripts long enough", async () => {

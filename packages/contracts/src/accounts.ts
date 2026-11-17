@@ -164,6 +164,20 @@ export const AccountUpdateSchema = z
   .strict();
 export type AccountUpdate = z.infer<typeof AccountUpdateSchema>;
 
+/** Prepares the account folder used by a host vendor CLI. */
+export const AccountPrepareRequestSchema = z
+  .object({
+    vendor: PlatformSchema,
+    name: AccountNameSchema.optional(),
+  })
+  .strict();
+export const AccountPrepareResultSchema = z.object({
+  dir: z.string().min(1),
+  problems: z.array(z.string()),
+});
+export type AccountPrepareRequest = z.infer<typeof AccountPrepareRequestSchema>;
+export type AccountPrepareResult = z.infer<typeof AccountPrepareResultSchema>;
+
 /** The body of `accounts.seed`. */
 export const AccountSeedRequestSchema = z
   .object({
@@ -176,6 +190,8 @@ export const AccountSeedRequestSchema = z
     name: AccountNameSchema.default(DEFAULT_SEED_ACCOUNT_NAME),
     /** Reports what seeding would copy, and copies nothing. */
     dryRun: z.boolean().default(false),
+    /** Copies Claude instructions, settings, skills and plugins once. */
+    copyHostSetup: z.boolean().default(false),
   })
   .strict();
 export type AccountSeedRequest = z.input<typeof AccountSeedRequestSchema>;
@@ -199,10 +215,12 @@ export const AccountSeedEntrySchema = z.object({
   bytes: CountSchema,
   /** Symbolic links copied as links, never followed. */
   symlinks: CountSchema,
-  /** Sign-in files left out, by path relative to the host folder. Never their contents. */
+  /** Paths left out of a copy. Never their contents. */
   leftOut: z.array(z.string()),
   /** Sockets, pipes, and devices, which a copy can't hold, by relative path. */
   skippedSpecial: z.array(z.string()),
+  /** Missing links and cycles skipped during a one-time copy. */
+  notes: z.array(z.string()).optional(),
   /** Whether seeding made this account its vendor's default. */
   madeDefault: z.boolean(),
   /** Usage samples relabeled from the legacy label to this account's id. */
@@ -264,7 +282,10 @@ export const AccountRelinkEntrySchema = z.object({
    * was left alone).
    */
   config: z.object({
-    entries: z.record(z.string(), z.enum(["unchanged", "linked", "replaced-identical", "local"])),
+    entries: z.record(
+      z.string(),
+      z.enum(["unchanged", "linked", "replaced-identical", "local", "copied"]),
+    ),
     errors: z.record(z.string(), z.string()),
   }),
 });
