@@ -61,15 +61,12 @@ import {
   protectedRetentionDays,
   retentionWarnings,
 } from "./retention.js";
-import { linkUserConfig, userConfigWarnings } from "./userConfig.js";
+import { copyLinkedConfig } from "./userConfig.js";
 import {
-  hostProjectsRoot,
   linkProjectsToStore,
   projectsLinkState,
   projectsLinkWarning,
   resolveStore,
-  sameLocation,
-  storeEntryCount,
   type LinkOutcome,
 } from "./store.js";
 
@@ -200,27 +197,6 @@ export class AccountService {
     }
   }
 
-  /**
-   * Links the shared user-config entries of the host's `~/.claude` into a
-   * Claude account folder. Returns a note when it linked or couldn't link
-   * something, for the caller's report.
-   */
-  private linkConfig(dir: string): string | undefined {
-    const r = linkUserConfig(dir, homePaths(this.env).claudeDir);
-    const linked = Object.entries(r.entries)
-      .filter(([, o]) => o === "linked" || o === "replaced-identical")
-      .map(([n]) => n);
-    const local = Object.entries(r.entries)
-      .filter(([, o]) => o === "local")
-      .map(([n]) => n);
-    const failed = Object.entries(r.errors).map(([n, m]) => `${n} (${m})`);
-    const parts: string[] = [];
-    if (linked.length > 0) parts.push(`Linked ${linked.join(", ")} to the host's ~/.claude.`);
-    if (local.length > 0) parts.push(`Kept the local ${local.join(", ")}.`);
-    if (failed.length > 0) parts.push(`Couldn't link ${failed.join(", ")}.`);
-    return parts.length > 0 ? parts.join(" ") : undefined;
-  }
-
   /** The least `cleanupPeriodDays` an account keeps. See `retention.ts`. */
   private retentionDays(): number {
     return protectedRetentionDays(
@@ -264,14 +240,6 @@ export class AccountService {
    */
   assertCanUseAccounts(next: GlobalSettings): void {
     const store = this.resolvedStore(next);
-    const host = hostProjectsRoot(this.env);
-    if (host !== undefined && !sameLocation(host, store.root) && storeEntryCount(host) > 0) {
-      throw new ApiError(
-        "conflict",
-        `The host's ~/.claude/projects leads to ${host}, which holds conversations outside the transcript store ${store.root}. Boxes in accounts mode wouldn't find them. Run "aio transcripts adopt" first.`,
-        { store: store.root, host },
-      );
-    }
     const bad = this.options.repo
       .list()
       .filter((a) => a.vendor === "claude")
@@ -304,7 +272,8 @@ export class AccountService {
       if (!isDirectory(dir)) continue;
       const before = projectsLinkState(dir, store.root);
       const outcome = linkProjectsToStore(dir, store.root);
-      const config = linkUserConfig(dir, homePaths(this.env).claudeDir);
+      const host = homePaths(this.env);
+      const config = copyLinkedConfig(dir, [host.claudeDir, host.codexDir, host.copilotDir]);
       accounts.push({ id: a.id, before, outcome, config });
     }
     return { store: store.root, source: store.source, accounts };
@@ -358,7 +327,6 @@ export class AccountService {
       const warning = projectsLinkWarning(projectsLinkState(dir, store), dir, store);
       if (warning) warnings.push(warning);
       warnings.push(...retentionWarnings(dir, this.retentionDays()));
-      warnings.push(...userConfigWarnings(dir, homePaths(this.env).claudeDir));
       if (
         preacceptClaudeAccount(dir, { trustDirs: [], installMethod: false, dryRun: true })
           .linkedMissing.length > 0
@@ -415,9 +383,6 @@ export class AccountService {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     if (c.vendor === "claude") {
       linkProjectsToStore(dir, this.storeRoot());
-      // Link first: a linked settings.json is the host's, which the next two
-      // steps check and never write.
-      this.linkConfig(dir);
       preacceptClaudeAccount(dir);
       this.keepTranscripts(dir);
     }
@@ -511,12 +476,20 @@ export class AccountService {
       }
     }
     fs.chmodSync(dest, 0o700);
+    const host = homePaths(this.env);
+    const converted = copyLinkedConfig(
+      dest,
+      [host.claudeDir, host.codexDir, host.copilotDir],
+      accountsRoot,
+    );
+    warnings.push(
+      ...Object.entries(converted.errors).map(([entry, message]) => `${entry}: ${message}`),
+    );
     if (req.vendor === "claude") {
       const store = this.storeRoot();
       const note = this.linkNote(linkProjectsToStore(dest, store), store);
       if (note) warnings.push(note);
-      const linked = this.linkConfig(dest);
-      if (linked) warnings.push(linked);
+
       const pre = preacceptClaudeAccount(dest);
       if (pre.changed.length > 0) {
         warnings.push(`Set ${pre.changed.join(", ")} for the first start.`);
@@ -708,8 +681,6 @@ export class AccountService {
           const store = this.storeRoot();
           const note = this.linkNote(linkProjectsToStore(dir, store), store);
           if (note) log(`  ${note}\r\n`);
-          const linked = this.linkConfig(dir);
-          if (linked) log(`  ${linked}\r\n`);
           const pre = preacceptClaudeAccount(dir);
           if (pre.changed.length > 0) {
             log(`  Set ${pre.changed.join(", ")} for the first start.\r\n`);

@@ -240,18 +240,18 @@ describe("check warning and relink", () => {
 });
 
 describe("switching to accounts mode", () => {
-  it("refuses while the host's projects holds transcripts outside the store", () => {
+  it("switches using account projects without consulting the host transcript folder", () => {
     const s = setup({ host: "dir" });
     s.accounts.create({ vendor: "claude", name: "work" });
-    expect(() => s.settings.patch({ accountsMode: "accounts" })).toThrow(/transcripts adopt/);
-    expect(s.settings.get().accountsMode).toBe("host");
+    expect(() => s.settings.patch({ accountsMode: "accounts" })).not.toThrow();
+    expect(s.settings.get().accountsMode).toBe("accounts");
   });
 
-  it("refuses when the transcriptStore override differs from the host's folder", () => {
+  it("requires relink when the transcriptStore override changes", () => {
     const s = setup({ host: "chain" });
     s.accounts.create({ vendor: "claude", name: "work" });
     s.settings.patch({ transcriptStore: tempDir("aio-override-") });
-    expect(() => s.settings.patch({ accountsMode: "accounts" })).toThrow(/transcripts adopt/);
+    expect(() => s.settings.patch({ accountsMode: "accounts" })).toThrow(/accounts relink/);
   });
 
   it("passes when the host's chain ends at the store", () => {
