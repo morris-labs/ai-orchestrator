@@ -116,7 +116,7 @@ describe("temporary directories", () => {
   });
 });
 
-describe("seed deny-list", () => {
+describe("seed explicit sources", () => {
   function sources(): SeedSources {
     const root = tempDir("aio-deny-");
     const claudeDir = path.join(root, ".claude");
@@ -135,36 +135,18 @@ describe("seed deny-list", () => {
     return { claudeDir, claudeJson, codexDir: path.join(root, ".codex"), copilotDir };
   }
 
-  function holdsSecret(dir: string): boolean {
-    const walk = (d: string): boolean =>
-      fs.readdirSync(d).some((n) => {
-        const p = path.join(d, n);
-        const st = fs.lstatSync(p);
-        if (st.isDirectory()) return walk(p);
-        return st.isFile() && fs.readFileSync(p, "utf8").includes(SECRET);
-      });
-    return walk(dir);
-  }
-
-  it("leaves out agent.env and .env files at any depth", async () => {
+  it("copies only explicit sign-ins by default, leaving unrelated env files and plugins behind", async () => {
     const dest = path.join(tempDir("aio-seed-"), "claude", "personal");
-    const r = await seedFolder("claude", sources(), dest);
-    expect(holdsSecret(dest)).toBe(false);
-    expect(r.leftOut).toEqual(
-      expect.arrayContaining([
-        ".credentials.json",
-        "agent.env",
-        "plugins/x/.env",
-        "plugins/x/prod.env",
-      ]),
-    );
+    await seedFolder("claude", sources(), dest);
+    expect(fs.readFileSync(path.join(dest, ".credentials.json"), "utf8")).toBe(SECRET);
+    expect(fs.existsSync(path.join(dest, "agent.env"))).toBe(false);
+    expect(fs.existsSync(path.join(dest, "plugins"))).toBe(false);
   });
-
-  it("leaves out Copilot's config.json, which holds the token", async () => {
+  it("copies Copilot sign-in without session history", async () => {
     const dest = path.join(tempDir("aio-seed-"), "copilot", "personal");
     await seedFolder("copilot", sources(), dest);
-    expect(fs.existsSync(path.join(dest, "config.json"))).toBe(false);
-    expect(fs.existsSync(path.join(dest, "session-store.db"))).toBe(true);
+    expect(fs.readFileSync(path.join(dest, "config.json"), "utf8")).toBe(SECRET);
+    expect(fs.existsSync(path.join(dest, "session-store.db"))).toBe(false);
   });
 
   it("copies a linked ~/.claude.json as a file and sets installMethod to global", async () => {

@@ -1,8 +1,7 @@
 // Accounts: records in the `accounts` table plus one folder each under
 // `DATA_DIR/accounts/VENDOR/NAME`. See `docs/accounts.md`:
-// the records, their folders, seeding, and the sign-in check. Box launches
-// don't use accounts yet; they mount the host folders whatever
-// `accountsMode` says.
+// the records, their self-contained folders, instructions, explicit seeding,
+// legacy-link migration, and the sign-in check.
 import fs from "node:fs";
 import path from "node:path";
 import {
@@ -53,6 +52,7 @@ import {
   sourceDirOf,
   type SeedSources,
 } from "./seed.js";
+import { buildAccountInstructions, ensureAccountInstructions } from "./instructions.js";
 import { adoptTranscripts } from "./adopt.js";
 import { BYPASS_ACCEPTED_KEY, preacceptClaudeAccount } from "./preaccept.js";
 import {
@@ -61,15 +61,12 @@ import {
   protectedRetentionDays,
   retentionWarnings,
 } from "./retention.js";
-import { linkUserConfig, userConfigWarnings } from "./userConfig.js";
+import { copyLinkedConfig, hostConfigLinks } from "./userConfig.js";
 import {
-  hostProjectsRoot,
   linkProjectsToStore,
   projectsLinkState,
   projectsLinkWarning,
   resolveStore,
-  sameLocation,
-  storeEntryCount,
   type LinkOutcome,
 } from "./store.js";
 
@@ -200,25 +197,37 @@ export class AccountService {
     }
   }
 
-  /**
-   * Links the shared user-config entries of the host's `~/.claude` into a
-   * Claude account folder. Returns a note when it linked or couldn't link
-   * something, for the caller's report.
-   */
-  private linkConfig(dir: string): string | undefined {
-    const r = linkUserConfig(dir, homePaths(this.env).claudeDir);
-    const linked = Object.entries(r.entries)
-      .filter(([, o]) => o === "linked" || o === "replaced-identical")
-      .map(([n]) => n);
-    const local = Object.entries(r.entries)
-      .filter(([, o]) => o === "local")
-      .map(([n]) => n);
-    const failed = Object.entries(r.errors).map(([n, m]) => `${n} (${m})`);
-    const parts: string[] = [];
-    if (linked.length > 0) parts.push(`Linked ${linked.join(", ")} to the host's ~/.claude.`);
-    if (local.length > 0) parts.push(`Kept the local ${local.join(", ")}.`);
-    if (failed.length > 0) parts.push(`Couldn't link ${failed.join(", ")}.`);
-    return parts.length > 0 ? parts.join(" ") : undefined;
+  private legacyLinks(dir: string): string[] {
+    const host = homePaths(this.env);
+    return hostConfigLinks(dir, [host.claudeDir, host.claudeJson, host.codexDir, host.copilotDir]);
+  }
+
+  private relinkNotice(links: readonly string[]): string {
+    return `Legacy host configuration links need conversion: ${links.join(", ")}. Run "aio accounts relink" before using this account.`;
+  }
+
+  private ensureInstructions(vendor: Platform, dir: string): void {
+    ensureAccountInstructions(dir, vendor);
+  }
+
+  /** Resolve an account and prepare the same instructions for host and box starts. */
+  prepareAccount(vendor: Platform, name?: string): { dir: string; problems: string[] } {
+    const id =
+      name === undefined
+        ? this.options.settings.get().accountDefaults[vendor]
+        : accountId(vendor, name);
+    if (!id)
+      throw new ApiError("not_found", `No default ${vendor} account. Set up an account first.`);
+    const account = this.get(id);
+    if (account.vendor !== vendor)
+      throw new ApiError("validation", `Account ${id} is not a ${vendor} account.`);
+    const dir = this.dirOf(vendor, account.name);
+    if (!isDirectory(dir))
+      throw new ApiError("not_found", `The account folder ${dir} doesn't exist.`);
+    const links = this.legacyLinks(dir);
+    if (links.length) throw new ApiError("invalid_state", this.relinkNotice(links));
+    this.ensureInstructions(vendor, dir);
+    return { dir, problems: vendor === "claude" ? [] : buildAccountInstructions(dir, vendor) };
   }
 
   /** The least `cleanupPeriodDays` an account keeps. See `retention.ts`. */
@@ -255,23 +264,13 @@ export class AccountService {
   }
 
   /**
-   * Refuses to switch to accounts mode when the boxes would lose their
-   * conversations: the host's `~/.claude/projects` holds transcripts outside
-   * the store, or a Claude account's `projects` doesn't lead to the store.
-   * Both folders are compared by real path, so a chain of links that ends at
-   * the store counts as the store.
+   * Refuses to switch to accounts mode when a Claude account's projects
+   * entry does not lead to the transcript store. Host configuration does
+   * not influence account readiness.
    * Throws `conflict` and names the fix.
    */
   assertCanUseAccounts(next: GlobalSettings): void {
     const store = this.resolvedStore(next);
-    const host = hostProjectsRoot(this.env);
-    if (host !== undefined && !sameLocation(host, store.root) && storeEntryCount(host) > 0) {
-      throw new ApiError(
-        "conflict",
-        `The host's ~/.claude/projects leads to ${host}, which holds conversations outside the transcript store ${store.root}. Boxes in accounts mode wouldn't find them. Run "aio transcripts adopt" first.`,
-        { store: store.root, host },
-      );
-    }
     const bad = this.options.repo
       .list()
       .filter((a) => a.vendor === "claude")
@@ -290,8 +289,8 @@ export class AccountService {
   }
 
   /**
-   * `accounts.relink`: points every Claude account's `projects` entry at the
-   * transcript store, replacing a link that dangles or leads elsewhere. Never
+   * `accounts.relink`: copies legacy host links into account-owned entries
+   * and points Claude accounts' projects at the transcript store. Never
    * deletes a real `projects` folder that holds transcripts; the result says
    * `kept-directory` for it.
    */
@@ -299,12 +298,18 @@ export class AccountService {
     const store = this.resolvedStore();
     const accounts: AccountRelinkResult["accounts"] = [];
     for (const a of this.options.repo.list()) {
-      if (a.vendor !== "claude") continue;
-      const dir = this.dirOf("claude", a.name);
+      const dir = this.dirOf(a.vendor, a.name);
       if (!isDirectory(dir)) continue;
-      const before = projectsLinkState(dir, store.root);
-      const outcome = linkProjectsToStore(dir, store.root);
-      const config = linkUserConfig(dir, homePaths(this.env).claudeDir);
+      const host = homePaths(this.env);
+      const config = copyLinkedConfig(dir, [
+        host.claudeDir,
+        host.claudeJson,
+        host.codexDir,
+        host.copilotDir,
+      ]);
+      this.ensureInstructions(a.vendor, dir);
+      const before = a.vendor === "claude" ? projectsLinkState(dir, store.root) : "missing";
+      const outcome = a.vendor === "claude" ? linkProjectsToStore(dir, store.root) : "unchanged";
       accounts.push({ id: a.id, before, outcome, config });
     }
     return { store: store.root, source: store.source, accounts };
@@ -352,13 +357,13 @@ export class AccountService {
   view(account: Account): AccountView {
     const dir = this.dirOf(account.vendor, account.name);
     const dirExists = isDirectory(dir);
-    const warnings: string[] = [];
-    if (account.vendor === "claude" && dirExists) {
+    const links = dirExists ? this.legacyLinks(dir) : [];
+    const warnings: string[] = links.length ? [this.relinkNotice(links)] : [];
+    if (account.vendor === "claude" && dirExists && !links.length) {
       const store = this.storeRoot();
       const warning = projectsLinkWarning(projectsLinkState(dir, store), dir, store);
       if (warning) warnings.push(warning);
       warnings.push(...retentionWarnings(dir, this.retentionDays()));
-      warnings.push(...userConfigWarnings(dir, homePaths(this.env).claudeDir));
       if (
         preacceptClaudeAccount(dir, { trustDirs: [], installMethod: false, dryRun: true })
           .linkedMissing.length > 0
@@ -413,11 +418,9 @@ export class AccountService {
       );
     }
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    this.ensureInstructions(c.vendor, dir);
     if (c.vendor === "claude") {
       linkProjectsToStore(dir, this.storeRoot());
-      // Link first: a linked settings.json is the host's, which the next two
-      // steps check and never write.
-      this.linkConfig(dir);
       preacceptClaudeAccount(dir);
       this.keepTranscripts(dir);
     }
@@ -511,12 +514,25 @@ export class AccountService {
       }
     }
     fs.chmodSync(dest, 0o700);
+    const host = homePaths(this.env);
+    const converted = copyLinkedConfig(
+      dest,
+      [host.claudeDir, host.claudeJson, host.codexDir, host.copilotDir],
+      accountsRoot,
+    );
+    if (Object.keys(converted.errors).length) {
+      throw new ApiError(
+        "validation",
+        `Cannot make the imported account self-contained: ${Object.entries(converted.errors)
+          .map(([entry, message]) => `${entry}: ${message}`)
+          .join("; ")}. Its files are retained at ${dest}; fix the links before importing again.`,
+      );
+    }
     if (req.vendor === "claude") {
       const store = this.storeRoot();
       const note = this.linkNote(linkProjectsToStore(dest, store), store);
       if (note) warnings.push(note);
-      const linked = this.linkConfig(dest);
-      if (linked) warnings.push(linked);
+
       const pre = preacceptClaudeAccount(dest);
       if (pre.changed.length > 0) {
         warnings.push(`Set ${pre.changed.join(", ")} for the first start.`);
@@ -529,6 +545,7 @@ export class AccountService {
     if (req.vendor === "codex" && (await addCodexFileStore(path.join(dest, "config.toml")))) {
       warnings.push(`Added ${CODEX_STORE_SETTING} to config.toml.`);
     }
+    this.ensureInstructions(req.vendor, dest);
     const now = this.env.now().toISOString();
     const account: Account = {
       id,
@@ -595,6 +612,7 @@ export class AccountService {
     const account = this.get(id);
     const dir = this.dirOf(account.vendor, account.name);
     if (!isDirectory(dir)) throw new ApiError("conflict", `The folder ${dir} doesn't exist.`);
+    if (this.legacyLinks(dir).length) return this.view(account);
     const checkedAt = this.env.now().toISOString();
     const command = signInStatusCommand(account.vendor);
     let signIn: AccountSignIn = { state: "unknown", checkedAt };
@@ -702,14 +720,15 @@ export class AccountService {
           continue;
         }
         log(`${req.dryRun ? "Would copy" : "Copying"} ${source} to ${dir}.\r\n`);
-        const copied = await seedFolder(vendor, sources, dir, { dryRun: req.dryRun });
+        const copied = await seedFolder(vendor, sources, dir, {
+          dryRun: req.dryRun,
+          copyHostSetup: req.copyHostSetup,
+        });
         for (const note of copied.notes) log(`  ${note}\r\n`);
         if (vendor === "claude" && !req.dryRun) {
           const store = this.storeRoot();
           const note = this.linkNote(linkProjectsToStore(dir, store), store);
           if (note) log(`  ${note}\r\n`);
-          const linked = this.linkConfig(dir);
-          if (linked) log(`  ${linked}\r\n`);
           const pre = preacceptClaudeAccount(dir);
           if (pre.changed.length > 0) {
             log(`  Set ${pre.changed.join(", ")} for the first start.\r\n`);
@@ -717,8 +736,9 @@ export class AccountService {
           const kept = this.keepTranscripts(dir);
           if (kept) log(`  ${kept}\r\n`);
         }
+        if (!req.dryRun) this.ensureInstructions(vendor, dir);
         if (copied.leftOut.length > 0) {
-          log(`  Left out the sign-in files: ${copied.leftOut.join(", ")}.\r\n`);
+          log(`  Left out: ${copied.leftOut.join(", ")}.\r\n`);
         }
         const hasDefault = this.options.settings.get().accountDefaults[vendor] !== undefined;
         let madeDefault = false;
@@ -731,7 +751,7 @@ export class AccountService {
             name: req.name,
             label: req.name,
             overflow: false,
-            signIn: { state: "not_signed_in" },
+            signIn: { state: "unknown" },
             seededFrom: source,
             createdAt: now,
             updatedAt: now,
@@ -753,6 +773,7 @@ export class AccountService {
           symlinks: copied.symlinks,
           leftOut: copied.leftOut,
           skippedSpecial: copied.skippedSpecial,
+          notes: copied.notes,
           madeDefault,
           usageRelabeled,
         });

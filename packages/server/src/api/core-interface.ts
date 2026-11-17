@@ -8,6 +8,8 @@
 // `ApiError` from `./errors.ts`); the API maps it to a status code.
 import type {
   AccountCreate,
+  AccountPrepareRequest,
+  AccountPrepareResult,
   AccountImportRequest,
   AccountImportResult,
   AccountRelinkResult,
@@ -219,6 +221,7 @@ export interface CoreSshRemotes {
 
 /** Accounts: records plus folders under `DATA_DIR/accounts`. */
 export interface CoreAccounts {
+  prepare(input: AccountPrepareRequest): Promise<AccountPrepareResult>;
   list(): Promise<AccountView[]>;
   /** Throws `not_found`. */
   get(id: string): Promise<AccountView>;

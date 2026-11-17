@@ -264,6 +264,13 @@ const cases: Case[] = [
     status: 201,
   },
   {
+    key: "accounts.prepare",
+    method: "POST",
+    url: `${V1}/accounts/prepare`,
+    body: { vendor: "claude" },
+    status: 200,
+  },
+  {
     key: "accounts.seed",
     method: "POST",
     url: `${V1}/accounts/seed`,
