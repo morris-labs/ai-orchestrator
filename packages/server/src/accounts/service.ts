@@ -53,6 +53,7 @@ import {
   sourceDirOf,
   type SeedSources,
 } from "./seed.js";
+import { ensureAccountInstructions } from "./instructions.js";
 import { adoptTranscripts } from "./adopt.js";
 import { BYPASS_ACCEPTED_KEY, preacceptClaudeAccount } from "./preaccept.js";
 import {
@@ -197,6 +198,10 @@ export class AccountService {
     }
   }
 
+  private ensureInstructions(vendor: Platform, dir: string): void {
+    ensureAccountInstructions(dir, vendor);
+  }
+
   /** The least `cleanupPeriodDays` an account keeps. See `retention.ts`. */
   private retentionDays(): number {
     return protectedRetentionDays(
@@ -267,9 +272,10 @@ export class AccountService {
     const store = this.resolvedStore();
     const accounts: AccountRelinkResult["accounts"] = [];
     for (const a of this.options.repo.list()) {
-      if (a.vendor !== "claude") continue;
-      const dir = this.dirOf("claude", a.name);
+      const dir = this.dirOf(a.vendor, a.name);
       if (!isDirectory(dir)) continue;
+      this.ensureInstructions(a.vendor, dir);
+      if (a.vendor !== "claude") continue;
       const before = projectsLinkState(dir, store.root);
       const outcome = linkProjectsToStore(dir, store.root);
       const host = homePaths(this.env);
@@ -381,6 +387,7 @@ export class AccountService {
       );
     }
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    this.ensureInstructions(c.vendor, dir);
     if (c.vendor === "claude") {
       linkProjectsToStore(dir, this.storeRoot());
       preacceptClaudeAccount(dir);
@@ -502,6 +509,7 @@ export class AccountService {
     if (req.vendor === "codex" && (await addCodexFileStore(path.join(dest, "config.toml")))) {
       warnings.push(`Added ${CODEX_STORE_SETTING} to config.toml.`);
     }
+    this.ensureInstructions(req.vendor, dest);
     const now = this.env.now().toISOString();
     const account: Account = {
       id,

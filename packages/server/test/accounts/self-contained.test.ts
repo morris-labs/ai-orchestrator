@@ -15,6 +15,7 @@ describe("self-contained accounts", () => {
     const host = path.join(h.home, ".claude");
     write(path.join(host, "CLAUDE.md"), "host instructions\n");
     write(path.join(host, "skills", "example.md"), "host skill\n");
+    fs.rmSync(path.join(view.dir, "CLAUDE.md"));
     fs.symlinkSync(path.join(host, "CLAUDE.md"), path.join(view.dir, "CLAUDE.md"));
     fs.symlinkSync(path.join(host, "skills"), path.join(view.dir, "skills"));
     write(path.join(view.dir, "local.md"), "own rules\n");
