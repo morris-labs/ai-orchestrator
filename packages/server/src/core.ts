@@ -127,13 +127,14 @@ export function createServerCore(options: CoreOptions): ServerCore {
   let hooks: CoreHooks = defaultHooks();
   const getHooks = () => hooks;
   const imageVersions = new ImageVersions(docker);
-  const projects = new ProjectService({
+  const projects: ProjectService = new ProjectService({
     env,
     repos: db,
     docker,
     events,
     settings,
     hooks: getHooks,
+    prepareAccount: (vendor, name) => accounts.prepareAccount(vendor, name),
     mutex: new KeyedMutex(),
     imageVersions,
     engineVersion: options.engineVersion,
@@ -144,7 +145,7 @@ export function createServerCore(options: CoreOptions): ServerCore {
     brokerTransport: options.brokerTransport,
     log: options.log,
   });
-  const boxes = new BoxService({
+  const boxes: BoxService = new BoxService({
     env,
     repos: db,
     docker,
@@ -152,10 +153,11 @@ export function createServerCore(options: CoreOptions): ServerCore {
     settings,
     projects,
     hooks: getHooks,
+    prepareAccount: (vendor, name) => accounts.prepareAccount(vendor, name),
     sessionGoneTimeoutMs: options.sessionGoneTimeoutMs,
     log: options.log,
   });
-  const accounts = new AccountService({
+  const accounts: AccountService = new AccountService({
     env,
     repo: db.accounts,
     tempDirs: options.accountTempDirs,
@@ -187,6 +189,12 @@ export function createServerCore(options: CoreOptions): ServerCore {
       const id = account ?? settings.get().accountDefaults.claude;
       if (!id?.startsWith("claude/") || !AccountIdSchema.safeParse(id).success) return undefined;
       const dir = accountDirFor(env, "claude", id.slice("claude/".length));
+      try {
+        const root = fs.realpathSync(homePaths(env).accountsDir);
+        if (!fs.realpathSync(dir).startsWith(`${root}${path.sep}`)) return undefined;
+      } catch {
+        return undefined;
+      }
       return { dir, json: path.join(dir, ".claude.json") };
     },
     getCache: () => settings.get().modelCache,

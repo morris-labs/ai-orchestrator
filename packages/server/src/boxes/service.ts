@@ -107,7 +107,7 @@ export interface BoxServiceDeps {
   settings: SettingsService;
   projects: ProjectService;
   hooks: () => CoreHooks;
-  prepareAccount?: (vendor: Platform, name?: string) => { dir: string; problems: string[] };
+  prepareAccount: (vendor: Platform, name?: string) => { dir: string; problems: string[] };
   /** Milliseconds a stopped session may take to leave the keeper's list. */
   sessionGoneTimeoutMs?: number;
   /** Receives notes about the transcript snapshot. */
@@ -361,8 +361,8 @@ export class BoxService {
     this.requireAccountsMode();
     const account = this.accountFor(box, program);
     if (program === "codex" || program === "copilot") {
-      const prepared = this.deps.prepareAccount?.(program, account.name);
-      for (const problem of prepared?.problems ?? []) this.deps.log?.(`${account.id}: ${problem}`);
+      const prepared = this.deps.prepareAccount(program, account.name);
+      for (const problem of prepared.problems) this.deps.log?.(`${account.id}: ${problem}`);
     }
     const command = buildSessionCommand(program, args, {
       [ACCOUNT_DIR_ENV[program]]: account.containerDir,

@@ -314,7 +314,8 @@ describe("engine account folders", () => {
       claudeDirs: [],
       accountLinkTargets: [],
     });
-    h.core.settings.patch({ accountDefaults: { claude: "claude/personal" } });
+    addAccount(h, "claude/work", h.dir(".ai-orchestrator", "transcripts", "claude"));
+    h.core.settings.patch({ accountDefaults: { claude: "claude/work" } });
     expect(readDirs(h, box.container)).toEqual({});
   });
 

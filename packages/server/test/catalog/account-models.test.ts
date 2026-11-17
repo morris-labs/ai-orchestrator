@@ -40,3 +40,24 @@ describe("models belong to the selected account", () => {
     expect(withoutAccount.defaults).toEqual({ model: "claude-opus-5-5", effort: "high" });
   });
 });
+
+it("never follows legacy account model and settings links into the host vendor folder", async () => {
+  const h = makeHarness();
+  const host = h.dir(".claude");
+  fs.writeFileSync(
+    path.join(h.home, ".claude.json"),
+    JSON.stringify({ additionalModelOptionsCache: [{ value: "host-secret-model" }] }),
+  );
+  fs.writeFileSync(
+    path.join(host, "settings.json"),
+    JSON.stringify({ model: "host-default-model", effortLevel: "low" }),
+  );
+  const account = accountDirFor(h.env, "claude", "fixture");
+  fs.rmSync(path.join(account, "settings.json"));
+  fs.symlinkSync(path.join(host, "settings.json"), path.join(account, "settings.json"));
+  fs.rmSync(path.join(account, ".claude.json"), { force: true });
+  fs.symlinkSync(path.join(h.home, ".claude.json"), path.join(account, ".claude.json"));
+  const models = await h.core.models.list();
+  expect(models.models).not.toContain("host-secret-model");
+  expect(models.defaults).toEqual({ model: "claude-opus-5-5", effort: "high" });
+});

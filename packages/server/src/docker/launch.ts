@@ -28,7 +28,6 @@ import {
   bindSource,
   brokerDirFor,
   engineConfigDirFor,
-  containerHome,
   homePaths,
   hostOsOf,
   hostToContainer,
@@ -293,7 +292,6 @@ export function buildLaunchSpec(
   input: LaunchInput,
   facts: LaunchHostFacts,
 ): ContainerCreateSpec {
-  const home = containerHome(env);
   const paths = homePaths(env);
   const hostOs = hostOsOf(env);
   // A bad path otherwise reaches docker as a bind it refuses with a 400, or

@@ -102,6 +102,7 @@ export interface ProjectServiceDeps {
   events: CoreEvents;
   settings: SettingsService;
   hooks: () => CoreHooks;
+  prepareAccount: (vendor: Platform, name?: string) => { dir: string; problems: string[] };
   mutex: KeyedMutex;
   imageVersions: ImageVersions;
   /** The engine version this server expects in the image. */
@@ -752,6 +753,12 @@ export class ProjectService {
         "conflict",
         'Host mode is no longer supported. Set up accounts and run "aio accounts relink" before starting containers.',
       );
+    for (const vendor of ["codex", "copilot"] as const) {
+      const id = this.deps.settings.get().accountDefaults[vendor];
+      if (!id) continue;
+      const prepared = this.deps.prepareAccount(vendor, id.slice(vendor.length + 1));
+      for (const problem of prepared.problems) this.deps.log?.(`${id}: ${problem}`);
+    }
     return this.deps.mutex.run(projectId, async () => {
       const project = this.get(projectId);
       const { image, imageId } = await this.checkImage();

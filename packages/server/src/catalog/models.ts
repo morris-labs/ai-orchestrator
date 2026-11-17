@@ -107,6 +107,11 @@ export function parseScan(output: string): string[] {
 
 function readJsonObject(file: string): Record<string, unknown> | undefined {
   try {
+    // A legacy per-file link is not account-owned configuration. In
+    // particular, never follow old settings links into a host vendor folder.
+    const accountDir = fs.realpathSync(path.dirname(file));
+    const target = fs.realpathSync(file);
+    if (!target.startsWith(`${accountDir}${path.sep}`)) return undefined;
     const v: unknown = JSON.parse(fs.readFileSync(file, "utf8"));
     return v !== null && typeof v === "object" && !Array.isArray(v)
       ? (v as Record<string, unknown>)

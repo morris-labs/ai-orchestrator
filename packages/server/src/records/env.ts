@@ -31,9 +31,9 @@ export interface HostEnv {
   /** The current time. */
   now: () => Date;
   /**
-   * The Claude transcript store root when boxes run on accounts (the
-   * shared store described in `docs/accounts.md`), else `undefined` and the host's
-   * `~/.claude/projects`. `createServerCore()` sets it from `accountsMode`.
+   * The Claude transcript store root. `createServerCore()` always supplies
+   * the orchestrator's shared account store; standalone legacy import tools
+   * can leave it absent to inspect their explicitly selected source.
    */
   claudeProjectsRoot?: () => string | undefined;
   /**
