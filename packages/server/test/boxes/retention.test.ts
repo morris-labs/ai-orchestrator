@@ -219,7 +219,7 @@ describe("starting a Claude session on an account", () => {
     expect(fs.lstatSync(path.join(dir, "settings.json")).isSymbolicLink()).toBe(false);
   });
 
-  it("starts on a linked settings.json whose host file keeps transcripts long enough", async () => {
+  it("starts after relink without changing the host retention settings", async () => {
     const h = makeHarness();
     addAccount(h, "personal");
     const hostFile = path.join(h.home, ".claude", "settings.json");
