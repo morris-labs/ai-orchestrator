@@ -3,7 +3,7 @@
 // a node that joins a hub with an enrollment code), the default directory for New
 // Box, and the 1Password reference of the containers' sudo password.
 import type { Job, NodeStatus, SetupCheck } from "@aio/contracts";
-import { Button, Dialog, StatusDot, errorMessage, useApiClient } from "@aio/ui";
+import { AccountSeedControl, Button, Dialog, StatusDot, errorMessage, useApiClient } from "@aio/ui";
 import { useCallback, useEffect, useState } from "react";
 import { machinesUnsupported, parseJoinInput } from "../logic/machines";
 import { JobDialog } from "./JobDialog";
@@ -282,6 +282,7 @@ export function SetupWizard({ onClose, onDone, stacked }: SetupWizardProps) {
           setMachineName={setMachineName}
         />
       )}
+      <AccountSeedControl />
       <div className="ab-field">
         <label htmlFor="bx-default-dir">Default directory for New Box</label>
         <input

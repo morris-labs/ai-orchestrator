@@ -4,11 +4,8 @@
 // The copy treats every file as opaque bytes: it never opens a file to read
 // its content, except `config.toml` for Codex, which holds settings, not a
 // sign-in, and Claude's `.claude.json`, which can hold the `/login` API key.
-// Symbolic links stay links and are never followed, except that a linked
-// Codex `config.toml` becomes a regular file before seeding changes it.
-// Sign-in files are left out by name, and the `/login` API key is removed
-// from the copied `.claude.json`, so each account signs in on its own and no
-// two folders hold one credential.
+// Seeding copies only explicit sign-in files unless setup copying is requested.
+// Setup links become real copies, so an account is independent afterward.
 import { constants as fsc } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -23,9 +20,8 @@ export const CODEX_SIGN_IN_FILES = ["auth.json"] as const;
 /**
  * Copilot's sign-in, relative to `COPILOT_HOME`. Phase 0 (check 5) found that
  * without a keychain Copilot stores the token in plain text in `config.json`
- * under `authTokens`, next to settings. Seeding leaves the file out whole,
- * which costs the copied settings but never copies a token. The other names
- * are older candidates, kept in the deny-list.
+ * under `authTokens`, next to settings. Seeding copies the file whole.
+ * The other names cover older sign-in formats.
  */
 export const COPILOT_SIGN_IN_FILES = [
   "config.json",
@@ -34,7 +30,7 @@ export const COPILOT_SIGN_IN_FILES = [
   "registered.tokens.json",
 ] as const;
 
-/** The sign-in files seeding leaves out, per vendor, relative to the folder. */
+/** Explicit sign-in files seeding copies, per vendor, relative to the folder. */
 export const SIGN_IN_FILES: Record<Platform, readonly string[]> = {
   claude: CLAUDE_SIGN_IN_FILES,
   codex: CODEX_SIGN_IN_FILES,
@@ -201,83 +197,81 @@ async function exists(p: string): Promise<boolean> {
   }
 }
 
-/**
- * Builds one vendor's account folder at `dest` from the host folder. It
- * copies into a sibling temporary folder and renames it into place at the
- * end, so a failure leaves no half-made account folder behind.
- *
- * - Claude: leaves out `.credentials.json`, copies `~/.claude.json` over the
- *   copy's own (stale) `.claude.json` without its `primaryApiKey`, or drops
- *   the stale one when the host has none. A `projects` that is a plain directory isn't copied: the
- *   account gets a link to it, so the host and every Claude account share
- *   one transcript store (owner decision 1).
- * - Codex: leaves out `auth.json`, and adds
- *   `cli_auth_credentials_store = "file"` when `config.toml` sets no store,
- *   because a container has no keyring.
- * - Copilot: leaves out `COPILOT_SIGN_IN_FILES`.
+/** Copies only the host sign-in, with an optional one-time Claude setup copy.
+ * Links are followed into independent files; dangling links and cycles are reported.
  */
 export async function seedFolder(
   vendor: Platform,
   sources: SeedSources,
   dest: string,
-  options: { dryRun?: boolean } = {},
+  options: { dryRun?: boolean; copyHostSetup?: boolean } = {},
 ): Promise<SeedFolderResult> {
   const source = sourceDirOf(sources, vendor);
-  const leaveOut = new Set(SIGN_IN_FILES[vendor]);
+  // Resolve the source up front, including for dry runs and missing folders.
+  await fs.realpath(source);
+  const stats = emptyStats();
   const notes: string[] = [];
-  // The transcripts aren't copied. The caller links the account's `projects`
-  // to the transcript store afterwards.
-  const leaveProjects = vendor === "claude";
-  if (leaveProjects) leaveOut.add("projects");
-
-  if (options.dryRun) {
-    const stats = await copyTree(source, dest, { leaveOut, dryRun: true });
-    if (leaveProjects) {
-      stats.leftOut = stats.leftOut.filter((p) => p !== "projects");
-      notes.push("projects would link to the transcript store; transcripts aren't copied.");
-    }
-    return { ...stats, notes };
-  }
-
-  await fs.mkdir(path.dirname(dest), { recursive: true, mode: 0o700 });
   const temp = `${dest}.seeding-${process.pid}-${Date.now()}`;
+  async function copy(
+    src: string,
+    target: string,
+    rel: string,
+    ancestors: ReadonlySet<string>,
+  ): Promise<void> {
+    let real: string;
+    try {
+      real = await fs.realpath(src);
+    } catch (err) {
+      if (["ENOENT", "ELOOP"].includes((err as NodeJS.ErrnoException).code ?? "")) {
+        notes.push(`Skipped missing or cyclic source: ${rel}.`);
+        return;
+      }
+      throw err;
+    }
+    if (ancestors.has(real)) {
+      notes.push(`Skipped cycle: ${rel}.`);
+      return;
+    }
+    const st = await fs.stat(real);
+    if (st.isDirectory()) {
+      if (!options.dryRun) await fs.mkdir(target, { mode: 0o700 });
+      const next = new Set([...ancestors, real]);
+      for (const name of (await fs.readdir(real)).sort())
+        await copy(path.join(real, name), path.join(target, name), `${rel}/${name}`, next);
+    } else if (st.isFile()) {
+      stats.files++;
+      stats.bytes += st.size;
+      if (!options.dryRun) {
+        await fs.copyFile(real, target, fsc.COPYFILE_EXCL | fsc.COPYFILE_FICLONE);
+        await fs.chmod(target, st.mode & 0o777);
+      }
+    } else {
+      stats.skippedSpecial.push(rel);
+    }
+  }
   try {
-    const stats = await copyTree(source, temp, { leaveOut });
-    if (vendor === "claude") {
-      const stale = path.join(temp, ".claude.json");
-      await fs.rm(stale, { force: true });
-      // `~/.claude.json` is a link to `~/.claude/.claude.json` on some hosts:
-      // resolve it, so the copy holds the file's bytes, not a link.
-      const claudeJson = await fs.realpath(sources.claudeJson).catch(() => sources.claudeJson);
-      if (await exists(claudeJson)) {
-        await fs.copyFile(claudeJson, stale, fsc.COPYFILE_FICLONE);
-        await fs.chmod(stale, 0o600);
-        if (await dropClaudeApiKey(stale)) {
-          notes.push("Left out the /login API key (primaryApiKey) from .claude.json.");
-        } else if (!(await exists(stale))) {
-          notes.push(
-            `${sources.claudeJson} isn't valid JSON, so it wasn't copied; Claude Code creates a new .claude.json.`,
-          );
-        }
-        if (await setInstallMethod(stale, CLAUDE_INSTALL_METHOD)) {
-          notes.push(`Set installMethod to ${CLAUDE_INSTALL_METHOD} in .claude.json.`);
-        }
-      } else {
-        notes.push(`${sources.claudeJson} doesn't exist; Claude Code creates a new .claude.json.`);
-      }
-      stats.leftOut = stats.leftOut.filter((p) => p !== "projects");
+    if (!options.dryRun) {
+      await fs.mkdir(path.dirname(dest), { recursive: true, mode: 0o700 });
+      await fs.mkdir(temp, { mode: 0o700 });
     }
-    if (vendor === "codex") {
-      if (await addCodexFileStore(path.join(temp, "config.toml"))) {
-        notes.push(`Added ${CODEX_STORE_SETTING} to config.toml.`);
-      }
+    const entries = [...SIGN_IN_FILES[vendor]] as string[];
+    if (vendor === "claude" && options.copyHostSetup)
+      entries.push("CLAUDE.md", "settings.json", "skills", "plugins");
+    for (const name of entries) {
+      const src = path.join(source, name);
+      if (await exists(src)) await copy(src, path.join(temp, name), name, new Set());
     }
-    // The account folder holds a sign-in once someone signs in: owner only.
-    await fs.chmod(temp, 0o700);
-    await fs.rename(temp, dest);
+    if (vendor === "claude" && (await exists(sources.claudeJson))) {
+      await copy(sources.claudeJson, path.join(temp, ".claude.json"), ".claude.json", new Set());
+      if (!options.dryRun)
+        await setInstallMethod(path.join(temp, ".claude.json"), CLAUDE_INSTALL_METHOD);
+    }
+    if (vendor === "codex" && !options.dryRun)
+      await addCodexFileStore(path.join(temp, "config.toml"));
+    if (!options.dryRun) await fs.rename(temp, dest);
     return { ...stats, notes };
   } catch (err) {
-    await fs.rm(temp, { recursive: true, force: true }).catch(() => undefined);
+    if (!options.dryRun) await fs.rm(temp, { recursive: true, force: true }).catch(() => undefined);
     throw err;
   }
 }

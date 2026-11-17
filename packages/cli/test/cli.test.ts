@@ -1716,11 +1716,18 @@ describe("accounts", () => {
       vendors: ["claude", "copilot"],
       name: "personal",
       dryRun: false,
+      copyHostSetup: false,
     });
     expect(out).toContain("Seeded claude/personal from /home/user/.claude: 10 files (2.0 MiB)");
-    expect(out).toContain("Left out the sign-in files: .credentials.json.");
+    expect(out).toContain("Left out: .credentials.json.");
     expect(out).toContain("Skipped copilot/personal");
-    expect(out).toContain("Sign in to it once from a box.");
+    expect(out).toContain("Copied available host sign-ins.");
+  });
+
+  it("opts into a one-time host setup copy only when requested", async () => {
+    server.on("POST /api/v1/accounts/seed", { status: 202, body: seedJob("finished", report) });
+    expect(await cli(["accounts", "seed", "--copy-host-setup"])).toBe(0);
+    expect(last()?.body).toMatchObject({ copyHostSetup: true });
   });
 
   it("passes a refusal through", async () => {
@@ -2349,26 +2356,55 @@ describe("host vendor commands", () => {
     ["claude", "CLAUDE_CONFIG_DIR"],
     ["codex", "CODEX_HOME"],
     ["copilot", "COPILOT_HOME"],
-  ])("prepares %s's default account, passes vendor arguments and returns its exit code", async (vendor, variable) => {
-    server.on("POST /api/v1/accounts/prepare", {status:200, body:{dir:"/accounts/personal",problems:["Missing include: optional.md"]}});
-    let launched: { argv: string[]; env: NodeJS.ProcessEnv | undefined } | undefined;
-    const code = await runCli([vendor, "--", "--model", "literal spaced value", "--account", "vendor-option"], {
-      env:{AIO_SERVER:server.url,AIO_TOKEN:TOKEN,AIO_SERVER_TOKEN:"other-token",PATH:"/usr/bin",KEEP:"yes"}, home,
-      out:t=>out+=t, err:t=>err+=t,
-      exec:async(argv, options)=>{launched={argv,env:options?.env};return 17;},
-    });
-    expect(code).toBe(17);
-    expect(last()?.body).toEqual({vendor});
-    expect(launched?.argv).toEqual([vendor,"--model","literal spaced value","--account","vendor-option"]);
-    expect(launched?.env).toMatchObject({[variable]:"/accounts/personal",KEEP:"yes"});
-    expect(launched?.env).not.toHaveProperty("AIO_TOKEN");
-    expect(launched?.env).not.toHaveProperty("AIO_SERVER_TOKEN");
-    expect(err).toContain("Missing include: optional.md");
-  });
+  ])(
+    "prepares %s's default account, passes vendor arguments and returns its exit code",
+    async (vendor, variable) => {
+      server.on("POST /api/v1/accounts/prepare", {
+        status: 200,
+        body: { dir: "/accounts/personal", problems: ["Missing include: optional.md"] },
+      });
+      let launched: { argv: string[]; env: NodeJS.ProcessEnv | undefined } | undefined;
+      const code = await runCli(
+        [vendor, "--", "--model", "literal spaced value", "--account", "vendor-option"],
+        {
+          env: {
+            AIO_SERVER: server.url,
+            AIO_TOKEN: TOKEN,
+            AIO_SERVER_TOKEN: "other-token",
+            PATH: "/usr/bin",
+            KEEP: "yes",
+          },
+          home,
+          out: (t) => (out += t),
+          err: (t) => (err += t),
+          exec: async (argv, options) => {
+            launched = { argv, env: options?.env };
+            return 17;
+          },
+        },
+      );
+      expect(code).toBe(17);
+      expect(last()?.body).toEqual({ vendor });
+      expect(launched?.argv).toEqual([
+        vendor,
+        "--model",
+        "literal spaced value",
+        "--account",
+        "vendor-option",
+      ]);
+      expect(launched?.env).toMatchObject({ [variable]: "/accounts/personal", KEEP: "yes" });
+      expect(launched?.env).not.toHaveProperty("AIO_TOKEN");
+      expect(launched?.env).not.toHaveProperty("AIO_SERVER_TOKEN");
+      expect(err).toContain("Missing include: optional.md");
+    },
+  );
   it("sends the explicitly named account and reports unknown accounts without launching", async () => {
-    server.on("POST /api/v1/accounts/prepare", {status:404,body:{error:{code:"not_found",message:"No Claude account missing"}}});
-    expect(await cli(["claude","--account","missing"])).toBe(1);
-    expect(last()?.body).toEqual({vendor:"claude",name:"missing"});
+    server.on("POST /api/v1/accounts/prepare", {
+      status: 404,
+      body: { error: { code: "not_found", message: "No Claude account missing" } },
+    });
+    expect(await cli(["claude", "--account", "missing"])).toBe(1);
+    expect(last()?.body).toEqual({ vendor: "claude", name: "missing" });
     expect(err).toContain("No Claude account missing");
     expect(execs).toEqual([]);
   });

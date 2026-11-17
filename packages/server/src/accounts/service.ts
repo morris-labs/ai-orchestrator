@@ -702,14 +702,15 @@ export class AccountService {
           continue;
         }
         log(`${req.dryRun ? "Would copy" : "Copying"} ${source} to ${dir}.\r\n`);
-        const copied = await seedFolder(vendor, sources, dir, { dryRun: req.dryRun });
+        const copied = await seedFolder(vendor, sources, dir, {
+          dryRun: req.dryRun,
+          copyHostSetup: req.copyHostSetup,
+        });
         for (const note of copied.notes) log(`  ${note}\r\n`);
         if (vendor === "claude" && !req.dryRun) {
           const store = this.storeRoot();
           const note = this.linkNote(linkProjectsToStore(dir, store), store);
           if (note) log(`  ${note}\r\n`);
-          const linked = this.linkConfig(dir);
-          if (linked) log(`  ${linked}\r\n`);
           const pre = preacceptClaudeAccount(dir);
           if (pre.changed.length > 0) {
             log(`  Set ${pre.changed.join(", ")} for the first start.\r\n`);
@@ -717,8 +718,9 @@ export class AccountService {
           const kept = this.keepTranscripts(dir);
           if (kept) log(`  ${kept}\r\n`);
         }
+        if (!req.dryRun) this.ensureInstructions(vendor, dir);
         if (copied.leftOut.length > 0) {
-          log(`  Left out the sign-in files: ${copied.leftOut.join(", ")}.\r\n`);
+          log(`  Left out: ${copied.leftOut.join(", ")}.\r\n`);
         }
         const hasDefault = this.options.settings.get().accountDefaults[vendor] !== undefined;
         let madeDefault = false;
@@ -753,6 +755,7 @@ export class AccountService {
           symlinks: copied.symlinks,
           leftOut: copied.leftOut,
           skippedSpecial: copied.skippedSpecial,
+          notes: copied.notes,
           madeDefault,
           usageRelabeled,
         });

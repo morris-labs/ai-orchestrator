@@ -329,15 +329,16 @@ function seedText(report: AccountSeedReport): string {
     lines.push(
       `${verb} ${a.id} from ${a.source}: ${a.files} files (${mib} MiB), ${a.symlinks} links.`,
     );
-    if (a.leftOut.length > 0) lines.push(`  Left out the sign-in files: ${a.leftOut.join(", ")}.`);
+    if (a.leftOut.length > 0) lines.push(`  Left out: ${a.leftOut.join(", ")}.`);
     if (a.skippedSpecial.length > 0) {
       lines.push(`  Skipped sockets and pipes: ${a.skippedSpecial.join(", ")}.`);
     }
+    for (const note of a.notes ?? []) lines.push(`  ${note}`);
     if (a.madeDefault) lines.push(`  Default ${a.vendor} account.`);
     if (a.usageRelabeled > 0) lines.push(`  Relabeled ${a.usageRelabeled} usage samples.`);
   }
   if (!report.dryRun && report.accounts.some((a) => a.status === "seeded")) {
-    lines.push("Each account is not signed in. Sign in to it once from a box.");
+    lines.push("Copied available host sign-ins. Check account sign-in status before use.");
   }
   return `${lines.join("\n")}\n`;
 }
@@ -1846,9 +1847,7 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
 
   accounts
     .command("seed")
-    .description(
-      "Copy the host's ~/.claude, ~/.codex, and ~/.copilot into new accounts, without their sign-ins.",
-    )
+    .description("Copy host sign-ins into clean accounts; optionally copy Claude setup once.")
     .addOption(
       new Option(
         "--vendor <vendor>",
@@ -1863,38 +1862,51 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
     .option("--name <name>", "The name of each new account.", DEFAULT_SEED_ACCOUNT_NAME)
     .option("--dry-run", "Report what seeding would copy, and copy nothing.")
     .option("--no-wait", "Print the job and return without waiting for it.")
-    .action(async (o: { vendor?: string[]; name: string; dryRun?: boolean; wait: boolean }) => {
-      const c = client();
-      const started: Job = await c.call("accounts.seed", {
-        body: {
-          ...(o.vendor ? { vendors: o.vendor as "claude"[] } : {}),
-          name: o.name,
-          dryRun: o.dryRun ?? false,
-        },
-      });
-      const job = await waitForJob(c, started, o.wait);
-      if (job.status === "failed") {
-        state.code = 1;
-        deps.err(
-          terminalText(`Seeding failed: ${job.error?.message ?? `exit code ${job.exitCode}`}\n`),
-        );
-        if (globals().json) deps.out(`${jsonText(job, 2)}\n`);
-        return;
-      }
-      if (job.status === "running") {
-        print(job, () => `Seeding accounts (job ${job.id}).\n`);
-        return;
-      }
-      const parsed = AccountSeedReportSchema.safeParse(job.result);
-      if (!parsed.success) {
-        state.code = 1;
-        deps.err("The seed job's result doesn't match the contract.\n");
-        if (globals().json) deps.out(`${jsonText(job, 2)}\n`);
-        return;
-      }
-      const report = parsed.data;
-      print(report, () => seedText(report));
-    });
+    .option(
+      "--copy-host-setup",
+      "Copy Claude instructions, settings, skills and plugins once (off by default).",
+    )
+    .action(
+      async (o: {
+        vendor?: string[];
+        name: string;
+        dryRun?: boolean;
+        wait: boolean;
+        copyHostSetup?: boolean;
+      }) => {
+        const c = client();
+        const started: Job = await c.call("accounts.seed", {
+          body: {
+            ...(o.vendor ? { vendors: o.vendor as "claude"[] } : {}),
+            name: o.name,
+            dryRun: o.dryRun ?? false,
+            copyHostSetup: o.copyHostSetup ?? false,
+          },
+        });
+        const job = await waitForJob(c, started, o.wait);
+        if (job.status === "failed") {
+          state.code = 1;
+          deps.err(
+            terminalText(`Seeding failed: ${job.error?.message ?? `exit code ${job.exitCode}`}\n`),
+          );
+          if (globals().json) deps.out(`${jsonText(job, 2)}\n`);
+          return;
+        }
+        if (job.status === "running") {
+          print(job, () => `Seeding accounts (job ${job.id}).\n`);
+          return;
+        }
+        const parsed = AccountSeedReportSchema.safeParse(job.result);
+        if (!parsed.success) {
+          state.code = 1;
+          deps.err("The seed job's result doesn't match the contract.\n");
+          if (globals().json) deps.out(`${jsonText(job, 2)}\n`);
+          return;
+        }
+        const report = parsed.data;
+        print(report, () => seedText(report));
+      },
+    );
 
   // -------------------------------------------------------------------------
   // machines and node (multi-host)
@@ -2051,7 +2063,9 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
       .option("--account <name>", "Use this account instead of the vendor's default.")
       .argument("[args...]", "Vendor arguments after --.")
       .action(async (args: string[], options: { account?: string }) => {
-        const prepared = await client().call("accounts.prepare", { body: { vendor, ...(options.account ? { name: options.account } : {}) } });
+        const prepared = await client().call("accounts.prepare", {
+          body: { vendor, ...(options.account ? { name: options.account } : {}) },
+        });
         for (const problem of prepared.problems) deps.err(terminalText(`${problem}\n`));
         const env = childEnv(deps.env);
         env[ACCOUNT_DIR_ENV[vendor]] = prepared.dir;

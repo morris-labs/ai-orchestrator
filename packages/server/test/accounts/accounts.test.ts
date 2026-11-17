@@ -168,9 +168,7 @@ describe("addCodexFileStore", () => {
     const st = fs.lstatSync(file);
     expect(st.isFile()).toBe(true);
     expect(st.mode & 0o777).toBe(0o600);
-    expect(fs.readFileSync(file, "utf8")).toBe(
-      'cli_auth_credentials_store = "file"\nmodel = "SYNTHETIC"\n',
-    );
+    expect(fs.readFileSync(file, "utf8")).toBe('cli_auth_credentials_store = "file"\n');
   });
 
   it("keeps a store setting the user chose", async () => {
@@ -187,7 +185,7 @@ describe("seedFolder", () => {
     const r = await seedFolder("claude", sources, dest);
     expect(fs.existsSync(path.join(dest, "projects"))).toBe(false);
     expect(fs.lstatSync(path.join(dest, "projects"), { throwIfNoEntry: false })).toBeUndefined();
-    expect(r.leftOut).toEqual([".credentials.json"]);
+    expect(r.leftOut).toEqual([]);
   });
 
   it("removes its temporary folder when the copy fails", async () => {
@@ -202,34 +200,55 @@ describe("seedFolder", () => {
 });
 
 describe("AccountService.seed", () => {
-  it("copies every vendor's folder without its sign-in files", async () => {
-    const { accounts, env } = setup();
+  it("copies only sign-in and Claude identity by default, and setup only with opt-in as real copies", async () => {
+    const clean = setup();
+    await clean.accounts.seed({ vendors: ["claude"] });
+    const cleanDir = clean.accounts.dirOf("claude", "personal");
+    expect(fs.readFileSync(path.join(cleanDir, ".credentials.json"), "utf8")).toBe(SECRET);
+    expect(fs.readFileSync(path.join(cleanDir, "settings.json"), "utf8")).not.toContain("opus");
+    expect(fs.existsSync(path.join(cleanDir, "skills"))).toBe(false);
+    expect(fs.readFileSync(path.join(cleanDir, "CLAUDE.md"), "utf8")).not.toBe("# Global\n");
+    const copied = setup();
+    const shared = path.join(copied.sources.root, "shared-rule.md");
+    write(shared, "Account rule\n");
+    fs.symlinkSync(shared, path.join(copied.sources.claudeDir, "skills", "extra.md"));
+    fs.symlinkSync("missing", path.join(copied.sources.claudeDir, "skills", "dangling"));
+    fs.symlinkSync(".", path.join(copied.sources.claudeDir, "skills", "cycle"));
+    const messages: string[] = [];
+    await copied.accounts.seed({ vendors: ["claude"], copyHostSetup: true }, (text) =>
+      messages.push(text),
+    );
+    const dir = copied.accounts.dirOf("claude", "personal");
+    expect(JSON.parse(fs.readFileSync(path.join(dir, "settings.json"), "utf8"))).toMatchObject({
+      model: "opus",
+    });
+    expect(fs.readFileSync(path.join(dir, "skills", "extra.md"), "utf8")).toBe("Account rule\n");
+    expect(fs.lstatSync(path.join(dir, "skills", "extra.md")).isSymbolicLink()).toBe(false);
+    expect(fs.readFileSync(path.join(dir, "CLAUDE.md"), "utf8")).toBe("# Global\n");
+    expect(messages.join("")).toMatch(/dangling/);
+    expect(messages.join("")).toMatch(/cycle/);
+    expect(fs.existsSync(path.join(copied.sources.claudeDir, "plugins"))).toBe(false);
+  });
+
+  it("copies vendor sign-ins without arbitrary setup or history", async () => {
+    const { accounts } = setup();
     const report = await accounts.seed({});
-    expect(report.accounts.map((a) => [a.id, a.status])).toEqual([
-      ["claude/personal", "seeded"],
-      ["codex/personal", "seeded"],
-      ["copilot/personal", "seeded"],
-    ]);
-    const claude = accounts.dirOf("claude", "personal");
-    const codex = accounts.dirOf("codex", "personal");
-    const copilot = accounts.dirOf("copilot", "personal");
-    expect(claude).toBe(path.join(env.dataDir!, "accounts", "claude", "personal"));
-    for (const dir of [claude, codex, copilot]) {
-      expect(holdsSecret(dir)).toBe(false);
+    expect(report.accounts.map((a) => a.status)).toEqual(["seeded", "seeded", "seeded"]);
+    for (const [vendor, file] of [
+      ["claude", ".credentials.json"],
+      ["codex", "auth.json"],
+      ["copilot", "config.json"],
+    ] as const) {
+      const dir = accounts.dirOf(vendor, "personal");
+      expect(fs.readFileSync(path.join(dir, file), "utf8")).toBe(SECRET);
+      expect(holdsSecret(dir)).toBe(true);
       expect(fs.statSync(dir).mode & 0o777).toBe(0o700);
     }
-    expect(fs.existsSync(path.join(claude, ".credentials.json"))).toBe(false);
-    expect(fs.existsSync(path.join(codex, "auth.json"))).toBe(false);
-    for (const name of COPILOT_SIGN_IN_FILES) {
-      expect(fs.existsSync(path.join(copilot, name))).toBe(false);
-    }
-    expect(report.accounts[0]!.leftOut).toEqual([".credentials.json"]);
-    expect(report.accounts[1]!.leftOut).toEqual(["auth.json"]);
-    expect([...report.accounts[2]!.leftOut].sort()).toEqual([...COPILOT_SIGN_IN_FILES].sort());
-    // Settings, skills, and sessions came across.
-    expect(fs.readFileSync(path.join(claude, "skills", "one", "SKILL.md"), "utf8")).toBe("skill\n");
-    expect(fs.existsSync(path.join(codex, "sessions", "2026", "r.jsonl"))).toBe(true);
-    expect(fs.existsSync(path.join(copilot, "session-store.db"))).toBe(true);
+    expect(fs.existsSync(path.join(accounts.dirOf("claude", "personal"), "skills"))).toBe(false);
+    expect(fs.existsSync(path.join(accounts.dirOf("codex", "personal"), "sessions"))).toBe(false);
+    expect(
+      fs.existsSync(path.join(accounts.dirOf("copilot", "personal"), "session-store.db")),
+    ).toBe(false);
   });
 
   it("replaces the stale .claude.json with the host's ~/.claude.json", async () => {
@@ -242,14 +261,18 @@ describe("AccountService.seed", () => {
     });
   });
 
-  it("leaves the /login API key out of the copied .claude.json", async () => {
+  it("preserves the copied /login API key without changing the host", async () => {
     const { accounts, sources } = setup();
     write(sources.claudeJson, '{"fresh":true,"primaryApiKey":"SYNTHETIC_KEY"}');
     await accounts.seed({ vendors: ["claude"] });
     const copy = path.join(accounts.dirOf("claude", "personal"), ".claude.json");
     const text = fs.readFileSync(copy, "utf8");
-    expect(text).not.toContain("SYNTHETIC_KEY");
-    expect(JSON.parse(text)).toEqual({ fresh: true, installMethod: "global" });
+    expect(text).toContain("SYNTHETIC_KEY");
+    expect(JSON.parse(text)).toEqual({
+      fresh: true,
+      primaryApiKey: "SYNTHETIC_KEY",
+      installMethod: "global",
+    });
     expect(fs.statSync(copy).mode & 0o777).toBe(0o600);
     // The host's own file keeps its key.
     expect(fs.readFileSync(sources.claudeJson, "utf8")).toContain("SYNTHETIC_KEY");
@@ -266,14 +289,13 @@ describe("AccountService.seed", () => {
     expect(fs.existsSync(backup)).toBe(true);
   });
 
-  it("drops a .claude.json that isn't JSON rather than copying it unchecked", async () => {
+  it("copies an opaque invalid identity file without interpreting it", async () => {
     const { accounts, sources } = setup();
-    write(sources.claudeJson, '{"primaryApiKey":"SYNTHETIC_KEY"');
+    write(sources.claudeJson, "opaque identity");
     await accounts.seed({ vendors: ["claude"] });
-    const copy = path.join(accounts.dirOf("claude", "personal"), ".claude.json");
-    // The unchecked file is gone; the first-start step writes a fresh one.
-    expect(fs.readFileSync(copy, "utf8")).not.toContain("SYNTHETIC_KEY");
-    expect(JSON.parse(fs.readFileSync(copy, "utf8"))).toEqual({ installMethod: "global" });
+    expect(
+      fs.readFileSync(path.join(accounts.dirOf("claude", "personal"), ".claude.json"), "utf8"),
+    ).toBe("opaque identity");
   });
 
   it("links projects to the shared store", async () => {
@@ -282,9 +304,9 @@ describe("AccountService.seed", () => {
     const link = path.join(accounts.dirOf("claude", "personal"), "projects");
     expect(fs.lstatSync(link).isSymbolicLink()).toBe(true);
     expect(fs.readlinkSync(link)).toBe(path.join(env.dataDir!, "transcripts", "claude"));
-    // An inner relative link still points inside the copy.
-    const inner = path.join(accounts.dirOf("claude", "personal"), "current-skill");
-    expect(fs.readlinkSync(inner)).toBe("skills/one");
+    expect(fs.existsSync(path.join(accounts.dirOf("claude", "personal"), "current-skill"))).toBe(
+      false,
+    );
   });
 
   it("keeps the Codex sign-in in a file", async () => {
@@ -294,7 +316,7 @@ describe("AccountService.seed", () => {
       path.join(accounts.dirOf("codex", "personal"), "config.toml"),
       "utf8",
     );
-    expect(toml.startsWith('cli_auth_credentials_store = "file"\nmodel = "o3"\n')).toBe(true);
+    expect(toml === 'cli_auth_credentials_store = "file"\n').toBe(true);
   });
 
   it("never writes through a symlinked Codex config.toml into the host's file", async () => {
@@ -308,9 +330,7 @@ describe("AccountService.seed", () => {
     expect(fs.readFileSync(dotfile, "utf8")).toBe('model = "SYNTHETIC"\n');
     const copy = path.join(accounts.dirOf("codex", "personal"), "config.toml");
     expect(fs.lstatSync(copy).isFile()).toBe(true);
-    expect(fs.readFileSync(copy, "utf8")).toBe(
-      'cli_auth_credentials_store = "file"\nmodel = "SYNTHETIC"\n',
-    );
+    expect(fs.readFileSync(copy, "utf8")).toBe('cli_auth_credentials_store = "file"\n');
   });
 
   it("records each account as not signed in and makes it the default", async () => {
@@ -413,7 +433,7 @@ describe("AccountService.seed", () => {
     const lines: string[] = [];
     await accounts.seed({}, (l) => lines.push(l));
     expect(lines.join("")).not.toContain(SECRET);
-    expect(lines.join("")).toContain("Left out the sign-in files: .credentials.json");
+    expect(lines.join("")).not.toContain("Left out the sign-in files");
   });
 });
 

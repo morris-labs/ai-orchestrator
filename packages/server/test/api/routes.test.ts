@@ -263,7 +263,13 @@ const cases: Case[] = [
     body: { vendor: "codex", name: "work" },
     status: 201,
   },
-  { key: "accounts.prepare", method: "POST", url: `${V1}/accounts/prepare`, body: { vendor: "claude" }, status: 200 },
+  {
+    key: "accounts.prepare",
+    method: "POST",
+    url: `${V1}/accounts/prepare`,
+    body: { vendor: "claude" },
+    status: 200,
+  },
   {
     key: "accounts.seed",
     method: "POST",
