@@ -7,7 +7,7 @@ import {
   mergeMounts,
   mountContainerPaths,
   prepareLaunchHost,
-  projectsLinkMounts,
+  linkTargetsOutside,
   tcpMapsLabel,
   toDockerRunArgs,
   type LaunchInput,
@@ -35,6 +35,7 @@ const input: LaunchInput = {
   image: "aio-agent",
   engine: { hostPort: 41000, token: "secret-token-value-0123456789", version: "1.0.0" },
   secretNames: ["GITHUB_TOKEN", "API_KEY"],
+  accounts: { claudeDirs: ["/home/tester/.ai-orchestrator/accounts/claude/fixture"] },
 };
 
 describe("buildLaunchSpec", () => {
@@ -42,7 +43,7 @@ describe("buildLaunchSpec", () => {
     const spec = buildLaunchSpec(
       env,
       { ...input, secretNames: ["AIO_ENGINE_TOKEN", "AIO_BROKER_SOCKET", "API_KEY"] },
-      { projectsLinkMounts: [], hasGitconfig: false },
+      { accountLinkTargets: [], hasGitconfig: false },
     );
     expect(spec.env.filter((e) => e.startsWith("AIO_ENGINE_TOKEN="))).toEqual([]);
     expect(spec.env.some((e) => e.startsWith("API_KEY"))).toBe(false);
@@ -60,7 +61,7 @@ describe("buildLaunchSpec", () => {
         ...input,
         extraEnv: { AIO_MOCK_VENDORS: "1", AIO_ENGINE_TOKEN_FILE: "/tmp/evil" },
       },
-      { projectsLinkMounts: [], hasGitconfig: false },
+      { accountLinkTargets: [], hasGitconfig: false },
     );
     expect(spec.env).toContain("AIO_MOCK_VENDORS=1");
     expect(spec.env.filter((e) => e.startsWith("AIO_ENGINE_TOKEN_FILE="))).toEqual([
@@ -75,14 +76,14 @@ describe("buildLaunchSpec", () => {
     const dir = path.join(home, ".ai-orchestrator", "broker", brokerDirName(C));
     expect(fs.statSync(dir).mode & 0o777).toBe(0o700);
     const spec = buildLaunchSpec(hostEnv, input, {
-      projectsLinkMounts: [],
+      accountLinkTargets: [],
       hasGitconfig: false,
     });
     expect(spec.binds).toContain(`${dir}:/run/aio-broker:ro`);
   });
 
   it("labels whether the container's sudo asks for a password, and lists the mount paths", () => {
-    const facts = { projectsLinkMounts: [], hasGitconfig: false };
+    const facts = { accountLinkTargets: [], hasGitconfig: false };
     expect(buildLaunchSpec(env, input, facts).labels["aio.sudo"]).toBe("off");
     const on = buildLaunchSpec(env, { ...input, sudoPassword: true }, facts);
     expect(on.labels["aio.sudo"]).toBe("password");
@@ -98,7 +99,7 @@ describe("buildLaunchSpec", () => {
   });
 
   it("keeps the engine token out of the container's environment", () => {
-    const spec = buildLaunchSpec(env, input, { projectsLinkMounts: [], hasGitconfig: false });
+    const spec = buildLaunchSpec(env, input, { accountLinkTargets: [], hasGitconfig: false });
     expect(spec.env.join("\n")).not.toContain(input.engine.token);
   });
 
@@ -110,7 +111,7 @@ describe("buildLaunchSpec", () => {
   // engine token is a file in that directory, not a variable.
   it("matches the inventoried 3.3.5 launch, minus the pool, plus the engine", () => {
     const spec = buildLaunchSpec(env, input, {
-      projectsLinkMounts: ["/home/tester/.ai-orchestrator/transcripts/claude"],
+      accountLinkTargets: ["/home/tester/.ai-orchestrator/transcripts/claude"],
       hasGitconfig: true,
     });
     expect(spec).toEqual({
@@ -140,12 +141,9 @@ describe("buildLaunchSpec", () => {
       ],
       binds: [
         "/home/tester/work/app:/home/tester/work/app",
-        "/home/tester/.claude:/home/tester/.claude",
-        "/home/tester/.claude.json:/home/tester/.claude.json",
-        "/home/tester/.codex:/home/tester/.codex",
-        "/home/tester/.copilot:/home/tester/.copilot",
+        "/home/tester/.ai-orchestrator/accounts:/home/tester/.ai-orchestrator/accounts",
+        `/home/tester/.ai-orchestrator/sessions/${C}:/home/tester/.ai-orchestrator/accounts/claude/fixture/sessions`,
         "/home/tester/.ai-orchestrator/transcripts/claude:/home/tester/.ai-orchestrator/transcripts/claude",
-        `/home/tester/.ai-orchestrator/sessions/${C}:/home/tester/.claude/sessions`,
         "/data/ref:/data/ref",
         "/data/shared:/shared",
         "/home/tester/Bin/.project_archive:/home/tester/Bin/.project_archive",
@@ -164,6 +162,7 @@ describe("buildLaunchSpec", () => {
         "aio.engine-version": "1.0.0",
         "aio.sudo": "off",
         "aio.secrets": "broker",
+        "aio.accounts-mode": "accounts",
       },
       capDrop: ["MKNOD", "SETFCAP"],
       tty: true,
@@ -176,10 +175,10 @@ describe("buildLaunchSpec", () => {
     const spec = buildLaunchSpec(
       env,
       { ...input, secretNames: [], tcpMaps: [] },
-      { projectsLinkMounts: [], hasGitconfig: false },
+      { accountLinkTargets: [], hasGitconfig: false },
     );
     expect(spec.env.some((e) => e.startsWith("GIT_CONFIG_GLOBAL="))).toBe(false);
-    expect(spec.binds).toHaveLength(12);
+    expect(spec.binds).toHaveLength(9);
     expect(Object.keys(spec.portBindings)).toEqual(["20411/tcp"]);
     expect(spec.labels["aio.secret-names"]).toBe("");
   });
@@ -194,7 +193,7 @@ describe("buildLaunchSpec", () => {
           { host: 9090, container: 4000, allInterfaces: true },
         ],
       },
-      { projectsLinkMounts: [], hasGitconfig: false },
+      { accountLinkTargets: [], hasGitconfig: false },
     );
     expect(spec.portBindings["3000/tcp"]).toEqual([{ hostIp: "127.0.0.1", hostPort: "8080" }]);
     expect(spec.portBindings["4000/tcp"]).toEqual([{ hostIp: "", hostPort: "9090" }]);
@@ -203,7 +202,7 @@ describe("buildLaunchSpec", () => {
   });
 
   it("refuses a relative root or a mount docker can't bind", () => {
-    const facts = { projectsLinkMounts: [], hasGitconfig: false };
+    const facts = { accountLinkTargets: [], hasGitconfig: false };
     expect(() => buildLaunchSpec(env, { ...input, root: "work/app" }, facts)).toThrow(
       expect.objectContaining({ code: "validation" }),
     );
@@ -221,7 +220,7 @@ describe("buildLaunchSpec", () => {
   });
 
   it("prints a docker run line with secrets masked", () => {
-    const built = buildLaunchSpec(env, input, { projectsLinkMounts: [], hasGitconfig: false });
+    const built = buildLaunchSpec(env, input, { accountLinkTargets: [], hasGitconfig: false });
     // A spec carries no secret value, but a masked line stays safe if one ever does.
     const spec = { ...built, env: [...built.env, "GITHUB_TOKEN=ghp_value"] };
     const args = toDockerRunArgs(spec);
@@ -294,20 +293,22 @@ describe("host preparation", () => {
     fs.writeFileSync(path.join(sessions, "11.json"), "{}");
     const shared = path.join(home, ".ai-orchestrator", "transcripts", "claude");
     fs.mkdirSync(shared, { recursive: true });
-    fs.mkdirSync(path.join(home, ".claude"), { recursive: true });
-    fs.symlinkSync(shared, path.join(home, ".claude", "projects"));
+    fs.mkdirSync(path.join(home, ".ai-orchestrator/accounts/claude/fixture"), { recursive: true });
+    fs.symlinkSync(shared, path.join(home, ".ai-orchestrator/accounts/claude/fixture", "projects"));
 
-    const facts = prepareLaunchHost(e, { container: C, root });
-    expect(facts).toEqual({ projectsLinkMounts: [shared], hasGitconfig: true });
-    for (const d of [".claude/sessions", ".codex", ".copilot"])
-      expect(fs.statSync(path.join(home, d)).isDirectory()).toBe(true);
+    const accountDir = path.join(home, ".ai-orchestrator/accounts/claude/fixture");
+    const facts = prepareLaunchHost(e, {
+      container: C,
+      root,
+      accounts: { claudeDirs: [accountDir] },
+    });
+    expect(facts).toEqual({ accountLinkTargets: [shared], hasGitconfig: true });
+    expect(fs.statSync(path.join(accountDir, "sessions")).isDirectory()).toBe(true);
+    for (const d of [".claude", ".codex", ".copilot"])
+      expect(fs.existsSync(path.join(home, d))).toBe(false);
     expect(fs.readdirSync(sessions)).toEqual([]);
     expect(fs.existsSync(path.join(home, ".ai-orchestrator", "state", C))).toBe(true);
-    // Docker would otherwise create a missing ~/.claude.json as a root-owned directory.
-    const claudeJson = path.join(home, ".claude.json");
-    expect(fs.lstatSync(claudeJson).isFile()).toBe(true);
-    expect(fs.statSync(claudeJson).mode & 0o777).toBe(0o600);
-    expect(fs.readFileSync(claudeJson, "utf8")).toBe("{}\n");
+    expect(fs.existsSync(path.join(home, ".claude.json"))).toBe(false);
   });
 
   it("leaves an existing ~/.claude.json alone", () => {
@@ -321,12 +322,21 @@ describe("host preparation", () => {
 
   it("ignores a projects symlink that points inside ~/.claude", () => {
     const home = tempDir("aio-launch-");
-    fs.mkdirSync(path.join(home, ".claude", "real"), { recursive: true });
-    fs.symlinkSync(path.join(home, ".claude", "real"), path.join(home, ".claude", "projects"));
-    expect(projectsLinkMounts({ ...env, home })).toEqual([]);
-    fs.rmSync(path.join(home, ".claude", "projects"));
-    fs.mkdirSync(path.join(home, ".claude", "projects"));
-    expect(projectsLinkMounts({ ...env, home })).toEqual([]);
+    fs.mkdirSync(path.join(home, ".ai-orchestrator/accounts/claude/fixture", "real"), {
+      recursive: true,
+    });
+    fs.symlinkSync(
+      path.join(home, ".ai-orchestrator/accounts/claude/fixture", "real"),
+      path.join(home, ".ai-orchestrator/accounts/claude/fixture", "projects"),
+    );
+    expect(linkTargetsOutside(path.join(home, ".ai-orchestrator/accounts/claude/fixture"))).toEqual(
+      [],
+    );
+    fs.rmSync(path.join(home, ".ai-orchestrator/accounts/claude/fixture", "projects"));
+    fs.mkdirSync(path.join(home, ".ai-orchestrator/accounts/claude/fixture", "projects"));
+    expect(linkTargetsOutside(path.join(home, ".ai-orchestrator/accounts/claude/fixture"))).toEqual(
+      [],
+    );
   });
 
   describe("projects link chains", () => {
@@ -334,43 +344,65 @@ describe("host preparation", () => {
       const home = fs.realpathSync(tempDir("aio-launch-"));
       const store = path.join(home, ".ai-orchestrator", "transcripts", "claude");
       fs.mkdirSync(store, { recursive: true });
-      fs.mkdirSync(path.join(home, ".claude"), { recursive: true });
+      fs.mkdirSync(path.join(home, ".ai-orchestrator/accounts/claude/fixture"), {
+        recursive: true,
+      });
       return { home, store, shared: path.join(home, "intermediate-link") };
     }
 
     it("follows a chain: projects -> intermediate link -> store", () => {
       const { home, store, shared } = chainHome();
       fs.symlinkSync(store, shared);
-      fs.symlinkSync(shared, path.join(home, ".claude", "projects"));
+      fs.symlinkSync(
+        shared,
+        path.join(home, ".ai-orchestrator/accounts/claude/fixture", "projects"),
+      );
       // The link path binds at its own path (docker follows it to the store),
       // and the store binds at its own path, so the chain resolves inside.
-      expect(projectsLinkMounts({ ...env, home })).toEqual([shared, store]);
+      expect(
+        linkTargetsOutside(path.join(home, ".ai-orchestrator/accounts/claude/fixture")),
+      ).toEqual([shared]);
     });
 
     it("follows a relative link in the chain", () => {
       const { home, store, shared } = chainHome();
       fs.symlinkSync(path.relative(home, store), shared);
-      fs.symlinkSync("../intermediate-link", path.join(home, ".claude", "projects"));
-      expect(projectsLinkMounts({ ...env, home })).toEqual([shared, store]);
+      fs.symlinkSync(
+        "../../../../intermediate-link",
+        path.join(home, ".ai-orchestrator/accounts/claude/fixture", "projects"),
+      );
+      expect(
+        linkTargetsOutside(path.join(home, ".ai-orchestrator/accounts/claude/fixture")),
+      ).toEqual([shared]);
     });
 
     it("mounts the store once for the final direct link", () => {
       const { home, store } = chainHome();
-      fs.symlinkSync(store, path.join(home, ".claude", "projects"));
-      expect(projectsLinkMounts({ ...env, home })).toEqual([store]);
+      fs.symlinkSync(
+        store,
+        path.join(home, ".ai-orchestrator/accounts/claude/fixture", "projects"),
+      );
+      expect(
+        linkTargetsOutside(path.join(home, ".ai-orchestrator/accounts/claude/fixture")),
+      ).toEqual([store]);
     });
 
     it("mounts nothing for a dangling link", () => {
       const { home, store } = chainHome();
       fs.rmSync(store, { recursive: true });
-      fs.symlinkSync(store, path.join(home, ".claude", "projects"));
-      expect(projectsLinkMounts({ ...env, home })).toEqual([]);
+      fs.symlinkSync(
+        store,
+        path.join(home, ".ai-orchestrator/accounts/claude/fixture", "projects"),
+      );
+      expect(
+        linkTargetsOutside(path.join(home, ".ai-orchestrator/accounts/claude/fixture")),
+      ).toEqual([]);
     });
 
     it("turns the chain into binds in the launch spec", () => {
       const { home, store, shared } = chainHome();
       const spec = buildLaunchSpec({ ...env, home }, input, {
-        projectsLinkMounts: [shared, store],
+        accountLinkTargets: [shared, store],
         hasGitconfig: false,
       });
       expect(spec.binds).toEqual(
@@ -381,7 +413,7 @@ describe("host preparation", () => {
 });
 
 describe("buildLaunchSpec broker transport", () => {
-  const facts = { projectsLinkMounts: [], hasGitconfig: false };
+  const facts = { accountLinkTargets: [], hasGitconfig: false };
 
   it("leaves a Unix socket launch exactly as it was without a transport", () => {
     const plain = buildLaunchSpec(env, input, facts);

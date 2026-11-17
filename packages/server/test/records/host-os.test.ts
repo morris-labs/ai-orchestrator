@@ -212,7 +212,7 @@ const winInput: LaunchInput = {
 };
 
 describe("the launch spec on Windows", () => {
-  const spec = buildLaunchSpec(winEnv, winInput, { projectsLinkMounts: [], hasGitconfig: true });
+  const spec = buildLaunchSpec(winEnv, winInput, { accountLinkTargets: [], hasGitconfig: true });
 
   it("mounts the root under /mnt/host and works there", () => {
     expect(spec.binds[0]).toBe("C:/Users/tester/work/app:/mnt/host/c/Users/tester/work/app");
@@ -221,14 +221,10 @@ describe("the launch spec on Windows", () => {
     expect(spec.env).toContain("GIT_CONFIG_GLOBAL=/mnt/host/c/Users/tester/work/app/gitconfig");
   });
 
-  it("binds the home folders, mounts, state, and broker with Windows sources", () => {
+  it("binds accounts, mounts, state, and broker with Windows sources", () => {
     expect(spec.binds).toEqual([
       "C:/Users/tester/work/app:/mnt/host/c/Users/tester/work/app",
-      "C:/Users/tester/.claude:/home/tester/.claude",
-      "C:/Users/tester/.claude.json:/home/tester/.claude.json",
-      "C:/Users/tester/.codex:/home/tester/.codex",
-      "C:/Users/tester/.copilot:/home/tester/.copilot",
-      `C:/Users/tester/.ai-orchestrator/sessions/${C}:/home/tester/.claude/sessions`,
+      "C:/Users/tester/.ai-orchestrator/accounts:/mnt/host/c/Users/tester/.ai-orchestrator/accounts",
       "D:/data/ref:/mnt/host/d/data/ref",
       "D:/data/shared:/shared",
       "E:/archive:/archive",
@@ -276,7 +272,6 @@ describe("the launch spec on Windows", () => {
         accounts: { claudeDirs: ["C:/Users/tester/.ai-orchestrator/accounts/claude/personal"] },
       },
       {
-        projectsLinkMounts: [],
         hasGitconfig: false,
         accountLinkTargets: ["C:/Users/tester/.ai-orchestrator/transcripts/claude"],
       },
@@ -297,14 +292,14 @@ describe("the launch spec on Windows", () => {
       buildLaunchSpec(
         winEnv,
         { ...winInput, root: "\\\\server\\share\\app" },
-        { projectsLinkMounts: [], hasGitconfig: false },
+        { accountLinkTargets: [], hasGitconfig: false },
       ),
     ).toThrow(/UNC/);
     expect(() =>
       buildLaunchSpec(
         winEnv,
         { ...winInput, root: "/home/tester/app" },
-        { projectsLinkMounts: [], hasGitconfig: false },
+        { accountLinkTargets: [], hasGitconfig: false },
       ),
     ).toThrow(/drive letter/);
   });
@@ -332,7 +327,7 @@ describe("the launch spec on macOS and Linux", () => {
   };
 
   it("is the same on macOS as on Linux", () => {
-    const facts = { projectsLinkMounts: ["/Users/tester/store"], hasGitconfig: true };
+    const facts = { accountLinkTargets: ["/Users/tester/store"], hasGitconfig: true };
     const env: HostEnv = { home: "/Users/tester", user: "tester", now: () => new Date() };
     const linux = buildLaunchSpec(env, input, facts);
     expect(buildLaunchSpec({ ...env, hostOs: "darwin" }, input, facts)).toEqual(linux);

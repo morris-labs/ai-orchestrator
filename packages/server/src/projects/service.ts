@@ -435,7 +435,7 @@ export class ProjectService {
     }
     // A container made before the mode changed mounts the other layout.
     const haveMode = inspect.labels[LABELS.accountsMode] ?? "host";
-    const wantMode = this.accountsLaunch() ? "accounts" : "host";
+    const wantMode = "accounts";
     if (haveMode !== wantMode) diffs.push(`accounts mode ${haveMode} -> ${wantMode}`);
     const haveMaps = inspect.labels[LABELS.tcpMaps] ?? "";
     const wantMaps = tcpMapsLabel(project.tcpMaps);
@@ -463,12 +463,11 @@ export class ProjectService {
   }
 
   /**
-   * The accounts part of the launch, or `undefined` in `host` mode: the host
-   * folders of the Claude accounts, whose `sessions` folders get this
+   * The accounts part of every launch: the Claude account folders, whose
+   * `sessions` folders get this
    * container's own directory.
    */
   private accountsLaunch(): LaunchInput["accounts"] {
-    if (this.deps.settings.get().accountsMode !== "accounts") return undefined;
     return {
       claudeDirs: this.repos.accounts
         .list()
@@ -748,6 +747,11 @@ export class ProjectService {
     projectId: string,
     options: { extraEnv?: Record<string, string> } = {},
   ): Promise<EnsureContainerResult> {
+    if (this.deps.settings.get().accountsMode !== "accounts")
+      throw new ApiError(
+        "conflict",
+        'Host mode is no longer supported. Set up accounts and run "aio accounts relink" before starting containers.',
+      );
     return this.deps.mutex.run(projectId, async () => {
       const project = this.get(projectId);
       const { image, imageId } = await this.checkImage();

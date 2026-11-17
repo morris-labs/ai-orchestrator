@@ -13,7 +13,6 @@ import {
 import type { z } from "zod";
 import type { DockerClient } from "../docker/types.js";
 import type { HostEnv } from "../records/env.js";
-import { homePaths } from "../records/env.js";
 import { ApiError } from "../records/errors.js";
 
 export type ModelsResult = z.infer<typeof ModelsResultSchema>;
@@ -118,8 +117,8 @@ function readJsonObject(file: string): Record<string, unknown> | undefined {
 }
 
 /** The account's extra model options, from `~/.claude.json` `additionalModelOptionsCache[].value`. */
-export function accountModels(env: HostEnv, claudeJson?: string): string[] {
-  const root = readJsonObject(claudeJson ?? homePaths(env).claudeJson);
+export function accountModels(claudeJson?: string): string[] {
+  const root = claudeJson === undefined ? undefined : readJsonObject(claudeJson);
   const list = root?.additionalModelOptionsCache;
   if (!Array.isArray(list)) return [];
   const out: string[] = [];
@@ -132,22 +131,9 @@ export function accountModels(env: HostEnv, claudeJson?: string): string[] {
   return out;
 }
 
-/**
- * What `claude` would use in `dir`: `model` and `effortLevel` from
- * `<dir>/.claude/settings.local.json`, `<dir>/.claude/settings.json`, then
- * `~/.claude/settings.json`, the precedence Claude Code applies.
- */
-export function settingsDefaults(
-  env: HostEnv,
-  dir?: string,
-  claudeDir?: string,
-): { model: string; effort: Effort } {
-  const files: string[] = [];
-  if (dir) {
-    files.push(path.join(dir, ".claude", "settings.local.json"));
-    files.push(path.join(dir, ".claude", "settings.json"));
-  }
-  files.push(path.join(claudeDir ?? homePaths(env).claudeDir, "settings.json"));
+/** Defaults from the selected account only. No account means built-in defaults. */
+export function settingsDefaults(claudeDir?: string): { model: string; effort: Effort } {
+  const files = claudeDir === undefined ? [] : [path.join(claudeDir, "settings.json")];
   let model: string | undefined;
   let effort: Effort | undefined;
   for (const file of files) {
@@ -171,8 +157,8 @@ export interface ModelCatalogOptions {
   setCache: (cache: ModelCache) => void;
   /**
    * The Claude config folder and `.claude.json` of an account (`account` is
-   * its id; absent means the default account), or `undefined` in `host`
-   * mode, where the host's own files apply.
+   * its id; absent means the default account). No selected account means
+   * only the built-in defaults apply.
    */
   claudeHome?: (account?: string) => { dir: string; json: string } | undefined;
 }
@@ -185,7 +171,7 @@ export class ModelCatalog {
     const cache = this.options.getCache();
     const ids = cache && cache.models.length > 0 ? [...cache.models] : [...MODEL_BASELINE];
     const home = this.options.claudeHome?.(account);
-    for (const id of accountModels(this.options.env, home?.json)) {
+    for (const id of accountModels(home?.json)) {
       if (!ids.includes(id)) ids.push(id);
     }
     return sortNewestFirst(ids);
@@ -198,14 +184,14 @@ export class ModelCatalog {
   }
 
   private result(
-    dir: string | undefined,
+    _dir: string | undefined,
     source: ModelsResult["source"],
     account?: string,
   ): ModelsResult {
     return {
       models: this.known(account),
       efforts: [...EFFORTS],
-      defaults: settingsDefaults(this.options.env, dir, this.options.claudeHome?.(account)?.dir),
+      defaults: settingsDefaults(this.options.claudeHome?.(account)?.dir),
       source,
     };
   }

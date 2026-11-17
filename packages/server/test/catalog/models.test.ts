@@ -25,6 +25,7 @@ beforeEach(() => {
   home = tempDir("models-");
   now = new Date("2026-10-28T00:00:00Z");
   env = { home, user: "tester", now: () => now };
+  fs.mkdirSync(path.join(home, "account"));
 });
 afterEach(() => fs.rmSync(home, { recursive: true, force: true }));
 
@@ -70,32 +71,22 @@ describe("ids", () => {
 describe("account models and settings defaults", () => {
   it("reads additionalModelOptionsCache", () => {
     fs.writeFileSync(
-      path.join(home, ".claude.json"),
+      path.join(home, "account", ".claude.json"),
       JSON.stringify({ additionalModelOptionsCache: [{ value: "claude-opus-9" }, { label: "x" }] }),
     );
-    expect(accountModels(env)).toEqual(["claude-opus-9"]);
+    expect(accountModels(path.join(home, "account", ".claude.json"))).toEqual(["claude-opus-9"]);
   });
-  it("applies the settings precedence and fallbacks", () => {
-    const dir = path.join(home, "proj");
-    fs.mkdirSync(path.join(dir, ".claude"), { recursive: true });
-    fs.mkdirSync(path.join(home, ".claude"), { recursive: true });
-    expect(settingsDefaults(env, dir)).toEqual({ model: "claude-opus-5-5", effort: "high" });
+  it("uses only the selected account's defaults, with independent fallbacks", () => {
+    const dir = path.join(home, "account");
+    expect(settingsDefaults(dir)).toEqual({ model: "claude-opus-5-5", effort: "high" });
     fs.writeFileSync(
-      path.join(home, ".claude/settings.json"),
-      JSON.stringify({ model: "user-m", effortLevel: "low" }),
+      path.join(dir, "settings.json"),
+      JSON.stringify({ model: "account-model", effortLevel: "low" }),
     );
-    fs.writeFileSync(
-      path.join(dir, ".claude/settings.json"),
-      JSON.stringify({ model: "proj-m", effortLevel: "bogus" }),
-    );
-    fs.writeFileSync(
-      path.join(dir, ".claude/settings.local.json"),
-      JSON.stringify({ effortLevel: "max" }),
-    );
-    expect(settingsDefaults(env, dir)).toEqual({ model: "proj-m", effort: "max" });
-    fs.writeFileSync(path.join(dir, ".claude/settings.local.json"), "{}");
-    expect(settingsDefaults(env, dir)).toEqual({ model: "proj-m", effort: "low" });
-    expect(settingsDefaults(env)).toEqual({ model: "user-m", effort: "low" });
+    expect(settingsDefaults(dir)).toEqual({ model: "account-model", effort: "low" });
+    fs.writeFileSync(path.join(dir, "settings.json"), JSON.stringify({ effortLevel: "bogus" }));
+    expect(settingsDefaults(dir)).toEqual({ model: "claude-opus-5-5", effort: "high" });
+    expect(settingsDefaults()).toEqual({ model: "claude-opus-5-5", effort: "high" });
   });
 });
 
@@ -121,6 +112,10 @@ function catalog(docker: DockerClient, initial?: ModelCache) {
     env,
     docker,
     image: () => "aio-agent",
+    claudeHome: () => ({
+      dir: path.join(home, "account"),
+      json: path.join(home, "account", ".claude.json"),
+    }),
     getCache: () => cache,
     setCache: (v) => {
       cache = v;
@@ -132,7 +127,7 @@ function catalog(docker: DockerClient, initial?: ModelCache) {
 describe("ModelCatalog", () => {
   it("uses the baseline plus account models before a scan", async () => {
     fs.writeFileSync(
-      path.join(home, ".claude.json"),
+      path.join(home, "account", ".claude.json"),
       JSON.stringify({ additionalModelOptionsCache: [{ value: "claude-opus-9" }] }),
     );
     const { c } = catalog(fakeDocker({}).docker);
