@@ -78,3 +78,30 @@ export function copyLinkedConfig(
   walk(accountDir);
   return result;
 }
+
+/** Identify legacy host links from metadata only; never read their contents. */
+export function hostConfigLinks(accountDir: string, hostPaths: readonly string[]): string[] {
+  const linked: string[] = [];
+  const visit = (entry: string): void => {
+    const stat = fs.lstatSync(entry);
+    if (stat.isSymbolicLink()) {
+      const target = path.resolve(path.dirname(entry), fs.readlinkSync(entry));
+      let real = target;
+      try {
+        real = fs.realpathSync(entry);
+      } catch {
+        /* Dangling legacy links still need migration. */
+      }
+      if (hostPaths.some((root) => inside(root, target) || inside(root, real))) linked.push(entry);
+      return;
+    }
+    if (stat.isDirectory()) {
+      for (const name of fs.readdirSync(entry)) {
+        if (entry === accountDir && name === "projects") continue;
+        visit(path.join(entry, name));
+      }
+    }
+  };
+  visit(accountDir);
+  return linked;
+}
