@@ -277,32 +277,6 @@ export async function seedFolder(
 }
 
 /**
- * Removes `primaryApiKey`, the API key that Claude Code's `/login` saves, from
- * a copied `.claude.json`, so the account holds no sign-in until someone
- * signs in to it. Returns whether it changed the file. A file that isn't a
- * JSON object is deleted, since it can't be checked for the key. Never logs
- * the content.
- */
-export async function dropClaudeApiKey(claudeJson: string): Promise<boolean> {
-  const text = await fs.readFile(claudeJson, "utf8");
-  let config: unknown;
-  try {
-    config = JSON.parse(text);
-  } catch {
-    config = undefined;
-  }
-  if (typeof config !== "object" || config === null || Array.isArray(config)) {
-    await fs.rm(claudeJson, { force: true });
-    return false;
-  }
-  if (!Object.hasOwn(config, "primaryApiKey")) return false;
-  delete (config as Record<string, unknown>).primaryApiKey;
-  await fs.writeFile(claudeJson, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
-  await fs.chmod(claudeJson, 0o600);
-  return true;
-}
-
-/**
  * Sets `installMethod` in a copied `.claude.json`, so that Claude Code in the
  * image doesn't warn that `~/.local/bin/claude` is missing (the host records
  * a native install). Returns whether it changed the file. Leaves a file that

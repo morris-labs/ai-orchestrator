@@ -168,7 +168,7 @@ describe("addCodexFileStore", () => {
     const st = fs.lstatSync(file);
     expect(st.isFile()).toBe(true);
     expect(st.mode & 0o777).toBe(0o600);
-    expect(fs.readFileSync(file, "utf8")).toBe('cli_auth_credentials_store = "file"\n');
+    expect(fs.readFileSync(file, "utf8")).toBe('cli_auth_credentials_store = "file"\nmodel = "SYNTHETIC"\n');
   });
 
   it("keeps a store setting the user chose", async () => {
@@ -195,7 +195,7 @@ describe("seedFolder", () => {
     await expect(
       seedFolder("codex", { ...sources, codexDir: path.join(sources.root, "missing") }, dest),
     ).rejects.toThrow();
-    expect(fs.readdirSync(path.dirname(dest))).toEqual([]);
+    expect(fs.existsSync(path.dirname(dest))).toBe(false);
   });
 });
 
@@ -333,7 +333,7 @@ describe("AccountService.seed", () => {
     expect(fs.readFileSync(copy, "utf8")).toBe('cli_auth_credentials_store = "file"\n');
   });
 
-  it("records each account as not signed in and makes it the default", async () => {
+  it("records copied sign-in as unchecked and makes each account the default", async () => {
     const { accounts, settings, sources } = setup();
     await accounts.seed({});
     const views = accounts.list();
@@ -343,7 +343,7 @@ describe("AccountService.seed", () => {
       "copilot/personal",
     ]);
     for (const v of views) {
-      expect(v.account.signIn).toEqual({ state: "not_signed_in" });
+      expect(v.account.signIn).toEqual({ state: "unknown" });
       expect(v.isDefault).toBe(true);
       expect(v.dirExists).toBe(true);
     }

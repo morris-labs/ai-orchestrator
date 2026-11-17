@@ -714,7 +714,7 @@ export class AccountService {
             name: req.name,
             label: req.name,
             overflow: false,
-            signIn: { state: "not_signed_in" },
+            signIn: { state: "unknown" },
             seededFrom: source,
             createdAt: now,
             updatedAt: now,
