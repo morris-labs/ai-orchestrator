@@ -21,8 +21,9 @@ You need the following:
 - Docker Engine, from the `docker.io` or `docker-ce` package, with your user
   in the `docker` group, and BuildKit, from the `docker-buildx` or
   `docker-buildx-plugin` package. The package depends on both.
-- A Claude account signed in to Claude Code on the host, so that
-  `~/.claude` and `~/.claude.json` exist. Every container mounts them.
+- A vendor account configured under AI Orchestrator's accounts directory.
+  Create an account and sign in with `aio claude -- auth login`, or explicitly
+  seed an account from the host. See [Accounts](accounts.md).
 - Optional: the 1Password CLI (`op`), if your projects use secrets. For more
   information, see [Secrets](secrets.md).
 
@@ -270,7 +271,7 @@ it never runs `git pull`. The server runs from the installed package.
    sudo apt remove ai-orchestrator
    ```
 
-Your data in `~/.ai-orchestrator`, your transcripts in `~/.claude`, and the
+Your data in `~/.ai-orchestrator`, your transcripts in the configured transcript store, and the
 `aio-agent` image stay in place.
 
 ## Build from source

@@ -367,12 +367,12 @@ text.
 
 ## Accounts
 
-In accounts mode, each model call of a run uses its vendor's default
+Each model call of a run uses its vendor's default
 account: the engine sets `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, or
 `COPILOT_HOME` to the account folder that the server names in the
 read-only `/run/aio-config/account-dirs.json` file. A change of default applies
-from the next call that starts a session, within what the container mounts. In host mode, the CLIs use the container user's `~/.claude`,
-`~/.codex`, and `~/.copilot`. For more information, see
+from the next call that starts a session, within what the container mounts.
+Host vendor folders aren't mounted. For more information, see
 [Accounts](accounts.md).
 
 ## Usage ceilings
