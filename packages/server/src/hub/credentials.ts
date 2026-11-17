@@ -120,6 +120,22 @@ export class CredentialStore {
     return path.join(this.opts.dataDir, "accounts", parts[1]!, parts[2]!, parts[3]!);
   }
 
+  private async isAccountFolder(file: string): Promise<boolean> {
+    try {
+      const root = path.join(await fs.realpath(this.opts.dataDir), "accounts");
+      const folder = await fs.realpath(path.dirname(file));
+      const relative = path.relative(root, folder);
+      return (
+        relative !== "" &&
+        relative !== ".." &&
+        !relative.startsWith(`..${path.sep}`) &&
+        !path.isAbsolute(relative)
+      );
+    } catch {
+      return false;
+    }
+  }
+
   private locked<T>(run: () => Promise<T>): Promise<T> {
     const result = this.lock.then(run, run);
     this.lock = result.catch(() => undefined);
@@ -161,9 +177,9 @@ export class CredentialStore {
       ["claude", ".credentials.json"],
       ["codex", "auth.json"],
     ] as const) {
-      const names = await fs
-        .readdir(path.join(this.opts.dataDir, "accounts", vendor))
-        .catch(() => [] as string[]);
+      const vendorDir = path.join(this.opts.dataDir, "accounts", vendor);
+      if (!(await this.isAccountFolder(path.join(vendorDir, file)))) continue;
+      const names = await fs.readdir(vendorDir).catch(() => [] as string[]);
       for (const name of names) {
         const key = `account/${vendor}/${name}/${file}`;
         if (isCredentialKey(key)) keys.push(key);
@@ -174,7 +190,7 @@ export class CredentialStore {
 
   private async read(key: string): Promise<Buffer | null> {
     const file = this.pathFor(key);
-    if (!file) return null;
+    if (!file || !(await this.isAccountFolder(file))) return null;
     try {
       const stat = await fs.lstat(file);
       // A link could lead out of the folder, so only regular files count.
@@ -282,6 +298,7 @@ export class CredentialStore {
       await this.load();
       const file = this.pathFor(entry.key);
       if (!file) throw new Error(`The sync doesn't write ${entry.key}.`);
+      if (!(await this.isAccountFolder(file))) return false;
       const bytes = entryBytes(entry);
       if (!bytes) throw new Error(`The content for ${entry.key} isn't a valid sign-in file.`);
       try {
