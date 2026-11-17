@@ -1670,23 +1670,23 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
 
   accounts
     .command("mode")
-    .description("Show or set where boxes get their agent folders: host or accounts.")
-    .argument("[mode]", "host or accounts. Omit it to show the current mode.")
+    .description("Show the account mode, or enable account folders. Host mode is retired.")
+    .argument("[mode]", "accounts. Omit it to show the current mode.")
     .action(async (mode: string | undefined) => {
       const c = client();
-      if (mode !== undefined && mode !== "host" && mode !== "accounts") {
-        throw new UsageError("Use host or accounts.");
+      if (mode !== undefined && mode !== "accounts") {
+        throw new UsageError(
+          "Host mode is retired. Use accounts after setting up your account folders.",
+        );
       }
       const settings =
         mode === undefined
           ? await c.call("settings.get")
           : await c.call("settings.patch", { body: { accountsMode: mode } });
-      print(
-        { accountsMode: settings.accountsMode },
-        () =>
-          `Boxes use ${settings.accountsMode === "accounts" ? "account folders" : "the host's agent folders"} (${settings.accountsMode}).${
-            mode === undefined ? "" : " Restart each project container for it to take effect."
-          }\n`,
+      print({ accountsMode: settings.accountsMode }, () =>
+        settings.accountsMode === "host"
+          ? 'Host mode is retired; boxes cannot start. Set up accounts, run "aio accounts relink", then "aio accounts mode accounts".\n'
+          : `Boxes use account folders (accounts).${mode === undefined ? "" : " Restart each project container for it to take effect."}\n`,
       );
     });
 

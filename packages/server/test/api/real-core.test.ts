@@ -12,6 +12,7 @@ import { MemoryDocker } from "../../src/docker/memory.js";
 import { waitFor } from "../events/fake-engine.js";
 import { FakeRunner } from "../setup/fake-runner.js";
 import { FakeExec } from "./harness.js";
+import { configureTestAccounts } from "../account-fixture.js";
 import { tempDir } from "../tmp.js";
 
 const ENGINE_VERSION = "1.0.0-test";
@@ -37,6 +38,7 @@ async function start(docker: MemoryDocker, before?: (home: string) => void) {
     home,
     createCore: async (options) => {
       real = await createCore({ ...options, docker, start: { pollMs: 0, watch: false } });
+      configureTestAccounts(real.server);
       return real;
     },
     version: ENGINE_VERSION,
@@ -79,6 +81,48 @@ function dockerWithImage(): MemoryDocker {
 }
 
 describe("the server over the real core", () => {
+  it("prepares the default account folder and reports an unknown account through the API", async () => {
+    const { home, api } = await start(dockerWithImage());
+    const prepared = await api("POST", "/api/v1/accounts/prepare", { vendor: "claude" });
+    expect(prepared.status).toBe(200);
+    expect(prepared.json).toEqual({
+      dir: path.join(home, ".ai-orchestrator", "accounts", "claude", "test"),
+      problems: [],
+    });
+    const missing = await api("POST", "/api/v1/accounts/prepare", {
+      vendor: "claude",
+      name: "missing",
+    });
+    expect(missing.status).toBe(404);
+    expect(codeOf(missing.json)).toBe("not_found");
+  });
+
+  it.each([
+    ["codex", "AGENTS.md"],
+    ["copilot", "copilot-instructions.md"],
+  ])("rebuilds %s instructions before returning its folder", async (vendor, output) => {
+    const { home, api } = await start(dockerWithImage());
+    const root = path.join(home, ".ai-orchestrator", "accounts");
+    const dir = path.join(root, vendor, "test");
+    fs.writeFileSync(path.join(root, "AGENTS.md"), "Global rule one\n");
+    fs.writeFileSync(
+      path.join(dir, "instructions.md"),
+      "@../../AGENTS.md\nAccount-specific rule\n@missing.md\n",
+    );
+    const prepared = await api("POST", "/api/v1/accounts/prepare", { vendor });
+    expect(prepared.status).toBe(200);
+    expect(prepared.json.dir).toBe(dir);
+    expect(prepared.json.problems).toEqual([expect.stringContaining("missing.md")]);
+    expect(fs.readFileSync(path.join(dir, output), "utf8")).toMatch(
+      /Global rule one\s+Account-specific rule/,
+    );
+    fs.writeFileSync(path.join(root, "AGENTS.md"), "Global rule two\n");
+    expect((await api("POST", "/api/v1/accounts/prepare", { vendor })).status).toBe(200);
+    const latest = fs.readFileSync(path.join(dir, output), "utf8");
+    expect(latest).toContain("Global rule two");
+    expect(latest).not.toContain("Global rule one");
+  });
+
   it("creates, lists, and previews a purge of a box", async () => {
     const docker = dockerWithImage();
     const { home, api } = await start(docker);

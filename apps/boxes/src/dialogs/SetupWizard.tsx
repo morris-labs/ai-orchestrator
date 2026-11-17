@@ -49,6 +49,7 @@ export interface SetupWizardProps {
 
 export function SetupWizard({ onClose, onDone, stacked }: SetupWizardProps) {
   const client = useApiClient();
+  const [hostMode, setHostMode] = useState(false);
   const [checks, setChecks] = useState<SetupCheck[] | null>(null);
   const [dir, setDir] = useState("");
   // `null` until the settings load, so Done never clears a reference it hasn't seen.
@@ -86,6 +87,7 @@ export function SetupWizard({ onClose, onDone, stacked }: SetupWizardProps) {
     client
       .call("settings.get", {})
       .then((s) => {
+        setHostMode(s.accountsMode === "host");
         const ref = s.sudoPasswordRef ?? "";
         setSavedSudoRef(ref);
         setSudoRef((r) => r ?? ref);
@@ -282,7 +284,7 @@ export function SetupWizard({ onClose, onDone, stacked }: SetupWizardProps) {
           setMachineName={setMachineName}
         />
       )}
-      <AccountSeedControl />
+      <AccountSeedControl hostMode={hostMode} />
       <div className="ab-field">
         <label htmlFor="bx-default-dir">Default directory for New Box</label>
         <input

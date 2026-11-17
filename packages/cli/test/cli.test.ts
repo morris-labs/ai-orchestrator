@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { parseConfig } from "@aio/contracts";
 import { childEnv, runCli } from "../src/program.js";
 import type { TerminalIo } from "../src/terminal.js";
 import type WebSocket from "ws";
@@ -1667,6 +1668,14 @@ describe("accounts", () => {
     expect(await cli(["box", "account", BOX_ID, "gemini"])).toBe(2);
   });
 
+  it("describes stored host mode as retired and offers only account mode", async () => {
+    server.on("GET /api/v1/settings", { body: parseConfig({ accountsMode: "host" }) });
+    expect(await cli(["accounts", "mode"])).toBe(0);
+    expect(out).toContain("Host mode is retired");
+    expect(out).toContain("aio accounts mode accounts");
+    expect(await cli(["accounts", "mode", "host"])).toBe(2);
+  });
+
   it("sets the accounts mode through the settings", async () => {
     server.on("PATCH /api/v1/settings", {
       status: 400,
@@ -2406,6 +2415,12 @@ describe("host vendor commands", () => {
     expect(await cli(["claude", "--account", "missing"])).toBe(1);
     expect(last()?.body).toEqual({ vendor: "claude", name: "missing" });
     expect(err).toContain("No Claude account missing");
+    expect(execs).toEqual([]);
+  });
+  it("rejects remote-machine selection before resolving or launching a local vendor CLI", async () => {
+    expect(await cli(["--machine", "remote", "claude"])).toBe(2);
+    expect(err).toContain("works on this machine only");
+    expect(server.requests).toHaveLength(0);
     expect(execs).toEqual([]);
   });
   it("reports an unreachable server without launching", async () => {

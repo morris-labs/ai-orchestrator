@@ -168,7 +168,9 @@ describe("addCodexFileStore", () => {
     const st = fs.lstatSync(file);
     expect(st.isFile()).toBe(true);
     expect(st.mode & 0o777).toBe(0o600);
-    expect(fs.readFileSync(file, "utf8")).toBe('cli_auth_credentials_store = "file"\nmodel = "SYNTHETIC"\n');
+    expect(fs.readFileSync(file, "utf8")).toBe(
+      'cli_auth_credentials_store = "file"\nmodel = "SYNTHETIC"\n',
+    );
   });
 
   it("keeps a store setting the user chose", async () => {
