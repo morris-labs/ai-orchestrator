@@ -425,7 +425,7 @@ function entryOf(key: string, text: string) {
 
 describe("sign-in sync keys", () => {
   it("allows only the known sign-in files, with no way out of their folders", async () => {
-    expect(isCredentialKey("host/claude/.credentials.json")).toBe(true);
+    expect(isCredentialKey("host/claude/.credentials.json")).toBe(false);
     expect(isCredentialKey("account/codex/work/auth.json")).toBe(true);
     expect(isCredentialKey("account/codex/work/.credentials.json")).toBe(false);
     expect(isCredentialKey("account/claude/../x/.credentials.json")).toBe(false);
@@ -436,18 +436,27 @@ describe("sign-in sync keys", () => {
     expect(store.pathFor("account/claude/work/.credentials.json")).toBe(
       path.join(home, "data", "accounts", "claude", "work", ".credentials.json"),
     );
+    fs.mkdirSync(path.join(home, ".claude"));
+    const hostFile = path.join(home, ".claude", ".credentials.json");
+    fs.writeFileSync(hostFile, '{"token":"synthetic-host"}');
+    expect(await store.list()).toEqual([]);
+    expect(await store.entry("host/claude/.credentials.json")).toBeNull();
+    await expect(
+      store.write(entryOf("host/claude/.credentials.json", '{"t":"a"}')),
+    ).rejects.toThrow();
+    expect(fs.readFileSync(hostFile, "utf8")).toBe('{"token":"synthetic-host"}');
     // No folder, no file.
-    expect(await store.write(entryOf("host/codex/auth.json", '{"t":"a"}'))).toBe(false);
+    expect(await store.write(entryOf("account/codex/work/auth.json", '{"t":"a"}'))).toBe(false);
     await expect(store.write(entryOf("host/../../etc/passwd", '{"t":"a"}'))).rejects.toThrow();
   });
 });
 
 describe("the sign-in store", () => {
-  const key = "host/claude/.credentials.json";
+  const key = "account/claude/work/.credentials.json";
   const setup = () => {
     const home = tempDir("aio-cred-");
-    fs.mkdirSync(path.join(home, ".claude"));
-    const file = path.join(home, ".claude", ".credentials.json");
+    fs.mkdirSync(path.join(home, "data/accounts/claude/work"), { recursive: true });
+    const file = path.join(home, "data/accounts/claude/work", ".credentials.json");
     const open = () => new CredentialStore({ home, dataDir: path.join(home, "data") });
     return { home, file, open };
   };
@@ -550,11 +559,11 @@ describe("the sign-in store", () => {
     fs.writeFileSync(file, '{"t":"1"}');
     const store = open();
     await store.prime();
-    fs.chmodSync(path.join(home, ".claude"), 0o555);
+    fs.chmodSync(path.join(home, "data/accounts/claude/work"), 0o555);
     try {
       await expect(store.write(entryOf(key, '{"t":"2"}'))).rejects.toThrow();
     } finally {
-      fs.chmodSync(path.join(home, ".claude"), 0o755);
+      fs.chmodSync(path.join(home, "data/accounts/claude/work"), 0o755);
     }
     expect(fs.readFileSync(file, "utf8")).toBe('{"t":"1"}');
     expect(await store.changes()).toEqual([]);

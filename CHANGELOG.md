@@ -6,6 +6,30 @@ section's heading must have the form `## [X.Y.Z]`.
 
 ## [Unreleased]
 
+### Breaking changes
+
+- Boxes no longer use host vendor folders. An installation still configured
+  with `accountsMode: host` refuses box creation and starts. Set up vendor
+  accounts, run `aio accounts relink` to copy old linked host configuration
+  into the accounts, select `aio accounts mode accounts`, and restart project
+  containers. Relink leaves host files unchanged. See [Accounts](docs/accounts.md).
+- Multi-host sign-in grants use account keys only. Replace legacy `host/…`
+  grants with `account/claude/NAME/.credentials.json` or
+  `account/codex/NAME/auth.json`.
+
+### Added
+
+- Global and account instruction layers with include lines. Claude follows
+  imports directly; Codex and Copilot receive generated instructions at each
+  start from editable `instructions.md` files. Missing imports are reported,
+  and expansion stops at depth 3.
+- `aio claude`, `aio codex`, and `aio copilot` run host CLIs with the selected
+  account folder and pass vendor arguments after `--` unchanged.
+- `aio accounts seed --copy-host-setup` optionally copies Claude instructions,
+  settings, skills, and plugins once. The option is off by default.
+- Shared contributor guidance in `AGENTS.md`; personal `CLAUDE.md` files remain
+  ignored.
+
 ## [2.0.0] - Unreleased
 
 ### Added

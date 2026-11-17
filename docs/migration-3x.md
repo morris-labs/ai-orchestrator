@@ -10,9 +10,9 @@ for classic boxes, and what 1.0.0 drops or defers.
 - Each box keeps its session ID, so it resumes the same conversation.
 - Worktrees stay at `PRIMARY_REPO/.worktrees/SLUG` on `claude/SLUG`
   branches.
-- Mounts work as before: the project root at the same path, `~/.claude`,
-  `~/.claude.json`, `~/.codex`, `~/.copilot`, the global mounts, and each
-  project's mounts.
+- Project roots, global mounts, and project mounts keep their configured paths.
+  Current releases use self-contained account folders for vendor configuration;
+  set up accounts before starting imported boxes. See [Accounts](accounts.md).
 
 ## What changes in names and folders
 
@@ -37,8 +37,8 @@ box and run `aio transcripts adopt` (`--dry-run` shows the plan first). The
 command moves the files, merges without overwriting, reports clashes, and
 points `~/.claude/projects` at the new folder. If `~/.claude/projects` is
 already a link to a folder elsewhere, the command moves that folder's
-contents. Until you run it, boxes in host mode keep working through
-whatever link `~/.claude/projects` is.
+contents. This is an explicit legacy migration; current box starts use the
+account transcript store and don't mount the host vendor folder.
 
 A conversation's `PLAN.md` and `STATUS.md` notes live in the `.claude-box/`
 folder of its worktree or project in 3.x. AI Orchestrator reads `.aio/`

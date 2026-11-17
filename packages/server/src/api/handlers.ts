@@ -495,6 +495,7 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
     "sshRemotes.copyId": async ({ params }) =>
       deps.ssh.copyId(await core.sshRemotes.get(params.name)),
     // Accounts
+    "accounts.prepare": async ({ body }) => core.accounts.prepare(body),
     "accounts.list": async () => ({ accounts: await core.accounts.list() }),
     "accounts.create": async ({ body }) => core.accounts.create(body),
     "accounts.seed": async ({ body }) => {

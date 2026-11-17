@@ -39,8 +39,8 @@ clean. You decide when to push and when to merge.
 
 - Ubuntu 24.04 or later on x86-64, with systemd.
 - Node.js 22 and Docker Engine.
-- Claude Code signed in on the host. Codex, Copilot, and the 1Password CLI
-  are optional.
+- A configured vendor account. See [Accounts](docs/accounts.md) to create or
+  seed one and sign in. The 1Password CLI is optional.
 
 macOS and Windows builds exist but are untested. For more information, see
 [macOS and Windows](docs/platforms.md).

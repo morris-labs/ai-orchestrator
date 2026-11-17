@@ -578,9 +578,8 @@ secrets broker. The following data crosses the link:
 - **Agent sign-ins**: by default, nothing. A node signs in by itself, as
   [Sign in on a node](#sign-in-on-a-node) describes, and never sends a sign-in
   to the hub. As an option, the hub copies its Claude and Codex sign-in files,
-  from the host folders (`~/.claude/.credentials.json` and
-  `~/.codex/auth.json`) and from account folders, for only the keys in that
-  machine's grant.
+  from account folders only, for the keys in that machine's grant. Host
+  vendor folders aren't read or synchronized.
 
 ## Sign in on a node
 
@@ -636,7 +635,7 @@ curl --cacert ~/.ai-orchestrator/server.crt \
     -X PATCH -d '{"nodeGrants": {"MACHINE_ID": {
         "opRefs": ["op://VAULT/ITEM/FIELD"],
         "opVaults": ["VAULT"],
-        "signInCopies": ["host/claude/.credentials.json"]
+        "signInCopies": ["account/claude/work/.credentials.json"]
     }}}' \
     https://127.0.0.1:21400/api/v1/settings
 
@@ -657,9 +656,9 @@ Each field is optional and defaults to an empty list:
   it empty when the machine signs in by itself. For the risk of a shared
   sign-in, see [Sign in on a node](#sign-in-on-a-node).
 
-A sign-in key is `host/claude/.credentials.json`, `host/codex/auth.json`,
-`account/claude/NAME/.credentials.json`, or `account/codex/NAME/auth.json`,
-where `NAME` is the account's name.
+A sign-in key is `account/claude/NAME/.credentials.json` or
+`account/codex/NAME/auth.json`, where `NAME` is the account's name.
+Legacy `host/…` keys no longer read or write any host vendor file.
 
 The request replaces every machine's grant, so send the whole setting. To
 remove every grant, send `{"nodeGrants": null}`. The hub applies a change to
