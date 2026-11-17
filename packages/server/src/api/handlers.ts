@@ -220,6 +220,9 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
       if (isRunState(result) && !mirrorOwnRun(engine, result)) {
         throw new ApiError("run_not_found", `No run has the id ${params.runId}.`);
       }
+      // The owner paused or cancelled this run; an upgrade leaves it alone.
+      if (key === "runs.pause" || key === "runs.cancel")
+        deps.upgrade?.forget({ runId: params.runId });
       return result;
     }) as unknown as HttpHandlers[K];
   }
@@ -255,8 +258,10 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
     },
     "projects.remove": async ({ params, query }) =>
       core.projects.remove(params.projectId, query.force),
-    "projects.restartContainer": async ({ params }) =>
-      core.projects.restartContainer(params.projectId),
+    "projects.restartContainer": async ({ params }) => {
+      await deps.upgrade?.waitReady();
+      return core.projects.restartContainer(params.projectId);
+    },
     "projects.policy.get": async ({ params }) => core.projects.getPolicy(params.projectId),
     "projects.policy.put": async ({ params, query, body }) =>
       core.projects.putPolicy(params.projectId, body, query.baseRevision),
@@ -274,6 +279,7 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
     // Boxes
     "boxes.list": async ({ query }) => ({ boxes: await core.boxes.list(query) }),
     "boxes.create": async ({ body }) => {
+      await deps.upgrade?.waitReady();
       requireAbsolute(body.targetDir, "The target directory");
       await core.boxes.validateCreate(body);
       const label = body.conversationName.trim() || body.targetDir;
@@ -287,12 +293,26 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
     },
     "boxes.get": async ({ params }) => core.boxes.get(params.boxId),
     "boxes.update": async ({ params, body }) => core.boxes.update(params.boxId, body),
-    "boxes.start": async ({ params, body }) =>
-      core.boxes.start(params.boxId, { force: body.force }),
-    "boxes.stop": async ({ params }) => core.boxes.stop(params.boxId),
-    "boxes.restart": async ({ params }) => core.boxes.restart(params.boxId),
-    "boxes.remove": async ({ params, query }) =>
-      core.boxes.remove(params.boxId, { removeWorktree: query.removeWorktree }),
+    "boxes.start": async ({ params, body }) => {
+      await deps.upgrade?.waitReady();
+      return core.boxes.start(params.boxId, { force: body.force });
+    },
+    "boxes.stop": async ({ params }) => {
+      const result = await core.boxes.stop(params.boxId);
+      deps.upgrade?.forget({ boxId: params.boxId });
+      return result;
+    },
+    "boxes.restart": async ({ params }) => {
+      await deps.upgrade?.waitReady();
+      return core.boxes.restart(params.boxId);
+    },
+    "boxes.remove": async ({ params, query }) => {
+      const result = await core.boxes.remove(params.boxId, {
+        removeWorktree: query.removeWorktree,
+      });
+      deps.upgrade?.forget({ boxId: params.boxId });
+      return result;
+    },
     "boxes.purge": async ({ params, body }) =>
       core.boxes.purge(params.boxId, { dryRun: body.dryRun }),
     "boxes.move": async ({ params, body }) => {
@@ -335,8 +355,10 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
         }),
       };
     },
-    "boxes.sideSessions.start": async ({ params, body }) =>
-      core.boxes.startSideSession(params.boxId, body.platform),
+    "boxes.sideSessions.start": async ({ params, body }) => {
+      await deps.upgrade?.waitReady();
+      return core.boxes.startSideSession(params.boxId, body.platform);
+    },
     "boxes.sideSessions.stop": async ({ params }) => {
       const platform = params.platform;
       if (platform !== "claude" && platform !== "codex" && platform !== "copilot") {
@@ -345,15 +367,27 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
       await core.boxes.stopSideSession(params.boxId, platform);
       return { ok: true };
     },
-    "boxes.platform": async ({ params, body }) =>
-      core.boxes.setPlatform(params.boxId, body.platform, body.restart),
+    "boxes.platform": async ({ params, body }) => {
+      if (body.restart) await deps.upgrade?.waitReady();
+      return core.boxes.setPlatform(params.boxId, body.platform, body.restart);
+    },
     "boxes.message": async ({ params, body }) => {
       await core.boxes.message(params.boxId, body.text);
       return { ok: true };
     },
-    "boxes.startAll": async ({ body }) => core.boxes.startAll(body.onlyWasRunning),
-    "boxes.stopAll": async () => core.boxes.stopAll(),
-    "boxes.restartAll": async () => core.boxes.restartAll(),
+    "boxes.startAll": async ({ body }) => {
+      await deps.upgrade?.waitReady();
+      return core.boxes.startAll(body.onlyWasRunning);
+    },
+    "boxes.stopAll": async () => {
+      const result = await core.boxes.stopAll();
+      deps.upgrade?.forget({ allBoxes: true });
+      return result;
+    },
+    "boxes.restartAll": async () => {
+      await deps.upgrade?.waitReady();
+      return core.boxes.restartAll();
+    },
     "stats.refresh": async () => {
       await core.docker.refreshStats();
       return { ok: true };
@@ -376,9 +410,29 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
       return core.models.list(query.dir, query.account);
     },
     "models.rescan": async () => core.models.rescan(),
-    "image.status": async () => core.image.status(),
+    "upgrade.preview": async () => {
+      if (!deps.upgrade) throw new ApiError("conflict", "Upgrade service unavailable");
+      return deps.upgrade.preview();
+    },
+    "upgrade.prepare": async () => {
+      if (!deps.upgrade) throw new ApiError("conflict", "Upgrade service unavailable");
+      return deps.upgrade.prepare();
+    },
+    "upgrade.start": async () => {
+      if (!deps.upgrade) throw new ApiError("conflict", "Upgrade service unavailable");
+      if (!deps.upgrade.upgrading) await deps.upgrade.prepare();
+      return deps.upgrade.start();
+    },
+    "image.status": async () => ({
+      ...(await core.image.status()),
+      upgrading: deps.upgrade?.upgrading ?? false,
+      buildLogJobId: deps.upgradeBuildJob?.() ?? null,
+    }),
     "image.build": async ({ body }) => deps.setup.buildImage(body.kind),
-    "updates.check": async ({ query }) => deps.updates.check(query.force),
+    "updates.check": async ({ query }) => ({
+      ...(await deps.updates.check(query.force)),
+      installedVersion: deps.version,
+    }),
     "setup.get": async () => deps.setup.status(),
     "setup.fix": async ({ params }) => deps.setup.fix(params.checkId),
     "setup.complete": async ({ body }) => {

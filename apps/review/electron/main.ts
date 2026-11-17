@@ -401,9 +401,17 @@ if (!app.requestSingleInstanceLock()) {
     quitting = true;
   });
   app.on("activate", () => show());
+  ipcMain.on("aio:relaunch", (e) => {
+    const url = e.senderFrame?.url;
+    if (typeof url !== "string" || !isAppPage(url, APP_PAGES)) return;
+    app.relaunch({
+      execPath: process.platform === "linux" ? "/usr/bin/aio-review" : process.execPath,
+    });
+    app.exit(0);
+  });
   ipcMain.on("aio:config", (e) => {
     // Under the Vite dev server the page calls its own origin, which proxies to the server.
-    e.returnValue = { serverUrl: DEV_URL ? null : config.serverUrl };
+    e.returnValue = { serverUrl: DEV_URL ? null : config.serverUrl, appVersion: app.getVersion() };
   });
   // The preload asks once per page load and hands the token to the page once.
   ipcMain.on("aio:token", (e) => {

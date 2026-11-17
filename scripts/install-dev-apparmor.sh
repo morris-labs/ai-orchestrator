@@ -95,6 +95,7 @@ apparmor_quote() {
   [[ "$path" != *$'\n'* ]] || die "the path contains a newline: $path"
   for ((i = 0; i < ${#path}; i++)); do
     ch="${path:i:1}"
+    # shellcheck disable=SC1003 # '\' matches a single backslash.
     case "$ch" in
       '\' | '"' | '*' | '?' | '[' | ']' | '{' | '}' | '^') out+="\\$ch" ;;
       *) out+="$ch" ;;

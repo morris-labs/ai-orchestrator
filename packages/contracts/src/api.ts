@@ -570,7 +570,41 @@ export const ModelsResultSchema = z.object({
   source: z.enum(["scan", "cache", "baseline"]),
 });
 
+export const UpgradePreviewSchema = z.object({
+  boxes: z.array(z.object({ id: z.string(), name: z.string() })),
+  runs: z.array(z.object({ run_id: z.string(), name: z.string() })),
+});
+export type UpgradePreview = z.infer<typeof UpgradePreviewSchema>;
+export const UpgradeReportSchema = z.object({
+  image: z.enum(["latest", "pinned", "failed"]),
+  fallback: z.boolean(),
+  error: z.string().nullable(),
+  boxes: z.array(
+    z.object({
+      id: z.string(),
+      name: z.string(),
+      restored: z.boolean(),
+      reason: z.string().nullable(),
+      /** True when the work no longer exists, so its absence isn't a failure. */
+      gone: z.boolean().optional(),
+    }),
+  ),
+  runs: z.array(
+    z.object({
+      run_id: z.string(),
+      name: z.string(),
+      restored: z.boolean(),
+      reason: z.string().nullable(),
+      /** True when the work no longer exists, so its absence isn't a failure. */
+      gone: z.boolean().optional(),
+    }),
+  ),
+});
+export type UpgradeReport = z.infer<typeof UpgradeReportSchema>;
+
 export const ImageStatusSchema = z.object({
+  upgrading: z.boolean().optional(),
+  buildLogJobId: z.string().nullable().optional(),
   name: z.string().min(1),
   exists: z.boolean(),
   imageId: z.string().nullable(),
@@ -594,6 +628,7 @@ export const ImageBuildSchema = z.object({
 
 /** The result of `updates.check`: this app's release and the image's Claude Code. */
 export const UpdatesSchema = z.object({
+  installedVersion: z.string().optional(),
   checkedAt: IsoDateTimeSchema,
   app: z.object({
     current: z.string().min(1),
@@ -1465,6 +1500,24 @@ export const serverRoutes = {
     summary: "Rescan the image for model ids.",
     response: ModelsResultSchema,
     errors: ["image_missing"],
+  }),
+  "upgrade.preview": http({
+    method: "GET",
+    path: `${V1}/upgrade/preview`,
+    summary: "Open work a CLI update will stop.",
+    response: UpgradePreviewSchema,
+  }),
+  "upgrade.prepare": http({
+    method: "POST",
+    path: `${V1}/upgrade/prepare`,
+    summary: "Record open work before restarting the server.",
+    response: UpgradePreviewSchema,
+  }),
+  "upgrade.start": http({
+    method: "POST",
+    path: `${V1}/upgrade`,
+    summary: "Build the image and restore open work.",
+    response: UpgradeReportSchema,
   }),
   "image.status": http({
     method: "GET",

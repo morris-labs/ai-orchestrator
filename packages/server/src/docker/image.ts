@@ -149,7 +149,7 @@ export function noEngineMessage(image: string): string {
 }
 
 /** The build kinds of `image.build`. */
-export type ImageBuildKind = "rebuild" | "packages" | "claude-code";
+export type ImageBuildKind = "rebuild" | "packages" | "claude-code" | "upgrade";
 
 /**
  * The `scripts/build-image.sh` options for a build kind, as 3.3.5's setup
@@ -159,6 +159,8 @@ export type ImageBuildKind = "rebuild" | "packages" | "claude-code";
  */
 export function imageBuildScriptArgs(kind: ImageBuildKind): string[] {
   switch (kind) {
+    case "upgrade":
+      return ["--upgrade"];
     case "rebuild":
       return ["--no-cache"];
     case "packages":

@@ -6,8 +6,33 @@ section's heading must have the form `## [X.Y.Z]`.
 
 ## [Unreleased]
 
+## [2.0.0] - Unreleased
+
 ### Added
 
+- One-step upgrade: installing the `.deb` package performs the whole
+  upgrade. For each user with `aio-server` enabled, the install records the
+  open boxes and review runs, restarts the server, builds the image with the
+  latest agent CLIs, recreates every project container, and reopens the boxes
+  and runs. It prints progress and a summary, and waits about 5 minutes at
+  most. If the image can't be built, the configure step fails; run
+  `sudo dpkg --configure -a` to retry. See `docs/install.md`.
+- When the latest agent CLIs fail to build, the image build falls back to the
+  pins in `image/versions.env` and reports it. The upgrade keeps one previous
+  image for rollback.
+- `scripts/upgrade.sh` builds a checkout, builds the `.deb` package, and
+  installs it. It doesn't run `git pull`.
+- A startup check for servers started without the package install, such as
+  on macOS and Windows: on an engine mismatch the server rebuilds the image,
+  the apps show an **Upgrading** bar, and box starts wait for the build.
+- A **CLI update** button that rebuilds the image with the latest agent CLIs
+  after a dialog that lists the boxes and runs it stops, then brings them back.
+- The Boxes and Review apps reload update, image, and machine status when they
+  reconnect to the server, and show a relaunch bar when the installed app is
+  newer than the running one.
+- Saved review runs carry a state version. A run saved by an older version
+  resumes through State adaptations; a run saved by a newer version stays
+  paused with a notice. See `docs/run-state-compatibility.md`.
 - GUI enrollment: the Boxes and Review apps on another PC can control a hub and
   its nodes. `aio gui code` or **Add GUI App** on the hub issues a one-time code,
   the app generates its own key and gets a client certificate, and a new listener
@@ -71,6 +96,10 @@ section's heading must have the form `## [X.Y.Z]`.
 
 ### Changed
 
+- The server runs only from the installed package, at `/usr/bin/aio-server`.
+  The package install and `scripts/install-server-unit.sh` replace a checkout
+  service with the packaged command and keep custom arguments such as
+  `--data-dir`, `--role`, and `--log-file`.
 - Agent sign-ins flow only from the hub to the nodes that a grant's `signInCopies`
   lists. The `signInUpdates` grant is gone; stored settings that hold it still
   load. A copy doesn't replace a file that the node signed in or refreshed itself.

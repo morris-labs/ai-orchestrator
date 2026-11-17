@@ -1,6 +1,7 @@
 // The `aio` command tree.
 import { spawn } from "node:child_process";
 import path from "node:path";
+import fs from "node:fs";
 import {
   ACCOUNT_DIR_ENV,
   ACCOUNT_SIGN_IN_COMMAND,
@@ -23,6 +24,7 @@ import {
   parseAccountId,
   type AccountSeedReport,
   VendorSchema,
+  UpgradePreviewSchema,
   type AccountSignIn,
   runDepth,
   type AccountView,
@@ -57,6 +59,7 @@ import {
   checkAttachArgv,
   checkServerUrl,
   displayUrl,
+  dataDirFor,
   resolveSettings,
   serverFetch,
   serverTls,
@@ -533,12 +536,13 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
   const clientFor = (
     s: CliSettings,
     machine: () => Promise<string | null> = async () => (await target())?.id ?? null,
+    signal: AbortSignal | undefined = deps.signal,
   ) =>
     new ServerClient({
       baseUrl: s.baseUrl,
       token: s.token,
       fetch: deps.fetch ?? serverFetch(s),
-      signal: deps.signal,
+      signal,
       machine,
     });
   const client = () => clientFor(settings());
@@ -2043,6 +2047,190 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
 
   // -------------------------------------------------------------------------
   // migrate, setup, doctor, events
+  program
+    .command("upgrade [phase]")
+    .description("Rebuild the image and restore open boxes and review runs.")
+    .option("--timeout <seconds>", "Maximum wait for the server and upgrade.", "300")
+    .action(async (phase: string | undefined, opts: { timeout: string }) => {
+      if (phase && phase !== "prepare")
+        throw new UsageError("Use aio upgrade or aio upgrade prepare.");
+      const seconds = Number(opts.timeout);
+      if (!Number.isFinite(seconds) || seconds <= 0)
+        throw new UsageError("--timeout must be a positive number.");
+      const deadline = Date.now() + seconds * 1000;
+      const controller = new AbortController();
+      const signal = AbortSignal.any([
+        controller.signal,
+        AbortSignal.timeout(Math.ceil(seconds * 1000)),
+        ...(deps.signal ? [deps.signal] : []),
+      ]);
+      const upgradeClient = () => clientFor(settings(), undefined, signal);
+      if (phase === "prepare") {
+        try {
+          const recordFile = path.join(
+            dataDirFor(deps.env, deps.home, globals().dataDir),
+            "upgrade-open-work.json",
+          );
+          try {
+            const prepared = await upgradeClient().call("upgrade.prepare");
+            print(
+              prepared,
+              () => `Recorded ${prepared.boxes.length} boxes and ${prepared.runs.length} runs.\n`,
+            );
+            return;
+          } catch (err) {
+            // The first package upgrade is served by a version with no upgrade API.
+            if (
+              !(err instanceof ServerUnreachableError) &&
+              !(err instanceof ApiCallError && err.status === 404)
+            )
+              throw err;
+            let boxes: { id: string; name: string }[] = [];
+            let runs: { run_id: string; name: string; projectId: string }[] = [];
+            try {
+              boxes = (await upgradeClient().call("boxes.list", { query: {} })).boxes
+                .filter((b) => b.status === "running")
+                .map((b) => ({ id: b.box.id, name: b.box.conversationName || b.box.id }));
+              runs = (await upgradeClient().call("runs.list", { query: {} })).runs
+                .filter((r) => ["pending", "running", "waiting_decision"].includes(r.status))
+                .map((r) => ({ run_id: r.id, name: r.id, projectId: r.projectId }));
+            } catch (legacyError) {
+              if (!(legacyError instanceof ServerUnreachableError)) throw legacyError;
+              // A previous attempt may have left work for the next startup.
+              if (fs.existsSync(recordFile)) {
+                deps.out("Preserved previously recorded open work.\n");
+                return;
+              }
+            }
+            fs.mkdirSync(path.dirname(recordFile), { recursive: true });
+            fs.writeFileSync(`${recordFile}.tmp`, JSON.stringify({ boxes, runs }), { mode: 0o600 });
+            fs.renameSync(`${recordFile}.tmp`, recordFile);
+            deps.out(`Recorded ${boxes.length} boxes and ${runs.length} runs.\n`);
+            return;
+          }
+        } catch (error) {
+          if ((signal.aborted || Date.now() >= deadline) && !deps.signal?.aborted)
+            throw new Error("Upgrade time limit reached; retry with sudo dpkg --configure -a.", {
+              cause: error,
+            });
+          throw error;
+        } finally {
+          controller.abort();
+        }
+      }
+      let pending = {
+        boxes: [] as { id: string; name: string }[],
+        runs: [] as { run_id: string; name: string }[],
+      };
+      try {
+        pending = UpgradePreviewSchema.parse(
+          JSON.parse(
+            fs.readFileSync(
+              path.join(
+                dataDirFor(deps.env, deps.home, globals().dataDir),
+                "upgrade-open-work.json",
+              ),
+              "utf8",
+            ),
+          ),
+        );
+      } catch {
+        /* A CLI update can have no prepared package-install record. */
+      }
+      deps.err("Upgrading: building the image, then restoring open work.\n");
+      let progressBusy = false;
+      const progress = setInterval(() => {
+        if (progressBusy) return;
+        progressBusy = true;
+        void upgradeClient()
+          .call("image.status")
+          .then((status) => {
+            deps.err(
+              status.upgrading
+                ? `Upgrading: building the image${status.buildLogJobId ? ` (build log job ${status.buildLogJobId})` : ""}.\n`
+                : "Upgrading: restoring open work.\n",
+            );
+          })
+          .catch(() => {})
+          .finally(() => {
+            progressBusy = false;
+          });
+      }, 5000);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let printedSummary = false;
+      try {
+        while (true) {
+          try {
+            await upgradeClient().call("health");
+            break;
+          } catch (err) {
+            if (!(err instanceof ServerUnreachableError) || Date.now() >= deadline) throw err;
+            await new Promise((resolve) =>
+              setTimeout(resolve, Math.max(1, Math.min(500, deadline - Date.now()))),
+            );
+          }
+        }
+        const report = await Promise.race([
+          upgradeClient()
+            .call("upgrade.start")
+            .catch((err) => {
+              if ((signal.aborted || Date.now() >= deadline) && !deps.signal?.aborted)
+                throw new Error("Upgrade time limit reached; retry with sudo dpkg --configure -a.");
+              throw err;
+            }),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(
+              () =>
+                reject(
+                  new Error("Upgrade time limit reached; retry with sudo dpkg --configure -a."),
+                ),
+              Math.max(1, deadline - Date.now()),
+            );
+          }),
+        ]);
+        print(
+          report,
+          () =>
+            [
+              report.image === "failed"
+                ? `Image build failed: ${report.error}`
+                : `Image built with ${report.image === "pinned" ? "pinned CLI versions (latest failed; fallback used)" : "latest CLI versions"}.`,
+              ...report.boxes.map(
+                (b) => `Box ${b.name} (${b.id}): ${b.restored ? "restored" : b.reason}`,
+              ),
+              ...report.runs.map((r) => `Run ${r.name}: ${r.restored ? "resumed" : r.reason}`),
+            ].join("\n") + "\n",
+        );
+        printedSummary = true;
+        if (
+          report.error ||
+          report.boxes.some((b) => !b.restored && !b.gone) ||
+          report.runs.some((r) => !r.restored && !r.gone)
+        )
+          throw new Error(
+            report.error ?? "Some open work could not be restored; see summary above.",
+          );
+      } catch (caught) {
+        const error =
+          (signal.aborted || Date.now() >= deadline) && !deps.signal?.aborted
+            ? new Error("Upgrade time limit reached; retry with sudo dpkg --configure -a.")
+            : caught;
+        if (!printedSummary && /time limit/i.test((error as Error).message)) {
+          for (const box of pending.boxes)
+            deps.out(
+              `Box ${box.name} (${box.id}): restoration unconfirmed; upgrade time limit reached.\n`,
+            );
+          for (const run of pending.runs)
+            deps.out(`Run ${run.name}: restoration unconfirmed; upgrade time limit reached.\n`);
+        }
+        throw error;
+      } finally {
+        controller.abort();
+        clearInterval(progress);
+        clearTimeout(timer);
+      }
+    });
+
   program
     .command("migrate")
     .description("Import the 3.x records under ~/.ai-orchestrator into the server's database.")

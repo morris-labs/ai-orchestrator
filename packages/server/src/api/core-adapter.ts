@@ -3,6 +3,8 @@
 // and mostly synchronous calls; the API works in views and promises. This
 // file is the only place that knows both shapes.
 import path from "node:path";
+import fs from "node:fs";
+import { stateFile } from "../docker/state.js";
 import type { Box, BoxView, ReviewState } from "@aio/contracts";
 import type Docker from "dockerode";
 import type { ServerCore } from "../core.js";
@@ -96,6 +98,15 @@ export function apiCoreOf(server: ServerCore, dockerApi: Docker): Core {
       get: async (projectId) => projects.summary(projects.get(projectId)),
       update: (projectId, patch) => projects.update(projectId, patch),
       restartContainer: (projectId) => boxes.restartProjectContainer(projectId),
+      recreateContainer: async (projectId) => {
+        const container = projects.containerName(projects.get(projectId));
+        for (const box of boxes.list(projectId)) {
+          await boxes.syncRecordFromSession(box.id).catch(() => false);
+        }
+        await server.docker.removeContainer(container, { force: true });
+        fs.rmSync(stateFile(server.env, container), { force: true });
+        await projects.ensureContainer(projectId);
+      },
       remove: (projectId, force) => boxes.removeProject(projectId, { force }),
       getPolicy: async (projectId) => readPolicy(projects.policyFile(projects.get(projectId))),
       putPolicy: async (projectId, policy, baseRevision) =>

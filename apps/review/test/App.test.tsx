@@ -37,6 +37,23 @@ function handlers() {
 }
 
 describe("App with the scripted event stream", () => {
+  it("refreshes upgrade notices and machine status when the server reconnects", async () => {
+    const { store, server } = renderWithStore(<App search="" />, handlers());
+    server.state.updates.claudeCode = { latest: "3.0.0", image: "2.0.0", stale: true };
+    store.start();
+    await screen.findByText(/Claude Code 3.0.0 is available/);
+    const before = server.callsTo("machines.list").length;
+    server.state.updates.claudeCode.stale = false;
+    server.state.image.upgrading = true;
+    server.state.image.buildLogJobId = "upgrade-job";
+    act(() => server.socketsFor("/api/v1/events")[0]!.close());
+    await screen.findByText("Upgrading: building the image");
+    await waitFor(() => expect(screen.queryByText(/Claude Code 3.0.0 is available/)).toBeNull());
+    expect(screen.getByRole("link", { name: "Build log" })).toBeInTheDocument();
+    expect(server.callsTo("machines.list").length).toBeGreaterThan(before);
+    store.stop();
+  });
+
   it("replays the demo into the dashboard and the navigation", async () => {
     const { store, server } = renderWithStore(<App search="" />, handlers());
     store.start();

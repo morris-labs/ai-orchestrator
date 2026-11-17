@@ -15,6 +15,8 @@ export interface BridgeResult {
 }
 
 export interface AioBridge {
+  appVersion?: string;
+  relaunch?: () => void;
   /**
    * Returns the server's bearer token, which the main process reads from
    * `server.token` in the data directory, on the first call, and `null` on

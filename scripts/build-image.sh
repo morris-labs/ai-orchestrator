@@ -12,7 +12,7 @@
 #
 # The CLI versions come from the pins in image/versions.env. With
 # --update-cli, the script first resolves the latest versions from npm,
-# writes them to that file, and builds with them.
+# builds with them and saves the pins only when the build succeeds.
 #
 # The engine build writes a content hash to dist/identity. The image records
 # VERSION+HASH in /etc/aio-engine-version, and the server expects the
@@ -41,6 +41,8 @@ PACK=auto
 PRINT=0
 PACK_ONLY=0
 UPDATE_CLI=0
+UPGRADE=0
+FORWARD_ARGS=()
 USER_NAME=""
 USER_UID=""
 USER_GID=""
@@ -64,9 +66,10 @@ Options:
                          only their owner can read.
   --gid GID              Give the image's user gid GID. Default: \$(id -g) on Linux,
                          else 1000.
+  --upgrade              Build latest CLIs, fall back to pins on failure, and keep one previous image.
   --update-cli           Update the agent CLIs to their latest versions. Resolves
                          the latest Claude Code, Codex, and Copilot versions from
-                         npm, writes them to $VERSIONS
+                         npm, saves them to $VERSIONS after a successful build
                          (when the file is writable), and builds with them. Also
                          rebuilds the CLI and engine layers
                          (--build-arg CACHEBUST=<now>). Without this option, the
@@ -82,11 +85,13 @@ USAGE
 }
 
 while (($#)); do
+  [[ "$1" == --upgrade ]] || FORWARD_ARGS+=("$1")
   case "$1" in
-    --tag) TAG="${2:?--tag needs a value}"; shift ;;
-    --user) USER_NAME="${2:?--user needs a value}"; shift ;;
-    --uid) USER_UID="${2:?--uid needs a value}"; shift ;;
-    --gid) USER_GID="${2:?--gid needs a value}"; shift ;;
+    --tag) FORWARD_ARGS+=("$2"); TAG="${2:?--tag needs a value}"; shift ;;
+    --user) FORWARD_ARGS+=("$2"); USER_NAME="${2:?--user needs a value}"; shift ;;
+    --uid) FORWARD_ARGS+=("$2"); USER_UID="${2:?--uid needs a value}"; shift ;;
+    --gid) FORWARD_ARGS+=("$2"); USER_GID="${2:?--gid needs a value}"; shift ;;
+    --upgrade) UPGRADE=1 ;;
     --update-cli) UPDATE_CLI=1; BUILD_ARGS+=(--build-arg "CACHEBUST=$(date +%s)") ;;
     --update-packages) BUILD_ARGS+=(--build-arg "CACHEBUST_PACKAGES=$(date +%s)") ;;
     --no-cache) BUILD_ARGS+=(--no-cache --pull) ;;
@@ -99,7 +104,46 @@ while (($#)); do
   shift
 done
 
+# Jobs stop the script at their deadline. Forward that signal through the
+# upgrade wrapper and its build child so Docker cannot outlive the upgrade.
+run_build() {
+  "$@" &
+  build_pid=$!
+  trap 'kill -TERM "$build_pid" 2>/dev/null || true; wait "$build_pid" 2>/dev/null || true; exit 143' TERM INT
+  local result=0
+  wait "$build_pid" || result=$?
+  trap - TERM INT
+  return "$result"
+}
+
 [[ -f "$IMAGE_DIR/Dockerfile" ]] || die "no Dockerfile in $IMAGE_DIR"
+
+# The same entry point serves package installs, startup recovery and CLI updates.
+# Retag only after a successful build; a failed pair leaves the current image intact.
+if ((UPGRADE)); then
+  previous_repo="${TAG%:*}-upgrade"
+  old_current="$(docker image inspect --format '{{.Id}}' "$TAG" 2>/dev/null || true)"
+  old_previous="$(docker image inspect --format '{{.Id}}' "$previous_repo:previous" 2>/dev/null || true)"
+  if run_build "$0" "${FORWARD_ARGS[@]}" --update-cli; then
+    echo 'AIO_UPGRADE_IMAGE=latest'
+  else
+    log "Latest agent CLIs failed; falling back to pinned versions"
+    run_build "$0" "${FORWARD_ARGS[@]}"
+    echo 'AIO_UPGRADE_IMAGE=pinned'
+  fi
+  current="$(docker image inspect --format '{{.Id}}' "$TAG")"
+  if [[ -n "$old_current" && "$old_current" != "$current" ]]; then
+    docker image tag "$old_current" "$previous_repo:previous"
+    if [[ -n "$old_previous" && "$old_previous" != "$old_current" && "$old_previous" != "$current" ]]; then
+      # A container or another tag can still use the older image. Keeping it
+      # costs disk space only, so the upgrade goes on.
+      docker image rm "$old_previous" >/dev/null 2>&1 ||
+        log "Kept the older image $old_previous; a container or tag still uses it"
+    fi
+  fi
+  exit 0
+fi
+
 
 # --update-cli: resolve the latest CLI versions from npm. OVERRIDE_KEYS and
 # OVERRIDE_VALUES hold them for this build (two plain arrays, since macOS
@@ -108,6 +152,15 @@ done
 # still uses the new versions and the script says it can't save them.
 OVERRIDE_KEYS=()
 OVERRIDE_VALUES=()
+if ((!UPDATE_CLI)) && [[ ! -w "$VERSIONS" ]]; then
+  saved_pins="${AIO_DATA_DIR:-$HOME/.ai-orchestrator}/cli-versions.env"
+  if [[ -f "$saved_pins" ]]; then
+    OVERRIDE_KEYS=(CLAUDE_CODE_VERSION CODEX_VERSION COPILOT_VERSION)
+    for key in "${OVERRIDE_KEYS[@]}"; do
+      OVERRIDE_VALUES+=("$(version_of "$saved_pins" "$key")")
+    done
+  fi
+fi
 
 # Prints the override of KEY, or nothing.
 override_of() {
@@ -138,19 +191,7 @@ if ((UPDATE_CLI && !PACK_ONLY)); then
   codex_version="$(npm_latest @openai/codex)"
   copilot_version="$(npm_latest @github/copilot)"
   OVERRIDE_VALUES=("$claude_code_version" "$codex_version" "$copilot_version")
-  if ((PRINT)); then
-    log "Not saving the versions to $VERSIONS because of --print"
-  elif [[ -w "$VERSIONS" ]]; then
-    for ((i = 0; i < ${#OVERRIDE_KEYS[@]}; i++)); do
-      set_pin "$VERSIONS" "${OVERRIDE_KEYS[i]}" "${OVERRIDE_VALUES[i]}"
-    done
-    sed_inplace "s|^# Recorded [0-9-]*\.|# Recorded $(date +%Y-%m-%d).|" "$VERSIONS"
-  else
-    for ((i = 0; i < ${#OVERRIDE_KEYS[@]}; i++)); do
-      log "${OVERRIDE_KEYS[i]}=${OVERRIDE_VALUES[i]}"
-    done
-    log "warning: $VERSIONS isn't writable, so these versions apply to this build only"
-  fi
+
 fi
 ENGINE_VERSION="$(version_of "$VERSIONS" AIO_ENGINE_VERSION)"
 ENGINE_TARBALL="$IMAGE_DIR/dist/aio-engine-$ENGINE_VERSION.tgz"
@@ -233,5 +274,27 @@ require_tool docker "Install Docker Engine (docker.io or docker-ce) and add your
 docker buildx version > /dev/null 2>&1 ||
   die "The image build needs BuildKit. Install the docker-buildx or docker-buildx-plugin package."
 log "Building image $TAG for user $USER_NAME (uid $USER_UID, gid $USER_GID)"
-# Replace this shell with the docker client, so a signal to the job reaches it.
-exec "${CMD[@]}"
+# Keep the process stoppable while retaining the successful pins afterward.
+run_build "${CMD[@]}"
+# A failed build must leave the known working pins intact. Installed packages
+# are root-owned: keep successful CLI pins in the user's data directory too.
+if ((UPDATE_CLI)); then
+  if [[ -w "$VERSIONS" ]]; then
+    pin_target="$VERSIONS"
+  else
+    pin_dir="${AIO_DATA_DIR:-$HOME/.ai-orchestrator}"
+    mkdir -p "$pin_dir"
+    log "warning: $VERSIONS isn't writable; saving successful CLI pins in $pin_dir"
+    saved_pin_target="$pin_dir/cli-versions.env"
+    pin_target="$saved_pin_target.tmp"
+    cp "$VERSIONS" "$pin_target"
+    chmod u+w "$pin_target"
+  fi
+  for ((i = 0; i < ${#OVERRIDE_KEYS[@]}; i++)); do
+    set_pin "$pin_target" "${OVERRIDE_KEYS[i]}" "${OVERRIDE_VALUES[i]}"
+  done
+fi
+
+if [[ -n "${saved_pin_target:-}" ]]; then
+  mv -f "$pin_target" "$saved_pin_target"
+fi

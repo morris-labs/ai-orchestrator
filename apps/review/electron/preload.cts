@@ -7,7 +7,10 @@ import type * as Electron from "electron";
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { contextBridge, ipcRenderer } = require("electron") as typeof Electron;
 
-const config = ipcRenderer.sendSync("aio:config") as { serverUrl: string | null };
+const config = ipcRenderer.sendSync("aio:config") as {
+  serverUrl: string | null;
+  appVersion: string;
+};
 let tokenTaken = false;
 
 // The page subscribes in an effect, after it renders; a navigation that
@@ -28,6 +31,8 @@ contextBridge.exposeInMainWorld("aio", {
     return ipcRenderer.sendSync("aio:token") as string | null;
   },
   serverUrl: config.serverUrl,
+  appVersion: config.appVersion,
+  relaunch: () => ipcRenderer.send("aio:relaunch"),
   onNavigate(listener: (hash: string) => void) {
     navigateListener = listener;
     if (pendingHash !== null) {

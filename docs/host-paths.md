@@ -120,3 +120,11 @@ The following parts of a Windows host are untested or incomplete:
   Desktop can't share with a container from a Windows host.
 - **Host Git.** Host Git calls set `core.hooksPath` to `NUL` on Windows and
   to `/dev/null` elsewhere.
+
+## Upgrading a development host
+
+Run `scripts/upgrade.sh` from the checkout to build and install its `.deb`.
+The live server runs from the installed package. If the host previously
+used a checkout unit, `scripts/install-server-unit.sh` removes that unit
+and its `source-checkout.conf` drop-in while preserving other drop-ins.
+See [Upgrade](install.md#upgrade) for recovery and package behavior.

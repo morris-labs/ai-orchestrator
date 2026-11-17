@@ -1,5 +1,5 @@
 // The whole server over the fake core and a fake engine on a real socket.
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
@@ -266,4 +266,67 @@ describe("startApp", () => {
     expect(runner.spawned[0]!.argv[0]).toBe("ssh");
     expect(runner.spawned[0]!.argv.at(-1)).toBe("deploy@staging.example.com");
   });
+});
+
+it("startup mismatch reports upgrading and holds box starts until the image is built", async () => {
+  await app.close();
+  core = createFakeCore();
+  const originalStatus = core.image.status;
+  core.image.status = async () => ({ ...(await originalStatus()), engineMatches: false });
+  for (const [id, view] of core.views) core.views.set(id, { ...view, status: "stopped" });
+  core.projects.recreateContainer = async () => {};
+  const root = tempDir("aio-image-");
+  const imageContext = path.join(root, "image");
+  mkdirSync(imageContext);
+  mkdirSync(path.join(root, "scripts"));
+  writeFileSync(path.join(imageContext, "Dockerfile"), "FROM scratch");
+  writeFileSync(path.join(root, "scripts", "build-image.sh"), "#!/bin/bash");
+  runner = new FakeRunner();
+  app = await startApp({
+    home,
+    createCore: async () => core,
+    version: "1.0.0-dev",
+    expectedEngineVersion: "1.0.0-dev",
+    execStart: "/usr/bin/aio-server",
+    imageContext,
+    runner,
+    op,
+    exec: new FakeExec(),
+    port: 0,
+    engineIntervalMs: 50,
+    log: () => {},
+  });
+  await waitFor(() => runner.spawned.length === 1);
+  const status = await api("GET", "/api/v1/image");
+  expect(status.json.upgrading).toBe(true);
+  expect(status.json.buildLogJobId).toEqual(expect.any(String));
+  const id = [...core.views.keys()][0]!;
+  let finished = false;
+  const starting = api("POST", `/api/v1/boxes/${id}/start`, { force: false }).then((result) => {
+    finished = true;
+    return result;
+  });
+  let additionalFinished = 0;
+  const additional = [
+    api("POST", "/api/v1/boxes/start-all", { onlyWasRunning: false }),
+    api("POST", "/api/v1/boxes/restart-all"),
+    api("POST", `/api/v1/boxes/${id}/restart`),
+    api("POST", `/api/v1/boxes/${id}/side-sessions`, { platform: "codex" }),
+    api("POST", `/api/v1/projects/${PROJECT_ID}/container/restart`),
+  ].map((request) =>
+    request.then((result) => {
+      additionalFinished++;
+      return result;
+    }),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(finished).toBe(false);
+  expect(additionalFinished).toBe(0);
+  runner.spawned[0]!.emit("AIO_UPGRADE_IMAGE=latest\n");
+  runner.spawned[0]!.exit(0);
+  expect((await starting).status).toBe(200);
+  expect((await Promise.all(additional)).map((result) => result.status)).toEqual([
+    200, 200, 200, 200, 200,
+  ]);
+  expect((await api("GET", "/api/v1/image")).json.upgrading).toBe(false);
 });

@@ -179,7 +179,7 @@ IMAGE_TAG=aio-agent:v4test /usr/share/ai-orchestrator/scripts/build-image.sh
 ```
 
 The server refuses to start a container whose engine version differs from
-its own, and offers a rebuild. After you upgrade the package, rebuild the
+its own, and offers a rebuild. The package upgrade rebuilds the
 image.
 
 The engine version includes a content hash of the built engine, as in
@@ -239,15 +239,22 @@ For the roles, the firewall rules, and what crosses the link, see
 
 ## Upgrade
 
-1. Install the new package with `sudo apt install ./ai-orchestrator_VERSION_amd64.deb`.
-1. As each user who runs the server, reload the unit and restart the
-   server, which still runs the old version until you do:
+Install the new package with `sudo apt install ./ai-orchestrator_VERSION_amd64.deb`.
+For every user with `aio-server` enabled, the package records open work,
+restarts the server, builds the image with the latest agent CLIs (falling
+back to pins if needed), recreates project containers, and reopens boxes
+and review runs. Running work stops immediately. Progress and a per-item
+summary appear in the terminal; the wait is limited to about five minutes.
+One previous image is retained for rollback.
 
-   ```sh
-   systemctl --user daemon-reload && systemctl --user restart aio-server
-   ```
+A failed configure step can be retried with `sudo dpkg --configure -a`.
+Desktop apps show a relaunch bar when their installed version is newer.
+Remote machines must be upgraded separately.
 
-1. Rebuild the image from the setup wizard or with `build-image.sh`.
+From a checkout, run `scripts/upgrade.sh`. It builds the workspace and the
+`.deb`, migrates the former checkout service to the installed command, and
+installs the package with `sudo apt install --reinstall`. It builds the revision you checked out;
+it never runs `git pull`. The server runs from the installed package.
 
 ## Uninstall
 
@@ -333,71 +340,28 @@ The first build downloads the Electron binary, so it needs network access.
    scripts/build-image.sh
    ```
 
-### Run the server from the checkout
+### Use the installed server while developing
 
-To run the server as a systemd user service straight from a checkout,
-without the package, build the workspace and install the unit with the
-`scripts/install-server-unit.sh` script:
+Run `scripts/upgrade.sh` to build and install the checked-out revision.
+The live server uses `/usr/bin/aio-server` from the package, so rebuilding
+the checkout cannot change the running server's files.
+
+To migrate an existing checkout service, after installing the package run:
 
 ```sh
-corepack pnpm install --frozen-lockfile
-corepack pnpm -r build
 scripts/install-server-unit.sh
+systemctl --user restart aio-server
 ```
 
-The checkout's `pnpm-workspace.yaml` file pins the pnpm store to `.pnpm-store` in the
-checkout, so the host and the boxes that work on the checkout share it. If
-`node_modules` came from another store, the first install after you update
-stops with `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`. Run
-`corepack pnpm install --config.confirmModulesPurge=false` once to reinstall
-from the pinned store.
-
-That reinstall can leave the Electron package without its binary, because
-pnpm doesn't run the package's install script for a module tree that it
-reuses, and `corepack pnpm rebuild electron` then exits 0 without downloading
-anything. The boxes and review apps fail to start. To check for this state
-and fix it, run `scripts/ensure-electron.sh`. It runs the package's own
-`install.js` file when `path.txt` or `dist/` is missing, and it removes group
-and other write permission from `dist/`. To only check, add `--check`.
-
-The script does the following:
-
-1. Writes the `~/.config/systemd/user/aio-server.service.d/source-checkout.conf`
-   drop-in, which puts the directory of the `node` on your `PATH` first on
-   the service's `PATH`. The setup wizard's image build runs pnpm through
-   corepack, and the systemd user manager's `PATH` might not include the
-   directory that holds them, such as an nvm install.
-1. Runs `aio-server install-service` from `packages/server/dist`. It
-   writes `~/.config/systemd/user/aio-server.service`, whose
-   `ExecStart=` line names that `node` and the checkout's
-   `packages/server/dist/main.js` file, then reloads systemd and enables and
-   starts the service.
-
-To see the drop-in and the command without changing anything, run
-`scripts/install-server-unit.sh --print`. To use a data directory other than
-`~/.ai-orchestrator`, pass `--data-dir PATH` or set `AIO_DATA_DIR`.
-
-The script replaces only the unit and its own drop-in. Other files in
-`~/.config/systemd/user/aio-server.service.d/` stay in place and apply
-to the unit, such as one that loads the 1Password service account token
-with `EnvironmentFile=`; see [Secrets](secrets.md). To see the unit
-with every drop-in it loads, run the following command:
-
-```sh
-systemctl --user cat aio-server
-```
-
-The unit runs whatever `packages/server/dist` holds when the service starts:
-
-- After you pull and rebuild, restart the service with
-  `systemctl --user restart aio-server`.
-- After you switch Node.js versions, run the script again: the unit names
-  the `node` binary by its full path.
-- The unit in `~/.config/systemd/user` takes precedence over the packaged
-  unit in `/usr/lib/systemd/user`. To go back to the packaged one, run
-  `systemctl --user disable --now aio-server`, remove
-  `aio-server.service` and `aio-server.service.d/source-checkout.conf`
-  from `~/.config/systemd/user`, and run `systemctl --user daemon-reload`.
+The migration replaces the checkout's Node.js command with `/usr/bin/aio-server`,
+preserving custom arguments such as `--data-dir`, `--role`, and `--log-file`.
+A service with no custom arguments uses the packaged unit. It removes
+`aio-server.service.d/source-checkout.conf`, reloads systemd, and enables the
+service. Other drop-ins, including credentials, remain. Package upgrades
+perform this migration automatically and use the same custom data directory
+for recording and restoring open work. Use `--print` to inspect the paths
+first. Inspect the resulting unit
+with `systemctl --user cat aio-server`.
 
 ### Run the Electron apps from the checkout
 

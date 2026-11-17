@@ -11,11 +11,10 @@ describe("main on each host", () => {
     expect(parseServerArgs(["--log-file"], {}).error).toMatch(/needs a file/);
   });
 
-  it("starts the service with this Node.js and this file", () => {
+  it("starts the Linux service from the installed package", () => {
     const argv = serverCommand("/srv/data");
-    expect(argv[0]).toBe(process.execPath);
-    expect(argv.slice(2)).toEqual(["--data-dir", "/srv/data"]);
-    expect(execStartLine("/srv/data")).toBe(`${argv[0]} ${argv[1]} --data-dir /srv/data`);
+    expect(argv).toEqual(["/usr/bin/aio-server", "--data-dir", "/srv/data"]);
+    expect(execStartLine("/srv/data")).toBe("/usr/bin/aio-server --data-dir /srv/data");
   });
 
   it("describes the service each host installs in its help", () => {

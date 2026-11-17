@@ -1,6 +1,6 @@
 // The aio CLI against a fake server.
 import { EventEmitter } from "node:events";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
@@ -2170,4 +2170,176 @@ describe("--role", () => {
       cli(["review", "start", "--box", "b", "--role", "reviewer=codex,"]),
     ).resolves.not.toBe(0);
   });
+});
+
+describe("package upgrade command", () => {
+  it("records open work using an older server before restarting", async () => {
+    writeFileSync(
+      path.join(home, ".ai-orchestrator", "upgrade-open-work.json"),
+      JSON.stringify({ boxes: [{ id: "stale", name: "stale" }], runs: [] }),
+    );
+    server.on("GET /api/v1/boxes", { body: { boxes: [{ ...boxView(), status: "running" }] } });
+    server.on("GET /api/v1/runs", { body: { runs: [] } });
+    expect(await cli(["upgrade", "prepare"])).toBe(0);
+    const work = JSON.parse(
+      readFileSync(path.join(home, ".ai-orchestrator", "upgrade-open-work.json"), "utf8"),
+    );
+    expect(work.boxes.map((b: { id: string }) => b.id)).toEqual([BOX_ID]);
+    expect(out).toContain("Recorded 1 boxes");
+  });
+  it.each(["prepared", "recovery"])(
+    "preserves a %s record when the server is stopped",
+    async (phase) => {
+      const record = path.join(home, ".ai-orchestrator", "upgrade-open-work.json");
+      const work = {
+        phase,
+        boxes: [{ id: "box", name: "Box" }],
+        runs: [{ run_id: "run", name: "Run", projectId: "project" }],
+      };
+      writeFileSync(record, JSON.stringify(work));
+      expect(await cli(["upgrade", "prepare"], { AIO_SERVER: "https://127.0.0.1:1" })).toBe(0);
+      expect(JSON.parse(readFileSync(record, "utf8"))).toEqual(work);
+    },
+  );
+  it("prints fallback and per-box failure reasons and exits nonzero", async () => {
+    server.on("GET /api/v1/health", { body: { version: "1.0.0", uptimeS: 1 } });
+    server.on("POST /api/v1/upgrade", {
+      body: {
+        image: "pinned",
+        fallback: true,
+        error: null,
+        boxes: [{ id: BOX_ID, name: "Work", restored: false, reason: "Sign in required" }],
+        runs: [],
+      },
+    });
+    expect(await cli(["upgrade", "--timeout", "1"])).toBe(1);
+    expect(out).toContain("fallback used");
+    expect(out).toContain("Sign in required");
+  });
+  it("names work that no longer exists without failing the upgrade", async () => {
+    server.on("GET /api/v1/health", { body: { version: "1.0.0", uptimeS: 1 } });
+    server.on("POST /api/v1/upgrade", {
+      body: {
+        image: "latest",
+        fallback: false,
+        error: null,
+        boxes: [
+          {
+            id: BOX_ID,
+            name: "Work",
+            restored: false,
+            reason: "The box no longer exists.",
+            gone: true,
+          },
+        ],
+        runs: [],
+      },
+    });
+    expect(await cli(["upgrade", "--timeout", "1"])).toBe(0);
+    expect(out).toContain("The box no longer exists.");
+  });
+});
+
+it("aborts the upgrade request at the CLI time limit", async () => {
+  let aborted = false;
+  const fetcher: typeof fetch = async (url, options) => {
+    if (String(url).endsWith("/health"))
+      return new Response(JSON.stringify({ version: "1.0.0", uptimeS: 1 }));
+    return new Promise<Response>((_, reject) => {
+      options?.signal?.addEventListener(
+        "abort",
+        () => {
+          aborted = true;
+          reject(new Error("aborted"));
+        },
+        { once: true },
+      );
+    });
+  };
+  expect(
+    await runCli(["upgrade", "--timeout", "0.02"], {
+      home,
+      env: { AIO_SERVER: server.url, AIO_TOKEN: TOKEN },
+      fetch: fetcher,
+      out: (t) => {
+        out += t;
+      },
+      err: (t) => {
+        err += t;
+      },
+    }),
+  ).toBe(1);
+  expect(aborted).toBe(true);
+  expect(err).toContain("time limit reached");
+});
+
+it("bounds prepare requests by the CLI deadline", async () => {
+  let aborted = false;
+  const fetcher: typeof fetch = async (_url, options) =>
+    new Promise<Response>((_, reject) => {
+      const timer = setTimeout(() => reject(new Error("stand-in request failed")), 100);
+      options?.signal?.addEventListener(
+        "abort",
+        () => {
+          clearTimeout(timer);
+          aborted = true;
+          reject(new Error("aborted"));
+        },
+        { once: true },
+      );
+    });
+  expect(
+    await runCli(["upgrade", "prepare", "--timeout", "0.02"], {
+      home,
+      env: { AIO_SERVER: server.url, AIO_TOKEN: TOKEN },
+      fetch: fetcher,
+      out: (t) => {
+        out += t;
+      },
+      err: (t) => {
+        err += t;
+      },
+    }),
+  ).toBe(1);
+  expect(aborted).toBe(true);
+  expect(err).toContain("time limit reached");
+});
+
+it("names unconfirmed boxes and runs when server readiness times out", async () => {
+  writeFileSync(
+    path.join(home, ".ai-orchestrator", "upgrade-open-work.json"),
+    JSON.stringify({
+      boxes: [{ id: BOX_ID, name: "Active box" }],
+      runs: [{ run_id: RUN, name: "Review in progress" }],
+    }),
+  );
+  let aborted = false;
+  const fetcher: typeof fetch = async (_url, options) =>
+    new Promise<Response>((_, reject) => {
+      options?.signal?.addEventListener(
+        "abort",
+        () => {
+          aborted = true;
+          reject(new Error("aborted"));
+        },
+        { once: true },
+      );
+    });
+  expect(
+    await runCli(["upgrade", "--timeout", "0.02"], {
+      home,
+      env: { AIO_SERVER: server.url, AIO_TOKEN: TOKEN },
+      fetch: fetcher,
+      out: (t) => {
+        out += t;
+      },
+      err: (t) => {
+        err += t;
+      },
+    }),
+  ).toBe(1);
+  expect(aborted).toBe(true);
+  expect(out).toContain("Active box");
+  expect(out).toContain("Review in progress");
+  expect(out).toContain("restoration unconfirmed");
 });
