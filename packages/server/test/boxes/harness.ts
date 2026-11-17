@@ -37,7 +37,12 @@ export function assertContractEvent(payload: CoreEventPayload): void {
 }
 
 export function makeHarness(
-  options: { image?: boolean; engineLabel?: string; log?: (message: string) => void; accounts?: boolean } = {},
+  options: {
+    image?: boolean;
+    engineLabel?: string;
+    log?: (message: string) => void;
+    accounts?: boolean;
+  } = {},
 ): Harness {
   const home = fs.realpathSync(tempDir("aio-core-"));
   const env: HostEnv = { home, user: "tester", now: () => new Date() };
@@ -64,8 +69,9 @@ export function makeHarness(
     log: options.log,
   });
   if (options.accounts ?? true) {
-    for (const vendor of ["claude", "codex", "copilot"] as const) core.accounts.create({vendor,name:"fixture",overflow:false});
-    core.settings.patch({accountsMode:"accounts"});
+    for (const vendor of ["claude", "codex", "copilot"] as const)
+      core.accounts.create({ vendor, name: "fixture", overflow: false });
+    core.settings.patch({ accountsMode: "accounts" });
   }
   const events: CoreEventPayload[] = [];
   core.events.subscribe((e) => events.push(e));

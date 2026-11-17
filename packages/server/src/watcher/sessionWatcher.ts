@@ -6,16 +6,15 @@
 // Where the files are matters. Every container numbers its pids from the same
 // small values, so a box reads its own directory, `~/.ai-orchestrator/sessions/<box>`,
 // when that has entries; whatever is there is the box's. Otherwise the box
-// reads a directory it shares with others: its container's
-// (`~/.ai-orchestrator/sessions/<container>`) for a box in a shared container, or
-// the host's `~/.claude/sessions`. There the process is found by the recorded
-// session id and then followed by `pid|pidDomain|procStart`.
+// reads its container's directory (`~/.ai-orchestrator/sessions/<container>`).
+// A shared process is found by its recorded session id, then followed by
+// `pid|pidDomain|procStart`. Host vendor session files are never consulted.
 import fs from "node:fs";
 import { BoxSchema, type Box } from "@aio/contracts";
 import { readSessionEntries, sessionEntryKey, type SessionEntry } from "../catalog/sessions.js";
 import type { BoxesRepo } from "../db/repositories.js";
 import type { HostEnv } from "../records/env.js";
-import { homePaths, sessionsDirFor } from "../records/env.js";
+import { sessionsDirFor } from "../records/env.js";
 import type { CoreEvents } from "../records/events.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -126,8 +125,7 @@ export class SessionWatcher {
   }
 
   private async scanOnce(): Promise<string[]> {
-    const sharedSessionsDir = homePaths(this.env).claudeSessions;
-    const watchDirs = new Set<string>([sharedSessionsDir]);
+    const watchDirs = new Set<string>();
     const sharedDirs = new Map<string, Map<string, SessionEntry>>();
     const readShared = async (dir: string) => {
       let entries = sharedDirs.get(dir);
@@ -172,9 +170,7 @@ export class SessionWatcher {
         ownDir = true;
         for (const e of mine) if (!live || e.updatedAt > live.updatedAt) live = e;
       } else {
-        const all = await readShared(
-          rec.container !== rec.id ? sessionsDirFor(this.env, rec.container) : sharedSessionsDir,
-        );
+        const all = await readShared(sessionsDirFor(this.env, rec.container));
         if (binding.key !== "") {
           live = all.get(binding.key);
           if (!live) {

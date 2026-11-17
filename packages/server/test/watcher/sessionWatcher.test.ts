@@ -227,13 +227,15 @@ describe("shared directory", () => {
     expect(repos.boxes.get("aio-agent-a")!.sessionUuid).toBe(U1);
   });
 
-  it("uses the host directory for a box that is its own container", async () => {
+  it("never falls back to host session files for a legacy box", async () => {
     box("aio-agent-c", { container: "aio-agent-c", session: "main" });
     const dir = path.join(home, ".claude/sessions");
     entry(dir, "11.json", { pid: 11, sessionId: U1, updatedAt: 1 });
     await watcher.setRunning(["aio-agent-c"]);
     entry(dir, "11.json", { pid: 11, sessionId: U2, updatedAt: 2 });
-    expect(await watcher.scan()).toEqual(["aio-agent-c"]);
+    expect(await watcher.scan()).toEqual([]);
+    expect(repos.boxes.get("aio-agent-c")!.sessionUuid).toBe(U1);
+    expect(watcher.watchedDirs()).not.toContain(dir);
   });
 
   it("forgets a stopped box", async () => {
