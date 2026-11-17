@@ -39,6 +39,8 @@ export interface CoreOptions {
   env?: HostEnv;
   /** The SQLite file, or `":memory:"`. Default: `aio.db` in the data directory. */
   dbPath?: string;
+  /** Temporary roots disallowed for durable accounts. Tests inject an empty list. */
+  accountTempDirs?: readonly string[];
   /** Default: dockerode on the local socket (`DOCKER_HOST` honored). */
   docker?: DockerClient;
   /** Seconds a project container lingers with no sessions. Default 30. */
@@ -120,13 +122,8 @@ export function createServerCore(options: CoreOptions): ServerCore {
     (id) => db.accounts.get(id) !== undefined,
     (next) => accounts.assertCanUseAccounts(next),
   );
-  // Option S: in accounts mode, transcripts live in the store
-  // (`DATA_DIR/transcripts/claude`, or the `transcriptStore` setting). In host
-  // mode the container reads `~/.claude/projects`, which leads to the store.
-  env.claudeProjectsRoot = () =>
-    settings.get().accountsMode === "accounts"
-      ? claudeStoreRoot(env, settings.get().transcriptStore)
-      : undefined;
+  // Transcripts always live in the orchestrator's shared account store.
+  env.claudeProjectsRoot = () => claudeStoreRoot(env, settings.get().transcriptStore);
   let hooks: CoreHooks = defaultHooks();
   const getHooks = () => hooks;
   const imageVersions = new ImageVersions(docker);
@@ -161,6 +158,7 @@ export function createServerCore(options: CoreOptions): ServerCore {
   const accounts = new AccountService({
     env,
     repo: db.accounts,
+    tempDirs: options.accountTempDirs,
     db: db.sqlite,
     settings,
     docker,

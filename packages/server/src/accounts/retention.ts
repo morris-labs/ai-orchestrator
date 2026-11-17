@@ -63,8 +63,8 @@ export function hostRetentionDays(home: string): number | undefined {
  * The protected retention: the host's value when it sets one, else the
  * `transcriptRetentionDays` setting, else 3650.
  */
-export function protectedRetentionDays(home: string, setting: number | undefined): number {
-  return hostRetentionDays(home) ?? setting ?? DEFAULT_RETENTION_DAYS;
+export function protectedRetentionDays(_home: string, setting: number | undefined): number {
+  return setting ?? DEFAULT_RETENTION_DAYS;
 }
 
 function isLink(file: string): boolean {
