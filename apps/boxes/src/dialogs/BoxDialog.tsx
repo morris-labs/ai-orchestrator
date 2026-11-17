@@ -384,7 +384,7 @@ export function BoxDialog(props: BoxDialogProps) {
           ? mode === "edit"
             ? "A change takes effect when the box restarts. Claude conversations carry over; Codex and Copilot start a new session."
             : "The box runs this CLI with the account's own sign-in and settings."
-          : "Accounts mode is off, so boxes use the host's agent folders and ignore this choice."}
+          : "Host mode is retired. Set up accounts, run aio accounts relink, then aio accounts mode accounts before starting boxes."}
       </div>
       <div className="ab-field">
         <label htmlFor="bx-dir">Target directory</label>

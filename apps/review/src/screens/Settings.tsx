@@ -274,7 +274,7 @@ export function Settings() {
   return (
     <div className="screen">
       <h2>Settings</h2>
-      <AccountSeedControl />
+      <AccountSeedControl hostMode={settings.accountsMode === "host"} />
       <ErrorBanner error={error} />
       {saved && !patch ? (
         <p role="status" className="banner banner-good">

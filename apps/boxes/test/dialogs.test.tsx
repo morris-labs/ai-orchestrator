@@ -83,10 +83,10 @@ describe("BoxDialog, account picker", () => {
     expect(onAccept.mock.calls[0]![0].form.account).toBe("claude/work");
   });
 
-  it("says the choice is ignored while accounts mode is off", async () => {
+  it("explains that stored host mode must be converted before boxes start", async () => {
     const server = new FakeServer();
     newDialog(server, { initialDir: "/w/site" });
-    expect(await screen.findByText(/Accounts mode is off/)).toBeInTheDocument();
+    expect(await screen.findByText(/Host mode is retired/)).toBeInTheDocument();
   });
 });
 

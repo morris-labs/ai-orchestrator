@@ -5,7 +5,7 @@ import { errorMessage } from "../api/errors";
 import { Button } from "./Dialog";
 
 /** The one-time seed choices shared by Setup and Review settings. */
-export function AccountSeedControl() {
+export function AccountSeedControl({ hostMode = false }: { hostMode?: boolean }) {
   const client = useApiClient();
   const [name, setName] = useState(DEFAULT_SEED_ACCOUNT_NAME);
   const [copyHostSetup, setCopyHostSetup] = useState(false);
@@ -15,21 +15,30 @@ export function AccountSeedControl() {
   useEffect(() => {
     if (job?.status !== "running") return;
     let live = true;
-    const timer = setTimeout(() => {
+    let polling = false;
+    const timer = setInterval(() => {
+      if (polling) return;
+      polling = true;
       void client
         .call("jobs.get", { params: { jobId: job.id } })
         .then((next) => {
-          if (live) setJob(next);
+          if (live) {
+            setJob(next);
+            setError(null);
+          }
         })
         .catch((err) => {
           if (live) setError(errorMessage(err));
+        })
+        .finally(() => {
+          polling = false;
         });
     }, 1000);
     return () => {
       live = false;
-      clearTimeout(timer);
+      clearInterval(timer);
     };
-  }, [client, job]);
+  }, [client, job?.id, job?.status]);
   const seed = async () => {
     setStarting(true);
     setError(null);
@@ -47,6 +56,12 @@ export function AccountSeedControl() {
   return (
     <section aria-label="Seed accounts">
       <h3>Seed accounts</h3>
+      {hostMode && (
+        <p className="ab-hint">
+          Host mode is retired and boxes cannot start. Set up accounts, run aio accounts relink,
+          then aio accounts mode accounts.
+        </p>
+      )}
       <p>
         Copy available host sign-ins into new Claude, Codex and Copilot accounts once. Existing
         accounts stay unchanged.
