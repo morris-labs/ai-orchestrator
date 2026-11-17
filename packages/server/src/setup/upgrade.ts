@@ -10,6 +10,12 @@ const RecordSchema = UpgradePreviewSchema.extend({
   phase: z.enum(["prepared", "recovery"]).default("prepared"),
 });
 type OpenWork = z.infer<typeof RecordSchema>;
+
+/** Reports whether an error says the box or run no longer exists. */
+function isGone(err: unknown): boolean {
+  const code = (err as { code?: unknown } | null)?.code;
+  return code === "not_found" || code === "run_not_found";
+}
 export interface UpgradeOptions {
   core: Core;
   recordFile: string;
@@ -63,6 +69,23 @@ export class UpgradeService {
     }
     this.writeRecord(work);
     return { boxes: work.boxes, runs: work.runs.map(({ run_id, name }) => ({ run_id, name })) };
+  }
+  /**
+   * Drops a box or run from the open-work record, so an upgrade doesn't
+   * bring back work that the owner stopped, cancelled, or removed.
+   */
+  forget(item: { boxId?: string; runId?: string; allBoxes?: boolean }): void {
+    if (!this.hasOpenWork) return;
+    let work: OpenWork;
+    try {
+      work = this.readRecord();
+    } catch {
+      return;
+    }
+    const boxes = work.boxes.filter((box) => !item.allBoxes && box.id !== item.boxId);
+    const runs = work.runs.filter((run) => run.run_id !== item.runId);
+    if (boxes.length === work.boxes.length && runs.length === work.runs.length) return;
+    this.writeRecord({ ...work, boxes, runs });
   }
   private readRecord(): OpenWork {
     return RecordSchema.parse(JSON.parse(fs.readFileSync(this.opts.recordFile, "utf8")));
@@ -150,6 +173,7 @@ export class UpgradeService {
     }
     for (const box of [...work.boxes]) {
       let reason: string | null = null;
+      let gone = false;
       try {
         if (Date.now() >= deadline) throw new Error("Upgrade time limit reached");
         const current = await this.opts.core.boxes.get(box.id);
@@ -157,26 +181,29 @@ export class UpgradeService {
         if (failure) throw new Error(failure);
         await withinDeadline(this.opts.core.boxes.start(box.id));
       } catch (err) {
-        reason = String((err as Error).message);
+        reason = isGone(err) ? "The box no longer exists." : String((err as Error).message);
+        gone = isGone(err);
       }
-      report.boxes.push({ ...box, restored: reason === null, reason });
-      if (reason === null) {
+      report.boxes.push({ ...box, restored: reason === null, reason, ...(gone ? { gone } : {}) });
+      if (reason === null || gone) {
         work.boxes = work.boxes.filter((item) => item.id !== box.id);
         this.writeRecord(work);
       }
     }
     for (const { projectId, ...run } of [...work.runs]) {
       let reason: string | null = null;
+      let gone = false;
       try {
         if (Date.now() >= deadline) throw new Error("Upgrade time limit reached");
         const failure = failures.get(projectId);
         if (failure) throw new Error(failure);
         await withinDeadline(this.opts.resume(projectId, run.run_id, controller.signal));
       } catch (err) {
-        reason = String((err as Error).message);
+        reason = isGone(err) ? "The run no longer exists." : String((err as Error).message);
+        gone = isGone(err);
       }
-      report.runs.push({ ...run, restored: reason === null, reason });
-      if (reason === null) {
+      report.runs.push({ ...run, restored: reason === null, reason, ...(gone ? { gone } : {}) });
+      if (reason === null || gone) {
         work.runs = work.runs.filter((item) => item.run_id !== run.run_id);
         this.writeRecord(work);
       }
@@ -184,11 +211,8 @@ export class UpgradeService {
     // A project without open work must still be represented in a failed summary.
     if (failures.size)
       report.error = [...failures].map(([id, reason]) => `${id}: ${reason}`).join("; ");
-    if (
-      !report.boxes.some((b) => !b.restored) &&
-      !report.runs.some((r) => !r.restored) &&
-      !report.error
-    ) {
+    // Work that no longer exists has left the record and doesn't keep it.
+    if (!work.boxes.length && !work.runs.length && !report.error) {
       fs.rmSync(this.opts.recordFile, { force: true });
     }
     this.opts.log?.(

@@ -2204,8 +2204,8 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
         printedSummary = true;
         if (
           report.error ||
-          report.boxes.some((b) => !b.restored) ||
-          report.runs.some((r) => !r.restored)
+          report.boxes.some((b) => !b.restored && !b.gone) ||
+          report.runs.some((r) => !r.restored && !r.gone)
         )
           throw new Error(
             report.error ?? "Some open work could not be restored; see summary above.",

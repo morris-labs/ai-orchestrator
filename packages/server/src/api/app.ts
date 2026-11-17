@@ -362,6 +362,7 @@ export async function startApp(options: AppOptions): Promise<App> {
           return;
         } catch (err) {
           const message = (err as Error).message;
+          if ((err as { code?: unknown }).code === "run_not_found") throw err;
           if (
             /state version|newer|saved by|unsupported|cannot resume/i.test(message) ||
             Date.now() >= deadline

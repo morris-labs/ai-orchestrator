@@ -220,6 +220,9 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
       if (isRunState(result) && !mirrorOwnRun(engine, result)) {
         throw new ApiError("run_not_found", `No run has the id ${params.runId}.`);
       }
+      // The owner paused or cancelled this run; an upgrade leaves it alone.
+      if (key === "runs.pause" || key === "runs.cancel")
+        deps.upgrade?.forget({ runId: params.runId });
       return result;
     }) as unknown as HttpHandlers[K];
   }
@@ -294,13 +297,22 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
       await deps.upgrade?.waitReady();
       return core.boxes.start(params.boxId, { force: body.force });
     },
-    "boxes.stop": async ({ params }) => core.boxes.stop(params.boxId),
+    "boxes.stop": async ({ params }) => {
+      const result = await core.boxes.stop(params.boxId);
+      deps.upgrade?.forget({ boxId: params.boxId });
+      return result;
+    },
     "boxes.restart": async ({ params }) => {
       await deps.upgrade?.waitReady();
       return core.boxes.restart(params.boxId);
     },
-    "boxes.remove": async ({ params, query }) =>
-      core.boxes.remove(params.boxId, { removeWorktree: query.removeWorktree }),
+    "boxes.remove": async ({ params, query }) => {
+      const result = await core.boxes.remove(params.boxId, {
+        removeWorktree: query.removeWorktree,
+      });
+      deps.upgrade?.forget({ boxId: params.boxId });
+      return result;
+    },
     "boxes.purge": async ({ params, body }) =>
       core.boxes.purge(params.boxId, { dryRun: body.dryRun }),
     "boxes.move": async ({ params, body }) => {
@@ -367,7 +379,11 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
       await deps.upgrade?.waitReady();
       return core.boxes.startAll(body.onlyWasRunning);
     },
-    "boxes.stopAll": async () => core.boxes.stopAll(),
+    "boxes.stopAll": async () => {
+      const result = await core.boxes.stopAll();
+      deps.upgrade?.forget({ allBoxes: true });
+      return result;
+    },
     "boxes.restartAll": async () => {
       await deps.upgrade?.waitReady();
       return core.boxes.restartAll();

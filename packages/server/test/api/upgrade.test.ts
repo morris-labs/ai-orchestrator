@@ -274,4 +274,76 @@ describe("upgrade recovery records", () => {
     expect(report.boxes.map((box) => box.id)).toEqual([old.id, fresh.id]);
     expect((await core.boxes.get(old.id)).status).toBe("running");
   });
+
+  it("drops a deleted box and a deleted run from the record and reports them as gone", async () => {
+    const h = makeHarness();
+    const kept = await h.core.boxes.create({
+      targetDir: h.dir("kept"),
+      layout: "root",
+      start: true,
+    });
+    const deleted = await h.core.boxes.create({
+      targetDir: h.dir("deleted"),
+      layout: "root",
+      start: true,
+    });
+    const core = apiCoreOf(h.core, {} as Docker);
+    const runs = [{ id: "deleted-run", projectId: kept.projectId, status: "running" }];
+    let builds = 0;
+    const service = new UpgradeService({
+      core,
+      recordFile: path.join(h.home, "gone.json"),
+      build: async () => {
+        builds += 1;
+        if (builds === 1) throw new Error("build failed");
+        return "latest";
+      },
+      runs: () => runs,
+      resume: async () => {
+        throw Object.assign(new Error("No run deleted-run."), { code: "run_not_found" });
+      },
+    });
+    await service.start();
+    await core.boxes.stop(deleted.id);
+    await core.boxes.remove(deleted.id, { removeWorktree: false });
+    const report = await service.start();
+    expect(report.boxes.find((box) => box.id === deleted.id)).toMatchObject({
+      restored: false,
+      gone: true,
+    });
+    expect(report.boxes.find((box) => box.id === kept.id)).toMatchObject({ restored: true });
+    expect(report.runs[0]).toMatchObject({ run_id: "deleted-run", restored: false, gone: true });
+    expect(service.hasOpenWork).toBe(false);
+  });
+
+  it("doesn't bring back a box the owner stopped after a failed build", async () => {
+    const h = makeHarness();
+    const box = await h.core.boxes.create({ targetDir: h.dir("app"), layout: "root", start: true });
+    const core = apiCoreOf(h.core, {} as Docker);
+    const options = {
+      core,
+      recordFile: path.join(h.home, "stopped.json"),
+      runs: () => [],
+      resume: async () => {},
+    };
+    await new UpgradeService({
+      ...options,
+      build: async () => {
+        throw new Error("build failed");
+      },
+    }).start();
+    const upgrade = new UpgradeService({ ...options, build: async () => "latest" });
+    const base = await createHarness();
+    const api = await createApiServer({ ...base.deps, core, upgrade });
+    const response = await api.app.inject({
+      method: "POST",
+      url: `/api/v1/boxes/${box.id}/stop`,
+      headers: AUTH,
+    });
+    expect(response.statusCode).toBe(200);
+    expect((await upgrade.prepare()).boxes).toEqual([]);
+    const report = await upgrade.start();
+    expect(report.boxes).toEqual([]);
+    expect((await core.boxes.get(box.id)).status).not.toBe("running");
+  });
 });

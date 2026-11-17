@@ -49,14 +49,19 @@ describe("app upgrade status", () => {
     );
   });
 
-  it("does not force update checks while polling an image upgrade", async () => {
+  it("polls only the image status during an upgrade and checks updates once it ends", async () => {
     const server = new FakeServer();
     server.state.image.upgrading = true;
     mount(server);
-    await waitFor(() => expect(server.callsTo("updates.check").length).toBeGreaterThan(1), {
+    await waitFor(() => expect(server.callsTo("image.status").length).toBeGreaterThan(1), {
       timeout: 3000,
     });
+    const checks = server.callsTo("updates.check").length;
     expect(server.callsTo("updates.check").every((call) => call.query.force === false)).toBe(true);
+    server.state.image.upgrading = false;
+    await waitFor(() => expect(server.callsTo("updates.check").length).toBe(checks + 1), {
+      timeout: 3000,
+    });
   });
 
   it("offers to relaunch an app older than the installed package", async () => {

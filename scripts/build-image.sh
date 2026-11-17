@@ -135,7 +135,10 @@ if ((UPGRADE)); then
   if [[ -n "$old_current" && "$old_current" != "$current" ]]; then
     docker image tag "$old_current" "$previous_repo:previous"
     if [[ -n "$old_previous" && "$old_previous" != "$old_current" && "$old_previous" != "$current" ]]; then
-      docker image rm "$old_previous"
+      # A container or another tag can still use the older image. Keeping it
+      # costs disk space only, so the upgrade goes on.
+      docker image rm "$old_previous" >/dev/null 2>&1 ||
+        log "Kept the older image $old_previous; a container or tag still uses it"
     fi
   fi
   exit 0

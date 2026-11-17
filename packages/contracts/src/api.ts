@@ -585,6 +585,8 @@ export const UpgradeReportSchema = z.object({
       name: z.string(),
       restored: z.boolean(),
       reason: z.string().nullable(),
+      /** True when the work no longer exists, so its absence isn't a failure. */
+      gone: z.boolean().optional(),
     }),
   ),
   runs: z.array(
@@ -593,6 +595,8 @@ export const UpgradeReportSchema = z.object({
       name: z.string(),
       restored: z.boolean(),
       reason: z.string().nullable(),
+      /** True when the work no longer exists, so its absence isn't a failure. */
+      gone: z.boolean().optional(),
     }),
   ),
 });

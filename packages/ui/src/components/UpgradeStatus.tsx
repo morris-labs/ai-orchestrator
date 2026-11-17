@@ -75,11 +75,23 @@ export function UpgradeStatus({
     if (connection === "open") reload();
   }, [reload, connection]);
   useResync(reload);
+  // While an upgrade runs, poll only the image status; update checks reach
+  // GitHub and npm and stay on the reconnect and resync path.
+  const pollImage = useCallback(() => {
+    void client
+      .call("image.status", {})
+      .then((i) => {
+        setImage(i);
+        if (updates) onStatus?.(updates, i);
+        if (!i.upgrading) reload();
+      })
+      .catch(() => undefined);
+  }, [client, onStatus, reload, updates]);
   useEffect(() => {
     if (!image?.upgrading && !busy) return;
-    const timer = setInterval(reload, 2000);
+    const timer = setInterval(pollImage, 2000);
     return () => clearInterval(timer);
-  }, [image?.upgrading, busy, reload]);
+  }, [image?.upgrading, busy, pollImage]);
   const hubVersion = machines.find((m) => m.isLocal)?.serverVersion;
 
   const previewUpdate = async () => {

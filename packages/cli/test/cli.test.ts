@@ -2216,6 +2216,28 @@ describe("package upgrade command", () => {
     expect(out).toContain("fallback used");
     expect(out).toContain("Sign in required");
   });
+  it("names work that no longer exists without failing the upgrade", async () => {
+    server.on("GET /api/v1/health", { body: { version: "1.0.0", uptimeS: 1 } });
+    server.on("POST /api/v1/upgrade", {
+      body: {
+        image: "latest",
+        fallback: false,
+        error: null,
+        boxes: [
+          {
+            id: BOX_ID,
+            name: "Work",
+            restored: false,
+            reason: "The box no longer exists.",
+            gone: true,
+          },
+        ],
+        runs: [],
+      },
+    });
+    expect(await cli(["upgrade", "--timeout", "1"])).toBe(0);
+    expect(out).toContain("The box no longer exists.");
+  });
 });
 
 it("aborts the upgrade request at the CLI time limit", async () => {
