@@ -41,6 +41,7 @@ describe("account bodies", () => {
       vendors: ["claude", "codex", "copilot"],
       name: "personal",
       dryRun: false,
+      copyHostSetup: false,
     });
   });
 
