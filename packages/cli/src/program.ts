@@ -339,6 +339,9 @@ function seedText(report: AccountSeedReport): string {
   }
   if (!report.dryRun && report.accounts.some((a) => a.status === "seeded")) {
     lines.push("Copied available host sign-ins. Check account sign-in status before use.");
+    lines.push(
+      "Providers can rotate refresh tokens, so using a copied sign-in on both the host and an account can sign out either copy. Sign in separately to each account if both will stay in use.",
+    );
   }
   return `${lines.join("\n")}\n`;
 }

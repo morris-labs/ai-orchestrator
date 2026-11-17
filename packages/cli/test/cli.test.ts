@@ -1731,6 +1731,10 @@ describe("accounts", () => {
     expect(out).toContain("Left out: .credentials.json.");
     expect(out).toContain("Skipped copilot/personal");
     expect(out).toContain("Copied available host sign-ins.");
+    expect(out).toContain(
+      "using a copied sign-in on both the host and an account can sign out either copy",
+    );
+    expect(out).toContain("Sign in separately to each account");
   });
 
   it("opts into a one-time host setup copy only when requested", async () => {

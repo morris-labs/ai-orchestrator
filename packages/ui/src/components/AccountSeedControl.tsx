@@ -66,6 +66,11 @@ export function AccountSeedControl({ hostMode = false }: { hostMode?: boolean })
         Copy available host sign-ins into new Claude, Codex and Copilot accounts once. Existing
         accounts stay unchanged.
       </p>
+      <p>
+        Providers can rotate refresh tokens, so using a copied sign-in on both the host and an
+        account can sign out either copy. Sign in separately to each account if both will stay in
+        use.
+      </p>
       <label>
         Account name{" "}
         <input value={name} disabled={busy} onChange={(e) => setName(e.target.value)} />
