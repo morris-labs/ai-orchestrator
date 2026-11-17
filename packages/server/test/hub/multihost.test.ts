@@ -771,16 +771,16 @@ describe("multi-host", () => {
   });
 
   it("copies sign-ins from the hub and sends a node's refresh to the other nodes", async () => {
-    const claudeDir = (home: string) => path.join(home, ".claude");
+    const claudeDir = (home: string) => path.join(home, "data/accounts/claude/work");
     const credFile = (home: string) => path.join(claudeDir(home), ".credentials.json");
     const hub = await startServer("hub", {
       signedIn: true,
       before: (home) => {
-        fs.mkdirSync(claudeDir(home));
+        fs.mkdirSync(claudeDir(home), { recursive: true });
         fs.writeFileSync(credFile(home), '{"token":"synthetic-1"}');
       },
     });
-    const withDir = (home: string) => fs.mkdirSync(claudeDir(home));
+    const withDir = (home: string) => fs.mkdirSync(claudeDir(home), { recursive: true });
     const one = await startServer("one", { before: withDir });
     const two = await startServer("two", { before: withDir });
     const ids: string[] = [];
@@ -800,7 +800,7 @@ describe("multi-host", () => {
       fs.existsSync(credFile(s.home)) ? fs.readFileSync(credFile(s.home), "utf8") : null;
     await waitFor(() => one.app.multiHost.status().link === "connected", 5000);
     await waitFor(() => two.app.multiHost.status().link === "connected", 5000);
-    const key = "host/claude/.credentials.json";
+    const key = "account/claude/work/.credentials.json";
     const [idOne, idTwo] = ids as [string, string];
 
     // With no grant, the hub copies nothing, and it never takes a file from a node.
@@ -866,18 +866,22 @@ describe("multi-host", () => {
   });
 
   it("delivers a sign-in change despite a pull, a refusal, or a failed send", async () => {
-    const key = "host/claude/.credentials.json";
-    const claudeDir = (s: Server) => path.join(s.home, ".claude");
+    const key = "account/claude/work/.credentials.json";
+    const claudeDir = (s: Server) => path.join(s.home, "data/accounts/claude/work");
     const file = (s: Server) => path.join(claudeDir(s), ".credentials.json");
     const read = (s: Server) => fs.readFileSync(file(s), "utf8");
     const hub = await startServer("hub", {
       signedIn: true,
       before: (home) => {
-        fs.mkdirSync(path.join(home, ".claude"));
-        fs.writeFileSync(path.join(home, ".claude", ".credentials.json"), '{"token":"v1"}');
+        fs.mkdirSync(path.join(home, "data/accounts/claude/work"), { recursive: true });
+        fs.writeFileSync(
+          path.join(home, "data/accounts/claude/work", ".credentials.json"),
+          '{"token":"v1"}',
+        );
       },
     });
-    const withDir = (home: string) => fs.mkdirSync(path.join(home, ".claude"));
+    const withDir = (home: string) =>
+      fs.mkdirSync(path.join(home, "data/accounts/claude/work"), { recursive: true });
     const one = await startServer("one", { before: withDir });
     const two = await startServer("two", { before: withDir });
     const ids: string[] = [];

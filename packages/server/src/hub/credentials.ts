@@ -16,8 +16,6 @@
 //
 // Synced files, by key:
 //
-//   host/claude/.credentials.json  HOME/.claude/.credentials.json
-//   host/codex/auth.json           HOME/.codex/auth.json
 //   account/VENDOR/NAME/FILE       DATA_DIR/accounts/VENDOR/NAME/FILE, for
 //                                  Claude's .credentials.json and Codex's
 //                                  auth.json
@@ -51,7 +49,7 @@ export interface CredentialEntry {
 }
 
 const KEY_PATTERN =
-  /^(host\/claude\/\.credentials\.json|host\/codex\/auth\.json|account\/claude\/[a-z0-9][a-z0-9-]{0,62}\/\.credentials\.json|account\/codex\/[a-z0-9][a-z0-9-]{0,62}\/auth\.json)$/;
+  /^(account\/claude\/[a-z0-9][a-z0-9-]{0,62}\/\.credentials\.json|account\/codex\/[a-z0-9][a-z0-9-]{0,62}\/auth\.json)$/;
 
 /** True when `key` names a file the sync may read or write. */
 export function isCredentialKey(key: string): boolean {
@@ -119,9 +117,6 @@ export class CredentialStore {
   pathFor(key: string): string | null {
     if (!isCredentialKey(key)) return null;
     const parts = key.split("/");
-    if (parts[0] === "host") {
-      return path.join(this.opts.home, parts[1] === "claude" ? ".claude" : ".codex", parts[2]!);
-    }
     return path.join(this.opts.dataDir, "accounts", parts[1]!, parts[2]!, parts[3]!);
   }
 
@@ -161,7 +156,7 @@ export class CredentialStore {
 
   /** The keys of the files that could exist here. */
   private async candidateKeys(): Promise<string[]> {
-    const keys = ["host/claude/.credentials.json", "host/codex/auth.json"];
+    const keys: string[] = [];
     for (const [vendor, file] of [
       ["claude", ".credentials.json"],
       ["codex", "auth.json"],
