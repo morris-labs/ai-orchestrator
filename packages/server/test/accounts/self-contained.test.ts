@@ -127,6 +127,18 @@ describe("self-contained accounts", () => {
     h.core.close();
   });
 
+  it("refuses a host Claude launch until legacy projects point to the shared transcript store", () => {
+    const h = makeHarness({ accounts: false });
+    const account = h.core.accounts.create({ vendor: "claude", name: "legacy" });
+    const hostProjects = h.dir(".claude", "projects");
+    fs.unlinkSync(path.join(account.dir, "projects"));
+    fs.symlinkSync(hostProjects, path.join(account.dir, "projects"));
+    expect(() => h.core.accounts.prepareAccount("claude")).toThrow(/accounts relink/);
+    h.core.accounts.relink();
+    expect(h.core.accounts.prepareAccount("claude")).toEqual({ dir: account.dir, problems: [] });
+    h.core.close();
+  });
+
   it("creates its own settings and only links projects outside accounts", () => {
     const h = makeHarness({ accounts: false });
     write(

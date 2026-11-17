@@ -226,6 +226,12 @@ export class AccountService {
       throw new ApiError("not_found", `The account folder ${dir} doesn't exist.`);
     const links = this.legacyLinks(dir);
     if (links.length) throw new ApiError("invalid_state", this.relinkNotice(links));
+    if (vendor === "claude" && projectsLinkState(dir, this.storeRoot()) !== "ok") {
+      throw new ApiError(
+        "invalid_state",
+        `The account's projects entry does not lead to the shared transcript store. Run "aio accounts relink" before using ${id}.`,
+      );
+    }
     this.ensureInstructions(vendor, dir);
     return { dir, problems: vendor === "claude" ? [] : buildAccountInstructions(dir, vendor) };
   }
