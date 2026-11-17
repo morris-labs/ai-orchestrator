@@ -163,11 +163,17 @@ describe("ProjectService", () => {
     const p = h.core.projects.ensureForRoot(h.dir("app"));
     const r = await h.core.projects.ensureContainer(p.id);
     const execs = h.docker.callsOf("exec");
-    expect(execs).toHaveLength(1);
+    expect(execs.filter((c) => (c.args[1] as ExecOptions).user === "root")).toHaveLength(1);
     const [, options] = execs[0]!.args as [string, ExecOptions];
     expect(options.user).toBe("root");
     expect(options.cmd.slice(0, 3)).toEqual(["/bin/sh", "-c", ROOT_SETUP_SCRIPT]);
-    expect(options.cmd.slice(4)).toEqual([h.env.user, containerHome(h.env), SUDOERS_FILE, p.root]);
+    expect(options.cmd.slice(4)).toEqual([
+      h.env.user,
+      containerHome(h.env),
+      SUDOERS_FILE,
+      p.root,
+      path.join(h.home, ".ai-orchestrator", "accounts"),
+    ]);
     expect(options.stdin).toBe("\n");
     expect(h.docker.containers.get(r.container)!.spec.labels["aio.sudo"]).toBe("off");
   });

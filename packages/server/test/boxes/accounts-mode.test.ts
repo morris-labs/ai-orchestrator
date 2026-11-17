@@ -6,7 +6,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { START_SESSION_PATH } from "../../src/docker/scripts.js";
 import { linkTargetsOutside } from "../../src/docker/launch.js";
-import { accountDirsFile } from "../../src/docker/state.js";
+import { writeContainerLayout, accountDirsFile } from "../../src/docker/state.js";
 import { skippedLinkMessage } from "../../src/projects/service.js";
 import { accountDirFor } from "../../src/records/env.js";
 import { makeHarness, type Harness } from "./harness.js";
@@ -45,7 +45,7 @@ function accountsMode(h: Harness, defaults: Record<string, string>): void {
 
 describe("session command", () => {
   it("prefixes CLAUDE_CONFIG_DIR with the box's account, and the default otherwise", async () => {
-    const h = makeHarness();
+    const h = makeHarness({ accounts: false });
     const store = h.dir(".ai-orchestrator", "transcripts", "claude");
     const personal = addAccount(h, "claude/personal", store);
     const work = addAccount(h, "claude/work", store);
@@ -63,7 +63,7 @@ describe("session command", () => {
   });
 
   it("pre-accepts the trust prompt for the box's folders in its account before it starts", async () => {
-    const h = makeHarness();
+    const h = makeHarness({ accounts: false });
     const personal = addAccount(
       h,
       "claude/personal",
@@ -82,24 +82,27 @@ describe("session command", () => {
     expect(settings.skipDangerousModePermissionPrompt).toBe(true);
   });
 
-  it("uses each platform's variable and starts no prefix in host mode", async () => {
-    const h = makeHarness();
+  it("uses each platform's own account folder variable", async () => {
+    const h = makeHarness({ accounts: false });
     const codex = addAccount(h, "codex/main");
-    addAccount(h, "claude/personal", h.dir(".ai-orchestrator", "transcripts", "claude"));
-    const host = await h.core.boxes.create({
-      targetDir: h.dir("host"),
+    const copilot = addAccount(h, "copilot/main");
+    accountsMode(h, { codex: "codex/main", copilot: "copilot/main" });
+    await h.core.boxes.create({
+      targetDir: h.dir("codex-work"),
       layout: "root",
       platform: "codex",
     });
-    expect(lastCommand(h).startsWith("codex ")).toBe(true);
-    await h.core.boxes.stop(host.id);
-    accountsMode(h, { claude: "claude/personal", codex: "codex/main" });
-    await h.core.boxes.start(host.id);
     expect(lastCommand(h).startsWith(`env CODEX_HOME='${codex}' codex `)).toBe(true);
+    await h.core.boxes.create({
+      targetDir: h.dir("copilot-work"),
+      layout: "root",
+      platform: "copilot",
+    });
+    expect(lastCommand(h).startsWith(`env COPILOT_HOME='${copilot}' copilot `)).toBe(true);
   });
 
   it("refuses to start when the vendor has no account", async () => {
-    const h = makeHarness();
+    const h = makeHarness({ accounts: false });
     accountsMode(h, {});
     await expect(
       h.core.boxes.create({ targetDir: h.dir("a"), layout: "root" }),
@@ -107,7 +110,8 @@ describe("session command", () => {
   });
 
   it("refuses an account that has no record", async () => {
-    const h = makeHarness();
+    const h = makeHarness({ accounts: false });
+    accountsMode(h, {});
     await expect(
       h.core.boxes.create({
         targetDir: h.dir("a"),
@@ -120,7 +124,7 @@ describe("session command", () => {
 
 describe("container layout", () => {
   it("mounts the accounts folder and each sessions folder, and not the host folders", async () => {
-    const h = makeHarness();
+    const h = makeHarness({ accounts: false });
     const store = h.dir(".ai-orchestrator", "transcripts", "claude");
     const personal = addAccount(h, "claude/personal", store);
     accountsMode(h, { claude: "claude/personal" });
@@ -144,10 +148,11 @@ describe("container layout", () => {
   });
 
   it("makes a container from host mode stale for the mode switch", async () => {
-    const h = makeHarness();
+    const h = makeHarness({ accounts: false });
     addAccount(h, "claude/personal", h.dir(".ai-orchestrator", "transcripts", "claude"));
-    const box = await h.core.boxes.create({ targetDir: h.dir("a"), layout: "root" });
     accountsMode(h, { claude: "claude/personal" });
+    const box = await h.core.boxes.create({ targetDir: h.dir("a"), layout: "root" });
+    h.docker.containers.get(box.container)!.spec.labels["aio.accounts-mode"] = "host";
     const project = h.core.projects.get(box.projectId);
     expect(await h.core.projects.staleDifferences(project)).toContain(
       "accounts mode host -> accounts",
@@ -155,7 +160,7 @@ describe("container layout", () => {
   });
 
   it("flags a box whose account was added after the container started", async () => {
-    const h = makeHarness();
+    const h = makeHarness({ accounts: false });
     const store = h.dir(".ai-orchestrator", "transcripts", "claude");
     addAccount(h, "claude/personal", store);
     accountsMode(h, { claude: "claude/personal" });
@@ -171,7 +176,7 @@ describe("container layout", () => {
   });
 
   it("finds links out of an account folder and skips dangling and inside links", () => {
-    const h = makeHarness();
+    const h = makeHarness({ accounts: false });
     const store = h.dir(".ai-orchestrator", "transcripts", "claude");
     const dir = addAccount(h, "claude/personal", store);
     fs.mkdirSync(path.join(dir, "skills"));
@@ -183,7 +188,7 @@ describe("container layout", () => {
 
 describe("shared transcript store", () => {
   it("resolves transcripts in the store, and resumes after a move between accounts", async () => {
-    const h = makeHarness();
+    const h = makeHarness({ accounts: false });
     const store = h.dir(".ai-orchestrator", "transcripts", "claude");
     addAccount(h, "claude/personal", store);
     addAccount(h, "claude/work", store);
@@ -205,8 +210,8 @@ describe("shared transcript store", () => {
     expect(lastCommand(h)).toContain("claude/work".replace("claude/", "/claude/"));
   });
 
-  it("uses the host's projects folder in host mode", () => {
-    const h = makeHarness();
+  it("finds transcripts in the host folder for a legacy host setting", () => {
+    const h = makeHarness({ accounts: false });
     const file = h.transcript(h.dir("a"), "11111111-1111-4111-8111-111111111111");
     expect(file.startsWith(path.join(h.env.home, ".claude", "projects"))).toBe(true);
   });
@@ -214,7 +219,7 @@ describe("shared transcript store", () => {
 
 describe("model catalog", () => {
   it("reads models and defaults from the chosen account's folder", async () => {
-    const h = makeHarness();
+    const h = makeHarness({ accounts: false });
     const work = addAccount(h, "claude/work", h.dir(".ai-orchestrator", "transcripts", "claude"));
     addAccount(h, "claude/personal", h.dir(".ai-orchestrator", "transcripts", "claude"));
     fs.writeFileSync(
@@ -233,7 +238,7 @@ describe("model catalog", () => {
 
 describe("moving a box between accounts", () => {
   it("starts a fresh Codex session in the new account and clears an entry with null", async () => {
-    const h = makeHarness();
+    const h = makeHarness({ accounts: false });
     addAccount(h, "codex/one");
     addAccount(h, "codex/two");
     addAccount(h, "claude/personal", h.dir(".ai-orchestrator", "transcripts", "claude"));
@@ -254,7 +259,7 @@ describe("moving a box between accounts", () => {
   });
 
   it("asks for a restart when a running box changes account", async () => {
-    const h = makeHarness();
+    const h = makeHarness({ accounts: false });
     const store = h.dir(".ai-orchestrator", "transcripts", "claude");
     addAccount(h, "claude/personal", store);
     addAccount(h, "claude/work", store);
@@ -271,7 +276,7 @@ describe("engine account folders", () => {
   }
 
   it("writes each vendor's default folder when the container starts", async () => {
-    const h = makeHarness();
+    const h = makeHarness({ accounts: false });
     const personal = addAccount(
       h,
       "claude/personal",
@@ -284,7 +289,7 @@ describe("engine account folders", () => {
   });
 
   it("rewrites the file for a running container when the defaults change", async () => {
-    const h = makeHarness();
+    const h = makeHarness({ accounts: false });
     const store = h.dir(".ai-orchestrator", "transcripts", "claude");
     const personal = addAccount(h, "claude/personal", store);
     const work = addAccount(h, "claude/work", store);
@@ -297,17 +302,24 @@ describe("engine account folders", () => {
     expect(readDirs(h, box.container)).toEqual({});
   });
 
-  it("keeps a container launched in host mode on its home folders", async () => {
-    const h = makeHarness();
-    const box = await h.core.boxes.create({ targetDir: h.dir("a"), layout: "root" });
+  it("keeps legacy container layouts from acquiring unmounted account paths", async () => {
+    const h = makeHarness({ accounts: false });
     addAccount(h, "claude/personal", h.dir(".ai-orchestrator", "transcripts", "claude"));
     accountsMode(h, { claude: "claude/personal" });
+    const box = await h.core.boxes.create({ targetDir: h.dir("a"), layout: "root" });
+    writeContainerLayout(h.env, box.container, {
+      accounts: false,
+      claudeDirs: [],
+      accountLinkTargets: [],
+    });
+    addAccount(h, "claude/work", h.dir(".ai-orchestrator", "transcripts", "claude"));
+    h.core.settings.patch({ accountDefaults: { claude: "claude/work" } });
     expect(readDirs(h, box.container)).toEqual({});
   });
 
   it("keeps the previous Claude account when the default has no mount, and logs it", async () => {
     const lines: string[] = [];
-    const h = makeHarness({ log: (m) => lines.push(m) });
+    const h = makeHarness({ accounts: false, log: (m) => lines.push(m) });
     const store = h.dir(".ai-orchestrator", "transcripts", "claude");
     const personal = addAccount(h, "claude/personal", store);
     accountsMode(h, { claude: "claude/personal" });
@@ -319,24 +331,30 @@ describe("engine account folders", () => {
   });
 
   it("repairs the file when a running container is ensured again", async () => {
-    const h = makeHarness();
+    const h = makeHarness({ accounts: false });
+    const personal = addAccount(
+      h,
+      "claude/personal",
+      h.dir(".ai-orchestrator", "transcripts", "claude"),
+    );
+    accountsMode(h, { claude: "claude/personal" });
     const box = await h.core.boxes.create({ targetDir: h.dir("a"), layout: "root" });
     fs.rmSync(accountDirsFile(h.env, box.container));
     await h.core.projects.ensureContainer(box.projectId);
-    expect(readDirs(h, box.container)).toEqual({});
+    expect(readDirs(h, box.container)).toEqual({ claude: personal });
   });
 
-  it("writes an empty object in host mode", async () => {
-    const h = makeHarness();
-    const box = await h.core.boxes.create({ targetDir: h.dir("a"), layout: "root" });
-    expect(readDirs(h, box.container)).toEqual({});
+  it("keeps legacy host settings readable without exposing host account paths", () => {
+    const h = makeHarness({ accounts: false });
+    expect(h.core.projects.accountDirs()).toEqual({});
+    expect(h.core.settings.get().accountsMode).toBe("host");
   });
 });
 
 describe("home links left alone", () => {
   it("logs each link the script reports it skipped", async () => {
     const lines: string[] = [];
-    const h = makeHarness({ log: (m) => lines.push(m) });
+    const h = makeHarness({ accounts: false, log: (m) => lines.push(m) });
     addAccount(h, "claude/personal", h.dir(".ai-orchestrator", "transcripts", "claude"));
     accountsMode(h, { claude: "claude/personal" });
     h.docker.execHandler = (_c, options) =>

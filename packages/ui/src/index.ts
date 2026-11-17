@@ -18,3 +18,4 @@ export * from "./components/selection";
 export * from "./components/Splitter";
 export * from "./api/react";
 export * from "./components/UpgradeStatus";
+export * from "./components/AccountSeedControl";

@@ -9,6 +9,7 @@ import {
   type NotificationToggles,
   type Vendor,
 } from "@aio/contracts";
+import { AccountSeedControl } from "@aio/ui";
 import { VENDOR_LABELS, VENDORS } from "@aio/ui/dashboard";
 import { useEffect, useRef, useState } from "react";
 import { ErrorBanner, Field } from "../components/common.js";
@@ -273,6 +274,7 @@ export function Settings() {
   return (
     <div className="screen">
       <h2>Settings</h2>
+      <AccountSeedControl hostMode={settings.accountsMode === "host"} />
       <ErrorBanner error={error} />
       {saved && !patch ? (
         <p role="status" className="banner banner-good">

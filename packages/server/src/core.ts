@@ -39,6 +39,8 @@ export interface CoreOptions {
   env?: HostEnv;
   /** The SQLite file, or `":memory:"`. Default: `aio.db` in the data directory. */
   dbPath?: string;
+  /** Temporary roots disallowed for durable accounts. Tests inject an empty list. */
+  accountTempDirs?: readonly string[];
   /** Default: dockerode on the local socket (`DOCKER_HOST` honored). */
   docker?: DockerClient;
   /** Seconds a project container lingers with no sessions. Default 30. */
@@ -120,23 +122,21 @@ export function createServerCore(options: CoreOptions): ServerCore {
     (id) => db.accounts.get(id) !== undefined,
     (next) => accounts.assertCanUseAccounts(next),
   );
-  // Option S: in accounts mode, transcripts live in the store
-  // (`DATA_DIR/transcripts/claude`, or the `transcriptStore` setting). In host
-  // mode the container reads `~/.claude/projects`, which leads to the store.
   env.claudeProjectsRoot = () =>
-    settings.get().accountsMode === "accounts"
-      ? claudeStoreRoot(env, settings.get().transcriptStore)
-      : undefined;
+    settings.get().accountsMode === "host"
+      ? homePaths(env).claudeProjects
+      : claudeStoreRoot(env, settings.get().transcriptStore);
   let hooks: CoreHooks = defaultHooks();
   const getHooks = () => hooks;
   const imageVersions = new ImageVersions(docker);
-  const projects = new ProjectService({
+  const projects: ProjectService = new ProjectService({
     env,
     repos: db,
     docker,
     events,
     settings,
     hooks: getHooks,
+    prepareAccount: (vendor, name) => accounts.prepareAccount(vendor, name),
     mutex: new KeyedMutex(),
     imageVersions,
     engineVersion: options.engineVersion,
@@ -147,7 +147,7 @@ export function createServerCore(options: CoreOptions): ServerCore {
     brokerTransport: options.brokerTransport,
     log: options.log,
   });
-  const boxes = new BoxService({
+  const boxes: BoxService = new BoxService({
     env,
     repos: db,
     docker,
@@ -155,12 +155,14 @@ export function createServerCore(options: CoreOptions): ServerCore {
     settings,
     projects,
     hooks: getHooks,
+    prepareAccount: (vendor, name) => accounts.prepareAccount(vendor, name),
     sessionGoneTimeoutMs: options.sessionGoneTimeoutMs,
     log: options.log,
   });
-  const accounts = new AccountService({
+  const accounts: AccountService = new AccountService({
     env,
     repo: db.accounts,
+    tempDirs: options.accountTempDirs,
     db: db.sqlite,
     settings,
     docker,
@@ -189,6 +191,12 @@ export function createServerCore(options: CoreOptions): ServerCore {
       const id = account ?? settings.get().accountDefaults.claude;
       if (!id?.startsWith("claude/") || !AccountIdSchema.safeParse(id).success) return undefined;
       const dir = accountDirFor(env, "claude", id.slice("claude/".length));
+      try {
+        const root = fs.realpathSync(homePaths(env).accountsDir);
+        if (!fs.realpathSync(dir).startsWith(`${root}${path.sep}`)) return undefined;
+      } catch {
+        return undefined;
+      }
       return { dir, json: path.join(dir, ".claude.json") };
     },
     getCache: () => settings.get().modelCache,

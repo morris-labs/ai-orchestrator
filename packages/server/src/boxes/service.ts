@@ -37,7 +37,7 @@ import {
 } from "../catalog/sessions.js";
 import type { Repositories } from "../db/repositories.js";
 import { DEFAULT_BACKUP_KEEP, snapshotTranscripts } from "../accounts/backup.js";
-import { preacceptClaudeAccount, preacceptHostTrust } from "../accounts/preaccept.js";
+import { preacceptClaudeAccount } from "../accounts/preaccept.js";
 import { RetentionError, ensureRetention, protectedRetentionDays } from "../accounts/retention.js";
 import { claudeStoreRoot } from "../accounts/store.js";
 import { buildSessionCommand, sessionStartCmd } from "../docker/scripts.js";
@@ -107,6 +107,7 @@ export interface BoxServiceDeps {
   settings: SettingsService;
   projects: ProjectService;
   hooks: () => CoreHooks;
+  prepareAccount: (vendor: Platform, name?: string) => { dir: string; problems: string[] };
   /** Milliseconds a stopped session may take to leave the keeper's list. */
   sessionGoneTimeoutMs?: number;
   /** Receives notes about the transcript snapshot. */
@@ -341,6 +342,15 @@ export class BoxService {
    * creating the container when needed (twice, for a container that is on its
    * way out just as it is reached).
    */
+  private requireAccountsMode(): void {
+    if (this.deps.settings.get().accountsMode !== "accounts") {
+      throw new ApiError(
+        "conflict",
+        'Host mode is no longer supported. Set up accounts with "aio accounts add VENDOR NAME", run "aio accounts relink", and set accountsMode to "accounts" before creating or starting boxes.',
+      );
+    }
+  }
+
   private async startSession(
     box: Box,
     program: Platform,
@@ -348,12 +358,15 @@ export class BoxService {
     session = boxTmuxSession(box),
     options: { force?: boolean } = {},
   ): Promise<void> {
+    this.requireAccountsMode();
     const account = this.accountFor(box, program);
-    const command = buildSessionCommand(
-      program,
-      args,
-      account ? { [ACCOUNT_DIR_ENV[program]]: account.containerDir } : {},
-    );
+    if (program === "codex" || program === "copilot") {
+      const prepared = this.deps.prepareAccount(program, account.name);
+      for (const problem of prepared.problems) this.deps.log?.(`${account.id}: ${problem}`);
+    }
+    const command = buildSessionCommand(program, args, {
+      [ACCOUNT_DIR_ENV[program]]: account.containerDir,
+    });
     const workDir = hostToContainer(boxWorkDir(box), this.hostOs);
     if (account?.claude) {
       // Claude Code deletes transcripts older than `cleanupPeriodDays` (30 by
@@ -369,14 +382,6 @@ export class BoxService {
         });
       } catch {
         // The box still starts; it waits at the prompts, as it would without this step.
-      }
-    } else if (program === "claude" && this.deps.settings.get().accountsMode === "host") {
-      // Host mode shares the host's live `~/.claude.json`. Add only the
-      // folder trust entries, and never block the start.
-      try {
-        preacceptHostTrust(this.env.home, [workDir, hostToContainer(box.targetDir, this.hostOs)]);
-      } catch {
-        // The box waits at the trust prompt, as it would without this step.
       }
     }
     let lastError = "";
@@ -432,17 +437,22 @@ export class BoxService {
 
   /**
    * The account a session of `platform` runs on, in accounts mode: the box's
-   * own choice, else the vendor's default. `undefined` in host mode, where
-   * the host's folders apply. Throws `conflict` when there is none.
+   * own choice, else the vendor's default. Throws `conflict` in retired host
+   * mode or when the selected account is unavailable.
    */
   private accountFor(
     box: Box,
     platform: Platform,
-  ):
-    | { id: string; vendor: Platform; dir: string; containerDir: string; claude: boolean }
-    | undefined {
+  ): {
+    id: string;
+    name: string;
+    vendor: Platform;
+    dir: string;
+    containerDir: string;
+    claude: boolean;
+  } {
     const settings = this.deps.settings.get();
-    if (settings.accountsMode !== "accounts") return undefined;
+    this.requireAccountsMode();
     const id = box.accounts?.[platform] ?? settings.accountDefaults[platform];
     if (id === undefined) {
       throw new ApiError(
@@ -456,6 +466,7 @@ export class BoxService {
     return {
       id,
       vendor: platform,
+      name: record.name,
       dir,
       containerDir: hostToContainer(dir, this.hostOs),
       claude: platform === "claude",
@@ -566,6 +577,7 @@ export class BoxService {
    * repeats the checks, since the state can change in between.
    */
   async validateCreate(input: BoxCreateInput): Promise<void> {
+    this.requireAccountsMode();
     const req: BoxCreate = parseInput(BoxCreateSchema, input);
     if (!isDirectory(normalizeRoot(path.resolve(req.targetDir), this.hostOs)))
       throw new ApiError("validation", `${req.targetDir} is not a directory.`);
@@ -586,6 +598,7 @@ export class BoxService {
    * false). A worktree this call made is removed again when the start fails.
    */
   async create(input: BoxCreateInput): Promise<Box> {
+    this.requireAccountsMode();
     const req: BoxCreate = parseInput(BoxCreateSchema, input);
     const targetDir = normalizeRoot(path.resolve(req.targetDir), this.hostOs);
     if (!isDirectory(targetDir))
@@ -834,6 +847,7 @@ export class BoxService {
    * anyway").
    */
   async start(id: string, options: { syncTitle?: boolean; force?: boolean } = {}): Promise<Box> {
+    this.requireAccountsMode();
     let box = this.get(id);
     if (this.converting.has(id)) {
       throw new ApiError(
@@ -1003,6 +1017,7 @@ export class BoxService {
 
   /** `boxes.restart`: stop, wait for the session to leave, start. */
   async restart(id: string): Promise<Box> {
+    this.requireAccountsMode();
     const box = this.get(id);
     if (this.isRunning(box)) {
       await this.stop(id);
@@ -1379,6 +1394,7 @@ export class BoxService {
 
   /** `boxes.sideSessions.start`: another CLI in its own tmux session beside the main one. */
   async startSideSession(id: string, platform: Platform): Promise<{ session: string }> {
+    this.requireAccountsMode();
     const box = this.get(id);
     if (!this.isRunning(box)) throw new ApiError("conflict", `${id} is not running.`);
     if (platform === box.platform)
@@ -1484,6 +1500,7 @@ export class BoxService {
 
   /** Stops every running box, waits for each session to leave, then starts each again. */
   async restartAll(): Promise<BulkResult> {
+    this.requireAccountsMode();
     const running = this.repos.boxes.list().filter((b) => this.isRunning(b));
     const stopped = await this.bulk(
       running.map((b) => b.id),
@@ -1501,6 +1518,7 @@ export class BoxService {
    * that box's session too; the boxes that did stop start again in it.
    */
   async restartProjectContainer(projectId: string): Promise<BulkResult> {
+    this.requireAccountsMode();
     const project = this.deps.projects.get(projectId);
     const running = this.repos.boxes.byProject(project.id).filter((b) => this.isRunning(b));
     const stopped = await this.bulk(

@@ -202,6 +202,15 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
     );
   }
 
+  async function prepareReviewAccounts(): Promise<void> {
+    const defaults = (await core.settings.get()).accountDefaults;
+    for (const vendor of ["codex", "copilot"] as const) {
+      if (!defaults[vendor]) continue;
+      const { problems } = await core.accounts.prepare({ vendor });
+      for (const problem of problems) deps.log?.(`${vendor}: ${problem}`);
+    }
+  }
+
   function proxyRun<K extends RunProxyKey>(key: K): HttpHandlers[K] {
     return (async (ctx: HandlerContext<K>) => {
       const params = ctx.params as Record<string, string>;
@@ -211,6 +220,7 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
         if (key === "runs.get") return known;
         if (key === "findings.list") return { findings: mirroredFindings(known.id, ctx.query) };
       }
+      if (key === "runs.resume") await prepareReviewAccounts();
       const engine = await engineForRun(params.runId as string);
       const result = await engine.call(`engine.${key}` as EngineRouteKey, {
         params,
@@ -495,6 +505,7 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
     "sshRemotes.copyId": async ({ params }) =>
       deps.ssh.copyId(await core.sshRemotes.get(params.name)),
     // Accounts
+    "accounts.prepare": async ({ body }) => core.accounts.prepare(body),
     "accounts.list": async () => ({ accounts: await core.accounts.list() }),
     "accounts.create": async ({ body }) => core.accounts.create(body),
     "accounts.seed": async ({ body }) => {
@@ -580,6 +591,7 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
       if (isReadOnlyPostPush(body)) throw new ApiError("validation", READ_ONLY_POST_PUSH_MESSAGE);
       requireAbsolute(body.repoPath, "The repository path", "container");
       await requireBoxInProject(body.boxId, body.projectId);
+      await prepareReviewAccounts();
       const engine = deps.engines.requireProject(body.projectId);
       // An older engine drops request fields it doesn't know, such as
       // `concurrency`, so the server forwards a run only to an engine whose

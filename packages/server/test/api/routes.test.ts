@@ -2,6 +2,7 @@ import path from "node:path";
 import { UpgradeService } from "../../src/setup/upgrade.js";
 import { RunIdSchema, projectContainerName, serverRoutes } from "@aio/contracts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { ApiError } from "../../src/api/errors.js";
 import { sessionValue } from "../../src/api/auth.js";
 import { failureOf } from "../../src/api/server.js";
 import { HOLD_EDITS_MESSAGE } from "../../src/api/handlers.js";
@@ -264,6 +265,13 @@ const cases: Case[] = [
     status: 201,
   },
   {
+    key: "accounts.prepare",
+    method: "POST",
+    url: `${V1}/accounts/prepare`,
+    body: { vendor: "claude" },
+    status: 200,
+  },
+  {
     key: "accounts.seed",
     method: "POST",
     url: `${V1}/accounts/seed`,
@@ -501,6 +509,21 @@ describe("authentication", () => {
 });
 
 describe("accounts", () => {
+  it("refuses starting a review when a configured vendor account cannot be prepared", async () => {
+    h.core.settingsValue.accountDefaults = { codex: "codex/work" };
+    h.core.accounts.prepare = async () => {
+      throw new ApiError("validation", "Convert account links before starting");
+    };
+    const response = await h.server.app.inject({
+      method: "POST",
+      url: `${V1}/runs`,
+      headers: AUTH,
+      payload: { projectId: "example-app-1a2b3c4d", repoPath: "/work/example-app" },
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error.message).toBe("Convert account links before starting");
+  });
+
   const call = (method: Case["method"], url: string, body?: object) =>
     h.server.app.inject({ method, url, headers: AUTH, ...(body ? { payload: body } : {}) });
 

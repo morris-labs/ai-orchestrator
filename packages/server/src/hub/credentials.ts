@@ -16,8 +16,6 @@
 //
 // Synced files, by key:
 //
-//   host/claude/.credentials.json  HOME/.claude/.credentials.json
-//   host/codex/auth.json           HOME/.codex/auth.json
 //   account/VENDOR/NAME/FILE       DATA_DIR/accounts/VENDOR/NAME/FILE, for
 //                                  Claude's .credentials.json and Codex's
 //                                  auth.json
@@ -51,7 +49,7 @@ export interface CredentialEntry {
 }
 
 const KEY_PATTERN =
-  /^(host\/claude\/\.credentials\.json|host\/codex\/auth\.json|account\/claude\/[a-z0-9][a-z0-9-]{0,62}\/\.credentials\.json|account\/codex\/[a-z0-9][a-z0-9-]{0,62}\/auth\.json)$/;
+  /^(account\/claude\/[a-z0-9][a-z0-9-]{0,62}\/\.credentials\.json|account\/codex\/[a-z0-9][a-z0-9-]{0,62}\/auth\.json)$/;
 
 /** True when `key` names a file the sync may read or write. */
 export function isCredentialKey(key: string): boolean {
@@ -119,10 +117,23 @@ export class CredentialStore {
   pathFor(key: string): string | null {
     if (!isCredentialKey(key)) return null;
     const parts = key.split("/");
-    if (parts[0] === "host") {
-      return path.join(this.opts.home, parts[1] === "claude" ? ".claude" : ".codex", parts[2]!);
-    }
     return path.join(this.opts.dataDir, "accounts", parts[1]!, parts[2]!, parts[3]!);
+  }
+
+  private async isAccountFolder(file: string): Promise<boolean> {
+    try {
+      const root = path.join(await fs.realpath(this.opts.dataDir), "accounts");
+      const folder = await fs.realpath(path.dirname(file));
+      const relative = path.relative(root, folder);
+      return (
+        relative !== "" &&
+        relative !== ".." &&
+        !relative.startsWith(`..${path.sep}`) &&
+        !path.isAbsolute(relative)
+      );
+    } catch {
+      return false;
+    }
   }
 
   private locked<T>(run: () => Promise<T>): Promise<T> {
@@ -161,14 +172,14 @@ export class CredentialStore {
 
   /** The keys of the files that could exist here. */
   private async candidateKeys(): Promise<string[]> {
-    const keys = ["host/claude/.credentials.json", "host/codex/auth.json"];
+    const keys: string[] = [];
     for (const [vendor, file] of [
       ["claude", ".credentials.json"],
       ["codex", "auth.json"],
     ] as const) {
-      const names = await fs
-        .readdir(path.join(this.opts.dataDir, "accounts", vendor))
-        .catch(() => [] as string[]);
+      const vendorDir = path.join(this.opts.dataDir, "accounts", vendor);
+      if (!(await this.isAccountFolder(path.join(vendorDir, file)))) continue;
+      const names = await fs.readdir(vendorDir).catch(() => [] as string[]);
       for (const name of names) {
         const key = `account/${vendor}/${name}/${file}`;
         if (isCredentialKey(key)) keys.push(key);
@@ -179,7 +190,7 @@ export class CredentialStore {
 
   private async read(key: string): Promise<Buffer | null> {
     const file = this.pathFor(key);
-    if (!file) return null;
+    if (!file || !(await this.isAccountFolder(file))) return null;
     try {
       const stat = await fs.lstat(file);
       // A link could lead out of the folder, so only regular files count.
@@ -287,6 +298,7 @@ export class CredentialStore {
       await this.load();
       const file = this.pathFor(entry.key);
       if (!file) throw new Error(`The sync doesn't write ${entry.key}.`);
+      if (!(await this.isAccountFolder(file))) return false;
       const bytes = entryBytes(entry);
       if (!bytes) throw new Error(`The content for ${entry.key} isn't a valid sign-in file.`);
       try {
