@@ -1,3 +1,4 @@
+import { configureTestAccounts } from "../account-fixture.js";
 // Terminal attach through the hub, end to end: whole servers in one process
 // (a hub and one or two nodes, each with its own temporary home passed as an
 // argument), joined over the real mutual TLS link. A client attaches to a
@@ -60,7 +61,11 @@ async function startServer(name: string): Promise<Server> {
   const app = await startApp({
     home,
     dataDir,
-    createCore: (o) => createCore({ ...o, docker, start: { pollMs: 0, watch: false } }),
+    createCore: async (o) => {
+      const core = await createCore({ ...o, docker, start: { pollMs: 0, watch: false } });
+      configureTestAccounts(core.server);
+      return core;
+    },
     version: VERSION,
     expectedEngineVersion: VERSION,
     execStart: "/usr/bin/aio-server",

@@ -1,3 +1,4 @@
+import { configureTestAccounts } from "../account-fixture.js";
 // The hub's GUI listener, end to end: whole servers in one process, a hub and a
 // node over the real mutual TLS link, and a GUI app's side from the code the
 // Electron main process runs: enrollment and the loopback proxy.
@@ -73,7 +74,11 @@ async function startServer(name: string): Promise<Server> {
   const app = await startApp({
     home,
     dataDir,
-    createCore: (o) => createCore({ ...o, docker, start: { pollMs: 0, watch: false } }),
+    createCore: async (o) => {
+      const core = await createCore({ ...o, docker, start: { pollMs: 0, watch: false } });
+      configureTestAccounts(core.server);
+      return core;
+    },
     version: VERSION,
     expectedEngineVersion: VERSION,
     execStart: "/usr/bin/aio-server",
