@@ -63,10 +63,12 @@ import {
 } from "./retention.js";
 import { copyLinkedConfig, hostConfigLinks } from "./userConfig.js";
 import {
+  hostProjectsRoot,
   linkProjectsToStore,
   projectsLinkState,
   projectsLinkWarning,
   resolveStore,
+  sameLocation,
   type LinkOutcome,
 } from "./store.js";
 
@@ -271,8 +273,7 @@ export class AccountService {
 
   /**
    * Refuses to switch to accounts mode when a Claude account's projects
-   * entry does not lead to the transcript store. Host configuration does
-   * not influence account readiness.
+   * entry does not lead to the transcript store or host transcripts need adoption.
    * Throws `conflict` and names the fix.
    */
   assertCanUseAccounts(next: GlobalSettings): void {
@@ -290,6 +291,13 @@ export class AccountService {
         "conflict",
         `The projects link of ${bad.map((b) => `${b.id} (${b.state})`).join(", ")} doesn't lead to the transcript store ${store.root}. Run "aio accounts relink" first.`,
         { store: store.root, accounts: bad },
+      );
+    }
+    const hostProjects = hostProjectsRoot(this.env);
+    if (hostProjects && !sameLocation(hostProjects, store.root)) {
+      throw new ApiError(
+        "conflict",
+        `Host transcripts are outside the transcript store. Run "aio transcripts adopt" first.`,
       );
     }
   }
@@ -730,6 +738,11 @@ export class AccountService {
           dryRun: req.dryRun,
           copyHostSetup: req.copyHostSetup,
         });
+        copied.notes.push(
+          vendor === "copilot"
+            ? "The host and account may share a Copilot sign-in; re-authentication or revocation can sign out the other copy. Sign in separately if both remain in use."
+            : `The host and account may share ${vendor === "claude" ? "Claude credentials, including an API key" : "Codex credentials"}. Refresh token rotation can sign out the other copy. Sign in separately if both remain in use.`,
+        );
         for (const note of copied.notes) log(`  ${note}\r\n`);
         if (vendor === "claude" && !req.dryRun) {
           const store = this.storeRoot();

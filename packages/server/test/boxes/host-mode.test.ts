@@ -4,6 +4,16 @@ import { describe, expect, it } from "vitest";
 import { makeHarness } from "./harness.js";
 
 describe("retired host accounts mode", () => {
+  it("looks up legacy transcripts in the host projects folder", () => {
+    const h = makeHarness({ accounts: false });
+    const work = h.dir("project");
+    const file = h.core.catalog.transcriptPath(work, "session");
+    expect(file.startsWith(path.join(h.home, ".claude", "projects") + path.sep)).toBe(true);
+    h.core.settings.patch({ accountsMode: "accounts" });
+    expect(h.core.catalog.transcriptPath(work, "session")).toContain(
+      path.join(".ai-orchestrator", "transcripts", "claude"),
+    );
+  });
   it("keeps stored host settings readable but refuses box creation without touching vendor folders", async () => {
     const h = makeHarness();
     h.core.settings.patch({ accountsMode: "host" });

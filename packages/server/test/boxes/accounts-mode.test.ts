@@ -210,12 +210,10 @@ describe("shared transcript store", () => {
     expect(lastCommand(h)).toContain("claude/work".replace("claude/", "/claude/"));
   });
 
-  it("keeps transcripts in the orchestrator store even for a legacy host setting", () => {
+  it("finds transcripts in the host folder for a legacy host setting", () => {
     const h = makeHarness({ accounts: false });
     const file = h.transcript(h.dir("a"), "11111111-1111-4111-8111-111111111111");
-    expect(
-      file.startsWith(path.join(h.env.home, ".ai-orchestrator", "transcripts", "claude")),
-    ).toBe(true);
+    expect(file.startsWith(path.join(h.env.home, ".claude", "projects"))).toBe(true);
   });
 });
 

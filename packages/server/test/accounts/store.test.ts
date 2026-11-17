@@ -240,11 +240,12 @@ describe("check warning and relink", () => {
 });
 
 describe("switching to accounts mode", () => {
-  it("switches using account projects without consulting the host transcript folder", () => {
+  it("requires adoption of host transcripts before switching", () => {
     const s = setup({ host: "dir" });
     s.accounts.create({ vendor: "claude", name: "work" });
-    expect(() => s.settings.patch({ accountsMode: "accounts" })).not.toThrow();
-    expect(s.settings.get().accountsMode).toBe("accounts");
+    expect(() => s.settings.patch({ accountsMode: "accounts" })).toThrow(/transcripts adopt/);
+    s.accounts.adoptTranscripts({});
+    expect(s.settings.patch({ accountsMode: "accounts" }).accountsMode).toBe("accounts");
   });
 
   it("requires relink when the transcriptStore override changes", () => {

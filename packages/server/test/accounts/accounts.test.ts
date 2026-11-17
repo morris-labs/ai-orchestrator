@@ -422,6 +422,21 @@ describe("AccountService.seed", () => {
     expect(settings.get().accountDefaults).toEqual({});
   });
 
+  it.each([true, false])(
+    "warns about shared sign-ins in seed reports and logs (dryRun=%s)",
+    async (dryRun) => {
+      const { accounts } = setup();
+      const lines: string[] = [];
+      const report = await accounts.seed({ dryRun }, (line) => lines.push(line));
+      for (const entry of report.accounts) {
+        expect(entry.notes?.join(" ")).toMatch(/host and account may share/i);
+      }
+      expect(lines.join(" ")).toMatch(/refresh token rotation/i);
+      expect(lines.join(" ")).toMatch(/API key/i);
+      expect(lines.join(" ")).toMatch(/revocation/i);
+    },
+  );
+
   it("skips a vendor whose host folder doesn't exist", async () => {
     const { accounts, sources } = setup();
     fs.rmSync(sources.copilotDir, { recursive: true });

@@ -122,8 +122,10 @@ export function createServerCore(options: CoreOptions): ServerCore {
     (id) => db.accounts.get(id) !== undefined,
     (next) => accounts.assertCanUseAccounts(next),
   );
-  // Transcripts always live in the orchestrator's shared account store.
-  env.claudeProjectsRoot = () => claudeStoreRoot(env, settings.get().transcriptStore);
+  env.claudeProjectsRoot = () =>
+    settings.get().accountsMode === "host"
+      ? homePaths(env).claudeProjects
+      : claudeStoreRoot(env, settings.get().transcriptStore);
   let hooks: CoreHooks = defaultHooks();
   const getHooks = () => hooks;
   const imageVersions = new ImageVersions(docker);
