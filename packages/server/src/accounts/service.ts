@@ -53,7 +53,7 @@ import {
   sourceDirOf,
   type SeedSources,
 } from "./seed.js";
-import { ensureAccountInstructions } from "./instructions.js";
+import { buildAccountInstructions, ensureAccountInstructions } from "./instructions.js";
 import { adoptTranscripts } from "./adopt.js";
 import { BYPASS_ACCEPTED_KEY, preacceptClaudeAccount } from "./preaccept.js";
 import {
@@ -200,6 +200,24 @@ export class AccountService {
 
   private ensureInstructions(vendor: Platform, dir: string): void {
     ensureAccountInstructions(dir, vendor);
+  }
+
+  /** Resolve an account and prepare the same instructions for host and box starts. */
+  prepareAccount(vendor: Platform, name?: string): { dir: string; problems: string[] } {
+    const id =
+      name === undefined
+        ? this.options.settings.get().accountDefaults[vendor]
+        : accountId(vendor, name);
+    if (!id)
+      throw new ApiError("not_found", `No default ${vendor} account. Set up an account first.`);
+    const account = this.get(id);
+    if (account.vendor !== vendor)
+      throw new ApiError("validation", `Account ${id} is not a ${vendor} account.`);
+    const dir = this.dirOf(vendor, account.name);
+    if (!isDirectory(dir))
+      throw new ApiError("not_found", `The account folder ${dir} doesn't exist.`);
+    this.ensureInstructions(vendor, dir);
+    return { dir, problems: vendor === "claude" ? [] : buildAccountInstructions(dir, vendor) };
   }
 
   /** The least `cleanupPeriodDays` an account keeps. See `retention.ts`. */
