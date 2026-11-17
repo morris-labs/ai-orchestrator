@@ -73,7 +73,7 @@ export interface CliDeps {
   err: (text: string) => void;
   fetch?: typeof fetch;
   /** Runs an attach command with the terminal; resolves with its exit code. */
-  exec?: (argv: string[]) => Promise<number>;
+  exec?: (argv: string[], options?: { env: NodeJS.ProcessEnv }) => Promise<number>;
   WebSocket?: WebSocketCtor;
   /**
    * The terminal that `box attach MACHINE/BOX` attaches and that `node join`
@@ -465,10 +465,10 @@ export function childEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEn
   return out;
 }
 
-function defaultExec(argv: string[]): Promise<number> {
+function defaultExec(argv: string[], options?: { env: NodeJS.ProcessEnv }): Promise<number> {
   return new Promise((resolve, reject) => {
     const [program, ...args] = argv as [string, ...string[]];
-    const child = spawn(program, args, { stdio: "inherit", env: childEnv() });
+    const child = spawn(program, args, { stdio: "inherit", env: options?.env ?? childEnv() });
     child.on("error", reject);
     child.on("exit", (code, signal) => resolve(code ?? (signal ? 1 : 0)));
   });
@@ -2044,6 +2044,20 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
       });
       print(r, () => `Joined ${r.hubUrl} as ${r.name} (${r.machineId}).\n${nodeText(r)}`);
     });
+
+  for (const vendor of PlatformSchema.options) {
+    thisMachineOnly(program.command(vendor))
+      .description(`Run ${vendor} on this host using an AI Orchestrator account.`)
+      .option("--account <name>", "Use this account instead of the vendor's default.")
+      .argument("[args...]", "Vendor arguments after --.")
+      .action(async (args: string[], options: { account?: string }) => {
+        const prepared = await client().call("accounts.prepare", { body: { vendor, ...(options.account ? { name: options.account } : {}) } });
+        for (const problem of prepared.problems) deps.err(terminalText(`${problem}\n`));
+        const env = childEnv(deps.env);
+        env[ACCOUNT_DIR_ENV[vendor]] = prepared.dir;
+        state.code = await exec([vendor, ...args], { env });
+      });
+  }
 
   // -------------------------------------------------------------------------
   // migrate, setup, doctor, events

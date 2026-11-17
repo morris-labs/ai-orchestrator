@@ -2343,3 +2343,39 @@ it("names unconfirmed boxes and runs when server readiness times out", async () 
   expect(out).toContain("Review in progress");
   expect(out).toContain("restoration unconfirmed");
 });
+
+describe("host vendor commands", () => {
+  it.each([
+    ["claude", "CLAUDE_CONFIG_DIR"],
+    ["codex", "CODEX_HOME"],
+    ["copilot", "COPILOT_HOME"],
+  ])("prepares %s's default account, passes vendor arguments and returns its exit code", async (vendor, variable) => {
+    server.on("POST /api/v1/accounts/prepare", {status:200, body:{dir:"/accounts/personal",problems:["Missing include: optional.md"]}});
+    let launched: { argv: string[]; env: NodeJS.ProcessEnv | undefined } | undefined;
+    const code = await runCli([vendor, "--", "--model", "literal spaced value", "--account", "vendor-option"], {
+      env:{AIO_SERVER:server.url,AIO_TOKEN:TOKEN,AIO_SERVER_TOKEN:"other-token",PATH:"/usr/bin",KEEP:"yes"}, home,
+      out:t=>out+=t, err:t=>err+=t,
+      exec:async(argv, options)=>{launched={argv,env:options?.env};return 17;},
+    });
+    expect(code).toBe(17);
+    expect(last()?.body).toEqual({vendor});
+    expect(launched?.argv).toEqual([vendor,"--model","literal spaced value","--account","vendor-option"]);
+    expect(launched?.env).toMatchObject({[variable]:"/accounts/personal",KEEP:"yes"});
+    expect(launched?.env).not.toHaveProperty("AIO_TOKEN");
+    expect(launched?.env).not.toHaveProperty("AIO_SERVER_TOKEN");
+    expect(err).toContain("Missing include: optional.md");
+  });
+  it("sends the explicitly named account and reports unknown accounts without launching", async () => {
+    server.on("POST /api/v1/accounts/prepare", {status:404,body:{error:{code:"not_found",message:"No Claude account missing"}}});
+    expect(await cli(["claude","--account","missing"])).toBe(1);
+    expect(last()?.body).toEqual({vendor:"claude",name:"missing"});
+    expect(err).toContain("No Claude account missing");
+    expect(execs).toEqual([]);
+  });
+  it("reports an unreachable server without launching", async () => {
+    await server.close();
+    expect(await cli(["codex"])).toBe(1);
+    expect(err).toMatch(/server.*(reach|connect)|unreachable/i);
+    expect(execs).toEqual([]);
+  });
+});

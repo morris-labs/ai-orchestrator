@@ -187,6 +187,7 @@ export function apiCoreOf(server: ServerCore, dockerApi: Docker): Core {
     },
 
     accounts: {
+      prepare: async ({ vendor, name }) => server.accounts.prepareAccount(vendor, name),
       list: async () => server.accounts.list(),
       get: async (id) => server.accounts.view(server.accounts.get(id)),
       create: async (input) => server.accounts.create(input),

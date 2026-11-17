@@ -164,6 +164,18 @@ export const AccountUpdateSchema = z
   .strict();
 export type AccountUpdate = z.infer<typeof AccountUpdateSchema>;
 
+/** Prepares the account folder used by a host vendor CLI. */
+export const AccountPrepareRequestSchema = z.object({
+  vendor: PlatformSchema,
+  name: AccountNameSchema.optional(),
+}).strict();
+export const AccountPrepareResultSchema = z.object({
+  dir: z.string().min(1),
+  problems: z.array(z.string()),
+});
+export type AccountPrepareRequest = z.infer<typeof AccountPrepareRequestSchema>;
+export type AccountPrepareResult = z.infer<typeof AccountPrepareResultSchema>;
+
 /** The body of `accounts.seed`. */
 export const AccountSeedRequestSchema = z
   .object({
@@ -176,6 +188,8 @@ export const AccountSeedRequestSchema = z
     name: AccountNameSchema.default(DEFAULT_SEED_ACCOUNT_NAME),
     /** Reports what seeding would copy, and copies nothing. */
     dryRun: z.boolean().default(false),
+    /** Copies Claude instructions, settings, skills and plugins once. */
+    copyHostSetup: z.boolean().default(false),
   })
   .strict();
 export type AccountSeedRequest = z.input<typeof AccountSeedRequestSchema>;

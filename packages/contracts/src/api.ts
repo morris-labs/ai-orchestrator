@@ -54,6 +54,8 @@
 import { z } from "zod";
 import {
   AccountCreateSchema,
+  AccountPrepareRequestSchema,
+  AccountPrepareResultSchema,
   AccountImportRequestSchema,
   AccountImportResultSchema,
   AccountRemoveResultSchema,
@@ -1667,11 +1669,18 @@ export const serverRoutes = {
     status: 201,
     errors: ["conflict"],
   }),
+  "accounts.prepare": http({
+    method: "POST",
+    path: `${accounts}/prepare`,
+    summary: "Resolve an account and prepare its instructions for a host vendor CLI.",
+    body: AccountPrepareRequestSchema,
+    response: AccountPrepareResultSchema,
+  }),
   "accounts.seed": http({
     method: "POST",
     path: `${accounts}/seed`,
     summary:
-      "Copy the host's agent folders into new accounts, leaving out the sign-in files, in an `account_seed` job.",
+      "Copy host sign-in into clean accounts, optionally copying Claude setup once, in an `account_seed` job.",
     body: AccountSeedRequestSchema,
     response: JobSchema,
     status: 202,

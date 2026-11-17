@@ -257,6 +257,7 @@ export function createFakeCore(): FakeCore {
       },
     },
     accounts: {
+      prepare: async ({vendor,name}) => ({dir:`/accounts/${vendor}/${name ?? "personal"}`,problems:[]}),
       list: async () => [...accounts.values()],
       get: async (id) => accounts.get(id) ?? notFound(`account ${id}`),
       create: async (input) => {
