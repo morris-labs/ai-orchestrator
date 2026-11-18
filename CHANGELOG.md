@@ -19,6 +19,10 @@ section's heading must have the form `## [X.Y.Z]`.
 
 ### Added
 
+- The Review app launcher has a **Group confirmed findings by root cause**
+  option. The Findings screen shows a run's root causes in fix order, with
+  links to their findings, and the JSON, Markdown, and HTML exports include
+  them.
 - Global and account instruction layers with include lines. Claude follows
   imports directly; Codex and Copilot receive generated instructions at each
   start from editable `instructions.md` files. Missing imports are reported,

@@ -151,6 +151,27 @@ describe("Launcher", () => {
     expect(request({ ...form, reviewerEffort: "high" })).toMatchObject({ reviewerEffort: "high" });
   });
 
+  it("asks for root causes only when a person ticks the option", async () => {
+    const { server } = renderWithStore(
+      <Launcher prefill={{ project: null, box: BOX }} />,
+      handlers(),
+    );
+    await waitFor(() =>
+      expect(screen.getByLabelText(/^Repository/)).toHaveValue(
+        "/home/user/src/example-app/.worktrees/Emails_not_sending",
+      ),
+    );
+    const option = screen.getByRole("checkbox", { name: /Group confirmed findings by root cause/ });
+    expect(option).not.toBeChecked();
+    fireEvent.click(option);
+    fireEvent.click(screen.getByRole("button", { name: "Start" }));
+    await waitFor(() => expect(server.callsTo("runs.create")).toHaveLength(1));
+    expect(server.callsTo("runs.create")[0]!.body).toMatchObject({ rootCauses: true });
+    const form = { ...DEFAULT_FORM, projectId: PROJECT, repoPath: "/repo", tip: "main" };
+    const built = buildRunRequest(form);
+    expect(built.ok && built.request).not.toHaveProperty("rootCauses");
+  });
+
   it("shows the profile's roles and follows a profile switch", async () => {
     const { server } = renderWithStore(
       <Launcher prefill={{ project: null, box: BOX }} />,

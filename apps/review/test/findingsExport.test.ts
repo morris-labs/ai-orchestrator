@@ -32,6 +32,53 @@ function sample(): FindingsExport {
   };
 }
 
+const ROOT_CAUSES = {
+  createdAt: "2026-01-02T03:04:05.000Z",
+  round: 2,
+  causes: [
+    { title: "Second <b>", summary: "Later.", findingIds: ["F-0007"], fixOrder: 2 },
+    { title: "First", summary: "Fix this\nfirst.", findingIds: ["F-0001", "F-0007"], fixOrder: 1 },
+  ],
+  rationale: "Errors before retries.",
+};
+
+function withCauses(): FindingsExport {
+  return { ...sample(), run: { ...run, rootCauses: ROOT_CAUSES } };
+}
+
+describe("root causes in the exports", () => {
+  it("leaves them out when the run has no summary", () => {
+    expect(findingsMarkdown(sample())).not.toContain("## Root causes");
+    expect(findingsHtml(sample())).not.toContain('root-causes"');
+    expect(JSON.parse(findingsJson(sample())).rootCauses).toBeNull();
+  });
+
+  it("adds them to the JSON next to the findings", () => {
+    expect(JSON.parse(findingsJson(withCauses())).rootCauses).toEqual(ROOT_CAUSES);
+  });
+
+  it("lists them in fix order in the Markdown", () => {
+    const md = findingsMarkdown(withCauses());
+    expect(md).toContain(
+      "## Root causes\n\n1. **First**: Fix this first.\n   Findings: F-0001, F-0007\n2. **Second <b>**: Later.\n   Findings: F-0007\n\nErrors before retries.",
+    );
+    expect(md.indexOf("## Root causes")).toBeLessThan(md.indexOf("## F-"));
+  });
+
+  it("links each finding ID in the HTML report and escapes the text", () => {
+    document.documentElement.innerHTML = new DOMParser().parseFromString(
+      findingsHtml(withCauses()),
+      "text/html",
+    ).documentElement.innerHTML;
+    const card = document.querySelector("section.root-causes")!;
+    const titles = [...card.querySelectorAll("li > strong")].map((s) => s.textContent);
+    expect(titles).toEqual(["First", "Second <b>"]);
+    expect(card.querySelector("b")).toBeNull();
+    const links = [...card.querySelectorAll("a")].map((a) => a.getAttribute("href"));
+    expect(links).toEqual(["#F-0001", "#F-0007", "#F-0007"]);
+  });
+});
+
 describe("findings export", () => {
   it("names files after the repository and run", () => {
     expect(exportFileName(run, "html")).toMatch(

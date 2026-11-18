@@ -1,7 +1,13 @@
 // Exports of a run's findings: JSON for tools, Markdown for a person or
 // another agent to read, and a single HTML file that works like the findings
 // screen with no server behind it.
-import { introducedLabel, type Finding, type RunState, type Severity } from "@aio/contracts";
+import {
+  introducedLabel,
+  type Finding,
+  type RootCause,
+  type RunState,
+  type Severity,
+} from "@aio/contracts";
 import { themeCss, VENDOR_LABELS } from "@aio/ui/dashboard";
 import {
   filterFindings,
@@ -73,6 +79,11 @@ function verdictText(f: Finding): string {
   ].join("");
 }
 
+/** The run's root causes in the suggested fix order, or none when the run has no summary. */
+function rootCauses(run: RunState): RootCause[] {
+  return [...(run.rootCauses?.causes ?? [])].sort((a, b) => a.fixOrder - b.fixOrder);
+}
+
 function counts(findings: readonly ExportedFinding[]): string {
   const by = new Map<Severity, number>();
   for (const { finding } of findings) by.set(finding.severity, (by.get(finding.severity) ?? 0) + 1);
@@ -88,6 +99,8 @@ export function findingsJson(e: FindingsExport): string {
     {
       exportedAt: e.exportedAt,
       run: e.run,
+      // Also inside `run`; repeated here so a reader finds it next to the findings.
+      rootCauses: e.run.rootCauses ?? null,
       findings: ordered(e.findings).map((f) => ({
         ...f.finding,
         diff: f.diff,
@@ -120,6 +133,17 @@ export function findingsMarkdown(e: FindingsExport): string {
     `- Exported: ${e.exportedAt}`,
     `- ${counts(e.findings)}`,
   ];
+  if (run.rootCauses) {
+    out.push("", "## Root causes", "");
+    const causes = rootCauses(run);
+    if (causes.length === 0) out.push("No root causes were found.");
+    for (const c of causes)
+      out.push(
+        `${c.fixOrder}. **${c.title}**${c.summary ? `: ${c.summary.replace(/\s+/g, " ")}` : ""}`,
+        `   Findings: ${c.findingIds.join(", ")}`,
+      );
+    if (run.rootCauses.rationale) out.push("", run.rootCauses.rationale);
+  }
   for (const { finding: f, diff, fixDiff } of ordered(e.findings)) {
     out.push(
       "",
@@ -211,6 +235,7 @@ button { cursor: pointer; }
 .diff-hunk { color: var(--ab-accent); }
 .diff-file { color: var(--ab-text-2); font-weight: 600; }
 .trail { margin: 0; padding-left: 20px; display: grid; gap: 4px; }
+.root-causes { display: grid; gap: 6px; }
 p { margin: 0; white-space: pre-wrap; }
 @media (max-width: 860px) { .split { grid-template-columns: 1fr; } .detail-pane { position: static; max-height: none; } }
 @media print { .filter-row { display: none; } .split { grid-template-columns: 1fr; } .detail-pane { position: static; max-height: none; } }
@@ -379,6 +404,23 @@ export function findingsHtml(e: FindingsExport): string {
     counts(e.findings),
   ];
   const pr = webLink(run.prUrl);
+  const causesHtml = run.rootCauses
+    ? `<section class="card root-causes" aria-label="Root causes"><h3>Root causes</h3>${
+        rootCauses(run).length === 0
+          ? `<p class="muted">No root causes were found.</p>`
+          : `<ol class="trail">${rootCauses(run)
+              .map(
+                (c) =>
+                  `<li><strong>${escapeHtml(c.title)}</strong>${c.summary ? `<div>${escapeHtml(c.summary)}</div>` : ""}<div class="muted small">Findings: ${c.findingIds
+                    .map(
+                      (id) =>
+                        `<a class="mono" href="#${encodeURIComponent(id)}">${escapeHtml(id)}</a>`,
+                    )
+                    .join(", ")}</div></li>`,
+              )
+              .join("")}</ol>`
+      }${run.rootCauses.rationale ? `<p class="muted small">${escapeHtml(run.rootCauses.rationale)}</p>` : ""}</section>`
+    : "";
   const field = (id: string, label: string) =>
     `<label class="field" for="${id}"><span class="field-label">${label}</span><select id="${id}"></select></label>`;
   return `<!DOCTYPE html>
@@ -394,6 +436,7 @@ export function findingsHtml(e: FindingsExport): string {
 <div class="screen">
 <h2>${escapeHtml(title)}</h2>
 <div class="muted small run-facts">${facts.map((f) => `<div>${escapeHtml(f)}</div>`).join("")}${pr ? `<div><a href="${escapeHtml(pr)}" target="_blank" rel="noreferrer">${escapeHtml(pr)}</a></div>` : ""}</div>
+${causesHtml}
 <div class="filter-row">${field("f-round", "Round")}${field("f-vendor", "Vendor")}${field("f-severity", "Severity")}${field("f-verdict", "Verdict")}</div>
 <div class="split">
 <div class="list-pane"><p class="muted small" id="count"></p><ul class="finding-list" id="list"></ul></div>

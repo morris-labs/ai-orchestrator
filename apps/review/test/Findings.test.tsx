@@ -83,6 +83,69 @@ describe("Findings", () => {
   });
 });
 
+const ROOT_CAUSES = {
+  createdAt: "2026-01-02T03:04:05.000Z",
+  round: 2,
+  causes: [
+    {
+      title: "Retries ignore the limit",
+      summary: "Both loops retry forever.",
+      findingIds: ["F-0007"],
+      fixOrder: 2,
+    },
+    {
+      title: "Unchecked mail errors",
+      summary: "Send errors are dropped.",
+      findingIds: ["F-0001", "F-0007"],
+      fixOrder: 1,
+    },
+  ],
+  rationale: "Fix error handling first, because the retry fix depends on it.",
+};
+
+describe("Findings root causes", () => {
+  it("shows no root-cause card when the run has no summary", async () => {
+    renderWithStore(<Findings runId={RUN_ID} findingId={null} />, handlers());
+    await screen.findByText("6 of 6 findings");
+    expect(screen.queryByRole("region", { name: "Root causes" })).toBeNull();
+  });
+
+  it("lists root causes in fix order and opens a finding from its ID", async () => {
+    renderWithStore(<Findings runId={RUN_ID} findingId={null} />, {
+      ...handlers(),
+      "runs.list": () => ({ runs: [{ ...run, rootCauses: ROOT_CAUSES }] }),
+    });
+    const card = await screen.findByRole("region", { name: "Root causes" });
+    const items = within(card).getAllByRole("listitem");
+    expect(items.map((li) => li.querySelector("strong")!.textContent)).toEqual([
+      "Unchecked mail errors",
+      "Retries ignore the limit",
+    ]);
+    expect(card).toHaveTextContent(ROOT_CAUSES.rationale);
+    fireEvent.click(within(items[0]!).getByRole("button", { name: "F-0001" }));
+    await waitFor(() => expect(window.location.hash).toContain("finding=F-0001"));
+    window.location.hash = "";
+  });
+
+  it("shows the summary when the finished run arrives on the stream", async () => {
+    const { store } = renderWithStore(<Findings runId={RUN_ID} findingId={null} />, handlers());
+    await screen.findByText("6 of 6 findings");
+    const last = loadDemoEvents()
+      .filter((e) => e.type === "run.changed")
+      .at(-1)!;
+    act(() => {
+      store.ingest({
+        ...last,
+        id: "evt-root-causes",
+        seq: last.seq + 1000,
+        sourceSeq: last.sourceSeq + 1000,
+        run: { ...run, rootCauses: ROOT_CAUSES },
+      } as typeof last);
+    });
+    expect(await screen.findByRole("region", { name: "Root causes" })).toBeInTheDocument();
+  });
+});
+
 describe("Findings with out-of-order responses", () => {
   const OTHER_RUN = "01JB8Z5K3W6Q2V9X4T7R0M1N2Q";
 

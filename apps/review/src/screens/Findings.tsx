@@ -6,6 +6,7 @@ import {
   SeveritySchema,
   VerdictSchema,
   type Finding,
+  type RootCauseSummary,
   type RouteOf,
   type RunState,
   type Severity,
@@ -237,6 +238,49 @@ function saveFile(name: string, text: string, mime: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
+/**
+ * The run's confirmed findings grouped by root cause, in the suggested fix
+ * order. Each finding ID opens that finding.
+ */
+export function RootCauses({
+  summary,
+  onOpen,
+}: {
+  summary: RootCauseSummary;
+  onOpen: (findingId: string) => void;
+}) {
+  const causes = [...summary.causes].sort((a, b) => a.fixOrder - b.fixOrder);
+  return (
+    <section className="card root-causes" aria-label="Root causes">
+      <h3>Root causes</h3>
+      {causes.length === 0 ? (
+        <p className="muted">No root causes were found.</p>
+      ) : (
+        <ol className="trail">
+          {causes.map((c) => (
+            <li key={`${c.fixOrder}-${c.title}`}>
+              <strong>{c.title}</strong>
+              {c.summary ? <div>{c.summary}</div> : null}
+              <div className="muted small">
+                Findings:{" "}
+                {c.findingIds.map((id, i) => (
+                  <span key={id}>
+                    {i > 0 ? ", " : null}
+                    <button type="button" className="link mono" onClick={() => onOpen(id)}>
+                      {id}
+                    </button>
+                  </span>
+                ))}
+              </div>
+            </li>
+          ))}
+        </ol>
+      )}
+      {summary.rationale ? <p className="muted small">{summary.rationale}</p> : null}
+    </section>
+  );
+}
+
 function ExportBar({ run, findings }: { run: RunState; findings: readonly Finding[] }) {
   const api = useApiClient();
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
@@ -344,6 +388,8 @@ export function Findings({ runId, findingId }: { runId: string | null; findingId
   }
 
   useAnyEvent((e) => {
+    // A finished run brings its root-cause summary with it.
+    if (e.type === "run.changed") setRuns((rs) => rs.map((r) => (r.id === e.run.id ? e.run : r)));
     if (e.type === "finding.changed" && e.runId === selectedRun) {
       buffer.record(e.finding.id, e.finding);
       setFindings((fs) => [...fs.filter((f) => f.id !== e.finding.id), e.finding]);
@@ -438,6 +484,9 @@ export function Findings({ runId, findingId }: { runId: string | null; findingId
         </Field>
       </div>
       {run ? <ExportBar run={run} findings={findings} /> : null}
+      {run?.rootCauses ? (
+        <RootCauses summary={run.rootCauses} onOpen={(id) => go({ finding: id })} />
+      ) : null}
       <div className="split">
         <div className="list-pane">
           <p className="muted small">

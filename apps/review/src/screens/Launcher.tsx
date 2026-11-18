@@ -622,6 +622,14 @@ export function Launcher({ prefill }: { prefill: { project: string | null; box: 
               />{" "}
               Include uncommitted changes
             </label>
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={form.rootCauses}
+                onChange={(e) => update({ rootCauses: e.target.checked })}
+              />{" "}
+              Group confirmed findings by root cause (one extra call when the run finishes)
+            </label>
             <Field
               label="Exclude paths"
               hint="Globs of files this run never groups or reviews, one per line, added to the policy's excludePaths."
