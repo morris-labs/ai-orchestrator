@@ -58,6 +58,8 @@ export interface LauncherForm {
   wholeProject: boolean;
   /** Globs of files this run leaves out, one per line. */
   excludePaths: string;
+  /** Group the confirmed findings by root cause when the run finishes. */
+  rootCauses: boolean;
 }
 
 /** The choices of a verification floor control, from checking everything to the least. */
@@ -91,6 +93,7 @@ export const DEFAULT_FORM: LauncherForm = {
   concurrency: "",
   wholeProject: false,
   excludePaths: "",
+  rootCauses: false,
 };
 
 /**
@@ -240,6 +243,7 @@ export function buildRunRequest(
     ...(concurrency !== undefined ? { concurrency } : {}),
     ...(form.wholeProject ? { scope: "whole" } : {}),
     ...(excludePaths.length > 0 ? { excludePaths } : {}),
+    ...(form.rootCauses ? { rootCauses: true } : {}),
   });
   if (!parsed.success)
     return {

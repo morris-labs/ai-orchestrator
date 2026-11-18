@@ -422,6 +422,21 @@ legend {
   display: grid;
   gap: 4px;
 }
+/* A button that reads as an inline link, such as a finding ID in a root cause. */
+button.link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--ab-accent);
+  text-decoration: underline;
+}
+.root-causes {
+  display: grid;
+  gap: 6px;
+}
+.root-causes h3 {
+  margin: 0;
+}
 .waive {
   display: flex;
   gap: 8px;

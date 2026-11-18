@@ -596,15 +596,24 @@ of them.
 
 ### Root-cause summary
 
-To end a run with a short list of root causes, pass `--root-causes` to the
-`aio review start` command, or set `rootCauses` to `true` in the run request.
-It is off by default. When the run finishes, one read-only call on a small
+To end a run with a short list of root causes, select **Group confirmed
+findings by root cause** in the Review app launcher, pass `--root-causes` to
+the `aio review start` command, or set `rootCauses` to `true` in the run
+request. It is off by default. When the run finishes, one read-only call on a small
 model reads the confirmed and fixed findings' IDs, severities, locations,
 titles, and failure cases, and reads no code. The engine stores the answer as
 `rootCauses` in the run state: each root cause with its finding IDs, in a
 suggested fix order. Duplicates go under their primary's root cause. A failed
-call adds a run notice and doesn't fail the run. The `aio review status RUN_ID`
-command lists the root causes.
+call adds a run notice and doesn't fail the run.
+
+The root causes appear in these places:
+
+- The `aio review status RUN_ID` command.
+- The Findings screen, in a **Root causes** card above the list. Click a
+  finding ID to open that finding.
+- The findings exports. The JSON export has a top-level `rootCauses` field, and
+  the Markdown and HTML exports have a **Root causes** section before the
+  findings.
 
 ## Verification floor
 
