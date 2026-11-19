@@ -201,7 +201,7 @@ export class ProjectService {
     if (problem)
       throw new ApiError("validation", `The project directory can't be used: ${problem}`);
     const existing = this.repos.projects.byRoot(root);
-    if (existing) return existing;
+    if (existing) return this.withDetectedRepo(existing);
     const now = this.now();
     const project = ProjectInputSchema.parse({
       id: projectIdForRoot(root),
@@ -236,11 +236,24 @@ export class ProjectService {
   }
 
   get(id: string): Project {
-    return this.repos.projects.get(id) ?? notFound(`The project ${id}`);
+    const project = this.repos.projects.get(id) ?? notFound(`The project ${id}`);
+    return this.withDetectedRepo(project);
+  }
+
+  /**
+   * A project with no primary repository picks up a git repository that
+   * appears in its folder later, such as one cloned or initialized after
+   * the project was added. A repository the owner removed stays removed.
+   */
+  private withDetectedRepo(project: Project): Project {
+    if (project.primaryRepo || project.primaryRepoCleared) return project;
+    const primaryRepo = detectPrimaryRepo(project.root);
+    if (!primaryRepo) return project;
+    return this.repos.projects.put({ ...project, primaryRepo, updatedAt: this.now() });
   }
 
   list(): Project[] {
-    return this.repos.projects.list();
+    return this.repos.projects.list().map((p) => this.withDetectedRepo(p));
   }
 
   containerName(project: Pick<Project, "id">): string {
@@ -321,12 +334,16 @@ export class ProjectService {
     const next: Project = { ...project, updatedAt: this.now() };
     if (u.name !== undefined) next.name = u.name.trim() || defaultProjectName(project.root);
     if (u.primaryRepo !== undefined) {
-      if (u.primaryRepo === null) delete next.primaryRepo;
-      else if (!isDirectory(u.primaryRepo))
+      if (u.primaryRepo === null) {
+        delete next.primaryRepo;
+        next.primaryRepoCleared = true;
+      } else if (!isDirectory(u.primaryRepo))
         throw new ApiError("validation", `${u.primaryRepo} is not a directory.`);
-      else
+      else {
         next.primaryRepo =
           this.hostOs === "win32" ? normalizeRoot(u.primaryRepo, this.hostOs) : u.primaryRepo;
+        delete next.primaryRepoCleared;
+      }
     }
     if (u.tcpMaps !== undefined) {
       const hosts = new Set<number>();
