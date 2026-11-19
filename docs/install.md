@@ -248,7 +248,9 @@ and review runs. Running work stops immediately. Progress and a per-item
 summary appear in the terminal; the wait is limited to about five minutes.
 One previous image is retained for rollback.
 
-A failed configure step can be retried with `sudo dpkg --configure -a`.
+When the image build fails, the summary shows the build's last line, and the
+full build log is in `~/.ai-orchestrator/upgrade-image-build.log`. Fix the
+cause, then retry the failed configure step with `sudo dpkg --configure -a`.
 Desktop apps show a relaunch bar when their installed version is newer.
 Remote machines must be upgraded separately.
 

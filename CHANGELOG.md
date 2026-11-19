@@ -36,6 +36,9 @@ section's heading must have the form `## [X.Y.Z]`.
 
 ### Fixed
 
+- A failed image build during a package upgrade names its cause and saves its
+  full log in `~/.ai-orchestrator/upgrade-image-build.log`, instead of
+  reporting only an exit code for the image and for every box.
 - The package upgrade no longer fails after a successful image build on a
   Docker host that uses the containerd image store. The build script held
   the old image by its ID, which that store deletes when the image's last
