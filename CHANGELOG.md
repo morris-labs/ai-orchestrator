@@ -36,6 +36,10 @@ section's heading must have the form `## [X.Y.Z]`.
 
 ### Fixed
 
+- A project picks up a git repository that appears in its folder after the
+  project was added, so a box can use a worktree there without setting the
+  primary repository by hand. A primary repository you removed with
+  `aio project set --clear-primary-repo` stays removed.
 - A failed image build during a package upgrade names its cause and saves its
   full log in `~/.ai-orchestrator/upgrade-image-build.log`, instead of
   reporting only an exit code for the image and for every box.

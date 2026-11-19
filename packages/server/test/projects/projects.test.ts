@@ -116,6 +116,26 @@ describe("ProjectService", () => {
     expect(cleared.project.ceilingsOverride).toBeUndefined();
   });
 
+  it("picks up a git repository added to the project folder later, unless the owner removed it", async () => {
+    const h = makeHarness();
+    const root = h.dir("later");
+    const created = h.core.projects.ensureForRoot(root);
+    expect(created.primaryRepo).toBeUndefined();
+    fs.mkdirSync(path.join(root, ".git"));
+    expect(h.core.projects.get(created.id).primaryRepo).toBe(root);
+    expect(h.core.projects.list().find((p) => p.id === created.id)?.primaryRepo).toBe(root);
+    expect(h.core.projects.ensureForRoot(root).primaryRepo).toBe(root);
+
+    const { project: cleared } = await h.core.projects.update(created.id, { primaryRepo: null });
+    expect(cleared.primaryRepo).toBeUndefined();
+    expect(h.core.projects.get(created.id).primaryRepo).toBeUndefined();
+    expect(h.core.projects.list().find((p) => p.id === created.id)?.primaryRepo).toBeUndefined();
+
+    const { project: set } = await h.core.projects.update(created.id, { primaryRepo: root });
+    expect(set.primaryRepo).toBe(root);
+    expect(set.primaryRepoCleared).toBeUndefined();
+  });
+
   it("creates the container once, registers the engine, and reuses it", async () => {
     const h = makeHarness();
     const created = h.core.projects.ensureForRoot(h.dir("app"));

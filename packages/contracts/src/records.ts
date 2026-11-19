@@ -301,6 +301,11 @@ const projectFields = {
   root: z.string().min(1),
   name: z.string().min(1),
   primaryRepo: z.string().min(1).optional(),
+  /**
+   * True when the owner removed the primary repository. The server then
+   * stops detecting one in the project folder; setting one clears it.
+   */
+  primaryRepoCleared: z.boolean().optional(),
   createdAt: IsoDateTimeSchema,
   updatedAt: IsoDateTimeSchema,
 };
