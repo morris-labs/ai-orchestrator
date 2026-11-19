@@ -1797,7 +1797,7 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
   accounts
     .command("relink")
     .description(
-      "Point every Claude account's projects folder at the shared transcript store, replacing a link that dangles or leads elsewhere.",
+      "Copy each account's links into host vendor folders into the account, and point every Claude account's projects folder at the shared transcript store.",
     )
     .action(async () => {
       const r = await client().call("accounts.relink");
@@ -1806,17 +1806,15 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
         () =>
           `Transcript store: ${r.store} (${r.source}).\n${r.accounts
             .map((a) => {
-              const local = Object.entries(a.config.entries)
-                .filter(([, o]) => o === "local")
+              const copied = Object.entries(a.config.entries)
+                .filter(([, o]) => o === "copied")
                 .map(([n]) => n);
-              const linked = Object.entries(a.config.entries)
-                .filter(([, o]) => o === "linked" || o === "replaced-identical")
-                .map(([n]) => n);
+              const failed = Object.entries(a.config.errors).map(([n, e]) => `${n} (${e})`);
               return (
                 `${a.id}: ${a.before} -> ${a.outcome}.\n` +
-                (linked.length > 0 ? `  Linked to the host: ${linked.join(", ")}.\n` : "") +
-                (local.length > 0
-                  ? `  Local overrides, left alone: ${local.join(", ")}. Move one away and run relink again to use the host's.\n`
+                (copied.length > 0 ? `  Copied from the host: ${copied.join(", ")}.\n` : "") +
+                (failed.length > 0
+                  ? `  Not copied, still linked to the host: ${failed.join("; ")}. Fix the cause and run relink again.\n`
                   : "")
               );
             })

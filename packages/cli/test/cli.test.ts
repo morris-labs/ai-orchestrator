@@ -1591,7 +1591,10 @@ describe("accounts", () => {
             id: "claude/work",
             before: "dangling",
             outcome: "replaced",
-            config: { entries: { "settings.json": "linked", skills: "local" }, errors: {} },
+            config: {
+              entries: { "CLAUDE.md": "copied", skills: "copied", "history.jsonl": "local" },
+              errors: { "settings.json": "EACCES: permission denied" },
+            },
           },
         ],
       },
@@ -1599,8 +1602,11 @@ describe("accounts", () => {
     expect(await cli(["accounts", "relink"])).toBe(0);
     expect(out).toContain("/home/me/.ai-orchestrator/transcripts/claude (data)");
     expect(out).toContain("claude/work: dangling -> replaced.");
-    expect(out).toContain("Linked to the host: settings.json.");
-    expect(out).toContain("Local overrides, left alone: skills.");
+    expect(out).toContain("Copied from the host: CLAUDE.md, skills.");
+    expect(out).toContain(
+      "Not copied, still linked to the host: settings.json (EACCES: permission denied).",
+    );
+    expect(out).not.toContain("history.jsonl");
   });
 
   it("adopts the host's transcripts, with a dry run and a blocked exit code", async () => {
