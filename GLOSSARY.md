@@ -66,6 +66,12 @@ base in round 1, or the tip before the last fix in a round that reviews
 only the fix.
 _Avoid_: Base (on its own), diff base
 
+**Branch point**:
+The commit a change grew from: where the branch left the named base, or
+the named base itself when the owner asks for an exact base. A finding
+counts as introduced when its flaw is absent at the branch point.
+_Avoid_: Base (on its own), merge base (for the concept)
+
 **Review range**:
 What one round of a review run looks at: its change base, its tip, and the
 files that changed between them.
