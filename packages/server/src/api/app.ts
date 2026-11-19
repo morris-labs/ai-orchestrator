@@ -33,7 +33,7 @@ import { BROKER_SYNC_INTERVAL_MS, SecretsBroker, assertSocketPathFits } from "..
 import { SecretsService } from "../secrets/secrets-service.js";
 import { brokerDirFor, dataDirOf, dataPath } from "../records/env.js";
 import { MultiHost, type MachineRole, type MultiHostOptions } from "../hub/multihost.js";
-import { UpgradeService } from "../setup/upgrade.js";
+import { UpgradeService, imageBuildFailureMessage, saveImageBuildLog } from "../setup/upgrade.js";
 import { SetupService } from "../setup/setup-service.js";
 import { UpdateChecker } from "../setup/updates.js";
 import { RELEASE_EDITS_MESSAGE } from "./handlers.js";
@@ -312,6 +312,10 @@ export async function startApp(options: AppOptions): Promise<App> {
   });
   engineSupervisor = engines;
   let upgradeBuildJob: string | null = null;
+  const buildLogFile = path.join(
+    dataDirOf({ home: options.home, dataDir: options.dataDir }),
+    "upgrade-image-build.log",
+  );
   const upgrade = new UpgradeService({
     core,
     recordFile: path.join(
@@ -333,8 +337,17 @@ export async function startApp(options: AppOptions): Promise<App> {
       try {
         await new Promise<void>((resolve, reject) =>
           attachment.onDone((done) => {
+            const saved = saveImageBuildLog(buildLogFile, output);
             if (done.status === "failed" || done.exitCode !== 0)
-              reject(new Error(done.error?.message ?? "Latest and pinned image builds failed"));
+              reject(
+                new Error(
+                  imageBuildFailureMessage(
+                    output,
+                    saved ? buildLogFile : null,
+                    done.error?.message ?? "Latest and pinned image builds failed",
+                  ),
+                ),
+              );
             else resolve();
           }),
         );

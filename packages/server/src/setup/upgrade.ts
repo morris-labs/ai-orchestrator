@@ -16,6 +16,39 @@ function isGone(err: unknown): boolean {
   const code = (err as { code?: unknown } | null)?.code;
   return code === "not_found" || code === "run_not_found";
 }
+/**
+ * Saves an upgrade's image build output to `file`, readable by its owner
+ * only, so a failed build leaves its log behind. Returns false when the
+ * file can't be written.
+ */
+export function saveImageBuildLog(file: string, output: string): boolean {
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, output, { mode: 0o600 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The error for a failed upgrade image build: the last line the build
+ * printed, which usually names the cause, and where the full log is.
+ */
+export function imageBuildFailureMessage(
+  output: string,
+  file: string | null,
+  fallback: string,
+): string {
+  const last = output
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .at(-1);
+  const cause = last ? `The image build failed: ${last}` : fallback;
+  return file ? `${cause.replace(/\.$/, "")}. The full build log is in ${file}.` : cause;
+}
+
 export interface UpgradeOptions {
   core: Core;
   recordFile: string;
@@ -142,12 +175,14 @@ export class UpgradeService {
         report.fallback = report.image === "pinned";
       } catch (err) {
         report.error = String((err as Error).message);
-        report.boxes = work.boxes.map((box) => ({ ...box, restored: false, reason: report.error }));
+        // The error appears once in the report; each item points back to it.
+        const reason = "Not restored, because the image build failed.";
+        report.boxes = work.boxes.map((box) => ({ ...box, restored: false, reason }));
         report.runs = work.runs.map((run) => ({
           run_id: run.run_id,
           name: run.name,
           restored: false,
-          reason: report.error,
+          reason,
         }));
         return report;
       }

@@ -347,3 +347,59 @@ describe("upgrade recovery records", () => {
     expect((await core.boxes.get(box.id)).status).not.toBe("running");
   });
 });
+
+describe("upgrade image build log", () => {
+  it("saves the build output and names its last line and the log in the error", async () => {
+    const { mkdtempSync, readFileSync, statSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { imageBuildFailureMessage, saveImageBuildLog } =
+      await import("../../src/setup/upgrade.js");
+    const file = path.join(mkdtempSync(path.join(tmpdir(), "aio-upgrade-")), "logs", "build.log");
+    const output = "#19 DONE 40.1s\nError response from daemon: No such image: sha256:abc\n\n";
+    expect(saveImageBuildLog(file, output)).toBe(true);
+    expect(readFileSync(file, "utf8")).toBe(output);
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+    expect(imageBuildFailureMessage(output, file, "fallback")).toBe(
+      `The image build failed: Error response from daemon: No such image: sha256:abc. The full build log is in ${file}.`,
+    );
+    expect(imageBuildFailureMessage("", null, "The command exited with code 1.")).toBe(
+      "The command exited with code 1.",
+    );
+  });
+});
+
+describe("upgrade with a failed image build", () => {
+  it("reports the build error once and leaves the boxes as they were", async () => {
+    const h = makeHarness();
+    const box = await h.core.boxes.create({
+      targetDir: h.dir("app"),
+      layout: "root",
+      conversationName: "Working",
+      start: true,
+    });
+    const core = apiCoreOf(h.core, {} as Docker);
+    const options = {
+      core,
+      recordFile: path.join(h.home, "upgrade.json"),
+      build: async (): Promise<"latest"> => {
+        throw new Error("The image build failed: No such image. The full build log is in /x.log.");
+      },
+      runs: () => [],
+      resume: async () => {},
+    };
+    await new UpgradeService(options).prepare();
+    const report = await new UpgradeService(options).start();
+    expect(report.image).toBe("failed");
+    expect(report.error).toBe(
+      "The image build failed: No such image. The full build log is in /x.log.",
+    );
+    expect(report.boxes).toEqual([
+      {
+        id: box.id,
+        name: "Working",
+        restored: false,
+        reason: "Not restored, because the image build failed.",
+      },
+    ]);
+  });
+});
