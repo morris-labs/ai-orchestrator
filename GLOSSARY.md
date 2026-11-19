@@ -52,3 +52,21 @@ A line `@path` in an instructions file that pulls in another file, such as
 another account's instructions. Claude Code follows it itself; AI
 Orchestrator expands it for Codex and Copilot.
 _Avoid_: Link, symlink, import (for the file-level mechanism)
+
+## Review runs
+
+**Named base**:
+The commit the owner asks a review run to compare against, such as the tip
+of `main` when the run starts.
+_Avoid_: Base (on its own)
+
+**Change base**:
+The commit a round's diff starts from: where the branch left the named
+base in round 1, or the tip before the last fix in a round that reviews
+only the fix.
+_Avoid_: Base (on its own), diff base
+
+**Review range**:
+What one round of a review run looks at: its change base, its tip, and the
+files that changed between them.
+_Avoid_: Range (on its own), diff
