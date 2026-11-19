@@ -34,6 +34,12 @@ section's heading must have the form `## [X.Y.Z]`.
 - Shared contributor guidance in `AGENTS.md`; personal `CLAUDE.md` files remain
   ignored.
 
+### Fixed
+
+- `aio accounts relink` lists the entries it copied from the host and any it
+  couldn't copy, instead of reporting host links and listing every file in the
+  account as a local override.
+
 ## [2.0.0] - Unreleased
 
 ### Added
