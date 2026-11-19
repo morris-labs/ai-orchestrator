@@ -36,6 +36,10 @@ section's heading must have the form `## [X.Y.Z]`.
 
 ### Fixed
 
+- The package upgrade no longer fails after a successful image build on a
+  Docker host that uses the containerd image store. The build script held
+  the old image by its ID, which that store deletes when the image's last
+  tag moves, so tagging it as the previous image failed.
 - `aio accounts relink` lists the entries it copied from the host and any it
   couldn't copy, instead of reporting host links and listing every file in the
   account as a local override.

@@ -122,25 +122,38 @@ run_build() {
 # Retag only after a successful build; a failed pair leaves the current image intact.
 if ((UPGRADE)); then
   previous_repo="${TAG%:*}-upgrade"
+  pending="$previous_repo:pending"
   old_current="$(docker image inspect --format '{{.Id}}' "$TAG" 2>/dev/null || true)"
   old_previous="$(docker image inspect --format '{{.Id}}' "$previous_repo:previous" 2>/dev/null || true)"
+  # Hold the current image by a tag while the build moves $TAG. Docker's
+  # containerd image store deletes an image when its last tag goes, so the
+  # old image ID alone doesn't survive the build.
+  [[ -z "$old_current" ]] || docker image tag "$TAG" "$pending"
   if run_build "$0" "${FORWARD_ARGS[@]}" --update-cli; then
     echo 'AIO_UPGRADE_IMAGE=latest'
   else
     log "Latest agent CLIs failed; falling back to pinned versions"
-    run_build "$0" "${FORWARD_ARGS[@]}"
+    if ! run_build "$0" "${FORWARD_ARGS[@]}"; then
+      [[ -z "$old_current" ]] || docker image rm "$pending" >/dev/null 2>&1 || true
+      die "the image build failed with both the latest and the pinned agent CLIs"
+    fi
     echo 'AIO_UPGRADE_IMAGE=pinned'
   fi
   current="$(docker image inspect --format '{{.Id}}' "$TAG")"
   if [[ -n "$old_current" && "$old_current" != "$current" ]]; then
-    docker image tag "$old_current" "$previous_repo:previous"
-    if [[ -n "$old_previous" && "$old_previous" != "$old_current" && "$old_previous" != "$current" ]]; then
+    docker image tag "$pending" "$previous_repo:previous"
+    # The containerd store already deleted the old previous image when its
+    # tag moved; the classic store keeps it untagged.
+    if [[ -n "$old_previous" && "$old_previous" != "$old_current" && "$old_previous" != "$current" ]] &&
+      docker image inspect "$old_previous" >/dev/null 2>&1; then
       # A container or another tag can still use the older image. Keeping it
       # costs disk space only, so the upgrade goes on.
       docker image rm "$old_previous" >/dev/null 2>&1 ||
         log "Kept the older image $old_previous; a container or tag still uses it"
     fi
   fi
+  # Removes only the tag: the image stays as $TAG or as the previous image.
+  [[ -z "$old_current" ]] || docker image rm "$pending" >/dev/null 2>&1 || true
   exit 0
 fi
 

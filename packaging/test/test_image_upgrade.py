@@ -32,7 +32,10 @@ printf '%s\\n' "$*" >> "$CALLS"
 case "$*" in
   'buildx version') exit 0;;
   'image inspect '*previous) echo previous-image;;
+  'image inspect previous-image') exit 0;;
   'image inspect '*) if [ -e "$BUILT" ]; then echo new-image; else echo old-image; fi;;
+  # Like the containerd image store: moving the last tag deletes the old image.
+  'image tag old-image '*) [ -e "$BUILT" ] && { echo "No such image: old-image" >&2; exit 1; };;
   'build '*)
     [ "$MODE" = fail ] && exit 1
     case "$*" in *CLAUDE_CODE_VERSION=99.0.0*) [ "$MODE" = fallback ] && exit 1;; esac
@@ -53,8 +56,10 @@ exit 0
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('AIO_UPGRADE_IMAGE=latest', result.stdout)
         self.assertIn('CLAUDE_CODE_VERSION=99.0.0', pins)
-        self.assertIn('image tag old-image aio-agent-upgrade:previous', calls)
+        self.assertLess(calls.index('image tag aio-agent aio-agent-upgrade:pending'), calls.index('build '))
+        self.assertIn('image tag aio-agent-upgrade:pending aio-agent-upgrade:previous', calls)
         self.assertIn('image rm previous-image', calls)
+        self.assertIn('image rm aio-agent-upgrade:pending', calls)
 
     def test_failed_latest_uses_pins_without_changing_them(self):
         result, calls, before, after = self.build('fallback')
@@ -70,6 +75,8 @@ exit 0
     def test_failed_pair_preserves_current_and_previous_images_and_pins(self):
         result, calls, before, after = self.build('fail')
         self.assertNotEqual(result.returncode, 0)
-        self.assertNotIn('image tag', calls)
-        self.assertNotIn('image rm', calls)
+        self.assertIn('both the latest and the pinned', result.stderr)
+        self.assertNotIn('aio-agent-upgrade:previous', calls.replace('image inspect --format {{.Id}} aio-agent-upgrade:previous', ''))
+        self.assertNotIn('image rm previous-image', calls)
+        self.assertIn('image rm aio-agent-upgrade:pending', calls)
         self.assertEqual(before, after)
