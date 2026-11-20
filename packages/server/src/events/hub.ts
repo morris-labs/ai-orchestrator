@@ -26,11 +26,16 @@ import type { EventInput, EventSink, SqlDatabase } from "../api/core-interface.j
 /** Applies finding compatibility when replaying events from an earlier server. */
 function parseStoredEvent(json: string): AioEvent {
   const value: unknown = JSON.parse(json);
-  if (value && typeof value === "object" && "type" in value && value.type === "finding.changed") {
-    const event = value as { finding: unknown };
+  if (
+    value &&
+    typeof value === "object" &&
+    "type" in value &&
+    value.type === "finding.changed" &&
+    "finding" in value
+  ) {
     return EventSchema.parse({
       ...value,
-      finding: adaptLegacyFinding(event.finding),
+      finding: adaptLegacyFinding(value.finding),
     });
   }
   return EventSchema.parse(value);
