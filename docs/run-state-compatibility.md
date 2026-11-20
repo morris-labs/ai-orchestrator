@@ -21,6 +21,10 @@ version means version 1. Version 2 reopens the retired `pre-existing` verdict as
 `confirmed` with `introduced: false` and retains the verdict trail. The next
 save writes the versioned findings envelope.
 
+The engine saves the review range for the round and tip in the `engine.json` file.
+When an interrupted run lacks that range, the engine restores the comparison
+commits and any recorded working-tree snapshot from the saved fields.
+
 When changing the saved state format:
 
 1. Append one State adaptation for the next version. Preserve every earlier

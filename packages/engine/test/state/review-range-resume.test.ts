@@ -10,14 +10,26 @@ import { RunController } from "../../src/state/controller.js";
 import { makeRun } from "./harness.js";
 
 it("resumes a saved mid-round run against its recorded working-tree snapshot", async () => {
-  const { repo, deps, run } = await makeRun({ request: { readOnly: true, includeWorktree: true, roundCap: 1 } });
+  const { repo, deps, run } = await makeRun({
+    request: { readOnly: true, includeWorktree: true, roundCap: 1 },
+  });
   writeFileSync(join(repo, "snapshot.txt"), "Saved review content\n");
   const state = { ...run.state, round: 1, status: "paused" as const, stage: "find" as const };
   const request = { ...state.request, includeWorktree: true };
   const resolved = await resolveRange(deps.runner, request);
-  const first = await resolveReviewRange({ git: new Git(deps.runner, repo), resolved, request, policy: DEFAULT_POLICY });
-  const legacy = readFileSync(join(import.meta.dirname, "../run/legacy-review-range-engine.json"), "utf8")
-    .replaceAll("BRANCH_POINT", resolved.diffBaseSha).replaceAll("SNAPSHOT", first.tipCommit).replaceAll("TIP", resolved.tipSha);
+  const first = await resolveReviewRange({
+    git: new Git(deps.runner, repo),
+    resolved,
+    request,
+    policy: DEFAULT_POLICY,
+  });
+  const legacy = readFileSync(
+    join(import.meta.dirname, "../run/legacy-review-range-engine.json"),
+    "utf8",
+  )
+    .replaceAll("BRANCH_POINT", resolved.diffBaseSha)
+    .replaceAll("SNAPSHOT", first.tipCommit)
+    .replaceAll("TIP", resolved.tipSha);
   const store = new RunStore(repo, run.id);
   await store.writeJson("state.json", { ...state, stateVersion: 1 });
   await store.writeJson("engine.json", JSON.parse(legacy));
