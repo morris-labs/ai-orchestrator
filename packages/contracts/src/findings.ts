@@ -28,17 +28,10 @@ export function belowVerifyFloor(
 }
 
 /**
- * The design's four verdicts, plus `fixed` (a confirmed finding whose fix
+ * The active verdicts, plus `fixed` (a confirmed finding whose fix
  * passed the gate and the confirmer) and `waived` (a person chose to accept it).
  */
-export const VerdictSchema = z.enum([
-  "pending",
-  "confirmed",
-  "disproved",
-  "pre-existing",
-  "fixed",
-  "waived",
-]);
+export const VerdictSchema = z.enum(["pending", "confirmed", "disproved", "fixed", "waived"]);
 export type Verdict = z.infer<typeof VerdictSchema>;
 
 export const VerificationSchema = z.enum(["script", "code-reading"]);
@@ -63,10 +56,14 @@ export const ActorSchema = z.object({
 });
 export type Actor = z.infer<typeof ActorSchema>;
 
+/** Verdicts retained in audit records, including retired values. */
+export const FindingHistoryVerdictSchema = z.union([VerdictSchema, z.literal("pre-existing")]);
+
 /** One verdict change in a finding's trail. */
 export const FindingHistoryEntrySchema = z.object({
   time: IsoDateTimeSchema,
-  verdict: VerdictSchema,
+  // Retain retired verdicts only in the audit trail.
+  verdict: FindingHistoryVerdictSchema,
   actor: ActorSchema,
   evidence: z.string().optional(),
   round: z.number().int().positive().optional(),
@@ -192,6 +189,37 @@ function checkLocation(
 export const FindingSchema = z.object(findingFields).superRefine(checkLocation);
 export type Finding = z.infer<typeof FindingSchema>;
 
+/** Reopen a retired verdict while retaining its audit trail. */
+export function adaptLegacyFinding(value: unknown): Finding {
+  const finding = z.record(z.unknown()).parse(value);
+  if (finding.verdict !== "pre-existing") return FindingSchema.parse(finding);
+  const history = z.array(z.record(z.unknown())).parse(finding.history ?? []);
+  const time = new Date().toISOString();
+  if (!history.some((entry) => entry.verdict === "pre-existing")) {
+    history.push({
+      time,
+      verdict: "pre-existing",
+      actor: { kind: "engine" },
+      evidence: finding.evidence,
+    });
+  }
+  return FindingSchema.parse({
+    ...finding,
+    verdict: "confirmed",
+    introduced: false,
+    history: [
+      ...history,
+      {
+        time,
+        verdict: "confirmed",
+        actor: { kind: "engine" },
+        evidence:
+          "Reopened during state adaptation: confirmed flaws require fixes even when they exist at the base.",
+      },
+    ],
+  });
+}
+
 /** A finding with defaults for the lists, `verification`, `evidence`, and `origin`. Outputs a `Finding`. */
 export const FindingInputSchema = z
   .object({
@@ -242,7 +270,7 @@ export interface FindingContext {
 /** Says whether a finding is new on the branch, in words, for screens and exports. */
 export function introducedLabel(introduced: boolean | null): string {
   if (introduced === null) return "Unknown: the run has no base to compare";
-  return introduced ? "Yes, on this branch" : "No, it exists at the base";
+  return introduced ? "Yes, on this branch" : "Already in the base";
 }
 
 /** One root cause in a run's root-cause summary. */

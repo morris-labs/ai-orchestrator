@@ -47,7 +47,7 @@ import {
   type VendorAdapter,
 } from "../core.js";
 import { NO_EXTRAS, type PolicyExtras } from "../policy/load.js";
-import { Git, normalizeRepoPath } from "../range/git.js";
+import { Git } from "../range/git.js";
 import { ShellRunner } from "../range/exec.js";
 import type { EngineState } from "../run/engine-state.js";
 import type { RunStore } from "../run/store.js";
@@ -445,16 +445,6 @@ export class RunContext {
     patch: Partial<Finding> = {},
   ): Promise<void> {
     const previous = finding.verdict;
-    // A disprover reading the code can call new code old. When the code
-    // isn't at the base at all, the engine overrules it.
-    if (verdict === "pre-existing" && patch.verification !== "script" && actor.kind === "agent") {
-      const missing = await this.missingAtBase(finding);
-      if (missing) {
-        verdict = "confirmed";
-        patch = { ...patch, introduced: true };
-        evidence = `${evidence}\nThe engine treats the flaw as introduced: ${missing}`.trim();
-      }
-    }
     Object.assign(finding, patch, { verdict });
     // A whole-project run has no base, so whether a flaw is new is unknown.
     if (this.state.request.scope === "whole") finding.introduced = null;
@@ -473,93 +463,6 @@ export class RunContext {
       finding: structuredClone(finding),
       previousVerdict: previous,
     });
-  }
-
-  /**
-   * Why a finding's code can't be at the run's base, or `null` when it can
-   * be or the engine can't tell. The file missing there, or the finding's
-   * symbol missing from the base version of the file, is a reason only when
-   * the change wrote the flagged code itself (see `flaggedCodeIsNew`): a
-   * rename or a move changes a path or a name but keeps the code.
-   */
-  private async missingAtBase(finding: Finding): Promise<string | null> {
-    const base = this.eng.diffBaseSha;
-    if (!base || !finding.file || this.state.request.scope === "whole") return null;
-    const file = normalizeRepoPath(finding.file);
-    const short = base.slice(0, 12);
-    let reason: string | null = null;
-    const exists = await this.git.pathExists(base, file);
-    if (exists === null) return null;
-    if (!exists) {
-      reason = `${file} doesn't exist at the base ${short}.`;
-    } else {
-      const text = await this.git.show(base, file);
-      if (text === null) return null;
-      const name = finding.symbol?.split(/[.#:]/).pop()?.trim();
-      if (name && name.length >= 3 && /^[\w$-]+$/.test(name) && !text.includes(name)) {
-        reason = `${name} doesn't appear in ${file} at the base ${short}.`;
-      }
-    }
-    if (!reason) return null;
-    return (await this.flaggedCodeIsNew(base, finding, !exists)) ? reason : null;
-  }
-
-  /**
-   * Whether the change wrote the finding's flagged lines rather than kept,
-   * renamed, moved, or reworked old code. The engine decides on the flagged
-   * lines themselves. A line counts as old when any of these hold:
-   *
-   * - `git blame` traces it to `base`, through renames, moves, and
-   *   whitespace changes.
-   * - Its words occur, in order, among the words of the lines that the
-   *   change removed, which catches a move too small for blame to trace,
-   *   and a move that also changed quotes, punctuation, or line wrapping.
-   * - It has at least three words and shares three quarters of them with
-   *   one removed line, such as a renamed declaration.
-   *
-   * The code is new only when more flagged lines are new than old, and the
-   * new lines don't mostly reuse the words of the lines that the hunks
-   * touching them removed: a rename that rewraps or reworks an old flaw
-   * keeps its words. For a file missing at the base, Git must also see the
-   * file as added, not renamed or copied from another. Any doubt, such as a
-   * Git failure or lines with no code, gives `false`, which keeps the
-   * agent's verdict.
-   */
-  private async flaggedCodeIsNew(
-    base: string,
-    finding: Finding,
-    fileMissing: boolean,
-  ): Promise<boolean> {
-    if (!finding.file || !finding.lines) return false;
-    const rev = this.linesRev(finding.linesAt);
-    if (rev === null) return false;
-    const file = normalizeRepoPath(finding.file);
-    const text = await this.git.show(rev, file);
-    if (text === null) return false;
-    const all = text.replace(/\n$/, "").split("\n");
-    const [first, end] = finding.lines;
-    const last = Math.min(end, first + 59, all.length);
-    if (first < 1 || first > last) return false;
-    const blamed = await this.git.linesFromBase(base, rev, file, first, last);
-    if (!blamed || blamed.counted === 0) return false;
-    const change = await this.git.changeTo(base, rev, file, first, last);
-    if (!change || (fileMissing && !change.added)) return false;
-    return flaggedLinesAreNew(blamed.lines, change.removed, change.replacedLines);
-  }
-
-  /**
-   * The commit that a finding's lines count in, or `null` when the engine
-   * can't tell. A working tree round records `worktree:TIP:SNAPSHOT`; the
-   * snapshot commit holds the files as the round read them. Older runs
-   * recorded only the tip, and the working tree has changed since. A
-   * finding without `linesAt`, such as an imported one or one stored before
-   * the field existed, has lines in an unknown version: the current tip can
-   * hold other code at those lines.
-   */
-  private linesRev(linesAt: string | undefined): string | null {
-    if (linesAt === undefined) return null;
-    if (!linesAt.startsWith("worktree:")) return linesAt;
-    return linesAt.split(":")[2] || null;
   }
 
   /** Emits `finding.changed` for a finding that the merge just created. */
@@ -1402,51 +1305,4 @@ export function describeError(error: unknown): string {
   const text = error instanceof Error ? error.message : String(error);
   const line = text.replace(/\s+/g, " ").trim();
   return line.length > 500 ? `${line.slice(0, 497)}...` : line;
-}
-
-const wordsOf = (line: string): string[] => line.match(/\w+/g) ?? [];
-
-/** How many of `words` a multiset of `pool` words holds, each pool word used once. */
-function sharedWords(words: string[], pool: string[]): number {
-  const left = new Map<string, number>();
-  for (const w of pool) left.set(w, (left.get(w) ?? 0) + 1);
-  let shared = 0;
-  for (const w of words) {
-    const n = left.get(w) ?? 0;
-    if (n > 0) {
-      shared += 1;
-      left.set(w, n - 1);
-    }
-  }
-  return shared;
-}
-
-/**
- * Whether flagged `lines` are mostly code the change wrote, given every line
- * the change removed (`removed`) and the lines that the hunks touching the
- * flagged lines removed (`replaced`). See `RunContext.flaggedCodeIsNew`.
- */
-export function flaggedLinesAreNew(
-  lines: { text: string; fromBase: boolean }[],
-  removed: string[],
-  replaced: string[],
-): boolean {
-  const removedWords = removed.map(wordsOf);
-  const removedFlat = ` ${removedWords.map((w) => w.join(" ")).join(" ")} `;
-  const isOld = (line: { text: string; fromBase: boolean }): boolean => {
-    if (line.fromBase) return true;
-    const words = wordsOf(line.text);
-    const flat = words.join(" ");
-    if (flat.length >= 8 && removedFlat.includes(` ${flat} `)) return true;
-    if (words.length < 3) return false;
-    return removedWords.some(
-      (r) => sharedWords(words, r) * 4 >= Math.max(words.length, r.length) * 3,
-    );
-  };
-  const fresh = lines.filter((l) => !isOld(l));
-  if (fresh.length * 2 <= lines.length) return false;
-  const freshWords = fresh.flatMap((l) => wordsOf(l.text));
-  if (freshWords.length === 0) return false;
-  const reused = sharedWords(freshWords, replaced.flatMap(wordsOf));
-  return reused * 2 < freshWords.length;
 }

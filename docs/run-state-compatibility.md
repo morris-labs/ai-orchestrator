@@ -7,11 +7,19 @@ package version. The engine validates the version before reading the run's
 fields or loading its bookkeeping.
 
 `packages/engine/src/run/state-version.ts` holds the ordered, forward-only
-State adaptations. The list starts empty. Its first entry converts version
+State adaptations. Its first entry converts version
 1 to version 2, its next entry converts version 2 to version 3, and so on.
 Loading applies each required step before validating the current contract.
 Loading alone never rewrites the saved file; the next normal save writes
 the current version.
+
+Findings use the same state version and ordered adaptation steps. The
+`findings.json` file stores a version beside its findings, independently of the
+`state.json` file. This keeps a checkpoint interruption from advancing the run
+version while leaving unadapted findings behind. A findings array without a
+version means version 1. Version 2 reopens the retired `pre-existing` verdict as
+`confirmed` with `introduced: false` and retains the verdict trail. The next
+save writes the versioned findings envelope.
 
 When changing the saved state format:
 

@@ -1,0 +1,36 @@
+[
+  {
+    "id": "F-0001",
+    "fingerprint": "legacy-base-bug",
+    "severity": "P2",
+    "title": "Cart loses the discount",
+    "file": "shop/cart.py",
+    "lines": [1, 2],
+    "failureCase": "The total ignores the discount.",
+    "category": "logic",
+    "introduced": false,
+    "reportedBy": "codex-test",
+    "alsoReportedBy": [],
+    "verdict": "pre-existing",
+    "verification": "script",
+    "evidence": "The script reproduces the flaw at the base.",
+    "runId": "01JB0000000000000000000001",
+    "round": 1,
+    "groupId": null,
+    "hunkIds": [],
+    "origin": "reviewer",
+    "history": [
+      {
+        "time": "2026-10-28T09:00:00.000Z",
+        "verdict": "pre-existing",
+        "actor": {
+          "kind": "agent",
+          "vendor": "copilot",
+          "role": "disprover"
+        },
+        "evidence": "The flaw reproduces at the base.",
+        "round": 1
+      }
+    ]
+  }
+]

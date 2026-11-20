@@ -1,10 +1,24 @@
-import { RunStateSchema, type RunState } from "@aio/contracts";
+import {
+  adaptLegacyFinding,
+  FindingSchema,
+  RunStateSchema,
+  type Finding,
+  type RunState,
+} from "@aio/contracts";
 import { z } from "zod";
 
 // Entry n converts state version n + 1 to n + 2. Never remove an old step.
 // Keep a saved example for every version in test/run/fixtures.
-const stateAdaptations: readonly ((state: Record<string, unknown>) => Record<string, unknown>)[] =
-  [];
+interface StateAdaptation {
+  state: (state: Record<string, unknown>) => Record<string, unknown>;
+  findings?: (findings: unknown[]) => unknown[];
+}
+const stateAdaptations: readonly StateAdaptation[] = [
+  {
+    state: (state) => state,
+    findings: (findings) => findings.map(adaptLegacyFinding),
+  },
+];
 export const CURRENT_RUN_STATE_VERSION = 1 + stateAdaptations.length;
 
 export class NewerRunStateError extends Error {
@@ -35,7 +49,17 @@ export function adaptRunState(saved: unknown): RunState {
     .parse(state.stateVersion === undefined ? 1 : state.stateVersion);
   if (version > CURRENT_RUN_STATE_VERSION) throw new NewerRunStateError(version, state);
   for (let step = version - 1; step < stateAdaptations.length; step++) {
-    state = { ...stateAdaptations[step]!(state), stateVersion: step + 2 };
+    state = { ...stateAdaptations[step]!.state(state), stateVersion: step + 2 };
   }
   return RunStateSchema.parse(state);
+}
+
+/** Adapt findings with the same version steps as their run state. */
+export function adaptFindings(saved: unknown, version: number): Finding[] {
+  if (version > CURRENT_RUN_STATE_VERSION) throw new NewerRunStateError(version, {});
+  let findings = z.array(z.unknown()).parse(saved);
+  for (let step = version - 1; step < stateAdaptations.length; step++) {
+    findings = stateAdaptations[step]?.findings?.(findings) ?? findings;
+  }
+  return z.array(FindingSchema).parse(findings);
 }

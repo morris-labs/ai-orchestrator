@@ -6,6 +6,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
+  adaptLegacyFinding,
   STANDARD_GROUP_SIZE_LIMIT,
   VENDOR_ROLES,
   belowVerifyFloor,
@@ -833,7 +834,7 @@ export async function mergeInto(
     await ctx.store.writeJson(file, commit);
   }
   if (!ctx.eng.appliedMerges.includes(file)) {
-    ctx.findings = commit.findings;
+    ctx.findings = commit.findings.map(adaptLegacyFinding);
     ctx.eng.counters.finding = Math.max(ctx.eng.counters.finding, commit.findingCounter);
     await ctx.persist();
     for (const id of commit.result.created) {
@@ -1204,7 +1205,7 @@ async function followPrimaries(
     const last = [...primary.history].reverse().find((h) => h.verdict === primary.verdict);
     if (!last || last.actor.kind !== "agent" || last.actor.role !== "disprover") continue;
     const evidence = `The same root cause as ${primary.id}. ${primary.evidence}`;
-    const verdict = primary.verdict as "confirmed" | "disproved" | "pre-existing";
+    const verdict = primary.verdict as "confirmed" | "disproved";
     await ctx.setVerdict(finding, verdict, last.actor, evidence, {
       ...(primary.verification ? { verification: primary.verification } : {}),
       introduced: primary.introduced,
@@ -1232,9 +1233,7 @@ async function followPrimaries(
 }
 
 /**
- * `result` with the verdict that `finding` ended with. The engine can
- * overrule a disprover's verdict in `setVerdict`, and the stage file and
- * the fix handoff count must report what the finding holds.
+ * Return the applied verdict so stage records match the finding.
  */
 function asApplied(result: VerifyResult, finding: Finding): VerifyResult {
   const d = result.decision;
@@ -1289,6 +1288,19 @@ export async function verifyPending(ctx: RunContext, stageFile: string): Promise
     return null;
   };
   const apply = async (finding: Finding, result: VerifyResult): Promise<VerifyResult> => {
+    // A saved verifier result can predate verdict retirement.
+    if ((result.decision.verdict as string) === "pre-existing") {
+      finding.history.push({
+        time: ctx.nowIso(),
+        verdict: "pre-existing",
+        actor: { kind: "agent", vendor: result.vendor, role: "disprover" },
+        evidence: result.decision.evidence,
+      });
+      result = {
+        ...result,
+        decision: { ...result.decision, verdict: "confirmed", introduced: false },
+      };
+    }
     const d = result.decision;
     if (d.verdict === "unverified") {
       // The finding stays pending: the run can't stop clean, and the next

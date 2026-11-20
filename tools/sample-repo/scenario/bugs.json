@@ -143,7 +143,13 @@
       "repro": "B7.py",
       "preExisting": true,
       "foundBy": [{ "vendor": "codex", "round": 1, "via": "review" }],
-      "fix": []
+      "fix": [
+        {
+          "file": "shop/pricing.py",
+          "find": "return int(amount * 100) / 100",
+          "replace": "return round(amount, 2)"
+        }
+      ]
     },
     {
       "id": "FP1",

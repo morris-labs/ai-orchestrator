@@ -44,7 +44,7 @@ export function filterFindings(findings: readonly Finding[], filter: FindingFilt
 
 /** A finding can be waived until it is fixed, disproved, or already waived. */
 export function canWaive(f: Finding): boolean {
-  return f.verdict === "pending" || f.verdict === "confirmed" || f.verdict === "pre-existing";
+  return f.verdict === "pending" || f.verdict === "confirmed";
 }
 
 /** How a finding that the verification floor kept from a disprover reads. */
