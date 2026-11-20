@@ -10,7 +10,7 @@ import { RunController } from "../../src/state/controller.js";
 import { makeRun } from "./harness.js";
 
 it("resumes a saved mid-round run against its recorded working-tree snapshot", async () => {
-  const { repo, deps, run } = await makeRun({ request: { readOnly: true, includeWorktree: true } });
+  const { repo, deps, run } = await makeRun({ request: { readOnly: true, includeWorktree: true, roundCap: 1 } });
   writeFileSync(join(repo, "snapshot.txt"), "Saved review content\n");
   const state = { ...run.state, round: 1, status: "paused" as const, stage: "find" as const };
   const request = { ...state.request, includeWorktree: true };
