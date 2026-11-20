@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "phase": "pre-push",
+  "tipRef": "feature",
+  "includeWorktree": true,
+  "diffBaseSha": "BRANCH_POINT",
+  "reviewFrom": null,
+  "reviewedHead": "TIP",
+  "roundOpen": true,
+  "worktreeSnapshot": {
+    "key": "1:TIP:true",
+    "commit": "SNAPSHOT",
+    "head": "TIP"
+  }
+}

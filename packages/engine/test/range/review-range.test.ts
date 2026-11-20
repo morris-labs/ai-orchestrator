@@ -141,3 +141,49 @@ describe("round review range", () => {
     },
   );
 });
+
+it("keeps a snapshot across calls and refreshes it after a fix moves the tip", async () => {
+  const { repo } = fixture();
+  writeFileSync(join(repo, "worktree-only.txt"), "Reviewed text\n");
+  const request = { repoPath: repo, depth: "standard" as const, includeWorktree: true, exactBase: false };
+  const resolved = await resolveRange(runner, { ...request, base: "moved", mergeBase: true, readOnly: true });
+  const repository = new Git(runner, repo);
+  const input = { git: repository, resolved, request, policy: DEFAULT_POLICY };
+  const first = await resolveReviewRange(input);
+  writeFileSync(join(repo, "worktree-only.txt"), "Unreviewed edit\n");
+  const reused = await resolveReviewRange({ ...input, saved: first });
+  expect(reused.tipCommit).toBe(first.tipCommit);
+  expect(await repository.show(reused.tipCommit, "worktree-only.txt")).toBe("Reviewed text\n");
+  git(repo, "add", "worktree-only.txt");
+  git(repo, "-c", "user.name=Example", "-c", "user.email=example@example.com", "commit", "-qm", "Apply a fix");
+  writeFileSync(join(repo, "worktree-only.txt"), "After-fix working tree\n");
+  const fixed = await resolveReviewRange({ ...input, tipSha: git(repo, "rev-parse", "HEAD"), saved: first });
+  expect(fixed.key).not.toBe(first.key);
+  expect(fixed.tipCommit).not.toBe(first.tipCommit);
+  expect(await repository.show(fixed.tipCommit, "worktree-only.txt")).toBe("After-fix working tree\n");
+  expect(fixed.branchPoint).toBe(first.branchPoint);
+});
+
+it("keeps the branch point when merge-base diffing is disabled", async () => {
+  const { repo, namedBase, branchPoint } = fixture();
+  const request = { repoPath: repo, includeWorktree: false, exactBase: false };
+  const resolved = await resolveRange(runner, { ...request, base: "moved", mergeBase: false, readOnly: true });
+  const range = await resolveReviewRange({ git: new Git(runner, repo), resolved, request, policy: DEFAULT_POLICY });
+  expect(range.changeBase).toBe(namedBase);
+  expect(range.branchPoint).toBe(branchPoint);
+});
+
+it("supports direct comparisons between unrelated histories without inventing a branch point", async () => {
+  const { repo, namedBase } = fixture();
+  git(repo, "checkout", "--orphan", "unrelated");
+  git(repo, "rm", "-rf", ".");
+  writeFileSync(join(repo, "unrelated.txt"), "Separate history\n");
+  git(repo, "add", ".");
+  git(repo, "-c", "user.name=Example", "-c", "user.email=example@example.com", "commit", "-qm", "Start an unrelated history");
+  const request = { repoPath: repo, includeWorktree: false, exactBase: false };
+  const resolved = await resolveRange(runner, { ...request, base: "moved", mergeBase: false, readOnly: true });
+  const range = await resolveReviewRange({ git: new Git(runner, repo), resolved, request, policy: DEFAULT_POLICY });
+  expect(range.changeBase).toBe(namedBase);
+  expect(range.branchPoint).toBeNull();
+  expect(range.groups.flatMap((group) => group.files)).toContain("unrelated.txt");
+});

@@ -7,6 +7,7 @@ import {
   runDepth,
   type PolicyFile,
   type RunRequest,
+  type RunDepth,
 } from "@aio/contracts";
 import { z } from "zod";
 import { selectFiles } from "../group/exclude.js";
@@ -23,6 +24,7 @@ export const ReviewRangeSchema = z.object({
   namedBaseSha: z.string(),
   changeBase: z.string(),
   branchPoint: z.string().nullable(),
+  branchPointCheckout: z.object({ commit: z.string(), head: z.string() }).nullable(),
   tipSha: z.string(),
   tipCommit: z.string(),
   worktree: z.boolean(),
@@ -45,8 +47,8 @@ export const ReviewRangeSchema = z.object({
 export type ReviewRange = z.infer<typeof ReviewRangeSchema>;
 export type ReviewRangeRequest = Pick<
   RunRequest,
-  "repoPath" | "scope" | "depth" | "modelTier" | "excludePaths" | "includeWorktree" | "exactBase"
->;
+  "repoPath" | "scope" | "modelTier" | "excludePaths" | "includeWorktree" | "exactBase"
+> & { depth?: RunDepth | undefined };
 
 /** Inputs shared by a saved run and its unsaved preview. */
 export interface ReviewRangeInput {
@@ -63,8 +65,14 @@ export interface ReviewRangeInput {
 }
 
 /** Gets the stable key used by grouping before round 1 and by round stages. */
-export function reviewRangeKey(round: number, tip: string, worktree: boolean): string {
-  return `${Math.max(1, round)}:${tip}:${worktree}`;
+export function reviewRangeKey(
+  round: number,
+  tip: string,
+  worktree: boolean,
+  namedBase: string,
+  changeBase: string,
+): string {
+  return `${Math.max(1, round)}:${tip}:${worktree}:${namedBase}:${changeBase}`;
 }
 
 /** Selects the round's commits without reading a working tree or saving a run. */
@@ -79,11 +87,12 @@ export function reviewRangeSeed(input: Omit<ReviewRangeInput, "git" | "policy">)
     !!input.reviewedFrom;
   const changeBase = fixDiffOnly ? input.reviewedFrom! : resolved.diffBaseSha;
   return {
-    key: reviewRangeKey(round, tip, worktree),
+    key: reviewRangeKey(round, tip, worktree, resolved.baseSha, changeBase),
     round,
     namedBaseSha: resolved.baseSha,
     changeBase,
     branchPoint: request.scope === "whole" ? null : resolved.diffBaseSha,
+    branchPointCheckout: request.scope === "whole" ? null : { commit: resolved.diffBaseSha, head: resolved.diffBaseSha },
     tipSha: tip,
     tipCommit: tip,
     worktree,
@@ -110,6 +119,9 @@ export async function resolveReviewRange(input: ReviewRangeInput): Promise<Revie
   const { git, request, policy } = input;
   const seed = reviewRangeSeed(input);
   const saved = input.saved?.key === seed.key ? input.saved : null;
+  if (saved?.worktree && saved.tipCommit !== saved.tipSha && !(await git.tryRevParse(saved.tipCommit))) {
+    throw new Error(`The saved working-tree snapshot ${saved.tipCommit} is missing. Restore the Git objects or start another review.`);
+  }
   if (saved?.grouped) return saved;
   const range = saved ?? seed;
   range.branchPoint =
@@ -119,7 +131,10 @@ export async function resolveReviewRange(input: ReviewRangeInput): Promise<Revie
         ? input.resolved.baseSha
         : input.saved?.namedBaseSha === input.resolved.baseSha && input.saved.branchPoint
           ? input.saved.branchPoint
-          : await git.mergeBase(input.resolved.baseSha, input.resolved.tipSha);
+          : (await git.ok(["merge-base", input.resolved.baseSha, input.resolved.tipSha]))
+            ? await git.mergeBase(input.resolved.baseSha, input.resolved.tipSha)
+            : null;
+  range.branchPointCheckout = range.branchPoint ? { commit: range.branchPoint, head: range.branchPoint } : null;
   if (range.worktree && (!saved || saved.tipCommit === saved.tipSha)) {
     const head = await git.head();
     const commit = await git.snapshotWorktree(join(tmpdir(), `aio-index-range-${randomUUID()}`));

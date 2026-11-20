@@ -47,6 +47,7 @@ import {
   type VendorAdapter,
 } from "../core.js";
 import { NO_EXTRAS, type PolicyExtras } from "../policy/load.js";
+import { resolveReviewRange, reviewRangeSeed, type ReviewRange } from "../range/review-range.js";
 import { Git, normalizeRepoPath } from "../range/git.js";
 import { ShellRunner } from "../range/exec.js";
 import type { EngineState } from "../run/engine-state.js";
@@ -228,6 +229,8 @@ export class RunContext {
   readonly readOnlyCheckout: EngineCheckout;
   /** Serializes writes, since parallel agent calls update the same files. */
   private writeChain: Promise<void> = Promise.resolve();
+  /** Serializes parallel callers while the saved range is being resolved. */
+  private resolvingRange: { key: string; promise: Promise<ReviewRange> } | null = null;
 
   constructor(
     public state: RunState,
@@ -307,8 +310,51 @@ export class RunContext {
     };
   }
 
+  /** Gets the persisted range, resolving it again when the round or tip changes. */
+  ensureReviewRange(): Promise<ReviewRange> {
+    const tip = this.state.tipSha ?? "HEAD";
+    const includeWorktree = this.eng.includeWorktree ?? this.state.request.includeWorktree;
+    const input = {
+      git: this.git,
+      resolved: {
+        baseRef: this.state.request.base,
+        baseSha: this.state.baseSha ?? "",
+        diffBaseSha: this.eng.diffBaseSha ?? this.state.baseSha ?? "",
+        tipSha: tip,
+        tipRef: this.eng.tipRef,
+        includeWorktree,
+        dirty: includeWorktree,
+      },
+      request: this.state.request,
+      round: this.round,
+      reviewedFrom: this.eng.reviewFrom,
+      policy: this.policy,
+      groupSizeLimit: this.extras.groupSizeLimit ?? undefined,
+      now: () => this.clock.now(),
+      saved: this.eng.reviewRange,
+    };
+    const key = reviewRangeSeed(input).key;
+    if (this.eng.reviewRange?.key === key && this.eng.reviewRange.grouped)
+      return Promise.resolve(this.eng.reviewRange);
+    if (this.resolvingRange?.key === key) return this.resolvingRange.promise;
+    const promise = (async () => {
+      const range = await resolveReviewRange(input);
+      this.eng.reviewRange = range;
+      await this.persist();
+      return range;
+    })();
+    this.resolvingRange = { key, promise };
+    void promise
+      .finally(() => {
+        if (this.resolvingRange?.promise === promise) this.resolvingRange = null;
+      })
+      .catch(() => undefined);
+    return promise;
+  }
+
   /** The run's range. `repoPath` overrides the repository path, such as for a read-only checkout. */
   range(repoPath: string = this.state.request.repoPath): RangeInfo {
+    if (this.eng.reviewRange) return { ...this.eng.reviewRange.promptRange, repoPath };
     return {
       repoPath,
       baseSha: this.state.baseSha ?? "",

@@ -181,8 +181,7 @@ export async function startRound(ctx: RunContext): Promise<void> {
 
   ctx.state.tipSha = ctx.state.request.readOnly ? ctx.state.tipSha : await ctx.git.head();
   ctx.eng.reviewedHead = ctx.state.tipSha ?? null;
-  const reuse = round === 1 ? await ctx.store.loadGroups() : undefined;
-  const groups = reuse ?? (await computeGroups(ctx));
+  const groups = await computeGroups(ctx);
   await ctx.store.saveGroups(groups, round);
   ctx.eng.roundOpen = true;
   await ctx.persist();
