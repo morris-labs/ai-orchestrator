@@ -411,7 +411,7 @@ export interface DisproverPromptInput {
   finding: Finding;
   /** Where the agent may write reproduction scripts. */
   scratchDir: string;
-  /** A checkout of the pinned base, for the pre-existing check. `null` in a whole-project run. */
+  /** A checkout of the pinned base, to check whether the flaw exists at the base. `null` in a whole-project run. */
   baseWorktree: string | null;
   policySection: string;
   /** Uses the compact prompt. */

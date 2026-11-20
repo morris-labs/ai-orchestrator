@@ -103,6 +103,7 @@ export function findingsJson(e: FindingsExport): string {
       rootCauses: e.run.rootCauses ?? null,
       findings: ordered(e.findings).map((f) => ({
         ...f.finding,
+        introducedLabel: introducedLabel(f.finding.introduced),
         diff: f.diff,
         fixDiff: f.fixDiff,
       })),
@@ -319,7 +320,7 @@ const REPORT_SCRIPT = `
     if (f.symbol) fact(dl, "Symbol", el("span", { className: "mono", text: f.symbol }));
     fact(dl, "Verdict", item.verdictText);
     fact(dl, "Raised by", [f.reportedBy].concat(f.alsoReportedBy || []).join(", "));
-    fact(dl, "Introduced", f.introduced === null || f.introduced === undefined ? "Unknown: the run has no base to compare" : f.introduced ? "Yes, on this branch" : "No, it exists at the base");
+    fact(dl, "Introduced", item.introducedLabel);
     if (f.duplicateOf) fact(dl, "Duplicate of", el("span", { className: "mono", text: f.duplicateOf }));
     fact(dl, "Origin", el("span", null, [f.origin, item.sourceLink ? " " : null, item.sourceLink ? link(item.sourceLink, "source") : null]));
     fact(dl, "Fix commit", f.fixCommit ? link(item.commitLink, f.fixCommit.slice(0, 10), "mono") : "None");
@@ -389,6 +390,7 @@ export function findingsHtml(e: FindingsExport): string {
     finding: f,
     diff,
     fixDiff,
+    introducedLabel: introducedLabel(f.introduced),
     location: location(f),
     verdictText: verdictText(f),
     verdictShort: `${f.verdict}${f.unverifiedReason ? ` (${NOT_VERIFIED_LABEL})` : ""}${f.fixHeldReason ? ` (${FIX_HELD_LABEL})` : ""}`,

@@ -487,6 +487,24 @@ A run reviews the changes between a base and a tip:
 - **Uncommitted changes**: a run refuses a dirty working tree unless you
   turn on **Include uncommitted changes**.
 
+### Fix confirmed bugs regardless of origin
+
+The fixer repairs confirmed findings whether the change introduced them or they
+already exist at the base. The `introduced` field records origin information;
+it doesn't close a finding or remove it from the fix list. Severity floors,
+nits, and findings you decline keep their usual behavior.
+
+When the verifier reproduces a flaw at the base, the finding stays `confirmed`
+with `introduced: false`. The Findings screen and exports show **Already in the
+base**. A verifier's code-reading answer can set the same label. The engine
+keeps reproduction at the base and doesn't override the label with file,
+symbol, blame, or word-matching checks.
+
+When you resume a run saved with the retired `pre-existing` verdict, a state
+adaptation reopens each affected finding as `confirmed` with `introduced: false`.
+The verdict trail retains the retired verdict. A later candidate for the same
+bug merges into the reopened finding.
+
 ### Review the whole project
 
 To review what ships at a tip instead of a change, select **Whole project** in
@@ -510,9 +528,7 @@ A whole-project run behaves differently in the following ways:
   removes it, the engine recreates it when the run resumes or opens a round.
 - **Findings**: whether a finding is new is unknown, so the engine records
   `introduced` as `null`, and the Findings screen and exports show "Unknown".
-  Runs stored before this change show `true`. The engine makes no base
-  checkout, runs reproduction scripts at the tip only, and never labels a finding
-  `pre-existing`.
+  The engine makes no base checkout and runs reproduction scripts at the tip only.
 - **Rounds**: round 1 reviews the project, in file groups only, and later rounds
   review only the fixer's diff, at both depths. Copilot takes groups instead of a
   whole-diff call, and a sweep searches the checkout instead of reading a diff.

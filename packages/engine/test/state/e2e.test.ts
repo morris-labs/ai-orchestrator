@@ -1,7 +1,7 @@
 // End-to-end runs of the pre-push pipeline on tools/sample-repo with fake
 // vendors scripted from its planted bugs.
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { EventSchema, FindingSchema, RunStateSchema, type Finding } from "@aio/contracts";
 import { describe, expect, it } from "vitest";
@@ -76,7 +76,9 @@ describe("pre-push end to end", () => {
       expect(verdict(id).verdict, id).toBe("fixed");
       expect(verdict(id).fixCommit, id).toMatch(/^[0-9a-f]{40}$/);
     }
-    expect(verdict("B7").verdict).toBe("pre-existing");
+    expect(verdict("B7").verdict).toBe("fixed");
+    expect(verdict("B7").fixCommit).toMatch(/^[0-9a-f]{40}$/);
+    expect(verdict("B7").history.some((h) => h.verdict === "confirmed")).toBe(true);
     expect(verdict("B7").introduced).toBe(false);
     expect(verdict("FP1").verdict).toBe("disproved");
     expect(verdict("B2").origin).toBe("sweep");
@@ -85,9 +87,9 @@ describe("pre-push end to end", () => {
     expect(verdict("B5").verification).toBe("code-reading");
     expect(findings).toHaveLength(8);
 
-    // The code is fixed for real, and the pre-existing bug is left alone.
+    // The fixer repairs confirmed bugs, including the bug present at the base.
     for (const bug of bugs.filter((b) => !b.falsePositive)) {
-      expect(bugPresent(bug, repo), bug.id).toBe(bug.id === "B7");
+      expect(bugPresent(bug, repo), bug.id).toBe(false);
     }
 
     // The ledger follow-up and the continuation ran.
@@ -145,7 +147,7 @@ describe("pre-push end to end", () => {
     expect(rounds.map((r) => r.round)).toEqual([1, 2, 3, 4]);
     expect(rounds[0]?.perVendor.copilot?.raised).toBe(3);
     expect(rounds[0]?.perVendor.codex?.raised).toBe(5);
-    expect(rounds[0]?.fixed).toBe(5);
+    expect(rounds[0]?.fixed).toBe(6);
     expect(rounds[1]?.fixed).toBe(1);
     expect(rounds[0]?.overlapRate).toBeCloseTo(1 / 6);
     expect(rounds[0]?.costUsd).toBeGreaterThan(0);
@@ -174,7 +176,7 @@ describe("pre-push end to end", () => {
     expect(worktrees).toHaveLength(1);
   });
 
-  it("resumes from the stage where the engine stopped", async () => {
+  it("reopens saved version 1 findings and resumes from the interrupted fix stage", async () => {
     const repo = buildSampleRepo();
     const first = new Scenario({ hang: { method: "fix", nth: 1 } });
     const d1 = deps(first);
@@ -187,11 +189,33 @@ describe("pre-push end to end", () => {
     const reviewsBefore = first.count("review");
     const verifiesBefore = first.count("verify");
 
+    // Version 1 stores findings as an array and closes flaws present at the base.
+    const savedState = JSON.parse(readFileSync(join(run1.runDir, "state.json"), "utf8"));
+    writeFileSync(
+      join(run1.runDir, "state.json"),
+      JSON.stringify({ ...savedState, stateVersion: 1 }),
+    );
+    const savedFindings = JSON.parse(
+      readFileSync(join(run1.runDir, "findings.json"), "utf8"),
+    ).findings;
+    for (const finding of savedFindings) {
+      if (finding.title !== first.bugs.find((b) => b.id === "B7")?.title) continue;
+      finding.verdict = "pre-existing";
+      finding.history = finding.history.map((h: { verdict: string }) => ({
+        ...h,
+        verdict: h.verdict === "confirmed" ? "pre-existing" : h.verdict,
+      }));
+    }
+    writeFileSync(join(run1.runDir, "findings.json"), JSON.stringify(savedFindings));
+
     // A new engine loads the run from disk and continues at the fix stage.
     const second = new Scenario();
     const d2 = deps(second);
     const run2 = await RunController.load(run1.id, { projectRoot: repo }, d2);
     expect(run2.state.stage).toBe("fix");
+    const reopened = byTitle(run2.findings, second.bugs.find((b) => b.id === "B7")!.title);
+    expect(reopened).toMatchObject({ verdict: "confirmed", introduced: false });
+    expect(reopened.history.some((h) => h.verdict === "pre-existing")).toBe(true);
     expect(run2.state.status).toBe("running");
     await run2.start();
     const state = await run2.settled();
@@ -201,7 +225,7 @@ describe("pre-push end to end", () => {
     expect(second.calls.filter((c) => c.method === "review" && c.round === 1)).toHaveLength(0);
     expect(second.count("verify")).toBeLessThan(verifiesBefore);
     expect(reviewsBefore).toBeGreaterThan(0);
-    expect(run2.findings.filter((f) => f.verdict === "fixed")).toHaveLength(6);
+    expect(run2.findings.filter((f) => f.verdict === "fixed")).toHaveLength(7);
   });
 
   it("stops for a decision when a fixed finding comes back, then converges after a waive", async () => {

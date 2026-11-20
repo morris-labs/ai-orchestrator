@@ -23,7 +23,7 @@
 import { z } from "zod";
 import { ModelTierSchema } from "./tiers.js";
 import { CountSchema, IsoDateTimeSchema, PortSchema, RunIdSchema, VendorSchema } from "./common.js";
-import { FindingSchema, VerdictSchema } from "./findings.js";
+import { FindingSchema, FindingHistoryVerdictSchema } from "./findings.js";
 import {
   LeaseRequestFrameSchema,
   LeaseResponseFrameSchema,
@@ -249,7 +249,7 @@ export const FindingChangedEventSchema = z.object({
   type: z.literal("finding.changed"),
   runId: RunIdSchema,
   finding: FindingSchema,
-  previousVerdict: VerdictSchema.nullable(),
+  previousVerdict: FindingHistoryVerdictSchema.nullable(),
 });
 
 export const UsageSampleEventSchema = z.object({

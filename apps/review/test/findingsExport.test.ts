@@ -20,6 +20,7 @@ function sample(): FindingsExport {
       {
         finding: {
           ...first!,
+          introduced: false,
           title: "Breaks </script><img src=x onerror=alert(1)>",
           evidence: "a ``` fence",
           externalRef: { url: "javascript:alert(1)" } as never,
@@ -95,11 +96,15 @@ describe("findings export", () => {
     const ranks = parsed.findings.map((f) => order[f.severity]!);
     expect(ranks).toEqual([...ranks].sort((a, b) => a - b));
     expect(parsed.findings.some((f) => f.diff?.includes("+new"))).toBe(true);
+    expect(JSON.parse(findingsJson(sample())).findings[0].introducedLabel).toBe(
+      "Already in the base",
+    );
   });
 
   it("fences evidence with more backticks than it holds", () => {
     const md = findingsMarkdown(sample());
     expect(md).toContain("# Findings for");
+    expect(md).toContain("Already in the base");
     expect(md).toContain("````\na ``` fence\n````");
     expect(md).toContain("```diff\n@@ -1 +1 @@");
   });
@@ -133,6 +138,7 @@ describe("findings export", () => {
     window.dispatchEvent(new HashChangeEvent("hashchange"));
     const detail = document.querySelector("article.finding-detail")!;
     expect(detail).not.toBeNull();
+    expect(detail.textContent).toContain("Already in the base");
     expect(detail.querySelector("img")).toBeNull();
     expect(detail.querySelector(`a[href^="javascript"]`)).toBeNull();
     location.hash = "";
