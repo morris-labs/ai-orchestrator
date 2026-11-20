@@ -5,6 +5,8 @@ import { dirname, join } from "node:path";
 import type { Vendor } from "@aio/contracts";
 import { describe, expect, it } from "vitest";
 import type { VendorAdapter } from "../../src/core.js";
+import { ExecaRunner } from "../../src/range/exec.js";
+import { Git } from "../../src/range/git.js";
 import { RunController } from "../../src/state/controller.js";
 import {
   mergeInto,
@@ -14,6 +16,7 @@ import {
   verifyPending,
 } from "../../src/state/steps.js";
 import { contextOf, makeRun } from "./harness.js";
+import { Scenario, buildSampleRepo } from "./scenario.js";
 
 const raw = [
   {
@@ -50,11 +53,10 @@ describe("mergeInto", () => {
     const { ctx, deps, repo } = await makeRun();
     ctx.state.round = 1;
     await ctx.persist();
+    const candidates = await toCandidates(ctx, raw, "reviewer", []);
     const persist = ctx.persist.bind(ctx);
     ctx.persist = () => Promise.reject(new Error("engine stopped"));
-    await expect(
-      mergeInto(ctx, await toCandidates(ctx, raw, "reviewer", []), "merge"),
-    ).rejects.toThrow();
+    await expect(mergeInto(ctx, candidates, "merge")).rejects.toThrow("engine stopped");
     ctx.persist = persist;
     const reloaded = contextOf(await RunController.load(ctx.state.id, { projectRoot: repo }, deps));
     expect(reloaded.findings).toHaveLength(0);
@@ -176,56 +178,46 @@ describe("runSweep", () => {
   it("hands a large diff to the sweeper in a file that holds the measured diff", async () => {
     const prompts: string[] = [];
     const extraDirs: (string[] | undefined)[] = [];
-    const sweeper = (vendor: Vendor): VendorAdapter =>
-      ({
-        vendor,
-        sweep: ({ prompt, extraDirs: dirs }: { prompt: string; extraDirs?: string[] }) => {
-          prompts.push(prompt);
-          extraDirs.push(dirs);
-          return Promise.resolve({
-            output: { findings: [] },
-            model: vendor,
-            sessionId: null,
-            tokens: { in: 1, out: 1 },
-            usage: [],
-            premiumRequests: 0,
-            costEstimate: 0,
-          });
-        },
-        detectLimit: () => null,
-      }) as unknown as VendorAdapter;
-    const { ctx, repo } = await makeRun({
-      adapters: { claude: sweeper("claude"), codex: sweeper("codex"), copilot: sweeper("copilot") },
-    });
+    const repo = buildSampleRepo();
+    const git = (...args: string[]) =>
+      execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trim();
     const commit = (path: string, content: string) => {
       writeFileSync(join(repo, path), content);
-      const git = (...args: string[]) =>
-        execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.com", ...args], {
-          cwd: repo,
-          encoding: "utf8",
-        });
       git("add", path);
-      git("commit", "-q", "-m", "change");
-      return git("rev-parse", "HEAD").trim();
+      git("commit", "-qm", "Add file");
     };
-    ctx.state.baseSha = await ctx.git.head();
-    // An upstream change sits between the base and the merge base.
-    ctx.eng.diffBaseSha = commit("upstream.txt", "upstream only\n");
+    const branchPoint = git("rev-parse", "main");
+    git("switch", "-qc", "advanced-main", "main");
+    commit("upstream.txt", "upstream only\n");
+    git("switch", "-q", "feature");
     const big = Array.from({ length: 40_000 }, (_, i) => `line ${i} of a large change`).join("\n");
-    ctx.state.tipSha = commit("big.txt", `${big}\n`);
-    ctx.state.round = 1;
-    await mergeInto(ctx, await toCandidates(ctx, raw, "reviewer", []), "merge");
-    const pattern = ctx.findingById("F-0001")!;
-    await ctx.setVerdict(pattern, "confirmed", { kind: "engine" } as never, "Seen.");
-    await runSweep(ctx, []);
-    const prompt = prompts[0] as string;
-    const path = ctx.store.path("rounds/1/sweep.diff");
+    commit("big.txt", `${big}\n`);
+    const tip = git("rev-parse", "HEAD");
+    const scenario = new Scenario();
+    const adapters = scenario.adapters();
+    for (const adapter of Object.values(adapters)) {
+      const sweep = adapter.sweep.bind(adapter);
+      adapter.sweep = (request) => {
+        prompts.push(request.prompt);
+        extraDirs.push(request.extraDirs);
+        return sweep(request);
+      };
+    }
+    const { run } = await makeRun({
+      repo,
+      adapters,
+      request: { base: "advanced-main", readOnly: true, roundCap: 1 },
+    });
+    await run.start();
+    expect(await run.settled()).toMatchObject({ status: "finished" });
+    const prompt = prompts[0]!;
+    const path = join(run.runDir, "rounds/1/sweep.diff");
     expect(prompt).toContain(path);
     expect(prompt).not.toContain("git -C");
     // The run store is outside the checkout, so the sweeper must be allowed to read it.
     expect(extraDirs[0]).toEqual([dirname(path)]);
     const written = readFileSync(path, "utf8");
-    expect(written).toBe(await ctx.git.diffForPrompt(ctx.eng.diffBaseSha, ctx.state.tipSha));
+    expect(written).toBe(await new Git(new ExecaRunner(), repo).diffForPrompt(branchPoint, tip));
     expect(written).not.toContain("upstream only");
   });
 });

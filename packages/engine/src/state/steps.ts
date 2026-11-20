@@ -441,7 +441,7 @@ async function runReviewTask(
   const diff = await ctx.git.diffForPrompt(diffBase, await diffTip(ctx), files);
   const repoPath = await readOnlyRepo(ctx);
   const prompt = finderPrompt({
-    range: { ...(await ctx.ensureReviewRange()).promptRange, repoPath },
+    range: { ...reviewRange.promptRange, repoPath },
     round: ctx.round,
     groupId: task.groupId,
     files,
@@ -1534,7 +1534,7 @@ export async function runSweep(
   const diffBase = reviewRange.changeBase;
   // The whole project doesn't fit a prompt, so a sweep of it reads the checkout.
   // Otherwise, excluded files stay out of the diff the sweep reads.
-  const diff = reviewsWholeProject(ctx)
+  const diff = reviewRange.wholeProject
     ? ""
     : await ctx.git.diffForPrompt(
         diffBase,
@@ -1967,7 +1967,7 @@ export async function runConfirm(
   const fixDiff = await ctx.git.diffForPrompt(fixRange.baseSha, fixRange.tipSha);
   const repoPath = await readOnlyRepo(ctx);
   const prompt = confirmerPrompt({
-    range: await ctx.range(repoPath),
+    range: { ...reviewRange.promptRange, ...fixRange, repoPath },
     findings: fixed,
     fixDiff,
     policySection: policyPromptSection(ctx.policy),
@@ -2046,7 +2046,7 @@ export async function runConfirm(
         f,
         "fixed",
         actor,
-        `Fixed in ${f.fixCommit ?? head}; the confirmer found the fix complete.`,
+        `Fixed in ${f.fixCommit ?? fixRange.tipSha}; the confirmer found the fix complete.`,
       );
       fixedIds.push(f.id);
     }

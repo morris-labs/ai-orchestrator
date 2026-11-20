@@ -57,6 +57,7 @@ describe("verification against the branch point", () => {
 
   it("keeps a round-one branch-added bug introduced when a standard round reviews only the fix", async () => {
     const repo = movedBaseRepo();
+    const originalTip = git(repo, "rev-parse", "HEAD");
     const scenario = selectedScenario(["B1", "B3"]);
     const later = scenario.bugs.find((bug) => bug.id === "B1")!;
     later.foundBy = [{ vendor: "any", round: 2, via: "review" }];
@@ -77,6 +78,11 @@ describe("verification against the branch point", () => {
       introduced: true,
       verification: "script",
     });
+    const firstFix = run.findings.find((item) => item.title.startsWith("bulk_discount"))?.fixCommit;
+    expect(firstFix).toMatch(/^[0-9a-f]{40}$/);
+    expect(
+      scenario.calls.find((call) => call.method === "review" && call.round === 2)?.prompt,
+    ).toContain(`${originalTip}..${firstFix}`);
     expect(finding?.fixCommit).toMatch(/^[0-9a-f]{40}$/);
     expect(
       scenario.calls.some(

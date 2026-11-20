@@ -94,6 +94,20 @@ describe("prompts", () => {
     expect(disprover).toContain('"presentAtBase"');
   });
 
+  it.each([true, false])(
+    "names the fix diff commits in confirm prompts (standard: %s)",
+    (standard) => {
+      const prompt = confirmerPrompt({
+        range,
+        findings: [finding],
+        fixDiff: "+return value",
+        policySection: "",
+        standard,
+      });
+      expect(prompt).toContain("Review the fix diff from aaaaaaa to bbbbbbb.");
+    },
+  );
+
   it("gives the fixer the gate failure on a retry", () => {
     expect(fixerPrompt({ range, findings: [finding], policySection: "" })).not.toContain(
       "## Gate failure",

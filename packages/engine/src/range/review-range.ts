@@ -107,7 +107,7 @@ export function reviewRangeSeed(input: Omit<ReviewRangeInput, "git" | "policy">)
     linesAt: tip,
     promptRange: {
       repoPath: request.repoPath,
-      baseSha: fixDiffOnly ? changeBase : resolved.baseSha,
+      baseSha: changeBase,
       tipSha: tip,
       tipRef: resolved.tipRef,
       ...(request.scope === "whole" && !fixDiffOnly ? { wholeProject: true } : {}),
@@ -155,6 +155,7 @@ export async function resolveReviewRange(input: ReviewRangeInput): Promise<Revie
     const head = await git.head();
     const commit = await git.snapshotWorktree(join(tmpdir(), `aio-index-range-${randomUUID()}`));
     range.tipCommit = commit;
+    range.promptRange.tipSha = commit;
     range.tipCheckout = { commit, head };
     range.linesAt = `worktree:${range.tipSha}:${commit}`;
   }

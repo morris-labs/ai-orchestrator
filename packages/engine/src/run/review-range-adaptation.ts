@@ -35,6 +35,7 @@ export function adaptEngineReviewRange(
     snapshot.data.key === `${state.round}:${state.tipSha}:true`
   ) {
     range.tipCommit = snapshot.data.commit;
+    range.promptRange.tipSha = snapshot.data.commit;
     range.tipCheckout = { commit: snapshot.data.commit, head: snapshot.data.head };
     range.linesAt = `worktree:${state.tipSha}:${snapshot.data.commit}`;
   }
