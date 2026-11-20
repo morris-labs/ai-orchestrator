@@ -54,7 +54,7 @@ import type { EngineState } from "../run/engine-state.js";
 import type { RunStore } from "../run/store.js";
 import { EngineCheckout, readOnlyCheckoutPath } from "./checkout.js";
 import { TreeGuard } from "./tree-guard.js";
-import { FALLBACK_ORDER } from "../verify/verify.js";
+import { baseWorktreePath, FALLBACK_ORDER } from "../verify/verify.js";
 import { assignRoles } from "./profiles.js";
 import type { RangeInfo } from "../prompts/templates.js";
 
@@ -227,6 +227,7 @@ export class RunContext {
    * `checkout.ts`). Steps move it with `readOnlyRepo()` in `steps.ts`.
    */
   readonly readOnlyCheckout: EngineCheckout;
+  readonly verificationCheckout: EngineCheckout;
   /** Serializes writes, since parallel agent calls update the same files. */
   private writeChain: Promise<void> = Promise.resolve();
   /** Serializes parallel callers while the saved range is being resolved. */
@@ -244,6 +245,7 @@ export class RunContext {
     this.git = new Git(deps.runner, state.request.repoPath);
     this.shell = deps.shellRunner ?? new ShellRunner(deps.runner);
     this.timeouts = { ...DEFAULT_TIMEOUTS, ...deps.timeouts };
+    this.verificationCheckout = new EngineCheckout(this.git, baseWorktreePath(state.id));
     this.readOnlyCheckout = new EngineCheckout(this.git, readOnlyCheckoutPath(state.id));
   }
 
@@ -328,13 +330,18 @@ export class RunContext {
       request: this.state.request,
       round: this.round,
       reviewedFrom: this.eng.reviewFrom,
+      preFixSha: this.eng.preFixSha,
       policy: this.policy,
       groupSizeLimit: this.extras.groupSizeLimit ?? undefined,
       now: () => this.clock.now(),
       saved: this.eng.reviewRange,
     };
     const key = reviewRangeSeed(input).key;
-    if (this.eng.reviewRange?.key === key && this.eng.reviewRange.grouped)
+    if (
+      this.eng.reviewRange?.key === key &&
+      this.eng.reviewRange.grouped &&
+      (this.eng.reviewRange.fixRange?.baseSha ?? null) === this.eng.preFixSha
+    )
       return Promise.resolve(this.eng.reviewRange);
     if (this.resolvingRange?.key === key) return this.resolvingRange.promise;
     const promise = (async () => {
@@ -352,16 +359,8 @@ export class RunContext {
     return promise;
   }
 
-  /** The run's range. `repoPath` overrides the repository path, such as for a read-only checkout. */
-  range(repoPath: string = this.state.request.repoPath): RangeInfo {
-    if (this.eng.reviewRange) return { ...this.eng.reviewRange.promptRange, repoPath };
-    return {
-      repoPath,
-      baseSha: this.state.baseSha ?? "",
-      tipSha: this.state.tipSha ?? "",
-      tipRef: this.eng.tipRef,
-      ...(this.state.request.scope === "whole" ? { wholeProject: true } : {}),
-    };
+  async range(repoPath: string = this.state.request.repoPath): Promise<RangeInfo> {
+    return { ...(await this.ensureReviewRange()).promptRange, repoPath };
   }
 
   nowIso(): string {

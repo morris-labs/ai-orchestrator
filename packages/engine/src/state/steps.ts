@@ -71,9 +71,7 @@ import {
   type VerifyBatch,
 } from "../verify/batch.js";
 import {
-  BaseWorktree,
   FALLBACK_ORDER,
-  baseWorktreePath,
   chooseDisprover,
   judgeAnswer,
   verifyFinding,
@@ -814,8 +812,6 @@ function avoidFor(f: Finding): Vendor[] {
   return reporter ? [reporter] : [];
 }
 
-const baseWorktrees = new WeakMap<RunContext, BaseWorktree>();
-
 /**
  * Runs `fn` in a new engine-owned checkout for one run of a reproduction
  * script, and removes the checkout afterwards. A script can write anything
@@ -837,23 +833,9 @@ async function inScriptCheckout<T>(
   }
 }
 
-export function baseWorktreeFor(ctx: RunContext): BaseWorktree {
-  if (ctx.cancelled) throw new RunCancelled();
-  let wt = baseWorktrees.get(ctx);
-  if (!wt) {
-    wt = new BaseWorktree(ctx.git, ctx.state.baseSha ?? "HEAD", baseWorktreePath(ctx.state.id));
-    baseWorktrees.set(ctx, wt);
-  }
-  return wt;
-}
-
-/** Removes the base checkout, if the run made one. */
+/** Removes the verifier checkout before changing the named base. */
 export async function disposeBaseWorktree(ctx: RunContext): Promise<void> {
-  const wt = baseWorktrees.get(ctx);
-  if (wt) {
-    baseWorktrees.delete(ctx);
-    await wt.dispose();
-  }
+  await ctx.verificationCheckout.dispose();
 }
 
 /** Removes every checkout the run made: the base, the read-only checkout, and script checkouts. */
@@ -1146,18 +1128,26 @@ export async function verifyPending(ctx: RunContext, stageFile: string): Promise
     (f) =>
       f.verdict === "pending" && f.unverifiedReason === undefined && f.followUpReason === undefined,
   );
+  const reviewRange = await ctx.ensureReviewRange();
   const repoPath = pending.length > 0 ? await readOnlyRepo(ctx) : ctx.state.request.repoPath;
-  const tipState = pending.length > 0 ? await readOnlyState(ctx) : null;
+  const base = reviewRange.verificationCheckout;
+  const baseWorktree = base ? { ensure: () => ctx.verificationCheckout.ensure(base) } : null;
   const groups = await roundGroups(ctx);
+  const verificationRange = {
+    ...reviewRange.promptRange,
+    repoPath,
+    baseSha: base?.commit ?? "",
+    wholeProject: !base,
+  };
   const deps = (id: string) => ({
     runner: ctx.deps.runner,
-    range: ctx.range(repoPath),
+    range: verificationRange,
     policy: ctx.policy,
-    baseWorktree: isWholeProject(ctx) ? null : baseWorktreeFor(ctx),
+    baseWorktree,
     signal: ctx.signal,
     inScriptCheckout: <T>(side: "tip" | "base", fn: (dir: string) => Promise<T>) => {
-      const base = ctx.state.baseSha ?? "HEAD";
-      const state = side === "tip" && tipState ? tipState : { commit: base, head: base };
+      const state = side === "tip" ? reviewRange.tipCheckout : base;
+      if (!state) throw new Error("This review range has no branch point.");
       return inScriptCheckout(ctx, `${id}-${side}`, state, fn);
     },
   });
@@ -1281,10 +1271,10 @@ export async function verifyPending(ctx: RunContext, stageFile: string): Promise
     const key = `verify-batch-${batchKey(batch.ids)}`;
     const scratchDir = ctx.store.scratchDir(`batch-${batchKey(batch.ids)}`);
     await mkdir(scratchDir, { recursive: true });
-    const baseDir = isWholeProject(ctx) ? null : await baseWorktreeFor(ctx).ensure();
+    const baseDir = (await baseWorktree?.ensure()) ?? null;
     const files = [...new Set(findings.flatMap((f) => (f.file ? [f.file] : [])))];
     const prompt = batchDisproverPrompt({
-      range: ctx.range(repoPath),
+      range: verificationRange,
       findings,
       related: relatedFindings(findings, ctx.findings),
       scratchDir,
@@ -1443,7 +1433,7 @@ export async function triageBelowFloor(ctx: RunContext): Promise<number> {
       return f && open.has(id) ? [f] : [];
     });
     if (findings.length === 0) continue;
-    const prompt = triagePrompt({ range: ctx.range(repoPath), findings });
+    const prompt = triagePrompt({ range: await ctx.range(repoPath), findings });
     try {
       const out = await callWithRefusalFallback<VerifyBatchOutput>(
         ctx,
@@ -1807,7 +1797,7 @@ export async function runFix(
       const before = start.before;
       const prompt = fixerPrompt({
         standard: runDepth(ctx.state.request) === "standard",
-        range: ctx.range(),
+        range: await ctx.range(),
         findings,
         gateFailure,
         policySection: policyPromptSection(
@@ -1953,7 +1943,8 @@ export async function runConfirm(
   const file = ctx.store.roundFile(ctx.round, "confirm");
   const saved = await ctx.store.readJson<ConfirmRecord>(file);
   if (saved) return saved;
-  const preFixSha = ctx.eng.preFixSha;
+  const reviewRange = await ctx.ensureReviewRange();
+  const fixRange = reviewRange.fixRange;
   // The findings to confirm are chosen once and saved before any verdict
   // changes: a stage that resumes after some verdicts were set would
   // otherwise find nothing left to confirm and skip the confirmer's
@@ -1961,23 +1952,22 @@ export async function runConfirm(
   const targetsFile = ctx.store.roundFile(ctx.round, "confirm-targets");
   let targets = await ctx.store.readJson<{ ids: string[] }>(targetsFile);
   if (!targets) {
-    const ids = preFixSha
+    const ids = fixRange
       ? ctx.findings.filter((f) => f.verdict === "confirmed" && f.fixCommit).map((f) => f.id)
       : [];
     targets = { ids };
     await ctx.store.writeJson(targetsFile, targets);
   }
   const fixed = targets.ids.flatMap((id) => ctx.findingById(id) ?? []);
-  if (fixed.length === 0 || !preFixSha) {
+  if (fixed.length === 0 || !fixRange) {
     const empty: ConfirmRecord = { confirmer: null, fixedIds: [], incomplete: [], created: [] };
     await ctx.store.writeJson(file, empty);
     return empty;
   }
-  const head = await ctx.git.head();
-  const fixDiff = await ctx.git.diffForPrompt(preFixSha, head);
+  const fixDiff = await ctx.git.diffForPrompt(fixRange.baseSha, fixRange.tipSha);
   const repoPath = await readOnlyRepo(ctx);
   const prompt = confirmerPrompt({
-    range: ctx.range(repoPath),
+    range: await ctx.range(repoPath),
     findings: fixed,
     fixDiff,
     policySection: policyPromptSection(ctx.policy),

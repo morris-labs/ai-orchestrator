@@ -430,7 +430,7 @@ export interface VerifyDeps {
   range: RangeInfo;
   policy: PolicyFile;
   /** The base checkout, or `null` when the run has no base to compare. */
-  baseWorktree: BaseWorktree | null;
+  baseWorktree: Pick<BaseWorktree, "ensure"> | null;
   scratchDirFor: (findingId: string) => string;
   timeoutMs: number;
   /**
@@ -515,7 +515,7 @@ export async function judgeAnswer(
   },
   scratchDir: string,
   deps: Pick<VerifyDeps, "runner" | "signal" | "inScriptCheckout"> & {
-    baseWorktree?: BaseWorktree | null;
+    baseWorktree?: Pick<BaseWorktree, "ensure"> | null;
   },
 ): Promise<VerifyResult> {
   let tipRun: ScriptRun | null = null;

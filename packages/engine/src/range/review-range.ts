@@ -23,6 +23,8 @@ export const ReviewRangeSchema = z.object({
   round: z.number().int().nonnegative(),
   namedBaseSha: z.string(),
   changeBase: z.string(),
+  branchDiffBase: z.string(),
+  verificationCheckout: z.object({ commit: z.string(), head: z.string() }).nullable(),
   branchPoint: z.string().nullable(),
   branchPointCheckout: z.object({ commit: z.string(), head: z.string() }).nullable(),
   tipSha: z.string(),
@@ -36,6 +38,7 @@ export const ReviewRangeSchema = z.object({
     tipRef: z.string().nullable(),
     wholeProject: z.boolean().optional(),
   }),
+  fixRange: z.object({ baseSha: z.string(), tipSha: z.string() }).nullable(),
   tipCheckout: z.object({ commit: z.string(), head: z.string() }),
   wholeProject: z.boolean(),
   fixDiffOnly: z.boolean(),
@@ -59,6 +62,7 @@ export interface ReviewRangeInput {
   round?: number;
   tipSha?: string;
   reviewedFrom?: string | null;
+  preFixSha?: string | null;
   groupSizeLimit?: number;
   now?: () => number;
   saved?: ReviewRange | null;
@@ -91,8 +95,15 @@ export function reviewRangeSeed(input: Omit<ReviewRangeInput, "git" | "policy">)
     round,
     namedBaseSha: resolved.baseSha,
     changeBase,
+    branchDiffBase: resolved.diffBaseSha,
+    verificationCheckout:
+      request.scope === "whole" ? null : { commit: resolved.baseSha, head: resolved.baseSha },
+    fixRange: input.preFixSha ? { baseSha: input.preFixSha, tipSha: tip } : null,
     branchPoint: request.scope === "whole" ? null : resolved.diffBaseSha,
-    branchPointCheckout: request.scope === "whole" ? null : { commit: resolved.diffBaseSha, head: resolved.diffBaseSha },
+    branchPointCheckout:
+      request.scope === "whole"
+        ? null
+        : { commit: resolved.diffBaseSha, head: resolved.diffBaseSha },
     tipSha: tip,
     tipCommit: tip,
     worktree,
@@ -119,10 +130,16 @@ export async function resolveReviewRange(input: ReviewRangeInput): Promise<Revie
   const { git, request, policy } = input;
   const seed = reviewRangeSeed(input);
   const saved = input.saved?.key === seed.key ? input.saved : null;
-  if (saved?.worktree && saved.tipCommit !== saved.tipSha && !(await git.tryRevParse(saved.tipCommit))) {
-    throw new Error(`The saved working-tree snapshot ${saved.tipCommit} is missing. Restore the Git objects or start another review.`);
+  if (
+    saved?.worktree &&
+    saved.tipCommit !== saved.tipSha &&
+    !(await git.tryRevParse(saved.tipCommit))
+  ) {
+    throw new Error(
+      `The saved working-tree snapshot ${saved.tipCommit} is missing. Restore the Git objects or start another review.`,
+    );
   }
-  if (saved?.grouped) return saved;
+  if (saved?.grouped) return { ...saved, fixRange: seed.fixRange };
   const range = saved ?? seed;
   range.branchPoint =
     request.scope === "whole"
@@ -134,7 +151,9 @@ export async function resolveReviewRange(input: ReviewRangeInput): Promise<Revie
           : (await git.ok(["merge-base", input.resolved.baseSha, input.resolved.tipSha]))
             ? await git.mergeBase(input.resolved.baseSha, input.resolved.tipSha)
             : null;
-  range.branchPointCheckout = range.branchPoint ? { commit: range.branchPoint, head: range.branchPoint } : null;
+  range.branchPointCheckout = range.branchPoint
+    ? { commit: range.branchPoint, head: range.branchPoint }
+    : null;
   if (range.worktree && (!saved || saved.tipCommit === saved.tipSha)) {
     const head = await git.head();
     const commit = await git.snapshotWorktree(join(tmpdir(), `aio-index-range-${randomUUID()}`));

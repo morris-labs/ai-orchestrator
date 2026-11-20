@@ -15,6 +15,7 @@ export function adaptEngineReviewRange(
     request: state.request,
     round: state.round,
     reviewedFrom: engine.reviewFrom,
+    preFixSha: engine.preFixSha,
     resolved: {
       baseRef: state.request.base,
       baseSha: state.baseSha,

@@ -444,9 +444,7 @@ export class EngineRunManager implements RunManager {
     if (!run || !finding) return null;
     const state = run.state;
     const git = new Git(this.engineDeps.runner, state.request.repoPath);
-    const store = new RunStore(this.deps.projectRoot, runId);
-    const diffBase = (await store.loadEngineState()).diffBaseSha ?? state.baseSha;
-    if (state.request.scope === "whole") await git.emptyBaseCommit().catch(() => undefined);
+    const range = await run.reviewRange().catch(() => null);
     const quiet = async (work: () => Promise<string>) => {
       try {
         const text = await work();
@@ -457,8 +455,8 @@ export class EngineRunManager implements RunManager {
     };
     const file = finding.file;
     const diff =
-      file && diffBase && state.tipSha
-        ? await quiet(() => git.diffForPrompt(diffBase, state.tipSha ?? null, [file]))
+      file && range?.branchDiffBase
+        ? await quiet(() => git.diffForPrompt(range.branchDiffBase, range.tipCommit, [file]))
         : null;
     const fixCommit = finding.fixCommit;
     const fixDiff = fixCommit

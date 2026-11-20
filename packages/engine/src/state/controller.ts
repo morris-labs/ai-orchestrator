@@ -214,6 +214,10 @@ export class RunController {
     return structuredClone(this.ctx.findings);
   }
 
+  reviewRange() {
+    return this.ctx.ensureReviewRange();
+  }
+
   async groups(): Promise<FileGroup[]> {
     return (await this.ctx.store.loadGroups()) ?? [];
   }
