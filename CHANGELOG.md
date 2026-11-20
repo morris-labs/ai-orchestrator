@@ -14,6 +14,8 @@ section's heading must have the form `## [X.Y.Z]`.
   Findings screen and exports label these findings **Already in the base**.
   Reproduction scripts still run at the base; file, symbol, blame, and word
   matching no longer override the verifier's origin label.
+- The verifier compares findings and runs reproduction scripts at the branch
+  point, including in rounds that review only the fix.
 
 ### Breaking changes
 

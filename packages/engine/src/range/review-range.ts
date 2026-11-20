@@ -24,7 +24,6 @@ export const ReviewRangeSchema = z.object({
   namedBaseSha: z.string(),
   changeBase: z.string(),
   branchDiffBase: z.string(),
-  verificationCheckout: z.object({ commit: z.string(), head: z.string() }).nullable(),
   branchPoint: z.string().nullable(),
   branchPointCheckout: z.object({ commit: z.string(), head: z.string() }).nullable(),
   tipSha: z.string(),
@@ -96,8 +95,6 @@ export function reviewRangeSeed(input: Omit<ReviewRangeInput, "git" | "policy">)
     namedBaseSha: resolved.baseSha,
     changeBase,
     branchDiffBase: resolved.diffBaseSha,
-    verificationCheckout:
-      request.scope === "whole" ? null : { commit: resolved.baseSha, head: resolved.baseSha },
     fixRange: input.preFixSha ? { baseSha: input.preFixSha, tipSha: tip } : null,
     branchPoint: request.scope === "whole" ? null : resolved.diffBaseSha,
     branchPointCheckout:

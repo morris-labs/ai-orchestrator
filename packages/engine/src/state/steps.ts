@@ -1130,7 +1130,7 @@ export async function verifyPending(ctx: RunContext, stageFile: string): Promise
   );
   const reviewRange = await ctx.ensureReviewRange();
   const repoPath = pending.length > 0 ? await readOnlyRepo(ctx) : ctx.state.request.repoPath;
-  const base = reviewRange.verificationCheckout;
+  const base = reviewRange.branchPointCheckout;
   const baseWorktree = base ? { ensure: () => ctx.verificationCheckout.ensure(base) } : null;
   const groups = await roundGroups(ctx);
   const verificationRange = {

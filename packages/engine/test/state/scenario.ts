@@ -163,7 +163,7 @@ export class Scenario {
 
   /** Records a call and applies the hang and limit options. */
   async enter(vendor: Vendor, method: keyof VendorAdapter, prompt: string): Promise<void> {
-    const round = /in round (\d+) of an automated review/.exec(prompt);
+    const round = /in round (\d+)(?: of (?:an automated review|the project)|:)/.exec(prompt);
     if (round) this.currentRound = Number(round[1]);
     this.calls.push({ vendor, method, round: round ? Number(round[1]) : null, prompt });
     const key = `${method}`;
@@ -215,7 +215,7 @@ function parseFiles(prompt: string): string[] {
         .split("\n")
         .map((l) => l.replace(/^- /, "").trim())
         .filter(Boolean)
-    : [];
+    : [...new Set(parseHunks(prompt).map((hunk) => hunk.file))];
 }
 
 function parseHunks(
@@ -382,7 +382,10 @@ export class ScenarioAdapter implements VendorAdapter {
 
   async verify(request: AdapterRequest): Promise<AdapterResult<VerifyOutput>> {
     await this.scenario.enter(this.vendor, "verify", request.prompt);
-    const title = /^Title: (.+)$/m.exec(request.prompt)?.[1] ?? "";
+    const title =
+      /^Title: (.+)$/m.exec(request.prompt)?.[1] ??
+      /^(?:### )?F-\d+\n[^\n]+\n([^\n]+)/m.exec(request.prompt)?.[1] ??
+      "";
     const bug = this.scenario.bugByTitle(title);
     if (!bug || bug.falsePositive) {
       return result(this.vendor, request.prompt, {
@@ -416,12 +419,10 @@ export class ScenarioAdapter implements VendorAdapter {
   async fix(request: AdapterRequest): Promise<AdapterResult<FixOutput>> {
     await this.scenario.enter(this.vendor, "fix", request.prompt);
     const retry = request.prompt.includes("## Gate failure");
-    const items = [...request.prompt.matchAll(/^- (F-\d+) \[(?:P1|P2|P3|nit)\] (.+?) \(/gm)].map(
-      (m) => ({
-        id: m[1] as string,
-        title: m[2] as string,
-      }),
-    );
+    const items = [
+      ...request.prompt.matchAll(/^- (F-\d+) \[(?:P1|P2|P3|nit)\] (.+?) \(/gm),
+      ...request.prompt.matchAll(/^- (F-\d+) (?:P1|P2|P3|nit) \S+ (.+)$/gm),
+    ].map((m) => ({ id: m[1]!, title: m[2]! }));
     const fixed: string[] = [];
     const notFixed: Array<{ id: string; reason: string }> = [];
     for (const item of items) {
