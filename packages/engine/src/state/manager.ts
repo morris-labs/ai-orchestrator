@@ -17,13 +17,9 @@ import {
   type RunState,
   type TimedUsageSample,
   type Vendor,
-  STANDARD_GROUP_SIZE_LIMIT,
   estimateRunTokens,
   runDepth,
 } from "@aio/contracts";
-import { randomUUID } from "node:crypto";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import {
   ACTIVE_RUN_STATUSES,
   EngineError,
@@ -36,16 +32,13 @@ import {
   type UsageFilter,
 } from "../api/core-interface.js";
 import type { EngineDeps } from "../core.js";
-import { selectFiles } from "../group/exclude.js";
-import { groupFiles } from "../group/group.js";
 import { globProblem } from "../policy/glob.js";
-import { assignTiers } from "../group/signals.js";
 import { PolicyError, loadPolicy, loadPolicyExtras } from "../policy/load.js";
 import { GhCliClient } from "../postpush/github.js";
-import { parseDiff } from "../range/diff.js";
 import { ExecaRunner } from "../range/exec.js";
 import { Git, GitError } from "../range/git.js";
 import { RangeError, resolveRange } from "../range/resolve.js";
+import { resolveReviewRange } from "../range/review-range.js";
 import { NewerRunStateError } from "../run/state-version.js";
 import { RunNotFoundError, RunStore, listRunIds } from "../run/store.js";
 import { loadTokenHistory } from "../run/token-history.js";
@@ -300,44 +293,18 @@ export class EngineRunManager implements RunManager {
         },
         github,
       );
-      const withWorktree = request.includeWorktree && range.includeWorktree;
-      const git = new Git(runner, request.repoPath);
-      // A snapshot commit of the working tree, as the run reviews it, so
-      // untracked files count too.
-      const tip = withWorktree
-        ? await git.snapshotWorktree(
-            join(tmpdir(), `aio-index-preview-${process.pid}-${randomUUID()}`),
-          )
-        : range.tipSha;
-      const whole = request.scope === "whole";
       const policy = await loadPolicy(this.location.projectRoot, this.location.policyPath);
       refuseBadExcludes(request.excludePaths);
-      // A whole-project diff needs only counts, so Git never prints the project.
-      const { files, excluded } = selectFiles(
-        whole
-          ? await git.addedFiles(range.diffBaseSha, tip)
-          : parseDiff(await git.diff(range.diffBaseSha, tip)),
-        request,
-        policy,
-      );
-      const depth = runDepth(request);
       const extras = await loadPolicyExtras(this.location.projectRoot, this.location.policyPath);
-      const grouped = await groupFiles(files, {
+      const { groups, excluded } = await resolveReviewRange({
+        git: new Git(runner, request.repoPath),
+        resolved: { ...range, includeWorktree: request.includeWorktree && range.includeWorktree },
+        request: { ...request, modelTier: request.modelTier ?? "auto" },
         policy,
-        readFile: (path) => git.show(tip, path),
-        ...(depth === "standard"
-          ? { coarse: true, sizeLimit: extras.groupSizeLimit ?? STANDARD_GROUP_SIZE_LIMIT }
-          : {}),
+        groupSizeLimit: extras.groupSizeLimit ?? undefined,
       });
-      const groups = await assignTiers(grouped, files, {
-        git,
-        policy,
-        diffBase: range.diffBaseSha,
-        tip,
-        choice: request.modelTier ?? "auto",
-        depth,
-        skipHistory: whole,
-      });
+      const depth = runDepth(request);
+      const whole = request.scope === "whole";
       const changedLines = groups.reduce((n, g) => n + g.changedLines, 0);
       const available = (["claude", "codex", "copilot"] as const).filter(
         (v) => this.deps.adapters[v],
