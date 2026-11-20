@@ -29,7 +29,8 @@ import {
   type Stage,
 } from "@aio/contracts";
 import { z } from "zod";
-import { EngineStateSchema, newEngineState, type EngineState } from "./engine-state.js";
+import { EngineStateSchema, type EngineState } from "./engine-state.js";
+import { adaptEngineReviewRange } from "./review-range-adaptation.js";
 import { adaptFindings, adaptRunState, CURRENT_RUN_STATE_VERSION } from "./state-version.js";
 import { appendJsonLine, readJson, writeJsonAtomic } from "./files.js";
 
@@ -111,7 +112,12 @@ export class RunStore {
   }
 
   async loadEngineState(): Promise<EngineState> {
-    return (await this.readJson("engine.json", EngineStateSchema)) ?? newEngineState();
+    const saved = await this.readJson<Record<string, unknown>>("engine.json");
+    const engine = EngineStateSchema.parse(saved ?? {});
+    const state = await this.readJson<unknown>("state.json");
+    return state
+      ? adaptEngineReviewRange(adaptRunState(state), engine, saved?.worktreeSnapshot)
+      : engine;
   }
 
   async saveFindings(findings: readonly Finding[]): Promise<void> {

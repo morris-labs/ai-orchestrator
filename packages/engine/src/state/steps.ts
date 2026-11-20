@@ -3,11 +3,9 @@
 // directory, and emits handoff events with counts.
 import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
   adaptLegacyFinding,
-  STANDARD_GROUP_SIZE_LIMIT,
   VENDOR_ROLES,
   belowVerifyFloor,
   runDepth,
@@ -36,9 +34,7 @@ import type {
   VerifyOutput,
 } from "../core.js";
 import { compareGate, formatRegressions, runGate, type GateRun } from "../gate/gate.js";
-import { hasExclusions, selectFiles } from "../group/exclude.js";
-import { groupFiles } from "../group/group.js";
-import { assignTiers } from "../group/signals.js";
+import { hasExclusions } from "../group/exclude.js";
 import { roleTier, tierRank, type TierChoice } from "../group/tier.js";
 import {
   hunksForFinding,
@@ -270,72 +266,20 @@ export function reviewsWorktree(ctx: RunContext): boolean {
   return resolved && ctx.round <= 1;
 }
 
-/**
- * The commit the diff ends at and files are read from: the tip SHA, or,
- * when the round reviews the working tree, the snapshot commit of it. The
- * snapshot holds the untracked files git doesn't ignore, which a diff to
- * the working tree leaves out.
- */
+/** Gets the saved commit whose files every stage reads. */
 async function diffTip(ctx: RunContext): Promise<string> {
-  if (reviewsWorktree(ctx)) return (await readOnlyState(ctx)).commit;
-  return ctx.state.tipSha ?? "HEAD";
+  return (await ctx.ensureReviewRange()).tipCommit;
 }
 
-/**
- * The code version that this stage's finding lines count in, for the
- * merge's `linesAt`: the tip SHA, or, when the round reviews uncommitted
- * changes, `worktree:TIP:SNAPSHOT` with the snapshot commit of the working
- * tree. Empty when the tip isn't known yet.
- */
+/** Gets the saved code version that finding lines refer to. */
 export async function linesVersion(ctx: RunContext): Promise<{ linesAt?: string }> {
-  const tip = ctx.state.tipSha;
-  if (!tip) return {};
-  if (!reviewsWorktree(ctx)) return { linesAt: tip };
-  // The snapshot commit pins the files the lines count in, which the
-  // working tree doesn't: a person or a fixer can change it later.
-  return { linesAt: `worktree:${tip}:${(await readOnlyState(ctx)).commit}` };
+  if (!ctx.state.tipSha) return {};
+  return { linesAt: (await ctx.ensureReviewRange()).linesAt };
 }
 
-/** The live state for one stage's read-only checkout, by run context. */
-const readOnlyStates = new WeakMap<RunContext, { key: string; state: Promise<CheckoutState> }>();
-
-/**
- * What a read-only call of the current round looks at: the tip commit, or,
- * when the round reviews the working tree, a snapshot commit of it with
- * `HEAD` at the tip, so the uncommitted changes show as uncommitted. The
- * snapshot is taken once per round and tip, and saved in the engine state,
- * so every stage and every parallel call sees the same files, even after a
- * restart, and the read-only checkout isn't rebuilt for each stage. A fix that commits moves the tip, which takes a
- * new snapshot.
- */
-function readOnlyState(ctx: RunContext): Promise<CheckoutState> {
-  const worktree = reviewsWorktree(ctx);
-  const key = `${ctx.round}:${ctx.state.tipSha ?? ""}:${worktree}`;
-  const cached = readOnlyStates.get(ctx);
-  if (cached?.key === key) return cached.state;
-  const state = (async (): Promise<CheckoutState> => {
-    if (!worktree) {
-      const tip = ctx.state.tipSha ?? (await ctx.git.head());
-      return { commit: tip, head: tip };
-    }
-    // An engine that restarts mid-round reuses the round's snapshot: the
-    // working tree can have changed since the reviewers read it.
-    const saved = ctx.eng.worktreeSnapshot;
-    if (saved?.key === key && (await ctx.git.tryRevParse(saved.commit))) {
-      return { commit: saved.commit, head: saved.head };
-    }
-    const head = await ctx.git.head();
-    const index = join(tmpdir(), `aio-index-${ctx.state.id}-${Date.now()}`);
-    const commit = await ctx.git.snapshotWorktree(index);
-    ctx.eng.worktreeSnapshot = { key, commit, head };
-    await ctx.persist();
-    return { commit, head };
-  })();
-  readOnlyStates.set(ctx, { key, state });
-  state.catch(() => {
-    if (readOnlyStates.get(ctx)?.state === state) readOnlyStates.delete(ctx);
-  });
-  return state;
+/** Gets the checkout state from the round's persisted range. */
+async function readOnlyState(ctx: RunContext): Promise<CheckoutState> {
+  return (await ctx.ensureReviewRange()).tipCheckout;
 }
 
 /**
@@ -350,97 +294,39 @@ export async function readOnlyRepo(ctx: RunContext): Promise<string> {
   return ctx.readOnlyCheckout.ensure(await readOnlyState(ctx));
 }
 
-/**
- * The commit the round's review diff starts from. At the `standard` depth,
- * round 2 and later review what changed after the last review, not the branch.
- */
-function reviewDiffBase(ctx: RunContext): string {
-  if (reviewsFixDiffOnly(ctx)) return ctx.eng.reviewFrom as string;
-  return ctx.eng.diffBaseSha ?? ctx.state.baseSha ?? "";
-}
-
-/** True when the round reviews only the change since the last review. */
-function reviewsFixDiffOnly(ctx: RunContext): boolean {
-  // A whole-project run never reviews the project twice, at any depth.
-  const narrows = runDepth(ctx.state.request) === "standard" || isWholeProject(ctx);
-  return narrows && ctx.round > 1 && !!ctx.eng.reviewFrom;
-}
-
 function isWholeProject(ctx: RunContext): boolean {
   return ctx.state.request.scope === "whole";
 }
 
-/** True when the round's diff is the whole project, not a fixer's diff. */
 function reviewsWholeProject(ctx: RunContext): boolean {
-  return isWholeProject(ctx) && !reviewsFixDiffOnly(ctx);
+  return ctx.eng.reviewRange?.wholeProject ?? isWholeProject(ctx);
 }
 
-/**
- * Recreates the empty base of a whole-project run, which no ref keeps. The
- * commit has a fixed SHA, so after a garbage collection the run goes on as if
- * nothing happened, and writing it again restarts the object's prune clock.
- */
+/** Recreates the deterministic empty base for a whole-project review. */
 export async function ensureWholeBase(ctx: RunContext): Promise<void> {
   if (isWholeProject(ctx)) await ctx.git.emptyBaseCommit();
 }
 
-/** The range of a round that reviews only the fixer's diff. */
-function fixDiffRange(ctx: RunContext, repoPath: string, diffBase: string) {
-  const { wholeProject: _wholeProject, ...range } = ctx.range(repoPath);
-  return { ...range, baseSha: diffBase };
-}
-
-/** Computes the file groups for the current tip. */
+/** Gets the groups selected by the shared review-range resolver. */
 export async function computeGroups(ctx: RunContext): Promise<FileGroup[]> {
-  const diffBase = reviewDiffBase(ctx);
-  const tip = await diffTip(ctx);
-  const depth = runDepth(ctx.state.request);
-  const standard = depth === "standard";
-  const wholeDiff = reviewsWholeProject(ctx);
-  await ensureWholeBase(ctx);
-  const { files, excluded } = selectFiles(
-    wholeDiff
-      ? await ctx.git.addedFiles(diffBase, tip)
-      : parseDiff(await ctx.git.diff(diffBase, tip)),
-    ctx.state.request,
-    ctx.policy,
-  );
-  if (excluded.length > 0) {
+  const range = await ctx.ensureReviewRange();
+  if (range.excluded.length)
     ctx.deps.log?.info?.("Left files out of the review", {
       runId: ctx.state.id,
       round: ctx.round,
-      count: excluded.length,
+      count: range.excluded.length,
     });
+  for (const group of range.groups) {
+    if (group.tier)
+      ctx.deps.log?.info?.("Chose a group's model tier", {
+        runId: ctx.state.id,
+        round: ctx.round,
+        groupId: group.id,
+        tier: group.tier,
+        reason: group.tierReason,
+      });
   }
-  const groups = await groupFiles(files, {
-    policy: ctx.policy,
-    readFile: (path) => ctx.git.show(tip, path),
-    ...(standard
-      ? { coarse: true, sizeLimit: ctx.extras.groupSizeLimit ?? STANDARD_GROUP_SIZE_LIMIT }
-      : {}),
-  });
-  const choice = ctx.state.request.modelTier;
-  if (!choice) return groups;
-  const tiered = await assignTiers(groups, files, {
-    git: ctx.git,
-    policy: ctx.policy,
-    diffBase,
-    tip,
-    choice,
-    depth,
-    skipHistory: wholeDiff,
-    now: () => ctx.clock.now(),
-  });
-  for (const g of tiered) {
-    ctx.deps.log?.info?.("Chose a group's model tier", {
-      runId: ctx.state.id,
-      round: ctx.round,
-      groupId: g.id,
-      tier: g.tier,
-      reason: g.tierReason,
-    });
-  }
-  return tiered;
+  return range.groups;
 }
 
 /**
@@ -551,12 +437,13 @@ async function runReviewTask(
   const files = group ? group.files : [...new Set(groups.flatMap((g) => g.files))];
   const hunks: Hunk[] = group ? group.hunks : groups.flatMap((g) => g.hunks);
   const standard = runDepth(ctx.state.request) === "standard";
-  const fixDiffOnly = reviewsFixDiffOnly(ctx);
-  const diffBase = reviewDiffBase(ctx);
+  const reviewRange = await ctx.ensureReviewRange();
+  const fixDiffOnly = reviewRange.fixDiffOnly;
+  const diffBase = reviewRange.changeBase;
   const diff = await ctx.git.diffForPrompt(diffBase, await diffTip(ctx), files);
   const repoPath = await readOnlyRepo(ctx);
   const prompt = finderPrompt({
-    range: fixDiffOnly ? fixDiffRange(ctx, repoPath, diffBase) : ctx.range(repoPath),
+    range: { ...(await ctx.ensureReviewRange()).promptRange, repoPath },
     round: ctx.round,
     groupId: task.groupId,
     files,
@@ -972,7 +859,6 @@ export async function disposeBaseWorktree(ctx: RunContext): Promise<void> {
 /** Removes every checkout the run made: the base, the read-only checkout, and script checkouts. */
 export async function disposeCheckouts(ctx: RunContext): Promise<void> {
   await disposeBaseWorktree(ctx);
-  readOnlyStates.delete(ctx);
   await ctx.readOnlyCheckout.dispose();
   await removeCheckout(ctx.git, scriptCheckoutsDir(ctx.state.id));
 }
@@ -1654,7 +1540,8 @@ export async function runSweep(
     return null;
   }
   const vendor = chooseSweeper(ctx.state.roles.reviewer);
-  const diffBase = reviewDiffBase(ctx);
+  const reviewRange = await ctx.ensureReviewRange();
+  const diffBase = reviewRange.changeBase;
   // The whole project doesn't fit a prompt, so a sweep of it reads the checkout.
   // Otherwise, excluded files stay out of the diff the sweep reads.
   const diff = reviewsWholeProject(ctx)
@@ -1669,7 +1556,7 @@ export async function runSweep(
   const repoPath = await readOnlyRepo(ctx);
   const promptInput = {
     standard: runDepth(ctx.state.request) === "standard",
-    range: reviewsFixDiffOnly(ctx) ? fixDiffRange(ctx, repoPath, diffBase) : ctx.range(repoPath),
+    range: { ...reviewRange.promptRange, repoPath },
     patterns,
     policySection: policyPromptSection(ctx.policy),
   };
