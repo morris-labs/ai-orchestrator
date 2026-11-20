@@ -1,4 +1,4 @@
-import { DEFAULT_POLICY, defaultConfig } from "@aio/contracts";
+import { DEFAULT_POLICY, defaultConfig, introducedLabel, VerdictSchema } from "@aio/contracts";
 import { describe, expect, it } from "vitest";
 import {
   canWaive,
@@ -186,6 +186,14 @@ describe("buildRunRequest", () => {
   });
 });
 
+describe("finding origin label", () => {
+  it("labels bugs already in the base without adding a separate verdict", () => {
+    expect(introducedLabel(false)).toBe("Already in the base");
+    expect(introducedLabel(null)).toMatch(/^Unknown/);
+    expect(VerdictSchema.options).toEqual(["pending", "confirmed", "disproved", "fixed", "waived"]);
+  });
+});
+
 describe("filterFindings", () => {
   const all = demoFindings();
   it.each([
@@ -205,7 +213,6 @@ describe("filterFindings", () => {
   it.each([
     ["pending", true],
     ["confirmed", true],
-    ["pre-existing", true],
     ["fixed", false],
     ["disproved", false],
     ["waived", false],

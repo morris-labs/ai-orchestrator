@@ -6,6 +6,19 @@ section's heading must have the form `## [X.Y.Z]`.
 
 ## [Unreleased]
 
+### Fixed
+
+- Review runs fix confirmed bugs that already exist at the base. The retired
+  `pre-existing` verdict becomes `confirmed` with `introduced: false` when
+  saved findings load, and the verdict trail keeps the retired verdict. The
+  Findings screen and exports label these findings **Already in the base**.
+  Reproduction scripts still run at the base; file, symbol, blame, and word
+  matching no longer override the verifier's origin label.
+- The verifier compares findings and runs reproduction scripts at the branch
+  point, including in rounds that review only the fix.
+- Review prompts name the commits used to build their diffs. The run preview
+  uses the same file groups and model tiers as round 1.
+
 ### Breaking changes
 
 - Boxes no longer use host vendor folders. An installation still configured

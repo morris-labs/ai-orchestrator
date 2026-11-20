@@ -3,10 +3,9 @@
 // directory, and emits handoff events with counts.
 import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
-  STANDARD_GROUP_SIZE_LIMIT,
+  adaptLegacyFinding,
   VENDOR_ROLES,
   belowVerifyFloor,
   runDepth,
@@ -35,9 +34,7 @@ import type {
   VerifyOutput,
 } from "../core.js";
 import { compareGate, formatRegressions, runGate, type GateRun } from "../gate/gate.js";
-import { hasExclusions, selectFiles } from "../group/exclude.js";
-import { groupFiles } from "../group/group.js";
-import { assignTiers } from "../group/signals.js";
+import { hasExclusions } from "../group/exclude.js";
 import { roleTier, tierRank, type TierChoice } from "../group/tier.js";
 import {
   hunksForFinding,
@@ -74,9 +71,7 @@ import {
   type VerifyBatch,
 } from "../verify/batch.js";
 import {
-  BaseWorktree,
   FALLBACK_ORDER,
-  baseWorktreePath,
   chooseDisprover,
   judgeAnswer,
   verifyFinding,
@@ -269,72 +264,20 @@ export function reviewsWorktree(ctx: RunContext): boolean {
   return resolved && ctx.round <= 1;
 }
 
-/**
- * The commit the diff ends at and files are read from: the tip SHA, or,
- * when the round reviews the working tree, the snapshot commit of it. The
- * snapshot holds the untracked files git doesn't ignore, which a diff to
- * the working tree leaves out.
- */
+/** Gets the saved commit whose files every stage reads. */
 async function diffTip(ctx: RunContext): Promise<string> {
-  if (reviewsWorktree(ctx)) return (await readOnlyState(ctx)).commit;
-  return ctx.state.tipSha ?? "HEAD";
+  return (await ctx.ensureReviewRange()).tipCommit;
 }
 
-/**
- * The code version that this stage's finding lines count in, for the
- * merge's `linesAt`: the tip SHA, or, when the round reviews uncommitted
- * changes, `worktree:TIP:SNAPSHOT` with the snapshot commit of the working
- * tree. Empty when the tip isn't known yet.
- */
+/** Gets the saved code version that finding lines refer to. */
 export async function linesVersion(ctx: RunContext): Promise<{ linesAt?: string }> {
-  const tip = ctx.state.tipSha;
-  if (!tip) return {};
-  if (!reviewsWorktree(ctx)) return { linesAt: tip };
-  // The snapshot commit pins the files the lines count in, which the
-  // working tree doesn't: a person or a fixer can change it later.
-  return { linesAt: `worktree:${tip}:${(await readOnlyState(ctx)).commit}` };
+  if (!ctx.state.tipSha) return {};
+  return { linesAt: (await ctx.ensureReviewRange()).linesAt };
 }
 
-/** The live state for one stage's read-only checkout, by run context. */
-const readOnlyStates = new WeakMap<RunContext, { key: string; state: Promise<CheckoutState> }>();
-
-/**
- * What a read-only call of the current round looks at: the tip commit, or,
- * when the round reviews the working tree, a snapshot commit of it with
- * `HEAD` at the tip, so the uncommitted changes show as uncommitted. The
- * snapshot is taken once per round and tip, and saved in the engine state,
- * so every stage and every parallel call sees the same files, even after a
- * restart, and the read-only checkout isn't rebuilt for each stage. A fix that commits moves the tip, which takes a
- * new snapshot.
- */
-function readOnlyState(ctx: RunContext): Promise<CheckoutState> {
-  const worktree = reviewsWorktree(ctx);
-  const key = `${ctx.round}:${ctx.state.tipSha ?? ""}:${worktree}`;
-  const cached = readOnlyStates.get(ctx);
-  if (cached?.key === key) return cached.state;
-  const state = (async (): Promise<CheckoutState> => {
-    if (!worktree) {
-      const tip = ctx.state.tipSha ?? (await ctx.git.head());
-      return { commit: tip, head: tip };
-    }
-    // An engine that restarts mid-round reuses the round's snapshot: the
-    // working tree can have changed since the reviewers read it.
-    const saved = ctx.eng.worktreeSnapshot;
-    if (saved?.key === key && (await ctx.git.tryRevParse(saved.commit))) {
-      return { commit: saved.commit, head: saved.head };
-    }
-    const head = await ctx.git.head();
-    const index = join(tmpdir(), `aio-index-${ctx.state.id}-${Date.now()}`);
-    const commit = await ctx.git.snapshotWorktree(index);
-    ctx.eng.worktreeSnapshot = { key, commit, head };
-    await ctx.persist();
-    return { commit, head };
-  })();
-  readOnlyStates.set(ctx, { key, state });
-  state.catch(() => {
-    if (readOnlyStates.get(ctx)?.state === state) readOnlyStates.delete(ctx);
-  });
-  return state;
+/** Gets the checkout state from the round's persisted range. */
+async function readOnlyState(ctx: RunContext): Promise<CheckoutState> {
+  return (await ctx.ensureReviewRange()).tipCheckout;
 }
 
 /**
@@ -349,97 +292,39 @@ export async function readOnlyRepo(ctx: RunContext): Promise<string> {
   return ctx.readOnlyCheckout.ensure(await readOnlyState(ctx));
 }
 
-/**
- * The commit the round's review diff starts from. At the `standard` depth,
- * round 2 and later review what changed after the last review, not the branch.
- */
-function reviewDiffBase(ctx: RunContext): string {
-  if (reviewsFixDiffOnly(ctx)) return ctx.eng.reviewFrom as string;
-  return ctx.eng.diffBaseSha ?? ctx.state.baseSha ?? "";
-}
-
-/** True when the round reviews only the change since the last review. */
-function reviewsFixDiffOnly(ctx: RunContext): boolean {
-  // A whole-project run never reviews the project twice, at any depth.
-  const narrows = runDepth(ctx.state.request) === "standard" || isWholeProject(ctx);
-  return narrows && ctx.round > 1 && !!ctx.eng.reviewFrom;
-}
-
 function isWholeProject(ctx: RunContext): boolean {
   return ctx.state.request.scope === "whole";
 }
 
-/** True when the round's diff is the whole project, not a fixer's diff. */
 function reviewsWholeProject(ctx: RunContext): boolean {
-  return isWholeProject(ctx) && !reviewsFixDiffOnly(ctx);
+  return ctx.eng.reviewRange?.wholeProject ?? isWholeProject(ctx);
 }
 
-/**
- * Recreates the empty base of a whole-project run, which no ref keeps. The
- * commit has a fixed SHA, so after a garbage collection the run goes on as if
- * nothing happened, and writing it again restarts the object's prune clock.
- */
+/** Recreates the deterministic empty base for a whole-project review. */
 export async function ensureWholeBase(ctx: RunContext): Promise<void> {
   if (isWholeProject(ctx)) await ctx.git.emptyBaseCommit();
 }
 
-/** The range of a round that reviews only the fixer's diff. */
-function fixDiffRange(ctx: RunContext, repoPath: string, diffBase: string) {
-  const { wholeProject: _wholeProject, ...range } = ctx.range(repoPath);
-  return { ...range, baseSha: diffBase };
-}
-
-/** Computes the file groups for the current tip. */
+/** Gets the groups selected by the shared review-range resolver. */
 export async function computeGroups(ctx: RunContext): Promise<FileGroup[]> {
-  const diffBase = reviewDiffBase(ctx);
-  const tip = await diffTip(ctx);
-  const depth = runDepth(ctx.state.request);
-  const standard = depth === "standard";
-  const wholeDiff = reviewsWholeProject(ctx);
-  await ensureWholeBase(ctx);
-  const { files, excluded } = selectFiles(
-    wholeDiff
-      ? await ctx.git.addedFiles(diffBase, tip)
-      : parseDiff(await ctx.git.diff(diffBase, tip)),
-    ctx.state.request,
-    ctx.policy,
-  );
-  if (excluded.length > 0) {
+  const range = await ctx.ensureReviewRange();
+  if (range.excluded.length)
     ctx.deps.log?.info?.("Left files out of the review", {
       runId: ctx.state.id,
       round: ctx.round,
-      count: excluded.length,
+      count: range.excluded.length,
     });
+  for (const group of range.groups) {
+    if (group.tier)
+      ctx.deps.log?.info?.("Chose a group's model tier", {
+        runId: ctx.state.id,
+        round: ctx.round,
+        groupId: group.id,
+        tier: group.tier,
+        reason: group.tierReason,
+      });
   }
-  const groups = await groupFiles(files, {
-    policy: ctx.policy,
-    readFile: (path) => ctx.git.show(tip, path),
-    ...(standard
-      ? { coarse: true, sizeLimit: ctx.extras.groupSizeLimit ?? STANDARD_GROUP_SIZE_LIMIT }
-      : {}),
-  });
-  const choice = ctx.state.request.modelTier;
-  if (!choice) return groups;
-  const tiered = await assignTiers(groups, files, {
-    git: ctx.git,
-    policy: ctx.policy,
-    diffBase,
-    tip,
-    choice,
-    depth,
-    skipHistory: wholeDiff,
-    now: () => ctx.clock.now(),
-  });
-  for (const g of tiered) {
-    ctx.deps.log?.info?.("Chose a group's model tier", {
-      runId: ctx.state.id,
-      round: ctx.round,
-      groupId: g.id,
-      tier: g.tier,
-      reason: g.tierReason,
-    });
-  }
-  return tiered;
+  return range.groups;
 }
 
 /**
@@ -550,12 +435,13 @@ async function runReviewTask(
   const files = group ? group.files : [...new Set(groups.flatMap((g) => g.files))];
   const hunks: Hunk[] = group ? group.hunks : groups.flatMap((g) => g.hunks);
   const standard = runDepth(ctx.state.request) === "standard";
-  const fixDiffOnly = reviewsFixDiffOnly(ctx);
-  const diffBase = reviewDiffBase(ctx);
+  const reviewRange = await ctx.ensureReviewRange();
+  const fixDiffOnly = reviewRange.fixDiffOnly;
+  const diffBase = reviewRange.changeBase;
   const diff = await ctx.git.diffForPrompt(diffBase, await diffTip(ctx), files);
   const repoPath = await readOnlyRepo(ctx);
   const prompt = finderPrompt({
-    range: fixDiffOnly ? fixDiffRange(ctx, repoPath, diffBase) : ctx.range(repoPath),
+    range: { ...reviewRange.promptRange, repoPath },
     round: ctx.round,
     groupId: task.groupId,
     files,
@@ -833,7 +719,7 @@ export async function mergeInto(
     await ctx.store.writeJson(file, commit);
   }
   if (!ctx.eng.appliedMerges.includes(file)) {
-    ctx.findings = commit.findings;
+    ctx.findings = commit.findings.map(adaptLegacyFinding);
     ctx.eng.counters.finding = Math.max(ctx.eng.counters.finding, commit.findingCounter);
     await ctx.persist();
     for (const id of commit.result.created) {
@@ -926,8 +812,6 @@ function avoidFor(f: Finding): Vendor[] {
   return reporter ? [reporter] : [];
 }
 
-const baseWorktrees = new WeakMap<RunContext, BaseWorktree>();
-
 /**
  * Runs `fn` in a new engine-owned checkout for one run of a reproduction
  * script, and removes the checkout afterwards. A script can write anything
@@ -949,29 +833,14 @@ async function inScriptCheckout<T>(
   }
 }
 
-export function baseWorktreeFor(ctx: RunContext): BaseWorktree {
-  if (ctx.cancelled) throw new RunCancelled();
-  let wt = baseWorktrees.get(ctx);
-  if (!wt) {
-    wt = new BaseWorktree(ctx.git, ctx.state.baseSha ?? "HEAD", baseWorktreePath(ctx.state.id));
-    baseWorktrees.set(ctx, wt);
-  }
-  return wt;
-}
-
-/** Removes the base checkout, if the run made one. */
+/** Removes the verifier checkout before changing the named base. */
 export async function disposeBaseWorktree(ctx: RunContext): Promise<void> {
-  const wt = baseWorktrees.get(ctx);
-  if (wt) {
-    baseWorktrees.delete(ctx);
-    await wt.dispose();
-  }
+  await ctx.verificationCheckout.dispose();
 }
 
 /** Removes every checkout the run made: the base, the read-only checkout, and script checkouts. */
 export async function disposeCheckouts(ctx: RunContext): Promise<void> {
   await disposeBaseWorktree(ctx);
-  readOnlyStates.delete(ctx);
   await ctx.readOnlyCheckout.dispose();
   await removeCheckout(ctx.git, scriptCheckoutsDir(ctx.state.id));
 }
@@ -1204,7 +1073,7 @@ async function followPrimaries(
     const last = [...primary.history].reverse().find((h) => h.verdict === primary.verdict);
     if (!last || last.actor.kind !== "agent" || last.actor.role !== "disprover") continue;
     const evidence = `The same root cause as ${primary.id}. ${primary.evidence}`;
-    const verdict = primary.verdict as "confirmed" | "disproved" | "pre-existing";
+    const verdict = primary.verdict as "confirmed" | "disproved";
     await ctx.setVerdict(finding, verdict, last.actor, evidence, {
       ...(primary.verification ? { verification: primary.verification } : {}),
       introduced: primary.introduced,
@@ -1232,9 +1101,7 @@ async function followPrimaries(
 }
 
 /**
- * `result` with the verdict that `finding` ended with. The engine can
- * overrule a disprover's verdict in `setVerdict`, and the stage file and
- * the fix handoff count must report what the finding holds.
+ * Return the applied verdict so stage records match the finding.
  */
 function asApplied(result: VerifyResult, finding: Finding): VerifyResult {
   const d = result.decision;
@@ -1261,18 +1128,26 @@ export async function verifyPending(ctx: RunContext, stageFile: string): Promise
     (f) =>
       f.verdict === "pending" && f.unverifiedReason === undefined && f.followUpReason === undefined,
   );
+  const reviewRange = await ctx.ensureReviewRange();
   const repoPath = pending.length > 0 ? await readOnlyRepo(ctx) : ctx.state.request.repoPath;
-  const tipState = pending.length > 0 ? await readOnlyState(ctx) : null;
+  const base = reviewRange.branchPointCheckout;
+  const baseWorktree = base ? { ensure: () => ctx.verificationCheckout.ensure(base) } : null;
   const groups = await roundGroups(ctx);
+  const verificationRange = {
+    ...reviewRange.promptRange,
+    repoPath,
+    baseSha: base?.commit ?? "",
+    wholeProject: !base,
+  };
   const deps = (id: string) => ({
     runner: ctx.deps.runner,
-    range: ctx.range(repoPath),
+    range: verificationRange,
     policy: ctx.policy,
-    baseWorktree: isWholeProject(ctx) ? null : baseWorktreeFor(ctx),
+    baseWorktree,
     signal: ctx.signal,
     inScriptCheckout: <T>(side: "tip" | "base", fn: (dir: string) => Promise<T>) => {
-      const base = ctx.state.baseSha ?? "HEAD";
-      const state = side === "tip" && tipState ? tipState : { commit: base, head: base };
+      const state = side === "tip" ? reviewRange.tipCheckout : base;
+      if (!state) throw new Error("This review range has no branch point.");
       return inScriptCheckout(ctx, `${id}-${side}`, state, fn);
     },
   });
@@ -1289,6 +1164,19 @@ export async function verifyPending(ctx: RunContext, stageFile: string): Promise
     return null;
   };
   const apply = async (finding: Finding, result: VerifyResult): Promise<VerifyResult> => {
+    // A saved verifier result can predate verdict retirement.
+    if ((result.decision.verdict as string) === "pre-existing") {
+      finding.history.push({
+        time: ctx.nowIso(),
+        verdict: "pre-existing",
+        actor: { kind: "agent", vendor: result.vendor, role: "disprover" },
+        evidence: result.decision.evidence,
+      });
+      result = {
+        ...result,
+        decision: { ...result.decision, verdict: "confirmed", introduced: false },
+      };
+    }
     const d = result.decision;
     if (d.verdict === "unverified") {
       // The finding stays pending: the run can't stop clean, and the next
@@ -1383,10 +1271,10 @@ export async function verifyPending(ctx: RunContext, stageFile: string): Promise
     const key = `verify-batch-${batchKey(batch.ids)}`;
     const scratchDir = ctx.store.scratchDir(`batch-${batchKey(batch.ids)}`);
     await mkdir(scratchDir, { recursive: true });
-    const baseDir = isWholeProject(ctx) ? null : await baseWorktreeFor(ctx).ensure();
+    const baseDir = (await baseWorktree?.ensure()) ?? null;
     const files = [...new Set(findings.flatMap((f) => (f.file ? [f.file] : [])))];
     const prompt = batchDisproverPrompt({
-      range: ctx.range(repoPath),
+      range: verificationRange,
       findings,
       related: relatedFindings(findings, ctx.findings),
       scratchDir,
@@ -1545,7 +1433,7 @@ export async function triageBelowFloor(ctx: RunContext): Promise<number> {
       return f && open.has(id) ? [f] : [];
     });
     if (findings.length === 0) continue;
-    const prompt = triagePrompt({ range: ctx.range(repoPath), findings });
+    const prompt = triagePrompt({ range: await ctx.range(repoPath), findings });
     try {
       const out = await callWithRefusalFallback<VerifyBatchOutput>(
         ctx,
@@ -1642,10 +1530,11 @@ export async function runSweep(
     return null;
   }
   const vendor = chooseSweeper(ctx.state.roles.reviewer);
-  const diffBase = reviewDiffBase(ctx);
+  const reviewRange = await ctx.ensureReviewRange();
+  const diffBase = reviewRange.changeBase;
   // The whole project doesn't fit a prompt, so a sweep of it reads the checkout.
   // Otherwise, excluded files stay out of the diff the sweep reads.
-  const diff = reviewsWholeProject(ctx)
+  const diff = reviewRange.wholeProject
     ? ""
     : await ctx.git.diffForPrompt(
         diffBase,
@@ -1657,7 +1546,7 @@ export async function runSweep(
   const repoPath = await readOnlyRepo(ctx);
   const promptInput = {
     standard: runDepth(ctx.state.request) === "standard",
-    range: reviewsFixDiffOnly(ctx) ? fixDiffRange(ctx, repoPath, diffBase) : ctx.range(repoPath),
+    range: { ...reviewRange.promptRange, repoPath },
     patterns,
     policySection: policyPromptSection(ctx.policy),
   };
@@ -1908,7 +1797,7 @@ export async function runFix(
       const before = start.before;
       const prompt = fixerPrompt({
         standard: runDepth(ctx.state.request) === "standard",
-        range: ctx.range(),
+        range: await ctx.range(),
         findings,
         gateFailure,
         policySection: policyPromptSection(
@@ -2054,7 +1943,8 @@ export async function runConfirm(
   const file = ctx.store.roundFile(ctx.round, "confirm");
   const saved = await ctx.store.readJson<ConfirmRecord>(file);
   if (saved) return saved;
-  const preFixSha = ctx.eng.preFixSha;
+  const reviewRange = await ctx.ensureReviewRange();
+  const fixRange = reviewRange.fixRange;
   // The findings to confirm are chosen once and saved before any verdict
   // changes: a stage that resumes after some verdicts were set would
   // otherwise find nothing left to confirm and skip the confirmer's
@@ -2062,23 +1952,22 @@ export async function runConfirm(
   const targetsFile = ctx.store.roundFile(ctx.round, "confirm-targets");
   let targets = await ctx.store.readJson<{ ids: string[] }>(targetsFile);
   if (!targets) {
-    const ids = preFixSha
+    const ids = fixRange
       ? ctx.findings.filter((f) => f.verdict === "confirmed" && f.fixCommit).map((f) => f.id)
       : [];
     targets = { ids };
     await ctx.store.writeJson(targetsFile, targets);
   }
   const fixed = targets.ids.flatMap((id) => ctx.findingById(id) ?? []);
-  if (fixed.length === 0 || !preFixSha) {
+  if (fixed.length === 0 || !fixRange) {
     const empty: ConfirmRecord = { confirmer: null, fixedIds: [], incomplete: [], created: [] };
     await ctx.store.writeJson(file, empty);
     return empty;
   }
-  const head = await ctx.git.head();
-  const fixDiff = await ctx.git.diffForPrompt(preFixSha, head);
+  const fixDiff = await ctx.git.diffForPrompt(fixRange.baseSha, fixRange.tipSha);
   const repoPath = await readOnlyRepo(ctx);
   const prompt = confirmerPrompt({
-    range: ctx.range(repoPath),
+    range: { ...reviewRange.promptRange, ...fixRange, repoPath },
     findings: fixed,
     fixDiff,
     policySection: policyPromptSection(ctx.policy),
@@ -2157,7 +2046,7 @@ export async function runConfirm(
         f,
         "fixed",
         actor,
-        `Fixed in ${f.fixCommit ?? head}; the confirmer found the fix complete.`,
+        `Fixed in ${f.fixCommit ?? fixRange.tipSha}; the confirmer found the fix complete.`,
       );
       fixedIds.push(f.id);
     }

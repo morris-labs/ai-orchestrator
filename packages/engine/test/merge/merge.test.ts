@@ -1,4 +1,4 @@
-import type { Finding, VendorFinding } from "@aio/contracts";
+import { adaptLegacyFinding, type Finding, type VendorFinding } from "@aio/contracts";
 import { describe, expect, it } from "vitest";
 import {
   enclosingSymbol,
@@ -238,6 +238,28 @@ describe("merge", () => {
     );
     expect(same.created).toEqual([]);
     expect(same.duplicates).toHaveLength(1);
+  });
+
+  it("merges a later candidate into a reopened finding instead of treating it as closed", () => {
+    const candidate = cand(raw("Cart loses the discount"), "codex-test");
+    const first = mergeCandidates([], [candidate], ctx()).findings[0]!;
+    const reopened = adaptLegacyFinding({ ...first, verdict: "pre-existing", introduced: false });
+    const later = mergeCandidates([reopened], [{ ...candidate, reportedBy: "copilot-test" }], {
+      ...ctx(),
+      round: 2,
+    });
+    expect(later.created).toEqual([]);
+    expect(later.known).toEqual([]);
+    expect(later.duplicates).toEqual([
+      { reportedBy: "copilot-test", title: "Cart loses the discount", into: first.id },
+    ]);
+    expect(later.findings).toHaveLength(1);
+    expect(later.findings[0]).toMatchObject({
+      id: first.id,
+      verdict: "confirmed",
+      introduced: false,
+    });
+    expect(findingsLog(later.findings)).toEqual([]);
   });
 
   it("builds the findings log from closed findings", () => {

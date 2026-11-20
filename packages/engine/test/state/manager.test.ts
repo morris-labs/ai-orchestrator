@@ -1,7 +1,7 @@
 // The run manager over real run controllers: a read-only run on the sample
 // repository with mock vendors through the adapter bridge, and the API
 // error mapping.
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { EventSchema, FindingSchema, RunStateSchema } from "@aio/contracts";
 import { beforeAll, describe, expect, it } from "vitest";
@@ -156,6 +156,41 @@ describe("EngineRunManager", () => {
     expect(preview.groups.length).toBeGreaterThan(0);
     expect(preview.changedLines).toBe(preview.groups.reduce((n, g) => n + g.changedLines, 0));
   });
+
+  it.each([
+    { scope: undefined, includeWorktree: false },
+    { scope: undefined, includeWorktree: true },
+    { scope: "whole", includeWorktree: false },
+    { scope: "whole", includeWorktree: true },
+  ] as const)(
+    "previews the groups and tiers for $scope scope with working tree $includeWorktree",
+    async (options) => {
+      const repoPath = buildSampleRepo();
+      const { runs } = manager(repoPath);
+      if (options.includeWorktree) {
+        writeFileSync(join(repoPath, "untracked.py"), "VALUE = 42\n");
+      }
+      const request = {
+        projectId: "sample",
+        depth: "thorough",
+        repoPath,
+        base: "origin/main",
+        readOnly: true,
+        roundCap: 1,
+        ...options,
+      };
+      const runId = uniqueRunId();
+      const preview = await runs.preview(request as never);
+      await runs.start({ ...request, runId } as never);
+      expect(await waitFor(runs, runId)).toMatchObject({ status: "finished" });
+      const groups = await runs.groups(runId);
+      expect(groups.length).toBeGreaterThan(0);
+      expect(preview.groups).toEqual(groups);
+      if (options.includeWorktree) {
+        expect(groups.flatMap((group) => group.files)).toContain("untracked.py");
+      }
+    },
+  );
 
   it("refuses a duplicate run id and actions on unknown runs", async () => {
     await expect(

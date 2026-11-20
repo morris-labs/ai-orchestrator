@@ -262,7 +262,7 @@ export interface VerdictDecision {
    * `unverified`: the disprover couldn't check the finding. The engine
    * leaves the finding pending, so it is verified again in the next round.
    */
-  verdict: "confirmed" | "disproved" | "pre-existing" | "unverified";
+  verdict: "confirmed" | "disproved" | "unverified";
   verification: "script" | "code-reading";
   /** `null` when the run has no base, so whether the flaw is new is unknown. */
   introduced: boolean | null;
@@ -331,11 +331,11 @@ export function disproofProblem(
  * `unverified` answer, or a `disproved` one that `disproofProblem()`
  * rejects, makes the finding `unverified`. Only a
  * script that reproduces the flaw at the tip counts as script verification,
- * and only then does the base run count: the flaw is pre-existing when the
+ * and only then does the base run count: the label marks the flaw as already in the base when the
  * script reproduces it at the base as well. A script that fails to run at
  * the tip leaves the verdict to the disprover's reading; one that fails to
  * run at the base leaves the finding introduced. A failed run never makes a
- * finding pre-existing.
+ * finding count as already in the base.
  */
 export function decideVerdict(
   output: VerifyOutput,
@@ -404,7 +404,13 @@ export function decideVerdict(
     }
   }
   if (presentAtBase) {
-    return { verdict: "pre-existing", verification, introduced: false, evidence: parts.join("\n") };
+    return {
+      verdict: "confirmed",
+      verification,
+      introduced: false,
+      evidence: parts.join("\n"),
+      ...(output.severity ? { severity: output.severity } : {}),
+    };
   }
   return {
     verdict: "confirmed",
@@ -424,7 +430,7 @@ export interface VerifyDeps {
   range: RangeInfo;
   policy: PolicyFile;
   /** The base checkout, or `null` when the run has no base to compare. */
-  baseWorktree: BaseWorktree | null;
+  baseWorktree: Pick<BaseWorktree, "ensure"> | null;
   scratchDirFor: (findingId: string) => string;
   timeoutMs: number;
   /**
@@ -509,7 +515,7 @@ export async function judgeAnswer(
   },
   scratchDir: string,
   deps: Pick<VerifyDeps, "runner" | "signal" | "inScriptCheckout"> & {
-    baseWorktree?: BaseWorktree | null;
+    baseWorktree?: Pick<BaseWorktree, "ensure"> | null;
   },
 ): Promise<VerifyResult> {
   let tipRun: ScriptRun | null = null;

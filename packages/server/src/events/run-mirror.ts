@@ -4,7 +4,7 @@
 // run and which box a run holds. It also keeps the latest state of every
 // finding, from `finding.changed` events.
 import {
-  FindingSchema,
+  adaptLegacyFinding,
   RunStateSchema,
   type Finding,
   type AioEvent,
@@ -101,7 +101,7 @@ export class RunMirror {
       this.db
         .prepare("SELECT json FROM svc_findings WHERE run_id = ? ORDER BY finding_id")
         .all(runId) as { json: string }[]
-    ).map((r) => FindingSchema.parse(JSON.parse(r.json)));
+    ).map((r) => adaptLegacyFinding(JSON.parse(r.json)));
   }
 
   get(runId: string): RunState | undefined {

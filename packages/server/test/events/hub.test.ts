@@ -232,7 +232,8 @@ describe("RunMirror", () => {
   });
 
   it("keeps the latest state of each finding from finding.changed events", () => {
-    const mirror = new RunMirror(openDatabase(":memory:"));
+    const db = openDatabase(":memory:");
+    const mirror = new RunMirror(db);
     const finding = FindingSchema.parse({
       id: "F-0001",
       fingerprint: "3f786850e387550fdab836ed7e6dc881de23001b",
@@ -276,5 +277,36 @@ describe("RunMirror", () => {
       ["F-0002", "disproved"],
     ]);
     expect(mirror.findings("01JB8Z5K3W6Q2V9X4T7R0M1N2Q")).toEqual([]);
+    const hub = new EventHub({ db });
+    const savedEvent = hub.relay(event(finding, 4));
+    db.prepare("UPDATE svc_events SET json = ? WHERE seq = ?").run(
+      JSON.stringify({
+        ...savedEvent,
+        previousVerdict: "pre-existing",
+        finding: { ...finding, verdict: "pre-existing" },
+      }),
+      savedEvent.seq,
+    );
+    const restarted = new EventHub({ db });
+    expect(
+      restarted.replay({ type: "hello", streamId: hub.streamId, lastSeq: 0 }).events,
+    ).toMatchObject([
+      { previousVerdict: "pre-existing", finding: { verdict: "confirmed", introduced: false } },
+    ]);
+
+    // A server can serve a mirrored run before its engine reconnects.
+    db.prepare(
+      "UPDATE svc_findings SET verdict = ?, json = ? WHERE run_id = ? AND finding_id = ?",
+    ).run(
+      "pre-existing",
+      JSON.stringify({ ...finding, verdict: "pre-existing", introduced: false }),
+      RUN,
+      finding.id,
+    );
+    expect(mirror.findings(RUN)[0]).toMatchObject({
+      verdict: "confirmed",
+      introduced: false,
+      history: expect.arrayContaining([expect.objectContaining({ verdict: "pre-existing" })]),
+    });
   });
 });

@@ -55,7 +55,7 @@ export interface MergeResult {
   created: string[];
   /** Candidates folded into a finding, with the finding's id. */
   duplicates: Array<{ reportedBy: string; title: string; into: string }>;
-  /** Candidates matching a disproved, pre-existing, or waived finding, which are not raised again. */
+  /** Candidates matching a disproved or waived finding, which are not raised again. */
   known: Array<{ reportedBy: string; title: string; matches: string }>;
   oscillations: Oscillation[];
   /** Share of created findings that more than one reviewer raised. */
@@ -197,9 +197,7 @@ export function mergeCandidates(
       continue;
     }
     const closed = findings.find(
-      (f) =>
-        (f.verdict === "disproved" || f.verdict === "pre-existing" || f.verdict === "waived") &&
-        sameIssue(f, cmp),
+      (f) => (f.verdict === "disproved" || f.verdict === "waived") && sameIssue(f, cmp),
     );
     if (closed) {
       known.push({
@@ -248,7 +246,7 @@ export function mergeCandidates(
 
 export interface FindingsLogEntry {
   id: string;
-  verdict: "fixed" | "disproved" | "pre-existing" | "waived";
+  verdict: "fixed" | "disproved" | "waived";
   severity: Severity;
   title: string;
   file: string | null;
@@ -260,12 +258,7 @@ export interface FindingsLogEntry {
 export function findingsLog(findings: readonly Finding[]): FindingsLogEntry[] {
   const out: FindingsLogEntry[] = [];
   for (const f of findings) {
-    if (
-      f.verdict !== "fixed" &&
-      f.verdict !== "disproved" &&
-      f.verdict !== "pre-existing" &&
-      f.verdict !== "waived"
-    ) {
+    if (f.verdict !== "fixed" && f.verdict !== "disproved" && f.verdict !== "waived") {
       continue;
     }
     const last = [...f.history].reverse().find((h) => h.verdict === f.verdict);

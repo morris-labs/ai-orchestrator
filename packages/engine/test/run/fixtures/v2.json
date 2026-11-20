@@ -1,0 +1,35 @@
+{
+  "id": "01JB0000000000000000000001",
+  "projectId": "p",
+  "container": "c",
+  "request": {
+    "projectId": "p",
+    "repoPath": "/repo",
+    "base": "origin/main",
+    "mergeBase": true,
+    "exactBase": false,
+    "pipeline": "pre-push",
+    "profile": "offload",
+    "readOnly": false,
+    "includeWorktree": false,
+    "crossVendor": true,
+    "roundCap": 25,
+    "overlapThreshold": 0.5,
+    "continuationCap": 3
+  },
+  "status": "paused",
+  "stage": "preflight",
+  "round": 0,
+  "profile": "offload",
+  "roles": {
+    "reviewer": ["codex"],
+    "disprover": "codex",
+    "confirmer": "codex",
+    "fixer": "claude"
+  },
+  "stopReason": null,
+  "decision": null,
+  "createdAt": "2026-10-28T09:00:00.000Z",
+  "updatedAt": "2026-10-28T09:00:00.000Z",
+  "stateVersion": 2
+}

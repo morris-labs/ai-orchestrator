@@ -411,7 +411,7 @@ export interface DisproverPromptInput {
   finding: Finding;
   /** Where the agent may write reproduction scripts. */
   scratchDir: string;
-  /** A checkout of the pinned base, for the pre-existing check. `null` in a whole-project run. */
+  /** A checkout of the pinned base, to check whether the flaw exists at the base. `null` in a whole-project run. */
   baseWorktree: string | null;
   policySection: string;
   /** Uses the compact prompt. */
@@ -485,7 +485,7 @@ export function disproverPrompt(input: DisproverPromptInput): string {
           ].join("\n")
         : [
             `The repository at the tip is ${input.range.repoPath}. Don't edit it.`,
-            `A checkout of the base (${input.range.baseSha}) is at ${input.baseWorktree}. Don't edit it.`,
+            `A checkout of the branch point (${input.range.baseSha}) is at ${input.baseWorktree}. Don't edit it.`,
             `Where you can, write a reproduction script in the scratch directory ${input.scratchDir}, the only place you may write. The script must exit 1 when the flaw reproduces and 0 when it doesn't, must let any other failure exit with a different code, and must take the repository directory as its first argument, so it runs against both checkouts.`,
             "The engine runs your script against the tip and the base; you might not be able to run it yourself. Return its path relative to the scratch directory, or `null` when you verified by reading the code. When you can't write the file, put its text in `script.content` and the engine writes it.",
             "Base your verdict and `presentAtBase` on your own reading too: a script that doesn't run counts for nothing.",
@@ -564,7 +564,7 @@ function terseVerifySteps(input: {
     ];
   }
   return [
-    `Tip: ${input.range.repoPath}. Base (${input.range.baseSha}): ${input.baseWorktree}. Don't edit either.`,
+    `Tip: ${input.range.repoPath}. Branch point (${input.range.baseSha}): ${input.baseWorktree}. Don't edit either.`,
     `Optional reproduction script: write it in ${input.scratchDir}, the only writable place, with a name unique to the finding. Exit 1 when the flaw reproduces, 0 when it doesn't, any other code otherwise. The first argument is the repository directory.`,
     "The engine runs the script at the tip and the base. Return its path relative to the scratch directory, or `null` for code reading. If you can't write the file, put its text in `script.content`.",
     "Base the verdict and `presentAtBase` on your own reading too: a script that doesn't run counts for nothing.",
@@ -676,7 +676,7 @@ export function confirmerPrompt(input: ConfirmerPromptInput): string {
         : `- ${f.id} ${location(f)} ${f.title}: ${f.failureCase}`,
     );
     return join([
-      `Another agent fixed these findings in ${input.range.repoPath}. Review the fix diff. You are read-only.`,
+      `Another agent fixed these findings in ${input.range.repoPath}. Review the fix diff from ${input.range.baseSha} to ${input.range.tipSha}. You are read-only.`,
       "- `incomplete`: each fix that doesn't remove the failure case.",
       "- `findings`: each P1 or P2 regression the fix introduced. A verifier checks them.",
       `- ${TERSE_RULE}`,
@@ -695,7 +695,7 @@ export function confirmerPrompt(input: ConfirmerPromptInput): string {
     )
     .join("\n");
   return join([
-    `Another agent fixed the findings below in ${input.range.repoPath}. Review the fix diff. You are read-only.`,
+    `Another agent fixed the findings below in ${input.range.repoPath}. Review the fix diff from ${input.range.baseSha} to ${input.range.tipSha}. You are read-only.`,
     "",
     "- List under `incomplete` every finding whose fix doesn't remove the failure case, with the reason.",
     input.standard

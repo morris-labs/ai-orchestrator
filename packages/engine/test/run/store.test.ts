@@ -1,6 +1,6 @@
 import { appendFileSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { RoundSummary, RunState } from "@aio/contracts";
+import { EventSchema, type RoundSummary, type RunState } from "@aio/contracts";
 import { describe, expect, it } from "vitest";
 import { newEngineState } from "../../src/run/engine-state.js";
 import { appendJsonLine, readJson, writeJsonAtomic } from "../../src/run/files.js";
@@ -93,6 +93,48 @@ describe("RunStore", () => {
     });
   }
 
+  it("reopens legacy findings and preserves their verdict history across a state-save interruption", async () => {
+    const store = new RunStore(tmp(), RUN_ID);
+    const saved = JSON.parse(
+      readFileSync(join(import.meta.dirname, "finding-fixtures/v1.json"), "utf8"),
+    );
+    await store.writeJson("findings.json", saved);
+    // The state write can finish before the findings write during a checkpoint.
+    await store.saveState(state());
+    const findings = await store.loadFindings();
+    expect(findings[0]).toMatchObject({ verdict: "confirmed", introduced: false });
+    expect(findings[0]?.history.map((h) => h.verdict)).toEqual(["pre-existing", "confirmed"]);
+    await store.saveFindings(findings);
+    expect(await store.loadFindings()).toEqual(findings);
+  });
+
+  it("replays legacy finding events with their historical previous verdict", async () => {
+    const store = new RunStore(tmp(), RUN_ID);
+    await store.saveState(state());
+    const [finding] = JSON.parse(
+      readFileSync(join(import.meta.dirname, "finding-fixtures/v1.json"), "utf8"),
+    );
+    const event = {
+      id: "legacy-event",
+      time: "2026-10-28T09:00:00.000Z",
+      source: "engine:test",
+      seq: 1,
+      sourceSeq: 1,
+      streamId: "legacy",
+      type: "finding.changed",
+      runId: RUN_ID,
+      finding,
+      previousVerdict: "pre-existing",
+    };
+    appendFileSync(store.path("events.jsonl"), JSON.stringify(event) + "\n");
+    const [replayed] = await store.loadEvents();
+    expect(EventSchema.safeParse(replayed).success).toBe(true);
+    expect(replayed).toMatchObject({
+      previousVerdict: "pre-existing",
+      finding: { verdict: "confirmed", introduced: false },
+    });
+  });
+
   it("refuses newer state before parsing it and leaves every saved byte intact", async () => {
     const store = new RunStore(tmp(), RUN_ID);
     await store.writeJson("state.json", { stateVersion: 99, futureState: true });
@@ -104,7 +146,7 @@ describe("RunStore", () => {
   it("records the current state version when saving a run", async () => {
     const store = new RunStore(tmp(), RUN_ID);
     await store.saveState(state());
-    expect(JSON.parse(readFileSync(store.path("state.json"), "utf8")).stateVersion).toBe(1);
+    expect(JSON.parse(readFileSync(store.path("state.json"), "utf8")).stateVersion).toBe(2);
   });
 
   it("keeps the run under .aio/runs/<id>", () => {

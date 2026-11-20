@@ -136,14 +136,14 @@ describe("decideVerdict", () => {
     expect(d).toMatchObject({ verdict: "confirmed", verification: "script", introduced: true });
   });
 
-  it("marks a flaw that reproduces at the base as pre-existing", () => {
+  it("confirms a flaw that reproduces at the base and labels its origin", () => {
     expect(decideVerdict(out({ script: { path: "r.py" } }), run(1), run(1))).toMatchObject({
-      verdict: "pre-existing",
+      verdict: "confirmed",
       introduced: false,
     });
     expect(
       decideVerdict(out({ verification: "code-reading", presentAtBase: true }), null, null).verdict,
-    ).toBe("pre-existing");
+    ).toBe("confirmed");
   });
 
   it("falls back to code reading when the script doesn't reproduce", () => {
@@ -311,7 +311,7 @@ describe("decideVerdict with failed scripts", () => {
   // handling of the failed runs can keep the finding introduced.
   const claimsBase = out({ script: { path: "r.sh" }, presentAtBase: true });
 
-  it("never makes a finding pre-existing because the script failed at the tip and the base", () => {
+  it("does not label a flaw as already in the base when its script cannot run", () => {
     const missing = ran(127, { notStarted: true });
     const d = decideVerdict(out({ script: { path: "r.sh" } }), missing, missing);
     expect(d).toMatchObject({
@@ -324,7 +324,7 @@ describe("decideVerdict with failed scripts", () => {
   it("leaves the base claim to the disprover's reading when the script failed at the tip", () => {
     const d = decideVerdict(claimsBase, ran(2), null);
     expect(d).toMatchObject({
-      verdict: "pre-existing",
+      verdict: "confirmed",
       verification: "code-reading",
       introduced: false,
     });
@@ -440,7 +440,7 @@ describe("verifyFinding", () => {
       "codex",
       deps({ path: "r.sh", interpreter: "sh", content: "exit 1\n" }, scratch, repo, base),
     );
-    expect(result?.decision).toMatchObject({ verdict: "pre-existing", verification: "script" });
+    expect(result?.decision).toMatchObject({ verdict: "confirmed", verification: "script" });
   });
 
   it("runs the script only in the engine's script checkouts, never in the checkout under review", async () => {
@@ -497,7 +497,7 @@ describe("decideVerdict with no base", () => {
   } as const;
   const reproduced = { exitCode: 1, timedOut: false, output: "" };
 
-  it("never gives pre-existing, whatever the disprover or a script says", () => {
+  it("keeps introduced unknown without a base, whatever the disprover or script reports", () => {
     expect(decideVerdict(confirmed, null, null, [], true)).toMatchObject({
       verdict: "confirmed",
       introduced: null,
@@ -509,6 +509,6 @@ describe("decideVerdict with no base", () => {
       introduced: null,
     });
     expect(scripted.evidence).not.toMatch(/base/);
-    expect(decideVerdict(confirmed, null, null, [], false).verdict).toBe("pre-existing");
+    expect(decideVerdict(confirmed, null, null, [], false).verdict).toBe("confirmed");
   });
 });

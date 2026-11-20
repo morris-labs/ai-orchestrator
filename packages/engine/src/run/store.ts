@@ -15,6 +15,7 @@
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import {
+  adaptLegacyFinding,
   FileGroupSchema,
   FindingSchema,
   RUNS_DIR,
@@ -28,8 +29,9 @@ import {
   type Stage,
 } from "@aio/contracts";
 import { z } from "zod";
-import { EngineStateSchema, newEngineState, type EngineState } from "./engine-state.js";
-import { adaptRunState, CURRENT_RUN_STATE_VERSION } from "./state-version.js";
+import { EngineStateSchema, type EngineState } from "./engine-state.js";
+import { adaptEngineReviewRange } from "./review-range-adaptation.js";
+import { adaptFindings, adaptRunState, CURRENT_RUN_STATE_VERSION } from "./state-version.js";
 import { appendJsonLine, readJson, writeJsonAtomic } from "./files.js";
 
 export class RunNotFoundError extends Error {
@@ -110,15 +112,31 @@ export class RunStore {
   }
 
   async loadEngineState(): Promise<EngineState> {
-    return (await this.readJson("engine.json", EngineStateSchema)) ?? newEngineState();
+    const saved = await this.readJson<Record<string, unknown>>("engine.json");
+    const engine = EngineStateSchema.parse(saved ?? {});
+    const state = await this.readJson<unknown>("state.json");
+    return state
+      ? adaptEngineReviewRange(adaptRunState(state), engine, saved?.worktreeSnapshot)
+      : engine;
   }
 
   async saveFindings(findings: readonly Finding[]): Promise<void> {
-    await this.writeJson("findings.json", z.array(FindingSchema).parse(findings));
+    await this.writeJson("findings.json", {
+      stateVersion: CURRENT_RUN_STATE_VERSION,
+      findings: z.array(FindingSchema).parse(findings),
+    });
   }
 
   async loadFindings(): Promise<Finding[]> {
-    return (await this.readJson("findings.json", z.array(FindingSchema))) ?? [];
+    const saved = await this.readJson<unknown>("findings.json");
+    if (saved === undefined) return [];
+    // Arrays predate finding versioning. Keep the version beside the findings
+    // so a checkpoint interruption cannot advance one file ahead of the other.
+    if (Array.isArray(saved)) return adaptFindings(saved, 1);
+    const versioned = z
+      .object({ stateVersion: z.number().int().positive(), findings: z.array(z.unknown()) })
+      .parse(saved);
+    return adaptFindings(versioned.findings, versioned.stateVersion);
   }
 
   async saveGroups(groups: readonly FileGroup[], round?: number): Promise<void> {
@@ -167,7 +185,9 @@ export class RunStore {
     for (const line of text.split("\n")) {
       if (line.trim() === "") continue;
       try {
-        events.push(JSON.parse(line) as AioEvent);
+        const event = JSON.parse(line);
+        if (event.type === "finding.changed") event.finding = adaptLegacyFinding(event.finding);
+        events.push(event as AioEvent);
       } catch {
         skipped += 1;
       }

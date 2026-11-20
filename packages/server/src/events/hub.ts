@@ -15,12 +15,31 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
   EventSchema,
+  adaptLegacyFinding,
   type AioEvent,
   type ClientHello,
   type EventType,
   type StreamHello,
 } from "@aio/contracts";
 import type { EventInput, EventSink, SqlDatabase } from "../api/core-interface.js";
+
+/** Applies finding compatibility when replaying events from an earlier server. */
+function parseStoredEvent(json: string): AioEvent {
+  const value: unknown = JSON.parse(json);
+  if (
+    value &&
+    typeof value === "object" &&
+    "type" in value &&
+    value.type === "finding.changed" &&
+    "finding" in value
+  ) {
+    return EventSchema.parse({
+      ...value,
+      finding: adaptLegacyFinding(value.finding),
+    });
+  }
+  return EventSchema.parse(value);
+}
 
 export type EventListener = (event: AioEvent) => void;
 
@@ -304,7 +323,7 @@ export class EventHub implements EventSink {
       )
       .all(...types, count) as { json: string }[];
     if (rows.length !== count) return null;
-    return rows.reverse().map((r) => EventSchema.parse(JSON.parse(r.json)));
+    return rows.reverse().map((r) => parseStoredEvent(r.json));
   }
 
   /** Every kept event after `seq`, or `null` when some of them are gone. */
@@ -317,6 +336,6 @@ export class EventHub implements EventSink {
       .prepare("SELECT seq, json FROM svc_events WHERE seq > ? ORDER BY seq")
       .all(seq) as { seq: number; json: string }[];
     if (rows.length === 0 || rows[0]?.seq !== seq + 1) return null;
-    return rows.map((r) => EventSchema.parse(JSON.parse(r.json)));
+    return rows.map((r) => parseStoredEvent(r.json));
   }
 }
