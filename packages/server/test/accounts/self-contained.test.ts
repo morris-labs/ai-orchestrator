@@ -84,6 +84,42 @@ describe("self-contained accounts", () => {
     h.core.close();
   });
 
+  it("relink keeps the links inside a copied folder as relative links in the account", () => {
+    const h = makeHarness({ accounts: false });
+    const view = h.core.accounts.create({ vendor: "claude", name: "nested" });
+    const host = path.join(h.home, ".claude");
+    const plugin = path.join(host, "plugins", "example");
+    write(path.join(plugin, "CLAUDE.md"), "plugin rules\n");
+    write(path.join(plugin, "lib", "tool.js"), "tool\n");
+    fs.symlinkSync("CLAUDE.md", path.join(plugin, "AGENTS.md"));
+    fs.mkdirSync(path.join(plugin, "bin"));
+    fs.symlinkSync(path.join(plugin, "lib", "tool.js"), path.join(plugin, "bin", "tool"));
+    fs.symlinkSync(path.join(host, "plugins"), path.join(view.dir, "plugins"));
+    const result = h.core.accounts.relink();
+    expect(result.accounts[0]?.config.errors).toEqual({});
+    const copy = path.join(view.dir, "plugins", "example");
+    expect(fs.readlinkSync(path.join(copy, "AGENTS.md"))).toBe("CLAUDE.md");
+    expect(fs.readlinkSync(path.join(copy, "bin", "tool"))).toBe(path.join("..", "lib", "tool.js"));
+    expect(fs.readFileSync(path.join(copy, "bin", "tool"), "utf8")).toBe("tool\n");
+    expect(() => h.core.accounts.prepareAccount("claude", "nested")).not.toThrow();
+    h.core.close();
+  });
+
+  it("repairs links that point at the host path of the account's own entries", () => {
+    const h = makeHarness({ accounts: false });
+    const view = h.core.accounts.create({ vendor: "claude", name: "mirrored" });
+    h.core.accounts.relink();
+    const host = path.join(h.home, ".claude");
+    write(path.join(host, "skills", "brief", "lib", "host.txt"), "host\n");
+    write(path.join(view.dir, "skills", "brief", "lib", "own.txt"), "own\n");
+    const link = path.join(view.dir, "skills", "brief", "lib64");
+    fs.symlinkSync(path.join(host, "skills", "brief", "lib"), link);
+    expect(() => h.core.accounts.prepareAccount("claude", "mirrored")).not.toThrow();
+    expect(fs.readlinkSync(link)).toBe("lib");
+    expect(fs.readdirSync(link)).toEqual(["own.txt"]);
+    h.core.close();
+  });
+
   it("reports legacy host links without asking the vendor to read them, and refuses prepare until relink", async () => {
     const h = makeHarness({ accounts: false });
     const account = h.core.accounts.create({ vendor: "claude", name: "legacy" });

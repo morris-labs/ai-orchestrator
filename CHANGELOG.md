@@ -8,6 +8,7 @@ section's heading must have the form `## [X.Y.Z]`.
 
 ### Fixed
 
+- `aio accounts relink` keeps the links inside a copied folder, such as a plugin's `node_modules/.bin` entries, as relative links in the account. Earlier versions turned them into links to the host's vendor folder, which then blocked the account with "Legacy host configuration links need conversion". The server repairs such links by itself when the account has its own copy of the target.
 - Review runs fix confirmed bugs that already exist at the base. The retired
   `pre-existing` verdict becomes `confirmed` with `introduced: false` when
   saved findings load, and the verdict trail keeps the retired verdict. The
