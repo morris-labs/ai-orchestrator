@@ -61,7 +61,7 @@ import {
   protectedRetentionDays,
   retentionWarnings,
 } from "./retention.js";
-import { copyLinkedConfig, hostConfigLinks } from "./userConfig.js";
+import { copyLinkedConfig, hostConfigLinks, repairMirroredLinks } from "./userConfig.js";
 import {
   hostProjectsRoot,
   linkProjectsToStore,
@@ -199,9 +199,24 @@ export class AccountService {
     }
   }
 
-  private legacyLinks(dir: string): string[] {
+  /**
+   * The account's links into host vendor folders, after repairing those that
+   * only stand in for the account's own entries.
+   */
+  private legacyLinks(dir: string, vendor: Platform): string[] {
     const host = homePaths(this.env);
+    repairMirroredLinks(dir, this.mirrorOf(vendor));
     return hostConfigLinks(dir, [host.claudeDir, host.claudeJson, host.codexDir, host.copilotDir]);
+  }
+
+  /** The host vendor folder whose path leads to an account of `vendor` inside a box. */
+  private mirrorOf(vendor: Platform): string {
+    const host = homePaths(this.env);
+    return vendor === "claude"
+      ? host.claudeDir
+      : vendor === "codex"
+        ? host.codexDir
+        : host.copilotDir;
   }
 
   private relinkNotice(links: readonly string[]): string {
@@ -226,7 +241,7 @@ export class AccountService {
     const dir = this.dirOf(vendor, account.name);
     if (!isDirectory(dir))
       throw new ApiError("not_found", `The account folder ${dir} doesn't exist.`);
-    const links = this.legacyLinks(dir);
+    const links = this.legacyLinks(dir, vendor);
     if (links.length) throw new ApiError("invalid_state", this.relinkNotice(links));
     if (vendor === "claude" && projectsLinkState(dir, this.storeRoot()) !== "ok") {
       throw new ApiError(
@@ -315,12 +330,12 @@ export class AccountService {
       const dir = this.dirOf(a.vendor, a.name);
       if (!isDirectory(dir)) continue;
       const host = homePaths(this.env);
-      const config = copyLinkedConfig(dir, [
-        host.claudeDir,
-        host.claudeJson,
-        host.codexDir,
-        host.copilotDir,
-      ]);
+      const config = copyLinkedConfig(
+        dir,
+        [host.claudeDir, host.claudeJson, host.codexDir, host.copilotDir],
+        undefined,
+        this.mirrorOf(a.vendor),
+      );
       this.ensureInstructions(a.vendor, dir);
       const before = a.vendor === "claude" ? projectsLinkState(dir, store.root) : "missing";
       const outcome = a.vendor === "claude" ? linkProjectsToStore(dir, store.root) : "unchanged";
@@ -371,7 +386,7 @@ export class AccountService {
   view(account: Account): AccountView {
     const dir = this.dirOf(account.vendor, account.name);
     const dirExists = isDirectory(dir);
-    const links = dirExists ? this.legacyLinks(dir) : [];
+    const links = dirExists ? this.legacyLinks(dir, account.vendor) : [];
     const warnings: string[] = links.length ? [this.relinkNotice(links)] : [];
     if (account.vendor === "claude" && dirExists && !links.length) {
       const store = this.storeRoot();
@@ -626,7 +641,7 @@ export class AccountService {
     const account = this.get(id);
     const dir = this.dirOf(account.vendor, account.name);
     if (!isDirectory(dir)) throw new ApiError("conflict", `The folder ${dir} doesn't exist.`);
-    if (this.legacyLinks(dir).length) return this.view(account);
+    if (this.legacyLinks(dir, account.vendor).length) return this.view(account);
     const checkedAt = this.env.now().toISOString();
     const command = signInStatusCommand(account.vendor);
     let signIn: AccountSignIn = { state: "unknown", checkedAt };
