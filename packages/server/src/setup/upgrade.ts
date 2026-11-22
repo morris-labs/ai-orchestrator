@@ -8,6 +8,11 @@ import type { Core } from "../api/core-interface.js";
 const RecordSchema = UpgradePreviewSchema.extend({
   runs: z.array(z.object({ run_id: z.string(), name: z.string(), projectId: z.string() })),
   phase: z.enum(["prepared", "recovery"]).default("prepared"),
+  /**
+   * Projects whose containers the upgrade recreated on the built image. A
+   * record from an older version has none, and its recovery recreates nothing.
+   */
+  recreated: z.array(z.string()).optional(),
 });
 type OpenWork = z.infer<typeof RecordSchema>;
 
@@ -49,18 +54,50 @@ export function imageBuildFailureMessage(
   return file ? `${cause.replace(/\.$/, "")}. The full build log is in ${file}.` : cause;
 }
 
+/** How long an image build can go without output before the upgrade stops it. */
+export const DEFAULT_BUILD_STALL_MS = 600_000;
+/** The restore time every upgrade gets, plus the time per project, box, and run. */
+export const RESTORE_BASE_MS = 120_000;
+export const RESTORE_PER_ITEM_MS = 60_000;
+
 export interface UpgradeOptions {
   core: Core;
   recordFile: string;
-  build(signal?: AbortSignal): Promise<"latest" | "pinned">;
+  /**
+   * Builds the image. The build calls `progress` with each line of output;
+   * a build that stays silent for `buildStallMs` is stopped.
+   */
+  build(signal?: AbortSignal, progress?: (line: string) => void): Promise<"latest" | "pinned">;
   runs(): { id: string; projectId: string; status: string }[];
   resume(projectId: string, runId: string, signal?: AbortSignal): Promise<void>;
-  timeoutMs?: number;
+  /**
+   * Whether the image already carries the engine this server expects. A
+   * retry after a successful build skips the build when it does.
+   */
+  imageCurrent?(): Promise<boolean>;
+  /** Default: `DEFAULT_BUILD_STALL_MS`. */
+  buildStallMs?: number;
+  /**
+   * The time for recreating containers and restoring boxes and runs.
+   * Default: `RESTORE_BASE_MS` plus `RESTORE_PER_ITEM_MS` for each project,
+   * box, and run.
+   */
+  restoreTimeoutMs?: number;
   log?: (message: string) => void;
 }
 export class UpgradeService {
   private active: Promise<UpgradeReport> | null = null;
+  private currentStage: "building" | "restoring" | null = null;
+  private lastBuildLine: string | null = null;
   constructor(private readonly opts: UpgradeOptions) {}
+  /** What a running upgrade is doing, or null when none runs. */
+  get stage(): "building" | "restoring" | null {
+    return this.active ? this.currentStage : null;
+  }
+  /** The last line the running upgrade's image build printed. */
+  get buildLine(): string | null {
+    return this.stage === "building" ? this.lastBuildLine : null;
+  }
   get hasOpenWork(): boolean {
     return fs.existsSync(this.opts.recordFile);
   }
@@ -91,6 +128,10 @@ export class UpgradeService {
     const existing = this.hasOpenWork ? this.readRecord() : null;
     const work = await this.snapshot();
     if (existing) {
+      // A retry after a successful build keeps its place, so it doesn't build
+      // again or recreate the containers it already recreated.
+      work.phase = existing.phase;
+      if (existing.recreated) work.recreated = existing.recreated;
       work.boxes = [
         ...existing.boxes,
         ...work.boxes.filter((box) => !existing.boxes.some((b) => b.id === box.id)),
@@ -120,6 +161,42 @@ export class UpgradeService {
     if (boxes.length === work.boxes.length && runs.length === work.runs.length) return;
     this.writeRecord({ ...work, boxes, runs });
   }
+  /**
+   * Runs the image build for as long as it keeps printing, and stops it once
+   * it stays silent for the stall window.
+   */
+  private async buildWatched(): Promise<"latest" | "pinned"> {
+    const stallMs = this.opts.buildStallMs ?? DEFAULT_BUILD_STALL_MS;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let stalled: (err: Error) => void = () => {};
+    const stall = new Promise<never>((_, reject) => {
+      stalled = reject;
+    });
+    const arm = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        controller.abort();
+        const minutes = Math.round(stallMs / 60_000);
+        stalled(
+          new Error(
+            `The image build printed nothing for ${minutes >= 1 ? `${minutes} minutes` : `${stallMs} ms`}, so the upgrade stopped it.`,
+          ),
+        );
+      }, stallMs);
+    };
+    const progress = (line: string) => {
+      const text = line.trim();
+      if (text) this.lastBuildLine = text;
+      arm();
+    };
+    arm();
+    try {
+      return await Promise.race([this.opts.build(controller.signal, progress), stall]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
   private readRecord(): OpenWork {
     return RecordSchema.parse(JSON.parse(fs.readFileSync(this.opts.recordFile, "utf8")));
   }
@@ -133,33 +210,14 @@ export class UpgradeService {
     if (this.active) return this.active;
     this.active = this.run().finally(() => {
       this.active = null;
+      this.currentStage = null;
+      this.lastBuildLine = null;
     });
     return this.active;
   }
   private async run(): Promise<UpgradeReport> {
     if (!this.hasOpenWork) await this.prepare();
     const work = this.readRecord();
-    const controller = new AbortController();
-    const deadline = Date.now() + (this.opts.timeoutMs ?? 300_000);
-    const withinDeadline = async <T>(operation: Promise<T>): Promise<T> => {
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      try {
-        return await Promise.race([
-          operation,
-          new Promise<never>((_, reject) => {
-            timer = setTimeout(
-              () => {
-                controller.abort();
-                reject(new Error("Upgrade time limit reached"));
-              },
-              Math.max(1, deadline - Date.now()),
-            );
-          }),
-        ]);
-      } finally {
-        clearTimeout(timer);
-      }
-    };
     const report: UpgradeReport = {
       image: "failed",
       fallback: false,
@@ -167,11 +225,16 @@ export class UpgradeService {
       boxes: [],
       runs: [],
     };
-    const failures = new Map<string, string>();
+    if (work.phase === "recovery" && this.opts.imageCurrent && !(await this.opts.imageCurrent())) {
+      // The record outlived its build: a newer package needs a new image.
+      work.phase = "prepared";
+      delete work.recreated;
+    }
     if (work.phase === "prepared") {
+      this.currentStage = "building";
       this.opts.log?.("Upgrading: building the image");
       try {
-        report.image = await withinDeadline(this.opts.build(controller.signal));
+        report.image = await this.buildWatched();
         report.fallback = report.image === "pinned";
       } catch (err) {
         report.error = String((err as Error).message);
@@ -192,19 +255,54 @@ export class UpgradeService {
         ...current.runs.filter((run) => !work.runs.some((r) => r.run_id === run.run_id)),
       );
       work.phase = "recovery";
+      work.recreated = [];
       this.writeRecord(work);
-      for (const { project } of await this.opts.core.projects.list()) {
-        try {
-          if (Date.now() >= deadline) throw new Error("Upgrade time limit reached");
-          if (!this.opts.core.projects.recreateContainer)
-            throw new Error("Container recreation is unavailable");
-          await withinDeadline(this.opts.core.projects.recreateContainer(project.id));
-        } catch (err) {
-          failures.set(project.id, String((err as Error).message));
-        }
-      }
     } else {
       report.image = "latest";
+    }
+
+    this.currentStage = "restoring";
+    const projects = await this.opts.core.projects.list();
+    const toRecreate = work.recreated
+      ? projects.filter(({ project }) => !work.recreated?.includes(project.id))
+      : [];
+    const controller = new AbortController();
+    const deadline =
+      Date.now() +
+      (this.opts.restoreTimeoutMs ??
+        RESTORE_BASE_MS +
+          RESTORE_PER_ITEM_MS * (toRecreate.length + work.boxes.length + work.runs.length));
+    const withinDeadline = async <T>(operation: Promise<T>): Promise<T> => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        return await Promise.race([
+          operation,
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(
+              () => {
+                controller.abort();
+                reject(new Error("Upgrade time limit reached"));
+              },
+              Math.max(1, deadline - Date.now()),
+            );
+          }),
+        ]);
+      } finally {
+        clearTimeout(timer);
+      }
+    };
+    const failures = new Map<string, string>();
+    for (const { project } of toRecreate) {
+      try {
+        if (Date.now() >= deadline) throw new Error("Upgrade time limit reached");
+        if (!this.opts.core.projects.recreateContainer)
+          throw new Error("Container recreation is unavailable");
+        await withinDeadline(this.opts.core.projects.recreateContainer(project.id));
+        work.recreated = [...(work.recreated ?? []), project.id];
+        this.writeRecord(work);
+      } catch (err) {
+        failures.set(project.id, String((err as Error).message));
+      }
     }
     for (const box of [...work.boxes]) {
       let reason: string | null = null;

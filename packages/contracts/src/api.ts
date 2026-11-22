@@ -603,6 +603,10 @@ export type UpgradeReport = z.infer<typeof UpgradeReportSchema>;
 export const ImageStatusSchema = z.object({
   upgrading: z.boolean().optional(),
   buildLogJobId: z.string().nullable().optional(),
+  /** What a running upgrade is doing: building the image or restoring open work. */
+  upgradeStage: z.enum(["building", "restoring"]).nullable().optional(),
+  /** The last line the upgrade's image build printed. */
+  buildLine: z.string().nullable().optional(),
   name: z.string().min(1),
   exists: z.boolean(),
   imageId: z.string().nullable(),

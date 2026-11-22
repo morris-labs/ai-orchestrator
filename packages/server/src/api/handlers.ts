@@ -440,6 +440,8 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
     "image.status": async () => ({
       ...(await core.image.status()),
       upgrading: deps.upgrade?.upgrading ?? false,
+      upgradeStage: deps.upgrade?.stage ?? null,
+      buildLine: deps.upgrade?.buildLine ?? null,
       buildLogJobId: deps.upgradeBuildJob?.() ?? null,
     }),
     "image.build": async ({ body }) => deps.setup.buildImage(body.kind),

@@ -2094,7 +2094,11 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
   program
     .command("upgrade [phase]")
     .description("Rebuild the image and restore open boxes and review runs.")
-    .option("--timeout <seconds>", "Maximum wait for the server and upgrade.", "300")
+    .option(
+      "--timeout <seconds>",
+      "Maximum wait for the server to answer. The upgrade itself runs until the server reports.",
+      "300",
+    )
     .action(async (phase: string | undefined, opts: { timeout: string }) => {
       if (phase && phase !== "prepare")
         throw new UsageError("Use aio upgrade or aio upgrade prepare.");
@@ -2109,6 +2113,13 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
         ...(deps.signal ? [deps.signal] : []),
       ]);
       const upgradeClient = () => clientFor(settings(), undefined, signal);
+      // The server bounds the upgrade itself: a build that stops printing and
+      // a restore limit scaled to the open work. The CLI waits for its report.
+      const reportSignal = AbortSignal.any([
+        controller.signal,
+        ...(deps.signal ? [deps.signal] : []),
+      ]);
+      const reportClient = () => clientFor(settings(), undefined, reportSignal);
       if (phase === "prepare") {
         try {
           const recordFile = path.join(
@@ -2186,12 +2197,15 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
       const progress = setInterval(() => {
         if (progressBusy) return;
         progressBusy = true;
-        void upgradeClient()
+        void reportClient()
           .call("image.status")
           .then((status) => {
+            const building =
+              status.upgradeStage === "building" ||
+              (status.upgradeStage === undefined && status.upgrading);
             deps.err(
-              status.upgrading
-                ? `Upgrading: building the image${status.buildLogJobId ? ` (build log job ${status.buildLogJobId})` : ""}.\n`
+              building
+                ? `Upgrading: building the image${status.buildLine ? `: ${terminalText(status.buildLine).slice(0, 160)}` : status.buildLogJobId ? ` (build log job ${status.buildLogJobId})` : ""}.\n`
                 : "Upgrading: restoring open work.\n",
             );
           })
@@ -2200,8 +2214,8 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
             progressBusy = false;
           });
       }, 5000);
-      let timer: ReturnType<typeof setTimeout> | undefined;
       let printedSummary = false;
+      let waitingForServer = true;
       try {
         while (true) {
           try {
@@ -2214,24 +2228,8 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
             );
           }
         }
-        const report = await Promise.race([
-          upgradeClient()
-            .call("upgrade.start")
-            .catch((err) => {
-              if ((signal.aborted || Date.now() >= deadline) && !deps.signal?.aborted)
-                throw new Error("Upgrade time limit reached; retry with sudo dpkg --configure -a.");
-              throw err;
-            }),
-          new Promise<never>((_, reject) => {
-            timer = setTimeout(
-              () =>
-                reject(
-                  new Error("Upgrade time limit reached; retry with sudo dpkg --configure -a."),
-                ),
-              Math.max(1, deadline - Date.now()),
-            );
-          }),
-        ]);
+        waitingForServer = false;
+        const report = await reportClient().call("upgrade.start");
         print(
           report,
           () =>
@@ -2246,18 +2244,25 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
             ].join("\n") + "\n",
         );
         printedSummary = true;
+        const timedOut = [...report.boxes, ...report.runs].some(
+          (item) => !item.restored && /time limit/i.test(item.reason ?? ""),
+        );
         if (
           report.error ||
           report.boxes.some((b) => !b.restored && !b.gone) ||
           report.runs.some((r) => !r.restored && !r.gone)
         )
           throw new Error(
-            report.error ?? "Some open work could not be restored; see summary above.",
+            timedOut
+              ? "The upgrade ran out of time restoring open work. Run aio upgrade to finish; it doesn't build the image again."
+              : (report.error ?? "Some open work could not be restored; see summary above."),
           );
       } catch (caught) {
         const error =
-          (signal.aborted || Date.now() >= deadline) && !deps.signal?.aborted
-            ? new Error("Upgrade time limit reached; retry with sudo dpkg --configure -a.")
+          waitingForServer && (signal.aborted || Date.now() >= deadline) && !deps.signal?.aborted
+            ? new Error(
+                "The server didn't answer within the time limit; retry with sudo dpkg --configure -a.",
+              )
             : caught;
         if (!printedSummary && /time limit/i.test((error as Error).message)) {
           for (const box of pending.boxes)
@@ -2271,7 +2276,6 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
       } finally {
         controller.abort();
         clearInterval(progress);
-        clearTimeout(timer);
       }
     });
 

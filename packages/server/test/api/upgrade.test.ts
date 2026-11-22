@@ -132,19 +132,57 @@ describe("upgrade recovery reports", () => {
 });
 
 describe("upgrade deadlines", () => {
-  it("ends a stalled image build without touching containers", async () => {
+  it("ends a silent image build without touching containers", async () => {
     const h = makeHarness();
+    let aborted = false;
     const service = new UpgradeService({
       core: apiCoreOf(h.core, {} as Docker),
       recordFile: path.join(h.home, "timeout.json"),
-      timeoutMs: 10,
-      build: () => new Promise(() => {}),
+      buildStallMs: 10,
+      build: (signal) =>
+        new Promise(() => {
+          signal?.addEventListener("abort", () => {
+            aborted = true;
+          });
+        }),
       runs: () => [],
       resume: async () => {},
     });
     const report = await service.start();
-    expect(report.error).toBe("Upgrade time limit reached");
+    expect(report.error).toMatch(/printed nothing for 10 ms/);
+    expect(aborted).toBe(true);
     expect(service.upgrading).toBe(false);
+  });
+
+  it("keeps waiting for a long build that keeps printing, then restores open work", async () => {
+    const h = makeHarness();
+    const box = await h.core.boxes.create({ targetDir: h.dir("app"), layout: "root", start: true });
+    const core = apiCoreOf(h.core, {} as Docker);
+    let stageWhileBuilding: string | null = null;
+    let lineWhileBuilding: string | null = null;
+    const service: UpgradeService = new UpgradeService({
+      core,
+      recordFile: path.join(h.home, "slow.json"),
+      buildStallMs: 40,
+      build: async (_signal, progress) => {
+        // Runs well past the stall window, but never goes quiet for that long.
+        for (let step = 1; step <= 10; step++) {
+          await new Promise((resolve) => setTimeout(resolve, 15));
+          progress?.(`#${step} building layer ${step}`);
+        }
+        stageWhileBuilding = service.stage;
+        lineWhileBuilding = service.buildLine;
+        return "latest";
+      },
+      runs: () => [],
+      resume: async () => {},
+    });
+    const report = await service.start();
+    expect(report.error).toBeNull();
+    expect(report.boxes).toEqual([{ id: box.id, name: box.id, restored: true, reason: null }]);
+    expect(stageWhileBuilding).toBe("building");
+    expect(lineWhileBuilding).toBe("#10 building layer 10");
+    expect(service.stage).toBeNull();
   });
 });
 
@@ -228,7 +266,7 @@ describe("upgrade recovery records", () => {
       core,
       build,
       recordFile: path.join(h.home, "recovery.json"),
-      timeoutMs: 50,
+      restoreTimeoutMs: 50,
       runs: () => [],
       resume: async () => {},
     };
@@ -237,7 +275,9 @@ describe("upgrade recovery records", () => {
       const report = await first.start();
       expect(report.boxes[0]).toMatchObject({ id: box.id, restored: false });
       expect(first.hasOpenWork).toBe(true);
+      // A package retry records open work again before it starts the upgrade.
       const second = new UpgradeService(options);
+      await second.prepare();
       expect((await second.start()).boxes[0]).toMatchObject({ id: box.id, restored: true });
       expect(build).toHaveBeenCalledTimes(1);
       expect(recreateSpy).toHaveBeenCalledTimes(1);
@@ -245,6 +285,37 @@ describe("upgrade recovery records", () => {
     } finally {
       clock.mockRestore();
     }
+  });
+
+  it("builds again on a retry when the image no longer matches the server", async () => {
+    const h = makeHarness();
+    const box = await h.core.boxes.create({ targetDir: h.dir("app"), layout: "root", start: true });
+    const core = apiCoreOf(h.core, {} as Docker);
+    const start = core.boxes.start;
+    let failStarts = true;
+    core.boxes.start = async (id) => {
+      if (failStarts) throw new Error("Upgrade time limit reached");
+      return start(id);
+    };
+    const build = vi.fn(async () => "latest" as const);
+    let current = true;
+    const options = {
+      core,
+      build,
+      imageCurrent: async () => current,
+      recordFile: path.join(h.home, "newer.json"),
+      runs: () => [],
+      resume: async () => {},
+    };
+    const first = new UpgradeService(options);
+    expect((await first.start()).boxes[0]).toMatchObject({ id: box.id, restored: false });
+    // A newer package arrives before the retry, so its engine differs.
+    current = false;
+    failStarts = false;
+    const second = new UpgradeService(options);
+    await second.prepare();
+    expect((await second.start()).boxes[0]).toMatchObject({ id: box.id, restored: true });
+    expect(build).toHaveBeenCalledTimes(2);
   });
 
   it("preserves unrestored work and includes newly opened work when preparing again", async () => {

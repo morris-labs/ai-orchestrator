@@ -2301,15 +2301,25 @@ describe("package upgrade command", () => {
   });
 });
 
-it("aborts the upgrade request at the CLI time limit", async () => {
+it("waits past the server time limit for the upgrade report", async () => {
   let aborted = false;
+  const report = { image: "latest", fallback: false, error: null, boxes: [], runs: [] };
   const fetcher: typeof fetch = async (url, options) => {
     if (String(url).endsWith("/health"))
       return new Response(JSON.stringify({ version: "1.0.0", uptimeS: 1 }));
-    return new Promise<Response>((_, reject) => {
+    if (String(url).includes("/image")) return new Response("{}", { status: 404 });
+    // The build outlasts --timeout; the CLI must keep waiting for the report.
+    return new Promise<Response>((resolve, reject) => {
+      let answered = false;
+      const timer = setTimeout(() => {
+        answered = true;
+        resolve(new Response(JSON.stringify(report)));
+      }, 100);
       options?.signal?.addEventListener(
         "abort",
         () => {
+          if (answered) return;
+          clearTimeout(timer);
           aborted = true;
           reject(new Error("aborted"));
         },
@@ -2329,9 +2339,24 @@ it("aborts the upgrade request at the CLI time limit", async () => {
         err += t;
       },
     }),
-  ).toBe(1);
-  expect(aborted).toBe(true);
-  expect(err).toContain("time limit reached");
+  ).toBe(0);
+  expect(aborted).toBe(false);
+  expect(out).toContain("Image built with latest CLI versions.");
+});
+
+it("tells the owner to finish a restore that ran out of time", async () => {
+  server.on("GET /api/v1/health", { body: { version: "1.0.0", uptimeS: 1 } });
+  server.on("POST /api/v1/upgrade", {
+    body: {
+      image: "latest",
+      fallback: false,
+      error: null,
+      boxes: [{ id: BOX_ID, name: "Work", restored: false, reason: "Upgrade time limit reached" }],
+      runs: [],
+    },
+  });
+  expect(await cli(["upgrade"])).toBe(1);
+  expect(err).toContain("Run aio upgrade to finish");
 });
 
 it("bounds prepare requests by the CLI deadline", async () => {

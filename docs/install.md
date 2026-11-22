@@ -244,13 +244,22 @@ Install the new package with `sudo apt install ./ai-orchestrator_VERSION_amd64.d
 For every user with `aio-server` enabled, the package records open work,
 restarts the server, builds the image with the latest agent CLIs (falling
 back to pins if needed), recreates project containers, and reopens boxes
-and review runs. Running work stops immediately. Progress and a per-item
-summary appear in the terminal; the wait is limited to about five minutes.
-One previous image is retained for rollback.
+and review runs. Running work stops immediately. The terminal shows the
+build's latest output line while it builds, then a per-item summary. One
+previous image is retained for rollback.
+
+The image build has no fixed time limit. The upgrade stops it only when it
+prints nothing for 10 minutes. Recreating containers and reopening work get
+2 minutes, plus 1 minute for each project, box, and run.
 
 When the image build fails, the summary shows the build's last line, and the
 full build log is in `~/.ai-orchestrator/upgrade-image-build.log`. Fix the
 cause, then retry the failed configure step with `sudo dpkg --configure -a`.
+
+When reopening work runs out of time, the image is already built. Run
+`aio upgrade` to reopen the rest; a retry skips the build while the image
+matches the installed server, and it doesn't recreate containers that the
+upgrade already recreated.
 Desktop apps show a relaunch bar when their installed version is newer.
 Remote machines must be upgraded separately.
 

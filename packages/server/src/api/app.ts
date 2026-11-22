@@ -323,7 +323,11 @@ export async function startApp(options: AppOptions): Promise<App> {
       "upgrade-open-work.json",
     ),
     runs: () => runMirror.list(),
-    build: async (signal) => {
+    imageCurrent: async () => {
+      const status = await core.image.status();
+      return status.exists && status.engineMatches;
+    },
+    build: async (signal, progress) => {
       const job = setup.buildImage("upgrade");
       upgradeBuildJob = job.id;
       const stop = () => jobs.stop(job.id);
@@ -332,7 +336,14 @@ export async function startApp(options: AppOptions): Promise<App> {
       if (!attachment) throw new Error("Image build job is unavailable");
       let output = attachment.backlog.toString();
       attachment.onData((chunk) => {
-        output += chunk.toString();
+        const text = chunk.toString();
+        output += text;
+        const line = text
+          .split(/\r?\n/)
+          .map((l) => l.trim())
+          .filter(Boolean)
+          .at(-1);
+        progress?.(line ?? "");
       });
       try {
         await new Promise<void>((resolve, reject) =>

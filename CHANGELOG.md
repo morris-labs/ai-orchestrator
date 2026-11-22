@@ -6,6 +6,18 @@ section's heading must have the form `## [X.Y.Z]`.
 
 ## [Unreleased]
 
+### Fixed
+
+- A package upgrade no longer fails when the image build takes more than five
+  minutes. The build runs as long as it keeps printing and stops after 10
+  silent minutes. Reopening boxes and review runs gets its own time, scaled to
+  the open work, and `aio upgrade` waits for the server's report instead of
+  giving up first. The terminal shows the build's latest output line.
+- A retry after a successful image build, such as `sudo dpkg --configure -a`
+  or `aio upgrade`, reopens the remaining work without building the image
+  again or recreating containers that the upgrade already recreated. A retry
+  under a newer package still builds, because the image no longer matches.
+
 ## [3.2.2] - 2026-11-22
 
 ### Changed
