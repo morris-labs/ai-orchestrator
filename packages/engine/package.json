@@ -1,6 +1,6 @@
 {
   "name": "@aio/engine",
-  "version": "3.2.1",
+  "version": "3.2.2",
   "description": "The AI Orchestrator engine: the review pipeline service inside each project container.",
   "private": true,
   "type": "module",
