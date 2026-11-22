@@ -12,10 +12,14 @@ export default tseslint.config(
       "**/test-results/**",
       "TestBox/**",
       ".worktrees/**",
+      // Per-conversation notes and review run checkouts, which Git ignores.
+      ".aio/**",
+      ".claude/**",
       ".pnpm-store/**",
       "scripts/**",
       // Runtime trees that scripts/stage-runtime.mjs assembles.
       "packaging/build/**",
+      "packaging/deb/build/**",
     ],
   },
   js.configs.recommended,

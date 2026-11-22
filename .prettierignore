@@ -9,3 +9,6 @@ TestBox/
 .github/
 test-results/
 packaging/build/
+.aio/
+.claude/
+packaging/deb/build/
