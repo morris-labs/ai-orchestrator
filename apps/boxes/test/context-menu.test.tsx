@@ -60,6 +60,44 @@ describe("box context menu", () => {
     );
   });
 
+  it.each([
+    { status: "stopped", label: "Start", route: "boxes.start" },
+    { status: "running", label: "Stop", route: "boxes.stop" },
+  ] as const)("applies $label to both selected boxes", async ({ status, label, route }) => {
+    const user = userEvent.setup();
+    const selectedBoxes = boxes().map((box) => ({ ...box, status }));
+    const server = new FakeServer({ boxes: selectedBoxes });
+    await renderWithClaudeSelected(server);
+    const codexRow = rowOf("Codex work");
+    fireEvent.mouseDown(codexRow, { button: 0, ctrlKey: true });
+    expect(codexRow).toHaveAttribute("aria-selected", "true");
+    expect(rowOf("Claude work")).toHaveAttribute("aria-selected", "true");
+
+    fireEvent.contextMenu(codexRow);
+    await user.click(screen.getByText(label, { selector: "span" }));
+
+    await waitFor(() =>
+      expect(
+        server
+          .callsTo(route)
+          .map((call) => call.params.boxId)
+          .sort(),
+      ).toEqual(selectedBoxes.map(({ box }) => box.id).sort()),
+    );
+  });
+
+  it("limits single-box actions and remote session menus to one selected box", async () => {
+    await renderWithClaudeSelected(new FakeServer({ boxes: boxes() }));
+    const codexRow = rowOf("Codex work");
+    fireEvent.mouseDown(codexRow, { button: 0, ctrlKey: true });
+    fireEvent.contextMenu(codexRow);
+
+    expect(screen.getByRole("menuitem", { name: /^Edit Box/ })).toBeDisabled();
+    expect(screen.getByRole("menuitem", { name: /^Attach to Session/ })).toBeDisabled();
+    expect(screen.queryByRole("menuitem", { name: /^Start Remote Session/ })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: /^Main Platform/ })).toBeNull();
+  });
+
   it("attaches an external terminal to the right-clicked Codex box, not the selected Claude box (#45)", async () => {
     const user = userEvent.setup();
     const openExternalTerminal = vi.fn(async () => ({ ok: true }));

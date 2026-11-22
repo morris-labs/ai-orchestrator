@@ -1288,7 +1288,9 @@ export function App() {
   };
 
   const boxMenu = (view: BoxView | null): MenuEntry[] => {
-    const targets = view ? [view] : selection;
+    // The table selects an unselected row when you open its context menu.
+    const targets = view && !selected.has(view.box.id) ? [view] : selection;
+    const target = targets.length === 1 ? (targets[0] ?? null) : null;
     const states = actionStates(targets, all, tabs.tabs.length);
     const run = boxActions(targets);
     return [
@@ -1297,11 +1299,11 @@ export function App() {
       { label: "Fork Conversation...", chord: CHORDS.fork, enabled: states.fork, run: run.fork },
       { label: "Convert to Worktree...", enabled: states.convertToWorktree, run: run.convert },
       { label: "Start Review...", enabled: states.startReview, run: run.review },
-      ...(view ? [{ type: "separator" } as const, ...sideMenus(view)] : []),
+      ...(view && target ? [{ type: "separator" } as const, ...sideMenus(target)] : []),
       { type: "separator" },
       { label: "Stop", enabled: states.stop, run: run.stop },
       {
-        label: attachLabel(view ?? single),
+        label: attachLabel(target),
         chord: CHORDS.attach,
         enabled: states.attach,
         run: run.attach,
