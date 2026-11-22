@@ -6,9 +6,48 @@ section's heading must have the form `## [X.Y.Z]`.
 
 ## [Unreleased]
 
+## [3.2.1] - 2026-11-22
+
+### Fixed
+
+- Packages, the image, the server, and both apps report the release version.
+  Builds from 2.0.0 through 3.2.0 all reported 2.0.0.
+- The changelog lists 3.0.0 through 3.2.0 as separate releases.
+
+## [3.2.0] - 2026-11-21
+
+### Added
+
+- Codex and Copilot boxes take a model and an effort level. Each vendor's model
+  list comes from a built-in baseline, a scan of the CLI in the image, and the
+  account's own defaults, and each vendor offers only the effort levels its CLI
+  accepts, including `minimal` for Codex.
+- The review preview and `aio review status` show each reviewer's effective
+  effort by vendor.
+
+### Fixed
+
+- A box's context menu acts on the box you right-clicked, or on the selection
+  that contains it, and its attach command names the box's vendor. Earlier, a
+  right-click on a Codex box could attach to a Claude session.
+- **Restart All** restarts every running box without needing a selection.
+- A review run maps its effort to the nearest level each vendor accepts and
+  notes the substitution on the call, instead of sending an effort that the
+  vendor rejects. Copilot uses its default effort when it selects the model
+  automatically.
+- Changing a box's vendor clears the saved model and effort, so the new vendor
+  starts from its own defaults.
+
+## [3.1.5] - 2026-11-21
+
 ### Fixed
 
 - `aio accounts relink` keeps the links inside a copied folder, such as a plugin's `node_modules/.bin` entries, as relative links in the account. Earlier versions turned them into links to the host's vendor folder, which then blocked the account with "Legacy host configuration links need conversion". The server repairs such links by itself when the account has its own copy of the target.
+
+## [3.1.4] - 2026-11-19
+
+### Fixed
+
 - Review runs fix confirmed bugs that already exist at the base. The retired
   `pre-existing` verdict becomes `confirmed` with `introduced: false` when
   saved findings load, and the verdict trail keeps the retired verdict. The
@@ -19,6 +58,46 @@ section's heading must have the form `## [X.Y.Z]`.
   point, including in rounds that review only the fix.
 - Review prompts name the commits used to build their diffs. The run preview
   uses the same file groups and model tiers as round 1.
+
+## [3.1.3] - 2026-11-19
+
+### Fixed
+
+- A project picks up a git repository that appears in its folder after the
+  project was added, so a box can use a worktree there without setting the
+  primary repository by hand. A primary repository you removed with
+  `aio project set --clear-primary-repo` stays removed.
+
+## [3.1.2] - 2026-11-19
+
+### Fixed
+
+- A failed image build during a package upgrade names its cause and saves its
+  full log in `~/.ai-orchestrator/upgrade-image-build.log`, instead of
+  reporting only an exit code for the image and for every box.
+- The package upgrade no longer fails after a successful image build on a
+  Docker host that uses the containerd image store. The build script held
+  the old image by its ID, which that store deletes when the image's last
+  tag moves, so tagging it as the previous image failed.
+
+## [3.1.1] - 2026-11-19
+
+### Fixed
+
+- `aio accounts relink` lists the entries it copied from the host and any it
+  couldn't copy, instead of reporting host links and listing every file in the
+  account as a local override.
+
+## [3.1.0] - 2026-11-17
+
+### Added
+
+- The Review app launcher has a **Group confirmed findings by root cause**
+  option. The Findings screen shows a run's root causes in fix order, with
+  links to their findings, and the JSON, Markdown, and HTML exports include
+  them.
+
+## [3.0.0] - 2026-11-17
 
 ### Breaking changes
 
@@ -33,10 +112,6 @@ section's heading must have the form `## [X.Y.Z]`.
 
 ### Added
 
-- The Review app launcher has a **Group confirmed findings by root cause**
-  option. The Findings screen shows a run's root causes in fix order, with
-  links to their findings, and the JSON, Markdown, and HTML exports include
-  them.
 - Global and account instruction layers with include lines. Claude follows
   imports directly; Codex and Copilot receive generated instructions at each
   start from editable `instructions.md` files. Missing imports are reported,
@@ -48,24 +123,7 @@ section's heading must have the form `## [X.Y.Z]`.
 - Shared contributor guidance in `AGENTS.md`; personal `CLAUDE.md` files remain
   ignored.
 
-### Fixed
-
-- A project picks up a git repository that appears in its folder after the
-  project was added, so a box can use a worktree there without setting the
-  primary repository by hand. A primary repository you removed with
-  `aio project set --clear-primary-repo` stays removed.
-- A failed image build during a package upgrade names its cause and saves its
-  full log in `~/.ai-orchestrator/upgrade-image-build.log`, instead of
-  reporting only an exit code for the image and for every box.
-- The package upgrade no longer fails after a successful image build on a
-  Docker host that uses the containerd image store. The build script held
-  the old image by its ID, which that store deletes when the image's last
-  tag moves, so tagging it as the previous image failed.
-- `aio accounts relink` lists the entries it copied from the host and any it
-  couldn't copy, instead of reporting host links and listing every file in the
-  account as a local override.
-
-## [2.0.0] - Unreleased
+## [2.0.0] - 2026-11-17
 
 ### Added
 

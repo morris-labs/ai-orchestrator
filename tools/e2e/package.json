@@ -1,6 +1,6 @@
 {
   "name": "@aio/e2e",
-  "version": "2.0.0",
+  "version": "3.2.1",
   "description": "End-to-end tests that run the built server, engine, and CLI together as local processes.",
   "private": true,
   "type": "module",
