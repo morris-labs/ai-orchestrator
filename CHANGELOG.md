@@ -6,6 +6,8 @@ section's heading must have the form `## [X.Y.Z]`.
 
 ## [Unreleased]
 
+## [3.2.3] - 2026-11-22
+
 ### Fixed
 
 - A package upgrade no longer fails when the image build takes more than five
