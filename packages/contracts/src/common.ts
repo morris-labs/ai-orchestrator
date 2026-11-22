@@ -60,9 +60,63 @@ export function parseAccountId(id: string): { vendor: Platform; name: string } |
   return { vendor: id.slice(0, slash) as Platform, name: id.slice(slash + 1) };
 }
 
-/** The `--effort` values that Claude Code accepts. */
-export const EffortSchema = z.enum(["low", "medium", "high", "xhigh", "max"]);
+/** Reasoning effort values a box or review can request, in ascending order. */
+export const EffortSchema = z.enum(["minimal", "low", "medium", "high", "xhigh", "max"]);
 export type Effort = z.infer<typeof EffortSchema>;
+
+const CLAUDE_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
+export const VENDOR_EFFORT_LEVELS: Readonly<Record<Vendor, readonly Effort[]>> = {
+  claude: CLAUDE_EFFORTS,
+  codex: EffortSchema.options,
+  copilot: EffortSchema.options,
+};
+
+export const ClaudeEffortSchema = EffortSchema.refine((level) =>
+  VENDOR_EFFORT_LEVELS.claude.includes(level),
+);
+
+/** Gets the supported levels for models with known reasoning limits. */
+export function modelEffortLevels(vendor: Vendor, model?: string): readonly Effort[] {
+  const levels = VENDOR_EFFORT_LEVELS[vendor];
+  if (vendor === "claude" || !model) return levels;
+  if (
+    /^gpt-(?:6(?:\.[12])?-(?:astra|sol|terra|luna)|5\.6-(?:sol|terra|luna)|daybreak-(?:blue|red)-latest)$/.test(
+      model,
+    )
+  ) {
+    return CLAUDE_EFFORTS;
+  }
+  if (/^gpt-5(?:-(?:mini|nano))?(?:-\d{4}-\d{2}-\d{2})?$/.test(model)) {
+    return ["minimal", "low", "medium", "high"];
+  }
+  if (/^gpt-5(?:[.-]|$)/.test(model)) return ["low", "medium", "high", "xhigh"];
+  if (vendor === "codex" && model !== "codex-auto-review") {
+    return ["minimal", "low", "medium", "high", "xhigh"];
+  }
+  return levels;
+}
+
+/** Selects the nearest effort for a review call and explains any substitution. */
+export function resolveReviewEffort(
+  requested: Effort | undefined,
+  vendor: Vendor,
+  model?: string,
+): { effort?: Effort; note?: string } {
+  if (!requested) return {};
+  if (vendor === "copilot" && (!model || model.toLowerCase() === "auto")) {
+    return {
+      note: `Copilot uses its default effort instead of ${requested} with automatic model selection.`,
+    };
+  }
+  const levels = modelEffortLevels(vendor, model);
+  if (levels.includes(requested)) return { effort: requested };
+  const rank = EffortSchema.options.indexOf(requested);
+  const distance = (level: Effort) => Math.abs(EffortSchema.options.indexOf(level) - rank);
+  const effort = levels.reduce((nearest, level) =>
+    distance(level) < distance(nearest) ? level : nearest,
+  );
+  return { effort, note: `The ${vendor} call uses ${effort} effort instead of ${requested}.` };
+}
 
 /** A git commit SHA, abbreviated (7 or more hex digits) or full. */
 export const CommitShaSchema = z.string().regex(/^[0-9a-f]{7,64}$/);

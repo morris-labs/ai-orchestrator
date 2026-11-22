@@ -22,11 +22,12 @@ const SCRIPT = join(import.meta.dirname, "../smoke/mock-script.json");
 const RUN_A = uniqueRunId();
 const RUN_B = uniqueRunId();
 
-function manager(repo: string) {
+function manager(repo: string, policyPath?: string) {
   const events = new MemoryEventSink("engine:test", "stream-test");
   const broker = new GrantingBroker();
   const runs = new EngineRunManager({
     projectRoot: repo,
+    ...(policyPath ? { policyPath } : {}),
     container: "aio-agent-proj-sample",
     events,
     leases: broker,
@@ -155,6 +156,29 @@ describe("EngineRunManager", () => {
     expect(preview.dirty).toBe(false);
     expect(preview.groups.length).toBeGreaterThan(0);
     expect(preview.changedLines).toBe(preview.groups.reduce((n, g) => n + g.changedLines, 0));
+  });
+
+  it("previews the effective reviewer effort for the resolved tier model", async () => {
+    const policyPath = join(tempDir("aio-preview-effort-"), "policy.yaml");
+    writeFileSync(policyPath, 'version: 1\ntierModels:\n  codex:\n    large: "gpt-5.5"\n');
+    const { runs } = manager(repo, policyPath);
+    const preview = await runs.preview({
+      projectId: "sample",
+      repoPath: repo,
+      base: "origin/main",
+      readOnly: true,
+      modelTier: "large",
+      roles: { reviewer: ["codex"] },
+      reviewerEffort: "max",
+    } as never);
+    expect(preview.reviewerEfforts).toEqual([
+      {
+        vendor: "codex",
+        model: "gpt-5.5",
+        effort: "xhigh",
+        note: "The codex call uses xhigh effort instead of max.",
+      },
+    ]);
   });
 
   it.each([

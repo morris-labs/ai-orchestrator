@@ -417,9 +417,13 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
     },
     "models.list": async ({ query }) => {
       requireAbsolute(query.dir, "The directory");
-      return core.models.list(query.dir, query.account);
+      const vendor = query.vendor ?? "claude";
+      if (query.account && !query.account.startsWith(`${vendor}/`)) {
+        throw new ApiError("validation", `Choose a ${vendor} account.`);
+      }
+      return core.models.list(query.dir, query.account, vendor);
     },
-    "models.rescan": async () => core.models.rescan(),
+    "models.rescan": async ({ query }) => core.models.rescan(query.vendor),
     "upgrade.preview": async () => {
       if (!deps.upgrade) throw new ApiError("conflict", "Upgrade service unavailable");
       return deps.upgrade.preview();

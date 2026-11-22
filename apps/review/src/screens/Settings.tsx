@@ -2,7 +2,7 @@
 // saved through the settings PATCH route.
 import {
   DEFAULT_COPILOT_MODEL,
-  EffortSchema,
+  VENDOR_EFFORT_LEVELS,
   type Ceiling,
   type Effort,
   type GlobalSettings,
@@ -169,7 +169,7 @@ function VendorDefaultsEditor({
             onChange={(e) => onChange({ ...value, claudeEffort: e.target.value as Effort | "" })}
           >
             <option value="">From the settings files</option>
-            {EffortSchema.options.map((o) => (
+            {VENDOR_EFFORT_LEVELS.claude.map((o) => (
               <option key={o} value={o}>
                 {o}
               </option>

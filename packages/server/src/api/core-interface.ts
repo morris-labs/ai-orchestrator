@@ -184,9 +184,9 @@ export interface CoreCatalog {
 }
 
 export interface CoreModels {
-  list(dir?: string, account?: string): Promise<ModelsResult>;
+  list(dir?: string, account?: string, vendor?: Platform): Promise<ModelsResult>;
   /** Throws `image_missing`. */
-  rescan(): Promise<ModelsResult>;
+  rescan(vendor?: Platform): Promise<ModelsResult>;
 }
 
 /**

@@ -2,6 +2,7 @@
 // roles, options, a group preview, and Start. A deep link `?project=&box=` prefills it.
 import {
   DEPTH_DEFAULTS,
+  EffortSchema,
   describeWindowShare,
   type ModelTierChoice,
   type ProjectSummary,
@@ -546,18 +547,18 @@ export function Launcher({ prefill }: { prefill: { project: string | null; box: 
             </Field>
             <Field
               label="Reviewer effort"
-              hint="How hard reviewers think on each group. Higher effort can find more and costs more. Claude and Codex use this; Copilot ignores it."
+              hint="Higher effort gives reviewers more time to reason and can cost more. The preview shows the closest supported level for each planned reviewer model."
             >
               <select
                 value={form.reviewerEffort}
                 onChange={(e) => update({ reviewerEffort: e.target.value as Effort | "" })}
               >
                 <option value="">Vendor default</option>
-                <option value="low">Low</option>
-                <option value="medium">Medium</option>
-                <option value="high">High</option>
-                <option value="xhigh">Extra high</option>
-                <option value="max">Max</option>
+                {EffortSchema.options.map((effort) => (
+                  <option key={effort} value={effort}>
+                    {effort === "xhigh" ? "Extra high" : effort[0]?.toUpperCase() + effort.slice(1)}
+                  </option>
+                ))}
               </select>
             </Field>
           </fieldset>
@@ -724,12 +725,25 @@ export function Launcher({ prefill }: { prefill: { project: string | null; box: 
               ))}
             </ul>
           ) : null}
+          {preview.reviewerEfforts?.length ? (
+            <ul aria-label="Effective reviewer effort">
+              {preview.reviewerEfforts.map(({ vendor, model, effort, note }) => (
+                <li key={JSON.stringify([vendor, model])}>
+                  {vendor}
+                  {model ? ` (${model})` : ""}: {effort ?? "default"}
+                  {note ? `. ${note}` : ""}
+                </li>
+              ))}
+            </ul>
+          ) : null}
           <ul aria-label="Effort by stage">
-            {stageEfforts(form.reviewerEffort || undefined).map((e) => (
-              <li key={e.stage}>
-                {e.stage} effort: {e.effort}
-              </li>
-            ))}
+            {stageEfforts(form.reviewerEffort || undefined)
+              .filter((e) => e.stage !== "Review" || preview.reviewerEfforts === undefined)
+              .map((e) => (
+                <li key={e.stage}>
+                  {e.stage} effort: {e.effort}
+                </li>
+              ))}
           </ul>
           {preview.dirty && !form.includeWorktree ? (
             <p role="alert" className="banner banner-warning">

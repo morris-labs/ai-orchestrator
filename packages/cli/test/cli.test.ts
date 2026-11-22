@@ -932,6 +932,15 @@ describe("review", () => {
     expect(out).toBe(`Started run ${RUN}.\n`);
   });
 
+  it("accepts minimal reviewer effort and rejects an unknown level", async () => {
+    server.on("POST /api/v1/runs", { status: 201, body: runState });
+    const args = ["review", "start", "--project", PROJECT_ID, "--repo", "/r"];
+    expect(await cli([...args, "--reviewer-effort", "minimal"])).toBe(0);
+    expect(last()?.body).toMatchObject({ reviewerEffort: "minimal" });
+    expect(await cli([...args, "--reviewer-effort", "extreme"])).toBe(2);
+    expect(server.requests).toHaveLength(1);
+  });
+
   it("starts a whole-project run with exclusions, and refuses post-push", async () => {
     server.on("POST /api/v1/runs", { status: 201, body: runState });
     const args = ["review", "start", "--project", PROJECT_ID, "--repo", "/r", "--whole-project"];
@@ -1016,6 +1025,32 @@ describe("review", () => {
     expect(out).toContain("codex, copilot");
     expect(out).toContain("$1.40");
     expect(out).toContain("codex 2/4");
+  });
+
+  it("shows the effective reviewer effort by vendor", async () => {
+    const task = {
+      round: 1,
+      stage: "find",
+      role: "reviewer",
+      groupId: "G01",
+      label: "Review G01",
+      state: "done",
+    };
+    server.on(`GET /api/v1/runs/${RUN}`, {
+      body: {
+        ...runState,
+        request: { ...runState.request, reviewerEffort: "max" },
+        tasks: [
+          { ...task, key: "find-g1-codex", seq: 0, vendor: "codex", effort: "xhigh" },
+          { ...task, key: "find-g1-copilot", seq: 1, vendor: "copilot" },
+        ],
+      },
+    });
+    server.on(`GET /api/v1/runs/${RUN}/rounds`, { body: { rounds: [] } });
+    expect(await cli(["review", "status", RUN])).toBe(0);
+    expect(out).toMatch(/Requested reviewer effort:\s+max/);
+    expect(out).toMatch(/Reviewer effort \(codex\):\s+xhigh/);
+    expect(out).toMatch(/Reviewer effort \(copilot\):\s+default/);
   });
 
   it("pauses, resumes, and cancels", async () => {

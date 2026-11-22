@@ -1,15 +1,15 @@
-// The model list for the New Box form (port of `ModelCatalog.cpp`): a
-// built-in baseline, the ids scanned from the Claude Code program inside the
-// engine image (cached against the image id), and the account's extra
-// options from `~/.claude.json`.
+// Model suggestions and account defaults for the box dialog.
 import fs from "node:fs";
 import path from "node:path";
 import {
-  EffortSchema,
+  DEFAULT_TIER_MODELS,
+  VENDOR_EFFORT_LEVELS,
   type Effort,
   type ModelCache,
+  type Vendor,
   type ModelsResultSchema,
 } from "@aio/contracts";
+import { parse as parseToml } from "smol-toml";
 import type { z } from "zod";
 import type { DockerClient } from "../docker/types.js";
 import type { HostEnv } from "../records/env.js";
@@ -33,9 +33,6 @@ export const MODEL_BASELINE: readonly string[] = [
   "claude-haiku-4-5",
 ];
 
-/** The `--effort` values, lowest first. */
-export const EFFORTS: readonly Effort[] = EffortSchema.options;
-
 /** Defaults when no settings file names a model or an effort. */
 export const FALLBACK_MODEL = "claude-opus-5-5";
 export const FALLBACK_EFFORT: Effort = "high";
@@ -52,6 +49,47 @@ export const MODEL_SCAN_COMMAND =
   'f=$(readlink -f "$(command -v claude)") && ' +
   "grep -aoE 'claude-(opus|sonnet|haiku|fable)-[0-9]+(-[0-9]{1,2})?([^0-9a-z-]|$)' \"$f\" " +
   "| sed -E 's/[^0-9a-z-]+$//' | sort -u";
+
+type ScannedVendor = Exclude<Vendor, "claude">;
+
+const VENDOR_MODELS: Record<ScannedVendor, readonly string[]> = {
+  codex: [
+    "gpt-6-astra",
+    ...Object.values(DEFAULT_TIER_MODELS.codex ?? {}),
+    "gpt-6-sol",
+    "gpt-5.6-sol",
+    "gpt-5.5",
+  ],
+  copilot: ["auto", "claude-sonnet-5-5", "claude-opus-5-5", "gpt-5.6-sol", "gpt-5.5"],
+};
+
+const GPT_MODEL =
+  "gpt-[0-9]+([.][0-9]+)?(-(astra|sol|terra|luna|codex(-max|-mini)?|mini|nano|pro))?";
+const CLAUDE_MODEL = "claude-(opus|sonnet|haiku|fable)-[0-9]+(-[0-9]{1,2})?";
+const MODEL_PATTERNS: Record<ScannedVendor, string> = {
+  codex: "(gpt-[0-9][a-z0-9.-]*|gpt-daybreak-[a-z0-9.-]+|codex-auto-review)",
+  copilot: `(${GPT_MODEL}|${CLAUDE_MODEL}|gemini-[0-9]+([.][0-9]+)?-(pro|flash))`,
+};
+
+function scanCommand(vendor: Vendor): string {
+  if (vendor === "claude") return MODEL_SCAN_COMMAND;
+  // npm installs a launcher and a separate package with the actual program.
+  const packageRoot =
+    vendor === "codex" ? '$(dirname "$(dirname "$launcher")")' : '$(dirname "$launcher")';
+  const pattern =
+    vendor === "codex"
+      ? `"slug"[[:space:]]*:[[:space:]]*"${MODEL_PATTERNS.codex}"`
+      : `${MODEL_PATTERNS.copilot}([^0-9a-z.-]|$)`;
+  const trim = vendor === "codex" ? `sed -E 's/.*"([^"]+)"$/\\1/'` : "sed -E 's/[^0-9a-z.-]+$//'";
+  return (
+    `launcher=$(readlink -f "$(command -v ${vendor})") && ` +
+    `root=${packageRoot} && ` +
+    `{ find "$root/node_modules" -type f -name ${vendor} -exec grep -ahoE '${pattern}' {} + 2>/dev/null; ` +
+    `grep -aoE '${pattern}' "$launcher"; ` +
+    (vendor === "copilot" ? `copilot --help | grep -oE '${pattern}'; ` : "") +
+    `} | ${trim} | sort -u`
+  );
+}
 
 export interface ParsedModelId {
   family: string;
@@ -105,14 +143,24 @@ export function parseScan(output: string): string[] {
   return sortNewestFirst(ids);
 }
 
-function readJsonObject(file: string): Record<string, unknown> | undefined {
+function readAccountFile(file: string): string | undefined {
   try {
     // A legacy per-file link is not account-owned configuration. In
     // particular, never follow old settings links into a host vendor folder.
     const accountDir = fs.realpathSync(path.dirname(file));
     const target = fs.realpathSync(file);
     if (!target.startsWith(`${accountDir}${path.sep}`)) return undefined;
-    const v: unknown = JSON.parse(fs.readFileSync(file, "utf8"));
+    return fs.readFileSync(target, "utf8");
+  } catch {
+    return undefined;
+  }
+}
+
+function readJsonObject(file: string): Record<string, unknown> | undefined {
+  const text = readAccountFile(file);
+  if (text === undefined) return undefined;
+  try {
+    const v: unknown = JSON.parse(text);
     return v !== null && typeof v === "object" && !Array.isArray(v)
       ? (v as Record<string, unknown>)
       : undefined;
@@ -138,19 +186,40 @@ export function accountModels(claudeJson?: string): string[] {
 
 /** Defaults from the selected account only. No account means built-in defaults. */
 export function settingsDefaults(claudeDir?: string): { model: string; effort: Effort } {
-  const files = claudeDir === undefined ? [] : [path.join(claudeDir, "settings.json")];
-  let model: string | undefined;
-  let effort: Effort | undefined;
-  for (const file of files) {
-    const obj = readJsonObject(file);
-    if (!obj) continue;
-    if (model === undefined && typeof obj.model === "string" && obj.model !== "") model = obj.model;
-    if (effort === undefined) {
-      const e = EffortSchema.safeParse(obj.effortLevel);
-      if (e.success) effort = e.data;
-    }
+  const obj = claudeDir ? readJsonObject(path.join(claudeDir, "settings.json")) : undefined;
+  return {
+    model: modelDefault(obj?.model, FALLBACK_MODEL),
+    effort: effortDefault("claude", obj?.effortLevel, FALLBACK_EFFORT),
+  };
+}
+
+function modelDefault(value: unknown, fallback: string): string {
+  return typeof value === "string" && value.trim() !== "" ? value : fallback;
+}
+
+function effortDefault(vendor: Vendor, value: unknown, fallback: Effort): Effort {
+  return VENDOR_EFFORT_LEVELS[vendor].find((level) => level === value) ?? fallback;
+}
+
+function vendorDefaults(vendor: ScannedVendor, dir?: string): ModelsResult["defaults"] {
+  if (vendor === "copilot") {
+    const config = dir ? readJsonObject(path.join(dir, "config.json")) : undefined;
+    return {
+      model: modelDefault(config?.model, "auto"),
+      effort: effortDefault(vendor, config?.reasoning_effort, "medium"),
+    };
   }
-  return { model: model ?? FALLBACK_MODEL, effort: effort ?? FALLBACK_EFFORT };
+  const text = dir ? readAccountFile(path.join(dir, "config.toml")) : undefined;
+  let config;
+  try {
+    config = text === undefined ? undefined : parseToml(text);
+  } catch {
+    // The CLI reports syntax errors when it reads the account config.
+  }
+  return {
+    model: modelDefault(config?.model, "gpt-6.1-sol"),
+    effort: effortDefault(vendor, config?.model_reasoning_effort, "medium"),
+  };
 }
 
 export interface ModelCatalogOptions {
@@ -158,46 +227,39 @@ export interface ModelCatalogOptions {
   docker: DockerClient;
   /** The engine image name. */
   image: () => string;
-  getCache: () => ModelCache | undefined;
-  setCache: (cache: ModelCache) => void;
-  /**
-   * The Claude config folder and `.claude.json` of an account (`account` is
-   * its id; absent means the default account). No selected account means
-   * only the built-in defaults apply.
-   */
-  claudeHome?: (account?: string) => { dir: string; json: string } | undefined;
+  getCache: (vendor: Vendor) => ModelCache | undefined;
+  setCache: (cache: ModelCache, vendor: Vendor) => void;
+  /** Gets the selected account directory, or the vendor's default account directory. */
+  accountHome?: (vendor: Vendor, account?: string) => string | undefined;
 }
 
 export class ModelCatalog {
   constructor(private readonly options: ModelCatalogOptions) {}
 
-  /** The cached scan (or the baseline) plus the account's extra models, sorted. */
-  known(account?: string): string[] {
-    const cache = this.options.getCache();
-    const ids = cache && cache.models.length > 0 ? [...cache.models] : [...MODEL_BASELINE];
-    const home = this.options.claudeHome?.(account);
-    for (const id of accountModels(home?.json)) {
-      if (!ids.includes(id)) ids.push(id);
-    }
-    return sortNewestFirst(ids);
+  /** Lists model suggestions, reasoning levels, and the selected account's defaults. */
+  async list(_dir?: string, account?: string, vendor: Vendor = "claude"): Promise<ModelsResult> {
+    return this.result(vendor, account);
   }
 
-  /** The model list, the efforts, and what `claude` would use in `dir`. */
-  async list(dir?: string, account?: string): Promise<ModelsResult> {
-    const cache = this.options.getCache();
-    return this.result(dir, cache && cache.models.length > 0 ? "cache" : "baseline", account);
-  }
-
-  private result(
-    _dir: string | undefined,
-    source: ModelsResult["source"],
-    account?: string,
-  ): ModelsResult {
+  private result(vendor: Vendor, account?: string, scanned = false): ModelsResult {
+    const cache = this.options.getCache(vendor);
+    const cachedModels = cache?.models.length ? cache.models : undefined;
+    const home = this.options.accountHome?.(vendor, account);
+    const defaults = vendor === "claude" ? settingsDefaults(home) : vendorDefaults(vendor, home);
+    const models =
+      vendor === "claude"
+        ? sortNewestFirst([
+            ...new Set([
+              ...(cachedModels ?? MODEL_BASELINE),
+              ...accountModels(home ? path.join(home, ".claude.json") : undefined),
+            ]),
+          ])
+        : [...new Set([...VENDOR_MODELS[vendor], ...(cachedModels ?? []), defaults.model])];
     return {
-      models: this.known(account),
-      efforts: [...EFFORTS],
-      defaults: settingsDefaults(this.options.claudeHome?.(account)?.dir),
-      source,
+      models,
+      efforts: [...VENDOR_EFFORT_LEVELS[vendor]],
+      defaults,
+      source: scanned ? "scan" : cachedModels ? "cache" : "baseline",
     };
   }
 
@@ -206,7 +268,7 @@ export class ModelCatalog {
    * old, or is empty. Returns whether the cache changed. Does nothing when
    * Docker or the image is missing.
    */
-  async refreshIfStale(): Promise<boolean> {
+  async refreshIfStale(vendor: Vendor = "claude"): Promise<boolean> {
     let imageId: string | undefined;
     try {
       imageId = (await this.options.docker.inspectImage(this.options.image()))?.id;
@@ -214,19 +276,19 @@ export class ModelCatalog {
       return false;
     }
     if (!imageId) return false;
-    const cache = this.options.getCache();
+    const cache = this.options.getCache(vendor);
     if (cache && cache.imageId === imageId && cache.models.length > 0) {
       const ageDays = (this.options.env.now().getTime() - Date.parse(cache.scannedAt)) / 86_400_000;
       if (ageDays < MODEL_CACHE_MAX_AGE_DAYS) return false;
     }
-    return this.scan(imageId);
+    return this.scan(imageId, vendor);
   }
 
   /**
    * Scans the image now. Throws `image_missing` when the image does not
    * exist. A scan that finds nothing keeps the old cache.
    */
-  async rescan(dir?: string): Promise<ModelsResult> {
+  async rescan(_dir?: string, vendor: Vendor = "claude"): Promise<ModelsResult> {
     const image = await this.options.docker.inspectImage(this.options.image());
     if (!image) {
       throw new ApiError(
@@ -234,26 +296,34 @@ export class ModelCatalog {
         `The image ${this.options.image()} does not exist. Build it first.`,
       );
     }
-    const scanned = await this.scan(image.id);
-    return scanned ? this.result(dir, "scan") : this.list(dir);
+    const scanned = await this.scan(image.id, vendor);
+    return this.result(vendor, undefined, scanned);
   }
 
-  private async scan(imageId: string): Promise<boolean> {
+  private async scan(imageId: string, vendor: Vendor): Promise<boolean> {
     let res;
     try {
       res = await this.options.docker.runOnce({
         image: this.options.image(),
         entrypoint: ["sh"],
-        cmd: ["-c", MODEL_SCAN_COMMAND],
+        cmd: ["-c", scanCommand(vendor)],
         timeoutMs: 120_000,
       });
     } catch {
       return false;
     }
     if (res.exitCode !== 0) return false;
-    const models = parseScan(res.stdout);
+    const pattern = vendor === "claude" ? undefined : new RegExp(`^${MODEL_PATTERNS[vendor]}$`);
+    const models = pattern
+      ? [...new Set(res.stdout.split("\n").map((line) => line.trim()))].filter((id) =>
+          pattern.test(id),
+        )
+      : parseScan(res.stdout);
     if (models.length === 0) return false; // an unexpected layout: keep the old list
-    this.options.setCache({ imageId, scannedAt: this.options.env.now().toISOString(), models });
+    this.options.setCache(
+      { imageId, scannedAt: this.options.env.now().toISOString(), models },
+      vendor,
+    );
     return true;
   }
 }

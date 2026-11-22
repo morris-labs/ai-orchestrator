@@ -10,6 +10,7 @@ import type {
   RunRetry,
   EngineRunCreate,
   FileGroup,
+  ReviewerEffortPreview,
   Finding,
   Profile,
   Role,
@@ -69,6 +70,7 @@ export interface UsageFilter {
 
 /** The body of `runs.preview`. */
 export interface RunPreview {
+  reviewerEfforts?: ReviewerEffortPreview[];
   baseSha: string;
   tipSha: string;
   diffBaseSha: string;

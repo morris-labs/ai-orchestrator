@@ -203,8 +203,17 @@ describe("request schemas", () => {
   it("enforces the platform and layout rules on box creation", () => {
     const body = routes["boxes.create"].body;
     expect(
-      body.safeParse({ targetDir: "/x", layout: "root", platform: "codex", model: "m" }).success,
-    ).toBe(false);
+      body.safeParse({
+        targetDir: "/x",
+        layout: "root",
+        platform: "codex",
+        model: "m",
+        effort: "minimal",
+      }).success,
+    ).toBe(true);
+    expect(body.safeParse({ targetDir: "/x", layout: "root", effort: "minimal" }).success).toBe(
+      false,
+    );
     expect(
       body.safeParse({
         targetDir: "/x",

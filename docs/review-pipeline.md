@@ -43,9 +43,12 @@ no `depth` field and stays `thorough`.
 | Verification floor | `P2` | None |
 
 To change how hard reviewers think, set **Reviewer effort** in the launcher or
-pass `--reviewer-effort`, with `low`, `medium`, `high`, `xhigh`, or `max`. Claude
-and Codex use the setting and Copilot ignores it. Without it, each vendor uses
-its own default. Higher effort can find more and costs more.
+pass `--reviewer-effort` with `minimal`, `low`, `medium`, `high`, `xhigh`, or
+`max`. Each reviewer uses the closest level its model supports. If Copilot
+selects the model automatically, it also selects the effort. When you omit
+the option, each vendor uses its own default. To see effective reviewer
+effort, preview the run in the Review app or run `aio review status RUN_ID`
+after the engine plans the reviews. Replace `RUN_ID` with the review run ID.
 
 Settings you name win over the depth: `--round-cap`, `--continuation-cap`,
 `--verify-floor`, `--tier`, `--role`, and `groupSizeLimit` in the policy file. To

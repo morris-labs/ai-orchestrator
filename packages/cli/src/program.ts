@@ -367,6 +367,20 @@ function runRows(runs: RunState[]) {
   );
 }
 
+function reviewerEffortRows(run: RunState): [string, string][] {
+  const byVendor = new Map<string, Set<string>>();
+  for (const task of run.tasks ?? []) {
+    if (!task.vendor || task.role !== "reviewer" || task.state === "skipped") continue;
+    const levels = byVendor.get(task.vendor) ?? new Set<string>();
+    levels.add(task.effort ?? "default");
+    byVendor.set(task.vendor, levels);
+  }
+  return [...byVendor].map(([vendor, efforts]) => [
+    `Reviewer effort (${vendor})`,
+    [...efforts].join(", "),
+  ]);
+}
+
 function runDetail(r: RunState): string {
   return keyValues([
     ["Run", r.id],
@@ -386,7 +400,8 @@ function runDetail(r: RunState): string {
     ["Excludes", r.request.excludePaths?.join(", ")],
     ["Model tier", r.request.modelTier],
     ["Depth", runDepth(r.request)],
-    ["Reviewer effort", r.request.reviewerEffort],
+    ["Requested reviewer effort", r.request.reviewerEffort],
+    ...reviewerEffortRows(r),
     ["Parallel calls", r.request.concurrency],
     ["Verification floor", r.request.verifyFloor],
     ["Reviewers", r.roles.reviewer.join(", ")],
@@ -1225,8 +1240,8 @@ export function buildProgram(deps: CliDeps, state: { code: number }): Command {
     .addOption(
       new Option(
         "--reviewer-effort <effort>",
-        "Set the reasoning effort for reviewer calls on Claude and Codex. Default: each vendor's own default.",
-      ).choices(["low", "medium", "high", "xhigh", "max"]),
+        "Request a reasoning effort for reviewer calls. Each call uses the closest level its model supports. Default: each vendor's own default.",
+      ).choices(EFFORTS),
     )
     .addOption(
       new Option(

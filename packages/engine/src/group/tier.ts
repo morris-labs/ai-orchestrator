@@ -1,6 +1,6 @@
 // Chooses model tiers. Pure and deterministic: the same signals always give
 // the same tier, and nothing here calls a model or runs a command.
-import type { AgentRole, ModelTier, ModelTierChoice, RunDepth } from "@aio/contracts";
+import type { AgentRole, FileGroup, ModelTier, ModelTierChoice, RunDepth } from "@aio/contracts";
 
 /** Starting guesses from the plan; change them from logged data. */
 export const TIER_THRESHOLDS = {
@@ -43,6 +43,17 @@ export interface TierChoice {
 
 export function tierRank(tier: ModelTier): number {
   return ORDER.indexOf(tier);
+}
+
+/** Gets the highest tier in the groups covered by a call. */
+export function strongestGroupTier(groups: readonly FileGroup[]): TierChoice | null {
+  let best: TierChoice | null = null;
+  for (const group of groups) {
+    if (group.tier && (!best || tierRank(group.tier) > tierRank(best.tier))) {
+      best = { tier: group.tier, reason: group.tierReason ?? `Group ${group.id}.` };
+    }
+  }
+  return best;
 }
 
 export function higherTier(a: ModelTier, b: ModelTier): ModelTier {

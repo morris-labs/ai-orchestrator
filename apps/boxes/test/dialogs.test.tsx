@@ -280,13 +280,32 @@ describe("BoxDialog, new mode", () => {
     expect(screen.getByLabelText("Effort")).toHaveValue("max");
   });
 
-  it("turns off the model, effort, and conversation for other platforms", async () => {
+  it("reloads model and effort defaults when the platform changes", async () => {
     const user = userEvent.setup();
-    newDialog(new FakeServer(), { initialDir: "/w/site" });
+    const server = new FakeServer();
+    const { onAccept } = newDialog(server, { initialDir: "/w/site" });
+    await user.clear(screen.getByLabelText("Model"));
+    await user.type(screen.getByLabelText("Model"), "claude-custom");
+    await user.selectOptions(screen.getByLabelText("Effort"), "max");
+
     await user.selectOptions(screen.getByLabelText("Platform"), "codex");
-    expect(screen.getByLabelText("Model")).toBeDisabled();
-    expect(screen.getByLabelText("Effort")).toBeDisabled();
+    expect(screen.getByLabelText("Model")).toBeEnabled();
+    expect(screen.getByLabelText("Effort")).toBeEnabled();
     expect(screen.getByLabelText("Conversation")).toBeDisabled();
+    await waitFor(() => expect(screen.getByLabelText("Model")).toHaveValue("gpt-6.1-sol"));
+    expect(screen.getByLabelText("Effort")).toHaveValue("medium");
+    expect(server.callsTo("models.list").at(-1)?.query).toMatchObject({ vendor: "codex" });
+
+    await user.selectOptions(screen.getByLabelText("Effort"), "minimal");
+    await user.selectOptions(screen.getByLabelText("Platform"), "copilot");
+    await waitFor(() => expect(screen.getByLabelText("Model")).toHaveValue("auto"));
+    expect(screen.getByLabelText("Effort")).toHaveValue("");
+    await user.click(screen.getByRole("button", { name: "Create" }));
+    expect(onAccept).toHaveBeenCalledWith(
+      expect.objectContaining({
+        form: expect.objectContaining({ platform: "copilot", model: "auto", effort: "" }),
+      }),
+    );
   });
 
   it("checks the project port maps and folders it edits", async () => {

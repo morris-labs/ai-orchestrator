@@ -137,6 +137,10 @@ describe("records", () => {
       GlobalSettingsPatchSchema.safeParse({ vendorDefaults: { copilot: { model: null } } }).success,
     ).toBe(false);
     expect(
+      GlobalSettingsPatchSchema.safeParse({ vendorDefaults: { claude: { effort: "minimal" } } })
+        .success,
+    ).toBe(false);
+    expect(
       GlobalSettingsPatchSchema.safeParse({ vendorDefaults: { codex: { effort: "high" } } })
         .success,
     ).toBe(false);

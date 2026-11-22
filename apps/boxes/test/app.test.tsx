@@ -101,6 +101,35 @@ describe("main window", () => {
     await waitFor(() => expect(server.callsTo("boxes.stopAll")).toHaveLength(1));
   });
 
+  it("restarts every running box with Restart All when no row is selected", async () => {
+    // Issue #47: Restart All acts on every running box, so it needs no selection.
+    const user = userEvent.setup();
+    const server = new FakeServer({ boxes: boxes() });
+    await renderApp(server);
+    await user.type(screen.getByLabelText("Filter boxes"), "no-such-box");
+    await waitFor(() => expect(screen.queryByRole("cell", { name: "Site work" })).toBeNull());
+    expect(screen.queryAllByRole("row", { selected: true })).toHaveLength(0);
+    const toolbar = screen.getByRole("toolbar", { name: "Box actions" });
+    const button = within(toolbar).getByRole("button", { name: "Restart All" });
+    expect(button).toBeEnabled();
+    await user.click(button);
+    const dialog = await screen.findByRole("dialog", { name: "Restart All" });
+    expect(dialog).toHaveTextContent("Restart 1 running box(es)?");
+    await user.click(within(dialog).getByRole("button", { name: "Yes" }));
+    await waitFor(() => expect(server.callsTo("boxes.restartAll")).toHaveLength(1));
+    const status = Object.fromEntries(server.state.boxes.map((b) => [b.box.id, b.status]));
+    expect(status).toEqual({ "aio-agent-site": "running", "aio-agent-api": "stopped" });
+  });
+
+  it("enables Restart All when only a stopped row is selected and a box runs", async () => {
+    const user = userEvent.setup();
+    await renderApp(new FakeServer({ boxes: boxes() }));
+    await user.click(screen.getByRole("cell", { name: "Api" }));
+    await waitFor(() => expect(rowOf("Api")).toHaveAttribute("aria-selected", "true"));
+    const toolbar = screen.getByRole("toolbar", { name: "Box actions" });
+    expect(within(toolbar).getByRole("button", { name: "Restart All" })).toBeEnabled();
+  });
+
   it("ignores application chords while a message box is open", async () => {
     const user = userEvent.setup();
     const server = new FakeServer({ boxes: boxes() });

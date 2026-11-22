@@ -8,6 +8,7 @@ import {
   adaptLegacyFinding,
   VENDOR_ROLES,
   belowVerifyFloor,
+  resolveReviewEffort,
   runDepth,
   taskLabel,
 } from "@aio/contracts";
@@ -35,7 +36,7 @@ import type {
 } from "../core.js";
 import { compareGate, formatRegressions, runGate, type GateRun } from "../gate/gate.js";
 import { hasExclusions } from "../group/exclude.js";
-import { roleTier, tierRank, type TierChoice } from "../group/tier.js";
+import { roleTier, strongestGroupTier } from "../group/tier.js";
 import {
   hunksForFinding,
   missingHunks,
@@ -85,6 +86,7 @@ import {
 } from "./checkout.js";
 import {
   AgentFailed,
+  chooseCallModel,
   RoleDenied,
   DecisionNeeded,
   RunCancelled,
@@ -341,12 +343,7 @@ export function callTier(
   const choice = ctx.state.request.modelTier;
   if (!choice) return undefined;
   const covering = files ? groups.filter((g) => g.files.some((f) => files.includes(f))) : groups;
-  let base: TierChoice | null = null;
-  for (const g of covering) {
-    if (g.tier && (!base || tierRank(g.tier) > tierRank(base.tier))) {
-      base = { tier: g.tier, reason: g.tierReason ?? `Group ${g.id}.` };
-    }
-  }
+  let base = strongestGroupTier(covering);
   if (runDepth(ctx.state.request) === "standard") {
     // A finding from an earlier round can sit in a file this round's groups
     // leave out, and a risk path keeps its tier there too.
@@ -576,15 +573,25 @@ export async function runFind(ctx: RunContext, groups: readonly FileGroup[]): Pr
   });
   const effort = ctx.state.request.reviewerEffort;
   await ctx.planTasks(
-    tasks.map((t) => ({
-      key: `find-${t.key}`,
-      role: "reviewer" as const,
-      groupId: t.groupId,
-      label: taskLabel("reviewer", `find-${t.key}`, t.groupId),
-      vendor: t.vendor,
-      // Copilot takes no effort setting.
-      effort: t.vendor === "copilot" ? undefined : effort,
-    })),
+    tasks.map((t) => {
+      const group = groups.find((g) => g.id === t.groupId);
+      const tier = callTier(ctx, "reviewer", groups, group?.files);
+      const { model } = chooseCallModel(
+        ctx.deps.models,
+        ctx.policy.tierModels,
+        t.vendor,
+        tier?.tier,
+        "reviewer",
+      );
+      return {
+        key: `find-${t.key}`,
+        role: "reviewer" as const,
+        groupId: t.groupId,
+        label: taskLabel("reviewer", `find-${t.key}`, t.groupId),
+        vendor: t.vendor,
+        effort: resolveReviewEffort(effort, t.vendor, model).effort,
+      };
+    }),
     "find",
   );
   const results = await runPerVendor(

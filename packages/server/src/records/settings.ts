@@ -16,6 +16,7 @@ import {
   type GlobalSettings,
   type GlobalSettingsPatch,
   type ModelCache,
+  type Vendor,
   type Platform,
   type Mount,
   type PromptTemplates,
@@ -246,8 +247,13 @@ export class SettingsService {
     return this.save(next);
   }
 
-  setModelCache(cache: ModelCache): GlobalSettings {
-    return this.save({ ...this.get(), modelCache: cache });
+  setModelCache(cache: ModelCache, vendor: Vendor = "claude"): GlobalSettings {
+    const settings = this.get();
+    if (vendor === "claude") return this.save({ ...settings, modelCache: cache });
+    return this.save({
+      ...settings,
+      vendorModelCache: { ...settings.vendorModelCache, [vendor]: cache },
+    });
   }
 
   /** Remembers the New Box layout choice for a directory. */

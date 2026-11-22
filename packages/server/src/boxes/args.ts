@@ -49,6 +49,8 @@ export function platformArgs(
   const args: string[] = [];
   if (program === "codex") {
     if (resume) args.push("resume", "--last");
+    if (box.model) args.push("--model", box.model);
+    if (box.effort) args.push("-c", `model_reasoning_effort="${box.effort}"`);
     if (box.skipPermissions) args.push("--dangerously-bypass-approvals-and-sandbox");
     // After `--`, a prompt that starts with `-` or names a subcommand is still the prompt.
     if (!resume && prompt !== "") args.push("--", prompt);
@@ -57,6 +59,8 @@ export function platformArgs(
   if (program === "copilot") {
     args.push("--remote");
     if (resume) args.push("--continue");
+    if (box.model) args.push("--model", box.model);
+    if (box.effort) args.push("--reasoning-effort", box.effort);
     if (box.skipPermissions) args.push("--allow-all-tools");
     if (!resume && prompt !== "") args.push("-i", prompt);
     return args;
@@ -78,7 +82,14 @@ export function sideSessionArgs(
 ): string[] {
   return program === "codex"
     ? ["remote-control", "--no-daemon"]
-    : platformArgs(box, project, program, false, "", hostOs);
+    : platformArgs(
+        { ...box, model: undefined, effort: undefined },
+        project,
+        program,
+        false,
+        "",
+        hostOs,
+      );
 }
 
 /** The first message of a resumed session after Convert to Worktree (inventory section 4.5). */

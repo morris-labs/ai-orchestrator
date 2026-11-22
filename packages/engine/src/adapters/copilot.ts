@@ -136,7 +136,7 @@ export class CopilotAdapter extends CliAdapter {
     for (const dir of req.addDirs ?? []) args.push("--add-dir", dir);
     if (this.copilotOptions.outputFormat !== "text") args.push("--output-format", "json");
     args.push("--no-color", "--no-ask-user", "--model", req.model ?? "auto");
-    if (req.effort) args.push("--effort", req.effort);
+    if (req.effort) args.push("--reasoning-effort", req.effort);
     if (req.sessionId) args.push(`--resume=${req.sessionId}`);
     else args.push("--session-id", sessionId);
     if (req.tools === "write") {

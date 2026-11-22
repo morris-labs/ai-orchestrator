@@ -5,7 +5,7 @@
 // listens on a port itself.
 import fs from "node:fs";
 import path from "node:path";
-import { AccountIdSchema, type ImageStatus, type Platform } from "@aio/contracts";
+import { parseAccountId, VendorSchema, type ImageStatus, type Platform } from "@aio/contracts";
 import { apiCoreOf, relayEvents, wireHooks } from "./api/core-adapter.js";
 import type { Core as ApiCore, CoreFactoryOptions } from "./api/core-interface.js";
 import { AccountService } from "./accounts/service.js";
@@ -186,22 +186,24 @@ export function createServerCore(options: CoreOptions): ServerCore {
     env,
     docker,
     image: () => settings.get().engineImage,
-    claudeHome: (account) => {
+    accountHome: (vendor, account) => {
       if (settings.get().accountsMode !== "accounts") return undefined;
-      const id = account ?? settings.get().accountDefaults.claude;
-      if (!id?.startsWith("claude/") || !AccountIdSchema.safeParse(id).success) return undefined;
-      const dir = accountDirFor(env, "claude", id.slice("claude/".length));
+      const id = account ?? settings.get().accountDefaults[vendor];
+      const parsed = id ? parseAccountId(id) : null;
+      if (!parsed || parsed.vendor !== vendor) return undefined;
+      const dir = accountDirFor(env, vendor, parsed.name);
       try {
         const root = fs.realpathSync(homePaths(env).accountsDir);
         if (!fs.realpathSync(dir).startsWith(`${root}${path.sep}`)) return undefined;
       } catch {
         return undefined;
       }
-      return { dir, json: path.join(dir, ".claude.json") };
+      return dir;
     },
-    getCache: () => settings.get().modelCache,
-    setCache: (cache) => {
-      settings.setModelCache(cache);
+    getCache: (vendor) =>
+      vendor === "claude" ? settings.get().modelCache : settings.get().vendorModelCache?.[vendor],
+    setCache: (cache, vendor) => {
+      settings.setModelCache(cache, vendor);
     },
   });
   const image: ImageApi = {
@@ -250,7 +252,8 @@ export function createServerCore(options: CoreOptions): ServerCore {
       if (startOptions.watch ?? true) watcher.start();
       const pollMs = startOptions.pollMs ?? 3000;
       if (pollMs > 0) monitor.start(pollMs);
-      void models.refreshIfStale().catch(() => false);
+      for (const vendor of VendorSchema.options)
+        void models.refreshIfStale(vendor).catch(() => false);
       return { imported };
     },
     close() {

@@ -157,8 +157,8 @@ export function apiCoreOf(server: ServerCore, dockerApi: Docker): Core {
       }),
     },
     models: {
-      list: (dir, account) => server.models.list(dir, account),
-      rescan: () => server.models.rescan(),
+      list: (dir, account, vendor) => server.models.list(dir, account, vendor),
+      rescan: (vendor) => server.models.rescan(undefined, vendor),
     },
 
     settings: {

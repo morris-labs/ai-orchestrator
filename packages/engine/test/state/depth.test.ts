@@ -1,7 +1,7 @@
 // The `standard` depth: batched verification, its fallbacks and resume, one
 // reviewer pass, and round 2 on the fixer's diff alone.
 import { execFileSync } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   FindingInputSchema,
@@ -37,6 +37,7 @@ import {
 } from "../../src/state/steps.js";
 import { RunStore } from "../../src/run/store.js";
 import { makeRun, nextRunId } from "./harness.js";
+import { buildSampleRepo } from "./scenario.js";
 
 const REFUSED = "This content was flagged for possible cybersecurity risk.";
 type Handler = (request: { prompt: string; model?: string; repoPath: string }) => unknown;
@@ -486,6 +487,56 @@ describe("reviewer effort", () => {
     ] as never);
     expect(efforts).toEqual([expected]);
   });
+  it.each([
+    { vendor: "codex", model: "gpt-5.5", requested: "max", expected: "xhigh" },
+    { vendor: "codex", model: "gpt-6.1-sol", requested: "max", expected: "max" },
+    { vendor: "codex", model: "gpt-5-mini", requested: "minimal", expected: "minimal" },
+    { vendor: "claude", model: "claude-opus-5-5", requested: "minimal", expected: "low" },
+    { vendor: "claude", model: "claude-opus-5-5", requested: "max", expected: "max" },
+    { vendor: "copilot", model: "gpt-5.5", requested: "high", expected: "high" },
+    { vendor: "copilot", model: "auto", requested: "high", expected: undefined },
+  ] as const)(
+    "uses $expected effort on $vendor with $model when $requested is requested",
+    async ({ vendor, model, requested, expected }) => {
+      const efforts: unknown[] = [];
+      const repo = buildSampleRepo();
+      mkdirSync(join(repo, ".aio"), { recursive: true });
+      writeFileSync(
+        join(repo, ".aio", "policy.yaml"),
+        `version: 1\ntierModels:\n  ${vendor}:\n    medium: "${model}"\n`,
+      );
+      const { ctx, events } = await makeRun({
+        repo,
+        adapters: {
+          [vendor]: adapter(vendor, {
+            review: (request) => {
+              efforts.push((request as { effort?: unknown }).effort);
+              return { findings: [], ledger: [] };
+            },
+          }),
+        },
+        request: { depth: "standard", reviewerEffort: requested },
+      });
+      ctx.state.round = 1;
+      ctx.state.roles.reviewer = [vendor];
+      await runFind(ctx, [
+        {
+          id: "G01",
+          kind: "major",
+          reason: "test",
+          files: ["a.ts"],
+          hunks: [],
+        },
+      ] as never);
+      expect(efforts).toEqual([expected]);
+      const call = events.ofType("agent.started").find((event) => event.role === "reviewer");
+      expect(call?.effort).toBe(expected);
+      if (expected !== requested) {
+        expect(call?.tierReason).toContain(`instead of ${requested}`);
+        expect(call?.tierReason).toContain(expected ?? "default effort");
+      }
+    },
+  );
 });
 
 describe("reviewer plan at the standard depth", () => {

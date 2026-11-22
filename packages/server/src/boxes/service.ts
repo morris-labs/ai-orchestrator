@@ -10,6 +10,7 @@ import {
   BoxCreateSchema,
   BoxInputSchema,
   BoxUpdateSchema,
+  VENDOR_EFFORT_LEVELS,
   ContainerPathError,
   boxWorkDir,
   expandTemplate,
@@ -737,8 +738,8 @@ export class BoxService {
         conversationName,
         transcriptSyncedName: conversationName,
         platform: req.platform,
-        model: req.platform === "claude" ? req.model : undefined,
-        effort: req.platform === "claude" ? req.effort : undefined,
+        model: req.model,
+        effort: req.effort,
         skipPermissions: req.skipPermissions,
         ...(accounts && Object.keys(accounts).length > 0 ? { accounts } : {}),
         workspace,
@@ -1269,6 +1270,12 @@ export class BoxService {
   async update(id: string, input: BoxUpdateInput): Promise<{ box: Box; restartRequired: boolean }> {
     const u = parseInput(BoxUpdateSchema, input);
     const box = this.get(id);
+    if (u.effort && !VENDOR_EFFORT_LEVELS[box.platform].includes(u.effort)) {
+      throw new ApiError(
+        "validation",
+        `Choose a ${box.platform} effort: ${VENDOR_EFFORT_LEVELS[box.platform].join(", ")}.`,
+      );
+    }
     const next: Box = { ...box, updatedAt: this.now() };
     if (u.sessionUuid !== undefined && u.sessionUuid !== box.sessionUuid) {
       if (u.sessionUuid !== null) this.checkAdoption(u.sessionUuid, id, u.force ?? false);
@@ -1320,7 +1327,12 @@ export class BoxService {
   async setPlatform(id: string, platform: Platform, restart = false): Promise<Box> {
     const box = this.get(id);
     const wasRunning = this.isRunning(box);
-    const saved = this.repos.boxes.put({ ...box, platform, updatedAt: this.now() });
+    const next = { ...box, platform, updatedAt: this.now() };
+    if (platform !== box.platform) {
+      delete next.model;
+      delete next.effort;
+    }
+    const saved = this.repos.boxes.put(next);
     this.publish(saved, this.status(saved));
     if (restart && wasRunning) return this.restart(id);
     return saved;

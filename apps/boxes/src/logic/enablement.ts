@@ -27,7 +27,7 @@ export type ActionStates = Record<ActionId, boolean>;
  * Computes the enabled state of every action.
  *
  * @param selection the selected rows.
- * @param all every row, whatever the filter shows: Stop All and Start All
+ * @param all every row, whatever the filter shows: Restart All, Stop All, and Start All
  *   Stopped look at the whole model.
  * @param tabCount open terminal tabs.
  */
@@ -42,6 +42,7 @@ export function actionStates(
   const only = selection.length === 1 ? (selection[0] as BoxView) : null;
   const single = only && only.status !== "starting" && only.status !== "stopping" ? only : null;
   const anyRunning = selection.some((b) => b.status === "running");
+  const runningExists = all.some((b) => b.status === "running");
   const anyStopped = selection.some((b) => b.status === "stopped");
   const hasWorktree = single?.box.worktree !== undefined;
   const singleRunning = single?.status === "running";
@@ -60,9 +61,9 @@ export function actionStates(
     attach: singleRunning,
     start: anyStopped,
     stop: anyRunning,
-    restartAll: anyRunning,
+    restartAll: runningExists,
     remove: anyStopped && !anyRunning,
-    stopAll: all.some((b) => b.status === "running"),
+    stopAll: runningExists,
     startAllStopped: all.some((b) => b.status === "stopped" && b.box.wasRunning),
     closeTab: tabCount > 0,
     startReview: single !== null && !underReview,
