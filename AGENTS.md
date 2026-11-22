@@ -49,3 +49,21 @@ server tokens out of vendor subprocess environments and logs.
 Use synthetic paths, account names, and credentials in tests and documentation.
 Keep personal setup notes in the ignored `INFRA.md`; `CLAUDE.md` remains ignored
 for contributors who keep a personal file.
+
+## Release every change
+
+Every change that reaches `main` ships as a release in the same session:
+
+1. Commit with a Conventional Commits subject, such as
+   `fix(review): ...` or `chore(image): update agent CLI version pins`.
+2. Add a user-facing entry under `## [Unreleased]` in `CHANGELOG.md`.
+3. After the push or merge, pick the bump from the commits since the last
+   `vX.Y.Z` tag: breaking is major, `feat` is minor, anything else is patch.
+4. Run `scripts/set-version.sh X.Y.Z`, rename `## [Unreleased]` to
+   `## [X.Y.Z] - YYYY-MM-DD` above a fresh `## [Unreleased]`, commit
+   `chore(release): vX.Y.Z`, tag `vX.Y.Z`, and push the commit and tag with
+   `git push --atomic`. The tag starts the release workflow.
+
+Commit pin updates from `scripts/bump-versions.sh` and release them as a
+patch as soon as the diff is reviewed. Keep the working tree free of
+uncommitted version or pin changes.
