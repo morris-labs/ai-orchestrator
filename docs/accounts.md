@@ -194,8 +194,12 @@ Each box chooses one account per vendor. Pass `--account VENDOR/NAME` to
 default. Review runs use vendor defaults. A changed choice applies to the
 next session; existing sessions keep the account they started with.
 
-The model catalog reads only the selected Claude account's `.claude.json`
-and `settings.json`. The host's model settings don't supply defaults.
+The box model catalog reads account defaults from the selected vendor's
+configuration. Claude uses the `settings.json` file and adds model suggestions
+from the `.claude.json` file. Codex reads `model` and `model_reasoning_effort`
+from the account's `config.toml` file. Copilot reads the account's `config.json`
+file. All three catalogs include suggestions from the engine image when a scan
+finds model IDs.
 
 Containers mount the accounts directory and the transcript store. They don't
 mount the host's `.claude`, `.claude.json`, `.codex`, or `.copilot`. Container

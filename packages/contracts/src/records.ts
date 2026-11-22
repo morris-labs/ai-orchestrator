@@ -91,6 +91,7 @@ import { MachineRoleSchema } from "./machines.js";
 import {
   AccountIdSchema,
   EffortSchema,
+  ClaudeEffortSchema,
   EnvVarNameSchema,
   FractionSchema,
   IsoDateTimeSchema,
@@ -584,7 +585,7 @@ export type NewBoxDefaults = z.infer<typeof NewBoxDefaultsSchema>;
 export const VendorDefaultsSchema = z.object({
   claude: z.object({
     model: z.string().min(1).optional(),
-    effort: EffortSchema.optional(),
+    effort: ClaudeEffortSchema.optional(),
   }),
   codex: z.object({ model: z.string().min(1).optional() }),
   copilot: z.object({ model: z.string().min(1) }),
@@ -667,6 +668,12 @@ export const GlobalSettingsSchema = z
     /** Identity file the setup wizard checks and generates. */
     sshIdentity: z.string().min(1).optional(),
     modelCache: ModelCacheSchema.optional(),
+    vendorModelCache: z
+      .object({
+        codex: ModelCacheSchema.optional(),
+        copilot: ModelCacheSchema.optional(),
+      })
+      .optional(),
     newBoxDefaults: NewBoxDefaultsSchema,
     /** Mounts every container gets, on top of its project's. */
     globalMounts: z.array(MountSchema),
@@ -823,7 +830,7 @@ export const GlobalSettingsInputSchema = z
 /**
  * The body of `PATCH /api/v1/settings`: only the fields a person edits there,
  * with no defaults. The server owns `version`, `serverPort`, `setupCompleted`,
- * `modelCache`, and `newBoxDefaults`; prompt templates, global mounts, and
+ * `modelCache`, `vendorModelCache`, and `newBoxDefaults`; prompt templates, global mounts, and
  * secret references have their own routes. A patch that names any of them is
  * rejected. `null` clears an optional field.
  */
@@ -838,7 +845,7 @@ export const GlobalSettingsPatchSchema = z
         claude: z
           .object({
             model: z.string().min(1).nullable(),
-            effort: EffortSchema.nullable(),
+            effort: ClaudeEffortSchema.nullable(),
           })
           .partial()
           .strict(),

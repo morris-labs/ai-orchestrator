@@ -56,7 +56,11 @@ export function planTasks(tasks: readonly RunTask[], planned: readonly TaskInput
     const index = out.findIndex((t) => t.round === p.round && t.key === p.key);
     const existing = index >= 0 ? out[index] : undefined;
     if (existing) {
-      if (existing.state === "queued") out[index] = { ...existing, ...withoutUndefined(p) };
+      if (existing.state === "queued") {
+        const next = { ...existing, ...withoutUndefined(p) };
+        if ("effort" in p && p.effort === undefined) delete next.effort;
+        out[index] = next;
+      }
       continue;
     }
     out.push({ ...withoutUndefined(p), state: "queued", seq: seq++ });
@@ -95,6 +99,7 @@ export function markTask(
       ...times,
     };
     if (next.finishedAt === undefined) delete next.finishedAt;
+    if ("effort" in input && input.effort === undefined) delete next.effort;
     out[index] = next;
   } else {
     out.push({ ...withoutUndefined({ ...input, ...times }), state, seq: nextSeq(out) } as RunTask);
@@ -151,7 +156,7 @@ export interface StageEffort {
 
 /**
  * The effort each stage uses. Reviewers take the run's reviewer effort; the
- * other stages have fixed settings in the engine. Copilot ignores effort.
+ * other stages have fixed settings in the engine.
  */
 export function stageEfforts(reviewerEffort: string | undefined): StageEffort[] {
   return [

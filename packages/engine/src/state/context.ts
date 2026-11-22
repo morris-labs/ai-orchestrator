@@ -7,6 +7,7 @@ import {
   DEFAULT_TIER_MODELS,
   blockedModelMessage,
   isBlockedReviewModel,
+  resolveReviewEffort,
   type Effort,
   type ModelTier,
   type Actor,
@@ -180,11 +181,28 @@ const MIN_LIMIT_BLOCK_MS = 60_000;
 /** The longest single sleep: a longer timer fires at once. */
 const MAX_SLEEP_MS = 2_000_000_000;
 
-/**
- * Vendors whose review calls take a reasoning effort. Copilot's automatic model
- * selection isn't known to honor one, so a call to it uses Copilot's default.
- */
-const EFFORT_VENDORS: readonly Vendor[] = ["claude", "codex"];
+/** Chooses a call's model and explains a missing tier mapping. */
+export function chooseCallModel(
+  models: EngineDeps["models"],
+  tierModels: PolicyFile["tierModels"],
+  vendor: Vendor,
+  tier: ModelTier | undefined,
+  role: AgentRole,
+): { model: string | undefined; note: string | null } {
+  const existing = models?.[vendor] ?? BLOCKED_DEFAULT_FALLBACK[vendor];
+  if (!tier) return { model: existing, note: null };
+  // A large confirmer reads the round's whole fix diff.
+  const builtIn = DEFAULT_TIER_MODELS[vendor]?.[tier];
+  const mapped =
+    role === "confirmer" && tier === "large" && builtIn
+      ? builtIn
+      : (tierModels?.[vendor]?.[tier] ?? builtIn);
+  if (mapped) return { model: mapped, note: null };
+  return {
+    model: existing,
+    note: `${vendor} has no mapping for the ${tier} tier, so the call uses ${existing ?? "the CLI's default model"}`,
+  };
+}
 
 const ROLE_FOR_AGENT: Record<AgentRole, Role> = {
   reviewer: "reviewer",
@@ -285,31 +303,6 @@ export class RunContext {
   /** True when this engine has an adapter for `vendor`. */
   usable(vendor: Vendor): boolean {
     return this.deps.adapters[vendor] !== undefined;
-  }
-
-  /**
-   * The model for a call on `vendor` at `tier`, and a note when the vendor
-   * has no mapping. Every model a call uses comes from here.
-   */
-  private chooseModel(
-    vendor: Vendor,
-    tier: ModelTier | undefined,
-    role?: AgentRole,
-  ): { model: string | undefined; note: string | null } {
-    const existing = this.deps.models?.[vendor] ?? BLOCKED_DEFAULT_FALLBACK[vendor];
-    if (!tier) return { model: existing, note: null };
-    // A large confirmer reads the round's whole fix diff, so a policy that lowers
-    // the large tier for per-group calls doesn't lower it.
-    const builtIn = DEFAULT_TIER_MODELS[vendor]?.[tier];
-    const mapped =
-      role === "confirmer" && tier === "large" && builtIn
-        ? builtIn
-        : (this.policy.tierModels?.[vendor]?.[tier] ?? builtIn);
-    if (mapped) return { model: mapped, note: null };
-    return {
-      model: existing,
-      note: `${vendor} has no mapping for the ${tier} tier, so the call uses ${existing ?? "the CLI's default model"}`,
-    };
   }
 
   /** Gets the persisted range, resolving it again when the round or tip changes. */
@@ -1063,15 +1056,23 @@ export class RunContext {
         tier = tier === "small" ? "medium" : "large";
         tierReason = `${tierReason}; the last answer was malformed, so one tier up`;
       }
-      const choice = this.chooseModel(vendor, tier, spec.role);
-      if (choice.note) tierReason = `${tierReason}; ${choice.note}`;
+      const choice = chooseCallModel(
+        this.deps.models,
+        this.policy.tierModels,
+        vendor,
+        tier,
+        spec.role,
+      );
       if (choice.model !== undefined && isBlockedRequestedModel(vendor, choice.model)) {
         await this.settle(lease.leaseId, vendor, spec.role, ZERO_USE);
         throw new AgentFailed(spec.role, vendor, blockedModelMessage(vendor, choice.model));
       }
       const requestModel = choice.model;
-      const effort = EFFORT_VENDORS.includes(vendor) ? spec.request.effort : undefined;
-      if (effort && tierReason) tierReason = `${tierReason}; ${effort} effort`;
+      const { effort, note } = resolveReviewEffort(spec.request.effort, vendor, requestModel);
+      tierReason =
+        [tierReason, choice.note, note ?? (effort && tierReason ? `${effort} effort` : null)]
+          .filter(Boolean)
+          .join("; ") || undefined;
       const model = requestModel ?? vendor;
       const common = {
         runId: this.state.id,
@@ -1086,7 +1087,7 @@ export class RunContext {
         ...(tierReason ? { tierReason } : {}),
         ...(effort ? { effort } : {}),
       };
-      if (tier || effort) {
+      if (tier || effort || note) {
         this.deps.log?.info?.("Chose a call's model", {
           runId: this.state.id,
           agentId,

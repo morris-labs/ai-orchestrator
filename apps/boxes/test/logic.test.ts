@@ -246,9 +246,11 @@ describe("new box form", () => {
     const fork = createBody(base, "fork", { forkFrom: "aio-agent-a" });
     expect(fork.conversation).toEqual({ mode: "fork", fromBoxId: "aio-agent-a" });
     expect(fork.rememberLayout).toBe(false);
-    const codex = createBody({ ...base, platform: "codex" }, "new");
-    expect(codex.model).toBeUndefined();
-    expect(codex.effort).toBeUndefined();
+    const codex = createBody(
+      { ...base, platform: "codex", model: "gpt-5-mini", effort: "minimal" },
+      "new",
+    );
+    expect(codex).toMatchObject({ model: "gpt-5-mini", effort: "minimal" });
     expect(createBody(base, "new", { force: true }).force).toBe(true);
   });
   it("sends the chosen account for the platform, and diffs an account change", () => {

@@ -11,6 +11,7 @@ import {
   type Finding,
   type Profile,
   type Role,
+  type ReviewerEffortPreview,
   type RoundSummary,
   type EngineRunPreview,
   type RunRetry,
@@ -18,6 +19,7 @@ import {
   type TimedUsageSample,
   type Vendor,
   estimateRunTokens,
+  resolveReviewEffort,
   runDepth,
 } from "@aio/contracts";
 import {
@@ -43,7 +45,9 @@ import { NewerRunStateError } from "../run/state-version.js";
 import { RunNotFoundError, RunStore, listRunIds } from "../run/store.js";
 import { loadTokenHistory } from "../run/token-history.js";
 import { RunController, startingRoles } from "./controller.js";
-import { assignRoles } from "./profiles.js";
+import { assignRoles, planReviews } from "./profiles.js";
+import { roleTier, strongestGroupTier } from "../group/tier.js";
+import { chooseCallModel } from "./context.js";
 import { chooseDisprover } from "../verify/verify.js";
 import { chooseConfirmer, chooseSweeper } from "./steps.js";
 
@@ -312,13 +316,36 @@ export class EngineRunManager implements RunManager {
       // A preview request can leave the profile and the cross-vendor rule out.
       const profile = request.profile ?? "offload";
       const crossVendor = request.crossVendor ?? true;
-      const roles = assignRoles({
-        profile,
-        round: 1,
-        available,
-        manual: startingRoles(request.roles, available),
-        crossVendor,
-      });
+      const manual = startingRoles(request.roles, available);
+      const roles = assignRoles({ profile, round: 1, available, manual, crossVendor });
+      const reviewerEfforts = new Map<string, ReviewerEffortPreview>();
+      for (const task of planReviews(roles.reviewer, groups, profile, {
+        depth,
+        named: manual.reviewer,
+        groupsOnly: whole,
+      })) {
+        const group = groups.find((g) => g.id === task.groupId);
+        const base = strongestGroupTier(group ? [group] : groups);
+        const { tier } = roleTier(base, "reviewer", {
+          choice: request.modelTier ?? "auto",
+          persisting: false,
+          depth,
+        });
+        const { model } = chooseCallModel(
+          this.deps.models,
+          policy.tierModels,
+          task.vendor,
+          tier,
+          "reviewer",
+        );
+        const { effort, note } = resolveReviewEffort(request.reviewerEffort, task.vendor, model);
+        reviewerEfforts.set(JSON.stringify([task.vendor, model]), {
+          vendor: task.vendor,
+          model,
+          effort,
+          note,
+        });
+      }
       const verifiers = Object.fromEntries(
         roles.reviewer.map((v) => [
           v,
@@ -327,6 +354,7 @@ export class EngineRunManager implements RunManager {
       );
       return {
         vendors: Object.keys(this.deps.adapters) as Vendor[],
+        reviewerEfforts: [...reviewerEfforts.values()],
         baseSha: range.baseSha,
         tipSha: range.tipSha,
         diffBaseSha: range.diffBaseSha,

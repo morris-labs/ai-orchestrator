@@ -1,6 +1,6 @@
 // The New Box dialog, also used to edit a box and to fork its conversation.
 import {
-  EffortSchema,
+  VENDOR_EFFORT_LEVELS,
   boxWorkDir,
   defaultContainerPath,
   type AccountView,
@@ -73,8 +73,6 @@ interface PortRow {
   container: string;
 }
 
-const efforts = EffortSchema.options;
-
 const titles: Record<DialogMode, string> = {
   new: "New Box",
   edit: "Edit Box",
@@ -87,7 +85,11 @@ export function BoxDialog(props: BoxDialogProps) {
   const fallback = { model: "claude-opus-5-5", effort: "high" as Effort };
   const [form, setForm] = useState<BoxForm>(() =>
     source
-      ? formFromBox(source.box, mode === "edit" ? "edit" : "fork", fallback)
+      ? formFromBox(
+          source.box,
+          mode === "edit" ? "edit" : "fork",
+          source.box.platform === "claude" ? fallback : { model: "", effort: "" },
+        )
       : {
           platform: "claude",
           targetDir: props.initialDir,
@@ -108,7 +110,11 @@ export function BoxDialog(props: BoxDialogProps) {
   // The name the dialog filled in last; a ref, so the directory effect sees it.
   const lastAuto = useRef<string | null>(null);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
-  const [models, setModels] = useState<string[]>([]);
+  const [modelCatalog, setModelCatalog] = useState<{
+    vendor: Platform;
+    models: string[];
+    efforts: Effort[];
+  }>();
   const [remotes, setRemotes] = useState<SshRemote[]>([]);
   const [accounts, setAccounts] = useState<AccountView[]>([]);
   const [errors, setErrors] = useState<string[]>([]);
@@ -183,17 +189,25 @@ export function BoxDialog(props: BoxDialogProps) {
         .call("models.list", {
           query: {
             dir: catalogDir,
-            ...(form.platform === "claude" && form.account !== "" ? { account: form.account } : {}),
+            vendor: form.platform,
+            ...(form.account !== "" ? { account: form.account } : {}),
           },
         })
         .then((r) => {
           if (!live) return;
-          setModels(r.models);
+          setModelCatalog({ vendor: form.platform, models: r.models, efforts: r.efforts });
           // Re-resolve the defaults on a directory change until the person picks by hand.
           setForm((f) => ({
             ...f,
             ...(touched.current.model ? {} : { model: r.defaults.model }),
-            ...(touched.current.effort ? {} : { effort: r.defaults.effort }),
+            ...(touched.current.effort
+              ? {}
+              : {
+                  effort:
+                    form.platform === "copilot" && r.defaults.model === "auto"
+                      ? ""
+                      : r.defaults.effort,
+                }),
           }));
         })
         .catch(() => undefined);
@@ -252,9 +266,11 @@ export function BoxDialog(props: BoxDialogProps) {
   const conversationDisabled = !claude || mode === "fork";
   const knownUuid = conversations.some((c) => c.sessionUuid === form.conversation);
   const picked = conversations.find((c) => c.sessionUuid === form.conversation) ?? null;
+  const vendorCatalog = modelCatalog?.vendor === form.platform ? modelCatalog : undefined;
+  const efforts = vendorCatalog?.efforts ?? VENDOR_EFFORT_LEVELS[form.platform];
   const modelOptions = useMemo(
-    () => [...new Set([...models, ...(form.model ? [form.model] : [])])],
-    [models, form.model],
+    () => [...new Set([...(vendorCatalog?.models ?? []), ...(form.model ? [form.model] : [])])],
+    [vendorCatalog, form.model],
   );
 
   const pickConversation = (uuid: string) => {
@@ -342,11 +358,16 @@ export function BoxDialog(props: BoxDialogProps) {
           disabled={mode === "edit"}
           onChange={(e) => {
             const p = e.target.value as Platform;
+            touched.current.model = false;
+            touched.current.effort = false;
+            handPicked.current = { model: false, effort: false };
             setForm((f) => ({
               ...f,
               platform: p,
               account: "",
-              ...(p !== "claude" ? { conversation: "" } : {}),
+              model: p === "claude" ? fallback.model : "",
+              effort: p === "claude" ? fallback.effort : "",
+              conversation: "",
             }));
           }}
         >
@@ -461,8 +482,8 @@ export function BoxDialog(props: BoxDialogProps) {
           id="bx-model"
           className="ab-input"
           list="bx-models"
-          value={claude ? form.model : ""}
-          disabled={!claude}
+          value={form.model}
+          placeholder={claude ? undefined : "Account default"}
           onChange={(e) => {
             touched.current.model = true;
             handPicked.current.model = true;
@@ -481,13 +502,13 @@ export function BoxDialog(props: BoxDialogProps) {
           id="bx-effort"
           className="ab-select"
           value={form.effort}
-          disabled={!claude}
           onChange={(e) => {
             touched.current.effort = true;
             handPicked.current.effort = true;
-            set("effort", e.target.value as Effort);
+            set("effort", e.target.value as Effort | "");
           }}
         >
+          <option value="">Account default</option>
           {efforts.map((e) => (
             <option key={e} value={e}>
               {e}

@@ -22,7 +22,7 @@ export interface BoxForm {
   conversation: string;
   name: string;
   model: string;
-  effort: Effort;
+  effort: Effort | "";
   layout: Layout;
   skipPermissions: boolean;
   /** The account (`VENDOR/NAME`) of the platform's CLI; `""` uses the vendor's default. */
@@ -177,7 +177,8 @@ export function createBody(
     platform: form.platform,
     conversationName: form.name.trim(),
     conversation,
-    ...(claude ? { model: form.model.trim(), effort: form.effort } : {}),
+    ...(form.model.trim() ? { model: form.model.trim() } : {}),
+    ...(form.effort ? { effort: form.effort } : {}),
     skipPermissions: form.skipPermissions,
     ...(form.account !== "" ? { accounts: { [form.platform]: form.account } } : {}),
     layout: adopt ? "root" : form.layout,
@@ -192,7 +193,7 @@ export function createBody(
 export function formFromBox(
   box: Box,
   mode: "edit" | "fork",
-  defaults: { model: string; effort: Effort },
+  defaults: { model: string; effort: Effort | "" },
 ): BoxForm {
   return {
     platform: box.platform,
@@ -221,14 +222,15 @@ export function updateBody(
 ): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   if (form.name.trim() !== box.conversationName) out.conversationName = form.name.trim();
-  if (box.platform === "claude") {
-    const model = form.model.trim();
-    if (box.model === undefined ? handPicked.model && model !== "" : model !== box.model) {
-      out.model = model;
-    }
-    if (box.effort === undefined ? handPicked.effort : form.effort !== box.effort) {
-      out.effort = form.effort;
-    }
+  const model = form.model.trim();
+  if ((box.model !== undefined || handPicked.model) && (model || undefined) !== box.model) {
+    out.model = model || null;
+  }
+  if (
+    (box.effort !== undefined || handPicked.effort) &&
+    (form.effort || undefined) !== box.effort
+  ) {
+    out.effort = form.effort || null;
   }
   if (form.skipPermissions !== box.skipPermissions) out.skipPermissions = form.skipPermissions;
   const account = box.accounts?.[box.platform] ?? "";

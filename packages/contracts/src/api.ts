@@ -71,6 +71,7 @@ import {
   CommitShaSchema,
   AccountIdSchema,
   EffortSchema,
+  VENDOR_EFFORT_LEVELS,
   EnvVarNameSchema,
   IsoDateTimeSchema,
   OkSchema,
@@ -362,8 +363,7 @@ export type ConversationMode = z.infer<typeof ConversationModeSchema>;
  * - `layout` is required. `auto` applies `GlobalSettings.newBoxDefaults` for
  *   the target directory, as 3.3.5 did; `rememberLayout` stores the resolved
  *   choice there for next time.
- * - Platforms other than `claude` take no `model` or `effort` and only a
- *   `new` conversation.
+ * - Platforms other than `claude` only take a `new` conversation.
  * - `worktree` and `workspace` need a conversation name, because the slug
  *   names the folder and the branch.
  * - Adopting a session that a stopped box holds fails with 409
@@ -390,23 +390,19 @@ export const BoxCreateSchema = z
     force: z.boolean().default(false),
   })
   .superRefine((b, ctx) => {
-    if (b.platform !== "claude") {
-      for (const key of ["model", "effort"] as const) {
-        if (b[key] !== undefined) {
-          ctx.addIssue({
-            code: z.ZodIssueCode.custom,
-            path: [key],
-            message: `${b.platform} boxes take no ${key}`,
-          });
-        }
-      }
-      if (b.conversation.mode !== "new") {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ["conversation"],
-          message: `${b.platform} boxes start a new conversation only`,
-        });
-      }
+    if (b.effort !== undefined && !VENDOR_EFFORT_LEVELS[b.platform].includes(b.effort)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["effort"],
+        message: `Choose a ${b.platform} effort: ${VENDOR_EFFORT_LEVELS[b.platform].join(", ")}.`,
+      });
+    }
+    if (b.platform !== "claude" && b.conversation.mode !== "new") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["conversation"],
+        message: `${b.platform} boxes start a new conversation only`,
+      });
     }
     if ((b.layout === "worktree" || b.layout === "workspace") && b.conversationName.trim() === "") {
       ctx.addIssue({
@@ -790,9 +786,19 @@ export const RunListQuerySchema = z.object({
   status: RunStatusSchema.optional(),
 });
 
+export const ReviewerEffortPreviewSchema = z.object({
+  vendor: VendorSchema,
+  model: z.string().optional(),
+  effort: EffortSchema.optional(),
+  note: z.string().optional(),
+});
+export type ReviewerEffortPreview = z.infer<typeof ReviewerEffortPreviewSchema>;
+
 export const RunPreviewSchema = z.object({
   /** The vendors with an adapter in the container. Absent from an older engine. */
   vendors: z.array(VendorSchema).optional(),
+  /** The planned reviewer models and effective effort values. */
+  reviewerEfforts: z.array(ReviewerEffortPreviewSchema).optional(),
   baseSha: CommitShaSchema,
   tipSha: CommitShaSchema,
   /** The commit the diff starts from: the merge base, or `baseSha` with `exactBase`. */
@@ -1491,7 +1497,8 @@ export const serverRoutes = {
     summary: "List models and the defaults for a directory.",
     query: z.object({
       dir: z.string().optional(),
-      /** A Claude account id; absent means the default account. */
+      vendor: VendorSchema.optional(),
+      /** An account id for the selected vendor. */
       account: AccountIdSchema.optional(),
     }),
     response: ModelsResultSchema,
@@ -1500,6 +1507,7 @@ export const serverRoutes = {
     method: "POST",
     path: `${V1}/models/rescan`,
     summary: "Rescan the image for model ids.",
+    query: z.object({ vendor: VendorSchema.optional() }),
     response: ModelsResultSchema,
     errors: ["image_missing"],
   }),

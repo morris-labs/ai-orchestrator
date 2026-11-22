@@ -251,7 +251,7 @@ describe("CopilotAdapter", () => {
         "--resume=s1",
         "--model",
         "gpt-5.1",
-        "--effort",
+        "--reasoning-effort",
         "low",
       ]),
     );

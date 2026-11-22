@@ -734,12 +734,23 @@ const defaultHandlers: Partial<Record<HttpRouteKey, FakeHandler>> = {
     dir: r.query.dir as string,
     conversations: s.state.conversations[r.query.dir as string] ?? [],
   }),
-  "models.list": (_r, s) => ({
-    models: s.state.models,
-    efforts: ["low", "medium", "high", "xhigh", "max"],
-    defaults: { model: "claude-opus-5-5", effort: "high" },
-    source: "cache",
-  }),
+  "models.list": (r, s) =>
+    r.query.vendor && r.query.vendor !== "claude"
+      ? {
+          models: r.query.vendor === "codex" ? ["gpt-6.1-sol"] : ["auto"],
+          efforts: ["minimal", "low", "medium", "high", "xhigh", "max"],
+          defaults: {
+            model: r.query.vendor === "codex" ? "gpt-6.1-sol" : "auto",
+            effort: "medium",
+          },
+          source: "baseline",
+        }
+      : {
+          models: s.state.models,
+          efforts: ["low", "medium", "high", "xhigh", "max"],
+          defaults: { model: "claude-opus-5-5", effort: "high" },
+          source: "cache",
+        },
   "models.rescan": (_r, s) => ({
     models: s.state.models,
     efforts: ["low", "medium", "high", "xhigh", "max"],

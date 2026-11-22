@@ -470,9 +470,6 @@ describe("create", () => {
     expect(lastCommand(h)).toMatch(
       /^env COPILOT_HOME='.*copilot '--remote' '--allow-all-tools' '-i' '/,
     );
-    await expect(
-      h.core.boxes.create({ targetDir: dir, layout: "root", platform: "codex", model: "x" }),
-    ).rejects.toMatchObject({ code: "validation" });
   });
 
   it("saves without starting when asked", async () => {

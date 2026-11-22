@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { ModelsResultSchema, type ModelCache } from "@aio/contracts";
+import { ModelsResultSchema, type ModelCache, type Vendor } from "@aio/contracts";
 import {
   MODEL_BASELINE,
   MODEL_SCAN_COMMAND,
@@ -107,21 +107,18 @@ function fakeDocker(opts: {
 }
 
 function catalog(docker: DockerClient, initial?: ModelCache) {
-  let cache = initial;
+  const caches: Partial<Record<Vendor, ModelCache>> = { ...(initial ? { claude: initial } : {}) };
   const c = new ModelCatalog({
     env,
     docker,
     image: () => "aio-agent",
-    claudeHome: () => ({
-      dir: path.join(home, "account"),
-      json: path.join(home, "account", ".claude.json"),
-    }),
-    getCache: () => cache,
-    setCache: (v) => {
-      cache = v;
+    accountHome: () => path.join(home, "account"),
+    getCache: (vendor) => caches[vendor],
+    setCache: (v, vendor) => {
+      caches[vendor] = v;
     },
   });
-  return { c, cache: () => cache };
+  return { c, cache: (vendor: Vendor = "claude") => caches[vendor] };
 }
 
 describe("ModelCatalog", () => {
@@ -137,6 +134,53 @@ describe("ModelCatalog", () => {
     expect(res.models).toContain("claude-opus-9");
     expect(res.models).toHaveLength(MODEL_BASELINE.length + 1);
     expect(res.efforts).toEqual(["low", "medium", "high", "xhigh", "max"]);
+  });
+
+  it("adds scanned Codex models to its baseline and reads root account TOML defaults", async () => {
+    fs.writeFileSync(
+      path.join(home, "account", "config.toml"),
+      [
+        "model = 'gpt-5-mini' # Account default",
+        'model_reasoning_effort = "minimal"',
+        "[profiles.review]",
+        'model = "gpt-5.5"',
+      ].join("\n"),
+    );
+    const { docker, runs } = fakeDocker({
+      imageId: "sha:1",
+      scan: { exitCode: 0, stdout: "gpt-6.2-sol\nclaude-opus-6\n" },
+    });
+    const { c, cache } = catalog(docker);
+    expect(await c.refreshIfStale("codex")).toBe(true);
+    expect(await c.refreshIfStale("codex")).toBe(false);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.cmd?.[1]).toContain("command -v codex");
+    const result = await c.list(undefined, undefined, "codex");
+    expect(result.defaults).toEqual({ model: "gpt-5-mini", effort: "minimal" });
+    expect(result.efforts).toContain("minimal");
+    expect(result.models).toEqual(
+      expect.arrayContaining(["gpt-6.2-sol", "gpt-6.1-sol", "gpt-5-mini"]),
+    );
+    expect(result.models).not.toContain("claude-opus-6");
+    expect(cache("codex")?.models).toEqual(["gpt-6.2-sol"]);
+    expect((await c.list()).source).toBe("baseline");
+  });
+
+  it("keeps a separate Copilot scan and ignores defaults linked outside the account", async () => {
+    const outside = path.join(home, "config.json");
+    fs.writeFileSync(outside, JSON.stringify({ model: "claude-opus-6" }));
+    fs.symlinkSync(outside, path.join(home, "account", "config.json"));
+    const { docker, runs } = fakeDocker({
+      imageId: "sha:1",
+      scan: { exitCode: 0, stdout: "gemini-3-pro\n" },
+    });
+    const { c, cache } = catalog(docker);
+    const result = await c.rescan(undefined, "copilot");
+    expect(result).toMatchObject({ source: "scan", defaults: { model: "auto" } });
+    expect(runs[0]?.cmd?.[1]).toContain("command -v copilot");
+    expect(result.models).toEqual(expect.arrayContaining(["auto", "gemini-3-pro"]));
+    expect(result.models).not.toContain("claude-opus-6");
+    expect(cache("copilot")?.models).toEqual(["gemini-3-pro"]);
   });
 
   it("refreshes only when stale", async () => {

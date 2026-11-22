@@ -140,6 +140,32 @@ describe("Launcher", () => {
     await waitFor(() => expect(window.location.hash).toBe(`#/runs/${lastRun().id}`));
   });
 
+  it("shows effective reviewer effort from the preview", async () => {
+    const { server } = renderWithStore(<Launcher prefill={{ project: null, box: BOX }} />, {
+      ...handlers(),
+      "runs.preview": () => ({
+        ...preview,
+        reviewerEfforts: [
+          { vendor: "claude", model: "claude-opus-5-5", effort: "max" },
+          {
+            vendor: "codex",
+            model: "gpt-5.5",
+            effort: "xhigh",
+            note: "The codex call uses xhigh effort instead of max.",
+          },
+        ],
+      }),
+    });
+    await waitFor(() => expect(screen.getByLabelText(/^Repository/)).not.toHaveValue(""));
+    fireEvent.change(screen.getByLabelText(/^Reviewer effort/), { target: { value: "max" } });
+    fireEvent.click(screen.getByRole("button", { name: "Preview groups" }));
+
+    const list = await screen.findByRole("list", { name: "Effective reviewer effort" });
+    expect(within(list).getByText(/claude.*max/)).toBeInTheDocument();
+    expect(within(list).getByText(/xhigh effort instead of max/)).toBeInTheDocument();
+    expect(server.callsTo("runs.preview")[0]?.body).toMatchObject({ reviewerEffort: "max" });
+  });
+
   it("sends the reviewer effort only when a person picks one", async () => {
     const form = { ...DEFAULT_FORM, projectId: PROJECT, repoPath: "/repo", tip: "main" };
     const request = (f: typeof form) => {
