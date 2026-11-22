@@ -449,13 +449,13 @@ export function App() {
     }
   };
 
-  const onStart = () => {
-    const targets = selection.filter((b) => b.status === "stopped");
+  const onStart = (boxes: readonly BoxView[]) => {
+    const targets = boxes.filter((b) => b.status === "stopped");
     for (const b of targets) void startBox(b);
   };
 
-  const onStop = async () => {
-    const targets = selection.filter((b) => b.status === "running");
+  const onStop = async (boxes: readonly BoxView[]) => {
+    const targets = boxes.filter((b) => b.status === "running");
     mark(
       targets.map((b) => b.box.id),
       "stopping",
@@ -560,12 +560,15 @@ export function App() {
     }
   };
 
+  const attachLabel = (view: BoxView | null) =>
+    view ? `Attach to ${platformLabel[view.box.platform]} Session` : "Attach to Session";
+
   const externalTerminal = async (
     view: BoxView,
     kind: "session" | "shell" | "side",
     platform?: Platform,
   ) => {
-    const title = kind === "shell" ? "Open Shell in Container" : "Attach to Claude Session";
+    const title = kind === "shell" ? "Open Shell in Container" : attachLabel(view);
     if (!machine.isLocal) {
       // A host terminal here can't reach a container on another PC, so the
       // terminal opens in a tab, through the hub.
@@ -614,8 +617,8 @@ export function App() {
     }
   };
 
-  const onRemove = async () => {
-    const targets = selection.filter((b) => b.status === "stopped");
+  const onRemove = async (boxes: readonly BoxView[]) => {
+    const targets = boxes.filter((b) => b.status === "stopped");
     if (targets.length === 0) return;
     const text =
       targets.length === 1
@@ -650,8 +653,7 @@ export function App() {
     void data.reload();
   };
 
-  const onPurge = async () => {
-    if (!single) return;
+  const onPurge = async (single: BoxView) => {
     const dir = single.box.targetDir;
     const running = runningOnDir(all, dir);
     if (running) {
@@ -694,8 +696,7 @@ export function App() {
     void data.reload();
   };
 
-  const onConvert = async () => {
-    if (!single) return;
+  const onConvert = async (single: BoxView) => {
     let plan;
     try {
       plan = await client.call("boxes.convertToWorktree.plan", {
@@ -736,8 +737,7 @@ export function App() {
     }
   };
 
-  const onStartReview = async () => {
-    if (!single) return;
+  const onStartReview = async (single: BoxView) => {
     // The run executes on the machine that holds the box; the review app
     // reaches it through this server.
     const machineId = machine.isLocal ? undefined : machine.id;
@@ -1159,6 +1159,25 @@ export function App() {
   // Actions, menus, toolbar, and chords
 
   const newDir = () => currentProject?.project.root ?? data.settings?.defaultTargetDir ?? "";
+  const boxActions = (targets: readonly BoxView[]) => {
+    const target = targets.length === 1 ? targets[0] : undefined;
+    return {
+      edit: () => target && setDialog({ kind: "edit", box: target }),
+      fork: () => target && setDialog({ kind: "fork", box: target }),
+      convert: () => target && void onConvert(target),
+      start: () => onStart(targets),
+      stop: () => void onStop(targets),
+      attach: () => target && void externalTerminal(target, "session"),
+      openShell: () => target && void externalTerminal(target, "shell"),
+      remove: () => void onRemove(targets),
+      purge: () => target && void onPurge(target),
+      move: () => target && setDialog({ kind: "move", box: target }),
+      changeDir: () =>
+        target && setDialog({ kind: "changeDir", box: target, title: "Change Working Directory" }),
+      review: () => target && void onStartReview(target),
+    };
+  };
+
   const run = {
     newBox: () => setDialog({ kind: "new", dir: newDir() }),
     setup: () => setDialog({ kind: "setup" }),
@@ -1171,22 +1190,10 @@ export function App() {
       if (b) b.quit();
       else window.close();
     },
-    edit: () => single && setDialog({ kind: "edit", box: single }),
-    fork: () => single && setDialog({ kind: "fork", box: single }),
-    convert: () => void onConvert(),
-    start: onStart,
-    stop: () => void onStop(),
+    ...boxActions(selection),
     stopAll: () => void onStopAll(),
     startAllStopped: () => void onStartAllStopped(),
     restartAll: () => void onRestartAll(),
-    attach: () => single && void externalTerminal(single, "session"),
-    openShell: () => single && void externalTerminal(single, "shell"),
-    remove: () => void onRemove(),
-    purge: () => void onPurge(),
-    move: () => single && setDialog({ kind: "move", box: single }),
-    changeDir: () =>
-      single && setDialog({ kind: "changeDir", box: single, title: "Change Working Directory" }),
-    review: () => void onStartReview(),
     refresh: () => {
       void client.call("stats.refresh", {}).catch(() => undefined);
       void data.reload();
@@ -1280,34 +1287,39 @@ export function App() {
     ];
   };
 
-  const boxMenu = (view: BoxView | null): MenuEntry[] => [
-    { label: "Start", chord: CHORDS.start, enabled: states.start, run: run.start },
-    { label: "Edit Box...", chord: CHORDS.edit, enabled: states.edit, run: run.edit },
-    { label: "Fork Conversation...", chord: CHORDS.fork, enabled: states.fork, run: run.fork },
-    { label: "Convert to Worktree...", enabled: states.convertToWorktree, run: run.convert },
-    { label: "Start Review...", enabled: states.startReview, run: run.review },
-    ...(view && selection.length === 1 ? [{ type: "separator" } as const, ...sideMenus(view)] : []),
-    { type: "separator" },
-    { label: "Stop", enabled: states.stop, run: run.stop },
-    {
-      label: "Attach to Claude Session",
-      chord: CHORDS.attach,
-      enabled: states.attach,
-      run: run.attach,
-    },
-    {
-      label: "Open Shell in Container",
-      chord: CHORDS.openShell,
-      enabled: states.openShell,
-      run: run.openShell,
-    },
-    { type: "separator" },
-    { label: "Move Working Directory...", enabled: states.moveWorkDir, run: run.move },
-    { label: "Change Working Directory...", enabled: states.changeWorkDir, run: run.changeDir },
-    { type: "separator" },
-    { label: "Remove", enabled: states.remove, run: run.remove },
-    { label: "Purge...", enabled: states.purge, run: run.purge },
-  ];
+  const boxMenu = (view: BoxView | null): MenuEntry[] => {
+    const targets = view ? [view] : selection;
+    const states = actionStates(targets, all, tabs.tabs.length);
+    const run = boxActions(targets);
+    return [
+      { label: "Start", chord: CHORDS.start, enabled: states.start, run: run.start },
+      { label: "Edit Box...", chord: CHORDS.edit, enabled: states.edit, run: run.edit },
+      { label: "Fork Conversation...", chord: CHORDS.fork, enabled: states.fork, run: run.fork },
+      { label: "Convert to Worktree...", enabled: states.convertToWorktree, run: run.convert },
+      { label: "Start Review...", enabled: states.startReview, run: run.review },
+      ...(view ? [{ type: "separator" } as const, ...sideMenus(view)] : []),
+      { type: "separator" },
+      { label: "Stop", enabled: states.stop, run: run.stop },
+      {
+        label: attachLabel(view ?? single),
+        chord: CHORDS.attach,
+        enabled: states.attach,
+        run: run.attach,
+      },
+      {
+        label: "Open Shell in Container",
+        chord: CHORDS.openShell,
+        enabled: states.openShell,
+        run: run.openShell,
+      },
+      { type: "separator" },
+      { label: "Move Working Directory...", enabled: states.moveWorkDir, run: run.move },
+      { label: "Change Working Directory...", enabled: states.changeWorkDir, run: run.changeDir },
+      { type: "separator" },
+      { label: "Remove", enabled: states.remove, run: run.remove },
+      { label: "Purge...", enabled: states.purge, run: run.purge },
+    ];
+  };
 
   const menus = [
     {
@@ -1349,7 +1361,7 @@ export function App() {
         },
         { label: "Restart All Running...", enabled: states.restartAll, run: run.restartAll },
         {
-          label: "Attach to Claude Session",
+          label: attachLabel(single),
           chord: CHORDS.attach,
           enabled: states.attach,
           run: run.attach,
@@ -1455,7 +1467,7 @@ export function App() {
         {tool("Fork", states.fork, run.fork, `Fork Conversation (${CHORDS.fork})`)}
         {tool("Stop", states.stop, run.stop)}
         {tool("Restart All", states.restartAll, run.restartAll, "Restart All Running")}
-        {tool("Attach", states.attach, run.attach, `Attach to Claude Session (${CHORDS.attach})`)}
+        {tool("Attach", states.attach, run.attach, `${attachLabel(single)} (${CHORDS.attach})`)}
         {tool(
           "Open Shell",
           states.openShell,

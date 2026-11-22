@@ -69,7 +69,7 @@ const cases: Case[] = [
     name: "nothing selected, a box runs and a stopped one was running",
     selection: [],
     all: [running, stoppedWas],
-    enabled: ["stopAll", "startAllStopped"],
+    enabled: ["restartAll", "stopAll", "startAllStopped"],
   },
   {
     name: "one stopped box with a session",
@@ -182,8 +182,11 @@ describe("actionStates (inventory 1.4)", () => {
     expect(on.sort()).toEqual([...enabled].sort());
   });
 
-  it("looks at every box for Stop All, whatever is selected", () => {
-    expect(actionStates([stopped], [stopped, running], 0).stopAll).toBe(true);
+  it("looks at every box for Restart All and Stop All", () => {
+    expect(actionStates([stopped], [stopped, running], 0)).toMatchObject({
+      restartAll: true,
+      stopAll: true,
+    });
   });
 
   it("enables Start All Stopped only for stopped boxes that were running", () => {
