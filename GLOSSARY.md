@@ -76,3 +76,238 @@ _Avoid_: Base (on its own), merge base (for the concept)
 What one round of a review run looks at: its change base, its tip, and the
 files that changed between them.
 _Avoid_: Range (on its own), diff
+
+## Build pipeline
+
+The build pipeline takes a request from planning to a release-ready pull
+request, using a team of role-based agents. It is a sister to the review
+pipeline inside AI Orchestrator.
+
+### Team
+
+**Role**:
+A reusable definition of one job on the team, such as Architect, with its
+prompt, rules, permissions, triggers, and output contract. A review run's
+reviewer, disprover, confirmer, and fixer are review roles, a separate set.
+_Avoid_: Agent type, persona
+
+**Seat**:
+A role that a build activates.
+_Avoid_: Slot, assignment
+
+**Agent**:
+One model session that fills a seat for one piece of work. One seat can hold
+several agents at once.
+_Avoid_: Worker, bot
+
+**Team**:
+The set of seats in one build.
+_Avoid_: Crew, squad
+
+**Planning team**:
+The seats that shape the build plan: Analyst, Architect, Critic, and the
+design consults.
+_Avoid_: Design team
+
+**Build team**:
+The seats that carry out the build plan: Test engineer, Developers,
+Simplifier, the bench roles, and the on-call roles.
+_Avoid_: Dev team, execution team
+
+**Project manager**:
+The core role that is the owner's single point of contact. It runs planning,
+triages escalations, and directs the build team. The owner's main Claude
+conversation fills this seat.
+_Avoid_: PM, lead, orchestrator
+
+**Analyst**:
+The core role that turns a request into a spec: stories, edge cases,
+acceptance criteria, and a size estimate.
+_Avoid_: Product manager, PM, scope estimator
+
+**Core team**:
+The roles that every build seats.
+_Avoid_: Tier 1, primary group
+
+**Bench**:
+The roles that a build seats because of the project's traits, such as having
+a user interface or a database.
+_Avoid_: Tier 2, project bench
+
+**On-call role**:
+A role that the engine activates only when one of its triggers fires, as a
+seat or as a review lens.
+_Avoid_: Tier 3, situational role
+
+**Scribe**:
+The core role that writes the project's record: decisions and their reasons,
+the glossary, the architecture, and the codebase walkthrough.
+_Avoid_: Note taker, secretary
+
+**Librarian**:
+The core role that reads the project's record and the code to answer
+questions and to give other agents the context they need.
+_Avoid_: SME, context librarian, historian
+
+**Memory archive**:
+The owner's long-term, cross-project store of records, which receives copies
+of each project's record. The repository stays the canonical record.
+_Avoid_: Wiki, knowledge base
+
+**Design consult**:
+Constraints that a specialist role adds to the spec before any code exists.
+
+**Review lens**:
+A focus area that a specialist role adds to the review pipeline's reviewers.
+_Avoid_: Review stage, audit
+
+### Lifecycle
+
+**Build**:
+One whole effort, from the first planning conversation to the final
+release-ready pull request.
+_Avoid_: Run, job, project
+
+**Planning**:
+The interactive phase of a build, a conversation between the owner and a
+Claude Code session that produces the build plan.
+_Avoid_: Intake, design phase
+
+**Build plan**:
+The approved, versioned record of what a build delivers and how: the spec,
+acceptance criteria, architecture, contracts, milestones, and task graph.
+_Avoid_: Spec, PRD, ticket
+
+**Execution**:
+The unattended phase of a build, in which the engine carries out the build
+plan.
+_Avoid_: Build phase, coding phase
+
+**Milestone**:
+A working, tested increment of a build. Every build has at least one.
+_Avoid_: Phase, sprint, stage
+
+**Single PR**:
+The delivery mode in which all milestones land on one branch and reach the
+owner as one pull request.
+
+**Release train**:
+The delivery mode in which each milestone reaches the owner as its own pull
+request.
+_Avoid_: Stacked mode
+
+**Release ready**:
+The state of a milestone or build that meets every exit criterion and waits
+only for the owner to merge it.
+_Avoid_: Done, complete, shippable
+
+**Escalation**:
+A decision that execution can't make inside the build plan's bounds. It goes
+to the Project manager, and on to the owner when it changes what the build
+delivers.
+_Avoid_: Blocker, ticket, alert
+
+### Team chat
+
+**Team chat**:
+The messages that a build's agents and the owner exchange, shown as a
+conversation. Each message is a file, and the owner can read all of them.
+_Avoid_: Slack, log
+
+**Message**:
+One typed file that a sender addresses to a seat or to the owner, such as a
+question, a test dispute, a file request, or a meeting reply. The engine
+delivers it straight to the addressee.
+_Avoid_: Chat message, note
+
+**Owner post**:
+A message from the owner to one agent. The engine records it as a decision.
+_Avoid_: Comment, instruction
+
+**Channel**:
+A topic space in the team chat, such as one per milestone or design question,
+that only its members read. A phase 2 addition.
+_Avoid_: Room, topic
+
+**Side chat**:
+A private conversation between two or more agents in the team chat. The owner
+can read it. A phase 2 addition.
+_Avoid_: Agent DM, back channel
+
+**Direct message**:
+A message from an agent straight to the owner, outside the Project manager.
+_Avoid_: DM, side chat, escalation
+
+**Slice**:
+The messages that one agent received. The owner can view each agent's
+slice.
+_Avoid_: Inbox, feed, context
+
+**Meeting**:
+A turn-based discussion of one proposal, which ends when no
+invited role holds a major objection or when the meeting reaches its round
+cap.
+_Avoid_: Discussion, standup, review
+
+### Testing
+
+**Red check**:
+The engine's run of the tests before the code exists. Each test must fail on
+an assertion.
+_Avoid_: Dry run, smoke test
+
+**Coverage check**:
+One reading of each acceptance criterion with its tests, by an agent on a
+different vendor from the Test engineer, to find criteria that the tests
+don't check.
+_Avoid_: Test review, audit
+
+**Test lock**:
+The engine's record of each test file's hash. The gate fails a Developer
+commit that changes a locked file.
+_Avoid_: Freeze, protection
+
+**Test dispute**:
+A message from a Developer that says a locked test is wrong, with the reason.
+It goes to the Test engineer.
+_Avoid_: Test escalation, appeal
+
+**Known failing**:
+A test that fails in every preflight run. It doesn't block the build.
+_Avoid_: Broken test, expected failure
+
+**Flaky**:
+A test whose result differs between runs of the same code. The engine
+quarantines it.
+_Avoid_: Unstable, intermittent
+
+**Failure fingerprint**:
+The set of failing checks in one gate run, each with its normalized first
+error line. Two gate failures in a row on one failure fingerprint seat the
+Debugger.
+_Avoid_: Error signature, failure hash
+
+**Owned file set**:
+The files that one task can change.
+_Avoid_: Scope, file list
+
+**Task**:
+The smallest unit of work in a build plan, sized for one agent session, with
+an owned file set and the tests that it must make pass.
+_Avoid_: Ticket, job, step
+
+**Task gate**:
+The checks that the engine runs after each Developer attempt on a task: the
+tests, type checks, lint, the test lock, and the owned file set.
+_Avoid_: Gate (on its own, which is the review pipeline's check after a fix)
+
+### Placement
+
+**Placement**:
+The vendor, model tier, and effort that a seat runs on.
+_Avoid_: Profile, assignment
+
+**Single-vendor setting**:
+A build setting that places every seat on one vendor. A rule that requires
+another vendor then uses a fresh agent on the same vendor.
+_Avoid_: Single-vendor profile, `claude-only`, `codex-only`
