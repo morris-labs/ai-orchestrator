@@ -6,6 +6,10 @@ section's heading must have the form `## [X.Y.Z]`.
 
 ## [Unreleased]
 
+### Changed
+
+- The image pins Claude Code 2.1.328, Codex 0.170.0, and Copilot CLI 1.0.114.
+
 ## [3.2.1] - 2026-11-22
 
 ### Fixed
