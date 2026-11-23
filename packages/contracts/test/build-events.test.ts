@@ -64,6 +64,19 @@ describe("build events", () => {
     expect(roundTrip(EventSchema, event)).toEqual(event);
   });
 
+  it("names the task's milestone on a build.task.changed event when the plan has one", () => {
+    const event = {
+      ...meta(3),
+      type: "build.task.changed",
+      buildId: BUILD,
+      taskId: "T2",
+      status: "pending",
+      previousStatus: null,
+      milestone: "export",
+    };
+    expect(roundTrip(EventSchema, event)).toEqual(event);
+  });
+
   it("reads a build.changed event without a box as a build that no box runs", () => {
     const { boxId: _boxId, ...noBox } = build;
     const parsed = EventSchema.parse({ ...meta(1), type: "build.changed", build: noBox });
@@ -152,5 +165,38 @@ describe("build routes", () => {
     const get = serverRoutes["builds.get"];
     expect(get.path).toBe("/api/v1/builds/:buildId");
     expect(roundTrip(get.response, build)).toEqual(build);
+  });
+
+  it("lists a build's messages and its tasks with their milestones", () => {
+    const messages = serverRoutes["builds.messages"];
+    expect(messages.path).toBe("/api/v1/builds/:buildId/messages");
+    const message = {
+      version: 1,
+      id: "M1",
+      buildId: BUILD,
+      from: { kind: "seat", seat: "developer", taskId: "T1" },
+      to: { kind: "owner" },
+      routing: "addressed",
+      type: "note",
+      taskId: "T1",
+      milestone: null,
+      paths: [],
+      body: "The export needs a currency.",
+      createdAt: T0,
+    };
+    expect(roundTrip(messages.response, { messages: [message] })).toEqual({
+      messages: [message],
+    });
+    const tasks = serverRoutes["builds.tasks"];
+    expect(tasks.path).toBe("/api/v1/builds/:buildId/tasks");
+    const list = {
+      tasks: [{ taskId: "T1", status: "done", milestone: "export", updatedAt: T1 }],
+    };
+    expect(roundTrip(tasks.response, list)).toEqual(list);
+    expect(() =>
+      tasks.response.parse({
+        tasks: [{ taskId: "T1", status: "late", milestone: null, updatedAt: T1 }],
+      }),
+    ).toThrow(/status/);
   });
 });
