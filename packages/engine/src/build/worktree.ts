@@ -172,12 +172,18 @@ export class BuildWorktree {
   }
 
   /**
-   * Sets aside every change since `base`: saves it as a patch in `patchFile`,
-   * puts the changed paths back the way they are at `base`, and commits that
-   * with `message`. Returns the paths, or an empty list when nothing changed.
+   * Sets aside every change since `base` except the paths in `keep`: saves
+   * it as a patch in `patchFile`, puts the changed paths back the way they
+   * are at `base`, and commits that with `message`. Returns the paths, or an
+   * empty list when nothing changed.
    */
-  async setAside(base: string, patchFile: string, message: string): Promise<string[]> {
-    const paths = await this.changedSince(base);
+  async setAside(
+    base: string,
+    patchFile: string,
+    message: string,
+    keep: readonly string[] = [],
+  ): Promise<string[]> {
+    const paths = (await this.changedSince(base)).filter((p) => !keep.includes(p));
     if (paths.length === 0) return [];
     await mkdir(dirname(patchFile), { recursive: true });
     await this.git.run(["add", "-A", "--", ...paths]);

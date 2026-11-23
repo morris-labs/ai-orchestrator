@@ -3,6 +3,8 @@
 // the test or rejects the dispute, the Project manager rules on repeated
 // disputes, and the owner decides an amendment that changes a criterion.
 import { createHash } from "node:crypto";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { BUILD_PIPELINE } from "../../src/build/index.js";
 import { CART_DONE, REPORT, buildWorld, cartPlan, type MockResponse } from "./harness.js";
@@ -359,5 +361,100 @@ describe("a test dispute that the owner decides", () => {
     expect(dispute(world, 1)).toMatchObject({ outcome: "escalated" });
     expect(lockOf(world).files).toEqual([{ path: TEST_FILE, sha256: sha256(RIGHT_TEST) }]);
     expect(world.calls().at(-1)?.prompt).toContain("AC1 is the sum; keep the test.");
+  });
+});
+
+const LABEL_FILE = "test/label.test.mjs";
+const LABEL_TEST = [
+  "// AC2: an item label names the item.",
+  'import assert from "node:assert/strict";',
+  'import { label } from "../src/label.mjs";',
+  'assert.equal(label("pen"), "Item: pen");',
+  "",
+].join("\n");
+
+describe("a test dispute in a task that waits", () => {
+  it("keeps the amended test on the branch while the task's work is set aside", async () => {
+    const world = await buildWorld({ steps: BUILD_PIPELINE });
+    writeFileSync(join(world.root, "src", "label.mjs"), 'export function label() {\n  return "";\n}\n');
+    world.git(world.root, "add", "-A");
+    world.git(world.root, "commit", "-q", "-m", "feat: add a label stub");
+    const plan = cartPlan({
+      criteria: [
+        { id: "AC1", text: "The cart reports the sum of its item prices." },
+        { id: "AC2", text: "An item label names the item." },
+      ],
+      tasks: [
+        { ...cartPlan().tasks[0]!, id: "T1" },
+        {
+          id: "T2",
+          title: "Label",
+          description: "Make label() name the item.",
+          ownedFiles: ["src/label.mjs"],
+          criteria: ["AC2"],
+          tests: [LABEL_FILE],
+        },
+      ],
+      commands: {
+        test: [{ command: RUN_TEST }, { command: `node ${LABEL_FILE}` }],
+        typecheck: [{ command: "node --check src/cart.mjs" }],
+        lint: [{ command: "node lint.mjs" }],
+      },
+    });
+    const blocked = {
+      kind: "service",
+      name: "price-service",
+      reason: "The price service is down.",
+    };
+    world.script({
+      codex: [
+        {
+          match: "round 1 of",
+          output: {
+            summary: "Wrote the tests first.",
+            tests: [
+              AC1_TEST,
+              {
+                file: LABEL_FILE,
+                name: "AC2: an item label names the item",
+                criterion: "AC2",
+                command: `node ${LABEL_FILE}`,
+              },
+            ],
+          },
+          writeFiles: { [TEST_FILE]: WRONG_TEST, [LABEL_FILE]: LABEL_TEST },
+        },
+        verdict({ verdict: "amend", reason: "The test wanted double the sum." }, RIGHT_TEST),
+      ],
+      claude: [
+        // After the dispute, T1 reports a missing service and waits for the owner.
+        {
+          match: "test dispute 1 .*amended",
+          output: { ...REPORT, blocked },
+          writeFiles: { "src/cart.mjs": CART_DONE },
+        },
+        disputing("Task T1"),
+        {
+          match: "Task T2",
+          output: { summary: "Added the label.", criteria: [{ id: "AC2", met: true }] },
+          writeFiles: { "src/label.mjs": "export function label(name) {\n  return `Item: ${name}`;\n}\n" },
+        },
+      ],
+    });
+
+    await world.start("cart-total", plan);
+    const state = await world.settle("cart-total");
+
+    expect(state.tasks.map((t) => [t.id, t.status, t.attempts])).toEqual([
+      ["T1", "failed", 1],
+      ["T2", "done", 1],
+    ]);
+    expect(world.git(world.root, "show", `build/cart-total:${TEST_FILE}`)).toBe(RIGHT_TEST.trim());
+    expect(world.git(world.root, "show", "build/cart-total:src/cart.mjs")).not.toBe(
+      CART_DONE.trim(),
+    );
+    const patch = world.file("cart-total", "tasks/T1/set-aside-1.patch");
+    expect(patch).toContain("src/cart.mjs");
+    expect(patch).not.toContain(TEST_FILE);
   });
 });

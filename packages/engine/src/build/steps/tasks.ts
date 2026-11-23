@@ -539,6 +539,12 @@ async function runTask(ctx: BuildContext, task: BuildTask): Promise<StepOutcome>
 async function setAsideWaiting(ctx: BuildContext): Promise<void> {
   for (const progress of ctx.state.tasks) {
     if (progress.status !== "failed" || progress.setAside || !progress.base) continue;
+    // A test that a dispute of the task amended is locked as amended, so it
+    // stays: the next task's lock check expects it.
+    const lock = await readTestLock(ctx.store);
+    const amended = (lock?.amendments ?? [])
+      .filter((a) => a.taskId === progress.id)
+      .map((a) => a.test);
     // A task without changes gets an entry too: its base moves past the
     // tasks that run meanwhile, so its permission check leaves their work alone.
     const file = `tasks/${progress.id}/set-aside-${progress.attempts}.patch`;
@@ -546,6 +552,7 @@ async function setAsideWaiting(ctx: BuildContext): Promise<void> {
       progress.base,
       ctx.store.path(file),
       `chore(build): set task ${progress.id} aside while it waits for an escalation`,
+      amended,
     );
     progress.setAside = file;
     await ctx.persist();
