@@ -158,7 +158,8 @@ keeper script, the container's first process, starts it.
   files, discovers listening ports with `ss`, and proxies HTTP to them.
 - It opens a build socket at `/tmp/aio-build/build.sock` on the container's
   own file system. The socket needs no engine token and accepts only build
-  requests: start, status, pause, and resume. It refuses any request for a
+  requests: a planning seat call, the freeze, start, status, pause, and
+  resume. It refuses any request for a
   project other than the one in `AIO_PROJECT_ID`, and any build whose
   saved state names another project. The `aio-build` command in a box's
   session is its client.

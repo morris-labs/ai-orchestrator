@@ -1,9 +1,15 @@
 // Shared pieces of the build socket tests.
 import http from "node:http";
-import type { BuildPlanInput, BuildState } from "@aio/contracts";
+import type {
+  BuildFreezeAnswer,
+  BuildPlanInput,
+  BuildSeatAnswer,
+  BuildState,
+} from "@aio/contracts";
 
-/** A parsed answer: a build on success, an error otherwise. */
-export interface SocketBody {
+/** A parsed answer: a build, a seat's answer, or a freeze on success, an error otherwise. */
+export interface SocketBody
+  extends Partial<BuildSeatAnswer>, Partial<Omit<BuildFreezeAnswer, "planning">> {
   build: BuildState;
   error: { code: string; message: string };
 }

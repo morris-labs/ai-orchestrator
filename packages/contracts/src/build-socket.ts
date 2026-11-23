@@ -1,11 +1,18 @@
 // The build socket's protocol: HTTP/1.1 with JSON bodies, over a Unix
 // socket that the engine opens inside its project container. The socket
-// accepts only build requests (start, status, pause, and resume) and needs
+// accepts only build requests (planning seat calls, the freeze, start,
+// status, pause, and resume) and needs
 // no engine token, so a box's session can drive a build with the
 // `aio-build` command without the token that the engine's full API
 // requires. See `docs/build-pipeline/design.md`.
 import { z } from "zod";
 import { BuildSlugSchema } from "./build-events.js";
+import {
+  BuildFreezeAnswerSchema,
+  BuildFreezeRequestSchema,
+  BuildSeatAnswerSchema,
+  BuildSeatRequestSchema,
+} from "./build-planning.js";
 import { BuildPlanSchema, BuildStateSchema } from "./builds.js";
 import { ENGINE_ENV } from "./config.js";
 
@@ -35,6 +42,8 @@ export const BUILD_SOCKET_ENV = {
 
 /** The socket's routes, one for each build request. Every route takes `POST`. */
 export const BUILD_SOCKET_ROUTES = {
+  plan: "/v1/builds/plan",
+  freeze: "/v1/builds/freeze",
   start: "/v1/builds/start",
   status: "/v1/builds/status",
   pause: "/v1/builds/pause",
@@ -51,12 +60,13 @@ const scope = {
   boxId: z.string().min(1).nullable(),
 };
 
-/** The body of a start request: the build's slug and plan. */
+/** The body of a start request: the build's slug and, unless the build has a frozen plan, its plan. */
 export const BuildSocketStartSchema = z
   .object({
     ...scope,
     slug: BuildSlugSchema,
-    plan: BuildPlanSchema,
+    /** The build plan. Absent means the build's latest frozen plan. */
+    plan: BuildPlanSchema.optional(),
     /** The branch, tag, or commit the build branch starts from. Absent means `HEAD`. */
     base: z.string().min(1).optional(),
   })
@@ -68,6 +78,25 @@ export type BuildSocketStartInput = z.input<typeof BuildSocketStartSchema>;
 export const BuildSocketSlugSchema = z.object({ ...scope, slug: BuildSlugSchema }).strict();
 export type BuildSocketSlug = z.infer<typeof BuildSocketSlugSchema>;
 
-/** The answer to every build request: the build's state after the request. */
+/** The body of a planning seat call. */
+export const BuildSocketPlanSchema = BuildSeatRequestSchema;
+
+/** The body of a freeze request. */
+export const BuildSocketFreezeSchema = BuildFreezeRequestSchema;
+
+/** The answer to a start, status, pause, or resume request: the build's state after the request. */
 export const BuildSocketResponseSchema = z.object({ build: BuildStateSchema });
 export type BuildSocketResponse = z.infer<typeof BuildSocketResponseSchema>;
+
+/** The answer to each request, by kind. */
+export const BUILD_SOCKET_RESPONSES = {
+  plan: BuildSeatAnswerSchema,
+  freeze: BuildFreezeAnswerSchema,
+  start: BuildSocketResponseSchema,
+  status: BuildSocketResponseSchema,
+  pause: BuildSocketResponseSchema,
+  resume: BuildSocketResponseSchema,
+} as const satisfies Record<BuildSocketRequestKind, z.ZodTypeAny>;
+export type BuildSocketAnswer<K extends BuildSocketRequestKind> = z.infer<
+  (typeof BUILD_SOCKET_RESPONSES)[K]
+>;

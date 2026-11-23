@@ -73,6 +73,24 @@ describe("usage by seat and by step", () => {
     });
   });
 
+  it("counts planning calls by seat, under the planning step", () => {
+    const t = setup();
+    settle(t, 1, { buildId: BUILD, seat: "analyst", step: "planning", role: "reviewer" });
+    settle(t, 2, { buildId: BUILD, seat: "architect", step: "planning", role: "reviewer" });
+    settle(t, 3, { buildId: BUILD, seat: "developer", step: "tasks" });
+
+    const usage = t.store.buildUsage(BUILD);
+    expect(usage.bySeat.map((row) => [row.seat, row.calls])).toEqual([
+      ["analyst", 1],
+      ["architect", 1],
+      ["developer", 1],
+    ]);
+    expect(usage.byStep.map((row) => [row.step, row.calls])).toEqual([
+      ["planning", 2],
+      ["tasks", 1],
+    ]);
+  });
+
   it("returns zero totals for a build with no settled calls", () => {
     const t = setup();
     expect(t.store.buildUsage(BUILD)).toEqual({
