@@ -7,7 +7,7 @@ import { EngineError } from "../../src/api/core-interface.js";
 import { BUILD_USAGE, buildMain } from "../../src/build-socket/cli.js";
 import { serveBuildSocket, type BuildSocketServer } from "../../src/build-socket/server.js";
 import { silentLogger } from "../../src/main/logger.js";
-import { buildState, fakeBuildManager } from "../api/fixtures.js";
+import { buildState, fakeBuildManager, freezeAnswer, seatAnswer } from "../api/fixtures.js";
 import { tempDir } from "../tmp.js";
 import { PLAN } from "./helpers.js";
 
@@ -24,6 +24,8 @@ async function world(projectId = "proj-1") {
   server = await serveBuildSocket({ path: socket, builds, projectId, log: silentLogger });
   const planFile = join(dir, "plan.json");
   writeFileSync(planFile, JSON.stringify(PLAN));
+  const briefFile = join(dir, "brief.md");
+  writeFileSync(briefFile, "Add a total to the cart.\n");
   const env: Record<string, string | undefined> = {
     AIO_BUILD_SOCKET: socket,
     AIO_PROJECT_ID: "proj-1",
@@ -39,7 +41,7 @@ async function world(projectId = "proj-1") {
     });
     return { code, stdout, stderr };
   };
-  return { builds, planFile, run, dir, socket };
+  return { builds, planFile, briefFile, run, dir, socket };
 }
 
 describe("aio-build", () => {
@@ -75,6 +77,92 @@ describe("aio-build", () => {
     expect(builds.pause).toHaveBeenCalledWith("cart-total");
     expect((await run(["resume", "cart-total"])).code).toBe(0);
     expect(builds.resume).toHaveBeenCalledWith("cart-total");
+  });
+
+  it("calls a planning seat with a brief and an issue and prints its answer", async () => {
+    const { builds, briefFile, run } = await world();
+    const out = await run([
+      "plan",
+      "cart-total",
+      "analyst",
+      briefFile,
+      "--issue",
+      "example/shop#42",
+    ]);
+    expect(out.code).toBe(0);
+    expect(builds.plan).toHaveBeenCalledWith({
+      projectId: "proj-1",
+      boxId: "box-1",
+      slug: "cart-total",
+      seat: "analyst",
+      brief: "Add a total to the cart.\n",
+      issue: {
+        repository: "example/shop",
+        number: 42,
+        url: "https://github.com/example/shop/issues/42",
+      },
+    });
+    expect(out.stdout).toContain("The analyst answered build cart-total (call 1)");
+    expect(out.stdout).toContain(".aio/builds/cart-total/planning/analyst-1.json");
+    expect(out.stdout).toContain('"size": "small"');
+  });
+
+  it("takes an issue as a link", async () => {
+    const { builds, briefFile, run } = await world();
+    const link = "https://git.example.com/example/shop/issues/7";
+    expect((await run(["plan", "cart-total", "architect", briefFile, "--issue", link])).code).toBe(
+      0,
+    );
+    expect(builds.plan.mock.calls[0]![0].issue).toEqual({
+      repository: "example/shop",
+      number: 7,
+      url: link,
+    });
+  });
+
+  it("freezes the draft plan with the push answer", async () => {
+    const { builds, run } = await world();
+    const out = await run(["freeze", "cart-total", "--push", "yes"]);
+    expect(out.code).toBe(0);
+    expect(builds.freeze).toHaveBeenCalledWith({
+      projectId: "proj-1",
+      boxId: "box-1",
+      slug: "cart-total",
+      push: true,
+    });
+    expect(out.stdout).toContain("Froze build cart-total's plan as version 1");
+    expect(out.stdout).toContain(".aio/builds/cart-total/plans/v1.json");
+    expect(out.stdout).toContain("Push: allowed");
+  });
+
+  it("freezes a plan file and prints the answer as JSON with --json", async () => {
+    const { builds, planFile, run } = await world();
+    const out = await run(["freeze", "cart-total", planFile, "--push", "no", "--json"]);
+    expect(out.code).toBe(0);
+    expect(builds.freeze.mock.calls[0]![0]).toMatchObject({ plan: PLAN, push: false });
+    expect(JSON.parse(out.stdout)).toEqual(freezeAnswer);
+  });
+
+  it("passes on the engine's message for a freeze without the push answer", async () => {
+    const { builds, run } = await world();
+    builds.freeze.mockRejectedValueOnce(
+      new EngineError("validation", "The freeze needs the owner's push answer. Ask the owner."),
+    );
+    const out = await run(["freeze", "cart-total"]);
+    expect(out.code).toBe(5);
+    expect(out.stderr).toContain("Ask the owner");
+  });
+
+  it("starts a build from its frozen plan without a plan file", async () => {
+    const { builds, run } = await world();
+    expect((await run(["start", "cart-total"])).code).toBe(0);
+    expect(builds.start.mock.calls[0]![0]).not.toHaveProperty("plan");
+  });
+
+  it("prints a seat's whole answer as JSON with --json", async () => {
+    const { briefFile, run } = await world();
+    const out = await run(["plan", "cart-total", "analyst", briefFile, "--json"]);
+    expect(JSON.parse(out.stdout)).toEqual(seatAnswer);
   });
 
   it("sends a null box outside a box session", async () => {
@@ -129,7 +217,13 @@ describe("aio-build", () => {
 
   it.each([
     [[]],
-    [["start", "cart-total"]],
+    [["start", "cart-total", "a", "b"]],
+    [["plan", "cart-total", "analyst"]],
+    [["plan", "cart-total", "Analyst", "brief.md"]],
+    [["plan", "cart-total", "analyst", "brief.md", "--issue", "shop#1"]],
+    [["freeze", "cart-total", "--push", "maybe"]],
+    [["freeze", "cart-total", "--issue", "example/shop#1"]],
+    [["status", "cart-total", "--push", "yes"]],
     [["start", "Bad Slug", "plan.json"]],
     [["status"]],
     [["status", "a", "b"]],
@@ -151,6 +245,10 @@ describe("aio-build", () => {
       expect(BUILD_USAGE).toMatch(new RegExp(`^  ${kind}\\b`, "m"));
     }
     for (const fact of [
+      "BRIEF_FILE",
+      "--issue",
+      "--push",
+      "ask the owner",
       "PLAN_FILE",
       "--base",
       "--json",

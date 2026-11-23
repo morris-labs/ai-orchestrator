@@ -23,7 +23,7 @@ import { SessionRegistryFile } from "./registry.js";
 import { freshReason } from "./rule.js";
 
 /** A seat call's first turn, as the desk records it. */
-export interface SeatTurn {
+export interface SeatSession {
   seat: string;
   taskIds: readonly string[];
   task: RoleTask;
@@ -101,7 +101,7 @@ export class SessionDesk {
    * Records the session of a seat call that started a new agent. A cached
    * call that a restarted build returns again is recorded once.
    */
-  async started(input: SeatTurn): Promise<void> {
+  async started(input: SeatSession): Promise<void> {
     if (await this.registry.hasTurn(input.key)) return;
     await this.registry.start({
       seat: input.seat,
@@ -232,6 +232,7 @@ export class SessionDesk {
       taskId: entry.taskId,
       key,
       step: session.step,
+      task,
       prompt,
       placement,
       specialties: packs,

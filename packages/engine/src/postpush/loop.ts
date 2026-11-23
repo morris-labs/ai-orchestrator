@@ -206,7 +206,7 @@ async function stagePush(ctx: RunContext, requestReview = true): Promise<PrInfo>
       head: branch,
       // A blank title gets the default, since gh refuses an empty one.
       title: ctx.eng.push?.title?.trim() || `Review fixes for ${branch}`,
-      body: `Opened by AI Orchestrator run ${ctx.state.id}.`,
+      body: ctx.eng.push?.body ?? `Opened by AI Orchestrator run ${ctx.state.id}.`,
       draft: ctx.eng.push?.draft ?? false,
     });
   }

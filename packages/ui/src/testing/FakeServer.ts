@@ -12,9 +12,13 @@ import {
   type ApiErrorCode,
   type BoxView,
   type BuildSummary,
+  type BuildTaskStatus,
+  type BuildTaskView,
+  type BuildUsage,
   type ConversationSummary,
   type GlobalSettings,
   type Job,
+  type Message,
   type Mount,
   type Notification,
   type Project,
@@ -28,7 +32,15 @@ import {
 import type { z } from "zod";
 import type { HttpRouteKey, ResponseOf, WebSocketCtor } from "../api/client";
 import { FakeSocket } from "./FakeSocket";
-import { makeBox, makeJob, makeProject, makeSettings, projectIdFor, T0 } from "./fixtures";
+import {
+  emptyBuildUsage,
+  makeBox,
+  makeJob,
+  makeProject,
+  makeSettings,
+  projectIdFor,
+  T0,
+} from "./fixtures";
 
 /** A failure a handler throws to answer with an `ApiError`. */
 export class FakeApiError extends Error {
@@ -84,6 +96,12 @@ export interface FakeState {
   notifications: Notification[];
   /** The builds the server has seen, in no order; `builds.list` sorts them. */
   builds: BuildSummary[];
+  /** Each build's team chat messages, oldest first, by build id. */
+  buildMessages: Record<string, Message[]>;
+  /** Each build's tasks, by build id. */
+  buildTasks: Record<string, BuildTaskView[]>;
+  /** Each build's usage, by build id; a build without an entry has none. */
+  buildUsage: Record<string, BuildUsage>;
   /** Project ids whose container has stale mounts: `boxes.start` refuses without `force`. */
   staleProjects: string[];
   /** Subdirectory names by absolute path, for `fs.dirs`. */
@@ -185,6 +203,9 @@ export class FakeServer {
       },
       notifications: [],
       builds: options.builds ?? [],
+      buildMessages: {},
+      buildTasks: {},
+      buildUsage: {},
       staleProjects: [],
       dirs: {
         "/home/user": ["src", "work"],
@@ -360,6 +381,83 @@ export class FakeServer {
       seq: 0,
       sourceSeq: 0,
       build,
+    });
+  }
+
+  /** Stores team chat messages and emits a `message.sent` event for each. */
+  putMessages(messages: readonly Message[]): void {
+    for (const message of messages) {
+      const list = (this.state.buildMessages[message.buildId] ??= []);
+      list.push(message);
+      this.emit({
+        type: "message.sent",
+        id: `message-${message.buildId}-${message.id}`,
+        time: message.createdAt,
+        source: "server",
+        streamId: this.streamId,
+        seq: 0,
+        sourceSeq: 0,
+        message,
+      });
+    }
+  }
+
+  /** Stores a task's state and emits its `build.task.changed` event. */
+  putTask(
+    buildId: string,
+    task: { taskId: string; status: BuildTaskStatus; milestone?: string | null },
+    time = T0,
+  ): void {
+    const list = (this.state.buildTasks[buildId] ??= []);
+    const current = list.find((t) => t.taskId === task.taskId);
+    const next: BuildTaskView = {
+      taskId: task.taskId,
+      status: task.status,
+      milestone: task.milestone ?? current?.milestone ?? null,
+      updatedAt: time,
+    };
+    this.state.buildTasks[buildId] = [...list.filter((t) => t !== current), next].sort((a, b) =>
+      a.taskId.localeCompare(b.taskId),
+    );
+    this.emit({
+      type: "build.task.changed",
+      id: `task-${buildId}-${task.taskId}-${time}`,
+      time,
+      source: "server",
+      streamId: this.streamId,
+      seq: 0,
+      sourceSeq: 0,
+      buildId,
+      taskId: task.taskId,
+      status: task.status,
+      previousStatus: current?.status ?? null,
+      ...(task.milestone !== undefined ? { milestone: task.milestone } : {}),
+    });
+  }
+
+  /**
+   * Replaces a build's usage and emits a `lease.settled` event for one of
+   * its calls, as the server does when a build call settles.
+   */
+  putBuildUsage(usage: BuildUsage, seat = "developer"): void {
+    this.state.buildUsage[usage.buildId] = usage;
+    this.emit({
+      type: "lease.settled",
+      id: `settled-${usage.buildId}-${usage.total.calls}`,
+      time: T0,
+      source: "server",
+      streamId: this.streamId,
+      seq: 0,
+      sourceSeq: 0,
+      leaseId: `${usage.buildId}-L${usage.total.calls}`,
+      runId: null,
+      buildId: usage.buildId,
+      seat,
+      vendor: "claude",
+      role: "fixer",
+      tokens: { in: 0, out: 0 },
+      premiumRequests: 0,
+      costEstimate: 0,
     });
   }
 
@@ -912,13 +1010,24 @@ const defaultHandlers: Partial<Record<HttpRouteKey, FakeHandler>> = {
     if (!build) throw new FakeApiError("not_found", `No build ${r.params.buildId as string}.`, 404);
     return build;
   },
-  "builds.usage": (r) => ({
-    buildId: r.params.buildId as string,
-    total: { calls: 0, tokensIn: 0, tokensOut: 0, premiumRequests: 0, costEstimate: 0 },
-    bySeat: [],
-    byStep: [],
-    bySpecialty: [],
-  }),
+  "builds.usage": (r, s) => {
+    const buildId = r.params.buildId as string;
+    return s.state.buildUsage[buildId] ?? emptyBuildUsage(buildId);
+  },
+  "builds.messages": (r, s) => {
+    const buildId = r.params.buildId as string;
+    if (!s.state.builds.some((b) => b.id === buildId)) {
+      throw new FakeApiError("not_found", `No build ${buildId}.`, 404);
+    }
+    return { messages: s.state.buildMessages[buildId] ?? [] };
+  },
+  "builds.tasks": (r, s) => {
+    const buildId = r.params.buildId as string;
+    if (!s.state.builds.some((b) => b.id === buildId)) {
+      throw new FakeApiError("not_found", `No build ${buildId}.`, 404);
+    }
+    return { tasks: s.state.buildTasks[buildId] ?? [] };
+  },
   "notifications.list": (_r, s) => ({ notifications: s.state.notifications }),
   "notifications.read": () => ({ ok: true }),
 };

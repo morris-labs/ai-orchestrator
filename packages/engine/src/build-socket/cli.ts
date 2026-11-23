@@ -1,30 +1,53 @@
-// The `aio-build` command: starts, reads, pauses, and resumes a build from a
-// box's session, over the engine's build socket. It sends the project ID
-// and box ID that the server sets in the session's environment.
+// The `aio-build` command: plans, starts, reads, pauses, and resumes a build
+// from a box's session, over the engine's build socket. It sends the project
+// ID and box ID that the server sets in the session's environment.
 import { readFileSync } from "node:fs";
 import { posix } from "node:path";
 import {
   BUILD_SOCKET_ENV,
   BUILDS_DIR,
   BuildSlugSchema,
+  RoleNameSchema,
+  type BuildFreezeAnswer,
+  type BuildIssueInput,
+  type BuildSeatAnswer,
   type BuildSocketRequestKind,
   type BuildState,
 } from "@aio/contracts";
 import { BuildSocketClient, BuildSocketError, buildSocketPath } from "./client.js";
 
+/** How long a planning seat call can take before the command stops waiting. */
+export const PLANNING_TIMEOUT_MS = 3 * 60 * 60_000;
+
 export const BUILD_USAGE = `Usage:
-  aio-build start SLUG PLAN_FILE [--base REF] [--json]
+  aio-build plan SLUG SEAT BRIEF_FILE [--issue ISSUE] [--json]
+  aio-build freeze SLUG [PLAN_FILE] [--push yes|no] [--json]
+  aio-build start SLUG [PLAN_FILE] [--base REF] [--json]
   aio-build status SLUG [--json]
   aio-build pause SLUG [--json]
   aio-build resume SLUG [--json]
   aio-build help
 
-Drives a build of this box's project through the AI Orchestrator engine.
-Every request prints the build's state afterward.
+Plans and drives a build of this box's project through the AI Orchestrator
+engine.
 
 Requests:
-  start     Start build SLUG from the build plan in PLAN_FILE, a JSON file
-            ("-" reads standard input). The build works on the branch
+  plan      Call the planning seat SEAT, such as analyst or architect, for
+            build SLUG with the brief in BRIEF_FILE ("-" reads standard
+            input), and print its answer. The first planning request
+            starts the build's planning record. The request waits until the
+            seat answers, which can take many minutes. Once the Analyst and
+            the Architect have answered, the engine drafts the build plan in
+            .aio/builds/SLUG/planning/draft.json.
+  freeze    Freeze the build plan in PLAN_FILE, a JSON file ("-" reads
+            standard input), or without PLAN_FILE the draft plan. A plan
+            that changed since the last freeze becomes the next version in
+            .aio/builds/SLUG/plans/; a frozen version never changes. The
+            freeze needs the owner's answer to whether the build can push
+            its branch and open its pull request: ask the owner, then pass
+            --push yes or --push no.
+  start     Start build SLUG from its latest frozen plan, or from the plan
+            in PLAN_FILE when it has none. The build works on the branch
             build/SLUG in its own worktree. --base REF names the branch,
             tag, or commit the build branch starts from; the default is
             HEAD.
@@ -38,8 +61,12 @@ SLUG uses lowercase letters, digits, and single hyphens, such as
 cart-total.
 
 Options:
-  --json    Print the build's state as JSON instead of text.
-  --help    Print this help.
+  --issue ISSUE  The GitHub issue the build starts from, as OWNER/NAME#NUMBER
+                 or as the issue's link. The build plan links back to it.
+  --push yes|no  The owner's answer to whether the build can push its branch
+                 and open its pull request.
+  --json         Print the answer as JSON instead of text.
+  --help         Print this help.
 
 Environment:
   ${BUILD_SOCKET_ENV.projectId}    The project ID. The server sets it in every box. Required.
@@ -47,28 +74,60 @@ Environment:
                     build records it as the box that plans and watches it.
   ${BUILD_SOCKET_ENV.socket}  The engine's build socket. Default: /tmp/aio-build/build.sock.
 
-Exit status: 0 on success, 2 for a usage error or a plan file that can't
-be read, 3 when the build socket can't be reached, 4 for a build that this
-project doesn't have, 5 when the engine refuses the request, such as a
-plan that isn't valid or a slug in use, and 1 for any other failure.
+Exit status: 0 on success, 2 for a usage error or a brief or plan file that
+can't be read, 3 when the build socket can't be reached, 4 for a build that
+this project doesn't have, 5 when the engine refuses the request, such as a
+plan that isn't valid, a freeze without the push answer, or a slug in use,
+and 1 for any other failure, such as a seat call that failed.
 `;
 
 export interface BuildCliIo {
   stdout: (text: string) => void;
   stderr: (text: string) => void;
   env: Record<string, string | undefined>;
-  /** Reads standard input, for a plan file named `-`. */
+  /** Reads standard input, for a brief or plan file named `-`. */
   stdin?: () => string;
   /** The socket client. Default: a `BuildSocketClient` for `env`. */
-  client?: Pick<BuildSocketClient, "request">;
+  client?: Pick<BuildSocketClient, "send">;
 }
 
 export type BuildCommand =
   | { kind: "help" }
-  | { kind: "start"; slug: string; planFile: string; base: string | null; json: boolean }
-  | { kind: Exclude<BuildSocketRequestKind, "start">; slug: string; json: boolean };
+  | {
+      kind: "plan";
+      slug: string;
+      seat: string;
+      briefFile: string;
+      issue: BuildIssueInput | null;
+      json: boolean;
+    }
+  | { kind: "freeze"; slug: string; planFile: string | null; push: boolean | null; json: boolean }
+  | { kind: "start"; slug: string; planFile: string | null; base: string | null; json: boolean }
+  | {
+      kind: Exclude<BuildSocketRequestKind, "start" | "plan" | "freeze">;
+      slug: string;
+      json: boolean;
+    };
 
-const KINDS = new Set(["start", "status", "pause", "resume"]);
+const KINDS = new Set(["plan", "freeze", "start", "status", "pause", "resume"]);
+
+/** The options each request takes, beyond `--json`. */
+const OPTIONS: Record<string, readonly string[]> = {
+  plan: ["--issue"],
+  freeze: ["--push"],
+  start: ["--base"],
+};
+
+/** Parses `OWNER/NAME#NUMBER` or an issue link such as `https://HOST/OWNER/NAME/issues/NUMBER`. */
+export function parseIssue(text: string): BuildIssueInput {
+  const short = /^([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#(\d+)$/.exec(text);
+  if (short) return { repository: short[1] as string, number: Number(short[2]) };
+  const link = /^https?:\/\/[^/\s]+\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/issues\/(\d+)\/?$/.exec(
+    text,
+  );
+  if (link) return { repository: link[1] as string, number: Number(link[2]), url: text };
+  throw new Error(`${text} isn't an issue: use OWNER/NAME#NUMBER or the issue's link.`);
+}
 
 /** Parses the arguments; throws an `Error` whose message explains a usage error. */
 export function parseBuildArgs(argv: readonly string[]): BuildCommand {
@@ -79,32 +138,59 @@ export function parseBuildArgs(argv: readonly string[]): BuildCommand {
   const [kind, ...rest] = argv as [string, ...string[]];
   if (!KINDS.has(kind)) throw new Error(`${kind} isn't a request.`);
   let json = false;
-  let base: string | null = null;
+  const values = new Map<string, string>();
   const positional: string[] = [];
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i] as string;
-    if (a === "--json") json = true;
-    else if (a === "--base" || a.startsWith("--base=")) {
-      if (kind !== "start") throw new Error("Only start takes --base.");
+    if (a === "--json") {
+      json = true;
+      continue;
+    }
+    const option = ["--base", "--issue", "--push"].find((o) => a === o || a.startsWith(`${o}=`));
+    if (option) {
+      if (!(OPTIONS[kind] ?? []).includes(option)) {
+        throw new Error(`${kind} doesn't take ${option}.`);
+      }
       const value = a.includes("=") ? a.slice(a.indexOf("=") + 1) : rest[++i];
-      if (!value) throw new Error("--base needs a branch, tag, or commit.");
-      base = value;
+      if (!value) throw new Error(`${option} needs a value.`);
+      values.set(option, value);
     } else if (a.startsWith("--") && a !== "--") throw new Error(`Unknown option: ${a}`);
     else positional.push(a);
   }
-  const want = kind === "start" ? 2 : 1;
-  if (positional.length !== want) {
-    throw new Error(
-      kind === "start" ? "start needs SLUG and PLAN_FILE." : `${kind} needs one SLUG.`,
-    );
-  }
-  const slug = positional[0] as string;
+  const [slug] = positional;
+  if (slug === undefined) throw new Error(`${kind} needs a SLUG.`);
   if (!BuildSlugSchema.safeParse(slug).success) {
     throw new Error(
       `${slug} isn't a valid slug: use lowercase letters, digits, and single hyphens.`,
     );
   }
-  if (kind === "start") return { kind, slug, planFile: positional[1] as string, base, json };
+  if (kind === "plan") {
+    if (positional.length !== 3) throw new Error("plan needs SLUG, SEAT, and BRIEF_FILE.");
+    const seat = positional[1] as string;
+    if (!RoleNameSchema.safeParse(seat).success) {
+      throw new Error(`${seat} isn't a seat: name a role such as analyst or architect.`);
+    }
+    const issue = values.get("--issue");
+    return {
+      kind,
+      slug,
+      seat,
+      briefFile: positional[2] as string,
+      issue: issue === undefined ? null : parseIssue(issue),
+      json,
+    };
+  }
+  if (kind === "freeze" || kind === "start") {
+    if (positional.length > 2) throw new Error(`${kind} takes SLUG and at most one PLAN_FILE.`);
+    const planFile = positional[1] ?? null;
+    if (kind === "start") return { kind, slug, planFile, base: values.get("--base") ?? null, json };
+    const answer = values.get("--push");
+    if (answer !== undefined && answer !== "yes" && answer !== "no") {
+      throw new Error("--push takes yes or no.");
+    }
+    return { kind, slug, planFile, push: answer === undefined ? null : answer === "yes", json };
+  }
+  if (positional.length !== 1) throw new Error(`${kind} needs one SLUG.`);
   return { kind: kind as "status" | "pause" | "resume", slug, json };
 }
 
@@ -155,6 +241,42 @@ export function formatBuild(build: BuildState): string {
   return `${lines.join("\n")}\n`;
 }
 
+/** A file in the build's directory, as the container sees it. */
+function buildFile(repoPath: string, slug: string, file: string): string {
+  return posix.join(repoPath, BUILDS_DIR, slug, file);
+}
+
+/** A seat's answer as text for a person to read. */
+export function formatSeatAnswer(answer: BuildSeatAnswer): string {
+  const { planning, call } = answer;
+  return [
+    `The ${call.seat} answered build ${planning.slug} (call ${call.n}).`,
+    `Answer file: ${buildFile(planning.repoPath, planning.slug, call.file)}`,
+    `Draft plan, once the spec and the design exist: ${buildFile(planning.repoPath, planning.slug, "planning/draft.json")}`,
+    JSON.stringify(answer.answer, null, 2),
+    "",
+  ].join("\n");
+}
+
+/** A freeze's answer as text for a person to read. */
+export function formatFreeze(answer: BuildFreezeAnswer): string {
+  const { planning, frozen } = answer;
+  return [
+    `Froze build ${planning.slug}'s plan as version ${frozen.version}: ${buildFile(planning.repoPath, planning.slug, frozen.file)}`,
+    `Push: ${frozen.push ? "allowed" : "not allowed"}`,
+    ...(answer.plan.issue ? [`Issue: ${answer.plan.issue.url}`] : []),
+    `Start the build with: aio-build start ${planning.slug}`,
+    "",
+  ].join("\n");
+}
+
+/** Reads a brief or plan file, or standard input for `-`. */
+function readInput(io: BuildCliIo, file: string): string {
+  return file === "-"
+    ? (io.stdin ?? (() => readFileSync(0, "utf8")))()
+    : readFileSync(file, "utf8");
+}
+
 /** Runs `aio-build` and returns its exit status. */
 export async function buildMain(argv: readonly string[], io: BuildCliIo): Promise<number> {
   let command: BuildCommand;
@@ -177,26 +299,60 @@ export async function buildMain(argv: readonly string[], io: BuildCliIo): Promis
   }
   const boxId = io.env[BUILD_SOCKET_ENV.boxId] || null;
   let body: Record<string, unknown> = { projectId, boxId, slug: command.slug };
-  if (command.kind === "start") {
-    let plan: unknown;
+  const file =
+    command.kind === "plan"
+      ? command.briefFile
+      : command.kind === "start" || command.kind === "freeze"
+        ? command.planFile
+        : null;
+  let input: string | null = null;
+  if (file !== null) {
     try {
-      const text =
-        command.planFile === "-"
-          ? (io.stdin ?? (() => readFileSync(0, "utf8")))()
-          : readFileSync(command.planFile, "utf8");
-      plan = JSON.parse(text);
+      input = readInput(io, file);
     } catch (err) {
-      io.stderr(
-        `aio-build: Can't read the plan file ${command.planFile}: ${(err as Error).message}\n`,
-      );
+      const what = command.kind === "plan" ? "brief" : "plan";
+      io.stderr(`aio-build: Can't read the ${what} file ${file}: ${(err as Error).message}\n`);
       return 2;
     }
-    body = { ...body, plan, ...(command.base !== null ? { base: command.base } : {}) };
+  }
+  if (command.kind !== "plan" && input !== null) {
+    try {
+      body.plan = JSON.parse(input) as unknown;
+    } catch (err) {
+      io.stderr(`aio-build: Can't read the plan file ${file}: ${(err as Error).message}\n`);
+      return 2;
+    }
+  }
+  if (command.kind === "plan") {
+    body = {
+      ...body,
+      seat: command.seat,
+      brief: input,
+      ...(command.issue ? { issue: command.issue } : {}),
+    };
+  } else if (command.kind === "freeze" && command.push !== null) {
+    body.push = command.push;
+  } else if (command.kind === "start" && command.base !== null) {
+    body.base = command.base;
   }
   try {
-    const client = io.client ?? new BuildSocketClient(buildSocketPath(io.env));
-    const build = await client.request(command.kind, body);
-    io.stdout(command.json ? `${JSON.stringify(build, null, 2)}\n` : formatBuild(build));
+    const client =
+      io.client ??
+      new BuildSocketClient(
+        buildSocketPath(io.env),
+        command.kind === "plan" ? PLANNING_TIMEOUT_MS : undefined,
+      );
+    const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
+    if (command.kind === "plan") {
+      const answer = await client.send("plan", body);
+      io.stdout(command.json ? json(answer) : formatSeatAnswer(answer));
+    } else if (command.kind === "freeze") {
+      const answer = await client.send("freeze", body);
+      io.stdout(command.json ? json(answer) : formatFreeze(answer));
+    } else {
+      const { build } = await client.send(command.kind, body);
+      io.stdout(command.json ? json(build) : formatBuild(build));
+    }
     return 0;
   } catch (err) {
     if (err instanceof BuildSocketError) {

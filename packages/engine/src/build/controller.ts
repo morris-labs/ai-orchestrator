@@ -3,7 +3,7 @@
 // requests: pause and resume. Its drive saves after every step, so a
 // restarted engine continues the build from where it stopped.
 import { mkdir } from "node:fs/promises";
-import type { BuildCreate, BuildState, BuildStep } from "@aio/contracts";
+import type { BuildCreate, BuildPlan, BuildState, BuildStep } from "@aio/contracts";
 import { RunCancelled, describeError } from "../calls/index.js";
 import { EngineError } from "../api/core-interface.js";
 import { loadPolicy } from "../policy/load.js";
@@ -11,7 +11,7 @@ import { BuildContext, type BuildServices } from "./context.js";
 import { ulid } from "./ids.js";
 import { loadRoles, type LoadRolesOptions } from "./roles/index.js";
 import { BUILD_PIPELINE, STEP_HANDLERS, type StepHandler } from "./steps/index.js";
-import { checkPlanSpecialties, SpecialtyPlanError } from "./specialties/index.js";
+import { checkPlan } from "./plan-check.js";
 import { BuildStore } from "./store.js";
 import { BuildWorktree } from "./worktree.js";
 
@@ -23,6 +23,13 @@ export interface BuildLocation {
   policyPath?: string;
   /** Options for loading role definitions, such as a test role library. */
   roles?: LoadRolesOptions;
+}
+
+/** What a build that planning started keeps from its planning record. */
+export interface BuildOrigin {
+  id: string;
+  createdAt: string;
+  boxId: string | null;
 }
 
 /** The steps a controller runs, in order, and their handlers. Tests and later milestones pass their own. */
@@ -71,13 +78,16 @@ export class BuildController {
 
   /**
    * Creates a build: its directory, plan, state, branch, and worktree.
-   * Throws `WorktreeConflict` when the branch or the worktree exists.
+   * Throws `WorktreeConflict` when the branch or the worktree exists. A
+   * build that planning started keeps the id, creation time, and box of
+   * its planning record in `origin`.
    */
   static async create(
-    request: BuildCreate,
+    request: BuildCreate & { plan: BuildPlan },
     location: BuildLocation,
     services: Omit<BuildServices, "tierModels" | "sessions">,
     pipeline: BuildPipeline = DEFAULT_PIPELINE,
+    origin?: BuildOrigin,
   ): Promise<BuildController> {
     const repoPath = request.repoPath ?? location.projectRoot;
     const branch = BuildWorktree.branchFor(request.slug);
@@ -88,23 +98,7 @@ export class BuildController {
       branch,
     );
     const roles = await loadRoles(repoPath, location.roles);
-    for (const task of request.plan.tasks) {
-      if (!roles.has(task.role)) {
-        throw new EngineError(
-          "validation",
-          `Task ${task.id} names the role ${task.role}, which no role file defines.`,
-        );
-      }
-    }
-    try {
-      await checkPlanSpecialties(request.plan.tasks, {
-        repoRoot: repoPath,
-        skillDirs: services.skillDirs(),
-      });
-    } catch (error) {
-      if (error instanceof SpecialtyPlanError) throw new EngineError("validation", error.message);
-      throw error;
-    }
+    await checkPlan(request.plan, roles, { repoRoot: repoPath, skillDirs: services.skillDirs() });
     const full = await servicesFor(location, services);
     const base = await worktree.resolveBase(request.base);
     await worktree.create(base);
@@ -113,10 +107,10 @@ export class BuildController {
     const now = new Date(services.clock.now()).toISOString();
     const state: BuildState = {
       version: 1,
-      id: ulid(services.clock.now()),
+      id: origin?.id ?? ulid(services.clock.now()),
       slug: request.slug,
       projectId: request.projectId,
-      boxId: request.boxId ?? null,
+      boxId: request.boxId ?? origin?.boxId ?? null,
       container: location.container,
       title: request.plan.title,
       repoPath,
@@ -137,11 +131,12 @@ export class BuildController {
         plan: request.plan.placements,
         live: [],
       },
-      createdAt: now,
+      createdAt: origin?.createdAt ?? now,
       updatedAt: now,
     };
     await store.savePlan(request.plan);
-    const ledger = { counters: { lease: 0, agent: 0 }, limitedVendors: {} };
+    // Planning's calls took lease and agent ids already; execution goes on from them.
+    const ledger = await store.loadLedger();
     const ctx = new BuildContext(state, request.plan, ledger, store, worktree, roles, full);
     await ctx.persist();
     return new BuildController(ctx, services.log, pipeline);
@@ -205,7 +200,8 @@ export class BuildController {
         await ctx.calls.checkpoint();
         const next = this.pipeline.steps[this.pipeline.steps.indexOf(step) + 1];
         if (!next) {
-          await ctx.setStatus("finished");
+          // The last step's note, such as where its digest is, stays.
+          await ctx.setStatus("finished", ctx.state.note);
           return;
         }
         await ctx.setStep(next);

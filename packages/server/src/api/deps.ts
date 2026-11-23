@@ -6,7 +6,9 @@ import type {
   EventType,
   Job,
   BuildSummary,
+  BuildTaskView,
   BuildUsage,
+  Message,
   Notification,
   Finding,
   RunState,
@@ -116,6 +118,10 @@ export interface ApiDeps {
     get(buildId: string): BuildSummary | undefined;
     /** One build's settled usage, or `undefined` for a build the server hasn't seen. */
     usage(buildId: string): BuildUsage | undefined;
+    /** One build's team chat messages, oldest first, or `undefined` for a build the server hasn't seen. */
+    messages(buildId: string): Message[] | undefined;
+    /** One build's tasks, or `undefined` for a build the server hasn't seen. */
+    tasks(buildId: string): BuildTaskView[] | undefined;
   };
   notifications: {
     list(query: { unread?: boolean }): Notification[];

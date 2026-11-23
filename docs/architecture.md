@@ -158,7 +158,8 @@ keeper script, the container's first process, starts it.
   files, discovers listening ports with `ss`, and proxies HTTP to them.
 - It opens a build socket at `/tmp/aio-build/build.sock` on the container's
   own file system. The socket needs no engine token and accepts only build
-  requests: start, status, pause, and resume. It refuses any request for a
+  requests: a planning seat call, the freeze, start, status, pause, and
+  resume. It refuses any request for a
   project other than the one in `AIO_PROJECT_ID`, and any build whose
   saved state names another project. The `aio-build` command in a box's
   session is its client.
@@ -259,6 +260,17 @@ newest first, and takes an optional `projectId` query. The
 `GET /api/v1/builds/BUILD_ID` route returns one build. A build's `boxId`
 names the box whose Project manager runs it. The Boxes app lists builds on
 its Builds page and shows a badge on a box that runs an active build.
+
+The server also keeps each build's team chat messages from its
+`message.sent` events, in the `svc_build_messages` table, and the state and
+milestone of each task from its `build.task.changed` events, in the
+`svc_build_tasks` table. The `GET /api/v1/builds/BUILD_ID/messages` route
+returns the messages, oldest first, and the
+`GET /api/v1/builds/BUILD_ID/tasks` route returns the tasks. When you select
+a build on the Builds page, the Boxes app shows its build view: the messages
+as a conversation that you can filter by task, milestone, seat, and slice;
+the direct messages to the owner; a milestone board; and the usage by seat
+and by specialty. The view stays current from the event stream.
 
 ## Container image
 

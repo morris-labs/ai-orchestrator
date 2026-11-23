@@ -101,6 +101,15 @@ describe("build event admission", () => {
     expect(engineEventRefusal(db, endpoint, agent)).toBeNull();
   });
 
+  it("accepts a planning seat's calls once its build in planning is known", () => {
+    const { db, builds } = seeded();
+    const planning = buildChanged({ status: "planning", step: "planning" });
+    const agent = buildAgent({ runId: null, buildId: BUILD, seat: "analyst", step: "planning" });
+    expect(engineEventRefusal(db, endpoint, planning)).toBeNull();
+    builds.ingest(planning);
+    expect(engineEventRefusal(db, endpoint, agent)).toBeNull();
+  });
+
   it("accepts a team chat message of a known build of the project", () => {
     const { db, builds } = seeded();
     const message = (buildId: string) =>
@@ -161,5 +170,59 @@ describe("BuildMirror", () => {
     expect(builds.list(PROJECT_ID).map((b) => b.id)).toEqual([BUILD]);
     expect(builds.list(OTHER_PROJECT)).toEqual([]);
     expect(builds.get(OTHER_BUILD)).toBeUndefined();
+  });
+});
+
+describe("BuildMirror messages and tasks", () => {
+  const message = (id: string, buildId = BUILD, body = `Body of ${id}`) =>
+    ev({
+      type: "message.sent",
+      message: {
+        version: 1,
+        id,
+        buildId,
+        from: { kind: "seat", seat: "developer", taskId: "T1" },
+        to: { kind: "seat", seat: "project-manager", taskId: null },
+        routing: "by_type",
+        type: "question",
+        taskId: "T1",
+        milestone: null,
+        paths: [],
+        body,
+        createdAt: T0,
+      },
+    });
+  const task = (taskId: string, status: string, extra: Record<string, unknown> = {}) =>
+    ev({
+      type: "build.task.changed",
+      buildId: BUILD,
+      taskId,
+      status,
+      previousStatus: null,
+      ...extra,
+    });
+
+  it("keeps a build's messages in id order, once each", () => {
+    const { builds } = seeded();
+    builds.ingest(buildChanged());
+    for (const id of ["M2", "M10", "M1"]) builds.ingest(message(id));
+    // A replayed event doesn't add the message twice.
+    builds.ingest(message("M2"));
+    builds.ingest(message("M1", OTHER_BUILD));
+    expect(builds.messages(BUILD)?.map((m) => m.id)).toEqual(["M1", "M2", "M10"]);
+    expect(builds.messages(OTHER_BUILD)).toBeUndefined();
+  });
+
+  it("keeps each task's latest state and the milestone an event named", () => {
+    const { builds } = seeded();
+    builds.ingest(buildChanged());
+    builds.ingest(task("T2", "pending", { milestone: "export" }));
+    builds.ingest(task("T1", "running"));
+    builds.ingest({ ...task("T2", "done"), time: T1 } as AioEvent);
+    expect(builds.tasks(BUILD)).toEqual([
+      { taskId: "T1", status: "running", milestone: null, updatedAt: T0 },
+      { taskId: "T2", status: "done", milestone: "export", updatedAt: T1 },
+    ]);
+    expect(builds.tasks(OTHER_BUILD)).toBeUndefined();
   });
 });
