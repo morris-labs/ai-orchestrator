@@ -1,5 +1,6 @@
 {
   "title": "Add sales tax",
+  "size": "small",
   "criteria": [
     {
       "id": "AC1",
