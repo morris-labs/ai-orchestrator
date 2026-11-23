@@ -156,6 +156,8 @@ export class TeamBus {
         resolve();
       });
     });
+    // The engine's API keeps the process alive; the bus alone never does.
+    server.unref();
     this.server = server;
     this.address = server.address() as AddressInfo;
     this.options.log.info("The team chat bus is listening", { url: this.url });
@@ -182,6 +184,11 @@ export class TeamBus {
     const channel = new TeamChannel(options, registry);
     this.channels.set(options.buildId, channel);
     return channel;
+  }
+
+  /** How many tokens the bus accepts: one for each agent call under way. */
+  activeTokens(): number {
+    return this.tokens.size;
   }
 
   /** Closes every channel and stops listening. */

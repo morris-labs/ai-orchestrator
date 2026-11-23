@@ -264,4 +264,36 @@ describe("startEngine with the real core", () => {
       await handle.close();
     }
   });
+
+  it("runs the team chat bus on the loopback interface and stops it", async () => {
+    const env = {
+      AIO_ENGINE_TOKEN: TOKEN,
+      AIO_ENGINE_PORT: 0,
+      AIO_PROJECT_ROOT: dir,
+      AIO_CONTAINER: CONTAINER,
+      AIO_ENGINE_VERSION: readPackageVersion(),
+    } as unknown as EngineEnv;
+    const handle = await startEngine({
+      env,
+      token: TOKEN,
+      log: silentLogger,
+      stateDir: dir,
+      host: "127.0.0.1",
+      runner: { run: async () => ({ code: 1, stdout: "", stderr: "" }) },
+    });
+    const url = handle.team.url;
+    try {
+      expect(url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/mcp$/);
+      // The engine token isn't a bus token.
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+      });
+      expect(res.status).toBe(401);
+    } finally {
+      await handle.close();
+    }
+    await expect(fetch(url, { method: "POST" })).rejects.toThrow();
+  });
 });

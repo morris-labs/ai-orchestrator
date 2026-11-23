@@ -21,6 +21,7 @@ import { PortWatcher } from "../ports/watcher.js";
 import type { AdapterSet } from "../core.js";
 import { createBuildManager, type BuildManager } from "../build/manager.js";
 import { createRunManager } from "../state/manager.js";
+import { TeamBus } from "../team/index.js";
 import { ChildRegistry, setChildRegistry } from "../process/children.js";
 import { setCredentialSource } from "../process/credentials.js";
 import { looksLikeCredential } from "../process/env.js";
@@ -107,6 +108,8 @@ export interface EngineHandle {
   leases: EngineLeaseBroker;
   runs: RunManager;
   builds: BuildManager;
+  /** The team chat bus that build agents reach on the loopback interface. */
+  team: TeamBus;
   ports: PortWatcher;
   /** The address the API listens on. */
   address: { host: string; port: number };
@@ -149,6 +152,10 @@ export async function startEngine(options: StartOptions): Promise<EngineHandle> 
 
   const hub = new EventHub({ source: `engine:${container}` });
   const leases = new EngineLeaseBroker({ log });
+  // Agents run in this container, so the bus listens on the loopback
+  // interface only, apart from the API's port.
+  const team = new TeamBus({ log, version: engineVersion });
+  await team.start();
   let runs: RunManager;
   try {
     runs =
@@ -163,6 +170,7 @@ export async function startEngine(options: StartOptions): Promise<EngineHandle> 
       }));
   } catch (err) {
     leases.close();
+    await team.close();
     throw err;
   }
   let builds: BuildManager;
@@ -176,10 +184,12 @@ export async function startEngine(options: StartOptions): Promise<EngineHandle> 
         leases,
         adapters: options.adapters ?? {},
         log,
+        team,
       }));
   } catch (err) {
     await runs.close?.();
     leases.close();
+    await team.close();
     throw err;
   }
   const repos = new RepoService({ projectRoot, runner, log });
@@ -212,6 +222,7 @@ export async function startEngine(options: StartOptions): Promise<EngineHandle> 
   } catch (err) {
     await ports.stop();
     leases.close();
+    await team.close();
     throw err;
   }
   const bound = app.server.address();
@@ -238,12 +249,23 @@ export async function startEngine(options: StartOptions): Promise<EngineHandle> 
       const buildsClosed = builds.close();
       leases.close();
       await Promise.all([runsClosed, buildsClosed]);
+      await team.close();
       activeRuns.stop(0);
       log.info("The engine stopped");
     })();
     return closing;
   };
-  return { app, hub, leases, runs, builds, ports, address: { host, port: boundPort }, close };
+  return {
+    app,
+    hub,
+    leases,
+    runs,
+    builds,
+    team,
+    ports,
+    address: { host, port: boundPort },
+    close,
+  };
 }
 
 /**
