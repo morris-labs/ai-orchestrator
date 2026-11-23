@@ -79,6 +79,24 @@ describe("aio-build", () => {
     expect(builds.resume).toHaveBeenCalledWith("cart-total");
   });
 
+  it("prints the direct messages and the decisions for the Project manager", async () => {
+    const { builds, run } = await world();
+    const direct = await run(["messages", "cart-total", "--direct"]);
+    expect(direct.code).toBe(0);
+    expect(builds.messages).toHaveBeenCalledWith("cart-total", { direct: true });
+    expect(direct.stdout).toContain("M1  developer (T1) -> owner  note  T1");
+    expect(direct.stdout).toContain("  The criteria miss an empty cart.");
+    const all = await run(["messages", "cart-total", "--json"]);
+    expect(JSON.parse(all.stdout)).toHaveLength(2);
+    const decisions = await run(["decisions", "cart-total"]);
+    expect(decisions.code).toBe(0);
+    expect(decisions.stdout).toContain("D1  owner post M2 to developer (T1)");
+    expect(decisions.stdout).toContain("Plan change: contradicts AC1");
+    const wrong = await run(["status", "cart-total", "--direct"]);
+    expect(wrong.code).toBe(2);
+    expect(wrong.stderr).toContain("status doesn't take --direct");
+  });
+
   it("calls a planning seat with a brief and an issue and prints its answer", async () => {
     const { builds, briefFile, run } = await world();
     const out = await run([
@@ -300,6 +318,7 @@ describe("aio-build", () => {
       "PLAN_FILE",
       "--base",
       "--json",
+      "--direct",
       "AIO_PROJECT_ID",
       "AIO_BOX_ID",
       "Exit status",

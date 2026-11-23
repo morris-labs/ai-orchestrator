@@ -1,6 +1,6 @@
 // The build socket: a Unix socket inside the project container that accepts
 // only build requests (planning seat calls, meetings, the freeze, start, status,
-// pause, and resume) and needs no engine token. The `aio-build` command in a box's session talks to it; see
+// pause, resume, and reading the team chat and decisions) and needs no engine token. The `aio-build` command in a box's session talks to it; see
 // `@aio/contracts` `build-socket.ts` for the protocol.
 //
 // The socket lives on the container's own file system, so only processes in
@@ -13,6 +13,7 @@ import {
   BuildSocketFreezeSchema,
   BuildSocketMeetSchema,
   BuildSocketMeetingPostSchema,
+  BuildSocketMessagesSchema,
   BuildSocketPlanSchema,
   BuildSocketSlugSchema,
   BuildSocketStartSchema,
@@ -36,7 +37,16 @@ export interface BuildSocketOptions {
   /** The requests the socket serves. */
   builds: Pick<
     BuildManager,
-    "plan" | "freeze" | "meet" | "meetingPost" | "start" | "get" | "pause" | "resume"
+    | "plan"
+    | "freeze"
+    | "meet"
+    | "meetingPost"
+    | "start"
+    | "get"
+    | "pause"
+    | "resume"
+    | "messages"
+    | "decisions"
   >;
   /** The engine's project, or `null` when the server didn't name one. */
   projectId: string | null;
@@ -184,10 +194,17 @@ export async function serveBuildSocket(options: BuildSocketOptions): Promise<Bui
       });
       return { build };
     }
+    if (kind === "messages") {
+      const request = BuildSocketMessagesSchema.parse(raw);
+      ownProject(request);
+      await ownBuild(request.projectId, request.slug);
+      return { messages: await builds.messages(request.slug, { direct: request.direct }) };
+    }
     const request = BuildSocketSlugSchema.parse(raw);
     ownProject(request);
     const build = await ownBuild(request.projectId, request.slug);
     if (kind === "status") return { build };
+    if (kind === "decisions") return { decisions: await builds.decisions(request.slug) };
     if (kind === "pause") return { build: await builds.pause(request.slug) };
     return { build: await builds.resume(request.slug) };
   };

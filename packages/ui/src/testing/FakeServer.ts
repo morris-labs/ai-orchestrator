@@ -21,6 +21,7 @@ import {
   type Message,
   type Mount,
   type Notification,
+  type OwnerPost,
   type Project,
   type PromptTemplates,
   type SecretCandidate,
@@ -1020,6 +1021,53 @@ const defaultHandlers: Partial<Record<HttpRouteKey, FakeHandler>> = {
       throw new FakeApiError("not_found", `No build ${buildId}.`, 404);
     }
     return { messages: s.state.buildMessages[buildId] ?? [] };
+  },
+  "builds.post": (r, s) => {
+    // Like the engine: the post is a message from the owner to one agent,
+    // recorded as a decision on the addressee's task.
+    const buildId = r.params.buildId as string;
+    if (!s.state.builds.some((b) => b.id === buildId)) {
+      throw new FakeApiError("not_found", `No build ${buildId}.`, 404);
+    }
+    const post = r.body as OwnerPost;
+    const taskId = post.taskId ?? post.toTask ?? null;
+    const milestone = post.milestone ?? null;
+    if (taskId === null && milestone === null) {
+      throw new FakeApiError("validation", "The post needs a task or a milestone.", 400);
+    }
+    const earlier = s.state.buildMessages[buildId] ?? [];
+    const message: Message = {
+      version: 1,
+      id: `M${earlier.length + 1}`,
+      buildId,
+      from: { kind: "owner" },
+      to: { kind: "seat", seat: post.to, taskId: post.toTask ?? null },
+      routing: "addressed",
+      type: post.type ?? "note",
+      taskId,
+      milestone,
+      paths: [],
+      body: post.body,
+      createdAt: new Date().toISOString(),
+    };
+    s.putMessages([message]);
+    const decisions = earlier.filter((m) => m.from.kind === "owner").length;
+    return {
+      route: "agent" as const,
+      message,
+      decision: {
+        version: 1 as const,
+        id: `D${decisions + 1}`,
+        buildId,
+        messageId: message.id,
+        to: message.to,
+        taskId,
+        milestone,
+        body: message.body,
+        createdAt: message.createdAt,
+        planChange: null,
+      },
+    };
   },
   "builds.tasks": (r, s) => {
     const buildId = r.params.buildId as string;

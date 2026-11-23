@@ -1,10 +1,21 @@
 // The build controller: one per build. It creates the build's files and
 // worktree, drives the build pipeline step by step, and handles the build
-// requests: pause and resume. Its drive saves after every step, so a
+// requests: pause, resume, and owner posts. Its drive saves after every step, so a
 // restarted engine continues the build from where it stopped.
 import { mkdir } from "node:fs/promises";
-import type { BuildCreate, BuildPlan, BuildState, BuildStep } from "@aio/contracts";
+import type {
+  BuildCreate,
+  BuildDecision,
+  BuildPlan,
+  BuildState,
+  BuildStep,
+  Message,
+  OwnerPost,
+  OwnerPostAnswer,
+} from "@aio/contracts";
 import { RunCancelled, describeError } from "../calls/index.js";
+import { MessageRefused } from "../team/index.js";
+import { isDirectMessage } from "./owner/index.js";
 import { EngineError } from "../api/core-interface.js";
 import { loadPolicy } from "../policy/load.js";
 import { BuildContext, type BuildServices } from "./context.js";
@@ -258,6 +269,40 @@ export class BuildController {
     this.ctx.calls.wakePause();
     this.start();
     return this.state;
+  }
+
+  /**
+   * Posts as the owner to one agent of the build. Throws `invalid_state`
+   * for a build that ended, `conflict` when the engine runs no team chat,
+   * and `validation` for a post the team chat refuses.
+   */
+  async post(input: OwnerPost): Promise<OwnerPostAnswer> {
+    if (["finished", "failed", "cancelled"].includes(this.state.status)) {
+      throw new EngineError(
+        "invalid_state",
+        `Build ${this.slug} is ${this.state.status}, so no agent can take a post.`,
+      );
+    }
+    if (!this.ctx.team) {
+      throw new EngineError("conflict", "This engine runs no team chat, so it can't take a post.");
+    }
+    try {
+      return await this.ctx.post(input);
+    } catch (error) {
+      if (error instanceof MessageRefused) throw new EngineError("validation", error.message);
+      throw error;
+    }
+  }
+
+  /** The build's team chat messages, oldest first; with `direct`, only the ones agents sent the owner. */
+  async messages(direct = false): Promise<Message[]> {
+    const all = (await this.ctx.team?.list()) ?? [];
+    return direct ? all.filter(isDirectMessage) : all;
+  }
+
+  /** The build's decisions, oldest first. */
+  decisions(): Promise<BuildDecision[]> {
+    return this.ctx.decisions.list();
   }
 
   /**

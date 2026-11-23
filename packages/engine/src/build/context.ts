@@ -3,6 +3,7 @@
 // through it, so every change reaches `state.json`, `STATUS.md`, and the
 // event stream the same way.
 import type {
+  BuildDecision,
   BuildSessionSettings,
   EngineRunCreate,
   BuildPlan,
@@ -12,6 +13,9 @@ import type {
   BuildTaskProgress,
   BuildTaskStatus,
   Escalation,
+  Message,
+  OwnerPost,
+  OwnerPostAnswer,
   RoleDefinition,
   RoleName,
   RunState,
@@ -36,6 +40,7 @@ import { seatCallSpec } from "./seat-call.js";
 import { loadSpecialties, type SpecialtyPack, type SpecialtySources } from "./specialties/index.js";
 import type { TeamBus, TeamChannel } from "../team/index.js";
 import { SessionDesk } from "./sessions/index.js";
+import { DecisionLog, checkDirectMessage, decisionsFor, decisionsText } from "./owner/index.js";
 import type { EscalationDraft } from "./escalations.js";
 import { renderStatus } from "./status-file.js";
 import type { BuildStore } from "./store.js";
@@ -131,6 +136,8 @@ export class BuildContext {
   readonly team: TeamChannel | null;
   /** The session registry, and the message turns it gives each seat. */
   readonly sessions: SessionDesk;
+  /** The owner's decisions: one for each owner post. */
+  readonly decisions: DecisionLog;
   /** Aborts the gate's commands when the engine stops; a new drive gets a new one. */
   private driveAbort = new AbortController();
   private writeChain: Promise<void> = Promise.resolve();
@@ -189,9 +196,16 @@ export class BuildContext {
         dir: store.path("messages"),
         tasks: () => this.plan.tasks,
         emit: (draft) => this.emit(draft),
+        check: (message) => checkDirectMessage(message, this.plan, () => this.team!.list()),
         clock: services.clock,
       }) ?? null;
+    this.decisions = new DecisionLog(store.path("decisions"), state.id);
     this.sessions = new SessionDesk(this);
+    // The decision comes first: the log's queue then holds it before any
+    // turn for the post reads it.
+    this.team?.onMessage((message) => {
+      if (message.from.kind === "owner") void this.decisions.record(message).catch(() => undefined);
+    });
     this.team?.onMessage((message) => this.sessions.receive(message));
   }
 
@@ -322,6 +336,65 @@ export class BuildContext {
     return escalation;
   }
 
+  /**
+   * Posts as the owner to one agent and records the post as a decision.
+   * The team chat delivers the post to that agent only; an agent that
+   * holds no session yet gets it with the task's decisions when it starts.
+   */
+  async post(input: OwnerPost): Promise<OwnerPostAnswer> {
+    if (!this.team) throw new Error("The engine runs no team chat, so it can't take a post.");
+    const message = await this.team.send({ kind: "owner" }, input);
+    return { route: "agent", message, decision: await this.decisions.record(message) };
+  }
+
+  /** The decisions attached to any of `taskIds`, as a prompt section's body. */
+  async decisionsText(taskIds: readonly string[]): Promise<string> {
+    return decisionsText(decisionsFor(await this.decisions.list(), taskIds, this.plan));
+  }
+
+  /**
+   * Flags owner post `message` to the Project manager as a change to the
+   * build plan, because `reporter` found that it contradicts `contradicts`.
+   * A post flagged already stays as it is.
+   */
+  async flagPlanChange(
+    message: Message,
+    reporter: { seat: string; taskId: string | null },
+    contradicts: ReadonlyArray<{ criterion: string; reason: string }>,
+  ): Promise<BuildDecision | null> {
+    const decision = await this.decisions.byMessage(message.id);
+    if (!decision || decision.planChange || contradicts.length === 0) return null;
+    const from = { kind: "seat" as const, seat: reporter.seat, taskId: reporter.taskId };
+    const criteria = [...new Set(contradicts.map((c) => c.criterion))];
+    const reason = contradicts.map((c) => `${c.criterion}: ${c.reason}`).join(" ");
+    const note = await this.team
+      ?.send(from, {
+        type: "note",
+        to: "project-manager",
+        ...(decision.taskId !== null ? { taskId: decision.taskId } : {}),
+        ...(decision.milestone !== null ? { milestone: decision.milestone } : {}),
+        body: [
+          `Plan change: owner post ${message.id} (decision ${decision.id}) contradicts acceptance criteria ${criteria.join(", ")} of the build plan.`,
+          reason,
+          "The agent works from the post. Change the plan's criteria to match it, or ask the owner.",
+        ].join("\n\n"),
+      })
+      .catch((error: unknown) => {
+        this.services.log.warn("Couldn't send a plan change flag", {
+          build: this.state.slug,
+          error: String(error),
+        });
+        return null;
+      });
+    return this.decisions.flag(message.id, {
+      criteria,
+      reason,
+      reportedBy: from,
+      messageId: note?.id ?? null,
+      flaggedAt: this.now(),
+    });
+  }
+
   /** Where the build finds specialties: the repository, then the account skills folders. */
   specialtySources(): SpecialtySources {
     return { repoRoot: this.state.repoPath, skillDirs: this.services.skillDirs() };
@@ -357,12 +430,13 @@ export class BuildContext {
       input.seat,
       async () => {
         const placement = this.seats.place(input.seat, input.placement);
+        const decisions = await this.decisionsText(taskIds);
         const outcome = await this.runTurn(
           seatCallSpec(role, placement, {
             seat: input.seat,
             key: input.key,
             step: input.step,
-            task: input.task,
+            task: decisions === "" ? input.task : { ...input.task, decisions },
             repoPath: this.worktree.path,
             scratchDir: this.store.scratchDir,
             specialties: packs,

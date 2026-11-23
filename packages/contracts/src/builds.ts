@@ -287,6 +287,11 @@ export const BuildPlanSchema = z
      * the push. A freeze needs it.
      */
     push: z.boolean().nullable().default(null),
+    /**
+     * How many direct messages each agent can send the owner in one
+     * milestone. Absent means `DIRECT_MESSAGE_LIMIT`.
+     */
+    directMessagesPerMilestone: z.number().int().min(0).max(100).optional(),
   })
   .strict()
   .superRefine((plan, ctx) => {

@@ -1,10 +1,9 @@
 // The build socket's protocol: HTTP/1.1 with JSON bodies, over a Unix
 // socket that the engine opens inside its project container. The socket
-// accepts only build requests (planning seat calls, meetings, the freeze, start,
-// status, pause, and resume) and needs
-// no engine token, so a box's session can drive a build with the
-// `aio-build` command without the token that the engine's full API
-// requires. See `docs/build-pipeline/design.md`.
+// accepts only build requests (planning seat calls, meetings, the freeze,
+// start, status, pause, resume, and reading the team chat and decisions) and
+// needs no engine token, so a box's session can drive a build with the
+// `aio-build` command without the token that the engine's full API requires. See `docs/build-pipeline/design.md`.
 import { z } from "zod";
 import { BuildSlugSchema } from "./build-events.js";
 import {
@@ -20,6 +19,8 @@ import {
 } from "./build-meetings.js";
 import { BuildPlanSchema, BuildStateSchema } from "./builds.js";
 import { ENGINE_ENV } from "./config.js";
+import { BuildMessageListSchema } from "./messages.js";
+import { BuildDecisionListSchema } from "./owner-posts.js";
 
 /**
  * The folder that holds the socket inside a container. It sits on the
@@ -55,6 +56,8 @@ export const BUILD_SOCKET_ROUTES = {
   status: "/v1/builds/status",
   pause: "/v1/builds/pause",
   resume: "/v1/builds/resume",
+  messages: "/v1/builds/messages",
+  decisions: "/v1/builds/decisions",
 } as const;
 export type BuildSocketRequestKind = keyof typeof BUILD_SOCKET_ROUTES;
 
@@ -85,6 +88,15 @@ export type BuildSocketStartInput = z.input<typeof BuildSocketStartSchema>;
 export const BuildSocketSlugSchema = z.object({ ...scope, slug: BuildSlugSchema }).strict();
 export type BuildSocketSlug = z.infer<typeof BuildSocketSlugSchema>;
 
+/**
+ * The body of a messages request. With `direct`, the answer holds only the
+ * direct messages: the ones that agents sent the owner.
+ */
+export const BuildSocketMessagesSchema = z
+  .object({ ...scope, slug: BuildSlugSchema, direct: z.boolean().default(false) })
+  .strict();
+export type BuildSocketMessages = z.infer<typeof BuildSocketMessagesSchema>;
+
 /** The body of a planning seat call. */
 export const BuildSocketPlanSchema = BuildSeatRequestSchema;
 
@@ -111,6 +123,8 @@ export const BUILD_SOCKET_RESPONSES = {
   status: BuildSocketResponseSchema,
   pause: BuildSocketResponseSchema,
   resume: BuildSocketResponseSchema,
+  messages: BuildMessageListSchema,
+  decisions: BuildDecisionListSchema,
 } as const satisfies Record<BuildSocketRequestKind, z.ZodTypeAny>;
 export type BuildSocketAnswer<K extends BuildSocketRequestKind> = z.infer<
   (typeof BUILD_SOCKET_RESPONSES)[K]

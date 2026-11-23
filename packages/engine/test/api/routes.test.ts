@@ -255,6 +255,21 @@ const cases: Record<string, Case> = {
     url: "/api/v1/builds/cart-total/resume",
     check: () => expect(builds.resume).toHaveBeenCalledWith("cart-total"),
   },
+  "engine.builds.post": {
+    method: "POST",
+    url: "/api/v1/builds/cart-total/posts",
+    body: { to: "developer", toTask: "T1", body: "Keep the total in whole dollars." },
+    status: 201,
+    check: (j) => {
+      expect(j).toMatchObject({ message: { id: "M2" }, decision: { id: "D1" } });
+      expect(builds.post).toHaveBeenCalledWith("cart-total", {
+        to: "developer",
+        toTask: "T1",
+        type: "note",
+        body: "Keep the total in whole dollars.",
+      });
+    },
+  },
   "engine.ports": {
     method: "GET",
     url: "/api/v1/ports",
