@@ -7,7 +7,9 @@
 //
 //   planning.json             the planning record (`BuildPlanning`)
 //   planning/SEAT-N.json      each seat call: its brief, then its answer or error
-//   planning/draft.json       the plan drafted from the latest spec and design
+//   planning/draft.json       the plan drafted from the latest spec and design,
+//                             which the Project manager can edit before a freeze
+//   planning/draft.engine.json the engine's own draft from the latest answers
 //   meetings/ID.json          each planning meeting (see `meeting.ts`)
 //   plans/vN.json             each frozen version of the build plan, read-only
 //   engine.json               the agent-call ledger, which execution goes on from
@@ -65,6 +67,9 @@ import { listSpecialties } from "../specialties/index.js";
 import { renderPlanningStatus } from "../status-file.js";
 import { BuildStore } from "../store.js";
 import { Meeting, type MeetingHost } from "./meeting.js";
+
+/** The engine's own draft plan, beside the one the Project manager can edit. */
+export const ENGINE_DRAFT_FILE = "planning/draft.engine.json";
 
 /** The answers the engine reads, by seat: the spec from the Analyst and the design from the Architect. */
 const ANSWERS: Readonly<Record<string, { name: string; schema: z.ZodTypeAny }>> = {
@@ -626,7 +631,12 @@ export class BuildPlanner {
     return parts.join("\n\n");
   }
 
-  /** Writes the plan drafted from the latest spec and design, once both exist. */
+  /**
+   * Writes the plan drafted from the latest spec and design, once both
+   * exist, to `planning/draft.engine.json`, and to `planning/draft.json`
+   * unless the Project manager changed that file since the engine last wrote
+   * it: a seat's answer never overwrites the Project manager's edits.
+   */
   private async writeDraft(): Promise<void> {
     const spec = await this.latest("analyst");
     const design = await this.latest("architect");
@@ -636,7 +646,27 @@ export class BuildPlanner {
       commands: { test: policy.tests, typecheck: policy.typecheck ?? [], lint: policy.lint },
       issue: this.planning.issue,
     });
-    await this.store.writeJson(this.store.path(BUILD_DRAFT_FILE), draft);
+    const draftPath = this.store.path(BUILD_DRAFT_FILE);
+    const enginePath = this.store.path(ENGINE_DRAFT_FILE);
+    // A draft that isn't valid JSON is an edit under way. A draft from
+    // before the engine kept its own copy counts as the engine's.
+    const unreadable = Symbol("unreadable");
+    const current = await this.store.readJson<unknown>(draftPath).catch(() => unreadable);
+    const engine = await this.store.readJson<unknown>(enginePath).catch(() => undefined);
+    const edited =
+      current === unreadable ||
+      (current !== undefined &&
+        engine !== undefined &&
+        JSON.stringify(current) !== JSON.stringify(engine));
+    await this.store.writeJson(enginePath, draft);
+    if (edited) {
+      this.services.log.info("Kept the Project manager's edits to the draft plan", {
+        build: this.planning.slug,
+        engineDraft: ENGINE_DRAFT_FILE,
+      });
+      return;
+    }
+    await this.store.writeJson(draftPath, draft);
   }
 
   /**

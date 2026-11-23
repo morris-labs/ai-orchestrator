@@ -133,6 +133,28 @@ describe("planning a build", () => {
     expect(await world.manager.planning(SLUG)).toBeNull();
   });
 
+  it("keeps the Project manager's edits to the draft plan when a seat answers again", async () => {
+    const world = await planningWorld();
+    await plan(world);
+    const draft = JSON.parse(world.file(SLUG, "planning/draft.json")) as Record<string, unknown>;
+    // Without edits, the draft is the engine's.
+    expect(JSON.parse(world.file(SLUG, "planning/draft.engine.json"))).toEqual(draft);
+    writeFileSync(
+      join(world.dir(SLUG), "planning/draft.json"),
+      `${JSON.stringify({ ...draft, title: "Add a cart total with tax" }, null, 2)}\n`,
+    );
+
+    await world.manager.plan(seat("architect"));
+
+    expect(JSON.parse(world.file(SLUG, "planning/draft.json"))).toMatchObject({
+      title: "Add a cart total with tax",
+    });
+    // The engine's own draft from the latest answers is beside it.
+    expect(JSON.parse(world.file(SLUG, "planning/draft.engine.json"))).toMatchObject({
+      title: SPEC.title,
+    });
+  });
+
   it("runs the planning calls under leases that name the build, the seat, and the step", async () => {
     const world = await planningWorld();
     const { analyst } = await plan(world);
