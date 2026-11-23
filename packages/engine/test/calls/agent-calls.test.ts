@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { EventDraft } from "../../src/core.js";
 import { RunCancelled } from "../../src/calls/index.js";
 import { buildSampleRepo } from "../state/scenario.js";
+import { uniqueRunId } from "../state/run-ids.js";
 import { answering, hanging, limited, makeCaller, spec, type Answer } from "./caller.js";
 
 describe("AgentCalls for a caller that isn't a review run", () => {
@@ -26,6 +27,37 @@ describe("AgentCalls for a caller that isn't a review run", () => {
     expect(started).toMatchObject({ runId: id, agentId: `${id}-A1`, role: "fixer" });
     const finished = emitted[1] as Extract<EventDraft, { type: "agent.finished" }>;
     expect(finished).toMatchObject({ outcome: "ok", model: "codex-model" });
+  });
+
+  it("names the build, seat, and step on a build call's lease and events", async () => {
+    const repo = buildSampleRepo();
+    const buildId = uniqueRunId();
+    const { id, calls, broker, emitted } = makeCaller({ codex: answering("codex") }, undefined, undefined, {
+      owner: { runId: null, buildId },
+    });
+
+    await calls.call<Answer>(spec(repo, { seat: "developer", step: "tasks" }));
+
+    const owner = { runId: null, buildId, seat: "developer", step: "tasks" };
+    expect(broker.requests[0]).toMatchObject({ leaseId: `${id}-L1`, ...owner });
+    expect(emitted.map((e) => e.type)).toEqual([
+      "agent.started",
+      "agent.finished",
+      "lease.settled",
+    ]);
+    for (const event of emitted) expect(event).toMatchObject(owner);
+  });
+
+  it("leaves the build fields out of a review run's lease and events", async () => {
+    const repo = buildSampleRepo();
+    const { id, calls, broker, emitted } = makeCaller({ codex: answering("codex") });
+
+    await calls.call<Answer>(spec(repo));
+
+    for (const record of [broker.requests[0], ...emitted]) {
+      expect(record).toMatchObject({ runId: id });
+      for (const key of ["buildId", "seat", "step"]) expect(record).not.toHaveProperty(key);
+    }
   });
 
   it("returns a finished call from the cache instead of calling again", async () => {

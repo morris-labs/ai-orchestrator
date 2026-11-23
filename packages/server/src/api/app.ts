@@ -22,6 +22,7 @@ import { assertDevEnginesAllowed, withDevEngines } from "../events/dev-engines.j
 import { EngineSupervisor } from "../events/engines.js";
 import { EventHub } from "../events/hub.js";
 import { LateSink } from "../events/late-sink.js";
+import { BuildMirror } from "../events/build-mirror.js";
 import { RunMirror } from "../events/run-mirror.js";
 import { JobManager } from "../jobs/jobs.js";
 import { NodeProcessRunner, type ProcessRunner } from "../jobs/process.js";
@@ -188,6 +189,7 @@ export async function startApp(options: AppOptions): Promise<App> {
   sink.attach(hub);
   runs = new RunMirror(core.db);
   const runMirror = runs;
+  const buildMirror = new BuildMirror(core.db);
   const usageStore = new UsageStore(core.db);
   const usage = new UsageService({ store: usageStore, settings, emit: (e) => hub.emit(e) });
   const vendorHealth = new VendorHealth();
@@ -453,6 +455,7 @@ export async function startApp(options: AppOptions): Promise<App> {
 
   hub.subscribe((event: AioEvent) => {
     runMirror.ingest(event);
+    buildMirror.ingest(event);
     usage.ingest(event);
     vendorHealth.ingest(event);
     notifier.ingest(event);
@@ -509,6 +512,10 @@ export async function startApp(options: AppOptions): Promise<App> {
           (await core.projects.list()).flatMap((p) => p.project.ceilingsOverride ?? []),
         ),
       samples: (q) => usageStore.samples(q),
+    },
+    builds: {
+      usage: (buildId) =>
+        buildMirror.get(buildId) === undefined ? undefined : usageStore.buildUsage(buildId),
     },
     notifications: notifier,
     secrets,

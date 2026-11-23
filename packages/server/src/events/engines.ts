@@ -3,6 +3,7 @@
 // scheduler, and resynchronizes the run mirror when events were missed.
 import type {
   AioEvent,
+  BuildSummary,
   EngineInfo,
   Finding,
   LeaseRequest,
@@ -69,6 +70,29 @@ function runProject(db: SqlDatabase, runId: string): string | undefined {
   return row?.project_id;
 }
 
+/** The project a build belongs to in the mirror, or `undefined` for a build it hasn't seen. */
+function buildProject(db: SqlDatabase, buildId: string): string | undefined {
+  const row = db.prepare("SELECT project_id FROM svc_builds WHERE id = ?").get(buildId) as
+    { project_id: string } | undefined;
+  return row?.project_id;
+}
+
+/** Why a build state doesn't belong to the engine at `endpoint`, or `null` when it does. */
+export function foreignBuildReason(
+  db: SqlDatabase,
+  endpoint: Pick<EngineEndpoint, "container" | "projectId">,
+  build: BuildSummary,
+): string | null {
+  if (build.projectId !== endpoint.projectId || build.container !== endpoint.container) {
+    return `build ${build.id} belongs to ${build.container} in project ${build.projectId}`;
+  }
+  const known = buildProject(db, build.id);
+  if (known !== undefined && known !== endpoint.projectId) {
+    return `build ${build.id} belongs to project ${known}`;
+  }
+  return null;
+}
+
 /** The project of a box, or `undefined` for a box the database doesn't hold. */
 function boxProject(db: SqlDatabase, boxId: string): string | undefined {
   const row = db.prepare("SELECT project_id FROM boxes WHERE id = ?").get(boxId) as
@@ -100,9 +124,11 @@ export function foreignRunReason(
 
 /**
  * Why the server must drop an event from the engine at `endpoint`, or `null`
- * to relay it. An engine emits run, agent, finding, lease, usage, and port
- * events, and only for its own container, its own project, and runs of that
- * project; a run event needs the run's `run.changed` first. Boxes,
+ * to relay it. An engine emits run, build, agent, finding, lease, usage, and
+ * port events, and only for its own container, its own project, and runs
+ * and builds of that project; a run event needs the run's `run.changed`
+ * first, and a build event the build's `build.changed`. An agent or lease
+ * event names a run, a build, or both, and each must be the engine's. Boxes,
  * containers, terminals, notifications, settings, and ceilings are the
  * server's own events.
  */
@@ -115,6 +141,20 @@ export function engineEventRefusal(
     const project = runProject(db, runId);
     if (project === undefined) return `run ${runId} is unknown`;
     return project === endpoint.projectId ? null : `run ${runId} belongs to project ${project}`;
+  };
+  const ownBuild = (buildId: string) => {
+    const project = buildProject(db, buildId);
+    if (project === undefined) return `build ${buildId} is unknown`;
+    return project === endpoint.projectId ? null : `build ${buildId} belongs to project ${project}`;
+  };
+  const ownCall = (owner: { runId: string | null; buildId?: string }) => {
+    if (owner.runId === null && owner.buildId === undefined) {
+      return "the call names neither a run nor a build";
+    }
+    return (
+      (owner.runId === null ? null : ownRun(owner.runId)) ??
+      (owner.buildId === undefined ? null : ownBuild(owner.buildId))
+    );
   };
   switch (event.type) {
     case "usage.sample":
@@ -129,12 +169,17 @@ export function engineEventRefusal(
       return event.finding.runId === event.runId
         ? ownRun(event.runId)
         : `finding ${event.finding.id} belongs to run ${event.finding.runId}`;
+    case "build.changed":
+      return foreignBuildReason(db, endpoint, event.build);
+    case "build.task.changed":
+      return ownBuild(event.buildId);
     case "agent.started":
     case "agent.finished":
+    case "lease.settled":
+      return ownCall(event);
     case "stage.changed":
     case "handoff":
     case "role.reassigned":
-    case "lease.settled":
       return ownRun(event.runId);
     default:
       return `engines don't emit ${event.type} events`;

@@ -94,6 +94,7 @@ import {
   UsageSampleSchema,
   UsageWindowSchema,
 } from "./events.js";
+import { BuildUsageSchema } from "./build-events.js";
 import { FindingSchema, SeveritySchema, VerdictSchema } from "./findings.js";
 import {
   EnrollmentCodeSchema,
@@ -1818,6 +1819,15 @@ export const serverRoutes = {
       "Clear a vendor's usage block, such as after you buy a reset. The next real sample replaces it.",
     body: z.object({ vendor: VendorSchema, account: z.string().min(1).optional() }),
     response: z.object({ vendors: z.array(VendorUsageSchema), cleared: z.number().int() }),
+  }),
+
+  // Builds
+  "builds.usage": http({
+    method: "GET",
+    path: `${V1}/builds/:buildId/usage`,
+    summary:
+      "A build's settled usage, in total, by seat, and by step. Returns not_found for a build the server hasn't seen.",
+    response: BuildUsageSchema,
   }),
 
   // Machines (multi-host)

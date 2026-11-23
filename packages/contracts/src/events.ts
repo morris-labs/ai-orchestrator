@@ -25,6 +25,7 @@ import { SeatPlacementSchema } from "./placements.js";
 import { ModelTierSchema } from "./tiers.js";
 import { CountSchema, IsoDateTimeSchema, PortSchema, RunIdSchema, VendorSchema } from "./common.js";
 import { FindingSchema, FindingHistoryVerdictSchema } from "./findings.js";
+import { buildChangedFields, buildTaskChangedFields, callOwnerFields } from "./build-events.js";
 import {
   LeaseRequestFrameSchema,
   LeaseResponseFrameSchema,
@@ -182,7 +183,8 @@ export type EngineInfo = z.infer<typeof EngineInfoSchema>;
 // Events
 
 const agentFields = {
-  runId: RunIdSchema,
+  /** The review run or the build the call belongs to; see `callOwnerFields`. */
+  ...callOwnerFields,
   /** Unique per agent call within the run. */
   agentId: z.string().min(1),
   /** The lease the call runs under. */
@@ -367,6 +369,18 @@ export const SettingsChangedEventSchema = z.object({
   changedKeys: z.array(z.string().min(1)),
 });
 
+export const BuildChangedEventSchema = z.object({
+  ...base,
+  type: z.literal("build.changed"),
+  ...buildChangedFields,
+});
+
+export const BuildTaskChangedEventSchema = z.object({
+  ...base,
+  type: z.literal("build.task.changed"),
+  ...buildTaskChangedFields,
+});
+
 export const EventSchema = z.discriminatedUnion("type", [
   AgentStartedEventSchema,
   AgentFinishedEventSchema,
@@ -385,6 +399,8 @@ export const EventSchema = z.discriminatedUnion("type", [
   TerminalEndedEventSchema,
   NotificationEventSchema,
   SettingsChangedEventSchema,
+  BuildChangedEventSchema,
+  BuildTaskChangedEventSchema,
 ]);
 export type AioEvent = z.infer<typeof EventSchema>;
 export type EventType = AioEvent["type"];
