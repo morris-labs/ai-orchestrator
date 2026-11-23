@@ -19,7 +19,15 @@ export const EngineStateSchema = z.object({
   /** Which loop drives the run: the pre-push rounds, or the post-push loop after a push. */
   phase: z.enum(["pre-push", "post-push"]).default("pre-push"),
   /** Post-push: the pull request title and draft flag from the push request. */
-  push: z.object({ title: z.string().nullable(), draft: z.boolean() }).nullable().default(null),
+  push: z
+    .object({
+      title: z.string().nullable(),
+      draft: z.boolean(),
+      /** The pull request description, from a build's release ready step. */
+      body: z.string().optional(),
+    })
+    .nullable()
+    .default(null),
   /** Counters for ids that must stay unique across a resume. */
   counters: z
     .object({

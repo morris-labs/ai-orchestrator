@@ -44,6 +44,13 @@ export type BuildCriterion = z.infer<typeof BuildCriterionSchema>;
 
 const RepoPathSchema = z.string().min(1);
 
+/**
+ * The build size, which sets the steps that run: a small build skips the
+ * coverage check, for example. See "Build size" in the design.
+ */
+export const BuildSizeSchema = z.enum(["small", "medium", "large"]);
+export type BuildSize = z.infer<typeof BuildSizeSchema>;
+
 export const BuildTaskSchema = z
   .object({
     id: PlanIdSchema,
@@ -85,6 +92,8 @@ export const BuildPlanSchema = z
     /** The plan's version; a revised plan gets the next one. */
     version: z.number().int().positive().default(1),
     title: z.string().min(1),
+    /** The build size, which the Analyst estimates and the owner can change. */
+    size: BuildSizeSchema.default("medium"),
     criteria: z.array(BuildCriterionSchema).min(1),
     tasks: z.array(BuildTaskSchema).min(1).max(1, "a build plan has one task in this version"),
     commands: BuildCommandsSchema,
@@ -92,6 +101,13 @@ export const BuildPlanSchema = z
     singleVendor: VendorSchema.nullable().default(null),
     /** Placement overrides by seat, over the role defaults and the single-vendor setting. */
     placements: z.record(RoleNameSchema, PlacementOverrideSchema).default({}),
+    /**
+     * The owner's push answer: `true` lets the build push its branch and open
+     * its pull request, and `false` keeps the branch local. `null` means
+     * nobody asked the owner yet, and the build stops at an escalation before
+     * the push.
+     */
+    push: z.boolean().nullable().default(null),
   })
   .strict()
   .superRefine((plan, ctx) => {
@@ -171,8 +187,16 @@ export const EscalationKindSchema = z.enum([
   "review",
   /** A test, type check, or lint command of the build plan can't run at preflight. */
   "preflight",
-  /** Tests first can't lock the tests, such as tests that fail the red check in every round. */
+  /**
+   * Tests first can't lock the tests, such as tests that fail the red check
+   * in every round, or revised tests that fail it after the coverage check.
+   */
   "tests_first",
+  /**
+   * The build can't become release ready: a criterion without a passing
+   * test, no recorded push answer, or a pull request whose checks don't pass.
+   */
+  "release_ready",
 ]);
 export type EscalationKind = z.infer<typeof EscalationKindSchema>;
 
