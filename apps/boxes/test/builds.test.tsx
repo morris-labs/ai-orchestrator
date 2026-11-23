@@ -343,6 +343,28 @@ describe("waiting escalations", () => {
     await waitFor(() => expect(within(buildRow("add-export")).queryByText(/open/)).toBeNull());
   });
 
+  it("doesn't notify again about an escalation after an app restart", async () => {
+    const notifyBuild = vi.fn();
+    window.aio = {
+      onSelectBox: () => () => undefined,
+      notifyBuild,
+      onSelectBuild: () => () => undefined,
+    } as unknown as AioBridge;
+    const server = serverWithInbox();
+    const first = await renderApp(server);
+    await waitFor(() => expect(notifyBuild).toHaveBeenCalledTimes(1));
+    first.unmount();
+
+    await renderApp(server);
+    act(() =>
+      server.putInboxItem(B1, makeInboxItem({ id: "I5", ref: "E4", summary: "E4 waits." })),
+    );
+    await waitFor(() => expect(notifyBuild).toHaveBeenCalledTimes(2));
+    expect(notifyBuild).toHaveBeenLastCalledWith(expect.objectContaining({ body: "E4 waits." }));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(notifyBuild).toHaveBeenCalledTimes(2);
+  });
+
   it("notifies the owner once per escalation that didn't reach the session", async () => {
     const notifyBuild = vi.fn();
     let select: ((buildId: string, machineId?: string) => void) | undefined;

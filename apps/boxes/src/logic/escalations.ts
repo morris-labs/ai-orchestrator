@@ -90,6 +90,25 @@ export function noticeKey(buildId: string, item: Pick<PmItem, "id">): string {
   return `${buildId}/${item.id}`;
 }
 
+/** How many notified escalations the app remembers across restarts. */
+export const NOTIFIED_KEEP = 500;
+
+/** The notified set stored as `text`; anything unreadable reads as empty. */
+export function parseNotified(text: string | null): Set<string> {
+  if (!text) return new Set();
+  try {
+    const keys: unknown = JSON.parse(text);
+    return new Set(Array.isArray(keys) ? keys.filter((k) => typeof k === "string") : []);
+  } catch {
+    return new Set();
+  }
+}
+
+/** The text that stores the newest `keep` keys of the notified set. */
+export function serializeNotified(notified: ReadonlySet<string>, keep = NOTIFIED_KEEP): string {
+  return JSON.stringify([...notified].slice(-keep));
+}
+
 /**
  * The escalations to notify the owner about: each one whose pointer didn't
  * reach the session within `NOTIFY_AFTER_MS` and that isn't in `notified`.
