@@ -3,7 +3,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { BUILD_SOCKET_ROUTES, BuildPlanSchema } from "@aio/contracts";
 import { PACKAGED_SKILLS_DIR } from "../../src/accounts/packaged-skills.js";
+import { configureTestAccounts } from "../account-fixture.js";
 import { makeHarness } from "../boxes/harness.js";
 
 const SKILL = path.join(PACKAGED_SKILLS_DIR, "aio-build", "SKILL.md");
@@ -93,6 +95,16 @@ describe("packaged skills", () => {
     h.core.close();
   });
 
+  it("installs the skill when a box prepares an account that arrived another way, such as a seed", () => {
+    const h = makeHarness({ accounts: false });
+    configureTestAccounts(h.core);
+    const { dir } = h.core.accounts.prepareAccount("claude");
+    expect(fs.readFileSync(path.join(dir, "skills/aio-build/SKILL.md"), "utf8")).toBe(
+      fs.readFileSync(SKILL, "utf8"),
+    );
+    h.core.close();
+  });
+
   it("installs the skill into a Claude account created after the start", async () => {
     const h = makeHarness({ accounts: false });
     await h.core.start({ importLegacy: false, pollMs: 0, watch: false });
@@ -101,5 +113,29 @@ describe("packaged skills", () => {
       fs.readFileSync(SKILL, "utf8"),
     );
     h.core.close();
+  });
+});
+
+describe("the aio-build skill", () => {
+  it("ships a small build plan template that the engine's freeze accepts", () => {
+    const template = JSON.parse(
+      fs.readFileSync(path.join(PACKAGED_SKILLS_DIR, "aio-build", "small-plan.json"), "utf8"),
+    ) as unknown;
+    const plan = BuildPlanSchema.parse(template);
+    expect(plan.size).toBe("small");
+    expect(plan.tasks).toHaveLength(1);
+    expect(plan.push).toBeNull();
+  });
+
+  it("names only requests that the aio-build command has", () => {
+    const dir = path.join(PACKAGED_SKILLS_DIR, "aio-build");
+    const text = ["SKILL.md", "triage.md"]
+      .map((f) => fs.readFileSync(path.join(dir, f), "utf8"))
+      .join("\n");
+    const named = new Set([...text.matchAll(/aio-build ([a-z][a-z-]*)/g)].map((m) => m[1]!));
+    const known = new Set([...Object.keys(BUILD_SOCKET_ROUTES), "help"]);
+    expect([...named].filter((kind) => !known.has(kind))).toEqual([]);
+    for (const kind of ["plan", "meet", "freeze", "start", "inbox", "resolve"])
+      expect(named).toContain(kind);
   });
 });

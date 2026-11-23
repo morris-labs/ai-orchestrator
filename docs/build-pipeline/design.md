@@ -684,7 +684,8 @@ and post. The planning team runs as engine calls under leases, so planning
 usage counts by seat.
 
 The server copies the `aio-build` skill from the installed package into each
-Claude account at start. The skill refuses to run in a Codex or Copilot box.
+Claude account at start. The skill refuses to run in a Codex or Copilot box. For
+the owner's walkthrough, see [Run your first build](first-build.md).
 
 ### Code and files
 

@@ -263,7 +263,11 @@ export class AccountService {
       );
     }
     this.ensureInstructions(vendor, dir);
-    return { dir, problems: vendor === "claude" ? [] : buildAccountInstructions(dir, vendor) };
+    if (vendor === "claude") {
+      // A seeded or imported account gets the packaged skills at its first box start.
+      return { dir, problems: installPackagedSkills([dir]).skipped };
+    }
+    return { dir, problems: buildAccountInstructions(dir, vendor) };
   }
 
   /** The least `cleanupPeriodDays` an account keeps. See `retention.ts`. */

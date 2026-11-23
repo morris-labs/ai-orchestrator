@@ -56,6 +56,14 @@ running containers through the accounts directory mount. Adding skills or
 plugins doesn't require new single-file mounts. A CLI may still need a new
 session to load a setting.
 
+The server installs the skills it ships, such as `aio-build`, into each
+Claude account at every start, and into an account at its first box start.
+It writes only the `skills/NAME/` folder of each packaged skill and replaces
+files there that differ from the package, so keep your own changes in
+another skill. A `skills` folder that is a link to somewhere else is left
+alone, and the server logs why. For the build skill, see
+[Run your first build](build-pipeline/first-build.md).
+
 ## Run vendor CLIs on the host
 
 ```sh
