@@ -327,43 +327,46 @@ async function callTestEngineer(
   const key = record.callKey ?? `${task.id}-dispute-${record.id}`;
   const specialties = await ctx.specialties(task.specialties);
   const brief = roleTask(ctx, task, record, lock);
-  const outcome = await ctx.sessions.run(TEST_ENGINEER, async () => {
-    const placement = ctx.seats.place(TEST_ENGINEER);
-    const answer = await ctx.callTurn({
-      seat: TEST_ENGINEER,
-      taskId: task.id,
-      key,
-      step: "tasks",
-      task: brief,
-      prompt: rolePrompt(
-        {
-          ...role,
-          outputs: [
-            {
-              name: "verdict",
-              description: "Whether you amended the test or rejected the dispute, and why.",
-              schema: VERDICT_JSON as unknown as Record<string, unknown>,
-            },
-          ],
-        },
-        { ...brief, specialties },
-      ),
-      placement,
-      specialties,
-      output: VERDICT_OUTPUT,
-    });
-    await ctx.sessions.started({
-      seat: TEST_ENGINEER,
-      taskIds: [task.id],
-      task: brief,
-      specialties: specialties.map((p) => p.name),
-      step: "tasks",
-      key,
-      placement,
-      outcome: answer,
-    });
-    return answer;
-  }, [task.id]);
+  // The drive lets go of the worktree before it waits for the seat.
+  const outcome = await ctx.worktreeLock.outside(() =>
+    ctx.sessions.run(TEST_ENGINEER, async () => {
+      const placement = ctx.seats.place(TEST_ENGINEER);
+      const answer = await ctx.callTurn({
+        seat: TEST_ENGINEER,
+        taskId: task.id,
+        key,
+        step: "tasks",
+        task: brief,
+        prompt: rolePrompt(
+          {
+            ...role,
+            outputs: [
+              {
+                name: "verdict",
+                description: "Whether you amended the test or rejected the dispute, and why.",
+                schema: VERDICT_JSON as unknown as Record<string, unknown>,
+              },
+            ],
+          },
+          { ...brief, specialties },
+        ),
+        placement,
+        specialties,
+        output: VERDICT_OUTPUT,
+      });
+      await ctx.sessions.started({
+        seat: TEST_ENGINEER,
+        taskIds: [task.id],
+        task: brief,
+        specialties: specialties.map((p) => p.name),
+        step: "tasks",
+        key,
+        placement,
+        outcome: answer,
+      });
+      return answer;
+    }, [task.id]),
+  );
   return { vendor: outcome.vendor, model: outcome.model, output: outcome.output };
 }
 

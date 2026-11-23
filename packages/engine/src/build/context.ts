@@ -50,6 +50,7 @@ import { capQuestion } from "./questions.js";
 import { renderStatus } from "./status-file.js";
 import type { BuildStore } from "./store.js";
 import type { BuildWorktree } from "./worktree.js";
+import { WorktreeLock } from "./worktree-lock.js";
 
 export { SEAT_ESTIMATE_TOKENS, agentRoleFor } from "./seat-call.js";
 
@@ -161,6 +162,8 @@ export class BuildContext {
   readonly decisions: DecisionLog;
   /** The Project manager's inbox: a pointer for each escalation and each digest. */
   readonly inbox: PmInboxFile;
+  /** Keeps write seats' message turns out of the worktree while the drive reads or changes it. */
+  readonly worktreeLock = new WorktreeLock();
   /** Aborts the gate's commands when the engine stops; a new drive gets a new one. */
   private driveAbort = new AbortController();
   private writeChain: Promise<void> = Promise.resolve();
@@ -589,12 +592,22 @@ export class BuildContext {
    * returns its answer. The call cache returns a finished call's answer
    * without calling again, which is how a restarted build skips the calls
    * it already made. The agent's session goes into the session registry,
-   * and the seat takes no message turn while the call runs.
+   * and the seat takes no message turn while the call runs. Other seats'
+   * message turns can change the worktree meanwhile.
    */
   callSeat(input: SeatCall): Promise<AgentOutcome<Record<string, unknown>>> {
     const role = this.role(input.seat);
     const packs = input.specialties ?? [];
     const taskIds = input.taskIds ?? [input.task.id];
+    return this.worktreeLock.outside(() => this.seatCall(role, packs, taskIds, input));
+  }
+
+  private seatCall(
+    role: RoleDefinition,
+    packs: readonly SpecialtyPack[],
+    taskIds: readonly string[],
+    input: SeatCall,
+  ): Promise<AgentOutcome<Record<string, unknown>>> {
     return this.sessions.run(
       input.seat,
       async () => {

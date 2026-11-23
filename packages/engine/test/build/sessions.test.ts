@@ -321,6 +321,29 @@ describe("session resume", () => {
     expect(world.file("cart-undelivered", "escalations/E1.json")).toContain(QUESTION);
   });
 
+  it("keeps a write seat's message turn out of the worktree while the task gate runs", async () => {
+    const world = await buildWorld({ steps: BUILD_PIPELINE });
+    const note = ".aio/tester-note.md";
+    world.script({
+      // The Test engineer's resumed turn writes a note a second after the Developer finishes.
+      codex: [done(QUESTION, { delayMs: 1_500, writeFiles: { [note]: "A note.\n" } }), TESTS_FIRST],
+      claude: [{ ...developer(QUESTION), delayMs: 500 }],
+    });
+    const plan = cartPlan();
+    // The gate's lint runs for two seconds and fails when the tree changes under it.
+    const exists = `[ -e ${note} ] && echo yes || echo no`;
+    plan.commands = {
+      ...plan.commands,
+      lint: [{ command: `a=$(${exists}); sleep 2; b=$(${exists}); [ "$a" = "$b" ] && node lint.mjs` }],
+    };
+
+    await world.start("cart-gated", plan);
+    const state = await world.settle("cart-gated");
+
+    expect(state.tasks[0]).toMatchObject({ status: "done", attempts: 1 });
+    expect(existsSync(join(state.worktree, note))).toBe(true);
+  });
+
   it("leaves a message for a seat and task that no agent holds to others", async () => {
     const world = await buildWorld();
     world.script({

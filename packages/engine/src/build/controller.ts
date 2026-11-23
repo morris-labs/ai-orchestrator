@@ -241,7 +241,7 @@ export class BuildController {
           );
           return;
         }
-        if ((await handler(ctx)) === "wait") {
+        if ((await ctx.worktreeLock.drive(() => handler(ctx))) === "wait") {
           // A step that left the build running with escalations open waits for them.
           if (ctx.state.status === "running" && ctx.openEscalations().length > 0) {
             await ctx.waitForEscalations();

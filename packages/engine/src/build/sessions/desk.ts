@@ -196,7 +196,9 @@ export class SessionDesk {
 
   private async deliver(entry: QueuedMessage): Promise<void> {
     try {
-      await this.turn(entry);
+      // A seat that writes files waits until the drive lets go of the worktree.
+      const writes = this.ctx.role(entry.seat).permission.access === "write";
+      await (writes ? this.ctx.worktreeLock.run(() => this.turn(entry)) : this.turn(entry));
       this.scheduled.delete(entry.messageId);
     } catch (error) {
       this.scheduled.delete(entry.messageId);
