@@ -442,6 +442,9 @@ them:
   shared file, and the engine doesn't run two tasks that declare the same
   shared file at the same time.
 
+For the dependency rules, the gate's treatment of earlier and later tasks,
+and oscillation, see [Task graph](task-graph.md).
+
 ### Task gate
 
 After each Developer attempt, the gate runs these checks:
