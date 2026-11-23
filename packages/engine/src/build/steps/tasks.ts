@@ -215,12 +215,22 @@ async function afterDispute(
   return "again";
 }
 
+/** An attempt whose task an escalation paused during its call; it goes on from the saved answer. */
+const PAUSED = "paused";
+
 /**
  * Runs attempt `n`, or returns its saved result when it already finished.
  * An attempt whose seat reports a missing secret or service ends without
- * the gate.
+ * the gate. An attempt whose task an escalation paused during the call,
+ * such as a question past the cap, returns `PAUSED` without the gate; once
+ * the escalation is resolved, the call cache returns the same answer and
+ * the gate runs then.
  */
-async function attempt(ctx: BuildContext, task: BuildTask, n: number): Promise<FinishedAttempt> {
+async function attempt(
+  ctx: BuildContext,
+  task: BuildTask,
+  n: number,
+): Promise<FinishedAttempt | typeof PAUSED> {
   const path = ctx.store.attemptPath(task.id, n);
   let record = await ctx.store.readJson<AttemptRecord>(path);
   if (record?.gate || record?.blocked || record?.dispute !== undefined) {
@@ -258,6 +268,10 @@ async function attempt(ctx: BuildContext, task: BuildTask, n: number): Promise<F
     ),
   });
   record.answer = { vendor: outcome.vendor, model: outcome.model, output: outcome.output };
+  if (progress.status !== "running") {
+    await ctx.store.writeJson(path, record);
+    return PAUSED;
+  }
   const blocked = blockerOf(outcome.output);
   if (blocked) {
     const finished = { ...record, blocked };
@@ -431,20 +445,22 @@ async function runTask(ctx: BuildContext, task: BuildTask): Promise<StepOutcome>
   const first = Math.max(progress.attempts, progress.resumeAt ?? 1, 1);
   for (let n = first; n <= cap; n += 1) {
     await ctx.calls.checkpoint();
-    let record: FinishedAttempt;
+    let finished: FinishedAttempt | typeof PAUSED;
     try {
-      record = await attempt(ctx, task, n);
+      finished = await attempt(ctx, task, n);
     } catch (error) {
       return failOnCallError(ctx, task.id, error);
     }
+    if (finished === PAUSED) return "wait";
+    const record = finished;
     if (record.blocked) {
       progress.lastFailure = `Needs the ${record.blocked.kind} ${record.blocked.name}.`;
       await ctx.escalate(blockerEscalation(task, n, record.blocked));
       return "wait";
     }
-    // An escalation that came in during the attempt, such as a question past
-    // the seat's question cap, pauses the task. Once it's resolved, the task
-    // goes on from this attempt's saved result.
+    // An escalation that came in after the call, such as during a dispute
+    // or a message turn, pauses the task. Once it's resolved, the task goes
+    // on from this attempt's saved result.
     if (progress.status !== "running") return "wait";
     if (record.dispute !== undefined) {
       let next: "again" | "wait";
