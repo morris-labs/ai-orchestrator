@@ -597,3 +597,64 @@ describe("resolutions for each step", () => {
     expect(labelled.at(-1)?.prompt).toContain("Prefix every label with its kind.");
   });
 });
+
+describe("a box stop beside an escalation", () => {
+  it("pauses the tasks that go on beside an escalation, and a resolution waits for the box start", async () => {
+    const world = await buildWorld();
+    addModules(world);
+    world.script({
+      claude: [
+        { match: "Task T1", times: 2, error: "boom" },
+        answer("T1", { "src/cart.mjs": CART_DONE }),
+        answer("T2", { "src/discount.mjs": DISCOUNT_DONE }),
+        { ...answer("T3", { "src/label.mjs": LABEL_DONE }), delayMs: 1500 },
+      ],
+    });
+    await world.start("checkout", threeTaskPlan());
+    await world.waitFor(
+      "checkout",
+      (s) => s.escalations.length === 1 && s.tasks.find((t) => t.id === "T3")?.status === "running",
+    );
+
+    expect(await world.manager.pause("checkout", "box")).toMatchObject({
+      status: "paused",
+      pausedBy: "box",
+    });
+    const held = await world.manager.resolve("checkout", { escalation: "E1", action: "retry" });
+    expect(held).toMatchObject({ status: "paused", pausedBy: "box" });
+    expect(held.escalations[0]).toMatchObject({ status: "resolved" });
+    await new Promise((r) => setTimeout(r, 1800));
+    const paused = await world.manager.get("checkout");
+    expect(paused?.status).toBe("paused");
+    expect(world.calls().filter((c) => taskOf(c.prompt) === "T1")).toHaveLength(2);
+
+    await world.manager.resume("checkout", "box");
+    const state = await world.waitFor("checkout", (s) => s.step === "review");
+    expect(state.tasks.map((t) => [t.id, t.status])).toEqual([
+      ["T1", "done"],
+      ["T2", "done"],
+      ["T3", "done"],
+    ]);
+  });
+
+  it("holds a build that waits for an escalation for a box stop, and the box start puts it back to waiting", async () => {
+    const world = await buildWorld();
+    const plan = cartPlan();
+    plan.commands = { ...plan.commands, lint: [{ command: "./check.sh" }] };
+    world.script({ claude: [{ match: "Task T1", output: REPORT }] });
+    await world.start("cart-total", plan);
+    await world.settle("cart-total");
+
+    expect(await world.manager.pause("cart-total", "box")).toMatchObject({
+      status: "paused",
+      pausedBy: "box",
+    });
+    const resumed = await world.manager.resume("cart-total", "box");
+
+    // The open preflight escalation still holds the build, and preflight doesn't run again.
+    expect(resumed).toMatchObject({ status: "waiting_escalation", step: "preflight" });
+    expect(resumed.pausedBy).toBeUndefined();
+    await new Promise((r) => setTimeout(r, 300));
+    expect((await world.manager.get("cart-total"))?.escalations).toHaveLength(1);
+  });
+});

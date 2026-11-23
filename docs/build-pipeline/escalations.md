@@ -53,6 +53,12 @@ The build waits, with the `waiting_escalation` status, once no task can run.
 An escalation without a task, such as a preflight or review escalation,
 makes the build wait right away.
 
+A box stop pauses the work that goes on beside an escalation, and it also
+pauses a build that waits for one. A resolution of a paused build records
+the decision but doesn't resume the build: the box start, or a resume
+request, does. A build that an open escalation without a task holds goes
+back to waiting when it resumes.
+
 ## Resolve an escalation
 
 To resolve an escalation and resume what it paused, run the following
@@ -82,8 +88,9 @@ Replace the following:
   - `escalate`: hands the escalation to the owner, with the reason in
     `--note`.
 
-The engine records the resolution in the escalation file and the build
-state, and resumes the paused tasks. It refuses a resolution that doesn't
+Only the box that started the build can resolve its escalations. The
+engine records the resolution in the escalation file and the build state,
+and resumes the paused tasks. It refuses a resolution that doesn't
 fit the escalation, such as `reorder` for an escalation without a task, and
 a second resolution of one escalation.
 

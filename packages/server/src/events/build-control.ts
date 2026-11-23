@@ -1,7 +1,8 @@
 // Build requests that the server forwards to the engine that runs a build:
 // pause, resume, cancel, and delete from the owner, and a pause and resume
 // that follow the build's box. A box stop pauses the box's running build
-// after its current turn and holds a build in a timed pause. A box start
+// after its current turn, and holds a build in a timed pause or one that
+// waits for an escalation. A box start
 // resumes a build that the box's stop paused. A build that the owner paused
 // stays paused.
 import {
@@ -106,8 +107,11 @@ export class BoxBuildLink {
     this.timers.delete(boxId);
     // A box stop also reaches a paused build: one in a timed pause, such as
     // a wait for a limit reset, would otherwise wake on its own. The engine
-    // refuses a build that a request or a box stop paused.
-    const want: readonly BuildStatus[] = action === "pause" ? ["running", "paused"] : ["paused"];
+    // refuses a build that a request or a box stop paused. It reaches a
+    // build that waits for an escalation too, so a resolution doesn't run
+    // work while the box is stopped.
+    const want: readonly BuildStatus[] =
+      action === "pause" ? ["running", "paused", "waiting_escalation"] : ["paused"];
     const builds = this.deps.builds
       .list()
       .filter((b) => b.boxId === boxId && want.includes(b.status));

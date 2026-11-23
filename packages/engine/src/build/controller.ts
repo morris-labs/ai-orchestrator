@@ -284,13 +284,14 @@ export class BuildController {
    * run. `reason` records who paused it: a box start resumes only a build
    * that its box's stop paused. A build in a timed pause, such as a wait for
    * a vendor's limit reset, takes the pause too, so it doesn't wake on its
-   * own when the wait ends.
+   * own when the wait ends. So does a build that waits for an escalation,
+   * so a resolution doesn't resume it until the resume.
    */
   async pause(reason: BuildPauseReason = "owner"): Promise<BuildState> {
     this.requireLive("pause");
     const { status, pausedUntil, pausedBy } = this.state;
     const timed = status === "paused" && pausedUntil !== undefined && pausedBy === undefined;
-    if (status !== "running" && !timed) {
+    if (status !== "running" && status !== "waiting_escalation" && !timed) {
       throw new EngineError("invalid_state", `Build ${this.slug} is ${status}, not running.`);
     }
     this.ctx.calls.requestPause();
@@ -319,9 +320,15 @@ export class BuildController {
         `Build ${this.slug} wasn't paused by its box's stop, so the box start leaves it paused.`,
       );
     }
-    await this.ctx.setStatus("running");
     this.ctx.calls.requestResume();
     this.ctx.calls.wakePause();
+    // An open escalation without a task still holds the build: its step
+    // doesn't run again until the escalation is resolved.
+    if (this.ctx.openEscalations().some((e) => e.taskId === null)) {
+      await this.ctx.waitForEscalations();
+      return this.state;
+    }
+    await this.ctx.setStatus("running");
     this.start();
     await this.reviewRun("resume", ["paused"]);
     return this.state;
