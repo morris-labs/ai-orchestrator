@@ -101,6 +101,33 @@ describe("build event admission", () => {
     expect(engineEventRefusal(db, endpoint, agent)).toBeNull();
   });
 
+  it("accepts a team chat message of a known build of the project", () => {
+    const { db, builds } = seeded();
+    const message = (buildId: string) =>
+      ev({
+        type: "message.sent",
+        message: {
+          version: 1,
+          id: "M1",
+          buildId,
+          from: { kind: "seat", seat: "developer", taskId: "T1" },
+          to: { kind: "seat", seat: "project-manager", taskId: null },
+          routing: "by_type",
+          type: "question",
+          taskId: "T1",
+          milestone: null,
+          paths: [],
+          body: "Which currency?",
+          createdAt: T0,
+        },
+      });
+    expect(engineEventRefusal(db, endpoint, message(BUILD))).toMatch(/unknown/);
+    builds.ingest(buildChanged());
+    expect(engineEventRefusal(db, endpoint, message(BUILD))).toBeNull();
+    builds.upsert({ ...summary, id: OTHER_BUILD, projectId: OTHER_PROJECT });
+    expect(engineEventRefusal(db, endpoint, message(OTHER_BUILD))).toMatch(OTHER_PROJECT);
+  });
+
   it("checks both the run and the build of a review run that a build started", () => {
     const { db, builds } = seeded();
     builds.upsert(summary);

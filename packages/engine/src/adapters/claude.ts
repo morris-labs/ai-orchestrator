@@ -1,8 +1,8 @@
 // The Claude adapter: `claude -p` with `--output-format stream-json`. Flags
 // and output shapes follow the Claude Code headless documentation, checked
 // against Claude Code 2.1.310.
-import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { UsageSample, UsageWindow } from "@aio/contracts";
 import {
@@ -21,11 +21,35 @@ import { childEnv } from "../process/env.js";
 import { runProcess } from "./process.js";
 import {
   AdapterError,
+  teamToolNames,
   type CliRequest,
   type CliResult,
   type CliLimitInfo,
+  type TeamAttachment,
   type TokenCounts,
 } from "./types.js";
+
+/**
+ * The `--mcp-config` content that attaches the team chat bus: one HTTP
+ * server that sends the agent's token. Checked against Claude Code 2.1.328.
+ */
+export function claudeMcpConfig(team: TeamAttachment): Record<string, unknown> {
+  return {
+    mcpServers: {
+      [team.server]: {
+        type: "http",
+        url: team.url,
+        headers: { Authorization: `Bearer ${team.token}` },
+      },
+    },
+  };
+}
+
+/** Files a call writes for its CLI, which `buildArgs` names. */
+export interface ClaudeCallFiles {
+  /** The MCP config file of a call with `team`. */
+  mcpConfig?: string;
+}
 
 /** Tools a read-only Claude role gets. */
 export const CLAUDE_READ_ONLY_TOOLS = ["Read", "Grep", "Glob", "Bash"];
@@ -143,7 +167,11 @@ export class ClaudeAdapter extends CliAdapter {
    * the ones the broker gave for this call: an API key among them means
    * `--bare`.
    */
-  buildArgs(req: CliRequest<unknown>, credentials: Record<string, string> = {}): string[] {
+  buildArgs(
+    req: CliRequest<unknown>,
+    credentials: Record<string, string> = {},
+    files: ClaudeCallFiles = {},
+  ): string[] {
     const args = ["-p", "--output-format", "stream-json", "--verbose"];
     const bare =
       this.claudeOptions.bare ??
@@ -158,13 +186,18 @@ export class ClaudeAdapter extends CliAdapter {
     if (req.systemPrompt) args.push("--append-system-prompt", req.systemPrompt);
     for (const dir of req.addDirs ?? []) args.push("--add-dir", dir);
     args.push("--json-schema", JSON.stringify(this.jsonSchemaFor(req)));
+    // The bus comes from the config file only: `--strict-mcp-config` keeps
+    // out every other MCP server, and the token stays off the command line.
+    const team = req.team && files.mcpConfig ? teamToolNames(req.team) : [];
+    if (team.length > 0)
+      args.push("--mcp-config", files.mcpConfig as string, "--strict-mcp-config");
     if (req.tools === "read-only") {
       const policy = claudeReadOnlyPolicy(req.scratchDir);
       args.push(
         "--tools",
         policy.tools.join(","),
         "--allowedTools",
-        policy.allowed.join(","),
+        [...policy.allowed, ...team].join(","),
         "--disallowedTools",
         policy.disallowed.join(","),
         "--permission-mode",
@@ -173,6 +206,7 @@ export class ClaudeAdapter extends CliAdapter {
         "none",
       );
     } else {
+      if (team.length > 0) args.push("--allowedTools", team.join(","));
       args.push("--permission-mode", this.claudeOptions.writePermissionMode ?? "bypassPermissions");
     }
     return args;
@@ -181,20 +215,33 @@ export class ClaudeAdapter extends CliAdapter {
   protected async call<T>(req: CliRequest<T>, _ctx: CallContext): Promise<CliResult<T>> {
     const parser = new ClaudeStreamParser(this.accountFor(req), this.ceiling);
     const credentials = await credentialsFor(`vendor:${this.vendor}`, this.command);
-    const result = await runProcess({
-      command: this.command,
-      args: this.buildArgs(req, credentials),
-      credentials,
-      cwd: req.cwd,
-      input: req.prompt,
-      env: this.envFor(req),
-      envProfile: `vendor:${this.vendor}`,
-      timeoutMs: req.timeoutMs,
-      signal: req.signal,
-      onLine: (line) => {
-        for (const sample of parser.push(line)) req.onUsage?.(sample);
-      },
-    });
+    // The bus's config holds the agent's token, so it goes in a file only
+    // this user can read, removed when the call ends.
+    const dir = req.team ? mkdtempSync(join(tmpdir(), "aio-claude-mcp-")) : null;
+    let result;
+    try {
+      const files: ClaudeCallFiles = {};
+      if (dir && req.team) {
+        files.mcpConfig = join(dir, "mcp.json");
+        writeFileSync(files.mcpConfig, JSON.stringify(claudeMcpConfig(req.team)), { mode: 0o600 });
+      }
+      result = await runProcess({
+        command: this.command,
+        args: this.buildArgs(req, credentials, files),
+        credentials,
+        cwd: req.cwd,
+        input: req.prompt,
+        env: this.envFor(req),
+        envProfile: `vendor:${this.vendor}`,
+        timeoutMs: req.timeoutMs,
+        signal: req.signal,
+        onLine: (line) => {
+          for (const sample of parser.push(line)) req.onUsage?.(sample);
+        },
+      });
+    } finally {
+      if (dir) rmSync(dir, { recursive: true, force: true });
+    }
     const summary = parser.summary();
     const failure = this.processFailure(result, req);
     if (failure) throw failure;

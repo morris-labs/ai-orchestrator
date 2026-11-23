@@ -152,3 +152,18 @@ export function tailEvents(args: string[], env: NodeJS.ProcessEnv) {
   );
   return { child, exited, lines, stderr: () => stderr, connected };
 }
+
+/** The `aio-build` command's environment in a box of project `projectId`. */
+export function buildCliEnv(socket: string, projectId: string, boxId = "box-e2e") {
+  return childEnv({ AIO_BUILD_SOCKET: socket, AIO_PROJECT_ID: projectId, AIO_BOX_ID: boxId });
+}
+
+/** Runs the built `aio-build` command to completion. */
+export function runBuildCli(args: string[], env: NodeJS.ProcessEnv): Promise<CliResult> {
+  return new Promise((resolve) => {
+    execFile(process.execPath, [BUILD_MAIN, ...args], { env }, (err, stdout, stderr) => {
+      const code = err ? (typeof err.code === "number" ? err.code : 1) : 0;
+      resolve({ code, stdout, stderr });
+    });
+  });
+}

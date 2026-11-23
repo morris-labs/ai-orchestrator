@@ -30,7 +30,7 @@ import { PolicyCommandSchema } from "./policy.js";
 import { TaskSpecialtiesSchema } from "./specialties.js";
 
 /** An ID in the build plan, such as `AC2` or `T1`. */
-const PlanIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,31}$/, {
+export const PlanIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,31}$/, {
   message: "use letters, digits, `_`, `.`, and `-`, at most 32 characters",
 });
 
@@ -53,6 +53,13 @@ export const BuildCriterionSchema = z
 export type BuildCriterion = z.infer<typeof BuildCriterionSchema>;
 
 const RepoPathSchema = z.string().min(1);
+
+/**
+ * The build size, which sets the steps that run: a small build skips the
+ * coverage check, for example. See "Build size" in the design.
+ */
+export const BuildSizeSchema = z.enum(["small", "medium", "large"]);
+export type BuildSize = z.infer<typeof BuildSizeSchema>;
 
 export const BuildTaskSchema = z
   .object({
@@ -103,10 +110,6 @@ export const BuildIssueSchema = z
   }));
 export type BuildIssue = z.infer<typeof BuildIssueSchema>;
 export type BuildIssueInput = z.input<typeof BuildIssueSchema>;
-
-/** How big a build is; the size sets the seats. See the design's "Build size". */
-export const BuildSizeSchema = z.enum(["small", "medium", "large"]);
-export type BuildSize = z.infer<typeof BuildSizeSchema>;
 
 /** The usage a build is expected to spend, in tokens. */
 export const UsageEstimateSchema = z
@@ -236,11 +239,12 @@ export const BuildPlanSchema = z
     /** The plan's version; a revised plan gets the next one. */
     version: z.number().int().positive().default(1),
     title: z.string().min(1),
+    /** The build size, which the Analyst estimates and the owner can change. */
+    size: BuildSizeSchema.default("medium"),
     /** The GitHub issue the plan starts from, or `null` for a request in the owner's words. */
     issue: BuildIssueSchema.nullable().default(null),
     /** The Analyst's stories and edge cases. */
     spec: BuildSpecTextSchema.nullable().default(null),
-    size: BuildSizeSchema.nullable().default(null),
     usageEstimate: UsageEstimateSchema.nullable().default(null),
     /** The secrets the build needs, which the owner ticks for the project before approval. */
     secrets: z.array(BuildSecretSchema).default([]),
@@ -378,7 +382,10 @@ export const EscalationKindSchema = z.enum([
   "review",
   /** A test, type check, or lint command of the build plan can't run at preflight. */
   "preflight",
-  /** Tests first can't lock the tests, such as tests that fail the red check in every round. */
+  /**
+   * Tests first can't lock the tests, such as tests that fail the red check
+   * in every round, or revised tests that fail it after the coverage check.
+   */
   "tests_first",
 ]);
 export type EscalationKind = z.infer<typeof EscalationKindSchema>;

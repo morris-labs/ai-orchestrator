@@ -26,6 +26,7 @@ import { ModelTierSchema } from "./tiers.js";
 import { CountSchema, IsoDateTimeSchema, PortSchema, RunIdSchema, VendorSchema } from "./common.js";
 import { FindingSchema, FindingHistoryVerdictSchema } from "./findings.js";
 import { buildChangedFields, buildTaskChangedFields, callOwnerFields } from "./build-events.js";
+import { messageSentFields } from "./messages.js";
 import {
   LeaseRequestFrameSchema,
   LeaseResponseFrameSchema,
@@ -381,6 +382,13 @@ export const BuildTaskChangedEventSchema = z.object({
   ...buildTaskChangedFields,
 });
 
+/** A team chat message that the engine saved; see `messages.ts`. */
+export const MessageSentEventSchema = z.object({
+  ...base,
+  type: z.literal("message.sent"),
+  ...messageSentFields,
+});
+
 export const EventSchema = z.discriminatedUnion("type", [
   AgentStartedEventSchema,
   AgentFinishedEventSchema,
@@ -401,6 +409,7 @@ export const EventSchema = z.discriminatedUnion("type", [
   SettingsChangedEventSchema,
   BuildChangedEventSchema,
   BuildTaskChangedEventSchema,
+  MessageSentEventSchema,
 ]);
 export type AioEvent = z.infer<typeof EventSchema>;
 export type EventType = AioEvent["type"];
