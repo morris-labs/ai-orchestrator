@@ -142,4 +142,8 @@ export class BuildStore {
   writeJson(path: string, value: unknown): Promise<void> {
     return writeJsonAtomic(path, value);
   }
+
+  writeText(path: string, text: string): Promise<void> {
+    return writeFileAtomic(path, text);
+  }
 }

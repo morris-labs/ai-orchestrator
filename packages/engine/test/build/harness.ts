@@ -27,6 +27,7 @@ import {
   type EngineBuildManager,
 } from "../../src/build/index.js";
 import { GrantingBroker, MemoryEventSink } from "../../src/core.js";
+import type { GitHubClient } from "../../src/postpush/github.js";
 import { silentLogger } from "../../src/main/logger.js";
 import { TeamBus } from "../../src/team/index.js";
 import { createRunManager, type EngineRunManager } from "../../src/state/manager.js";
@@ -141,17 +142,34 @@ export interface BuildWorldOptions {
   steps?: readonly BuildStep[];
   /** Runs the review step. Off by default: the build then waits at that step. */
   review?: boolean;
+  /** Runs the release ready step. Off by default: the build then waits at that step. */
+  release?: boolean;
+  /** The GitHub client of the review runs' post-push loop. Default: none, which never reaches the network. */
+  github?: GitHubClient;
 }
 
-/** The handlers a build world runs: every step's, without the review's unless `review` is set. */
+/**
+ * The handlers a build world runs: every step's, without the review's unless
+ * `review` is set, and without the release ready step's unless `release` is.
+ */
 function worldPipeline(options: BuildWorldOptions): BuildPipeline {
+  const skip = new Set<string>([
+    ...(options.review ? [] : ["review"]),
+    ...(options.release ? [] : ["release_ready"]),
+  ]);
   return {
     steps: options.steps ?? WORLD_STEPS,
-    handlers: options.review
-      ? STEP_HANDLERS
-      : Object.fromEntries(Object.entries(STEP_HANDLERS).filter(([step]) => step !== "review")),
+    handlers: Object.fromEntries(Object.entries(STEP_HANDLERS).filter(([step]) => !skip.has(step))),
   };
 }
+
+/** A GitHub client that refuses every call, so a world without a fake never reaches GitHub. */
+const NO_GITHUB: GitHubClient = new Proxy({} as GitHubClient, {
+  get: (_target, name) =>
+    name === "then"
+      ? undefined
+      : () => Promise.reject(new Error(`This build world has no GitHub client (${String(name)}).`)),
+});
 
 export interface BuildWorld {
   root: string;
@@ -213,6 +231,7 @@ export async function buildWorld(options: BuildWorldOptions = {}): Promise<Build
       leases: broker,
       adapters: bridgeAdapters(cli),
       log: silentLogger,
+      github: options.github ?? NO_GITHUB,
     };
     const runs = await createRunManager(core);
     const manager = await createBuildManager({

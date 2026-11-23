@@ -205,7 +205,11 @@ describe("a one-task build", () => {
     });
 
     state = await settle("sales-tax");
-    expect(state).toMatchObject({ status: "paused", step: "release_ready" });
+    // The plan records no push answer, so release ready stops before the push.
+    expect(state).toMatchObject({ status: "waiting_escalation", step: "release_ready" });
+    expect(state.escalations).toEqual([
+      expect.objectContaining({ kind: "release_ready", level: "owner" }),
+    ]);
     expect(state.tasks).toEqual([
       expect.objectContaining({ id: "T1", status: "done", attempts: 1 }),
     ]);
@@ -265,7 +269,7 @@ describe("a one-task build", () => {
 
   it("writes a status file that names the step and the task", () => {
     const text = readFileSync(path.join(buildDir("sales-tax"), "STATUS.md"), "utf8");
-    expect(text).toContain("Status: paused");
+    expect(text).toContain("Status: waiting_escalation");
     expect(text).toContain("release_ready");
     expect(text).toContain("T1");
   });
@@ -398,7 +402,11 @@ describe("an engine restart mid-build", () => {
     rmSync(hold);
 
     const state = await settle("sales-tax-restart");
-    expect(state).toMatchObject({ id: started.id, status: "paused", step: "release_ready" });
+    expect(state).toMatchObject({
+      id: started.id,
+      status: "waiting_escalation",
+      step: "release_ready",
+    });
     expect(state.tasks).toEqual([
       expect.objectContaining({ id: "T1", status: "done", attempts: 1 }),
     ]);

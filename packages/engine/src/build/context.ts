@@ -28,7 +28,7 @@ import {
   type CallLedger,
 } from "../calls/index.js";
 import type { Clock, CommandRunner, EventDraft, EventSink } from "../core.js";
-import type { Logger } from "../api/core-interface.js";
+import type { Logger, PushOptions } from "../api/core-interface.js";
 import { UnknownRoleError, roleAnswerSchema, rolePrompt, type RoleTask } from "./roles/index.js";
 import { SeatPlacements, placeCall, type PlaceOptions } from "./placements/index.js";
 import {
@@ -58,10 +58,15 @@ export function agentRoleFor(role: RoleDefinition): AgentRole {
   return role.permission.access === "write" ? "fixer" : "reviewer";
 }
 
-/** The engine's review runs, which the review step starts and reads. */
+/**
+ * The engine's review runs, which the review step starts and reads, and
+ * which the release ready step pushes.
+ */
 export interface ReviewRuns {
   start(request: EngineRunCreate): Promise<RunState>;
   get(runId: string): Promise<RunState | null>;
+  /** Starts a finished run's post-push loop. */
+  push(runId: string, options: PushOptions): Promise<RunState>;
 }
 
 /** The engine services a build uses. */

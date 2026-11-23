@@ -100,6 +100,14 @@ export interface FindingDetail {
  * status doesn't allow the action, except `get`, `finding`, which return
  * `null` for an unknown run or finding.
  */
+/** What a push request sets on the pull request it opens. */
+export interface PushOptions {
+  title?: string;
+  /** The pull request description. Absent gives a one-line default. */
+  body?: string;
+  draft: boolean;
+}
+
 export interface RunManager {
   list(filter: RunListFilter): Promise<RunState[]>;
   preview(request: EngineRunPreview): Promise<RunPreview>;
@@ -114,7 +122,11 @@ export interface RunManager {
   rebaseBase(runId: string): Promise<RunState>;
   retry(runId: string, options: RunRetry): Promise<RunState>;
   decide(runId: string, answer: DecisionAnswer): Promise<RunState>;
-  push(runId: string, options: { title?: string; draft: boolean }): Promise<RunState>;
+  /**
+   * Starts the post-push loop. `body` is the pull request description; only
+   * a build's release ready step sets it.
+   */
+  push(runId: string, options: PushOptions): Promise<RunState>;
   groups(runId: string): Promise<FileGroup[]>;
   rounds(runId: string): Promise<RoundSummary[]>;
   findings(runId: string, filter: FindingFilter): Promise<Finding[]>;
