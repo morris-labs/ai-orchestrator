@@ -6,6 +6,7 @@ import { readFileSync } from "node:fs";
 import { posix } from "node:path";
 import {
   BUILD_SOCKET_ENV,
+  BUILD_SOCKET_SESSION_HEADERS,
   BUILDS_DIR,
   BuildSlugSchema,
   EscalationActionSchema,
@@ -637,6 +638,21 @@ function readInput(io: BuildCliIo, file: string): string {
     : readFileSync(file, "utf8");
 }
 
+/**
+ * The headers that name the Claude Code session that runs the command, so
+ * the engine can read the Project manager's usage from its transcript.
+ * Empty outside a Claude Code session.
+ */
+export function sessionHeaders(env: Record<string, string | undefined>): Record<string, string> {
+  const id = env.CLAUDE_CODE_SESSION_ID;
+  const config = env.CLAUDE_CONFIG_DIR || (env.HOME ? `${env.HOME}/.claude` : "");
+  if (!id || !config.startsWith("/")) return {};
+  return {
+    [BUILD_SOCKET_SESSION_HEADERS.id]: id,
+    [BUILD_SOCKET_SESSION_HEADERS.transcripts]: `${config.replace(/\/+$/, "")}/projects`,
+  };
+}
+
 /** Runs `aio-build` and returns its exit status. */
 export async function buildMain(argv: readonly string[], io: BuildCliIo): Promise<number> {
   let command: BuildCommand;
@@ -728,6 +744,7 @@ export async function buildMain(argv: readonly string[], io: BuildCliIo): Promis
           : command.kind === "meet"
             ? MEETING_TIMEOUT_MS
             : undefined,
+        sessionHeaders(io.env),
       );
     const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
     if (command.kind === "plan") {

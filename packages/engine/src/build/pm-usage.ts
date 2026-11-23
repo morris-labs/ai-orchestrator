@@ -13,7 +13,18 @@ import { createReadStream } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
-import type { PmSession } from "@aio/contracts";
+import { z } from "zod";
+import {
+  BUILD_PLANNING_FILE,
+  BuildPlanningSchema,
+  PM_SEAT,
+  PM_SESSIONS_FILE,
+  PmSessionSchema,
+  type PmSession,
+} from "@aio/contracts";
+import { readJson, writeJsonAtomic } from "../run/files.js";
+import type { BuildContext } from "./context.js";
+import type { BuildStore } from "./store.js";
 
 /** What a session spent: its model responses and their tokens. */
 export interface TranscriptUsage {
@@ -148,4 +159,92 @@ export async function sessionTranscripts(
     }
   }
   return files;
+}
+
+const SessionsFileSchema = z.object({ version: z.literal(1), sessions: z.array(PmSessionSchema) });
+
+/** The Project manager's sessions of one build, in its `pm-sessions.json` file. */
+export class PmSessionsFile {
+  /** Serializes every read and write, so two requests never race. */
+  private chain: Promise<unknown> = Promise.resolve();
+
+  constructor(readonly file: string) {}
+
+  /** The sessions, in the order requests first named them. */
+  async list(): Promise<PmSession[]> {
+    return (await readJson(this.file, SessionsFileSchema))?.sessions ?? [];
+  }
+
+  /** Adds `session` unless the file holds it already. */
+  note(session: Pick<PmSession, "id" | "transcripts">, now: string): Promise<void> {
+    const run = this.chain.then(async () => {
+      const sessions = await this.list();
+      if (sessions.some((s) => s.id === session.id && s.transcripts === session.transcripts)) {
+        return;
+      }
+      sessions.push(PmSessionSchema.parse({ ...session, seenAt: now }));
+      await writeJsonAtomic(this.file, { version: 1, sessions });
+    });
+    this.chain = run.catch(() => undefined);
+    return run;
+  }
+}
+
+/** The sessions file of the build that `store` holds. */
+export function pmSessionsOf(store: BuildStore): PmSessionsFile {
+  return new PmSessionsFile(store.path(PM_SESSIONS_FILE));
+}
+
+/**
+ * When the build's planning started: its planning record's creation, or the
+ * build's own for a build that started from a plan the Project manager
+ * wrote. Turns before it belong to other work and don't count.
+ */
+export async function planningStart(ctx: BuildContext): Promise<string> {
+  const planning = await ctx.store
+    .readJson(ctx.store.path(BUILD_PLANNING_FILE), BuildPlanningSchema)
+    .catch(() => null);
+  return planning?.createdAt ?? ctx.state.createdAt;
+}
+
+/** What the Project manager's sessions spent from `since` until `until`. */
+export async function projectManagerUsage(
+  ctx: BuildContext,
+  window: UsageWindow,
+): Promise<TranscriptUsage> {
+  const files: string[] = [];
+  for (const session of await pmSessionsOf(ctx.store).list()) {
+    files.push(...(await sessionTranscripts(session)));
+  }
+  return transcriptUsage(files, window);
+}
+
+/**
+ * Reads what the Project manager's sessions spent since planning started,
+ * and sends it in a `build.seat.usage` event for the usage by seat. A read
+ * that fails is logged and returns `null`; usage never stops a digest.
+ */
+export async function reportProjectManagerUsage(
+  ctx: BuildContext,
+): Promise<(TranscriptUsage & { since: string; through: string }) | null> {
+  try {
+    const since = await planningStart(ctx);
+    const through = new Date(ctx.services.clock.now()).toISOString();
+    const usage = await projectManagerUsage(ctx, { since });
+    await ctx.emit({
+      type: "build.seat.usage",
+      buildId: ctx.state.id,
+      seat: PM_SEAT,
+      ...usage,
+      since,
+      through,
+    });
+    return { ...usage, since, through };
+  } catch (error) {
+    ctx.services.log.warn("Couldn't read the Project manager's usage", {
+      build: ctx.state.slug,
+      error: String(error),
+    });
+    return null;
+  }
 }

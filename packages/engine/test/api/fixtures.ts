@@ -384,6 +384,7 @@ export function fakeBuildManager(): {
       status: "cancelled",
       deletedAt: buildState.updatedAt,
     })),
+    noteSession: vi.fn(async () => {}),
     activeCount: vi.fn(() => 0),
     close: vi.fn(async () => {}),
   };

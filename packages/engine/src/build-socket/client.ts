@@ -40,6 +40,8 @@ export class BuildSocketClient {
   constructor(
     readonly socketPath: string,
     private readonly timeoutMs = 60_000,
+    /** Headers sent with every request, such as the session headers. */
+    private readonly headers: Record<string, string> = {},
   ) {}
 
   /** Sends a start, status, pause, or resume request and returns the build's state after it. */
@@ -63,6 +65,7 @@ export class BuildSocketClient {
           method: "POST",
           path: BUILD_SOCKET_ROUTES[kind],
           headers: {
+            ...this.headers,
             "content-type": "application/json",
             "content-length": Buffer.byteLength(data),
           },

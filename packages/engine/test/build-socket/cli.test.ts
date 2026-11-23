@@ -61,6 +61,27 @@ describe("aio-build", () => {
     expect(out.stdout).toContain(".aio/builds/cart-total/STATUS.md");
   });
 
+  it("names the Claude Code session behind each request, so the engine can read its transcript", async () => {
+    const { builds, run } = await world();
+    const id = "8f1c2d3e-0000-4000-8000-000000000001";
+    expect(
+      (await run(["status", "cart-total"], { CLAUDE_CODE_SESSION_ID: id, CLAUDE_CONFIG_DIR: "/cfg/dev" }))
+        .code,
+    ).toBe(0);
+    expect(builds.noteSession).toHaveBeenLastCalledWith("cart-total", "box-1", {
+      id,
+      transcripts: "/cfg/dev/projects",
+    });
+    await run(["status", "cart-total"], { CLAUDE_CODE_SESSION_ID: id, HOME: "/home/dev" });
+    expect(builds.noteSession).toHaveBeenLastCalledWith("cart-total", "box-1", {
+      id,
+      transcripts: "/home/dev/.claude/projects",
+    });
+    builds.noteSession.mockClear();
+    await run(["status", "cart-total"]);
+    expect(builds.noteSession).not.toHaveBeenCalled();
+  });
+
   it("prints the build state as JSON with --json", async () => {
     const { planFile, run } = await world();
     const out = await run(["start", "cart-total", planFile, "--json"]);

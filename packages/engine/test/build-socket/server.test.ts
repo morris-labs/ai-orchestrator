@@ -2,7 +2,7 @@
 import http from "node:http";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { BUILD_SOCKET_ROUTES } from "@aio/contracts";
+import { BUILD_SOCKET_ROUTES, BUILD_SOCKET_SESSION_HEADERS } from "@aio/contracts";
 import { serveBuildSocket, type BuildSocketServer } from "../../src/build-socket/server.js";
 import { silentLogger } from "../../src/main/logger.js";
 import {
@@ -44,6 +44,32 @@ describe("the build socket", () => {
       expect.objectContaining({ projectId: "proj-1", boxId: "box-1", slug: "cart-total" }),
     );
     expect(builds.start.mock.calls[0]![0]).not.toHaveProperty("repoPath");
+  });
+
+  it("records the session that a request names, once the request succeeds", async () => {
+    const { builds, path } = await open();
+    const id = "8f1c2d3e-0000-4000-8000-000000000001";
+    const session = {
+      [BUILD_SOCKET_SESSION_HEADERS.id]: id,
+      [BUILD_SOCKET_SESSION_HEADERS.transcripts]: "/cfg/dev/projects",
+    };
+    const ask = { projectId: "proj-1", boxId: "box-1", slug: "cart-total" };
+    expect((await send(path, "POST", BUILD_SOCKET_ROUTES.status, ask, session)).status).toBe(200);
+    expect(builds.noteSession).toHaveBeenCalledWith("cart-total", "box-1", {
+      id,
+      transcripts: "/cfg/dev/projects",
+    });
+
+    builds.noteSession.mockClear();
+    const other = { ...ask, slug: "other-build" };
+    expect((await send(path, "POST", BUILD_SOCKET_ROUTES.status, other, session)).status).toBe(404);
+    const bad = { ...session, [BUILD_SOCKET_SESSION_HEADERS.id]: "../../etc" };
+    expect((await send(path, "POST", BUILD_SOCKET_ROUTES.status, ask, bad)).status).toBe(200);
+    expect((await send(path, "POST", BUILD_SOCKET_ROUTES.status, ask)).status).toBe(200);
+    expect(builds.noteSession).not.toHaveBeenCalled();
+
+    builds.noteSession.mockRejectedValueOnce(new Error("disk full"));
+    expect((await send(path, "POST", BUILD_SOCKET_ROUTES.status, ask, session)).status).toBe(200);
   });
 
   it("reads, pauses, and resumes a build", async () => {

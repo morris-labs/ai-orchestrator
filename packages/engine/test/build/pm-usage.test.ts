@@ -2,11 +2,12 @@
 // manager makes no engine calls, so the engine reads its token counts from
 // the Claude Code transcripts of its sessions. Every fixture transcript
 // lives in a temporary folder, never in the real transcript store.
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { sessionTranscripts, transcriptUsage } from "../../src/build/pm-usage.js";
 import { tempDir } from "../tmp.js";
+import { CART_DONE, PROJECT_ID, REPORT, buildWorld, cartPlan } from "./harness.js";
 
 const SESSION = "8f1c2d3e-0000-4000-8000-000000000001";
 const RESUMED = "8f1c2d3e-0000-4000-8000-000000000002";
@@ -159,5 +160,100 @@ describe("session transcripts", () => {
     expect(await sessionTranscripts({ id: SESSION, transcripts: join(store, "missing") })).toEqual(
       [],
     );
+  });
+});
+
+/** A test command that can't run (exit 127) until `marker` exists. */
+function gatedPlan(marker: string) {
+  const plan = cartPlan();
+  plan.commands = {
+    ...plan.commands,
+    test: [{ command: `test -f ${marker} || exit 127; node test/cart.test.mjs` }],
+  };
+  return plan;
+}
+
+const ago = (ms: number) => new Date(Date.now() - ms).toISOString();
+
+describe("the Project manager's usage in a build", () => {
+  it("records only the sessions of the build's own box", async () => {
+    const world = await buildWorld();
+    const marker = join(tempDir("aio-marker-"), "ready");
+    world.script({ claude: [{ match: "Task T1", output: REPORT }] });
+    await world.manager.start({
+      projectId: PROJECT_ID,
+      boxId: "box-pm",
+      slug: "cart-total",
+      plan: gatedPlan(marker),
+    });
+    const store = tempDir("aio-pm-store-");
+
+    await world.manager.noteSession("cart-total", "box-pm", { id: SESSION, transcripts: store });
+    await world.manager.noteSession("cart-total", "box-pm", { id: SESSION, transcripts: store });
+    await world.manager.noteSession("cart-total", "box-other", { id: RESUMED, transcripts: store });
+    await world.manager.noteSession("no-such-build", "box-pm", { id: RESUMED, transcripts: store });
+
+    const file = join(world.dir("cart-total"), "pm-sessions.json");
+    const saved = JSON.parse(readFileSync(file, "utf8")) as { sessions: { id: string }[] };
+    expect(saved.sessions.map((s) => s.id)).toEqual([SESSION]);
+    expect(existsSync(join(world.dir("no-such-build")))).toBe(false);
+    await world.settle("cart-total");
+  });
+
+  it("puts the Project manager's turns since planning started in each digest, marked tokens only", async () => {
+    const world = await buildWorld();
+    const marker = join(tempDir("aio-marker-"), "ready");
+    world.script({
+      claude: [
+        {
+          match: "Task T1",
+          output: REPORT,
+          writeFiles: { "src/cart.mjs": CART_DONE },
+          tokens: { input: 1000, output: 100 },
+        },
+      ],
+    });
+    await world.manager.start({
+      projectId: PROJECT_ID,
+      boxId: "box-pm",
+      slug: "cart-total",
+      plan: gatedPlan(marker),
+    });
+    await world.settle("cart-total");
+
+    // The Project manager's transcripts: one turn from before the build,
+    // two after it, and a resumed session that copies them and adds one.
+    const store = tempDir("aio-pm-store-");
+    const project = join(store, "-work-shop");
+    mkdirSync(project);
+    const old = { id: "old", time: ago(3_600_000), input: 9000, output: 900 };
+    const first = { id: "a", time: ago(0), input: 100, output: 10 };
+    const second = { id: "b", time: ago(0), input: 200, output: 20 };
+    write(join(project, `${SESSION}.jsonl`), [assistant(old), assistant(first), assistant(second)]);
+    write(join(project, `${RESUMED}.jsonl`), [
+      assistant(old, RESUMED),
+      assistant(first, RESUMED),
+      assistant(second, RESUMED),
+      assistant({ id: "c", time: ago(0), input: 300, output: 30 }, RESUMED),
+    ]);
+    await world.manager.noteSession("cart-total", "box-pm", { id: SESSION, transcripts: store });
+    await world.manager.noteSession("cart-total", "box-pm", { id: RESUMED, transcripts: store });
+
+    writeFileSync(marker, "");
+    await world.manager.resolve("cart-total", { escalation: "E1", action: "retry" });
+    await world.waitFor("cart-total", (s) => s.step === "review");
+    await world.settle("cart-total");
+
+    const digest = world.file("cart-total", "digests/milestone-all.md");
+    expect(digest).toContain("| developer | 1 | 1000 | 100 |");
+    expect(digest).toContain("| Total | 1 | 1000 | 100 |");
+    expect(digest).toContain("| project-manager (tokens only) | 3 turns | 600 | 60 | n/a |");
+    const usage = world.events.ofType("build.seat.usage");
+    expect(usage.at(-1)).toMatchObject({
+      seat: "project-manager",
+      turns: 3,
+      tokensIn: 600,
+      tokensOut: 60,
+    });
   });
 });
