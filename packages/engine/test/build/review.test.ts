@@ -1,6 +1,6 @@
 // The review step: a build reviews its diff with one review pipeline run in
 // the build worktree, through the engine build API and the mock vendor CLIs.
-import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { RUNS_DIR } from "@aio/contracts";
@@ -59,6 +59,14 @@ function reviewers(fix: MockResponse): MockResponse[] {
 
 interface ReviewFile {
   runId: string;
+}
+
+/** The commands a review run's gate ran at its preflight. */
+function gateCommands(root: string, runId: string): Array<{ kind: string; command: string }> {
+  const preflight = JSON.parse(
+    readFileSync(join(root, RUNS_DIR, runId, "preflight.json"), "utf8"),
+  ) as { baseline: { commands: Array<{ kind: string; command: string }> } };
+  return preflight.baseline.commands.map(({ kind, command }) => ({ kind, command }));
 }
 
 describe("the review step", () => {
@@ -130,13 +138,9 @@ describe("the review step", () => {
   });
 
   it("turns a review decision into a build escalation file", async () => {
+    // The project has no policy file. The review gate runs the build plan's
+    // commands, and the fix breaks the plan's test command.
     const world = await buildWorld({ review: true });
-    // The review gate runs the project's tests; every fix breaks them.
-    mkdirSync(join(world.root, ".aio"), { recursive: true });
-    writeFileSync(
-      join(world.root, ".aio", "policy.yaml"),
-      "version: 1\ntests:\n  - command: node test/cart.test.mjs\n",
-    );
     const fix: MockResponse = {
       output: { fixed: ["F-0001"], notFixed: [], summary: "Counted the quantity." },
       writeFiles: { "src/cart.mjs": CART_WRONG },
@@ -154,6 +158,11 @@ describe("the review step", () => {
     const { runId } = JSON.parse(world.file("cart-total", "review/run.json")) as ReviewFile;
     const run = await world.runs.get(runId);
     expect(run).toMatchObject({ status: "waiting_decision", decision: { kind: "gate_failed" } });
+    expect(gateCommands(world.root, runId)).toEqual([
+      { kind: "test", command: "node test/cart.test.mjs" },
+      { kind: "typecheck", command: "node --check src/cart.mjs" },
+      { kind: "lint", command: "node lint.mjs" },
+    ]);
     const file = JSON.parse(world.file("cart-total", "escalations/E1.json")) as {
       step: string;
       details: string;
@@ -161,6 +170,46 @@ describe("the review step", () => {
     expect(file.step).toBe("review");
     expect(file.details).toContain(runId);
     expect(file.details).toContain("gate_failed");
+  });
+
+  it("gates with the plan's commands over the policy file's, and keeps the policy file's rules", async () => {
+    const world = await buildWorld({ review: true });
+    mkdirSync(join(world.root, ".aio"), { recursive: true });
+    writeFileSync(
+      join(world.root, ".aio", "policy.yaml"),
+      [
+        "version: 1",
+        "rules:",
+        "  - id: R-CART",
+        "    text: Cart totals use integer cents.",
+        "tests:",
+        '  - command: node -e "process.exit(0)"',
+        "lint: []",
+        "",
+      ].join("\n"),
+    );
+    const fix: MockResponse = {
+      output: { fixed: ["F-0001"], notFixed: [], summary: "Counted the quantity." },
+      writeFiles: { "src/cart.mjs": CART_WRONG },
+      commit: "fix(cart): count item quantity (F-1)",
+    };
+    world.script({ claude: reviewers(fix), codex: reviewers(fix) });
+
+    await world.start("cart-total");
+    const state = await world.settle("cart-total");
+
+    expect(state).toMatchObject({ step: "review", status: "waiting_escalation" });
+    const { runId } = JSON.parse(world.file("cart-total", "review/run.json")) as ReviewFile;
+    const run = await world.runs.get(runId);
+    expect(run).toMatchObject({ status: "waiting_decision", decision: { kind: "gate_failed" } });
+    expect(gateCommands(world.root, runId).map((c) => c.command)).toEqual([
+      "node test/cart.test.mjs",
+      "node --check src/cart.mjs",
+      "node lint.mjs",
+    ]);
+    const finders = world.calls().filter((c) => /Review file group/.test(c.prompt));
+    expect(finders.length).toBeGreaterThan(0);
+    expect(finders.every((c) => c.prompt.includes("Cart totals use integer cents."))).toBe(true);
   });
 
   it("waits for the same review run after an engine restart", async () => {

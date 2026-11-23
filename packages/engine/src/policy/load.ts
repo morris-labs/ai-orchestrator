@@ -6,6 +6,7 @@ import {
   DEFAULT_POLICY_PATH,
   PolicyFileSchema,
   type PolicyFile,
+  type ResolvedRunRequest,
 } from "@aio/contracts";
 import { parse } from "yaml";
 import { ZodError } from "zod";
@@ -129,4 +130,24 @@ export async function loadPolicyExtras(
     throw error;
   }
   return parsePolicyExtras(text, path);
+}
+
+/**
+ * The policy a run works with: the policy file, with the gate commands of a
+ * build's run replaced by the build plan's. A stand-alone run gets the
+ * policy file unchanged.
+ */
+export function runPolicy(policy: PolicyFile, request: ResolvedRunRequest): PolicyFile {
+  const gate = request.build?.gate;
+  if (!gate) return policy;
+  return { ...policy, tests: gate.tests, typecheck: gate.typecheck, lint: gate.lint };
+}
+
+/** Loads the policy file for a run; see `runPolicy()`. */
+export async function loadRunPolicy(
+  projectRoot: string,
+  policyPath: string | undefined,
+  request: ResolvedRunRequest,
+): Promise<PolicyFile> {
+  return runPolicy(await loadPolicy(projectRoot, policyPath), request);
 }
