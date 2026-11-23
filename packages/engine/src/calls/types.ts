@@ -2,7 +2,7 @@
 // it. The core knows leases, tiers, limits, the call cache, events, and the
 // working tree guard; everything about the caller's own state, such as a
 // review run's roles and rounds, reaches it through `AgentCallHost`.
-import type { AgentRole, ModelTier, Vendor } from "@aio/contracts";
+import type { AgentRole, ModelTier, SeatPlacement, Vendor } from "@aio/contracts";
 import type {
   AdapterMethod,
   AdapterRequest,
@@ -49,6 +49,12 @@ export interface AgentCallSpec {
   avoid?: readonly Vendor[];
   /** Keep this vendor even when a person assigned the role to another one. */
   pinVendor?: boolean;
+  /**
+   * The build seat's placement the call runs on. The core copies it onto the
+   * call's agent and lease events; `placeCall()` in `build/placements` sets
+   * the vendor, tier, and effort to match.
+   */
+  placement?: SeatPlacement;
 }
 
 /** What a finished call returns, and what the call cache holds. */
