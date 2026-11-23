@@ -10,10 +10,13 @@
 //
 // In a plan with several tasks, the gate also runs the tests that earlier
 // tasks made pass, and a failure on one is a regression. A test command that
-// names only tests of tasks that haven't run yet waits for those tasks, and
-// a failure line that names one of those tests doesn't fail the gate.
+// names only tests of tasks that haven't run yet waits for those tasks:
+// tests first wrote those tests red. While the test commands run, the gate
+// sets those tests aside, so a command that runs the whole suite skips them.
 //
 // Later milestones add checks here: the failure fingerprint.
+import { readFile, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import type { BuildCommands, PolicyCommand } from "@aio/contracts";
 import type { CommandRunner } from "../core.js";
 import { runGateCommand, type GateCommandResult, type GateOptions } from "../gate/gate.js";
@@ -69,6 +72,8 @@ export interface TaskGateResult {
   regressions?: TaskRegression[];
   /** Test commands the gate didn't run: they name only tests of tasks that haven't run yet. */
   deferred?: string[];
+  /** The test files of later tasks that the gate set aside while the test commands ran. */
+  setAside?: string[];
   /** Untracked files the commands left, which the gate deleted. */
   leftovers: string[];
 }
@@ -106,7 +111,7 @@ export interface TaskGateOptions {
   protect?: readonly string[];
   /** The tasks that finished before this one: their tests must still pass. */
   earlier?: readonly EarlierTask[];
-  /** The test files of the tasks that haven't run yet, which may still fail. */
+  /** The test files of the tasks that haven't run yet: a test command that names only these waits. */
   pending?: readonly string[];
   signal?: AbortSignal;
   timeoutMs?: number;
@@ -122,25 +127,15 @@ async function runTestCommand(
   run: GateOptions,
   baseline: TestBaseline,
   protect: readonly string[],
-  pending: readonly string[] = [],
 ): Promise<TaskGateCommand> {
   const excused = excusedFailures(baseline, cmd);
-  // A failure line that names a test of a task that hasn't run yet is
-  // expected: tests first wrote that test red.
-  const addPending = (result: GateCommandResult) => {
-    for (const line of testFailures(result)) {
-      if (names(line, pending) && !names(line, protect)) excused.add(line);
-    }
-  };
   const first = await runGateCommand("test", cmd, run);
   if (first.passed) return first;
-  addPending(first);
   if (failsOnlyOnBaseline(first, excused, protect)) {
     return { ...first, passed: true, excused: testFailures(first) };
   }
   if (run.signal?.aborted) return first;
   const rerun = await runGateCommand("test", cmd, run);
-  addPending(rerun);
   const still = new Set(testFailures(rerun));
   const quarantined = testFailures(first).filter((line) => !still.has(line));
   for (const line of quarantined) excused.add(line);
@@ -150,6 +145,35 @@ async function runTestCommand(
     return { ...result, passed: true, excused: testFailures(rerun) };
   }
   return result;
+}
+
+/**
+ * Sets aside the test files of later tasks, so that a test command that runs
+ * the whole suite doesn't fail on tests that tests first wrote red for those
+ * tasks. `restore()` puts each file back with the content it had. A glob, a
+ * missing file, and a file that `protect` names stay in place.
+ */
+async function setAside(
+  root: string,
+  pending: readonly string[],
+  protect: readonly string[],
+): Promise<{ paths: string[]; restore(): Promise<void> }> {
+  const saved = new Map<string, Buffer>();
+  for (const path of [...new Set(pending)].sort()) {
+    if (/[*?[]/.test(path) || protect.includes(path)) continue;
+    try {
+      saved.set(path, await readFile(join(root, path)));
+    } catch {
+      continue;
+    }
+    await rm(join(root, path));
+  }
+  return {
+    paths: [...saved.keys()],
+    async restore() {
+      for (const [path, content] of saved) await writeFile(join(root, path), content);
+    },
+  };
 }
 
 /** True when `text` names one of `paths`. */
@@ -231,26 +255,31 @@ export async function runTaskGate(options: TaskGateOptions): Promise<TaskGateRes
   const protect = [...(options.protect ?? []), ...earlier.flatMap((t) => t.tests)];
   const lockOwners = earlierLockCommands(options.lock, earlier);
   const deferred: string[] = [];
-  for (const kind of ["test", "typecheck", "lint"] as const) {
-    for (const cmd of options.commands[kind]) {
+  const aside = await setAside(worktree.path, pending, protect);
+  try {
+    for (const cmd of options.commands.test) {
       if (options.signal?.aborted) break;
-      if (kind === "test" && names(cmd.command, pending) && !names(cmd.command, protect)) {
+      if (names(cmd.command, pending) && !names(cmd.command, protect)) {
         deferred.push(cmd.command);
         continue;
       }
-      commands.push(
-        kind === "test"
-          ? await runTestCommand(cmd, timed, baseline, protect, pending)
-          : await runGateCommand(kind, cmd, timed),
-      );
+      commands.push(await runTestCommand(cmd, timed, baseline, protect));
     }
+    // The tests that earlier tasks made pass, each by its own command, unless
+    // a plan test command is the same command.
+    const ran = new Set(commands.map((c) => commandKey(c)));
+    for (const [key, { cmd }] of lockOwners) {
+      if (options.signal?.aborted || ran.has(key)) continue;
+      commands.push(await runTestCommand(cmd, timed, baseline, protect));
+    }
+  } finally {
+    await aside.restore();
   }
-  // The tests that earlier tasks made pass, each by its own command, unless
-  // a plan test command is the same command.
-  const ran = new Set(commands.map((c) => commandKey(c)));
-  for (const [key, { cmd }] of lockOwners) {
-    if (options.signal?.aborted || ran.has(key)) continue;
-    commands.push(await runTestCommand(cmd, timed, baseline, protect, pending));
+  for (const kind of ["typecheck", "lint"] as const) {
+    for (const cmd of options.commands[kind]) {
+      if (options.signal?.aborted) break;
+      commands.push(await runGateCommand(kind, cmd, timed));
+    }
   }
   const regressions = findRegressions(commands, earlier, lockOwners);
   const leftovers = (await worktree.untracked()).filter((path) => !before.has(path));
@@ -267,6 +296,7 @@ export async function runTaskGate(options: TaskGateOptions): Promise<TaskGateRes
     ...(quarantined.length > 0 ? { quarantined } : {}),
     ...(regressions.length > 0 ? { regressions } : {}),
     ...(deferred.length > 0 ? { deferred } : {}),
+    ...(aside.paths.length > 0 ? { setAside: aside.paths } : {}),
   };
 }
 

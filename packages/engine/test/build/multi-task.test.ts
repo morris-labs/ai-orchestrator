@@ -5,7 +5,15 @@ import { dirname, join } from "node:path";
 import type { BuildPlanInput } from "@aio/contracts";
 import type { TaskGateResult } from "../../src/build/index.js";
 import { describe, expect, it } from "vitest";
-import { CART_DONE, CART_WRONG, REPORT, buildWorld, cartPlan, type BuildWorld } from "./harness.js";
+import { BUILD_PIPELINE } from "../../src/build/index.js";
+import {
+  CART_DONE,
+  CART_WRONG,
+  buildWorld,
+  cartPlan,
+  type BuildWorld,
+  type MockResponse,
+} from "./harness.js";
 
 const DISCOUNT_STUB = "export function discounted(items, percent) {\n  return 0;\n}\n";
 const DISCOUNT_DONE = [
@@ -24,23 +32,33 @@ const RECEIPT_DONE = [
   "",
 ].join("\n");
 
-/** Adds the discount and receipt modules, as stubs with their tests, to the sample project. */
-function addModules(world: BuildWorld): void {
+/** The tests of the discount and receipt modules, red against their stubs. */
+const MODULE_TESTS: Record<string, string> = {
+  "test/discount.test.mjs": [
+    "// AC-T2: the discount applies to the cart total.",
+    'import assert from "node:assert/strict";',
+    'import { discounted } from "../src/discount.mjs";',
+    "assert.equal(discounted([{ price: 10 }, { price: 10 }], 10), 18);",
+    "",
+  ].join("\n"),
+  "test/receipt.test.mjs": [
+    "// AC-T3: the receipt shows the cart total.",
+    'import assert from "node:assert/strict";',
+    'import { receipt } from "../src/receipt.mjs";',
+    'assert.equal(receipt([{ price: 2 }, { price: 3 }]), "Total: 5");',
+    "",
+  ].join("\n"),
+};
+
+/**
+ * Adds the discount and receipt modules to the sample project as stubs, with
+ * their tests unless tests first writes them.
+ */
+function addModules(world: BuildWorld, { tests = true } = {}): void {
   const files: Record<string, string> = {
     "src/discount.mjs": DISCOUNT_STUB,
-    "test/discount.test.mjs": [
-      'import assert from "node:assert/strict";',
-      'import { discounted } from "../src/discount.mjs";',
-      "assert.equal(discounted([{ price: 10 }, { price: 10 }], 10), 18);",
-      "",
-    ].join("\n"),
     "src/receipt.mjs": RECEIPT_STUB,
-    "test/receipt.test.mjs": [
-      'import assert from "node:assert/strict";',
-      'import { receipt } from "../src/receipt.mjs";',
-      'assert.equal(receipt([{ price: 2 }, { price: 3 }]), "Total: 5");',
-      "",
-    ].join("\n"),
+    ...(tests ? MODULE_TESTS : {}),
   };
   for (const [path, content] of Object.entries(files)) {
     mkdirSync(dirname(join(world.root, path)), { recursive: true });
@@ -85,6 +103,36 @@ const answer = (id: string, files: Record<string, string>) => ({
   writeFiles: files,
 });
 
+/** The Test engineer's answer: every task's test, red against the stubs, each with its own command. */
+const TEST_ENGINEER: MockResponse = {
+  match: "round 1 of",
+  output: {
+    summary: "Wrote the tests first.",
+    tests: ["cart", "discount", "receipt"].map((module, i) => ({
+      file: `test/${module}.test.mjs`,
+      name: `AC-T${i + 1}: the ${module} works`,
+      criterion: `AC-T${i + 1}`,
+      command: `node test/${module}.test.mjs`,
+    })),
+  },
+  writeFiles: {
+    ...MODULE_TESTS,
+    "test/cart.test.mjs": [
+      "// AC-T1: the cart reports the sum of its item prices.",
+      'import assert from "node:assert/strict";',
+      'import { total } from "../src/cart.mjs";',
+      "assert.equal(total([{ price: 2 }, { price: 3 }]), 5);",
+      "",
+    ].join("\n"),
+  },
+};
+
+/** A three-task plan whose one test command runs the whole suite. */
+function suitePlan(): BuildPlanInput {
+  const plan = threeTaskPlan();
+  return { ...plan, commands: { ...plan.commands, test: [{ command: "node --test" }] } };
+}
+
 const taskOf = (prompt: string) => /Task (T\d):/.exec(prompt)?.[1];
 
 describe("a multi-task build", () => {
@@ -128,6 +176,52 @@ describe("a multi-task build", () => {
       true,
       true,
     ]);
+  });
+
+  it("checks each task with one test suite command while later tasks' tests are still red", async () => {
+    const world = await buildWorld({ steps: BUILD_PIPELINE });
+    addModules(world, { tests: false });
+    world.script({
+      codex: [TEST_ENGINEER],
+      claude: [
+        answer("T1", { "src/cart.mjs": CART_DONE }),
+        answer("T2", { "src/discount.mjs": DISCOUNT_DONE }),
+        answer("T3", { "src/receipt.mjs": RECEIPT_DONE }),
+      ],
+    });
+    await world.start("suite", suitePlan());
+    const state = await world.settle("suite");
+
+    expect(state.tasks.map((t) => [t.id, t.status, t.attempts])).toEqual([
+      ["T3", "done", 1],
+      ["T1", "done", 1],
+      ["T2", "done", 1],
+    ]);
+    // The gate set the later tasks' tests aside while the suite ran, and put them back.
+    const tip = world.git(world.root, "ls-tree", "--name-only", "-r", "build/suite", "test");
+    expect(tip.split("\n")).toEqual([
+      "test/cart.test.mjs",
+      "test/discount.test.mjs",
+      "test/receipt.test.mjs",
+    ]);
+    const gate = (world.jsonFiles("suite", "tasks/T1")[0] as { gate: TaskGateResult }).gate;
+    expect(gate.setAside).toEqual(["test/discount.test.mjs", "test/receipt.test.mjs"]);
+  });
+
+  it("still fails a task on its own test while the later tasks' tests are set aside", async () => {
+    const world = await buildWorld({ steps: BUILD_PIPELINE });
+    addModules(world, { tests: false });
+    world.script({
+      codex: [TEST_ENGINEER],
+      claude: [{ ...answer("T1", { "src/cart.mjs": CART_WRONG }), times: 4 }],
+    });
+
+    await world.start("suite", suitePlan());
+    const state = await world.settle("suite");
+
+    expect(state.tasks.find((t) => t.id === "T1")).toMatchObject({ status: "failed", attempts: 4 });
+    expect(world.git(world.root, "status", "--porcelain")).toBe("");
+    expect(world.git(state.worktree, "status", "--porcelain")).not.toMatch(/test\//);
   });
 
   it("refuses a plan with a dependency cycle before it creates the build branch", async () => {
