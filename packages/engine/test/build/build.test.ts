@@ -1,5 +1,5 @@
 // A one-task build through the engine build API, with the mock vendor CLIs.
-import { existsSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { CART_DONE, CART_WRONG, PROJECT_ID, REPORT, buildWorld, cartPlan } from "./harness.js";
@@ -304,5 +304,41 @@ describe("escalations from agent calls", () => {
 
     expect(state.tasks[0]).toMatchObject({ status: "done" });
     expect(world.calls().map((c) => c.cli)).toEqual(["codex"]);
+  });
+});
+
+describe("specialties", () => {
+  it("gives the Developer its task's specialties and names them on the call", async () => {
+    const world = await buildWorld();
+    mkdirSync(join(world.root, ".aio/team/specialties"), { recursive: true });
+    writeFileSync(
+      join(world.root, ".aio/team/specialties/node-dev.md"),
+      "Use ES modules and the node:test runner.\n",
+    );
+    world.script({
+      claude: [
+        { match: "node:test runner", output: REPORT, writeFiles: { "src/cart.mjs": CART_DONE } },
+      ],
+    });
+    const plan = cartPlan();
+    plan.tasks = plan.tasks.map((t) => ({ ...t, specialties: ["node-dev"] }));
+
+    await world.start("cart-total", plan);
+    const state = await world.settle("cart-total");
+
+    expect(state.tasks[0]).toMatchObject({ status: "done" });
+    expect(world.events.ofType("agent.started")[0]).toMatchObject({ specialties: ["node-dev"] });
+  });
+
+  it("refuses a plan whose task names a specialty that doesn't exist", async () => {
+    const world = await buildWorld();
+    const plan = cartPlan();
+    plan.tasks = plan.tasks.map((t) => ({ ...t, specialties: ["cobol-dev"] }));
+
+    await expect(world.start("cart-total", plan)).rejects.toMatchObject({
+      code: "validation",
+      message: expect.stringContaining("task T1 names cobol-dev"),
+    });
+    expect(world.git(world.root, "branch", "--list", "build/*")).toBe("");
   });
 });

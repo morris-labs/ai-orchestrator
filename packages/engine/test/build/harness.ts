@@ -167,6 +167,7 @@ export async function buildWorld(): Promise<BuildWorld> {
       leases: broker,
       adapters: bridgeAdapters(cli),
       log: silentLogger,
+      skillDirs: () => [],
     });
     return { events, broker, manager };
   };

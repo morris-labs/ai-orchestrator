@@ -11,6 +11,7 @@ import { BuildContext, type BuildServices } from "./context.js";
 import { ulid } from "./ids.js";
 import { loadRoles, type LoadRolesOptions } from "./roles/index.js";
 import { BUILD_PIPELINE, STEP_HANDLERS, type StepHandler } from "./steps/index.js";
+import { checkPlanSpecialties, SpecialtyPlanError } from "./specialties/index.js";
 import { BuildStore } from "./store.js";
 import { BuildWorktree } from "./worktree.js";
 
@@ -90,6 +91,15 @@ export class BuildController {
           `Task ${task.id} names the role ${task.role}, which no role file defines.`,
         );
       }
+    }
+    try {
+      await checkPlanSpecialties(request.plan.tasks, {
+        repoRoot: repoPath,
+        skillDirs: services.skillDirs(),
+      });
+    } catch (error) {
+      if (error instanceof SpecialtyPlanError) throw new EngineError("validation", error.message);
+      throw error;
     }
     const full = await servicesFor(location, services);
     const base = await worktree.resolveBase(request.base);

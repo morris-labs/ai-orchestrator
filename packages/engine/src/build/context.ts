@@ -29,6 +29,12 @@ import type { Clock, CommandRunner, EventDraft, EventSink } from "../core.js";
 import type { Logger } from "../api/core-interface.js";
 import { UnknownRoleError, roleAnswerSchema, rolePrompt, type RoleTask } from "./roles/index.js";
 import { SeatPlacements, placeCall, type PlaceOptions } from "./placements/index.js";
+import {
+  loadSpecialties,
+  specialtyCall,
+  type SpecialtyPack,
+  type SpecialtySources,
+} from "./specialties/index.js";
 import type { EscalationDraft } from "./escalations.js";
 import { renderStatus } from "./status-file.js";
 import type { BuildStore } from "./store.js";
@@ -59,6 +65,8 @@ export interface BuildServices {
   shell: CommandRunner;
   clock: Clock;
   log: Logger;
+  /** The account skills folders that hold specialties, read on every use. */
+  skillDirs: () => string[];
   /** The policy's model per tier and vendor. */
   tierModels?: Parameters<typeof basicRouting>[0]["tierModels"];
 }
@@ -70,6 +78,8 @@ export interface SeatCall {
   key: string;
   step: BuildStep;
   task: RoleTask;
+  /** The task's specialty packs, from `specialties()`. */
+  specialties?: readonly SpecialtyPack[];
   placement?: PlaceOptions;
 }
 
@@ -267,6 +277,19 @@ export class BuildContext {
     return escalation;
   }
 
+  /** Where the build finds specialties: the repository, then the account skills folders. */
+  specialtySources(): SpecialtySources {
+    return { repoRoot: this.state.repoPath, skillDirs: this.services.skillDirs() };
+  }
+
+  /**
+   * Loads the packs of a task's specialties. Throws `UnknownSpecialtyError`
+   * when one no longer exists.
+   */
+  specialties(names: readonly string[]): Promise<SpecialtyPack[]> {
+    return loadSpecialties(names, this.specialtySources());
+  }
+
   /** A role definition by seat name. Throws `UnknownRoleError` for a seat no role defines. */
   role(seat: RoleName): RoleDefinition {
     const role = this.roles.get(seat);
@@ -284,27 +307,33 @@ export class BuildContext {
     const role = this.role(input.seat);
     const placement = this.seats.place(input.seat, input.placement);
     const writes = role.permission.access === "write";
+    const packs = input.specialties ?? [];
     const spec = placeCall(
-      {
-        key: input.key,
-        role: agentRoleFor(role),
-        method: writes ? "fix" : "review",
-        request: {
-          prompt: rolePrompt(role, input.task),
-          repoPath: this.worktree.path,
-          toolPolicy: writes ? "write" : "read-only",
-          scratchDir: this.store.scratchDir,
-          timeoutMs: role.turnTimeoutMinutes * 60_000,
-          output: {
-            schema: RoleAnswerSchema,
-            json: (roleAnswerSchema(role) as Record<string, unknown> | null) ?? { type: "object" },
+      specialtyCall(
+        {
+          key: input.key,
+          role: agentRoleFor(role),
+          method: writes ? "fix" : "review",
+          request: {
+            prompt: rolePrompt(role, { ...input.task, specialties: packs }),
+            repoPath: this.worktree.path,
+            toolPolicy: writes ? "write" : "read-only",
+            scratchDir: this.store.scratchDir,
+            timeoutMs: role.turnTimeoutMinutes * 60_000,
+            output: {
+              schema: RoleAnswerSchema,
+              json: (roleAnswerSchema(role) as Record<string, unknown> | null) ?? {
+                type: "object",
+              },
+            },
           },
+          groupId: null,
+          estimateTokens: SEAT_ESTIMATE_TOKENS,
+          seat: input.seat,
+          step: input.step,
         },
-        groupId: null,
-        estimateTokens: SEAT_ESTIMATE_TOKENS,
-        seat: input.seat,
-        step: input.step,
-      },
+        packs,
+      ),
       placement,
     );
     return this.calls.call<Record<string, unknown>>(spec);

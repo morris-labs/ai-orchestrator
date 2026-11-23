@@ -17,6 +17,7 @@ import {
 import { RoleNameSchema } from "./build-roles.js";
 import { BuildPlacementsSchema, PlacementOverrideSchema } from "./placements.js";
 import { PolicyCommandSchema } from "./policy.js";
+import { TaskSpecialtiesSchema } from "./specialties.js";
 
 /** An ID in the build plan, such as `AC2` or `T1`. */
 const PlanIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,31}$/, {
@@ -53,6 +54,8 @@ export const BuildTaskSchema = z
     criteria: z.array(PlanIdSchema).min(1),
     /** The test files that must pass. */
     tests: z.array(RepoPathSchema).default([]),
+    /** The specialties whose guidance every agent on the task gets. */
+    specialties: TaskSpecialtiesSchema,
   })
   .strict();
 export type BuildTask = z.infer<typeof BuildTaskSchema>;
@@ -152,6 +155,8 @@ export const EscalationKindSchema = z.enum([
   "agent_call",
   /** A seat's placement breaks a rule, such as a vendor that the single-vendor setting excludes. */
   "placement",
+  /** A task's specialty can't be loaded, such as one whose skill was removed. */
+  "specialty",
 ]);
 export type EscalationKind = z.infer<typeof EscalationKindSchema>;
 

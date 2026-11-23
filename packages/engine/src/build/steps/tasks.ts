@@ -78,8 +78,10 @@ async function attempt(ctx: BuildContext, task: BuildTask, n: number): Promise<G
     n > 1
       ? await ctx.store.readJson<AttemptRecord>(ctx.store.attemptPath(task.id, n - 1))
       : undefined;
+  const specialties = await ctx.specialties(task.specialties);
   const outcome = await ctx.callSeat({
     seat: task.role,
+    specialties,
     key: record.callKey,
     step: "tasks",
     task: roleTask(ctx, task, attemptContext(n, previous)),

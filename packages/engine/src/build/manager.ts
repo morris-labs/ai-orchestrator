@@ -4,9 +4,11 @@
 import {
   BuildCreateSchema,
   BuildSlugSchema,
+  ENGINE_CONFIG_MOUNT,
   type BuildCreateInput,
   type BuildState,
 } from "@aio/contracts";
+import { accountDirsFileIn, readAccountDirs } from "../adapters/account-dirs.js";
 import { EngineError, type CoreDeps } from "../api/core-interface.js";
 import { systemClock } from "../core.js";
 import { PolicyError } from "../policy/load.js";
@@ -15,6 +17,7 @@ import { GitError } from "../range/git.js";
 import { BuildController, type BuildLocation, type BuildPipeline } from "./controller.js";
 import type { BuildServices } from "./context.js";
 import { RoleError } from "./roles/index.js";
+import { accountSkillDirs } from "./specialties/index.js";
 import { BuildNotFoundError, BuildStore, listBuildSlugs } from "./store.js";
 import { WorktreeConflict } from "./worktree.js";
 
@@ -39,6 +42,8 @@ export interface BuildManager {
 
 /** What `createBuildManager()` receives: the run manager's deps, and optional test settings. */
 export interface BuildManagerDeps extends CoreDeps {
+  /** The account skills folders that hold specialties. Default: the ones the account folders file names. */
+  skillDirs?: () => string[];
   /** Options for loading role definitions, such as a test role library. */
   roles?: BuildLocation["roles"];
   /** The steps builds run, for tests and later milestones. */
@@ -75,6 +80,9 @@ export class EngineBuildManager implements BuildManager {
       events: deps.events,
       runner,
       shell: new ShellRunner(runner),
+      skillDirs:
+        deps.skillDirs ??
+        (() => accountSkillDirs(readAccountDirs(accountDirsFileIn(ENGINE_CONFIG_MOUNT)))),
       clock,
       log: deps.log,
     };
