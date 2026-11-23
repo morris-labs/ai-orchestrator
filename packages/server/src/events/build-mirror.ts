@@ -44,11 +44,17 @@ export class BuildMirror {
     return row ? BuildSummarySchema.parse(JSON.parse(row.json)) : undefined;
   }
 
-  /** A project's builds, newest first. */
-  list(projectId: string): BuildSummary[] {
-    const rows = this.db
-      .prepare("SELECT json FROM svc_builds WHERE project_id = ? ORDER BY created_at DESC, id DESC")
-      .all(projectId) as { json: string }[];
+  /** Every build, or one project's builds, newest first. */
+  list(projectId?: string): BuildSummary[] {
+    const rows = (
+      projectId === undefined
+        ? this.db.prepare(`SELECT json FROM svc_builds ORDER BY created_at DESC, id DESC`).all()
+        : this.db
+            .prepare(
+              `SELECT json FROM svc_builds WHERE project_id = ? ORDER BY created_at DESC, id DESC`,
+            )
+            .all(projectId)
+    ) as { json: string }[];
     return rows.map((r) => BuildSummarySchema.parse(JSON.parse(r.json)));
   }
 }

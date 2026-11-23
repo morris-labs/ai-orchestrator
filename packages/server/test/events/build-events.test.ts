@@ -20,6 +20,7 @@ const summary: BuildSummary = {
   container: CONTAINER,
   status: "running",
   step: "tasks",
+  boxId: null,
   createdAt: T0,
   updatedAt: T0,
 };

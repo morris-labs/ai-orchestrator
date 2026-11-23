@@ -94,7 +94,12 @@ import {
   UsageSampleSchema,
   UsageWindowSchema,
 } from "./events.js";
-import { BuildUsageSchema } from "./build-events.js";
+import {
+  BuildListQuerySchema,
+  BuildListSchema,
+  BuildSummarySchema,
+  BuildUsageSchema,
+} from "./build-events.js";
 import { FindingSchema, SeveritySchema, VerdictSchema } from "./findings.js";
 import {
   EnrollmentCodeSchema,
@@ -1822,6 +1827,20 @@ export const serverRoutes = {
   }),
 
   // Builds
+  "builds.list": http({
+    method: "GET",
+    path: `${V1}/builds`,
+    summary:
+      "List the builds the server has seen, newest first, across every project or for one project.",
+    query: BuildListQuerySchema,
+    response: BuildListSchema,
+  }),
+  "builds.get": http({
+    method: "GET",
+    path: `${V1}/builds/:buildId`,
+    summary: "Get a build's latest state. Returns not_found for a build the server hasn't seen.",
+    response: BuildSummarySchema,
+  }),
   "builds.usage": http({
     method: "GET",
     path: `${V1}/builds/:buildId/usage`,
