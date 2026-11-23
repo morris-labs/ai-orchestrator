@@ -172,8 +172,12 @@ export function trayIconBitmap(size: number, state: "running" | "idle" | "offlin
 // ---------------------------------------------------------------------------
 // Notifications and the review app
 
-/** Notification kinds about boxes; the review app shows the run kinds. */
-export const BOX_NOTIFICATION_KINDS: readonly NotificationKind[] = ["box_ended"];
+/**
+ * Notification kinds this app raises on the desktop; the review app shows
+ * the run kinds. Usage watcher alerts are account-wide, so only this app
+ * raises them, and both apps show them in the window.
+ */
+export const BOX_NOTIFICATION_KINDS: readonly NotificationKind[] = ["box_ended", "usage_alert"];
 
 /** True for notifications this app shows: box kinds, or any notification about a box but no run. */
 export function isBoxNotification(n: Pick<Notification, "kind" | "runId" | "boxId">): boolean {

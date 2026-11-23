@@ -25,7 +25,12 @@ import { SeatPlacementSchema } from "./placements.js";
 import { ModelTierSchema } from "./tiers.js";
 import { CountSchema, IsoDateTimeSchema, PortSchema, RunIdSchema, VendorSchema } from "./common.js";
 import { FindingSchema, FindingHistoryVerdictSchema } from "./findings.js";
-import { buildChangedFields, buildTaskChangedFields, callOwnerFields } from "./build-events.js";
+import {
+  BuildIdSchema,
+  buildChangedFields,
+  buildTaskChangedFields,
+  callOwnerFields,
+} from "./build-events.js";
 import { messageSentFields } from "./messages.js";
 import {
   LeaseRequestFrameSchema,
@@ -142,6 +147,7 @@ export const NotificationKindSchema = z.enum([
   "ready_to_push",
   "box_ended",
   "round_summary",
+  "usage_alert",
 ]);
 export type NotificationKind = z.infer<typeof NotificationKindSchema>;
 
@@ -153,6 +159,12 @@ export const NotificationSchema = z.object({
   body: z.string(),
   runId: RunIdSchema.nullable(),
   boxId: z.string().min(1).nullable(),
+  /**
+   * The build the notification is about, such as a build past its usage
+   * estimate. Absent, not `null`, for every other notification, so stored
+   * notifications from before builds stay valid.
+   */
+  buildId: BuildIdSchema.optional(),
   severity: z.enum(["info", "warning", "error"]),
   read: z.boolean(),
 });

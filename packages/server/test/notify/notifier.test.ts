@@ -221,3 +221,63 @@ describe("Notifier", () => {
     ]);
   });
 });
+
+describe("usage alerts", () => {
+  const BUILD = "01JB8Z5K3W6Q2V9X4T7R0M1N2Q";
+  const alert = {
+    rule: "build_estimate" as const,
+    title: "Build settings-page passed 2 times its usage estimate",
+    body: "B",
+    vendor: null,
+    account: null,
+    window: null,
+    buildId: BUILD,
+    boxId: BOX,
+  };
+
+  it("stores and sends a usage alert as a notification about its build", () => {
+    const t = make();
+    const notifier = t.notifier;
+    notifier.usageAlert(alert);
+
+    const [sent] = t.ofType("notification");
+    expect(sent).toMatchObject({
+      kind: "usage_alert",
+      title: alert.title,
+      buildId: BUILD,
+      boxId: BOX,
+      runId: null,
+      severity: "warning",
+    });
+    expect(notifier.list({ unread: true }).map((n) => n.kind)).toEqual(["usage_alert"]);
+  });
+
+  it("leaves the build out of a window alert", () => {
+    const t = make();
+    const notifier = t.notifier;
+    notifier.usageAlert({
+      ...alert,
+      rule: "jump",
+      vendor: "claude",
+      window: "5h",
+      buildId: null,
+      boxId: null,
+    });
+
+    expect(t.ofType("notification")[0]?.buildId).toBeUndefined();
+  });
+
+  it("knows a build already got its estimate alert after a restart", () => {
+    const t = make();
+    const notifier = t.notifier;
+    expect(notifier.hasBuildAlert(BUILD)).toBe(false);
+    notifier.usageAlert(alert);
+    const restarted = new Notifier({
+      db: t.db,
+      settings: () => t.settings.value,
+      emit: (e) => t.hub.emit(e),
+    });
+
+    expect(restarted.hasBuildAlert(BUILD)).toBe(true);
+  });
+});
