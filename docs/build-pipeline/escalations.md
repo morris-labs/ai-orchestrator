@@ -103,7 +103,11 @@ Only the box that started the build can resolve its escalations. The
 engine records the resolution in the escalation file and the build state,
 and resumes the paused tasks. It refuses a resolution that doesn't
 fit the escalation, such as `reorder` for an escalation without a task, and
-a second resolution of one escalation.
+a second resolution of one escalation. It also refuses to run a `placement`
+escalation's work again while the build plan places a seat on a vendor that
+the single-vendor setting excludes, because the seat would fail the same
+way. The refusal names the plan field to change, such as
+`placements.developer.vendor`, for a new build.
 
 ### Decisions for the owner
 

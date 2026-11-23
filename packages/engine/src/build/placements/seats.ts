@@ -75,6 +75,26 @@ export class SeatPlacements {
     return change;
   }
 
+  /**
+   * Each seat whose plan or live vendor breaks the single-vendor setting,
+   * which no retry fixes; empty when the setting is off.
+   */
+  singleVendorConflicts(): { seat: RoleName; vendor: Vendor; level: "plan" | "live" }[] {
+    const single = this.levels.singleVendor;
+    if (!single) return [];
+    const conflicts: { seat: RoleName; vendor: Vendor; level: "plan" | "live" }[] = [];
+    for (const [seat, override] of Object.entries(this.levels.plan)) {
+      if (override.vendor && override.vendor !== single) {
+        conflicts.push({ seat, vendor: override.vendor, level: "plan" });
+      }
+    }
+    for (const seat of new Set(this.levels.live.map((c) => c.seat))) {
+      const vendor = this.liveOf(seat)?.vendor;
+      if (vendor && vendor !== single) conflicts.push({ seat, vendor, level: "live" });
+    }
+    return conflicts;
+  }
+
   /** The levels to save in the build's state; `new SeatPlacements(roles, saved)` restores them. */
   state(): BuildPlacements {
     return structuredClone(this.levels);

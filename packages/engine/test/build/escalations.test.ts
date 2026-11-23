@@ -425,6 +425,35 @@ describe("resolutions", () => {
     expect(state.escalations[0]).toMatchObject({ status: "resolved", resolution: { by: "owner" } });
   });
 
+  it("refuses a retry of a placement escalation that only a plan change fixes, and names the change", async () => {
+    const world = await buildWorld();
+    world.script({ claude: [answer("T1", { "src/cart.mjs": CART_DONE })] });
+    await world.start(
+      "cart-total",
+      cartPlan({ singleVendor: "claude", placements: { developer: { vendor: "codex" } } }),
+    );
+    const waiting = await world.settle("cart-total");
+    expect(waiting.escalations).toEqual([
+      expect.objectContaining({ id: "E1", kind: "placement", taskId: "T1" }),
+    ]);
+
+    for (const by of ["project_manager", "owner"] as const) {
+      await expect(
+        world.manager.resolve("cart-total", { escalation: "E1", action: "retry", by }),
+      ).rejects.toMatchObject({
+        code: "validation",
+        message: expect.stringMatching(
+          /developer seat on codex.*single-vendor setting.*claude.*placements\.developer\.vendor/s,
+        ),
+      });
+    }
+    const after = await world.manager.get("cart-total");
+    expect(after?.escalations[0]).toMatchObject({ status: "open" });
+    expect(world.calls()).toEqual([]);
+    // The Project manager can still hand it to the owner.
+    await world.manager.resolve("cart-total", { escalation: "E1", action: "escalate", note: "Plan fix." });
+  });
+
   it("resolves an escalation after an engine restart, and the build goes on", async () => {
     const world = await buildWorld();
     await capped(world);
