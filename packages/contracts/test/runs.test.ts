@@ -21,6 +21,7 @@ import {
   wantsCopilotReview,
 } from "../src/index.js";
 import {
+  BUILD,
   RUN,
   fileGroup,
   leaseRequest,
@@ -491,5 +492,44 @@ describe("the whole-project scope", () => {
       prNumber: 1,
     });
     expect(parsed.success).toBe(false);
+  });
+});
+
+describe("the build option", () => {
+  const build = {
+    buildId: BUILD,
+    fixer: {
+      placement: {
+        seat: "developer",
+        vendor: "claude",
+        tier: "medium",
+        effort: "high",
+        sources: { vendor: "role", tier: "role", effort: "role" },
+        fresh: true,
+      },
+      context: "Task T1, Cart total: make total() return the sum of the item prices.",
+    },
+  };
+
+  it("carries the build, the fixer's placement, and the task context to the engine", () => {
+    const create = EngineRunCreateSchema.parse({ ...runRequest, runId: RUN, build });
+    expect(create.build).toEqual(build);
+    expect(ResolvedRunRequestSchema.parse(create).build).toEqual(build);
+  });
+
+  it("is absent from a stand-alone request, and a client can't set it through the server", () => {
+    expect(EngineRunCreateSchema.parse({ ...runRequest, runId: RUN }).build).toBeUndefined();
+    expect(RunRequestSchema.parse({ ...runRequest, build })).not.toHaveProperty("build");
+  });
+
+  it("refuses a fixer placement without a seat", () => {
+    const { seat: _seat, ...placement } = build.fixer.placement;
+    expect(() =>
+      EngineRunCreateSchema.parse({
+        ...runRequest,
+        runId: RUN,
+        build: { ...build, fixer: { ...build.fixer, placement } },
+      }),
+    ).toThrow(/seat/);
   });
 });

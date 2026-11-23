@@ -12,7 +12,9 @@ import {
   VendorSchema,
   type Vendor,
 } from "./common.js";
+import { BuildIdSchema } from "./build-events.js";
 import { RootCauseSummarySchema, SeveritySchema, type Severity } from "./findings.js";
+import { SeatPlacementSchema } from "./placements.js";
 import { ModelTierChoiceSchema, ModelTierSchema, type ModelTier } from "./tiers.js";
 
 export const PipelineSchema = z.enum(["pre-push", "post-push"]);
@@ -205,6 +207,23 @@ export function profileRoles(profile: Profile, round: number): RoleAssignment {
   }
 }
 
+/**
+ * The option a build sets on the review run it starts. The run's calls name
+ * the build, so the server exempts them from the usage ceilings, and the
+ * fixer takes the build's seat: its vendor, tier, and effort, as a fresh
+ * agent with the task context in its prompt.
+ */
+export const BuildRunOptionSchema = z.object({
+  buildId: BuildIdSchema,
+  fixer: z.object({
+    /** The seat that fills the fixer role, such as the Developer, with its placement. */
+    placement: SeatPlacementSchema,
+    /** The build's task context, which the fixer's prompt carries. */
+    context: z.string().min(1),
+  }),
+});
+export type BuildRunOption = z.infer<typeof BuildRunOptionSchema>;
+
 /** A run request with every default resolved, as `RunState.request` stores it. */
 export const ResolvedRunRequestSchema = z.object({
   projectId: z.string().min(1),
@@ -283,6 +302,11 @@ export const ResolvedRunRequestSchema = z.object({
    * `wantsCopilotReview`.
    */
   copilotReview: z.boolean().optional(),
+  /**
+   * Set only on a run that a build starts inside the engine. Absent on a
+   * stand-alone run; the server's `runs.create` drops it.
+   */
+  build: BuildRunOptionSchema.optional(),
 });
 export type ResolvedRunRequest = z.infer<typeof ResolvedRunRequestSchema>;
 
@@ -383,8 +407,8 @@ function refuseReadOnlyPostPush(
  * What starts a run: the body of the server's `runs.create`. Defaults follow
  * design.md. A read-only request can't use the post-push pipeline.
  */
-export const RunRequestSchema =
-  RunRequestFieldsSchema.superRefine(refuseReadOnlyPostPush).transform(resolveRequest);
+export const RunRequestSchema = RunRequestFieldsSchema.omit({ build: true })
+  .superRefine(refuseReadOnlyPostPush).transform(resolveRequest);
 export type RunRequest = z.infer<typeof RunRequestSchema>;
 export type RunRequestInput = z.input<typeof RunRequestSchema>;
 
