@@ -88,10 +88,7 @@ describe("session resume", () => {
   it("delivers a question and its reply to the sessions that asked and answered, on Codex and Claude", async () => {
     const world = await buildWorld({ steps: BUILD_PIPELINE });
     world.script({
-      codex: [
-        done(QUESTION, { busCalls: [send("developer", ANSWER, "answer")] }),
-        TESTS_FIRST,
-      ],
+      codex: [done(QUESTION, { busCalls: [send("developer", ANSWER, "answer")] }), TESTS_FIRST],
       claude: [done(ANSWER), developer(QUESTION)],
     });
 
@@ -162,11 +159,7 @@ describe("session resume", () => {
   it("runs two messages for one session as two turns, in order", async () => {
     const world = await buildWorld({ steps: BUILD_PIPELINE });
     world.script({
-      codex: [
-        done("first question", { delayMs: 400 }),
-        done("second question"),
-        TESTS_FIRST,
-      ],
+      codex: [done("first question", { delayMs: 400 }), done("second question"), TESTS_FIRST],
       claude: [developer("The first question.", "The second question.")],
     });
 

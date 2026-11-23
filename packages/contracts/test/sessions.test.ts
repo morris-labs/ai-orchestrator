@@ -65,9 +65,9 @@ describe("session settings", () => {
   });
 
   it("rejects an unknown vendor and a negative window", () => {
-    expect(() =>
-      BuildSessionSettingsSchema.parse({ cacheWindowMinutes: { gemini: 10 } }),
-    ).toThrow(/gemini/);
+    expect(() => BuildSessionSettingsSchema.parse({ cacheWindowMinutes: { gemini: 10 } })).toThrow(
+      /gemini/,
+    );
     expect(() => BuildSessionSettingsSchema.parse({ cacheWindowMinutes: { claude: -1 } })).toThrow(
       /claude/,
     );
@@ -104,9 +104,9 @@ describe("the session registry", () => {
   });
 
   it("rejects a session with no turn or an unknown reason", () => {
-    expect(() =>
-      SessionRegistrySchema.parse({ sessions: [{ ...session, turns: [] }] }),
-    ).toThrow(/turns/);
+    expect(() => SessionRegistrySchema.parse({ sessions: [{ ...session, turns: [] }] })).toThrow(
+      /turns/,
+    );
     expect(() =>
       SessionRegistrySchema.parse({ sessions: [{ ...session, reason: "bored" }] }),
     ).toThrow(/reason/);

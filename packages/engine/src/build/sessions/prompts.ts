@@ -100,7 +100,9 @@ export function freshPrompt(input: {
   message: Message;
 }): string {
   const { role, task, reason, thread, message } = input;
-  const files = [...new Set([...task.ownedFiles, ...(task.tests ?? []), ...(task.contracts ?? [])])];
+  const files = [
+    ...new Set([...task.ownedFiles, ...(task.tests ?? []), ...(task.contracts ?? [])]),
+  ];
   const context = [
     `You take over this seat from an earlier agent on the task, because ${WHY_FRESH[reason]}. The earlier agent's work is in the worktree and on the branch.`,
     files.length > 0
