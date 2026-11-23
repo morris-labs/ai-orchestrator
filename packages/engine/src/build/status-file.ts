@@ -2,7 +2,7 @@
 // restart many times during a build, so it doesn't hold the build in its
 // context: it rereads this file and the build plan instead. The engine
 // rewrites the file every time it saves the build's state.
-import type { BuildPlan, BuildPlanning, BuildState } from "@aio/contracts";
+import type { BuildMeeting, BuildPlan, BuildPlanning, BuildState } from "@aio/contracts";
 
 function cell(text: string | undefined): string {
   return (text ?? "").replace(/\|/g, "\\|").replace(/\s+/g, " ").trim();
@@ -50,7 +50,10 @@ export function renderStatus(state: BuildState, plan: BuildPlan): string {
 }
 
 /** Renders the status file of a build in planning, before its execution starts. */
-export function renderPlanningStatus(planning: BuildPlanning): string {
+export function renderPlanningStatus(
+  planning: BuildPlanning,
+  meetings: readonly BuildMeeting[] = [],
+): string {
   const lines = [
     `# Build ${planning.slug}: planning`,
     "",
@@ -74,6 +77,17 @@ export function renderPlanningStatus(planning: BuildPlanning): string {
           ),
         ]),
     "",
+    ...(meetings.length === 0
+      ? []
+      : [
+          "## Meetings",
+          "",
+          ...meetings.flatMap((m) => [
+            `- ${m.id} (\`meetings/${m.id}.json\`): ${m.status}, ${m.rounds.length} of at most ${m.roundCap} rounds, ${m.proposer} with ${m.members.join(", ")}.${m.error ? ` Error: ${m.error}` : ""}`,
+            ...m.open.map((o) => `  - Open, ${o.seat}: ${o.point}`),
+          ]),
+          "",
+        ]),
     "## Frozen plans",
     "",
     ...(planning.frozen.length === 0

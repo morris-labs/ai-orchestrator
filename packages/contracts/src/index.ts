@@ -21,6 +21,7 @@ export * from "./build-roles.js";
 export * from "./builds.js";
 export * from "./task-graph.js";
 export * from "./build-planning.js";
+export * from "./build-meetings.js";
 export * from "./build-socket.js";
 export * from "./placements.js";
 export * from "./specialties.js";
