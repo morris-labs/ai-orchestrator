@@ -78,7 +78,11 @@ describe("failureFingerprint", () => {
       gate(command(nodeFailure("/tmp/a", 3, "2026-11-01T10:00:00Z", "0x1"))),
     );
     const other = failureFingerprint(
-      gate(command("TypeError: items.reduce is not a function\n    at total (/tmp/a/src/cart.mjs:2:16)")),
+      gate(
+        command(
+          "TypeError: items.reduce is not a function\n    at total (/tmp/a/src/cart.mjs:2:16)",
+        ),
+      ),
     );
 
     expect(other).not.toEqual(wrong);
@@ -88,7 +92,12 @@ describe("failureFingerprint", () => {
     const print = failureFingerprint({
       ...gate(
         command("not ok - totals the cart"),
-        command("", { kind: "typecheck", command: "node --check src/cart.mjs", passed: true, exitCode: 0 }),
+        command("", {
+          kind: "typecheck",
+          command: "node --check src/cart.mjs",
+          passed: true,
+          exitCode: 0,
+        }),
         command("src/cart.mjs: no console.log", { kind: "lint", command: "node lint.mjs" }),
       ),
       permission: { passed: false, writable: ["src/cart.mjs"], outside: ["README.md"] },

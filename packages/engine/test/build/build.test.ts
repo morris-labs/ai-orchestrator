@@ -172,7 +172,12 @@ describe("the attempt cap", () => {
 
     expect(state).toMatchObject({ status: "waiting_escalation", step: "tasks" });
     expect(state.tasks[0]).toMatchObject({ status: "failed", attempts: 4 });
-    expect(world.calls()).toHaveLength(4);
+    // Four Developer attempts, and the Debugger after attempts 2 and 3 failed
+    // the same way as the attempt before.
+    const seats = world
+      .calls()
+      .map((c) => (c.prompt.startsWith("You are the Debugger") ? "D" : "d"));
+    expect(seats.join("")).toBe("ddDdDd");
     const [escalation] = world.jsonFiles("cart-total", "escalations") as Record<string, unknown>[];
     expect(escalation).toMatchObject({
       id: "E1",
