@@ -54,8 +54,11 @@ escalation. So a resumed agent never changes files while the build's agent
 works or while the task gate, a red check, or a commit reads them, and
 nothing changes the worktree under a read-only turn.
 
-A turn of a seat that writes files records the paths it changed with the
-turn, in `changed`. The task gate doesn't count those paths against the
+A turn of a seat that writes files may change only what its seat may: its
+writable paths for the session's task, and never a locked test. The engine
+puts back any other file the turn changed, the way it was before the turn,
+and raises an escalation for the Project manager that names the files. The
+turn records the paths it kept with the turn, in `changed`. The task gate doesn't count those paths against the
 attempts of another seat's task, and a task that a turn's escalation paused
 doesn't start its next attempt.
 

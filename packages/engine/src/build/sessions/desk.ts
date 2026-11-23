@@ -9,7 +9,9 @@ import {
   OwnerPostTurnAnswerSchema,
   type BuildSessionSettings,
   type BuildStep,
+  type EscalationKind,
   type Message,
+  type RoleDefinition,
   type QueuedMessage,
   type SeatPlacement,
   type SessionBrief,
@@ -19,6 +21,9 @@ import {
 import { RunCancelled, describeError, type AgentOutcome } from "../../calls/index.js";
 import { readJson } from "../../run/files.js";
 import { escalationForCallError } from "../escalations.js";
+import { outsideWritable } from "../gate.js";
+import { writablePaths } from "../roles/index.js";
+import { readTestLock } from "../test-lock.js";
 import type { BuildContext } from "../context.js";
 import type { RoleTask } from "../roles/index.js";
 import { ownerPostAnswer } from "../owner/index.js";
@@ -237,6 +242,28 @@ export class SessionDesk {
    * otherwise the build waits for it.
    */
   private async escalateFailure(entry: QueuedMessage, error: unknown): Promise<void> {
+    const addressee = `the ${entry.seat}${entry.taskId ? ` (task ${entry.taskId})` : ""}`;
+    const cause = escalationForCallError(error, null);
+    await this.escalateTurn(entry, {
+      kind: cause?.kind ?? "agent_call",
+      summary: `Message ${entry.messageId} to ${addressee} wasn't delivered: ${describeError(error)}`,
+      details: [
+        `The engine couldn't give message ${entry.messageId} to ${addressee}, so that agent never read it. Answer the sender yourself on the team chat, or fix the cause and resolve the escalation; the sender can then send the message again.`,
+        "",
+        `Error: ${describeError(error)}`,
+      ].join("\n"),
+    });
+  }
+
+  /**
+   * Raises an escalation about a message turn, with the message's body. It
+   * pauses the message's task, or the sender's, when that is a plan task;
+   * otherwise the build waits for it.
+   */
+  private async escalateTurn(
+    entry: QueuedMessage,
+    draft: { kind?: EscalationKind; summary: string; details: string },
+  ): Promise<void> {
     const { ctx } = this;
     const message = await readJson(
       ctx.store.path("messages", `${entry.messageId}.json`),
@@ -245,22 +272,33 @@ export class SessionDesk {
     const planTask = (id: string | null | undefined) =>
       id && ctx.state.tasks.some((t) => t.id === id) ? id : null;
     const sender = message?.from.kind === "seat" ? message.from.taskId : null;
-    const taskId = planTask(entry.taskId) ?? planTask(sender);
-    const cause = escalationForCallError(error, taskId);
-    const addressee = `the ${entry.seat}${entry.taskId ? ` (task ${entry.taskId})` : ""}`;
     await ctx.escalate({
-      kind: cause?.kind ?? "agent_call",
+      kind: draft.kind ?? "agent_call",
       level: "project_manager",
-      taskId,
-      summary: `Message ${entry.messageId} to ${addressee} wasn't delivered: ${describeError(error)}`,
+      taskId: planTask(entry.taskId) ?? planTask(sender),
+      summary: draft.summary,
       details: [
-        `The engine couldn't give message ${entry.messageId} to ${addressee}, so that agent never read it. Answer the sender yourself on the team chat, or fix the cause and resolve the escalation; the sender can then send the message again.`,
-        "",
-        `Error: ${describeError(error)}`,
+        draft.details,
         "",
         message ? `Message body:\n\n${message.body}` : "The message file is missing.",
       ].join("\n"),
     });
+  }
+
+  /**
+   * The paths of `changed` that the turn's seat may not change: those
+   * outside its writable paths for `task`, and locked tests, which only a
+   * test dispute changes.
+   */
+  private async refusedChanges(
+    role: RoleDefinition,
+    task: RoleTask,
+    changed: readonly string[],
+  ): Promise<string[]> {
+    const outside = outsideWritable(changed, writablePaths(role, task));
+    const lock = await readTestLock(this.ctx.store);
+    const locked = new Set((lock?.files ?? []).map((f) => f.path));
+    return [...new Set([...outside, ...changed.filter((p) => locked.has(p))])].sort();
   }
 
   /** One message turn: a resume of the addressee's session, or a fresh agent that takes it over. */
@@ -336,8 +374,17 @@ export class SessionDesk {
         : {}),
     });
     let taken = session;
+    let refused: string[] = [];
     if (!(await this.registry.hasTurn(key))) {
-      const changed = before ? await ctx.worktree.changedSinceSnapshot(before) : [];
+      let changed = before ? await ctx.worktree.changedSinceSnapshot(before) : [];
+      // A turn may change only what its seat may: the engine puts back the rest.
+      if (before && changed.length > 0) {
+        refused = await this.refusedChanges(role, task, changed);
+        if (refused.length > 0) {
+          await ctx.worktree.restoreSnapshot(before, refused);
+          changed = changed.filter((p) => !refused.includes(p));
+        }
+      }
       const turn = {
         key,
         messageId: message.id,
@@ -371,6 +418,16 @@ export class SessionDesk {
       status: "delivered",
       at: this.now(),
     });
+    if (refused.length > 0) {
+      const files = refused.join(", ");
+      await this.escalateTurn(entry, {
+        summary: `The ${entry.seat} changed ${files} in its turn for message ${message.id}, which it may not change. The engine put them back.`,
+        details: [
+          `In its turn for message ${message.id}, the ${entry.seat}${entry.taskId ? ` (task ${entry.taskId})` : ""} changed files outside its writable paths, or locked tests: ${files}. The engine put each one back the way it was before the turn.`,
+          "Tell the agent what it may change, or move the change to the seat that owns the files, then resolve the escalation.",
+        ].join("\n\n"),
+      });
+    }
     if (fromOwner) {
       const answered = OwnerPostTurnAnswerSchema.safeParse(outcome.output);
       const contradicts = answered.success ? answered.data.contradicts : [];

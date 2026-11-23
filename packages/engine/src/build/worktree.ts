@@ -174,6 +174,24 @@ export class BuildWorktree {
     return paths.sort();
   }
 
+  /**
+   * Puts each of `paths` back the way it was at `before`: a path that
+   * didn't exist then is deleted, and any other gets its content back.
+   */
+  async restoreSnapshot(before: WorktreeSnapshot, paths: readonly string[]): Promise<void> {
+    for (const path of paths) {
+      const blob = before.changed.get(path) ?? (await this.blobAt(before.head, path));
+      if (blob === "none") {
+        await this.git.run(["rm", "-q", "--cached", "--ignore-unmatch", "--", path]);
+        await rm(join(this.path, path), { force: true, recursive: true });
+        continue;
+      }
+      // Through the index, so a binary file comes back byte for byte.
+      await this.git.run(["update-index", "--add", "--cacheinfo", `100644,${blob},${path}`]);
+      await this.git.run(["checkout-index", "-f", "--", path]);
+    }
+  }
+
   /** The Git blob ID of a path's working copy, or `"none"` when it doesn't exist. */
   private async blobOf(path: string): Promise<string> {
     if (!existsSync(join(this.path, path))) return "none";
