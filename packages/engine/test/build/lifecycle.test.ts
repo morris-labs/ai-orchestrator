@@ -187,7 +187,10 @@ describe("cancel, resume, and delete", () => {
     expect(resumed.status).toBe("running");
     const state = await world.waitFor("cart-total", (s) => s.step === "review");
     expect(state.tasks[0]).toMatchObject({ status: "done" });
-    expect(world.file("cart-total", "STATUS.md")).toContain("review");
+    // The engine writes the status file right after the state file.
+    await world.waitFor("cart-total", () =>
+      world.file("cart-total", "STATUS.md").includes("- Step: review"),
+    );
   });
 
   it("deletes the branch and worktree and keeps the build's record", async () => {
