@@ -811,10 +811,11 @@ export class AgentCalls {
       signal: controller.signal,
     };
     try {
+      // A named session is resumed whatever the method; a continuation needs one.
       const call =
         spec.method === "continueReview"
           ? adapter.continueReview({ ...request, sessionId: sessionId ?? "" })
-          : adapter[spec.method](request);
+          : adapter[spec.method](sessionId !== undefined ? { ...request, sessionId } : request);
       return (await Promise.race([call, guard, aborted])) as AdapterResult<T>;
     } finally {
       clearTimeout(timer);

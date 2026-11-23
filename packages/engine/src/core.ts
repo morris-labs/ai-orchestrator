@@ -96,6 +96,8 @@ export interface AdapterRequest {
   output?: AdapterOutput;
   /** The team chat bus to attach to this call only; see `src/team/`. */
   team?: TeamAttachment;
+  /** A session of the same vendor to resume. Absent, the call starts a fresh session. */
+  sessionId?: string;
 }
 
 /**
