@@ -216,10 +216,9 @@ describe("a build's review run", () => {
     done: (status: string) => boolean,
   ): Promise<string> {
     const end = Date.now() + 30_000;
-    let status = "missing";
     const seen: string[] = [];
     while (Date.now() < end) {
-      status = (await world.runs.get(runId))?.status ?? "missing";
+      const status = (await world.runs.get(runId))?.status ?? "missing";
       if (seen.at(-1) !== status) seen.push(status);
       if (done(status)) return status;
       await new Promise((r) => setTimeout(r, 25));
