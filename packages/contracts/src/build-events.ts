@@ -9,6 +9,7 @@
 // The `events.ts` and `lease.ts` modules compose these parts into the event
 // union and the lease frames.
 import { z } from "zod";
+import { RoleNameSchema } from "./build-roles.js";
 import { CountSchema, IsoDateTimeSchema, RunIdSchema, UlidSchema } from "./common.js";
 
 /** A build id. Engines mint build ids as ULIDs, so one is unique across every engine. */
@@ -20,11 +21,10 @@ export const BuildSlugSchema = z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
 export type BuildSlug = z.infer<typeof BuildSlugSchema>;
 
 /**
- * A seat: the role a build activates, such as `developer` or
- * `test-engineer`. Role definitions name the seats, so the event stream
- * accepts any kebab-case name.
+ * A seat: the role a build activates, named by its role definition, such
+ * as `developer` or `test-engineer`.
  */
-export const SeatSchema = z.string().regex(/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/);
+export const SeatSchema = RoleNameSchema;
 export type Seat = z.infer<typeof SeatSchema>;
 
 /**

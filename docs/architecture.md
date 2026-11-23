@@ -237,7 +237,15 @@ The protocol follows these rules:
 1. After the call, the engine emits a `lease.settled` event with the actual
    usage, which the server records against the vendor's account.
 
-The schemas for these frames are in `packages/contracts/src/lease.ts`.
+A build call names its build, its seat, and its step on the request, the
+settlement, and its agent events, and its `runId` is `null` unless it
+belongs to a review run that the build started. The server grants a build
+call on the vendor it names, even over a ceiling, and records its usage by
+seat and by step for the `GET /api/v1/builds/BUILD_ID/usage` route. Replace
+`BUILD_ID` with the build's ID.
+
+The schemas for these frames are in `packages/contracts/src/lease.ts`, and
+the build fields are in `packages/contracts/src/build-events.ts`.
 
 ## Container image
 
