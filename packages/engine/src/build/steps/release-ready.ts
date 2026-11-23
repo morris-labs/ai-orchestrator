@@ -21,11 +21,14 @@
 //    escalation for the owner. With `false`, the branch stays local.
 // 6. The push and CI loop: the build's review run pushes the build branch,
 //    opens the pull request, and fixes failing checks with the Developer
-//    seat. It never pushes the default branch and never merges.
+//    seat. It never pushes the default branch and never merges. A retry
+//    after the loop ended without a clean pull request, or was cancelled,
+//    sets the run aside and starts a new one, which reviews the diff again
+//    before it pushes.
 //
 // The build then ends release ready, with a digest for the Project manager
 // in `digests/release-ready.md`.
-import { readdir } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { setTimeout as sleep } from "node:timers/promises";
 import type {
   BuildCriterion,
@@ -53,7 +56,7 @@ import type { ListedTest } from "../red-check.js";
 import { writablePaths, type RoleTask } from "../roles/index.js";
 import { readTestLock } from "../test-lock.js";
 import { reportProjectManagerUsage, type TranscriptUsage } from "../pm-usage.js";
-import { CLEAN_REVIEW, REVIEW_POLL_MS, reopenRun } from "./review.js";
+import { CLEAN_REVIEW, REVIEW_POLL_MS, ensureRun, reopenRun } from "./review.js";
 import type { StepOutcome } from "./types.js";
 
 /** The seat that writes the record. */
@@ -491,18 +494,22 @@ async function pushAndWatch(
   const saved = await ctx.store.readJson<PushRecord>(ctx.store.path(RELEASE_FILES.push));
   if (saved) return saved;
   const runs = ctx.services.reviews;
-  const review = await ctx.store.readJson<{ runId: string }>(ctx.store.path("review", "run.json"));
-  const run = review && runs ? await runs.get(review.runId) : null;
-  if (!runs || !review || !run) {
+  if (!runs) {
     await ctx.escalate({
       kind: "release_ready",
       level: "project_manager",
       taskId: null,
-      summary: "The build has no review run to push its branch with.",
-      details: `Review record: ${review ? review.runId : "none"}. The push and CI loop runs in the build's review run.`,
+      summary: "This engine has no review runs to push the build's branch with.",
+      details: "The push and CI loop runs in the build's review run.",
     });
     return null;
   }
+  // The review step's run, or a new one after a retry set the ended one
+  // aside, or after the run manager lost it. A new run reviews the diff
+  // before it pushes.
+  const runId = await ensureRun(ctx, runs, "release_ready");
+  if (runId === null) return null;
+  const run = await waitForRun(ctx, runs, runId, (r) => cleanBeforePush(r) || pushSettled(r));
   if (cleanBeforePush(run)) {
     try {
       await runs.push(run.id, { title, body, draft: false });
@@ -609,8 +616,13 @@ export async function runReleaseReady(ctx: BuildContext): Promise<StepOutcome> {
   if (!gate) return "wait";
   // The final gate can quarantine more flaky tests.
   const baseline = await loadBaseline(ctx.store);
-  const body = pullRequestBody(ctx, scribe, trace, baseline, gate, await reviewFollowUps(ctx));
-  await ctx.store.writeText(ctx.store.path(RELEASE_FILES.pullRequest), body);
+  // A retry after a push run ended sets that run's record aside, and with
+  // it the follow-ups, so the description written once stays.
+  const bodyFile = ctx.store.path(RELEASE_FILES.pullRequest);
+  const written = await readFile(bodyFile, "utf8").catch(() => null);
+  const body =
+    written ?? pullRequestBody(ctx, scribe, trace, baseline, gate, await reviewFollowUps(ctx));
+  if (written === null) await ctx.store.writeText(bodyFile, body);
   await ctx.calls.checkpoint();
   let push: PushRecord | null = null;
   if (ctx.plan.push === null) {
@@ -657,5 +669,11 @@ export function reopenReleaseReady(
   escalation: Escalation,
   request: EscalationResolve,
 ): Promise<void> {
-  return reopenRun(ctx, escalation, request, () => "keep");
+  // A run that ended or was cancelled after its push can't push again, so
+  // the step starts a new one. A clean run that couldn't push tries again.
+  return reopenRun(ctx, escalation, request, (run) =>
+    !cleanBeforePush(run) && (run.status === "finished" || run.status === "cancelled")
+      ? "rerun"
+      : "keep",
+  );
 }

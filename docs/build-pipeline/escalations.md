@@ -86,7 +86,12 @@ Replace the following:
 - `ESCALATION`: the escalation's ID, such as `E1`.
 - `ACTION`: one of the following:
   - `retry`: runs the paused work again. A task goes on with its next
-    attempt and gets four more. Tests first gets three more rounds.
+    attempt and gets four more. Tests first gets three more rounds. A
+    failed review run continues. A review run that ended without
+    reporting the diff clean, or a push and CI loop that ended without a
+    clean pull request or was cancelled, gets a new review run, which
+    reviews the diff again before it pushes. The same happens when the run
+    manager no longer knows the build's review run.
   - `reorder`: sets the order of the tasks that aren't done, with
     `--order T2,T1`, and then retries. Each task must still come after the
     tasks it depends on.

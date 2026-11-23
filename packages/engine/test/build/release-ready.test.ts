@@ -2,7 +2,7 @@
 // the Scribe, the push answer, and the push and CI loop over a local bare
 // remote and a fake GitHub client.
 import { execFileSync } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { BuildPlanInput } from "@aio/contracts";
@@ -199,6 +199,8 @@ class FakeGitHub implements GitHubClient {
   created: CreatePrInput[] = [];
   reviewRequests = 0;
   checkedHeads: string[] = [];
+  /** Runs after each pull request the fake creates. */
+  onCreate: (() => void) | null = null;
   private failingHead: string | null = null;
 
   constructor(private readonly origin: string) {}
@@ -223,6 +225,7 @@ class FakeGitHub implements GitHubClient {
       headSha: this.head(input.head),
       state: "OPEN",
     };
+    this.onCreate?.();
     return this.pr;
   }
   async defaultBranch(): Promise<string> {
@@ -439,6 +442,72 @@ describe("the release ready step", () => {
     expect(digest).toContain("AC2");
     expect(state.note).toContain("digests/release-ready.md");
     expect(world.file("cart-total", "STATUS.md")).toContain("digests/release-ready.md");
+  });
+
+  /** A world whose first push run is cancelled as soon as it opens the pull request. */
+  async function cancelledPush() {
+    const origin = originPath();
+    const gh = new FakeGitHub(origin);
+    const world = await buildWorld({
+      steps: BUILD_PIPELINE,
+      review: true,
+      release: true,
+      github: gh,
+    });
+    releaseProject(world, origin);
+    fullScript(world);
+    const runOf = () =>
+      (JSON.parse(world.file("cart-total", "review/run.json")) as { runId: string }).runId;
+    gh.onCreate = () => {
+      gh.onCreate = null;
+      const runId = runOf();
+      setTimeout(() => void world.runs.cancel(runId), 0);
+    };
+    await world.start("cart-total", releasePlan(true));
+    const waiting = await world.settle("cart-total");
+    expect(waiting.status).toBe("waiting_escalation");
+    expect(waiting.escalations).toEqual([
+      expect.objectContaining({ id: "E1", kind: "release_ready", status: "open" }),
+    ]);
+    expect(waiting.escalations[0]!.summary).toMatch(/cancelled/);
+    return { world, gh, first: runOf() };
+  }
+
+  it("starts a new review run that pushes again when a retry resolves a cancelled push run's escalation", async () => {
+    const { world, first } = await cancelledPush();
+
+    await world.manager.resolve("cart-total", { escalation: "E1", action: "retry" });
+    const state = await world.settle("cart-total");
+
+    expect(state).toMatchObject({ step: "release_ready", status: "finished" });
+    expect(state.escalations).toHaveLength(1);
+    const second = (JSON.parse(world.file("cart-total", "review/run.json")) as { runId: string })
+      .runId;
+    expect(second).not.toBe(first);
+    expect(JSON.parse(world.file("cart-total", `review/run-${first}.json`))).toEqual({
+      runId: first,
+    });
+    expect(JSON.parse(world.file("cart-total", "release/push.json"))).toMatchObject({
+      runId: second,
+      stopReason: "pr_clean",
+    });
+  });
+
+  it("starts the build's review run again when its state is gone, instead of escalating again", async () => {
+    const { world, first } = await cancelledPush();
+    // The run manager no longer knows the run, such as after its state was pruned.
+    await world.restart();
+    rmSync(join(world.root, ".aio", "runs", first), { recursive: true, force: true });
+    await world.restart();
+
+    await world.manager.resolve("cart-total", { escalation: "E1", action: "retry" });
+    const state = await world.settle("cart-total");
+
+    expect(state).toMatchObject({ step: "release_ready", status: "finished" });
+    expect(state.escalations).toHaveLength(1);
+    expect(JSON.parse(world.file("cart-total", "release/push.json"))).toMatchObject({
+      stopReason: "pr_clean",
+    });
   });
 
   it("runs the plan's full test, type check, and lint commands after the Scribe and escalates a failure before the push", async () => {
