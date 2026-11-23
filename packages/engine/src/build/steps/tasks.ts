@@ -1,17 +1,24 @@
-// The tasks step: each task in plan order, worked by its seat's agent and
-// checked by the task gate, up to the attempt cap.
+// The tasks step: each task in dependency order, one at a time, worked by
+// its seat's agent and checked by the task gate, up to the attempt cap. The
+// gate also runs the tests that earlier tasks made pass.
 //
 // Every attempt saves a file as it goes: its start before the agent call,
 // the agent's answer after it, and the gate result last. A restarted build
 // reads those files and continues from the last finished part; the call
 // cache returns a finished agent call without calling again.
-import type { BuildTask } from "@aio/contracts";
+import { taskOrder, type BuildTask } from "@aio/contracts";
 import { RunCancelled } from "../../calls/index.js";
 import { untrusted } from "../../prompts/templates.js";
 import { loadBaseline, quarantine } from "../baseline.js";
 import type { BuildContext } from "../context.js";
 import { escalationForCallError } from "../escalations.js";
-import { gateFailureLine, gateReport, runTaskGate, type TaskGateResult } from "../gate.js";
+import {
+  gateFailureLine,
+  gateReport,
+  runTaskGate,
+  type EarlierTask,
+  type TaskGateResult,
+} from "../gate.js";
 import { writablePaths, type RoleTask } from "../roles/index.js";
 import { readTestLock } from "../test-lock.js";
 import type { StepOutcome } from "./types.js";
@@ -64,6 +71,23 @@ function attemptContext(n: number, previous: AttemptRecord | undefined): string 
   return lines.join("\n");
 }
 
+/**
+ * The other tasks, as the gate of `task` sees them: the tasks that finished,
+ * whose tests must still pass, and the test files of the tasks that haven't,
+ * which may still fail.
+ */
+function otherTasks(
+  ctx: BuildContext,
+  task: BuildTask,
+): { earlier: EarlierTask[]; pending: string[] } {
+  const others = ctx.plan.tasks.filter((t) => t.id !== task.id);
+  const done = (t: BuildTask) => ctx.task(t.id).status === "done";
+  return {
+    earlier: others.filter(done).map((t) => ({ id: t.id, tests: t.tests })),
+    pending: others.filter((t) => !done(t)).flatMap((t) => t.tests),
+  };
+}
+
 /** Runs attempt `n`, or returns its saved result when it already finished. */
 async function attempt(ctx: BuildContext, task: BuildTask, n: number): Promise<GatedAttempt> {
   const path = ctx.store.attemptPath(task.id, n);
@@ -101,6 +125,7 @@ async function attempt(ctx: BuildContext, task: BuildTask, n: number): Promise<G
     shell: ctx.services.shell,
     baseline: await loadBaseline(ctx.store),
     protect: task.tests,
+    ...otherTasks(ctx, task),
     signal,
   });
   // A gate that the engine stopped part way says nothing about the attempt.
@@ -183,9 +208,9 @@ async function runTask(ctx: BuildContext, task: BuildTask): Promise<StepOutcome>
   return "wait";
 }
 
-/** The tasks step: every task in plan order, one at a time. */
+/** The tasks step: every task in dependency order, one at a time. */
 export async function runTasks(ctx: BuildContext): Promise<StepOutcome> {
-  for (const task of ctx.plan.tasks) {
+  for (const task of taskOrder(ctx.plan.tasks)) {
     if ((await runTask(ctx, task)) === "wait") return "wait";
   }
   return "next";

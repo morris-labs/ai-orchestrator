@@ -10,7 +10,7 @@ function cell(text: string | undefined): string {
 
 /** Renders the status file for `state`. */
 export function renderStatus(state: BuildState, plan: BuildPlan): string {
-  const titles = new Map(plan.tasks.map((t) => [t.id, t.title]));
+  const planned = new Map(plan.tasks.map((t) => [t.id, t]));
   const lines = [
     `# Build ${state.slug}: ${state.title}`,
     "",
@@ -26,11 +26,13 @@ export function renderStatus(state: BuildState, plan: BuildPlan): string {
     "",
     "## Tasks",
     "",
-    "| Task | Title | Status | Attempts | Commit | Last failure |",
-    "|---|---|---|---|---|---|",
+    "Tasks run one at a time, each after the tasks it depends on.",
+    "",
+    "| Task | Title | Depends on | Status | Attempts | Commit | Last failure |",
+    "|---|---|---|---|---|---|---|",
     ...state.tasks.map(
       (t) =>
-        `| ${t.id} | ${cell(titles.get(t.id))} | ${t.status} | ${t.attempts} | ${t.commit ? `\`${t.commit.slice(0, 12)}\`` : ""} | ${cell(t.lastFailure)} |`,
+        `| ${t.id} | ${cell(planned.get(t.id)?.title)} | ${cell(planned.get(t.id)?.dependsOn.join(", "))} | ${t.status} | ${t.attempts} | ${t.commit ? `\`${t.commit.slice(0, 12)}\`` : ""} | ${cell(t.lastFailure)} |`,
     ),
     "",
     "## Escalations",
