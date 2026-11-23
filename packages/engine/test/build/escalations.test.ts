@@ -5,6 +5,7 @@ import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { BuildPlanInput, Escalation } from "@aio/contracts";
 import { describe, expect, it } from "vitest";
+import type { BuildContext } from "../../src/build/context.js";
 import {
   CART_DONE,
   CART_WRONG,
@@ -770,5 +771,34 @@ describe("a box stop beside an escalation", () => {
     expect(resumed.pausedBy).toBeUndefined();
     await new Promise((r) => setTimeout(r, 300));
     expect((await world.manager.get("cart-total"))?.escalations).toHaveLength(1);
+  });
+});
+
+describe("escalation IDs", () => {
+  it("gives escalations that start at the same moment IDs and files of their own", async () => {
+    const world = await buildWorld();
+    world.script({
+      claude: [{ match: "Task T1", output: REPORT, writeFiles: { "src/cart.mjs": CART_DONE } }],
+    });
+    await world.start("cart-ids");
+    await world.settle("cart-ids");
+    // Two seats' turns can escalate at once; the manager has no request that does it.
+    const manager = world.manager as unknown as {
+      controller(slug: string): Promise<{ ctx: BuildContext } | null>;
+    };
+    const { ctx } = (await manager.controller("cart-ids"))!;
+    const draft = (summary: string) => ({
+      kind: "agent_call" as const,
+      level: "project_manager" as const,
+      taskId: "T1",
+      summary,
+      details: "Details.",
+    });
+
+    const made = await Promise.all([ctx.escalate(draft("First.")), ctx.escalate(draft("Second."))]);
+
+    expect(made.map((e) => e.id)).toEqual(["E1", "E2"]);
+    expect(escalationFile(world, "cart-ids", "E1")).toMatchObject({ summary: "First." });
+    expect(escalationFile(world, "cart-ids", "E2")).toMatchObject({ summary: "Second." });
   });
 });

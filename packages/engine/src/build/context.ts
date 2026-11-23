@@ -184,6 +184,8 @@ export class BuildContext {
   /** Aborts the gate's commands when the engine stops; a new drive gets a new one. */
   private driveAbort = new AbortController();
   private writeChain: Promise<void> = Promise.resolve();
+  /** The number of the last escalation ID taken, including one whose file is still being written. */
+  private lastEscalation = 0;
   /** The status, step, and delete time that the last `build.changed` showed. */
   private announced: string | null = null;
 
@@ -399,7 +401,7 @@ export class BuildContext {
    * tasks go on. One without a task makes the build wait for it.
    */
   async escalate(draft: EscalationDraft): Promise<Escalation> {
-    const id = `E${this.state.escalations.length + 1}`;
+    const id = this.nextEscalationId();
     // An escalation about a task that is done, such as a question about it
     // that came after, pauses nothing.
     const { taskId } = draft;
@@ -448,6 +450,16 @@ export class BuildContext {
     await this.setTaskStatus(draft.taskId, "failed");
     for (const t of tasks.slice(1)) await this.setTaskStatus(t, "blocked");
     return escalation;
+  }
+
+  /**
+   * Takes the next escalation ID before any await, so escalations that start
+   * at the same moment, such as from two seats' turns, never share one.
+   */
+  private nextEscalationId(): string {
+    const taken = this.state.escalations.map((e) => Number(e.id.slice(1)) || 0);
+    this.lastEscalation = Math.max(this.lastEscalation, ...taken) + 1;
+    return `E${this.lastEscalation}`;
   }
 
   /** The escalations that wait for a decision. */
