@@ -2,6 +2,8 @@
 // A stand-in for `claude -p --output-format stream-json --verbose`, driven by
 // MOCK_CLI_SCENARIO. Its lines copy the shapes the real CLI printed (Claude
 // Code 2.1.310). See README.md.
+import { readFileSync } from "node:fs";
+import { actOutBusCalls } from "../lib/mcp.mjs";
 import {
   answerText,
   loadScenario,
@@ -34,6 +36,7 @@ const VALUE_FLAGS = new Set([
   "--permission-prompts",
   "--fallback-model",
   "--add-dir",
+  "--mcp-config",
 ]);
 const BOOL_FLAGS = new Set([
   "-p",
@@ -72,7 +75,31 @@ const readOnly = flags["--permission-mode"] === "dontAsk" || flags["--permission
 
 const scenario = loadScenario("claude");
 const picked = pickResponse("claude", scenario, prompt);
-logCall("claude", { argv, prompt, responseIndex: picked?.index ?? -1, model, sessionId, readOnly });
+
+// The MCP servers of `--mcp-config`: a file, or the JSON itself.
+const mcpConfig = flags["--mcp-config"];
+const mcpServers = mcpConfig
+  ? (JSON.parse(mcpConfig.trim().startsWith("{") ? mcpConfig : readFileSync(mcpConfig, "utf8"))
+      .mcpServers ?? {})
+  : {};
+const allowedTools = (flags["--allowedTools"] ?? flags["--allowed-tools"] ?? "").split(",");
+// In `dontAsk` mode, Claude Code denies every tool that no allow rule covers.
+const busAllowed = (server, tool) =>
+  readOnly && !allowedTools.includes(`mcp__${server}__${tool}`)
+    ? `Permission to use mcp__${server}__${tool} has been denied.`
+    : null;
+const busResults = picked?.response.error
+  ? []
+  : await actOutBusCalls(mcpServers, picked?.response.busCalls, busAllowed);
+logCall("claude", {
+  argv,
+  prompt,
+  responseIndex: picked?.index ?? -1,
+  model,
+  sessionId,
+  readOnly,
+  ...(busResults.length > 0 ? { busResults } : {}),
+});
 
 const emit = (obj) => stream && process.stdout.write(`${JSON.stringify(obj)}\n`);
 emit({
@@ -84,6 +111,41 @@ emit({
   model,
   permissionMode: flags["--permission-mode"] ?? "default",
   uuid: newId(),
+});
+
+busResults.forEach((result, i) => {
+  const toolUseId = `toolu_mock_${i + 1}`;
+  emit({
+    type: "assistant",
+    message: {
+      model,
+      role: "assistant",
+      content: [
+        {
+          type: "tool_use",
+          id: toolUseId,
+          name: `mcp__${result.server}__${result.tool}`,
+          input: picked.response.busCalls[i].arguments ?? {},
+        },
+      ],
+    },
+    session_id: sessionId,
+  });
+  emit({
+    type: "user",
+    message: {
+      role: "user",
+      content: [
+        {
+          type: "tool_result",
+          tool_use_id: toolUseId,
+          content: result.text,
+          ...(result.isError ? { is_error: true } : {}),
+        },
+      ],
+    },
+    session_id: sessionId,
+  });
 });
 
 const response = picked?.response ?? {

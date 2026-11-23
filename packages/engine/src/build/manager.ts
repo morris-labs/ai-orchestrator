@@ -20,6 +20,7 @@ import { RoleError } from "./roles/index.js";
 import { accountSkillDirs } from "./specialties/index.js";
 import { BuildNotFoundError, BuildStore, listBuildSlugs } from "./store.js";
 import { WorktreeConflict } from "./worktree.js";
+import type { TeamBus } from "../team/index.js";
 
 /** How long `close()` waits for a build's drive to stop. */
 const SHUTDOWN_WAIT_MS = 5000;
@@ -48,6 +49,8 @@ export interface BuildManagerDeps extends CoreDeps {
   roles?: BuildLocation["roles"];
   /** The steps builds run, for tests and later milestones. */
   pipeline?: BuildPipeline;
+  /** The team chat bus that seat calls reach. Without it, they run without one. */
+  team?: TeamBus;
   /** The engine's review runs, for the review step. */
   reviews?: ReviewRuns;
   /** How often the review step reads its run's state, in milliseconds. */
@@ -89,6 +92,7 @@ export class EngineBuildManager implements BuildManager {
         (() => accountSkillDirs(readAccountDirs(accountDirsFileIn(ENGINE_CONFIG_MOUNT)))),
       clock,
       log: deps.log,
+      ...(deps.team ? { team: deps.team } : {}),
       ...(deps.reviews ? { reviews: deps.reviews } : {}),
       ...(deps.reviewPollMs !== undefined ? { reviewPollMs: deps.reviewPollMs } : {}),
     };

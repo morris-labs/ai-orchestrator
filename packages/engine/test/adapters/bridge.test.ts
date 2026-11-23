@@ -40,6 +40,12 @@ describe("toCliRequest", () => {
     expect("sessionId" in req).toBe(false);
   });
 
+  it("passes the team chat attachment on, and none when the call has none", () => {
+    const team = { server: "aio_team", url: "http://127.0.0.1:1/mcp", token: "t", tools: ["x"] };
+    expect(toCliRequest("fix", { ...base, team }).team).toBe(team);
+    expect("team" in toCliRequest("fix", base)).toBe(false);
+  });
+
   it("keeps the session for a continuation and leaves out empty fields", () => {
     const req = toCliRequest("continueReview", { ...base, sessionId: "s-1" });
     expect(req.sessionId).toBe("s-1");

@@ -94,6 +94,24 @@ export interface AdapterRequest {
    * such as a build role's report. Absent, the method's schema applies.
    */
   output?: AdapterOutput;
+  /** The team chat bus to attach to this call only; see `src/team/`. */
+  team?: TeamAttachment;
+}
+
+/**
+ * The team chat MCP server for one agent call. The adapter attaches it on
+ * this call only, a resume included, and passes `token` as the bearer
+ * token without putting it on the command line.
+ */
+export interface TeamAttachment {
+  /** The MCP server name the CLI registers, which prefixes the tool names. */
+  server: string;
+  /** The streamable HTTP endpoint, such as `http://127.0.0.1:PORT/mcp`. */
+  url: string;
+  /** The agent's own token; the bus knows the sender from it. */
+  token: string;
+  /** The bus tools the agent may call, such as `send_message`. */
+  tools: readonly string[];
 }
 
 /** An answer shape: the schema that parses the answer, and the JSON Schema the CLI gets. */

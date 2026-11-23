@@ -33,6 +33,7 @@ describe("events", () => {
         "finding.changed",
         "handoff",
         "lease.settled",
+        "message.sent",
         "notification",
         "ports.changed",
         "role.reassigned",

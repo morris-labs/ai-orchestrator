@@ -20,7 +20,7 @@ import { PolicyCommandSchema } from "./policy.js";
 import { TaskSpecialtiesSchema } from "./specialties.js";
 
 /** An ID in the build plan, such as `AC2` or `T1`. */
-const PlanIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,31}$/, {
+export const PlanIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,31}$/, {
   message: "use letters, digits, `_`, `.`, and `-`, at most 32 characters",
 });
 
