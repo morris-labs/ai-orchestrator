@@ -366,6 +366,7 @@ export function buildLaunchSpec(
     `${ENGINE_ENV.container}=${input.container}`,
     `${ENGINE_ENV.engineVersion}=${input.engine.version}`,
     `${ENGINE_ENV.stateDir}=${STATE_MOUNT}`,
+    `${ENGINE_ENV.projectId}=${input.projectId}`,
     tcpBroker
       ? `${BROKER_ENV.url}=${brokerTcpUrl(tcpBroker.port)}`
       : `${BROKER_ENV.socket}=${BROKER_SOCKET_PATH}`,
@@ -457,6 +458,7 @@ export function toDockerRunArgs(
     ENGINE_ENV.container,
     ENGINE_ENV.engineVersion,
     ENGINE_ENV.stateDir,
+    ENGINE_ENV.projectId,
     BROKER_ENV.socket,
     BROKER_ENV.url,
   ]);

@@ -7,6 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import {
   ACCOUNT_DIR_ENV,
+  BUILD_SOCKET_ENV,
   BoxCreateSchema,
   BoxInputSchema,
   BoxUpdateSchema,
@@ -365,8 +366,10 @@ export class BoxService {
       const prepared = this.deps.prepareAccount(program, account.name);
       for (const problem of prepared.problems) this.deps.log?.(`${account.id}: ${problem}`);
     }
+    // The box ID tells the `aio-build` command which box asks for a build.
     const command = buildSessionCommand(program, args, {
       [ACCOUNT_DIR_ENV[program]]: account.containerDir,
+      [BUILD_SOCKET_ENV.boxId]: box.id,
     });
     const workDir = hostToContainer(boxWorkDir(box), this.hostOs);
     if (account?.claude) {
