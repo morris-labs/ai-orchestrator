@@ -143,19 +143,24 @@ export class RunContext {
         (await this.store.readJson<AgentOutcome<T>>(this.callFile(key))) ?? null,
       write: (key, outcome) => this.store.writeJson(this.callFile(key), outcome),
     };
+    const build = this.state.request.build;
     const routing: CallRouting = {
       fallbackOrder: FALLBACK_ORDER,
       canTake: (vendor, role) => VENDOR_ROLES[vendor].includes(role),
-      // The fixer never moves, and a continuation stays with its session.
+      // The fixer never moves, and a continuation stays with its session. A
+      // build's review run never moves a call either: like every build call,
+      // it waits for the vendor's reset.
       movable: (spec) =>
-        spec.allowFallback !== false && spec.role !== "fixer" && spec.method !== "continueReview",
+        !build &&
+        spec.allowFallback !== false &&
+        spec.role !== "fixer" &&
+        spec.method !== "continueReview",
       assigned: (spec, vendor, limitOf) => this.assignedVendor(spec, vendor, limitOf),
       moved: (role, from, to, reason, announce) => this.reassign(role, from, to, reason, announce),
       model: (vendor, tier, role) =>
         chooseCallModel(this.deps.models, this.policy.tierModels, vendor, tier, role),
       timeoutMs: (role) => this.timeouts[role],
     };
-    const build = this.state.request.build;
     return {
       id: this.state.id,
       // A build's review run names the build on its leases and events, so

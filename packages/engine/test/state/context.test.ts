@@ -798,3 +798,39 @@ describe("a vendor that reports a limit", () => {
     await expect(ctx.callAgent(review(ctx.state.request.repoPath))).resolves.toBeDefined();
   });
 });
+
+describe("a build's review run under a limit", () => {
+  const build = {
+    buildId: "01JBQ8ZC5W3X4Y6Z7A8B9CDEFG",
+    fixer: {
+      placement: {
+        seat: "developer",
+        vendor: "claude",
+        tier: "large",
+        effort: "medium",
+        sources: { vendor: "role", tier: "role", effort: "role" },
+        fresh: true,
+      },
+      context: "The build's task context.",
+    },
+  };
+
+  it("waits for the vendor's reset instead of moving the call to another vendor", async () => {
+    const resetAt = "2099-01-01T00:00:00.000Z";
+    const codex = limited("codex");
+    codex.detectLimit = () => ({ message: "usage limit", resetAt, kind: "usage_limit" }) as never;
+    const { ctx, events, clock } = await makeRun({
+      adapters: { codex, copilot: answering("copilot"), claude: answering("claude") },
+      request: { build },
+    });
+    clock.sleep = (_ms, _signal) => {
+      ctx.requestCancel();
+      return Promise.reject(new RunCancelled());
+    };
+
+    await expect(ctx.callAgent(review(ctx.state.request.repoPath))).rejects.toThrow();
+
+    expect(events.ofType("agent.started").map((e) => e.vendor)).toEqual(["codex"]);
+    expect(ctx.state.pausedUntil).toBe(resetAt);
+  });
+});
