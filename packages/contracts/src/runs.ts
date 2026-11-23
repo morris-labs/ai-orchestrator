@@ -15,6 +15,7 @@ import {
 import { BuildIdSchema } from "./build-events.js";
 import { RootCauseSummarySchema, SeveritySchema, type Severity } from "./findings.js";
 import { SeatPlacementSchema } from "./placements.js";
+import { PolicyCommandSchema } from "./policy.js";
 import { ModelTierChoiceSchema, ModelTierSchema, type ModelTier } from "./tiers.js";
 
 export const PipelineSchema = z.enum(["pre-push", "post-push"]);
@@ -225,6 +226,19 @@ export const BuildRunOptionSchema = z.object({
     /** The build's task context, which the fixer's prompt carries. */
     context: z.string().min(1),
   }),
+  /**
+   * The build plan's commands, which the run's gate runs in place of the
+   * policy file's tests, type checks, and lint. The rest of the policy file
+   * still applies. Absent only on a run that a build started before the
+   * field existed; that run gates with the policy file's commands.
+   */
+  gate: z
+    .object({
+      tests: z.array(PolicyCommandSchema),
+      typecheck: z.array(PolicyCommandSchema),
+      lint: z.array(PolicyCommandSchema),
+    })
+    .optional(),
 });
 export type BuildRunOption = z.infer<typeof BuildRunOptionSchema>;
 
