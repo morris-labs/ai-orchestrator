@@ -624,6 +624,7 @@ export class BuildContext {
           step: input.step,
           key: input.key,
           placement,
+          ...(input.placement?.otherThan ? { otherThan: input.placement.otherThan } : {}),
           outcome,
         });
         return outcome;

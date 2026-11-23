@@ -14,6 +14,7 @@ import {
   type SeatPlacement,
   type SessionBrief,
   type SessionRecord,
+  type Vendor,
 } from "@aio/contracts";
 import { RunCancelled, describeError, type AgentOutcome } from "../../calls/index.js";
 import { readJson } from "../../run/files.js";
@@ -34,6 +35,8 @@ export interface SeatSession {
   step: BuildStep;
   key: string;
   placement: SeatPlacement;
+  /** The vendor a rule keeps the seat's agents off, which every later turn keeps. */
+  otherThan?: Vendor;
   outcome: AgentOutcome<unknown>;
 }
 
@@ -126,6 +129,7 @@ export class SessionDesk {
       model: input.outcome.model,
       sessionId: input.outcome.sessionId,
       placement: input.placement,
+      ...(input.otherThan ? { otherThan: input.otherThan } : {}),
       reason: "step",
       turn: {
         key: input.key,
@@ -228,7 +232,11 @@ export class SessionDesk {
     }
     const key = `message-${message.id}`;
     const role = ctx.role(entry.seat);
-    const placement = ctx.seats.place(entry.seat);
+    // The rule that kept the session's first agent off a vendor holds for every turn.
+    const placement = ctx.seats.place(
+      entry.seat,
+      session.otherThan ? { otherThan: session.otherThan } : {},
+    );
     const reason = freshReason(session, placement, ctx.services.clock.now(), this.settings);
     const packs = await ctx.specialties(session.brief.specialties);
     const decisions = await ctx.decisionsText(session.taskIds);
@@ -287,6 +295,7 @@ export class SessionDesk {
           model: outcome.model,
           sessionId: outcome.sessionId,
           placement,
+          ...(session.otherThan ? { otherThan: session.otherThan } : {}),
           reason,
           replaces: session.id,
           turn,

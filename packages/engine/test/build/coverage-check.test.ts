@@ -259,6 +259,43 @@ describe("the coverage check", () => {
     expect(checker?.placement?.note).toMatch(/requires a vendor other than claude/);
   });
 
+  it("resumes the check's own session on its vendor for a message", async () => {
+    const world = await buildWorld({ steps: BUILD_PIPELINE });
+    const note = {
+      tool: "send_message",
+      arguments: {
+        type: "question",
+        to: "coverage-checker",
+        toTask: "coverage-check",
+        body: "Which test covers AC2?",
+      },
+    };
+    world.script({
+      claude: [testRound("round 1 of", REVISED_TEST), { ...DEVELOPER, busCalls: [note] }],
+      codex: [
+        { match: "Which test covers AC2?", output: { summary: "Read the message." } },
+        ALL_CHECKED,
+      ],
+    });
+
+    await world.start("cart-total", {
+      ...twoCriteriaPlan(),
+      placements: { "test-engineer": { vendor: "claude" } },
+    });
+    await world.settle("cart-total");
+
+    const codex = world.calls().filter((c) => c.cli === "codex");
+    expect(codex).toHaveLength(2);
+    expect(codex[0]!.resumeId).toBeNull();
+    expect(codex[1]!.resumeId).toEqual(expect.any(String));
+    const registry = JSON.parse(world.file("cart-total", "sessions.json")) as {
+      sessions: { seat: string; vendor: string; turns: unknown[] }[];
+    };
+    const checkers = registry.sessions.filter((s) => s.seat === "coverage-checker");
+    expect(checkers).toEqual([expect.objectContaining({ vendor: "codex" })]);
+    expect(checkers[0]!.turns).toHaveLength(2);
+  });
+
   it("skips the check in a small build", async () => {
     const world = await buildWorld({ steps: BUILD_PIPELINE });
     world.script({ codex: [testRound("round 1 of", REVISED_TEST)], claude: [DEVELOPER] });

@@ -84,6 +84,12 @@ export const SessionRecordSchema = z
     sessionId: z.string().min(1).nullable(),
     /** The placement the session runs on. A different one for its seat starts a fresh agent. */
     placement: SeatPlacementSchema,
+    /**
+     * The vendor a rule keeps the seat's agents off, such as the Test
+     * engineer's vendor for the coverage check. A message turn places the
+     * seat with it too.
+     */
+    otherThan: VendorSchema.optional(),
     reason: SessionReasonSchema,
     /** The session this one took over from. */
     replaces: SessionIdSchema.nullable().default(null),

@@ -27,6 +27,8 @@ export interface SessionStart {
   model: string;
   sessionId: string | null;
   placement: SeatPlacement;
+  /** The vendor a rule keeps the seat's agents off. */
+  otherThan?: Vendor;
   reason: SessionReason;
   /**
    * The session this one takes over from. Absent, a new session replaces
