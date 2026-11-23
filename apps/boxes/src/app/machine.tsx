@@ -30,6 +30,7 @@ export const BOX_EVENT_TYPES = [
   "build.inbox",
   "message.sent",
   "lease.settled",
+  "build.seat.usage",
 ] as const;
 
 export interface MachineInfo {
