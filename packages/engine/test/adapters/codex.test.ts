@@ -158,6 +158,38 @@ describe("CodexAdapter.buildArgs", () => {
     );
   });
 
+  it("attaches the team chat bus on a first call and on a resume, with approval and a token variable", () => {
+    const team = {
+      server: "aio_team",
+      url: "http://127.0.0.1:41000/mcp",
+      token: "secret-token-value",
+      tools: ["send_message"],
+    };
+    const overrides = [
+      "-c",
+      'mcp_servers.aio_team.url="http://127.0.0.1:41000/mcp"',
+      "-c",
+      'mcp_servers.aio_team.bearer_token_env_var="AIO_TEAM_TOKEN"',
+      "-c",
+      'mcp_servers.aio_team.default_tools_approval_mode="approve"',
+    ];
+    const first = adapter.buildArgs({ ...base, team }, "/s.json");
+    const resumed = adapter.buildArgs({ ...base, team, sessionId: "thread-1" }, "/s.json");
+    for (const args of [first, resumed]) {
+      expect(args.join(" ")).toContain(overrides.join(" "));
+      expect(args.at(-1)).toBe("-");
+      expect(args.join(" ")).not.toContain("secret-token-value");
+    }
+    expect(resumed.slice(0, 5)).toEqual([
+      "exec",
+      "--sandbox",
+      "danger-full-access",
+      "resume",
+      "thread-1",
+    ]);
+    expect(adapter.buildArgs(base, "/s.json").join(" ")).not.toContain("mcp_servers");
+  });
+
   it("runs a read-only call with a scratch directory in that directory", () => {
     const request = { ...base, scratchDir: "/runs/r1/scratch/F-1" };
     expect(adapter.buildArgs(request, "/s.json").slice(0, 3)).toEqual([

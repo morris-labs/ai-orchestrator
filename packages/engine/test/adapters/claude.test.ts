@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
   ClaudeAdapter,
+  claudeMcpConfig,
   ClaudeStreamParser,
   claudeAccount,
   claudeTokens,
@@ -306,6 +307,59 @@ describe("ClaudeAdapter.buildArgs", () => {
     expect(args[args.indexOf("--permission-mode") + 1]).toBe("bypassPermissions");
     expect(args[args.indexOf("--resume") + 1]).toBe("abc");
     expect(args).not.toContain("--tools");
+  });
+
+  it("attaches the team chat bus through a config file, with its tools allowed", () => {
+    const team = {
+      server: "aio_team",
+      url: "http://127.0.0.1:41000/mcp",
+      token: "secret-token-value",
+      tools: ["send_message"],
+    };
+    const readOnly = adapter.buildArgs(
+      req(z.object({}), { team }),
+      {},
+      { mcpConfig: "/t/mcp.json" },
+    );
+    expect(readOnly[readOnly.indexOf("--mcp-config") + 1]).toBe("/t/mcp.json");
+    expect(readOnly).toContain("--strict-mcp-config");
+    expect(readOnly[readOnly.indexOf("--allowedTools") + 1]).toMatch(
+      /^Read,.*,mcp__aio_team__send_message$/,
+    );
+    const write = adapter.buildArgs(
+      req(z.object({}), { team, tools: "write", sessionId: "abc" }),
+      {},
+      { mcpConfig: "/t/mcp.json" },
+    );
+    expect(write[write.indexOf("--allowedTools") + 1]).toBe("mcp__aio_team__send_message");
+    expect(write).toContain("--strict-mcp-config");
+    expect(write[write.indexOf("--resume") + 1]).toBe("abc");
+    expect([...readOnly, ...write].join(" ")).not.toContain("secret-token-value");
+  });
+
+  it("writes the bus's URL and the agent's token in the MCP config", () => {
+    expect(
+      claudeMcpConfig({
+        server: "aio_team",
+        url: "http://127.0.0.1:41000/mcp",
+        token: "tok",
+        tools: ["send_message"],
+      }),
+    ).toEqual({
+      mcpServers: {
+        aio_team: {
+          type: "http",
+          url: "http://127.0.0.1:41000/mcp",
+          headers: { Authorization: "Bearer tok" },
+        },
+      },
+    });
+  });
+
+  it("passes no MCP flags without the bus", () => {
+    const args = adapter.buildArgs(req(z.object({}), { tools: "write" }));
+    expect(args).not.toContain("--mcp-config");
+    expect(args).not.toContain("--allowedTools");
   });
 
   it("adds each extra directory with --add-dir", () => {
