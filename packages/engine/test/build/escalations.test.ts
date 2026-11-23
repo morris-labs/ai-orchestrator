@@ -1,7 +1,7 @@
 // Escalations (#74): an escalation pauses only the task it names and the
 // tasks that depend on it, independent tasks go on, and a resolve request
 // resumes what it paused and records how it was resolved.
-import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { BuildPlanInput, Escalation } from "@aio/contracts";
 import { describe, expect, it } from "vitest";
@@ -425,21 +425,53 @@ describe("resolutions", () => {
     expect(state.escalations[0]).toMatchObject({ status: "resolved", resolution: { by: "owner" } });
   });
 
+  it("refuses at build start a plan whose placement breaks the single-vendor setting", async () => {
+    const world = await buildWorld();
+    await expect(
+      world.start(
+        "cart-total",
+        cartPlan({ singleVendor: "claude", placements: { developer: { vendor: "codex" } } }),
+      ),
+    ).rejects.toMatchObject({
+      code: "validation",
+      message: expect.stringMatching(/placements\.developer\.vendor.*codex.*singleVendor.*claude/s),
+    });
+    expect(world.git(world.root, "branch", "--list", "build/*")).toBe("");
+  });
+
   it("refuses a retry of a placement escalation that only a plan change fixes, and names the change", async () => {
     const world = await buildWorld();
-    world.script({ claude: [answer("T1", { "src/cart.mjs": CART_DONE })] });
-    await world.start(
-      "cart-total",
-      cartPlan({ singleVendor: "claude", placements: { developer: { vendor: "codex" } } }),
-    );
-    const waiting = await world.settle("cart-total");
-    expect(waiting.escalations).toEqual([
-      expect.objectContaining({ id: "E1", kind: "placement", taskId: "T1" }),
-    ]);
+    world.script({
+      claude: [
+        {
+          match: "Task T1",
+          times: 1,
+          output: {
+            summary: "Stopped: the price service is down.",
+            criteria: [{ id: "AC1", met: false }],
+            blocked: { kind: "service", name: "price-api", reason: "Connection refused." },
+          },
+        },
+        answer("T1", { "src/cart.mjs": CART_DONE }),
+      ],
+    });
+    await world.start("cart-total", cartPlan({ singleVendor: "claude" }));
+    await world.settle("cart-total");
+    // A build that an older engine started with a plan placement that breaks the setting.
+    const file = join(world.dir("cart-total"), "state.json");
+    const saved = JSON.parse(readFileSync(file, "utf8")) as {
+      placements: { plan: Record<string, unknown> };
+    };
+    saved.placements.plan = { developer: { vendor: "codex" } };
+    writeFileSync(file, JSON.stringify(saved));
+    await world.restart();
+    await world.manager.resolve("cart-total", { escalation: "E1", action: "retry", by: "owner" });
+    const waiting = await world.waitFor("cart-total", (s) => s.escalations.length === 2);
+    expect(waiting.escalations[1]).toMatchObject({ id: "E2", kind: "placement", taskId: "T1" });
 
     for (const by of ["project_manager", "owner"] as const) {
       await expect(
-        world.manager.resolve("cart-total", { escalation: "E1", action: "retry", by }),
+        world.manager.resolve("cart-total", { escalation: "E2", action: "retry", by }),
       ).rejects.toMatchObject({
         code: "validation",
         message: expect.stringMatching(
@@ -448,11 +480,11 @@ describe("resolutions", () => {
       });
     }
     const after = await world.manager.get("cart-total");
-    expect(after?.escalations[0]).toMatchObject({ status: "open" });
-    expect(world.calls()).toEqual([]);
+    expect(after?.escalations[1]).toMatchObject({ status: "open" });
+    expect(world.calls()).toHaveLength(1);
     // The Project manager can still hand it to the owner.
     await world.manager.resolve("cart-total", {
-      escalation: "E1",
+      escalation: "E2",
       action: "escalate",
       note: "Plan fix.",
     });
