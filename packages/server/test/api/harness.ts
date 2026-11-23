@@ -96,6 +96,40 @@ export function defaultEngine(): FakeEngine {
     { container: CONTAINER, projectId: PROJECT_ID },
     {
       "engine.runs.list": () => ({ runs: [runState] }),
+      "engine.builds.post": (input) => {
+        const post = input.body as { to: string; toTask?: string; type: string; body: string };
+        const message = {
+          version: 1,
+          id: "M1",
+          buildId: "01JB8Z5K3W6Q2V9X4T7R0M1N2Q",
+          from: { kind: "owner" },
+          to: { kind: "seat", seat: post.to, taskId: post.toTask ?? null },
+          routing: "addressed",
+          type: post.type,
+          taskId: post.toTask ?? null,
+          milestone: null,
+          paths: [],
+          body: post.body,
+          createdAt: "2026-10-28T09:05:00.000Z",
+        };
+        const { buildId, to, taskId, milestone, body, createdAt } = message;
+        return {
+          route: "agent",
+          message,
+          decision: {
+            version: 1,
+            id: "D1",
+            buildId,
+            messageId: "M1",
+            to,
+            taskId,
+            milestone,
+            body,
+            createdAt,
+            planChange: null,
+          },
+        };
+      },
       "engine.repos.list": () => ({
         repos: [
           {

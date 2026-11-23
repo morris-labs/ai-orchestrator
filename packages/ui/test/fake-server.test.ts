@@ -134,6 +134,27 @@ describe("FakeServer", () => {
     expect(server.contractViolations).toEqual([]);
   });
 
+  it("takes an owner post, adds it to the conversation, and answers with its decision", async () => {
+    const build = makeBuild({ id: "01JB8Z5K3W6Q2V9X4T7R0M1N2Q" });
+    const server = new FakeServer({ builds: [build] });
+    const c = new ApiClient({ fetch: server.fetch });
+    const answer = await c.call("builds.post", {
+      params: { buildId: build.id },
+      body: { to: "developer", toTask: "T1", body: "Keep whole dollars." },
+    });
+    if (answer.route !== "agent") throw new Error(`Expected the agent route, got ${answer.route}.`);
+    expect(answer.message).toMatchObject({
+      id: "M1",
+      from: { kind: "owner" },
+      to: { kind: "seat", seat: "developer", taskId: "T1" },
+      type: "note",
+    });
+    expect(answer.decision).toMatchObject({ id: "D1", messageId: "M1", taskId: "T1" });
+    const { messages } = await c.call("builds.messages", { params: { buildId: build.id } });
+    expect(messages).toEqual([answer.message]);
+    expect(server.contractViolations).toEqual([]);
+  });
+
   it("answers 400 to a body the schema rejects", async () => {
     const server = new FakeServer();
     const res = await server.fetch("http://x/api/v1/boxes", {
