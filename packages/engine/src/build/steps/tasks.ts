@@ -329,11 +329,9 @@ async function attempt(
   const gate = await runTaskGate({
     worktree: ctx.worktree,
     base,
-    writable: [
-      ...writablePaths(ctx.role(task.role), roleTask(ctx, task, "")),
-      ...amended,
-      ...(await othersTurnPaths(ctx, task, base)),
-    ],
+    writable: writablePaths(ctx.role(task.role), roleTask(ctx, task, "")),
+    // By exact name: a path such as `notes/*.md` must not exempt other notes.
+    exempt: [...amended, ...(await othersTurnPaths(ctx, task, base))],
     commands: ctx.plan.commands,
     lock,
     shell: ctx.services.shell,
