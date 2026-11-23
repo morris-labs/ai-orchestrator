@@ -207,6 +207,21 @@ describe.each(["claude", "codex", "copilot"] as const)(
   },
 );
 
+describe("codex resume usage", () => {
+  it("reports only the resumed turn's tokens, not the thread's total", async () => {
+    const { dir, adapters } = setup();
+    const first = await adapters.codex.review(request(dir, "FIND bugs"));
+    expect(first.tokens).toMatchObject({ input: 5000, output: 300 });
+    const more = await adapters.codex.continueReview({
+      ...request(dir, "MORE please"),
+      sessionId: first.sessionId!,
+    });
+    // The mock reports the thread's total (6200 and 380) on `turn.completed`,
+    // as Codex does, so the adapter must subtract the earlier turns.
+    expect(more.tokens).toMatchObject({ input: 1200, output: 80, fresh: 1200, cacheRead: 0 });
+  });
+});
+
 describe("mock CLI state lock", () => {
   it("breaks a lock that a killed mock left behind", async () => {
     const { dir, adapters } = setup();
