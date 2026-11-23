@@ -321,6 +321,8 @@ export function applyEvent(prev: DashboardState, event: AioEvent): DashboardStat
   };
   switch (event.type) {
     case "agent.started": {
+      // A build's own calls belong to no review run.
+      if (event.runId === null) return state;
       const key = agentKey(event.runId, event.agentId);
       return {
         ...state,
@@ -346,6 +348,7 @@ export function applyEvent(prev: DashboardState, event: AioEvent): DashboardStat
       };
     }
     case "agent.finished": {
+      if (event.runId === null) return state;
       const key = agentKey(event.runId, event.agentId);
       const started = state.agents[key];
       const agent: AgentView = {
@@ -543,6 +546,10 @@ export function applyEvent(prev: DashboardState, event: AioEvent): DashboardStat
     }
     case "settings.changed":
       return { ...state, settingsChangedAt: event.time };
+    case "build.changed":
+    case "build.task.changed":
+      // The review dashboard shows review runs; builds have their own view.
+      return state;
   }
 }
 

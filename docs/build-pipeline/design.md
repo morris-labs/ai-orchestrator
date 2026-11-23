@@ -106,6 +106,9 @@ in its `.aio/team/` directory. During planning, the owner can tell the
 Project manager to change a role's rules for one build, and the Scribe
 records the change in the build plan.
 
+For the fields of a role file and how the engine loads it, see
+[Role definition format](roles.md).
+
 ### Specialties
 
 Each agent runs as its own session, which the engine starts from the role
@@ -123,7 +126,8 @@ technology that needs different rules gets a role file of its own.
 A specialty names a skill in the account's skills folder, and the engine
 reads that skill's text for an agent on any vendor. A repository adds its own
 specialties in its `.aio/team/specialties/` directory. Usage reports break
-down by seat and by specialty.
+down by seat and by specialty. For how to add a specialty, see
+[Specialties](specialties.md).
 
 ### Core team
 

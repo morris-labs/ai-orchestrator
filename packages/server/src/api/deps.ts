@@ -5,6 +5,8 @@ import type {
   EngineRouteKey,
   EventType,
   Job,
+  BuildSummary,
+  BuildUsage,
   Notification,
   Finding,
   RunState,
@@ -106,6 +108,14 @@ export interface ApiDeps {
     clear(vendor: Vendor, account?: string): Promise<number>;
     samples(query: { vendor?: Vendor; since?: string; until?: string }): TimedUsageSample[];
     forgetAccount?(vendor: Vendor, account: string): void;
+  };
+  builds: {
+    /** Every build the server has seen, or one project's, newest first. */
+    list(projectId?: string): BuildSummary[];
+    /** One build's latest state, or `undefined` for a build the server hasn't seen. */
+    get(buildId: string): BuildSummary | undefined;
+    /** One build's settled usage, or `undefined` for a build the server hasn't seen. */
+    usage(buildId: string): BuildUsage | undefined;
   };
   notifications: {
     list(query: { unread?: boolean }): Notification[];

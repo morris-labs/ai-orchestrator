@@ -602,6 +602,30 @@ export function buildDemoEvents(): AioEvent[] {
     "server",
   );
 
+  // A build in the same project; the review dashboard leaves it out.
+  const BUILD_ID = "01JB8Z5K3W6Q2V9X4T7R0M1N2Q";
+  emit({
+    type: "build.changed",
+    build: {
+      id: BUILD_ID,
+      slug: "add-export",
+      projectId: PROJECT,
+      container: CONTAINER,
+      status: "running",
+      step: "tasks",
+      boxId: null,
+      createdAt: new Date(T0).toISOString(),
+      updatedAt: new Date(T0 + clock * 1000).toISOString(),
+    },
+  });
+  emit({
+    type: "build.task.changed",
+    buildId: BUILD_ID,
+    taskId: "T1",
+    status: "running",
+    previousStatus: "pending",
+  });
+
   const missing = EVENT_TYPES.filter((t) => !events.some((e) => e.type === t));
   if (missing.length > 0) throw new Error(`The demo misses event types: ${missing.join(", ")}.`);
   return events;

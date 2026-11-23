@@ -25,6 +25,8 @@ describe("events", () => {
         "agent.finished",
         "agent.started",
         "box.changed",
+        "build.changed",
+        "build.task.changed",
         "ceiling.crossed",
         "container.changed",
         "container.stats",

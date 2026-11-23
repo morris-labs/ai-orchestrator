@@ -11,6 +11,7 @@ import {
   type AioEvent,
   type ApiErrorCode,
   type BoxView,
+  type BuildSummary,
   type ConversationSummary,
   type GlobalSettings,
   type Job,
@@ -81,6 +82,8 @@ export interface FakeState {
   image: ImageStatus;
   updates: Updates;
   notifications: Notification[];
+  /** The builds the server has seen, in no order; `builds.list` sorts them. */
+  builds: BuildSummary[];
   /** Project ids whose container has stale mounts: `boxes.start` refuses without `force`. */
   staleProjects: string[];
   /** Subdirectory names by absolute path, for `fs.dirs`. */
@@ -99,6 +102,7 @@ export interface FakeServerOptions {
   settings?: Partial<GlobalSettings>;
   conversations?: Record<string, ConversationSummary[]>;
   accounts?: AccountView[];
+  builds?: BuildSummary[];
   /** False leaves jobs running until `finishJob()`. Default true: jobs finish right away. */
   autoFinishJobs?: boolean;
 }
@@ -180,6 +184,7 @@ export class FakeServer {
         claudeCode: { image: "2.1.300", latest: "2.1.300", stale: false },
       },
       notifications: [],
+      builds: options.builds ?? [],
       staleProjects: [],
       dirs: {
         "/home/user": ["src", "work"],
@@ -338,6 +343,24 @@ export class FakeServer {
     this.eventLog.push(numbered);
     for (const s of this.socketsFor("/api/v1/events")) s.serverSend(numbered);
     return numbered;
+  }
+
+  /**
+   * Stores a build's state and emits its `build.changed` event, as the
+   * server does when an engine reports the build.
+   */
+  putBuild(build: BuildSummary): AioEvent {
+    this.state.builds = [...this.state.builds.filter((b) => b.id !== build.id), build];
+    return this.emit({
+      type: "build.changed",
+      id: `build-${build.id}-${build.updatedAt}`,
+      time: build.updatedAt,
+      source: "server",
+      streamId: this.streamId,
+      seq: 0,
+      sourceSeq: 0,
+      build,
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -879,6 +902,23 @@ const defaultHandlers: Partial<Record<HttpRouteKey, FakeHandler>> = {
     return { mounts: s.state.globalMounts, staleContainers: [] };
   },
   "usage.get": () => ({ vendors: [] }),
+  "builds.list": (r, s) => ({
+    builds: s.state.builds
+      .filter((b) => !r.query.projectId || b.projectId === r.query.projectId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id)),
+  }),
+  "builds.get": (r, s) => {
+    const build = s.state.builds.find((b) => b.id === r.params.buildId);
+    if (!build) throw new FakeApiError("not_found", `No build ${r.params.buildId as string}.`, 404);
+    return build;
+  },
+  "builds.usage": (r) => ({
+    buildId: r.params.buildId as string,
+    total: { calls: 0, tokensIn: 0, tokensOut: 0, premiumRequests: 0, costEstimate: 0 },
+    bySeat: [],
+    byStep: [],
+    bySpecialty: [],
+  }),
   "notifications.list": (_r, s) => ({ notifications: s.state.notifications }),
   "notifications.read": () => ({ ok: true }),
 };

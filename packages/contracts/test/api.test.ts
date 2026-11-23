@@ -57,6 +57,7 @@ describe("route catalog", () => {
       "events.",
       "engine.repos.",
       "engine.runs.",
+      "engine.builds.",
       "engine.findings.",
       "engine.usage.",
       "engine.ports",

@@ -19,6 +19,7 @@ import { EngineLeaseBroker } from "../events/leases.js";
 import { scanListeners } from "../ports/scan.js";
 import { PortWatcher } from "../ports/watcher.js";
 import type { AdapterSet } from "../core.js";
+import { createBuildManager, type BuildManager } from "../build/manager.js";
 import { createRunManager } from "../state/manager.js";
 import { ChildRegistry, setChildRegistry } from "../process/children.js";
 import { setCredentialSource } from "../process/credentials.js";
@@ -105,6 +106,7 @@ export interface EngineHandle {
   hub: EventHub;
   leases: EngineLeaseBroker;
   runs: RunManager;
+  builds: BuildManager;
   ports: PortWatcher;
   /** The address the API listens on. */
   address: { host: string; port: number };
@@ -124,6 +126,8 @@ export interface StartOptions {
   adapters?: AdapterSet;
   /** Replaces the core, for tests. */
   runs?: RunManager;
+  /** Replaces the build manager, for tests. */
+  builds?: BuildManager;
   portIntervalMs?: number;
 }
 
@@ -161,6 +165,23 @@ export async function startEngine(options: StartOptions): Promise<EngineHandle> 
     leases.close();
     throw err;
   }
+  let builds: BuildManager;
+  try {
+    builds =
+      options.builds ??
+      (await createBuildManager({
+        projectRoot,
+        container,
+        events: hub,
+        leases,
+        adapters: options.adapters ?? {},
+        log,
+      }));
+  } catch (err) {
+    await runs.close?.();
+    leases.close();
+    throw err;
+  }
   const repos = new RepoService({ projectRoot, runner, log });
   const ports = new PortWatcher({
     container,
@@ -181,6 +202,7 @@ export async function startEngine(options: StartOptions): Promise<EngineHandle> 
     leases,
     log,
     runs,
+    builds,
     repos,
     ports,
   });
@@ -197,7 +219,11 @@ export async function startEngine(options: StartOptions): Promise<EngineHandle> 
   log.info("The engine is listening", { host, port: boundPort, engineVersion, container });
 
   const stateDir = options.stateDir ?? env[ENGINE_ENV.stateDir];
-  const activeRuns = startActiveRunsWriter(stateDir, () => runs.activeRunCount(), log);
+  const activeRuns = startActiveRunsWriter(
+    stateDir,
+    () => runs.activeRunCount() + builds.activeCount(),
+    log,
+  );
 
   let closing: Promise<void> | null = null;
   const close = () => {
@@ -209,14 +235,15 @@ export async function startEngine(options: StartOptions): Promise<EngineHandle> 
       // their pending lease requests, so those runs stay `running` and the
       // next engine continues them instead of finding them failed.
       const runsClosed = runs.close?.();
+      const buildsClosed = builds.close();
       leases.close();
-      await runsClosed;
+      await Promise.all([runsClosed, buildsClosed]);
       activeRuns.stop(0);
       log.info("The engine stopped");
     })();
     return closing;
   };
-  return { app, hub, leases, runs, ports, address: { host, port: boundPort }, close };
+  return { app, hub, leases, runs, builds, ports, address: { host, port: boundPort }, close };
 }
 
 /**

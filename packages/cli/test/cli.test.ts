@@ -953,6 +953,16 @@ describe("review", () => {
     expect(await cli([...args, "--pipeline", "post-push", "--pr", "1"])).not.toBe(0);
   });
 
+  it("requests a Copilot review only with --copilot-review", async () => {
+    server.on("POST /api/v1/runs", { status: 201, body: runState });
+    const args = ["review", "start", "--project", PROJECT_ID, "--repo", "/r"];
+    const postPush = [...args, "--pipeline", "post-push", "--pr", "1"];
+    expect(await cli(postPush)).toBe(0);
+    expect(last()?.body).toMatchObject({ copilotReview: false });
+    expect(await cli([...postPush, "--copilot-review"])).toBe(0);
+    expect(last()?.body).toMatchObject({ pipeline: "post-push", copilotReview: true });
+  });
+
   it("passes the round and continuation caps", async () => {
     server.on("POST /api/v1/runs", { status: 201, body: runState });
     const args = ["review", "start", "--project", PROJECT_ID, "--repo", "/r", "--read-only"];

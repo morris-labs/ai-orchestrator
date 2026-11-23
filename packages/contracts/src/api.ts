@@ -94,6 +94,13 @@ import {
   UsageSampleSchema,
   UsageWindowSchema,
 } from "./events.js";
+import {
+  BuildListQuerySchema,
+  BuildListSchema,
+  BuildSummarySchema,
+  BuildUsageSchema,
+} from "./build-events.js";
+import { BuildCreateSchema, BuildStateSchema } from "./builds.js";
 import { FindingSchema, SeveritySchema, VerdictSchema } from "./findings.js";
 import {
   EnrollmentCodeSchema,
@@ -1820,6 +1827,29 @@ export const serverRoutes = {
     response: z.object({ vendors: z.array(VendorUsageSchema), cleared: z.number().int() }),
   }),
 
+  // Builds
+  "builds.list": http({
+    method: "GET",
+    path: `${V1}/builds`,
+    summary:
+      "List the builds the server has seen, newest first, across every project or for one project.",
+    query: BuildListQuerySchema,
+    response: BuildListSchema,
+  }),
+  "builds.get": http({
+    method: "GET",
+    path: `${V1}/builds/:buildId`,
+    summary: "Get a build's latest state. Returns not_found for a build the server hasn't seen.",
+    response: BuildSummarySchema,
+  }),
+  "builds.usage": http({
+    method: "GET",
+    path: `${V1}/builds/:buildId/usage`,
+    summary:
+      "A build's settled usage, in total, by seat, and by step. Returns not_found for a build the server hasn't seen.",
+    response: BuildUsageSchema,
+  }),
+
   // Machines (multi-host)
   "machines.list": http({
     method: "GET",
@@ -1944,6 +1974,36 @@ export const engineRoutes = {
       "List the engine's usage samples from its run files.",
     ),
   ),
+  "engine.builds.create": http({
+    method: "POST",
+    path: `${V1}/builds`,
+    summary: "Start a build from a build plan.",
+    body: BuildCreateSchema,
+    response: BuildStateSchema,
+    status: 201,
+    errors: ["conflict"],
+  }),
+  "engine.builds.get": http({
+    method: "GET",
+    path: `${V1}/builds/:slug`,
+    summary: "Get a build's state.",
+    response: BuildStateSchema,
+    errors: ["not_found"],
+  }),
+  "engine.builds.pause": http({
+    method: "POST",
+    path: `${V1}/builds/:slug/pause`,
+    summary: "Pause a build after its current agent call or gate.",
+    response: BuildStateSchema,
+    errors: ["not_found", "invalid_state"],
+  }),
+  "engine.builds.resume": http({
+    method: "POST",
+    path: `${V1}/builds/:slug/resume`,
+    summary: "Resume a paused build.",
+    response: BuildStateSchema,
+    errors: ["not_found", "invalid_state"],
+  }),
   "engine.ports": http({
     method: "GET",
     path: `${V1}/ports`,

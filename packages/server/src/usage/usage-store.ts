@@ -1,7 +1,10 @@
 // The SQLite mirror of usage samples and lease settlements, across every
 // engine. `usage.samples` and `usage.get` answer from it.
 import {
+  BuildStepSchema,
   TimedUsageSampleSchema,
+  type BuildStep,
+  type BuildUsage,
   type LeaseSettlement,
   type TimedUsageSample,
   type UsageWindow,
@@ -10,6 +13,42 @@ import {
 import type { SqlDatabase } from "../api/core-interface.js";
 
 type Row = { json: string };
+
+/** One group of settlements as SQLite sums it. */
+type TotalsRow = {
+  key: string | null;
+  calls: number;
+  tokens_in: number;
+  tokens_out: number;
+  premium_requests: number;
+  cost_estimate: number;
+};
+
+const TOTALS = `COUNT(*) AS calls, COALESCE(SUM(tokens_in), 0) AS tokens_in,
+  COALESCE(SUM(tokens_out), 0) AS tokens_out,
+  COALESCE(SUM(premium_requests), 0) AS premium_requests,
+  COALESCE(SUM(cost_estimate), 0) AS cost_estimate`;
+
+function totals(row: TotalsRow) {
+  return {
+    calls: row.calls,
+    tokensIn: row.tokens_in,
+    tokensOut: row.tokens_out,
+    premiumRequests: row.premium_requests,
+    costEstimate: row.cost_estimate,
+  };
+}
+
+/** Compares rows by key with `compare`, with a `null` key last. */
+function nullsLast<K>(compare: (a: K, b: K) => number) {
+  return (a: { key: K | null }, b: { key: K | null }) => {
+    if (a.key === null) return b.key === null ? 0 : 1;
+    if (b.key === null) return -1;
+    return compare(a.key, b.key);
+  };
+}
+
+const STEP_ORDER: readonly BuildStep[] = BuildStepSchema.options;
 
 function parseRows(rows: unknown[]): TimedUsageSample[] {
   return (rows as Row[]).map((r) => TimedUsageSampleSchema.parse(JSON.parse(r.json)));
@@ -43,13 +82,18 @@ export class UsageStore {
     this.db
       .prepare(
         `INSERT INTO svc_lease_settlements
-         (time, lease_id, run_id, vendor, role, tokens_in, tokens_out, premium_requests, cost_estimate)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (time, lease_id, run_id, build_id, seat, step, specialties, vendor, role, tokens_in,
+          tokens_out, premium_requests, cost_estimate)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         time,
         s.leaseId,
         s.runId,
+        s.buildId ?? null,
+        s.seat ?? null,
+        s.step ?? null,
+        s.specialties?.length ? JSON.stringify(s.specialties) : null,
         s.vendor,
         s.role,
         s.tokens.in,
@@ -57,6 +101,50 @@ export class UsageStore {
         s.premiumRequests,
         s.costEstimate,
       );
+  }
+
+  /**
+   * One build's settled usage, in total, by seat, by step, and by
+   * specialty. It counts every call that names the build, the calls of a
+   * review run the build started included. A call with several specialties
+   * counts toward each of them.
+   */
+  buildUsage(buildId: string): BuildUsage {
+    const group = (column: "seat" | "step") =>
+      this.db
+        .prepare(
+          `SELECT ${column} AS key, ${TOTALS} FROM svc_lease_settlements
+           WHERE build_id = ? GROUP BY ${column}`,
+        )
+        .all(buildId) as TotalsRow[];
+    const total = this.db
+      .prepare(`SELECT NULL AS key, ${TOTALS} FROM svc_lease_settlements WHERE build_id = ?`)
+      .get(buildId) as TotalsRow;
+    const specialties = this.db
+      .prepare(
+        `SELECT j.value AS key, ${TOTALS}
+         FROM svc_lease_settlements, json_each(svc_lease_settlements.specialties) AS j
+         WHERE build_id = ? GROUP BY j.value
+         UNION ALL
+         SELECT NULL AS key, ${TOTALS} FROM svc_lease_settlements
+         WHERE build_id = ? AND specialties IS NULL HAVING COUNT(*) > 0`,
+      )
+      .all(buildId, buildId) as TotalsRow[];
+    const seats = group("seat");
+    const steps = group("step") as (TotalsRow & { key: BuildStep | null })[];
+    return {
+      buildId,
+      total: totals(total),
+      bySeat: seats
+        .sort(nullsLast<string>((a, b) => (a < b ? -1 : a > b ? 1 : 0)))
+        .map((r) => ({ seat: r.key, ...totals(r) })),
+      byStep: steps
+        .sort(nullsLast<BuildStep>((a, b) => STEP_ORDER.indexOf(a) - STEP_ORDER.indexOf(b)))
+        .map((r) => ({ step: r.key, ...totals(r) })),
+      bySpecialty: specialties
+        .sort(nullsLast<string>((a, b) => (a < b ? -1 : a > b ? 1 : 0)))
+        .map((r) => ({ specialty: r.key, ...totals(r) })),
+    };
   }
 
   /** Samples matching the query, oldest first. `since` and `until` are inclusive. */

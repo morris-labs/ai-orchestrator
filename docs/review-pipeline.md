@@ -201,7 +201,7 @@ according to the profile and the usage ceilings.
 |---|---|---|
 | Claude | `claude -p` | Fixer, always. Reviewer and disprover when the profile allows. |
 | Codex | `codex exec` | Reviewer, disprover, and fix confirmer. |
-| GitHub Copilot | `copilot -p`, with automatic model selection | Reviewer. Disprover of Codex findings in `offload`. Pull request reviewer after the push. |
+| GitHub Copilot | `copilot -p`, with automatic model selection | Reviewer. Disprover of Codex findings in `offload`. Pull request reviewer after the push, when the run requests a Copilot review. |
 
 A run has four roles: `reviewer` (one or more vendors), `disprover`,
 `confirmer`, and `fixer`. By default, the disprover and the confirmer come
@@ -791,20 +791,40 @@ The engine refuses a retry, and changes nothing, in the following cases:
 After you push from a run's summary, the post-push loop runs on the pull
 request:
 
-1. Pushes the branch, opens or updates the pull request, and requests a
-   Copilot review.
-1. Polls the pull request until the Copilot review and the checks finish.
+1. Pushes the branch, opens or updates the pull request, and, with the
+   Copilot review option on, requests a Copilot review.
+1. Polls the pull request until the checks finish, and with the option on,
+   until the Copilot review finishes too.
 1. Imports the review comments and the logs of failing checks as findings.
 1. Has Codex verify each comment. For a comment it disproves, the loop
    replies on the thread with the evidence instead of changing code.
 1. Has Claude fix the confirmed findings, runs the gate, and pushes.
-1. Replies to and resolves each addressed thread, and requests another
-   Copilot review.
+1. Replies to and resolves each addressed thread, and with the option on,
+   requests another Copilot review.
 
-The loop ends when the Copilot review raises no new actionable comment and
-the checks pass, or when the only failing checks have causes outside the
-code, such as infrastructure or missing secrets. The round cap and the
-oscillation check apply here too.
+The loop ends when the checks pass and no imported finding is open, or when
+the only failing checks have causes outside the code, such as infrastructure
+or missing secrets. With the Copilot review option on, the loop also waits
+until the Copilot review of the pushed head raises no new actionable comment.
+The round cap and the oscillation check apply here too.
+
+### Copilot review option
+
+The Copilot review option is off by default. With the option off, the loop
+never requests a Copilot review and never waits for one. It still imports the
+comments that people, or a Copilot review that the repository requests on its
+own, leave on the pull request.
+
+To turn on the option, do one of the following:
+
+- In the Review app launcher, select **Request a Copilot review of each
+  push**. The launcher hides the option for a read-only run.
+- Pass the `--copilot-review` flag to the `aio review start` command.
+- Set the `copilotReview` field to `true` in the run request.
+
+The option applies to a pre-push run that continues into the post-push loop
+after you push, as well as to a post-push run. A run that started before the
+option existed keeps the Copilot review.
 
 ### Guardrails
 

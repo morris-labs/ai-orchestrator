@@ -67,7 +67,9 @@ export function toCliRequest(
   method: AdapterMethod,
   request: AdapterRequest | ContinueRequest,
 ): CliRequest<unknown> {
-  const schema = METHOD_SCHEMAS[method];
+  const schema = request.output
+    ? { output: request.output.schema, json: request.output.json }
+    : METHOD_SCHEMAS[method];
   const addDirs = [
     ...(request.extraDirs ?? []),
     ...(request.scratchDir ? [request.scratchDir] : []),

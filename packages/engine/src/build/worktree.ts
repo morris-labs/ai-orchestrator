@@ -1,0 +1,164 @@
+// The build worktree: one Git worktree under the repository's `.worktrees/`
+// directory, on the build branch. Every agent and the task gate work there,
+// so the Project manager's own checkout stays untouched. The engine owns the
+// worktree, so it can reset it and delete files in it without losing anyone
+// else's work.
+import { existsSync } from "node:fs";
+import { appendFile, mkdir, readFile, rm } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
+import type { CommandRunner } from "../core.js";
+import { Git } from "../range/git.js";
+
+/** The directory, relative to the repository, that holds build worktrees. */
+export const WORKTREES_DIR = ".worktrees";
+
+/** The author of commits the engine makes when the repository names nobody. */
+const ENGINE_AUTHOR = {
+  GIT_AUTHOR_NAME: "AI Orchestrator",
+  GIT_AUTHOR_EMAIL: "build@aio.invalid",
+  GIT_COMMITTER_NAME: "AI Orchestrator",
+  GIT_COMMITTER_EMAIL: "build@aio.invalid",
+};
+
+/** Thrown when the build branch or worktree already exists. */
+export class WorktreeConflict extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "WorktreeConflict";
+  }
+}
+
+function nul(text: string): string[] {
+  return text.split("\0").filter((p) => p !== "");
+}
+
+/**
+ * Adds `pattern` to the repository's `info/exclude`, which every worktree
+ * shares, unless a line there already names it.
+ */
+async function excludeInRepo(git: Git, pattern: string): Promise<void> {
+  const commonDir = resolve(git.cwd, (await git.run(["rev-parse", "--git-common-dir"])).trim());
+  const file = join(commonDir, "info", "exclude");
+  let text = "";
+  try {
+    text = await readFile(file, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  const bare = pattern.replace(/^\/|\/$/g, "");
+  const names = new Set([bare, `${bare}/`, `/${bare}`, `/${bare}/`]);
+  if (text.split("\n").some((l) => names.has(l.trim()))) return;
+  await mkdir(dirname(file), { recursive: true });
+  const sep = text === "" || text.endsWith("\n") ? "" : "\n";
+  await appendFile(file, `${sep}/${bare}/\n`);
+}
+
+export class BuildWorktree {
+  /** Runs Git in the project's repository. */
+  private readonly repo: Git;
+  /** Runs Git in the build worktree. */
+  readonly git: Git;
+
+  constructor(
+    runner: CommandRunner,
+    readonly repoPath: string,
+    readonly path: string,
+    readonly branch: string,
+  ) {
+    this.repo = new Git(runner, repoPath);
+    this.git = new Git(runner, path);
+  }
+
+  /** The worktree path of build `slug` in the repository at `repoPath`. */
+  static pathFor(repoPath: string, slug: string): string {
+    return join(repoPath, WORKTREES_DIR, `build-${slug}`);
+  }
+
+  /** The build branch of build `slug`. */
+  static branchFor(slug: string): string {
+    return `build/${slug}`;
+  }
+
+  /** Resolves `ref` in the project's repository; `HEAD` when absent. */
+  async resolveBase(ref: string | undefined): Promise<string> {
+    const sha = await this.repo.tryRevParse(ref ?? "HEAD");
+    if (!sha) throw new Error(`The base ${ref ?? "HEAD"} isn't a commit in ${this.repoPath}.`);
+    return sha;
+  }
+
+  /**
+   * Creates the build branch at `base` and checks it out in the worktree.
+   * Throws `WorktreeConflict` when either exists.
+   */
+  async create(base: string): Promise<void> {
+    if (await this.repo.isLocalBranch(this.branch)) {
+      throw new WorktreeConflict(`The branch ${this.branch} already exists in ${this.repoPath}.`);
+    }
+    if (existsSync(this.path)) {
+      throw new WorktreeConflict(`The worktree ${this.path} already exists.`);
+    }
+    await excludeInRepo(this.repo, WORKTREES_DIR);
+    await this.repo.excludeEngineDir().catch(() => false);
+    await mkdir(dirname(this.path), { recursive: true });
+    await this.repo.run(["worktree", "add", "-q", "-b", this.branch, this.path, base]);
+  }
+
+  /** Checks the build branch out again when its worktree is gone, such as after a cleanup. */
+  async ensure(): Promise<void> {
+    if (existsSync(join(this.path, ".git"))) return;
+    await this.repo.ok(["worktree", "prune"]);
+    await this.repo.run(["worktree", "add", "-q", this.path, this.branch]);
+  }
+
+  head(): Promise<string> {
+    return this.git.head();
+  }
+
+  /** Untracked files that Git doesn't ignore. */
+  async untracked(): Promise<string[]> {
+    return nul(await this.git.run(["ls-files", "--others", "--exclude-standard", "-z"]));
+  }
+
+  /**
+   * Every path that differs from `base`: committed, staged, unstaged, and
+   * untracked changes, with deletions and both sides of a rename.
+   */
+  async changedSince(base: string): Promise<string[]> {
+    const tracked = nul(await this.git.run(["diff", "--name-only", "--no-renames", "-z", base]));
+    return [...new Set([...tracked, ...(await this.untracked())])].sort();
+  }
+
+  /** True when the worktree has changes that aren't committed. */
+  async dirty(): Promise<boolean> {
+    return (await this.git.statusLines()).length > 0;
+  }
+
+  /** Commits every change in the worktree; returns the new `HEAD`. */
+  async commitAll(message: string): Promise<string> {
+    await this.git.run(["add", "-A"]);
+    const named = (await this.git.ok(["config", "user.email"])) ? {} : ENGINE_AUTHOR;
+    await this.git.run(["commit", "-q", "-m", message], { env: named });
+    return this.head();
+  }
+
+  /**
+   * Puts each of `paths` back the way it is at `sha`: a file that exists
+   * there is checked out from it, and any other file is deleted. Other
+   * changes stay as they are.
+   */
+  async restorePaths(sha: string, paths: readonly string[]): Promise<void> {
+    for (const path of paths) {
+      if (await this.git.ok(["cat-file", "-e", `${sha}:${path}`])) {
+        await this.git.run(["checkout", "-q", sha, "--", path]);
+      } else {
+        await this.git.run(["rm", "-q", "--cached", "--ignore-unmatch", "--", path]);
+        await rm(join(this.path, path), { force: true, recursive: true });
+      }
+    }
+  }
+
+  /** Deletes files in the worktree, such as a gate command's leftovers. */
+  async remove(paths: readonly string[]): Promise<void> {
+    for (const path of paths) await rm(join(this.path, path), { force: true, recursive: true });
+  }
+}

@@ -100,6 +100,10 @@ export class UsageService {
         {
           leaseId: event.leaseId,
           runId: event.runId,
+          ...(event.buildId === undefined ? {} : { buildId: event.buildId }),
+          ...(event.seat === undefined ? {} : { seat: event.seat }),
+          ...(event.step === undefined ? {} : { step: event.step }),
+          ...(event.specialties === undefined ? {} : { specialties: event.specialties }),
           vendor: event.vendor,
           role: event.role,
           tokens: event.tokens,

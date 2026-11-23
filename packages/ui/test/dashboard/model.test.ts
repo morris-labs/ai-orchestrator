@@ -148,6 +148,47 @@ describe("applyEvent edge cases", () => {
     } as AioEvent);
     expect(s.unexpectedEnds).toBe(1);
   });
+
+  it("leaves a build's own agents and build events out of the review dashboard", () => {
+    const before = replay(events);
+    const agent = {
+      runId: null,
+      buildId: "01JB8Z5K3W6Q2V9X4T7R0M1N2Q",
+      seat: "developer",
+      step: "tasks",
+      agentId: "B-A1",
+      leaseId: "B-L1",
+      vendor: "claude",
+      model: "claude-sonnet-5",
+      role: "fixer",
+      groupId: null,
+      round: 1,
+    } as const;
+    let s = applyEvent(before, makeEvent("agent.started", agent));
+    s = applyEvent(
+      s,
+      makeEvent("agent.finished", {
+        ...agent,
+        outcome: "ok",
+        elapsedMs: 10,
+        tokens: { in: 1, out: 1 },
+        premiumRequests: 0,
+        costEstimate: 1,
+      }),
+    );
+    s = applyEvent(
+      s,
+      makeEvent("build.task.changed", {
+        buildId: agent.buildId,
+        taskId: "T1",
+        status: "done",
+        previousStatus: "running",
+      }),
+    );
+    expect(s.agents).toEqual(before.agents);
+    expect(s.runs).toEqual(before.runs);
+    expect(s.eventCount).toBe(before.eventCount + 3);
+  });
 });
 
 describe("usage.sample events", () => {

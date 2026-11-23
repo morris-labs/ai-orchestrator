@@ -89,6 +89,17 @@ export interface AdapterRequest {
   effort?: Effort;
   /** Aborted when the run is cancelled. The adapter must stop the CLI. */
   signal?: AbortSignal;
+  /**
+   * The answer's shape, for a caller whose answer isn't the method's own,
+   * such as a build role's report. Absent, the method's schema applies.
+   */
+  output?: AdapterOutput;
+}
+
+/** An answer shape: the schema that parses the answer, and the JSON Schema the CLI gets. */
+export interface AdapterOutput {
+  schema: z.ZodType<unknown, z.ZodTypeDef, unknown>;
+  json: Record<string, unknown>;
 }
 
 /** A request that resumes an earlier session of the same vendor. */

@@ -276,6 +276,13 @@ export const ResolvedRunRequestSchema = z.object({
    * root cause (`RunState.rootCauses`). Absent or false skips it.
    */
   rootCauses: z.boolean().optional(),
+  /**
+   * The post-push loop requests a Copilot review of each pushed head and
+   * waits for it. False skips the request, and the loop waits for the checks
+   * only. Absent in runs that predate the option, which keep the review. See
+   * `wantsCopilotReview`.
+   */
+  copilotReview: z.boolean().optional(),
 });
 export type ResolvedRunRequest = z.infer<typeof ResolvedRunRequestSchema>;
 
@@ -293,6 +300,7 @@ export const RunRequestFieldsSchema = ResolvedRunRequestSchema.extend({
   overlapThreshold: FractionSchema.default(0.5),
   continuationCap: z.number().int().nonnegative().optional(),
   depth: RunDepthSchema.default("standard"),
+  copilotReview: z.boolean().default(false),
 });
 
 /**
@@ -323,6 +331,14 @@ function resolveRequest<
     continuationCap: r.continuationCap ?? defaults.continuationCap,
     ...(verifyFloor ? { verifyFloor } : {}),
   };
+}
+
+/**
+ * True when the post-push loop requests a Copilot review. A request without
+ * the option comes from a run that predates it, which keeps the review.
+ */
+export function wantsCopilotReview(request: { copilotReview?: boolean | undefined }): boolean {
+  return request.copilotReview ?? true;
 }
 
 /** The reason every layer gives when it refuses a read-only post-push request. */
