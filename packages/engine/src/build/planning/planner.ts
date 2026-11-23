@@ -15,7 +15,7 @@
 //   engine.json               the agent-call ledger, which execution goes on from
 //   STATUS.md                 the status file, until execution rewrites it
 import { createHash } from "node:crypto";
-import { chmod, mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import {
   BUILD_DRAFT_FILE,
@@ -173,12 +173,26 @@ export class BuildPlanner {
     // A box that stopped before the engine did still holds planning.
     if (planning.pausedBy === "box") planner.calls.requestPause();
     // A call that was under way when an engine stopped never finishes.
+    let interrupted = false;
     const stopped = planning.calls.filter((c) => c.status === "running");
     for (const call of stopped) {
       call.status = "failed";
       call.error = "The engine stopped during the call.";
     }
-    let interrupted = false;
+    // The engine saves a meeting's record before the planning record lists it,
+    // so a stop in between leaves a record that planning doesn't list.
+    const dir = store.path("meetings");
+    const listed = new Set(planning.meetings.map((m) => m.file));
+    const names = await readdir(dir).catch(() => [] as string[]);
+    const unlisted = names
+      .filter((name) => /^meeting-\d+\.json$/.test(name) && !listed.has(`meetings/${name}`))
+      .sort((a, b) => Number.parseInt(a.slice(8), 10) - Number.parseInt(b.slice(8), 10));
+    for (const name of unlisted) {
+      const meeting = await store.readJson(store.path(`meetings/${name}`), BuildMeetingSchema);
+      if (!meeting) continue;
+      planning.meetings.push({ id: meeting.id, file: `meetings/${name}`, status: meeting.status });
+      interrupted = true;
+    }
     for (const entry of planning.meetings) {
       const meeting = await store.readJson(store.path(entry.file), BuildMeetingSchema);
       if (!meeting) continue;
