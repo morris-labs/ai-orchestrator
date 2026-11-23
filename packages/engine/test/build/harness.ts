@@ -45,6 +45,8 @@ export interface MockResponse {
   commit?: string;
   error?: string;
   delayMs?: number;
+  /** The tokens the call reports in its usage. */
+  tokens?: { input: number; output: number };
   /** MCP tool calls that the mock CLI makes, such as team chat messages. */
   busCalls?: { tool: string; arguments?: Record<string, unknown>; server?: string }[];
 }
