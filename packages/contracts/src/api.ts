@@ -103,6 +103,7 @@ import {
 } from "./build-events.js";
 import { BuildMessageListSchema } from "./messages.js";
 import { OwnerPostAnswerSchema, OwnerPostSchema } from "./owner-posts.js";
+import { PmInboxSchema, PmItemSchema } from "./pm-inbox.js";
 import {
   BuildControlSchema,
   BuildCreateSchema,
@@ -1913,6 +1914,16 @@ export const serverRoutes = {
     errors: ["not_found", "invalid_state", "conflict"],
   }),
 
+  "builds.inbox": http({
+    method: "GET",
+    path: `${V1}/builds/:buildId/inbox`,
+    summary:
+      "The items that wait in a build's Project manager inbox: escalations and digests whose pointer didn't reach the box's session, and escalations without an answer. `all=true` lists every item.",
+    query: z.object({ all: QueryBooleanSchema.optional() }),
+    response: PmInboxSchema,
+    errors: ["not_found", "conflict"],
+  }),
+
   // Machines (multi-host)
   "machines.list": http({
     method: "GET",
@@ -2104,6 +2115,23 @@ export const engineRoutes = {
     response: OwnerPostAnswerSchema,
     status: 201,
     errors: ["not_found", "invalid_state", "conflict"],
+  }),
+  "engine.builds.inbox": http({
+    method: "GET",
+    path: `${V1}/builds/:slug/inbox`,
+    summary:
+      "The items that wait in a build's Project manager inbox, oldest first. `all=true` lists every item.",
+    query: z.object({ all: QueryBooleanSchema.optional() }),
+    response: PmInboxSchema,
+    errors: ["not_found"],
+  }),
+  "engine.builds.inbox.delivered": http({
+    method: "POST",
+    path: `${V1}/builds/:slug/inbox/:itemId/delivered`,
+    summary:
+      "Mark an inbox item's pointer as delivered to the Project manager's session. Marking it again keeps the first time.",
+    response: PmItemSchema,
+    errors: ["not_found"],
   }),
   "engine.ports": http({
     method: "GET",

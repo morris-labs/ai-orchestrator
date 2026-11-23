@@ -29,6 +29,8 @@ import {
   type Message,
   type OwnerPostInput,
   type OwnerPostAnswer,
+  type PmInbox,
+  type PmItem,
 } from "@aio/contracts";
 import { OwnerPostSchema } from "@aio/contracts";
 import { accountDirsFileIn, readAccountDirs } from "../adapters/account-dirs.js";
@@ -118,6 +120,10 @@ export interface BuildManager {
   messages(slug: string, options?: { direct?: boolean }): Promise<Message[]>;
   /** The build's decisions, oldest first. */
   decisions(slug: string): Promise<BuildDecision[]>;
+  /** The Project manager's inbox of the build: the items that wait, or with `all` every item. */
+  inbox(slug: string, options?: { all?: boolean }): Promise<PmInbox>;
+  /** Marks an inbox item's pointer delivered. Throws `not_found` for an unknown item. */
+  delivered(slug: string, itemId: string): Promise<PmItem>;
   /** The builds that keep the container alive: the ones the engine works on. */
   activeCount(): number;
   /** Stops every drive and leaves each build's files for the next engine. */
@@ -504,6 +510,14 @@ export class EngineBuildManager implements BuildManager {
 
   async decisions(slug: string): Promise<BuildDecision[]> {
     return (await this.require(slug)).decisions();
+  }
+
+  async inbox(slug: string, options: { all?: boolean } = {}): Promise<PmInbox> {
+    return (await this.require(slug)).inbox(options.all ?? false);
+  }
+
+  async delivered(slug: string, itemId: string): Promise<PmItem> {
+    return (await this.require(slug)).delivered(itemId);
   }
 
   activeCount(): number {

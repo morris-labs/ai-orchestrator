@@ -1,9 +1,9 @@
 // The build socket: a Unix socket inside the project container that accepts
 // only build requests (planning seat calls, meetings, the freeze, start,
-// status, pause, resume, cancel, resolve, and reading the team chat and
-// decisions) and needs no engine token. The `aio-build` command in a box's
-// session talks to it; see
-// `@aio/contracts` `build-socket.ts` for the protocol.
+// status, pause, resume, cancel, resolve, and reading the team chat, the
+// decisions, and the Project manager inbox) and needs no engine token. The
+// `aio-build` command in a box's session talks to it; see `@aio/contracts`
+// `build-socket.ts` for the protocol.
 //
 // The socket lives on the container's own file system, so only processes in
 // this project's container reach it. Each request names its project, and
@@ -17,6 +17,7 @@ import {
   BuildSocketFreezeSchema,
   BuildSocketMeetSchema,
   BuildSocketMeetingPostSchema,
+  BuildSocketInboxSchema,
   BuildSocketMessagesSchema,
   BuildSocketPlanSchema,
   BuildSocketResolveSchema,
@@ -54,6 +55,7 @@ export interface BuildSocketOptions {
     | "cancel"
     | "messages"
     | "decisions"
+    | "inbox"
   >;
   /** The engine's project, or `null` when the server didn't name one. */
   projectId: string | null;
@@ -227,6 +229,12 @@ export async function serveBuildSocket(options: BuildSocketOptions): Promise<Bui
       ownProject(request);
       await ownBuild(request.projectId, request.slug);
       return { messages: await builds.messages(request.slug, { direct: request.direct }) };
+    }
+    if (kind === "inbox") {
+      const request = BuildSocketInboxSchema.parse(raw);
+      ownProject(request);
+      await ownBuild(request.projectId, request.slug);
+      return builds.inbox(request.slug, { all: request.all });
     }
     const request = BuildSocketSlugSchema.parse(raw);
     ownProject(request);

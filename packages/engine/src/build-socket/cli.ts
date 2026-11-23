@@ -21,6 +21,7 @@ import {
   type BuildSocketRequestKind,
   type BuildState,
   type Message,
+  type PmInbox,
 } from "@aio/contracts";
 import { BuildSocketClient, BuildSocketError, buildSocketPath } from "./client.js";
 
@@ -41,6 +42,7 @@ export const BUILD_USAGE = `Usage:
   aio-build resume SLUG [--json]
   aio-build messages SLUG [--direct] [--json]
   aio-build decisions SLUG [--json]
+  aio-build inbox SLUG [--all] [--json]
   aio-build cancel SLUG [--json]
   aio-build resolve SLUG ESCALATION ACTION [--note TEXT] [--order TASKS]
                     [--decision OPTION] [--waive FINDINGS] [--push yes|no]
@@ -98,6 +100,11 @@ Requests:
             post, with the task it's attached to. A decision flagged as a
             plan change contradicts acceptance criteria of the build plan:
             change the plan's criteria to match it, or ask the owner.
+  inbox     Print the Project manager inbox of build SLUG: each escalation
+            and digest whose pointer the engine didn't deliver to this
+            session yet, and each escalation that waits for its answer,
+            oldest first. With --all, print every item. Read the file that
+            each item names.
   resolve   Resolve escalation ESCALATION, such as E1, of build SLUG, and
             resume the tasks it paused. ACTION is one of:
               retry     Run the paused work again. A task gets more attempts.
@@ -152,6 +159,8 @@ Options:
   --owner        Record the decision as the owner's, which the Project
                  manager relays.
   --direct       Print only the direct messages to the owner.
+  --all          Print every inbox item, including delivered digests and
+                 answered escalations.
   --json         Print the answer as JSON instead of text.
   --help         Print this help.
 
@@ -203,6 +212,7 @@ export type BuildCommand =
   | { kind: "start"; slug: string; planFile: string | null; base: string | null; json: boolean }
   | { kind: "messages"; slug: string; direct: boolean; json: boolean }
   | { kind: "decisions"; slug: string; json: boolean }
+  | { kind: "inbox"; slug: string; all: boolean; json: boolean }
   | {
       kind: "resolve";
       slug: string;
@@ -213,7 +223,15 @@ export type BuildCommand =
   | {
       kind: Exclude<
         BuildSocketRequestKind,
-        "start" | "plan" | "freeze" | "meet" | "meeting-post" | "messages" | "decisions" | "resolve"
+        | "start"
+        | "plan"
+        | "freeze"
+        | "meet"
+        | "meeting-post"
+        | "messages"
+        | "decisions"
+        | "inbox"
+        | "resolve"
       >;
       slug: string;
       json: boolean;
@@ -230,6 +248,7 @@ const KINDS = new Set([
   "resume",
   "messages",
   "decisions",
+  "inbox",
   "cancel",
   "resolve",
 ]);
@@ -241,6 +260,7 @@ const OPTIONS: Record<string, readonly string[]> = {
   freeze: ["--push"],
   start: ["--base"],
   resolve: ["--note", "--order", "--decision", "--waive", "--push", "--changes", "--owner"],
+  inbox: ["--all"],
 };
 
 /** Every option that takes a value. */
@@ -259,7 +279,7 @@ const VALUE_OPTIONS = [
 ];
 
 /** Options that take no value. */
-const FLAGS = ["--owner"];
+const FLAGS = ["--owner", "--all"];
 
 /** Splits a comma-separated list, dropping empty items. */
 function list(text: string): string[] {
@@ -435,6 +455,7 @@ export function parseBuildArgs(argv: readonly string[]): BuildCommand {
   if (positional.length !== 1) throw new Error(`${kind} needs one SLUG.`);
   if (kind === "messages") return { kind, slug, direct, json };
   if (kind === "decisions") return { kind, slug, json };
+  if (kind === "inbox") return { kind, slug, all: flags.has("--all"), json };
   return { kind: kind as "status" | "pause" | "resume" | "cancel", slug, json };
 }
 
@@ -520,6 +541,26 @@ export function formatMessages(
       const about = [m.taskId, m.milestone].filter((x) => x !== null).join(", ");
       return `${m.id}  ${partyText(m.from)} -> ${partyText(m.to)}  ${m.type}  ${about}  ${m.createdAt}\n${indent(m.body)}\n`;
     })
+    .join("\n");
+}
+
+/** Where an inbox item stands, in a few words. */
+function itemState(item: PmInbox["items"][number]): string {
+  const delivery = item.deliveredAt === null ? "not delivered" : "delivered";
+  if (!item.needsAnswer) return delivery;
+  return `${delivery}, ${item.answeredAt === null ? "waits for an answer" : "answered"}`;
+}
+
+/** Inbox items as text for a person to read. */
+export function formatInbox(inbox: PmInbox, all: boolean): string {
+  if (inbox.items.length === 0) {
+    return `Build ${inbox.slug} has ${all ? "no inbox items" : "nothing waiting in its inbox"}.\n`;
+  }
+  return inbox.items
+    .map(
+      (i) =>
+        `${i.id}  ${i.kind} ${i.ref}  ${itemState(i)}  ${i.createdAt}\n${indent(i.summary)}\n  Read ${i.path}\n`,
+    )
     .join("\n");
 }
 
@@ -672,6 +713,8 @@ export async function buildMain(argv: readonly string[], io: BuildCliIo): Promis
     body.base = command.base;
   } else if (command.kind === "messages") {
     body.direct = command.direct;
+  } else if (command.kind === "inbox") {
+    body.all = command.all;
   } else if (command.kind === "resolve") {
     body = { ...body, ...command.resolution };
   }
@@ -701,6 +744,9 @@ export async function buildMain(argv: readonly string[], io: BuildCliIo): Promis
       io.stdout(
         command.json ? json(messages) : formatMessages(command.slug, messages, command.direct),
       );
+    } else if (command.kind === "inbox") {
+      const inbox = await client.send("inbox", body);
+      io.stdout(command.json ? json(inbox.items) : formatInbox(inbox, command.all));
     } else if (command.kind === "decisions") {
       const { decisions } = await client.send("decisions", body);
       io.stdout(command.json ? json(decisions) : formatDecisions(command.slug, decisions));

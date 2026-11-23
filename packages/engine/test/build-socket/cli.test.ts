@@ -209,6 +209,22 @@ describe("aio-build", () => {
     expect(wrong.stderr).toContain("status doesn't take --direct");
   });
 
+  it("prints the Project manager inbox", async () => {
+    const { builds, run } = await world();
+    const out = await run(["inbox", "cart-total"]);
+    expect(out.code).toBe(0);
+    expect(builds.inbox).toHaveBeenCalledWith("cart-total", { all: false });
+    expect(out.stdout).toContain("I1  escalation E1  delivered, waits for an answer  2026-");
+    expect(out.stdout).toContain("  Read /work/shop/.aio/builds/cart-total/escalations/E1.json");
+    await run(["inbox", "cart-total", "--all"]);
+    expect(builds.inbox).toHaveBeenLastCalledWith("cart-total", { all: true });
+    const json = await run(["inbox", "cart-total", "--json"]);
+    expect(JSON.parse(json.stdout)).toHaveLength(1);
+    expect((await run(["status", "cart-total", "--all"])).stderr).toContain(
+      "status doesn't take --all",
+    );
+  });
+
   it("calls a planning seat with a brief and an issue and prints its answer", async () => {
     const { builds, briefFile, run } = await world();
     const out = await run([

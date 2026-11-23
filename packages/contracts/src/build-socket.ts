@@ -1,10 +1,10 @@
 // The build socket's protocol: HTTP/1.1 with JSON bodies, over a Unix
 // socket that the engine opens inside its project container. The socket
 // accepts only build requests (planning seat calls, meetings, the freeze,
-// start, status, pause, resume, cancel, resolve, and reading the team chat and
-// decisions) and needs no engine token, so a box's session can drive a build
-// with the `aio-build` command without the token that the engine's full API
-// requires. See `docs/build-pipeline/design.md`.
+// start, status, pause, resume, cancel, resolve, and reading the team chat,
+// decisions, and the Project manager inbox) and needs no engine token, so a
+// box's session can drive a build with the `aio-build` command without the
+// token that the engine's full API requires. See `docs/build-pipeline/design.md`.
 import { z } from "zod";
 import { BuildSlugSchema } from "./build-events.js";
 import {
@@ -27,6 +27,7 @@ import {
 import { ENGINE_ENV } from "./config.js";
 import { BuildMessageListSchema } from "./messages.js";
 import { BuildDecisionListSchema } from "./owner-posts.js";
+import { PmInboxSchema } from "./pm-inbox.js";
 
 /**
  * The folder that holds the socket inside a container. It sits on the
@@ -66,6 +67,7 @@ export const BUILD_SOCKET_ROUTES = {
   messages: "/v1/builds/messages",
   decisions: "/v1/builds/decisions",
   cancel: "/v1/builds/cancel",
+  inbox: "/v1/builds/inbox",
 } as const;
 export type BuildSocketRequestKind = keyof typeof BUILD_SOCKET_ROUTES;
 
@@ -114,6 +116,12 @@ export const BuildSocketMessagesSchema = z
   .strict();
 export type BuildSocketMessages = z.infer<typeof BuildSocketMessagesSchema>;
 
+/** The body of an inbox request. With `all`, the answer lists every item, not only the ones that wait. */
+export const BuildSocketInboxSchema = z
+  .object({ ...scope, slug: BuildSlugSchema, all: z.boolean().default(false) })
+  .strict();
+export type BuildSocketInbox = z.infer<typeof BuildSocketInboxSchema>;
+
 /** The body of a planning seat call. */
 export const BuildSocketPlanSchema = BuildSeatRequestSchema;
 
@@ -144,6 +152,7 @@ export const BUILD_SOCKET_RESPONSES = {
   messages: BuildMessageListSchema,
   decisions: BuildDecisionListSchema,
   cancel: BuildSocketResponseSchema,
+  inbox: PmInboxSchema,
 } as const satisfies Record<BuildSocketRequestKind, z.ZodTypeAny>;
 export type BuildSocketAnswer<K extends BuildSocketRequestKind> = z.infer<
   (typeof BUILD_SOCKET_RESPONSES)[K]

@@ -46,7 +46,7 @@ export class BuildSocketClient {
   async request(
     kind: Exclude<
       BuildSocketRequestKind,
-      "plan" | "freeze" | "meet" | "meeting-post" | "messages" | "decisions"
+      "plan" | "freeze" | "meet" | "meeting-post" | "messages" | "decisions" | "inbox"
     >,
     body: unknown,
   ): Promise<BuildState> {

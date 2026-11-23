@@ -107,6 +107,10 @@ export function createHandlers(deps: HandlerDeps): EngineHandlers {
     "engine.builds.delete": (i) => deps.builds.delete(param(i, "slug")),
     "engine.builds.resolve": (i) => deps.builds.resolve(param(i, "slug"), i.body),
     "engine.builds.post": (i) => deps.builds.post(param(i, "slug"), i.body),
+    "engine.builds.inbox": (i) =>
+      deps.builds.inbox(param(i, "slug"), { all: i.query.all ?? false }),
+    "engine.builds.inbox.delivered": (i) =>
+      deps.builds.delivered(param(i, "slug"), param(i, "itemId")),
     "engine.ports": () => ({ listeners: deps.ports.list() }),
   };
 }
