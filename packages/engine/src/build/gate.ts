@@ -30,7 +30,7 @@ import {
   testFailures,
   type TestBaseline,
 } from "./baseline.js";
-import { globToRegExp } from "../policy/glob.js";
+import { isPathGlob, pathMatcher } from "./paths.js";
 import { checkLock, type LockCheck, type TestLock } from "./test-lock.js";
 import type { BuildWorktree } from "./worktree.js";
 
@@ -100,7 +100,7 @@ export interface TaskGateOptions {
   worktree: BuildWorktree;
   /** The commit the task started from; the permission check covers every change since. */
   base: string;
-  /** Repository-relative globs that the seat may change. */
+  /** Repository-relative paths and globs that the seat may change. */
   writable: readonly string[];
   /** Exact paths that other seats changed, which the permission check leaves be. */
   exempt?: readonly string[];
@@ -155,7 +155,9 @@ async function runTestCommand(
  * Sets aside the test files of later tasks, so that a test command that runs
  * the whole suite doesn't fail on tests that tests first wrote red for those
  * tasks. `restore()` puts each file back with the content it had. A glob, a
- * missing file, and a file that `protect` names stay in place.
+ * missing file, and a file that `protect` names stay in place. A path with
+ * brackets but no glob characters, such as `app/[slug]/page.test.ts`, is a
+ * file, which goes aside.
  */
 async function setAside(
   root: string,
@@ -164,7 +166,7 @@ async function setAside(
 ): Promise<{ paths: string[]; restore(): Promise<void> }> {
   const saved = new Map<string, Buffer>();
   for (const path of [...new Set(pending)].sort()) {
-    if (/[*?[]/.test(path) || protect.includes(path)) continue;
+    if (isPathGlob(path) || protect.includes(path)) continue;
     try {
       saved.set(path, await readFile(join(root, path)));
     } catch {
@@ -243,17 +245,18 @@ function findRegressions(
 }
 
 /**
- * The changed paths that none of the `writable` globs cover, other than the
- * paths in `exempt`, which match only by their exact name.
+ * The changed paths that none of the `writable` paths and globs cover, other
+ * than the paths in `exempt`, which match only by their exact name. See
+ * `pathMatcher()` for how a writable entry matches.
  */
 export function outsideWritable(
   changed: readonly string[],
   writable: readonly string[],
   exempt: readonly string[] = [],
 ): string[] {
-  const patterns = writable.map((glob) => globToRegExp(glob));
+  const covered = pathMatcher(writable);
   const exact = new Set(exempt);
-  return changed.filter((path) => !exact.has(path) && !patterns.some((re) => re.test(path)));
+  return changed.filter((path) => !exact.has(path) && !covered(path));
 }
 
 /** Runs the task gate in the build worktree. */

@@ -9,7 +9,7 @@ import {
   type MessageRouting,
   type SendMessageInput,
 } from "@aio/contracts";
-import { globToRegExp } from "../policy/glob.js";
+import { pathMatcher } from "../build/paths.js";
 
 /** What routing needs to know about a task of the build plan. */
 export interface RouteTask {
@@ -28,9 +28,7 @@ export interface Route {
 /** The task whose owned files cover `path`, or `null` when none does. */
 export function taskOwning(tasks: readonly RouteTask[], path: string): RouteTask | null {
   const clean = path.replace(/^\.\//, "");
-  return (
-    tasks.find((task) => task.ownedFiles.some((glob) => globToRegExp(glob).test(clean))) ?? null
-  );
+  return tasks.find((task) => pathMatcher(task.ownedFiles)(clean)) ?? null;
 }
 
 const seat = (name: string, taskId: string | null): MessageParty => ({
