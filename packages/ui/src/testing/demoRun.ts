@@ -613,6 +613,7 @@ export function buildDemoEvents(): AioEvent[] {
       container: CONTAINER,
       status: "running",
       step: "tasks",
+      boxId: null,
       createdAt: new Date(T0).toISOString(),
       updatedAt: new Date(T0 + clock * 1000).toISOString(),
     },
