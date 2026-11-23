@@ -10,14 +10,7 @@ import {
   type BuildPlanInput,
   type BuildSeatRequestInput,
 } from "@aio/contracts";
-import {
-  CART_DONE,
-  PROJECT_ID,
-  REPORT,
-  buildWorld,
-  cartPlan,
-  type BuildWorld,
-} from "./harness.js";
+import { CART_DONE, PROJECT_ID, REPORT, buildWorld, cartPlan, type BuildWorld } from "./harness.js";
 
 const SLUG = "cart-total";
 

@@ -95,21 +95,11 @@ describe("packaged skills", () => {
     h.core.close();
   });
 
-  it("installs the skill when a box prepares an account that arrived another way, such as a seed", () => {
+  it("installs the skill when a box prepares an account that the start didn't see", () => {
     const h = makeHarness({ accounts: false });
     configureTestAccounts(h.core);
     const { dir } = h.core.accounts.prepareAccount("claude");
     expect(fs.readFileSync(path.join(dir, "skills/aio-build/SKILL.md"), "utf8")).toBe(
-      fs.readFileSync(SKILL, "utf8"),
-    );
-    h.core.close();
-  });
-
-  it("installs the skill into a Claude account created after the start", async () => {
-    const h = makeHarness({ accounts: false });
-    await h.core.start({ importLegacy: false, pollMs: 0, watch: false });
-    const view = h.core.accounts.create({ vendor: "claude", name: "later" });
-    expect(fs.readFileSync(path.join(view.dir, "skills/aio-build/SKILL.md"), "utf8")).toBe(
       fs.readFileSync(SKILL, "utf8"),
     );
     h.core.close();

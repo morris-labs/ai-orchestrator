@@ -14,7 +14,7 @@ Check the following:
   refuses to run in a Codex or Copilot box.
 - The project has a policy file, `.aio/policy.yaml`, with the test, type
   check, and lint commands. The build plan takes its commands from it. For
-  more information, see [Review policy](../policy.md).
+  more information, see [Policy file](../policy.md).
 - The box's container started with this version of AI Orchestrator. A
   container from an earlier version lacks the `aio-build` command or the
   project ID it needs; restart the project's boxes to recreate it.

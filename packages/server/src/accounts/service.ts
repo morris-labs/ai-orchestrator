@@ -264,7 +264,8 @@ export class AccountService {
     }
     this.ensureInstructions(vendor, dir);
     if (vendor === "claude") {
-      // A seeded or imported account gets the packaged skills at its first box start.
+      // An account created, seeded, or imported after the server start gets
+      // the packaged skills here, at its first box start.
       return { dir, problems: installPackagedSkills([dir]).skipped };
     }
     return { dir, problems: buildAccountInstructions(dir, vendor) };
@@ -469,7 +470,6 @@ export class AccountService {
       linkProjectsToStore(dir, this.storeRoot());
       preacceptClaudeAccount(dir);
       this.keepTranscripts(dir);
-      installPackagedSkills([dir]);
     }
     if (c.vendor === "codex") {
       fs.writeFileSync(path.join(dir, "config.toml"), `${CODEX_STORE_SETTING}\n`, { mode: 0o600 });

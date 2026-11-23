@@ -77,7 +77,10 @@ function installSkill(accountDir: string, name: string, source: string): boolean
   let changed = false;
   for (const rel of filesUnder(source)) {
     let dir = root;
-    for (const part of path.dirname(rel).split(path.sep).filter((p) => p && p !== ".")) {
+    for (const part of path
+      .dirname(rel)
+      .split(path.sep)
+      .filter((p) => p && p !== ".")) {
       dir = path.join(dir, part);
       ensureRealDir(dir);
     }
