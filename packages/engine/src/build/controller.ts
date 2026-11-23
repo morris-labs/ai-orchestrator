@@ -178,7 +178,8 @@ export class BuildController {
       this.driver = null;
       if (this.again && !this.stopping) {
         this.again = false;
-        this.start();
+        // A pause or a new escalation without a task that came in meanwhile holds the build.
+        if (this.resumable()) this.start();
       }
     });
   }
@@ -280,13 +281,26 @@ export class BuildController {
       throw new EngineError("invalid_state", `Build ${this.slug} stops with the engine.`);
     }
     if ((await resolveEscalation(this.ctx, request)) === "owner") return this.state;
-    const held = this.ctx.openEscalations().some((e) => e.taskId === null);
-    const status = this.state.status;
-    if (held || (status !== "waiting_escalation" && status !== "running")) return this.state;
-    if (status === "waiting_escalation") await this.ctx.setStatus("running");
-    if (this.driver) this.again = true;
-    else this.start();
+    if (!this.resumable()) return this.state;
+    if (this.driver) {
+      this.again = true;
+      return this.state;
+    }
+    if (this.state.status === "waiting_escalation") await this.ctx.setStatus("running");
+    this.start();
     return this.state;
+  }
+
+  /**
+   * Whether a resolution can resume the build: nobody paused it, and no
+   * open escalation without a task holds it.
+   */
+  private resumable(): boolean {
+    const { status } = this.state;
+    return (
+      (status === "running" || status === "waiting_escalation") &&
+      !this.ctx.openEscalations().some((e) => e.taskId === null)
+    );
   }
 
   /**

@@ -354,19 +354,29 @@ export class BuildContext {
    * other task that isn't done can run again.
    */
   async refreshTaskStatuses(): Promise<void> {
+    // Every status changes before the first save, so a drive that runs
+    // meanwhile never sees a resolved escalation with its task still failed.
     const open = this.openEscalations();
+    const changed: { id: string; status: BuildTaskStatus; previous: BuildTaskStatus }[] = [];
     for (const progress of this.state.tasks) {
       if (progress.status === "done") continue;
       const own = open.some((e) => e.taskId === progress.id);
       const paused = open.some((e) => e.tasks.includes(progress.id));
-      const status = own
-        ? "failed"
-        : paused
-          ? "blocked"
-          : progress.base
-            ? "running"
-            : "pending";
-      await this.setTaskStatus(progress.id, status);
+      const status = own ? "failed" : paused ? "blocked" : progress.base ? "running" : "pending";
+      if (status === progress.status) continue;
+      changed.push({ id: progress.id, status, previous: progress.status });
+      progress.status = status;
+    }
+    if (changed.length === 0) return;
+    await this.persist();
+    for (const { id, status, previous } of changed) {
+      await this.emit({
+        type: "build.task.changed",
+        buildId: this.state.id,
+        taskId: id,
+        status,
+        previousStatus: previous,
+      });
     }
   }
 

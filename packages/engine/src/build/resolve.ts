@@ -24,7 +24,11 @@ import { reopenTestsFirst } from "./steps/tests-first.js";
 export type ResolveOutcome = "resolved" | "owner";
 
 /** Prepares a step's work to run again; throws `EngineError` to refuse the resolution. */
-type Reopen = (ctx: BuildContext, escalation: Escalation, request: EscalationResolve) => Promise<void>;
+type Reopen = (
+  ctx: BuildContext,
+  escalation: Escalation,
+  request: EscalationResolve,
+) => Promise<void>;
 
 /** The kinds whose step keeps files that a resolution must change before the step runs again. */
 const REOPEN: Partial<Record<EscalationKind, Reopen>> = {
@@ -66,7 +70,9 @@ function checkRequest(ctx: BuildContext, escalation: Escalation, request: Escala
     checkOrder(ctx, request.order ?? []);
   }
   if (request.action === "decide" && !escalation.runId) {
-    refuse(`Escalation ${escalation.id} isn't about a review run, so it has no decision to answer.`);
+    refuse(
+      `Escalation ${escalation.id} isn't about a review run, so it has no decision to answer.`,
+    );
   }
   if (request.push !== undefined && escalation.kind !== "release_ready") {
     refuse("Only a release ready escalation records the push answer.");
@@ -134,7 +140,8 @@ export async function resolveEscalation(
     changes: request.changes,
     resolvedAt: now,
   };
-  await ctx.saveEscalation(escalation);
+  // The task statuses change in the same turn as the escalation's status.
   await ctx.refreshTaskStatuses();
+  await ctx.saveEscalation(escalation);
   return "resolved";
 }
