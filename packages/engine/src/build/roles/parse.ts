@@ -1,10 +1,6 @@
 // Parses one role file: YAML front matter between `---` lines, then the
 // Markdown body that holds the role's standing instructions.
-import {
-  RoleFrontMatterSchema,
-  type RoleDefinition,
-  type RoleSource,
-} from "@aio/contracts";
+import { RoleFrontMatterSchema, type RoleDefinition, type RoleSource } from "@aio/contracts";
 import { parse } from "yaml";
 import type { ZodIssue } from "zod";
 

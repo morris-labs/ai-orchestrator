@@ -86,7 +86,11 @@ export const RoleFrontMatterSchema = z
     permission: RolePermissionSchema,
     placement: RolePlacementSchema,
     /** How long one turn of the role's agent can run before the engine stops it. */
-    turnTimeoutMinutes: z.number().int().positive().max(24 * 60),
+    turnTimeoutMinutes: z
+      .number()
+      .int()
+      .positive()
+      .max(24 * 60),
     rules: z.array(z.string().min(1)),
   })
   .strict();
