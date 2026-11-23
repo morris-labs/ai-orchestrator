@@ -47,6 +47,7 @@ import { DockerExecBackend, type ExecBackend } from "../terminals/exec.js";
 import { UsageService } from "../usage/usage-service.js";
 import { UsageStore } from "../usage/usage-store.js";
 import { UsageWatcher, projectManagerBoxes, projectManagerMessage } from "../usage/watcher.js";
+import { PmDelivery } from "../events/pm-delivery.js";
 
 export interface AppOptions {
   home: string;
@@ -214,6 +215,13 @@ export async function startApp(options: AppOptions): Promise<App> {
       });
     },
   });
+  // Escalations, digests, and usage alerts reach the Project manager's session.
+  const pmDelivery = new PmDelivery({
+    builds: buildMirror,
+    engines: { get: (container) => engineSupervisor?.get(container) },
+    boxes: { deliver: (boxId, request) => core.boxes.deliver(boxId, request) },
+    log,
+  });
   const usageWatcher = new UsageWatcher({
     store: usageStore,
     settings,
@@ -223,9 +231,7 @@ export async function startApp(options: AppOptions): Promise<App> {
       notifier.usageAlert(alert);
       const text = projectManagerMessage(alert);
       for (const boxId of projectManagerBoxes(alert, buildMirror.list())) {
-        void core.boxes.message(boxId, text).catch((err: unknown) => {
-          log(`Sending a usage alert to ${boxId} failed: ${(err as Error).message}`);
-        });
+        pmDelivery.alert(boxId, text);
       }
     },
   });
@@ -476,6 +482,7 @@ export async function startApp(options: AppOptions): Promise<App> {
     runMirror.ingest(event);
     buildMirror.ingest(event);
     boxBuilds.ingest(event);
+    pmDelivery.ingest(event);
     usage.ingest(event);
     // After the usage service, which records the sample or settlement it reads.
     usageWatcher.ingest(event);
@@ -617,6 +624,7 @@ export async function startApp(options: AppOptions): Promise<App> {
   }
 
   engines.start();
+  pmDelivery.start();
   // Keep the API available while building so apps can show progress and starts wait.
   void core.image
     .status()
@@ -652,6 +660,7 @@ export async function startApp(options: AppOptions): Promise<App> {
       closing = true;
       clearInterval(brokerTimer);
       boxBuilds.close();
+      pmDelivery.close();
       await brokerSync;
       await broker.closeAll();
       await core.close?.();

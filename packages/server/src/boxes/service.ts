@@ -1471,7 +1471,9 @@ export class BoxService {
     request: DeliveryRequest & { confirm?: boolean },
   ): Promise<DeliveryResult> {
     const box = this.get(id);
-    if (!this.isRunning(box)) return { delivered: false, reason: `${id} is not running.` };
+    if (!this.isRunning(box)) {
+      return { delivered: false, stopped: true, reason: `${id} is not running.` };
+    }
     // `send-keys` takes a pane target, and tmux resolves `=NAME` without a
     // `:` as a pane or window, so it fails. The trailing `:` names the
     // session's current window and pane.

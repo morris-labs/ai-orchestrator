@@ -110,6 +110,31 @@ describe("build event admission", () => {
     expect(engineEventRefusal(db, endpoint, agent)).toBeNull();
   });
 
+  it("accepts a Project manager inbox item of a known build of the project", () => {
+    const { db, builds } = seeded();
+    const added = ev({
+      type: "build.inbox",
+      buildId: BUILD,
+      slug: summary.slug,
+      boxId: null,
+      item: {
+        id: "I1",
+        kind: "escalation",
+        ref: "E1",
+        summary: "Escalation E1 (preflight, for the project manager): a command can't run.",
+        file: "escalations/E1.json",
+        path: "/work/app/.aio/builds/x/escalations/E1.json",
+        needsAnswer: true,
+        createdAt: T0,
+        deliveredAt: null,
+        answeredAt: null,
+      },
+    });
+    expect(engineEventRefusal(db, endpoint, added)).toMatch(/unknown/);
+    builds.ingest(buildChanged());
+    expect(engineEventRefusal(db, endpoint, added)).toBeNull();
+  });
+
   it("accepts a team chat message of a known build of the project", () => {
     const { db, builds } = seeded();
     const message = (buildId: string) =>

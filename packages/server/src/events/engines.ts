@@ -175,6 +175,8 @@ export function engineEventRefusal(
       return ownBuild(event.buildId);
     case "message.sent":
       return ownBuild(event.message.buildId);
+    case "build.inbox":
+      return ownBuild(event.buildId);
     case "agent.started":
     case "agent.finished":
     case "lease.settled":

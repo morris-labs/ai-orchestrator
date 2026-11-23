@@ -54,8 +54,8 @@ export type DeliveryResult =
    * transcript to read.
    */
   | { delivered: true; confirmed: boolean | null }
-  /** Nothing was typed: the session can't take a message now. */
-  | { delivered: false; reason: string };
+  /** Nothing was typed: the session can't take a message now. `stopped` marks a box that isn't running. */
+  | { delivered: false; reason: string; stopped?: true };
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
