@@ -78,7 +78,9 @@ describe("Builds page", () => {
         }),
       );
     });
-    await waitFor(() => expect(stateOf("add-export")).toEqual(["Paused", "add-export", "Integrate"]));
+    await waitFor(() =>
+      expect(stateOf("add-export")).toEqual(["Paused", "add-export", "Integrate"]),
+    );
     expect(stateOf("drop-legacy")).toEqual(["Running", "drop-legacy", "Tasks"]);
     expect(server.callsTo("builds.list").length).toBe(lists);
   });
