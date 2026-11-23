@@ -212,7 +212,7 @@ describe("startApp", () => {
     );
   });
 
-  it("stores a build, grants its calls at a ceiling, and reports its usage by seat and step", async () => {
+  it("stores a build, grants its calls at a ceiling, and reports its usage by seat, step, and specialty", async () => {
     const BUILD = "01JB8Z5K3W6Q2V9X4T7R0M1N2Q";
     await waitFor(() => engine.sockets.length === 1);
     // Claude is over its ceiling, as in the test above.
@@ -259,6 +259,7 @@ describe("startApp", () => {
       type: "lease.settled",
       leaseId: "B-L1",
       ...owner,
+      specialties: ["node-dev"],
       vendor: "claude",
       role: "fixer",
       tokens: { in: 300, out: 20 },
@@ -285,6 +286,7 @@ describe("startApp", () => {
       total: totals,
       bySeat: [{ seat: "developer", ...totals }],
       byStep: [{ step: "tasks", ...totals }],
+      bySpecialty: [{ specialty: "node-dev", ...totals }],
     });
     const unknown = await api("GET", "/api/v1/builds/01JB8Z5K3W6Q2V9X4T7R0M1N2R/usage");
     expect(unknown.status).toBe(404);

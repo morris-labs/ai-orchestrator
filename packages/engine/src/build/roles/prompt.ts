@@ -1,6 +1,7 @@
 // The prompt for one agent that fills a role's seat for one task.
 import type { RoleDefinition } from "@aio/contracts";
 import { jsonInstruction } from "../../prompts/schema.js";
+import type { SpecialtyPack } from "../specialties/load.js";
 
 /** The placeholder in a write permission's path globs for the task's owned files. */
 export const OWNED_FILES = "{owned}";
@@ -26,6 +27,11 @@ export interface RoleTask {
   tests?: readonly string[];
   /** Extra context that the engine attaches, such as decisions or a diagnosis. */
   context?: string;
+  /**
+   * The packs of the task's specialties, from `loadSpecialties()`. Every
+   * agent on the task gets their text, whatever its seat or vendor.
+   */
+  specialties?: ReadonlyArray<Pick<SpecialtyPack, "name" | "text">>;
 }
 
 /**
@@ -56,6 +62,16 @@ function permissionRule(role: RoleDefinition, task: RoleTask): string {
   return `Change only these files: ${writablePaths(role, task).join(", ")}.`;
 }
 
+/** The guidance of each specialty, each pack in its own tagged block. */
+function specialtyGuidance(task: RoleTask): string {
+  const packs = task.specialties ?? [];
+  if (packs.length === 0) return "";
+  return [
+    "This task uses these specialties. Follow their guidance where it applies, and follow the rules above where the two differ.",
+    ...packs.map((pack) => `<specialty name="${pack.name}">\n${pack.text.trim()}\n</specialty>`),
+  ].join("\n\n");
+}
+
 /** The JSON schema of the role's answer, or `null` when no output has one. */
 function answerSchema(role: RoleDefinition): object | null {
   const structured = role.outputs.filter((output) => output.schema !== undefined);
@@ -77,6 +93,7 @@ export function rolePrompt(role: RoleDefinition, task: RoleTask): string {
     `You are the ${role.title} on a build team. ${role.purpose.trim()}`,
     role.instructions,
     section("Rules", list([permissionRule(role, task), ...role.rules])),
+    section("Specialties", specialtyGuidance(task)),
     section(
       `Task ${task.id}: ${task.title}`,
       `${task.description.trim()}\n\nRepository: ${task.repoPath}\nBranch: ${task.branch}`,

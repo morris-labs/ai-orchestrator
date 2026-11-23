@@ -15,7 +15,8 @@ export class RoleError extends Error {
   }
 }
 
-const FRONT_MATTER = /^---\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/;
+/** YAML front matter between `---` lines at the start of a Markdown file. */
+export const FRONT_MATTER = /^---\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/;
 
 /** Describes one schema issue, naming the field it concerns. */
 function describeIssue(issue: ZodIssue): string {

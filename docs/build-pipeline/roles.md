@@ -19,7 +19,8 @@ A repository role with a name that the library doesn't use adds a role.
 
 The engine reads only the Markdown files directly in the `.aio/team/`
 directory. Subdirectories, such as `.aio/team/specialties/`, hold other
-files.
+files. For more information about specialties, see
+[Specialties](specialties.md).
 
 Each file name must match the role's `name` field: the `developer` role lives
 in the `developer.md` file. The engine refuses an invalid repository role. It

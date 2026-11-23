@@ -82,9 +82,9 @@ export class UsageStore {
     this.db
       .prepare(
         `INSERT INTO svc_lease_settlements
-         (time, lease_id, run_id, build_id, seat, step, vendor, role, tokens_in, tokens_out,
-          premium_requests, cost_estimate)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (time, lease_id, run_id, build_id, seat, step, specialties, vendor, role, tokens_in,
+          tokens_out, premium_requests, cost_estimate)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         time,
@@ -93,6 +93,7 @@ export class UsageStore {
         s.buildId ?? null,
         s.seat ?? null,
         s.step ?? null,
+        s.specialties?.length ? JSON.stringify(s.specialties) : null,
         s.vendor,
         s.role,
         s.tokens.in,
@@ -103,9 +104,10 @@ export class UsageStore {
   }
 
   /**
-   * One build's settled usage, in total, by seat, and by step. It counts
-   * every call that names the build, the calls of a review run the build
-   * started included.
+   * One build's settled usage, in total, by seat, by step, and by
+   * specialty. It counts every call that names the build, the calls of a
+   * review run the build started included. A call with several specialties
+   * counts toward each of them.
    */
   buildUsage(buildId: string): BuildUsage {
     const group = (column: "seat" | "step") =>
@@ -118,6 +120,16 @@ export class UsageStore {
     const total = this.db
       .prepare(`SELECT NULL AS key, ${TOTALS} FROM svc_lease_settlements WHERE build_id = ?`)
       .get(buildId) as TotalsRow;
+    const specialties = this.db
+      .prepare(
+        `SELECT j.value AS key, ${TOTALS}
+         FROM svc_lease_settlements, json_each(svc_lease_settlements.specialties) AS j
+         WHERE build_id = ? GROUP BY j.value
+         UNION ALL
+         SELECT NULL AS key, ${TOTALS} FROM svc_lease_settlements
+         WHERE build_id = ? AND specialties IS NULL HAVING COUNT(*) > 0`,
+      )
+      .all(buildId, buildId) as TotalsRow[];
     const seats = group("seat");
     const steps = group("step") as (TotalsRow & { key: BuildStep | null })[];
     return {
@@ -129,6 +141,9 @@ export class UsageStore {
       byStep: steps
         .sort(nullsLast<BuildStep>((a, b) => STEP_ORDER.indexOf(a) - STEP_ORDER.indexOf(b)))
         .map((r) => ({ step: r.key, ...totals(r) })),
+      bySpecialty: specialties
+        .sort(nullsLast<string>((a, b) => (a < b ? -1 : a > b ? 1 : 0)))
+        .map((r) => ({ specialty: r.key, ...totals(r) })),
     };
   }
 
