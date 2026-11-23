@@ -3,7 +3,6 @@
 // through it, so every change reaches `state.json`, `STATUS.md`, and the
 // event stream the same way.
 import type {
-  AgentRole,
   EngineRunCreate,
   BuildPlan,
   BuildState,
@@ -17,7 +16,6 @@ import type {
   RunState,
 } from "@aio/contracts";
 import { VendorSchema } from "@aio/contracts";
-import { z } from "zod";
 import {
   AgentCalls,
   basicRouting,
@@ -29,11 +27,11 @@ import {
 } from "../calls/index.js";
 import type { Clock, CommandRunner, EventDraft, EventSink } from "../core.js";
 import type { Logger } from "../api/core-interface.js";
-import { UnknownRoleError, roleAnswerSchema, rolePrompt, type RoleTask } from "./roles/index.js";
-import { SeatPlacements, placeCall, type PlaceOptions } from "./placements/index.js";
+import { UnknownRoleError, type RoleTask } from "./roles/index.js";
+import { SeatPlacements, type PlaceOptions } from "./placements/index.js";
+import { seatCallSpec } from "./seat-call.js";
 import {
   loadSpecialties,
-  specialtyCall,
   type SpecialtyPack,
   type SpecialtySources,
 } from "./specialties/index.js";
@@ -42,20 +40,7 @@ import { renderStatus } from "./status-file.js";
 import type { BuildStore } from "./store.js";
 import type { BuildWorktree } from "./worktree.js";
 
-/** The lease estimate of one seat's turn, in tokens. */
-export const SEAT_ESTIMATE_TOKENS = 100_000;
-
-/** A role's answer: a JSON object, which the step that asked reads. */
-const RoleAnswerSchema = z.record(z.unknown());
-
-/**
- * The review role that a seat's leases and events name, until they name the
- * seat itself (ADR 0007): a seat that writes files is a `fixer`, and a
- * read-only seat a `reviewer`.
- */
-export function agentRoleFor(role: RoleDefinition): AgentRole {
-  return role.permission.access === "write" ? "fixer" : "reviewer";
-}
+export { SEAT_ESTIMATE_TOKENS, agentRoleFor } from "./seat-call.js";
 
 /** The engine's review runs, which the review step starts and reads. */
 export interface ReviewRuns {
@@ -95,7 +80,8 @@ export interface SeatCall {
   placement?: PlaceOptions;
 }
 
-class FileCallCache implements CallCache {
+/** The build's call cache: each finished call in `calls/KEY.json`. */
+export class FileCallCache implements CallCache {
   constructor(private readonly store: BuildStore) {}
 
   async read<T>(key: string): Promise<AgentOutcome<T> | null> {
@@ -318,37 +304,15 @@ export class BuildContext {
    */
   async callSeat(input: SeatCall): Promise<AgentOutcome<Record<string, unknown>>> {
     const role = this.role(input.seat);
-    const placement = this.seats.place(input.seat, input.placement);
-    const writes = role.permission.access === "write";
-    const packs = input.specialties ?? [];
-    const spec = placeCall(
-      specialtyCall(
-        {
-          key: input.key,
-          role: agentRoleFor(role),
-          method: writes ? "fix" : "review",
-          request: {
-            prompt: rolePrompt(role, { ...input.task, specialties: packs }),
-            repoPath: this.worktree.path,
-            toolPolicy: writes ? "write" : "read-only",
-            scratchDir: this.store.scratchDir,
-            timeoutMs: role.turnTimeoutMinutes * 60_000,
-            output: {
-              schema: RoleAnswerSchema,
-              json: (roleAnswerSchema(role) as Record<string, unknown> | null) ?? {
-                type: "object",
-              },
-            },
-          },
-          groupId: null,
-          estimateTokens: SEAT_ESTIMATE_TOKENS,
-          seat: input.seat,
-          step: input.step,
-        },
-        packs,
-      ),
-      placement,
-    );
+    const spec = seatCallSpec(role, this.seats.place(input.seat, input.placement), {
+      seat: input.seat,
+      key: input.key,
+      step: input.step,
+      task: input.task,
+      repoPath: this.worktree.path,
+      scratchDir: this.store.scratchDir,
+      ...(input.specialties ? { specialties: input.specialties } : {}),
+    });
     return this.calls.call<Record<string, unknown>>(spec);
   }
 }
