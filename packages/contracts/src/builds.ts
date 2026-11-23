@@ -159,6 +159,8 @@ export const EscalationKindSchema = z.enum([
   "placement",
   /** A task's specialty can't be loaded, such as one whose skill was removed. */
   "specialty",
+  /** A test, type check, or lint command of the build plan can't run at preflight. */
+  "preflight",
 ]);
 export type EscalationKind = z.infer<typeof EscalationKindSchema>;
 
