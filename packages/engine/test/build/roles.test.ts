@@ -166,6 +166,18 @@ describe("the Developer role", () => {
     expect(role.permission).toEqual({ access: "write", paths: ["{owned}"] });
   });
 
+  it("ships the Test engineer on a different vendor from the Developer, writing only its owned paths", async () => {
+    const repo = tempDir("aio-roles-repo-");
+    const tester = await loadRole("test-engineer", repo);
+    const developer = await loadRole("developer", repo);
+    expect(tester.source).toBe("library");
+    expect(tester.title).toBe("Test engineer");
+    expect(tester.placement).toEqual({ vendor: "codex", tier: "large", effort: "medium" });
+    expect(tester.placement.vendor).not.toBe(developer.placement.vendor);
+    expect(tester.permission).toEqual({ access: "write", paths: ["{owned}"] });
+    expect(tester.outputs.map((o) => o.name)).toEqual(["tests", "report"]);
+  });
+
   it("produces the prompt for one task", async () => {
     const role = await loadRole("developer", tempDir("aio-roles-repo-"));
     const prompt = rolePrompt(role, task);

@@ -13,6 +13,7 @@ import type { BuildContext } from "../context.js";
 import { escalationForCallError } from "../escalations.js";
 import { gateFailureLine, gateReport, runTaskGate, type TaskGateResult } from "../gate.js";
 import { writablePaths, type RoleTask } from "../roles/index.js";
+import { readTestLock } from "../test-lock.js";
 import type { StepOutcome } from "./types.js";
 
 /** Attempts a task gets before it escalates. */
@@ -96,6 +97,7 @@ async function attempt(ctx: BuildContext, task: BuildTask, n: number): Promise<G
     base: progress.base ?? ctx.state.base,
     writable: writablePaths(ctx.role(task.role), roleTask(ctx, task, "")),
     commands: ctx.plan.commands,
+    lock: await readTestLock(ctx.store),
     shell: ctx.services.shell,
     baseline: await loadBaseline(ctx.store),
     protect: task.tests,
@@ -154,6 +156,11 @@ async function runTask(ctx: BuildContext, task: BuildTask): Promise<StepOutcome>
     // puts them back, so the next attempt starts within bounds.
     if (!record.gate.permission.passed) {
       await ctx.worktree.restorePaths(base, record.gate.permission.outside);
+    }
+    // Nor change a locked test: the engine puts it back the way the lock has it.
+    if (record.gate.lock && !record.gate.lock.passed) {
+      const lock = await readTestLock(ctx.store);
+      if (lock) await ctx.worktree.restorePaths(lock.commit, record.gate.lock.changed);
     }
     progress.lastFailure = gateFailureLine(record.gate);
     await ctx.persist();

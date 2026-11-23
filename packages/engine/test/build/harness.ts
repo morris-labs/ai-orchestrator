@@ -12,6 +12,7 @@ import {
   BuildStateSchema,
   type BuildPlanInput,
   type BuildState,
+  type BuildStep,
   type Vendor,
 } from "@aio/contracts";
 import { bridgeAdapters } from "../../src/adapters/bridge.js";
@@ -122,18 +123,29 @@ function sampleProject(): string {
   return root;
 }
 
+/**
+ * The steps a build world runs unless a test asks for others: the build
+ * pipeline without tests first, so a scenario about a later step scripts only
+ * the seats of that step. Scenarios about tests first pass `BUILD_PIPELINE`.
+ */
+export const WORLD_STEPS: readonly BuildStep[] = BUILD_PIPELINE.filter(
+  (step) => step !== "tests_first",
+);
+
 export interface BuildWorldOptions {
+  /** The steps the builds run, in order. Default: `WORLD_STEPS`. */
+  steps?: readonly BuildStep[];
   /** Runs the review step. Off by default: the build then waits at that step. */
   review?: boolean;
 }
 
-/** The default pipeline without the review handler, for tests that end at the review step. */
-function withoutReview(): BuildPipeline {
+/** The handlers a build world runs: every step's, without the review's unless `review` is set. */
+function worldPipeline(options: BuildWorldOptions): BuildPipeline {
   return {
-    steps: BUILD_PIPELINE,
-    handlers: Object.fromEntries(
-      Object.entries(STEP_HANDLERS).filter(([step]) => step !== "review"),
-    ),
+    steps: options.steps ?? WORLD_STEPS,
+    handlers: options.review
+      ? STEP_HANDLERS
+      : Object.fromEntries(Object.entries(STEP_HANDLERS).filter(([step]) => step !== "review")),
   };
 }
 
@@ -200,7 +212,7 @@ export async function buildWorld(options: BuildWorldOptions = {}): Promise<Build
       skillDirs: () => [],
       reviews: runs,
       reviewPollMs: 25,
-      ...(options.review ? {} : { pipeline: withoutReview() }),
+      pipeline: worldPipeline(options),
     });
     return { events, broker, manager, runs };
   };
