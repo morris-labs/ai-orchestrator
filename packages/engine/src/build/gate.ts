@@ -24,6 +24,7 @@ import { runGateCommand, type GateCommandResult, type GateOptions } from "../gat
 import {
   commandKey,
   emptyBaseline,
+  checkFailsOnlyOnBaseline,
   excusedFailures,
   failsOnlyOnBaseline,
   testFailures,
@@ -284,7 +285,13 @@ export async function runTaskGate(options: TaskGateOptions): Promise<TaskGateRes
   for (const kind of ["typecheck", "lint"] as const) {
     for (const cmd of options.commands[kind]) {
       if (options.signal?.aborted) break;
-      commands.push(await runGateCommand(kind, cmd, timed));
+      const result = await runGateCommand(kind, cmd, { ...timed, diagnostics: true });
+      // A check that fails only the way it failed at preflight doesn't fail the gate.
+      commands.push(
+        checkFailsOnlyOnBaseline(result, baseline)
+          ? { ...result, passed: true, excused: result.diagnostics ?? [] }
+          : result,
+      );
     }
   }
   const regressions = findRegressions(commands, earlier, lockOwners);

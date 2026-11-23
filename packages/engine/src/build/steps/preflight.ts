@@ -11,7 +11,7 @@
 import type { BuildCommands, PolicyCommand } from "@aio/contracts";
 import { RunCancelled, describeError } from "../../calls/index.js";
 import { runGateCommand, type GateCommandKind, type GateCommandResult } from "../../gate/gate.js";
-import { BASELINE_FILE, classifyRuns, couldNotRun } from "../baseline.js";
+import { BASELINE_FILE, baselineChecks, classifyRuns, couldNotRun } from "../baseline.js";
 import type { BuildContext } from "../context.js";
 import type { StepOutcome } from "./types.js";
 
@@ -43,6 +43,7 @@ async function runCommands(
         repoPath: ctx.worktree.path,
         shell: ctx.services.shell,
         signal,
+        diagnostics: kind !== "test",
       }),
     );
   }
@@ -141,6 +142,10 @@ export async function runPreflight(ctx: BuildContext): Promise<StepOutcome> {
     record.runs.push(await runCommands(ctx, ofKind(ctx.plan.commands, "test")));
     await store.writeJson(path, record);
   }
-  await store.writeJson(store.path(BASELINE_FILE), classifyRuns(record.runs));
+  const checks = baselineChecks(record.checks);
+  await store.writeJson(store.path(BASELINE_FILE), {
+    ...classifyRuns(record.runs),
+    ...(checks.length > 0 ? { checks } : {}),
+  });
   return "next";
 }

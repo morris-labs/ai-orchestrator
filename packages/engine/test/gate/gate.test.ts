@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { CommandRunner } from "../../src/core.js";
 import {
   compareGate,
+  diagnosticLines,
   extractFailures,
   formatRegressions,
   runGate,
@@ -224,5 +225,27 @@ describe("gate", () => {
     });
     await runGate(policy, { repoPath: "/repo", shell });
     expect(envs).toEqual([{ PYTHONDONTWRITEBYTECODE: "1" }, { PYTHONDONTWRITEBYTECODE: "1" }]);
+  });
+});
+
+describe("diagnosticLines", () => {
+  it("keeps every lint and type check line, without positions or count lines", () => {
+    const before = [
+      "src/a.ts(10,5): error TS2322: Type 'number' is not assignable to type 'string'.",
+      "  3:1  error  Unexpected var  no-var",
+      "Found 2 errors in 1 file.",
+      "",
+    ].join("\n");
+    const after = [
+      "src/a.ts(14,5): error TS2322: Type 'number' is not assignable to type 'string'.",
+      "  7:1  error  Unexpected var  no-var",
+      "Found 3 errors in 2 files.",
+    ].join("\n");
+
+    expect(diagnosticLines(before)).toEqual([
+      "L:C error Unexpected var no-var",
+      "src/a.ts(L,C): error TS2322: Type 'number' is not assignable to type 'string'.",
+    ]);
+    expect(diagnosticLines(after)).toEqual(diagnosticLines(before));
   });
 });

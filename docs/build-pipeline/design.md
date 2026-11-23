@@ -338,8 +338,12 @@ from three runs of the repository's tests:
 - **Flaky:** a test whose result differs between runs. The engine quarantines
   it. Its result doesn't block the build, count as a regression, or feed a
   failure fingerprint.
+- **Known check failures:** the lines that a failing type check or lint
+  command prints at preflight, with line and column numbers left out. A
+  later run of that command that prints only those lines doesn't fail the
+  task gate; a new line does.
 
-The Scribe lists both kinds in the pull request.
+The Scribe lists both kinds of test in the pull request.
 
 ### Milestone loop
 
