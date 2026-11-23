@@ -454,7 +454,7 @@ describe("the release ready step", () => {
     fullScript(world);
     // A lint check that the Scribe's changelog entry breaks: every earlier gate passes it.
     const plan = releasePlan(true);
-    plan.commands.lint = [...plan.commands.lint, { command: "test ! -f CHANGELOG.md" }];
+    plan.commands.lint = [...(plan.commands.lint ?? []), { command: "test ! -f CHANGELOG.md" }];
 
     await world.start("cart-total", plan);
     const state = await world.settle("cart-total");
