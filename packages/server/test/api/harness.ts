@@ -275,6 +275,7 @@ export async function createHarness(
               total: { calls: 0, tokensIn: 0, tokensOut: 0, premiumRequests: 0, costEstimate: 0 },
               bySeat: [],
               byStep: [],
+              bySpecialty: [],
             }
           : undefined,
     },

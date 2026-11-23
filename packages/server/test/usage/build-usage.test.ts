@@ -69,6 +69,7 @@ describe("usage by seat and by step", () => {
         { step: "tasks", ...sum(2, 150, 15, 0, 1) },
         { step: "review", ...sum(1, 100, 10, 1, 0.5) },
       ],
+      bySpecialty: [{ specialty: null, ...sum(4, 350, 35, 1, 1.75) }],
     });
   });
 
@@ -79,6 +80,7 @@ describe("usage by seat and by step", () => {
       total: { calls: 0, tokensIn: 0, tokensOut: 0, premiumRequests: 0, costEstimate: 0 },
       bySeat: [],
       byStep: [],
+      bySpecialty: [],
     });
   });
 
@@ -88,5 +90,33 @@ describe("usage by seat and by step", () => {
     expect(
       t.db.prepare("SELECT run_id, build_id, seat, step FROM svc_lease_settlements").all(),
     ).toEqual([{ run_id: RUN, build_id: null, seat: null, step: null }]);
+  });
+});
+
+describe("usage by specialty", () => {
+  it("counts each call toward every specialty its task names", () => {
+    const t = setup();
+    const build = { buildId: BUILD, seat: "developer", step: "tasks" } as const;
+    settle(t, 1, { ...build, specialties: ["node-dev", "typescript-dev"] });
+    settle(t, 2, { ...build, specialties: ["go-dev"], vendor: "codex", tokens: { in: 40, out: 4 } });
+    settle(t, 3, { ...build, specialties: ["typescript-dev"], costEstimate: 0.25 });
+    settle(t, 4, build);
+    settle(t, 5, { buildId: OTHER_BUILD, specialties: ["go-dev"] });
+
+    const sum = (calls: number, tokensIn: number, tokensOut: number, cost: number) => ({
+      calls,
+      tokensIn,
+      tokensOut,
+      premiumRequests: 0,
+      costEstimate: cost,
+    });
+    const usage = t.store.buildUsage(BUILD);
+    expect(usage.total).toEqual(sum(4, 340, 34, 1.75));
+    expect(usage.bySpecialty).toEqual([
+      { specialty: "go-dev", ...sum(1, 40, 4, 0.5) },
+      { specialty: "node-dev", ...sum(1, 100, 10, 0.5) },
+      { specialty: "typescript-dev", ...sum(2, 200, 20, 0.75) },
+      { specialty: null, ...sum(1, 100, 10, 0.5) },
+    ]);
   });
 });

@@ -327,4 +327,10 @@ export const MIGRATIONS: readonly Migration[] = [
   ALTER TABLE svc_lease_settlements_9 RENAME TO svc_lease_settlements;
   CREATE INDEX IF NOT EXISTS svc_lease_settlements_build ON svc_lease_settlements (build_id);
 `,
+  // 10: the specialties of a build call's task, as a JSON array of names, so
+  // usage breaks down by specialty. Calls with none, and every older row,
+  // keep `NULL`.
+  `
+  ALTER TABLE svc_lease_settlements ADD COLUMN specialties TEXT;
+`,
 ];
