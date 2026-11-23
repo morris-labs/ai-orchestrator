@@ -4,7 +4,14 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { BUILD_PIPELINE } from "../../src/build/index.js";
-import { CART_DONE, REPORT, buildWorld, cartPlan, type MockResponse } from "./harness.js";
+import {
+  CART_DONE,
+  CART_STUB,
+  REPORT,
+  buildWorld,
+  cartPlan,
+  type MockResponse,
+} from "./harness.js";
 
 /** A test for AC1 that fails on an assertion against the cart stub. */
 const RED_TEST = [
@@ -94,7 +101,12 @@ describe("tests first", () => {
     expect(state).toMatchObject({ step: "review", status: "paused" });
     expect(world.calls().map((c) => c.cli)).toEqual(["codex", "claude"]);
     expect(world.events.ofType("agent.started")).toEqual([
-      expect.objectContaining({ seat: "test-engineer", step: "tests_first", vendor: "codex" }),
+      expect.objectContaining({
+        seat: "test-engineer",
+        step: "tests_first",
+        vendor: "codex",
+        role: "fixer",
+      }),
       expect.objectContaining({ seat: "developer", step: "tasks", vendor: "claude" }),
     ]);
     const [round] = world.jsonFiles("cart-total", "tests-first") as SavedRound[];
@@ -109,5 +121,157 @@ describe("tests first", () => {
     expect(world.git(world.root, "show", `${lock.commit}:${TEST_FILE}`)).toBe(RED_TEST.trim());
     expect(world.git(world.root, "show", `build/cart-total:${TEST_FILE}`)).toBe(RED_TEST.trim());
     expect(world.git(world.root, "rev-list", "--count", "main..build/cart-total")).toBe("2");
+  });
+});
+
+describe("the red check", () => {
+  it.each([
+    ["passes before the code exists", GREEN_TEST, /passes before the code exists/],
+    ["fails on an import error", IMPORT_ERROR_TEST, /failed on an error: SyntaxError/],
+  ])("sends back a test that %s", async (_label, content, problem) => {
+    const world = await buildWorld({ steps: BUILD_PIPELINE });
+    world.script({
+      codex: [testRound(1, content), testRound(2, RED_TEST)],
+      claude: [DEVELOPER],
+    });
+
+    await world.start("cart-total");
+    const state = await world.settle("cart-total");
+
+    expect(state).toMatchObject({ step: "review", status: "paused" });
+    const [first, second] = world.jsonFiles("cart-total", "tests-first") as SavedRound[];
+    expect(first?.check?.passed).toBe(false);
+    expect(first?.check?.problems).toEqual([expect.stringMatching(problem)]);
+    expect(second?.check?.passed).toBe(true);
+    const retry = world.calls()[1];
+    expect(retry?.cli).toBe("codex");
+    expect(retry?.prompt).toMatch(problem);
+    const lock = JSON.parse(world.file("cart-total", "test-lock.json")) as SavedLock;
+    expect(lock.redCheck).toBe("tests-first/round-2.json");
+    expect(lock.files).toEqual([{ path: TEST_FILE, sha256: sha256(RED_TEST) }]);
+  });
+
+  it("sends back a test without a criterion ID", async () => {
+    const world = await buildWorld({ steps: BUILD_PIPELINE });
+    const { criterion: _dropped, ...unnamed } = AC1_TEST;
+    world.script({
+      codex: [testRound(1, RED_TEST, [unnamed]), testRound(2, RED_TEST)],
+      claude: [DEVELOPER],
+    });
+
+    await world.start("cart-total");
+    await world.settle("cart-total");
+
+    const [first, second] = world.jsonFiles("cart-total", "tests-first") as SavedRound[];
+    expect(first?.check?.problems).toEqual([
+      expect.stringMatching(/names no criterion ID/),
+      "Criterion AC1 has no test.",
+    ]);
+    expect(second?.check?.passed).toBe(true);
+    expect(world.calls()[1]?.prompt).toMatch(/names no criterion ID/);
+  });
+
+  it("accepts a passing test for a criterion that the plan marks as one that already holds", async () => {
+    const world = await buildWorld({ steps: BUILD_PIPELINE });
+    world.script({ codex: [testRound(1, GREEN_TEST)], claude: [DEVELOPER] });
+    const plan = cartPlan({
+      criteria: [{ id: "AC1", text: "An empty cart totals zero.", alreadyHolds: true }],
+    });
+
+    await world.start("cart-total", plan);
+    const state = await world.settle("cart-total");
+
+    expect(state).toMatchObject({ step: "review", status: "paused" });
+    const [round] = world.jsonFiles("cart-total", "tests-first") as SavedRound[];
+    expect(round?.check).toMatchObject({
+      passed: true,
+      tests: [{ criterion: "AC1", outcome: "passed" }],
+    });
+  });
+
+  it("puts back a file that the Test engineer changed outside the test paths", async () => {
+    const world = await buildWorld({ steps: BUILD_PIPELINE });
+    const outside = testRound(1, RED_TEST);
+    outside.writeFiles = { ...outside.writeFiles, "src/cart.mjs": CART_DONE };
+    world.script({ codex: [outside, testRound(2, RED_TEST)], claude: [DEVELOPER] });
+
+    await world.start("cart-total");
+    await world.settle("cart-total");
+
+    const [first] = world.jsonFiles("cart-total", "tests-first") as SavedRound[];
+    expect(first?.check?.problems).toEqual([
+      expect.stringMatching(/outside the test paths.*src\/cart\.mjs/),
+    ]);
+    const lock = JSON.parse(world.file("cart-total", "test-lock.json")) as SavedLock;
+    expect(world.git(world.root, "show", `${lock.commit}:src/cart.mjs`)).toBe(CART_STUB.trim());
+  });
+
+  it("escalates when the tests fail the checks in every round, and no Developer starts", async () => {
+    const world = await buildWorld({ steps: BUILD_PIPELINE });
+    world.script({ codex: [{ ...testRound(1, GREEN_TEST), match: "round" }] });
+
+    await world.start("cart-total");
+    const state = await world.settle("cart-total");
+
+    expect(state).toMatchObject({ step: "tests_first", status: "waiting_escalation" });
+    expect(state.escalations).toEqual([
+      expect.objectContaining({ kind: "tests_first", level: "project_manager", taskId: null }),
+    ]);
+    expect(world.calls().map((c) => c.cli)).toEqual(["codex", "codex", "codex"]);
+    expect(world.file("cart-total", "escalations/E1.json")).toMatch(
+      /passes before the code exists/,
+    );
+    expect(() => world.file("cart-total", "test-lock.json")).toThrow();
+  });
+});
+
+interface SavedAttempt {
+  gate: {
+    passed: boolean;
+    permission: { passed: boolean };
+    lock?: { passed: boolean; changed: string[] };
+  };
+}
+
+describe("the test lock", () => {
+  it("fails a Developer attempt that changes a locked test and puts it back, and lets a Developer add a test file", async () => {
+    const world = await buildWorld({ steps: BUILD_PIPELINE });
+    const extra = 'import assert from "node:assert/strict";\nassert.ok(true);\n';
+    world.script({
+      codex: [testRound(1, RED_TEST)],
+      claude: [
+        {
+          match: "attempt 1 of",
+          output: REPORT,
+          writeFiles: { "src/cart.mjs": CART_DONE, [TEST_FILE]: GREEN_TEST },
+        },
+        {
+          match: "attempt 2 of",
+          output: REPORT,
+          writeFiles: { "src/cart.mjs": CART_DONE, "test/extra.test.mjs": extra },
+        },
+      ],
+    });
+    const plan = cartPlan();
+    const task = plan.tasks[0];
+    if (task) task.ownedFiles = ["src/cart.mjs", "test/**"];
+
+    await world.start("cart-total", plan);
+    const state = await world.settle("cart-total");
+
+    expect(state).toMatchObject({ step: "review", status: "paused" });
+    expect(state.tasks[0]).toMatchObject({ status: "done", attempts: 2 });
+    const [first, second] = world.jsonFiles("cart-total", "tasks/T1") as SavedAttempt[];
+    expect(first?.gate).toMatchObject({
+      passed: false,
+      permission: { passed: true },
+      lock: { passed: false, changed: [TEST_FILE] },
+    });
+    expect(second?.gate).toMatchObject({ passed: true, lock: { passed: true, changed: [] } });
+    expect(world.calls()[2]?.prompt).toMatch(/locked test/i);
+    expect(world.git(world.root, "show", `build/cart-total:${TEST_FILE}`)).toBe(RED_TEST.trim());
+    expect(world.git(world.root, "show", "build/cart-total:test/extra.test.mjs")).toBe(
+      extra.trim(),
+    );
   });
 });

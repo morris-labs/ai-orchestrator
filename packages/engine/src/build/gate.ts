@@ -2,13 +2,15 @@
 // It compares the task's changes with the role's writable paths, then runs
 // the plan's test, type check, and lint commands in the build worktree.
 //
+// When tests first locked the tests, the gate also checks the test lock.
+//
 // Later milestones add checks here: the tests that earlier tasks made pass,
-// the test lock, a rerun of a failing test for flakiness, and the failure
-// fingerprint.
+// a rerun of a failing test for flakiness, and the failure fingerprint.
 import type { BuildCommands } from "@aio/contracts";
 import type { CommandRunner } from "../core.js";
 import { runGateCommand, type GateCommandResult } from "../gate/gate.js";
 import { globToRegExp } from "../policy/glob.js";
+import { checkLock, type LockCheck, type TestLock } from "./test-lock.js";
 import type { BuildWorktree } from "./worktree.js";
 
 /** The permission check: the changed paths that no writable glob covers. */
@@ -21,6 +23,8 @@ export interface PermissionCheck {
 export interface TaskGateResult {
   passed: boolean;
   permission: PermissionCheck;
+  /** The test lock check, when the build has a test lock. */
+  lock?: LockCheck;
   commands: GateCommandResult[];
   /** Untracked files the commands left, which the gate deleted. */
   leftovers: string[];
@@ -33,6 +37,8 @@ export interface TaskGateOptions {
   /** Repository-relative globs that the seat may change. */
   writable: readonly string[];
   commands: BuildCommands;
+  /** The build's test lock; the gate fails an attempt that changes a locked file. */
+  lock?: TestLock | null;
   /** Runs one command line through a shell. */
   shell: CommandRunner;
   signal?: AbortSignal;
@@ -50,6 +56,7 @@ export async function runTaskGate(options: TaskGateOptions): Promise<TaskGateRes
   const { worktree } = options;
   const outside = outsideWritable(await worktree.changedSince(options.base), options.writable);
   const permission = { passed: outside.length === 0, writable: [...options.writable], outside };
+  const lock = options.lock ? await checkLock(worktree, options.lock) : undefined;
   const before = new Set(await worktree.untracked());
   const commands: GateCommandResult[] = [];
   const run = { repoPath: worktree.path, shell: options.shell, signal: options.signal };
@@ -63,8 +70,9 @@ export async function runTaskGate(options: TaskGateOptions): Promise<TaskGateRes
   const leftovers = (await worktree.untracked()).filter((path) => !before.has(path));
   await worktree.remove(leftovers);
   return {
-    passed: permission.passed && commands.every((c) => c.passed),
+    passed: permission.passed && (lock?.passed ?? true) && commands.every((c) => c.passed),
     permission,
+    ...(lock ? { lock } : {}),
     commands,
     leftovers,
   };
@@ -75,6 +83,9 @@ export function gateFailureLine(result: TaskGateResult): string {
   const parts: string[] = [];
   if (!result.permission.passed) {
     parts.push(`changed files outside the writable paths: ${result.permission.outside.join(", ")}`);
+  }
+  if (result.lock && !result.lock.passed) {
+    parts.push(`changed locked tests: ${result.lock.changed.join(", ")}`);
   }
   for (const c of result.commands.filter((c) => !c.passed)) {
     parts.push(
@@ -92,6 +103,14 @@ export function gateReport(result: TaskGateResult): string {
       [
         "Permission check: these changed files are outside the paths you may change, so the engine reset the worktree to the attempt's start:",
         ...result.permission.outside.map((p) => `  ${p}`),
+      ].join("\n"),
+    );
+  }
+  if (result.lock && !result.lock.passed) {
+    parts.push(
+      [
+        "Test lock: you changed these locked tests, so the engine put them back. Don't change a locked test; when you believe one is wrong, send a test dispute with your reason.",
+        ...result.lock.changed.map((p) => `  ${p}`),
       ].join("\n"),
     );
   }
