@@ -21,6 +21,15 @@ import { untrusted } from "../../prompts/templates.js";
 import { loadBaseline, quarantine } from "../baseline.js";
 import type { BuildContext } from "../context.js";
 import { diagnose, diagnosisText, readDiagnosis, type DiagnosisRecord } from "../debugger.js";
+import {
+  disputeContext,
+  disputeFile,
+  disputeOf,
+  nextDisputeId,
+  openDispute,
+  settleDispute,
+  type DisputeRecord,
+} from "../disputes.js";
 import { escalationForCallError, type EscalationDraft } from "../escalations.js";
 import { failureFingerprint, sameFingerprint } from "../fingerprint.js";
 import {
@@ -57,10 +66,17 @@ export interface AttemptRecord {
   gate?: TaskGateResult;
   /** What the seat reported it needs, in place of the gate. */
   blocked?: Blocker;
+  /** The test dispute that the seat raised, in place of the gate; the attempt runs again once it's settled. */
+  dispute?: number;
+  /** The test dispute that the attempt runs again after. */
+  after?: number;
 }
 
 type GatedAttempt = AttemptRecord & { gate: TaskGateResult };
-type FinishedAttempt = GatedAttempt | (AttemptRecord & { blocked: Blocker });
+type FinishedAttempt =
+  | GatedAttempt
+  | (AttemptRecord & { blocked: Blocker })
+  | (AttemptRecord & { dispute: number });
 
 /** The last attempt `task` gets. */
 function capOf(ctx: BuildContext, taskId: string): number {
@@ -112,11 +128,13 @@ function attemptContext(
   previous: AttemptRecord | undefined,
   diagnosis: DiagnosisRecord | undefined,
   notes: readonly string[],
+  dispute?: string,
 ): string {
   const lines = [`This is attempt ${n} of ${cap} at this task.`];
   for (const note of notes) {
     lines.push("", "The Project manager clarified the task:", "", untrusted(note));
   }
+  if (dispute) lines.push("", dispute);
   if (previous?.gate && !previous.gate.passed) {
     lines.push(
       "",
@@ -153,6 +171,47 @@ function otherTasks(
   };
 }
 
+/** The context about the dispute that an attempt runs again after, or `undefined` for none. */
+async function settledDispute(
+  ctx: BuildContext,
+  task: BuildTask,
+  id: number | undefined,
+): Promise<string | undefined> {
+  if (id === undefined) return undefined;
+  const record = await ctx.store.readJson<DisputeRecord>(ctx.store.path(disputeFile(task.id, id)));
+  if (!record) return undefined;
+  return disputeContext(
+    record,
+    ctx.state.escalations.find((e) => e.id === record.escalation),
+  );
+}
+
+/**
+ * Settles the test dispute that attempt `n` raised, then starts the attempt
+ * again with a call of its own. The attempt count stays as it is. Returns
+ * `"wait"` when the dispute escalated.
+ */
+async function afterDispute(
+  ctx: BuildContext,
+  task: BuildTask,
+  n: number,
+  id: number,
+): Promise<"again" | "wait"> {
+  // A dispute file that a stop kept from being saved is saved from the answer.
+  const path = ctx.store.attemptPath(task.id, n);
+  const saved = await ctx.store.readJson<AttemptRecord>(path);
+  const claim = saved?.answer ? disputeOf(saved.answer.output) : null;
+  if (claim) await openDispute(ctx, task, id, n, claim);
+  if ((await settleDispute(ctx, task, id)) === "wait") return "wait";
+  await ctx.store.writeJson(path, {
+    attempt: n,
+    start: await ctx.worktree.head(),
+    callKey: `${task.id}-attempt-${n}-after-dispute-${id}`,
+    after: id,
+  } satisfies AttemptRecord);
+  return "again";
+}
+
 /**
  * Runs attempt `n`, or returns its saved result when it already finished.
  * An attempt whose seat reports a missing secret or service ends without
@@ -161,7 +220,9 @@ function otherTasks(
 async function attempt(ctx: BuildContext, task: BuildTask, n: number): Promise<FinishedAttempt> {
   const path = ctx.store.attemptPath(task.id, n);
   let record = await ctx.store.readJson<AttemptRecord>(path);
-  if (record?.gate || record?.blocked) return record as FinishedAttempt;
+  if (record?.gate || record?.blocked || record?.dispute !== undefined) {
+    return record as FinishedAttempt;
+  }
   const progress = ctx.task(task.id);
   if (!record) {
     record = { attempt: n, start: await ctx.worktree.head(), callKey: `${task.id}-attempt-${n}` };
@@ -183,7 +244,14 @@ async function attempt(ctx: BuildContext, task: BuildTask, n: number): Promise<F
     task: roleTask(
       ctx,
       task,
-      attemptContext(n, capOf(ctx, task.id), previous, diagnosis, clarifications(ctx, task.id)),
+      attemptContext(
+        n,
+        capOf(ctx, task.id),
+        previous,
+        diagnosis,
+        clarifications(ctx, task.id),
+        await settledDispute(ctx, task, record.after),
+      ),
     ),
   });
   record.answer = { vendor: outcome.vendor, model: outcome.model, output: outcome.output };
@@ -193,15 +261,28 @@ async function attempt(ctx: BuildContext, task: BuildTask, n: number): Promise<F
     await ctx.store.writeJson(path, finished);
     return finished;
   }
+  // A test dispute doesn't count as an attempt: the gate doesn't run, and
+  // the attempt runs again once the dispute is settled.
+  const claim = disputeOf(outcome.output);
+  if (claim) {
+    const finished = { ...record, dispute: await nextDisputeId(ctx, task.id) };
+    await ctx.store.writeJson(path, finished);
+    await openDispute(ctx, task, finished.dispute, n, claim);
+    return finished;
+  }
   await ctx.store.writeJson(path, record);
   await ctx.calls.checkpoint();
   const signal = ctx.signal;
+  const lock = await readTestLock(ctx.store);
+  // A test that a dispute of this task amended changed since the task's
+  // base, but the engine changed it, so the permission check leaves it be.
+  const amended = (lock?.amendments ?? []).filter((a) => a.taskId === task.id).map((a) => a.test);
   const gate = await runTaskGate({
     worktree: ctx.worktree,
     base: progress.base ?? ctx.state.base,
-    writable: writablePaths(ctx.role(task.role), roleTask(ctx, task, "")),
+    writable: [...writablePaths(ctx.role(task.role), roleTask(ctx, task, "")), ...amended],
     commands: ctx.plan.commands,
-    lock: await readTestLock(ctx.store),
+    lock,
     shell: ctx.services.shell,
     baseline: await loadBaseline(ctx.store),
     protect: task.tests,
@@ -352,6 +433,18 @@ async function runTask(ctx: BuildContext, task: BuildTask): Promise<StepOutcome>
       record = await attempt(ctx, task, n);
     } catch (error) {
       return failOnCallError(ctx, task.id, error);
+    }
+    if (record.dispute !== undefined) {
+      let next: "again" | "wait";
+      try {
+        next = await afterDispute(ctx, task, n, record.dispute);
+      } catch (error) {
+        return failOnCallError(ctx, task.id, error);
+      }
+      if (next === "wait") return "wait";
+      // The same attempt runs again.
+      n -= 1;
+      continue;
     }
     if (record.blocked) {
       progress.lastFailure = `Needs the ${record.blocked.kind} ${record.blocked.name}.`;
