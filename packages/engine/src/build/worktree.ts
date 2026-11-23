@@ -202,9 +202,20 @@ export class BuildWorktree {
     return paths;
   }
 
-  /** Applies a patch that `setAside()` saved. Returns false when it no longer applies. */
+  /**
+   * Applies a patch that `setAside()` saved. Returns false when it no longer
+   * applies, with the paths it touches put back the way `HEAD` has them, so
+   * no conflict stays in the worktree.
+   */
   async bringBack(patchFile: string): Promise<boolean> {
-    return this.git.ok(["apply", "--3way", "--whitespace=nowarn", patchFile]);
+    if (await this.git.ok(["apply", "--3way", "--whitespace=nowarn", patchFile])) return true;
+    const numstat = await this.git.run(["apply", "--numstat", "-z", patchFile]).catch(() => "");
+    const paths = numstat
+      .split("\0")
+      .map((entry) => entry.split("\t").at(-1) ?? "")
+      .filter((path) => path !== "");
+    await this.restorePaths("HEAD", paths);
+    return false;
   }
 
   /** Deletes files in the worktree, such as a gate command's leftovers. */

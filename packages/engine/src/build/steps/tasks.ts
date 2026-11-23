@@ -439,7 +439,7 @@ async function runTask(ctx: BuildContext, task: BuildTask): Promise<StepOutcome>
     progress.base = await ctx.worktree.head();
     await ctx.setTaskStatus(task.id, "running");
   }
-  if (progress.setAside) await bringBack(ctx, task, progress.setAside);
+  if (progress.setAside && !(await bringBack(ctx, task, progress.setAside))) return "wait";
   const base = progress.base ?? ctx.state.base;
   const cap = capOf(ctx, task.id);
   const first = Math.max(progress.attempts, progress.resumeAt ?? 1, 1);
@@ -561,21 +561,31 @@ async function setAsideWaiting(ctx: BuildContext): Promise<void> {
 
 /**
  * Gives a task back the work that `setAsideWaiting()` saved, on top of the
- * tasks that ran since, which its new base covers.
+ * tasks that ran since, which its new base covers. Returns false, with a
+ * `set_aside` escalation that pauses the task, when the work no longer
+ * applies; the patch stays for the Project manager.
  */
-async function bringBack(ctx: BuildContext, task: BuildTask, file: string): Promise<void> {
+async function bringBack(ctx: BuildContext, task: BuildTask, file: string): Promise<boolean> {
   const progress = ctx.task(task.id);
   progress.base = await ctx.worktree.head();
   const patch = ctx.store.path(file);
   if (existsSync(patch) && !(await ctx.worktree.bringBack(patch))) {
-    ctx.services.log.warn("A task's set-aside work no longer applies; the task starts without it", {
-      build: ctx.state.slug,
-      task: task.id,
-      patch: file,
+    progress.lastFailure = `The set-aside work in ${file} no longer applies.`;
+    await ctx.escalate({
+      kind: "set_aside",
+      level: "project_manager",
+      taskId: task.id,
+      summary: `Task ${task.id}'s set-aside work no longer applies on top of the tasks that ran since it waited.`,
+      details: [
+        `While task ${task.id} waited for an escalation, the engine saved its work as the patch ${file} in the build directory. The patch no longer applies to the worktree, so the task didn't start.`,
+        `To keep the work, apply the patch to the worktree at ${ctx.worktree.path} by hand, commit it, and resolve this escalation with a retry. To drop it, resolve with a retry: the task then goes on from the worktree as it is.`,
+      ].join("\n\n"),
     });
+    return false;
   }
   delete progress.setAside;
   await ctx.persist();
+  return true;
 }
 
 /** The plan's tasks in the order they run: a resolution's order, else plan order, after their dependencies. */
@@ -632,10 +642,14 @@ const AFTER_ATTEMPT: ReadonlySet<Escalation["kind"]> = new Set([
  * Prepares a task to run again after its escalation was resolved. After an
  * attempt that finished, the task goes on with the next attempt and gets
  * `ATTEMPT_CAP` more; after an agent call that stopped, the attempt runs
- * again.
+ * again. After set-aside work that no longer applied, the task goes on
+ * without it.
  */
 export function reopenTask(ctx: BuildContext, escalation: Escalation): void {
-  if (!escalation.taskId || !AFTER_ATTEMPT.has(escalation.kind)) return;
+  if (!escalation.taskId) return;
+  // The Project manager applied the set-aside work by hand or dropped it.
+  if (escalation.kind === "set_aside") delete ctx.task(escalation.taskId).setAside;
+  if (!AFTER_ATTEMPT.has(escalation.kind)) return;
   const progress = ctx.task(escalation.taskId);
   progress.resumeAt = progress.attempts + 1;
   progress.attemptCap = Math.max(capOf(ctx, progress.id), progress.attempts + ATTEMPT_CAP);

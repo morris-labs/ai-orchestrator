@@ -39,6 +39,7 @@ The file holds the following fields:
 | `missing_service` | A Developer reports an external service that it can't reach. | Owner |
 | `question_cap` | An agent asks more questions about a task than the plan's question cap allows. The question goes to the Project manager, and the details hold it. See [Questions](team-chat.md#questions). | Project manager |
 | `test_dispute` | A second test dispute about one test, or a third in one task, which the Project manager rules on; or a Test engineer's fix that changes what a criterion means, which the owner decides. For details, see [Test disputes](test-disputes.md). | Project manager; owner for a criterion change |
+| `set_aside` | A paused task's saved work no longer applies on top of the tasks that ran since. The patch stays in the task's directory. | Project manager |
 
 A Developer never works around a missing secret or service, for example
 with a mock that ships. It stops and reports the gap in the `blocked` field
@@ -49,7 +50,15 @@ of its answer, and the engine skips the task gate for that attempt.
 An escalation with a task pauses that task and every task that depends on
 it. The engine sets the task aside, so the next task starts from a worktree
 without its unfinished work, and then runs the tasks that don't depend on
-it. The paused task gets its work back when it runs again.
+it. The paused task gets its work back when it runs again. A test that one
+of the task's disputes amended stays on the branch, because the test lock
+holds it as amended.
+
+When the saved work no longer applies, such as after a change by hand to
+the same lines, the engine leaves the worktree as it is and raises a
+`set_aside` escalation that names the patch file. Apply the patch by hand
+and commit it before you retry to keep the work. A retry without it starts
+the task from the worktree as it is.
 
 The build waits, with the `waiting_escalation` status, once no task can run.
 An escalation without a task, such as a preflight or review escalation,

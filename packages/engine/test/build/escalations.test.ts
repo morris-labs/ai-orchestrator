@@ -314,6 +314,69 @@ describe("escalation levels", () => {
   });
 });
 
+describe("a waiting task's set-aside work", () => {
+  it("escalates instead of dropping work that no longer applies, then starts without it on a retry", async () => {
+    const world = await buildWorld();
+    addModules(world);
+    const PARTIAL = "export function total(items) {\n  return items.length * 0;\n}\n";
+    const CHANGED = "export function total(items) {\n  return -1;\n}\n";
+    world.script({
+      claude: [
+        {
+          match: "Task T1",
+          times: 1,
+          output: {
+            summary: "Stopped: the price service is down.",
+            criteria: [{ id: "AC-T1", met: false }],
+            blocked: { kind: "service", name: "price-api", reason: "Connection refused." },
+          },
+          writeFiles: { "src/cart.mjs": PARTIAL },
+        },
+        answer("T1", { "src/cart.mjs": CART_DONE }),
+        answer("T2", { "src/discount.mjs": DISCOUNT_DONE }),
+        answer("T3", { "src/label.mjs": LABEL_DONE }),
+      ],
+    });
+
+    await world.start("checkout", threeTaskPlan());
+    const waiting = await world.settle("checkout");
+    expect(waiting.tasks.map((t) => [t.id, t.status])).toEqual([
+      ["T1", "failed"],
+      ["T2", "blocked"],
+      ["T3", "done"],
+    ]);
+    // Someone changes the task's file while it waits, so its saved work no longer applies.
+    writeFileSync(join(waiting.worktree, "src/cart.mjs"), CHANGED);
+    world.git(waiting.worktree, "commit", "-q", "-am", "fix: change the cart by hand");
+
+    await world.manager.resolve("checkout", { escalation: "E1", action: "retry", by: "owner" });
+    const conflicted = await world.waitFor(
+      "checkout",
+      (s) => s.status === "waiting_escalation" && s.escalations.length === 2,
+    );
+    expect(conflicted.escalations[1]).toMatchObject({
+      id: "E2",
+      kind: "set_aside",
+      level: "project_manager",
+      taskId: "T1",
+      status: "open",
+    });
+    expect(escalationFile(world, "checkout", "E2").details).toContain("tasks/T1/set-aside-1.patch");
+    expect(world.file("checkout", "tasks/T1/set-aside-1.patch")).toContain("items.length * 0");
+    // The failed apply leaves no conflict in the worktree.
+    expect(world.git(waiting.worktree, "status", "--porcelain")).toBe("");
+    expect(world.git(waiting.worktree, "show", "HEAD:src/cart.mjs")).toBe(CHANGED.trim());
+
+    await world.manager.resolve("checkout", { escalation: "E2", action: "retry" });
+    const state = await world.waitFor("checkout", (s) => s.step === "review");
+    expect(state.tasks.map((t) => [t.id, t.status, t.attempts])).toEqual([
+      ["T1", "done", 2],
+      ["T2", "done", 1],
+      ["T3", "done", 1],
+    ]);
+  });
+});
+
 describe("resolutions", () => {
   /** A one-task build whose Developer fails once and then asks for a decision. */
   async function capped(world: BuildWorld, slug = "cart-total") {
