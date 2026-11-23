@@ -12,13 +12,19 @@ import {
   BuildStateSchema,
   type BuildPlanInput,
   type BuildState,
+  type BuildStep,
   type Vendor,
 } from "@aio/contracts";
 import { bridgeAdapters } from "../../src/adapters/bridge.js";
 import { ClaudeAdapter } from "../../src/adapters/claude.js";
 import { CodexAdapter } from "../../src/adapters/codex.js";
 import type { CliVendorAdapter } from "../../src/adapters/types.js";
-import { createBuildManager, type EngineBuildManager } from "../../src/build/index.js";
+import {
+  BUILD_PIPELINE,
+  STEP_HANDLERS,
+  createBuildManager,
+  type EngineBuildManager,
+} from "../../src/build/index.js";
 import { GrantingBroker, MemoryEventSink } from "../../src/core.js";
 import { silentLogger } from "../../src/main/logger.js";
 import { MOCK_BIN } from "../adapters/helpers.js";
@@ -113,6 +119,20 @@ function sampleProject(): string {
   return root;
 }
 
+/**
+ * The steps a build world runs unless a test asks for others: the build
+ * pipeline without tests first, so a scenario about a later step scripts only
+ * the seats of that step. Scenarios about tests first pass `BUILD_PIPELINE`.
+ */
+export const WORLD_STEPS: readonly BuildStep[] = BUILD_PIPELINE.filter(
+  (step) => step !== "tests_first",
+);
+
+export interface BuildWorldOptions {
+  /** The steps the builds run, in order. Default: `WORLD_STEPS`. */
+  steps?: readonly BuildStep[];
+}
+
 export interface BuildWorld {
   root: string;
   manager: EngineBuildManager;
@@ -140,22 +160,23 @@ export interface BuildWorld {
 }
 
 /** Starts a build world. Close it with `restart()` or let the test end. */
-export async function buildWorld(): Promise<BuildWorld> {
+export async function buildWorld(options: BuildWorldOptions = {}): Promise<BuildWorld> {
+  const pipeline = { steps: options.steps ?? WORLD_STEPS, handlers: STEP_HANDLERS };
   const root = sampleProject();
   const work = tempDir("aio-build-cli-");
   const scenario = join(work, "scenario.json");
   const log = join(work, "calls.jsonl");
   writeFileSync(scenario, "{}");
   const env = { MOCK_CLI_SCENARIO: scenario, MOCK_CLI_LOG: log, ANTHROPIC_API_KEY: undefined };
-  const options = { env, account: "user@example.com" };
+  const cliOptions = { env, account: "user@example.com" };
   const cli: Partial<Record<Vendor, CliVendorAdapter>> = {
     claude: new ClaudeAdapter({
-      ...options,
+      ...cliOptions,
       command: join(MOCK_BIN, "claude"),
       bare: false,
       persistSessions: false,
     }),
-    codex: new CodexAdapter({ ...options, command: join(MOCK_BIN, "codex") }),
+    codex: new CodexAdapter({ ...cliOptions, command: join(MOCK_BIN, "codex") }),
   };
   const make = async () => {
     const events = new MemoryEventSink("engine:test", "stream-build");
@@ -168,6 +189,7 @@ export async function buildWorld(): Promise<BuildWorld> {
       adapters: bridgeAdapters(cli),
       log: silentLogger,
       skillDirs: () => [],
+      pipeline,
     });
     return { events, broker, manager };
   };

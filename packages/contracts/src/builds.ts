@@ -33,6 +33,11 @@ export const BuildCriterionSchema = z
     id: PlanIdSchema,
     text: z.string().min(1),
     verification: VerificationMethodSchema.default("test"),
+    /**
+     * True when the criterion holds before the build, such as a behavior
+     * that the change must keep. Its tests can pass the red check.
+     */
+    alreadyHolds: z.boolean().default(false),
   })
   .strict();
 export type BuildCriterion = z.infer<typeof BuildCriterionSchema>;
@@ -159,6 +164,8 @@ export const EscalationKindSchema = z.enum([
   "placement",
   /** A task's specialty can't be loaded, such as one whose skill was removed. */
   "specialty",
+  /** Tests first can't lock the tests, such as tests that fail the red check in every round. */
+  "tests_first",
 ]);
 export type EscalationKind = z.infer<typeof EscalationKindSchema>;
 
