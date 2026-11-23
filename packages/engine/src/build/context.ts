@@ -596,12 +596,17 @@ export class BuildContext {
       async () => {
         const placement = this.seats.place(input.seat, input.placement);
         const decisions = await this.decisionsText(taskIds);
+        const task = {
+          ...input.task,
+          ...(decisions !== "" ? { decisions } : {}),
+          ...(this.team ? { teamChat: true } : {}),
+        };
         const outcome = await this.runTurn(
           seatCallSpec(role, placement, {
             seat: input.seat,
             key: input.key,
             step: input.step,
-            task: decisions === "" ? input.task : { ...input.task, decisions },
+            task,
             repoPath: this.worktree.path,
             scratchDir: this.store.scratchDir,
             specialties: packs,

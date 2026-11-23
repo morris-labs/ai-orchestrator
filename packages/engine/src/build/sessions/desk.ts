@@ -238,6 +238,7 @@ export class SessionDesk {
       branch: ctx.state.branch,
       specialties: packs,
       ...(decisions !== "" ? { decisions } : {}),
+      ...(ctx.team ? { teamChat: true } : {}),
     };
     // An owner post's turn also reports the criteria the post contradicts.
     const fromOwner = message.from.kind === "owner";

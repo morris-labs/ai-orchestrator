@@ -151,6 +151,12 @@ describe("a multi-task build", () => {
     const state = await world.settle("checkout");
 
     expect(world.calls().map((c) => taskOf(c.prompt))).toEqual(["T1", "T2", "T3"]);
+    // Each Developer prompt lists the tasks it builds on, and names the team chat tool.
+    const prompts = world.calls().map((c) => c.prompt);
+    expect(prompts[0]).not.toContain("## Depends on");
+    expect(prompts[1]).toContain("## Depends on\n\n- T1: Cart total");
+    expect(prompts[2]).toContain("## Depends on\n\n- T2: Discount");
+    for (const prompt of prompts) expect(prompt).toMatch(/## Team chat\n\n.*send_message/);
     expect(state.step).toBe("review");
     expect(state.tasks.map((t) => [t.id, t.status, t.attempts])).toEqual([
       ["T3", "done", 1],

@@ -112,6 +112,10 @@ function roleTask(ctx: BuildContext, task: BuildTask, context: string): RoleTask
     contracts: task.contracts,
     criteria: task.criteria.map((id) => ({ id, text: criteria.get(id) ?? "" })),
     tests: task.tests,
+    dependsOn: task.dependsOn.map((id) => ({
+      id,
+      title: ctx.plan.tasks.find((t) => t.id === id)?.title ?? "",
+    })),
     context,
   };
 }

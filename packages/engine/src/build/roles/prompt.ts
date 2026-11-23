@@ -25,6 +25,10 @@ export interface RoleTask {
   criteria: ReadonlyArray<{ id: string; text: string }>;
   /** The locked tests that must pass. */
   tests?: readonly string[];
+  /** The tasks that this task builds on, whose work is on the branch. */
+  dependsOn?: ReadonlyArray<{ id: string; title: string }>;
+  /** True when the agent reaches the team chat's `send_message` tool. */
+  teamChat?: boolean;
   /** Extra context that the engine attaches, such as a diagnosis or gate output. */
   context?: string;
   /** The owner's decisions attached to the task, as `decisionsText()` writes them. */
@@ -74,6 +78,18 @@ function specialtyGuidance(task: RoleTask): string {
   ].join("\n\n");
 }
 
+/** How the agent uses the team chat, for an agent that reaches it. */
+export const TEAM_CHAT_GUIDANCE = [
+  "Your tools include send_message, the build team's chat. Use it when you need another seat, instead of guessing:",
+  "",
+  "- Ask a question with `type: question`, and answer one with `replyTo` set to its ID.",
+  "- Ask the Architect about a shared contract with `type: contract_question`.",
+  "- Ask the Developer that owns a file to change it with `type: file_request` and the file in `paths`.",
+  "- Tell the Project manager something it must know with `type: note`, or send `to: owner` for the owner.",
+  "",
+  "The engine records you as the sender. Answers reach you in a later turn, so go on with the work you can do meanwhile. Dispute a locked test in your report's `dispute` field, never in a message.",
+].join("\n");
+
 /** The JSON schema of the role's answer, or `null` when no output has one. */
 export function roleAnswerSchema(role: RoleDefinition): object | null {
   const structured = role.outputs.filter((output) => output.schema !== undefined);
@@ -107,8 +123,10 @@ export function rolePrompt(role: RoleDefinition, task: RoleTask): string {
       list(task.criteria.map((criterion) => `${criterion.id}: ${criterion.text}`)),
     ),
     section("Tests that must pass", list(task.tests)),
+    section("Depends on", list((task.dependsOn ?? []).map((t) => `${t.id}: ${t.title}`))),
     section("Owner decisions", task.decisions ?? ""),
     section("Context", task.context ?? ""),
+    section("Team chat", task.teamChat ? TEAM_CHAT_GUIDANCE : ""),
     section("Outputs", list(outputs)),
     schema ? jsonInstruction(schema) : "",
   ]
