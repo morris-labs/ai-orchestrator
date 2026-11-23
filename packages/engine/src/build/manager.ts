@@ -1,6 +1,6 @@
 // The engine build API: the planning requests (a planning seat call and the
 // freeze) over one `BuildPlanner` per build, the build requests (start,
-// status, pause, resume) over one `BuildController` per build, and the
+// status, pause, resume, resolve) over one `BuildController` per build, and the
 // startup scan that continues the builds a stopped engine left running.
 import {
   BuildCreateSchema,
@@ -8,6 +8,7 @@ import {
   BuildSeatRequestSchema,
   BuildSlugSchema,
   ENGINE_CONFIG_MOUNT,
+  EscalationResolveSchema,
   type BuildCreateInput,
   type BuildFreezeAnswer,
   type BuildFreezeRequest,
@@ -15,6 +16,7 @@ import {
   type BuildSeatAnswer,
   type BuildSeatRequestInput,
   type BuildState,
+  type EscalationResolveInput,
 } from "@aio/contracts";
 import { accountDirsFileIn, readAccountDirs } from "../adapters/account-dirs.js";
 import { EngineError, type CoreDeps } from "../api/core-interface.js";
@@ -64,6 +66,13 @@ export interface BuildManager {
   get(slug: string): Promise<BuildState | null>;
   pause(slug: string): Promise<BuildState>;
   resume(slug: string): Promise<BuildState>;
+  /**
+   * Resolves an escalation of the build and resumes what it paused, or marks
+   * it for the owner. Throws `not_found` for an unknown escalation,
+   * `invalid_state` for a resolved one, and `validation` for a request that
+   * doesn't fit it.
+   */
+  resolve(slug: string, request: EscalationResolveInput): Promise<BuildState>;
   /** The builds that keep the container alive: the ones the engine works on. */
   activeCount(): number;
   /** Stops every drive and leaves each build's files for the next engine. */
@@ -84,6 +93,8 @@ export interface BuildManagerDeps extends CoreDeps {
   reviews?: ReviewRuns;
   /** How often the review step reads its run's state, in milliseconds. */
   reviewPollMs?: number;
+  /** The secret names the project gives builds. Without it, preflight doesn't check the plan's secrets. */
+  secretNames?: () => Promise<string[]>;
 }
 
 /** Turns a creation error into one the API maps to a status. */
@@ -127,6 +138,7 @@ export class EngineBuildManager implements BuildManager {
       ...(deps.team ? { team: deps.team } : {}),
       ...(deps.reviews ? { reviews: deps.reviews } : {}),
       ...(deps.reviewPollMs !== undefined ? { reviewPollMs: deps.reviewPollMs } : {}),
+      ...(deps.secretNames ? { secretNames: deps.secretNames } : {}),
     };
     this.location = {
       projectRoot: deps.projectRoot,
@@ -327,6 +339,12 @@ export class EngineBuildManager implements BuildManager {
 
   async resume(slug: string): Promise<BuildState> {
     return structuredClone(await (await this.require(slug)).resume());
+  }
+
+  async resolve(slug: string, input: EscalationResolveInput): Promise<BuildState> {
+    const build = await this.require(slug);
+    const request = EscalationResolveSchema.parse(input);
+    return structuredClone(await build.resolve(request));
   }
 
   activeCount(): number {

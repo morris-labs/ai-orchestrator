@@ -62,3 +62,22 @@ export function taskOrder<T extends GraphTask>(tasks: readonly T[]): T[] {
   }
   return order;
 }
+
+/**
+ * The IDs of every task that depends on task `id`, directly or through other
+ * tasks, in the order `tasks` lists them.
+ */
+export function dependentsOf(tasks: readonly GraphTask[], id: string): string[] {
+  const found = new Set<string>([id]);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const t of tasks) {
+      if (!found.has(t.id) && t.dependsOn.some((dep) => found.has(dep))) {
+        found.add(t.id);
+        grew = true;
+      }
+    }
+  }
+  return tasks.map((t) => t.id).filter((t) => t !== id && found.has(t));
+}

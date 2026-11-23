@@ -16,7 +16,7 @@
 // Every round saves `tests-first/round-N.json` as it goes: its start before
 // the agent call, the answer after it, and the check last. A restarted build
 // continues from the last finished part.
-import { readFile } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { BuildCriterion } from "@aio/contracts";
 import { RunCancelled } from "../../calls/index.js";
@@ -35,6 +35,14 @@ export const TESTS_FIRST_ROUND_CAP = 3;
 
 /** The seat that writes the tests. */
 export const TEST_ENGINEER = "test-engineer";
+
+/** Where a retry after an escalation starts: `tests-first/retry.json`. */
+const RETRY_FILE = "tests-first/retry.json";
+
+interface RetryRecord {
+  /** The first round of the retry. */
+  from: number;
+}
 
 /** A round's checks: the red check, with the other problems the engine found first. */
 export interface RoundCheck extends RedCheck {
@@ -117,8 +125,8 @@ function revisionContext(report: CoverageReport): string {
   ].join("\n");
 }
 
-function roundContext(n: number, previous: RoundRecord | undefined): string {
-  const lines = [`This is round ${n} of ${TESTS_FIRST_ROUND_CAP} of tests first.`];
+function roundContext(n: number, last: number, previous: RoundRecord | undefined): string {
+  const lines = [`This is round ${n} of ${last} of tests first.`];
   if (previous?.check && !previous.check.passed) {
     lines.push(
       "",
@@ -337,10 +345,12 @@ export async function runTestsFirst(ctx: BuildContext): Promise<StepOutcome> {
   }
   const first = await ctx.store.readJson<RoundRecord>(ctx.store.path(roundFile(1)));
   const scope: Scope = { base: first?.start ?? (await ctx.worktree.head()), criteria, paths };
+  const from = (await ctx.store.readJson<RetryRecord>(ctx.store.path(RETRY_FILE)))?.from ?? 1;
+  const last = from + TESTS_FIRST_ROUND_CAP - 1;
   try {
-    for (let n = 1; n <= TESTS_FIRST_ROUND_CAP; n += 1) {
+    for (let n = from; n <= last; n += 1) {
       await ctx.calls.checkpoint();
-      const record = await round(ctx, scope, n, (previous) => roundContext(n, previous));
+      const record = await round(ctx, scope, n, (previous) => roundContext(n, last, previous));
       if (record.check.passed) return await afterRedCheck(ctx, scope, record);
     }
   } catch (error) {
@@ -349,19 +359,29 @@ export async function runTestsFirst(ctx: BuildContext): Promise<StepOutcome> {
     await ctx.escalate(draft);
     return "wait";
   }
-  const last = await ctx.store.readJson<RoundRecord>(
-    ctx.store.path(roundFile(TESTS_FIRST_ROUND_CAP)),
-  );
+  const lastRound = await ctx.store.readJson<RoundRecord>(ctx.store.path(roundFile(last)));
   await ctx.escalate({
     kind: "tests_first",
     level: "project_manager",
     taskId: null,
     summary: `The Test engineer's tests failed the engine's checks in all ${TESTS_FIRST_ROUND_CAP} rounds.`,
     details: [
-      last?.check ? roundReport(last.check) : "",
+      lastRound?.check ? roundReport(lastRound.check) : "",
       "",
-      `Round files: ${Array.from({ length: TESTS_FIRST_ROUND_CAP }, (_, i) => roundFile(i + 1)).join(", ")}`,
+      `Round files: ${Array.from({ length: TESTS_FIRST_ROUND_CAP }, (_, i) => roundFile(from + i)).join(", ")}`,
     ].join("\n"),
   });
   return "wait";
+}
+
+/**
+ * Prepares tests first to run again after its escalation was resolved: the
+ * Test engineer gets `TESTS_FIRST_ROUND_CAP` more rounds after the last one,
+ * and a round that passes gets a new coverage check.
+ */
+export async function reopenTestsFirst(ctx: BuildContext): Promise<void> {
+  let last = 0;
+  while (await ctx.store.readJson(ctx.store.path(roundFile(last + 1)))) last += 1;
+  await ctx.store.writeJson(ctx.store.path(RETRY_FILE), { from: last + 1 } satisfies RetryRecord);
+  await rm(ctx.store.path(COVERAGE_REPORT_FILE), { force: true });
 }

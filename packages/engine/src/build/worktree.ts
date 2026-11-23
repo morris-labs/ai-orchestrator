@@ -157,6 +157,36 @@ export class BuildWorktree {
     }
   }
 
+  /**
+   * Sets aside every change since `base`: saves it as a patch in `patchFile`,
+   * puts the changed paths back the way they are at `base`, and commits that
+   * with `message`. Returns the paths, or an empty list when nothing changed.
+   */
+  async setAside(base: string, patchFile: string, message: string): Promise<string[]> {
+    const paths = await this.changedSince(base);
+    if (paths.length === 0) return [];
+    await mkdir(dirname(patchFile), { recursive: true });
+    await this.git.run(["add", "-A", "--", ...paths]);
+    await this.git.run([
+      "diff",
+      "--cached",
+      "--binary",
+      "--no-renames",
+      `--output=${patchFile}`,
+      base,
+      "--",
+      ...paths,
+    ]);
+    await this.restorePaths(base, paths);
+    if (await this.dirty()) await this.commitAll(message);
+    return paths;
+  }
+
+  /** Applies a patch that `setAside()` saved. Returns false when it no longer applies. */
+  async bringBack(patchFile: string): Promise<boolean> {
+    return this.git.ok(["apply", "--3way", "--whitespace=nowarn", patchFile]);
+  }
+
   /** Deletes files in the worktree, such as a gate command's leftovers. */
   async remove(paths: readonly string[]): Promise<void> {
     for (const path of paths) await rm(join(this.path, path), { force: true, recursive: true });

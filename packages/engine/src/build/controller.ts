@@ -1,9 +1,15 @@
 // The build controller: one per build. It creates the build's files and
 // worktree, drives the build pipeline step by step, and handles the build
-// requests: pause and resume. Its drive saves after every step, so a
-// restarted engine continues the build from where it stopped.
+// requests: pause, resume, and resolve. Its drive saves after every step, so
+// a restarted engine continues the build from where it stopped.
 import { mkdir } from "node:fs/promises";
-import type { BuildCreate, BuildPlan, BuildState, BuildStep } from "@aio/contracts";
+import type {
+  BuildCreate,
+  BuildPlan,
+  BuildState,
+  BuildStep,
+  EscalationResolve,
+} from "@aio/contracts";
 import { RunCancelled, describeError } from "../calls/index.js";
 import { EngineError } from "../api/core-interface.js";
 import { loadPolicy } from "../policy/load.js";
@@ -12,6 +18,7 @@ import { ulid } from "./ids.js";
 import { loadRoles, type LoadRolesOptions } from "./roles/index.js";
 import { BUILD_PIPELINE, STEP_HANDLERS, type StepHandler } from "./steps/index.js";
 import { checkPlan } from "./plan-check.js";
+import { resolveEscalation } from "./resolve.js";
 import { BuildStore } from "./store.js";
 import { BuildWorktree } from "./worktree.js";
 
@@ -52,6 +59,8 @@ export class BuildController {
   private driver: Promise<void> | null = null;
   /** True while the engine shuts down: a stopped drive leaves the build as it is. */
   private stopping = false;
+  /** True when a resolution came in during a drive: another drive follows it. */
+  private again = false;
 
   private constructor(
     readonly ctx: BuildContext,
@@ -167,6 +176,10 @@ export class BuildController {
     this.stopping = false;
     this.driver = this.drive().finally(() => {
       this.driver = null;
+      if (this.again && !this.stopping) {
+        this.again = false;
+        this.start();
+      }
     });
   }
 
@@ -187,7 +200,13 @@ export class BuildController {
           );
           return;
         }
-        if ((await handler(ctx)) === "wait") return;
+        if ((await handler(ctx)) === "wait") {
+          // A step that left the build running with escalations open waits for them.
+          if (ctx.state.status === "running" && ctx.openEscalations().length > 0) {
+            await ctx.waitForEscalations();
+          }
+          return;
+        }
         const next = this.pipeline.steps[this.pipeline.steps.indexOf(step) + 1];
         if (!next) {
           // The last step's note, such as where its digest is, stays.
@@ -247,6 +266,26 @@ export class BuildController {
     this.ctx.calls.requestResume();
     this.ctx.calls.wakePause();
     this.start();
+    return this.state;
+  }
+
+  /**
+   * Resolves one of the build's escalations, or marks it for the owner, and
+   * resumes the build when nothing else holds it: no escalation without a
+   * task is open, and nobody paused the build. Throws `EngineError` for a
+   * request that doesn't fit the escalation.
+   */
+  async resolve(request: EscalationResolve): Promise<BuildState> {
+    if (this.stopping) {
+      throw new EngineError("invalid_state", `Build ${this.slug} stops with the engine.`);
+    }
+    if ((await resolveEscalation(this.ctx, request)) === "owner") return this.state;
+    const held = this.ctx.openEscalations().some((e) => e.taskId === null);
+    const status = this.state.status;
+    if (held || (status !== "waiting_escalation" && status !== "running")) return this.state;
+    if (status === "waiting_escalation") await this.ctx.setStatus("running");
+    if (this.driver) this.again = true;
+    else this.start();
     return this.state;
   }
 

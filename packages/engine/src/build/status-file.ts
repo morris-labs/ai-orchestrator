@@ -2,10 +2,18 @@
 // restart many times during a build, so it doesn't hold the build in its
 // context: it rereads this file and the build plan instead. The engine
 // rewrites the file every time it saves the build's state.
-import type { BuildPlan, BuildPlanning, BuildState } from "@aio/contracts";
+import type { BuildPlan, BuildPlanning, BuildState, Escalation } from "@aio/contracts";
 
 function cell(text: string | undefined): string {
   return (text ?? "").replace(/\|/g, "\\|").replace(/\s+/g, " ").trim();
+}
+
+/** Whether an escalation is open and what it pauses, or how it was resolved. */
+function escalationState(e: Escalation): string {
+  if (e.resolution) {
+    return `resolved by the ${e.resolution.by.replace("_", " ")}: ${e.resolution.action}`;
+  }
+  return `open, pauses ${e.tasks.length > 0 ? e.tasks.join(", ") : "the build"}`;
 }
 
 /** Renders the status file for `state`. */
@@ -27,7 +35,8 @@ export function renderStatus(state: BuildState, plan: BuildPlan): string {
     "",
     "## Tasks",
     "",
-    "Tasks run one at a time, each after the tasks it depends on.",
+    "Tasks run one at a time, each after the tasks it depends on. An open",
+    "escalation pauses its task and the tasks that depend on it.",
     "",
     "| Task | Title | Depends on | Status | Attempts | Commit | Last failure |",
     "|---|---|---|---|---|---|---|",
@@ -42,7 +51,7 @@ export function renderStatus(state: BuildState, plan: BuildPlan): string {
       ? ["None."]
       : state.escalations.map(
           (e) =>
-            `- ${e.id} (${e.kind}, for the ${e.level.replace("_", " ")}${e.taskId ? `, task ${e.taskId}` : ""}): ${e.summary} See \`${e.file}\`.`,
+            `- ${e.id} (${e.kind}, for the ${e.level.replace("_", " ")}${e.taskId ? `, task ${e.taskId}` : ""}, ${escalationState(e)}): ${e.summary} See \`${e.file}\`.`,
         )),
     "",
   ];

@@ -10,7 +10,11 @@
 // When the gate fails two attempts in a row on one failure fingerprint, the
 // engine seats the Debugger before the next attempt, and that attempt's
 // prompt carries the diagnosis.
-import { taskOrder, type BuildTask } from "@aio/contracts";
+//
+// A task that escalates pauses with every task that depends on it, and the
+// step goes on with the tasks that don't. The step waits once no task can
+// run. A resolve request resumes the paused tasks (see `reopenTask()`).
+import { taskOrder, type BuildTask, type Escalation } from "@aio/contracts";
 import { RunCancelled } from "../../calls/index.js";
 import { untrusted } from "../../prompts/templates.js";
 import { loadBaseline, quarantine } from "../baseline.js";
@@ -29,8 +33,15 @@ import { writablePaths, type RoleTask } from "../roles/index.js";
 import { readTestLock } from "../test-lock.js";
 import type { StepOutcome } from "./types.js";
 
-/** Attempts a task gets before it escalates. */
+/** Attempts a task gets before it escalates, and the attempts a retry adds. */
 export const ATTEMPT_CAP = 4;
+
+/** What a task needs that the build doesn't have, as the seat reports it. */
+export interface Blocker {
+  kind: "secret" | "service";
+  name: string;
+  reason: string;
+}
 
 /** One attempt at a task, as `tasks/TASK/attempt-N.json` saves it. */
 export interface AttemptRecord {
@@ -43,9 +54,35 @@ export interface AttemptRecord {
   answer?: { vendor: string; model: string; output: Record<string, unknown> };
   /** The gate result, once the gate ran. */
   gate?: TaskGateResult;
+  /** What the seat reported it needs, in place of the gate. */
+  blocked?: Blocker;
 }
 
 type GatedAttempt = AttemptRecord & { gate: TaskGateResult };
+type FinishedAttempt = GatedAttempt | (AttemptRecord & { blocked: Blocker });
+
+/** The last attempt `task` gets. */
+function capOf(ctx: BuildContext, taskId: string): number {
+  return ctx.task(taskId).attemptCap ?? ATTEMPT_CAP;
+}
+
+/** The seat's report of a missing secret or service, or `null` when it reports none. */
+function blockerOf(output: Record<string, unknown>): Blocker | null {
+  const blocked = output.blocked;
+  if (typeof blocked !== "object" || blocked === null) return null;
+  const { kind, name, reason } = blocked as Record<string, unknown>;
+  if ((kind !== "secret" && kind !== "service") || typeof name !== "string") return null;
+  return { kind, name, reason: typeof reason === "string" ? reason : "" };
+}
+
+/** The Project manager's clarifications for a task, from its resolved escalations. */
+function clarifications(ctx: BuildContext, taskId: string): string[] {
+  return ctx.state.escalations.flatMap((e) =>
+    e.taskId === taskId && e.resolution?.action === "clarify" && e.resolution.note
+      ? [e.resolution.note]
+      : [],
+  );
+}
 
 function roleTask(ctx: BuildContext, task: BuildTask, context: string): RoleTask {
   const criteria = new Map(ctx.plan.criteria.map((c) => [c.id, c.text]));
@@ -70,10 +107,15 @@ function roleTask(ctx: BuildContext, task: BuildTask, context: string): RoleTask
  */
 function attemptContext(
   n: number,
+  cap: number,
   previous: AttemptRecord | undefined,
   diagnosis: DiagnosisRecord | undefined,
+  notes: readonly string[],
 ): string {
-  const lines = [`This is attempt ${n} of ${ATTEMPT_CAP} at this task.`];
+  const lines = [`This is attempt ${n} of ${cap} at this task.`];
+  for (const note of notes) {
+    lines.push("", "The Project manager clarified the task:", "", untrusted(note));
+  }
   if (previous?.gate && !previous.gate.passed) {
     lines.push(
       "",
@@ -110,11 +152,15 @@ function otherTasks(
   };
 }
 
-/** Runs attempt `n`, or returns its saved result when it already finished. */
-async function attempt(ctx: BuildContext, task: BuildTask, n: number): Promise<GatedAttempt> {
+/**
+ * Runs attempt `n`, or returns its saved result when it already finished.
+ * An attempt whose seat reports a missing secret or service ends without
+ * the gate.
+ */
+async function attempt(ctx: BuildContext, task: BuildTask, n: number): Promise<FinishedAttempt> {
   const path = ctx.store.attemptPath(task.id, n);
   let record = await ctx.store.readJson<AttemptRecord>(path);
-  if (record?.gate) return record as GatedAttempt;
+  if (record?.gate || record?.blocked) return record as FinishedAttempt;
   const progress = ctx.task(task.id);
   if (!record) {
     record = { attempt: n, start: await ctx.worktree.head(), callKey: `${task.id}-attempt-${n}` };
@@ -133,9 +179,19 @@ async function attempt(ctx: BuildContext, task: BuildTask, n: number): Promise<G
     specialties,
     key: record.callKey,
     step: "tasks",
-    task: roleTask(ctx, task, attemptContext(n, previous, diagnosis)),
+    task: roleTask(
+      ctx,
+      task,
+      attemptContext(n, capOf(ctx, task.id), previous, diagnosis, clarifications(ctx, task.id)),
+    ),
   });
   record.answer = { vendor: outcome.vendor, model: outcome.model, output: outcome.output };
+  const blocked = blockerOf(outcome.output);
+  if (blocked) {
+    const finished = { ...record, blocked };
+    await ctx.store.writeJson(path, finished);
+    return finished;
+  }
   await ctx.store.writeJson(path, record);
   await ctx.calls.checkpoint();
   const signal = ctx.signal;
@@ -215,7 +271,6 @@ async function failOnCallError(
   const draft = escalationForCallError(error, taskId);
   if (!draft) throw error;
   ctx.task(taskId).lastFailure = draft.summary;
-  await ctx.setTaskStatus(taskId, "failed");
   await ctx.escalate(draft);
   return "wait";
 }
@@ -241,28 +296,69 @@ async function repeatedFailure(
     : null;
 }
 
+/** The escalation for a task whose seat reports a missing secret or service. */
+function blockerEscalation(task: BuildTask, n: number, blocked: Blocker): EscalationDraft {
+  const what = blocked.kind === "secret" ? "secret" : "external service";
+  return {
+    kind: blocked.kind === "secret" ? "missing_secret" : "missing_service",
+    level: "owner",
+    taskId: task.id,
+    summary: `Task ${task.id} needs the ${what} ${blocked.name}, which the build doesn't have.`,
+    details: [
+      `The ${what} ${blocked.name} is missing. The seat stopped instead of working around it.`,
+      blocked.kind === "secret"
+        ? "Tick the secret for the project in the box's Secrets (project) section, then resolve the escalation with a retry."
+        : "Make the service reachable from the project's container, then resolve the escalation with a retry.",
+      "",
+      `Reason: ${blocked.reason || "none given"}`,
+      "",
+      `Attempt file: tasks/${task.id}/attempt-${n}.json`,
+    ].join("\n"),
+  };
+}
+
+/** The diagnosis files of a task's attempts up to `last`, as build-relative paths. */
+async function diagnosisFiles(ctx: BuildContext, taskId: string, last: number): Promise<string[]> {
+  const files: string[] = [];
+  for (let n = 1; n <= last; n += 1) {
+    if (await ctx.store.readJson(ctx.store.diagnosisPath(taskId, n))) {
+      files.push(`tasks/${taskId}/diagnosis-${n}.json`);
+    }
+  }
+  return files;
+}
+
 /**
  * Works one task to a passing gate. Returns `"wait"` when the task
- * escalated, and the build must wait for a decision.
+ * escalated, and it and its dependents wait for a decision.
  */
 async function runTask(ctx: BuildContext, task: BuildTask): Promise<StepOutcome> {
   const progress = ctx.task(task.id);
   if (progress.status === "done") return "next";
-  if (progress.status === "failed") return "wait";
+  if (progress.status === "failed" || progress.status === "blocked") return "wait";
   if (progress.status === "pending") {
     progress.base = await ctx.worktree.head();
     await ctx.setTaskStatus(task.id, "running");
   }
+  if (progress.setAside) await bringBack(ctx, task, progress.setAside);
   const base = progress.base ?? ctx.state.base;
-  for (let n = Math.max(progress.attempts, 1); n <= ATTEMPT_CAP; n += 1) {
+  const cap = capOf(ctx, task.id);
+  const first = Math.max(progress.attempts, progress.resumeAt ?? 1, 1);
+  for (let n = first; n <= cap; n += 1) {
     await ctx.calls.checkpoint();
-    let record: GatedAttempt;
+    let record: FinishedAttempt;
     try {
       record = await attempt(ctx, task, n);
     } catch (error) {
       return failOnCallError(ctx, task.id, error);
     }
-    if (record.gate.passed) {
+    if (record.blocked) {
+      progress.lastFailure = `Needs the ${record.blocked.kind} ${record.blocked.name}.`;
+      await ctx.escalate(blockerEscalation(task, n, record.blocked));
+      return "wait";
+    }
+    const gated = record as GatedAttempt;
+    if (gated.gate.passed) {
       if (await ctx.worktree.dirty()) {
         await ctx.worktree.commitAll(`chore(build): finish task ${task.id}, ${task.title}`);
       }
@@ -273,54 +369,142 @@ async function runTask(ctx: BuildContext, task: BuildTask): Promise<StepOutcome>
     }
     // The seat may not change files outside its writable paths: the engine
     // puts them back, so the next attempt starts within bounds.
-    if (!record.gate.permission.passed) {
-      await ctx.worktree.restorePaths(base, record.gate.permission.outside);
+    if (!gated.gate.permission.passed) {
+      await ctx.worktree.restorePaths(base, gated.gate.permission.outside);
     }
     // Nor change a locked test: the engine puts it back the way the lock has it.
-    if (record.gate.lock && !record.gate.lock.passed) {
+    if (gated.gate.lock && !gated.gate.lock.passed) {
       const lock = await readTestLock(ctx.store);
-      if (lock) await ctx.worktree.restorePaths(lock.commit, record.gate.lock.changed);
+      if (lock) await ctx.worktree.restorePaths(lock.commit, gated.gate.lock.changed);
     }
-    progress.lastFailure = gateFailureLine(record.gate);
+    progress.lastFailure = gateFailureLine(gated.gate);
     await ctx.persist();
-    const oscillating = await oscillation(ctx, task, n, record.gate);
+    const oscillating = await oscillation(ctx, task, n, gated.gate);
     if (oscillating) {
-      await ctx.setTaskStatus(task.id, "failed");
       await ctx.escalate(oscillating);
       return "wait";
     }
-    if (n === ATTEMPT_CAP) break;
-    const repeated = await repeatedFailure(ctx, task, n, record.gate);
+    if (n === cap) break;
+    const repeated = await repeatedFailure(ctx, task, n, gated.gate);
     if (!repeated) continue;
     await ctx.calls.checkpoint();
     try {
-      await diagnose(ctx, task, n, repeated, record.gate);
+      await diagnose(ctx, task, n, repeated, gated.gate);
     } catch (error) {
       return failOnCallError(ctx, task.id, error);
     }
   }
-  const last = await ctx.store.readJson<AttemptRecord>(ctx.store.attemptPath(task.id, ATTEMPT_CAP));
-  await ctx.setTaskStatus(task.id, "failed");
+  const last = await ctx.store.readJson<AttemptRecord>(ctx.store.attemptPath(task.id, cap));
+  const attempts = Array.from({ length: cap }, (_, i) => `tasks/${task.id}/attempt-${i + 1}.json`);
+  const diagnoses = await diagnosisFiles(ctx, task.id, cap);
   await ctx.escalate({
     kind: "attempt_cap",
     level: "project_manager",
     taskId: task.id,
-    summary: `Task ${task.id} failed the task gate on all ${ATTEMPT_CAP} attempts.`,
+    summary: `Task ${task.id} failed the task gate on all ${cap} attempts.`,
     details: [
       `Last failure: ${progress.lastFailure ?? "unknown"}`,
       "",
       last?.gate ? gateReport(last.gate) : "",
       "",
-      `Attempt files: ${Array.from({ length: ATTEMPT_CAP }, (_, i) => `tasks/${task.id}/attempt-${i + 1}.json`).join(", ")}`,
+      `Attempt files: ${attempts.join(", ")}`,
+      `Diagnosis files: ${diagnoses.join(", ") || "none"}`,
     ].join("\n"),
   });
   return "wait";
 }
 
-/** The tasks step: every task in dependency order, one at a time. */
-export async function runTasks(ctx: BuildContext): Promise<StepOutcome> {
-  for (const task of taskOrder(ctx.plan.tasks)) {
-    if ((await runTask(ctx, task)) === "wait") return "wait";
+/**
+ * Sets aside the work of each task that waits for its own escalation, so the
+ * next task starts from a worktree without it. The waiting task gets it back
+ * when it runs again.
+ */
+async function setAsideWaiting(ctx: BuildContext): Promise<void> {
+  for (const progress of ctx.state.tasks) {
+    if (progress.status !== "failed" || progress.setAside || !progress.base) continue;
+    const file = `tasks/${progress.id}/set-aside-${progress.attempts}.patch`;
+    const paths = await ctx.worktree.setAside(
+      progress.base,
+      ctx.store.path(file),
+      `chore(build): set task ${progress.id} aside while it waits for an escalation`,
+    );
+    if (paths.length === 0) continue;
+    progress.setAside = file;
+    await ctx.persist();
   }
-  return "next";
+}
+
+/** Gives a task back the work that `setAsideWaiting()` saved, on top of the tasks that ran since. */
+async function bringBack(ctx: BuildContext, task: BuildTask, file: string): Promise<void> {
+  const progress = ctx.task(task.id);
+  progress.base = await ctx.worktree.head();
+  if (!(await ctx.worktree.bringBack(ctx.store.path(file)))) {
+    ctx.services.log.warn("A task's set-aside work no longer applies; the task starts without it", {
+      build: ctx.state.slug,
+      task: task.id,
+      patch: file,
+    });
+  }
+  delete progress.setAside;
+  await ctx.persist();
+}
+
+/** The plan's tasks in the order they run: a resolution's order, else plan order, after their dependencies. */
+function orderedTasks(ctx: BuildContext): BuildTask[] {
+  const order = ctx.state.taskOrder;
+  if (!order) return taskOrder(ctx.plan.tasks);
+  const rank = (id: string) => {
+    const at = order.indexOf(id);
+    return at < 0 ? -1 : at;
+  };
+  return taskOrder([...ctx.plan.tasks].sort((a, b) => rank(a.id) - rank(b.id)));
+}
+
+/** The next task that can run: not done, not paused, and every task it depends on done. */
+function nextTask(ctx: BuildContext): BuildTask | undefined {
+  const done = (id: string) => ctx.task(id).status === "done";
+  return orderedTasks(ctx).find((task) => {
+    const status = ctx.task(task.id).status;
+    return (status === "pending" || status === "running") && task.dependsOn.every(done);
+  });
+}
+
+/**
+ * The tasks step: every task in dependency order, one at a time. A task that
+ * escalates doesn't stop the tasks that don't depend on it; the step waits
+ * once no task can run.
+ */
+export async function runTasks(ctx: BuildContext): Promise<StepOutcome> {
+  for (let task = nextTask(ctx); task; task = nextTask(ctx)) {
+    await ctx.calls.checkpoint();
+    await setAsideWaiting(ctx);
+    await runTask(ctx, task);
+  }
+  if (ctx.state.tasks.every((t) => t.status === "done")) return "next";
+  if (ctx.openEscalations().length === 0) {
+    throw new Error("The build has tasks that can't run, and no escalation explains why.");
+  }
+  await ctx.waitForEscalations();
+  return "wait";
+}
+
+/** Kinds of task escalation that a finished attempt raised; a retry goes on with the next attempt. */
+const AFTER_ATTEMPT: ReadonlySet<Escalation["kind"]> = new Set([
+  "attempt_cap",
+  "oscillation",
+  "missing_secret",
+  "missing_service",
+]);
+
+/**
+ * Prepares a task to run again after its escalation was resolved. After an
+ * attempt that finished, the task goes on with the next attempt and gets
+ * `ATTEMPT_CAP` more; after an agent call that stopped, the attempt runs
+ * again.
+ */
+export function reopenTask(ctx: BuildContext, escalation: Escalation): void {
+  if (!escalation.taskId || !AFTER_ATTEMPT.has(escalation.kind)) return;
+  const progress = ctx.task(escalation.taskId);
+  progress.resumeAt = progress.attempts + 1;
+  progress.attemptCap = Math.max(capOf(ctx, progress.id), progress.attempts + ATTEMPT_CAP);
 }

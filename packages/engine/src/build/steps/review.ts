@@ -5,10 +5,15 @@
 //
 // The run's id is saved in `review/run.json` before the run starts, so a
 // restarted engine waits for the same run, which the run manager continues,
-// instead of starting another one.
+// instead of starting another one. A retry after a run that ended without
+// reporting the diff clean keeps that record as `review/run-ID.json`, and the
+// step starts a new run.
+import { rename } from "node:fs/promises";
 import { setTimeout as sleep } from "node:timers/promises";
 import {
   EngineRunCreateSchema,
+  type Escalation,
+  type EscalationResolve,
   type RunState,
   type RunStatus,
   type StopReason,
@@ -168,8 +173,68 @@ export async function runReview(ctx: BuildContext): Promise<StepOutcome> {
     kind: "review",
     level: "project_manager",
     taskId: null,
+    runId: run.id,
     summary: summaryOf(run),
     details: detailsOf(run),
   });
   return "wait";
+}
+
+/** Turns a refusal of the run manager into one the build request reports. */
+async function asRequest<T>(work: () => Promise<T>): Promise<T> {
+  try {
+    return await work();
+  } catch (error) {
+    if (error instanceof EngineError) throw error;
+    const code = (error as { code?: unknown }).code === "invalid_state" ? "invalid_state" : null;
+    if (code) throw new EngineError(code, (error as Error).message);
+    throw error;
+  }
+}
+
+/**
+ * Prepares the review run that an escalation names for the step to wait on
+ * it again: answers its decision, continues it when it failed, or, when it
+ * ended without reporting the diff clean, sets the step to start a new run.
+ * Throws `EngineError` for a retry of a run that waits for a decision.
+ */
+export async function reopenRun(
+  ctx: BuildContext,
+  escalation: Escalation,
+  request: EscalationResolve,
+  ended: (run: RunState) => "rerun" | "keep",
+): Promise<void> {
+  const runs = ctx.services.reviews;
+  const run = escalation.runId && runs ? await runs.get(escalation.runId) : null;
+  if (!runs || !run) return;
+  if (request.action === "decide" && request.decision) {
+    const decision = request.decision;
+    await asRequest(() => runs.decide(run.id, decision));
+    return;
+  }
+  if (run.status === "waiting_decision") {
+    throw new EngineError(
+      "validation",
+      `Review run ${run.id} waits for a decision (${run.decision?.kind ?? "unknown"}). Answer it with decide and one of: ${run.decision?.options.join(", ") ?? "none"}.`,
+    );
+  }
+  if (run.status === "failed") {
+    await asRequest(() => runs.retry(run.id, {}));
+    return;
+  }
+  if (ended(run) === "rerun") {
+    const file = ctx.store.path("review", "run.json");
+    await rename(file, ctx.store.path("review", `run-${run.id}.json`));
+  }
+}
+
+/** Prepares the review step to run again after its escalation was resolved. */
+export function reopenReview(
+  ctx: BuildContext,
+  escalation: Escalation,
+  request: EscalationResolve,
+): Promise<void> {
+  return reopenRun(ctx, escalation, request, (run) =>
+    run.status === "finished" || run.status === "cancelled" ? "rerun" : "keep",
+  );
 }

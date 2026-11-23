@@ -1,6 +1,7 @@
 // The preflight step: before the first task, the engine checks that the
-// build plan's test, type check, and lint commands run, then records the
-// test baseline from three runs of the test commands.
+// project gives the build every secret its plan lists, and that the build
+// plan's test, type check, and lint commands run, then records the test
+// baseline from three runs of the test commands.
 //
 // The step saves each finished run in `preflight.json` and the baseline in
 // `baseline.json`. A restarted build continues from the saved runs; a build
@@ -8,7 +9,7 @@
 // the step saves nothing for it, so it checks every command again once the
 // plan or the worktree is fixed.
 import type { BuildCommands, PolicyCommand } from "@aio/contracts";
-import { RunCancelled } from "../../calls/index.js";
+import { RunCancelled, describeError } from "../../calls/index.js";
 import { runGateCommand, type GateCommandKind, type GateCommandResult } from "../../gate/gate.js";
 import { BASELINE_FILE, classifyRuns, couldNotRun } from "../baseline.js";
 import type { BuildContext } from "../context.js";
@@ -79,10 +80,51 @@ async function escalateUnrunnable(
   return "wait";
 }
 
+/**
+ * Escalates to the owner when the project doesn't give the build a secret
+ * that its plan lists. Returns `null` when every secret is there, or when
+ * the engine can't list them.
+ */
+async function checkSecrets(ctx: BuildContext): Promise<StepOutcome | null> {
+  const wanted = ctx.plan.secrets;
+  const list = ctx.services.secretNames;
+  if (wanted.length === 0 || !list) return null;
+  let names: string[];
+  try {
+    names = await list();
+  } catch (error) {
+    await ctx.escalate({
+      kind: "missing_secret",
+      level: "owner",
+      taskId: null,
+      summary: "Preflight can't list the project's secrets, which the build plan needs.",
+      details: `Secrets the plan lists: ${wanted.map((s) => s.name).join(", ")}.\n\nThe secrets broker answered: ${describeError(error)}`,
+    });
+    return "wait";
+  }
+  const missing = wanted.filter((s) => !names.includes(s.name));
+  if (missing.length === 0) return null;
+  await ctx.escalate({
+    kind: "missing_secret",
+    level: "owner",
+    taskId: null,
+    summary: `The project doesn't give the build the secret${missing.length === 1 ? "" : "s"} ${missing.map((s) => s.name).join(", ")}.`,
+    details: [
+      "The build plan lists these secrets, and the project's secrets don't include them:",
+      ...missing.map((s) => `- ${s.name}: ${s.purpose}`),
+      "",
+      "Tick each one for the project in the box's Secrets (project) section, then resolve the escalation with a retry.",
+    ].join("\n"),
+  });
+  return "wait";
+}
+
 /** The preflight step. */
 export async function runPreflight(ctx: BuildContext): Promise<StepOutcome> {
   const { store } = ctx;
   if (await store.readJson(store.path(BASELINE_FILE))) return "next";
+  const secrets = await checkSecrets(ctx);
+  if (secrets) return secrets;
   const path = store.path(PREFLIGHT_FILE);
   let record = await store.readJson<PreflightRecord>(path);
   if (!record) {
