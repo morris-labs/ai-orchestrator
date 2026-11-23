@@ -100,6 +100,29 @@ Each response takes these fields, all optional:
 | `costUsd` | Claude only: the call's `total_cost_usd`. |
 | `sessionId` | The session or thread id to report on a fresh call. |
 | `writeFiles` | `{ "relative/path": "content" }` written in the working directory, but only when the call may write: Codex with a writable sandbox, Copilot with `--allow-all-tools`, Claude outside `dontAsk` mode. |
+| `busCalls` | Claude and Codex only: `[{ "tool": "send_message", "arguments": { ... }, "server": "NAME" }]`, MCP tool calls that the mock makes before it answers. `server` is optional and defaults to the first configured server. |
+
+## MCP tool calls
+
+The `claude` and `codex` mocks act out the MCP tool calls that a response
+lists in `busCalls`, the way an agent calls the team chat bus. For each call,
+the mock sends `initialize`, `notifications/initialized`, `tools/list`, and
+`tools/call` over streamable HTTP, and records each result in the call's
+`MOCK_CLI_LOG` line under `busResults` (`server`, `tool`, `isError`, `text`).
+
+The mocks read the servers from the flags that the real CLIs take:
+
+- **`claude`:** `--mcp-config FILE_OR_JSON`, whose `mcpServers` entries give
+  each server's `url` and `headers`, and `--strict-mcp-config`. In `dontAsk`
+  mode, a call to a tool that `--allowedTools` doesn't list as
+  `mcp__SERVER__TOOL` is denied, as the real CLI denies it.
+- **`codex`:** `-c mcp_servers.NAME.url="URL"`, and
+  `-c mcp_servers.NAME.bearer_token_env_var="VAR"`, which sends the value of
+  the environment variable `VAR` as the bearer token. Unless
+  `-c mcp_servers.NAME.default_tools_approval_mode="approve"` is set, the
+  call fails with the message that `codex exec` gives, `MCP tool call
+  requires approval, but approval policy is never`. Each call shows in the
+  output as an `mcp_tool_call` item.
 
 The mocks reject flags their real CLI doesn't have, such as
 `codex exec --full-auto`, which Codex removed, so an adapter that drifts

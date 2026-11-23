@@ -87,6 +87,33 @@ describe("CodexStreamParser", () => {
   });
 });
 
+describe("CodexStreamParser MCP tool calls", () => {
+  it("collects failed MCP tool calls, such as a refused bus call, as tool errors", () => {
+    const parser = new CodexStreamParser();
+    const item = (status: string, extra: Record<string, unknown>) =>
+      JSON.stringify({
+        type: "item.completed",
+        item: {
+          id: "i",
+          type: "mcp_tool_call",
+          server: "aio_team",
+          tool: "send_message",
+          status,
+          ...extra,
+        },
+      });
+    parser.push(
+      item("failed", {
+        error: { message: "MCP tool call requires approval, but approval policy is never" },
+      }),
+    );
+    parser.push(item("completed", { result: { content: [] } }));
+    expect(parser.summary().toolErrors).toEqual([
+      "aio_team.send_message: MCP tool call requires approval, but approval policy is never",
+    ]);
+  });
+});
+
 describe("codexRateLimitSamples", () => {
   it("reads the newest token_count rate limits", () => {
     const samples = codexRateLimitSamples(

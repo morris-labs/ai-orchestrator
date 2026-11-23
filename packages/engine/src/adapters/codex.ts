@@ -312,6 +312,13 @@ export class CodexStreamParser {
           this.toolErrors.push(
             `${command}: ${output.length > 300 ? output.slice(-300) : output || String(item.status)}`,
           );
+        } else if (item?.type === "mcp_tool_call" && item.status === "failed") {
+          const error = item.error as { message?: unknown } | undefined;
+          const message =
+            typeof error?.message === "string" ? error.message : "the tool call failed";
+          this.toolErrors.push(
+            `${String(item.server)}.${String(item.tool)}: ${message.slice(-300)}`,
+          );
         }
         break;
       }

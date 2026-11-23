@@ -3,6 +3,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { actOutBusCalls } from "../lib/mcp.mjs";
 import {
   answerText,
   loadScenario,
@@ -101,6 +102,32 @@ if (schemaFile) {
 
 const scenario = loadScenario("codex");
 const picked = pickResponse("codex", scenario, prompt);
+
+// MCP servers from `-c mcp_servers.NAME.KEY=VALUE` overrides; values are TOML.
+const mcp = {};
+for (const override of [...(flags["-c"] ?? []), ...(flags["--config"] ?? [])]) {
+  const m = /^mcp_servers\.([A-Za-z0-9_-]+)\.([A-Za-z0-9_]+)=(.*)$/s.exec(override);
+  if (!m) continue;
+  const raw = m[3].trim();
+  (mcp[m[1]] ??= {})[m[2]] = raw.startsWith('"') ? JSON.parse(raw) : raw;
+}
+const mcpServers = Object.fromEntries(
+  Object.entries(mcp)
+    .filter(([, c]) => typeof c.url === "string")
+    .map(([name, c]) => {
+      const token = c.bearer_token_env_var ? process.env[c.bearer_token_env_var] : undefined;
+      return [name, { url: c.url, headers: token ? { authorization: `Bearer ${token}` } : {} }];
+    }),
+);
+// `codex exec` runs with the approval policy `never`, so it refuses every
+// tool call that its server doesn't approve up front.
+const busAllowed = (server) =>
+  mcp[server]?.default_tools_approval_mode === "approve"
+    ? null
+    : "MCP tool call requires approval, but approval policy is never";
+const busResults = picked?.response.error
+  ? []
+  : await actOutBusCalls(mcpServers, picked?.response.busCalls, busAllowed);
 logCall("codex", {
   argv,
   prompt,
@@ -109,6 +136,7 @@ logCall("codex", {
   sandbox,
   bypass,
   model,
+  ...(busResults.length > 0 ? { busResults } : {}),
 });
 
 const threadId = resumeId ?? picked?.response.sessionId ?? newId();
@@ -153,6 +181,22 @@ if ((sandbox !== "read-only" || bypass) && response.writeFiles) {
     },
   });
 }
+
+busResults.forEach((result, i) => {
+  emit({
+    type: "item.completed",
+    item: {
+      id: `item_mcp_${i + 1}`,
+      type: "mcp_tool_call",
+      server: result.server,
+      tool: result.tool,
+      arguments: response.busCalls[i].arguments ?? {},
+      ...(result.isError
+        ? { status: "failed", error: { message: result.text } }
+        : { status: "completed", result: { content: [{ type: "text", text: result.text }] } }),
+    },
+  });
+});
 
 const text = answerText(response);
 emit({
