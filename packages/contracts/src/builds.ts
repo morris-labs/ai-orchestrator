@@ -92,6 +92,13 @@ export const BuildPlanSchema = z
     singleVendor: VendorSchema.nullable().default(null),
     /** Placement overrides by seat, over the role defaults and the single-vendor setting. */
     placements: z.record(RoleNameSchema, PlacementOverrideSchema).default({}),
+    /**
+     * The owner's push answer: `true` lets the build push its branch and open
+     * its pull request, and `false` keeps the branch local. `null` means
+     * nobody asked the owner yet, and the build stops at an escalation before
+     * the push.
+     */
+    push: z.boolean().nullable().default(null),
   })
   .strict()
   .superRefine((plan, ctx) => {
@@ -173,6 +180,11 @@ export const EscalationKindSchema = z.enum([
   "preflight",
   /** Tests first can't lock the tests, such as tests that fail the red check in every round. */
   "tests_first",
+  /**
+   * The build can't become release ready: a criterion without a passing
+   * test, no recorded push answer, or a pull request whose checks don't pass.
+   */
+  "release_ready",
 ]);
 export type EscalationKind = z.infer<typeof EscalationKindSchema>;
 
