@@ -442,7 +442,7 @@ export class AgentCalls {
     }
   }
 
-  /** The owner, seat, and step fields of a lease and of a call's events. */
+  /** The owner, seat, step, and specialty fields of a lease and of a call's events. */
   private ownerFields(work: CallWork) {
     const owner = this.host.owner ?? { runId: this.host.id };
     return {
@@ -450,6 +450,7 @@ export class AgentCalls {
       ...(owner.buildId !== undefined ? { buildId: owner.buildId } : {}),
       ...(work.seat !== undefined ? { seat: work.seat } : {}),
       ...(work.step !== undefined ? { step: work.step } : {}),
+      ...(work.specialties?.length ? { specialties: [...work.specialties] } : {}),
     };
   }
 

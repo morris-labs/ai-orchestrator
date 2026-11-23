@@ -2,7 +2,15 @@
 // it. The core knows leases, tiers, limits, the call cache, events, and the
 // working tree guard; everything about the caller's own state, such as a
 // review run's roles and rounds, reaches it through `AgentCallHost`.
-import type { AgentRole, BuildStep, ModelTier, Seat, SeatPlacement, Vendor } from "@aio/contracts";
+import type {
+  AgentRole,
+  BuildStep,
+  ModelTier,
+  Seat,
+  SeatPlacement,
+  SpecialtyName,
+  Vendor,
+} from "@aio/contracts";
 import type {
   AdapterMethod,
   AdapterRequest,
@@ -59,10 +67,15 @@ export interface AgentCallSpec {
   seat?: Seat;
   /** The build step a call belongs to; the lease and the events name it. */
   step?: BuildStep;
+  /**
+   * The specialties of the task a build call works on; the lease and the
+   * events name them. `specialtyCall()` in `build/specialties` sets them.
+   */
+  specialties?: readonly SpecialtyName[];
 }
 
-/** The seat, the step, and the placement of one call, for its lease and its events. */
-export type CallWork = Pick<AgentCallSpec, "seat" | "step" | "placement">;
+/** The seat, the step, the specialties, and the placement of one call, for its lease and its events. */
+export type CallWork = Pick<AgentCallSpec, "seat" | "step" | "specialties" | "placement">;
 
 /**
  * Who a call belongs to: a review run (`runId`), a build (`buildId` with

@@ -13,3 +13,4 @@ export {
   type SpecialtySources,
 } from "./load.js";
 export { SpecialtyPlanError, checkPlanSpecialties, type SpecialtyTask } from "./plan.js";
+export { specialtyCall } from "./call.js";
