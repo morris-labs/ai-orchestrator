@@ -54,6 +54,12 @@ A resumed turn's prompt holds the message and a summary of the commits that
 landed on the build branch since the session's last turn, one `SHA subject`
 line for each, oldest first. The agent replies with the `send_message` tool.
 
+When a message turn fails, such as an agent call that fails twice, the
+registry records the delivery as `failed` and the engine raises an
+escalation for the Project manager. The escalation pauses the message's
+task, or the sender's task, when that is a plan task. Otherwise the build
+waits for it before its next step.
+
 ## When a message gets a fresh agent
 
 The engine starts a fresh agent instead of resuming the session in the

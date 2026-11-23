@@ -18,6 +18,7 @@ import {
 } from "@aio/contracts";
 import { RunCancelled, describeError, type AgentOutcome } from "../../calls/index.js";
 import { readJson } from "../../run/files.js";
+import { escalationForCallError } from "../escalations.js";
 import type { BuildContext } from "../context.js";
 import type { RoleTask } from "../roles/index.js";
 import { ownerPostAnswer } from "../owner/index.js";
@@ -216,7 +217,40 @@ export class SessionDesk {
         at: this.now(),
         note: describeError(error),
       });
+      await this.escalateFailure(entry, error);
     }
+  }
+
+  /**
+   * Raises an escalation for a message that its addressee never got. It
+   * pauses the message's task, or the sender's, when that is a plan task;
+   * otherwise the build waits for it.
+   */
+  private async escalateFailure(entry: QueuedMessage, error: unknown): Promise<void> {
+    const { ctx } = this;
+    const message = await readJson(
+      ctx.store.path("messages", `${entry.messageId}.json`),
+      MessageSchema,
+    ).catch(() => null);
+    const planTask = (id: string | null | undefined) =>
+      id && ctx.state.tasks.some((t) => t.id === id) ? id : null;
+    const sender = message?.from.kind === "seat" ? message.from.taskId : null;
+    const taskId = planTask(entry.taskId) ?? planTask(sender);
+    const cause = escalationForCallError(error, taskId);
+    const addressee = `the ${entry.seat}${entry.taskId ? ` (task ${entry.taskId})` : ""}`;
+    await ctx.escalate({
+      kind: cause?.kind ?? "agent_call",
+      level: "project_manager",
+      taskId,
+      summary: `Message ${entry.messageId} to ${addressee} wasn't delivered: ${describeError(error)}`,
+      details: [
+        `The engine couldn't give message ${entry.messageId} to ${addressee}, so that agent never read it. Answer the sender yourself on the team chat, or fix the cause and resolve the escalation; the sender can then send the message again.`,
+        "",
+        `Error: ${describeError(error)}`,
+        "",
+        message ? `Message body:\n\n${message.body}` : "The message file is missing.",
+      ].join("\n"),
+    });
   }
 
   /** One message turn: a resume of the addressee's session, or a fresh agent that takes it over. */

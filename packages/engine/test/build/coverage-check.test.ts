@@ -296,6 +296,35 @@ describe("the coverage check", () => {
     expect(checkers[0]!.turns).toHaveLength(2);
   });
 
+  it("waits before the next step when a message without a plan task can't be delivered", async () => {
+    const world = await buildWorld({ steps: BUILD_PIPELINE });
+    const ask = {
+      tool: "send_message",
+      arguments: {
+        type: "question",
+        to: "coverage-checker",
+        toTask: "coverage-check",
+        body: "Does a quantity of zero count?",
+      },
+    };
+    world.script({
+      codex: [
+        testRound("round 1 of", WEAK_TEST),
+        { ...testRound("coverage revision", REVISED_TEST), busCalls: [ask] },
+      ],
+      claude: [{ match: "Does a quantity of zero count?", error: "crash" }, AC2_GAP, DEVELOPER],
+    });
+
+    await world.start("cart-total", twoCriteriaPlan());
+    const state = await world.settle("cart-total");
+
+    expect(state).toMatchObject({ step: "tasks", status: "waiting_escalation" });
+    expect(state.escalations).toEqual([
+      expect.objectContaining({ kind: "agent_call", taskId: null, status: "open" }),
+    ]);
+    expect(world.events.ofType("agent.started").map((e) => e.seat)).not.toContain("developer");
+  });
+
   it("skips the check in a small build", async () => {
     const world = await buildWorld({ steps: BUILD_PIPELINE });
     world.script({ codex: [testRound("round 1 of", REVISED_TEST)], claude: [DEVELOPER] });

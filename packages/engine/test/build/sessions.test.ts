@@ -294,6 +294,33 @@ describe("session resume", () => {
     expect(existsSync(join(second, "sessions"))).toBe(false);
   });
 
+  it("escalates a message that the engine can't deliver, and pauses the message's task", async () => {
+    const world = await buildWorld({ steps: BUILD_PIPELINE });
+    world.script({
+      codex: [{ match: QUESTION, error: "crash" }, TESTS_FIRST],
+      // The Developer's turn outlasts the failed delivery.
+      claude: [{ ...developer(QUESTION), delayMs: 3_000 }],
+    });
+
+    await world.start("cart-undelivered");
+    const state = await world.settle("cart-undelivered");
+
+    const { deliveries } = registry(world, "cart-undelivered");
+    expect(deliveries).toEqual([expect.objectContaining({ messageId: "M1", status: "failed" })]);
+    expect(state.status).toBe("waiting_escalation");
+    expect(state.escalations).toEqual([
+      expect.objectContaining({
+        id: "E1",
+        kind: "agent_call",
+        level: "project_manager",
+        taskId: "T1",
+        status: "open",
+      }),
+    ]);
+    expect(state.escalations[0]!.summary).toContain("M1");
+    expect(world.file("cart-undelivered", "escalations/E1.json")).toContain(QUESTION);
+  });
+
   it("leaves a message for a seat and task that no agent holds to others", async () => {
     const world = await buildWorld();
     world.script({

@@ -226,6 +226,12 @@ export class BuildController {
       ctx.sessions.resumePending();
       for (;;) {
         await ctx.calls.checkpoint();
+        // An escalation without a task that came in during the last step,
+        // such as a message that couldn't be delivered, holds the build.
+        if (ctx.openEscalations().some((e) => e.taskId === null)) {
+          await ctx.waitForEscalations();
+          return;
+        }
         const step = ctx.state.step;
         const handler = this.pipeline.handlers[step];
         if (!handler) {
