@@ -32,9 +32,14 @@ describe("AgentCalls for a caller that isn't a review run", () => {
   it("names the build, seat, and step on a build call's lease and events", async () => {
     const repo = buildSampleRepo();
     const buildId = uniqueRunId();
-    const { id, calls, broker, emitted } = makeCaller({ codex: answering("codex") }, undefined, undefined, {
-      owner: { runId: null, buildId },
-    });
+    const { id, calls, broker, emitted } = makeCaller(
+      { codex: answering("codex") },
+      undefined,
+      undefined,
+      {
+        owner: { runId: null, buildId },
+      },
+    );
 
     await calls.call<Answer>(spec(repo, { seat: "developer", step: "tasks" }));
 
