@@ -576,6 +576,26 @@ function registerIpc() {
       { urgent: urgent === true, releaseOnClose },
     );
   });
+  ipcMain.on("aio:notify-build", (e, n: unknown) => {
+    if (!fromApp(e) || !Notification.isSupported() || typeof n !== "object" || n === null) return;
+    const { title, body, buildId, machineId } = n as Record<string, unknown>;
+    if (
+      typeof title !== "string" ||
+      typeof body !== "string" ||
+      typeof buildId !== "string" ||
+      typeof machineId !== "string"
+    )
+      return;
+    showRetained(
+      shownNotifications,
+      new Notification({ title, body, urgency: "normal" }),
+      () => {
+        showWindow();
+        win?.webContents.send("aio:select-build", buildId, machineId);
+      },
+      { releaseOnClose },
+    );
+  });
   ipcMain.on("aio:quit", (e) => {
     if (!fromApp(e)) return;
     quitting = true;

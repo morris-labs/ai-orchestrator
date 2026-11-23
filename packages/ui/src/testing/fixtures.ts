@@ -14,6 +14,7 @@ import {
   type GlobalSettings,
   type Job,
   type Message,
+  type PmItem,
   type Project,
 } from "@aio/contracts";
 
@@ -115,6 +116,26 @@ export function makeMessage(partial: Partial<Message> & { id: string; buildId: s
     paths: [],
     body: `Message ${partial.id}`,
     createdAt: T0,
+    ...partial,
+  };
+}
+
+/**
+ * An item of a build's Project manager inbox: by default, escalation E1,
+ * which waits because its pointer didn't reach the session.
+ */
+export function makeInboxItem(partial: Partial<PmItem> & { id: string }): PmItem {
+  const ref = partial.ref ?? "E1";
+  return {
+    kind: "escalation",
+    ref,
+    summary: `Escalation ${ref} (attempt_cap, for the project manager): Task T1 failed 4 attempts.`,
+    file: `escalations/${ref}.json`,
+    path: `/work/example-app/.aio/builds/add-export/escalations/${ref}.json`,
+    needsAnswer: true,
+    createdAt: T0,
+    deliveredAt: null,
+    answeredAt: null,
     ...partial,
   };
 }

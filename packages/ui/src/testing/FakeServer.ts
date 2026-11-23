@@ -6,11 +6,14 @@
 // so a test fails when the fake and the contracts drift apart.
 import {
   DEFAULT_PROMPT_TEMPLATES,
+  pmItemWaits,
+  pmPointer,
   serverRoutes,
   type AccountView,
   type AioEvent,
   type ApiErrorCode,
   type BoxView,
+  type BuildMeeting,
   type BuildSummary,
   type BuildTaskStatus,
   type BuildTaskView,
@@ -22,6 +25,7 @@ import {
   type Mount,
   type Notification,
   type OwnerPost,
+  type PmItem,
   type Project,
   type PromptTemplates,
   type SecretCandidate,
@@ -103,6 +107,10 @@ export interface FakeState {
   buildTasks: Record<string, BuildTaskView[]>;
   /** Each build's usage, by build id; a build without an entry has none. */
   buildUsage: Record<string, BuildUsage>;
+  /** Each build's planning meeting under way, by build id; `builds.post` routes its seats' posts into it. */
+  buildMeetings: Record<string, BuildMeeting>;
+  /** Each build's Project manager inbox, oldest first, by build id. */
+  buildInbox: Record<string, PmItem[]>;
   /** Project ids whose container has stale mounts: `boxes.start` refuses without `force`. */
   staleProjects: string[];
   /** Subdirectory names by absolute path, for `fs.dirs`. */
@@ -207,6 +215,8 @@ export class FakeServer {
       buildMessages: {},
       buildTasks: {},
       buildUsage: {},
+      buildMeetings: {},
+      buildInbox: {},
       staleProjects: [],
       dirs: {
         "/home/user": ["src", "work"],
@@ -433,6 +443,30 @@ export class FakeServer {
       status: task.status,
       previousStatus: current?.status ?? null,
       ...(task.milestone !== undefined ? { milestone: task.milestone } : {}),
+    });
+  }
+
+  /**
+   * Stores an item of a build's Project manager inbox, replacing the one
+   * with its id, and emits its `build.inbox` event, as the server relays it
+   * from the engine.
+   */
+  putInboxItem(buildId: string, item: PmItem): void {
+    const build = this.state.builds.find((b) => b.id === buildId);
+    const list = (this.state.buildInbox[buildId] ?? []).filter((i) => i.id !== item.id);
+    this.state.buildInbox[buildId] = [...list, item];
+    this.emit({
+      type: "build.inbox",
+      id: `inbox-${buildId}-${item.id}-${item.deliveredAt ?? ""}-${item.answeredAt ?? ""}`,
+      time: item.createdAt,
+      source: "server",
+      streamId: this.streamId,
+      seq: 0,
+      sourceSeq: 0,
+      buildId,
+      slug: build?.slug ?? "unknown",
+      boxId: build?.boxId ?? null,
+      item,
     });
   }
 
@@ -1040,6 +1074,15 @@ const defaultHandlers: Partial<Record<HttpRouteKey, FakeHandler>> = {
       throw new FakeApiError("not_found", `No build ${buildId}.`, 404);
     }
     const post = r.body as OwnerPost;
+    const meeting = s.state.buildMeetings[buildId];
+    if (
+      meeting?.status === "running" &&
+      (meeting.proposer === post.to || meeting.members.includes(post.to))
+    ) {
+      // Like the engine: a post for a seat of a meeting under way goes into the meeting.
+      meeting.posts.push({ body: post.body, postedAt: new Date().toISOString() });
+      return { route: "meeting" as const, meeting };
+    }
     const taskId = post.taskId ?? post.toTask ?? null;
     const milestone = post.milestone ?? null;
     if (taskId === null && milestone === null) {
@@ -1090,7 +1133,10 @@ const defaultHandlers: Partial<Record<HttpRouteKey, FakeHandler>> = {
     const buildId = r.params.buildId as string;
     const build = s.state.builds.find((b) => b.id === buildId);
     if (!build) throw new FakeApiError("not_found", `No build ${buildId}.`, 404);
-    return { buildId, slug: build.slug, boxId: build.boxId, items: [] };
+    const items = (s.state.buildInbox[buildId] ?? [])
+      .filter((item) => r.query.all === true || pmItemWaits(item))
+      .map((item) => ({ ...item, pointer: pmPointer(build.slug, item) }));
+    return { buildId, slug: build.slug, boxId: build.boxId, items };
   },
   "notifications.list": (_r, s) => ({ notifications: s.state.notifications }),
   "notifications.read": () => ({ ok: true }),

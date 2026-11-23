@@ -4,7 +4,7 @@
 // sums usage over settlements.
 import type { BuildTaskView, BuildUsage, EventOf, Message } from "@aio/contracts";
 import { useApiClient, useEvent, useResync } from "@aio/ui";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { addMessages, applyTaskChanged } from "../logic/buildView";
 
 export interface BuildDetail {
@@ -18,13 +18,21 @@ export interface BuildDetail {
   error: string | null;
 }
 
+export interface BuildDetailData extends BuildDetail {
+  /**
+   * Adds messages the view learned of from an answer, such as the owner's
+   * post, before their `message.sent` events arrive.
+   */
+  addMessages: (messages: readonly Message[]) => void;
+}
+
 const EMPTY: BuildDetail = { messages: [], tasks: [], usage: null, loaded: false, error: null };
 
 function messageOf(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-export function useBuildDetail(buildId: string): BuildDetail {
+export function useBuildDetail(buildId: string): BuildDetailData {
   const client = useApiClient();
   const [detail, setDetail] = useState<BuildDetail>(EMPTY);
   /** The build the view shows; a response for another build is dropped. */
@@ -105,5 +113,14 @@ export function useBuildDetail(buildId: string): BuildDetail {
     if (ev.buildId === buildId) void reloadUsage();
   });
 
-  return detail;
+  const add = useCallback(
+    (messages: readonly Message[]) => {
+      const own = messages.filter((m) => m.buildId === buildId);
+      pending.current?.messages.push(...own);
+      setDetail((d) => ({ ...d, messages: addMessages(d.messages, own) }));
+    },
+    [buildId],
+  );
+
+  return useMemo(() => ({ ...detail, addMessages: add }), [detail, add]);
 }

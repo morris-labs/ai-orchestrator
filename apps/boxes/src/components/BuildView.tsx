@@ -1,13 +1,23 @@
 // The build view: a build's team chat as a conversation with filters by
-// task, milestone, seat, and slice; the direct messages to the owner; the
-// milestone board; the usage by seat and by specialty; and the owner's
-// build controls (pause, resume, cancel, and delete). The conversation
-// renders a window of the newest matching messages, so a build with
-// thousands of messages stays responsive.
-import type { BuildSummary, BuildTaskView, BuildUsage, Message, UsageTotals } from "@aio/contracts";
+// task, milestone, seat, and slice; the owner's post box; the open
+// escalations; the direct messages to the owner; the milestone board; the
+// usage by seat and by specialty; and the owner's build controls (pause,
+// resume, cancel, and delete). The conversation renders a window of the
+// newest matching messages, so a build with thousands of messages stays
+// responsive.
+import {
+  MESSAGE_BODY_MAX,
+  type BuildSummary,
+  type BuildTaskView,
+  type BuildUsage,
+  type Message,
+  type PmItem,
+  type UsageTotals,
+} from "@aio/contracts";
 import { Button, errorMessage, useApiClient, useMessageBox } from "@aio/ui";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useBuildDetail } from "../app/useBuildDetail";
+import { isBuildActive } from "../logic/builds";
 import {
   MESSAGE_WINDOW,
   NO_FILTER,
@@ -15,17 +25,22 @@ import {
   directMessages,
   filterMessages,
   filterOptions,
+  ownerPostFor,
   partyLabel,
+  postTargets,
   taskStatusLabel,
   type BoardColumn,
   type MessageFilter,
+  type PostAbout,
 } from "../logic/buildView";
 
 export interface BuildViewProps {
   build: BuildSummary;
+  /** The build's open escalations, oldest first. */
+  escalations?: readonly PmItem[];
 }
 
-export function BuildView({ build }: BuildViewProps) {
+export function BuildView({ build, escalations = [] }: BuildViewProps) {
   const detail = useBuildDetail(build.id);
   return (
     <div className="bx-build-view">
@@ -36,8 +51,14 @@ export function BuildView({ build }: BuildViewProps) {
         </div>
       ) : null}
       <div className="bx-build-columns">
-        <Conversation messages={detail.messages} tasks={detail.tasks} />
+        <Conversation
+          build={build}
+          messages={detail.messages}
+          tasks={detail.tasks}
+          onPosted={detail.addMessages}
+        />
         <div className="bx-build-side">
+          {escalations.length > 0 ? <Escalations build={build} items={escalations} /> : null}
           <DirectMessages messages={detail.messages} />
           <Board columns={boardOf(detail.tasks)} />
           <Usage usage={detail.usage} />
@@ -139,8 +160,13 @@ function BuildControls({ build }: { build: BuildSummary }) {
   );
 }
 
-function Conversation(props: { messages: readonly Message[]; tasks: readonly BuildTaskView[] }) {
-  const { messages, tasks } = props;
+function Conversation(props: {
+  build: BuildSummary;
+  messages: readonly Message[];
+  tasks: readonly BuildTaskView[];
+  onPosted: (messages: readonly Message[]) => void;
+}) {
+  const { build, messages, tasks, onPosted } = props;
   const [filter, setFilter] = useState<MessageFilter>(NO_FILTER);
   const [limit, setLimit] = useState(MESSAGE_WINDOW);
   const options = useMemo(() => filterOptions(messages, tasks), [messages, tasks]);
@@ -196,7 +222,136 @@ function Conversation(props: { messages: readonly Message[]; tasks: readonly Bui
           {messages.length === 0 ? "No messages yet." : "No messages match the filters."}
         </div>
       ) : null}
+      {isBuildActive(build) ? (
+        <PostBox
+          buildId={build.id}
+          planning={build.status === "planning"}
+          messages={messages}
+          tasks={tasks}
+          onPosted={onPosted}
+        />
+      ) : null}
     </section>
+  );
+}
+
+/**
+ * The owner's post box. A post goes to one agent, which runs on it; the
+ * engine records it as a decision on the post's task. A post for a seat of
+ * a planning meeting under way goes into the meeting instead.
+ */
+function PostBox(props: {
+  buildId: string;
+  /** True while the build plans, so a post can go into the meeting under way. */
+  planning: boolean;
+  messages: readonly Message[];
+  tasks: readonly BuildTaskView[];
+  onPosted: (messages: readonly Message[]) => void;
+}) {
+  const { buildId, planning, messages, tasks, onPosted } = props;
+  const client = useApiClient();
+  const targets = useMemo(() => postTargets(messages, tasks), [messages, tasks]);
+  const options = useMemo(() => filterOptions(messages, tasks), [messages, tasks]);
+  const [to, setTo] = useState("");
+  const [about, setAbout] = useState<PostAbout>("");
+  const [body, setBody] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const live = useRef(true);
+  useEffect(() => {
+    live.current = true;
+    return () => {
+      live.current = false;
+    };
+  }, []);
+  const target = targets.find((t) => t.label === to) ?? null;
+  const text = body.trim();
+  const post = target && text ? ownerPostFor(target, about, text, planning) : null;
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!post || !target || busy) return;
+    setBusy(true);
+    setError(null);
+    setStatus(null);
+    try {
+      const answer = await client.call("builds.post", { params: { buildId }, body: post });
+      if (!live.current) return;
+      if (answer.route === "agent") {
+        onPosted([answer.message]);
+        setStatus(`Posted to ${target.label}.`);
+      } else {
+        setStatus(
+          `Posted to the planning meeting ${answer.meeting.id}. Every member reads it at its next turn.`,
+        );
+      }
+      setBody("");
+    } catch (err) {
+      if (live.current) setError(`Couldn't post: ${errorMessage(err)}`);
+    } finally {
+      if (live.current) setBusy(false);
+    }
+  };
+
+  return (
+    <form className="bx-post-box" aria-label="Post to an agent" onSubmit={(e) => void submit(e)}>
+      <div className="bx-build-filters">
+        <label className="bx-build-filter">
+          To{" "}
+          <select aria-label="To" value={to} onChange={(e) => setTo(e.target.value)}>
+            <option value="">Choose an agent</option>
+            {targets.map((t) => (
+              <option key={t.label} value={t.label}>
+                {t.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="bx-build-filter">
+          About{" "}
+          <select aria-label="About" value={about} onChange={(e) => setAbout(e.target.value)}>
+            <option value="">The agent's task</option>
+            {options.tasks.map((id) => (
+              <option key={`task:${id}`} value={`task:${id}`}>
+                Task {id}
+              </option>
+            ))}
+            {options.milestones.map((name) => (
+              <option key={`milestone:${name}`} value={`milestone:${name}`}>
+                Milestone {name}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <textarea
+        aria-label="Post"
+        rows={3}
+        maxLength={MESSAGE_BODY_MAX}
+        value={body}
+        placeholder="Write to the agent. The engine records the post as a decision on its task."
+        onChange={(e) => setBody(e.target.value)}
+      />
+      <div className="bx-post-actions">
+        <Button type="submit" disabled={busy || post === null}>
+          Post
+        </Button>
+        {target && text && post === null ? (
+          <span className="bx-dim">Choose the task or milestone the post is about.</span>
+        ) : null}
+        {status ? (
+          <span className="bx-dim" role="status">
+            {status}
+          </span>
+        ) : null}
+        {error ? (
+          <span className="bx-dim" role="alert">
+            {error}
+          </span>
+        ) : null}
+      </div>
+    </form>
   );
 }
 
@@ -235,6 +390,41 @@ function MessageItem({ message: m }: { message: Message }) {
       </div>
       <div className="bx-message-body">{m.body}</div>
     </li>
+  );
+}
+
+/**
+ * The build's open escalations: each one whose pointer didn't reach the
+ * Project manager's session, or that waits for an answer.
+ */
+function Escalations({ build, items }: { build: BuildSummary; items: readonly PmItem[] }) {
+  return (
+    <section className="bx-build-panel bx-build-escalations" aria-label="Escalations">
+      <h3>Open escalations</h3>
+      <ol className="bx-messages" aria-label="Open escalations">
+        {items.map((item) => (
+          <li key={item.id} className="bx-message" title={`${item.id} ${item.createdAt}`}>
+            <div className="bx-message-head">
+              <strong>{item.ref}</strong>
+              <span className="bx-dim">
+                {" "}
+                {item.deliveredAt === null
+                  ? "hasn't reached the Project manager's session"
+                  : "waits for an answer"}
+              </span>
+            </div>
+            <div className="bx-message-body">{item.summary}</div>
+            <div className="bx-dim">
+              <code>{item.file}</code>
+            </div>
+          </li>
+        ))}
+      </ol>
+      <div className="bx-dim">
+        To resolve an escalation, run <code>aio-build resolve {build.slug} ID ACTION</code> in the
+        build's box.
+      </div>
+    </section>
   );
 }
 

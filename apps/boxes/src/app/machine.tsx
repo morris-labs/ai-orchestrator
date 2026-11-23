@@ -23,6 +23,13 @@ export const BOX_EVENT_TYPES = [
   "terminal.ended",
   "settings.changed",
   "notification",
+  // The Builds page and the build view. The server sends a type only to a
+  // client that asks for it.
+  "build.changed",
+  "build.task.changed",
+  "build.inbox",
+  "message.sent",
+  "lease.settled",
 ] as const;
 
 export interface MachineInfo {

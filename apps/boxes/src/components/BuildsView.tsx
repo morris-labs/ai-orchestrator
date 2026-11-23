@@ -1,7 +1,7 @@
 // The Builds page: the machine's builds, newest first, with each build's
-// state, step, project, and last change. Selecting a build shows the detail
+// state, step, open escalations, project, and last change. Selecting a build shows the detail
 // that the caller renders beside the list.
-import type { BuildSummary, ProjectSummary } from "@aio/contracts";
+import type { BuildSummary, PmItem, ProjectSummary } from "@aio/contracts";
 import { DataTable, type Column, type SortState } from "@aio/ui";
 import { useMemo, useState, type ReactNode } from "react";
 import { buildStateLabel, stepLabel } from "../logic/builds";
@@ -21,9 +21,14 @@ export interface BuildsViewProps {
   error?: string | null;
   /** The detail of the selected build, shown beside the list. */
   detail?: (build: BuildSummary) => ReactNode;
+  /** Each build's open escalations, by build id. */
+  escalations?: ReadonlyMap<string, readonly PmItem[]>;
 }
 
-function buildColumns(projectName: (id: string) => string): Column<BuildSummary>[] {
+function buildColumns(
+  projectName: (id: string) => string,
+  openCount: (id: string) => number,
+): Column<BuildSummary>[] {
   return [
     {
       id: "state",
@@ -34,6 +39,20 @@ function buildColumns(projectName: (id: string) => string): Column<BuildSummary>
     },
     { id: "build", header: "Build", sortValue: (b) => b.slug, render: (b) => b.slug },
     { id: "step", header: "Step", width: 120, render: (b) => stepLabel(b.step) },
+    {
+      id: "escalations",
+      header: "Escalations",
+      width: 110,
+      sortValue: (b) => openCount(b.id),
+      render: (b) => {
+        const n = openCount(b.id);
+        return n > 0 ? (
+          <span className="bx-escalation-count" title="Open escalations">
+            {n} open
+          </span>
+        ) : null;
+      },
+    },
     {
       id: "project",
       header: "Project",
@@ -58,12 +77,15 @@ const rowKey = (b: BuildSummary) => b.id;
 const rowTitle = (b: BuildSummary) => `${b.slug}\n${b.id}${b.boxId ? `\nbox ${b.boxId}` : ""}`;
 
 export function BuildsView(props: BuildsViewProps) {
-  const { projects, builds, selectedId, onSelect, detail } = props;
+  const { projects, builds, selectedId, onSelect, detail, escalations } = props;
   const [sort, setSort] = useState<SortState | undefined>(undefined);
   const columns = useMemo(() => {
     const names = new Map(projects.map((p) => [p.project.id, p.project.name]));
-    return buildColumns((id) => names.get(id) ?? id);
-  }, [projects]);
+    return buildColumns(
+      (id) => names.get(id) ?? id,
+      (id) => escalations?.get(id)?.length ?? 0,
+    );
+  }, [projects, escalations]);
   const selected = useMemo(() => new Set(selectedId ? [selectedId] : []), [selectedId]);
   const current = selectedId ? builds.find((b) => b.id === selectedId) : undefined;
   return (
