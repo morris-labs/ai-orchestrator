@@ -36,7 +36,9 @@ function world(answers: DeliveryResult[], options: { giveUpMs?: number } = {}) {
 const dialog: DeliveryResult = { delivered: false, reason: "The session shows a dialog." };
 
 async function until(done: () => boolean): Promise<void> {
-  for (let i = 0; i < 200 && !done(); i++) await new Promise((r) => setTimeout(r, 5));
+  // A deadline, not a count of polls: a loaded machine runs fewer polls a second.
+  const end = Date.now() + 5000;
+  while (!done() && Date.now() < end) await new Promise((r) => setTimeout(r, 5));
   expect(done()).toBe(true);
 }
 
