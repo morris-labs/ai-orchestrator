@@ -5,9 +5,10 @@ import {
   ApiErrorSchema,
   BUILD_SOCKET_ENV,
   BUILD_SOCKET_PATH,
+  BUILD_SOCKET_RESPONSES,
   BUILD_SOCKET_ROUTES,
-  BuildSocketResponseSchema,
   type ApiErrorCode,
+  type BuildSocketAnswer,
   type BuildSocketRequestKind,
   type BuildState,
 } from "@aio/contracts";
@@ -41,8 +42,16 @@ export class BuildSocketClient {
     private readonly timeoutMs = 60_000,
   ) {}
 
-  /** Sends one build request and returns the build's state after it. */
-  request(kind: BuildSocketRequestKind, body: unknown): Promise<BuildState> {
+  /** Sends a start, status, pause, or resume request and returns the build's state after it. */
+  async request(
+    kind: Exclude<BuildSocketRequestKind, "plan" | "freeze">,
+    body: unknown,
+  ): Promise<BuildState> {
+    return (await this.send(kind, body)).build;
+  }
+
+  /** Sends one build request and returns its answer. */
+  send<K extends BuildSocketRequestKind>(kind: K, body: unknown): Promise<BuildSocketAnswer<K>> {
     const data = JSON.stringify(body);
     return new Promise((resolve, reject) => {
       const req = http.request(
@@ -68,9 +77,9 @@ export class BuildSocketClient {
               reject(this.protocolError());
               return;
             }
-            const ok = BuildSocketResponseSchema.safeParse(parsed);
+            const ok = BUILD_SOCKET_RESPONSES[kind].safeParse(parsed);
             if (ok.success && (res.statusCode === 200 || res.statusCode === 201)) {
-              resolve(ok.data.build);
+              resolve(ok.data as BuildSocketAnswer<K>);
               return;
             }
             const failed = ApiErrorSchema.safeParse(parsed);

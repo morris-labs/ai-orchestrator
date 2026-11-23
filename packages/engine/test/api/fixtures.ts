@@ -1,6 +1,10 @@
 // Sample documents and fakes shared by the engine service tests.
 import {
+  BuildPlanSchema,
   EngineRunCreateSchema,
+  type BuildFreezeAnswer,
+  type BuildPlanning,
+  type BuildSeatAnswer,
   type BuildState,
   type FileGroup,
   type Finding,
@@ -158,11 +162,84 @@ export const buildState: BuildState = {
   updatedAt: "2026-11-23T09:00:00.000Z",
 };
 
+/** A build's planning record, with one Analyst call and no frozen plan. */
+export const planningRecord: BuildPlanning = {
+  version: 1,
+  id: RUN,
+  slug: "cart-total",
+  projectId: "proj-1",
+  boxId: null,
+  container: CONTAINER,
+  repoPath: PROJECT_ROOT,
+  issue: null,
+  calls: [
+    {
+      key: "plan-analyst-1",
+      seat: "analyst",
+      n: 1,
+      status: "done",
+      file: "planning/analyst-1.json",
+      startedAt: "2026-11-23T09:00:00.000Z",
+      finishedAt: "2026-11-23T09:05:00.000Z",
+    },
+  ],
+  frozen: [],
+  createdAt: "2026-11-23T09:00:00.000Z",
+  updatedAt: "2026-11-23T09:05:00.000Z",
+};
+
+/** The answer to a seat call. */
+export const seatAnswer: BuildSeatAnswer = {
+  planning: planningRecord,
+  call: planningRecord.calls[0] as BuildSeatAnswer["call"],
+  answer: { title: "Add a total to the cart", size: "small" },
+};
+
+/** The answer to a freeze. */
+export const freezeAnswer: BuildFreezeAnswer = {
+  planning: {
+    ...planningRecord,
+    frozen: [
+      {
+        version: 1,
+        file: "plans/v1.json",
+        hash: "a".repeat(64),
+        push: true,
+        frozenAt: "2026-11-23T09:10:00.000Z",
+      },
+    ],
+  },
+  frozen: {
+    version: 1,
+    file: "plans/v1.json",
+    hash: "a".repeat(64),
+    push: true,
+    frozenAt: "2026-11-23T09:10:00.000Z",
+  },
+  plan: BuildPlanSchema.parse({
+    title: "Add a total to the cart",
+    criteria: [{ id: "AC1", text: "The cart reports the sum of its item prices." }],
+    tasks: [
+      {
+        id: "T1",
+        title: "Cart total",
+        description: "Sum the prices.",
+        ownedFiles: ["src/cart.mjs"],
+        criteria: ["AC1"],
+      },
+    ],
+    commands: { test: [{ command: "node test/cart.test.mjs" }] },
+    push: true,
+  }),
+};
+
 /** A build manager whose every method is a `vi.fn` returning sample data. */
 export function fakeBuildManager(): {
   [K in keyof BuildManager]-?: ReturnType<typeof vi.fn>;
 } & BuildManager {
   const m = {
+    plan: vi.fn(async () => seatAnswer),
+    freeze: vi.fn(async () => freezeAnswer),
     start: vi.fn(async () => buildState),
     get: vi.fn(async (slug: string) => (slug === buildState.slug ? buildState : null)),
     pause: vi.fn(async () => ({ ...buildState, status: "paused" })),

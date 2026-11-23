@@ -52,6 +52,50 @@ describe("the build socket", () => {
     expect(builds.resume).toHaveBeenCalledWith("cart-total");
   });
 
+  it("calls a planning seat and answers with the seat's answer", async () => {
+    const { builds, path } = await open();
+    const request = {
+      projectId: "proj-1",
+      boxId: "box-1",
+      slug: "cart-total",
+      seat: "analyst",
+      brief: "Add a total to the cart.",
+      issue: { repository: "example/shop", number: 42 },
+    };
+    const res = await send(path, "POST", BUILD_SOCKET_ROUTES.plan, request);
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ call: { seat: "analyst" }, answer: { size: "small" } });
+    expect(builds.plan).toHaveBeenCalledWith({
+      ...request,
+      issue: { ...request.issue, url: "https://github.com/example/shop/issues/42" },
+    });
+  });
+
+  it("freezes a build plan and answers with the frozen version", async () => {
+    const { builds, path } = await open();
+    const request = { projectId: "proj-1", boxId: null, slug: "cart-total", push: true };
+    const res = await send(path, "POST", BUILD_SOCKET_ROUTES.freeze, request);
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({ frozen: { version: 1, push: true } });
+    expect(builds.freeze).toHaveBeenCalledWith(request);
+  });
+
+  it("refuses planning requests for another project", async () => {
+    const { builds, path } = await open("proj-1");
+    const ask = { projectId: "proj-2", boxId: null, slug: "cart-total" };
+    const plan = await send(path, "POST", BUILD_SOCKET_ROUTES.plan, {
+      ...ask,
+      seat: "analyst",
+      brief: "Add a total.",
+    });
+    const freeze = await send(path, "POST", BUILD_SOCKET_ROUTES.freeze, ask);
+    for (const res of [plan, freeze]) {
+      expect(res).toMatchObject({ status: 404, body: { error: { code: "not_found" } } });
+    }
+    expect(builds.plan).not.toHaveBeenCalled();
+    expect(builds.freeze).not.toHaveBeenCalled();
+  });
+
   it("answers not_found for a build the engine doesn't have", async () => {
     const { path } = await open();
     const res = await send(path, "POST", BUILD_SOCKET_ROUTES.status, {

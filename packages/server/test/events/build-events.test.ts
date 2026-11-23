@@ -101,6 +101,15 @@ describe("build event admission", () => {
     expect(engineEventRefusal(db, endpoint, agent)).toBeNull();
   });
 
+  it("accepts a planning seat's calls once its build in planning is known", () => {
+    const { db, builds } = seeded();
+    const planning = buildChanged({ status: "planning", step: "planning" });
+    const agent = buildAgent({ runId: null, buildId: BUILD, seat: "analyst", step: "planning" });
+    expect(engineEventRefusal(db, endpoint, planning)).toBeNull();
+    builds.ingest(planning);
+    expect(engineEventRefusal(db, endpoint, agent)).toBeNull();
+  });
+
   it("accepts a team chat message of a known build of the project", () => {
     const { db, builds } = seeded();
     const message = (buildId: string) =>
