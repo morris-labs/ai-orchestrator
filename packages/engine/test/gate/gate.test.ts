@@ -97,6 +97,23 @@ describe("gate", () => {
     expect(formatRegressions(worse)).toContain("Command: lint");
   });
 
+  it("doesn't count a test command that fails only on excused lines, and counts any other line", () => {
+    const baseline = run({ command: "test", passed: true });
+    const excused = [{ command: "test", cwd: null, failures: ["not ok - stock sync"] }];
+
+    const flaky = run({ command: "test", passed: false, failures: ["not ok - stock sync"] });
+    expect(compareGate(baseline, flaky, excused).regressed).toBe(false);
+
+    const both = run({
+      command: "test",
+      passed: false,
+      failures: ["not ok - stock sync", "not ok - cart total"],
+    });
+    expect(compareGate(baseline, both, excused).regressed).toBe(true);
+    // Without the excused lines, the flaky failure is a regression too.
+    expect(compareGate(baseline, flaky).regressed).toBe(true);
+  });
+
   it("runs test and lint commands in the repository", async () => {
     const seen: Array<{ line: string; cwd: string }> = [];
     const shell: CommandRunner = {
