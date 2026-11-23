@@ -321,13 +321,20 @@ export class BuildContext {
     if (previous === status) return;
     task.status = status;
     await this.persist();
-    await this.emit({
+    await this.emit(this.taskChanged(id, status, previous));
+  }
+
+  /** The `build.task.changed` event for a task, with the plan milestone it belongs to. */
+  private taskChanged(id: string, status: BuildTaskStatus, previous: BuildTaskStatus): EventDraft {
+    const milestone = this.plan.milestones.find((m) => m.tasks.includes(id))?.id;
+    return {
       type: "build.task.changed",
       buildId: this.state.id,
       taskId: id,
       status,
       previousStatus: previous,
-    });
+      ...(milestone ? { milestone } : {}),
+    };
   }
 
   /** Sends an event and records it in the build's `events.jsonl`. */
@@ -484,13 +491,7 @@ export class BuildContext {
     if (changed.length === 0) return;
     await this.persist();
     for (const { id, status, previous } of changed) {
-      await this.emit({
-        type: "build.task.changed",
-        buildId: this.state.id,
-        taskId: id,
-        status,
-        previousStatus: previous,
-      });
+      await this.emit(this.taskChanged(id, status, previous));
     }
   }
 
