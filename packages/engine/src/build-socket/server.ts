@@ -14,6 +14,7 @@
 import {
   BUILD_SOCKET_MAX_BODY_BYTES,
   BUILD_SOCKET_ROUTES,
+  BUILD_SOCKET_SESSION_HEADERS,
   BuildSocketFreezeSchema,
   BuildSocketMeetSchema,
   BuildSocketMeetingPostSchema,
@@ -23,6 +24,7 @@ import {
   BuildSocketResolveSchema,
   BuildSocketSlugSchema,
   BuildSocketStartSchema,
+  PmSessionSchema,
   type ApiError,
   type ApiErrorCode,
   type BuildSocketRequestKind,
@@ -56,6 +58,7 @@ export interface BuildSocketOptions {
     | "messages"
     | "decisions"
     | "inbox"
+    | "noteSession"
   >;
   /** The engine's project, or `null` when the server didn't name one. */
   projectId: string | null;
@@ -247,6 +250,33 @@ export async function serveBuildSocket(options: BuildSocketOptions): Promise<Bui
     return { build: await builds.cancel(request.slug) };
   };
 
+  /**
+   * Records the Claude Code session that the request's headers name, so the
+   * engine can read the Project manager's usage from its transcript. A
+   * malformed header, or a failure to record it, never fails the request.
+   */
+  const noteSession = async (req: http.IncomingMessage, raw: unknown): Promise<void> => {
+    const id = req.headers[BUILD_SOCKET_SESSION_HEADERS.id];
+    const transcripts = req.headers[BUILD_SOCKET_SESSION_HEADERS.transcripts];
+    if (typeof id !== "string" || typeof transcripts !== "string") return;
+    const body = raw as { slug?: unknown; boxId?: unknown };
+    if (typeof body.slug !== "string") return;
+    const boxId = typeof body.boxId === "string" ? body.boxId : null;
+    const session = PmSessionSchema.pick({ id: true, transcripts: true }).safeParse({
+      id,
+      transcripts,
+    });
+    if (!session.success) return;
+    try {
+      await builds.noteSession(body.slug, boxId, session.data);
+    } catch (error) {
+      log.warn("Couldn't record the session behind a build request", {
+        build: body.slug,
+        error: String(error),
+      });
+    }
+  };
+
   const server = http.createServer((req, res) => {
     const kind = req.method === "POST" ? ROUTE_KINDS.get(req.url ?? "") : undefined;
     if (kind === undefined) {
@@ -275,6 +305,7 @@ export async function serveBuildSocket(options: BuildSocketOptions): Promise<Bui
       }
       try {
         const body = await handle(kind, raw);
+        await noteSession(req, raw);
         reply(res, kind === "start" || kind === "freeze" ? 201 : 200, body);
       } catch (error) {
         if (error instanceof ZodError) {

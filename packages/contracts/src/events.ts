@@ -33,6 +33,7 @@ import {
 } from "./build-events.js";
 import { messageSentFields } from "./messages.js";
 import { buildInboxFields } from "./pm-inbox.js";
+import { buildSeatUsageFields } from "./pm-usage.js";
 import {
   LeaseRequestFrameSchema,
   LeaseResponseFrameSchema,
@@ -409,6 +410,13 @@ export const BuildInboxEventSchema = z.object({
   ...buildInboxFields,
 });
 
+/** What a tokens only seat, the Project manager, spent; see `pm-usage.ts`. */
+export const BuildSeatUsageEventSchema = z.object({
+  ...base,
+  type: z.literal("build.seat.usage"),
+  ...buildSeatUsageFields,
+});
+
 export const EventSchema = z.discriminatedUnion("type", [
   AgentStartedEventSchema,
   AgentFinishedEventSchema,
@@ -431,6 +439,7 @@ export const EventSchema = z.discriminatedUnion("type", [
   BuildTaskChangedEventSchema,
   MessageSentEventSchema,
   BuildInboxEventSchema,
+  BuildSeatUsageEventSchema,
 ]);
 export type AioEvent = z.infer<typeof EventSchema>;
 export type EventType = AioEvent["type"];

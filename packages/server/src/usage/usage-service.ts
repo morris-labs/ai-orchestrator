@@ -114,6 +114,10 @@ export class UsageService {
       );
       return;
     }
+    if (event.type === "build.seat.usage") {
+      this.opts.store.recordSeatUsage(event);
+      return;
+    }
     if (event.type !== "usage.sample") return;
     this.recordSample({
       vendor: event.vendor,

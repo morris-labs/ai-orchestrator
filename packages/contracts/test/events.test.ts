@@ -27,6 +27,7 @@ describe("events", () => {
         "box.changed",
         "build.changed",
         "build.inbox",
+        "build.seat.usage",
         "build.task.changed",
         "ceiling.crossed",
         "container.changed",

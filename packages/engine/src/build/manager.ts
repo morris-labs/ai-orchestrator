@@ -31,6 +31,7 @@ import {
   type OwnerPostAnswer,
   type PmInbox,
   type PmItem,
+  type PmSession,
 } from "@aio/contracts";
 import { OwnerPostSchema } from "@aio/contracts";
 import { accountDirsFileIn, readAccountDirs } from "../adapters/account-dirs.js";
@@ -49,6 +50,7 @@ import type { BuildServices, ReviewRuns } from "./context.js";
 import { BuildPlanner, planHash } from "./planning/index.js";
 import { RoleError } from "./roles/index.js";
 import { accountSkillDirs } from "./specialties/index.js";
+import { pmSessionsOf } from "./pm-usage.js";
 import { BuildNotFoundError, BuildStore, listBuildSlugs } from "./store.js";
 import { WorktreeConflict } from "./worktree.js";
 import type { TeamBus } from "../team/index.js";
@@ -124,6 +126,16 @@ export interface BuildManager {
   inbox(slug: string, options?: { all?: boolean }): Promise<PmInbox>;
   /** Marks an inbox item's pointer delivered. Throws `not_found` for an unknown item. */
   delivered(slug: string, itemId: string): Promise<PmItem>;
+  /**
+   * Records a Claude Code session of build `slug`'s Project manager: one
+   * that sent a request from the box that owns the build. A session of
+   * another box, or a slug with no planning or build, is ignored.
+   */
+  noteSession(
+    slug: string,
+    boxId: string | null,
+    session: Pick<PmSession, "id" | "transcripts">,
+  ): Promise<void>;
   /** The builds that keep the container alive: the ones the engine works on. */
   activeCount(): number;
   /** Stops every drive and leaves each build's files for the next engine. */
@@ -518,6 +530,23 @@ export class EngineBuildManager implements BuildManager {
 
   async delivered(slug: string, itemId: string): Promise<PmItem> {
     return (await this.require(slug)).delivered(itemId);
+  }
+
+  async noteSession(
+    slug: string,
+    boxId: string | null,
+    session: Pick<PmSession, "id" | "transcripts">,
+  ): Promise<void> {
+    const build = await this.controller(slug);
+    const planner = build ? null : await this.planner(slug).catch(() => null);
+    if (!build && !planner) return;
+    const owner = build ? build.state.boxId : (planner?.record.boxId ?? null);
+    if (owner !== null && owner !== boxId) return;
+    const clock = this.deps.clock ?? systemClock;
+    await pmSessionsOf(new BuildStore(this.deps.projectRoot, slug)).note(
+      session,
+      new Date(clock.now()).toISOString(),
+    );
   }
 
   activeCount(): number {

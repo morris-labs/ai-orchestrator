@@ -1,7 +1,8 @@
 // One build's messages, tasks, and usage, loaded through REST and kept
-// current with `message.sent`, `build.task.changed`, and `lease.settled`
-// events. A settled call of the build reloads its usage, since the server
-// sums usage over settlements.
+// current with `message.sent`, `build.task.changed`, `lease.settled`, and
+// `build.seat.usage` events. A settled call of the build, or a new report of
+// the Project manager's transcript usage, reloads its usage, since the
+// server sums usage over settlements and reports.
 import type { BuildTaskView, BuildUsage, EventOf, Message } from "@aio/contracts";
 import { useApiClient, useEvent, useResync } from "@aio/ui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -110,6 +111,10 @@ export function useBuildDetail(buildId: string): BuildDetailData {
   });
 
   useEvent("lease.settled", (ev) => {
+    if (ev.buildId === buildId) void reloadUsage();
+  });
+
+  useEvent("build.seat.usage", (ev) => {
     if (ev.buildId === buildId) void reloadUsage();
   });
 

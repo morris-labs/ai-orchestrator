@@ -135,6 +135,23 @@ describe("build event admission", () => {
     expect(engineEventRefusal(db, endpoint, added)).toBeNull();
   });
 
+  it("accepts the Project manager's transcript usage of a known build of the project", () => {
+    const { db, builds } = seeded();
+    const usage = ev({
+      type: "build.seat.usage",
+      buildId: BUILD,
+      seat: "project-manager",
+      turns: 3,
+      tokensIn: 900,
+      tokensOut: 30,
+      since: T0,
+      through: T0,
+    });
+    expect(engineEventRefusal(db, endpoint, usage)).toMatch(/unknown/);
+    builds.ingest(buildChanged());
+    expect(engineEventRefusal(db, endpoint, usage)).toBeNull();
+  });
+
   it("accepts a team chat message of a known build of the project", () => {
     const { db, builds } = seeded();
     const message = (buildId: string) =>

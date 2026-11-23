@@ -39,6 +39,7 @@ import { outsideWritable } from "../gate.js";
 import type { ListedTest } from "../red-check.js";
 import { writablePaths, type RoleTask } from "../roles/index.js";
 import { readTestLock } from "../test-lock.js";
+import { reportProjectManagerUsage, type TranscriptUsage } from "../pm-usage.js";
 import { REVIEW_POLL_MS, reopenRun } from "./review.js";
 import type { StepOutcome } from "./types.js";
 
@@ -417,6 +418,7 @@ function digest(
   trace: TraceRecord,
   baseline: TestBaseline,
   push: PushRecord | null,
+  pm: TranscriptUsage | null,
 ): string {
   const owner = ownerChecks(ctx);
   return [
@@ -431,6 +433,11 @@ function digest(
     `- Known failing tests: ${baseline.knownFailing.reduce((n, e) => n + e.failures.length, 0)}. Flaky tests: ${baseline.flaky.length}.`,
     `- Record: ${scribe.commit ? `commit \`${scribe.commit.slice(0, 12)}\`` : "no record changes"}.`,
     `- Pull request title: ${scribe.title}`,
+    ...(pm
+      ? [
+          `- Project manager session since planning started (tokens only): ${pm.turns} turns, ${pm.tokensIn} tokens in, ${pm.tokensOut} tokens out.`,
+        ]
+      : []),
     "",
   ].join("\n");
 }
@@ -484,9 +491,10 @@ export async function runReleaseReady(ctx: BuildContext): Promise<StepOutcome> {
     push = await pushAndWatch(ctx, scribe.title, body);
     if (!push) return "wait";
   }
+  const pm = await reportProjectManagerUsage(ctx);
   await ctx.store.writeText(
     ctx.store.path(RELEASE_FILES.digest),
-    digest(ctx, scribe, trace, baseline, push),
+    digest(ctx, scribe, trace, baseline, push, pm),
   );
   ctx.state.note = `Release ready. The digest is in ${RELEASE_FILES.digest}.`;
   await ctx.persist();

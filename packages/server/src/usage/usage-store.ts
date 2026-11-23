@@ -104,6 +104,32 @@ export class UsageStore {
   }
 
   /**
+   * Stores what a tokens only seat of a build spent, unless the store holds
+   * a report that the engine read later.
+   */
+  recordSeatUsage(u: {
+    buildId: string;
+    seat: string;
+    turns: number;
+    tokensIn: number;
+    tokensOut: number;
+    since: string;
+    through: string;
+  }): void {
+    this.db
+      .prepare(
+        `INSERT INTO svc_build_seat_usage
+         (build_id, seat, turns, tokens_in, tokens_out, since, through)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (build_id, seat) DO UPDATE SET turns = excluded.turns,
+           tokens_in = excluded.tokens_in, tokens_out = excluded.tokens_out,
+           since = excluded.since, through = excluded.through
+         WHERE excluded.through >= svc_build_seat_usage.through`,
+      )
+      .run(u.buildId, u.seat, u.turns, u.tokensIn, u.tokensOut, u.since, u.through);
+  }
+
+  /**
    * One build's settled usage, in total, by seat, by step, and by
    * specialty. It counts every call that names the build, the calls of a
    * review run the build started included. A call with several specialties
@@ -130,14 +156,26 @@ export class UsageStore {
          WHERE build_id = ? AND specialties IS NULL HAVING COUNT(*) > 0`,
       )
       .all(buildId, buildId) as TotalsRow[];
-    const seats = group("seat");
+    const seats: (TotalsRow & { tokensOnly?: true })[] = group("seat");
+    // Tokens only seats come from transcripts: their turns count as calls,
+    // with no cost, and the total leaves them out.
+    const tokensOnly = this.db
+      .prepare(
+        `SELECT seat AS key, turns AS calls, tokens_in, tokens_out, 0 AS premium_requests,
+           0 AS cost_estimate
+         FROM svc_build_seat_usage WHERE build_id = ?`,
+      )
+      .all(buildId) as TotalsRow[];
+    seats.push(...tokensOnly.map((r) => ({ ...r, tokensOnly: true as const })));
     const steps = group("step") as (TotalsRow & { key: BuildStep | null })[];
     return {
       buildId,
       total: totals(total),
-      bySeat: seats
-        .sort(nullsLast<string>((a, b) => (a < b ? -1 : a > b ? 1 : 0)))
-        .map((r) => ({ seat: r.key, ...totals(r) })),
+      bySeat: seats.sort(nullsLast<string>((a, b) => (a < b ? -1 : a > b ? 1 : 0))).map((r) => ({
+        seat: r.key,
+        ...totals(r),
+        ...(r.tokensOnly ? { tokensOnly: true } : {}),
+      })),
       byStep: steps
         .sort(nullsLast<BuildStep>((a, b) => STEP_ORDER.indexOf(a) - STEP_ORDER.indexOf(b)))
         .map((r) => ({ step: r.key, ...totals(r) })),

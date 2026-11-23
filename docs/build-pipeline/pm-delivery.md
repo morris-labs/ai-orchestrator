@@ -63,7 +63,8 @@ holds these sections:
 - **Tasks:** each task's status, attempts, and commit.
 - **Usage:** what the build's settled agent calls spent, by seat, since the
   previous milestone's digest, or since the build started for the first
-  milestone. The Project manager's own session isn't counted.
+  milestone. A `project-manager (tokens only)` row shows what the Project
+  manager's own session spent; see "The Project manager's usage".
 - **Escalations:** the escalations about the milestone's tasks, and the ones
   without a task that the milestone raised.
 - **Plan change flags:** owner posts about the milestone that an agent found
@@ -73,6 +74,32 @@ holds these sections:
 The engine runs the tasks of every milestone in one tasks step, so a
 milestone ends when its last task passes. A build plan without milestones
 has one, `all`, that holds every task.
+
+## The Project manager's usage
+
+The Project manager's session makes no engine calls, so no lease settlement
+records what it spends. Instead, at each digest, the engine reads the token
+counts from the session's Claude Code transcripts:
+
+- Each `aio-build` request names the Claude Code session that runs it, from
+  the `CLAUDE_CODE_SESSION_ID` and `CLAUDE_CONFIG_DIR` variables that Claude
+  Code sets in its shells. The engine records each session of the build's
+  own box in the build's `.aio/builds/SLUG/pm-sessions.json` file. A session
+  that a resume, a fork, or `/clear` started counts once its first
+  `aio-build` request names it.
+- Only turns after the build's planning started count: from the planning
+  record's creation, or from the build's start for a build that started
+  from a plan that the Project manager wrote.
+- Each model response counts once, by its message ID, across every
+  transcript the engine reads. A resumed session that copies earlier turns
+  into its own transcript, and a compaction, don't count a turn twice.
+
+A milestone digest shows the session's turns and tokens since the previous
+digest, or since planning started for the first one. The release ready
+digest shows the total since planning started. The engine also sends the
+total in a `build.seat.usage` event, and the usage by seat lists it as the
+`project-manager` row marked tokens only: its calls count the session's
+turns, it has no cost estimate, and the build's total leaves it out.
 
 ## How the server types a pointer
 

@@ -355,4 +355,20 @@ export const MIGRATIONS: readonly Migration[] = [
     PRIMARY KEY (build_id, task_id)
   );
 `,
+  // 12: the usage of a build's tokens only seats, such as the Project
+  // manager, whose session makes no engine calls. The engine reads it from
+  // the session's transcripts and reports it in `build.seat.usage` events;
+  // each report replaces the one before.
+  `
+  CREATE TABLE IF NOT EXISTS svc_build_seat_usage (
+    build_id TEXT NOT NULL,
+    seat TEXT NOT NULL,
+    turns INTEGER NOT NULL,
+    tokens_in INTEGER NOT NULL,
+    tokens_out INTEGER NOT NULL,
+    since TEXT NOT NULL,
+    through TEXT NOT NULL,
+    PRIMARY KEY (build_id, seat)
+  );
+`,
 ];

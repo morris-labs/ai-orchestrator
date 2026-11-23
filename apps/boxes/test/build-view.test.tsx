@@ -260,6 +260,43 @@ describe("build view board and usage", () => {
       within(screen.getByRole("table", { name: "Usage by specialty" })).getByText("python-dev"),
     ).toBeInTheDocument();
   });
+
+  it("marks the Project manager's transcript usage as tokens only and refreshes it from its event", async () => {
+    const server = serverWith();
+    await renderView(server);
+    await screen.findByRole("table", { name: "Usage by seat" });
+    const pm = { seat: "project-manager", premiumRequests: 0, costEstimate: 0, tokensOnly: true };
+    server.state.buildUsage[B1] = {
+      ...emptyBuildUsage(B1),
+      bySeat: [{ ...pm, calls: 5, tokensIn: 9000, tokensOut: 400 }],
+    };
+    act(() => {
+      server.emit({
+        type: "build.seat.usage",
+        id: "seat-usage-1",
+        time: "2026-10-28T09:00:00.000Z",
+        source: "server",
+        streamId: "s",
+        seq: 0,
+        sourceSeq: 0,
+        buildId: B1,
+        seat: "project-manager",
+        turns: 5,
+        tokensIn: 9000,
+        tokensOut: 400,
+        since: "2026-10-28T09:00:00.000Z",
+        through: "2026-10-28T09:00:00.000Z",
+      });
+    });
+    const table = screen.getByRole("table", { name: "Usage by seat" });
+    await waitFor(() => expect(within(table).getByText("project-manager")).toBeInTheDocument());
+    const row = within(table).getByText("project-manager").closest("tr") as HTMLElement;
+    expect(
+      within(row)
+        .getAllByRole("cell")
+        .map((c) => c.textContent),
+    ).toEqual(["project-manager", "5 turns", "9,000", "400", "Tokens only"]);
+  });
 });
 
 describe("build view controls", () => {

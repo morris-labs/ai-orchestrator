@@ -143,3 +143,60 @@ describe("usage by specialty", () => {
     ]);
   });
 });
+
+describe("tokens only seats", () => {
+  function seatUsage(
+    t: ReturnType<typeof setup>,
+    n: number,
+    fields: { turns: number; tokensIn: number; tokensOut: number; through: string },
+  ) {
+    t.usage.ingest(
+      EventSchema.parse({
+        id: `s${n}`,
+        time: fields.through,
+        source: "engine:aio-agent-proj-example-app-1a2b3c4d",
+        streamId: "S",
+        seq: n,
+        sourceSeq: n,
+        type: "build.seat.usage",
+        buildId: BUILD,
+        seat: "project-manager",
+        since: iso(T0),
+        ...fields,
+      }),
+    );
+  }
+
+  it("lists the Project manager's transcript usage by seat, marked tokens only and outside the total", () => {
+    const t = setup();
+    settle(t, 1, { buildId: BUILD, seat: "developer", step: "tasks" });
+    seatUsage(t, 2, { turns: 2, tokensIn: 300, tokensOut: 30, through: iso(T0 + 60_000) });
+    // Each report covers the time since planning started, so it replaces the one before.
+    seatUsage(t, 3, { turns: 5, tokensIn: 900, tokensOut: 90, through: iso(T0 + 120_000) });
+    // A report the engine read earlier, delivered late, doesn't win.
+    seatUsage(t, 4, { turns: 1, tokensIn: 100, tokensOut: 10, through: iso(T0 + 30_000) });
+
+    const usage = t.store.buildUsage(BUILD);
+    expect(usage.total).toMatchObject({ calls: 1, tokensIn: 100, tokensOut: 10 });
+    expect(usage.bySeat).toEqual([
+      {
+        seat: "developer",
+        calls: 1,
+        tokensIn: 100,
+        tokensOut: 10,
+        premiumRequests: 0,
+        costEstimate: 0.5,
+      },
+      {
+        seat: "project-manager",
+        calls: 5,
+        tokensIn: 900,
+        tokensOut: 90,
+        premiumRequests: 0,
+        costEstimate: 0,
+        tokensOnly: true,
+      },
+    ]);
+    expect(t.store.buildUsage(OTHER_BUILD).bySeat).toEqual([]);
+  });
+});

@@ -473,7 +473,7 @@ const dollars = new Intl.NumberFormat("en-US", { style: "currency", currency: "U
 function UsageTable(props: {
   label: string;
   heading: string;
-  rows: readonly (UsageTotals & { name: string })[];
+  rows: readonly (UsageTotals & { name: string; tokensOnly?: boolean })[];
 }) {
   return (
     <table className="bx-usage-table" aria-label={props.label}>
@@ -497,10 +497,14 @@ function UsageTable(props: {
           props.rows.map((r) => (
             <tr key={r.name}>
               <td>{r.name}</td>
-              <td>{integer.format(r.calls)}</td>
+              <td>
+                {r.tokensOnly
+                  ? `${integer.format(r.calls)} turn${r.calls === 1 ? "" : "s"}`
+                  : integer.format(r.calls)}
+              </td>
               <td>{integer.format(r.tokensIn)}</td>
               <td>{integer.format(r.tokensOut)}</td>
-              <td>{dollars.format(r.costEstimate)}</td>
+              <td>{r.tokensOnly ? "Tokens only" : dollars.format(r.costEstimate)}</td>
             </tr>
           ))
         )}

@@ -8,13 +8,22 @@
 // The engine runs the tasks of every milestone in one tasks step, so a
 // milestone ends when its last task passes the task gate. Its usage is
 // what the build's settled agent calls spent since the previous milestone's
-// digest, or since the build started for the first one. A plan without
-// milestones has one, `all`, which holds every task.
+// digest, or since the build started for the first one. The Project
+// manager's session makes no engine calls, so its row comes from its
+// transcripts (`pm-usage.ts`), from when planning started for the first
+// milestone, and has tokens only. A plan without milestones has one, `all`,
+// which holds every task.
 import { readFile } from "node:fs/promises";
 import type { AioEvent, BuildMilestone, Escalation, Message } from "@aio/contracts";
-import { escalationState } from "@aio/contracts";
+import { PM_SEAT, escalationState } from "@aio/contracts";
 import type { BuildContext } from "./context.js";
 import { decisionsFor } from "./owner/index.js";
+import {
+  planningStart,
+  projectManagerUsage,
+  reportProjectManagerUsage,
+  type TranscriptUsage,
+} from "./pm-usage.js";
 
 /** A milestone digest's file, relative to the build directory. */
 export function digestFile(milestoneId: string): string {
@@ -72,8 +81,26 @@ async function usageSince(ctx: BuildContext, from: string): Promise<SeatUsage[]>
   return [...bySeat.values()].sort((a, b) => a.seat.localeCompare(b.seat));
 }
 
-function usageTable(rows: readonly SeatUsage[]): string[] {
-  if (rows.length === 0) return ["No agent call settled in this milestone."];
+function usageTable(rows: readonly SeatUsage[], pm: TranscriptUsage | null): string[] {
+  const pmLine =
+    pm && pm.turns > 0
+      ? [
+          `| ${PM_SEAT} (tokens only) | ${pm.turns} turn${pm.turns === 1 ? "" : "s"} | ${pm.tokensIn} | ${pm.tokensOut} | n/a |`,
+        ]
+      : [];
+  if (rows.length === 0) {
+    return [
+      "No agent call settled in this milestone.",
+      ...(pmLine.length > 0
+        ? [
+            "",
+            "| Seat | Calls | Tokens in | Tokens out | Cost estimate (USD) |",
+            "| :-- | --: | --: | --: | --: |",
+            ...pmLine,
+          ]
+        : []),
+    ];
+  }
   const total = rows.reduce(
     (t, r) => ({
       seat: "Total",
@@ -91,6 +118,7 @@ function usageTable(rows: readonly SeatUsage[]): string[] {
     "| :-- | --: | --: | --: | --: |",
     ...rows.map(line),
     line(total),
+    ...pmLine,
   ];
 }
 
@@ -101,6 +129,7 @@ async function renderDigest(
   done: number,
   count: number,
   from: string,
+  pm: (TranscriptUsage & { since: string }) | null,
 ): Promise<string> {
   const tasks = new Set(milestone.tasks);
   const taskLines = milestone.tasks.map((id) => {
@@ -135,9 +164,9 @@ async function renderDigest(
     "",
     "## Usage",
     "",
-    `What the build's settled agent calls spent since ${from}, by seat. The Project manager's own session isn't counted.`,
+    `What the build's settled agent calls spent since ${from}, by seat. The total covers those calls.${pm && pm.turns > 0 ? ` The ${PM_SEAT} row is what the Project manager's own session spent since ${pm.since}, read from its transcripts: tokens only, with no cost estimate.` : ""}`,
     "",
-    ...usageTable(await usageSince(ctx, from)),
+    ...usageTable(await usageSince(ctx, from), pm),
     "",
     "## Escalations",
     "",
@@ -177,12 +206,18 @@ export async function digestMilestones(ctx: BuildContext): Promise<void> {
       (i) => i.kind === "digest" && i.ref.startsWith("milestone-"),
     );
     if (digests.some((i) => i.ref === `milestone-${milestone.id}`)) continue;
-    const from = digests.at(-1)?.createdAt ?? ctx.state.createdAt;
+    const previous = digests.at(-1)?.createdAt;
+    const from = previous ?? ctx.state.createdAt;
     const count = digests.length + 1;
     const file = digestFile(milestone.id);
+    await reportProjectManagerUsage(ctx);
+    const pmSince = previous ?? (await planningStart(ctx));
+    const pm = await projectManagerUsage(ctx, { since: pmSince })
+      .then((usage) => ({ ...usage, since: pmSince }))
+      .catch(() => null);
     await ctx.store.writeText(
       ctx.store.path(file),
-      await renderDigest(ctx, milestone, count, milestones.length, from),
+      await renderDigest(ctx, milestone, count, milestones.length, from, pm),
     );
     await ctx.toProjectManager({
       kind: "digest",
