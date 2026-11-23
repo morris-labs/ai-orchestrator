@@ -167,7 +167,10 @@ keeper script, the container's first process, starts it.
 - It pauses a box's build when the server reports that the box stopped,
   and resumes it when the box starts. A cancelled build keeps its branch and
   worktree, gets a closing record from the Scribe, and stays resumable
-  until the owner deletes it, which removes the branch and worktree.
+  until the owner deletes it, which removes the branch and worktree. A box
+  stop also holds a build that waits for a vendor's limit reset, and the box
+  start returns it to that wait. The owner pauses, resumes, cancels, and
+  deletes a build from the build view in the Boxes app, through the server.
 - It refuses to start when its version differs from
   `AIO_ENGINE_VERSION`, the version the server expects. The image
   records its engine version in `/etc/aio-engine-version`.
