@@ -71,7 +71,10 @@ async function packs(): Promise<SpecialtyPack[]> {
     join(root, "repo", ".aio", "team", "specialties", "csv.md"),
     "Quote every field that holds a comma.",
   );
-  return loadSpecialties(["node-dev", "csv"], { repoRoot: join(root, "repo"), skillDirs: [skills] });
+  return loadSpecialties(["node-dev", "csv"], {
+    repoRoot: join(root, "repo"),
+    skillDirs: [skills],
+  });
 }
 
 describe("specialties in agent calls", () => {

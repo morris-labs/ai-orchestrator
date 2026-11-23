@@ -98,7 +98,12 @@ describe("usage by specialty", () => {
     const t = setup();
     const build = { buildId: BUILD, seat: "developer", step: "tasks" } as const;
     settle(t, 1, { ...build, specialties: ["node-dev", "typescript-dev"] });
-    settle(t, 2, { ...build, specialties: ["go-dev"], vendor: "codex", tokens: { in: 40, out: 4 } });
+    settle(t, 2, {
+      ...build,
+      specialties: ["go-dev"],
+      vendor: "codex",
+      tokens: { in: 40, out: 4 },
+    });
     settle(t, 3, { ...build, specialties: ["typescript-dev"], costEstimate: 0.25 });
     settle(t, 4, build);
     settle(t, 5, { buildId: OTHER_BUILD, specialties: ["go-dev"] });
