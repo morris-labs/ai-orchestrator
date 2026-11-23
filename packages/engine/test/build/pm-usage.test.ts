@@ -153,10 +153,7 @@ describe("session transcripts", () => {
       (await sessionTranscripts({ id: SESSION, transcripts: store })).map((f) =>
         f.slice(store.length),
       ),
-    ).toEqual([
-      `/-work-shop/${SESSION}.jsonl`,
-      `/-work-shop/${SESSION}/subagents/agent-1.jsonl`,
-    ]);
+    ).toEqual([`/-work-shop/${SESSION}.jsonl`, `/-work-shop/${SESSION}/subagents/agent-1.jsonl`]);
     expect(await sessionTranscripts({ id: SESSION, transcripts: join(store, "missing") })).toEqual(
       [],
     );

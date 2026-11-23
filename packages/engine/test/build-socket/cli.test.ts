@@ -65,8 +65,12 @@ describe("aio-build", () => {
     const { builds, run } = await world();
     const id = "8f1c2d3e-0000-4000-8000-000000000001";
     expect(
-      (await run(["status", "cart-total"], { CLAUDE_CODE_SESSION_ID: id, CLAUDE_CONFIG_DIR: "/cfg/dev" }))
-        .code,
+      (
+        await run(["status", "cart-total"], {
+          CLAUDE_CODE_SESSION_ID: id,
+          CLAUDE_CONFIG_DIR: "/cfg/dev",
+        })
+      ).code,
     ).toBe(0);
     expect(builds.noteSession).toHaveBeenLastCalledWith("cart-total", "box-1", {
       id,

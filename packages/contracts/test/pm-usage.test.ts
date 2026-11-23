@@ -39,7 +39,10 @@ describe("Project manager usage", () => {
     const usage = roundTrip(BuildUsageSchema, {
       buildId: BUILD,
       total: totals,
-      bySeat: [{ seat: PM_SEAT, ...totals, tokensOnly: true }, { seat: "developer", ...totals }],
+      bySeat: [
+        { seat: PM_SEAT, ...totals, tokensOnly: true },
+        { seat: "developer", ...totals },
+      ],
       byStep: [],
       bySpecialty: [],
     });
@@ -52,10 +55,18 @@ describe("Project manager usage", () => {
       transcripts: "x-aio-claude-transcripts",
     });
     expect(() =>
-      PmSessionSchema.parse({ id: "../etc", transcripts: "/home/dev/.claude/projects", seenAt: T0 }),
+      PmSessionSchema.parse({
+        id: "../etc",
+        transcripts: "/home/dev/.claude/projects",
+        seenAt: T0,
+      }),
     ).toThrow(/id/);
     expect(() =>
-      PmSessionSchema.parse({ id: "8f1c2d3e-0000-4000-8000-000000000001", transcripts: "rel", seenAt: T0 }),
+      PmSessionSchema.parse({
+        id: "8f1c2d3e-0000-4000-8000-000000000001",
+        transcripts: "rel",
+        seenAt: T0,
+      }),
     ).toThrow(/transcripts/);
   });
 });

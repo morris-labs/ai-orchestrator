@@ -179,7 +179,14 @@ describe("tokens only seats", () => {
     const usage = t.store.buildUsage(BUILD);
     expect(usage.total).toMatchObject({ calls: 1, tokensIn: 100, tokensOut: 10 });
     expect(usage.bySeat).toEqual([
-      { seat: "developer", calls: 1, tokensIn: 100, tokensOut: 10, premiumRequests: 0, costEstimate: 0.5 },
+      {
+        seat: "developer",
+        calls: 1,
+        tokensIn: 100,
+        tokensOut: 10,
+        premiumRequests: 0,
+        costEstimate: 0.5,
+      },
       {
         seat: "project-manager",
         calls: 5,

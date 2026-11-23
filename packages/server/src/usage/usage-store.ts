@@ -171,13 +171,11 @@ export class UsageStore {
     return {
       buildId,
       total: totals(total),
-      bySeat: seats
-        .sort(nullsLast<string>((a, b) => (a < b ? -1 : a > b ? 1 : 0)))
-        .map((r) => ({
-          seat: r.key,
-          ...totals(r),
-          ...(r.tokensOnly ? { tokensOnly: true } : {}),
-        })),
+      bySeat: seats.sort(nullsLast<string>((a, b) => (a < b ? -1 : a > b ? 1 : 0))).map((r) => ({
+        seat: r.key,
+        ...totals(r),
+        ...(r.tokensOnly ? { tokensOnly: true } : {}),
+      })),
       byStep: steps
         .sort(nullsLast<BuildStep>((a, b) => STEP_ORDER.indexOf(a) - STEP_ORDER.indexOf(b)))
         .map((r) => ({ step: r.key, ...totals(r) })),
