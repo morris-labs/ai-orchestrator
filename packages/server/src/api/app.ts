@@ -514,6 +514,8 @@ export async function startApp(options: AppOptions): Promise<App> {
       samples: (q) => usageStore.samples(q),
     },
     builds: {
+      list: (projectId) => buildMirror.list(projectId),
+      get: (buildId) => buildMirror.get(buildId),
       usage: (buildId) =>
         buildMirror.get(buildId) === undefined ? undefined : usageStore.buildUsage(buildId),
     },

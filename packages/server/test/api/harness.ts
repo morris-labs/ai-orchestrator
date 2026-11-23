@@ -2,7 +2,7 @@
 import { openDatabase } from "../../src/db/index.js";
 import fs from "node:fs";
 import { PassThrough, Duplex } from "node:stream";
-import type { EngineRouteKey, Job, RunState } from "@aio/contracts";
+import type { BuildSummary, EngineRouteKey, Job, RunState } from "@aio/contracts";
 import type { ApiDeps, ApiEngine, ApiEngines } from "../../src/api/deps.js";
 import { ApiError } from "../../src/api/errors.js";
 import { createApiServer, type ApiServer } from "../../src/api/server.js";
@@ -212,6 +212,19 @@ export async function createHarness(
   const engine = defaultEngine();
   const exec = new FakeExec();
   const runs = new RunMirror(db);
+  const builds: BuildSummary[] = [
+    {
+      id: "01JB8Z5K3W6Q2V9X4T7R0M1N2Q",
+      slug: "add-export",
+      projectId: PROJECT_ID,
+      container: CONTAINER,
+      status: "running",
+      step: "tasks",
+      boxId: null,
+      createdAt: T1,
+      updatedAt: T1,
+    },
+  ];
   const notifications = [
     {
       notificationId: "n1",
@@ -268,6 +281,8 @@ export async function createHarness(
       ],
     },
     builds: {
+      list: (projectId) => builds.filter((b) => !projectId || b.projectId === projectId),
+      get: (buildId) => builds.find((b) => b.id === buildId),
       usage: (buildId) =>
         buildId === "01JB8Z5K3W6Q2V9X4T7R0M1N2Q"
           ? {
