@@ -17,7 +17,7 @@ export function UsageAlerts() {
 
   const reload = useCallback(() => {
     void client
-      .call("notifications.list", { query: { unread: true } })
+      .call("notifications.list", { query: { unread: "true" } })
       .then((r) => setAlerts(r.notifications.filter(isUsageAlert)))
       .catch(() => undefined);
   }, [client]);

@@ -35,8 +35,9 @@ describe("usage watch settings", () => {
     const base = defaultConfig();
     const bad = (usageWatch: unknown) =>
       GlobalSettingsSchema.safeParse({ ...base, usageWatch }).success;
-    expect(bad({ ...DEFAULT_USAGE_WATCH, "5h": { ...DEFAULT_USAGE_WATCH["5h"], ceilingAt: 1.2 } }))
-      .toBe(false);
+    expect(
+      bad({ ...DEFAULT_USAGE_WATCH, "5h": { ...DEFAULT_USAGE_WATCH["5h"], ceilingAt: 1.2 } }),
+    ).toBe(false);
     expect(bad({ ...DEFAULT_USAGE_WATCH, "7d": { ...DEFAULT_USAGE_WATCH["7d"], jump: 0 } })).toBe(
       false,
     );

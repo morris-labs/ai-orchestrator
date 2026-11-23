@@ -80,8 +80,6 @@ function watch(options: { alerted?: (buildId: string) => boolean } = {}) {
   return { t, alerts, at, settle, putBuild, restart };
 }
 
-const RESET = iso(T0 + 300 * MIN);
-
 describe("ceiling alert", () => {
   it("alerts once when the 5-hour window passes 80% and the burn rate reaches 100% before the reset", () => {
     const w = watch();

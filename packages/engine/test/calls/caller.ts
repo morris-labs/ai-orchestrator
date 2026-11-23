@@ -66,10 +66,7 @@ export function limited(vendor: Vendor): VendorAdapter {
  * An adapter whose first call hits a usage limit that resets at `resetAt`;
  * every later call answers.
  */
-export function limitedUntil(
-  vendor: Vendor,
-  resetAt: string,
-): VendorAdapter & { calls: number } {
+export function limitedUntil(vendor: Vendor, resetAt: string): VendorAdapter & { calls: number } {
   const inner = answering(vendor);
   const adapter = {
     ...inner,
