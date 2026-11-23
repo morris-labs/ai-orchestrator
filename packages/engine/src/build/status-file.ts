@@ -2,18 +2,15 @@
 // restart many times during a build, so it doesn't hold the build in its
 // context: it rereads this file and the build plan instead. The engine
 // rewrites the file every time it saves the build's state.
-import type { BuildPlan, BuildPlanning, BuildState, Escalation } from "@aio/contracts";
+import {
+  escalationState,
+  type BuildPlan,
+  type BuildPlanning,
+  type BuildState,
+} from "@aio/contracts";
 
 function cell(text: string | undefined): string {
   return (text ?? "").replace(/\|/g, "\\|").replace(/\s+/g, " ").trim();
-}
-
-/** Whether an escalation is open and what it pauses, or how it was resolved. */
-function escalationState(e: Escalation): string {
-  if (e.resolution) {
-    return `resolved by the ${e.resolution.by.replace("_", " ")}: ${e.resolution.action}`;
-  }
-  return `open, pauses ${e.tasks.length > 0 ? e.tasks.join(", ") : "the build"}`;
 }
 
 /** Renders the status file for `state`. */

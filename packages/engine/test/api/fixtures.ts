@@ -244,6 +244,7 @@ export function fakeBuildManager(): {
     get: vi.fn(async (slug: string) => (slug === buildState.slug ? buildState : null)),
     pause: vi.fn(async () => ({ ...buildState, status: "paused" })),
     resume: vi.fn(async () => buildState),
+    resolve: vi.fn(async () => buildState),
     activeCount: vi.fn(() => 0),
     close: vi.fn(async () => {}),
   };

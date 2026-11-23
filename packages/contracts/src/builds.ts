@@ -492,8 +492,8 @@ const resolutionFields = {
   changes: z.array(PlanChangeSchema).default([]),
 };
 
-/** Adds an issue for each field that the resolution's action needs and lacks. */
-function checkResolution(
+/** Adds an issue for each field that a resolution's action needs and lacks. */
+export function checkEscalationResolve(
   r: { action: EscalationAction; note?: string; order?: string[]; decision?: unknown },
   ctx: z.RefinementCtx,
 ): void {
@@ -509,11 +509,14 @@ function checkResolution(
   }
 }
 
-/** A resolve request: how to resolve one escalation of a build. */
-export const EscalationResolveSchema = z
+/** The fields of a resolve request, before the check that each action has what it needs. */
+export const EscalationResolveFieldsSchema = z
   .object({ escalation: PlanIdSchema, ...resolutionFields })
-  .strict()
-  .superRefine(checkResolution);
+  .strict();
+
+/** A resolve request: how to resolve one escalation of a build. */
+export const EscalationResolveSchema =
+  EscalationResolveFieldsSchema.superRefine(checkEscalationResolve);
 export type EscalationResolve = z.infer<typeof EscalationResolveSchema>;
 export type EscalationResolveInput = z.input<typeof EscalationResolveSchema>;
 
@@ -548,6 +551,14 @@ export const EscalationSchema = z.object({
   createdAt: IsoDateTimeSchema,
 });
 export type Escalation = z.infer<typeof EscalationSchema>;
+
+/** Whether an escalation is open and what it pauses, or how it was resolved, in a few words. */
+export function escalationState(e: Escalation): string {
+  if (e.resolution) {
+    return `resolved by the ${e.resolution.by.replace("_", " ")}: ${e.resolution.action}`;
+  }
+  return `open, pauses ${e.tasks.length > 0 ? e.tasks.join(", ") : "the build"}`;
+}
 
 /** A build's saved state, in `.aio/builds/SLUG/state.json`. */
 export const BuildStateSchema = z.object({

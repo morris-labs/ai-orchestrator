@@ -54,6 +54,9 @@ same task broke the same test, the task oscillates between the two tasks'
 behavior. The engine fails the task and raises an `oscillation` escalation
 for the Project manager, with the gate report and both attempt files.
 
+An escalation pauses only its task and the tasks that depend on it. The
+other tasks go on. For how to resolve one, see [Escalations](escalations.md).
+
 ## Status file
 
 The `STATUS.md` file of a build lists every task with its title, the tasks it

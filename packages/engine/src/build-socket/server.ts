@@ -1,6 +1,6 @@
 // The build socket: a Unix socket inside the project container that accepts
 // only build requests (planning seat calls, the freeze, start, status,
-// pause, and resume) and needs no engine token. The `aio-build` command in a box's session talks to it; see
+// pause, resume, and resolve) and needs no engine token. The `aio-build` command in a box's session talks to it; see
 // `@aio/contracts` `build-socket.ts` for the protocol.
 //
 // The socket lives on the container's own file system, so only processes in
@@ -12,6 +12,7 @@ import {
   BUILD_SOCKET_ROUTES,
   BuildSocketFreezeSchema,
   BuildSocketPlanSchema,
+  BuildSocketResolveSchema,
   BuildSocketSlugSchema,
   BuildSocketStartSchema,
   type ApiError,
@@ -32,7 +33,7 @@ export interface BuildSocketOptions {
   /** The socket path. The engine makes its folder, mode 0700, when it's missing. */
   path: string;
   /** The requests the socket serves. */
-  builds: Pick<BuildManager, "plan" | "freeze" | "start" | "get" | "pause" | "resume">;
+  builds: Pick<BuildManager, "plan" | "freeze" | "start" | "get" | "pause" | "resume" | "resolve">;
   /** The engine's project, or `null` when the server didn't name one. */
   projectId: string | null;
   log: Logger;
@@ -168,6 +169,17 @@ export async function serveBuildSocket(options: BuildSocketOptions): Promise<Bui
         ...(request.base !== undefined ? { base: request.base } : {}),
       });
       return { build };
+    }
+    if (kind === "resolve") {
+      const {
+        projectId: project,
+        boxId: _box,
+        slug,
+        ...resolution
+      } = BuildSocketResolveSchema.parse(raw);
+      ownProject({ projectId: project, slug });
+      await ownBuild(project, slug);
+      return { build: await builds.resolve(slug, resolution) };
     }
     const request = BuildSocketSlugSchema.parse(raw);
     ownProject(request);

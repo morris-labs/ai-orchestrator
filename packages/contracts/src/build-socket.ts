@@ -1,7 +1,7 @@
 // The build socket's protocol: HTTP/1.1 with JSON bodies, over a Unix
 // socket that the engine opens inside its project container. The socket
 // accepts only build requests (planning seat calls, the freeze, start,
-// status, pause, and resume) and needs
+// status, pause, resume, and resolve) and needs
 // no engine token, so a box's session can drive a build with the
 // `aio-build` command without the token that the engine's full API
 // requires. See `docs/build-pipeline/design.md`.
@@ -13,7 +13,12 @@ import {
   BuildSeatAnswerSchema,
   BuildSeatRequestSchema,
 } from "./build-planning.js";
-import { BuildPlanSchema, BuildStateSchema } from "./builds.js";
+import {
+  BuildPlanSchema,
+  BuildStateSchema,
+  EscalationResolveFieldsSchema,
+  checkEscalationResolve,
+} from "./builds.js";
 import { ENGINE_ENV } from "./config.js";
 
 /**
@@ -48,6 +53,7 @@ export const BUILD_SOCKET_ROUTES = {
   status: "/v1/builds/status",
   pause: "/v1/builds/pause",
   resume: "/v1/builds/resume",
+  resolve: "/v1/builds/resolve",
 } as const;
 export type BuildSocketRequestKind = keyof typeof BUILD_SOCKET_ROUTES;
 
@@ -78,13 +84,22 @@ export type BuildSocketStartInput = z.input<typeof BuildSocketStartSchema>;
 export const BuildSocketSlugSchema = z.object({ ...scope, slug: BuildSlugSchema }).strict();
 export type BuildSocketSlug = z.infer<typeof BuildSocketSlugSchema>;
 
+/** The body of a resolve request: the build, and how to resolve one of its escalations. */
+export const BuildSocketResolveSchema = EscalationResolveFieldsSchema.extend({
+  ...scope,
+  slug: BuildSlugSchema,
+})
+  .strict()
+  .superRefine(checkEscalationResolve);
+export type BuildSocketResolve = z.infer<typeof BuildSocketResolveSchema>;
+
 /** The body of a planning seat call. */
 export const BuildSocketPlanSchema = BuildSeatRequestSchema;
 
 /** The body of a freeze request. */
 export const BuildSocketFreezeSchema = BuildFreezeRequestSchema;
 
-/** The answer to a start, status, pause, or resume request: the build's state after the request. */
+/** The answer to a start, status, pause, resume, or resolve request: the build's state after the request. */
 export const BuildSocketResponseSchema = z.object({ build: BuildStateSchema });
 export type BuildSocketResponse = z.infer<typeof BuildSocketResponseSchema>;
 
@@ -96,6 +111,7 @@ export const BUILD_SOCKET_RESPONSES = {
   status: BuildSocketResponseSchema,
   pause: BuildSocketResponseSchema,
   resume: BuildSocketResponseSchema,
+  resolve: BuildSocketResponseSchema,
 } as const satisfies Record<BuildSocketRequestKind, z.ZodTypeAny>;
 export type BuildSocketAnswer<K extends BuildSocketRequestKind> = z.infer<
   (typeof BUILD_SOCKET_RESPONSES)[K]
