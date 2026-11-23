@@ -129,7 +129,6 @@ describe("delivery to the Project manager", () => {
         request: {
           text: pmPointer("cart-total", i1),
           marker: "[aio-build cart-total I1]",
-          claudeOnly: true,
         },
       },
     ]);
@@ -199,5 +198,18 @@ describe("delivery to the Project manager", () => {
     expect(w.typed).toEqual([
       { boxId: "box-pm", request: { text: "Usage alert: claude 5h window at 85%." } },
     ]);
+  });
+
+  it("drops the usage alerts for a session that never takes a message, such as a Codex session", async () => {
+    const w = world({
+      result: { delivered: false, unsupported: true, reason: "The session runs codex." },
+    });
+    open = w.delivery;
+    w.delivery.alert("box-pm", "Usage alert: claude 5h window at 85%.");
+    await w.delivery.idle();
+    w.delivery.ingest({ type: "box.changed", boxId: "box-pm", status: "running" } as AioEvent);
+    await w.delivery.idle();
+    expect(w.typed).toHaveLength(1);
+    expect(w.logs.join("\n")).toContain("codex");
   });
 });
