@@ -37,6 +37,11 @@ export interface TeamChannelOptions {
   tasks: readonly RouteTask[] | (() => readonly RouteTask[]);
   /** Sends an event, such as the build context's `emit`. */
   emit(draft: EventDraft): void | Promise<void>;
+  /**
+   * Checks a message before the channel saves it, such as against a rate
+   * limit. Throw `MessageRefused` to refuse it; the sender reads the reason.
+   */
+  check?(message: Message): void | Promise<void>;
   clock?: Clock;
 }
 
@@ -135,6 +140,7 @@ export class TeamChannel {
       body: draft.body,
       createdAt: new Date((this.options.clock ?? systemClock).now()).toISOString(),
     });
+    await this.options.check?.(message);
     await writeJsonAtomic(join(this.dir, `${message.id}.json`), message);
     this.last = number;
     await this.options.emit({ type: "message.sent", message });

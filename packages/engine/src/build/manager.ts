@@ -19,8 +19,13 @@ import {
   type BuildPlan,
   type BuildSeatAnswer,
   type BuildSeatRequestInput,
+  type BuildDecision,
   type BuildState,
+  type Message,
+  type OwnerPostInput,
+  type OwnerPostAnswer,
 } from "@aio/contracts";
+import { OwnerPostSchema } from "@aio/contracts";
 import { accountDirsFileIn, readAccountDirs } from "../adapters/account-dirs.js";
 import { EngineError, type CoreDeps } from "../api/core-interface.js";
 import { systemClock } from "../core.js";
@@ -80,6 +85,16 @@ export interface BuildManager {
   get(slug: string): Promise<BuildState | null>;
   pause(slug: string): Promise<BuildState>;
   resume(slug: string): Promise<BuildState>;
+  /**
+   * Posts as the owner to one agent of build `slug`; only that agent runs.
+   * The engine records the post as a decision on its task. Throws
+   * `invalid_state` for a build that ended.
+   */
+  post(slug: string, input: OwnerPostInput): Promise<OwnerPostAnswer>;
+  /** The build's team chat messages, oldest first; with `direct`, only the direct messages to the owner. */
+  messages(slug: string, options?: { direct?: boolean }): Promise<Message[]>;
+  /** The build's decisions, oldest first. */
+  decisions(slug: string): Promise<BuildDecision[]>;
   /** The builds that keep the container alive: the ones the engine works on. */
   activeCount(): number;
   /** Stops every drive and leaves each build's files for the next engine. */
@@ -361,6 +376,40 @@ export class EngineBuildManager implements BuildManager {
 
   async resume(slug: string): Promise<BuildState> {
     return structuredClone(await (await this.require(slug)).resume());
+  }
+
+  async post(slug: string, input: OwnerPostInput): Promise<OwnerPostAnswer> {
+    const post = OwnerPostSchema.parse(input);
+    const planner = await this.planner(slug);
+    const meeting = planner?.openMeeting;
+    if (planner && meeting?.seats.includes(post.to)) {
+      const { record } = planner;
+      const answer = await planner.post({
+        projectId: record.projectId,
+        boxId: record.boxId,
+        slug,
+        meeting: meeting.id,
+        body: post.body,
+      });
+      return { route: "meeting", meeting: answer.meeting };
+    }
+    const build = await this.controller(slug);
+    if (build) return build.post(post);
+    if (planner) {
+      throw new EngineError(
+        "invalid_state",
+        `Build ${slug} is in planning, and no meeting under way holds the ${post.to}. In planning, an owner post reaches only the seats of a meeting.`,
+      );
+    }
+    throw new EngineError("not_found", `No build ${slug}.`);
+  }
+
+  async messages(slug: string, options: { direct?: boolean } = {}): Promise<Message[]> {
+    return (await this.require(slug)).messages(options.direct ?? false);
+  }
+
+  async decisions(slug: string): Promise<BuildDecision[]> {
+    return (await this.require(slug)).decisions();
   }
 
   activeCount(): number {

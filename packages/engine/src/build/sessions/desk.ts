@@ -6,6 +6,7 @@
 import {
   BuildSessionSettingsSchema,
   MessageSchema,
+  OwnerPostTurnAnswerSchema,
   type BuildSessionSettings,
   type BuildStep,
   type Message,
@@ -18,7 +19,8 @@ import { RunCancelled, describeError, type AgentOutcome } from "../../calls/inde
 import { readJson } from "../../run/files.js";
 import type { BuildContext } from "../context.js";
 import type { RoleTask } from "../roles/index.js";
-import { TURN_ANSWER, freshPrompt, resumePrompt } from "./prompts.js";
+import { ownerPostAnswer } from "../owner/index.js";
+import { DEFAULT_TURN_ANSWER, freshPrompt, resumePrompt } from "./prompts.js";
 import { SessionRegistryFile } from "./registry.js";
 import { freshReason } from "./rule.js";
 
@@ -229,16 +231,28 @@ export class SessionDesk {
     const placement = ctx.seats.place(entry.seat);
     const reason = freshReason(session, placement, ctx.services.clock.now(), this.settings);
     const packs = await ctx.specialties(session.brief.specialties);
+    const decisions = await ctx.decisionsText(session.taskIds);
     const task: RoleTask = {
       ...session.brief,
       repoPath: ctx.worktree.path,
       branch: ctx.state.branch,
       specialties: packs,
+      ...(decisions !== "" ? { decisions } : {}),
     };
+    // An owner post's turn also reports the criteria the post contradicts.
+    const fromOwner = message.from.kind === "owner";
+    const answer = fromOwner ? ownerPostAnswer(ctx.plan.criteria) : DEFAULT_TURN_ANSWER;
     const prompt =
       reason === null
-        ? resumePrompt(message, await this.commitsSince(session))
-        : freshPrompt({ role, task, reason, thread: await this.thread(session, message), message });
+        ? resumePrompt(message, await this.commitsSince(session), answer)
+        : freshPrompt({
+            role,
+            task,
+            reason,
+            thread: await this.thread(session, message),
+            message,
+            answer,
+          });
     const outcome = await ctx.callTurn({
       seat: entry.seat,
       taskId: entry.taskId,
@@ -248,7 +262,7 @@ export class SessionDesk {
       prompt,
       placement,
       specialties: packs,
-      output: TURN_ANSWER,
+      output: answer.output,
       ...(reason === null && session.sessionId !== null ? { sessionId: session.sessionId } : {}),
     });
     let taken = session;
@@ -283,6 +297,20 @@ export class SessionDesk {
       status: "delivered",
       at: this.now(),
     });
+    if (fromOwner) {
+      const answered = OwnerPostTurnAnswerSchema.safeParse(outcome.output);
+      const contradicts = answered.success ? answered.data.contradicts : [];
+      // The post is delivered; a flag that fails to save is only logged.
+      await ctx
+        .flagPlanChange(message, { seat: entry.seat, taskId: entry.taskId }, contradicts)
+        .catch((error: unknown) => {
+          ctx.services.log.warn("Couldn't flag an owner post as a plan change", {
+            build: ctx.state.slug,
+            message: message.id,
+            error: describeError(error),
+          });
+        });
+    }
   }
 
   /**

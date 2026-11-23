@@ -30,6 +30,23 @@ export const TURN_ANSWER: AdapterOutput = {
   json: TURN_ANSWER_JSON,
 };
 
+/**
+ * What a message turn answers, and what the prompt tells the agent about
+ * it. The default answers with a summary; an owner post's turn also asks
+ * which acceptance criteria the post contradicts.
+ */
+export interface TurnAnswer {
+  output: AdapterOutput;
+  /** Extra instructions before the answer's schema; empty for none. */
+  guidance: string;
+}
+
+export const DEFAULT_TURN_ANSWER: TurnAnswer = { output: TURN_ANSWER, guidance: "" };
+
+function answerParts(answer: TurnAnswer): string[] {
+  return [answer.guidance, jsonInstruction(answer.output.json as object)].filter((p) => p !== "");
+}
+
 /** Who a message party is, in words. */
 function party(p: Message["from"]): string {
   if (p.kind === "owner") return "the owner";
@@ -71,13 +88,17 @@ const HOW_TO_ACT = [
 ].join(" ");
 
 /** The prompt of a resumed session's turn for `message`. */
-export function resumePrompt(message: Message, commits: readonly string[] | null): string {
+export function resumePrompt(
+  message: Message,
+  commits: readonly string[] | null,
+  answer: TurnAnswer = DEFAULT_TURN_ANSWER,
+): string {
   return [
     "A message for you arrived on the team chat.",
     describeMessage(message),
     commitSummary(commits),
     HOW_TO_ACT,
-    jsonInstruction(TURN_ANSWER_JSON),
+    ...answerParts(answer),
   ].join("\n\n");
 }
 
@@ -98,8 +119,9 @@ export function freshPrompt(input: {
   reason: Exclude<SessionReason, "step">;
   thread: readonly Message[];
   message: Message;
+  answer?: TurnAnswer;
 }): string {
-  const { role, task, reason, thread, message } = input;
+  const { role, task, reason, thread, message, answer = DEFAULT_TURN_ANSWER } = input;
   const files = [
     ...new Set([...task.ownedFiles, ...(task.tests ?? []), ...(task.contracts ?? [])]),
   ];
@@ -120,6 +142,6 @@ export function freshPrompt(input: {
     rolePrompt({ ...role, outputs: [] }, { ...task, context }),
     `## The message to act on\n\n${describeMessage(message)}`,
     HOW_TO_ACT,
-    jsonInstruction(TURN_ANSWER_JSON),
+    ...answerParts(answer),
   ].join("\n\n");
 }

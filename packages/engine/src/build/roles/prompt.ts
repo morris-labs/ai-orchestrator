@@ -25,8 +25,10 @@ export interface RoleTask {
   criteria: ReadonlyArray<{ id: string; text: string }>;
   /** The locked tests that must pass. */
   tests?: readonly string[];
-  /** Extra context that the engine attaches, such as decisions or a diagnosis. */
+  /** Extra context that the engine attaches, such as a diagnosis or gate output. */
   context?: string;
+  /** The owner's decisions attached to the task, as `decisionsText()` writes them. */
+  decisions?: string;
   /**
    * The packs of the task's specialties, from `loadSpecialties()`. Every
    * agent on the task gets their text, whatever its seat or vendor.
@@ -105,6 +107,7 @@ export function rolePrompt(role: RoleDefinition, task: RoleTask): string {
       list(task.criteria.map((criterion) => `${criterion.id}: ${criterion.text}`)),
     ),
     section("Tests that must pass", list(task.tests)),
+    section("Owner decisions", task.decisions ?? ""),
     section("Context", task.context ?? ""),
     section("Outputs", list(outputs)),
     schema ? jsonInstruction(schema) : "",

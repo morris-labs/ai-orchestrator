@@ -245,6 +245,36 @@ describe("the Critic meeting", () => {
     expect(done.rounds[1]?.turns[0]?.posts).toEqual([0]);
   });
 
+  it("routes an owner post for a seat in the meeting into the meeting", async () => {
+    const world = await meetingWorld([
+      { match: CRITIC, times: 1, output: OBJECTION, delayMs: 1500 },
+      { match: CRITIC, output: AGREED },
+    ]);
+    const post = "Keep the total in cents; the owner decided.";
+
+    const meeting = world.manager.meet(request());
+    await waitFor(() => {
+      if (!existsSync(join(world.dir(SLUG), "meetings/meeting-1.json"))) return false;
+      return meetingFile(world).rounds[0]?.turns[0]?.status === "running";
+    });
+    const answer = await world.manager.post(SLUG, { to: "critic", body: post });
+    expect(answer).toMatchObject({
+      route: "meeting",
+      meeting: { id: "meeting-1", posts: [{ body: post }] },
+    });
+    const { meeting: done } = await meeting;
+
+    expect(prompts(world, CRITIC)[1]).toContain(post);
+    expect(done.posts.map((p) => p.body)).toEqual([post]);
+  });
+
+  it("refuses an owner post in planning for a seat that holds no meeting", async () => {
+    const world = await meetingWorld([{ match: CRITIC, output: AGREED }]);
+    await expect(
+      world.manager.post(SLUG, { to: "critic", body: "Keep cents." }),
+    ).rejects.toMatchObject({ code: "invalid_state" });
+  });
+
   it("runs the Critic on a vendor other than the Architect's", async () => {
     const world = await meetingWorld([{ match: CRITIC, output: AGREED }]);
     await world.manager.meet(request());

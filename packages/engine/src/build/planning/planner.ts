@@ -234,6 +234,13 @@ export class BuildPlanner {
     return structuredClone(this.planning);
   }
 
+  /** The ID and seats (the proposer and the members) of the meeting under way, or `null`. */
+  get openMeeting(): { id: string; seats: string[] } | null {
+    if (!this.meeting) return null;
+    const { id, proposer, members } = this.meeting.record;
+    return { id, seats: [proposer, ...members] };
+  }
+
   /** True while a seat call or a meeting is under way. */
   get busy(): boolean {
     return this.current !== null || this.meeting !== null;
