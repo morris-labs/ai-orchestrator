@@ -61,10 +61,11 @@ export const REPORT = {
   criteria: [{ id: "AC1", met: true }],
 };
 
-/** A one-task plan over the sample project. */
+/** A small, one-task plan over the sample project. */
 export function cartPlan(overrides: Partial<BuildPlanInput> = {}): BuildPlanInput {
   return {
     title: "Add a total to the cart",
+    size: "small",
     criteria: [{ id: "AC1", text: "The cart reports the sum of its item prices." }],
     tasks: [
       {
