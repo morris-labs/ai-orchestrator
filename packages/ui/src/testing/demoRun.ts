@@ -625,6 +625,23 @@ export function buildDemoEvents(): AioEvent[] {
     status: "running",
     previousStatus: "pending",
   });
+  emit({
+    type: "message.sent",
+    message: {
+      version: 1,
+      id: "M1",
+      buildId: BUILD_ID,
+      from: { kind: "seat", seat: "developer", taskId: "T1" },
+      to: { kind: "seat", seat: "project-manager", taskId: null },
+      routing: "by_type",
+      type: "question",
+      taskId: "T1",
+      milestone: null,
+      paths: [],
+      body: "Does the export include archived orders?",
+      createdAt: new Date(T0 + clock * 1000).toISOString(),
+    },
+  });
 
   const missing = EVENT_TYPES.filter((t) => !events.some((e) => e.type === t));
   if (missing.length > 0) throw new Error(`The demo misses event types: ${missing.join(", ")}.`);
