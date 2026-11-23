@@ -13,6 +13,9 @@
 //   tasks/TASK/attempt-N.json    each attempt: its start, its agent call, and its gate result
 //   escalations/ID.json          each escalation, with its details
 //   scratch/                     scratch space for agents
+//
+// Planning adds `planning.json`, `planning/`, and the frozen plans in
+// `plans/`; see `planning/planner.ts`.
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import {
