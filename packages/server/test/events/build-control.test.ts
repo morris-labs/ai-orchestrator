@@ -114,6 +114,19 @@ describe("the box build link", () => {
     });
   });
 
+  it("asks the engine to hold a paused build for a box stop, such as one that waits for a limit reset", async () => {
+    const { engine, link } = world([
+      summary({ status: "paused" }),
+      summary({ id: "01JB8Z5K3W6Q2V9X4T7R0M1N2S", slug: "done", status: "finished" }),
+    ]);
+    link.ingest(boxEvent("box-a", "stopped"));
+    await until(() => engine.calls.length === 1);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(engine.calls.map((c) => [c.key, c.input.params?.slug])).toEqual([
+      ["engine.builds.pause", "cart-total"],
+    ]);
+  });
+
   it("resumes the box's paused build for a box start, and stays quiet when the owner paused it", async () => {
     const { engine, link, logs } = world([
       summary({ status: "paused" }),

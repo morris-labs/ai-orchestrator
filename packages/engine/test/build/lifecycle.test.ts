@@ -106,6 +106,33 @@ describe("a box stop and start", () => {
   });
 });
 
+describe("a box stop during a usage limit wait", () => {
+  it("holds the build paused for the box until the box starts", async () => {
+    const world = await buildWorld();
+    world.script({ claude: [{ match: "Task T1", error: "usage_limit", times: 1 }, DEVELOPER] });
+    await startIn(world, "cart-total", "box-a");
+    const waiting = await world.waitFor("cart-total", (s) => s.pausedUntil !== undefined);
+    expect(waiting.status).toBe("paused");
+
+    const paused = await world.manager.pause("cart-total", "box");
+    expect(paused).toMatchObject({ status: "paused", pausedBy: "box" });
+    expect(paused.pausedUntil).toBeUndefined();
+    // An engine restart leaves a build that its box's stop paused alone.
+    await world.restart();
+    await new Promise((r) => setTimeout(r, 300));
+    expect(await world.manager.get("cart-total")).toMatchObject({
+      status: "paused",
+      pausedBy: "box",
+    });
+
+    // The box start returns the build to its wait for the limit reset.
+    await world.manager.resume("cart-total", "box");
+    const state = await world.waitFor("cart-total", (s) => s.pausedUntil !== undefined);
+    expect(state).toMatchObject({ status: "paused", pausedUntil: waiting.pausedUntil });
+    expect(state.pausedBy).toBeUndefined();
+  });
+});
+
 describe("cancel, resume, and delete", () => {
   it("stops the agent, keeps the branch and worktree, and has the Scribe write a closing record", async () => {
     const world = await buildWorld();

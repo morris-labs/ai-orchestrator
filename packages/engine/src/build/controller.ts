@@ -260,18 +260,21 @@ export class BuildController {
   /**
    * Pauses the build after its current agent call or gate, and its review
    * run. `reason` records who paused it: a box start resumes only a build
-   * that its box's stop paused.
+   * that its box's stop paused. A build in a timed pause, such as a wait for
+   * a vendor's limit reset, takes the pause too, so it doesn't wake on its
+   * own when the wait ends.
    */
   async pause(reason: BuildPauseReason = "owner"): Promise<BuildState> {
     this.requireLive("pause");
-    if (this.state.status !== "running") {
-      throw new EngineError(
-        "invalid_state",
-        `Build ${this.slug} is ${this.state.status}, not running.`,
-      );
+    const { status, pausedUntil, pausedBy } = this.state;
+    const timed = status === "paused" && pausedUntil !== undefined && pausedBy === undefined;
+    if (status !== "running" && !timed) {
+      throw new EngineError("invalid_state", `Build ${this.slug} is ${status}, not running.`);
     }
     this.ctx.calls.requestPause();
     this.ctx.state.pausedBy = reason;
+    // The pause lasts until a resume, not until the timed wait ends.
+    delete this.ctx.state.pausedUntil;
     await this.ctx.setStatus("paused");
     await this.reviewRun("pause", ["running", "pending"]);
     return this.state;

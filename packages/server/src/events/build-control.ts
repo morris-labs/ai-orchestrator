@@ -1,13 +1,15 @@
 // Build requests that the server forwards to the engine that runs a build:
 // pause, resume, cancel, and delete from the owner, and a pause and resume
 // that follow the build's box. A box stop pauses the box's running build
-// after its current turn, and a box start resumes a build that the box's
-// stop paused. A build that the owner paused stays paused.
+// after its current turn and holds a build in a timed pause. A box start
+// resumes a build that the box's stop paused. A build that the owner paused
+// stays paused.
 import {
   BuildStateSchema,
   type AioEvent,
   type BuildPauseReason,
   type BuildState,
+  type BuildStatus,
   type BuildSummary,
 } from "@aio/contracts";
 import type { ApiEngines } from "../api/deps.js";
@@ -102,8 +104,13 @@ export class BoxBuildLink {
   private follow(boxId: string, action: "pause" | "resume", attempt: number): void {
     clearTimeout(this.timers.get(boxId));
     this.timers.delete(boxId);
-    const want = action === "pause" ? "running" : "paused";
-    const builds = this.deps.builds.list().filter((b) => b.boxId === boxId && b.status === want);
+    // A box stop also reaches a paused build: one in a timed pause, such as
+    // a wait for a limit reset, would otherwise wake on its own. The engine
+    // refuses a build that a request or a box stop paused.
+    const want: readonly BuildStatus[] = action === "pause" ? ["running", "paused"] : ["paused"];
+    const builds = this.deps.builds
+      .list()
+      .filter((b) => b.boxId === boxId && want.includes(b.status));
     let waiting = false;
     for (const build of builds) {
       if (!this.deps.engines.get(build.container)) {
