@@ -181,24 +181,29 @@ function names(text: string, paths: readonly string[]): boolean {
   return paths.some((path) => text.includes(path));
 }
 
+/** A test lock command that checks earlier tasks' tests. */
+interface LockCommand {
+  cmd: PolicyCommand;
+  /** The earlier tasks and test files that the command checks. */
+  owners: { taskId: string; test: string }[];
+}
+
 /**
  * The test commands that check earlier tasks' tests: each test that the
  * test lock lists for an earlier task, by its command, with the tasks and
  * files it checks.
  */
+
 function earlierLockCommands(
   lock: TestLock | null | undefined,
   earlier: readonly EarlierTask[],
-): Map<string, { cmd: PolicyCommand; owners: { taskId: string; test: string }[] }> {
-  const byCommand = new Map<
-    string,
-    { cmd: PolicyCommand; owners: { taskId: string; test: string }[] }
-  >();
+): Map<string, LockCommand> {
+  const byCommand = new Map<string, LockCommand>();
   for (const test of lock?.tests ?? []) {
     for (const task of earlier.filter((t) => t.tests.includes(test.file))) {
       const cmd = { command: test.command };
       const key = commandKey(cmd);
-      const entry = byCommand.get(key) ?? { cmd, owners: [] };
+      const entry: LockCommand = byCommand.get(key) ?? { cmd, owners: [] };
       entry.owners.push({ taskId: task.id, test: test.file });
       byCommand.set(key, entry);
     }
@@ -214,7 +219,7 @@ function earlierLockCommands(
 function findRegressions(
   commands: readonly TaskGateCommand[],
   earlier: readonly EarlierTask[],
-  lockOwners: ReadonlyMap<string, { owners: { taskId: string; test: string }[] }>,
+  lockOwners: ReadonlyMap<string, LockCommand>,
 ): TaskRegression[] {
   const found = new Map<string, TaskRegression>();
   const add = (r: TaskRegression) => found.set(`${r.taskId}\0${r.test}`, r);
