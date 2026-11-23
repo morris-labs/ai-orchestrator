@@ -349,10 +349,47 @@ describe("the Critic meeting", () => {
   it("marks a meeting that an engine stop interrupted as failed", async () => {
     const world = await meetingWorld([{ match: CRITIC, output: AGREED, delayMs: 3000 }]);
     const pending = world.manager.meet(request()).catch((error: unknown) => error);
-    await waitFor(() => existsSync(join(world.dir(SLUG), "meetings/meeting-1.json")));
+    // The engine saves the meeting's record, then the planning record's entry
+    // for it. Stop only after both, or the next engine finds no entry.
+    await waitFor(() => {
+      const file = join(world.dir(SLUG), "planning.json");
+      return (
+        existsSync(join(world.dir(SLUG), "meetings/meeting-1.json")) &&
+        existsSync(file) &&
+        readFileSync(file, "utf8").includes('"meeting-1"')
+      );
+    });
     await world.restart();
     // The next engine loads the planning record on its first request. (In a
     // test, the stopped engine's call still runs; a real engine exits.)
+    await expect(
+      world.manager.meetingPost({
+        projectId: PROJECT_ID,
+        boxId: null,
+        slug: SLUG,
+        meeting: "meeting-1",
+        body: "Still there?",
+      }),
+    ).rejects.toMatchObject({ code: "conflict" });
+    const record = BuildPlanningSchema.parse(JSON.parse(world.file(SLUG, "planning.json")));
+    expect(record.meetings).toEqual([
+      { id: "meeting-1", file: "meetings/meeting-1.json", status: "failed" },
+    ]);
+    expect(meetingFile(world)).toMatchObject({ status: "failed" });
+    await pending;
+  });
+
+  it("marks a meeting failed when the engine stopped before the planning record listed it", async () => {
+    const world = await meetingWorld([{ match: CRITIC, output: AGREED, delayMs: 3000 }]);
+    const pending = world.manager.meet(request()).catch((error: unknown) => error);
+    await waitFor(() => existsSync(join(world.dir(SLUG), "meetings/meeting-1.json")));
+    // The crash window: the meeting's record is saved, its planning entry is not.
+    const file = join(world.dir(SLUG), "planning.json");
+    await waitFor(() => existsSync(file));
+    const planning = JSON.parse(readFileSync(file, "utf8")) as { meetings: unknown[] };
+    planning.meetings = [];
+    writeFileSync(file, JSON.stringify(planning));
+    await world.restart();
     await expect(
       world.manager.meetingPost({
         projectId: PROJECT_ID,
