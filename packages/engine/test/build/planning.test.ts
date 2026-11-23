@@ -155,6 +155,21 @@ describe("planning a build", () => {
     });
   });
 
+  it("holds planning seat calls while the build's box is stopped, and goes on when it starts", async () => {
+    const world = await planningWorld();
+    await world.manager.plan(seat("analyst"));
+    const before = world.calls().length;
+
+    expect(await world.manager.pausePlanning(SLUG)).toEqual({ paused: true });
+    const architect = world.manager.plan(seat("architect"));
+    await new Promise((r) => setTimeout(r, 300));
+    expect(world.calls()).toHaveLength(before);
+
+    expect(await world.manager.resumePlanning(SLUG)).toEqual({ paused: false });
+    expect((await architect).answer).toEqual(DESIGN);
+    expect(world.calls()).toHaveLength(before + 1);
+  });
+
   it("runs the planning calls under leases that name the build, the seat, and the step", async () => {
     const world = await planningWorld();
     const { analyst } = await plan(world);

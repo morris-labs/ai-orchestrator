@@ -364,6 +364,8 @@ export function fakeBuildManager(): {
     planning: vi.fn(async (slug: string) =>
       slug === "in-planning" ? { ...planningRecord, slug } : null,
     ),
+    pausePlanning: vi.fn(async () => ({ paused: true })),
+    resumePlanning: vi.fn(async () => ({ paused: false })),
     pause: vi.fn(async () => ({ ...buildState, status: "paused" })),
     resume: vi.fn(async () => buildState),
     resolve: vi.fn(async () => buildState),

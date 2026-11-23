@@ -22,6 +22,7 @@ import {
   type BuildPauseReason,
   type BuildPlan,
   type BuildPlanning,
+  type BuildPlanningControlAnswer,
   type BuildSeatAnswer,
   type BuildSeatRequestInput,
   type BuildDecision,
@@ -96,6 +97,14 @@ export interface BuildManager {
   get(slug: string): Promise<BuildState | null>;
   /** The planning record of a build that is still in planning, or `null` once it runs or without one. */
   planning(slug: string): Promise<BuildPlanning | null>;
+  /**
+   * Holds a build in planning for its box's stop: its seat calls and meeting
+   * turns wait until `resumePlanning`. Throws `not_found` without planning,
+   * and `invalid_state` once the build runs.
+   */
+  pausePlanning(slug: string): Promise<BuildPlanningControlAnswer>;
+  /** Lets a build in planning go on after its box starts. */
+  resumePlanning(slug: string): Promise<BuildPlanningControlAnswer>;
   /** Pauses a running build; `reason` `box` marks a pause for a box stop. */
   pause(slug: string, reason?: BuildPauseReason): Promise<BuildState>;
   /**
@@ -461,6 +470,29 @@ export class EngineBuildManager implements BuildManager {
   async get(slug: string): Promise<BuildState | null> {
     const build = await this.controller(slug);
     return build ? structuredClone(build.state) : null;
+  }
+
+  async pausePlanning(slug: string): Promise<BuildPlanningControlAnswer> {
+    (await this.planningOnly(slug)).pause();
+    return { paused: true };
+  }
+
+  async resumePlanning(slug: string): Promise<BuildPlanningControlAnswer> {
+    (await this.planningOnly(slug)).resume();
+    return { paused: false };
+  }
+
+  /** The planner of a build that is still in planning; throws otherwise. */
+  private async planningOnly(slug: string): Promise<BuildPlanner> {
+    if (this.loading.has(slug) || (await this.controller(slug))) {
+      throw new EngineError(
+        "invalid_state",
+        `Build ${slug} runs already, so its planning is over.`,
+      );
+    }
+    const planner = await this.planner(slug);
+    if (!planner) throw new EngineError("not_found", `No build ${slug}.`);
+    return planner;
   }
 
   async planning(slug: string): Promise<BuildPlanning | null> {

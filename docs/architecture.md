@@ -169,7 +169,8 @@ keeper script, the container's first process, starts it.
   worktree, gets a closing record from the Scribe, and stays resumable
   until the owner deletes it, which removes the branch and worktree. A box
   stop also holds a build that waits for a vendor's limit reset, and the box
-  start returns it to that wait. The owner pauses, resumes, cancels, and
+  start returns it to that wait. A box stop holds a build in planning as
+  well: its seat calls and meeting turns wait until the box starts. The owner pauses, resumes, cancels, and
   deletes a build from the build view in the Boxes app, through the server.
 - It refuses to start when its version differs from
   `AIO_ENGINE_VERSION`, the version the server expects. The image

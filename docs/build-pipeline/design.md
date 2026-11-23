@@ -542,7 +542,9 @@ A build runs in one box, next to the Project manager's session. Each box runs
 at most one active build, and stand-alone review runs can run beside it. For
 parallel builds on one project, use another box.
 
-When the box stops, the build pauses. It resumes when the box starts. The
+When the box stops, the build pauses. It resumes when the box starts. A
+build in planning pauses too: its seat calls and meeting turns wait for the
+box start, and a call under way finishes. The
 Project manager is the box's main session, and the engine delivers
 escalations and digests into it as messages. Each delivery is a one-line
 pointer to the file, typed into the session.

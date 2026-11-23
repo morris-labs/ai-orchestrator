@@ -235,6 +235,16 @@ export class BuildPlanner {
     return new BuildPlanner(planning, ledger, store, roles, location, services, policy.tierModels);
   }
 
+  /** Holds the seat calls and meeting turns that haven't started, for a box stop. */
+  pause(): void {
+    this.calls.requestPause();
+  }
+
+  /** Lets held seat calls and meeting turns go on. */
+  resume(): void {
+    this.calls.requestResume();
+  }
+
   get record(): BuildPlanning {
     return structuredClone(this.planning);
   }

@@ -102,6 +102,7 @@ import {
   BuildUsageSchema,
 } from "./build-events.js";
 import { BuildMessageListSchema } from "./messages.js";
+import { BuildPlanningControlAnswerSchema } from "./build-planning.js";
 import { OwnerPostAnswerSchema, OwnerPostSchema } from "./owner-posts.js";
 import { PmInboxSchema, PmItemSchema } from "./pm-inbox.js";
 import {
@@ -2081,6 +2082,21 @@ export const engineRoutes = {
     body: BuildControlSchema,
     response: BuildStateSchema,
     errors: ["not_found", "invalid_state", "conflict"],
+  }),
+  "engine.builds.planning.pause": http({
+    method: "POST",
+    path: `${V1}/builds/:slug/planning/pause`,
+    summary:
+      "Hold a build in planning for its box's stop: its seat calls and meeting turns wait until a resume. A call under way finishes.",
+    response: BuildPlanningControlAnswerSchema,
+    errors: ["not_found", "invalid_state"],
+  }),
+  "engine.builds.planning.resume": http({
+    method: "POST",
+    path: `${V1}/builds/:slug/planning/resume`,
+    summary: "Let a build in planning go on after its box starts.",
+    response: BuildPlanningControlAnswerSchema,
+    errors: ["not_found", "invalid_state"],
   }),
   "engine.builds.cancel": http({
     method: "POST",

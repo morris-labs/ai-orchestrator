@@ -144,3 +144,11 @@ export const BuildFreezeAnswerSchema = z.object({
   plan: BuildPlanSchema,
 });
 export type BuildFreezeAnswer = z.infer<typeof BuildFreezeAnswerSchema>;
+
+/**
+ * The answer to a planning pause or resume request: whether the planning
+ * seat calls and meetings now wait. A box stop pauses its build's planning,
+ * and a box start resumes it.
+ */
+export const BuildPlanningControlAnswerSchema = z.object({ paused: z.boolean() });
+export type BuildPlanningControlAnswer = z.infer<typeof BuildPlanningControlAnswerSchema>;
