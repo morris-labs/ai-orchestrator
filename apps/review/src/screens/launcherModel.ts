@@ -60,6 +60,8 @@ export interface LauncherForm {
   excludePaths: string;
   /** Group the confirmed findings by root cause when the run finishes. */
   rootCauses: boolean;
+  /** Request a Copilot review of each head the post-push loop pushes. */
+  copilotReview: boolean;
 }
 
 /** The choices of a verification floor control, from checking everything to the least. */
@@ -94,6 +96,7 @@ export const DEFAULT_FORM: LauncherForm = {
   wholeProject: false,
   excludePaths: "",
   rootCauses: false,
+  copilotReview: false,
 };
 
 /**
@@ -244,6 +247,7 @@ export function buildRunRequest(
     ...(form.wholeProject ? { scope: "whole" } : {}),
     ...(excludePaths.length > 0 ? { excludePaths } : {}),
     ...(form.rootCauses ? { rootCauses: true } : {}),
+    ...(form.copilotReview ? { copilotReview: true } : {}),
   });
   if (!parsed.success)
     return {

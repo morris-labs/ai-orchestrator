@@ -18,6 +18,7 @@ import {
   type RunTokenSample,
   profileRoles,
   runDepth,
+  wantsCopilotReview,
 } from "../src/index.js";
 import {
   RUN,
@@ -49,6 +50,7 @@ describe("runs", () => {
       continuationCap: 0,
       depth: "standard",
       verifyFloor: "P2",
+      copilotReview: false,
     });
     expect(ResolvedRunRequestSchema.parse(parsed)).toEqual(parsed);
   });
@@ -436,6 +438,25 @@ describe("leases", () => {
       LeaseResponseFrameSchema.parse({ type: "lease.response", response: leaseResponses[0] })
         .response.decision,
     ).toBe("granted");
+  });
+});
+
+describe("the Copilot review option", () => {
+  it("is off by default and on when a request names it", () => {
+    expect(wantsCopilotReview(RunRequestSchema.parse(runRequest))).toBe(false);
+    const on = RunRequestSchema.parse({ ...runRequest, copilotReview: true });
+    expect(on.copilotReview).toBe(true);
+    expect(wantsCopilotReview(on)).toBe(true);
+  });
+
+  it("keeps the review for a stored run that predates the option", () => {
+    const { copilotReview: _option, ...stored } = RunRequestSchema.parse({
+      ...runRequest,
+      pipeline: "post-push",
+    });
+    const parsed = ResolvedRunRequestSchema.parse(stored);
+    expect(parsed.copilotReview).toBeUndefined();
+    expect(wantsCopilotReview(parsed)).toBe(true);
   });
 });
 

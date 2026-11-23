@@ -1,5 +1,6 @@
 // The post-push loop (design.md, "Post-push pipeline"): push, open or update
-// the pull request, request a Copilot review, poll the review and the checks,
+// the pull request, request a Copilot review when the run asks for one, poll
+// the review and the checks,
 // import comments and failing checks as findings, verify, fix, gate, reply,
 // resolve, and push again.
 import {
@@ -7,6 +8,7 @@ import {
   READ_ONLY_POST_PUSH_MESSAGE,
   isReadOnlyPostPush,
   postPushRoundCap,
+  wantsCopilotReview,
   type Finding,
   type Severity,
 } from "@aio/contracts";
@@ -136,7 +138,8 @@ async function prBase(ctx: RunContext, defaultBranch: string, branch: string): P
 /**
  * Pushes the tip branch and opens or updates the pull request, with every
  * guardrail. With `requestReview` false (the final push before the run
- * stops), it doesn't ask Copilot for another review.
+ * stops), or with the run's Copilot review option off, it doesn't ask
+ * Copilot for a review.
  */
 async function stagePush(ctx: RunContext, requestReview = true): Promise<PrInfo> {
   const gh = github(ctx);
@@ -213,7 +216,11 @@ async function stagePush(ctx: RunContext, requestReview = true): Promise<PrInfo>
   ctx.state.tipSha = head;
   ctx.eng.pushedHead = head;
   let dropped = false;
-  if (requestReview && ctx.eng.reviewRequestedFor !== head) {
+  if (
+    requestReview &&
+    wantsCopilotReview(ctx.state.request) &&
+    ctx.eng.reviewRequestedFor !== head
+  ) {
     const refusal = await requestCopilotReview(ctx, gh, pr.number);
     dropped = refusal !== null;
     ctx.eng.reviewRequestedFor = head;
@@ -295,8 +302,8 @@ interface PollResult {
 
 /**
  * Polls until Copilot reviewed the head and no check is pending, or the
- * poll times out. When GitHub dropped the review request for the head, it
- * waits for the checks only.
+ * poll times out. When the run doesn't request a review, or GitHub dropped
+ * the review request for the head, it waits for the checks only.
  */
 async function stagePoll(ctx: RunContext): Promise<PollResult> {
   const file = ctx.store.roundFile(ctx.round, "poll");
@@ -308,6 +315,7 @@ async function stagePoll(ctx: RunContext): Promise<PollResult> {
   const head = ctx.state.tipSha ?? (await ctx.git.head());
   const started = ctx.clock.now();
   const reviewDropped = ctx.eng.reviewDroppedFor === head;
+  const checksOnly = reviewDropped || !wantsCopilotReview(ctx.state.request);
   let result: PollResult;
   for (;;) {
     await ctx.checkpoint();
@@ -322,7 +330,7 @@ async function stagePoll(ctx: RunContext): Promise<PollResult> {
       const pending = checks.some((c) => c.bucket === "pending");
       // Without a review to wait for, an empty list can just mean too early.
       const settled =
-        reviewed || (reviewDropped && (checks.length > 0 || elapsed >= CHECKS_REGISTER_MS));
+        reviewed || (checksOnly && (checks.length > 0 || elapsed >= CHECKS_REGISTER_MS));
       if ((settled && !pending) || timedOut) {
         result = { reviewed, checks, timedOut, ...(reviewDropped ? { reviewDropped } : {}) };
         break;
@@ -695,7 +703,12 @@ export async function drivePostPush(ctx: RunContext): Promise<void> {
         if (!actionable) {
           await closePostPushRound(ctx);
           // A clean pull request needs the review the poll waited for.
-          if (poll.timedOut && !poll.reviewed && !poll.reviewDropped) {
+          if (
+            poll.timedOut &&
+            !poll.reviewed &&
+            !poll.reviewDropped &&
+            wantsCopilotReview(ctx.state.request)
+          ) {
             const head = (ctx.state.tipSha ?? "").slice(0, 12);
             throw new DecisionNeeded({
               kind: "gate_failed",
@@ -784,7 +797,8 @@ export async function drivePostPush(ctx: RunContext): Promise<void> {
           break;
         }
         ctx.eng.lastGateFailure = null;
-        // No confirmer after push: the next Copilot review checks the fixes.
+        // No confirmer after push: the next poll, and the Copilot review when
+        // the run asks for one, checks the fixes.
         for (const f of ctx.findings.filter((x) => x.verdict === "confirmed" && x.fixCommit)) {
           await ctx.setVerdict(
             f,

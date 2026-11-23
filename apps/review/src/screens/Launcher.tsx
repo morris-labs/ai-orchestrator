@@ -463,6 +463,16 @@ export function Launcher({ prefill }: { prefill: { project: string | null; box: 
                 </datalist>
               </Field>
             ) : null}
+            {form.readOnly ? null : (
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={form.copilotReview}
+                  onChange={(e) => update({ copilotReview: e.target.checked })}
+                />{" "}
+                Request a Copilot review of each push (the post-push loop waits for it)
+              </label>
+            )}
           </fieldset>
 
           <fieldset>
