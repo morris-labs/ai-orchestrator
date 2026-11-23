@@ -152,12 +152,17 @@ function flakyTest(name: string, failOn: number[]): string {
  * Gives the sample project a local bare `origin` at `origin`, a known
  * failing test, and a flaky test.
  */
-function releaseProject(world: BuildWorld, origin: string): void {
+function releaseProject(
+  world: BuildWorld,
+  origin: string,
+  extra: Record<string, string> = {},
+): void {
   git(world.root, "init", "-q", "--bare", origin);
   git(world.root, "remote", "add", "origin", origin);
   commit(world, {
     "test/legacy.test.mjs": 'console.log("not ok - legacy discount rounding");\nprocess.exit(1);\n',
     "test/stock.test.mjs": flakyTest("stock sync", [2]),
+    ...extra,
   });
   git(world.root, "push", "-q", "origin", "main");
 }
@@ -434,5 +439,81 @@ describe("the release ready step", () => {
     expect(digest).toContain("AC2");
     expect(state.note).toContain("digests/release-ready.md");
     expect(world.file("cart-total", "STATUS.md")).toContain("digests/release-ready.md");
+  });
+
+  it("runs the plan's full test, type check, and lint commands after the Scribe and escalates a failure before the push", async () => {
+    const origin = originPath();
+    const gh = new FakeGitHub(origin);
+    const world = await buildWorld({
+      steps: BUILD_PIPELINE,
+      review: true,
+      release: true,
+      github: gh,
+    });
+    releaseProject(world, origin);
+    fullScript(world);
+    // A lint check that the Scribe's changelog entry breaks: every earlier gate passes it.
+    const plan = releasePlan(true);
+    plan.commands.lint = [...plan.commands.lint, { command: "test ! -f CHANGELOG.md" }];
+
+    await world.start("cart-total", plan);
+    const state = await world.settle("cart-total");
+
+    expect(state).toMatchObject({ step: "release_ready", status: "waiting_escalation" });
+    expect(state.escalations).toEqual([
+      expect.objectContaining({ kind: "release_ready", level: "project_manager" }),
+    ]);
+    expect(state.escalations[0]?.summary).toMatch(/final gate/i);
+    const file = JSON.parse(world.file("cart-total", "escalations/E1.json")) as {
+      details: string;
+    };
+    expect(file.details).toContain("test ! -f CHANGELOG.md");
+    expect(gh.created).toEqual([]);
+    expect(git(origin, "branch", "--list", "build/*")).toBe("");
+  });
+
+  it("leaves a known failing test that the build fixed out of the pull request's known failing list", async () => {
+    const origin = originPath();
+    const world = await buildWorld({
+      steps: BUILD_PIPELINE,
+      review: true,
+      release: true,
+      github: new FakeGitHub(origin),
+    });
+    // A legacy test that fails on the cart stub at the base and passes once the build adds the total.
+    releaseProject(world, origin, {
+      "test/legacy-sum.test.mjs": [
+        'import { total } from "../src/cart.mjs";',
+        "if (total([{ price: 1 }]) !== 1) {",
+        '  console.log("not ok - legacy cart sum");',
+        "  process.exit(1);",
+        "}",
+        'console.log("ok");',
+        "",
+      ].join("\n"),
+    });
+    fullScript(world);
+    const plan = releasePlan(false);
+    plan.commands.test = [...plan.commands.test, { command: "node test/legacy-sum.test.mjs" }];
+
+    await world.start("cart-total", plan);
+    const state = await world.settle("cart-total");
+
+    expect(state).toMatchObject({ step: "release_ready", status: "finished" });
+    const baseline = world.file("cart-total", "baseline.json");
+    expect(baseline).toContain("not ok - legacy cart sum");
+    const body = world.file("cart-total", "release/pull-request.md");
+    const known = body.slice(
+      body.indexOf("## Known failing tests"),
+      body.indexOf("## Flaky tests"),
+    );
+    expect(known).toContain("not ok - legacy discount rounding");
+    expect(known).not.toContain("legacy cart sum");
+    expect(body).toMatch(
+      /## Fixed tests\n[\s\S]*`node test\/legacy-sum\.test\.mjs`: not ok - legacy cart sum/,
+    );
+    expect(world.file("cart-total", "digests/release-ready.md")).toContain(
+      "Known failing tests: 1.",
+    );
   });
 });

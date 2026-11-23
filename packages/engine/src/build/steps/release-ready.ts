@@ -9,12 +9,17 @@
 // 2. The Scribe (`release/scribe.json`): the decision records, the glossary
 //    entries, and the changelog entry, committed on the build branch, and the
 //    pull request's title and description.
-// 3. The pull request description (`release/pull-request.md`): the Scribe's
-//    text, with the criteria, the owner checks, and the known failing and
-//    flaky tests that the engine adds.
-// 4. The push answer in the build plan. Without one, the build stops at an
+// 3. The final gate (`release/gate.json`, saved only when it passes): the
+//    plan's full test, type check, and lint commands, on the build branch
+//    with the Scribe's record. Known failing and flaky tests from the
+//    baseline don't fail it.
+// 4. The pull request description (`release/pull-request.md`): the Scribe's
+//    text, with the criteria, the owner checks, the known failing tests that
+//    still fail, the known failing tests that the build fixed, and the flaky
+//    tests, which the engine adds.
+// 5. The push answer in the build plan. Without one, the build stops at an
 //    escalation for the owner. With `false`, the branch stays local.
-// 5. The push and CI loop: the build's review run pushes the build branch,
+// 6. The push and CI loop: the build's review run pushes the build branch,
 //    opens the pull request, and fixes failing checks with the Developer
 //    seat. It never pushes the default branch and never merges.
 //
@@ -30,12 +35,19 @@ import type {
   StopReason,
 } from "@aio/contracts";
 import { RunCancelled, describeError } from "../../calls/index.js";
-import { runGateCommand } from "../../gate/gate.js";
+import { runGateCommand, type GateCommandResult } from "../../gate/gate.js";
 import { untrusted } from "../../prompts/templates.js";
-import { loadBaseline, type TestBaseline } from "../baseline.js";
+import {
+  commandKey,
+  loadBaseline,
+  quarantine,
+  testFailures,
+  type BaselineTests,
+  type TestBaseline,
+} from "../baseline.js";
 import type { BuildContext, ReviewRuns } from "../context.js";
 import { escalationForCallError } from "../escalations.js";
-import { outsideWritable } from "../gate.js";
+import { gateReport, outsideWritable, runTaskGate, type TaskGateResult } from "../gate.js";
 import type { ListedTest } from "../red-check.js";
 import { writablePaths, type RoleTask } from "../roles/index.js";
 import { readTestLock } from "../test-lock.js";
@@ -50,6 +62,7 @@ export const SCRIBE = "scribe";
 export const RELEASE_FILES = {
   trace: "release/trace.json",
   scribe: "release/scribe.json",
+  gate: "release/gate.json",
   pullRequest: "release/pull-request.md",
   push: "release/push.json",
   digest: "digests/release-ready.md",
@@ -89,6 +102,13 @@ export interface ScribeRecord {
 }
 
 type DoneScribe = ScribeRecord & { commit: string | null; title: string; body: string };
+
+/** The final gate's outcome, as `release/gate.json` saves it. */
+export interface FinalGateRecord {
+  passed: true;
+  /** The test failure lines that the final gate's runs still showed, by command. */
+  failing: BaselineTests[];
+}
 
 /** The push and CI loop's outcome, as `release/push.json` saves it. */
 export interface PushRecord {
@@ -175,9 +195,19 @@ function ownerChecks(ctx: BuildContext): BuildCriterion[] {
   return ctx.plan.criteria.filter((c) => c.verification === "owner");
 }
 
-function knownFailingLines(baseline: TestBaseline): string[] {
+/**
+ * The baseline's known failing tests as lines: with `fixed: false`, the ones
+ * that still failed in the final gate, and with `fixed: true`, the ones that
+ * the build made pass.
+ */
+function knownFailingLines(baseline: TestBaseline, gate: FinalGateRecord, fixed = false): string[] {
+  const failing = new Set(
+    gate.failing.flatMap((e) => e.failures.map((f) => `${commandKey(e)}\0${f}`)),
+  );
   return baseline.knownFailing.flatMap((entry) =>
-    entry.failures.map((failure) => `\`${entry.command}\`: ${failure}`),
+    entry.failures
+      .filter((failure) => failing.has(`${commandKey(entry)}\0${failure}`) !== fixed)
+      .map((failure) => `\`${entry.command}\`: ${failure}`),
   );
 }
 
@@ -186,7 +216,9 @@ function flakyLines(baseline: TestBaseline): string[] {
     const where =
       entry.source.at === "preflight"
         ? "at preflight"
-        : `in the task gate of ${entry.source.taskId}, attempt ${entry.source.attempt}`;
+        : entry.source.at === "release"
+          ? "in the final gate before release"
+          : `in the task gate of ${entry.source.taskId}, attempt ${entry.source.attempt}`;
     return `\`${entry.command}\`: ${entry.failure} (found ${where})`;
   });
 }
@@ -197,12 +229,12 @@ async function scribeContext(ctx: BuildContext, baseline: TestBaseline): Promise
   const changed = await git.run(["diff", "--stat", ctx.state.base, "HEAD"]);
   const decisions = await decisionFiles(ctx);
   const owner = ownerChecks(ctx);
-  const known = knownFailingLines(baseline);
+  const known = baseline.knownFailing.reduce((n, e) => n + e.failures.length, 0);
   const flaky = flakyLines(baseline);
   return [
     `The build's decision files, in ${ctx.store.dir}: ${decisions.length > 0 ? decisions.join(", ") : "none"}.`,
     `Owner checks: ${owner.length > 0 ? owner.map((c) => c.id).join(", ") : "none"}.`,
-    `Known failing tests: ${known.length}. Flaky tests: ${flaky.length}.`,
+    `Known failing tests at the build's base: ${known}. Flaky tests: ${flaky.length}. The engine lists them in the pull request.`,
     "",
     "The build's commits and changed files:",
     "",
@@ -266,7 +298,9 @@ export function pullRequestBody(
   scribe: DoneScribe,
   trace: TraceRecord,
   baseline: TestBaseline,
+  gate: FinalGateRecord,
 ): string {
+  const fixed = knownFailingLines(baseline, gate, true);
   const texts = new Map(ctx.plan.criteria.map((c) => [c.id, c.text]));
   const traced = trace.criteria.map((c) => {
     const passing = c.tests.filter((t) => t.passed).map((t) => `\`${t.file}\` "${t.name}"`);
@@ -289,7 +323,7 @@ export function pullRequestBody(
     "",
     "These tests failed in every preflight run at the build's base, so the build doesn't count them as regressions.",
     "",
-    ...bullets(knownFailingLines(baseline), "None."),
+    ...bullets(knownFailingLines(baseline, gate), "None."),
     "",
     "## Flaky tests",
     "",
@@ -297,9 +331,79 @@ export function pullRequestBody(
     "",
     ...bullets(flakyLines(baseline), "None."),
     "",
+    ...(fixed.length === 0
+      ? []
+      : [
+          "## Fixed tests",
+          "",
+          "These tests failed in every preflight run at the build's base, and they pass on the build branch.",
+          "",
+          ...bullets(fixed, "None."),
+          "",
+        ]),
     `Built by AI Orchestrator build \`${ctx.state.slug}\` on the branch \`${ctx.state.branch}\`.`,
     "",
   ].join("\n");
+}
+
+/** The test failure lines of a run, also when the gate excused them and counts it as passed. */
+function failedLines(run: GateCommandResult): string[] {
+  return testFailures({ ...run, passed: run.exitCode === 0 && !run.timedOut });
+}
+
+/** The failure lines that a test command's runs in the final gate showed, first run and rerun. */
+function stillFailing(result: TaskGateResult): BaselineTests[] {
+  return result.commands
+    .filter((c) => c.kind === "test")
+    .map((c) => ({
+      command: c.command,
+      cwd: c.cwd,
+      failures: [
+        ...new Set([...failedLines(c), ...(c.firstRun ? failedLines(c.firstRun) : [])]),
+      ].sort(),
+    }))
+    .filter((e) => e.failures.length > 0);
+}
+
+/**
+ * Runs the final gate, or returns its saved record when it already passed.
+ * Returns `null` when the gate failed and the step escalated.
+ */
+async function finalGate(ctx: BuildContext): Promise<FinalGateRecord | null> {
+  const path = ctx.store.path(RELEASE_FILES.gate);
+  const saved = await ctx.store.readJson<FinalGateRecord>(path);
+  if (saved) return saved;
+  const result = await runTaskGate({
+    worktree: ctx.worktree,
+    // Nothing changes in the final gate, so it checks no writable paths.
+    base: await ctx.worktree.head(),
+    writable: ["**"],
+    commands: ctx.plan.commands,
+    shell: ctx.services.shell,
+    baseline: await loadBaseline(ctx.store),
+    // The build exists to make its tasks' tests pass, so the baseline never excuses them.
+    protect: ctx.plan.tasks.flatMap((t) => t.tests),
+    signal: ctx.signal,
+  });
+  if (ctx.signal.aborted) throw new RunCancelled();
+  await quarantine(
+    ctx.store,
+    (result.quarantined ?? []).map((t) => ({ ...t, source: { at: "release" as const } })),
+  );
+  if (!result.passed) {
+    const failed = result.commands.filter((c) => !c.passed);
+    await ctx.escalate({
+      kind: "release_ready",
+      level: "project_manager",
+      taskId: null,
+      summary: `The final gate before release failed: ${failed.map((c) => `${c.kind} \`${c.command}\``).join(", ")}.`,
+      details: gateReport(result),
+    });
+    return null;
+  }
+  const record: FinalGateRecord = { passed: true, failing: stillFailing(result) };
+  await ctx.store.writeJson(path, record);
+  return record;
 }
 
 /** Waits until `done` holds for the run. */
@@ -417,6 +521,7 @@ function digest(
   scribe: DoneScribe,
   trace: TraceRecord,
   baseline: TestBaseline,
+  gate: FinalGateRecord,
   push: PushRecord | null,
   pm: TranscriptUsage | null,
 ): string {
@@ -430,7 +535,7 @@ function digest(
     "",
     `- Criteria traced to passing tests: ${trace.criteria.map((c) => c.id).join(", ") || "none"}.`,
     `- Owner checks for the owner: ${owner.map((c) => c.id).join(", ") || "none"}.`,
-    `- Known failing tests: ${baseline.knownFailing.reduce((n, e) => n + e.failures.length, 0)}. Flaky tests: ${baseline.flaky.length}.`,
+    `- Known failing tests: ${knownFailingLines(baseline, gate).length}. Fixed tests: ${knownFailingLines(baseline, gate, true).length}. Flaky tests: ${baseline.flaky.length}.`,
     `- Record: ${scribe.commit ? `commit \`${scribe.commit.slice(0, 12)}\`` : "no record changes"}.`,
     `- Pull request title: ${scribe.title}`,
     ...(pm
@@ -462,17 +567,21 @@ export async function runReleaseReady(ctx: BuildContext): Promise<StepOutcome> {
     await ctx.store.writeJson(ctx.store.path(RELEASE_FILES.trace), trace);
   }
   await ctx.calls.checkpoint();
-  const baseline = await loadBaseline(ctx.store);
   let scribe: DoneScribe;
   try {
-    scribe = await runScribe(ctx, baseline);
+    scribe = await runScribe(ctx, await loadBaseline(ctx.store));
   } catch (error) {
     const draft = escalationForCallError(error, null);
     if (!draft) throw error;
     await ctx.escalate(draft);
     return "wait";
   }
-  const body = pullRequestBody(ctx, scribe, trace, baseline);
+  await ctx.calls.checkpoint();
+  const gate = await finalGate(ctx);
+  if (!gate) return "wait";
+  // The final gate can quarantine more flaky tests.
+  const baseline = await loadBaseline(ctx.store);
+  const body = pullRequestBody(ctx, scribe, trace, baseline, gate);
   await ctx.store.writeText(ctx.store.path(RELEASE_FILES.pullRequest), body);
   await ctx.calls.checkpoint();
   let push: PushRecord | null = null;
@@ -494,7 +603,7 @@ export async function runReleaseReady(ctx: BuildContext): Promise<StepOutcome> {
   const pm = await reportProjectManagerUsage(ctx);
   await ctx.store.writeText(
     ctx.store.path(RELEASE_FILES.digest),
-    digest(ctx, scribe, trace, baseline, push, pm),
+    digest(ctx, scribe, trace, baseline, gate, push, pm),
   );
   ctx.state.note = `Release ready. The digest is in ${RELEASE_FILES.digest}.`;
   await ctx.persist();
