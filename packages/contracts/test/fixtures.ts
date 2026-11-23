@@ -442,4 +442,22 @@ export const events = [
     status: "done",
     previousStatus: "running",
   },
+  {
+    ...ev(20),
+    type: "message.sent",
+    message: {
+      version: 1,
+      id: "M1",
+      buildId: BUILD,
+      from: { kind: "seat", seat: "developer", taskId: "T1" },
+      to: { kind: "seat", seat: "project-manager", taskId: null },
+      routing: "by_type",
+      type: "question",
+      taskId: "T1",
+      milestone: null,
+      paths: [],
+      body: "Which currency does the cart total use?",
+      createdAt: T0,
+    },
+  },
 ];
