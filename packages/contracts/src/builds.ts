@@ -482,6 +482,13 @@ export const EscalationKindSchema = z.enum([
    * manager with the escalation.
    */
   "question_cap",
+  /**
+   * A test dispute that the Test engineer doesn't settle: a second dispute
+   * about one test or a third in one task, which the Project manager rules
+   * on, or an amendment that changes what a criterion means, which the
+   * owner decides.
+   */
+  "test_dispute",
 ]);
 export type EscalationKind = z.infer<typeof EscalationKindSchema>;
 
