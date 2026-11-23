@@ -1117,6 +1117,34 @@ describe("edit, platform, side sessions, messages", () => {
       expect(keys(h, box)).toEqual([]);
     });
 
+    it("types a message without a marker again when the transcript holds the same text", async () => {
+      const h = makeHarness();
+      const { box } = await claudeBox(h);
+      expect(await h.core.boxes.deliver(box.id, { text: "Hold edits." })).toEqual({
+        delivered: true,
+        confirmed: true,
+      });
+      expect(await h.core.boxes.deliver(box.id, { text: "Hold edits." })).toEqual({
+        delivered: true,
+        confirmed: true,
+      });
+      expect(keys(h, box)).toEqual(["-l Hold edits.", "Enter", "-l Hold edits.", "Enter"]);
+    });
+
+    it("confirms a repeated message without a marker only from a new transcript entry", async () => {
+      const h = makeHarness();
+      const { box, file } = await claudeBox(h, false);
+      fs.appendFileSync(
+        file,
+        `${JSON.stringify({ type: "user", message: { content: "Hold edits." } })}\n`,
+      );
+      expect(await h.core.boxes.deliver(box.id, { text: "Hold edits." })).toEqual({
+        delivered: true,
+        confirmed: false,
+      });
+      expect(keys(h, box)).toEqual(["-l Hold edits.", "Enter"]);
+    });
+
     it("reports a message that the transcript doesn't show as unconfirmed", async () => {
       const h = makeHarness();
       const { box } = await claudeBox(h, false);

@@ -169,10 +169,17 @@ function detailsOf(run: RunState): string {
   return lines.join("\n");
 }
 
-/** The review step. */
-export async function runReview(ctx: BuildContext): Promise<StepOutcome> {
-  const runs = ctx.services.reviews;
-  if (!runs) throw new Error("This engine has no review runs for the build's review step.");
+/**
+ * The build's review run: the one that `review/run.json` names, started when
+ * the run manager doesn't know it, or a new one when the file is missing.
+ * Returns the run's ID, or `null` when the run can't start and the build
+ * escalated with `kind`.
+ */
+export async function ensureRun(
+  ctx: BuildContext,
+  runs: ReviewRuns,
+  kind: "review" | "release_ready",
+): Promise<string | null> {
   const file = ctx.store.path("review", "run.json");
   let record = await ctx.store.readJson<ReviewRecord>(file);
   if (!record) {
@@ -186,20 +193,29 @@ export async function runReview(ctx: BuildContext): Promise<StepOutcome> {
       const draft = escalationForCallError(error, null);
       if (draft) {
         await ctx.escalate(draft);
-        return "wait";
+        return null;
       }
       if (!(error instanceof EngineError) && !(error instanceof ReviewRangeError)) throw error;
       await ctx.escalate({
-        kind: "review",
+        kind,
         level: "project_manager",
         taskId: null,
         summary: `The review run can't start: ${error.message}`,
         details: `Review run: ${record.runId}\n\n${error.message}`,
       });
-      return "wait";
+      return null;
     }
   }
-  const run = await settled(ctx, runs, record.runId);
+  return record.runId;
+}
+
+/** The review step. */
+export async function runReview(ctx: BuildContext): Promise<StepOutcome> {
+  const runs = ctx.services.reviews;
+  if (!runs) throw new Error("This engine has no review runs for the build's review step.");
+  const runId = await ensureRun(ctx, runs, "review");
+  if (runId === null) return "wait";
+  const run = await settled(ctx, runs, runId);
   if (run.status === "finished" && run.stopReason && CLEAN_REVIEW.includes(run.stopReason)) {
     return "next";
   }

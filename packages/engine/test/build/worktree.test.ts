@@ -1,0 +1,64 @@
+// Snapshots of a build worktree, and putting refused changes back.
+import { execFileSync } from "node:child_process";
+import { chmodSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+import { BuildWorktree } from "../../src/build/worktree.js";
+import { ExecaRunner } from "../../src/range/exec.js";
+import { buildSampleRepo } from "../state/scenario.js";
+
+const git = (cwd: string, ...args: string[]) =>
+  execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+
+async function worktree(): Promise<BuildWorktree> {
+  const repo = buildSampleRepo();
+  const tree = new BuildWorktree(
+    new ExecaRunner(),
+    repo,
+    BuildWorktree.pathFor(repo, "snap"),
+    BuildWorktree.branchFor("snap"),
+  );
+  await tree.create(await tree.resolveBase(undefined));
+  return tree;
+}
+
+describe("BuildWorktree snapshots", () => {
+  it("puts back a file that was dirty at the snapshot after a turn changes it", async () => {
+    const tree = await worktree();
+    const file = git(tree.path, "ls-files").split("\n")[0]!;
+    // Uncommitted content Git has never stored.
+    writeFileSync(join(tree.path, file), "dirty before the turn\n");
+    const before = await tree.snapshot();
+
+    writeFileSync(join(tree.path, file), "changed by the turn\n");
+    expect(await tree.changedSinceSnapshot(before)).toEqual([file]);
+    await tree.restoreSnapshot(before, [file]);
+
+    expect(readFileSync(join(tree.path, file), "utf8")).toBe("dirty before the turn\n");
+    expect(await tree.changedSinceSnapshot(before)).toEqual([]);
+  });
+
+  it("keeps an executable file executable when it puts the file back", async () => {
+    const tree = await worktree();
+    writeFileSync(join(tree.path, "run.sh"), "#!/bin/sh\necho one\n");
+    chmodSync(join(tree.path, "run.sh"), 0o755);
+    git(tree.path, "add", "run.sh");
+    git(
+      tree.path,
+      "-c",
+      "user.name=Example",
+      "-c",
+      "user.email=dev@example.com",
+      "commit",
+      "-qm",
+      "add run.sh",
+    );
+    const before = await tree.snapshot();
+
+    writeFileSync(join(tree.path, "run.sh"), "#!/bin/sh\necho two\n");
+    await tree.restoreSnapshot(before, ["run.sh"]);
+
+    expect(readFileSync(join(tree.path, "run.sh"), "utf8")).toBe("#!/bin/sh\necho one\n");
+    expect(statSync(join(tree.path, "run.sh")).mode & 0o111).not.toBe(0);
+  });
+});

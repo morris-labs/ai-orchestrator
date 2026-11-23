@@ -287,6 +287,42 @@ describe("post-push loop", () => {
     expect(run.findings.filter((f) => f.externalRef?.id === "T2")).toHaveLength(1);
   });
 
+  it("pushes a run that a caller sees finished while its driver still winds down", async () => {
+    const repo = buildSampleRepo();
+    const gh = new FakeGitHub(join(dirname(repo), "origin.git"));
+    gh.checks = [{ name: "tests", bucket: "pass", link: null, workflow: "ci" }];
+    const d = deps(new Scenario(), gh);
+    let run: RunController | null = null;
+    let pushed: Promise<unknown> | null = null;
+    // A caller that polls the run's state can see it finished before the driver stops.
+    const emit = d.events.emit.bind(d.events);
+    d.events.emit = (draft) => {
+      const event = emit(draft);
+      if (draft.type === "run.changed" && draft.run.status === "finished" && !pushed) {
+        pushed = run!.push({ title: "Fix the pricing", draft: false });
+        pushed.catch(() => undefined);
+      }
+      return event;
+    };
+    run = await RunController.create(
+      {
+        runId: nextRunId(),
+        projectId: "sample",
+        repoPath: repo,
+        depth: "thorough",
+        roundCap: 1,
+      },
+      { projectRoot: repo },
+      d,
+    );
+    await run.start();
+    await run.settled();
+    expect(pushed).not.toBeNull();
+
+    await expect(pushed).resolves.toBeDefined();
+    expect(await run.settled()).toMatchObject({ status: "finished", stopReason: "pr_clean" });
+  });
+
   it("stops at a clean pull request when nothing is new and the checks pass", async () => {
     const repo = buildSampleRepo();
     const gh = new FakeGitHub(join(dirname(repo), "origin.git"));

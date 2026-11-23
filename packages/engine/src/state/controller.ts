@@ -489,6 +489,9 @@ export class RunController {
    */
   async retry(options: RunRetry = {}): Promise<RunState> {
     const ctx = this.ctx;
+    // The run shows `failed` before its driver stops, and a caller that saw
+    // it failed can retry.
+    if (this.active && ctx.state.status === "failed") await this.settled();
     const status = ctx.state.status;
     if (status === "cancelled") throw new InvalidStateError("A cancelled run is final.");
     if (status !== "failed" || this.active || this.retrying) {
@@ -567,6 +570,9 @@ export class RunController {
     const ctx = this.ctx;
     if (ctx.state.request.readOnly) throw new InvalidStateError("A read-only run can't push.");
     if (!ctx.deps.github) throw new InvalidStateError("The post-push loop needs the gh client.");
+    // The run shows `finished` before its driver stops, and a caller that
+    // saw it finished can push.
+    if (this.active && ctx.state.status === "finished") await this.settled();
     if (this.active || ctx.state.status !== "finished") {
       throw new InvalidStateError(`Can't push a ${ctx.state.status} run.`);
     }
