@@ -7,6 +7,7 @@
 import { z } from "zod";
 import { BuildSlugSchema } from "./build-events.js";
 import { BuildPlanSchema, BuildStateSchema } from "./builds.js";
+import { ENGINE_ENV } from "./config.js";
 
 /**
  * The folder that holds the socket inside a container. It sits on the
@@ -27,7 +28,7 @@ export const BUILD_SOCKET_ENV = {
    * command sends it with each request, and the engine refuses a request
    * for any other project.
    */
-  projectId: "AIO_PROJECT_ID",
+  projectId: ENGINE_ENV.projectId,
   /** The box's ID. The server sets it on every box session; the command sends it. */
   boxId: "AIO_BOX_ID",
 } as const;

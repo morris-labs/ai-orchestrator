@@ -3,6 +3,8 @@
 // order, and stops them in reverse on a signal.
 import {
   BROKER_ENV,
+  BUILD_SOCKET_ENV,
+  BUILD_SOCKET_PATH,
   DEFAULT_ENGINE_STATE_DIR,
   ENGINE_ENV,
   EngineEnvSchema,
@@ -20,6 +22,7 @@ import { scanListeners } from "../ports/scan.js";
 import { PortWatcher } from "../ports/watcher.js";
 import type { AdapterSet } from "../core.js";
 import { createBuildManager, type BuildManager } from "../build/manager.js";
+import { serveBuildSocket, type BuildSocketServer } from "../build-socket/server.js";
 import { createRunManager } from "../state/manager.js";
 import { ChildRegistry, setChildRegistry } from "../process/children.js";
 import { setCredentialSource } from "../process/credentials.js";
@@ -53,6 +56,9 @@ Environment:
   ${ENGINE_ENV.container}      The container's name. Required.
   ${ENGINE_ENV.engineVersion}  The engine version the server expects. Required.
   ${ENGINE_ENV.stateDir}       Where to write active-runs. Default: ${DEFAULT_ENGINE_STATE_DIR}.
+  ${ENGINE_ENV.projectId}      The project's ID. The build socket refuses other projects.
+  ${BUILD_SOCKET_ENV.socket}    The build socket, which serves only build requests.
+                         Default: ${BUILD_SOCKET_PATH}.
   ${MOCK_VENDORS_ENV}    Vendors whose calls mock scripts answer: 1 for all, or a list
                          such as codex,copilot.
   ${MOCK_SCRIPT_ENV}     With ${MOCK_VENDORS_ENV}: a JSON file of responses per vendor.
@@ -128,6 +134,12 @@ export interface StartOptions {
   runs?: RunManager;
   /** Replaces the build manager, for tests. */
   builds?: BuildManager;
+  /**
+   * Where to open the build socket for the `aio-build` command. Absent
+   * means no socket. When the socket can't be opened, the engine logs a
+   * warning and starts without it.
+   */
+  buildSocket?: string;
   portIntervalMs?: number;
 }
 
@@ -214,6 +226,22 @@ export async function startEngine(options: StartOptions): Promise<EngineHandle> 
     leases.close();
     throw err;
   }
+  let buildSocket: BuildSocketServer | null = null;
+  if (options.buildSocket !== undefined) {
+    try {
+      buildSocket = await serveBuildSocket({
+        path: options.buildSocket,
+        builds,
+        projectId: env[ENGINE_ENV.projectId] ?? null,
+        log,
+      });
+    } catch (err) {
+      log.warn("The engine runs without its build socket", {
+        path: options.buildSocket,
+        reason: (err as Error).message,
+      });
+    }
+  }
   const bound = app.server.address();
   const boundPort = typeof bound === "object" && bound ? bound.port : port;
   log.info("The engine is listening", { host, port: boundPort, engineVersion, container });
@@ -230,6 +258,7 @@ export async function startEngine(options: StartOptions): Promise<EngineHandle> 
     closing ??= (async () => {
       log.info("The engine is shutting down");
       await ports.stop();
+      await buildSocket?.close();
       await app.close();
       // The runs learn that the engine is stopping before the broker rejects
       // their pending lease requests, so those runs stay `running` and the
@@ -332,7 +361,13 @@ export async function main(
   let handle: EngineHandle;
   try {
     const { adapters } = await selectAdapters(env, log);
-    handle = await startEngine({ env: checked.env, token: loaded.token, log, adapters });
+    handle = await startEngine({
+      env: checked.env,
+      token: loaded.token,
+      log,
+      adapters,
+      buildSocket: env[BUILD_SOCKET_ENV.socket] || BUILD_SOCKET_PATH,
+    });
   } catch (err) {
     log.error("The engine failed to start", { error: String(err) });
     return 1;
