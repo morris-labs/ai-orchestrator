@@ -1,5 +1,8 @@
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { RoleError, parseRole } from "../../src/build/roles/index.js";
+import { RoleError, UnknownRoleError, loadRole, loadRoles, parseRole } from "../../src/build/roles/index.js";
+import { tempDir } from "../tmp.js";
 
 /** A valid role definition, with `extra` front matter lines and without the `omit` field. */
 function roleText(options: { extra?: string; omit?: string } = {}): string {
@@ -58,5 +61,75 @@ describe("parseRole", () => {
 
   it("rejects a file without front matter", () => {
     expect(() => parseRole("Just text.\n", "x.md")).toThrow(/front matter/);
+  });
+});
+
+describe("loadRoles", () => {
+  function writeRole(dir: string, name: string, text: string): void {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, `${name}.md`), text);
+  }
+
+  function setup(): { library: string; repo: string } {
+    const library = tempDir("aio-roles-lib-");
+    const repo = tempDir("aio-roles-repo-");
+    writeRole(library, "reviewer-of-notes", roleText());
+    return { library, repo };
+  }
+
+  it("loads the shipped library when the repository has no team directory", async () => {
+    const { library, repo } = setup();
+    const roles = await loadRoles(repo, { libraryDir: library });
+    expect([...roles.keys()]).toEqual(["reviewer-of-notes"]);
+    expect(roles.get("reviewer-of-notes")?.source).toBe("library");
+  });
+
+  it("replaces a shipped role with the repository role of the same name", async () => {
+    const { library, repo } = setup();
+    const override = roleText().replace("Read the notes.", "Read the notes twice.");
+    writeRole(join(repo, ".aio", "team"), "reviewer-of-notes", override);
+    const role = await loadRole("reviewer-of-notes", repo, { libraryDir: library });
+    expect(role.source).toBe("repository");
+    expect(role.instructions).toBe("Read the notes twice.");
+    expect(role.path).toBe(join(repo, ".aio", "team", "reviewer-of-notes.md"));
+  });
+
+  it("adds a repository role that the library doesn't ship", async () => {
+    const { library, repo } = setup();
+    const added = roleText().replaceAll("reviewer-of-notes", "release-checker");
+    writeRole(join(repo, ".aio", "team"), "release-checker", added);
+    const roles = await loadRoles(repo, { libraryDir: library });
+    expect([...roles.keys()].sort()).toEqual(["release-checker", "reviewer-of-notes"]);
+  });
+
+  it("ignores the specialties directory and files that aren't Markdown", async () => {
+    const { library, repo } = setup();
+    const team = join(repo, ".aio", "team");
+    writeRole(join(team, "specialties"), "go", "Go guidance.\n");
+    mkdirSync(team, { recursive: true });
+    writeFileSync(join(team, "notes.txt"), "not a role");
+    const roles = await loadRoles(repo, { libraryDir: library });
+    expect([...roles.keys()]).toEqual(["reviewer-of-notes"]);
+  });
+
+  it("rejects a role whose name differs from its file name", async () => {
+    const { library, repo } = setup();
+    writeRole(join(repo, ".aio", "team"), "other-name", roleText());
+    await expect(loadRoles(repo, { libraryDir: library })).rejects.toThrow(/other-name\.md.*name/);
+  });
+
+  it("rejects an invalid repository role instead of falling back to the library", async () => {
+    const { library, repo } = setup();
+    writeRole(join(repo, ".aio", "team"), "reviewer-of-notes", roleText({ omit: "rules" }));
+    await expect(loadRole("reviewer-of-notes", repo, { libraryDir: library })).rejects.toThrow(
+      RoleError,
+    );
+  });
+
+  it("names the role when it doesn't exist", async () => {
+    const { library, repo } = setup();
+    await expect(loadRole("astronaut", repo, { libraryDir: library })).rejects.toThrow(
+      UnknownRoleError,
+    );
   });
 });
