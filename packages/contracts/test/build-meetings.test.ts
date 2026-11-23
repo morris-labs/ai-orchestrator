@@ -78,7 +78,7 @@ describe("meeting requests", () => {
 
   it("serves meetings on the build socket", () => {
     expect(BUILD_SOCKET_ROUTES.meet).toBe("/v1/builds/meet");
-    expect(BUILD_SOCKET_ROUTES.meetingPost).toBe("/v1/builds/meeting-post");
+    expect(BUILD_SOCKET_ROUTES["meeting-post"]).toBe("/v1/builds/meeting-post");
   });
 
   it("reads a planning record written before meetings existed", () => {

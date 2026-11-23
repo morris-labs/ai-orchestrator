@@ -120,6 +120,50 @@ describe("aio-build", () => {
     });
   });
 
+  it("opens a meeting with its members and round cap and prints the outcome", async () => {
+    const { builds, briefFile, run } = await world();
+    const out = await run([
+      "meet",
+      "cart-total",
+      briefFile,
+      "--members",
+      "critic,analyst",
+      "--proposer",
+      "architect",
+      "--rounds",
+      "2",
+    ]);
+    expect(out.code).toBe(0);
+    expect(builds.meet).toHaveBeenCalledWith({
+      projectId: "proj-1",
+      boxId: "box-1",
+      slug: "cart-total",
+      brief: "Add a total to the cart.\n",
+      members: ["critic", "analyst"],
+      proposer: "architect",
+      rounds: 2,
+    });
+    expect(out.stdout).toContain(
+      "Meeting meeting-1 of build cart-total: round_cap after 1 of 1 rounds",
+    );
+    expect(out.stdout).toContain("critic: No task covers an empty cart.");
+    expect(out.stdout).toContain(".aio/builds/cart-total/meetings/meeting-1.json");
+  });
+
+  it("relays an owner post to a meeting", async () => {
+    const { builds, briefFile, run } = await world();
+    const out = await run(["meeting-post", "cart-total", "meeting-1", briefFile, "--json"]);
+    expect(out.code).toBe(0);
+    expect(builds.meetingPost).toHaveBeenCalledWith({
+      projectId: "proj-1",
+      boxId: "box-1",
+      slug: "cart-total",
+      meeting: "meeting-1",
+      body: "Add a total to the cart.\n",
+    });
+    expect(JSON.parse(out.stdout).meeting.id).toBe("meeting-1");
+  });
+
   it("freezes the draft plan with the push answer", async () => {
     const { builds, run } = await world();
     const out = await run(["freeze", "cart-total", "--push", "yes"]);
@@ -222,6 +266,10 @@ describe("aio-build", () => {
     [["plan", "cart-total", "Analyst", "brief.md"]],
     [["plan", "cart-total", "analyst", "brief.md", "--issue", "shop#1"]],
     [["freeze", "cart-total", "--push", "maybe"]],
+    [["meet", "cart-total", "brief.md", "--rounds", "0"]],
+    [["meet", "cart-total", "brief.md", "--members", "Critic"]],
+    [["meeting-post", "cart-total", "meeting-x", "post.md"]],
+    [["meet", "cart-total", "brief.md", "--push", "yes"]],
     [["freeze", "cart-total", "--issue", "example/shop#1"]],
     [["status", "cart-total", "--push", "yes"]],
     [["start", "Bad Slug", "plan.json"]],
