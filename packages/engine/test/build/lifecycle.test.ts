@@ -171,6 +171,14 @@ describe("cancel, resume, and delete", () => {
     await world.manager.cancel("cart-total");
     await world.waitFor("cart-total", (s) => s.closingRecord !== undefined);
 
+    // The inbox item follows the record's save.
+    await expect
+      .poll(async () =>
+        (await world.manager.inbox("cart-total", { all: true })).items.some(
+          (i) => i.file === BUILD_CLOSING_RECORD,
+        ),
+      )
+      .toBe(true);
     const inbox = await world.manager.inbox("cart-total", { all: true });
     expect(inbox.items).toContainEqual(
       expect.objectContaining({
