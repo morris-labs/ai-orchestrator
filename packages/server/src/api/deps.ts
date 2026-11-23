@@ -123,6 +123,14 @@ export interface ApiDeps {
     /** One build's tasks, or `undefined` for a build the server hasn't seen. */
     tasks(buildId: string): BuildTaskView[] | undefined;
   };
+  /**
+   * Messages the server sends a box's session on its own, which wait while
+   * the session can't take them; see `boxes/session-messages.ts`.
+   */
+  sessionMessages: {
+    send(boxId: string, text: string, options?: { withdraws?: string }): void;
+    idle?(): Promise<void>;
+  };
   notifications: {
     list(query: { unread?: boolean }): Notification[];
     markRead(id: string): boolean;

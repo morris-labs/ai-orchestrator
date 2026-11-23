@@ -131,4 +131,11 @@ starts.
 The `boxes.message` request, and the messages that the server sends when a
 review run holds or releases a box's edits, use the same checks: a Claude
 Code session that shows a dialog or holds unsent text refuses the message
-with `conflict`.
+with `conflict`. The server can't read a Codex or GitHub Copilot session's
+screen, so it types nothing into one: `boxes.message` refuses it with
+`conflict`, and pointers and usage alerts for it don't go out.
+
+The hold and release edits messages wait while the session can't take
+them: the server tries again every five seconds, for up to 30 minutes. When
+a run ends before its hold message reached the session, the server sends
+neither message.

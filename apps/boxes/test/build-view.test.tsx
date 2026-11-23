@@ -347,6 +347,15 @@ describe("build view controls", () => {
     await waitFor(() => expect(server.callsTo("builds.resume")).toHaveLength(1));
   });
 
+  it("offers no resume or delete for a deleted build", async () => {
+    const current = { ...build, status: "cancelled" as const, deletedAt: "2026-10-28T10:00:00Z" };
+    renderWithServer(<BuildView build={current} />, new FakeServer({ builds: [current] }));
+    const controls = await screen.findByRole("group", { name: "Build controls" });
+    expect(within(controls).queryByRole("button", { name: "Resume" })).toBeNull();
+    expect(within(controls).queryByRole("button", { name: "Delete build" })).toBeNull();
+    expect(controls).toHaveTextContent("deleted");
+  });
+
   it("shows why the engine refused a request", async () => {
     const { server, controls } = await renderControls("paused");
     const stored = server.state.builds[0];

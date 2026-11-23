@@ -1126,21 +1126,24 @@ describe("edit, platform, side sessions, messages", () => {
       });
     });
 
-    it("refuses a session that isn't Claude Code when the message needs one", async () => {
+    it("types nothing into a Codex or Copilot session, whose screen the server can't read", async () => {
       const h = makeHarness();
-      const box = await h.core.boxes.create({
-        targetDir: h.dir("app"),
-        layout: "root",
-        platform: "codex",
-      });
-      expect(await h.core.boxes.deliver(box.id, { text: "Hello", claudeOnly: true })).toMatchObject(
-        { delivered: false, reason: expect.stringContaining("codex") },
-      );
-      expect(await h.core.boxes.deliver(box.id, { text: "Hello" })).toEqual({
-        delivered: true,
-        confirmed: null,
-      });
-      expect(keys(h, box)).toEqual(["-l Hello", "Enter"]);
+      for (const platform of ["codex", "copilot"] as const) {
+        const box = await h.core.boxes.create({
+          targetDir: h.dir(`app-${platform}`),
+          layout: "root",
+          platform,
+        });
+        expect(await h.core.boxes.deliver(box.id, { text: "Hello" })).toMatchObject({
+          delivered: false,
+          unsupported: true,
+          reason: expect.stringContaining(platform),
+        });
+        await expect(h.core.boxes.sendMessage(box.id, "Hold edits.")).rejects.toMatchObject({
+          code: "conflict",
+        });
+        expect(keys(h, box)).toEqual([]);
+      }
     });
   });
 

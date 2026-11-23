@@ -120,3 +120,8 @@ the build plan.
 
 The engine's API takes the same request at
 `POST /api/v1/builds/SLUG/resolve`.
+
+The owner can also resolve an escalation in the Boxes app: on the Builds
+page, select the build, and then click **Resolve** next to the escalation
+in the **Open escalations** list. The app sends the decision as the
+owner's, through the server's `POST /api/v1/builds/BUILD_ID/resolve` route.

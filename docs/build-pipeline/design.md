@@ -596,6 +596,9 @@ Orchestrator covers builds and stand-alone review runs:
   15% of a window in 10 minutes.
 - **7-day window:** the same two rules, with thresholds that the owner sets.
 
+For the thresholds and how to change them, see
+[Usage watcher](../review-pipeline.md#usage-watcher).
+
 Stand-alone review runs keep their usage ceilings, which pause and redirect
 calls. Build calls are exempt from the ceilings. The watcher reads the usage
 of one machine and doesn't combine machines.

@@ -146,7 +146,6 @@ export class PmDelivery {
     const result = await this.deps.boxes.deliver(boxId, {
       text: pmPointer(build.slug, item),
       marker: pmMarker(build.slug, item.id),
-      claudeOnly: true,
     });
     if (!result.delivered) {
       // A stopped box isn't worth a line: its start sweeps again.
@@ -171,6 +170,12 @@ export class PmDelivery {
       const [text] = this.alerts.get(boxId) ?? [];
       if (text === undefined) return;
       const result = await this.deps.boxes.deliver(boxId, { text });
+      if (!result.delivered && result.unsupported) {
+        // A session that never takes a message, such as a Codex session.
+        this.deps.log(`Dropped the usage alerts for box ${boxId}: ${result.reason}`);
+        this.alerts.delete(boxId);
+        return;
+      }
       if (!result.delivered) {
         if (!result.stopped) this.waited(`alert/${boxId}`, boxId, result.reason);
         return;

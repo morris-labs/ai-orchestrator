@@ -228,6 +228,9 @@ describe("cancel, resume, and delete", () => {
     await world.waitFor("cart-total", (s) => s.closingRecord !== undefined);
     const deleted = await world.manager.delete("cart-total");
     expect(deleted.deletedAt).toBeDefined();
+    // The server and the apps learn of the delete from the build's summary.
+    const shown = world.events.ofType("build.changed").filter((e) => e.build.id === started.id);
+    expect(shown.at(-1)?.build.deletedAt).toBe(deleted.deletedAt);
     expect(existsSync(started.worktree)).toBe(false);
     expect(world.git(world.root, "branch", "--list", "build/cart-total")).toBe("");
     expect(world.file("cart-total", BUILD_CLOSING_RECORD)).toMatch(/cancelled/i);

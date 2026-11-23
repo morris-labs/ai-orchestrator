@@ -24,7 +24,7 @@ import { listDirs } from "./fs-dirs.js";
 import { ulid } from "./ulid.js";
 import { readHostTokenSamples } from "../usage/token-samples.js";
 import { commandLine } from "../jobs/process.js";
-import { controlBuild, type BuildAction } from "../events/build-control.js";
+import { controlBuild, resolveBuildEscalation, type BuildAction } from "../events/build-control.js";
 import { externalAttachArgv } from "../terminals/attach.js";
 
 type SR = ServerRoutes;
@@ -616,11 +616,7 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
         body: { ...body, runId: ulid() },
       })) as RunState;
       deps.runs.upsert(run);
-      if (body.boxId !== undefined) {
-        await core.boxes.message(body.boxId, HOLD_EDITS_MESSAGE).catch((err: unknown) => {
-          deps.log?.(`Asking ${body.boxId} to hold edits failed: ${(err as Error).message}`);
-        });
-      }
+      if (body.boxId !== undefined) deps.sessionMessages.send(body.boxId, HOLD_EDITS_MESSAGE);
       reply.code(201);
       return run;
     },
@@ -643,6 +639,11 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
     "builds.resume": ({ params }) => buildRequest(params.buildId, "resume"),
     "builds.cancel": ({ params }) => buildRequest(params.buildId, "cancel"),
     "builds.delete": ({ params }) => buildRequest(params.buildId, "delete"),
+    "builds.resolve": async ({ params, body }) => {
+      const build = deps.builds.get(params.buildId);
+      if (!build) throw new ApiError("not_found", `No build has the id ${params.buildId}.`);
+      return resolveBuildEscalation(deps.engines, build, body);
+    },
     "builds.usage": async ({ params }) => {
       const usage = deps.builds.usage(params.buildId);
       if (!usage) throw new ApiError("not_found", `No build has the id ${params.buildId}.`);
