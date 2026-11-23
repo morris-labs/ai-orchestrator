@@ -1882,6 +1882,15 @@ export const serverRoutes = {
     response: BuildSummarySchema,
     errors: ["not_found", "invalid_state"],
   }),
+  "builds.resolve": http({
+    method: "POST",
+    path: `${V1}/builds/:buildId/resolve`,
+    summary:
+      "Resolve an escalation of a build and resume what it paused. Send `by: owner` for the owner's answer. Refused with conflict when the build's container isn't running.",
+    body: EscalationResolveSchema,
+    response: BuildSummarySchema,
+    errors: ["not_found", "invalid_state", "conflict"],
+  }),
   "builds.usage": http({
     method: "GET",
     path: `${V1}/builds/:buildId/usage`,

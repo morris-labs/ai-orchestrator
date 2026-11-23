@@ -1,5 +1,5 @@
 // The Builds page and the build badge on a box, against the fake server.
-import { FakeServer, makeBoxView, makeBuild, makeInboxItem, makeMessage } from "@aio/ui/testing";
+import { FakeApiError, FakeServer, makeBoxView, makeBuild, makeInboxItem, makeMessage } from "@aio/ui/testing";
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -251,6 +251,69 @@ describe("waiting escalations", () => {
     expect(within(open).getAllByRole("listitem")).toHaveLength(1);
     expect(open).toHaveTextContent("Escalation E1: Task T1 failed 4 attempts.");
     expect(open).toHaveTextContent("escalations/E1.json");
+  });
+
+  it("resolves an escalation as the owner from the build view", async () => {
+    const user = userEvent.setup();
+    const server = serverWithInbox();
+    await renderApp(server);
+    await user.click(screen.getByRole("tab", { name: "Builds" }));
+    await screen.findByRole("table", { name: "Builds" });
+    await user.click(within(buildsTable()).getByRole("cell", { name: "add-export" }));
+    await screen.findByRole("list", { name: "Open escalations" });
+
+    await user.click(screen.getByRole("button", { name: "Resolve E1" }));
+    const form = screen.getByRole("form", { name: "Resolve E1" });
+    await user.selectOptions(within(form).getByRole("combobox", { name: "Action" }), "clarify");
+    // A clarification needs its text, so the form waits for it.
+    expect(within(form).getByRole("button", { name: "Resolve" })).toBeDisabled();
+    await user.type(within(form).getByRole("textbox", { name: "Note" }), "Use whole dollars.");
+    await user.click(within(form).getByRole("button", { name: "Resolve" }));
+
+    await waitFor(() => expect(server.callsTo("builds.resolve")).toHaveLength(1));
+    const call = server.callsTo("builds.resolve")[0];
+    expect(call?.params).toMatchObject({ buildId: B1 });
+    expect(call?.body).toMatchObject({
+      escalation: "E1",
+      action: "clarify",
+      by: "owner",
+      note: "Use whole dollars.",
+    });
+    await waitFor(() => expect(screen.queryByRole("list", { name: "Open escalations" })).toBeNull());
+  });
+
+  it("sends a reorder's task order and a decision's answer, and shows a refusal", async () => {
+    const user = userEvent.setup();
+    const server = serverWithInbox();
+    await renderApp(server);
+    await user.click(screen.getByRole("tab", { name: "Builds" }));
+    await screen.findByRole("table", { name: "Builds" });
+    await user.click(within(buildsTable()).getByRole("cell", { name: "add-export" }));
+    await screen.findByRole("list", { name: "Open escalations" });
+
+    await user.click(screen.getByRole("button", { name: "Resolve E1" }));
+    const form = screen.getByRole("form", { name: "Resolve E1" });
+    await user.selectOptions(within(form).getByRole("combobox", { name: "Action" }), "reorder");
+    await user.type(within(form).getByRole("textbox", { name: "Task order" }), "T2, T1");
+    server.on("builds.resolve", () => {
+      throw new FakeApiError("invalid_state", "Task T2 depends on T1.", 409);
+    });
+    await user.click(within(form).getByRole("button", { name: "Resolve" }));
+    expect(await within(form).findByRole("alert")).toHaveTextContent("Task T2 depends on T1.");
+    server.overrides.delete("builds.resolve");
+    expect(server.callsTo("builds.resolve")[0]?.body).toMatchObject({
+      action: "reorder",
+      order: ["T2", "T1"],
+    });
+
+    await user.selectOptions(within(form).getByRole("combobox", { name: "Action" }), "decide");
+    await user.selectOptions(within(form).getByRole("combobox", { name: "Decision" }), "cancel");
+    await user.click(within(form).getByRole("button", { name: "Resolve" }));
+    await waitFor(() => expect(server.callsTo("builds.resolve")).toHaveLength(2));
+    expect(server.callsTo("builds.resolve")[1]?.body).toMatchObject({
+      action: "decide",
+      decision: { option: "cancel" },
+    });
   });
 
   it("follows the inbox from the event stream", async () => {

@@ -1,10 +1,9 @@
 // Build requests that the server forwards to the engine that runs a build:
-// pause, resume, cancel, and delete from the owner, and a pause and resume
-// that follow the build's box. A box stop pauses the box's running build
-// after its current turn, and holds a build in a timed pause or one that
-// waits for an escalation. A box start
-// resumes a build that the box's stop paused. A build that the owner paused
-// stays paused.
+// pause, resume, cancel, delete, and escalation resolutions from the owner,
+// and a pause and resume that follow the build's box. A box stop pauses the
+// box's running build after its current turn, and holds a build in a timed
+// pause or one that waits for an escalation. A box start resumes a build
+// that the box's stop paused. A build that the owner paused stays paused.
 import {
   BuildStateSchema,
   type AioEvent,
@@ -12,6 +11,7 @@ import {
   type BuildState,
   type BuildStatus,
   type BuildSummary,
+  type EscalationResolveInput,
 } from "@aio/contracts";
 import type { ApiEngines } from "../api/deps.js";
 import { ApiError } from "../api/errors.js";
@@ -52,6 +52,34 @@ export async function controlBuild(
   action: BuildAction,
   reason: BuildPauseReason = "owner",
 ): Promise<BuildSummary> {
+  const engine = engineOf(engines, build);
+  const takesReason = action === "pause" || action === "resume";
+  const state = await engine.call(ENGINE_ROUTES[action], {
+    params: { slug: build.slug },
+    ...(takesReason ? { body: { reason } } : {}),
+  });
+  return buildSummaryOf(BuildStateSchema.parse(state));
+}
+
+/**
+ * Sends a resolution of one of `build`'s escalations to the engine that
+ * runs it and returns the build's summary afterward. Throws `conflict` when
+ * that engine's container isn't running.
+ */
+export async function resolveBuildEscalation(
+  engines: Pick<ApiEngines, "get">,
+  build: BuildSummary,
+  resolution: EscalationResolveInput,
+): Promise<BuildSummary> {
+  const state = await engineOf(engines, build).call("engine.builds.resolve", {
+    params: { slug: build.slug },
+    body: resolution,
+  });
+  return buildSummaryOf(BuildStateSchema.parse(state));
+}
+
+/** The engine that runs `build`, or `conflict` when its container isn't running. */
+function engineOf(engines: Pick<ApiEngines, "get">, build: BuildSummary) {
   const engine = engines.get(build.container);
   if (!engine) {
     throw new ApiError(
@@ -60,12 +88,7 @@ export async function controlBuild(
     );
   }
   engine.assertVersion();
-  const takesReason = action === "pause" || action === "resume";
-  const state = await engine.call(ENGINE_ROUTES[action], {
-    params: { slug: build.slug },
-    ...(takesReason ? { body: { reason } } : {}),
-  });
-  return buildSummaryOf(BuildStateSchema.parse(state));
+  return engine;
 }
 
 export interface BoxBuildLinkDeps {

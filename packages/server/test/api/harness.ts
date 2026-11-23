@@ -97,6 +97,7 @@ function buildHandlers(): Partial<Record<EngineRouteKey, (input: EngineCallInput
     "engine.builds.resume": (i) => (known(i), harnessBuildState("running")),
     "engine.builds.cancel": (i) => (known(i), harnessBuildState("cancelled")),
     "engine.builds.delete": (i) => (known(i), harnessBuildState("cancelled")),
+    "engine.builds.resolve": (i) => (known(i), harnessBuildState("running")),
     "engine.builds.inbox": (i) => (
       known(i),
       {

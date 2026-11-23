@@ -409,6 +409,13 @@ const cases: Case[] = [
     status: 200,
   },
   {
+    key: "builds.resolve",
+    method: "POST",
+    url: `${V1}/builds/01JB8Z5K3W6Q2V9X4T7R0M1N2Q/resolve`,
+    body: { escalation: "E1", action: "retry", by: "owner" },
+    status: 200,
+  },
+  {
     key: "builds.usage",
     method: "GET",
     url: `${V1}/builds/01JB8Z5K3W6Q2V9X4T7R0M1N2Q/usage`,
