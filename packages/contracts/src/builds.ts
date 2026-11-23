@@ -1,9 +1,9 @@
 // Build pipeline execution: the build plan the engine carries out, the build
 // request, and the build's saved state. See `docs/build-pipeline/design.md`.
 //
-// The plan covers what the walking skeleton uses: criteria, one task with
-// its tests, and the test, type check, and lint commands. Later milestones
-// widen it (several tasks, milestones, specialties, placements).
+// The plan covers criteria, the task graph (each task with its tests and the
+// tasks it depends on), and the test, type check, and lint commands. Later
+// milestones widen it (milestones, shared files).
 import { z } from "zod";
 import { CommitShaSchema, IsoDateTimeSchema, VendorSchema } from "./common.js";
 import {
@@ -18,6 +18,7 @@ import { RoleNameSchema } from "./build-roles.js";
 import { BuildPlacementsSchema, PlacementOverrideSchema } from "./placements.js";
 import { PolicyCommandSchema } from "./policy.js";
 import { TaskSpecialtiesSchema } from "./specialties.js";
+import { cycleMessage, dependencyCycle } from "./task-graph.js";
 
 /** An ID in the build plan, such as `AC2` or `T1`. */
 export const PlanIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,31}$/, {
@@ -61,6 +62,8 @@ export const BuildTaskSchema = z
     tests: z.array(RepoPathSchema).default([]),
     /** The specialties whose guidance every agent on the task gets. */
     specialties: TaskSpecialtiesSchema,
+    /** The IDs of the tasks that must finish before this task starts. */
+    dependsOn: z.array(PlanIdSchema).default([]),
   })
   .strict();
 export type BuildTask = z.infer<typeof BuildTaskSchema>;
@@ -86,7 +89,7 @@ export const BuildPlanSchema = z
     version: z.number().int().positive().default(1),
     title: z.string().min(1),
     criteria: z.array(BuildCriterionSchema).min(1),
-    tasks: z.array(BuildTaskSchema).min(1).max(1, "a build plan has one task in this version"),
+    tasks: z.array(BuildTaskSchema).min(1),
     commands: BuildCommandsSchema,
     /** Places every seat on this vendor. `null` leaves each seat on its own placement. */
     singleVendor: VendorSchema.nullable().default(null),
@@ -115,6 +118,18 @@ export const BuildPlanSchema = z
         });
       }
     });
+    const ids = new Set(plan.tasks.map((t) => t.id));
+    plan.tasks.forEach((task, i) => {
+      for (const id of task.dependsOn.filter((d) => !ids.has(d))) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["tasks", i, "dependsOn"],
+          message: `task ${task.id} depends on ${id}, which the plan doesn't have`,
+        });
+      }
+    });
+    const cycle = dependencyCycle(plan.tasks);
+    if (cycle) ctx.addIssue({ code: "custom", path: ["tasks"], message: cycleMessage(cycle) });
   });
 export type BuildPlan = z.infer<typeof BuildPlanSchema>;
 export type BuildPlanInput = z.input<typeof BuildPlanSchema>;

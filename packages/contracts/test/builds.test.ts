@@ -41,9 +41,35 @@ describe("BuildPlanSchema", () => {
     expect(() => BuildPlanSchema.parse(bad)).toThrow(/AC1/);
   });
 
-  it("refuses a plan with more than one task", () => {
-    const bad = { ...plan, tasks: [plan.tasks[0], { ...plan.tasks[0], id: "T2" }] };
-    expect(() => BuildPlanSchema.parse(bad)).toThrow(/one task/);
+  it("accepts several tasks with dependencies, and no dependencies by default", () => {
+    const parsed = BuildPlanSchema.parse({
+      ...plan,
+      tasks: [plan.tasks[0], { ...plan.tasks[0], id: "T2", dependsOn: ["T1"] }],
+    });
+    expect(parsed.tasks.map((t) => t.dependsOn)).toEqual([[], ["T1"]]);
+  });
+
+  it("refuses a dependency on a task the plan doesn't have", () => {
+    const bad = { ...plan, tasks: [{ ...plan.tasks[0], dependsOn: ["T9"] }] };
+    expect(() => BuildPlanSchema.parse(bad)).toThrow(/T1 depends on T9/);
+  });
+
+  it("refuses a dependency cycle and names the tasks in it", () => {
+    const bad = {
+      ...plan,
+      tasks: [
+        { ...plan.tasks[0], id: "T1", dependsOn: ["T3"] },
+        { ...plan.tasks[0], id: "T2", dependsOn: ["T1"] },
+        { ...plan.tasks[0], id: "T3", dependsOn: ["T2"] },
+        { ...plan.tasks[0], id: "T4", dependsOn: ["T1"] },
+      ],
+    };
+    expect(() => BuildPlanSchema.parse(bad)).toThrow(/dependency cycle: T1 -> T3 -> T2 -> T1/);
+  });
+
+  it("refuses a task that depends on itself", () => {
+    const bad = { ...plan, tasks: [{ ...plan.tasks[0], dependsOn: ["T1"] }] };
+    expect(() => BuildPlanSchema.parse(bad)).toThrow(/dependency cycle: T1 -> T1/);
   });
 
   it("refuses an unknown field", () => {
