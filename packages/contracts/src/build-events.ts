@@ -123,9 +123,9 @@ export type UsageTotals = z.infer<typeof UsageTotalsSchema>;
 export const BuildUsageSchema = z.object({
   buildId: BuildIdSchema,
   total: UsageTotalsSchema,
-  /** One row per seat, sorted by seat; `null` collects calls that named no seat. */
+  /** One row per seat, sorted by name; `null`, last, collects calls that named no seat. */
   bySeat: z.array(UsageTotalsSchema.extend({ seat: SeatSchema.nullable() })),
-  /** One row per step, sorted by step; `null` collects calls that named no step. */
+  /** One row per step, in `BuildStepSchema` order; `null`, last, collects calls that named no step. */
   byStep: z.array(UsageTotalsSchema.extend({ step: BuildStepSchema.nullable() })),
 });
 export type BuildUsage = z.infer<typeof BuildUsageSchema>;

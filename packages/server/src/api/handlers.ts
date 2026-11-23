@@ -623,6 +623,13 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
       vendors: deps.usage.vendors(),
     }),
 
+    // Builds
+    "builds.usage": async ({ params }) => {
+      const usage = deps.builds.usage(params.buildId);
+      if (!usage) throw new ApiError("not_found", `No build has the id ${params.buildId}.`);
+      return usage;
+    },
+
     // Notifications
     "notifications.list": async ({ query }) => ({
       notifications: deps.notifications.list({ unread: query.unread }),

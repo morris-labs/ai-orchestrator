@@ -57,6 +57,43 @@ describe("Scheduler", () => {
     expect(res).toMatchObject({ decision: "granted", vendor: "claude" });
   });
 
+  it("grants a build call on its own vendor at a ceiling, and still pauses a review call", async () => {
+    const t = make();
+    t.sample("claude", { utilization: 1, resetAt: iso(T0 + 60 * MIN) });
+    t.sample("codex", { utilization: 1, resetAt: iso(T0 + 60 * MIN) });
+    t.sample("copilot", { utilization: 1, resetAt: iso(T0 + 60 * MIN) });
+    const build = {
+      buildId: "01JB8Z5K3W6Q2V9X4T7R0M1N2Q",
+      seat: "developer",
+      step: "tasks",
+    } as const;
+    for (const fields of [
+      { ...build, runId: null, vendor: "claude", role: "fixer" },
+      { ...build, runId: null, vendor: "codex", role: "reviewer" },
+      // A review run that a build started counts as a build call.
+      { ...build, runId: RUN, vendor: "codex", role: "reviewer" },
+    ] as const) {
+      expect(await t.scheduler.decide("e", "p", t.req(fields))).toMatchObject({
+        decision: "granted",
+        vendor: fields.vendor,
+        redirectedFrom: null,
+      });
+    }
+    expect(
+      await t.scheduler.decide("e", "p", t.req({ role: "fixer", vendor: "claude" })),
+    ).toMatchObject({ decision: "pause" });
+    expect(t.events.filter((e) => e.type === "role.reassigned")).toEqual([]);
+  });
+
+  it("still redirects a review call over its ceiling", async () => {
+    const t = make();
+    t.sample("codex", { utilization: 1, resetAt: iso(T0 + 60 * MIN) });
+    expect(await t.scheduler.decide("e", "p", t.req())).toMatchObject({
+      decision: "granted",
+      redirectedFrom: "codex",
+    });
+  });
+
   it("grants a vendor under its ceiling", async () => {
     const t = make();
     t.sample("codex", { utilization: 0.3 });

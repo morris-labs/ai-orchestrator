@@ -5,6 +5,7 @@ import type {
   EngineRouteKey,
   EventType,
   Job,
+  BuildUsage,
   Notification,
   Finding,
   RunState,
@@ -106,6 +107,10 @@ export interface ApiDeps {
     clear(vendor: Vendor, account?: string): Promise<number>;
     samples(query: { vendor?: Vendor; since?: string; until?: string }): TimedUsageSample[];
     forgetAccount?(vendor: Vendor, account: string): void;
+  };
+  builds: {
+    /** One build's settled usage, or `undefined` for a build the server hasn't seen. */
+    usage(buildId: string): BuildUsage | undefined;
   };
   notifications: {
     list(query: { unread?: boolean }): Notification[];
