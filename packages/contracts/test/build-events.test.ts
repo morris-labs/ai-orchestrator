@@ -125,6 +125,7 @@ describe("build events", () => {
         { step: "tasks", ...totals },
         { step: null, ...totals },
       ],
+      bySpecialty: [],
     };
     expect(roundTrip(BuildUsageSchema, usage)).toEqual(usage);
   });

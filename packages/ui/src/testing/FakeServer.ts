@@ -884,6 +884,7 @@ const defaultHandlers: Partial<Record<HttpRouteKey, FakeHandler>> = {
     total: { calls: 0, tokensIn: 0, tokensOut: 0, premiumRequests: 0, costEstimate: 0 },
     bySeat: [],
     byStep: [],
+    bySpecialty: [],
   }),
   "notifications.list": (_r, s) => ({ notifications: s.state.notifications }),
   "notifications.read": () => ({ ok: true }),

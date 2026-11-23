@@ -126,7 +126,8 @@ technology that needs different rules gets a role file of its own.
 A specialty names a skill in the account's skills folder, and the engine
 reads that skill's text for an agent on any vendor. A repository adds its own
 specialties in its `.aio/team/specialties/` directory. Usage reports break
-down by seat and by specialty.
+down by seat and by specialty. For how to add a specialty, see
+[Specialties](specialties.md).
 
 ### Core team
 
