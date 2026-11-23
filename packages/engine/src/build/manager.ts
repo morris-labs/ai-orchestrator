@@ -261,6 +261,12 @@ export class EngineBuildManager implements BuildManager {
     given: BuildPlan | undefined,
   ): Promise<{ plan: BuildPlan; origin?: BuildOrigin }> {
     const planner = await this.planner(slug);
+    if (planner?.busy) {
+      throw new EngineError(
+        "conflict",
+        `Build ${slug} is waiting for a planning seat's answer. Start it when the answer arrives.`,
+      );
+    }
     const latest = planner ? await planner.latestFrozen() : null;
     if (latest && given && planHash(given) !== latest.frozen.hash) {
       throw new EngineError(
