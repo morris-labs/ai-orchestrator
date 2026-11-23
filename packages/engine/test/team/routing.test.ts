@@ -1,5 +1,6 @@
 // Routing rules of the team chat: where a message goes when its sender names
 // no addressee, and how a named addressee is kept.
+import type { Message } from "@aio/contracts";
 import { describe, expect, it } from "vitest";
 import { routeMessage, taskOwning, type RouteTask } from "../../src/team/index.js";
 
@@ -12,7 +13,7 @@ const sender = { kind: "seat", seat: "developer", taskId: "T1" } as const;
 
 describe("routing a message without an addressee", () => {
   it("sends a reply back to the sender of the message it replies to", () => {
-    const question = {
+    const question: Message = {
       version: 1,
       id: "M3",
       buildId: "01JB8Z5K3W6Q2V9X4T7R0M1N2Q",
@@ -25,7 +26,7 @@ describe("routing a message without an addressee", () => {
       paths: [],
       body: "Which currency?",
       createdAt: "2026-01-01T00:00:00.000Z",
-    } as const;
+    };
     expect(
       routeMessage({ type: "answer", body: "Dollars.", replyTo: "M3" }, sender, tasks, question),
     ).toEqual({ to: { kind: "seat", seat: "test-engineer", taskId: "T2" }, routing: "reply" });
