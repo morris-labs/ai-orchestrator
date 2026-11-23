@@ -334,6 +334,46 @@ describe("the release ready step", () => {
     expect(body).toMatch(/## Acceptance criteria\n\n- AC1: /);
   });
 
+  it("records the owner's push answer from a resolve request and ends with the branch local", async () => {
+    const origin = originPath();
+    const gh = new FakeGitHub(origin);
+    const world = await buildWorld({
+      steps: BUILD_PIPELINE,
+      review: true,
+      release: true,
+      github: gh,
+    });
+    releaseProject(world, origin);
+    fullScript(world);
+    await world.start("cart-total", releasePlan(null));
+    await world.settle("cart-total");
+
+    // The push answer is the owner's.
+    await expect(
+      world.manager.resolve("cart-total", { escalation: "E1", action: "retry", push: false }),
+    ).rejects.toThrow(/waits for the owner/);
+    await expect(
+      world.manager.resolve("cart-total", { escalation: "E1", action: "retry", by: "owner" }),
+    ).rejects.toThrow(/no push answer/);
+    await world.manager.resolve("cart-total", {
+      escalation: "E1",
+      action: "retry",
+      by: "owner",
+      push: false,
+    });
+    const state = await world.settle("cart-total");
+
+    expect(state).toMatchObject({ status: "finished", step: "release_ready" });
+    expect(JSON.parse(world.file("cart-total", "plan.json"))).toMatchObject({ push: false });
+    expect(state.escalations[0]).toMatchObject({
+      status: "resolved",
+      resolution: { by: "owner", push: false },
+    });
+    expect(world.file("cart-total", "digests/release-ready.md")).toMatch(/stays local/);
+    expect(gh.created).toEqual([]);
+    expect(git(origin, "branch", "--list", "build/*")).toBe("");
+  });
+
   it("pushes the build branch, opens the pull request, fixes a failing check, and ends release ready with a digest", async () => {
     const origin = originPath();
     const gh = new FakeGitHub(origin);

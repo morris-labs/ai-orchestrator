@@ -14,6 +14,7 @@
 // A task that escalates pauses with every task that depends on it, and the
 // step goes on with the tasks that don't. The step waits once no task can
 // run. A resolve request resumes the paused tasks (see `reopenTask()`).
+import { existsSync } from "node:fs";
 import { taskOrder, type BuildTask, type Escalation } from "@aio/contracts";
 import { RunCancelled } from "../../calls/index.js";
 import { untrusted } from "../../prompts/templates.js";
@@ -422,23 +423,28 @@ async function runTask(ctx: BuildContext, task: BuildTask): Promise<StepOutcome>
 async function setAsideWaiting(ctx: BuildContext): Promise<void> {
   for (const progress of ctx.state.tasks) {
     if (progress.status !== "failed" || progress.setAside || !progress.base) continue;
+    // A task without changes gets an entry too: its base moves past the
+    // tasks that run meanwhile, so its permission check leaves their work alone.
     const file = `tasks/${progress.id}/set-aside-${progress.attempts}.patch`;
-    const paths = await ctx.worktree.setAside(
+    await ctx.worktree.setAside(
       progress.base,
       ctx.store.path(file),
       `chore(build): set task ${progress.id} aside while it waits for an escalation`,
     );
-    if (paths.length === 0) continue;
     progress.setAside = file;
     await ctx.persist();
   }
 }
 
-/** Gives a task back the work that `setAsideWaiting()` saved, on top of the tasks that ran since. */
+/**
+ * Gives a task back the work that `setAsideWaiting()` saved, on top of the
+ * tasks that ran since, which its new base covers.
+ */
 async function bringBack(ctx: BuildContext, task: BuildTask, file: string): Promise<void> {
   const progress = ctx.task(task.id);
   progress.base = await ctx.worktree.head();
-  if (!(await ctx.worktree.bringBack(ctx.store.path(file)))) {
+  const patch = ctx.store.path(file);
+  if (existsSync(patch) && !(await ctx.worktree.bringBack(patch))) {
     ctx.services.log.warn("A task's set-aside work no longer applies; the task starts without it", {
       build: ctx.state.slug,
       task: task.id,

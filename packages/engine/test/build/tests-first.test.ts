@@ -225,6 +225,31 @@ describe("the red check", () => {
   });
 });
 
+describe("a tests first escalation", () => {
+  it("gives the Test engineer more rounds after a retry, and the build goes on", async () => {
+    const world = await buildWorld({ steps: BUILD_PIPELINE });
+    world.script({
+      codex: [testRound(4, RED_TEST), { ...testRound(1, GREEN_TEST), match: "round [123] of" }],
+      claude: [DEVELOPER],
+    });
+    await world.start("cart-total");
+    await world.settle("cart-total");
+
+    await world.manager.resolve("cart-total", {
+      escalation: "E1",
+      action: "retry",
+      note: "The stub returns 0, so a sum test fails on it.",
+    });
+    const state = await world.waitFor("cart-total", (s) => s.step === "review");
+
+    expect(state.tasks[0]).toMatchObject({ status: "done" });
+    expect(world.calls().map((c) => c.cli)).toEqual(["codex", "codex", "codex", "codex", "claude"]);
+    expect(world.calls()[3]?.prompt).toContain("round 4 of 6");
+    const lock = JSON.parse(world.file("cart-total", "test-lock.json")) as SavedLock;
+    expect(lock.redCheck).toBe("tests-first/round-4.json");
+  });
+});
+
 interface SavedAttempt {
   gate: {
     passed: boolean;

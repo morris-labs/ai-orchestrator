@@ -170,3 +170,281 @@ describe("an escalation that pauses only what it affects", () => {
   });
 });
 
+
+describe("a resolution while other tasks run", () => {
+  it("resumes the paused task after the running task, in the same drive's wake", async () => {
+    const world = await buildWorld();
+    addModules(world);
+    world.script({
+      claude: [
+        { match: "Task T1", times: 2, error: "boom" },
+        answer("T1", { "src/cart.mjs": CART_DONE }),
+        answer("T2", { "src/discount.mjs": DISCOUNT_DONE }),
+        { ...answer("T3", { "src/label.mjs": LABEL_DONE }), delayMs: 1500 },
+      ],
+    });
+
+    await world.start("checkout", threeTaskPlan());
+    const running = await world.waitFor("checkout", (s) => s.escalations.length === 1);
+    expect(running.status).toBe("running");
+    expect(running.tasks.find((t) => t.id === "T3")?.status).toBe("running");
+
+    const resumed = await world.manager.resolve("checkout", { escalation: "E1", action: "retry" });
+    expect(resumed.status).toBe("running");
+    const state = await world.waitFor("checkout", (s) => s.step === "review");
+
+    expect(state.tasks.map((t) => [t.id, t.status])).toEqual([
+      ["T1", "done"],
+      ["T2", "done"],
+      ["T3", "done"],
+    ]);
+    expect(state.escalations).toHaveLength(1);
+  });
+});
+
+describe("escalation levels", () => {
+  it("lists the diagnosis files in an attempt cap escalation for the Project manager", async () => {
+    const world = await buildWorld();
+    world.script({
+      claude: [
+        { match: "You are the Debugger", output: DIAGNOSIS },
+        { match: "Task T1", output: REPORT, writeFiles: { "src/cart.mjs": CART_WRONG } },
+      ],
+    });
+
+    await world.start("cart-total");
+    const state = await world.settle("cart-total");
+
+    expect(state.escalations[0]).toMatchObject({ kind: "attempt_cap", level: "project_manager" });
+    expect(escalationFile(world, "cart-total", "E1").details).toContain(
+      "Diagnosis files: tasks/T1/diagnosis-2.json, tasks/T1/diagnosis-3.json",
+    );
+  });
+
+  it("escalates a secret that the project doesn't give the build to the owner at preflight, and goes on after a retry", async () => {
+    let names = ["GH_TOKEN"];
+    const world = await buildWorld({ secretNames: () => Promise.resolve(names) });
+    world.script({
+      claude: [{ match: "Task T1", output: REPORT, writeFiles: { "src/cart.mjs": CART_DONE } }],
+    });
+    const plan = cartPlan({ secrets: [{ name: "SHOP_API_KEY", purpose: "Reads the price list." }] });
+
+    await world.start("cart-total", plan);
+    const waiting = await world.settle("cart-total");
+
+    expect(waiting).toMatchObject({ status: "waiting_escalation", step: "preflight" });
+    expect(waiting.escalations).toEqual([
+      expect.objectContaining({
+        kind: "missing_secret",
+        level: "owner",
+        taskId: null,
+        tasks: [],
+        summary: expect.stringContaining("SHOP_API_KEY"),
+      }),
+    ]);
+    expect(world.calls()).toEqual([]);
+
+    // Only the owner can resolve it.
+    await expect(
+      world.manager.resolve("cart-total", { escalation: "E1", action: "retry" }),
+    ).rejects.toThrow(/waits for the owner/);
+    names = ["GH_TOKEN", "SHOP_API_KEY"];
+    await world.manager.resolve("cart-total", { escalation: "E1", action: "retry", by: "owner" });
+    const state = await world.waitFor("cart-total", (s) => s.step === "review");
+
+    expect(state.tasks[0]).toMatchObject({ status: "done" });
+    expect(state.escalations[0]).toMatchObject({
+      status: "resolved",
+      resolution: { action: "retry", by: "owner" },
+    });
+  });
+
+  it("escalates a task whose seat reports a missing service to the owner, and lets the other tasks finish", async () => {
+    const world = await buildWorld();
+    addModules(world);
+    world.script({
+      claude: [
+        {
+          match: "Task T1",
+          times: 1,
+          output: {
+            summary: "Stopped: the price service is down.",
+            criteria: [{ id: "AC-T1", met: false }],
+            blocked: { kind: "service", name: "price-api", reason: "Connection refused." },
+          },
+        },
+        answer("T1", { "src/cart.mjs": CART_DONE }),
+        answer("T2", { "src/discount.mjs": DISCOUNT_DONE }),
+        answer("T3", { "src/label.mjs": LABEL_DONE }),
+      ],
+    });
+
+    await world.start("checkout", threeTaskPlan());
+    const waiting = await world.settle("checkout");
+
+    expect(waiting.tasks.map((t) => [t.id, t.status, t.attempts])).toEqual([
+      ["T1", "failed", 1],
+      ["T2", "blocked", 0],
+      ["T3", "done", 1],
+    ]);
+    expect(waiting.escalations).toEqual([
+      expect.objectContaining({
+        kind: "missing_service",
+        level: "owner",
+        taskId: "T1",
+        tasks: ["T1", "T2"],
+        summary: expect.stringContaining("price-api"),
+      }),
+    ]);
+    // The gate didn't run for the attempt that stopped.
+    expect(world.jsonFiles("checkout", "tasks/T1")[0]).not.toHaveProperty("gate");
+
+    await world.manager.resolve("checkout", { escalation: "E1", action: "retry", by: "owner" });
+    const state = await world.waitFor("checkout", (s) => s.step === "review");
+    expect(state.tasks.map((t) => [t.id, t.status, t.attempts])).toEqual([
+      ["T1", "done", 2],
+      ["T2", "done", 1],
+      ["T3", "done", 1],
+    ]);
+  });
+});
+
+describe("resolutions", () => {
+  /** A one-task build whose Developer fails once and then asks for a decision. */
+  async function capped(world: BuildWorld, slug = "cart-total") {
+    world.script({
+      claude: [
+        { match: "You are the Debugger", output: DIAGNOSIS },
+        answer("T1", { "src/cart.mjs": CART_DONE }, "attempt 5 of"),
+        answer("T1", { "src/cart.mjs": CART_WRONG }),
+      ],
+    });
+    const plan = cartPlan({
+      criteria: [{ id: "AC-T1", text: "The cart reports the sum of its item prices." }],
+      tasks: [task("T1", "Cart total", "cart")],
+    });
+    await world.start(slug, plan);
+    return world.settle(slug);
+  }
+
+  it("marks a change to the criteria for the owner instead of resolving it, and the owner resolves it", async () => {
+    const world = await buildWorld();
+    await capped(world);
+
+    const marked = await world.manager.resolve("cart-total", {
+      escalation: "E1",
+      action: "clarify",
+      note: "Count the quantity of each item too.",
+      changes: ["criteria"],
+    });
+
+    expect(marked.status).toBe("waiting_escalation");
+    expect(marked.escalations[0]).toMatchObject({
+      level: "owner",
+      status: "open",
+      ownerReason: expect.stringMatching(/changes the criteria, which only the owner decides/),
+    });
+    expect(escalationFile(world, "cart-total", "E1")).toMatchObject({ level: "owner" });
+    expect(world.file("cart-total", "STATUS.md")).toMatch(/E1 \(attempt_cap, for the owner/);
+
+    await world.manager.resolve("cart-total", {
+      escalation: "E1",
+      action: "retry",
+      by: "owner",
+      note: "Keep the criteria as they are.",
+    });
+    const state = await world.waitFor("cart-total", (s) => s.step === "review");
+    expect(state.escalations[0]).toMatchObject({ status: "resolved", resolution: { by: "owner" } });
+  });
+
+  it("hands an escalation to the owner when the Project manager escalates it", async () => {
+    const world = await buildWorld();
+    await capped(world);
+
+    const state = await world.manager.resolve("cart-total", {
+      escalation: "E1",
+      action: "escalate",
+      note: "The task may need a bigger change than the plan allows.",
+    });
+
+    expect(state.escalations[0]).toMatchObject({
+      level: "owner",
+      status: "open",
+      ownerReason: "The task may need a bigger change than the plan allows.",
+    });
+  });
+
+  it("puts a clarification in the task's next attempt", async () => {
+    const world = await buildWorld();
+    await capped(world);
+
+    await world.manager.resolve("cart-total", {
+      escalation: "E1",
+      action: "clarify",
+      note: "total() sums item.price; items have no quantity.",
+    });
+    await world.waitFor("cart-total", (s) => s.step === "review");
+
+    const retry = world.calls().find((c) => c.prompt.includes("attempt 5 of 8"));
+    expect(retry?.prompt).toContain("total() sums item.price; items have no quantity.");
+  });
+
+  it("refuses a request that doesn't fit the escalation, and a second resolution", async () => {
+    const world = await buildWorld();
+    await capped(world);
+    const resolve = (request: Parameters<BuildWorld["manager"]["resolve"]>[1]) =>
+      world.manager.resolve("cart-total", request);
+
+    await expect(resolve({ escalation: "E9", action: "retry" })).rejects.toThrow(/no escalation E9/);
+    await expect(resolve({ escalation: "E1", action: "clarify" })).rejects.toThrow(/needs note/);
+    await expect(
+      resolve({ escalation: "E1", action: "decide", decision: { option: "resume" } }),
+    ).rejects.toThrow(/isn't about a review run/);
+    await expect(resolve({ escalation: "E1", action: "reorder", order: ["T9"] })).rejects.toThrow(
+      /no task T9/,
+    );
+    await resolve({ escalation: "E1", action: "retry" });
+    await expect(resolve({ escalation: "E1", action: "retry" })).rejects.toThrow(/resolved already/);
+  });
+
+  it("runs the tasks in a new order after a reorder, and refuses one that breaks a dependency", async () => {
+    const world = await buildWorld();
+    addModules(world);
+    world.script({
+      claude: [
+        { match: "Task T1", times: 1, error: "boom" },
+        { match: "Task T1", times: 1, error: "boom" },
+        answer("T1", { "src/cart.mjs": CART_DONE }),
+        answer("T2", { "src/discount.mjs": DISCOUNT_DONE }),
+        answer("T3", { "src/label.mjs": LABEL_DONE }),
+      ],
+    });
+    const plan = threeTaskPlan();
+    plan.tasks = [...plan.tasks.slice(0, 2), { ...task("T3", "Label", "label"), dependsOn: ["T1"] }];
+
+    await world.start("checkout", plan);
+    const waiting = await world.settle("checkout");
+    expect(waiting.escalations[0]).toMatchObject({ kind: "agent_call", tasks: ["T1", "T2", "T3"] });
+
+    await expect(
+      world.manager.resolve("checkout", {
+        escalation: "E1",
+        action: "reorder",
+        order: ["T3", "T1", "T2"],
+      }),
+    ).rejects.toThrow(/T3 depends on T1/);
+    await world.manager.resolve("checkout", {
+      escalation: "E1",
+      action: "reorder",
+      order: ["T1", "T3", "T2"],
+    });
+    const state = await world.waitFor("checkout", (s) => s.step === "review");
+
+    expect(state.taskOrder).toEqual(["T1", "T3", "T2"]);
+    const order = world
+      .calls()
+      .map((c) => taskOf(c.prompt))
+      .filter((t) => t !== "T1");
+    expect(order).toEqual(["T3", "T2"]);
+  });
+});
