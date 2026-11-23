@@ -75,8 +75,8 @@ async function nextKey(ctx: BuildContext): Promise<string> {
   return `${CALL_PREFIX}${done + 1}`;
 }
 
-/** Asks the Scribe seat for its account of the build. */
-async function scribeAccount(ctx: BuildContext, known: string): Promise<string> {
+/** Asks the Scribe seat for its account of the build, in the call `key`. */
+async function scribeAccount(ctx: BuildContext, known: string, key: string): Promise<string> {
   ctx.role(SCRIBE);
   const placement = ctx.seats.place(SCRIBE);
   const prompt = [
@@ -92,7 +92,7 @@ async function scribeAccount(ctx: BuildContext, known: string): Promise<string> 
   const outcome = await ctx.calls.call<z.infer<typeof ClosingAnswerSchema>>(
     placeCall(
       {
-        key: await nextKey(ctx),
+        key,
         role: "reviewer",
         method: "review",
         request: {
@@ -116,14 +116,16 @@ async function scribeAccount(ctx: BuildContext, known: string): Promise<string> 
 
 /**
  * Writes the closing record of a cancelled build to `closing-record.md` in
- * the build directory, and names it in the build's state. `why` says why the
- * build stopped, in one sentence.
+ * the build directory, names it in the build's state, and delivers a pointer
+ * to it to the Project manager. `why` says why the build stopped, in one
+ * sentence.
  */
 export async function writeClosingRecord(ctx: BuildContext, why: string): Promise<void> {
   const known = (await facts(ctx, why)).join("\n");
+  const key = await nextKey(ctx);
   let account: string;
   try {
-    account = (await scribeAccount(ctx, known)).trim();
+    account = (await scribeAccount(ctx, known, key)).trim();
   } catch (error) {
     ctx.services.log.warn("The Scribe couldn't write a closing record", {
       build: ctx.state.slug,
@@ -137,4 +139,13 @@ export async function writeClosingRecord(ctx: BuildContext, why: string): Promis
   );
   ctx.state.closingRecord = BUILD_CLOSING_RECORD;
   await ctx.persist();
+  // Each cancel's record gets its own inbox item.
+  const delivered = (await ctx.inbox.list()).filter((i) => i.file === BUILD_CLOSING_RECORD);
+  await ctx.toProjectManager({
+    kind: "digest",
+    ref: `closing-record-${delivered.length + 1}`,
+    summary: `Build ${ctx.state.slug} was cancelled. Its closing record says what got done and why it stopped.`,
+    file: BUILD_CLOSING_RECORD,
+    needsAnswer: false,
+  });
 }

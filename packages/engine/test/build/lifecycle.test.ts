@@ -162,6 +162,28 @@ describe("cancel, resume, and delete", () => {
     });
   });
 
+  it("delivers the closing record to the Project manager's inbox", async () => {
+    const world = await buildWorld();
+    world.script({ claude: [SLOW_DEVELOPER], codex: [CLOSING] });
+    await startIn(world, "cart-total", "box-a");
+    await agentStarted(world);
+
+    await world.manager.cancel("cart-total");
+    await world.waitFor("cart-total", (s) => s.closingRecord !== undefined);
+
+    const inbox = await world.manager.inbox("cart-total", { all: true });
+    expect(inbox.items).toContainEqual(
+      expect.objectContaining({
+        kind: "digest",
+        file: BUILD_CLOSING_RECORD,
+        needsAnswer: false,
+      }),
+    );
+    expect(world.events.ofType("build.inbox").map((e) => e.item.file)).toContain(
+      BUILD_CLOSING_RECORD,
+    );
+  });
+
   it("writes the engine's closing record when the Scribe can't", async () => {
     const world = await buildWorld();
     world.script({ claude: [SLOW_DEVELOPER] });
