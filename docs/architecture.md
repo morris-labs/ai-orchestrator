@@ -280,6 +280,15 @@ as a conversation that you can filter by task, milestone, seat, and slice;
 the direct messages to the owner; a milestone board; and the usage by seat
 and by specialty. The view stays current from the event stream.
 
+The build view also holds the owner's post box, which sends a post to one
+agent through the `POST /api/v1/builds/BUILD_ID/posts` route. The Boxes app
+reads each active build's Project manager inbox through the
+`GET /api/v1/builds/BUILD_ID/inbox` route. The Builds page counts each
+build's open escalations, and the build view lists them. When an
+escalation's pointer doesn't reach the Project manager's session within two
+minutes, the app raises one desktop notification for it, and a click opens
+the build.
+
 ## Container image
 
 The image, `aio-agent` by default, is built on the host from
