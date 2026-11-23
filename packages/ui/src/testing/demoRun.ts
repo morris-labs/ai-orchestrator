@@ -660,6 +660,16 @@ export function buildDemoEvents(): AioEvent[] {
       answeredAt: null,
     },
   });
+  emit({
+    type: "build.seat.usage",
+    buildId: BUILD_ID,
+    seat: "project-manager",
+    turns: 4,
+    tokensIn: 12000,
+    tokensOut: 800,
+    since: new Date(T0).toISOString(),
+    through: new Date(T0 + clock * 1000).toISOString(),
+  });
 
   const missing = EVENT_TYPES.filter((t) => !events.some((e) => e.type === t));
   if (missing.length > 0) throw new Error(`The demo misses event types: ${missing.join(", ")}.`);
