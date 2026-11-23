@@ -156,6 +156,12 @@ keeper script, the container's first process, starts it.
   to the ports the box listens on or the project maps.
 - It runs the review pipeline and its vendor adapters, writes each run's
   files, discovers listening ports with `ss`, and proxies HTTP to them.
+- It opens a build socket at `/tmp/aio-build/build.sock` on the container's
+  own file system. The socket needs no engine token and accepts only build
+  requests: start, status, pause, and resume. It refuses any request for a
+  project other than the one in `AIO_PROJECT_ID`, and any build whose
+  saved state names another project. The `aio-build` command in a box's
+  session is its client.
 - It refuses to start when its version differs from
   `AIO_ENGINE_VERSION`, the version the server expects. The image
   records its engine version in `/etc/aio-engine-version`.
@@ -273,6 +279,10 @@ The image, `aio-agent` by default, is built on the host from
   tmux session.
 - `/usr/local/bin/aio-secret`, the client of the secrets broker, from
   the engine package.
+- `/usr/local/bin/aio-build`, the client of the engine's build socket, from
+  the engine package. It sends `AIO_PROJECT_ID`, which the server sets on
+  every container, and `AIO_BOX_ID`, which the server sets on every box
+  session, with each request. Run `aio-build --help` for its requests.
 
 The server creates each container with the keeper as its command, the
 project root mounted at its container path (the same path on Linux and

@@ -188,6 +188,12 @@ RUN test -n "${AIO_ENGINE_VERSION}" || { echo "AIO_ENGINE_VERSION is not set; bu
     printf '#!/bin/sh\n# Gets secrets from the AI Orchestrator secrets broker, on the system Node.js 22.\nexec /usr/bin/node %s "$@"\n' \
       "${engine_pkg}/${secret_bin#./}" > /usr/local/bin/aio-secret && \
     chmod 0755 /usr/local/bin/aio-secret && \
+    build_bin="$(/usr/bin/node -p "require('${engine_pkg}/package.json').bin['aio-build'] ?? ''")" && \
+    { test -n "${build_bin}" || { echo "the engine package has no aio-build bin" >&2; exit 1; }; } && \
+    { test -f "${engine_pkg}/${build_bin#./}" || { echo "the build bin ${build_bin} is missing from the package" >&2; exit 1; }; } && \
+    printf '#!/bin/sh\n# Drives a build through the engine build socket, on the system Node.js 22.\nexec /usr/bin/node %s "$@"\n' \
+      "${engine_pkg}/${build_bin#./}" > /usr/local/bin/aio-build && \
+    chmod 0755 /usr/local/bin/aio-build && \
     rm -rf /tmp/aio-dist
 
 # The keeper scripts the server runs: keeper.sh is the container's PID 1

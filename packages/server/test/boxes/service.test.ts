@@ -59,7 +59,7 @@ describe("create", () => {
     expect([session, workDir]).toEqual(["aio-agent-app", dir]);
     const prompt = expandTemplate(DEFAULT_PROMPT_TEMPLATES.starter, ["Quick look", dir]);
     expect(command).toBe(
-      `env CLAUDE_CONFIG_DIR='${path.join(h.home, ".ai-orchestrator", "accounts", "claude", "fixture")}' claude '--remote-control=Quick look' '--permission-mode' 'auto' '--allow-dangerously-skip-permissions' ` +
+      `env CLAUDE_CONFIG_DIR='${path.join(h.home, ".ai-orchestrator", "accounts", "claude", "fixture")}' AIO_BOX_ID='${box.id}' claude '--remote-control=Quick look' '--permission-mode' 'auto' '--allow-dangerously-skip-permissions' ` +
         `'--model' 'claude-opus-5-5' '--effort' 'high' '--name=Quick look' '--session-id' '${box.sessionUuid}' '--' '${prompt.replace(/'/g, `'\\''`)}'`,
     );
     expect(h.core.boxes.status(box)).toBe("running");
@@ -557,7 +557,7 @@ describe("start, stop, restart", () => {
     const box = await stopped(h, { platform: "codex" });
     await h.core.boxes.start(box.id);
     expect(lastCommand(h)).toBe(
-      `env CODEX_HOME='${path.join(h.home, ".ai-orchestrator", "accounts", "codex", "fixture")}' codex 'resume' '--last' '--dangerously-bypass-approvals-and-sandbox'`,
+      `env CODEX_HOME='${path.join(h.home, ".ai-orchestrator", "accounts", "codex", "fixture")}' AIO_BOX_ID='${box.id}' codex 'resume' '--last' '--dangerously-bypass-approvals-and-sandbox'`,
     );
   });
 
@@ -973,7 +973,7 @@ describe("edit, platform, side sessions, messages", () => {
     const box = await h.core.boxes.create({ targetDir: h.dir("app"), layout: "root" });
     await h.core.boxes.setPlatform(box.id, "copilot", true);
     expect(lastCommand(h)).toBe(
-      `env COPILOT_HOME='${path.join(h.home, ".ai-orchestrator", "accounts", "copilot", "fixture")}' copilot '--remote' '--continue' '--allow-all-tools'`,
+      `env COPILOT_HOME='${path.join(h.home, ".ai-orchestrator", "accounts", "copilot", "fixture")}' AIO_BOX_ID='${box.id}' copilot '--remote' '--continue' '--allow-all-tools'`,
     );
   });
 
@@ -984,7 +984,7 @@ describe("edit, platform, side sessions, messages", () => {
       session: `${box.session}-codex`,
     });
     expect(lastCommand(h)).toBe(
-      `env CODEX_HOME='${path.join(h.home, ".ai-orchestrator", "accounts", "codex", "fixture")}' codex 'remote-control' '--no-daemon'`,
+      `env CODEX_HOME='${path.join(h.home, ".ai-orchestrator", "accounts", "codex", "fixture")}' AIO_BOX_ID='${box.id}' codex 'remote-control' '--no-daemon'`,
     );
     expect(h.core.boxes.view(h.core.boxes.get(box.id)).sideSessions).toEqual(["codex"]);
     await expect(h.core.boxes.startSideSession(box.id, "codex")).rejects.toMatchObject({

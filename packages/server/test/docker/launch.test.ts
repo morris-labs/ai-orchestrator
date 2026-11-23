@@ -137,6 +137,7 @@ describe("buildLaunchSpec", () => {
         `AIO_CONTAINER=${C}`,
         "AIO_ENGINE_VERSION=1.0.0",
         "AIO_STATE_DIR=/run/aio",
+        `AIO_PROJECT_ID=${input.projectId}`,
         "AIO_BROKER_SOCKET=/run/aio-broker/broker.sock",
       ],
       binds: [
