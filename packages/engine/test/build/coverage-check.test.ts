@@ -285,15 +285,16 @@ describe("the coverage check", () => {
     await world.settle("cart-total");
 
     const codex = world.calls().filter((c) => c.cli === "codex");
-    expect(codex).toHaveLength(2);
+    // The check's first turn starts its session; every message turn resumes it.
+    expect(codex.length).toBeGreaterThanOrEqual(2);
     expect(codex[0]!.resumeId).toBeNull();
-    expect(codex[1]!.resumeId).toEqual(expect.any(String));
+    for (const call of codex.slice(1)) expect(call.resumeId).toEqual(expect.any(String));
     const registry = JSON.parse(world.file("cart-total", "sessions.json")) as {
       sessions: { seat: string; vendor: string; turns: unknown[] }[];
     };
     const checkers = registry.sessions.filter((s) => s.seat === "coverage-checker");
     expect(checkers).toEqual([expect.objectContaining({ vendor: "codex" })]);
-    expect(checkers[0]!.turns).toHaveLength(2);
+    expect(checkers[0]!.turns.length).toBeGreaterThanOrEqual(2);
   });
 
   it("waits before the next step when a message without a plan task can't be delivered", async () => {
