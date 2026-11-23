@@ -34,6 +34,22 @@ const stateOf = (slug: string) =>
     .map((c) => c.textContent);
 
 describe("Builds page", () => {
+  it("subscribes to the build events, which the server sends only on request", async () => {
+    const server = new FakeServer({ boxes: [site()] });
+    await renderApp(server);
+    const socket = server.socketsFor("/api/v1/events")[0];
+    const types = socket?.query.get("types")?.split(",") ?? [];
+    for (const type of [
+      "build.changed",
+      "build.task.changed",
+      "build.inbox",
+      "message.sent",
+      "lease.settled",
+    ]) {
+      expect(types).toContain(type);
+    }
+  });
+
   it("lists the machine's builds with their state and step", async () => {
     const user = userEvent.setup();
     const server = new FakeServer({
