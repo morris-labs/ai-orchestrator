@@ -37,6 +37,7 @@ import {
   type SpecialtyPack,
   type SpecialtySources,
 } from "./specialties/index.js";
+import type { TeamBus, TeamChannel } from "../team/index.js";
 import type { EscalationDraft } from "./escalations.js";
 import { renderStatus } from "./status-file.js";
 import type { BuildStore } from "./store.js";
@@ -82,6 +83,8 @@ export interface BuildServices {
   skillDirs: () => string[];
   /** The policy's model per tier and vendor. */
   tierModels?: Parameters<typeof basicRouting>[0]["tierModels"];
+  /** The team chat bus. Without it, seat calls run without the bus. */
+  team?: TeamBus;
   /** The review runs; without them, the review step fails the build. */
   reviews?: ReviewRuns;
   /** How often the review step reads its run's state, in milliseconds. */
@@ -115,6 +118,8 @@ class FileCallCache implements CallCache {
 export class BuildContext {
   readonly calls: AgentCalls;
   readonly seats: SeatPlacements;
+  /** The build's team chat, or `null` when the engine runs no bus. */
+  readonly team: TeamChannel | null;
   /** Aborts the gate's commands when the engine stops; a new drive gets a new one. */
   private driveAbort = new AbortController();
   private writeChain: Promise<void> = Promise.resolve();
@@ -167,6 +172,14 @@ export class BuildContext {
       },
     };
     this.calls = new AgentCalls(host, services.call);
+    this.team =
+      services.team?.channel({
+        buildId: state.id,
+        dir: store.path("messages"),
+        tasks: () => this.plan.tasks,
+        emit: (draft) => this.emit(draft),
+        clock: services.clock,
+      }) ?? null;
   }
 
   /** Aborts when the engine stops the drive or the build is cancelled. */
@@ -319,7 +332,8 @@ export class BuildContext {
    * Starts an agent in `seat` for one task, on the seat's placement, and
    * returns its answer. The call cache returns a finished call's answer
    * without calling again, which is how a restarted build skips the calls
-   * it already made.
+   * it already made. The agent reaches the team chat with a token of its
+   * own, which ends with the call.
    */
   async callSeat(input: SeatCall): Promise<AgentOutcome<Record<string, unknown>>> {
     const role = this.role(input.seat);
@@ -354,6 +368,12 @@ export class BuildContext {
       ),
       placement,
     );
-    return this.calls.call<Record<string, unknown>>(spec);
+    const pass = this.team?.admit({ seat: input.seat, taskId: input.task.id });
+    if (pass) spec.request.team = pass.attachment;
+    try {
+      return await this.calls.call<Record<string, unknown>>(spec);
+    } finally {
+      pass?.revoke();
+    }
   }
 }
