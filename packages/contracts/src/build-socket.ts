@@ -1,6 +1,6 @@
 // The build socket's protocol: HTTP/1.1 with JSON bodies, over a Unix
 // socket that the engine opens inside its project container. The socket
-// accepts only build requests (planning seat calls, the freeze, start,
+// accepts only build requests (planning seat calls, meetings, the freeze, start,
 // status, pause, and resume) and needs
 // no engine token, so a box's session can drive a build with the
 // `aio-build` command without the token that the engine's full API
@@ -13,6 +13,11 @@ import {
   BuildSeatAnswerSchema,
   BuildSeatRequestSchema,
 } from "./build-planning.js";
+import {
+  BuildMeetingAnswerSchema,
+  BuildMeetingPostRequestSchema,
+  BuildMeetingRequestSchema,
+} from "./build-meetings.js";
 import { BuildPlanSchema, BuildStateSchema } from "./builds.js";
 import { ENGINE_ENV } from "./config.js";
 
@@ -44,6 +49,8 @@ export const BUILD_SOCKET_ENV = {
 export const BUILD_SOCKET_ROUTES = {
   plan: "/v1/builds/plan",
   freeze: "/v1/builds/freeze",
+  meet: "/v1/builds/meet",
+  meetingPost: "/v1/builds/meeting-post",
   start: "/v1/builds/start",
   status: "/v1/builds/status",
   pause: "/v1/builds/pause",
@@ -84,6 +91,12 @@ export const BuildSocketPlanSchema = BuildSeatRequestSchema;
 /** The body of a freeze request. */
 export const BuildSocketFreezeSchema = BuildFreezeRequestSchema;
 
+/** The body of a meeting request. */
+export const BuildSocketMeetSchema = BuildMeetingRequestSchema;
+
+/** The body of an owner post to a running meeting. */
+export const BuildSocketMeetingPostSchema = BuildMeetingPostRequestSchema;
+
 /** The answer to a start, status, pause, or resume request: the build's state after the request. */
 export const BuildSocketResponseSchema = z.object({ build: BuildStateSchema });
 export type BuildSocketResponse = z.infer<typeof BuildSocketResponseSchema>;
@@ -92,6 +105,8 @@ export type BuildSocketResponse = z.infer<typeof BuildSocketResponseSchema>;
 export const BUILD_SOCKET_RESPONSES = {
   plan: BuildSeatAnswerSchema,
   freeze: BuildFreezeAnswerSchema,
+  meet: BuildMeetingAnswerSchema,
+  meetingPost: BuildMeetingAnswerSchema,
   start: BuildSocketResponseSchema,
   status: BuildSocketResponseSchema,
   pause: BuildSocketResponseSchema,
