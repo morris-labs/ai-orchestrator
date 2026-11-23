@@ -247,6 +247,13 @@ seat and by step for the `GET /api/v1/builds/BUILD_ID/usage` route. Replace
 The schemas for these frames are in `packages/contracts/src/lease.ts`, and
 the build fields are in `packages/contracts/src/build-events.ts`.
 
+The server keeps the latest state of every build from its `build.changed`
+events in the `svc_builds` table. The `GET /api/v1/builds` route lists them,
+newest first, and takes an optional `projectId` query. The
+`GET /api/v1/builds/BUILD_ID` route returns one build. A build's `boxId`
+names the box whose Project manager runs it. The Boxes app lists builds on
+its Builds page and shows a badge on a box that runs an active build.
+
 ## Container image
 
 The image, `aio-agent` by default, is built on the host from
