@@ -67,10 +67,22 @@ export const BuildSummarySchema = z.object({
   status: BuildStatusSchema,
   /** The step the build is in; `null` before it starts one. */
   step: BuildStepSchema.nullable(),
+  /**
+   * The box whose Project manager runs the build, or `null` when no box
+   * does. An event that leaves it out reads as `null`.
+   */
+  boxId: z.string().min(1).nullable().default(null),
   createdAt: IsoDateTimeSchema,
   updatedAt: IsoDateTimeSchema,
 });
 export type BuildSummary = z.infer<typeof BuildSummarySchema>;
+
+/** The query of `builds.list`: every build on the machine, or one project's. */
+export const BuildListQuerySchema = z.object({ projectId: z.string().min(1).optional() });
+
+/** The response of `builds.list`: newest first. */
+export const BuildListSchema = z.object({ builds: z.array(BuildSummarySchema) });
+export type BuildList = z.infer<typeof BuildListSchema>;
 
 export const BuildTaskStatusSchema = z.enum(["pending", "running", "done", "failed", "blocked"]);
 export type BuildTaskStatus = z.infer<typeof BuildTaskStatusSchema>;

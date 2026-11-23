@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   BuildUsageSchema,
+  serverRoutes,
   EventSchema,
   LeaseRequestSchema,
   LeaseSettlementSchema,
@@ -26,6 +27,7 @@ const build = {
   container: CONTAINER,
   status: "running",
   step: "tasks",
+  boxId: "example-app-1",
   createdAt: T0,
   updatedAt: T1,
 };
@@ -60,6 +62,12 @@ describe("build events", () => {
       previousStatus: "pending",
     };
     expect(roundTrip(EventSchema, event)).toEqual(event);
+  });
+
+  it("reads a build.changed event without a box as a build that no box runs", () => {
+    const { boxId: _boxId, ...noBox } = build;
+    const parsed = EventSchema.parse({ ...meta(1), type: "build.changed", build: noBox });
+    expect(parsed).toMatchObject({ build: { boxId: null } });
   });
 
   it("rejects a build with a slug that isn't kebab case", () => {
@@ -127,5 +135,21 @@ describe("build events", () => {
       ],
     };
     expect(roundTrip(BuildUsageSchema, usage)).toEqual(usage);
+  });
+});
+
+describe("build routes", () => {
+  it("lists builds, optionally for one project, and reads one build", () => {
+    const list = serverRoutes["builds.list"];
+    expect(list.method).toBe("GET");
+    expect(list.path).toBe("/api/v1/builds");
+    expect(list.query.parse({})).toEqual({});
+    expect(list.query.parse({ projectId: "example-app-1a2b3c4d" }).projectId).toBe(
+      "example-app-1a2b3c4d",
+    );
+    expect(roundTrip(list.response, { builds: [build] })).toEqual({ builds: [build] });
+    const get = serverRoutes["builds.get"];
+    expect(get.path).toBe("/api/v1/builds/:buildId");
+    expect(roundTrip(get.response, build)).toEqual(build);
   });
 });
