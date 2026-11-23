@@ -9,6 +9,7 @@ import { PlanIdSchema } from "./builds.js";
 import { IsoDateTimeSchema, VendorSchema } from "./common.js";
 import { MessageIdSchema } from "./messages.js";
 import { SeatPlacementSchema } from "./placements.js";
+import { SpecialtyNameSchema } from "./specialties.js";
 
 /** A session's ID in its build's registry: `S1`, `S2`, and so on, in start order. */
 export const SessionIdSchema = z.string().regex(/^S[1-9][0-9]*$/);
@@ -44,13 +45,37 @@ export const SessionTurnSchema = z
   .strict();
 export type SessionTurn = z.infer<typeof SessionTurnSchema>;
 
-/** One agent session: the seat and task it works for, and its turns. */
+/**
+ * The task as the session's agent got it, so a fresh agent that takes over
+ * gets the same brief: the role prompt's task fields without the context of
+ * one attempt.
+ */
+export const SessionBriefSchema = z
+  .object({
+    id: z.string().min(1),
+    title: z.string(),
+    description: z.string(),
+    ownedFiles: z.array(z.string()),
+    contracts: z.array(z.string()).default([]),
+    criteria: z.array(z.object({ id: z.string(), text: z.string() }).strict()),
+    tests: z.array(z.string()).default([]),
+    specialties: z.array(SpecialtyNameSchema).default([]),
+  })
+  .strict();
+export type SessionBrief = z.infer<typeof SessionBriefSchema>;
+
+/** One agent session: the seat and tasks it works for, and its turns. */
 export const SessionRecordSchema = z
   .object({
     id: SessionIdSchema,
     seat: RoleNameSchema,
-    /** `null` for a seat that works on no one task. */
-    taskId: PlanIdSchema.nullable(),
+    /**
+     * The plan tasks the session works for: one for a Developer, every task
+     * in scope for the Test engineer's tests first, none for a seat that
+     * works on no one task.
+     */
+    taskIds: z.array(PlanIdSchema),
+    brief: SessionBriefSchema,
     /** The step the session started in. */
     step: BuildStepSchema,
     vendor: VendorSchema,

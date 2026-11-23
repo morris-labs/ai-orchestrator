@@ -21,7 +21,17 @@ function session(inputTokens: number, vendor: SessionRecord["vendor"] = "claude"
   return {
     id: "S1",
     seat: "developer",
-    taskId: "T1",
+    taskIds: ["T1"],
+    brief: {
+      id: "T1",
+      title: "Cart total",
+      description: "Make total() return the sum of the item prices.",
+      ownedFiles: ["src/cart.mjs"],
+      contracts: [],
+      criteria: [],
+      tests: [],
+      specialties: [],
+    },
     step: "tasks",
     vendor,
     model: "model",
