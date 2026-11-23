@@ -85,6 +85,7 @@ export function toCliRequest(
     ...(request.effort !== undefined ? { effort: request.effort } : {}),
     ...(request.signal !== undefined ? { signal: request.signal } : {}),
     ...(request.sessionId !== undefined ? { sessionId: request.sessionId } : {}),
+    ...(request.sessionFolder !== undefined ? { sessionFolder: request.sessionFolder } : {}),
     ...(request.team !== undefined ? { team: request.team } : {}),
     outputSchema: schema.output,
     jsonSchema: schema.json,
@@ -107,6 +108,7 @@ export function toCoreResult<T>(
     output: result.output as T,
     model: result.model ?? requestedModel ?? vendor,
     sessionId: result.sessionId,
+    ...(result.accountFolder !== undefined ? { accountFolder: result.accountFolder } : {}),
     tokens: {
       in: result.tokens.input,
       out: result.tokens.output,

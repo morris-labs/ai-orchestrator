@@ -128,6 +128,9 @@ export class SessionDesk {
       vendor: input.outcome.vendor,
       model: input.outcome.model,
       sessionId: input.outcome.sessionId,
+      ...(input.outcome.accountFolder !== undefined
+        ? { accountFolder: input.outcome.accountFolder }
+        : {}),
       placement: input.placement,
       ...(input.otherThan ? { otherThan: input.otherThan } : {}),
       reason: "step",
@@ -272,7 +275,14 @@ export class SessionDesk {
       placement,
       specialties: packs,
       output: answer.output,
-      ...(reason === null && session.sessionId !== null ? { sessionId: session.sessionId } : {}),
+      ...(reason === null && session.sessionId !== null
+        ? {
+            sessionId: session.sessionId,
+            ...(session.accountFolder !== undefined
+              ? { sessionFolder: session.accountFolder }
+              : {}),
+          }
+        : {}),
     });
     let taken = session;
     if (!(await this.registry.hasTurn(key))) {
@@ -284,7 +294,7 @@ export class SessionDesk {
         inputTokens: outcome.tokens.in,
       };
       if (reason === null) {
-        await this.registry.addTurn(session.id, turn, outcome.sessionId);
+        await this.registry.addTurn(session.id, turn, outcome.sessionId, outcome.accountFolder);
       } else {
         taken = await this.registry.start({
           seat: session.seat,
@@ -294,6 +304,7 @@ export class SessionDesk {
           vendor: outcome.vendor,
           model: outcome.model,
           sessionId: outcome.sessionId,
+          ...(outcome.accountFolder !== undefined ? { accountFolder: outcome.accountFolder } : {}),
           placement,
           ...(session.otherThan ? { otherThan: session.otherThan } : {}),
           reason,

@@ -132,6 +132,8 @@ export interface TurnCall {
   output: AdapterOutput;
   /** The session to resume; absent, the turn starts a fresh agent. */
   sessionId?: string;
+  /** The account folder that holds `sessionId`, as the session registry saved it. */
+  sessionFolder?: string | null;
 }
 
 /** The build's call cache: each finished call in `calls/KEY.json`. */
@@ -650,6 +652,7 @@ export class BuildContext {
       prompt: input.prompt,
       output: input.output,
       ...(input.sessionId !== undefined ? { sessionId: input.sessionId } : {}),
+      ...(input.sessionFolder !== undefined ? { sessionFolder: input.sessionFolder } : {}),
     });
     return this.runTurn(spec, input.seat, input.taskId);
   }

@@ -742,6 +742,7 @@ export class AgentCalls {
         vendor,
         model: result.model || model,
         sessionId: result.sessionId,
+        ...(result.accountFolder !== undefined ? { accountFolder: result.accountFolder } : {}),
         output: result.output,
         tokens: actual.tokens,
         ...(result.toolErrors?.length ? { toolErrors: result.toolErrors } : {}),

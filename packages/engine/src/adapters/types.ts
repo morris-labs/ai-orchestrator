@@ -36,6 +36,13 @@ export interface CliRequest<T = unknown> {
   timeoutMs: number;
   /** A session to continue. `continueReview` requires it. */
   sessionId?: string;
+  /**
+   * The account folder that holds `sessionId`, as an earlier result's
+   * `accountFolder` reported it; `null` for the CLI's home folder. Absent,
+   * the adapter uses the folder it remembers for the session, else the
+   * default.
+   */
+  sessionFolder?: string | null;
   /** Validates the structured output. */
   outputSchema: z.ZodType<T, z.ZodTypeDef, unknown>;
   /** A JSON Schema for the CLI. Absent means the adapter derives one from `outputSchema`. */
@@ -96,6 +103,11 @@ export interface CliResult<T = unknown> {
   output: T;
   /** The session to pass back for a continuation; `null` when the CLI reported none. */
   sessionId: string | null;
+  /**
+   * The account folder the call ran in, which holds its session; `null` for
+   * the CLI's home folder. The adapter's `dispatch` sets it.
+   */
+  accountFolder?: string | null;
   /** The model that answered, when the CLI says; otherwise the requested model or `null`. */
   model: string | null;
   usage: UsageSample[];

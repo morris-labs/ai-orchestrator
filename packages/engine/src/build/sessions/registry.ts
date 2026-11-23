@@ -26,6 +26,8 @@ export interface SessionStart {
   vendor: Vendor;
   model: string;
   sessionId: string | null;
+  /** The account folder that holds the vendor session, when the adapter reported it. */
+  accountFolder?: string | null;
   placement: SeatPlacement;
   /** The vendor a rule keeps the seat's agents off. */
   otherThan?: Vendor;
@@ -113,13 +115,22 @@ export class SessionRegistryFile {
     });
   }
 
-  /** Adds a finished turn to session `id`, with the vendor session it reported. */
-  addTurn(id: string, turn: SessionTurn, sessionId: string | null): Promise<void> {
+  /**
+   * Adds a finished turn to session `id`, with the vendor session it
+   * reported and the account folder that holds it.
+   */
+  addTurn(
+    id: string,
+    turn: SessionTurn,
+    sessionId: string | null,
+    accountFolder?: string | null,
+  ): Promise<void> {
     return this.change((data) => {
       const session = data.sessions.find((s) => s.id === id);
       if (!session) throw new Error(`The session registry has no session ${id}.`);
       session.turns.push(turn);
       if (sessionId !== null) session.sessionId = sessionId;
+      if (accountFolder !== undefined) session.accountFolder = accountFolder;
     });
   }
 

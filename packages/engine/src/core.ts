@@ -98,6 +98,11 @@ export interface AdapterRequest {
   team?: TeamAttachment;
   /** A session of the same vendor to resume. Absent, the call starts a fresh session. */
   sessionId?: string;
+  /**
+   * The account folder that holds `sessionId`, as an earlier result's
+   * `accountFolder` reported it; `null` for the CLI's home folder.
+   */
+  sessionFolder?: string | null;
 }
 
 /**
@@ -136,6 +141,8 @@ export interface AdapterResult<T> {
   model: string;
   /** The vendor session, for `continueReview`; `null` when the CLI has none. */
   sessionId: string | null;
+  /** The account folder that holds the session; `null` for the CLI's home folder; absent when unknown. */
+  accountFolder?: string | null;
   tokens: { in: number; out: number; fresh?: number; cacheWrite?: number; cacheRead?: number };
   /** Usage readings the call produced, such as Claude's `rate_limit_event`. */
   usage: RawUsageSample[];

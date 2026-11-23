@@ -2,7 +2,7 @@
 // agent's session with its seat and tasks, and a message for an agent whose
 // turn ended resumes that session, one turn at a time, with the commits
 // that landed since.
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { SessionRegistrySchema, type SessionRecord } from "@aio/contracts";
 import { describe, expect, it } from "vitest";
@@ -15,6 +15,7 @@ import {
   type BuildWorld,
   type MockResponse,
 } from "./harness.js";
+import { tempDir } from "../tmp.js";
 
 const TEST_FILE = "test/cart.test.mjs";
 
@@ -261,6 +262,36 @@ describe("session resume", () => {
     ]);
     expect(asked().map((c) => c.resumeId)).toEqual([tester.sessionId, tester.sessionId]);
     expect(world.jsonFiles("cart-restart", "messages")).toHaveLength(1);
+  });
+
+  it("resumes a session in its account folder after a restart moved the default", async () => {
+    const first = tempDir("aio-codex-first-");
+    const second = tempDir("aio-codex-second-");
+    let current = first;
+    const world = await buildWorld({
+      steps: BUILD_PIPELINE,
+      accountDirs: { codex: () => current },
+    });
+    world.script({
+      codex: [done(QUESTION, { times: 1, delayMs: 20_000 }), done(QUESTION), TESTS_FIRST],
+      claude: [{ ...developer(QUESTION), times: 1 }, developer()],
+    });
+
+    await world.start("cart-folder");
+    const asked = () => world.calls().filter((c) => c.cli === "codex" && c.resumeId);
+    const end = Date.now() + 20_000;
+    while (asked().length === 0 && Date.now() < end) await new Promise((r) => setTimeout(r, 25));
+    const tester = sessionOf(registry(world, "cart-folder").sessions, "test-engineer");
+    expect(tester.accountFolder).toBe(first);
+
+    current = second;
+    await world.restart();
+    await world.settle("cart-folder");
+
+    expect(asked().map((c) => c.resumeId)).toEqual([tester.sessionId, tester.sessionId]);
+    // The resumed turn ran in the folder that holds the session, so the
+    // codex mock wrote nothing to the new default.
+    expect(existsSync(join(second, "sessions"))).toBe(false);
   });
 
   it("leaves a message for a seat and task that no agent holds to others", async () => {

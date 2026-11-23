@@ -162,6 +162,8 @@ export interface BuildWorldOptions {
   secretNames?: () => Promise<string[]>;
   /** Adds the Copilot mock CLI to Claude and Codex. */
   copilot?: boolean;
+  /** The account folder of each vendor's calls, asked on every call. Default: none. */
+  accountDirs?: Partial<Record<Vendor, () => string | undefined>>;
 }
 
 /**
@@ -225,21 +227,31 @@ export async function buildWorld(options: BuildWorldOptions = {}): Promise<Build
   const log = join(work, "calls.jsonl");
   writeFileSync(scenario, "{}");
   const env = { MOCK_CLI_SCENARIO: scenario, MOCK_CLI_LOG: log, ANTHROPIC_API_KEY: undefined };
-  const cliOptions = { env, account: "user@example.com" };
-  const cli: Partial<Record<Vendor, CliVendorAdapter>> = {
+  const cliOptions = (vendor: Vendor) => ({
+    env,
+    account: "user@example.com",
+    ...(options.accountDirs?.[vendor] ? { accountDir: options.accountDirs[vendor] } : {}),
+  });
+  // Each engine gets adapters of its own, as a restarted engine does.
+  const adapters = (): Partial<Record<Vendor, CliVendorAdapter>> => ({
     claude: new ClaudeAdapter({
-      ...cliOptions,
+      ...cliOptions("claude"),
       command: join(MOCK_BIN, "claude"),
       bare: false,
       persistSessions: false,
     }),
-    codex: new CodexAdapter({ ...cliOptions, command: join(MOCK_BIN, "codex") }),
+    codex: new CodexAdapter({ ...cliOptions("codex"), command: join(MOCK_BIN, "codex") }),
     // The review runs that builds start pick from every vendor, so Copilot
     // takes part only in the worlds that ask for it.
     ...(options.copilot
-      ? { copilot: new CopilotAdapter({ ...cliOptions, command: join(MOCK_BIN, "copilot") }) }
+      ? {
+          copilot: new CopilotAdapter({
+            ...cliOptions("copilot"),
+            command: join(MOCK_BIN, "copilot"),
+          }),
+        }
       : {}),
-  };
+  });
   const team = new TeamBus({ log: silentLogger });
   await team.start();
   const make = async () => {
@@ -250,7 +262,7 @@ export async function buildWorld(options: BuildWorldOptions = {}): Promise<Build
       container: "aio-agent-proj-build",
       events,
       leases: broker,
-      adapters: bridgeAdapters(cli),
+      adapters: bridgeAdapters(adapters()),
       log: silentLogger,
       github: options.github ?? NO_GITHUB,
     };

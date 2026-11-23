@@ -17,7 +17,9 @@ the following lists:
 
 - **`sessions`:** every agent session in start order. Each one names its
   seat, the plan tasks it works for, the vendor and its session ID, the
-  placement it runs on, the task brief that its agent got, and its turns.
+  account folder that holds the session, the placement it runs on, the
+  vendor a rule keeps the seat off (for the coverage check), the task brief
+  that its agent got, and its turns.
   Each turn records the agent call key, the message it answered, when it
   ended, the build worktree's `HEAD` commit at that time, and its input
   tokens.
@@ -44,6 +46,9 @@ Each seat takes one turn at a time. A message for an agent whose turn is
 under way waits in the queue until the turn ends, and two messages for one
 session run as two turns in the order the engine saved them. A build step
 ends only after the message turns that it started finish.
+
+A resumed turn runs in the account folder that holds the session, even when
+the vendor's default account folder changed or the engine restarted since.
 
 A resumed turn's prompt holds the message and a summary of the commits that
 landed on the build branch since the session's last turn, one `SHA subject`

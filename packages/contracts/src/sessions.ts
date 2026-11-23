@@ -82,6 +82,12 @@ export const SessionRecordSchema = z
     model: z.string().min(1),
     /** The vendor's session ID, or `null` when the vendor reported none. */
     sessionId: z.string().min(1).nullable(),
+    /**
+     * The account folder that holds the vendor session, so a resume after an
+     * engine restart runs there; `null` for the CLI's home folder. Absent for
+     * a session recorded before the engine saved it.
+     */
+    accountFolder: z.string().min(1).nullable().optional(),
     /** The placement the session runs on. A different one for its seat starts a fresh agent. */
     placement: SeatPlacementSchema,
     /**
