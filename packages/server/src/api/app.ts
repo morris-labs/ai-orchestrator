@@ -38,7 +38,8 @@ import { MultiHost, type MachineRole, type MultiHostOptions } from "../hub/multi
 import { UpgradeService, imageBuildFailureMessage, saveImageBuildLog } from "../setup/upgrade.js";
 import { SetupService } from "../setup/setup-service.js";
 import { UpdateChecker } from "../setup/updates.js";
-import { RELEASE_EDITS_MESSAGE } from "./handlers.js";
+import { HOLD_EDITS_MESSAGE, RELEASE_EDITS_MESSAGE } from "./handlers.js";
+import { SessionMessages } from "../boxes/session-messages.js";
 import { SshTunnelManager, startCopyIdJob, testConnection } from "../ssh/tunnels.js";
 import { currentPlatform, serviceManagerOf, type HostPlatform } from "../platform/host.js";
 import { installServerService, serverServiceInstalled } from "../service/index.js";
@@ -205,16 +206,18 @@ export async function startApp(options: AppOptions): Promise<App> {
     runRound: (runId) => runMirror.round(runId),
     emit: (e) => hub.emit(e),
   });
+  // The hold and release edits messages wait while a session shows a dialog.
+  const sessionMessages = new SessionMessages({
+    deliver: (boxId, request) => core.boxes.deliver(boxId, request),
+    log,
+  });
   const notifier = new Notifier({
     db: core.db,
     settings,
     emit: (e) => hub.emit(e),
     builds: buildMirror,
-    releaseBox: (boxId) => {
-      void core.boxes.message(boxId, RELEASE_EDITS_MESSAGE).catch((err: unknown) => {
-        log(`Telling ${boxId} that the run ended failed: ${(err as Error).message}`);
-      });
-    },
+    releaseBox: (boxId) =>
+      sessionMessages.send(boxId, RELEASE_EDITS_MESSAGE, { withdraws: HOLD_EDITS_MESSAGE }),
   });
   // Escalations, digests, and usage alerts reach the Project manager's session.
   const pmDelivery = new PmDelivery({
@@ -551,6 +554,7 @@ export async function startApp(options: AppOptions): Promise<App> {
       messages: (buildId) => buildMirror.messages(buildId),
       tasks: (buildId) => buildMirror.tasks(buildId),
     },
+    sessionMessages,
     notifications: notifier,
     secrets,
     setup,
@@ -662,6 +666,7 @@ export async function startApp(options: AppOptions): Promise<App> {
       clearInterval(brokerTimer);
       boxBuilds.close();
       pmDelivery.close();
+      sessionMessages.close();
       await brokerSync;
       await broker.closeAll();
       await core.close?.();

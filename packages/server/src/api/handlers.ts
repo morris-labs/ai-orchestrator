@@ -620,11 +620,7 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
         body: { ...body, runId: ulid() },
       })) as RunState;
       deps.runs.upsert(run);
-      if (body.boxId !== undefined) {
-        await core.boxes.message(body.boxId, HOLD_EDITS_MESSAGE).catch((err: unknown) => {
-          deps.log?.(`Asking ${body.boxId} to hold edits failed: ${(err as Error).message}`);
-        });
-      }
+      if (body.boxId !== undefined) deps.sessionMessages.send(body.boxId, HOLD_EDITS_MESSAGE);
       reply.code(201);
       return run;
     },

@@ -763,7 +763,9 @@ describe("review routes", () => {
     const sent = h.engine.calls.find((c) => c.key === "engine.runs.create");
     expect((sent?.input.body as { runId: string }).runId).toBe(run.id);
     expect(h.runs.get(run.id)?.status).toBe("pending");
-    expect(h.core.calls).toContain(`message:${box.id}:${HOLD_EDITS_MESSAGE.slice(0, 20)}`);
+    // The request goes out through delivery, which waits while the session shows a dialog.
+    await h.deps.sessionMessages.idle?.();
+    expect(h.core.calls).toContain(`deliver:${box.id}:${HOLD_EDITS_MESSAGE.slice(0, 20)}`);
   });
 
   it("passes other projects' token samples into a preview", async () => {
