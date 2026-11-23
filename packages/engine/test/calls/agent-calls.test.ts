@@ -85,7 +85,11 @@ class MemoryCache implements CallCache {
 }
 
 /** A minimal caller: a build-like task runner with its own status and cache. */
-function makeCaller(adapters: Partial<Record<Vendor, VendorAdapter>>, cache = new MemoryCache()) {
+function makeCaller(
+  adapters: Partial<Record<Vendor, VendorAdapter>>,
+  cache = new MemoryCache(),
+  extra: Partial<AgentCallHost> = {},
+) {
   const clock = new FakeClock();
   const events = new MemoryEventSink("engine:test", "s", clock);
   const broker = new GrantingBroker(clock);
@@ -126,6 +130,7 @@ function makeCaller(adapters: Partial<Record<Vendor, VendorAdapter>>, cache = ne
     cache,
     routing: basicRouting({ fallbackOrder: ["codex", "claude", "copilot"], timeoutMs: 60_000 }),
     treeGuard: { ignore: [] },
+    ...extra,
   };
   const calls = new AgentCalls(host, {
     adapters,
@@ -170,6 +175,37 @@ describe("AgentCalls for a caller that isn't a review run", () => {
     expect(started).toMatchObject({ runId: id, agentId: `${id}-A1`, role: "fixer" });
     const finished = emitted[1] as Extract<EventDraft, { type: "agent.finished" }>;
     expect(finished).toMatchObject({ outcome: "ok", model: "codex-model" });
+  });
+
+  it("names the build, seat, and step on a build call's lease and events", async () => {
+    const repo = buildSampleRepo();
+    const buildId = uniqueRunId();
+    const { id, calls, broker, emitted } = makeCaller({ codex: answering("codex") }, undefined, {
+      owner: { runId: null, buildId },
+    });
+
+    await calls.call<Answer>(spec(repo, { seat: "developer", step: "tasks" }));
+
+    const owner = { runId: null, buildId, seat: "developer", step: "tasks" };
+    expect(broker.requests[0]).toMatchObject({ leaseId: `${id}-L1`, ...owner });
+    expect(emitted.map((e) => e.type)).toEqual([
+      "agent.started",
+      "agent.finished",
+      "lease.settled",
+    ]);
+    for (const event of emitted) expect(event).toMatchObject(owner);
+  });
+
+  it("leaves the build fields out of a review run's lease and events", async () => {
+    const repo = buildSampleRepo();
+    const { id, calls, broker, emitted } = makeCaller({ codex: answering("codex") });
+
+    await calls.call<Answer>(spec(repo));
+
+    for (const record of [broker.requests[0], ...emitted]) {
+      expect(record).toMatchObject({ runId: id });
+      for (const key of ["buildId", "seat", "step"]) expect(record).not.toHaveProperty(key);
+    }
   });
 
   it("returns a finished call from the cache instead of calling again", async () => {
