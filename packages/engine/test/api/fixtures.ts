@@ -142,6 +142,7 @@ export const buildState: BuildState = {
   id: RUN,
   slug: "cart-total",
   projectId: "proj-1",
+  boxId: null,
   container: CONTAINER,
   title: "Add a total to the cart",
   repoPath: PROJECT_ROOT,

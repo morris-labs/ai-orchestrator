@@ -73,6 +73,7 @@ describe("BuildStateSchema", () => {
       id: "01JD0000000000000000000000",
       slug: "cart-total",
       projectId: "p-1",
+      boxId: null,
       container: "aio-agent-proj-shop",
       title: "Add a total to the cart",
       repoPath: "/workspace/shop",

@@ -119,6 +119,8 @@ export const BuildCreateSchema = z
   .object({
     /** The project the build belongs to, as the server knows it. */
     projectId: z.string().min(1),
+    /** The box whose session plans and watches the build, when one does. */
+    boxId: z.string().min(1).optional(),
     slug: BuildSlugSchema,
     plan: BuildPlanSchema,
     /** The repository as the container sees it. Absent means the project root. */
@@ -185,6 +187,8 @@ export const BuildStateSchema = z.object({
   id: BuildIdSchema,
   slug: BuildSlugSchema,
   projectId: z.string().min(1),
+  /** The box whose session plans and watches the build, or `null`. */
+  boxId: z.string().min(1).nullable(),
   /** The project container whose engine runs the build. */
   container: z.string().min(1),
   title: z.string(),

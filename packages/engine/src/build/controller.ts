@@ -112,6 +112,7 @@ export class BuildController {
       id: ulid(services.clock.now()),
       slug: request.slug,
       projectId: request.projectId,
+      boxId: request.boxId ?? null,
       container: location.container,
       title: request.plan.title,
       repoPath,
