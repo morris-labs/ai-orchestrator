@@ -21,13 +21,15 @@
 // 6. After the call, the engine emits a `lease.settled` event with the actual
 //    usage, which the server records against the account.
 import { z } from "zod";
-import { CountSchema, IsoDateTimeSchema, RunIdSchema, VendorSchema } from "./common.js";
+import { CountSchema, IsoDateTimeSchema, VendorSchema } from "./common.js";
 import { AgentRoleSchema } from "./runs.js";
+import { callOwnerFields } from "./build-events.js";
 
 export const LeaseRequestSchema = z.object({
   /** Unique per engine; the response and the settlement refer to it. */
   leaseId: z.string().min(1),
-  runId: RunIdSchema,
+  /** The review run or the build the call belongs to; see `callOwnerFields`. */
+  ...callOwnerFields,
   vendor: VendorSchema,
   role: AgentRoleSchema,
   estimate: z.object({ tokens: CountSchema }),
@@ -84,7 +86,8 @@ export type LeaseResponseFrame = z.infer<typeof LeaseResponseFrameSchema>;
 /** The actual usage of a call made under a lease; the payload of `lease.settled`. */
 export const LeaseSettlementSchema = z.object({
   leaseId: z.string().min(1),
-  runId: RunIdSchema,
+  /** The review run or the build the call belongs to; see `callOwnerFields`. */
+  ...callOwnerFields,
   vendor: VendorSchema,
   role: AgentRoleSchema,
   tokens: z.object({ in: CountSchema, out: CountSchema }),

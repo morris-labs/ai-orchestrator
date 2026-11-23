@@ -5,6 +5,7 @@ export * from "./records.js";
 export * from "./findings.js";
 export * from "./runs.js";
 export * from "./tasks.js";
+export * from "./build-events.js";
 export * from "./lease.js";
 export * from "./events.js";
 export * from "./policy.js";

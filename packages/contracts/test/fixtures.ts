@@ -6,6 +6,8 @@ export const T1 = "2026-10-28T09:05:00.000Z";
 export const UUID = "0b9f2a7e-4c1d-4e8a-9f3b-2d6c8e1a5b70";
 /** A ULID run id. */
 export const RUN = "01JB8Z5K3W6Q2V9X4T7R0M1N2P";
+/** A ULID build id. */
+export const BUILD = "01JB8Z5K3W6Q2V9X4T7R0M1N2Q";
 
 export const project = {
   id: "example-app-1a2b3c4d",
@@ -417,5 +419,27 @@ export const events = [
     type: "settings.changed",
     settings: parseConfig(settingsFile),
     changedKeys: ["notifications"],
+  },
+  {
+    ...ev(18),
+    type: "build.changed",
+    build: {
+      id: BUILD,
+      slug: "add-export",
+      projectId: project.id,
+      container: CONTAINER,
+      status: "running",
+      step: "tasks",
+      createdAt: T0,
+      updatedAt: T1,
+    },
+  },
+  {
+    ...ev(19),
+    type: "build.task.changed",
+    buildId: BUILD,
+    taskId: "T1",
+    status: "done",
+    previousStatus: "running",
   },
 ];
