@@ -1,7 +1,16 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { RoleError, UnknownRoleError, loadRole, loadRoles, parseRole } from "../../src/build/roles/index.js";
+import {
+  RoleError,
+  UnknownRoleError,
+  loadRole,
+  loadRoles,
+  parseRole,
+  rolePrompt,
+  writablePaths,
+  type RoleTask,
+} from "../../src/build/roles/index.js";
 import { tempDir } from "../tmp.js";
 
 /** A valid role definition, with `extra` front matter lines and without the `omit` field. */
@@ -131,5 +140,63 @@ describe("loadRoles", () => {
     await expect(loadRole("astronaut", repo, { libraryDir: library })).rejects.toThrow(
       UnknownRoleError,
     );
+  });
+});
+
+describe("the Developer role", () => {
+  const task: RoleTask = {
+    id: "T3",
+    title: "Add the export button",
+    description: "Add a button that exports the report as CSV.",
+    repoPath: "/work/repo",
+    branch: "build/T3",
+    ownedFiles: ["src/export.ts", "test/export.test.ts"],
+    contracts: ["src/contracts/report.ts"],
+    criteria: [{ id: "AC2", text: "The export holds one row per report line." }],
+    tests: ["test/export.test.ts"],
+  };
+
+  it("ships in the library with its default placement", async () => {
+    const repo = tempDir("aio-roles-repo-");
+    const role = await loadRole("developer", repo);
+    expect(role.source).toBe("library");
+    expect(role.title).toBe("Developer");
+    expect(role.activation.group).toBe("core");
+    expect(role.placement).toEqual({ vendor: "claude", tier: "large", effort: "medium" });
+    expect(role.permission).toEqual({ access: "write", paths: ["{owned}"] });
+  });
+
+  it("produces the prompt for one task", async () => {
+    const role = await loadRole("developer", tempDir("aio-roles-repo-"));
+    const prompt = rolePrompt(role, task);
+    expect(prompt).toContain("You are the Developer");
+    expect(prompt).toContain(role.instructions);
+    for (const rule of role.rules) expect(prompt).toContain(rule);
+    expect(prompt).toContain("T3: Add the export button");
+    expect(prompt).toContain("/work/repo");
+    expect(prompt).toContain("build/T3");
+    expect(prompt).toContain("- src/export.ts");
+    expect(prompt).toContain("- src/contracts/report.ts");
+    expect(prompt).toContain("- AC2: The export holds one row per report line.");
+    expect(prompt).toContain("- test/export.test.ts");
+    expect(prompt).toContain("Answer with exactly one JSON object");
+    expect(prompt).toContain('"criteria"');
+  });
+
+  it("limits writes to the task's owned files", async () => {
+    const role = await loadRole("developer", tempDir("aio-roles-repo-"));
+    expect(writablePaths(role, task)).toEqual(["src/export.ts", "test/export.test.ts"]);
+    expect(rolePrompt(role, task)).toContain(
+      "Change only these files: src/export.ts, test/export.test.ts.",
+    );
+  });
+
+  it("tells a read-only role to change no file and leaves out empty sections", () => {
+    const role = parseRole(roleText(), "reviewer-of-notes.md");
+    const prompt = rolePrompt(role, { ...task, contracts: [], tests: [] });
+    expect(writablePaths(role, task)).toEqual([]);
+    expect(prompt).toContain("Don't change, create, or delete any file.");
+    expect(prompt).not.toContain("## Contracts");
+    expect(prompt).not.toContain("## Tests that must pass");
   });
 });
