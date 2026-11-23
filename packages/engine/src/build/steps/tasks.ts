@@ -8,6 +8,7 @@
 import type { BuildTask } from "@aio/contracts";
 import { RunCancelled } from "../../calls/index.js";
 import { untrusted } from "../../prompts/templates.js";
+import { loadBaseline, quarantine } from "../baseline.js";
 import type { BuildContext } from "../context.js";
 import { escalationForCallError } from "../escalations.js";
 import { gateFailureLine, gateReport, runTaskGate, type TaskGateResult } from "../gate.js";
@@ -96,10 +97,19 @@ async function attempt(ctx: BuildContext, task: BuildTask, n: number): Promise<G
     writable: writablePaths(ctx.role(task.role), roleTask(ctx, task, "")),
     commands: ctx.plan.commands,
     shell: ctx.services.shell,
+    baseline: await loadBaseline(ctx.store),
+    protect: task.tests,
     signal,
   });
   // A gate that the engine stopped part way says nothing about the attempt.
   if (signal.aborted) throw new RunCancelled();
+  await quarantine(
+    ctx.store,
+    (gate.quarantined ?? []).map((t) => ({
+      ...t,
+      source: { at: "gate", taskId: task.id, attempt: n },
+    })),
+  );
   const gated: GatedAttempt = { ...record, gate };
   await ctx.store.writeJson(path, gated);
   return gated;

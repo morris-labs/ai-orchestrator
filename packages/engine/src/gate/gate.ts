@@ -11,7 +11,7 @@ import { join } from "node:path";
 import type { PolicyCommand, PolicyFile } from "@aio/contracts";
 import type { CommandRunner } from "../core.js";
 
-/** What a gate command checks. The review gate runs tests and lint; a build's task gate adds type checks. */
+/** What a gate command checks. */
 export type GateCommandKind = "test" | "typecheck" | "lint";
 
 export interface GateCommandResult {
@@ -56,8 +56,20 @@ const FAILURE_RE = /\b(FAIL(?:ED|URE)?|ERROR|Error|failed|AssertionError|Traceba
 const ANSI_RE = /\u001b\[[0-9;]*[A-Za-z]/g;
 // A runner's count line, such as vitest's `Tests  2 failed | 40 passed (42)`,
 // jest's `Tests: 1 failed, 5 passed, 6 total`, or eslint's `3 problems`.
-const SUMMARY_RE =
-  /\b\d+\s+(failed|failing|failures?|passed|passing|errors?|skipped|pending|todo|total|tests?|warnings?|problems?)\b/i;
+const COUNT_WORDS =
+  "failed|failing|failures?|passed|passing|errors?|skipped|pending|todo|total|tests?|warnings?|problems?";
+const SUMMARY_RE = new RegExp(`\\b\\d+\\s+(${COUNT_WORDS})\\b`, "i");
+// A count line after `extractFailures()` replaced its numbers with `N`.
+const COUNT_LINE_RE = new RegExp(`\\bN\\s+(${COUNT_WORDS})\\b`, "i");
+
+/**
+ * True for a failure line that only counts failures, such as
+ * `Tests N failed | N passed`. A count line doesn't name a test, so the
+ * test baseline ignores it.
+ */
+export function isCountLine(line: string): boolean {
+  return COUNT_LINE_RE.test(line);
+}
 
 /**
  * Failure lines from a command's output, with timings, addresses, and colors
@@ -145,7 +157,7 @@ export async function untrackedFiles(
 }
 
 /**
- * Runs every test and lint command of the policy, in order. When
+ * Runs every test, type check, and lint command of the policy, in order. When
  * `options.git` is set, lists the untracked files that appeared meanwhile
  * in `leftovers`, without deleting any.
  */
@@ -153,6 +165,9 @@ export async function runGate(policy: PolicyFile, options: GateOptions): Promise
   const before = options.git ? await untrackedFiles(options.git, options.repoPath) : null;
   const commands: GateCommandResult[] = [];
   for (const cmd of policy.tests) commands.push(await runGateCommand("test", cmd, options));
+  for (const cmd of policy.typecheck ?? []) {
+    commands.push(await runGateCommand("typecheck", cmd, options));
+  }
   for (const cmd of policy.lint) commands.push(await runGateCommand("lint", cmd, options));
   const run: GateRun = { passed: commands.every((c) => c.passed), commands };
   if (options.git && before) {

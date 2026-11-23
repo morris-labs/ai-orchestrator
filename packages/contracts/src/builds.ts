@@ -164,6 +164,8 @@ export const EscalationKindSchema = z.enum([
    * diff clean, such as at its round cap or with findings left for a person.
    */
   "review",
+  /** A test, type check, or lint command of the build plan can't run at preflight. */
+  "preflight",
 ]);
 export type EscalationKind = z.infer<typeof EscalationKindSchema>;
 
