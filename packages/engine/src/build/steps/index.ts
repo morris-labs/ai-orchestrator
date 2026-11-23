@@ -9,6 +9,12 @@ import { runTasks } from "./tasks.js";
 import { runTestsFirst } from "./tests-first.js";
 import type { StepHandler } from "./types.js";
 
+export {
+  COVERAGE_CHECKER,
+  COVERAGE_REPORT_FILE,
+  type CoverageGap,
+  type CoverageReport,
+} from "./coverage-check.js";
 export { PREFLIGHT_RUNS, type PreflightRecord } from "./preflight.js";
 export { REVIEW_FIXER_SEAT, REVIEW_POLL_MS, reviewTaskContext } from "./review.js";
 export { ATTEMPT_CAP, type AttemptRecord } from "./tasks.js";
