@@ -1,10 +1,13 @@
-// The engine build API: the planning requests (a planning seat call and the
-// freeze) over one `BuildPlanner` per build, the build requests (start,
-// status, pause, resume, resolve) over one `BuildController` per build, and the
+// The engine build API: the planning requests (a planning seat call, a
+// meeting, and the freeze) over one `BuildPlanner` per build, the build
+// requests (start, status, pause, resume, resolve) over one `BuildController`
+// per build, and the
 // startup scan that continues the builds a stopped engine left running.
 import {
   BuildCreateSchema,
   BuildFreezeRequestSchema,
+  BuildMeetingPostRequestSchema,
+  BuildMeetingRequestSchema,
   BuildSeatRequestSchema,
   BuildSlugSchema,
   ENGINE_CONFIG_MOUNT,
@@ -12,12 +15,20 @@ import {
   type BuildCreateInput,
   type BuildFreezeAnswer,
   type BuildFreezeRequest,
+  type BuildMeetingAnswer,
+  type BuildMeetingPostRequest,
+  type BuildMeetingRequestInput,
   type BuildPlan,
   type BuildSeatAnswer,
   type BuildSeatRequestInput,
+  type BuildDecision,
   type BuildState,
   type EscalationResolveInput,
+  type Message,
+  type OwnerPostInput,
+  type OwnerPostAnswer,
 } from "@aio/contracts";
+import { OwnerPostSchema } from "@aio/contracts";
 import { accountDirsFileIn, readAccountDirs } from "../adapters/account-dirs.js";
 import { EngineError, type CoreDeps } from "../api/core-interface.js";
 import { systemClock } from "../core.js";
@@ -58,6 +69,17 @@ export interface BuildManager {
    */
   freeze(request: BuildFreezeRequest): Promise<BuildFreezeAnswer>;
   /**
+   * Opens a planning meeting and waits until it ends. Throws `conflict`
+   * while a seat call or another meeting is under way, and once the build
+   * runs.
+   */
+  meet(request: BuildMeetingRequestInput): Promise<BuildMeetingAnswer>;
+  /**
+   * Adds an owner post to a meeting under way. Throws `not_found` for an
+   * unknown meeting and `conflict` for one that ended.
+   */
+  meetingPost(request: BuildMeetingPostRequest): Promise<BuildMeetingAnswer>;
+  /**
    * Creates a build and starts it, from the request's plan or, absent, the
    * build's latest frozen plan. Throws `conflict` when the build exists, and
    * `validation` for a plan that differs from the frozen one.
@@ -73,6 +95,16 @@ export interface BuildManager {
    * doesn't fit it.
    */
   resolve(slug: string, request: EscalationResolveInput): Promise<BuildState>;
+  /**
+   * Posts as the owner to one agent of build `slug`; only that agent runs.
+   * The engine records the post as a decision on its task. Throws
+   * `invalid_state` for a build that ended.
+   */
+  post(slug: string, input: OwnerPostInput): Promise<OwnerPostAnswer>;
+  /** The build's team chat messages, oldest first; with `direct`, only the direct messages to the owner. */
+  messages(slug: string, options?: { direct?: boolean }): Promise<Message[]>;
+  /** The build's decisions, oldest first. */
+  decisions(slug: string): Promise<BuildDecision[]>;
   /** The builds that keep the container alive: the ones the engine works on. */
   activeCount(): number;
   /** Stops every drive and leaves each build's files for the next engine. */
@@ -267,6 +299,24 @@ export class EngineBuildManager implements BuildManager {
     }
   }
 
+  async meet(input: BuildMeetingRequestInput): Promise<BuildMeetingAnswer> {
+    const request = BuildMeetingRequestSchema.parse(input);
+    const planner = await this.openPlanner(request);
+    return planner.meet(request);
+  }
+
+  async meetingPost(input: BuildMeetingPostRequest): Promise<BuildMeetingAnswer> {
+    const request = BuildMeetingPostRequestSchema.parse(input);
+    const planner = await this.planner(request.slug);
+    if (!planner || planner.record.projectId !== request.projectId) {
+      throw new EngineError(
+        "not_found",
+        `Project ${request.projectId} has no build ${request.slug}.`,
+      );
+    }
+    return planner.post(request);
+  }
+
   /** The plan a build starts from, and the planning record it keeps. */
   private async startingPlan(
     slug: string,
@@ -345,6 +395,40 @@ export class EngineBuildManager implements BuildManager {
     const build = await this.require(slug);
     const request = EscalationResolveSchema.parse(input);
     return structuredClone(await build.resolve(request));
+  }
+
+  async post(slug: string, input: OwnerPostInput): Promise<OwnerPostAnswer> {
+    const post = OwnerPostSchema.parse(input);
+    const planner = await this.planner(slug);
+    const meeting = planner?.openMeeting;
+    if (planner && meeting?.seats.includes(post.to)) {
+      const { record } = planner;
+      const answer = await planner.post({
+        projectId: record.projectId,
+        boxId: record.boxId,
+        slug,
+        meeting: meeting.id,
+        body: post.body,
+      });
+      return { route: "meeting", meeting: answer.meeting };
+    }
+    const build = await this.controller(slug);
+    if (build) return build.post(post);
+    if (planner) {
+      throw new EngineError(
+        "invalid_state",
+        `Build ${slug} is in planning, and no meeting under way holds the ${post.to}. In planning, an owner post reaches only the seats of a meeting.`,
+      );
+    }
+    throw new EngineError("not_found", `No build ${slug}.`);
+  }
+
+  async messages(slug: string, options: { direct?: boolean } = {}): Promise<Message[]> {
+    return (await this.require(slug)).messages(options.direct ?? false);
+  }
+
+  async decisions(slug: string): Promise<BuildDecision[]> {
+    return (await this.require(slug)).decisions();
   }
 
   activeCount(): number {

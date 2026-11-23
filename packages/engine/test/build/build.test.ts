@@ -75,6 +75,20 @@ describe("a one-task build", () => {
     expect(saved).toEqual(events.map((e) => e.type));
   });
 
+  it("names the plan's usage estimate on its build events, for the usage watcher", async () => {
+    const world = await buildWorld();
+    world.script({
+      claude: [{ match: "Task T1", output: REPORT, writeFiles: { "src/cart.mjs": CART_DONE } }],
+    });
+
+    await world.start("cart-total", cartPlan({ usageEstimate: { low: 40_000, high: 90_000 } }));
+    await world.settle("cart-total");
+
+    const builds = world.events.ofType("build.changed").map((e) => e.build);
+    expect(builds.length).toBeGreaterThan(0);
+    for (const build of builds) expect(build.usageEstimate).toEqual({ low: 40_000, high: 90_000 });
+  });
+
   it("leaves the project's own checkout untouched", async () => {
     const world = await buildWorld();
     world.script({

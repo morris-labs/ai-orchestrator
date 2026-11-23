@@ -63,6 +63,26 @@ export function limited(vendor: Vendor): VendorAdapter {
 }
 
 /**
+ * An adapter whose first call hits a usage limit that resets at `resetAt`;
+ * every later call answers.
+ */
+export function limitedUntil(vendor: Vendor, resetAt: string): VendorAdapter & { calls: number } {
+  const inner = answering(vendor);
+  const adapter = {
+    ...inner,
+    calls: 0,
+    fix: (...args: unknown[]) => {
+      adapter.calls += 1;
+      if (adapter.calls === 1) return Promise.reject(new LimitError("usage limit"));
+      return (inner.fix as (...a: unknown[]) => Promise<unknown>)(...args);
+    },
+    detectLimit: (e: unknown) =>
+      e instanceof LimitError ? { resetAt, message: "usage limit", kind: "usage_limit" } : null,
+  };
+  return adapter as unknown as VendorAdapter & { calls: number };
+}
+
+/**
  * An adapter that answers `fix` calls only when the test calls `release()`.
  * `started` resolves when the first call begins.
  */

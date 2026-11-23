@@ -107,5 +107,9 @@ The `TeamChannel` object of a build offers the following methods:
   the Project manager's digests can build on it.
 - **`close()`:** revokes every token of the build.
 
+The channel's `check` option checks each message before the channel saves
+it. The build uses it for the direct message limit; see
+[`owner-posts.md`](owner-posts.md).
+
 The `BuildContext.team` property holds the channel of a build, or `null` when
 the engine runs no bus.

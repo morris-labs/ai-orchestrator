@@ -640,6 +640,17 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
       if (!messages) throw new ApiError("not_found", `No build has the id ${params.buildId}.`);
       return { messages };
     },
+    "builds.post": async ({ params, body, reply }) => {
+      const build = deps.builds.get(params.buildId);
+      if (!build) throw new ApiError("not_found", `No build has the id ${params.buildId}.`);
+      const engine = deps.engines.requireProject(build.projectId);
+      const answer = await engine.call("engine.builds.post", {
+        params: { slug: build.slug },
+        body,
+      });
+      reply.code(201);
+      return answer as never;
+    },
     "builds.tasks": async ({ params }) => {
       const tasks = deps.builds.tasks(params.buildId);
       if (!tasks) throw new ApiError("not_found", `No build has the id ${params.buildId}.`);

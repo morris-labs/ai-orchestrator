@@ -409,6 +409,13 @@ const cases: Case[] = [
     status: 200,
   },
   {
+    key: "builds.post",
+    method: "POST",
+    url: `${V1}/builds/01JB8Z5K3W6Q2V9X4T7R0M1N2Q/posts`,
+    body: { to: "developer", toTask: "T1", body: "Keep the total in whole dollars." },
+    status: 201,
+  },
+  {
     key: "builds.tasks",
     method: "GET",
     url: `${V1}/builds/01JB8Z5K3W6Q2V9X4T7R0M1N2Q/tasks`,
@@ -871,6 +878,42 @@ describe("review routes", () => {
       expect(rogue.calls.map((c) => c.key)).toEqual(["engine.runs.get"]);
       expect(h.runs.get(FOREIGN)).toBeUndefined();
     });
+  });
+});
+
+describe("owner posts", () => {
+  const url = `${V1}/builds/01JB8Z5K3W6Q2V9X4T7R0M1N2Q/posts`;
+  const body = { to: "developer", toTask: "T1", body: "Keep the total in whole dollars." };
+
+  it("forwards a post to the engine of the build's project, by the build's slug", async () => {
+    const res = await h.server.app.inject({ method: "POST", url, headers: AUTH, payload: body });
+    expect(res.statusCode).toBe(201);
+    expect(res.json()).toMatchObject({
+      message: { from: { kind: "owner" }, body: body.body },
+      decision: { id: "D1" },
+    });
+    expect(h.engine.calls.at(-1)).toEqual({
+      key: "engine.builds.post",
+      input: { params: { slug: "add-export" }, body: { ...body, type: "note" } },
+    });
+  });
+
+  it("refuses a post to a build the server hasn't seen, or one addressed to the owner", async () => {
+    const unknown = await h.server.app.inject({
+      method: "POST",
+      url: `${V1}/builds/01JB8Z5K3W6Q2V9X4T7R0M1N2Z/posts`,
+      headers: AUTH,
+      payload: body,
+    });
+    expect(unknown.statusCode).toBe(404);
+    const toOwner = await h.server.app.inject({
+      method: "POST",
+      url,
+      headers: AUTH,
+      payload: { ...body, to: "owner" },
+    });
+    expect(toOwner.statusCode).toBe(400);
+    expect(h.engine.calls.some((c) => c.key === "engine.builds.post")).toBe(false);
   });
 });
 

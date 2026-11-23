@@ -2,12 +2,15 @@
 import {
   BuildPlanSchema,
   EngineRunCreateSchema,
+  type BuildDecision,
   type BuildFreezeAnswer,
+  type BuildMeetingAnswer,
   type BuildPlanning,
   type BuildSeatAnswer,
   type BuildState,
   type FileGroup,
   type Finding,
+  type Message,
   type RoundSummary,
   type RunState,
 } from "@aio/contracts";
@@ -184,6 +187,7 @@ export const planningRecord: BuildPlanning = {
     },
   ],
   frozen: [],
+  meetings: [],
   createdAt: "2026-11-23T09:00:00.000Z",
   updatedAt: "2026-11-23T09:05:00.000Z",
 };
@@ -233,6 +237,95 @@ export const freezeAnswer: BuildFreezeAnswer = {
   }),
 };
 
+/** The answer to a meeting that ended with a major objection open. */
+export const meetingAnswer: BuildMeetingAnswer = {
+  planning: {
+    ...planningRecord,
+    meetings: [{ id: "meeting-1", file: "meetings/meeting-1.json", status: "round_cap" }],
+  },
+  meeting: {
+    version: 1,
+    id: "meeting-1",
+    proposer: "architect",
+    members: ["critic"],
+    brief: "Attack the design.",
+    roundCap: 1,
+    status: "round_cap",
+    rounds: [
+      {
+        n: 1,
+        proposal: "planning/architect-1.json",
+        turns: [
+          {
+            seat: "critic",
+            status: "done",
+            files: ["planning/critic-1.json"],
+            reply: {
+              position: "object",
+              summary: "The design misses the empty cart.",
+              points: [
+                { severity: "major", point: "No task covers an empty cart.", reason: "AC1." },
+              ],
+            },
+            posts: [],
+          },
+        ],
+      },
+    ],
+    posts: [],
+    open: [
+      { seat: "critic", severity: "major", point: "No task covers an empty cart.", reason: "AC1." },
+    ],
+    startedAt: "2026-11-23T09:06:00.000Z",
+    finishedAt: "2026-11-23T09:08:00.000Z",
+  },
+};
+
+/** A direct message from the Developer of T1 to the owner. */
+export const directMessage: Message = {
+  version: 1,
+  id: "M1",
+  buildId: RUN,
+  from: { kind: "seat", seat: "developer", taskId: "T1" },
+  to: { kind: "owner" },
+  routing: "addressed",
+  type: "note",
+  taskId: "T1",
+  milestone: null,
+  paths: [],
+  body: "The criteria miss an empty cart.",
+  createdAt: "2026-10-28T09:00:00.000Z",
+};
+
+/** An owner post to the Developer of T1. */
+export const ownerPost: Message = {
+  ...directMessage,
+  id: "M2",
+  from: { kind: "owner" },
+  to: { kind: "seat", seat: "developer", taskId: "T1" },
+  body: "Keep the total in whole dollars.",
+};
+
+/** The decision that records `ownerPost`, flagged as a plan change. */
+export const decision: BuildDecision = {
+  version: 1,
+  id: "D1",
+  buildId: RUN,
+  messageId: "M2",
+  to: ownerPost.to,
+  taskId: "T1",
+  milestone: null,
+  body: ownerPost.body,
+  createdAt: ownerPost.createdAt,
+  planChange: {
+    criteria: ["AC1"],
+    reason: "AC1: it asks for the exact sum.",
+    reportedBy: { kind: "seat", seat: "developer", taskId: "T1" },
+    messageId: "M3",
+    flaggedAt: ownerPost.createdAt,
+  },
+};
+
 /** A build manager whose every method is a `vi.fn` returning sample data. */
 export function fakeBuildManager(): {
   [K in keyof BuildManager]-?: ReturnType<typeof vi.fn>;
@@ -240,11 +333,22 @@ export function fakeBuildManager(): {
   const m = {
     plan: vi.fn(async () => seatAnswer),
     freeze: vi.fn(async () => freezeAnswer),
+    meet: vi.fn(async () => meetingAnswer),
+    meetingPost: vi.fn(async () => meetingAnswer),
     start: vi.fn(async () => buildState),
     get: vi.fn(async (slug: string) => (slug === buildState.slug ? buildState : null)),
     pause: vi.fn(async () => ({ ...buildState, status: "paused" })),
     resume: vi.fn(async () => buildState),
     resolve: vi.fn(async () => buildState),
+    post: vi.fn(async () => ({
+      route: "agent",
+      message: ownerPost,
+      decision: { ...decision, planChange: null },
+    })),
+    messages: vi.fn(async (_slug: string, options?: { direct?: boolean }) =>
+      options?.direct ? [directMessage] : [directMessage, ownerPost],
+    ),
+    decisions: vi.fn(async () => [decision]),
     activeCount: vi.fn(() => 0),
     close: vi.fn(async () => {}),
   };

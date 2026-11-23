@@ -1,6 +1,6 @@
 // The build socket: a Unix socket inside the project container that accepts
-// only build requests (planning seat calls, the freeze, start, status,
-// pause, resume, and resolve) and needs no engine token. The `aio-build` command in a box's session talks to it; see
+// only build requests (planning seat calls, meetings, the freeze, start, status,
+// pause, resume, resolve, and reading the team chat and decisions) and needs no engine token. The `aio-build` command in a box's session talks to it; see
 // `@aio/contracts` `build-socket.ts` for the protocol.
 //
 // The socket lives on the container's own file system, so only processes in
@@ -11,6 +11,9 @@ import {
   BUILD_SOCKET_MAX_BODY_BYTES,
   BUILD_SOCKET_ROUTES,
   BuildSocketFreezeSchema,
+  BuildSocketMeetSchema,
+  BuildSocketMeetingPostSchema,
+  BuildSocketMessagesSchema,
   BuildSocketPlanSchema,
   BuildSocketResolveSchema,
   BuildSocketSlugSchema,
@@ -33,7 +36,20 @@ export interface BuildSocketOptions {
   /** The socket path. The engine makes its folder, mode 0700, when it's missing. */
   path: string;
   /** The requests the socket serves. */
-  builds: Pick<BuildManager, "plan" | "freeze" | "start" | "get" | "pause" | "resume" | "resolve">;
+  builds: Pick<
+    BuildManager,
+    | "plan"
+    | "freeze"
+    | "meet"
+    | "meetingPost"
+    | "start"
+    | "get"
+    | "pause"
+    | "resume"
+    | "resolve"
+    | "messages"
+    | "decisions"
+  >;
   /** The engine's project, or `null` when the server didn't name one. */
   projectId: string | null;
   log: Logger;
@@ -153,6 +169,16 @@ export async function serveBuildSocket(options: BuildSocketOptions): Promise<Bui
       ownProject(request);
       return builds.freeze(request);
     }
+    if (kind === "meet") {
+      const request = BuildSocketMeetSchema.parse(raw);
+      ownProject(request);
+      return builds.meet(request);
+    }
+    if (kind === "meeting-post") {
+      const request = BuildSocketMeetingPostSchema.parse(raw);
+      ownProject(request);
+      return builds.meetingPost(request);
+    }
     if (kind === "start") {
       const request = BuildSocketStartSchema.parse(raw);
       if (projectId !== null && request.projectId !== projectId) {
@@ -181,10 +207,17 @@ export async function serveBuildSocket(options: BuildSocketOptions): Promise<Bui
       await ownBuild(project, slug);
       return { build: await builds.resolve(slug, resolution) };
     }
+    if (kind === "messages") {
+      const request = BuildSocketMessagesSchema.parse(raw);
+      ownProject(request);
+      await ownBuild(request.projectId, request.slug);
+      return { messages: await builds.messages(request.slug, { direct: request.direct }) };
+    }
     const request = BuildSocketSlugSchema.parse(raw);
     ownProject(request);
     const build = await ownBuild(request.projectId, request.slug);
     if (kind === "status") return { build };
+    if (kind === "decisions") return { decisions: await builds.decisions(request.slug) };
     if (kind === "pause") return { build: await builds.pause(request.slug) };
     return { build: await builds.resume(request.slug) };
   };

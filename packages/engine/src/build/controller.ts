@@ -1,16 +1,22 @@
 // The build controller: one per build. It creates the build's files and
 // worktree, drives the build pipeline step by step, and handles the build
-// requests: pause, resume, and resolve. Its drive saves after every step, so
-// a restarted engine continues the build from where it stopped.
+// requests: pause, resume, resolve, and owner posts. Its drive saves after
+// every step, so a restarted engine continues the build from where it stopped.
 import { mkdir } from "node:fs/promises";
 import type {
   BuildCreate,
+  BuildDecision,
   BuildPlan,
   BuildState,
   BuildStep,
   EscalationResolve,
+  Message,
+  OwnerPost,
+  OwnerPostAnswer,
 } from "@aio/contracts";
 import { RunCancelled, describeError } from "../calls/index.js";
+import { MessageRefused } from "../team/index.js";
+import { isDirectMessage } from "./owner/index.js";
 import { EngineError } from "../api/core-interface.js";
 import { loadPolicy } from "../policy/load.js";
 import { BuildContext, type BuildServices } from "./context.js";
@@ -49,10 +55,14 @@ const DEFAULT_PIPELINE: BuildPipeline = { steps: BUILD_PIPELINE, handlers: STEP_
 
 async function servicesFor(
   location: BuildLocation,
-  services: Omit<BuildServices, "tierModels">,
+  services: Omit<BuildServices, "tierModels" | "sessions">,
 ): Promise<BuildServices> {
   const policy = await loadPolicy(location.projectRoot, location.policyPath);
-  return { ...services, ...(policy.tierModels ? { tierModels: policy.tierModels } : {}) };
+  return {
+    ...services,
+    ...(policy.tierModels ? { tierModels: policy.tierModels } : {}),
+    ...(policy.sessions ? { sessions: policy.sessions } : {}),
+  };
 }
 
 export class BuildController {
@@ -90,7 +100,7 @@ export class BuildController {
   static async create(
     request: BuildCreate & { plan: BuildPlan },
     location: BuildLocation,
-    services: Omit<BuildServices, "tierModels">,
+    services: Omit<BuildServices, "tierModels" | "sessions">,
     pipeline: BuildPipeline = DEFAULT_PIPELINE,
     origin?: BuildOrigin,
   ): Promise<BuildController> {
@@ -151,7 +161,7 @@ export class BuildController {
   static async load(
     slug: string,
     location: BuildLocation,
-    services: Omit<BuildServices, "tierModels">,
+    services: Omit<BuildServices, "tierModels" | "sessions">,
     pipeline: BuildPipeline = DEFAULT_PIPELINE,
   ): Promise<BuildController> {
     const store = new BuildStore(location.projectRoot, slug);
@@ -190,6 +200,8 @@ export class BuildController {
       await ctx.beginDrive();
       await ctx.worktree.ensure();
       if (ctx.state.status !== "running") await ctx.setStatus("running");
+      // Messages that a stopped engine or drive left waiting get their turns.
+      ctx.sessions.resumePending();
       for (;;) {
         await ctx.calls.checkpoint();
         const step = ctx.state.step;
@@ -208,6 +220,10 @@ export class BuildController {
           }
           return;
         }
+        // A step ends when its agents' conversations do: the message turns
+        // it started finish before the next step.
+        await ctx.sessions.idle();
+        await ctx.calls.checkpoint();
         const next = this.pipeline.steps[this.pipeline.steps.indexOf(step) + 1];
         if (!next) {
           // The last step's note, such as where its digest is, stays.
@@ -301,6 +317,40 @@ export class BuildController {
       (status === "running" || status === "waiting_escalation") &&
       !this.ctx.openEscalations().some((e) => e.taskId === null)
     );
+  }
+
+  /**
+   * Posts as the owner to one agent of the build. Throws `invalid_state`
+   * for a build that ended, `conflict` when the engine runs no team chat,
+   * and `validation` for a post the team chat refuses.
+   */
+  async post(input: OwnerPost): Promise<OwnerPostAnswer> {
+    if (["finished", "failed", "cancelled"].includes(this.state.status)) {
+      throw new EngineError(
+        "invalid_state",
+        `Build ${this.slug} is ${this.state.status}, so no agent can take a post.`,
+      );
+    }
+    if (!this.ctx.team) {
+      throw new EngineError("conflict", "This engine runs no team chat, so it can't take a post.");
+    }
+    try {
+      return await this.ctx.post(input);
+    } catch (error) {
+      if (error instanceof MessageRefused) throw new EngineError("validation", error.message);
+      throw error;
+    }
+  }
+
+  /** The build's team chat messages, oldest first; with `direct`, only the ones agents sent the owner. */
+  async messages(direct = false): Promise<Message[]> {
+    const all = (await this.ctx.team?.list()) ?? [];
+    return direct ? all.filter(isDirectMessage) : all;
+  }
+
+  /** The build's decisions, oldest first. */
+  decisions(): Promise<BuildDecision[]> {
+    return this.ctx.decisions.list();
   }
 
   /**

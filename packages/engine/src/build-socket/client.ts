@@ -44,7 +44,10 @@ export class BuildSocketClient {
 
   /** Sends a start, status, pause, or resume request and returns the build's state after it. */
   async request(
-    kind: Exclude<BuildSocketRequestKind, "plan" | "freeze">,
+    kind: Exclude<
+      BuildSocketRequestKind,
+      "plan" | "freeze" | "meet" | "meeting-post" | "messages" | "decisions"
+    >,
     body: unknown,
   ): Promise<BuildState> {
     return (await this.send(kind, body)).build;

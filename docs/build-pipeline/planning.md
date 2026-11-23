@@ -1,8 +1,8 @@
 # Planning a build
 
 This page describes how the Project manager plans a build with the
-`aio-build` command: it calls the planning seats, freezes the build plan,
-and starts the build from the frozen plan. For the design behind it, see
+`aio-build` command: it calls the planning seats, holds the Critic meeting,
+freezes the build plan, and starts the build from the frozen plan. For the design behind it, see
 the "Planning" section of [Build pipeline design](design.md).
 
 ## Call a planning seat
@@ -44,6 +44,62 @@ answer, the engine drafts the full build plan in
 `.aio/builds/SLUG/planning/draft.json`, with the test, type check, and lint
 commands from the project's policy file. The engine rewrites the draft
 after each answer.
+
+## Hold the Critic meeting
+
+For a medium or large build, open a meeting on the Architect's design after
+the Architect answers. Write a brief to a file and run the following
+command:
+
+```bash
+aio-build meet SLUG BRIEF_FILE [--members SEATS] [--proposer SEAT] [--rounds N]
+
+```
+
+Replace the following:
+
+- `BRIEF_FILE`: a file with what the meeting must settle, such as "Attack
+  the design for the cart total."
+- `SEATS`: the seats that reply, separated by commas. The default is
+  `critic`.
+- `SEAT`: the seat whose latest answer the meeting discusses. The default
+  is `architect`.
+- `N`: the round cap, from 1 to 10. The default is 3.
+
+Code takes the turns:
+
+1. The proposer's latest answer is the proposal. A proposer that hasn't
+   answered yet answers the brief first.
+2. Each member replies once per round with a position (`object`,
+   `concern`, or `no_objection`), a severity (`major` or `minor`) for each
+   point, and the reasons. A reply that breaks this structure goes back to
+   the member once, with the errors; a second broken reply fails the
+   meeting.
+3. While a major objection remains, the proposer revises from the replies.
+   The revision is a planning call like any other, so the draft plan
+   follows it.
+4. The meeting ends as `agreed` when no major objection remains, or as
+   `round_cap` at the round cap, with the open objections in its answer and
+   in `STATUS.md`. Report the outcome and the open objections to the owner.
+
+The Critic runs on a vendor other than the proposer's: Codex by default,
+against the Architect on Claude. When a repository places the Critic on the
+proposer's vendor, the engine refuses the meeting before any call.
+
+The command waits until the meeting ends, which can take hours. Run it in
+the background. Planning takes no other request for the build while the
+meeting runs.
+
+To pass the owner's words to a running meeting, write them to a file and
+run the following command:
+
+```bash
+aio-build meeting-post SLUG MEETING POST_FILE
+
+```
+
+Replace `MEETING` with the meeting's ID, such as `meeting-1`. Every member
+reads the post at its next turn, ahead of every other input.
 
 ## Freeze the build plan
 
@@ -87,8 +143,10 @@ The engine keeps planning's files beside the build's other files in
 
 | File | Contents |
 |---|---|
-| `planning.json` | The planning record: the issue, each seat call, and each frozen version |
+| `planning.json` | The planning record: the issue, each seat call, each meeting, and each frozen version |
 | `planning/SEAT-N.json` | Each seat call's brief, and its answer or error |
 | `planning/draft.json` | The plan drafted from the latest spec and design |
+| `meetings/meeting-N.json` | Each meeting: its rounds, the replies, the owner posts, and the open objections |
+| `messages/MN.json` | Each meeting turn and owner post, as a team chat message |
 | `plans/vN.json` | Each frozen version of the build plan, read-only |
 | `STATUS.md` | The planning status, until execution rewrites it |

@@ -5,7 +5,13 @@ import { afterEach, describe, expect, it } from "vitest";
 import { BUILD_SOCKET_ROUTES } from "@aio/contracts";
 import { serveBuildSocket, type BuildSocketServer } from "../../src/build-socket/server.js";
 import { silentLogger } from "../../src/main/logger.js";
-import { buildState, fakeBuildManager } from "../api/fixtures.js";
+import {
+  buildState,
+  decision,
+  directMessage,
+  fakeBuildManager,
+  ownerPost,
+} from "../api/fixtures.js";
 import { tempDir } from "../tmp.js";
 import { PLAN, send } from "./helpers.js";
 
@@ -91,6 +97,29 @@ describe("the build socket", () => {
     expect(builds.resolve).toHaveBeenCalledTimes(1);
   });
 
+  it("lets the Project manager read the direct messages and the decisions", async () => {
+    const { builds, path } = await open();
+    const ask = { projectId: "proj-1", boxId: "box-1", slug: "cart-total" };
+    const direct = await send(path, "POST", BUILD_SOCKET_ROUTES.messages, { ...ask, direct: true });
+    expect(direct.status).toBe(200);
+    expect(direct.body).toEqual({ messages: [directMessage] });
+    expect(builds.messages).toHaveBeenCalledWith("cart-total", { direct: true });
+    const all = await send(path, "POST", BUILD_SOCKET_ROUTES.messages, ask);
+    expect(all.body).toEqual({ messages: [directMessage, ownerPost] });
+    const decisions = await send(path, "POST", BUILD_SOCKET_ROUTES.decisions, ask);
+    expect(decisions).toMatchObject({ status: 200, body: { decisions: [decision] } });
+    const other = await send(path, "POST", BUILD_SOCKET_ROUTES.messages, {
+      ...ask,
+      projectId: "proj-2",
+    });
+    expect(other.status).toBe(404);
+    const unknown = await send(path, "POST", BUILD_SOCKET_ROUTES.decisions, {
+      ...ask,
+      slug: "no-such-build",
+    });
+    expect(unknown.status).toBe(404);
+  });
+
   it("calls a planning seat and answers with the seat's answer", async () => {
     const { builds, path } = await open();
     const request = {
@@ -119,6 +148,39 @@ describe("the build socket", () => {
     expect(builds.freeze).toHaveBeenCalledWith(request);
   });
 
+  it("opens a meeting and answers when it ends", async () => {
+    const { builds, path } = await open();
+    const request = {
+      projectId: "proj-1",
+      boxId: "box-1",
+      slug: "cart-total",
+      brief: "Attack the design.",
+    };
+    const res = await send(path, "POST", BUILD_SOCKET_ROUTES.meet, request);
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ meeting: { id: "meeting-1", status: "round_cap" } });
+    expect(builds.meet).toHaveBeenCalledWith({
+      ...request,
+      proposer: "architect",
+      members: ["critic"],
+      rounds: 3,
+    });
+  });
+
+  it("relays an owner post to a meeting", async () => {
+    const { builds, path } = await open();
+    const request = {
+      projectId: "proj-1",
+      boxId: "box-1",
+      slug: "cart-total",
+      meeting: "meeting-1",
+      body: "Keep the total in cents.",
+    };
+    const res = await send(path, "POST", BUILD_SOCKET_ROUTES["meeting-post"], request);
+    expect(res.status).toBe(200);
+    expect(builds.meetingPost).toHaveBeenCalledWith(request);
+  });
+
   it("refuses planning requests for another project", async () => {
     const { builds, path } = await open("proj-1");
     const ask = { projectId: "proj-2", boxId: null, slug: "cart-total" };
@@ -128,11 +190,19 @@ describe("the build socket", () => {
       brief: "Add a total.",
     });
     const freeze = await send(path, "POST", BUILD_SOCKET_ROUTES.freeze, ask);
-    for (const res of [plan, freeze]) {
+    const meet = await send(path, "POST", BUILD_SOCKET_ROUTES.meet, { ...ask, brief: "Attack." });
+    const post = await send(path, "POST", BUILD_SOCKET_ROUTES["meeting-post"], {
+      ...ask,
+      meeting: "meeting-1",
+      body: "Cents.",
+    });
+    for (const res of [plan, freeze, meet, post]) {
       expect(res).toMatchObject({ status: 404, body: { error: { code: "not_found" } } });
     }
     expect(builds.plan).not.toHaveBeenCalled();
     expect(builds.freeze).not.toHaveBeenCalled();
+    expect(builds.meet).not.toHaveBeenCalled();
+    expect(builds.meetingPost).not.toHaveBeenCalled();
   });
 
   it("answers not_found for a build the engine doesn't have", async () => {

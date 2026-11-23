@@ -84,7 +84,7 @@ export function toCliRequest(
     ...(request.model !== undefined ? { model: request.model } : {}),
     ...(request.effort !== undefined ? { effort: request.effort } : {}),
     ...(request.signal !== undefined ? { signal: request.signal } : {}),
-    ...("sessionId" in request ? { sessionId: request.sessionId } : {}),
+    ...(request.sessionId !== undefined ? { sessionId: request.sessionId } : {}),
     ...(request.team !== undefined ? { team: request.team } : {}),
     outputSchema: schema.output,
     jsonSchema: schema.json,

@@ -168,6 +168,24 @@ describe("aio-build", () => {
     expect((await run(["status", "cart-total", "--owner"])).code).toBe(2);
   });
 
+  it("prints the direct messages and the decisions for the Project manager", async () => {
+    const { builds, run } = await world();
+    const direct = await run(["messages", "cart-total", "--direct"]);
+    expect(direct.code).toBe(0);
+    expect(builds.messages).toHaveBeenCalledWith("cart-total", { direct: true });
+    expect(direct.stdout).toContain("M1  developer (T1) -> owner  note  T1");
+    expect(direct.stdout).toContain("  The criteria miss an empty cart.");
+    const all = await run(["messages", "cart-total", "--json"]);
+    expect(JSON.parse(all.stdout)).toHaveLength(2);
+    const decisions = await run(["decisions", "cart-total"]);
+    expect(decisions.code).toBe(0);
+    expect(decisions.stdout).toContain("D1  owner post M2 to developer (T1)");
+    expect(decisions.stdout).toContain("Plan change: contradicts AC1");
+    const wrong = await run(["status", "cart-total", "--direct"]);
+    expect(wrong.code).toBe(2);
+    expect(wrong.stderr).toContain("status doesn't take --direct");
+  });
+
   it("calls a planning seat with a brief and an issue and prints its answer", async () => {
     const { builds, briefFile, run } = await world();
     const out = await run([
@@ -207,6 +225,50 @@ describe("aio-build", () => {
       number: 7,
       url: link,
     });
+  });
+
+  it("opens a meeting with its members and round cap and prints the outcome", async () => {
+    const { builds, briefFile, run } = await world();
+    const out = await run([
+      "meet",
+      "cart-total",
+      briefFile,
+      "--members",
+      "critic,analyst",
+      "--proposer",
+      "architect",
+      "--rounds",
+      "2",
+    ]);
+    expect(out.code).toBe(0);
+    expect(builds.meet).toHaveBeenCalledWith({
+      projectId: "proj-1",
+      boxId: "box-1",
+      slug: "cart-total",
+      brief: "Add a total to the cart.\n",
+      members: ["critic", "analyst"],
+      proposer: "architect",
+      rounds: 2,
+    });
+    expect(out.stdout).toContain(
+      "Meeting meeting-1 of build cart-total: round_cap after 1 of 1 rounds",
+    );
+    expect(out.stdout).toContain("critic: No task covers an empty cart.");
+    expect(out.stdout).toContain(".aio/builds/cart-total/meetings/meeting-1.json");
+  });
+
+  it("relays an owner post to a meeting", async () => {
+    const { builds, briefFile, run } = await world();
+    const out = await run(["meeting-post", "cart-total", "meeting-1", briefFile, "--json"]);
+    expect(out.code).toBe(0);
+    expect(builds.meetingPost).toHaveBeenCalledWith({
+      projectId: "proj-1",
+      boxId: "box-1",
+      slug: "cart-total",
+      meeting: "meeting-1",
+      body: "Add a total to the cart.\n",
+    });
+    expect(JSON.parse(out.stdout).meeting.id).toBe("meeting-1");
   });
 
   it("freezes the draft plan with the push answer", async () => {
@@ -311,6 +373,10 @@ describe("aio-build", () => {
     [["plan", "cart-total", "Analyst", "brief.md"]],
     [["plan", "cart-total", "analyst", "brief.md", "--issue", "shop#1"]],
     [["freeze", "cart-total", "--push", "maybe"]],
+    [["meet", "cart-total", "brief.md", "--rounds", "0"]],
+    [["meet", "cart-total", "brief.md", "--members", "Critic"]],
+    [["meeting-post", "cart-total", "meeting-x", "post.md"]],
+    [["meet", "cart-total", "brief.md", "--push", "yes"]],
     [["freeze", "cart-total", "--issue", "example/shop#1"]],
     [["status", "cart-total", "--push", "yes"]],
     [["start", "Bad Slug", "plan.json"]],
@@ -348,6 +414,7 @@ describe("aio-build", () => {
       "PLAN_FILE",
       "--base",
       "--json",
+      "--direct",
       "AIO_PROJECT_ID",
       "AIO_BOX_ID",
       "Exit status",

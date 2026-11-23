@@ -19,6 +19,7 @@ import {
 import {
   MenuBar,
   UpgradeStatus,
+  UsageAlerts,
   Splitter,
   errorMessage,
   hasOpenDialog,
@@ -1517,6 +1518,7 @@ export function App() {
         onStatus={upgradeStatus}
         showCliNotice={false}
       />
+      <UsageAlerts />
       <UpdateBars
         updates={updates}
         image={image}

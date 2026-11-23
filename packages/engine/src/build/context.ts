@@ -3,6 +3,8 @@
 // through it, so every change reaches `state.json`, `STATUS.md`, and the
 // event stream the same way.
 import type {
+  BuildDecision,
+  BuildSessionSettings,
   DecisionAnswer,
   EngineRunCreate,
   RunRetry,
@@ -13,27 +15,34 @@ import type {
   BuildTaskProgress,
   BuildTaskStatus,
   Escalation,
+  Message,
+  OwnerPost,
+  OwnerPostAnswer,
   RoleDefinition,
   RoleName,
   RunState,
+  SeatPlacement,
 } from "@aio/contracts";
 import { VendorSchema, dependentsOf } from "@aio/contracts";
 import {
   AgentCalls,
   basicRouting,
   type AgentCallHost,
+  type AgentCallSpec,
   type AgentOutcome,
   type CallCache,
   type CallDeps,
   type CallLedger,
 } from "../calls/index.js";
-import type { Clock, CommandRunner, EventDraft, EventSink } from "../core.js";
+import type { AdapterOutput, Clock, CommandRunner, EventDraft, EventSink } from "../core.js";
 import type { Logger, PushOptions } from "../api/core-interface.js";
 import { UnknownRoleError, type RoleTask } from "./roles/index.js";
 import { SeatPlacements, type PlaceOptions } from "./placements/index.js";
 import { seatCallSpec } from "./seat-call.js";
 import { loadSpecialties, type SpecialtyPack, type SpecialtySources } from "./specialties/index.js";
 import type { TeamBus, TeamChannel } from "../team/index.js";
+import { SessionDesk } from "./sessions/index.js";
+import { DecisionLog, checkDirectMessage, decisionsFor, decisionsText } from "./owner/index.js";
 import type { EscalationDraft } from "./escalations.js";
 import { renderStatus } from "./status-file.js";
 import type { BuildStore } from "./store.js";
@@ -81,6 +90,8 @@ export interface BuildServices {
    * Without it, preflight doesn't check the plan's secrets.
    */
   secretNames?: () => Promise<string[]>;
+  /** When a message resumes a session and when it gets a fresh agent. Default: the schema's defaults. */
+  sessions?: BuildSessionSettings;
 }
 
 /** What a step asks a seat to do. */
@@ -93,6 +104,27 @@ export interface SeatCall {
   /** The task's specialty packs, from `specialties()`. */
   specialties?: readonly SpecialtyPack[];
   placement?: PlaceOptions;
+  /**
+   * The plan tasks the agent works for, which messages to the seat name.
+   * Default: the task's own ID.
+   */
+  taskIds?: readonly string[];
+}
+
+/** One turn of an agent in a seat, with a prompt the caller wrote. */
+export interface TurnCall {
+  seat: RoleName;
+  /** The task whose member token the agent gets on the team chat. */
+  taskId: string | null;
+  key: string;
+  step: BuildStep;
+  task: RoleTask;
+  prompt: string;
+  placement: SeatPlacement;
+  specialties: readonly SpecialtyPack[];
+  output: AdapterOutput;
+  /** The session to resume; absent, the turn starts a fresh agent. */
+  sessionId?: string;
 }
 
 /** The build's call cache: each finished call in `calls/KEY.json`. */
@@ -113,6 +145,10 @@ export class BuildContext {
   readonly seats: SeatPlacements;
   /** The build's team chat, or `null` when the engine runs no bus. */
   readonly team: TeamChannel | null;
+  /** The session registry, and the message turns it gives each seat. */
+  readonly sessions: SessionDesk;
+  /** The owner's decisions: one for each owner post. */
+  readonly decisions: DecisionLog;
   /** Aborts the gate's commands when the engine stops; a new drive gets a new one. */
   private driveAbort = new AbortController();
   private writeChain: Promise<void> = Promise.resolve();
@@ -171,8 +207,17 @@ export class BuildContext {
         dir: store.path("messages"),
         tasks: () => this.plan.tasks,
         emit: (draft) => this.emit(draft),
+        check: (message) => checkDirectMessage(message, this.plan, () => this.team!.list()),
         clock: services.clock,
       }) ?? null;
+    this.decisions = new DecisionLog(store.path("decisions"), state.id);
+    this.sessions = new SessionDesk(this);
+    // The decision comes first: the log's queue then holds it before any
+    // turn for the post reads it.
+    this.team?.onMessage((message) => {
+      if (message.from.kind === "owner") void this.decisions.record(message).catch(() => undefined);
+    });
+    this.team?.onMessage((message) => this.sessions.receive(message));
   }
 
   /** Aborts when the engine stops the drive or the build is cancelled. */
@@ -229,6 +274,7 @@ export class BuildContext {
         container: state.container,
         status: state.status,
         step: state.step,
+        ...(this.plan.usageEstimate ? { usageEstimate: this.plan.usageEstimate } : {}),
         createdAt: state.createdAt,
         updatedAt: state.updatedAt,
       },
@@ -386,6 +432,65 @@ export class BuildContext {
     await this.store.savePlan(this.plan);
   }
 
+  /**
+   * Posts as the owner to one agent and records the post as a decision.
+   * The team chat delivers the post to that agent only; an agent that
+   * holds no session yet gets it with the task's decisions when it starts.
+   */
+  async post(input: OwnerPost): Promise<OwnerPostAnswer> {
+    if (!this.team) throw new Error("The engine runs no team chat, so it can't take a post.");
+    const message = await this.team.send({ kind: "owner" }, input);
+    return { route: "agent", message, decision: await this.decisions.record(message) };
+  }
+
+  /** The decisions attached to any of `taskIds`, as a prompt section's body. */
+  async decisionsText(taskIds: readonly string[]): Promise<string> {
+    return decisionsText(decisionsFor(await this.decisions.list(), taskIds, this.plan));
+  }
+
+  /**
+   * Flags owner post `message` to the Project manager as a change to the
+   * build plan, because `reporter` found that it contradicts `contradicts`.
+   * A post flagged already stays as it is.
+   */
+  async flagPlanChange(
+    message: Message,
+    reporter: { seat: string; taskId: string | null },
+    contradicts: ReadonlyArray<{ criterion: string; reason: string }>,
+  ): Promise<BuildDecision | null> {
+    const decision = await this.decisions.byMessage(message.id);
+    if (!decision || decision.planChange || contradicts.length === 0) return null;
+    const from = { kind: "seat" as const, seat: reporter.seat, taskId: reporter.taskId };
+    const criteria = [...new Set(contradicts.map((c) => c.criterion))];
+    const reason = contradicts.map((c) => `${c.criterion}: ${c.reason}`).join(" ");
+    const note = await this.team
+      ?.send(from, {
+        type: "note",
+        to: "project-manager",
+        ...(decision.taskId !== null ? { taskId: decision.taskId } : {}),
+        ...(decision.milestone !== null ? { milestone: decision.milestone } : {}),
+        body: [
+          `Plan change: owner post ${message.id} (decision ${decision.id}) contradicts acceptance criteria ${criteria.join(", ")} of the build plan.`,
+          reason,
+          "The agent works from the post. Change the plan's criteria to match it, or ask the owner.",
+        ].join("\n\n"),
+      })
+      .catch((error: unknown) => {
+        this.services.log.warn("Couldn't send a plan change flag", {
+          build: this.state.slug,
+          error: String(error),
+        });
+        return null;
+      });
+    return this.decisions.flag(message.id, {
+      criteria,
+      reason,
+      reportedBy: from,
+      messageId: note?.id ?? null,
+      flaggedAt: this.now(),
+    });
+  }
+
   /** Where the build finds specialties: the repository, then the account skills folders. */
   specialtySources(): SpecialtySources {
     return { repoRoot: this.state.repoPath, skillDirs: this.services.skillDirs() };
@@ -410,21 +515,75 @@ export class BuildContext {
    * Starts an agent in `seat` for one task, on the seat's placement, and
    * returns its answer. The call cache returns a finished call's answer
    * without calling again, which is how a restarted build skips the calls
-   * it already made. The agent reaches the team chat with a token of its
-   * own, which ends with the call.
+   * it already made. The agent's session goes into the session registry,
+   * and the seat takes no message turn while the call runs.
    */
-  async callSeat(input: SeatCall): Promise<AgentOutcome<Record<string, unknown>>> {
+  callSeat(input: SeatCall): Promise<AgentOutcome<Record<string, unknown>>> {
     const role = this.role(input.seat);
-    const spec = seatCallSpec(role, this.seats.place(input.seat, input.placement), {
+    const packs = input.specialties ?? [];
+    const taskIds = input.taskIds ?? [input.task.id];
+    return this.sessions.run(
+      input.seat,
+      async () => {
+        const placement = this.seats.place(input.seat, input.placement);
+        const decisions = await this.decisionsText(taskIds);
+        const outcome = await this.runTurn(
+          seatCallSpec(role, placement, {
+            seat: input.seat,
+            key: input.key,
+            step: input.step,
+            task: decisions === "" ? input.task : { ...input.task, decisions },
+            repoPath: this.worktree.path,
+            scratchDir: this.store.scratchDir,
+            specialties: packs,
+          }),
+          input.seat,
+          input.task.id,
+        );
+        await this.sessions.started({
+          seat: input.seat,
+          taskIds,
+          task: input.task,
+          specialties: packs.map((p) => p.name),
+          step: input.step,
+          key: input.key,
+          placement,
+          outcome,
+        });
+        return outcome;
+      },
+      taskIds,
+    );
+  }
+
+  /**
+   * Runs one turn of an agent in a seat with a prompt the caller wrote, and
+   * returns its answer. Callers that share a seat queue through
+   * `sessions.run()`.
+   */
+  callTurn(input: TurnCall): Promise<AgentOutcome<Record<string, unknown>>> {
+    const spec = seatCallSpec(this.role(input.seat), input.placement, {
       seat: input.seat,
       key: input.key,
       step: input.step,
       task: input.task,
       repoPath: this.worktree.path,
       scratchDir: this.store.scratchDir,
-      ...(input.specialties ? { specialties: input.specialties } : {}),
+      specialties: input.specialties,
+      prompt: input.prompt,
+      output: input.output,
+      ...(input.sessionId !== undefined ? { sessionId: input.sessionId } : {}),
     });
-    const pass = this.team?.admit({ seat: input.seat, taskId: input.task.id });
+    return this.runTurn(spec, input.seat, input.taskId);
+  }
+
+  /** Makes a seat's call; the agent reaches the team chat with a token of its own, which ends with the call. */
+  private async runTurn(
+    spec: AgentCallSpec,
+    seat: RoleName,
+    taskId: string | null,
+  ): Promise<AgentOutcome<Record<string, unknown>>> {
+    const pass = this.team?.admit({ seat, taskId });
     if (pass) spec.request.team = pass.attachment;
     try {
       return await this.calls.call<Record<string, unknown>>(spec);

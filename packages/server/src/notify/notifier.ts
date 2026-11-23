@@ -11,6 +11,7 @@ import {
   type RunStatus,
 } from "@aio/contracts";
 import type { EventInput, SqlDatabase } from "../api/core-interface.js";
+import type { UsageAlert } from "../usage/watcher.js";
 
 export interface NotifierOptions {
   db: SqlDatabase;
@@ -176,6 +177,35 @@ export class Notifier {
       .prepare("INSERT INTO svc_notifications (id, read, json) VALUES (?, 0, ?)")
       .run(notification.notificationId, JSON.stringify(notification));
     this.opts.emit({ type: "notification", ...notification });
+  }
+
+  /**
+   * Stores and sends a usage watcher alert. Usage alerts have no toggle: they
+   * are how the owner learns to pause a build, since nothing pauses on its own.
+   */
+  usageAlert(alert: UsageAlert): void {
+    this.notify({
+      kind: "usage_alert",
+      title: alert.title,
+      body: `${alert.body} Tell the Project manager to pause or continue.`,
+      runId: null,
+      boxId: alert.boxId,
+      ...(alert.buildId === null ? {} : { buildId: alert.buildId }),
+      severity: "warning",
+    });
+  }
+
+  /** Whether a build already got a usage alert, such as before a restart. */
+  hasBuildAlert(buildId: string): boolean {
+    const row = this.opts.db
+      .prepare(
+        `SELECT 1 FROM svc_notifications
+         WHERE json_extract(json, '$.kind') = 'usage_alert'
+           AND json_extract(json, '$.buildId') = ?
+         LIMIT 1`,
+      )
+      .get(buildId);
+    return row !== undefined;
   }
 
   /** Notifications, newest first. */

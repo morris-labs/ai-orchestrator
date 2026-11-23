@@ -102,6 +102,7 @@ import {
 import { DEFAULT_PROMPT_TEMPLATES } from "./prompts.js";
 import { isUncPath, type HostOs } from "./containerPaths.js";
 import { BrokerTransportSettingSchema } from "./broker.js";
+import { UsageWatchPatchSchema, UsageWatchSchema } from "./usage-watch.js";
 
 /** Every shared container name and box id starts with this prefix. */
 export const CONTAINER_PREFIX = "aio-agent-";
@@ -752,6 +753,8 @@ export const GlobalSettingsSchema = z
     linkAddress: z.string().min(1).optional(),
     /** On a hub, what each enrolled machine may reach, by machine ID. Absent grants nothing. */
     nodeGrants: z.record(z.string().min(1), NodeGrantSchema).optional(),
+    /** The usage watcher's alert thresholds. Absent means `DEFAULT_USAGE_WATCH`. */
+    usageWatch: UsageWatchSchema.optional(),
   })
   .strict();
 export type GlobalSettings = z.infer<typeof GlobalSettingsSchema>;
@@ -886,6 +889,8 @@ export const GlobalSettingsPatchSchema = z
     linkAddress: z.string().min(1).nullable(),
     /** Replaces every machine's grant; `null` removes them all. */
     nodeGrants: z.record(z.string().min(1), NodeGrantSchema).nullable(),
+    /** Only the windows and fields it names change; `null` goes back to the defaults. */
+    usageWatch: UsageWatchPatchSchema.nullable(),
     /**
      * Applies to containers created afterward; `null` goes back to `auto`.
      */

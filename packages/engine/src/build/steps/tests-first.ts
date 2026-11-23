@@ -253,6 +253,9 @@ async function round(
     key: record.callKey,
     step: "tests_first",
     task: roleTask(ctx, scope, context(previous)),
+    // The Test engineer writes the tests of every task in scope, so a
+    // message about any of them reaches this agent.
+    taskIds: ctx.plan.tasks.map((task) => task.id),
   });
   record.answer = { vendor: outcome.vendor, model: outcome.model, output: outcome.output };
   await ctx.store.writeJson(path, record);

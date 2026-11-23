@@ -102,6 +102,7 @@ import {
   BuildUsageSchema,
 } from "./build-events.js";
 import { BuildMessageListSchema } from "./messages.js";
+import { OwnerPostAnswerSchema, OwnerPostSchema } from "./owner-posts.js";
 import { BuildCreateSchema, BuildStateSchema, EscalationResolveSchema } from "./builds.js";
 import { FindingSchema, SeveritySchema, VerdictSchema } from "./findings.js";
 import {
@@ -1865,6 +1866,16 @@ export const serverRoutes = {
       "A build's tasks with their state and milestone, by task id. Returns not_found for a build the server hasn't seen.",
     response: BuildTaskListSchema,
   }),
+  "builds.post": http({
+    method: "POST",
+    path: `${V1}/builds/:buildId/posts`,
+    summary:
+      "Post as the owner to one agent of a build. Only that agent runs; the engine records the post as a decision on its task.",
+    body: OwnerPostSchema,
+    response: OwnerPostAnswerSchema,
+    status: 201,
+    errors: ["not_found", "invalid_state", "conflict"],
+  }),
 
   // Machines (multi-host)
   "machines.list": http({
@@ -2028,6 +2039,15 @@ export const engineRoutes = {
     body: EscalationResolveSchema,
     response: BuildStateSchema,
     errors: ["not_found", "invalid_state"],
+  }),
+  "engine.builds.post": http({
+    method: "POST",
+    path: `${V1}/builds/:slug/posts`,
+    summary: "Post as the owner to one agent of a build, and record the post as a decision.",
+    body: OwnerPostSchema,
+    response: OwnerPostAnswerSchema,
+    status: 201,
+    errors: ["not_found", "invalid_state", "conflict"],
   }),
   "engine.ports": http({
     method: "GET",

@@ -56,6 +56,28 @@ describe("main window", () => {
     expect(server.callsTo("machines.list").length).toBeGreaterThan(before);
   });
 
+  it("shows a usage watcher alert as it arrives", async () => {
+    const server = new FakeServer({ boxes: boxes() });
+    await renderApp(server);
+    act(() => {
+      server.emit(
+        makeEvent("notification", {
+          notificationId: "usage-1",
+          kind: "usage_alert",
+          title: "Claude 5-hour usage jumped",
+          body: "It used more than 15% of its 5-hour window in 10 minutes.",
+          runId: null,
+          boxId: null,
+          severity: "warning",
+          read: false,
+        }),
+      );
+    });
+
+    const region = await screen.findByRole("region", { name: "Usage alerts" });
+    expect(within(region).getByText("Claude 5-hour usage jumped")).toBeInTheDocument();
+  });
+
   it("lists boxes with all four columns, counts, and projects", async () => {
     await renderApp(new FakeServer({ boxes: boxes() }));
     expect(
