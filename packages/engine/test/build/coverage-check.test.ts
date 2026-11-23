@@ -225,6 +225,39 @@ describe("the coverage check", () => {
     });
   });
 
+  it("resumes a single-vendor check's own session for a message", async () => {
+    const world = await buildWorld({ steps: BUILD_PIPELINE });
+    const ask = {
+      tool: "send_message",
+      arguments: {
+        type: "question",
+        to: "coverage-checker",
+        toTask: "coverage-check",
+        body: "Which test covers the quantity?",
+      },
+    };
+    world.script({
+      codex: [
+        { match: "Which test covers the quantity", output: { summary: "Read the message." } },
+        testRound("round 1 of", REVISED_TEST),
+        { ...ALL_CHECKED, match: "Coverage check" },
+        { ...DEVELOPER, match: "Task T1", busCalls: [ask] },
+      ],
+    });
+
+    await world.start("cart-total", { ...twoCriteriaPlan(), singleVendor: "codex" });
+    await world.settle("cart-total");
+
+    const registry = JSON.parse(world.file("cart-total", "sessions.json")) as {
+      sessions: { seat: string; sessionId: string; turns: { messageId: string | null }[] }[];
+    };
+    const checkers = registry.sessions.filter((s) => s.seat === "coverage-checker");
+    expect(checkers).toHaveLength(1);
+    expect(checkers[0]!.turns.map((t) => t.messageId)).toEqual([null, "M1"]);
+    const answered = world.calls().find((c) => c.prompt.includes("Which test covers the quantity"));
+    expect(answered?.resumeId).toBe(checkers[0]!.sessionId);
+  });
+
   it("escalates when the plan places the check on the Test engineer's vendor", async () => {
     const world = await buildWorld({ steps: BUILD_PIPELINE });
     world.script({ codex: [testRound("round 1 of", REVISED_TEST)], claude: [DEVELOPER] });

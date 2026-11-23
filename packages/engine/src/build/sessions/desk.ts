@@ -271,11 +271,14 @@ export class SessionDesk {
     }
     const key = `message-${message.id}`;
     const role = ctx.role(entry.seat);
-    // The rule that kept the session's first agent off a vendor holds for every turn.
-    const placement = ctx.seats.place(
-      entry.seat,
-      session.otherThan ? { otherThan: session.otherThan } : {},
-    );
+    // The rule that kept the session's first agent off a vendor holds for
+    // every turn. With the single-vendor setting, that rule only made the
+    // first agent fresh, so it didn't share the other seat's session; the
+    // session a turn resumes is the seat's own.
+    const placement = {
+      ...ctx.seats.place(entry.seat, session.otherThan ? { otherThan: session.otherThan } : {}),
+      fresh: false,
+    };
     const reason = freshReason(session, placement, ctx.services.clock.now(), this.settings);
     const packs = await ctx.specialties(session.brief.specialties);
     const decisions = await ctx.decisionsText(session.taskIds);
