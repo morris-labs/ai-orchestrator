@@ -82,7 +82,10 @@ describe("session messages", () => {
   });
 
   it("gives up on a message that waits too long", async () => {
-    const w = world(Array.from({ length: 100 }, () => dialog), { giveUpMs: 30 });
+    const w = world(
+      Array.from({ length: 100 }, () => dialog),
+      { giveUpMs: 30 },
+    );
     w.messages.send("box-a", HOLD);
     await until(() => w.logs.some((l) => l.includes("Gave up")));
     const count = w.attempts.length;

@@ -24,11 +24,7 @@ import { listDirs } from "./fs-dirs.js";
 import { ulid } from "./ulid.js";
 import { readHostTokenSamples } from "../usage/token-samples.js";
 import { commandLine } from "../jobs/process.js";
-import {
-  controlBuild,
-  resolveBuildEscalation,
-  type BuildAction,
-} from "../events/build-control.js";
+import { controlBuild, resolveBuildEscalation, type BuildAction } from "../events/build-control.js";
 import { externalAttachArgv } from "../terminals/attach.js";
 
 type SR = ServerRoutes;

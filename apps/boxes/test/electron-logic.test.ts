@@ -115,10 +115,8 @@ describe("notifications and review", () => {
     };
     expect(isBoxNotification(dm)).toBe(true);
     expect(notificationTarget(dm)).toEqual({ buildId: "01JB8Z5K3W6Q2V9X4T7R0M1N2Q" });
-    expect(notificationTarget({ ...dm, kind: "box_ended", buildId: undefined })).toEqual({
-      boxId: "b",
-    });
-    expect(notificationTarget({ ...dm, boxId: null, buildId: undefined })).toBeNull();
+    expect(notificationTarget({ boxId: "b" })).toEqual({ boxId: "b" });
+    expect(notificationTarget({ boxId: null })).toBeNull();
   });
   it("prefills the review launcher", () => {
     expect(reviewCommand("p", "b")).toEqual({

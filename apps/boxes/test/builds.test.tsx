@@ -1,5 +1,12 @@
 // The Builds page and the build badge on a box, against the fake server.
-import { FakeApiError, FakeServer, makeBoxView, makeBuild, makeInboxItem, makeMessage } from "@aio/ui/testing";
+import {
+  FakeApiError,
+  FakeServer,
+  makeBoxView,
+  makeBuild,
+  makeInboxItem,
+  makeMessage,
+} from "@aio/ui/testing";
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -279,7 +286,9 @@ describe("waiting escalations", () => {
       by: "owner",
       note: "Use whole dollars.",
     });
-    await waitFor(() => expect(screen.queryByRole("list", { name: "Open escalations" })).toBeNull());
+    await waitFor(() =>
+      expect(screen.queryByRole("list", { name: "Open escalations" })).toBeNull(),
+    );
   });
 
   it("sends a reorder's task order and a decision's answer, and shows a refusal", async () => {
