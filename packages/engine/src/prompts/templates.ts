@@ -600,6 +600,8 @@ export interface FixerPromptInput {
   policySection: string;
   /** Uses the compact prompt. */
   standard?: boolean;
+  /** The build task the change belongs to, when a build started the run. */
+  taskContext?: string | undefined;
 }
 
 /** The fixer: fixes confirmed findings on the tip branch and commits. */
@@ -617,6 +619,7 @@ export function fixerPrompt(input: FixerPromptInput): string {
       "- If a finding isn't a real defect, leave the code and list it under `notFixed`.",
       `- ${TERSE_RULE}`,
       input.findings.some(isExternal) ? UNTRUSTED_FRAME : "",
+      section("Build task", input.taskContext ?? ""),
       section("Findings", items.join("\n")),
       input.gateFailure
         ? section(
@@ -645,6 +648,7 @@ export function fixerPrompt(input: FixerPromptInput): string {
     "- When a finding is not a real defect after all, leave the code and list it under `notFixed` with the reason.",
     "",
     external ? UNTRUSTED_FRAME : "",
+    section("Build task", input.taskContext ?? ""),
     section("Findings", list),
     input.gateFailure
       ? section(

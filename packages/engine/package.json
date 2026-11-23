@@ -8,7 +8,8 @@
   "types": "./dist/index.d.ts",
   "bin": {
     "aio-engine": "./dist/main.js",
-    "aio-secret": "./dist/secret-main.js"
+    "aio-secret": "./dist/secret-main.js",
+    "aio-build": "./dist/build-main.js"
   },
   "exports": {
     ".": {

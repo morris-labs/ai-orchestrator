@@ -2,6 +2,7 @@
 // responses; each call takes the first one whose `match` fits the prompt and
 // whose `times` isn't used up. Use counts persist in a state file, so a
 // sequence of separate CLI invocations walks through the script.
+import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
   appendFileSync,
@@ -72,12 +73,37 @@ export function answerText(response) {
   return JSON.stringify(response.output ?? { findings: [] });
 }
 
-/** Writes `response.writeFiles` ({ relative path: content }) under the working directory. */
+/**
+ * Writes `response.writeFiles` ({ relative path: content }) under the working
+ * directory. With `response.commit`, commits every change in the working
+ * directory with that message afterward, as an agent that commits does. A
+ * clean working directory gets no commit.
+ */
 export function writeFiles(response) {
   for (const [file, content] of Object.entries(response.writeFiles ?? {})) {
     const target = isAbsolute(file) ? file : join(process.cwd(), file);
     mkdirSync(dirname(target), { recursive: true });
     writeFileSync(target, content);
+  }
+  const changed =
+    response.commit &&
+    execFileSync("git", ["status", "--porcelain"], { encoding: "utf8" }).trim() !== "";
+  if (changed) {
+    execFileSync("git", ["add", "-A"], { stdio: "ignore" });
+    execFileSync(
+      "git",
+      [
+        "-c",
+        "user.name=Mock Agent",
+        "-c",
+        "user.email=mock-agent@example.com",
+        "commit",
+        "-q",
+        "-m",
+        response.commit,
+      ],
+      { stdio: "ignore" },
+    );
   }
 }
 

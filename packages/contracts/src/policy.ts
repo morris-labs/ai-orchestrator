@@ -30,6 +30,8 @@ export const PolicyFileSchema = z
     riskPaths: z.array(z.string().min(1)).default([]),
     rules: z.array(PolicyRuleSchema).default([]),
     tests: z.array(PolicyCommandSchema).default([]),
+    /** Type check commands. A build plan's type check list starts from this one. */
+    typecheck: z.array(PolicyCommandSchema).optional(),
     lint: z.array(PolicyCommandSchema).default([]),
     /** Facts about where the code runs, such as "Windows-only code paths under win/". */
     environmentLimits: z.array(z.string().min(1)).default([]),

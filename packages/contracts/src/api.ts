@@ -2027,8 +2027,14 @@ export const engineRoutes = {
   },
 } as const;
 
-/** Every route, keyed by name. Engine keys start with `engine.`. */
-export const routes = { ...serverRoutes, ...engineRoutes } as const;
+/**
+ * Every route, keyed by name. Engine keys start with `engine.`. The type is
+ * written out because the inferred one is too large for declaration output.
+ */
+export const routes: typeof serverRoutes & typeof engineRoutes = {
+  ...serverRoutes,
+  ...engineRoutes,
+};
 
 export type ServerRoutes = typeof serverRoutes;
 export type EngineRoutes = typeof engineRoutes;

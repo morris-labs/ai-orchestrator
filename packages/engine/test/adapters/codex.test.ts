@@ -49,6 +49,23 @@ describe("CodexStreamParser", () => {
     });
   });
 
+  it("reports only the change since the totals from before the call", () => {
+    const parser = new CodexStreamParser({ input: 5000, output: 300, cached: 1000 });
+    parser.push(
+      JSON.stringify({
+        type: "turn.completed",
+        usage: { input_tokens: 6200, cached_input_tokens: 1500, output_tokens: 380 },
+      }),
+    );
+    expect(parser.summary().tokens).toEqual({
+      input: 1200,
+      output: 80,
+      fresh: 700,
+      cacheWrite: 0,
+      cacheRead: 500,
+    });
+  });
+
   it("leaves out the token breakdown when a turn omits cached_input_tokens", () => {
     const parser = new CodexStreamParser();
     parser.push(

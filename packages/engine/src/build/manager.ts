@@ -15,7 +15,7 @@ import { PolicyError } from "../policy/load.js";
 import { ExecaRunner, ShellRunner } from "../range/exec.js";
 import { GitError } from "../range/git.js";
 import { BuildController, type BuildLocation, type BuildPipeline } from "./controller.js";
-import type { BuildServices } from "./context.js";
+import type { BuildServices, ReviewRuns } from "./context.js";
 import { RoleError } from "./roles/index.js";
 import { accountSkillDirs } from "./specialties/index.js";
 import { BuildNotFoundError, BuildStore, listBuildSlugs } from "./store.js";
@@ -51,6 +51,10 @@ export interface BuildManagerDeps extends CoreDeps {
   pipeline?: BuildPipeline;
   /** The team chat bus that seat calls reach. Without it, they run without one. */
   team?: TeamBus;
+  /** The engine's review runs, for the review step. */
+  reviews?: ReviewRuns;
+  /** How often the review step reads its run's state, in milliseconds. */
+  reviewPollMs?: number;
 }
 
 /** Turns a creation error into one the API maps to a status. */
@@ -89,6 +93,8 @@ export class EngineBuildManager implements BuildManager {
       clock,
       log: deps.log,
       ...(deps.team ? { team: deps.team } : {}),
+      ...(deps.reviews ? { reviews: deps.reviews } : {}),
+      ...(deps.reviewPollMs !== undefined ? { reviewPollMs: deps.reviewPollMs } : {}),
     };
     this.location = {
       projectRoot: deps.projectRoot,

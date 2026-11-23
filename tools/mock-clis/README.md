@@ -47,7 +47,7 @@ adapter the script's absolute path through its `command` option.
 | `MOCK_CLI_SCENARIO` | The scenario file. Without it, every call answers `{"findings":[]}`. |
 | `MOCK_CLI_STATE` | Where use counts are kept. Default: the scenario path plus `.state.json`. Delete it to restart a scenario. |
 | `MOCK_CLI_LOG` | A file that gets one JSON line per call, with the arguments, prompt, and chosen response. |
-| `CODEX_HOME` | When set, the `codex` mock writes a session rollout file with the scenario's `rateLimits` under `CODEX_HOME/sessions`, as the real CLI does. Without it, the mock writes nothing, so it never touches your real `~/.codex`. |
+| `CODEX_HOME` | When set, the `codex` mock writes a session rollout file under `CODEX_HOME/sessions`, as the real CLI does, with the scenario's `rateLimits` and the thread's token totals. A resumed call reports the thread's total tokens on `turn.completed`, as Codex does. Without it, the mock writes nothing, so it never touches your real `~/.codex`. |
 
 ## Scenario file
 
@@ -100,6 +100,7 @@ Each response takes these fields, all optional:
 | `costUsd` | Claude only: the call's `total_cost_usd`. |
 | `sessionId` | The session or thread id to report on a fresh call. |
 | `writeFiles` | `{ "relative/path": "content" }` written in the working directory, but only when the call may write: Codex with a writable sandbox, Copilot with `--allow-all-tools`, Claude outside `dontAsk` mode. |
+| `commit` | A commit message. After `writeFiles`, the mock commits every change in the working directory with it, as an agent that commits its work does. Needs `writeFiles` and the same write permission. A clean working directory gets no commit. |
 | `busCalls` | Claude and Codex only: `[{ "tool": "send_message", "arguments": { ... }, "server": "NAME" }]`, MCP tool calls that the mock makes before it answers. `server` is optional and defaults to the first configured server. |
 
 ## MCP tool calls

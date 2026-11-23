@@ -142,7 +142,10 @@ export class CodexAdapter extends CliAdapter {
     try {
       const schemaFile = join(dir, "schema.json");
       writeFileSync(schemaFile, JSON.stringify(toStrictJsonSchema(this.jsonSchemaFor(req))));
-      const parser = new CodexStreamParser();
+      // A resumed call's `turn.completed` reports the whole thread's total, so
+      // the parser needs the total from before this call to isolate the turn.
+      const before = req.sessionId ? this.readRollout(req.sessionId, req) : null;
+      const parser = new CodexStreamParser(before ? codexRolloutTotals(before) : undefined);
       const prompt = req.systemPrompt ? `${req.systemPrompt}\n\n${req.prompt}` : req.prompt;
       const result = await runProcess({
         command: this.command,
@@ -247,8 +250,53 @@ export function codexRolloutModel(rollout: string): string | null {
   return model;
 }
 
-/** Reads `codex exec --json` lines one at a time. */
+/** Cumulative token counts for a thread, as Codex reports them. */
+export interface CodexTotals {
+  input: number;
+  output: number;
+  cached: number;
+}
+
+/**
+ * Reads the thread's cumulative token counts from the last `token_count`
+ * event in a rollout file, or `undefined` when the file holds none.
+ */
+export function codexRolloutTotals(rollout: string): CodexTotals | undefined {
+  let totals: CodexTotals | undefined;
+  for (const line of rollout.split("\n")) {
+    if (!line.includes("total_token_usage")) continue;
+    try {
+      const entry = JSON.parse(line) as {
+        payload?: { type?: unknown; info?: { total_token_usage?: Record<string, unknown> } | null };
+      };
+      const usage = entry.payload?.info?.total_token_usage;
+      if (entry.payload?.type === "token_count" && usage) {
+        totals = {
+          input: num(usage.input_tokens),
+          output: num(usage.output_tokens),
+          cached: num(usage.cached_input_tokens),
+        };
+      }
+    } catch {
+      // Skip a torn line; the file can be mid-write.
+    }
+  }
+  return totals;
+}
+
+/**
+ * Reads `codex exec --json` lines one at a time.
+ *
+ * The usage in each `turn.completed` event is the thread's running total, so
+ * the parser reports the change since the previous total. Pass the thread's
+ * total from before the call as `before` when the call resumes a session.
+ */
 export class CodexStreamParser {
+  constructor(before?: CodexTotals) {
+    if (before) this.previous = before;
+  }
+
+  private previous: CodexTotals = { input: 0, output: 0, cached: 0 };
   private threadId: string | null = null;
   private lastMessage: string | null = null;
   private readonly toolErrors: string[] = [];
@@ -278,14 +326,20 @@ export class CodexStreamParser {
       case "turn.completed": {
         this.turnsCompleted += 1;
         const usage = (event.usage ?? {}) as Record<string, unknown>;
-        this.input += num(usage.input_tokens);
-        this.output += num(usage.output_tokens);
+        const total = {
+          input: num(usage.input_tokens),
+          output: num(usage.output_tokens),
+          cached: num(usage.cached_input_tokens),
+        };
+        this.input += Math.max(0, total.input - this.previous.input);
+        this.output += Math.max(0, total.output - this.previous.output);
         // `input_tokens` includes `cached_input_tokens`, which are cache reads.
         if (typeof usage.cached_input_tokens === "number") {
-          this.cached += num(usage.cached_input_tokens);
+          this.cached += Math.max(0, total.cached - this.previous.cached);
         } else {
           this.cacheUnknown = true;
         }
+        this.previous = total;
         break;
       }
       case "turn.failed": {

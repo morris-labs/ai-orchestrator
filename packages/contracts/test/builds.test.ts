@@ -25,7 +25,7 @@ describe("BuildPlanSchema", () => {
   it("accepts a one-task plan and fills the defaults", () => {
     const parsed = roundTrip(BuildPlanSchema, plan);
     expect(parsed.version).toBe(1);
-    expect(parsed.criteria[0]?.verification).toBe("test");
+    expect(parsed.criteria[0]).toMatchObject({ verification: "test", alreadyHolds: false });
     expect(parsed.tasks[0]).toMatchObject({ role: "developer", contracts: [], specialties: [] });
     expect(parsed.commands.typecheck).toEqual([]);
     expect(parsed).toMatchObject({ singleVendor: null, placements: {} });

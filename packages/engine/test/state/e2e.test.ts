@@ -111,6 +111,19 @@ describe("pre-push end to end", () => {
       if (disprover)
         expect(f.reportedBy.startsWith(disprover.actor.vendor ?? "?"), f.id).toBe(false);
     }
+    // A stand-alone run names no build: its leases and fixer calls are a review run's own.
+    const requests = (d.broker as GrantingBroker).requests;
+    expect(requests.every((r) => r.runId === state.id && r.buildId === undefined)).toBe(true);
+    expect(
+      d.events
+        .ofType("agent.started")
+        .every((e) => e.buildId === undefined && e.seat === undefined && e.placement === undefined),
+    ).toBe(true);
+    expect(
+      scenario.calls
+        .filter((c) => c.method === "fix")
+        .some((c) => c.prompt.includes("## Build task")),
+    ).toBe(false);
     // Offload: Claude only fixes.
     expect(
       scenario.calls.filter((c) => c.vendor === "claude").every((c) => c.method === "fix"),

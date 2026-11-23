@@ -127,6 +127,25 @@ describe("gate", () => {
     ]);
   });
 
+  it("runs the policy's type check commands between its tests and lint", async () => {
+    const seen: string[] = [];
+    const shell: CommandRunner = {
+      run: async (line) => {
+        seen.push(line);
+        return { exitCode: 0, stdout: "", stderr: "", timedOut: false };
+      },
+    };
+    const policy = PolicyFileSchema.parse({
+      version: 1,
+      tests: [{ command: "npm test" }],
+      typecheck: [{ command: "npx tsc --noEmit" }],
+      lint: [{ command: "npm run lint" }],
+    });
+    const result = await runGate(policy, { repoPath: "/repo", shell });
+    expect(seen).toEqual(["npm test", "npx tsc --noEmit", "npm run lint"]);
+    expect(result.commands.map((c) => c.kind)).toEqual(["test", "typecheck", "lint"]);
+  });
+
   it("runs commands without Python bytecode and lists the untracked files they made", async () => {
     const { execFileSync } = await import("node:child_process");
     const { existsSync, mkdirSync, readFileSync, writeFileSync } = await import("node:fs");

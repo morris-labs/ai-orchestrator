@@ -4,6 +4,7 @@
 // event stream the same way.
 import type {
   AgentRole,
+  EngineRunCreate,
   BuildPlan,
   BuildState,
   BuildStatus,
@@ -13,6 +14,7 @@ import type {
   Escalation,
   RoleDefinition,
   RoleName,
+  RunState,
 } from "@aio/contracts";
 import { VendorSchema } from "@aio/contracts";
 import { z } from "zod";
@@ -56,6 +58,12 @@ export function agentRoleFor(role: RoleDefinition): AgentRole {
   return role.permission.access === "write" ? "fixer" : "reviewer";
 }
 
+/** The engine's review runs, which the review step starts and reads. */
+export interface ReviewRuns {
+  start(request: EngineRunCreate): Promise<RunState>;
+  get(runId: string): Promise<RunState | null>;
+}
+
 /** The engine services a build uses. */
 export interface BuildServices {
   call: CallDeps;
@@ -72,6 +80,10 @@ export interface BuildServices {
   tierModels?: Parameters<typeof basicRouting>[0]["tierModels"];
   /** The team chat bus. Without it, seat calls run without the bus. */
   team?: TeamBus;
+  /** The review runs; without them, the review step fails the build. */
+  reviews?: ReviewRuns;
+  /** How often the review step reads its run's state, in milliseconds. */
+  reviewPollMs?: number;
 }
 
 /** What a step asks a seat to do. */

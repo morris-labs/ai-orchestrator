@@ -1,0 +1,189 @@
+// The build socket: build requests only, scoped to the engine's project.
+import http from "node:http";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { BUILD_SOCKET_ROUTES } from "@aio/contracts";
+import { serveBuildSocket, type BuildSocketServer } from "../../src/build-socket/server.js";
+import { silentLogger } from "../../src/main/logger.js";
+import { buildState, fakeBuildManager } from "../api/fixtures.js";
+import { tempDir } from "../tmp.js";
+import { PLAN, send } from "./helpers.js";
+
+let server: BuildSocketServer | null = null;
+afterEach(async () => {
+  await server?.close();
+  server = null;
+});
+
+async function open(projectId: string | null = "proj-1") {
+  const builds = fakeBuildManager();
+  const path = join(tempDir("aio-bs-"), "build.sock");
+  server = await serveBuildSocket({ path, builds, projectId, log: silentLogger });
+  return { builds, path };
+}
+
+describe("the build socket", () => {
+  it("starts a build with the project, box, slug, and plan of the request", async () => {
+    const { builds, path } = await open();
+    const res = await send(path, "POST", BUILD_SOCKET_ROUTES.start, {
+      projectId: "proj-1",
+      boxId: "box-1",
+      slug: "cart-total",
+      plan: PLAN,
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.build.slug).toBe("cart-total");
+    expect(builds.start).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: "proj-1", boxId: "box-1", slug: "cart-total" }),
+    );
+    expect(builds.start.mock.calls[0]![0]).not.toHaveProperty("repoPath");
+  });
+
+  it("reads, pauses, and resumes a build", async () => {
+    const { builds, path } = await open();
+    const ask = { projectId: "proj-1", boxId: null, slug: "cart-total" };
+    const status = await send(path, "POST", BUILD_SOCKET_ROUTES.status, ask);
+    expect(status).toMatchObject({ status: 200, body: { build: { status: "running" } } });
+    const paused = await send(path, "POST", BUILD_SOCKET_ROUTES.pause, ask);
+    expect(paused).toMatchObject({ status: 200, body: { build: { status: "paused" } } });
+    expect(builds.pause).toHaveBeenCalledWith("cart-total");
+    const resumed = await send(path, "POST", BUILD_SOCKET_ROUTES.resume, ask);
+    expect(resumed.status).toBe(200);
+    expect(builds.resume).toHaveBeenCalledWith("cart-total");
+  });
+
+  it("answers not_found for a build the engine doesn't have", async () => {
+    const { path } = await open();
+    const res = await send(path, "POST", BUILD_SOCKET_ROUTES.status, {
+      projectId: "proj-1",
+      boxId: null,
+      slug: "no-such-build",
+    });
+    expect(res).toMatchObject({ status: 404, body: { error: { code: "not_found" } } });
+  });
+
+  it("refuses every request that isn't a build request, even with the engine token", async () => {
+    const { builds, path } = await open();
+    const auth = { authorization: "Bearer engine-token-0123456789" };
+    const refused = [
+      await send(path, "GET", "/api/v1/health", undefined, auth),
+      await send(path, "POST", "/api/v1/runs", { projectId: "proj-1" }, auth),
+      await send(path, "GET", "/api/v1/builds/cart-total", undefined, auth),
+      await send(path, "GET", BUILD_SOCKET_ROUTES.status),
+      await send(path, "DELETE", BUILD_SOCKET_ROUTES.pause),
+      await send(path, "POST", `${BUILD_SOCKET_ROUTES.start}/../../runs`, {}),
+    ];
+    for (const res of refused) {
+      expect(res.status).toBeGreaterThanOrEqual(400);
+      expect(res.body.error.message).toMatch(/only build requests/);
+    }
+    for (const fn of Object.values(builds)) expect(fn).not.toHaveBeenCalled();
+  });
+
+  it("refuses a malformed body or unknown fields", async () => {
+    const { builds, path } = await open();
+    const extra = await send(path, "POST", BUILD_SOCKET_ROUTES.start, {
+      projectId: "proj-1",
+      boxId: null,
+      slug: "cart-total",
+      plan: PLAN,
+      repoPath: "/etc",
+    });
+    expect(extra).toMatchObject({ status: 400, body: { error: { code: "validation" } } });
+    const missing = await send(path, "POST", BUILD_SOCKET_ROUTES.status, { slug: "cart-total" });
+    expect(missing).toMatchObject({ status: 400, body: { error: { code: "validation" } } });
+    const notJson = await new Promise<number>((resolve, reject) => {
+      const req = http.request(
+        { socketPath: path, method: "POST", path: BUILD_SOCKET_ROUTES.status, agent: false },
+        (res) => {
+          res.resume();
+          resolve(res.statusCode ?? 0);
+        },
+      );
+      req.on("error", reject);
+      req.end("{not json");
+    });
+    expect(notJson).toBe(400);
+    expect(builds.start).not.toHaveBeenCalled();
+  });
+
+  it("keeps a session in one project away from another project's builds", async () => {
+    const { builds, path } = await open("proj-1");
+    for (const route of [
+      BUILD_SOCKET_ROUTES.status,
+      BUILD_SOCKET_ROUTES.pause,
+      BUILD_SOCKET_ROUTES.resume,
+    ]) {
+      const res = await send(path, "POST", route, {
+        projectId: "proj-2",
+        boxId: null,
+        slug: "cart-total",
+      });
+      expect(res).toMatchObject({ status: 404, body: { error: { code: "not_found" } } });
+    }
+    const start = await send(path, "POST", BUILD_SOCKET_ROUTES.start, {
+      projectId: "proj-2",
+      boxId: null,
+      slug: "other",
+      plan: PLAN,
+    });
+    expect(start).toMatchObject({ status: 404, body: { error: { code: "not_found" } } });
+    expect(builds.start).not.toHaveBeenCalled();
+    expect(builds.pause).not.toHaveBeenCalled();
+    expect(builds.resume).not.toHaveBeenCalled();
+  });
+
+  it("checks the build's own project when the engine doesn't know its project", async () => {
+    const { builds, path } = await open(null);
+    const other = await send(path, "POST", BUILD_SOCKET_ROUTES.pause, {
+      projectId: "proj-2",
+      boxId: null,
+      slug: buildState.slug,
+    });
+    expect(other.status).toBe(404);
+    expect(builds.pause).not.toHaveBeenCalled();
+    const own = await send(path, "POST", BUILD_SOCKET_ROUTES.pause, {
+      projectId: buildState.projectId,
+      boxId: null,
+      slug: buildState.slug,
+    });
+    expect(own.status).toBe(200);
+  });
+
+  it("maps a conflict from the build manager to its status", async () => {
+    const { builds, path } = await open();
+    const { EngineError } = await import("../../src/api/core-interface.js");
+    builds.start.mockRejectedValueOnce(new EngineError("conflict", "A build named x exists."));
+    const res = await send(path, "POST", BUILD_SOCKET_ROUTES.start, {
+      projectId: "proj-1",
+      boxId: null,
+      slug: "cart-total",
+      plan: PLAN,
+    });
+    expect(res).toMatchObject({
+      status: 409,
+      body: { error: { code: "conflict", message: "A build named x exists." } },
+    });
+  });
+
+  it("replaces a stale socket file and removes the socket on close", async () => {
+    const { existsSync, writeFileSync } = await import("node:fs");
+    const path = join(tempDir("aio-bs-"), "build.sock");
+    writeFileSync(path, "");
+    server = await serveBuildSocket({
+      path,
+      builds: fakeBuildManager(),
+      projectId: "proj-1",
+      log: silentLogger,
+    });
+    const res = await send(path, "POST", BUILD_SOCKET_ROUTES.status, {
+      projectId: "proj-1",
+      boxId: null,
+      slug: "cart-total",
+    });
+    expect(res.status).toBe(200);
+    await server.close();
+    server = null;
+    expect(existsSync(path)).toBe(false);
+  });
+});
