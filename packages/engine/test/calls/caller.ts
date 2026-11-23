@@ -124,6 +124,7 @@ export function makeCaller(
   adapters: Partial<Record<Vendor, VendorAdapter>>,
   cache = new MemoryCache(),
   makeBroker: (clock: FakeClock) => GrantingBroker = (clock) => new GrantingBroker(clock),
+  extra: Partial<AgentCallHost> = {},
 ) {
   const clock = new FakeClock();
   const events = new MemoryEventSink("engine:test", "s", clock);
@@ -165,6 +166,7 @@ export function makeCaller(
     cache,
     routing: basicRouting({ fallbackOrder: ["codex", "claude", "copilot"], timeoutMs: 60_000 }),
     treeGuard: { ignore: [] },
+    ...extra,
   };
   const calls = new AgentCalls(host, {
     adapters,

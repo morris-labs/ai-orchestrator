@@ -286,4 +286,45 @@ export const MIGRATIONS: readonly Migration[] = [
     created_at TEXT NOT NULL
   );
 `,
+  // 9: builds. The mirror of every build an engine reports, and the build,
+  // seat, and step of a lease settlement. A build call outside a review run
+  // has no run id, so the settlements table is rebuilt with a nullable
+  // `run_id`; review settlements keep their rows, with no build.
+  `
+  CREATE TABLE IF NOT EXISTS svc_builds (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    container TEXT NOT NULL,
+    slug TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    json TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS svc_builds_project ON svc_builds (project_id, status);
+
+  CREATE TABLE svc_lease_settlements_9 (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    time TEXT NOT NULL,
+    lease_id TEXT NOT NULL,
+    run_id TEXT,
+    build_id TEXT,
+    seat TEXT,
+    step TEXT,
+    vendor TEXT NOT NULL,
+    role TEXT NOT NULL,
+    tokens_in INTEGER NOT NULL,
+    tokens_out INTEGER NOT NULL,
+    premium_requests REAL NOT NULL,
+    cost_estimate REAL NOT NULL
+  );
+  INSERT INTO svc_lease_settlements_9
+    (id, time, lease_id, run_id, vendor, role, tokens_in, tokens_out, premium_requests, cost_estimate)
+    SELECT id, time, lease_id, run_id, vendor, role, tokens_in, tokens_out, premium_requests,
+      cost_estimate
+    FROM svc_lease_settlements;
+  DROP TABLE svc_lease_settlements;
+  ALTER TABLE svc_lease_settlements_9 RENAME TO svc_lease_settlements;
+  CREATE INDEX IF NOT EXISTS svc_lease_settlements_build ON svc_lease_settlements (build_id);
+`,
 ];

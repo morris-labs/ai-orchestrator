@@ -200,7 +200,7 @@ describe("migrations 5 to 7", () => {
   }
 
   it("keeps the usage index at 5, the broker port at 6, and the machines at 7", () => {
-    expect(MIGRATIONS).toHaveLength(8);
+    expect(MIGRATIONS.length).toBeGreaterThanOrEqual(8);
     expect(MIGRATIONS[4]).toContain("svc_usage_samples_account");
     const six = databaseAt(6);
     expect(engineColumns(six)).toContain("broker_port");
@@ -478,5 +478,68 @@ describe("engine endpoints broker port", () => {
     expect(r.engines.get(base.projectId)).toEqual({ ...base, brokerPort: 41500 });
     r.engines.put(base, new Date(T));
     expect(r.engines.list()).toEqual([base]);
+  });
+});
+
+describe("migration 9", () => {
+  function databaseAt(version: number): Database.Database {
+    const db = new Database(":memory:");
+    for (const m of MIGRATIONS.slice(0, version)) {
+      if (typeof m === "function") m(db);
+      else db.exec(m as string);
+    }
+    db.pragma(`user_version = ${version}`);
+    return db;
+  }
+
+  it("adds builds and the build, seat, and step of a settlement, and keeps review settlements", () => {
+    const db = databaseAt(8);
+    db.prepare(
+      `INSERT INTO svc_lease_settlements
+       (time, lease_id, run_id, vendor, role, tokens_in, tokens_out, premium_requests, cost_estimate)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(T, "R-L1", "01JB8Z5K3W6Q2V9X4T7R0M1N2P", "codex", "reviewer", 100, 10, 0, 0.5);
+
+    migrate(db);
+
+    expect(
+      db
+        .prepare(
+          "SELECT lease_id, run_id, build_id, seat, step, tokens_in FROM svc_lease_settlements",
+        )
+        .all(),
+    ).toEqual([
+      {
+        lease_id: "R-L1",
+        run_id: "01JB8Z5K3W6Q2V9X4T7R0M1N2P",
+        build_id: null,
+        seat: null,
+        step: null,
+        tokens_in: 100,
+      },
+    ]);
+    // A build call outside a review run has no run id.
+    db.prepare(
+      `INSERT INTO svc_lease_settlements
+       (time, lease_id, run_id, build_id, seat, step, vendor, role, tokens_in, tokens_out,
+        premium_requests, cost_estimate)
+       VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      T,
+      "B-L1",
+      "01JB8Z5K3W6Q2V9X4T7R0M1N2Q",
+      "developer",
+      "tasks",
+      "claude",
+      "fixer",
+      5,
+      1,
+      0,
+      0,
+    );
+    const tables = (
+      db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[]
+    ).map((t) => t.name);
+    expect(tables).toContain("svc_builds");
   });
 });

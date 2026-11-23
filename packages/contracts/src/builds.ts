@@ -5,55 +5,18 @@
 // its tests, and the test, type check, and lint commands. Later milestones
 // widen it (several tasks, milestones, specialties, placements).
 import { z } from "zod";
-import { CommitShaSchema, IsoDateTimeSchema, UlidSchema, VendorSchema } from "./common.js";
+import { CommitShaSchema, IsoDateTimeSchema, VendorSchema } from "./common.js";
+import {
+  BuildIdSchema,
+  BuildSlugSchema,
+  BuildStatusSchema,
+  BuildStepSchema,
+  BuildTaskStatusSchema,
+  type BuildStatus,
+} from "./build-events.js";
 import { RoleNameSchema } from "./build-roles.js";
 import { BuildPlacementsSchema, PlacementOverrideSchema } from "./placements.js";
 import { PolicyCommandSchema } from "./policy.js";
-
-// The build id, slug, status, step, and task status schemas below match the
-// ones that the build events module (#62) defines; when both modules meet,
-// these move there.
-
-/** A build id. Engines mint build ids as ULIDs, so one is unique across every engine. */
-export const BuildIdSchema = UlidSchema;
-export type BuildId = z.infer<typeof BuildIdSchema>;
-
-/** A build's short kebab-case name; its files live in `.aio/builds/SLUG/`. */
-export const BuildSlugSchema = z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
-export type BuildSlug = z.infer<typeof BuildSlugSchema>;
-
-/**
- * The part of a build a call or a state belongs to: `planning` before the
- * build plan is frozen, `preflight` for the baseline, the milestone loop
- * steps in order, and `release_ready` for the push and CI loop.
- */
-export const BuildStepSchema = z.enum([
-  "planning",
-  "preflight",
-  "contracts",
-  "tests_first",
-  "tasks",
-  "integrate",
-  "harden",
-  "simplify",
-  "review",
-  "release_ready",
-]);
-export type BuildStep = z.infer<typeof BuildStepSchema>;
-
-export const BuildStatusSchema = z.enum([
-  "planning",
-  "running",
-  "paused",
-  "waiting_escalation",
-  "finished",
-  "failed",
-  "cancelled",
-]);
-export type BuildStatus = z.infer<typeof BuildStatusSchema>;
-
-export const BuildTaskStatusSchema = z.enum(["pending", "running", "done", "failed", "blocked"]);
-export type BuildTaskStatus = z.infer<typeof BuildTaskStatusSchema>;
 
 /** An ID in the build plan, such as `AC2` or `T1`. */
 const PlanIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,31}$/, {

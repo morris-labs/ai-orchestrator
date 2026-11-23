@@ -4,6 +4,8 @@ import { engineRoutes } from "@aio/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EngineClient, type StreamCursor } from "../../src/events/engine-client.js";
 import { EngineSupervisor, engineEventRefusal, sqliteCursor } from "../../src/events/engines.js";
+import { BuildMirror } from "../../src/events/build-mirror.js";
+import { EventHub } from "../../src/events/hub.js";
 import { RunMirror } from "../../src/events/run-mirror.js";
 import { CONTAINER, PROJECT_ID, RUN, runState } from "../api/fixtures.js";
 import { ENGINE_TOKEN, FakeEngineServer, waitFor } from "./fake-engine.js";
@@ -693,6 +695,93 @@ describe("engine event admission", () => {
     await waitFor(() => relayed.length === 1);
     expect(relayed[0]?.type).toBe("run.changed");
     expect(logs.filter((l) => l.startsWith("Dropped event"))).toHaveLength(2);
+    await sup.stop();
+  });
+
+  it("stores a build's events and its agent and lease events", async () => {
+    const db = seededDb();
+    const hub = new EventHub({ db });
+    const builds = new BuildMirror(db);
+    hub.subscribe((e) => builds.ingest(e));
+    const logs: string[] = [];
+    const sup = new EngineSupervisor({
+      engines: {
+        list: async () => [
+          {
+            container: CONTAINER,
+            projectId: PROJECT_ID,
+            hostPort: engine.port,
+            token: ENGINE_TOKEN,
+          },
+        ],
+      },
+      db,
+      expectedVersion: "1.0.0-dev",
+      relay: (e) => hub.relay(e),
+      decideLease: async () => {
+        throw new Error("unused");
+      },
+      log: (m) => logs.push(m),
+      intervalMs: 50,
+    });
+    sup.start();
+    await waitFor(() => sup.get(CONTAINER)?.connected === true);
+    const BUILD = "01JB8Z5K3W6Q2V9X4T7R0M1N2S";
+    const owner = { runId: null, buildId: BUILD, seat: "developer", step: "tasks" } as const;
+    engine.emit({
+      type: "build.changed",
+      build: {
+        id: BUILD,
+        slug: "add-export",
+        projectId: PROJECT_ID,
+        container: CONTAINER,
+        status: "running",
+        step: "tasks",
+        createdAt: "2026-10-28T09:00:00.000Z",
+        updatedAt: "2026-10-28T09:00:00.000Z",
+      },
+    });
+    engine.emit({
+      type: "build.task.changed",
+      buildId: BUILD,
+      taskId: "T1",
+      status: "running",
+      previousStatus: "pending",
+    });
+    engine.emit({
+      type: "agent.started",
+      ...owner,
+      agentId: "B-A1",
+      leaseId: "B-L1",
+      vendor: "claude",
+      model: "claude-sonnet-5",
+      role: "fixer",
+      groupId: null,
+      round: 1,
+    });
+    engine.emit({
+      type: "lease.settled",
+      ...owner,
+      leaseId: "B-L1",
+      vendor: "claude",
+      role: "fixer",
+      tokens: { in: 10, out: 2 },
+      premiumRequests: 0,
+      costEstimate: 0.01,
+    });
+    const stored = () =>
+      (db.prepare("SELECT type FROM svc_events ORDER BY seq").all() as { type: string }[]).map(
+        (r) => r.type,
+      );
+    await waitFor(() => stored().length === 4);
+    expect(stored()).toEqual([
+      "build.changed",
+      "build.task.changed",
+      "agent.started",
+      "lease.settled",
+    ]);
+    expect(builds.get(BUILD)?.slug).toBe("add-export");
+    expect(logs.filter((l) => l.startsWith("Dropped event"))).toEqual([]);
     await sup.stop();
   });
 

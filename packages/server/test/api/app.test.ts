@@ -212,6 +212,84 @@ describe("startApp", () => {
     );
   });
 
+  it("stores a build, grants its calls at a ceiling, and reports its usage by seat and step", async () => {
+    const BUILD = "01JB8Z5K3W6Q2V9X4T7R0M1N2Q";
+    await waitFor(() => engine.sockets.length === 1);
+    // Claude is over its ceiling, as in the test above.
+    engine.emit({
+      type: "usage.sample",
+      vendor: "claude",
+      account: "user@example.com",
+      window: "5h",
+      utilization: 0.7,
+      spendUsd: null,
+      ceiling: { kind: "utilization", window: "5h", max: 0.6 },
+      resetAt: "2099-01-01T00:00:00.000Z",
+      sampleSource: "rate_limit_event",
+    });
+    engine.emit({
+      type: "build.changed",
+      build: {
+        id: BUILD,
+        slug: "add-export",
+        projectId: PROJECT_ID,
+        container: CONTAINER,
+        status: "running",
+        step: "tasks",
+        createdAt: "2026-10-28T09:00:00.000Z",
+        updatedAt: "2026-10-28T09:00:00.000Z",
+      },
+    });
+    const owner = { runId: null, buildId: BUILD, seat: "developer", step: "tasks" } as const;
+    engine.sendRaw({
+      type: "lease.request",
+      leaseId: "B-L1",
+      ...owner,
+      vendor: "claude",
+      role: "fixer",
+      estimate: { tokens: 10 },
+    });
+    await waitFor(() => engine.leaseResponses.length === 1);
+    expect(engine.leaseResponses[0]).toMatchObject({
+      decision: "granted",
+      vendor: "claude",
+      redirectedFrom: null,
+    });
+    engine.emit({
+      type: "lease.settled",
+      leaseId: "B-L1",
+      ...owner,
+      vendor: "claude",
+      role: "fixer",
+      tokens: { in: 300, out: 20 },
+      premiumRequests: 0,
+      costEstimate: 0.5,
+    });
+    const types = () =>
+      app.hub
+        .replay({ type: "hello", streamId: app.hub.streamId, lastSeq: 0 })
+        .events.map((e) => e.type);
+    await waitFor(() => types().includes("lease.settled"));
+    expect(types()).toEqual(expect.arrayContaining(["build.changed", "lease.settled"]));
+    const usage = await api("GET", `/api/v1/builds/${BUILD}/usage`);
+    expect(usage.status).toBe(200);
+    const totals = {
+      calls: 1,
+      tokensIn: 300,
+      tokensOut: 20,
+      premiumRequests: 0,
+      costEstimate: 0.5,
+    };
+    expect(usage.json).toEqual({
+      buildId: BUILD,
+      total: totals,
+      bySeat: [{ seat: "developer", ...totals }],
+      byStep: [{ step: "tasks", ...totals }],
+    });
+    const unknown = await api("GET", "/api/v1/builds/01JB8Z5K3W6Q2V9X4T7R0M1N2R/usage");
+    expect(unknown.status).toBe(404);
+  });
+
   it("clears a usage block that comes from a project's ceiling override", async () => {
     const summary = {
       ...projectSummary,

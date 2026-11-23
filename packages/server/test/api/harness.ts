@@ -267,6 +267,17 @@ export async function createHarness(
         },
       ],
     },
+    builds: {
+      usage: (buildId) =>
+        buildId === "01JB8Z5K3W6Q2V9X4T7R0M1N2Q"
+          ? {
+              buildId,
+              total: { calls: 0, tokensIn: 0, tokensOut: 0, premiumRequests: 0, costEstimate: 0 },
+              bySeat: [],
+              byStep: [],
+            }
+          : undefined,
+    },
     notifications: {
       list: (q) => notifications.filter((n) => !q.unread || !n.read),
       markRead: (id) => {

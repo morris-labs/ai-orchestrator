@@ -12,7 +12,6 @@ import {
   resolveReviewEffort,
   type AgentRole,
   type Effort,
-  type SeatPlacement,
   type UsageSample,
   type Vendor,
 } from "@aio/contracts";
@@ -40,6 +39,7 @@ import type {
   AgentOutcome,
   CallDeps,
   CallState,
+  CallWork,
   VendorLimit,
 } from "./types.js";
 
@@ -346,6 +346,7 @@ export class AgentCalls {
     estimateTokens: number,
     avoid: readonly Vendor[] = [],
     current?: (vendor: Vendor) => Vendor,
+    work: CallWork = {},
   ): Promise<{ vendor: Vendor; leaseId: string }> {
     const host = this.host;
     let waiting = false;
@@ -368,7 +369,7 @@ export class AgentCalls {
         response = await this.deps.broker.acquire(
           {
             leaseId: requested,
-            runId: host.id,
+            ...this.ownerFields(work),
             vendor,
             role,
             estimate: { tokens: Math.max(0, Math.round(estimateTokens)) },
@@ -382,7 +383,7 @@ export class AgentCalls {
       }
       if (this.stopped) {
         if (response.decision === "granted") {
-          await this.settle(response.leaseId, response.vendor, role, ZERO_USE);
+          await this.settle(response.leaseId, response.vendor, role, ZERO_USE, work);
         }
         throw new RunCancelled();
       }
@@ -394,7 +395,7 @@ export class AgentCalls {
             // The server doesn't know which CLIs this engine has; taking the
             // grant would call a vendor that can't answer, and calling the
             // requested vendor instead would ignore its ceiling.
-            await this.settle(leaseId, response.vendor, role, ZERO_USE);
+            await this.settle(leaseId, response.vendor, role, ZERO_USE, work);
             const why = `this engine has no working ${response.vendor} CLI`;
             throw ceilingDecision(
               `The server moved the ${role} call from ${vendor}, which is over its ceiling, to ${response.vendor}, but ${why}. No usable vendor can take the call. Resume when ${vendor} has room again, raise its ceiling, or fix ${response.vendor}'s setup.`,
@@ -403,7 +404,7 @@ export class AgentCalls {
           const limited = this.limitOf(response.vendor);
           if (limited) {
             // Only a server that ignores `exclude` does this.
-            await this.settle(leaseId, response.vendor, role, ZERO_USE);
+            await this.settle(leaseId, response.vendor, role, ZERO_USE, work);
             throw ceilingDecision(
               `The server moved the ${role} call from ${vendor} to ${response.vendor}, but ${response.vendor} reported a limit: ${limited.message}. Resume when ${vendor} has room again, or assign the role to another vendor.`,
             );
@@ -411,7 +412,7 @@ export class AgentCalls {
           if (avoid.includes(response.vendor)) {
             // Taking the grant would break the cross-vendor rule; hand the
             // lease back unused and ask a person.
-            await this.settle(leaseId, response.vendor, role, ZERO_USE);
+            await this.settle(leaseId, response.vendor, role, ZERO_USE, work);
             throw ceilingDecision(
               `The server moved the ${role} call from ${vendor} to ${response.vendor}, but ${response.vendor} may not take it: a finding is never checked by the vendor that reported or fixed it. Resume when ${vendor} has room again, or assign the role to another vendor.`,
             );
@@ -441,25 +442,36 @@ export class AgentCalls {
     }
   }
 
+  /** The owner, seat, and step fields of a lease and of a call's events. */
+  private ownerFields(work: CallWork) {
+    const owner = this.host.owner ?? { runId: this.host.id };
+    return {
+      runId: owner.runId,
+      ...(owner.buildId !== undefined ? { buildId: owner.buildId } : {}),
+      ...(work.seat !== undefined ? { seat: work.seat } : {}),
+      ...(work.step !== undefined ? { step: work.step } : {}),
+    };
+  }
+
   private async settle(
     leaseId: string,
     vendor: Vendor,
     role: AgentRole,
     actual: LeaseActual,
-    placement?: SeatPlacement,
+    work: CallWork,
   ): Promise<void> {
     this.deps.broker.settle(leaseId, actual);
     this.host.observer?.settled?.(vendor, actual);
     await this.host.emit({
       type: "lease.settled",
       leaseId,
-      runId: this.host.id,
+      ...this.ownerFields(work),
       vendor,
       role,
       tokens: actual.tokens,
       premiumRequests: actual.premiumRequests,
       costEstimate: actual.costEstimate,
-      ...(placement ? { placement } : {}),
+      ...(work.placement ? { placement: work.placement } : {}),
     });
   }
 
@@ -544,6 +556,7 @@ export class AgentCalls {
         spec.estimateTokens,
         spec.avoid,
         (v) => this.assigned(spec, v),
+        spec,
       );
       vendor = lease.vendor;
       const adapter: VendorAdapter | undefined = this.deps.adapters[vendor];
@@ -560,7 +573,7 @@ export class AgentCalls {
       }
       const choice = host.routing.model(vendor, tier, spec.role);
       if (choice.model !== undefined && isBlockedRequestedModel(vendor, choice.model)) {
-        await this.settle(lease.leaseId, vendor, spec.role, ZERO_USE, spec.placement);
+        await this.settle(lease.leaseId, vendor, spec.role, ZERO_USE, spec);
         throw new AgentFailed(spec.role, vendor, blockedModelMessage(vendor, choice.model));
       }
       const requestModel = choice.model;
@@ -571,7 +584,7 @@ export class AgentCalls {
           .join("; ") || undefined;
       const model = requestModel ?? vendor;
       const common = {
-        runId: host.id,
+        ...this.ownerFields(spec),
         agentId,
         leaseId: lease.leaseId,
         vendor,
@@ -651,7 +664,7 @@ export class AgentCalls {
           vendor,
           spec.role,
           { tokens: { in: 0, out: 0 }, premiumRequests: 0, costEstimate: 0 },
-          spec.placement,
+          spec,
         );
         if (outcome === "cancelled") throw new RunCancelled();
         log?.warn("An agent call failed", {
@@ -714,7 +727,7 @@ export class AgentCalls {
         ...(actual.aiCredits !== undefined ? { aiCredits: actual.aiCredits } : {}),
         costEstimate: actual.costEstimate,
       });
-      await this.settle(lease.leaseId, vendor, spec.role, actual, spec.placement);
+      await this.settle(lease.leaseId, vendor, spec.role, actual, spec);
       for (const sample of result.usage) {
         const ceiling = (this.deps.ceilings ?? DEFAULT_CEILINGS)[sample.vendor];
         await host.emit({ type: "usage.sample", ...sample, ceiling, agentId });

@@ -2,7 +2,7 @@
 // it. The core knows leases, tiers, limits, the call cache, events, and the
 // working tree guard; everything about the caller's own state, such as a
 // review run's roles and rounds, reaches it through `AgentCallHost`.
-import type { AgentRole, ModelTier, SeatPlacement, Vendor } from "@aio/contracts";
+import type { AgentRole, BuildStep, ModelTier, Seat, SeatPlacement, Vendor } from "@aio/contracts";
 import type {
   AdapterMethod,
   AdapterRequest,
@@ -55,6 +55,22 @@ export interface AgentCallSpec {
    * the vendor, tier, and effort to match.
    */
   placement?: SeatPlacement;
+  /** The seat a build call fills; the lease and the events name it. */
+  seat?: Seat;
+  /** The build step a call belongs to; the lease and the events name it. */
+  step?: BuildStep;
+}
+
+/** The seat, the step, and the placement of one call, for its lease and its events. */
+export type CallWork = Pick<AgentCallSpec, "seat" | "step" | "placement">;
+
+/**
+ * Who a call belongs to: a review run (`runId`), a build (`buildId` with
+ * `runId: null`), or a review run that a build started (both).
+ */
+export interface CallOwner {
+  runId: string | null;
+  buildId?: string;
 }
 
 /** What a finished call returns, and what the call cache holds. */
@@ -172,8 +188,17 @@ export interface CommitUndo {
 
 /** What the caller gives the core. */
 export interface AgentCallHost {
-  /** The caller's id: it prefixes lease and agent ids and fills `runId` on events. */
+  /**
+   * The caller's id: it prefixes lease and agent ids, and it fills `runId` on
+   * leases and events unless `owner` says otherwise.
+   */
   readonly id: string;
+  /**
+   * Who the calls belong to, on leases and events. Absent means the review
+   * run `id`. A build sets `{ runId: null, buildId }`, which also exempts
+   * its calls from the usage ceilings.
+   */
+  readonly owner?: CallOwner;
   /** The caller's round, for events; a caller without rounds returns 1. */
   round(): number;
   /** The caller's saved ledger. Read on every use, so the caller can swap it. */
