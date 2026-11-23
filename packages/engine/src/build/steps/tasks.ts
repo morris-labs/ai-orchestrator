@@ -105,7 +105,10 @@ async function attempt(ctx: BuildContext, task: BuildTask, n: number): Promise<G
   if (signal.aborted) throw new RunCancelled();
   await quarantine(
     ctx.store,
-    (gate.quarantined ?? []).map((t) => ({ ...t, source: { at: "gate", taskId: task.id, attempt: n } })),
+    (gate.quarantined ?? []).map((t) => ({
+      ...t,
+      source: { at: "gate", taskId: task.id, attempt: n },
+    })),
   );
   const gated: GatedAttempt = { ...record, gate };
   await ctx.store.writeJson(path, gated);

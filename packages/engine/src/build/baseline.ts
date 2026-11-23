@@ -12,9 +12,7 @@ import { isCountLine, type GateCommandResult } from "../gate/gate.js";
 import type { BuildStore } from "./store.js";
 
 /** Where a flaky test showed: across the preflight runs, or in a task gate's rerun. */
-export type FlakySource =
-  | { at: "preflight" }
-  | { at: "gate"; taskId: string; attempt: number };
+export type FlakySource = { at: "preflight" } | { at: "gate"; taskId: string; attempt: number };
 
 /** The failing tests of one test command. */
 export interface BaselineTests {

@@ -4,12 +4,13 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { CART_DONE, REPORT, buildWorld, cartPlan, type BuildWorld } from "./harness.js";
+import { CART_DONE, CART_WRONG, REPORT, buildWorld, cartPlan, type BuildWorld } from "./harness.js";
 import { tempDir } from "../tmp.js";
 
 /** Commits `files` to the sample project's `main`, where the build starts. */
 function commit(world: BuildWorld, files: Record<string, string>): void {
-  for (const [path, content] of Object.entries(files)) writeFileSync(join(world.root, path), content);
+  for (const [path, content] of Object.entries(files))
+    writeFileSync(join(world.root, path), content);
   world.git(world.root, "add", "-A");
   world.git(world.root, "commit", "-q", "-m", "test: add tests");
 }
@@ -78,7 +79,10 @@ describe("preflight", () => {
         string,
         unknown
       >[];
-      expect(escalation).toMatchObject({ step: "preflight", details: expect.stringContaining(named) });
+      expect(escalation).toMatchObject({
+        step: "preflight",
+        details: expect.stringContaining(named),
+      });
       expect(world.calls()).toHaveLength(0);
       expect(state.tasks[0]).toMatchObject({ status: "pending", attempts: 0 });
     },
@@ -104,5 +108,94 @@ describe("the test baseline", () => {
       }),
     );
     expect(baseline.flaky).toEqual([]);
+  });
+
+  it("quarantines a test whose result differs between the preflight runs", async () => {
+    const world = await buildWorld();
+    // Fails in the second preflight run only, and again in the task gate's
+    // first run, where the baseline excuses it without a rerun.
+    commit(world, { "test/stock.test.mjs": flakyTest("stock sync", [2, 4]) });
+    world.script({ claude: DONE });
+
+    await world.start("cart-total", withTest("node test/stock.test.mjs"));
+    const state = await world.settle("cart-total");
+
+    expect(state).toMatchObject({ step: "review" });
+    expect(state.tasks[0]).toMatchObject({ status: "done", attempts: 1 });
+    const baseline = JSON.parse(world.file("cart-total", "baseline.json")) as SavedBaseline;
+    expect(baseline.flaky).toEqual([
+      {
+        command: "node test/stock.test.mjs",
+        cwd: null,
+        failure: "not ok - stock sync",
+        source: { at: "preflight" },
+      },
+    ]);
+    expect(baseline.knownFailing.map((e) => e.command)).not.toContain("node test/stock.test.mjs");
+    const [attempt] = world.jsonFiles("cart-total", "tasks/T1") as {
+      gate: { commands: { command: string; passed: boolean; excused?: string[] }[] };
+    }[];
+    expect(attempt?.gate.commands).toContainEqual(
+      expect.objectContaining({
+        command: "node test/stock.test.mjs",
+        passed: true,
+        excused: ["not ok - stock sync"],
+      }),
+    );
+  });
+
+  it("quarantines a test that fails in the task gate and passes in its rerun, and passes the attempt", async () => {
+    const world = await buildWorld();
+    // Passes the three preflight runs, fails the gate's first run, and
+    // passes the rerun.
+    commit(world, { "test/stock.test.mjs": flakyTest("stock sync", [4]) });
+    world.script({ claude: DONE });
+
+    await world.start("cart-total", withTest("node test/stock.test.mjs"));
+    const state = await world.settle("cart-total");
+
+    expect(state).toMatchObject({ step: "review" });
+    expect(state.tasks[0]).toMatchObject({ status: "done", attempts: 1 });
+    expect(world.calls()).toHaveLength(1);
+    const baseline = JSON.parse(world.file("cart-total", "baseline.json")) as SavedBaseline;
+    expect(baseline.flaky).toEqual([
+      {
+        command: "node test/stock.test.mjs",
+        cwd: null,
+        failure: "not ok - stock sync",
+        source: { at: "gate", taskId: "T1", attempt: 1 },
+      },
+    ]);
+    const [attempt] = world.jsonFiles("cart-total", "tasks/T1") as {
+      gate: {
+        passed: boolean;
+        quarantined?: unknown[];
+        commands: { command: string; passed: boolean; firstRun?: { passed: boolean } }[];
+      };
+    }[];
+    expect(attempt?.gate.passed).toBe(true);
+    expect(attempt?.gate.quarantined).toHaveLength(1);
+    expect(attempt?.gate.commands).toContainEqual(
+      expect.objectContaining({
+        command: "node test/stock.test.mjs",
+        passed: true,
+        firstRun: expect.objectContaining({ passed: false }),
+      }),
+    );
+  });
+
+  it("fails an attempt on the task's own test even when it failed at preflight", async () => {
+    const world = await buildWorld();
+    world.script({
+      claude: [{ match: "Task T1", output: REPORT, writeFiles: { "src/cart.mjs": CART_WRONG } }],
+    });
+
+    await world.start("cart-total");
+    const state = await world.settle("cart-total");
+
+    const baseline = JSON.parse(world.file("cart-total", "baseline.json")) as SavedBaseline;
+    expect(baseline.knownFailing.map((e) => e.command)).toEqual(["node test/cart.test.mjs"]);
+    expect(state).toMatchObject({ status: "waiting_escalation", step: "tasks" });
+    expect(state.escalations).toEqual([expect.objectContaining({ kind: "attempt_cap" })]);
   });
 });
