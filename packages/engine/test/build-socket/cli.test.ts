@@ -102,6 +102,95 @@ describe("aio-build", () => {
     expect(builds.cancel).not.toHaveBeenCalled();
   });
 
+  it("resolves an escalation with each kind of resolution", async () => {
+    const { builds, run } = await world();
+    const resolve = async (args: string[]) => {
+      builds.resolve.mockClear();
+      const out = await run(["resolve", "cart-total", "E1", ...args]);
+      expect(out.code).toBe(0);
+      return builds.resolve.mock.calls[0]?.[1] as Record<string, unknown>;
+    };
+
+    expect(await resolve(["retry"])).toEqual({
+      escalation: "E1",
+      action: "retry",
+      by: "project_manager",
+      changes: [],
+    });
+    expect(await resolve(["reorder", "--order", "T2,T1"])).toMatchObject({ order: ["T2", "T1"] });
+    expect(await resolve(["clarify", "--note", "Prices are in cents."])).toMatchObject({
+      action: "clarify",
+      note: "Prices are in cents.",
+    });
+    expect(
+      await resolve(["decide", "--decision", "resume_waive", "--waive", "F-1,F-2"]),
+    ).toMatchObject({
+      decision: { option: "resume_waive", waiveFindingIds: ["F-1", "F-2"] },
+    });
+    expect(await resolve(["retry", "--owner", "--push", "no"])).toMatchObject({
+      by: "owner",
+      push: false,
+    });
+    expect(
+      await resolve(["clarify", "--note", "Drop AC3.", "--changes", "criteria,scope"]),
+    ).toMatchObject({
+      changes: ["criteria", "scope"],
+    });
+    expect(builds.resolve.mock.calls[0]?.[0]).toBe("cart-total");
+  });
+
+  it("prints each escalation's status and the tasks it pauses", async () => {
+    const { builds, run } = await world();
+    builds.resolve.mockResolvedValueOnce({
+      ...buildState,
+      status: "waiting_escalation",
+      escalations: [
+        {
+          id: "E1",
+          kind: "attempt_cap",
+          level: "project_manager",
+          taskId: "T1",
+          tasks: ["T1", "T2"],
+          summary: "Task T1 failed the task gate on all 4 attempts.",
+          file: "escalations/E1.json",
+          status: "open",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+        {
+          id: "E2",
+          kind: "preflight",
+          level: "owner",
+          taskId: null,
+          tasks: [],
+          summary: "A test command can't run.",
+          file: "escalations/E2.json",
+          status: "resolved",
+          resolution: {
+            action: "retry",
+            by: "owner",
+            changes: [],
+            resolvedAt: "2026-01-01T00:00:00.000Z",
+          },
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+    });
+
+    const out = await run(["resolve", "cart-total", "E2", "retry", "--owner"]);
+
+    expect(out.stdout).toContain("E1  open, pauses T1, T2  project_manager  attempt_cap T1:");
+    expect(out.stdout).toContain("E2  resolved by the owner: retry  owner  preflight:");
+  });
+
+  it("refuses a resolve request without an escalation or with an unknown action", async () => {
+    const { run } = await world();
+    expect((await run(["resolve", "cart-total"])).code).toBe(2);
+    expect((await run(["resolve", "cart-total", "E1", "skip"])).stderr).toContain(
+      "skip isn't a resolution",
+    );
+    expect((await run(["status", "cart-total", "--owner"])).code).toBe(2);
+  });
+
   it("prints the direct messages and the decisions for the Project manager", async () => {
     const { builds, run } = await world();
     const direct = await run(["messages", "cart-total", "--direct"]);
@@ -317,6 +406,10 @@ describe("aio-build", () => {
     [["status"]],
     [["status", "a", "b"]],
     [["pause", "cart-total", "--base", "main"]],
+    [["resolve", "cart-total", "E1", "retry", "extra"]],
+    [["resolve", "cart-total", "E1", "clarify", "--note"]],
+    [["resolve", "cart-total", "E1", "retry", "--push", "maybe"]],
+    [["start", "cart-total", "--note", "Hi."]],
     [["frobnicate"]],
   ])("refuses the usage %j", async (argv) => {
     const { run } = await world();
@@ -338,6 +431,9 @@ describe("aio-build", () => {
       "--issue",
       "--push",
       "ask the owner",
+      "ESCALATION",
+      "--owner",
+      "--changes",
       "PLAN_FILE",
       "--base",
       "--json",

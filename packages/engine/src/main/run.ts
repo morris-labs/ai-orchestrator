@@ -143,6 +143,11 @@ export interface StartOptions {
    * warning and starts without it.
    */
   buildSocket?: string;
+  /**
+   * The secret names the project gives builds, from the secrets broker.
+   * Absent means preflight doesn't check a build plan's secrets.
+   */
+  secretNames?: () => Promise<string[]>;
   portIntervalMs?: number;
 }
 
@@ -198,6 +203,7 @@ export async function startEngine(options: StartOptions): Promise<EngineHandle> 
         log,
         team,
         reviews: runs,
+        ...(options.secretNames ? { secretNames: options.secretNames } : {}),
       }));
   } catch (err) {
     await runs.close?.();
@@ -371,16 +377,17 @@ export async function main(
 
   // The server sets the broker socket on every container it creates; an
   // engine started by hand without it gives children no brokered credentials.
+  let broker: BrokerClient | null = null;
   if (env[BROKER_ENV.socket] || env[BROKER_ENV.url]) {
     try {
-      setCredentialSource(new BrokerClient({ env }), (message, fields) =>
-        log.warn(message, fields),
-      );
+      broker = new BrokerClient({ env });
+      setCredentialSource(broker, (message, fields) => log.warn(message, fields));
     } catch (err) {
       log.warn("The engine can't use the secrets broker", { reason: (err as Error).message });
     }
   }
 
+  const secrets = broker;
   let handle: EngineHandle;
   try {
     const { adapters } = await selectAdapters(env, log);
@@ -390,6 +397,7 @@ export async function main(
       log,
       adapters,
       buildSocket: env[BUILD_SOCKET_ENV.socket] || BUILD_SOCKET_PATH,
+      ...(secrets ? { secretNames: () => secrets.names() } : {}),
     });
   } catch (err) {
     log.error("The engine failed to start", { error: String(err) });

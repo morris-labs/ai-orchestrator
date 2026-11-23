@@ -172,6 +172,47 @@ describe("the review step", () => {
     expect(file.details).toContain("gate_failed");
   });
 
+  it("answers the review run's decision from a resolve request, and starts a new run on a retry", async () => {
+    const world = await buildWorld({ review: true });
+    const fix: MockResponse = {
+      output: { fixed: ["F-0001"], notFixed: [], summary: "Counted the quantity." },
+      writeFiles: { "src/cart.mjs": CART_WRONG },
+      commit: "fix(cart): count item quantity (F-1)",
+    };
+    world.script({ claude: reviewers(fix), codex: reviewers(fix) });
+    await world.start("cart-total");
+    await world.settle("cart-total");
+    const { runId } = JSON.parse(world.file("cart-total", "review/run.json")) as ReviewFile;
+
+    // A retry can't skip the decision the run waits for.
+    await expect(
+      world.manager.resolve("cart-total", { escalation: "E1", action: "retry" }),
+    ).rejects.toThrow(/waits for a decision \(gate_failed\)/);
+    await world.manager.resolve("cart-total", {
+      escalation: "E1",
+      action: "decide",
+      decision: { option: "cancel" },
+      note: "The fix broke the gate; start over.",
+    });
+    const cancelled = await world.waitFor("cart-total", (s) => s.escalations.length === 2);
+
+    expect(await world.runs.get(runId)).toMatchObject({ status: "cancelled" });
+    expect(cancelled.escalations[0]).toMatchObject({
+      status: "resolved",
+      runId,
+      resolution: { action: "decide", decision: { option: "cancel" } },
+    });
+    expect(cancelled.escalations[1]).toMatchObject({ kind: "review", runId, status: "open" });
+
+    await world.manager.resolve("cart-total", { escalation: "E2", action: "retry" });
+    const state = await world.waitFor("cart-total", (s) => s.step === "release_ready");
+
+    const next = JSON.parse(world.file("cart-total", "review/run.json")) as ReviewFile;
+    expect(next.runId).not.toBe(runId);
+    expect(JSON.parse(world.file("cart-total", `review/run-${runId}.json`))).toEqual({ runId });
+    expect(state.escalations.map((e) => e.status)).toEqual(["resolved", "resolved"]);
+  });
+
   it("gates with the plan's commands over the policy file's, and keeps the policy file's rules", async () => {
     const world = await buildWorld({ review: true });
     mkdirSync(join(world.root, ".aio"), { recursive: true });

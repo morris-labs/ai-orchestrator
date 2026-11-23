@@ -61,6 +61,23 @@ outputs:
               description: The path of the locked test.
             reason:
               type: string
+        blocked:
+          type: object
+          description: >-
+            A secret or an external service that the task needs and that you
+            can't reach. Leave it out otherwise.
+          additionalProperties: false
+          required: [kind, name, reason]
+          properties:
+            kind:
+              type: string
+              enum: [secret, service]
+            name:
+              type: string
+              description: The secret's name, as aio-secret lists it, or the service's name.
+            reason:
+              type: string
+              description: What you tried and what failed.
 permission:
   access: write
   paths: ["{owned}"]
@@ -76,6 +93,7 @@ rules:
   - Implement the contracts as written. Don't change a signature that another task depends on.
   - Run the task's tests before you finish, and fix what fails.
   - Commit your work on the task branch with conventional commit subjects. Don't switch branches, rebase, amend earlier commits, or push.
+  - When the task needs a secret or an external service that you can't reach, stop and report it as blocked. Never work around the gap, for example with a mock that ships.
   - Keep each change as small as the task allows. Don't refactor code that the task doesn't need.
 ---
 

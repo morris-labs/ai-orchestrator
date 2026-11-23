@@ -1,5 +1,6 @@
 // The `aio-build` command: plans, meets, starts, reads, pauses, resumes, and
-// cancels a build from a box's session, over the engine's build socket. It sends the project
+// cancels a build, and resolves its escalations, from a box's session, over
+// the engine's build socket. It sends the project
 // ID and box ID that the server sets in the session's environment.
 import { readFileSync } from "node:fs";
 import { posix } from "node:path";
@@ -7,9 +8,11 @@ import {
   BUILD_SOCKET_ENV,
   BUILDS_DIR,
   BuildSlugSchema,
+  EscalationActionSchema,
   MEETING_ROUND_MAX,
   MeetingIdSchema,
   RoleNameSchema,
+  escalationState,
   type BuildDecision,
   type BuildFreezeAnswer,
   type BuildMeetingAnswer,
@@ -39,6 +42,9 @@ export const BUILD_USAGE = `Usage:
   aio-build messages SLUG [--direct] [--json]
   aio-build decisions SLUG [--json]
   aio-build cancel SLUG [--json]
+  aio-build resolve SLUG ESCALATION ACTION [--note TEXT] [--order TASKS]
+                    [--decision OPTION] [--waive FINDINGS] [--push yes|no]
+                    [--changes PARTS] [--owner] [--json]
   aio-build help
 
 Plans and drives a build of this box's project through the AI Orchestrator
@@ -92,6 +98,25 @@ Requests:
             post, with the task it's attached to. A decision flagged as a
             plan change contradicts acceptance criteria of the build plan:
             change the plan's criteria to match it, or ask the owner.
+  resolve   Resolve escalation ESCALATION, such as E1, of build SLUG, and
+            resume the tasks it paused. ACTION is one of:
+              retry     Run the paused work again. A task gets more attempts.
+              reorder   Set the order of the tasks that aren't done with
+                        --order, then retry.
+              clarify   Add the clarification in --note, which the build
+                        plan already implies, to the task, then retry.
+              decide    Answer the decision that the build's review run
+                        waits for with --decision, then retry.
+              escalate  Hand the escalation to the owner, with the reason
+                        in --note.
+            A decision that changes the criteria, the scope, or the
+            milestones is the owner's: name the changes with --changes, and
+            the engine marks the escalation for the owner instead of
+            resolving it. An escalation for the owner, such as a missing
+            secret, takes only the owner's decision: ask the owner, then
+            pass --owner. For a release ready escalation, ask the owner
+            whether the build can push its branch and open its pull
+            request, then pass --push yes or --push no with --owner.
 
 A build that a box started takes pause, resume, and cancel requests only
 from that box. Any box of the project can read its status.
@@ -111,6 +136,21 @@ Options:
   --rounds N     A meeting's round cap, from 1 to ${MEETING_ROUND_MAX}. Default: 3.
   --push yes|no  The owner's answer to whether the build can push its branch
                  and open its pull request.
+  --note TEXT    Why, or the clarification itself for clarify.
+  --order TASKS  The task IDs in the order they run, separated by commas,
+                 such as T2,T1.
+  --decision OPTION
+                 The answer to the review run's decision: resume,
+                 resume_waive, or cancel.
+  --waive FINDINGS
+                 With resume_waive: the finding IDs to waive, separated by
+                 commas.
+  --changes PARTS
+                 The parts of the build plan that the decision changes,
+                 separated by commas: criteria, scope, milestones,
+                 contracts, or architecture.
+  --owner        Record the decision as the owner's, which the Project
+                 manager relays.
   --direct       Print only the direct messages to the owner.
   --json         Print the answer as JSON instead of text.
   --help         Print this help.
@@ -122,10 +162,11 @@ Environment:
   ${BUILD_SOCKET_ENV.socket}  The engine's build socket. Default: /tmp/aio-build/build.sock.
 
 Exit status: 0 on success, 2 for a usage error or a brief or plan file that
-can't be read, 3 when the build socket can't be reached, 4 for a build that
-this project doesn't have, 5 when the engine refuses the request, such as a
-plan that isn't valid, a freeze without the push answer, or a slug in use,
-and 1 for any other failure, such as a seat call that failed.
+can't be read, 3 when the build socket can't be reached, 4 for a build or an
+escalation that this project doesn't have, 5 when the engine refuses the
+request, such as a plan that isn't valid, a freeze without the push answer, a
+slug in use, or a resolution that doesn't fit the escalation, and 1 for any
+other failure, such as a seat call that failed.
 `;
 
 export interface BuildCliIo {
@@ -163,9 +204,16 @@ export type BuildCommand =
   | { kind: "messages"; slug: string; direct: boolean; json: boolean }
   | { kind: "decisions"; slug: string; json: boolean }
   | {
+      kind: "resolve";
+      slug: string;
+      /** The resolve request's fields beyond the project, box, and slug. */
+      resolution: Record<string, unknown>;
+      json: boolean;
+    }
+  | {
       kind: Exclude<
         BuildSocketRequestKind,
-        "start" | "plan" | "freeze" | "meet" | "meeting-post" | "messages" | "decisions"
+        "start" | "plan" | "freeze" | "meet" | "meeting-post" | "messages" | "decisions" | "resolve"
       >;
       slug: string;
       json: boolean;
@@ -183,6 +231,7 @@ const KINDS = new Set([
   "messages",
   "decisions",
   "cancel",
+  "resolve",
 ]);
 
 /** The options each request takes, beyond `--json`. */
@@ -191,7 +240,77 @@ const OPTIONS: Record<string, readonly string[]> = {
   meet: ["--members", "--proposer", "--rounds"],
   freeze: ["--push"],
   start: ["--base"],
+  resolve: ["--note", "--order", "--decision", "--waive", "--push", "--changes", "--owner"],
 };
+
+/** Every option that takes a value. */
+const VALUE_OPTIONS = [
+  "--base",
+  "--issue",
+  "--push",
+  "--members",
+  "--proposer",
+  "--rounds",
+  "--note",
+  "--order",
+  "--decision",
+  "--waive",
+  "--changes",
+];
+
+/** Options that take no value. */
+const FLAGS = ["--owner"];
+
+/** Splits a comma-separated list, dropping empty items. */
+function list(text: string): string[] {
+  return text
+    .split(",")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+}
+
+/** Parses a `--push` answer. */
+function pushAnswer(answer: string): boolean {
+  if (answer !== "yes" && answer !== "no") throw new Error("--push takes yes or no.");
+  return answer === "yes";
+}
+
+/**
+ * The fields of a resolve request from its positional arguments and options.
+ * The engine checks the rest, such as whether the action fits the escalation.
+ */
+function resolution(
+  positional: readonly string[],
+  values: ReadonlyMap<string, string>,
+  flags: ReadonlySet<string>,
+): Record<string, unknown> {
+  if (positional.length !== 3) throw new Error("resolve needs SLUG, ESCALATION, and ACTION.");
+  const [, escalation, action] = positional as [string, string, string];
+  if (!EscalationActionSchema.safeParse(action).success) {
+    throw new Error(
+      `${action} isn't a resolution: use ${EscalationActionSchema.options.join(", ")}.`,
+    );
+  }
+  const note = values.get("--note");
+  const order = values.get("--order");
+  const option = values.get("--decision");
+  const waive = values.get("--waive");
+  const push = values.get("--push");
+  const changes = values.get("--changes");
+  if (waive !== undefined && option === undefined) throw new Error("--waive needs --decision.");
+  return {
+    escalation,
+    action,
+    ...(flags.has("--owner") ? { by: "owner" } : {}),
+    ...(note !== undefined ? { note } : {}),
+    ...(order !== undefined ? { order: list(order) } : {}),
+    ...(option !== undefined
+      ? { decision: { option, ...(waive !== undefined ? { waiveFindingIds: list(waive) } : {}) } }
+      : {}),
+    ...(push !== undefined ? { push: pushAnswer(push) } : {}),
+    ...(changes !== undefined ? { changes: list(changes) } : {}),
+  };
+}
 
 /** Parses `OWNER/NAME#NUMBER` or an issue link such as `https://HOST/OWNER/NAME/issues/NUMBER`. */
 export function parseIssue(text: string): BuildIssueInput {
@@ -215,6 +334,7 @@ export function parseBuildArgs(argv: readonly string[]): BuildCommand {
   let json = false;
   let direct = false;
   const values = new Map<string, string>();
+  const flags = new Set<string>();
   const positional: string[] = [];
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i] as string;
@@ -227,9 +347,13 @@ export function parseBuildArgs(argv: readonly string[]): BuildCommand {
       direct = true;
       continue;
     }
-    const option = ["--base", "--issue", "--push", "--members", "--proposer", "--rounds"].find(
-      (o) => a === o || a.startsWith(`${o}=`),
-    );
+    const flag = FLAGS.find((f) => a === f);
+    if (flag) {
+      if (!(OPTIONS[kind] ?? []).includes(flag)) throw new Error(`${kind} doesn't take ${flag}.`);
+      flags.add(flag);
+      continue;
+    }
+    const option = VALUE_OPTIONS.find((o) => a === o || a.startsWith(`${o}=`));
     if (option) {
       if (!(OPTIONS[kind] ?? []).includes(option)) {
         throw new Error(`${kind} doesn't take ${option}.`);
@@ -303,10 +427,10 @@ export function parseBuildArgs(argv: readonly string[]): BuildCommand {
     const planFile = positional[1] ?? null;
     if (kind === "start") return { kind, slug, planFile, base: values.get("--base") ?? null, json };
     const answer = values.get("--push");
-    if (answer !== undefined && answer !== "yes" && answer !== "no") {
-      throw new Error("--push takes yes or no.");
-    }
-    return { kind, slug, planFile, push: answer === undefined ? null : answer === "yes", json };
+    return { kind, slug, planFile, push: answer === undefined ? null : pushAnswer(answer), json };
+  }
+  if (kind === "resolve") {
+    return { kind, slug, resolution: resolution(positional, values, flags), json };
   }
   if (positional.length !== 1) throw new Error(`${kind} needs one SLUG.`);
   if (kind === "messages") return { kind, slug, direct, json };
@@ -357,7 +481,9 @@ export function formatBuild(build: BuildState): string {
     lines.push("Escalations:");
     for (const e of build.escalations) {
       const task = e.taskId ? ` ${e.taskId}` : "";
-      lines.push(`  ${e.id}  ${e.level}  ${e.kind}${task}: ${e.summary} (${e.file})`);
+      lines.push(
+        `  ${e.id}  ${escalationState(e)}  ${e.level}  ${e.kind}${task}: ${e.summary} (${e.file})`,
+      );
     }
   }
   const dir = posix.join(build.repoPath, BUILDS_DIR, build.slug);
@@ -546,6 +672,8 @@ export async function buildMain(argv: readonly string[], io: BuildCliIo): Promis
     body.base = command.base;
   } else if (command.kind === "messages") {
     body.direct = command.direct;
+  } else if (command.kind === "resolve") {
+    body = { ...body, ...command.resolution };
   }
   try {
     const client =

@@ -1,7 +1,7 @@
 // The engine build API: the planning requests (a planning seat call, a
 // meeting, and the freeze) over one `BuildPlanner` per build, the build
-// requests (start, status, pause, resume, cancel, and delete) over one
-// `BuildController` per build, the rule of one active build per box, and
+// requests (start, status, pause, resume, resolve, cancel, and delete) over
+// one `BuildController` per build, the rule of one active build per box, and
 // the startup scan that continues the builds a stopped engine left running.
 import {
   BOX_BUILD_STATUSES,
@@ -12,6 +12,7 @@ import {
   BuildSeatRequestSchema,
   BuildSlugSchema,
   ENGINE_CONFIG_MOUNT,
+  EscalationResolveSchema,
   type BuildCreateInput,
   type BuildFreezeAnswer,
   type BuildFreezeRequest,
@@ -24,6 +25,7 @@ import {
   type BuildSeatRequestInput,
   type BuildDecision,
   type BuildState,
+  type EscalationResolveInput,
   type Message,
   type OwnerPostInput,
   type OwnerPostAnswer,
@@ -100,6 +102,13 @@ export interface BuildManager {
   /** Removes a finished, failed, or cancelled build's branch and worktree, and keeps its record. */
   delete(slug: string): Promise<BuildState>;
   /**
+   * Resolves an escalation of the build and resumes what it paused, or marks
+   * it for the owner. Throws `not_found` for an unknown escalation,
+   * `invalid_state` for a resolved one, and `validation` for a request that
+   * doesn't fit it.
+   */
+  resolve(slug: string, request: EscalationResolveInput): Promise<BuildState>;
+  /**
    * Posts as the owner to one agent of build `slug`; only that agent runs.
    * The engine records the post as a decision on its task. Throws
    * `invalid_state` for a build that ended.
@@ -129,6 +138,8 @@ export interface BuildManagerDeps extends CoreDeps {
   reviews?: ReviewRuns;
   /** How often the review step reads its run's state, in milliseconds. */
   reviewPollMs?: number;
+  /** The secret names the project gives builds. Without it, preflight doesn't check the plan's secrets. */
+  secretNames?: () => Promise<string[]>;
 }
 
 /** Turns a creation error into one the API maps to a status. */
@@ -174,6 +185,7 @@ export class EngineBuildManager implements BuildManager {
       ...(deps.team ? { team: deps.team } : {}),
       ...(deps.reviews ? { reviews: deps.reviews } : {}),
       ...(deps.reviewPollMs !== undefined ? { reviewPollMs: deps.reviewPollMs } : {}),
+      ...(deps.secretNames ? { secretNames: deps.secretNames } : {}),
     };
     this.location = {
       projectRoot: deps.projectRoot,
@@ -452,6 +464,12 @@ export class EngineBuildManager implements BuildManager {
 
   async delete(slug: string): Promise<BuildState> {
     return structuredClone(await (await this.require(slug)).delete());
+  }
+
+  async resolve(slug: string, input: EscalationResolveInput): Promise<BuildState> {
+    const build = await this.require(slug);
+    const request = EscalationResolveSchema.parse(input);
+    return structuredClone(await build.resolve(request));
   }
 
   async post(slug: string, input: OwnerPostInput): Promise<OwnerPostAnswer> {

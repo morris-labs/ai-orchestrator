@@ -5,7 +5,9 @@
 import type {
   BuildDecision,
   BuildSessionSettings,
+  DecisionAnswer,
   EngineRunCreate,
+  RunRetry,
   BuildPlan,
   BuildState,
   BuildStatus,
@@ -21,7 +23,7 @@ import type {
   RunState,
   SeatPlacement,
 } from "@aio/contracts";
-import { VendorSchema } from "@aio/contracts";
+import { VendorSchema, dependentsOf } from "@aio/contracts";
 import {
   AgentCalls,
   basicRouting,
@@ -57,6 +59,10 @@ export interface ReviewRuns {
   get(runId: string): Promise<RunState | null>;
   /** Starts a finished run's post-push loop. */
   push(runId: string, options: PushOptions): Promise<RunState>;
+  /** Answers the decision a run waits for. */
+  decide(runId: string, answer: DecisionAnswer): Promise<RunState>;
+  /** Continues a failed run. */
+  retry(runId: string, options: RunRetry): Promise<RunState>;
   /** Pauses, resumes, and cancels the run with the build. */
   pause(runId: string): Promise<RunState>;
   resume(runId: string): Promise<RunState>;
@@ -83,6 +89,11 @@ export interface BuildServices {
   reviews?: ReviewRuns;
   /** How often the review step reads its run's state, in milliseconds. */
   reviewPollMs?: number;
+  /**
+   * The secret names the project gives the build, from the secrets broker.
+   * Without it, preflight doesn't check the plan's secrets.
+   */
+  secretNames?: () => Promise<string[]>;
   /** When a message resumes a session and when it gets a fresh agent. Default: the schema's defaults. */
   sessions?: BuildSessionSettings;
 }
@@ -336,16 +347,31 @@ export class BuildContext {
     return task;
   }
 
-  /** Writes an escalation file, adds it to the state, and makes the build wait for it. */
+  /**
+   * Writes an escalation file and adds it to the state. An escalation with a
+   * task pauses that task and every task that depends on it, and the other
+   * tasks go on. One without a task makes the build wait for it.
+   */
   async escalate(draft: EscalationDraft): Promise<Escalation> {
     const id = `E${this.state.escalations.length + 1}`;
+    const tasks = draft.taskId
+      ? [
+          draft.taskId,
+          ...dependentsOf(this.plan.tasks, draft.taskId).filter(
+            (t) => this.task(t).status !== "done",
+          ),
+        ]
+      : [];
     const escalation: Escalation = {
       id,
       kind: draft.kind,
       level: draft.level,
       taskId: draft.taskId,
+      tasks,
+      ...(draft.runId ? { runId: draft.runId } : {}),
       summary: draft.summary,
       file: `escalations/${id}.json`,
+      status: "open",
       createdAt: this.now(),
     };
     await this.store.writeJson(this.store.escalationPath(id), {
@@ -355,8 +381,78 @@ export class BuildContext {
       details: draft.details,
     });
     this.state.escalations.push(escalation);
-    await this.setStatus("waiting_escalation", `Waiting for escalation ${id}: ${draft.summary}`);
+    if (!draft.taskId) {
+      await this.waitForEscalations();
+      return escalation;
+    }
+    await this.setTaskStatus(draft.taskId, "failed");
+    for (const t of tasks.slice(1)) await this.setTaskStatus(t, "blocked");
     return escalation;
+  }
+
+  /** The escalations that wait for a decision. */
+  openEscalations(): Escalation[] {
+    return this.state.escalations.filter((e) => e.status === "open");
+  }
+
+  /** Makes the build wait for its open escalations, with a note that names them. */
+  async waitForEscalations(): Promise<void> {
+    const open = this.openEscalations();
+    const [only] = open;
+    const note =
+      open.length === 1 && only
+        ? `Waiting for escalation ${only.id}: ${only.summary}`
+        : `Waiting for escalations ${open.map((e) => e.id).join(", ")}.`;
+    await this.setStatus("waiting_escalation", note);
+  }
+
+  /**
+   * Saves a changed escalation in the state and in its file, which keeps
+   * the details the step wrote.
+   */
+  async saveEscalation(escalation: Escalation): Promise<void> {
+    const path = this.store.escalationPath(escalation.id);
+    const saved = (await this.store.readJson<Record<string, unknown>>(path)) ?? {};
+    await this.store.writeJson(path, { ...saved, ...escalation });
+    await this.persist();
+  }
+
+  /**
+   * Sets each task's status from the open escalations: a task that an open
+   * escalation names is `failed`, a task it pauses is `blocked`, and any
+   * other task that isn't done can run again.
+   */
+  async refreshTaskStatuses(): Promise<void> {
+    // Every status changes before the first save, so a drive that runs
+    // meanwhile never sees a resolved escalation with its task still failed.
+    const open = this.openEscalations();
+    const changed: { id: string; status: BuildTaskStatus; previous: BuildTaskStatus }[] = [];
+    for (const progress of this.state.tasks) {
+      if (progress.status === "done") continue;
+      const own = open.some((e) => e.taskId === progress.id);
+      const paused = open.some((e) => e.tasks.includes(progress.id));
+      const status = own ? "failed" : paused ? "blocked" : progress.base ? "running" : "pending";
+      if (status === progress.status) continue;
+      changed.push({ id: progress.id, status, previous: progress.status });
+      progress.status = status;
+    }
+    if (changed.length === 0) return;
+    await this.persist();
+    for (const { id, status, previous } of changed) {
+      await this.emit({
+        type: "build.task.changed",
+        buildId: this.state.id,
+        taskId: id,
+        status,
+        previousStatus: previous,
+      });
+    }
+  }
+
+  /** Records the owner's push answer in the build plan. */
+  async recordPush(push: boolean): Promise<void> {
+    this.plan.push = push;
+    await this.store.savePlan(this.plan);
   }
 
   /**

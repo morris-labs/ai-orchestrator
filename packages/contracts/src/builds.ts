@@ -14,6 +14,7 @@ import {
   CountSchema,
   EnvVarNameSchema,
   IsoDateTimeSchema,
+  RunIdSchema,
   VendorSchema,
 } from "./common.js";
 import {
@@ -25,6 +26,7 @@ import {
   type BuildStatus,
 } from "./build-events.js";
 import { RoleNameSchema } from "./build-roles.js";
+import { DecisionAnswerSchema } from "./runs.js";
 import { BuildPlacementsSchema, PlacementOverrideSchema } from "./placements.js";
 import { PolicyCommandSchema } from "./policy.js";
 import { TaskSpecialtiesSchema } from "./specialties.js";
@@ -419,6 +421,19 @@ export const BuildTaskProgressSchema = z.object({
   commit: CommitShaSchema.nullable(),
   /** Why the last attempt failed, in one line. */
   lastFailure: z.string().optional(),
+  /**
+   * The last attempt the task gets. Absent means the engine's attempt cap;
+   * a retry after an escalation raises it.
+   */
+  attemptCap: z.number().int().positive().optional(),
+  /** The attempt the task goes on with after a resolved escalation. */
+  resumeAt: z.number().int().positive().optional(),
+  /**
+   * The patch of the task's work that the engine set aside while the task
+   * waited for an escalation and other tasks ran, relative to the build
+   * directory. The task's next attempt starts with it.
+   */
+  setAside: z.string().min(1).optional(),
 });
 export type BuildTaskProgress = z.infer<typeof BuildTaskProgressSchema>;
 
@@ -451,6 +466,10 @@ export const EscalationKindSchema = z.enum([
   "release_ready",
   /** A task broke a test that an earlier task made pass, on a second attempt after the first. */
   "oscillation",
+  /** The build needs a secret that the project doesn't give it. */
+  "missing_secret",
+  /** The build needs an external service that it can't reach. */
+  "missing_service",
 ]);
 export type EscalationKind = z.infer<typeof EscalationKindSchema>;
 
@@ -458,18 +477,123 @@ export type EscalationKind = z.infer<typeof EscalationKindSchema>;
 export const EscalationLevelSchema = z.enum(["project_manager", "owner"]);
 export type EscalationLevel = z.infer<typeof EscalationLevelSchema>;
 
+/** Whether an escalation still waits for a decision. */
+export const EscalationStatusSchema = z.enum(["open", "resolved"]);
+export type EscalationStatus = z.infer<typeof EscalationStatusSchema>;
+
+/**
+ * What a resolution does:
+ *
+ * - `retry`: runs the paused work again. A task gets a new set of attempts.
+ * - `reorder`: sets a new order for the tasks that aren't done, then retries.
+ * - `clarify`: adds a clarification that the plan already implies to the
+ *   task's context, then retries.
+ * - `decide`: answers the decision that the build's review run waits for,
+ *   then retries.
+ * - `escalate`: hands the escalation to the owner, with a note that says why.
+ */
+export const EscalationActionSchema = z.enum(["retry", "reorder", "clarify", "decide", "escalate"]);
+export type EscalationAction = z.infer<typeof EscalationActionSchema>;
+
+/** A part of the build plan that a resolution changes. */
+export const PlanChangeSchema = z.enum([
+  "criteria",
+  "scope",
+  "milestones",
+  "contracts",
+  "architecture",
+]);
+export type PlanChange = z.infer<typeof PlanChangeSchema>;
+
+/**
+ * The plan changes that only the owner decides. The Project manager can
+ * approve a change to contracts or architecture after a planning meeting.
+ */
+export const OWNER_PLAN_CHANGES: readonly PlanChange[] = ["criteria", "scope", "milestones"];
+
+const resolutionFields = {
+  action: EscalationActionSchema,
+  /** Who decided: the Project manager, or the owner, whose answer the Project manager relays. */
+  by: EscalationLevelSchema.default("project_manager"),
+  /** Why, or the clarification itself for `clarify`. */
+  note: z.string().min(1).optional(),
+  /** With `reorder`: the task IDs in the order they run. */
+  order: z.array(PlanIdSchema).min(1).optional(),
+  /** With `decide`: the answer to the review run's decision. */
+  decision: DecisionAnswerSchema.optional(),
+  /** For a release ready escalation: the owner's push answer, which the build plan records. */
+  push: z.boolean().optional(),
+  /** The parts of the build plan that the decision changes. */
+  changes: z.array(PlanChangeSchema).default([]),
+};
+
+/** Adds an issue for each field that a resolution's action needs and lacks. */
+export function checkEscalationResolve(
+  r: { action: EscalationAction; note?: string; order?: string[]; decision?: unknown },
+  ctx: z.RefinementCtx,
+): void {
+  const needs: Partial<Record<EscalationAction, "note" | "order" | "decision">> = {
+    reorder: "order",
+    clarify: "note",
+    decide: "decision",
+    escalate: "note",
+  };
+  const field = needs[r.action];
+  if (field && r[field] === undefined) {
+    ctx.addIssue({ code: "custom", path: [field], message: `${r.action} needs ${field}` });
+  }
+}
+
+/** The fields of a resolve request, before the check that each action has what it needs. */
+export const EscalationResolveFieldsSchema = z
+  .object({ escalation: PlanIdSchema, ...resolutionFields })
+  .strict();
+
+/** A resolve request: how to resolve one escalation of a build. */
+export const EscalationResolveSchema =
+  EscalationResolveFieldsSchema.superRefine(checkEscalationResolve);
+export type EscalationResolve = z.infer<typeof EscalationResolveSchema>;
+export type EscalationResolveInput = z.input<typeof EscalationResolveSchema>;
+
+/** How an escalation was resolved. */
+export const EscalationResolutionSchema = z.object({
+  ...resolutionFields,
+  resolvedAt: IsoDateTimeSchema,
+});
+export type EscalationResolution = z.infer<typeof EscalationResolutionSchema>;
+
 export const EscalationSchema = z.object({
   id: PlanIdSchema,
   kind: EscalationKindSchema,
   level: EscalationLevelSchema,
   taskId: PlanIdSchema.nullable(),
+  /**
+   * The tasks the escalation pauses: its task and every task that depends
+   * on it. Empty for an escalation without a task, which pauses the build.
+   */
+  tasks: z.array(PlanIdSchema).default([]),
+  /** The review run that the escalation is about, when one is. */
+  runId: RunIdSchema.optional(),
   /** One line that says what happened. */
   summary: z.string().min(1),
   /** The escalation file, relative to the build directory. */
   file: z.string().min(1),
+  status: EscalationStatusSchema.default("open"),
+  /** Why the escalation went to the owner after it was raised. */
+  ownerReason: z.string().min(1).optional(),
+  /** How the escalation was resolved, once it was. */
+  resolution: EscalationResolutionSchema.optional(),
   createdAt: IsoDateTimeSchema,
 });
 export type Escalation = z.infer<typeof EscalationSchema>;
+
+/** Whether an escalation is open and what it pauses, or how it was resolved, in a few words. */
+export function escalationState(e: Escalation): string {
+  if (e.resolution) {
+    return `resolved by the ${e.resolution.by.replace("_", " ")}: ${e.resolution.action}`;
+  }
+  return `open, pauses ${e.tasks.length > 0 ? e.tasks.join(", ") : "the build"}`;
+}
 
 /** A build's saved state, in `.aio/builds/SLUG/state.json`. */
 export const BuildStateSchema = z.object({
@@ -495,6 +619,8 @@ export const BuildStateSchema = z.object({
   step: BuildStepSchema,
   tasks: z.array(BuildTaskProgressSchema),
   escalations: z.array(EscalationSchema),
+  /** The order the tasks run in, which a resolution set. Absent means plan order. */
+  taskOrder: z.array(PlanIdSchema).optional(),
   /** The placement levels above the role defaults; see `SeatPlacements` in the engine. */
   placements: BuildPlacementsSchema,
   /** The end of a timed pause, such as a vendor's limit reset. */

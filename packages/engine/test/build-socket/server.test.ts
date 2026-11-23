@@ -94,6 +94,59 @@ describe("the build socket", () => {
     expect(own.status).toBe(200);
   });
 
+  it("resolves an escalation of a build", async () => {
+    const { builds, path } = await open();
+    const res = await send(path, "POST", BUILD_SOCKET_ROUTES.resolve, {
+      projectId: "proj-1",
+      boxId: "box-1",
+      slug: "cart-total",
+      escalation: "E1",
+      action: "reorder",
+      order: ["T2", "T1"],
+      note: "Run the discount first.",
+    });
+    expect(res).toMatchObject({ status: 200, body: { build: { slug: "cart-total" } } });
+    expect(builds.resolve).toHaveBeenCalledWith("cart-total", {
+      escalation: "E1",
+      action: "reorder",
+      by: "project_manager",
+      order: ["T2", "T1"],
+      note: "Run the discount first.",
+      changes: [],
+    });
+    const bad = await send(path, "POST", BUILD_SOCKET_ROUTES.resolve, {
+      projectId: "proj-1",
+      boxId: null,
+      slug: "cart-total",
+      escalation: "E1",
+      action: "clarify",
+    });
+    expect(bad).toMatchObject({ status: 400, body: { error: { code: "validation" } } });
+    const foreign = await send(path, "POST", BUILD_SOCKET_ROUTES.resolve, {
+      projectId: "proj-2",
+      boxId: null,
+      slug: "cart-total",
+      escalation: "E1",
+      action: "retry",
+    });
+    expect(foreign.status).toBe(404);
+    expect(builds.resolve).toHaveBeenCalledTimes(1);
+  });
+
+  it("lets only the build's own box resolve its escalations", async () => {
+    const { builds, path } = await open();
+    builds.get.mockResolvedValue({ ...buildState, boxId: "box-1" });
+    const ask = { projectId: "proj-1", slug: "cart-total", escalation: "E1", action: "retry" };
+    const other = await send(path, "POST", BUILD_SOCKET_ROUTES.resolve, { ...ask, boxId: "box-2" });
+    expect(other).toMatchObject({
+      status: 409,
+      body: { error: { code: "conflict", message: expect.stringContaining("box-1") } },
+    });
+    expect(builds.resolve).not.toHaveBeenCalled();
+    const own = await send(path, "POST", BUILD_SOCKET_ROUTES.resolve, { ...ask, boxId: "box-1" });
+    expect(own.status).toBe(200);
+  });
+
   it("lets the Project manager read the direct messages and the decisions", async () => {
     const { builds, path } = await open();
     const ask = { projectId: "proj-1", boxId: "box-1", slug: "cart-total" };

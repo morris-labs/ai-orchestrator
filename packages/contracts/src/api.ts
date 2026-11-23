@@ -103,7 +103,12 @@ import {
 } from "./build-events.js";
 import { BuildMessageListSchema } from "./messages.js";
 import { OwnerPostAnswerSchema, OwnerPostSchema } from "./owner-posts.js";
-import { BuildControlSchema, BuildCreateSchema, BuildStateSchema } from "./builds.js";
+import {
+  BuildControlSchema,
+  BuildCreateSchema,
+  BuildStateSchema,
+  EscalationResolveSchema,
+} from "./builds.js";
 import { FindingSchema, SeveritySchema, VerdictSchema } from "./findings.js";
 import {
   EnrollmentCodeSchema,
@@ -2079,6 +2084,15 @@ export const engineRoutes = {
     path: `${V1}/builds/:slug`,
     summary:
       "Delete a finished, failed, or cancelled build's branch and worktree. Its directory, with the closing record, stays.",
+    response: BuildStateSchema,
+    errors: ["not_found", "invalid_state"],
+  }),
+  "engine.builds.resolve": http({
+    method: "POST",
+    path: `${V1}/builds/:slug/resolve`,
+    summary:
+      "Resolve an escalation of a build and resume what it paused, or mark it for the owner.",
+    body: EscalationResolveSchema,
     response: BuildStateSchema,
     errors: ["not_found", "invalid_state"],
   }),

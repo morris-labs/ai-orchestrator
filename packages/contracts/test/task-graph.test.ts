@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dependencyCycle, taskOrder } from "../src/index.js";
+import { dependencyCycle, dependentsOf, taskOrder } from "../src/index.js";
 
 const task = (id: string, dependsOn: string[] = []) => ({ id, dependsOn });
 
@@ -30,5 +30,19 @@ describe("dependencyCycle", () => {
       "T3",
       "T2",
     ]);
+  });
+});
+
+describe("dependentsOf", () => {
+  it("lists the tasks that depend on a task directly or through others, in plan order", () => {
+    const tasks = [
+      task("T4", ["T3"]),
+      task("T1"),
+      task("T2", ["T1"]),
+      task("T3", ["T2"]),
+      task("T5"),
+    ];
+    expect(dependentsOf(tasks, "T1")).toEqual(["T4", "T2", "T3"]);
+    expect(dependentsOf(tasks, "T5")).toEqual([]);
   });
 });

@@ -22,7 +22,13 @@
 // in `digests/release-ready.md`.
 import { readdir } from "node:fs/promises";
 import { setTimeout as sleep } from "node:timers/promises";
-import type { BuildCriterion, RunState, StopReason } from "@aio/contracts";
+import type {
+  BuildCriterion,
+  Escalation,
+  EscalationResolve,
+  RunState,
+  StopReason,
+} from "@aio/contracts";
 import { RunCancelled, describeError } from "../../calls/index.js";
 import { runGateCommand } from "../../gate/gate.js";
 import { untrusted } from "../../prompts/templates.js";
@@ -33,7 +39,7 @@ import { outsideWritable } from "../gate.js";
 import type { ListedTest } from "../red-check.js";
 import { writablePaths, type RoleTask } from "../roles/index.js";
 import { readTestLock } from "../test-lock.js";
-import { REVIEW_POLL_MS } from "./review.js";
+import { REVIEW_POLL_MS, reopenRun } from "./review.js";
 import type { StepOutcome } from "./types.js";
 
 /** The seat that writes the record. */
@@ -372,6 +378,7 @@ async function pushAndWatch(
         kind: "release_ready",
         level: "project_manager",
         taskId: null,
+        runId: run.id,
         summary: `The build's review run can't push: ${describeError(error)}`,
         details: pushDetails(run),
       });
@@ -384,6 +391,7 @@ async function pushAndWatch(
       kind: "release_ready",
       level: "project_manager",
       taskId: null,
+      runId: ended.id,
       summary:
         ended.status === "waiting_decision"
           ? `The push and CI loop needs a decision (${ended.decision?.kind ?? "unknown"}).`
@@ -468,7 +476,7 @@ export async function runReleaseReady(ctx: BuildContext): Promise<StepOutcome> {
       taskId: null,
       summary:
         "The build plan has no push answer. Ask the owner whether the build can push its branch and open its pull request.",
-      details: `The branch ${ctx.state.branch} is ready, and the pull request description is in ${RELEASE_FILES.pullRequest}. Record the owner's answer in the build plan's push field, then resume the build.`,
+      details: `The branch ${ctx.state.branch} is ready, and the pull request description is in ${RELEASE_FILES.pullRequest}. Ask the owner, then resolve this escalation with the owner's push answer, which the build plan records.`,
     });
     return "wait";
   }
@@ -483,4 +491,17 @@ export async function runReleaseReady(ctx: BuildContext): Promise<StepOutcome> {
   ctx.state.note = `Release ready. The digest is in ${RELEASE_FILES.digest}.`;
   await ctx.persist();
   return "next";
+}
+
+/**
+ * Prepares the release ready step to run again after its escalation was
+ * resolved: answers or continues the build's review run when the escalation
+ * names it. The step itself starts again from its last saved part.
+ */
+export function reopenReleaseReady(
+  ctx: BuildContext,
+  escalation: Escalation,
+  request: EscalationResolve,
+): Promise<void> {
+  return reopenRun(ctx, escalation, request, () => "keep");
 }

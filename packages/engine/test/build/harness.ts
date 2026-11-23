@@ -156,6 +156,8 @@ export interface BuildWorldOptions {
   release?: boolean;
   /** The GitHub client of the review runs' post-push loop. Default: none, which never reaches the network. */
   github?: GitHubClient;
+  /** The secret names the project gives builds. Default: none, and preflight doesn't check secrets. */
+  secretNames?: () => Promise<string[]>;
   /** Adds the Copilot mock CLI to Claude and Codex. */
   copilot?: boolean;
 }
@@ -258,6 +260,7 @@ export async function buildWorld(options: BuildWorldOptions = {}): Promise<Build
       reviews: runs,
       reviewPollMs: 25,
       pipeline: worldPipeline(options),
+      ...(options.secretNames ? { secretNames: options.secretNames } : {}),
     });
     return { events, broker, manager, runs };
   };

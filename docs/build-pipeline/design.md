@@ -529,6 +529,9 @@ The following conditions escalate:
 - A missing secret or external service. An agent never works around the gap,
   for example with a mock that ships.
 
+For the escalation kinds, levels, and the resolve request, see
+[Escalations](escalations.md).
+
 ## Boxes and lifecycle
 
 A build runs in one box, next to the Project manager's session. Each box runs

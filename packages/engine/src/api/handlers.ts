@@ -105,6 +105,7 @@ export function createHandlers(deps: HandlerDeps): EngineHandlers {
     "engine.builds.resume": (i) => deps.builds.resume(param(i, "slug"), i.body.reason),
     "engine.builds.cancel": (i) => deps.builds.cancel(param(i, "slug")),
     "engine.builds.delete": (i) => deps.builds.delete(param(i, "slug")),
+    "engine.builds.resolve": (i) => deps.builds.resolve(param(i, "slug"), i.body),
     "engine.builds.post": (i) => deps.builds.post(param(i, "slug"), i.body),
     "engine.ports": () => ({ listeners: deps.ports.list() }),
   };

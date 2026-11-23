@@ -1,8 +1,8 @@
 // The build controller: one per build. It creates the build's files and
 // worktree, drives the build pipeline step by step, and handles the build
-// requests: pause, resume, cancel, delete, and owner posts. Its drive saves
-// after every step, so a restarted engine continues the build from where it
-// stopped.
+// requests: pause, resume, resolve, cancel, delete, and owner posts. Its drive
+// saves after every step, so a restarted engine continues the build from
+// where it stopped.
 import { mkdir, rm } from "node:fs/promises";
 import type {
   BuildCreate,
@@ -12,6 +12,7 @@ import type {
   BuildState,
   BuildStatus,
   BuildStep,
+  EscalationResolve,
   Message,
   OwnerPost,
   OwnerPostAnswer,
@@ -28,6 +29,7 @@ import { ulid } from "./ids.js";
 import { loadRoles, type LoadRolesOptions } from "./roles/index.js";
 import { BUILD_PIPELINE, STEP_HANDLERS, type StepHandler } from "./steps/index.js";
 import { checkPlan } from "./plan-check.js";
+import { resolveEscalation } from "./resolve.js";
 import { BuildStore } from "./store.js";
 import { BuildWorktree } from "./worktree.js";
 
@@ -83,6 +85,8 @@ export class BuildController {
   private driver: Promise<void> | null = null;
   /** True while the engine shuts down: a stopped drive leaves the build as it is. */
   private stopping = false;
+  /** True when a resolution came in during a drive: another drive follows it. */
+  private again = false;
   /** True while a cancel stops the drive: the drive leaves the status to the cancel. */
   private cancelling = false;
   /** The closing record under way after a cancel. */
@@ -202,6 +206,11 @@ export class BuildController {
     this.stopping = false;
     this.driver = this.drive().finally(() => {
       this.driver = null;
+      if (this.again && !this.stopping) {
+        this.again = false;
+        // A pause or a new escalation without a task that came in meanwhile holds the build.
+        if (this.resumable()) this.start();
+      }
     });
   }
 
@@ -224,7 +233,13 @@ export class BuildController {
           );
           return;
         }
-        if ((await handler(ctx)) === "wait") return;
+        if ((await handler(ctx)) === "wait") {
+          // A step that left the build running with escalations open waits for them.
+          if (ctx.state.status === "running" && ctx.openEscalations().length > 0) {
+            await ctx.waitForEscalations();
+          }
+          return;
+        }
         // A step ends when its agents' conversations do: the message turns
         // it started finish before the next step.
         await ctx.sessions.idle();
@@ -269,13 +284,14 @@ export class BuildController {
    * run. `reason` records who paused it: a box start resumes only a build
    * that its box's stop paused. A build in a timed pause, such as a wait for
    * a vendor's limit reset, takes the pause too, so it doesn't wake on its
-   * own when the wait ends.
+   * own when the wait ends. So does a build that waits for an escalation,
+   * so a resolution doesn't resume it until the resume.
    */
   async pause(reason: BuildPauseReason = "owner"): Promise<BuildState> {
     this.requireLive("pause");
     const { status, pausedUntil, pausedBy } = this.state;
     const timed = status === "paused" && pausedUntil !== undefined && pausedBy === undefined;
-    if (status !== "running" && !timed) {
+    if (status !== "running" && status !== "waiting_escalation" && !timed) {
       throw new EngineError("invalid_state", `Build ${this.slug} is ${status}, not running.`);
     }
     this.ctx.calls.requestPause();
@@ -304,9 +320,15 @@ export class BuildController {
         `Build ${this.slug} wasn't paused by its box's stop, so the box start leaves it paused.`,
       );
     }
-    await this.ctx.setStatus("running");
     this.ctx.calls.requestResume();
     this.ctx.calls.wakePause();
+    // An open escalation without a task still holds the build: its step
+    // doesn't run again until the escalation is resolved.
+    if (this.ctx.openEscalations().some((e) => e.taskId === null)) {
+      await this.ctx.waitForEscalations();
+      return this.state;
+    }
+    await this.ctx.setStatus("running");
     this.start();
     await this.reviewRun("resume", ["paused"]);
     return this.state;
@@ -435,6 +457,39 @@ export class BuildController {
       });
       return run;
     }
+  }
+
+  /**
+   * Resolves one of the build's escalations, or marks it for the owner, and
+   * resumes the build when nothing else holds it: no escalation without a
+   * task is open, and nobody paused the build. Throws `EngineError` for a
+   * request that doesn't fit the escalation.
+   */
+  async resolve(request: EscalationResolve): Promise<BuildState> {
+    if (this.stopping) {
+      throw new EngineError("invalid_state", `Build ${this.slug} stops with the engine.`);
+    }
+    if ((await resolveEscalation(this.ctx, request)) === "owner") return this.state;
+    if (!this.resumable()) return this.state;
+    if (this.driver) {
+      this.again = true;
+      return this.state;
+    }
+    if (this.state.status === "waiting_escalation") await this.ctx.setStatus("running");
+    this.start();
+    return this.state;
+  }
+
+  /**
+   * Whether a resolution can resume the build: nobody paused it, and no
+   * open escalation without a task holds it.
+   */
+  private resumable(): boolean {
+    const { status } = this.state;
+    return (
+      (status === "running" || status === "waiting_escalation") &&
+      !this.ctx.openEscalations().some((e) => e.taskId === null)
+    );
   }
 
   /**

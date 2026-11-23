@@ -1,16 +1,16 @@
 // The build socket: a Unix socket inside the project container that accepts
 // only build requests (planning seat calls, meetings, the freeze, start,
-// status, pause, resume, cancel, and reading the team chat and decisions) and
-// needs no engine token. The `aio-build` command in a box's session talks to
-// it; see
+// status, pause, resume, cancel, resolve, and reading the team chat and
+// decisions) and needs no engine token. The `aio-build` command in a box's
+// session talks to it; see
 // `@aio/contracts` `build-socket.ts` for the protocol.
 //
 // The socket lives on the container's own file system, so only processes in
 // this project's container reach it. Each request names its project, and
 // the socket refuses a project other than the engine's own, and a build
 // whose saved state belongs to another project. A build that a box started
-// takes pause, resume, and cancel requests only from that box; any box of
-// the project can read its status.
+// takes pause, resume, cancel, and resolve requests only from that box; any
+// box of the project can read its status.
 import {
   BUILD_SOCKET_MAX_BODY_BYTES,
   BUILD_SOCKET_ROUTES,
@@ -19,6 +19,7 @@ import {
   BuildSocketMeetingPostSchema,
   BuildSocketMessagesSchema,
   BuildSocketPlanSchema,
+  BuildSocketResolveSchema,
   BuildSocketSlugSchema,
   BuildSocketStartSchema,
   type ApiError,
@@ -49,6 +50,7 @@ export interface BuildSocketOptions {
     | "get"
     | "pause"
     | "resume"
+    | "resolve"
     | "cancel"
     | "messages"
     | "decisions"
@@ -150,6 +152,16 @@ export async function serveBuildSocket(options: BuildSocketOptions): Promise<Bui
     return build;
   };
 
+  /** Refuses `kind` from a box other than the one that started `build`. */
+  const ownBox = (build: BuildState, boxId: string | null, kind: BuildSocketRequestKind): void => {
+    if (build.boxId !== null && build.boxId !== boxId) {
+      throw new EngineError(
+        "conflict",
+        `Build ${build.slug} belongs to box ${build.boxId}, so only that box can ${kind} it.`,
+      );
+    }
+  };
+
   /** Refuses a request for a project other than the engine's own. */
   const ownProject = (request: { projectId: string; slug: string }): void => {
     if (projectId !== null && request.projectId !== projectId) {
@@ -199,6 +211,17 @@ export async function serveBuildSocket(options: BuildSocketOptions): Promise<Bui
       });
       return { build };
     }
+    if (kind === "resolve") {
+      const {
+        projectId: project,
+        boxId: box,
+        slug,
+        ...resolution
+      } = BuildSocketResolveSchema.parse(raw);
+      ownProject({ projectId: project, slug });
+      ownBox(await ownBuild(project, slug), box, kind);
+      return { build: await builds.resolve(slug, resolution) };
+    }
     if (kind === "messages") {
       const request = BuildSocketMessagesSchema.parse(raw);
       ownProject(request);
@@ -210,12 +233,7 @@ export async function serveBuildSocket(options: BuildSocketOptions): Promise<Bui
     const build = await ownBuild(request.projectId, request.slug);
     if (kind === "status") return { build };
     if (kind === "decisions") return { decisions: await builds.decisions(request.slug) };
-    if (build.boxId !== null && build.boxId !== request.boxId) {
-      throw new EngineError(
-        "conflict",
-        `Build ${build.slug} belongs to box ${build.boxId}, so only that box can ${kind} it.`,
-      );
-    }
+    ownBox(build, request.boxId, kind);
     if (kind === "pause") return { build: await builds.pause(request.slug, "owner") };
     if (kind === "resume") return { build: await builds.resume(request.slug, "owner") };
     return { build: await builds.cancel(request.slug) };

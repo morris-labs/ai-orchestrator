@@ -272,6 +272,19 @@ const cases: Record<string, Case> = {
       expect(builds.delete).toHaveBeenCalledWith("cart-total");
     },
   },
+  "engine.builds.resolve": {
+    method: "POST",
+    url: "/api/v1/builds/cart-total/resolve",
+    body: { escalation: "E1", action: "clarify", note: "Prices are in cents." },
+    check: () =>
+      expect(builds.resolve).toHaveBeenCalledWith("cart-total", {
+        escalation: "E1",
+        action: "clarify",
+        by: "project_manager",
+        note: "Prices are in cents.",
+        changes: [],
+      }),
+  },
   "engine.builds.post": {
     method: "POST",
     url: "/api/v1/builds/cart-total/posts",

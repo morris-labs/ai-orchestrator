@@ -127,6 +127,16 @@ describe("the box build link", () => {
     ]);
   });
 
+  it("pauses a build that waits for an escalation for a box stop, so a resolution doesn't run work in a stopped box", async () => {
+    const { engine, link } = world([summary({ status: "waiting_escalation" })]);
+    link.ingest(boxEvent("box-a", "stopped"));
+    await until(() => engine.calls.length === 1);
+    expect(engine.calls[0]).toMatchObject({
+      key: "engine.builds.pause",
+      input: { params: { slug: "cart-total" }, body: { reason: "box" } },
+    });
+  });
+
   it("resumes the box's paused build for a box start, and stays quiet when the owner paused it", async () => {
     const { engine, link, logs } = world([
       summary({ status: "paused" }),

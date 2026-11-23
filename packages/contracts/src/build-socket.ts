@@ -1,7 +1,7 @@
 // The build socket's protocol: HTTP/1.1 with JSON bodies, over a Unix
 // socket that the engine opens inside its project container. The socket
 // accepts only build requests (planning seat calls, meetings, the freeze,
-// start, status, pause, resume, cancel, and reading the team chat and
+// start, status, pause, resume, cancel, resolve, and reading the team chat and
 // decisions) and needs no engine token, so a box's session can drive a build
 // with the `aio-build` command without the token that the engine's full API
 // requires. See `docs/build-pipeline/design.md`.
@@ -18,7 +18,12 @@ import {
   BuildMeetingPostRequestSchema,
   BuildMeetingRequestSchema,
 } from "./build-meetings.js";
-import { BuildPlanSchema, BuildStateSchema } from "./builds.js";
+import {
+  BuildPlanSchema,
+  BuildStateSchema,
+  EscalationResolveFieldsSchema,
+  checkEscalationResolve,
+} from "./builds.js";
 import { ENGINE_ENV } from "./config.js";
 import { BuildMessageListSchema } from "./messages.js";
 import { BuildDecisionListSchema } from "./owner-posts.js";
@@ -57,6 +62,7 @@ export const BUILD_SOCKET_ROUTES = {
   status: "/v1/builds/status",
   pause: "/v1/builds/pause",
   resume: "/v1/builds/resume",
+  resolve: "/v1/builds/resolve",
   messages: "/v1/builds/messages",
   decisions: "/v1/builds/decisions",
   cancel: "/v1/builds/cancel",
@@ -90,6 +96,15 @@ export type BuildSocketStartInput = z.input<typeof BuildSocketStartSchema>;
 export const BuildSocketSlugSchema = z.object({ ...scope, slug: BuildSlugSchema }).strict();
 export type BuildSocketSlug = z.infer<typeof BuildSocketSlugSchema>;
 
+/** The body of a resolve request: the build, and how to resolve one of its escalations. */
+export const BuildSocketResolveSchema = EscalationResolveFieldsSchema.extend({
+  ...scope,
+  slug: BuildSlugSchema,
+})
+  .strict()
+  .superRefine(checkEscalationResolve);
+export type BuildSocketResolve = z.infer<typeof BuildSocketResolveSchema>;
+
 /**
  * The body of a messages request. With `direct`, the answer holds only the
  * direct messages: the ones that agents sent the owner.
@@ -111,7 +126,7 @@ export const BuildSocketMeetSchema = BuildMeetingRequestSchema;
 /** The body of an owner post to a running meeting. */
 export const BuildSocketMeetingPostSchema = BuildMeetingPostRequestSchema;
 
-/** The answer to a start, status, pause, resume, or cancel request: the build's state after the request. */
+/** The answer to a start, status, pause, resume, cancel, or resolve request: the build's state after the request. */
 export const BuildSocketResponseSchema = z.object({ build: BuildStateSchema });
 export type BuildSocketResponse = z.infer<typeof BuildSocketResponseSchema>;
 
@@ -125,6 +140,7 @@ export const BUILD_SOCKET_RESPONSES = {
   status: BuildSocketResponseSchema,
   pause: BuildSocketResponseSchema,
   resume: BuildSocketResponseSchema,
+  resolve: BuildSocketResponseSchema,
   messages: BuildMessageListSchema,
   decisions: BuildDecisionListSchema,
   cancel: BuildSocketResponseSchema,

@@ -1,7 +1,8 @@
 // Escalations: decisions that execution can't make inside the build plan's
-// bounds. Each one is a file in the build's `escalations/` directory, and the
-// build waits for it. Resolving an escalation, and pausing only the affected
-// task and its dependents, come with a later milestone.
+// bounds. Each one is a file in the build's `escalations/` directory. An
+// escalation with a task pauses that task and its dependents while the other
+// tasks go on; one without a task pauses the build. A resolve request
+// (`resolve.ts`) records the decision and resumes what the escalation paused.
 import type { EscalationKind, EscalationLevel } from "@aio/contracts";
 import { AgentFailed, DecisionNeeded, RoleDenied, describeError } from "../calls/index.js";
 import { PlacementError } from "./placements/index.js";
@@ -16,6 +17,8 @@ export interface EscalationDraft {
   summary: string;
   /** Everything the resolver needs, such as the last gate output. */
   details: string;
+  /** The review run the escalation is about, when one is. */
+  runId?: string;
 }
 
 /**
