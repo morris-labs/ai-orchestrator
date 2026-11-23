@@ -1,7 +1,8 @@
 // The shared agent-call core, driven by a caller that isn't a review run.
 import { describe, expect, it } from "vitest";
-import type { EventDraft } from "../../src/core.js";
-import { RunCancelled } from "../../src/calls/index.js";
+import type { LeaseRequest } from "@aio/contracts";
+import { GrantingBroker, type EventDraft } from "../../src/core.js";
+import { RunCancelled, basicRouting } from "../../src/calls/index.js";
 import { buildSampleRepo } from "../state/scenario.js";
 import { uniqueRunId } from "../state/run-ids.js";
 import { answering, hanging, limited, makeCaller, spec, type Answer } from "./caller.js";
@@ -27,6 +28,77 @@ describe("AgentCalls for a caller that isn't a review run", () => {
     expect(started).toMatchObject({ runId: id, agentId: `${id}-A1`, role: "fixer" });
     const finished = emitted[1] as Extract<EventDraft, { type: "agent.finished" }>;
     expect(finished).toMatchObject({ outcome: "ok", model: "codex-model" });
+  });
+
+  it("settles the lease when the granted vendor has no adapter", async () => {
+    const repo = buildSampleRepo();
+    const { id, calls, broker } = makeCaller({});
+
+    await expect(calls.call<Answer>(spec(repo))).rejects.toThrow(/No adapter/);
+
+    expect(broker.settled.map((s) => s.leaseId)).toEqual([`${id}-L1`]);
+  });
+
+  it("settles the lease once when saving the run before the call fails", async () => {
+    const repo = buildSampleRepo();
+    let saves = 0;
+    const { id, calls, broker, emitted } = makeCaller(
+      { codex: answering("codex") },
+      undefined,
+      undefined,
+      {
+        // The first save comes before the lease request, the second after the grant.
+        persist: () => (++saves > 1 ? Promise.reject(new Error("disk full")) : Promise.resolve()),
+      },
+    );
+
+    await expect(calls.call<Answer>(spec(repo))).rejects.toThrow(/disk full/);
+
+    expect(broker.settled.map((s) => s.leaseId)).toEqual([`${id}-L1`]);
+    expect(emitted.filter((e) => e.type === "lease.settled")).toHaveLength(1);
+  });
+
+  it("settles the lease with the call's usage when an event after the call fails", async () => {
+    const repo = buildSampleRepo();
+    let failed = false;
+    const { id, calls, broker } = makeCaller({ codex: answering("codex") }, undefined, undefined, {
+      emit: (draft) => {
+        if (draft.type === "agent.finished" && !failed) {
+          failed = true;
+          return Promise.reject(new Error("event log closed"));
+        }
+        return Promise.resolve();
+      },
+    });
+
+    await expect(calls.call<Answer>(spec(repo))).rejects.toThrow(/event log closed/);
+
+    expect(broker.settled).toHaveLength(1);
+    expect(broker.settled[0]).toMatchObject({
+      leaseId: `${id}-L1`,
+      actual: { tokens: { in: 10, out: 5 } },
+    });
+  });
+
+  it("settles a redirected lease when recording the move fails", async () => {
+    const repo = buildSampleRepo();
+    class Redirecting extends GrantingBroker {
+      override async acquire(request: LeaseRequest) {
+        const granted = await super.acquire(request);
+        return { ...granted, vendor: "claude" as const, redirectedFrom: request.vendor };
+      }
+    }
+    const routing = basicRouting({ fallbackOrder: ["codex", "claude"], timeoutMs: 60_000 });
+    const { id, calls, broker } = makeCaller(
+      { codex: answering("codex"), claude: answering("claude") },
+      undefined,
+      (clock) => new Redirecting(clock),
+      { routing: { ...routing, moved: () => Promise.reject(new Error("routing file locked")) } },
+    );
+
+    await expect(calls.call<Answer>(spec(repo))).rejects.toThrow(/routing file locked/);
+
+    expect(broker.settled.map((s) => s.leaseId)).toEqual([`${id}-L1`]);
   });
 
   it("names the build, seat, and step on a build call's lease and events", async () => {

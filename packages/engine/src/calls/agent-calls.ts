@@ -388,8 +388,15 @@ export class AgentCalls {
         throw new RunCancelled();
       }
       if (response.decision === "granted") {
-        if (waiting) await this.endPause();
         const leaseId = response.leaseId;
+        if (waiting) {
+          try {
+            await this.endPause();
+          } catch (error) {
+            await this.settle(leaseId, response.vendor, role, ZERO_USE, work);
+            throw error;
+          }
+        }
         if (response.vendor !== vendor) {
           if (!this.usable(response.vendor)) {
             // The server doesn't know which CLIs this engine has; taking the
@@ -417,7 +424,12 @@ export class AgentCalls {
               `The server moved the ${role} call from ${vendor} to ${response.vendor}, but ${response.vendor} may not take it: a finding is never checked by the vendor that reported or fixed it. Resume when ${vendor} has room again, or assign the role to another vendor.`,
             );
           }
-          await host.routing.moved(role, vendor, response.vendor, "ceiling", false);
+          try {
+            await host.routing.moved(role, vendor, response.vendor, "ceiling", false);
+          } catch (error) {
+            await this.settle(leaseId, response.vendor, role, ZERO_USE, work);
+            throw error;
+          }
           return { vendor: response.vendor, leaseId };
         }
         return { vendor, leaseId };
@@ -560,196 +572,216 @@ export class AgentCalls {
         spec,
       );
       vendor = lease.vendor;
-      const adapter: VendorAdapter | undefined = this.deps.adapters[vendor];
-      if (!adapter)
-        throw new AgentFailed(spec.role, vendor, `No adapter is configured for ${vendor}.`);
-      const ledger = host.ledger();
-      ledger.counters.agent += 1;
-      const agentId = `${host.id}-A${ledger.counters.agent}`;
-      let tier = spec.tier?.tier;
-      let tierReason = spec.tier?.reason;
-      if (tier && malformed && !spec.tier?.fixed && tier !== "large") {
-        tier = tier === "small" ? "medium" : "large";
-        tierReason = `${tierReason}; the last answer was malformed, so one tier up`;
-      }
-      const choice = host.routing.model(vendor, tier, spec.role);
-      if (choice.model !== undefined && isBlockedRequestedModel(vendor, choice.model)) {
-        await this.settle(lease.leaseId, vendor, spec.role, ZERO_USE, spec);
-        throw new AgentFailed(spec.role, vendor, blockedModelMessage(vendor, choice.model));
-      }
-      const requestModel = choice.model;
-      const { effort, note } = resolveReviewEffort(spec.request.effort, vendor, requestModel);
-      tierReason =
-        [tierReason, choice.note, note ?? (effort && tierReason ? `${effort} effort` : null)]
-          .filter(Boolean)
-          .join("; ") || undefined;
-      const model = requestModel ?? vendor;
-      const common = {
-        ...this.ownerFields(spec),
-        agentId,
-        leaseId: lease.leaseId,
-        vendor,
-        model,
-        role: spec.role,
-        groupId: spec.groupId,
-        round: host.round(),
-        ...(tier ? { tier } : {}),
-        ...(tierReason ? { tierReason } : {}),
-        ...(effort ? { effort } : {}),
-        ...(spec.placement ? { placement: spec.placement } : {}),
+      // The usage to settle the lease with if the call ends before it settles
+      // the lease itself, such as when an event or a save fails; `null` once
+      // the lease is settled. Settling in `finally` keeps a lease from staying
+      // open against the vendor's ceiling, whatever throws.
+      let unsettled: LeaseActual | null = ZERO_USE;
+      const leaseVendor = vendor;
+      const settleLease = async (actual: LeaseActual): Promise<void> => {
+        unsettled = null;
+        await this.settle(lease.leaseId, leaseVendor, spec.role, actual, spec);
       };
-      if (tier || effort || note) {
-        log?.info?.("Chose a call's model", {
-          runId: host.id,
-          agentId,
-          key: spec.key,
-          vendor,
-          role: spec.role,
-          tier,
-          model,
-          ...(effort ? { effort } : {}),
-          reason: tierReason,
-        });
-      }
-      // Saved before the call: a writer can commit and then fail or stop.
-      host.observer?.starting?.(spec, vendor);
-      await host.persist();
-      await host.emit({ type: "agent.started", ...common });
-      await this.track(spec, "running", { vendor, effort });
-      const started = this.clock.now();
-      const timeoutMs = spec.request.timeoutMs ?? host.routing.timeoutMs(spec.role);
-      // A write call that turns out to have used a blocked model loses its commits.
-      const headBefore =
-        spec.request.toolPolicy === "write" && host.commits ? await host.commits.head() : null;
-      let result: AdapterResult<T>;
       try {
-        result =
-          spec.request.toolPolicy === "read-only"
-            ? await this.treeGuardFor(spec.request.repoPath).run(
-                () => this.invoke<T>(adapter, spec, timeoutMs, requestModel, effort),
-                (message) =>
-                  log?.warn("A failed read-only call changed the worktree", {
-                    runId: host.id,
-                    agentId,
-                    vendor,
-                    error: message,
-                  }),
-              )
-            : await this.invoke<T>(adapter, spec, timeoutMs, requestModel, effort);
-      } catch (error) {
-        const elapsedMs = Math.max(0, this.clock.now() - started);
-        const limit = this.signal.aborted ? null : adapter.detectLimit(error);
-        // A failed or limited call can still hold the vendor's freshest reading.
-        for (const { ceiling: _ignored, ...sample } of usageOfError(error)) {
-          const ceiling = (this.deps.ceilings ?? DEFAULT_CEILINGS)[sample.vendor];
-          await host.emit({ type: "usage.sample", ...sample, ceiling, agentId });
+        const adapter: VendorAdapter | undefined = this.deps.adapters[vendor];
+        if (!adapter)
+          throw new AgentFailed(spec.role, vendor, `No adapter is configured for ${vendor}.`);
+        const ledger = host.ledger();
+        ledger.counters.agent += 1;
+        const agentId = `${host.id}-A${ledger.counters.agent}`;
+        let tier = spec.tier?.tier;
+        let tierReason = spec.tier?.reason;
+        if (tier && malformed && !spec.tier?.fixed && tier !== "large") {
+          tier = tier === "small" ? "medium" : "large";
+          tierReason = `${tierReason}; the last answer was malformed, so one tier up`;
         }
-        const outcome = this.signal.aborted
-          ? "cancelled"
-          : limit
-            ? "limited"
-            : error instanceof CallTimeout
-              ? "timeout"
-              : "error";
+        const choice = host.routing.model(vendor, tier, spec.role);
+        if (choice.model !== undefined && isBlockedRequestedModel(vendor, choice.model)) {
+          await settleLease(ZERO_USE);
+          throw new AgentFailed(spec.role, vendor, blockedModelMessage(vendor, choice.model));
+        }
+        const requestModel = choice.model;
+        const { effort, note } = resolveReviewEffort(spec.request.effort, vendor, requestModel);
+        tierReason =
+          [tierReason, choice.note, note ?? (effort && tierReason ? `${effort} effort` : null)]
+            .filter(Boolean)
+            .join("; ") || undefined;
+        const model = requestModel ?? vendor;
+        const common = {
+          ...this.ownerFields(spec),
+          agentId,
+          leaseId: lease.leaseId,
+          vendor,
+          model,
+          role: spec.role,
+          groupId: spec.groupId,
+          round: host.round(),
+          ...(tier ? { tier } : {}),
+          ...(tierReason ? { tierReason } : {}),
+          ...(effort ? { effort } : {}),
+          ...(spec.placement ? { placement: spec.placement } : {}),
+        };
+        if (tier || effort || note) {
+          log?.info?.("Chose a call's model", {
+            runId: host.id,
+            agentId,
+            key: spec.key,
+            vendor,
+            role: spec.role,
+            tier,
+            model,
+            ...(effort ? { effort } : {}),
+            reason: tierReason,
+          });
+        }
+        // Saved before the call: a writer can commit and then fail or stop.
+        host.observer?.starting?.(spec, vendor);
+        await host.persist();
+        await host.emit({ type: "agent.started", ...common });
+        await this.track(spec, "running", { vendor, effort });
+        const started = this.clock.now();
+        const timeoutMs = spec.request.timeoutMs ?? host.routing.timeoutMs(spec.role);
+        // A write call that turns out to have used a blocked model loses its commits.
+        const headBefore =
+          spec.request.toolPolicy === "write" && host.commits ? await host.commits.head() : null;
+        let result: AdapterResult<T>;
+        try {
+          result =
+            spec.request.toolPolicy === "read-only"
+              ? await this.treeGuardFor(spec.request.repoPath).run(
+                  () => this.invoke<T>(adapter, spec, timeoutMs, requestModel, effort),
+                  (message) =>
+                    log?.warn("A failed read-only call changed the worktree", {
+                      runId: host.id,
+                      agentId,
+                      vendor,
+                      error: message,
+                    }),
+                )
+              : await this.invoke<T>(adapter, spec, timeoutMs, requestModel, effort);
+        } catch (error) {
+          const elapsedMs = Math.max(0, this.clock.now() - started);
+          const limit = this.signal.aborted ? null : adapter.detectLimit(error);
+          // A failed or limited call can still hold the vendor's freshest reading.
+          for (const { ceiling: _ignored, ...sample } of usageOfError(error)) {
+            const ceiling = (this.deps.ceilings ?? DEFAULT_CEILINGS)[sample.vendor];
+            await host.emit({ type: "usage.sample", ...sample, ceiling, agentId });
+          }
+          const outcome = this.signal.aborted
+            ? "cancelled"
+            : limit
+              ? "limited"
+              : error instanceof CallTimeout
+                ? "timeout"
+                : "error";
+          await host.emit({
+            type: "agent.finished",
+            ...common,
+            outcome,
+            elapsedMs,
+            tokens: { in: 0, out: 0 },
+            premiumRequests: 0,
+            costEstimate: 0,
+          });
+          await settleLease(ZERO_USE);
+          if (outcome === "cancelled") throw new RunCancelled();
+          log?.warn("An agent call failed", {
+            runId: host.id,
+            agentId,
+            key: spec.key,
+            vendor,
+            role: spec.role,
+            outcome,
+            elapsedMs,
+            error: describeError(error),
+          });
+          if (limit) {
+            // The next pass of this loop moves the call, pauses, or asks a person.
+            this.noteLimit(vendor, limit);
+            await host.persist();
+            continue;
+          }
+          const text = (error as Error).message ?? String(error);
+          if (SAFETY_REFUSAL.test(text)) {
+            throw new SafetyRefused(
+              spec.role,
+              vendor,
+              `The ${spec.role} call on ${vendor} was refused by the vendor's safety filter: ${text}`,
+            );
+          }
+          failures += 1;
+          malformed = isMalformedOutput(error);
+          // One retry per call, unless the adapter knows a retry fails the same way.
+          if (failures >= 2 || adapter.isRetryable?.(error) === false) {
+            const reason = (error as Error).message ?? String(error);
+            throw new AgentFailed(
+              spec.role,
+              vendor,
+              failures >= 2
+                ? `The ${spec.role} call on ${vendor} failed twice: ${reason}`
+                : `The ${spec.role} call on ${vendor} failed: ${reason}`,
+            );
+          }
+          continue;
+        }
+        const elapsedMs = Math.max(0, this.clock.now() - started);
+        const actual: LeaseActual = {
+          tokens: { ...result.tokens },
+          premiumRequests: result.premiumRequests,
+          ...(result.aiCredits !== undefined ? { aiCredits: result.aiCredits } : {}),
+          costEstimate: result.costEstimate,
+        };
+        unsettled = actual;
+        // A CLI default or an alias can resolve to a blocked model; the call
+        // stops here, before anything uses the answer.
+        const blocked = Boolean(result.model && isBlockedReviewModel(vendor, result.model));
         await host.emit({
           type: "agent.finished",
           ...common,
-          outcome,
+          model: result.model || model,
+          outcome: blocked ? "error" : "ok",
           elapsedMs,
-          tokens: { in: 0, out: 0 },
-          premiumRequests: 0,
-          costEstimate: 0,
+          tokens: actual.tokens,
+          premiumRequests: actual.premiumRequests,
+          ...(actual.aiCredits !== undefined ? { aiCredits: actual.aiCredits } : {}),
+          costEstimate: actual.costEstimate,
         });
-        await this.settle(
-          lease.leaseId,
+        await settleLease(actual);
+        for (const sample of result.usage) {
+          const ceiling = (this.deps.ceilings ?? DEFAULT_CEILINGS)[sample.vendor];
+          await host.emit({ type: "usage.sample", ...sample, ceiling, agentId });
+        }
+        if (blocked) {
+          const message = blockedModelMessage(vendor, result.model);
+          const undone = headBefore ? await this.undoCommits(headBefore) : "";
+          throw new AgentFailed(spec.role, vendor, `${message}${undone}`);
+        }
+        const outcome: AgentOutcome<T> = {
           vendor,
-          spec.role,
-          { tokens: { in: 0, out: 0 }, premiumRequests: 0, costEstimate: 0 },
-          spec,
-        );
-        if (outcome === "cancelled") throw new RunCancelled();
-        log?.warn("An agent call failed", {
-          runId: host.id,
-          agentId,
-          key: spec.key,
-          vendor,
-          role: spec.role,
-          outcome,
-          elapsedMs,
-          error: describeError(error),
-        });
-        if (limit) {
-          // The next pass of this loop moves the call, pauses, or asks a person.
-          this.noteLimit(vendor, limit);
-          await host.persist();
-          continue;
+          model: result.model || model,
+          sessionId: result.sessionId,
+          ...(result.accountFolder !== undefined ? { accountFolder: result.accountFolder } : {}),
+          output: result.output,
+          tokens: actual.tokens,
+          ...(result.toolErrors?.length ? { toolErrors: result.toolErrors } : {}),
+          ...(tier ? { tier: { tier, reason: tierReason ?? "" } } : {}),
+        };
+        await host.cache.write(spec.key, outcome);
+        return outcome;
+      } finally {
+        if (unsettled !== null) {
+          try {
+            await settleLease(unsettled);
+          } catch (error) {
+            // The error under way says more than this one.
+            log?.warn("Could not settle a call's lease", {
+              runId: host.id,
+              leaseId: lease.leaseId,
+              error: describeError(error),
+            });
+          }
         }
-        const text = (error as Error).message ?? String(error);
-        if (SAFETY_REFUSAL.test(text)) {
-          throw new SafetyRefused(
-            spec.role,
-            vendor,
-            `The ${spec.role} call on ${vendor} was refused by the vendor's safety filter: ${text}`,
-          );
-        }
-        failures += 1;
-        malformed = isMalformedOutput(error);
-        // One retry per call, unless the adapter knows a retry fails the same way.
-        if (failures >= 2 || adapter.isRetryable?.(error) === false) {
-          const reason = (error as Error).message ?? String(error);
-          throw new AgentFailed(
-            spec.role,
-            vendor,
-            failures >= 2
-              ? `The ${spec.role} call on ${vendor} failed twice: ${reason}`
-              : `The ${spec.role} call on ${vendor} failed: ${reason}`,
-          );
-        }
-        continue;
       }
-      const elapsedMs = Math.max(0, this.clock.now() - started);
-      const actual: LeaseActual = {
-        tokens: { ...result.tokens },
-        premiumRequests: result.premiumRequests,
-        ...(result.aiCredits !== undefined ? { aiCredits: result.aiCredits } : {}),
-        costEstimate: result.costEstimate,
-      };
-      // A CLI default or an alias can resolve to a blocked model; the call
-      // stops here, before anything uses the answer.
-      const blocked = Boolean(result.model && isBlockedReviewModel(vendor, result.model));
-      await host.emit({
-        type: "agent.finished",
-        ...common,
-        model: result.model || model,
-        outcome: blocked ? "error" : "ok",
-        elapsedMs,
-        tokens: actual.tokens,
-        premiumRequests: actual.premiumRequests,
-        ...(actual.aiCredits !== undefined ? { aiCredits: actual.aiCredits } : {}),
-        costEstimate: actual.costEstimate,
-      });
-      await this.settle(lease.leaseId, vendor, spec.role, actual, spec);
-      for (const sample of result.usage) {
-        const ceiling = (this.deps.ceilings ?? DEFAULT_CEILINGS)[sample.vendor];
-        await host.emit({ type: "usage.sample", ...sample, ceiling, agentId });
-      }
-      if (blocked) {
-        const message = blockedModelMessage(vendor, result.model);
-        const undone = headBefore ? await this.undoCommits(headBefore) : "";
-        throw new AgentFailed(spec.role, vendor, `${message}${undone}`);
-      }
-      const outcome: AgentOutcome<T> = {
-        vendor,
-        model: result.model || model,
-        sessionId: result.sessionId,
-        ...(result.accountFolder !== undefined ? { accountFolder: result.accountFolder } : {}),
-        output: result.output,
-        tokens: actual.tokens,
-        ...(result.toolErrors?.length ? { toolErrors: result.toolErrors } : {}),
-        ...(tier ? { tier: { tier, reason: tierReason ?? "" } } : {}),
-      };
-      await host.cache.write(spec.key, outcome);
-      return outcome;
     }
   }
 
