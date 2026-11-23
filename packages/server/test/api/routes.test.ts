@@ -433,6 +433,12 @@ const cases: Case[] = [
     url: `${V1}/builds/01JB8Z5K3W6Q2V9X4T7R0M1N2Q/tasks`,
     status: 200,
   },
+  {
+    key: "builds.inbox",
+    method: "GET",
+    url: `${V1}/builds/01JB8Z5K3W6Q2V9X4T7R0M1N2Q/inbox?all=true`,
+    status: 200,
+  },
   { key: "notifications.list", method: "GET", url: `${V1}/notifications?unread=true`, status: 200 },
   { key: "notifications.read", method: "POST", url: `${V1}/notifications/n1/read`, status: 200 },
   { key: "machines.list", method: "GET", url: `${V1}/machines`, status: 200 },
@@ -926,6 +932,28 @@ describe("owner posts", () => {
     });
     expect(toOwner.statusCode).toBe(400);
     expect(h.engine.calls.some((c) => c.key === "engine.builds.post")).toBe(false);
+  });
+});
+
+describe("the Project manager inbox", () => {
+  it("reads a build's inbox from the engine that runs it, by the build's slug", async () => {
+    const res = await h.server.app.inject({
+      method: "GET",
+      url: `${V1}/builds/01JB8Z5K3W6Q2V9X4T7R0M1N2Q/inbox?all=true`,
+      headers: AUTH,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ slug: "add-export", items: [] });
+    expect(h.engine.calls.at(-1)).toEqual({
+      key: "engine.builds.inbox",
+      input: { params: { slug: "add-export" }, query: { all: "true" } },
+    });
+    const unknown = await h.server.app.inject({
+      method: "GET",
+      url: `${V1}/builds/01JB8Z5K3W6Q2V9X4T7R0M1N2Z/inbox`,
+      headers: AUTH,
+    });
+    expect(unknown.statusCode).toBe(404);
   });
 });
 

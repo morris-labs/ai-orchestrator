@@ -490,6 +490,15 @@ export async function runReleaseReady(ctx: BuildContext): Promise<StepOutcome> {
   );
   ctx.state.note = `Release ready. The digest is in ${RELEASE_FILES.digest}.`;
   await ctx.persist();
+  await ctx.toProjectManager({
+    kind: "digest",
+    ref: "release-ready",
+    summary: push
+      ? `Build ${ctx.state.slug} is release ready: its pull request's checks pass.`
+      : `Build ${ctx.state.slug} is release ready: its branch stays local.`,
+    file: RELEASE_FILES.digest,
+    needsAnswer: false,
+  });
   return "next";
 }
 

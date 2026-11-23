@@ -642,6 +642,24 @@ export function buildDemoEvents(): AioEvent[] {
       createdAt: new Date(T0 + clock * 1000).toISOString(),
     },
   });
+  emit({
+    type: "build.inbox",
+    buildId: BUILD_ID,
+    slug: "add-export",
+    boxId: null,
+    item: {
+      id: "I1",
+      kind: "digest",
+      ref: "milestone-M1",
+      summary: "Milestone M1 (Export) is done: 1 of 1 milestones.",
+      file: "digests/milestone-M1.md",
+      path: "/work/example-app/.aio/builds/add-export/digests/milestone-M1.md",
+      needsAnswer: false,
+      createdAt: new Date(T0 + clock * 1000).toISOString(),
+      deliveredAt: null,
+      answeredAt: null,
+    },
+  });
 
   const missing = EVENT_TYPES.filter((t) => !events.some((e) => e.type === t));
   if (missing.length > 0) throw new Error(`The demo misses event types: ${missing.join(", ")}.`);

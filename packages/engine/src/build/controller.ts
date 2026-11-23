@@ -16,6 +16,8 @@ import type {
   Message,
   OwnerPost,
   OwnerPostAnswer,
+  PmInbox,
+  PmItem,
   RunState,
 } from "@aio/contracts";
 import { RunCancelled, describeError } from "../calls/index.js";
@@ -524,6 +526,20 @@ export class BuildController {
   /** The build's decisions, oldest first. */
   decisions(): Promise<BuildDecision[]> {
     return this.ctx.decisions.list();
+  }
+
+  /** The Project manager's inbox: the items that wait, or with `all` every item. */
+  inbox(all = false): Promise<PmInbox> {
+    return this.ctx.inbox.view(this.state, all);
+  }
+
+  /** Marks an inbox item delivered. Throws `not_found` for an unknown item. */
+  async delivered(itemId: string): Promise<PmItem> {
+    const item = await this.ctx.inbox.delivered(itemId);
+    if (!item) {
+      throw new EngineError("not_found", `Build ${this.slug} has no inbox item ${itemId}.`);
+    }
+    return item;
   }
 
   /**

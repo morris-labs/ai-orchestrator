@@ -26,6 +26,7 @@ describe("events", () => {
         "agent.started",
         "box.changed",
         "build.changed",
+        "build.inbox",
         "build.task.changed",
         "ceiling.crossed",
         "container.changed",

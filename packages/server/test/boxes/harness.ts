@@ -66,6 +66,7 @@ export function makeHarness(
     portFree: async () => true,
     removalTimeoutMs: 300,
     sessionGoneTimeoutMs: 300,
+    deliveryTiming: { pauseMs: 0, confirmMs: 200, pollMs: 10 },
     log: options.log,
   });
   if (options.accounts ?? true) {

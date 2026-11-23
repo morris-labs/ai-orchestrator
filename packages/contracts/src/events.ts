@@ -32,6 +32,7 @@ import {
   callOwnerFields,
 } from "./build-events.js";
 import { messageSentFields } from "./messages.js";
+import { buildInboxFields } from "./pm-inbox.js";
 import {
   LeaseRequestFrameSchema,
   LeaseResponseFrameSchema,
@@ -401,6 +402,13 @@ export const MessageSentEventSchema = z.object({
   ...messageSentFields,
 });
 
+/** An item that a build added to the Project manager's inbox; see `pm-inbox.ts`. */
+export const BuildInboxEventSchema = z.object({
+  ...base,
+  type: z.literal("build.inbox"),
+  ...buildInboxFields,
+});
+
 export const EventSchema = z.discriminatedUnion("type", [
   AgentStartedEventSchema,
   AgentFinishedEventSchema,
@@ -422,6 +430,7 @@ export const EventSchema = z.discriminatedUnion("type", [
   BuildChangedEventSchema,
   BuildTaskChangedEventSchema,
   MessageSentEventSchema,
+  BuildInboxEventSchema,
 ]);
 export type AioEvent = z.infer<typeof EventSchema>;
 export type EventType = AioEvent["type"];

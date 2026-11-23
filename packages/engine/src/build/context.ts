@@ -44,6 +44,7 @@ import type { TeamBus, TeamChannel } from "../team/index.js";
 import { SessionDesk } from "./sessions/index.js";
 import { DecisionLog, checkDirectMessage, decisionsFor, decisionsText } from "./owner/index.js";
 import type { EscalationDraft } from "./escalations.js";
+import { PmInboxFile, type PmItemDraft } from "./inbox.js";
 import { capQuestion } from "./questions.js";
 import { renderStatus } from "./status-file.js";
 import type { BuildStore } from "./store.js";
@@ -155,6 +156,8 @@ export class BuildContext {
   readonly sessions: SessionDesk;
   /** The owner's decisions: one for each owner post. */
   readonly decisions: DecisionLog;
+  /** The Project manager's inbox: a pointer for each escalation and each digest. */
+  readonly inbox: PmInboxFile;
   /** Aborts the gate's commands when the engine stops; a new drive gets a new one. */
   private driveAbort = new AbortController();
   private writeChain: Promise<void> = Promise.resolve();
@@ -223,6 +226,11 @@ export class BuildContext {
         clock: services.clock,
       }) ?? null;
     this.decisions = new DecisionLog(store.path("decisions"), state.id);
+    this.inbox = new PmInboxFile(
+      store.path("inbox.json"),
+      (file) => store.path(file),
+      () => this.now(),
+    );
     this.sessions = new SessionDesk(this);
     // The decision comes first: the log's queue then holds it before any
     // turn for the post reads it.
@@ -389,6 +397,13 @@ export class BuildContext {
       details: draft.details,
     });
     this.state.escalations.push(escalation);
+    await this.toProjectManager({
+      kind: "escalation",
+      ref: id,
+      summary: `Escalation ${id} (${draft.kind}, for the ${draft.level.replace("_", " ")}): ${draft.summary}`,
+      file: escalation.file,
+      needsAnswer: true,
+    });
     if (!draft.taskId) {
       await this.waitForEscalations();
       return escalation;
@@ -427,6 +442,24 @@ export class BuildContext {
     const saved = (await this.store.readJson<Record<string, unknown>>(path)) ?? {};
     await this.store.writeJson(path, { ...saved, ...escalation });
     await this.persist();
+    if (escalation.status === "resolved") await this.inbox.answered("escalation", escalation.id);
+  }
+
+  /**
+   * Adds an item to the Project manager's inbox and sends `build.inbox`, so
+   * the server types its pointer into the session of the build's box. An
+   * item that the inbox holds already stays as it is.
+   */
+  async toProjectManager(draft: PmItemDraft): Promise<void> {
+    const item = await this.inbox.add(draft);
+    if (!item) return;
+    await this.emit({
+      type: "build.inbox",
+      buildId: this.state.id,
+      slug: this.state.slug,
+      boxId: this.state.boxId,
+      item,
+    });
   }
 
   /**

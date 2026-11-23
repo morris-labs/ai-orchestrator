@@ -664,6 +664,21 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
       reply.code(201);
       return answer as never;
     },
+    "builds.inbox": async ({ params, query }) => {
+      const build = deps.builds.get(params.buildId);
+      if (!build) throw new ApiError("not_found", `No build has the id ${params.buildId}.`);
+      const engine = deps.engines.get(build.container);
+      if (!engine) {
+        throw new ApiError(
+          "conflict",
+          `The container ${build.container} that runs build ${build.slug} is not running.`,
+        );
+      }
+      return engine.call("engine.builds.inbox", {
+        params: { slug: build.slug },
+        query: { all: query.all ? "true" : "false" },
+      }) as never;
+    },
     "builds.tasks": async ({ params }) => {
       const tasks = deps.builds.tasks(params.buildId);
       if (!tasks) throw new ApiError("not_found", `No build has the id ${params.buildId}.`);

@@ -186,6 +186,10 @@ export function createFakeCore(): FakeCore {
       stopSideSession: async (id, platform) => void record(`stopSide:${id}:${platform}`),
       setPlatform: async (id, platform) => ({ ...view(id), box: { ...view(id).box, platform } }),
       message: async (id, text) => void record(`message:${id}:${text.slice(0, 20)}`),
+      deliver: async (id, request) => {
+        record(`deliver:${id}:${request.text.slice(0, 20)}`);
+        return { delivered: true, confirmed: null };
+      },
       startAll: async () => bulk,
       stopAll: async () => bulk,
       restartAll: async () => bulk,

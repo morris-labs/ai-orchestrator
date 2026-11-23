@@ -166,6 +166,11 @@ describe("questions", () => {
     const details = world.file("cart-curious", state.escalations[0]!.file);
     expect(details).toContain("M6");
     expect(details).toContain("Question 6 about T1?");
+    // The Project manager gets one pointer to the escalation, whose file holds the question.
+    const inbox = await world.manager.inbox("cart-curious");
+    expect(inbox.items.map((i) => [i.kind, i.ref, i.file])).toEqual([
+      ["escalation", "E1", state.escalations[0]!.file],
+    ]);
 
     const saved = messages(world, "cart-curious");
     expect(saved).toHaveLength(6);

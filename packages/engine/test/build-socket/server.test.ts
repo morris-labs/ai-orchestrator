@@ -11,6 +11,7 @@ import {
   directMessage,
   fakeBuildManager,
   ownerPost,
+  pmInbox,
 } from "../api/fixtures.js";
 import { tempDir } from "../tmp.js";
 import { PLAN, send } from "./helpers.js";
@@ -168,6 +169,21 @@ describe("the build socket", () => {
       slug: "no-such-build",
     });
     expect(unknown.status).toBe(404);
+  });
+
+  it("lets the Project manager read the inbox from any box of the project", async () => {
+    const { builds, path } = await open();
+    const ask = { projectId: "proj-1", boxId: "box-2", slug: "cart-total" };
+    const waiting = await send(path, "POST", BUILD_SOCKET_ROUTES.inbox, ask);
+    expect(waiting).toMatchObject({ status: 200, body: pmInbox });
+    expect(builds.inbox).toHaveBeenCalledWith("cart-total", { all: false });
+    await send(path, "POST", BUILD_SOCKET_ROUTES.inbox, { ...ask, all: true });
+    expect(builds.inbox).toHaveBeenLastCalledWith("cart-total", { all: true });
+    const other = await send(path, "POST", BUILD_SOCKET_ROUTES.inbox, {
+      ...ask,
+      projectId: "proj-2",
+    });
+    expect(other.status).toBe(404);
   });
 
   it("calls a planning seat and answers with the seat's answer", async () => {

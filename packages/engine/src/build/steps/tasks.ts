@@ -14,6 +14,7 @@
 // A task that escalates pauses with every task that depends on it, and the
 // step goes on with the tasks that don't. The step waits once no task can
 // run. A resolve request resumes the paused tasks (see `reopenTask()`).
+import { digestMilestones } from "../digests.js";
 import { existsSync } from "node:fs";
 import { taskOrder, type BuildTask, type Escalation } from "@aio/contracts";
 import { RunCancelled } from "../../calls/index.js";
@@ -580,7 +581,10 @@ export async function runTasks(ctx: BuildContext): Promise<StepOutcome> {
     await ctx.calls.checkpoint();
     await setAsideWaiting(ctx);
     await runTask(ctx, task);
+    await digestMilestones(ctx);
   }
+  // A restarted engine finishes a digest that a stop left unwritten.
+  await digestMilestones(ctx);
   if (ctx.state.tasks.every((t) => t.status === "done")) return "next";
   if (ctx.openEscalations().length === 0) {
     throw new Error("The build has tasks that can't run, and no escalation explains why.");

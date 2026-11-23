@@ -3,6 +3,7 @@ import {
   BuildPlanSchema,
   EngineRunCreateSchema,
   type BuildDecision,
+  type PmInbox,
   type BuildFreezeAnswer,
   type BuildMeetingAnswer,
   type BuildPlanning,
@@ -326,6 +327,29 @@ export const decision: BuildDecision = {
   },
 };
 
+/** A Project manager inbox with one escalation that waits for its answer. */
+export const pmInbox: PmInbox = {
+  buildId: RUN,
+  slug: "cart-total",
+  boxId: "box-1",
+  items: [
+    {
+      id: "I1",
+      kind: "escalation",
+      ref: "E1",
+      summary: "Escalation E1 (attempt_cap, for the project manager): Task T1 failed 4 attempts.",
+      file: "escalations/E1.json",
+      path: "/work/shop/.aio/builds/cart-total/escalations/E1.json",
+      needsAnswer: true,
+      createdAt: ownerPost.createdAt,
+      deliveredAt: ownerPost.createdAt,
+      answeredAt: null,
+      pointer:
+        "[aio-build cart-total I1] Escalation E1 (attempt_cap, for the project manager): Task T1 failed 4 attempts. Read /work/shop/.aio/builds/cart-total/escalations/E1.json",
+    },
+  ],
+};
+
 /** A build manager whose every method is a `vi.fn` returning sample data. */
 export function fakeBuildManager(): {
   [K in keyof BuildManager]-?: ReturnType<typeof vi.fn>;
@@ -349,6 +373,11 @@ export function fakeBuildManager(): {
       options?.direct ? [directMessage] : [directMessage, ownerPost],
     ),
     decisions: vi.fn(async () => [decision]),
+    inbox: vi.fn(async () => pmInbox),
+    delivered: vi.fn(async () => {
+      const { pointer: _pointer, ...item } = pmInbox.items[0]!;
+      return item;
+    }),
     cancel: vi.fn(async () => ({ ...buildState, status: "cancelled" })),
     delete: vi.fn(async () => ({
       ...buildState,

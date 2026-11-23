@@ -285,6 +285,22 @@ const cases: Record<string, Case> = {
         changes: [],
       }),
   },
+  "engine.builds.inbox": {
+    method: "GET",
+    url: "/api/v1/builds/cart-total/inbox?all=true",
+    check: (j) => {
+      expect(j).toMatchObject({ slug: "cart-total", items: [{ id: "I1" }] });
+      expect(builds.inbox).toHaveBeenCalledWith("cart-total", { all: true });
+    },
+  },
+  "engine.builds.inbox.delivered": {
+    method: "POST",
+    url: "/api/v1/builds/cart-total/inbox/I1/delivered",
+    check: (j) => {
+      expect(j).toMatchObject({ id: "I1", ref: "E1" });
+      expect(builds.delivered).toHaveBeenCalledWith("cart-total", "I1");
+    },
+  },
   "engine.builds.post": {
     method: "POST",
     url: "/api/v1/builds/cart-total/posts",
