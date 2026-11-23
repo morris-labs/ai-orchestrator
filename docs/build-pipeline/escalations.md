@@ -37,6 +37,7 @@ The file holds the following fields:
 | `release_ready` | A criterion has no passing locked test, the push or CI loop stops, or the plan has no push answer. | Project manager; owner for the push answer |
 | `missing_secret` | The project doesn't give the build a secret that the plan lists, which preflight checks with the secrets broker, or a Developer reports a secret it can't reach. | Owner |
 | `missing_service` | A Developer reports an external service that it can't reach. | Owner |
+| `question_cap` | An agent asks more questions about a task than the plan's question cap allows. The question goes to the Project manager, and the details hold it. See [Questions](team-chat.md#questions). | Project manager |
 | `test_dispute` | A second test dispute about one test, or a third in one task, which the Project manager rules on; or a Test engineer's fix that changes what a criterion means, which the owner decides. For details, see [Test disputes](test-disputes.md). | Project manager; owner for a criterion change |
 
 A Developer never works around a missing secret or service, for example

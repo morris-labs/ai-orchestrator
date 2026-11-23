@@ -24,6 +24,13 @@ export const OWNER_ADDRESS = "owner";
 export const MESSAGE_BODY_MAX = 20_000;
 
 /**
+ * How many questions each agent, a seat on a task, can ask about one task
+ * when the build plan sets no `questionsPerTask`. A question past the cap
+ * goes to the Project manager as an escalation.
+ */
+export const QUESTION_CAP = 5;
+
+/**
  * What a message is. A message without an addressee goes where its type
  * says: a test dispute to the Test engineer, a file request to the
  * Developer of the task that owns the file, a contract question to the
@@ -67,8 +74,14 @@ export const MessagePartySchema = z.discriminatedUnion("kind", [
 export type MessageParty = z.infer<typeof MessagePartySchema>;
 export type SeatParty = Extract<MessageParty, { kind: "seat" }>;
 
-/** How the engine chose the addressee: the sender named it, or the engine routed by type. */
-export const MessageRoutingSchema = z.enum(["addressed", "by_type"]);
+/**
+ * How the engine chose the addressee: the sender named it (`addressed`), the
+ * engine routed it by type (`by_type`), it went back to the sender of the
+ * message it replies to (`reply`), or it was a question past its sender's
+ * question cap, which went to the Project manager as an escalation
+ * (`escalated`).
+ */
+export const MessageRoutingSchema = z.enum(["addressed", "by_type", "reply", "escalated"]);
 export type MessageRouting = z.infer<typeof MessageRoutingSchema>;
 
 const MessageBodySchema = z
@@ -93,6 +106,13 @@ export interface Message {
   /** Repository-relative files the message is about, such as the files a file request needs. */
   paths: string[];
   body: string;
+  /** The message this one replies to, such as the question that an answer answers. */
+  replyTo?: MessageId;
+  /**
+   * The first message of the thread that this reply belongs to. A message
+   * that replies to none starts a thread, whose ID is its own.
+   */
+  thread?: MessageId;
   createdAt: string;
 }
 
@@ -115,17 +135,24 @@ export const MessageSchema: z.ZodType<Message, z.ZodTypeDef, unknown> = z
     /** Repository-relative files the message is about, such as the files a file request needs. */
     paths: z.array(z.string().min(1)).default([]),
     body: MessageBodySchema,
+    replyTo: MessageIdSchema.optional(),
+    thread: MessageIdSchema.optional(),
     createdAt: IsoDateTimeSchema,
   })
   .refine((m) => m.taskId !== null || m.milestone !== null, {
     message: "a message names a task or a milestone",
     path: ["taskId"],
+  })
+  .refine((m) => (m.replyTo === undefined) === (m.thread === undefined), {
+    message: "a reply names both the message it replies to and its thread",
+    path: ["thread"],
   });
 
 /**
  * The arguments of the `send_message` tool. The sender isn't among them:
  * the engine knows it from the agent's token, and a sender field fails the
- * call. Without `to`, the engine routes the message by its type.
+ * call. Without `to`, a reply goes back to the sender of the message it
+ * replies to, and any other message goes where its type says.
  */
 export const SendMessageInputSchema = z
   .object({
@@ -139,6 +166,11 @@ export const SendMessageInputSchema = z
     taskId: PlanIdSchema.optional(),
     milestone: MilestoneNameSchema.optional(),
     paths: z.array(z.string().min(1)).max(50).optional(),
+    /**
+     * The message this one replies to, such as the question that an answer
+     * answers. Without `to`, the reply goes to that message's sender.
+     */
+    replyTo: MessageIdSchema.optional(),
   })
   .strict()
   .superRefine((input, ctx) => {

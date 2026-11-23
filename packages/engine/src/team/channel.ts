@@ -40,8 +40,10 @@ export interface TeamChannelOptions {
   /**
    * Checks a message before the channel saves it, such as against a rate
    * limit. Throw `MessageRefused` to refuse it; the sender reads the reason.
+   * Return a message to save that one instead, such as the same message
+   * routed elsewhere.
    */
-  check?(message: Message): void | Promise<void>;
+  check?(message: Message): void | Message | Promise<void | Message>;
   clock?: Clock;
 }
 
@@ -115,18 +117,21 @@ export class TeamChannel {
     const parsed = SendMessageInputSchema.safeParse(input);
     if (!parsed.success) throw new MessageRefused(describeIssues(parsed.error));
     const draft = parsed.data;
-    const { to, routing } = routeMessage(draft, from, this.tasks());
-    // The task defaults to the sender's, then to the addressee's.
+    const replied = draft.replyTo === undefined ? undefined : await this.replied(draft.replyTo);
+    const { to, routing } = routeMessage(draft, from, this.tasks(), replied);
+    // The task defaults to the replied message's, then to the sender's, then
+    // to the addressee's.
     const taskId =
       draft.taskId ??
+      replied?.taskId ??
       (from.kind === "seat" ? from.taskId : null) ??
       (to.kind === "seat" ? to.taskId : null);
-    const milestone = draft.milestone ?? null;
+    const milestone = draft.milestone ?? replied?.milestone ?? null;
     if (taskId === null && milestone === null) {
       throw new MessageRefused("The message needs a task or a milestone: set taskId or milestone.");
     }
     const number = (await this.lastNumber()) + 1;
-    const message = MessageSchema.parse({
+    const drafted = MessageSchema.parse({
       version: 1,
       id: `M${number}`,
       buildId: this.buildId,
@@ -138,9 +143,10 @@ export class TeamChannel {
       milestone,
       paths: draft.paths ?? [],
       body: draft.body,
+      ...(replied ? { replyTo: replied.id, thread: replied.thread ?? replied.id } : {}),
       createdAt: new Date((this.options.clock ?? systemClock).now()).toISOString(),
     });
-    await this.options.check?.(message);
+    const message = (await this.options.check?.(drafted)) ?? drafted;
     await writeJsonAtomic(join(this.dir, `${message.id}.json`), message);
     this.last = number;
     await this.options.emit({ type: "message.sent", message });
@@ -150,6 +156,17 @@ export class TeamChannel {
       } catch {
         // A listener's failure is its own; the message is saved and sent.
       }
+    }
+    return message;
+  }
+
+  /** The saved message that a reply replies to; refuses an ID the build doesn't have. */
+  private async replied(id: string): Promise<Message> {
+    const message = await readJson(join(this.dir, `${id}.json`), MessageSchema);
+    if (!message) {
+      throw new MessageRefused(
+        `The build has no message ${id} to reply to. Set replyTo to the ID of the message you answer.`,
+      );
     }
     return message;
   }

@@ -432,6 +432,15 @@ async function runTask(ctx: BuildContext, task: BuildTask): Promise<StepOutcome>
     } catch (error) {
       return failOnCallError(ctx, task.id, error);
     }
+    if (record.blocked) {
+      progress.lastFailure = `Needs the ${record.blocked.kind} ${record.blocked.name}.`;
+      await ctx.escalate(blockerEscalation(task, n, record.blocked));
+      return "wait";
+    }
+    // An escalation that came in during the attempt, such as a question past
+    // the seat's question cap, pauses the task. Once it's resolved, the task
+    // goes on from this attempt's saved result.
+    if (progress.status !== "running") return "wait";
     if (record.dispute !== undefined) {
       let next: "again" | "wait";
       try {
@@ -443,11 +452,6 @@ async function runTask(ctx: BuildContext, task: BuildTask): Promise<StepOutcome>
       // The same attempt runs again.
       n -= 1;
       continue;
-    }
-    if (record.blocked) {
-      progress.lastFailure = `Needs the ${record.blocked.kind} ${record.blocked.name}.`;
-      await ctx.escalate(blockerEscalation(task, n, record.blocked));
-      return "wait";
     }
     const gated = record as GatedAttempt;
     if (gated.gate.passed) {
