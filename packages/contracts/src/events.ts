@@ -150,6 +150,7 @@ export const NotificationKindSchema = z.enum([
   "box_ended",
   "round_summary",
   "usage_alert",
+  "direct_message",
 ]);
 export type NotificationKind = z.infer<typeof NotificationKindSchema>;
 

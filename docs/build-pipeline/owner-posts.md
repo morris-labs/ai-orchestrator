@@ -67,6 +67,10 @@ in each milestone. The build plan's `directMessagesPerMilestone` field
 changes the limit. The team chat refuses a message past the limit and tells
 the agent why, and the agent's work goes on: the build doesn't pause.
 
+The server notifies the owner about each direct message: the Boxes app
+raises a desktop notification that names the agent and the build, and a
+click on it opens the build view, which lists the build's direct messages.
+
 ## Read messages and decisions
 
 The Project manager reads the team chat from its box with the `aio-build`

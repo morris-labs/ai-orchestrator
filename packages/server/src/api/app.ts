@@ -209,6 +209,7 @@ export async function startApp(options: AppOptions): Promise<App> {
     db: core.db,
     settings,
     emit: (e) => hub.emit(e),
+    builds: buildMirror,
     releaseBox: (boxId) => {
       void core.boxes.message(boxId, RELEASE_EDITS_MESSAGE).catch((err: unknown) => {
         log(`Telling ${boxId} that the run ended failed: ${(err as Error).message}`);

@@ -5,6 +5,7 @@ import {
   ERR_ABORTED,
   findTerminal,
   isBoxNotification,
+  notificationTarget,
   needsExtensionList,
   needsLocalPage,
   permissionAllowed,
@@ -104,6 +105,20 @@ describe("notifications and review", () => {
   it("raises the desktop notification for a usage watcher alert, with or without a box", () => {
     expect(isBoxNotification({ kind: "usage_alert", runId: null, boxId: null })).toBe(true);
     expect(isBoxNotification({ kind: "usage_alert", runId: null, boxId: "b" })).toBe(true);
+  });
+  it("raises an agent's direct message, and a click on it opens the build", () => {
+    const dm = {
+      kind: "direct_message" as const,
+      runId: null,
+      boxId: "b",
+      buildId: "01JB8Z5K3W6Q2V9X4T7R0M1N2Q",
+    };
+    expect(isBoxNotification(dm)).toBe(true);
+    expect(notificationTarget(dm)).toEqual({ buildId: "01JB8Z5K3W6Q2V9X4T7R0M1N2Q" });
+    expect(notificationTarget({ ...dm, kind: "box_ended", buildId: undefined })).toEqual({
+      boxId: "b",
+    });
+    expect(notificationTarget({ ...dm, boxId: null, buildId: undefined })).toBeNull();
   });
   it("prefills the review launcher", () => {
     expect(reviewCommand("p", "b")).toEqual({
