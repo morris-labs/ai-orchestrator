@@ -54,6 +54,30 @@ describe("App with the scripted event stream", () => {
     store.stop();
   });
 
+  it("shows the unread usage watcher alerts", async () => {
+    const { store, server } = renderWithStore(<App search="" />, handlers());
+    server.state.notifications = [
+      {
+        notificationId: "usage-1",
+        kind: "usage_alert",
+        title: "Build settings-page passed 2 times its usage estimate",
+        body: "The build used 2,100 tokens against an estimate of 500 to 1,000.",
+        runId: null,
+        boxId: "aio-agent-site",
+        buildId: "01JB8Z5K3W6Q2V9X4T7R0M1N2Q",
+        severity: "warning",
+        read: false,
+      },
+    ];
+    store.start();
+
+    const region = await screen.findByRole("region", { name: "Usage alerts" });
+    expect(
+      within(region).getByText("Build settings-page passed 2 times its usage estimate"),
+    ).toBeInTheDocument();
+    store.stop();
+  });
+
   it("replays the demo into the dashboard and the navigation", async () => {
     const { store, server } = renderWithStore(<App search="" />, handlers());
     store.start();
