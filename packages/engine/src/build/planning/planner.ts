@@ -321,7 +321,8 @@ export class BuildPlanner {
           title: `Plan build ${this.planning.slug}`,
           description: request.brief,
           repoPath: this.planning.repoPath,
-          branch: (await new Git(this.services.runner, this.planning.repoPath).currentBranch()) ?? "HEAD",
+          branch:
+            (await new Git(this.services.runner, this.planning.repoPath).currentBranch()) ?? "HEAD",
           ownedFiles: [],
           criteria: (await this.latest("analyst"))?.criteria ?? [],
           context: await this.context(),
@@ -337,7 +338,12 @@ export class BuildPlanner {
         file.model = outcome.model;
         file.answer = answer;
       } catch (error) {
-        throw await this.fail(call, file, `The ${request.seat} call failed: ${describeError(error)}`, "internal");
+        throw await this.fail(
+          call,
+          file,
+          `The ${request.seat} call failed: ${describeError(error)}`,
+          "internal",
+        );
       }
       const expected = ANSWERS[request.seat];
       const parsed = expected?.schema.safeParse(answer);
@@ -472,7 +478,11 @@ export class BuildPlanner {
     const hash = planHash(plan);
     const latest = this.planning.frozen.at(-1);
     if (latest?.hash === hash) {
-      return { planning: this.record, frozen: structuredClone(latest), plan: await this.read(latest) };
+      return {
+        planning: this.record,
+        frozen: structuredClone(latest),
+        plan: await this.read(latest),
+      };
     }
     const version = (latest?.version ?? 0) + 1;
     const frozenPlan: BuildPlan = { ...plan, version };

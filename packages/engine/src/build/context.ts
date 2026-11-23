@@ -30,11 +30,7 @@ import type { Logger } from "../api/core-interface.js";
 import { UnknownRoleError, type RoleTask } from "./roles/index.js";
 import { SeatPlacements, type PlaceOptions } from "./placements/index.js";
 import { seatCallSpec } from "./seat-call.js";
-import {
-  loadSpecialties,
-  type SpecialtyPack,
-  type SpecialtySources,
-} from "./specialties/index.js";
+import { loadSpecialties, type SpecialtyPack, type SpecialtySources } from "./specialties/index.js";
 import type { TeamBus, TeamChannel } from "../team/index.js";
 import type { EscalationDraft } from "./escalations.js";
 import { renderStatus } from "./status-file.js";

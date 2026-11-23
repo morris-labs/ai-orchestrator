@@ -69,7 +69,7 @@ async function planningWorld(): Promise<BuildWorld> {
   writeFileSync(join(world.root, ".aio/team/specialties/node-dev.md"), "Use ES modules.\n");
   writeFileSync(
     join(world.root, ".aio/policy.yaml"),
-    "tests:\n  - command: node test/cart.test.mjs\nlint:\n  - command: node lint.mjs\n",
+    "version: 1\ntests:\n  - command: node test/cart.test.mjs\nlint:\n  - command: node lint.mjs\n",
   );
   world.script({
     claude: [
@@ -241,9 +241,10 @@ describe("freezing the build plan", () => {
     await plan(world);
     const draft = JSON.parse(world.file(SLUG, "planning/draft.json")) as BuildPlanInput;
     const bad = { ...draft, tasks: draft.tasks.map((t) => ({ ...t, specialties: ["cobol-dev"] })) };
-    await expect(
-      world.manager.freeze(freeze({ plan: bad, push: true })),
-    ).rejects.toMatchObject({ code: "validation", message: expect.stringMatching(/cobol-dev/) });
+    await expect(world.manager.freeze(freeze({ plan: bad, push: true }))).rejects.toMatchObject({
+      code: "validation",
+      message: expect.stringMatching(/cobol-dev/),
+    });
   });
 });
 
@@ -276,9 +277,10 @@ describe("starting a frozen build", () => {
 
   it("refuses a start with no plan when nothing is frozen", async () => {
     const world = await planningWorld();
-    await expect(world.manager.start({ projectId: PROJECT_ID, slug: SLUG })).rejects.toMatchObject(
-      { code: "validation", message: expect.stringMatching(/frozen/) },
-    );
+    await expect(world.manager.start({ projectId: PROJECT_ID, slug: SLUG })).rejects.toMatchObject({
+      code: "validation",
+      message: expect.stringMatching(/frozen/),
+    });
   });
 
   it("refuses a freeze and a seat call once the build runs", async () => {
