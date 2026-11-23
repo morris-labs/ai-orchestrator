@@ -3,6 +3,7 @@
 // in the `Core` interface the API serves (`src/api/core-interface.ts`), wires
 // the server's services in as hooks, and starts polling. The core never
 // listens on a port itself.
+import type { DeliveryTiming } from "./boxes/delivery.js";
 import fs from "node:fs";
 import path from "node:path";
 import { parseAccountId, VendorSchema, type ImageStatus, type Platform } from "@aio/contracts";
@@ -52,6 +53,8 @@ export interface CoreOptions {
   /** Milliseconds to wait for a stopped container or session to go away. */
   removalTimeoutMs?: number;
   sessionGoneTimeoutMs?: number;
+  /** How long message delivery to a box's session waits; see `boxes/delivery.ts`. */
+  deliveryTiming?: DeliveryTiming;
   /** Logs background failures, such as a failed status poll. Default: none. */
   log?: (message: string) => void;
   /** Decides the secrets broker transport; tests replace it. See `ProjectServiceDeps`. */
@@ -157,6 +160,7 @@ export function createServerCore(options: CoreOptions): ServerCore {
     hooks: getHooks,
     prepareAccount: (vendor, name) => accounts.prepareAccount(vendor, name),
     sessionGoneTimeoutMs: options.sessionGoneTimeoutMs,
+    ...(options.deliveryTiming ? { deliveryTiming: options.deliveryTiming } : {}),
     log: options.log,
   });
   const accounts: AccountService = new AccountService({

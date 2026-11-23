@@ -97,6 +97,15 @@ function buildHandlers(): Partial<Record<EngineRouteKey, (input: EngineCallInput
     "engine.builds.resume": (i) => (known(i), harnessBuildState("running")),
     "engine.builds.cancel": (i) => (known(i), harnessBuildState("cancelled")),
     "engine.builds.delete": (i) => (known(i), harnessBuildState("cancelled")),
+    "engine.builds.inbox": (i) => (
+      known(i),
+      {
+        buildId: "01JB8Z5K3W6Q2V9X4T7R0M1N2Q",
+        slug: "add-export",
+        boxId: null,
+        items: [],
+      }
+    ),
   };
 }
 

@@ -5,6 +5,7 @@ import {
   BoxSchema,
   BoxViewSchema,
   DEFAULT_PROMPT_TEMPLATES,
+  boxWorkDir,
   SECRETS_PROMPT_HINT,
   expandTemplate,
   withSecretsHint,
@@ -1025,6 +1026,122 @@ describe("edit, platform, side sessions, messages", () => {
       "--",
       "Hold edits, please.",
     ]);
+  });
+
+  describe("delivery into a box's session", () => {
+    const DIALOG = [
+      "─".repeat(60),
+      " Do you want to proceed?",
+      " ❯ 1. Yes",
+      "   2. No, and tell Claude what to do differently (esc)",
+    ].join("\n");
+
+    /** A running Claude box whose transcript records each line typed with an Enter after it. */
+    async function claudeBox(h: Harness, record = true) {
+      const box = await h.core.boxes.create({ targetDir: h.dir("app"), layout: "root" });
+      const uuid = box.sessionUuid as string;
+      const file = h.transcript(boxWorkDir(box), uuid, [{ type: "summary" }]);
+      let typed = "";
+      h.docker.beforeExec = async (_container, options) => {
+        const [tool, command, , , ...rest] = options.cmd;
+        if (tool !== "tmux" || command !== "send-keys") return;
+        if (rest[0] === "-l") typed = rest.at(-1) ?? "";
+        else if (rest[0] === "Enter" && record) {
+          const line = { type: "user", message: { role: "user", content: typed }, sessionId: uuid };
+          fs.appendFileSync(file, `${JSON.stringify(line)}\n`);
+        }
+      };
+      return { box, file };
+    }
+
+    const keys = (h: Harness, box: Box) =>
+      h.docker.containers.get(box.container)?.sentKeys.get(box.session) ?? [];
+
+    it("types into an empty input box, sends Enter on its own, and confirms from the transcript", async () => {
+      const h = makeHarness();
+      const { box } = await claudeBox(h);
+      const result = await h.core.boxes.deliver(box.id, {
+        text: "[aio-build cart I1] Read /work/x.md",
+        marker: "[aio-build cart I1]",
+      });
+      expect(result).toEqual({ delivered: true, confirmed: true });
+      expect(keys(h, box)).toEqual(["-l [aio-build cart I1] Read /work/x.md", "Enter"]);
+      const captures = h.docker
+        .callsOf("exec")
+        .map((c) => (c.args[1] as { cmd: string[] }).cmd)
+        .filter((cmd) => cmd[1] === "capture-pane");
+      expect(captures).toEqual([["tmux", "capture-pane", "-t", `=${box.session}:`, "-p"]]);
+    });
+
+    it("types nothing into a session that shows a dialog or holds unsent text", async () => {
+      const h = makeHarness();
+      const { box } = await claudeBox(h);
+      const screens = h.docker.containers.get(box.container)?.screens;
+      screens?.set(box.session, DIALOG);
+      const result = await h.core.boxes.deliver(box.id, { text: "Hold edits." });
+      expect(result).toMatchObject({ delivered: false, reason: expect.stringContaining("dialog") });
+      await expect(h.core.boxes.sendMessage(box.id, "Hold edits.")).rejects.toMatchObject({
+        code: "conflict",
+      });
+      screens?.set(box.session, `${"─".repeat(60)}\n❯ half a thought\n${"─".repeat(60)}\n`);
+      expect(await h.core.boxes.deliver(box.id, { text: "Hold edits." })).toMatchObject({
+        delivered: false,
+        reason: expect.stringContaining("nobody sent"),
+      });
+      expect(keys(h, box)).toEqual([]);
+    });
+
+    it("leaves a stopped box alone, without an error", async () => {
+      const h = makeHarness();
+      const { box } = await claudeBox(h);
+      await h.core.boxes.stop(box.id);
+      expect(await h.core.boxes.deliver(box.id, { text: "Hold edits." })).toMatchObject({
+        delivered: false,
+        reason: expect.stringContaining("not running"),
+      });
+    });
+
+    it("doesn't type a message twice when the transcript holds its marker", async () => {
+      const h = makeHarness();
+      const { box, file } = await claudeBox(h);
+      fs.appendFileSync(
+        file,
+        `${JSON.stringify({ type: "user", message: { content: "[aio-build cart I1] Read x" } })}\n`,
+      );
+      expect(
+        await h.core.boxes.deliver(box.id, {
+          text: "[aio-build cart I1] Read x",
+          marker: "[aio-build cart I1]",
+        }),
+      ).toEqual({ delivered: true, confirmed: true });
+      expect(keys(h, box)).toEqual([]);
+    });
+
+    it("reports a message that the transcript doesn't show as unconfirmed", async () => {
+      const h = makeHarness();
+      const { box } = await claudeBox(h, false);
+      expect(await h.core.boxes.deliver(box.id, { text: "Hello" })).toEqual({
+        delivered: true,
+        confirmed: false,
+      });
+    });
+
+    it("refuses a session that isn't Claude Code when the message needs one", async () => {
+      const h = makeHarness();
+      const box = await h.core.boxes.create({
+        targetDir: h.dir("app"),
+        layout: "root",
+        platform: "codex",
+      });
+      expect(await h.core.boxes.deliver(box.id, { text: "Hello", claudeOnly: true })).toMatchObject(
+        { delivered: false, reason: expect.stringContaining("codex") },
+      );
+      expect(await h.core.boxes.deliver(box.id, { text: "Hello" })).toEqual({
+        delivered: true,
+        confirmed: null,
+      });
+      expect(keys(h, box)).toEqual(["-l Hello", "Enter"]);
+    });
   });
 
   it("builds proxy links from the engine's listeners", async () => {
