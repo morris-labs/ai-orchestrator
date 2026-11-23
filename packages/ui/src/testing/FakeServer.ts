@@ -24,6 +24,7 @@ import {
   type Message,
   type Mount,
   type Notification,
+  type EscalationResolve,
   type OwnerPost,
   type PmItem,
   type Project,
@@ -1137,6 +1138,25 @@ const defaultHandlers: Partial<Record<HttpRouteKey, FakeHandler>> = {
       .filter((item) => r.query.all === true || pmItemWaits(item))
       .map((item) => ({ ...item, pointer: pmPointer(build.slug, item) }));
     return { buildId, slug: build.slug, boxId: build.boxId, items };
+  },
+  "builds.resolve": (r, s) => {
+    // Like the engine: a resolution answers the escalation's inbox item, and
+    // a build that waited for it runs again.
+    const buildId = r.params.buildId as string;
+    const build = s.state.builds.find((b) => b.id === buildId);
+    if (!build) throw new FakeApiError("not_found", `No build ${buildId}.`, 404);
+    const { escalation } = r.body as EscalationResolve;
+    const item = (s.state.buildInbox[buildId] ?? []).find(
+      (i) => i.kind === "escalation" && i.ref === escalation && i.answeredAt === null,
+    );
+    if (!item) {
+      throw new FakeApiError("invalid_state", `Escalation ${escalation} isn't open.`, 409);
+    }
+    s.putInboxItem(buildId, { ...item, answeredAt: new Date().toISOString() });
+    if (build.status !== "waiting_escalation") return build;
+    const next = { ...build, status: "running" as const, updatedAt: new Date().toISOString() };
+    s.putBuild(next);
+    return next;
   },
   "notifications.list": (_r, s) => ({ notifications: s.state.notifications }),
   "notifications.read": () => ({ ok: true }),

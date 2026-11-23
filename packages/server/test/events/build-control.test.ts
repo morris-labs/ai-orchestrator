@@ -2,7 +2,7 @@
 // build that the stop paused, through the engine that runs it.
 import type { AioEvent, BuildState, BuildSummary } from "@aio/contracts";
 import { afterEach, describe, expect, it } from "vitest";
-import { BoxBuildLink } from "../../src/events/build-control.js";
+import { BoxBuildLink, buildSummaryOf } from "../../src/events/build-control.js";
 import { ApiError } from "../../src/api/errors.js";
 import { FakeEngine, FakeEngines } from "../api/harness.js";
 
@@ -203,6 +203,44 @@ describe("the build requests", () => {
     }
   });
 
+  it("resolves an escalation as the owner through the engine that runs the build", async () => {
+    const { createHarness, AUTH } = await import("../api/harness.js");
+    const h = await createHarness();
+    try {
+      const res = await h.server.app.inject({
+        method: "POST",
+        url: `/api/v1/builds/${ID}/resolve`,
+        headers: AUTH,
+        payload: { escalation: "E1", action: "clarify", by: "owner", note: "Use whole dollars." },
+      });
+      expect(res.statusCode, res.body).toBe(200);
+      expect(res.json()).toMatchObject({ id: ID, slug: "add-export", status: "running" });
+      expect(h.engine.calls.at(-1)).toEqual({
+        key: "engine.builds.resolve",
+        input: {
+          params: { slug: "add-export" },
+          body: {
+            escalation: "E1",
+            action: "clarify",
+            by: "owner",
+            note: "Use whole dollars.",
+            changes: [],
+          },
+        },
+      });
+
+      const missing = await h.server.app.inject({
+        method: "POST",
+        url: `/api/v1/builds/${ID}/resolve`,
+        headers: AUTH,
+        payload: { escalation: "E1", action: "clarify", by: "owner" },
+      });
+      expect(missing.statusCode).toBe(400);
+    } finally {
+      await h.server.close();
+    }
+  });
+
   it("answers not_found for a build the server hasn't seen", async () => {
     const { createHarness, AUTH } = await import("../api/harness.js");
     const h = await createHarness();
@@ -217,5 +255,13 @@ describe("the build requests", () => {
     } finally {
       await h.server.close();
     }
+  });
+});
+
+describe("a build's summary", () => {
+  it("carries the delete time of the build's state", () => {
+    const deleted = { ...stateOf(summary({}), "cancelled"), deletedAt: "2026-11-23T10:00:00.000Z" };
+    expect(buildSummaryOf(deleted)).toMatchObject({ deletedAt: "2026-11-23T10:00:00.000Z" });
+    expect(buildSummaryOf(stateOf(summary({}), "running"))).not.toHaveProperty("deletedAt");
   });
 });

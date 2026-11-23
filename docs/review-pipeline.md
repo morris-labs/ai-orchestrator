@@ -474,6 +474,55 @@ After a window's reset time passes, its line shows **No recent data** instead
 of a percentage, until a later call records a sample. `aio review usage` lists
 the same windows, and shows `reset` for a window whose reset time has passed.
 
+## Usage watcher
+
+Beside the ceilings, an account-wide usage watcher covers builds and
+stand-alone review runs. It only alerts: nothing pauses because of it. Each
+alert appears in the **Usage alerts** list of both apps and as a desktop
+notification from the Boxes app. An alert about a build also goes to the
+Project manager of the build's box, and an alert about a window goes to the
+Project manager of every active build.
+
+The watcher checks each vendor account's 5-hour and 7-day windows with two
+rules, and each build with a third:
+
+- **Ceiling alert:** the window's usage is at or past `ceilingAt`, and the
+  burn rate over the last hour reaches the whole window before it resets. A
+  window at 100% always counts.
+- **Jump alert:** the window's usage rose by more than `jump` since the
+  lowest reading of the last `jumpMinutes` minutes.
+- **Build estimate alert:** a build's tokens in and out pass
+  `buildEstimateFactor` times the high end of its plan's usage estimate.
+  Each build gets this alert once.
+
+A window rule alerts when it starts to hold, not again while it keeps
+holding. Shares are fractions from 0 to 1, so `0.8` means 80%. The default
+thresholds are the following:
+
+| Setting | 5-hour window | 7-day window |
+|---|---|---|
+| `ceilingAt` | `0.8` | `0.8` |
+| `jump` | `0.15` | `0.05` |
+| `jumpMinutes` | `10` | `60` |
+
+The default `buildEstimateFactor` is `2`.
+
+To change the thresholds, send the `usageWatch` setting. A patch changes
+only the fields it names. For example, the following command sets the 7-day
+ceiling alert to 90% and the build estimate factor to 3:
+
+```bash
+curl --cacert ~/.ai-orchestrator/server.crt \
+    -H "Authorization: Bearer $(cat ~/.ai-orchestrator/server.token)" \
+    -H "Content-Type: application/json" \
+    -X PATCH -d '{"usageWatch": {"7d": {"ceilingAt": 0.9}, "buildEstimateFactor": 3}}' \
+    https://127.0.0.1:21400/api/v1/settings
+
+```
+
+To go back to the defaults, send `{"usageWatch": null}`. The server stores
+the thresholds in the `~/.ai-orchestrator/config.json` file.
+
 ## Review range
 
 A run reviews the changes between a base and a tip:

@@ -55,6 +55,7 @@ import {
   findTerminal,
   hostOsOf,
   isBoxNotification,
+  notificationTarget,
   macTerminalCommand,
   mayAskGsettings,
   needsLocalPage,
@@ -418,7 +419,13 @@ function watchEvents() {
           n,
           () => {
             showWindow();
-            if (ev.boxId) win?.webContents.send("aio:select-box", ev.boxId);
+            const target = notificationTarget(ev);
+            // The local server's stream sends this, so the build is on this machine.
+            if (target && "buildId" in target) {
+              win?.webContents.send("aio:select-build", target.buildId, "local");
+            } else if (target) {
+              win?.webContents.send("aio:select-box", target.boxId);
+            }
             void client()
               .call("notifications.read", { params: { notificationId: ev.notificationId } })
               .catch(() => undefined);

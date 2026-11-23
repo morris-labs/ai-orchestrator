@@ -1,9 +1,11 @@
 // Turns run and box events into `notification` events, as the settings
-// toggles allow, and keeps them in SQLite for `notifications.list`.
+// toggles allow, and keeps them in SQLite for `notifications.list`. It also
+// tells the owner about each direct message an agent of a build sends them.
 import { randomUUID } from "node:crypto";
 import {
   NotificationSchema,
   type AioEvent,
+  type BuildSummary,
   type EventOf,
   type GlobalSettings,
   type Notification,
@@ -20,7 +22,12 @@ export interface NotifierOptions {
   /** Tells a box's session that the run holding its edits has ended. */
   releaseBox?: (boxId: string) => void;
   idFn?: () => string;
+  /** The mirrored builds, which name the build and its box in a direct message's notification. */
+  builds?: { get(buildId: string): BuildSummary | undefined };
 }
+
+/** How much of a direct message's body its notification shows. */
+const DIRECT_MESSAGE_PREVIEW = 300;
 
 type Draft = Omit<Notification, "notificationId" | "read">;
 
@@ -39,6 +46,38 @@ export class Notifier {
   ingest(event: AioEvent): void {
     if (event.type === "run.changed") this.onRun(event);
     else if (event.type === "terminal.ended") this.onTerminal(event);
+    else if (event.type === "message.sent") this.onMessage(event);
+  }
+
+  /**
+   * Notifies the owner about a message an agent addressed to them. The
+   * notification's ID names the build and the message, so an event the
+   * engine sends again after a restart adds nothing. Direct messages have no
+   * toggle: the build plan caps them per milestone.
+   */
+  private onMessage(event: EventOf<"message.sent">): void {
+    const { message } = event;
+    if (message.to.kind !== "owner" || message.from.kind !== "seat") return;
+    const build = this.opts.builds?.get(message.buildId);
+    const sender = message.from.taskId
+      ? `${message.from.seat} (${message.from.taskId})`
+      : message.from.seat;
+    const body =
+      message.body.length > DIRECT_MESSAGE_PREVIEW
+        ? `${message.body.slice(0, DIRECT_MESSAGE_PREVIEW - 3)}...`
+        : message.body;
+    this.notify(
+      {
+        kind: "direct_message",
+        title: `${sender} wrote to you in ${build?.slug ?? "a build"}`,
+        body,
+        runId: null,
+        boxId: build?.boxId ?? null,
+        buildId: message.buildId,
+        severity: "info",
+      },
+      `dm-${message.buildId}-${message.id}`,
+    );
   }
 
   private onRun(event: EventOf<"run.changed">): void {
@@ -167,15 +206,20 @@ export class Notifier {
     return row !== undefined;
   }
 
-  private notify(draft: Draft): void {
+  /**
+   * Stores and sends a notification. With `id`, a notification that the
+   * store holds under that ID already is neither stored nor sent again.
+   */
+  private notify(draft: Draft, id?: string): void {
     const notification = NotificationSchema.parse({
       ...draft,
-      notificationId: this.opts.idFn?.() ?? randomUUID(),
+      notificationId: id ?? this.opts.idFn?.() ?? randomUUID(),
       read: false,
     });
-    this.opts.db
-      .prepare("INSERT INTO svc_notifications (id, read, json) VALUES (?, 0, ?)")
+    const result = this.opts.db
+      .prepare("INSERT OR IGNORE INTO svc_notifications (id, read, json) VALUES (?, 0, ?)")
       .run(notification.notificationId, JSON.stringify(notification));
+    if (Number(result.changes) === 0) return;
     this.opts.emit({ type: "notification", ...notification });
   }
 
