@@ -8,10 +8,12 @@ import {
   type Box,
   type BoxView,
   type BuildSummary,
+  type BuildUsage,
   type EventOf,
   type EventType,
   type GlobalSettings,
   type Job,
+  type Message,
   type Project,
 } from "@aio/contracts";
 
@@ -95,6 +97,32 @@ export function makeBuild(partial: Partial<BuildSummary> & { id: string }): Buil
     updatedAt: T0,
     ...partial,
   };
+}
+
+/**
+ * A team chat message: by default, the Developer of task T1 asks the
+ * Project manager a question about T1.
+ */
+export function makeMessage(partial: Partial<Message> & { id: string; buildId: string }): Message {
+  return {
+    version: 1,
+    from: { kind: "seat", seat: "developer", taskId: "T1" },
+    to: { kind: "seat", seat: "project-manager", taskId: null },
+    routing: "by_type",
+    type: "question",
+    taskId: "T1",
+    milestone: null,
+    paths: [],
+    body: `Message ${partial.id}`,
+    createdAt: T0,
+    ...partial,
+  };
+}
+
+/** A build's usage with no settled calls. */
+export function emptyBuildUsage(buildId: string): BuildUsage {
+  const zero = { calls: 0, tokensIn: 0, tokensOut: 0, premiumRequests: 0, costEstimate: 0 };
+  return { buildId, total: zero, bySeat: [], byStep: [], bySpecialty: [] };
 }
 
 export function makeJob(partial: Partial<Job> & { id: string; kind: Job["kind"] }): Job {

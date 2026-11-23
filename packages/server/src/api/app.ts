@@ -518,6 +518,8 @@ export async function startApp(options: AppOptions): Promise<App> {
       get: (buildId) => buildMirror.get(buildId),
       usage: (buildId) =>
         buildMirror.get(buildId) === undefined ? undefined : usageStore.buildUsage(buildId),
+      messages: (buildId) => buildMirror.messages(buildId),
+      tasks: (buildId) => buildMirror.tasks(buildId),
     },
     notifications: notifier,
     secrets,
