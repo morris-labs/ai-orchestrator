@@ -239,7 +239,12 @@ async function stagePush(ctx: RunContext, requestReview = true): Promise<PrInfo>
   await ctx.store.writeJson(ctx.store.roundFile(ctx.round, "push"), { pr, head });
   await ctx.handoff(
     { stage: "push" },
-    { stage: "poll", vendor: "copilot", role: "reviewer" },
+    // Copilot reviews the pull request only when the run asks for its review.
+    {
+      stage: "poll",
+      vendor: wantsCopilotReview(ctx.state.request) ? "copilot" : null,
+      role: "reviewer",
+    },
     "commits",
     1,
     null,
@@ -482,7 +487,11 @@ async function stageImport(ctx: RunContext, poll: PollResult): Promise<ImportRec
   };
   await ctx.store.writeJson(file, record);
   await ctx.handoff(
-    { stage: "import", vendor: "copilot", role: "reviewer" },
+    {
+      stage: "import",
+      vendor: wantsCopilotReview(ctx.state.request) ? "copilot" : null,
+      role: "reviewer",
+    },
     { stage: "verify", role: "disprover" },
     "findings",
     imported.length,

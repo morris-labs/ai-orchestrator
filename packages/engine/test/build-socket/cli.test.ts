@@ -104,6 +104,17 @@ describe("aio-build", () => {
     expect(builds.resume).toHaveBeenCalledWith("cart-total", "owner");
   });
 
+  it("prints the planning record of a build that is still in planning", async () => {
+    const { run } = await world();
+    const res = await run(["status", "in-planning"]);
+    expect(res.code).toBe(0);
+    expect(res.stdout).toContain("Build in-planning: planning");
+    expect(res.stdout).toContain("analyst 1: done");
+    expect(res.stdout).toContain("planning/draft.json");
+    const json = await run(["status", "in-planning", "--json"]);
+    expect(JSON.parse(json.stdout)).toMatchObject({ slug: "in-planning", version: 1 });
+  });
+
   it("cancels a build and points to its closing record", async () => {
     const { builds, run } = await world();
     builds.cancel.mockResolvedValue({

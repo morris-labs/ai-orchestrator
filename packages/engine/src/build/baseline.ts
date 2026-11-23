@@ -1,6 +1,7 @@
 // The test baseline: the known failing and flaky tests of a build, in the
 // build's `baseline.json` file. Preflight records it from three runs of the
-// plan's test commands, and the task gate adds the tests it finds flaky.
+// plan's test commands, and the task gate and the final gate add the tests
+// they find flaky.
 //
 // A test is a failure line of a test command (see `extractFailures()`),
 // keyed by the command and its directory. Count lines, such as
@@ -11,8 +12,12 @@ import type { PolicyCommand } from "@aio/contracts";
 import { isCountLine, type GateCommandKind, type GateCommandResult } from "../gate/gate.js";
 import type { BuildStore } from "./store.js";
 
-/** Where a flaky test showed: across the preflight runs, or in a task gate's rerun. */
-export type FlakySource = { at: "preflight" } | { at: "gate"; taskId: string; attempt: number };
+/**
+ * Where a flaky test showed: across the preflight runs, in a task gate's
+ * rerun, or in the release ready step's final gate.
+ */
+export type FlakySource =
+  { at: "preflight" } | { at: "gate"; taskId: string; attempt: number } | { at: "release" };
 
 /** The failing tests of one test command. */
 export interface BaselineTests {

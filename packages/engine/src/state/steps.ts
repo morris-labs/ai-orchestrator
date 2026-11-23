@@ -1916,7 +1916,7 @@ export async function runGateStage(ctx: RunContext, nextStage: Stage): Promise<G
     signal: ctx.signal,
   });
   warnLeftovers(ctx, run);
-  const comparison = compareGate(baseline, run);
+  const comparison = compareGate(baseline, run, ctx.state.request.build?.gate?.excused);
   const record: GateRecord = {
     attempt,
     run,

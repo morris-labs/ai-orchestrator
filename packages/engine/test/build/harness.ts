@@ -44,6 +44,8 @@ export interface MockResponse {
   /** Commits every change after `writeFiles`, with this message. */
   commit?: string;
   error?: string;
+  /** Replaces the error's default text. */
+  errorMessage?: string;
   delayMs?: number;
   /** The tokens the call reports in its usage. */
   tokens?: { input: number; output: number };

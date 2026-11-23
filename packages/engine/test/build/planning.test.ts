@@ -118,6 +118,75 @@ describe("planning a build", () => {
     expect(world.file(SLUG, "STATUS.md")).toMatch(/planning/i);
   });
 
+  it("reads the planning record of a build in planning, and none once it runs", async () => {
+    const world = await planningWorld();
+    expect(await world.manager.planning(SLUG)).toBeNull();
+    await plan(world);
+
+    expect(await world.manager.get(SLUG)).toBeNull();
+    expect(await world.manager.planning(SLUG)).toMatchObject({
+      slug: SLUG,
+      calls: [{ seat: "analyst" }, { seat: "architect" }],
+    });
+    await world.manager.freeze(freeze({ push: false }));
+    await world.manager.start({ projectId: PROJECT_ID, slug: SLUG });
+    expect(await world.manager.planning(SLUG)).toBeNull();
+  });
+
+  it("keeps the Project manager's edits to the draft plan when a seat answers again", async () => {
+    const world = await planningWorld();
+    await plan(world);
+    const draft = JSON.parse(world.file(SLUG, "planning/draft.json")) as Record<string, unknown>;
+    // Without edits, the draft is the engine's.
+    expect(JSON.parse(world.file(SLUG, "planning/draft.engine.json"))).toEqual(draft);
+    writeFileSync(
+      join(world.dir(SLUG), "planning/draft.json"),
+      `${JSON.stringify({ ...draft, title: "Add a cart total with tax" }, null, 2)}\n`,
+    );
+
+    await world.manager.plan(seat("architect"));
+
+    expect(JSON.parse(world.file(SLUG, "planning/draft.json"))).toMatchObject({
+      title: "Add a cart total with tax",
+    });
+    // The engine's own draft from the latest answers is beside it.
+    expect(JSON.parse(world.file(SLUG, "planning/draft.engine.json"))).toMatchObject({
+      title: SPEC.title,
+    });
+  });
+
+  it("holds planning seat calls while the build's box is stopped, and goes on when it starts", async () => {
+    const world = await planningWorld();
+    await world.manager.plan(seat("analyst"));
+    const before = world.calls().length;
+
+    expect(await world.manager.pausePlanning(SLUG)).toEqual({ paused: true });
+    const architect = world.manager.plan(seat("architect"));
+    await new Promise((r) => setTimeout(r, 300));
+    expect(world.calls()).toHaveLength(before);
+
+    expect(await world.manager.resumePlanning(SLUG)).toEqual({ paused: false });
+    expect((await architect).answer).toEqual(DESIGN);
+    expect(world.calls()).toHaveLength(before + 1);
+  });
+
+  it("keeps planning held for a stopped box across an engine restart", async () => {
+    const world = await planningWorld();
+    await world.manager.plan(seat("analyst"));
+    await world.manager.pausePlanning(SLUG);
+    expect(await world.manager.planning(SLUG)).toMatchObject({ pausedBy: "box" });
+    const before = world.calls().length;
+
+    await world.restart();
+    const architect = world.manager.plan(seat("architect"));
+    await new Promise((r) => setTimeout(r, 300));
+    expect(world.calls()).toHaveLength(before);
+
+    await world.manager.resumePlanning(SLUG);
+    expect((await architect).answer).toEqual(DESIGN);
+    expect((await world.manager.planning(SLUG))?.pausedBy).toBeUndefined();
+  });
+
   it("runs the planning calls under leases that name the build, the seat, and the step", async () => {
     const world = await planningWorld();
     const { analyst } = await plan(world);

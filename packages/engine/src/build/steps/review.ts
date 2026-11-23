@@ -21,6 +21,7 @@ import {
 import { RunCancelled } from "../../calls/index.js";
 import { EngineError } from "../../api/core-interface.js";
 import { RangeError as ReviewRangeError } from "../../range/resolve.js";
+import { commandKey, loadBaseline, type BaselineTests, type TestBaseline } from "../baseline.js";
 import type { BuildContext, ReviewRuns } from "../context.js";
 import { escalationForCallError } from "../escalations.js";
 import { ulid } from "../ids.js";
@@ -35,8 +36,17 @@ export const REVIEW_POLL_MS = 2000;
 /** The run statuses the step stops waiting at. */
 const SETTLED: readonly RunStatus[] = ["waiting_decision", "finished", "failed", "cancelled"];
 
-/** The stop reasons that report the build diff clean. */
-const CLEAN: readonly StopReason[] = ["clean", "clean_above_floor"];
+/**
+ * The stop reasons that report the build diff clean. A run that ends clean
+ * with follow-ups passed the same test as a clean one, with findings that no
+ * vendor would check: release ready lists them in the pull request for the
+ * owner, who reviews it before any merge.
+ */
+export const CLEAN_REVIEW: readonly StopReason[] = [
+  "clean",
+  "clean_above_floor",
+  "clean_with_followups",
+];
 
 /** What `review/run.json` holds. */
 interface ReviewRecord {
@@ -63,6 +73,26 @@ export function reviewTaskContext(ctx: BuildContext): string {
   return lines.join("\n");
 }
 
+/**
+ * The baseline's known failing and flaky tests, as failure lines by test
+ * command. A line that names one of `protect`, the tasks' own tests, or that
+ * a command naming one gave, never counts as excused: the build exists to
+ * make those pass.
+ */
+function excusedTests(baseline: TestBaseline, protect: readonly string[]): BaselineTests[] {
+  const byCommand = new Map<string, BaselineTests>();
+  const add = (command: string, cwd: string | null, failure: string) => {
+    if (protect.some((path) => command.includes(path) || failure.includes(path))) return;
+    const key = commandKey({ command, cwd });
+    const entry = byCommand.get(key) ?? { command, cwd, failures: [] };
+    if (!entry.failures.includes(failure)) entry.failures.push(failure);
+    byCommand.set(key, entry);
+  };
+  for (const e of baseline.knownFailing) for (const f of e.failures) add(e.command, e.cwd, f);
+  for (const e of baseline.flaky) add(e.command, e.cwd, e.failure);
+  return [...byCommand.values()];
+}
+
 /** Starts the build's review run with the run id `runId`. */
 async function startRun(ctx: BuildContext, runs: ReviewRuns, runId: string): Promise<void> {
   const placement = ctx.seats.place(REVIEW_FIXER_SEAT);
@@ -81,6 +111,10 @@ async function startRun(ctx: BuildContext, runs: ReviewRuns, runId: string): Pro
           tests: ctx.plan.commands.test,
           typecheck: ctx.plan.commands.typecheck,
           lint: ctx.plan.commands.lint,
+          excused: excusedTests(
+            await loadBaseline(ctx.store),
+            ctx.plan.tasks.flatMap((t) => t.tests),
+          ),
         },
       },
     }),
@@ -166,7 +200,7 @@ export async function runReview(ctx: BuildContext): Promise<StepOutcome> {
     }
   }
   const run = await settled(ctx, runs, record.runId);
-  if (run.status === "finished" && run.stopReason && CLEAN.includes(run.stopReason)) {
+  if (run.status === "finished" && run.stopReason && CLEAN_REVIEW.includes(run.stopReason)) {
     return "next";
   }
   await ctx.escalate({

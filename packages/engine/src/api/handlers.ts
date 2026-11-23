@@ -103,6 +103,8 @@ export function createHandlers(deps: HandlerDeps): EngineHandlers {
     },
     "engine.builds.pause": (i) => deps.builds.pause(param(i, "slug"), i.body.reason),
     "engine.builds.resume": (i) => deps.builds.resume(param(i, "slug"), i.body.reason),
+    "engine.builds.planning.pause": (i) => deps.builds.pausePlanning(param(i, "slug")),
+    "engine.builds.planning.resume": (i) => deps.builds.resumePlanning(param(i, "slug")),
     "engine.builds.cancel": (i) => deps.builds.cancel(param(i, "slug")),
     "engine.builds.delete": (i) => deps.builds.delete(param(i, "slug")),
     "engine.builds.resolve": (i) => deps.builds.resolve(param(i, "slug"), i.body),

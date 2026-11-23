@@ -220,16 +220,40 @@ function key(c: Pick<GateCommandResult, "kind" | "command" | "cwd">): string {
   return `${c.kind}\0${c.command}\0${c.cwd ?? ""}`;
 }
 
+/** Failure lines of a test command that a gate comparison doesn't count, such as a build's flaky tests. */
+export interface ExcusedFailures {
+  command: string;
+  cwd: string | null;
+  failures: readonly string[];
+}
+
 /**
  * Compares a gate run with the baseline. A command that passed and now
  * fails is a regression; so is a command that failed at the baseline and
- * now fails with new failure lines. Failures the baseline already had are not.
+ * now fails with new failure lines. Failures the baseline already had are not,
+ * nor are the `excused` failure lines of a test command. A test command that
+ * fails only on excused lines isn't a regression, unless it timed out or
+ * names no failing test.
  */
-export function compareGate(baseline: GateRun, current: GateRun): GateComparison {
+export function compareGate(
+  baseline: GateRun,
+  current: GateRun,
+  excused: readonly ExcusedFailures[] = [],
+): GateComparison {
   const before = new Map(baseline.commands.map((c) => [key(c), c]));
+  const excusedLines = new Map<string, Set<string>>();
+  for (const e of excused) {
+    const k = key({ kind: "test", command: e.command, cwd: e.cwd });
+    excusedLines.set(k, new Set([...(excusedLines.get(k) ?? []), ...e.failures]));
+  }
   const regressions: Regression[] = [];
   for (const c of current.commands) {
     if (c.passed) continue;
+    const allowed = excusedLines.get(key(c));
+    if (allowed && !c.timedOut) {
+      const lines = c.failures.filter((line) => !isCountLine(line));
+      if (lines.length > 0 && lines.every((line) => allowed.has(line))) continue;
+    }
     const b = before.get(key(c));
     if (!b || b.passed) {
       regressions.push({
@@ -240,7 +264,7 @@ export function compareGate(baseline: GateRun, current: GateRun): GateComparison
       });
       continue;
     }
-    const known = new Set(b.failures);
+    const known = new Set([...b.failures, ...(allowed ?? [])]);
     const fresh = c.failures.filter((f) => !known.has(f));
     if (fresh.length > 0 || (c.timedOut && !b.timedOut)) {
       regressions.push({

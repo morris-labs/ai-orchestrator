@@ -4,7 +4,15 @@ import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { RUNS_DIR } from "@aio/contracts";
-import { CART_DONE, CART_WRONG, REPORT, buildWorld, type MockResponse } from "./harness.js";
+import { tempDir } from "../tmp.js";
+import {
+  CART_DONE,
+  CART_WRONG,
+  REPORT,
+  buildWorld,
+  cartPlan,
+  type MockResponse,
+} from "./harness.js";
 
 /** The cart total with the planted flaw fixed: it counts each item's quantity. */
 const CART_FIXED =
@@ -69,7 +77,34 @@ function gateCommands(root: string, runId: string): Array<{ kind: string; comman
   return preflight.baseline.commands.map(({ kind, command }) => ({ kind, command }));
 }
 
+/** The text of a vendor's safety refusal. */
+const REFUSED = "This content was flagged for possible cybersecurity risk.";
+
+/** Review answers where every disprover refuses the finding, so it waits for a person. */
+function refusingReviewers(): MockResponse[] {
+  return [
+    DEVELOPER,
+    { match: "[Dd]isprove", error: "crash", errorMessage: REFUSED },
+    { times: 1, output: { findings: [FLAW] } },
+    { output: { findings: [] } },
+  ];
+}
+
 describe("the review step", () => {
+  it("treats a run that ends clean with follow-ups as clean and moves to release ready", async () => {
+    const world = await buildWorld({ review: true });
+    world.script({ claude: refusingReviewers(), codex: refusingReviewers() });
+
+    await world.start("cart-total");
+    const state = await world.settle("cart-total");
+
+    const { runId } = JSON.parse(world.file("cart-total", "review/run.json")) as ReviewFile;
+    const run = await world.runs.get(runId);
+    expect(run).toMatchObject({ status: "finished", stopReason: "clean_with_followups" });
+    expect(state).toMatchObject({ step: "release_ready", status: "paused" });
+    expect(state.escalations).toEqual([]);
+  });
+
   it("finds a planted flaw, has the Developer seat fix it with the task context, confirms it, and moves to release ready", async () => {
     const world = await buildWorld({ review: true });
     const fix: MockResponse = {
@@ -135,6 +170,46 @@ describe("the review step", () => {
     expect(run?.boxId).toBeUndefined();
     expect(run?.request.boxId).toBeUndefined();
     expect(world.events.ofType("run.changed").every((e) => e.run.boxId === undefined)).toBe(true);
+  });
+
+  it("doesn't fail the review gate on a test that the build's baseline holds as flaky", async () => {
+    const world = await buildWorld({ review: true });
+    // The stock test fails in the second preflight run, so the baseline holds
+    // it as flaky, and it fails again once the fix counts the quantity.
+    const counter = join(tempDir("aio-flaky-"), "runs");
+    writeFileSync(
+      join(world.root, "test", "stock.test.mjs"),
+      [
+        'import { existsSync, readFileSync, writeFileSync } from "node:fs";',
+        `const file = ${JSON.stringify(counter)};`,
+        'const run = (existsSync(file) ? Number(readFileSync(file, "utf8")) : 0) + 1;',
+        "writeFileSync(file, String(run));",
+        'if (run === 2 || readFileSync("src/cart.mjs", "utf8").includes("quantity")) {',
+        '  console.log("not ok - stock sync");',
+        "  process.exit(1);",
+        "}",
+        'console.log("ok");',
+        "",
+      ].join("\n"),
+    );
+    world.git(world.root, "add", "-A");
+    world.git(world.root, "commit", "-q", "-m", "test: add the stock test");
+    const fix: MockResponse = {
+      output: { fixed: ["F-0001"], notFixed: [], summary: "Counted the quantity." },
+      writeFiles: { "src/cart.mjs": CART_FIXED },
+      commit: "fix(cart): count item quantity (F-1)",
+    };
+    world.script({ claude: reviewers(fix), codex: reviewers(fix) });
+    const plan = cartPlan();
+    plan.commands.test = [...plan.commands.test, { command: "node test/stock.test.mjs" }];
+
+    await world.start("cart-total", plan);
+    const state = await world.settle("cart-total");
+
+    expect(world.file("cart-total", "baseline.json")).toContain("not ok - stock sync");
+    const { runId } = JSON.parse(world.file("cart-total", "review/run.json")) as ReviewFile;
+    expect(await world.runs.get(runId)).toMatchObject({ status: "finished", stopReason: "clean" });
+    expect(state).toMatchObject({ step: "release_ready", status: "paused" });
   });
 
   it("turns a review decision into a build escalation file", async () => {

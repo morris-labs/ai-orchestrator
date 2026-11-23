@@ -51,6 +51,7 @@ export interface BuildSocketOptions {
     | "meetingPost"
     | "start"
     | "get"
+    | "planning"
     | "pause"
     | "resume"
     | "resolve"
@@ -241,6 +242,11 @@ export async function serveBuildSocket(options: BuildSocketOptions): Promise<Bui
     }
     const request = BuildSocketSlugSchema.parse(raw);
     ownProject(request);
+    if (kind === "status" && !(await builds.get(request.slug))) {
+      // A build in planning has no state yet; its planning record answers.
+      const planning = await builds.planning(request.slug);
+      if (planning && planning.projectId === request.projectId) return { planning };
+    }
     const build = await ownBuild(request.projectId, request.slug);
     if (kind === "status") return { build };
     if (kind === "decisions") return { decisions: await builds.decisions(request.slug) };
