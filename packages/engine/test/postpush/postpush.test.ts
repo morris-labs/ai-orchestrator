@@ -208,6 +208,7 @@ describe("post-push loop", () => {
         repoPath: repo,
         depth: "thorough",
         pipeline: "post-push",
+        copilotReview: true,
       },
       { projectRoot: repo },
       d,
@@ -261,6 +262,7 @@ describe("post-push loop", () => {
         repoPath: repo,
         depth: "thorough",
         pipeline: "post-push",
+        copilotReview: true,
       },
       { projectRoot: repo },
       deps(scenario, gh),
@@ -296,6 +298,7 @@ describe("post-push loop", () => {
         repoPath: repo,
         depth: "thorough",
         pipeline: "post-push",
+        copilotReview: true,
       },
       { projectRoot: repo },
       deps(new Scenario(), gh),
@@ -306,6 +309,68 @@ describe("post-push loop", () => {
       stopReason: "pr_clean",
       round: 1,
     });
+  });
+
+  it("ends without a Copilot review when the run leaves the option off", async () => {
+    const repo = buildSampleRepo();
+    const gh = new FakeGitHub(join(dirname(repo), "origin.git"));
+    gh.checks = [{ name: "tests", bucket: "pass", link: null, workflow: "ci" }];
+    const run = await RunController.create(
+      {
+        runId: nextRunId(),
+        projectId: "sample",
+        repoPath: repo,
+        depth: "thorough",
+        pipeline: "post-push",
+      },
+      { projectRoot: repo },
+      deps(new Scenario(), gh),
+    );
+    await run.start();
+    expect(await run.settled()).toMatchObject({
+      status: "finished",
+      stopReason: "pr_clean",
+      prNumber: 7,
+    });
+    expect(gh.reviewRequests).toEqual([]);
+    expect(gh.droppedRequests).toEqual([]);
+  });
+
+  it("imports and fixes review comments without a Copilot review when the option is off", async () => {
+    const repo = buildSampleRepo();
+    const gh = new FakeGitHub(join(dirname(repo), "origin.git"));
+    const scenario = new Scenario();
+    const b3 = scenario.bugs.find((b) => b.id === "B3")!;
+    const line = lineOf(repo, "shop/pricing.py", "if quantity > 100");
+    gh.threads = [
+      {
+        id: "T1",
+        isResolved: false,
+        path: "shop/pricing.py",
+        line: line + 1,
+        startLine: line,
+        comments: [{ id: "c1", author: "Copilot", body: b3.title, url: null }],
+      },
+    ];
+    const run = await RunController.create(
+      {
+        runId: nextRunId(),
+        projectId: "sample",
+        repoPath: repo,
+        depth: "thorough",
+        pipeline: "post-push",
+      },
+      { projectRoot: repo },
+      deps(scenario, gh),
+    );
+    await run.start();
+    expect(await run.settled()).toMatchObject({
+      status: "finished",
+      stopReason: "non_code_failures",
+    });
+    expect(run.findings.find((f) => f.externalRef?.id === "T1")?.verdict).toBe("fixed");
+    expect(gh.resolved.has("T1")).toBe(true);
+    expect(gh.reviewRequests).toEqual([]);
   });
 
   it("doesn't call a pull request clean when its checks were cancelled", async () => {
@@ -319,6 +384,7 @@ describe("post-push loop", () => {
         repoPath: repo,
         depth: "thorough",
         pipeline: "post-push",
+        copilotReview: true,
       },
       { projectRoot: repo },
       deps(new Scenario(), gh),
@@ -346,6 +412,7 @@ describe("post-push loop", () => {
         repoPath: repo,
         depth: "thorough",
         pipeline: "post-push",
+        copilotReview: true,
       },
       { projectRoot: repo },
       deps(new Scenario(), gh),
@@ -370,6 +437,7 @@ describe("post-push loop", () => {
         repoPath: repo,
         depth: "thorough",
         pipeline: "post-push",
+        copilotReview: true,
       },
       { projectRoot: repo },
       d,
@@ -403,6 +471,7 @@ describe("post-push loop", () => {
         repoPath: repo,
         depth: "thorough",
         pipeline: "post-push",
+        copilotReview: true,
       },
       { projectRoot: repo },
       deps(new Scenario(), gh),
@@ -429,6 +498,7 @@ describe("post-push loop", () => {
         repoPath: repo,
         depth: "thorough",
         pipeline: "post-push",
+        copilotReview: true,
       },
       { projectRoot: repo },
       deps(new Scenario(), gh),
@@ -456,6 +526,7 @@ describe("post-push loop", () => {
         repoPath: repo,
         depth: "thorough",
         pipeline: "post-push",
+        copilotReview: true,
       },
       { projectRoot: repo },
       deps(new Scenario(), gh),
@@ -486,6 +557,7 @@ describe("post-push loop", () => {
         repoPath: repo,
         depth: "thorough",
         pipeline: "post-push",
+        copilotReview: true,
       },
       { projectRoot: repo },
       deps(new Scenario(), gh),
@@ -508,6 +580,7 @@ describe("post-push loop", () => {
         repoPath: repo,
         depth: "thorough",
         pipeline: "post-push",
+        copilotReview: true,
       },
       { projectRoot: repo },
       deps(new Scenario(), gh),
@@ -548,6 +621,7 @@ describe("post-push loop", () => {
         repoPath: repo,
         depth: "thorough",
         pipeline: "post-push",
+        copilotReview: true,
       },
       { projectRoot: repo },
       deps(new Scenario(), new FakeGitHub(origin)),
@@ -647,6 +721,7 @@ describe("post-push pull request choice", () => {
         repoPath: repo,
         depth: "thorough",
         pipeline: "post-push",
+        copilotReview: true,
         ...extra,
       },
       { projectRoot: repo },
@@ -1010,6 +1085,7 @@ describe("post-push ordering", () => {
         depth: "thorough",
         repoPath: repo,
         pipeline: "post-push",
+        copilotReview: true,
         roundCap: 1,
       },
       { projectRoot: repo },
@@ -1112,6 +1188,7 @@ describe("post-push ordering", () => {
         repoPath: repo,
         depth: "thorough",
         pipeline: "post-push",
+        copilotReview: true,
       },
       { projectRoot: repo },
       deps(scenario, gh),
@@ -1147,6 +1224,7 @@ describe("untrusted pull request comments", () => {
         repoPath: repo,
         depth: "thorough",
         pipeline: "post-push",
+        copilotReview: true,
       },
       { projectRoot: repo },
       deps(scenario, gh),
