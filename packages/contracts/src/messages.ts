@@ -135,7 +135,7 @@ export const SendMessageInputSchema = z
     to: SeatSchema.optional(),
     /** With `to`: the task of the addressee, when several agents fill that seat. */
     toTask: PlanIdSchema.optional(),
-    /** The task the message is about. Default: the sender's task. */
+    /** The task the message is about. Default: the sender's task, then the addressee's. */
     taskId: PlanIdSchema.optional(),
     milestone: MilestoneNameSchema.optional(),
     paths: z.array(z.string().min(1)).max(50).optional(),
