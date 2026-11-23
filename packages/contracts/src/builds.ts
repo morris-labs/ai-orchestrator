@@ -188,6 +188,8 @@ export const EscalationKindSchema = z.enum([
   "preflight",
   /** Tests first can't lock the tests, such as tests that fail the red check in every round. */
   "tests_first",
+  /** A task broke a test that an earlier task made pass, on a second attempt after the first. */
+  "oscillation",
 ]);
 export type EscalationKind = z.infer<typeof EscalationKindSchema>;
 

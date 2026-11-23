@@ -159,3 +159,89 @@ describe("a multi-task build", () => {
     expect(status).toMatch(/\| T2 \| Discount \| T1 \| running \| \d \| {2}\| test command/);
   });
 });
+
+describe("a later task that breaks an earlier task's test", () => {
+  /** T1 makes the cart test pass; T2 may change the cart module too. */
+  function twoTaskPlan(): BuildPlanInput {
+    const plan = threeTaskPlan();
+    return {
+      ...plan,
+      criteria: plan.criteria.slice(0, 2),
+      tasks: [
+        task("T1", "Cart total", "cart"),
+        {
+          ...task("T2", "Discount", "discount", ["T1"]),
+          ownedFiles: ["src/discount.mjs", "src/cart.mjs"],
+        },
+      ],
+      commands: { ...plan.commands, test: plan.commands.test.slice(0, 2) },
+    };
+  }
+
+  it("fails the gate with the broken test in the next attempt's prompt", async () => {
+    const world = await buildWorld();
+    addModules(world);
+    world.script({
+      claude: [
+        answer("T1", { "src/cart.mjs": CART_DONE }),
+        {
+          ...answer("T2", { "src/discount.mjs": DISCOUNT_DONE, "src/cart.mjs": CART_WRONG }),
+          match: "attempt 1 of",
+        },
+        { ...answer("T2", { "src/cart.mjs": CART_DONE }), match: "attempt 2 of" },
+      ],
+    });
+
+    await world.start("discount", twoTaskPlan());
+    const state = await world.settle("discount");
+
+    expect(state.tasks.map((t) => [t.id, t.status, t.attempts])).toEqual([
+      ["T1", "done", 1],
+      ["T2", "done", 2],
+    ]);
+    const [first] = world.jsonFiles("discount", "tasks/T2") as { gate: TaskGateResult }[];
+    expect(first?.gate).toMatchObject({
+      passed: false,
+      regressions: [
+        { taskId: "T1", test: "test/cart.test.mjs", command: "node test/cart.test.mjs" },
+      ],
+    });
+    const retry = world.calls().find((c) => c.prompt.includes("attempt 2 of"));
+    expect(retry?.prompt).toMatch(/Regression[^]*test\/cart\.test\.mjs \(task T1\)/);
+    expect(state.escalations).toEqual([]);
+  });
+
+  it("raises an oscillation escalation when the task breaks the test again", async () => {
+    const world = await buildWorld();
+    addModules(world);
+    world.script({
+      claude: [
+        answer("T1", { "src/cart.mjs": CART_DONE }),
+        {
+          ...answer("T2", { "src/discount.mjs": DISCOUNT_DONE, "src/cart.mjs": CART_WRONG }),
+          times: 4,
+        },
+      ],
+    });
+
+    await world.start("discount", twoTaskPlan());
+    const state = await world.settle("discount");
+
+    expect(state.status).toBe("waiting_escalation");
+    expect(state.tasks.map((t) => [t.id, t.status, t.attempts])).toEqual([
+      ["T1", "done", 1],
+      ["T2", "failed", 2],
+    ]);
+    expect(state.escalations).toEqual([
+      expect.objectContaining({
+        id: "E1",
+        kind: "oscillation",
+        level: "project_manager",
+        taskId: "T2",
+        summary: expect.stringMatching(/T2 broke test\/cart\.test\.mjs.*T1.*again/),
+      }),
+    ]);
+    expect(world.file("discount", "escalations/E1.json")).toContain("attempt-1.json");
+    expect(world.file("discount", "STATUS.md")).toMatch(/E1 \(oscillation/);
+  });
+});
