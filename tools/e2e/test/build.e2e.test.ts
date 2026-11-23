@@ -115,8 +115,9 @@ async function aioBuild(...args: string[]): Promise<CliResult> {
   return runBuildCli(args, buildEnv);
 }
 
-async function startBuild(slug: string, plan: string): Promise<BuildState> {
-  const r = await aioBuild("start", slug, plan, "--json");
+/** Starts a build from box `boxId`; a box runs one build at a time, so each scenario has its own. */
+async function startBuild(slug: string, plan: string, boxId = "box-e2e"): Promise<BuildState> {
+  const r = await runBuildCli(["start", slug, plan, "--json"], { ...buildEnv, AIO_BOX_ID: boxId });
   expect(r.code, r.stderr).toBe(0);
   return JSON.parse(r.stdout) as BuildState;
 }
@@ -313,7 +314,7 @@ describe("a one-task build", () => {
 describe("the attempt cap", () => {
   it("escalates a task that fails all four attempts, and the build waits", async () => {
     script({ codex: [TEST_ENGINEER], claude: [developer(TAX_WRONG)] });
-    const started = await startBuild("sales-tax-cap", planFile("sales-tax-cap"));
+    const started = await startBuild("sales-tax-cap", planFile("sales-tax-cap"), "box-e2e-cap");
 
     const state = await settle("sales-tax-cap");
     expect(state).toMatchObject({ status: "waiting_escalation", step: "tasks" });
@@ -387,7 +388,7 @@ describe("an engine restart mid-build", () => {
         },
       ];
     });
-    const started = await startBuild("sales-tax-restart", plan);
+    const started = await startBuild("sales-tax-restart", plan, "box-e2e-restart");
     await waitFor("the task gate to start", () => (existsSync(gateStarted) ? true : undefined));
     expect((await status("sales-tax-restart")).status).toBe("running");
 

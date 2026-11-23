@@ -380,6 +380,36 @@ export type BuildCreateInput = z.input<typeof BuildCreateSchema>;
 /** Build statuses that keep the container alive: the engine works on the build. */
 export const ACTIVE_BUILD_STATUSES: readonly BuildStatus[] = ["running"];
 
+/**
+ * Build statuses that hold a box: a box runs at most one build in one of
+ * these, so a second build in the box is refused. A finished, failed, or
+ * cancelled build frees its box.
+ */
+export const BOX_BUILD_STATUSES: readonly BuildStatus[] = [
+  "planning",
+  "running",
+  "paused",
+  "waiting_escalation",
+];
+
+/**
+ * Who paused a build: `owner` for a request, such as from the owner or the
+ * Project manager, and `box` when the build's box stopped. A box start
+ * resumes only a build that its box's stop paused.
+ */
+export const BuildPauseReasonSchema = z.enum(["owner", "box"]);
+export type BuildPauseReason = z.infer<typeof BuildPauseReasonSchema>;
+
+/** The body of a pause or resume request to the engine. */
+export const BuildControlSchema = z
+  .object({ reason: BuildPauseReasonSchema.default("owner") })
+  .strict();
+export type BuildControl = z.infer<typeof BuildControlSchema>;
+export type BuildControlInput = z.input<typeof BuildControlSchema>;
+
+/** The closing record that the Scribe writes when a build is cancelled, relative to the build directory. */
+export const BUILD_CLOSING_RECORD = "closing-record.md";
+
 export const BuildTaskProgressSchema = z.object({
   id: PlanIdSchema,
   status: BuildTaskStatusSchema,
@@ -595,6 +625,15 @@ export const BuildStateSchema = z.object({
   placements: BuildPlacementsSchema,
   /** The end of a timed pause, such as a vendor's limit reset. */
   pausedUntil: IsoDateTimeSchema.optional(),
+  /** Who paused the build, while it is paused by a request or a box stop. */
+  pausedBy: BuildPauseReasonSchema.optional(),
+  /** The closing record of a cancelled build, relative to the build directory. */
+  closingRecord: z.string().min(1).optional(),
+  /**
+   * When the owner deleted the build: its branch and worktree are gone, and
+   * its directory keeps the record. A deleted build never resumes.
+   */
+  deletedAt: IsoDateTimeSchema.optional(),
   /** Why the build waits or failed, in one or two sentences. */
   note: z.string().optional(),
   createdAt: IsoDateTimeSchema,

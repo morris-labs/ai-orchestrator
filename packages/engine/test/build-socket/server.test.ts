@@ -52,10 +52,46 @@ describe("the build socket", () => {
     expect(status).toMatchObject({ status: 200, body: { build: { status: "running" } } });
     const paused = await send(path, "POST", BUILD_SOCKET_ROUTES.pause, ask);
     expect(paused).toMatchObject({ status: 200, body: { build: { status: "paused" } } });
-    expect(builds.pause).toHaveBeenCalledWith("cart-total");
+    expect(builds.pause).toHaveBeenCalledWith("cart-total", "owner");
     const resumed = await send(path, "POST", BUILD_SOCKET_ROUTES.resume, ask);
     expect(resumed.status).toBe(200);
-    expect(builds.resume).toHaveBeenCalledWith("cart-total");
+    expect(builds.resume).toHaveBeenCalledWith("cart-total", "owner");
+  });
+
+  it("cancels a build", async () => {
+    const { builds, path } = await open();
+    const ask = { projectId: "proj-1", boxId: null, slug: "cart-total" };
+    const res = await send(path, "POST", BUILD_SOCKET_ROUTES.cancel, ask);
+    expect(res).toMatchObject({ status: 200, body: { build: { status: "cancelled" } } });
+    expect(builds.cancel).toHaveBeenCalledWith("cart-total");
+  });
+
+  it("lets only the build's own box pause, resume, or cancel it", async () => {
+    const { builds, path } = await open();
+    builds.get.mockResolvedValue({ ...buildState, boxId: "box-1" });
+    const other = { projectId: "proj-1", boxId: "box-2", slug: "cart-total" };
+    for (const kind of ["pause", "resume", "cancel"] as const) {
+      const res = await send(path, "POST", BUILD_SOCKET_ROUTES[kind], other);
+      expect(res.status).toBe(409);
+      expect(res.body.error).toMatchObject({
+        code: "conflict",
+        message: expect.stringContaining("box-1"),
+      });
+    }
+    // A session outside any box is another box too.
+    const outside = await send(path, "POST", BUILD_SOCKET_ROUTES.pause, {
+      ...other,
+      boxId: null,
+    });
+    expect(outside.status).toBe(409);
+    expect(builds.pause).not.toHaveBeenCalled();
+    expect(builds.resume).not.toHaveBeenCalled();
+    expect(builds.cancel).not.toHaveBeenCalled();
+    // Any box can read it.
+    expect((await send(path, "POST", BUILD_SOCKET_ROUTES.status, other)).status).toBe(200);
+    // Its own box controls it.
+    const own = await send(path, "POST", BUILD_SOCKET_ROUTES.pause, { ...other, boxId: "box-1" });
+    expect(own.status).toBe(200);
   });
 
   it("resolves an escalation of a build", async () => {

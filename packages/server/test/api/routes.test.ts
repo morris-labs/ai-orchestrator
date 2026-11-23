@@ -396,6 +396,18 @@ const cases: Case[] = [
     url: `${V1}/builds/01JB8Z5K3W6Q2V9X4T7R0M1N2Q`,
     status: 200,
   },
+  ...(["pause", "resume", "cancel"] as const).map((action) => ({
+    key: `builds.${action}` as const,
+    method: "POST" as const,
+    url: `${V1}/builds/01JB8Z5K3W6Q2V9X4T7R0M1N2Q/${action}`,
+    status: 200,
+  })),
+  {
+    key: "builds.delete",
+    method: "DELETE",
+    url: `${V1}/builds/01JB8Z5K3W6Q2V9X4T7R0M1N2Q`,
+    status: 200,
+  },
   {
     key: "builds.usage",
     method: "GET",

@@ -74,9 +74,32 @@ describe("aio-build", () => {
     const paused = await run(["pause", "cart-total"]);
     expect(paused.code).toBe(0);
     expect(paused.stdout).toContain("Build cart-total: paused");
-    expect(builds.pause).toHaveBeenCalledWith("cart-total");
+    expect(builds.pause).toHaveBeenCalledWith("cart-total", "owner");
     expect((await run(["resume", "cart-total"])).code).toBe(0);
-    expect(builds.resume).toHaveBeenCalledWith("cart-total");
+    expect(builds.resume).toHaveBeenCalledWith("cart-total", "owner");
+  });
+
+  it("cancels a build and points to its closing record", async () => {
+    const { builds, run } = await world();
+    builds.cancel.mockResolvedValue({
+      ...buildState,
+      status: "cancelled",
+      closingRecord: "closing-record.md",
+    });
+    const out = await run(["cancel", "cart-total"]);
+    expect(out.code).toBe(0);
+    expect(builds.cancel).toHaveBeenCalledWith("cart-total");
+    expect(out.stdout).toContain("Build cart-total: cancelled");
+    expect(out.stdout).toContain(".aio/builds/cart-total/closing-record.md");
+  });
+
+  it("refuses to control another box's build with the refusal's exit status", async () => {
+    const { builds, run } = await world();
+    builds.get.mockResolvedValue({ ...buildState, boxId: "box-2" });
+    const out = await run(["cancel", "cart-total"]);
+    expect(out.code).toBe(5);
+    expect(out.stderr).toContain("box-2");
+    expect(builds.cancel).not.toHaveBeenCalled();
   });
 
   it("resolves an escalation with each kind of resolution", async () => {

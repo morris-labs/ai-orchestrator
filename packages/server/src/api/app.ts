@@ -22,6 +22,7 @@ import { assertDevEnginesAllowed, withDevEngines } from "../events/dev-engines.j
 import { EngineSupervisor } from "../events/engines.js";
 import { EventHub } from "../events/hub.js";
 import { LateSink } from "../events/late-sink.js";
+import { BoxBuildLink } from "../events/build-control.js";
 import { BuildMirror } from "../events/build-mirror.js";
 import { RunMirror } from "../events/run-mirror.js";
 import { JobManager } from "../jobs/jobs.js";
@@ -469,9 +470,12 @@ export async function startApp(options: AppOptions): Promise<App> {
   const brokerTimer = setInterval(syncBroker, BROKER_SYNC_INTERVAL_MS);
   brokerTimer.unref();
 
+  // A box stop pauses the box's build, and its start resumes it.
+  const boxBuilds = new BoxBuildLink({ builds: buildMirror, engines, log });
   hub.subscribe((event: AioEvent) => {
     runMirror.ingest(event);
     buildMirror.ingest(event);
+    boxBuilds.ingest(event);
     usage.ingest(event);
     // After the usage service, which records the sample or settlement it reads.
     usageWatcher.ingest(event);
@@ -647,6 +651,7 @@ export async function startApp(options: AppOptions): Promise<App> {
       await tunnels.stopAll();
       closing = true;
       clearInterval(brokerTimer);
+      boxBuilds.close();
       await brokerSync;
       await broker.closeAll();
       await core.close?.();

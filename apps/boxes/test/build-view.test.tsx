@@ -1,6 +1,6 @@
 // The build view: a build's messages as a conversation with filters, its
 // direct messages, its milestone board, and its usage, against the fake server.
-import type { BuildUsage, Message } from "@aio/contracts";
+import type { BuildSummary, BuildUsage, Message } from "@aio/contracts";
 import { FakeServer, emptyBuildUsage, makeBuild, makeMessage } from "@aio/ui/testing";
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -259,5 +259,64 @@ describe("build view board and usage", () => {
     expect(
       within(screen.getByRole("table", { name: "Usage by specialty" })).getByText("python-dev"),
     ).toBeInTheDocument();
+  });
+});
+
+describe("build view controls", () => {
+  const confirmYes = async (title: string) =>
+    within(await screen.findByRole("dialog", { name: title })).getByRole("button", {
+      name: "Yes",
+    });
+
+  async function renderControls(status: BuildSummary["status"]) {
+    const current = { ...build, status };
+    const server = new FakeServer({ builds: [current] });
+    renderWithServer(<BuildView build={current} />, server);
+    const controls = await screen.findByRole("group", { name: "Build controls" });
+    return { server, controls };
+  }
+
+  it("pauses a running build and cancels it after a confirmation", async () => {
+    const { server, controls } = await renderControls("running");
+    expect(within(controls).queryByRole("button", { name: "Resume" })).toBeNull();
+    expect(within(controls).queryByRole("button", { name: "Delete build" })).toBeNull();
+
+    await userEvent.click(within(controls).getByRole("button", { name: "Pause" }));
+    await waitFor(() => expect(server.callsTo("builds.pause")).toHaveLength(1));
+
+    await userEvent.click(within(controls).getByRole("button", { name: "Cancel build" }));
+    await userEvent.click(await confirmYes("Cancel Build"));
+    await waitFor(() => expect(server.callsTo("builds.cancel")).toHaveLength(1));
+    expect(server.callsTo("builds.cancel")[0]?.params).toMatchObject({ buildId: B1 });
+  });
+
+  it("resumes or deletes a cancelled build, and deletes only after a confirmation", async () => {
+    const { server, controls } = await renderControls("cancelled");
+    expect(within(controls).queryByRole("button", { name: "Pause" })).toBeNull();
+    expect(within(controls).queryByRole("button", { name: "Cancel build" })).toBeNull();
+
+    await userEvent.click(within(controls).getByRole("button", { name: "Delete build" }));
+    await userEvent.click(
+      within(await screen.findByRole("dialog", { name: "Delete Build" })).getByRole("button", {
+        name: "No",
+      }),
+    );
+    expect(server.callsTo("builds.delete")).toHaveLength(0);
+    await userEvent.click(within(controls).getByRole("button", { name: "Delete build" }));
+    await userEvent.click(await confirmYes("Delete Build"));
+    await waitFor(() => expect(server.callsTo("builds.delete")).toHaveLength(1));
+
+    await userEvent.click(within(controls).getByRole("button", { name: "Resume" }));
+    await waitFor(() => expect(server.callsTo("builds.resume")).toHaveLength(1));
+  });
+
+  it("shows why the engine refused a request", async () => {
+    const { server, controls } = await renderControls("paused");
+    const stored = server.state.builds[0];
+    if (stored) stored.status = "finished";
+    await userEvent.click(within(controls).getByRole("button", { name: "Resume" }));
+    expect(await within(controls).findByRole("alert")).toHaveTextContent(
+      "Couldn't resume the build",
+    );
   });
 });

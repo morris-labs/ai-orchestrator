@@ -1,6 +1,6 @@
-// The `aio-build` command: plans, meets, starts, reads, pauses, and resumes a
-// build, and resolves its escalations, from a box's session, over the
-// engine's build socket. It sends the project
+// The `aio-build` command: plans, meets, starts, reads, pauses, resumes, and
+// cancels a build, and resolves its escalations, from a box's session, over
+// the engine's build socket. It sends the project
 // ID and box ID that the server sets in the session's environment.
 import { readFileSync } from "node:fs";
 import { posix } from "node:path";
@@ -41,6 +41,7 @@ export const BUILD_USAGE = `Usage:
   aio-build resume SLUG [--json]
   aio-build messages SLUG [--direct] [--json]
   aio-build decisions SLUG [--json]
+  aio-build cancel SLUG [--json]
   aio-build resolve SLUG ESCALATION ACTION [--note TEXT] [--order TASKS]
                     [--decision OPTION] [--waive FINDINGS] [--push yes|no]
                     [--changes PARTS] [--owner] [--json]
@@ -84,7 +85,12 @@ Requests:
             escalations.
   pause     Pause build SLUG. The engine finishes the agent call in
             progress first.
-  resume    Resume build SLUG after a pause.
+  resume    Resume build SLUG after a pause or a cancel.
+  cancel    Cancel build SLUG. The engine stops every agent and the
+            build's review run, and keeps the branch and the worktree.
+            The Scribe then writes a closing record in the build
+            directory. The build stays resumable until the owner deletes
+            it.
   messages  Print the team chat messages of build SLUG, oldest first. With
             --direct, print only the direct messages: the ones that agents
             sent the owner.
@@ -111,6 +117,9 @@ Requests:
             pass --owner. For a release ready escalation, ask the owner
             whether the build can push its branch and open its pull
             request, then pass --push yes or --push no with --owner.
+
+A build that a box started takes pause, resume, and cancel requests only
+from that box. Any box of the project can read its status.
 
 SLUG uses lowercase letters, digits, and single hyphens, such as
 cart-total.
@@ -221,6 +230,7 @@ const KINDS = new Set([
   "resume",
   "messages",
   "decisions",
+  "cancel",
   "resolve",
 ]);
 
@@ -425,7 +435,7 @@ export function parseBuildArgs(argv: readonly string[]): BuildCommand {
   if (positional.length !== 1) throw new Error(`${kind} needs one SLUG.`);
   if (kind === "messages") return { kind, slug, direct, json };
   if (kind === "decisions") return { kind, slug, json };
-  return { kind: kind as "status" | "pause" | "resume", slug, json };
+  return { kind: kind as "status" | "pause" | "resume" | "cancel", slug, json };
 }
 
 /** The exit status for a failed request. */
@@ -457,7 +467,10 @@ export function formatBuild(build: BuildState): string {
     `Worktree: ${build.worktree}`,
   ];
   if (build.boxId) lines.push(`Box: ${build.boxId}`);
+  if (build.pausedBy)
+    lines.push(`Paused by: ${build.pausedBy === "box" ? "a box stop" : "a request"}`);
   if (build.pausedUntil) lines.push(`Paused until: ${build.pausedUntil}`);
+  if (build.deletedAt) lines.push(`Deleted: ${build.deletedAt}`);
   if (build.note) lines.push(`Note: ${build.note}`);
   lines.push("Tasks:");
   for (const t of build.tasks) {
@@ -473,7 +486,9 @@ export function formatBuild(build: BuildState): string {
       );
     }
   }
-  lines.push(`Status file: ${posix.join(build.repoPath, BUILDS_DIR, build.slug, "STATUS.md")}`);
+  const dir = posix.join(build.repoPath, BUILDS_DIR, build.slug);
+  lines.push(`Status file: ${posix.join(dir, "STATUS.md")}`);
+  if (build.closingRecord) lines.push(`Closing record: ${posix.join(dir, build.closingRecord)}`);
   return `${lines.join("\n")}\n`;
 }
 

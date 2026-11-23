@@ -225,6 +225,11 @@ export class EngineRunManager implements RunManager {
       pending = (async () => {
         try {
           const run = await RunController.load(runId, this.location, this.engineDeps);
+          // A run that `start()` registered while this load read its files
+          // wins: the loaded copy never drives, so it would hide the run's
+          // progress from every later request.
+          const started = this.controllers.get(runId);
+          if (started) return started;
           this.controllers.set(runId, run);
           return run;
         } catch (error) {
