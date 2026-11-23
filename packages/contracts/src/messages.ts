@@ -156,3 +156,7 @@ export type SendMessageInput = z.infer<typeof SendMessageInputSchema>;
 export const messageSentFields = {
   message: MessageSchema,
 };
+
+/** The response of `builds.messages`: a build's team chat messages, oldest first. */
+export const BuildMessageListSchema = z.object({ messages: z.array(MessageSchema) });
+export type BuildMessageList = z.infer<typeof BuildMessageListSchema>;

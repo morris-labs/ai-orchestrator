@@ -100,7 +100,27 @@ export const buildTaskChangedFields = {
   taskId: z.string().min(1),
   status: BuildTaskStatusSchema,
   previousStatus: BuildTaskStatusSchema.nullable(),
+  /**
+   * The milestone the task belongs to, for a plan with milestones. Absent or
+   * `null` leaves the task's milestone as the server knows it.
+   */
+  milestone: z.string().min(1).max(64).nullable().optional(),
 };
+
+/** A build task as the server mirrors it from `build.task.changed` events. */
+export const BuildTaskViewSchema = z.object({
+  taskId: z.string().min(1),
+  status: BuildTaskStatusSchema,
+  /** The task's milestone, or `null` when no event named one. */
+  milestone: z.string().min(1).max(64).nullable(),
+  /** When the task last changed state. */
+  updatedAt: IsoDateTimeSchema,
+});
+export type BuildTaskView = z.infer<typeof BuildTaskViewSchema>;
+
+/** The response of `builds.tasks`: every task of the build that an event named, by task id. */
+export const BuildTaskListSchema = z.object({ tasks: z.array(BuildTaskViewSchema) });
+export type BuildTaskList = z.infer<typeof BuildTaskListSchema>;
 
 /**
  * Who a call under a lease belongs to, on lease requests, settlements, and
