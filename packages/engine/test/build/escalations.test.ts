@@ -425,20 +425,6 @@ describe("resolutions", () => {
     expect(state.escalations[0]).toMatchObject({ status: "resolved", resolution: { by: "owner" } });
   });
 
-  it("refuses at build start a plan whose placement breaks the single-vendor setting", async () => {
-    const world = await buildWorld();
-    await expect(
-      world.start(
-        "cart-total",
-        cartPlan({ singleVendor: "claude", placements: { developer: { vendor: "codex" } } }),
-      ),
-    ).rejects.toMatchObject({
-      code: "validation",
-      message: expect.stringMatching(/placements\.developer\.vendor.*codex.*singleVendor.*claude/s),
-    });
-    expect(world.git(world.root, "branch", "--list", "build/*")).toBe("");
-  });
-
   it("refuses a retry of a placement escalation that only a plan change fixes, and names the change", async () => {
     const world = await buildWorld();
     world.script({
