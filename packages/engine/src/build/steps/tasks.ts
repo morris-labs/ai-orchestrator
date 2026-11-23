@@ -358,6 +358,10 @@ async function runTask(ctx: BuildContext, task: BuildTask): Promise<StepOutcome>
       await ctx.escalate(blockerEscalation(task, n, record.blocked));
       return "wait";
     }
+    // An escalation that came in during the attempt, such as a question past
+    // the seat's question cap, pauses the task. Once it's resolved, the task
+    // goes on from this attempt's saved result.
+    if (progress.status !== "running") return "wait";
     const gated = record as GatedAttempt;
     if (gated.gate.passed) {
       if (await ctx.worktree.dirty()) {

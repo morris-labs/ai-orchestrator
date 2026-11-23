@@ -40,6 +40,19 @@ describe("team chat messages", () => {
     expect(() => MessageSchema.parse({ ...message, taskId: null })).toThrow(/task or a milestone/);
   });
 
+  it("parses a reply that names the message it replies to and its thread", () => {
+    const reply = {
+      ...message,
+      id: "M2",
+      type: "answer",
+      routing: "reply",
+      replyTo: "M1",
+      thread: "M1",
+    };
+    expect(roundTrip(MessageSchema, reply)).toEqual(reply);
+    expect(() => MessageSchema.parse({ ...reply, thread: undefined })).toThrow(/thread/);
+  });
+
   it("refuses an empty or oversized body", () => {
     expect(() => MessageSchema.parse({ ...message, body: "" })).toThrow(/body/);
     const big = "x".repeat(MESSAGE_BODY_MAX + 1);
@@ -63,6 +76,15 @@ describe("team chat messages", () => {
 });
 
 describe("send_message input", () => {
+  it("takes the message that a reply replies to", () => {
+    expect(
+      SendMessageInputSchema.parse({ type: "answer", body: "Zero.", replyTo: "M3" }).replyTo,
+    ).toBe("M3");
+    expect(() =>
+      SendMessageInputSchema.parse({ type: "answer", body: "Zero.", replyTo: "3" }),
+    ).toThrow();
+  });
+
   it("takes a type and a body, and nothing about the sender", () => {
     expect(SendMessageInputSchema.parse({ type: "question", body: "Which currency?" })).toEqual({
       type: "question",

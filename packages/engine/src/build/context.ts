@@ -44,6 +44,7 @@ import type { TeamBus, TeamChannel } from "../team/index.js";
 import { SessionDesk } from "./sessions/index.js";
 import { DecisionLog, checkDirectMessage, decisionsFor, decisionsText } from "./owner/index.js";
 import type { EscalationDraft } from "./escalations.js";
+import { capQuestion } from "./questions.js";
 import { renderStatus } from "./status-file.js";
 import type { BuildStore } from "./store.js";
 import type { BuildWorktree } from "./worktree.js";
@@ -214,7 +215,11 @@ export class BuildContext {
         dir: store.path("messages"),
         tasks: () => this.plan.tasks,
         emit: (draft) => this.emit(draft),
-        check: (message) => checkDirectMessage(message, this.plan, () => this.team!.list()),
+        check: async (message) => {
+          const earlier = () => this.team!.list();
+          await checkDirectMessage(message, this.plan, earlier);
+          return capQuestion(message, this.plan, earlier, (draft) => this.escalate(draft));
+        },
         clock: services.clock,
       }) ?? null;
     this.decisions = new DecisionLog(store.path("decisions"), state.id);
@@ -354,14 +359,17 @@ export class BuildContext {
    */
   async escalate(draft: EscalationDraft): Promise<Escalation> {
     const id = `E${this.state.escalations.length + 1}`;
-    const tasks = draft.taskId
-      ? [
-          draft.taskId,
-          ...dependentsOf(this.plan.tasks, draft.taskId).filter(
-            (t) => this.task(t).status !== "done",
-          ),
-        ]
-      : [];
+    // An escalation about a task that is done, such as a question about it
+    // that came after, pauses nothing.
+    const { taskId } = draft;
+    const pauses = taskId !== null && this.task(taskId).status !== "done";
+    const tasks =
+      taskId !== null && pauses
+        ? [
+            taskId,
+            ...dependentsOf(this.plan.tasks, taskId).filter((t) => this.task(t).status !== "done"),
+          ]
+        : [];
     const escalation: Escalation = {
       id,
       kind: draft.kind,
@@ -383,6 +391,10 @@ export class BuildContext {
     this.state.escalations.push(escalation);
     if (!draft.taskId) {
       await this.waitForEscalations();
+      return escalation;
+    }
+    if (!pauses) {
+      await this.persist();
       return escalation;
     }
     await this.setTaskStatus(draft.taskId, "failed");
