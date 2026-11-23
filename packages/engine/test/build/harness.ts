@@ -128,7 +128,7 @@ export interface BuildWorld {
   restart(): Promise<void>;
   /** Waits until the build's state satisfies `done`. */
   waitFor(slug: string, done: (state: BuildState) => boolean, ms?: number): Promise<BuildState>;
-  /** Waits until the build stops running. */
+  /** Waits until the build stops running and its last `build.changed` event shows it. */
   settle(slug: string): Promise<BuildState>;
   /** The build's directory. */
   dir(slug: string): string;
@@ -220,7 +220,12 @@ export async function buildWorld(): Promise<BuildWorld> {
       throw new Error(`build ${slug} didn't reach the state; last: ${JSON.stringify(last)}`);
     },
     settle(slug) {
-      return world.waitFor(slug, (s) => s.status !== "running");
+      // The build's state changes before its `build.changed` event goes out,
+      // so a settled build is one whose last event shows the same status.
+      return world.waitFor(slug, (s) => {
+        const shown = current.events.ofType("build.changed").at(-1)?.build;
+        return s.status !== "running" && shown?.status === s.status && shown.step === s.step;
+      });
     },
     dir,
     file(slug, path) {
