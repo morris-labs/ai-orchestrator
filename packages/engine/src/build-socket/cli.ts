@@ -170,6 +170,10 @@ Environment:
   ${BUILD_SOCKET_ENV.boxId}        The box ID. The server sets it in every box session; the
                     build records it as the box that plans and watches it.
   ${BUILD_SOCKET_ENV.socket}  The engine's build socket. Default: /tmp/aio-build/build.sock.
+  CLAUDE_CODE_SESSION_ID, CLAUDE_CONFIG_DIR
+                    Claude Code sets them in its shells. The command names the
+                    session, so the engine counts the Project manager's usage
+                    from the session's transcript.
 
 Exit status: 0 on success, 2 for a usage error or a brief or plan file that
 can't be read, 3 when the build socket can't be reached, 4 for a build or an
