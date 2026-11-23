@@ -713,8 +713,16 @@ the server to one agent call only, and attaches it again on every resume:
 
 - **Claude Code:** the `--mcp-config` and `--strict-mcp-config` flags, with
   the bus tools in the `--allowedTools` flag.
-- **Codex:** a `-c mcp_servers.NAME.url=URL` override on the `codex exec`
-  and `codex exec resume` commands.
+- **Codex:** `-c` overrides on the `codex exec` and `codex exec resume`
+  commands: `mcp_servers.NAME.url=URL`, `mcp_servers.NAME.bearer_token_env_var`
+  for the agent's token, and `mcp_servers.NAME.default_tools_approval_mode`
+  set to `approve`. Without the approval setting, `codex exec` refuses every
+  bus tool call.
+
+The engine types into an interactive Claude Code session only when the
+session shows its input prompt and no dialog, because a dialog takes the
+`Enter` key as its answer. For the evidence behind these rules, see
+[Vendor CLI facts for the build pipeline](vendor-cli-facts.md).
 
 ### Permissions
 
@@ -728,7 +736,9 @@ engine detects a violation after the turn and can't prevent it.
 ### Session resume
 
 The size rule uses a cache window for each vendor, set in configuration. The
-defaults are 60 minutes for Claude and 30 minutes for Codex. A placement
+defaults are 60 minutes for Claude and 30 minutes for Codex. A spike measured
+Codex cache hits on resumes after 45 minutes, so the Codex default is
+conservative. A placement
 change starts a fresh agent, because a different model or effort invalidates
 the cache.
 
@@ -743,9 +753,6 @@ seat's usage from the session's transcript at each digest, as tokens only.
 
 ## Open questions
 
-- Whether a live Codex session loads an MCP server from a `-c` override, and
-  how Codex approves MCP tool calls without a terminal.
-- How long the Codex prompt cache lasts in practice.
 - Which project traits the engine can detect reliably for bench seating.
 - Scaffolding for greenfield projects, which follows support for repositories
   that already exist.
