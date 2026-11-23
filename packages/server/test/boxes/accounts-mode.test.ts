@@ -60,7 +60,9 @@ describe("session command", () => {
     const work = addAccount(h, "claude/work", store);
     accountsMode(h, { claude: "claude/personal" });
     const a = await h.core.boxes.create({ targetDir: h.dir("a"), layout: "root" });
-    expect(lastCommand(h).startsWith(`env CLAUDE_CONFIG_DIR='${personal}' AIO_BOX_ID='${a.id}' claude `)).toBe(true);
+    expect(
+      lastCommand(h).startsWith(`env CLAUDE_CONFIG_DIR='${personal}' AIO_BOX_ID='${a.id}' claude `),
+    ).toBe(true);
     const b = await h.core.boxes.create({
       targetDir: h.dir("b"),
       layout: "root",
@@ -101,13 +103,17 @@ describe("session command", () => {
       layout: "root",
       platform: "codex",
     });
-    expect(lastCommand(h).startsWith(`env CODEX_HOME='${codex}' AIO_BOX_ID='${c.id}' codex `)).toBe(true);
+    expect(lastCommand(h).startsWith(`env CODEX_HOME='${codex}' AIO_BOX_ID='${c.id}' codex `)).toBe(
+      true,
+    );
     const p = await h.core.boxes.create({
       targetDir: h.dir("copilot-work"),
       layout: "root",
       platform: "copilot",
     });
-    expect(lastCommand(h).startsWith(`env COPILOT_HOME='${copilot}' AIO_BOX_ID='${p.id}' copilot `)).toBe(true);
+    expect(
+      lastCommand(h).startsWith(`env COPILOT_HOME='${copilot}' AIO_BOX_ID='${p.id}' copilot `),
+    ).toBe(true);
   });
 
   it("refuses to start when the vendor has no account", async () => {

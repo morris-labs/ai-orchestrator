@@ -1,6 +1,12 @@
 // Shared pieces of the build socket tests.
 import http from "node:http";
-import type { BuildPlanInput } from "@aio/contracts";
+import type { BuildPlanInput, BuildState } from "@aio/contracts";
+
+/** A parsed answer: a build on success, an error otherwise. */
+export interface SocketBody {
+  build: BuildState;
+  error: { code: string; message: string };
+}
 
 export const PLAN: BuildPlanInput = {
   title: "Add a total to the cart",
@@ -24,7 +30,7 @@ export function send(
   path: string,
   body?: unknown,
   headers: Record<string, string> = {},
-): Promise<{ status: number; body: any }> {
+): Promise<{ status: number; body: SocketBody }> {
   const data = body === undefined ? undefined : JSON.stringify(body);
   return new Promise((resolve, reject) => {
     const req = http.request(
@@ -40,7 +46,10 @@ export function send(
         res.on("data", (c: Buffer) => chunks.push(c));
         res.on("end", () => {
           const text = Buffer.concat(chunks).toString("utf8");
-          resolve({ status: res.statusCode ?? 0, body: text ? JSON.parse(text) : null });
+          resolve({
+            status: res.statusCode ?? 0,
+            body: (text ? JSON.parse(text) : null) as SocketBody,
+          });
         });
       },
     );

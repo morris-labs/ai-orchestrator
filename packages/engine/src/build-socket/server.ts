@@ -107,7 +107,7 @@ function answers(path: string): Promise<boolean> {
 export async function serveBuildSocket(options: BuildSocketOptions): Promise<BuildSocketServer> {
   const { path, builds, projectId, log } = options;
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  let existing: ReturnType<typeof lstatSync> | null = null;
+  let existing: ReturnType<typeof lstatSync> | null;
   try {
     existing = lstatSync(path);
   } catch {
@@ -147,7 +147,10 @@ export async function serveBuildSocket(options: BuildSocketOptions): Promise<Bui
     }
     const request = BuildSocketSlugSchema.parse(raw);
     if (projectId !== null && request.projectId !== projectId) {
-      throw new EngineError("not_found", `Project ${request.projectId} has no build ${request.slug}.`);
+      throw new EngineError(
+        "not_found",
+        `Project ${request.projectId} has no build ${request.slug}.`,
+      );
     }
     const build = await ownBuild(request.projectId, request.slug);
     if (kind === "status") return build;

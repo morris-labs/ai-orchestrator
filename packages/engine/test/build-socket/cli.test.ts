@@ -150,7 +150,14 @@ describe("aio-build", () => {
     for (const kind of Object.keys(BUILD_SOCKET_ROUTES)) {
       expect(BUILD_USAGE).toMatch(new RegExp(`^  ${kind}\\b`, "m"));
     }
-    for (const fact of ["PLAN_FILE", "--base", "--json", "AIO_PROJECT_ID", "AIO_BOX_ID", "Exit status"]) {
+    for (const fact of [
+      "PLAN_FILE",
+      "--base",
+      "--json",
+      "AIO_PROJECT_ID",
+      "AIO_BOX_ID",
+      "Exit status",
+    ]) {
       expect(BUILD_USAGE).toContain(fact);
     }
   });

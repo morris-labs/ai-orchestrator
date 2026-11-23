@@ -65,9 +65,7 @@ export type BuildSocketStart = z.infer<typeof BuildSocketStartSchema>;
 export type BuildSocketStartInput = z.input<typeof BuildSocketStartSchema>;
 
 /** The body of a status, pause, or resume request. */
-export const BuildSocketSlugSchema = z
-  .object({ ...scope, slug: BuildSlugSchema })
-  .strict();
+export const BuildSocketSlugSchema = z.object({ ...scope, slug: BuildSlugSchema }).strict();
 export type BuildSocketSlug = z.infer<typeof BuildSocketSlugSchema>;
 
 /** The answer to every build request: the build's state after the request. */

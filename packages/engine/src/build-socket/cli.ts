@@ -100,7 +100,9 @@ export function parseBuildArgs(argv: readonly string[]): BuildCommand {
   }
   const slug = positional[0] as string;
   if (!BuildSlugSchema.safeParse(slug).success) {
-    throw new Error(`${slug} isn't a valid slug: use lowercase letters, digits, and single hyphens.`);
+    throw new Error(
+      `${slug} isn't a valid slug: use lowercase letters, digits, and single hyphens.`,
+    );
   }
   if (kind === "start") return { kind, slug, planFile: positional[1] as string, base, json };
   return { kind: kind as "status" | "pause" | "resume", slug, json };
@@ -119,7 +121,8 @@ function issueLines(details: unknown): string {
   if (!Array.isArray(details)) return "";
   return details
     .map((issue: { path?: unknown; message?: unknown }) => {
-      const where = Array.isArray(issue.path) && issue.path.length > 0 ? issue.path.join(".") : "request";
+      const where =
+        Array.isArray(issue.path) && issue.path.length > 0 ? issue.path.join(".") : "request";
       return `  ${where}: ${String(issue.message)}\n`;
     })
     .join("");
@@ -183,7 +186,9 @@ export async function buildMain(argv: readonly string[], io: BuildCliIo): Promis
           : readFileSync(command.planFile, "utf8");
       plan = JSON.parse(text);
     } catch (err) {
-      io.stderr(`aio-build: Can't read the plan file ${command.planFile}: ${(err as Error).message}\n`);
+      io.stderr(
+        `aio-build: Can't read the plan file ${command.planFile}: ${(err as Error).message}\n`,
+      );
       return 2;
     }
     body = { ...body, plan, ...(command.base !== null ? { base: command.base } : {}) };
