@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { BuildSummary } from "@aio/contracts";
 import { createServerIdentity, pinFromPem, pinnedFetch } from "@aio/contracts/tls";
 import { startApp, type App } from "../../src/api/app.js";
 import type { OpClient } from "../../src/secrets/op.js";
@@ -236,6 +237,7 @@ describe("startApp", () => {
         container: CONTAINER,
         status: "running",
         step: "tasks",
+        boxId: null,
         createdAt: "2026-10-28T09:00:00.000Z",
         updatedAt: "2026-10-28T09:00:00.000Z",
       },
@@ -290,6 +292,53 @@ describe("startApp", () => {
     });
     const unknown = await api("GET", "/api/v1/builds/01JB8Z5K3W6Q2V9X4T7R0M1N2R/usage");
     expect(unknown.status).toBe(404);
+  });
+
+  it("lists builds newest first and serves a build's latest state", async () => {
+    const OLD = "01JB8Z5K3W6Q2V9X4T7R0M1N2Q";
+    const NEW = "01JB8Z5K3W6Q2V9X4T7R0M1N2R";
+    await waitFor(() => engine.sockets.length === 1);
+    const build = (
+      id: string,
+      createdAt: string,
+      over: Partial<BuildSummary> = {},
+    ): BuildSummary => ({
+      id,
+      slug: "add-export",
+      projectId: PROJECT_ID,
+      container: CONTAINER,
+      status: "running",
+      step: "tasks",
+      boxId: "example-app-1",
+      createdAt,
+      updatedAt: createdAt,
+      ...over,
+    });
+    engine.emit({ type: "build.changed", build: build(OLD, "2026-10-28T09:00:00.000Z") });
+    engine.emit({ type: "build.changed", build: build(NEW, "2026-10-28T10:00:00.000Z") });
+    engine.emit({
+      type: "build.changed",
+      build: build(OLD, "2026-10-28T09:00:00.000Z", {
+        status: "paused",
+        updatedAt: "2026-10-28T11:00:00.000Z",
+      }),
+    });
+    const builds = () =>
+      app.hub
+        .replay({ type: "hello", streamId: app.hub.streamId, lastSeq: 0 })
+        .events.filter((e) => e.type === "build.changed").length;
+    await waitFor(() => builds() === 3);
+    const paused = await api("GET", `/api/v1/builds/${OLD}`);
+    expect(paused.status).toBe(200);
+    expect(paused.json).toMatchObject({ id: OLD, status: "paused", boxId: "example-app-1" });
+    const all = await api("GET", "/api/v1/builds");
+    expect((all.json.builds as { id: string }[]).map((b) => b.id)).toEqual([NEW, OLD]);
+    const mine = await api("GET", `/api/v1/builds?projectId=${PROJECT_ID}`);
+    expect((mine.json.builds as unknown[]).length).toBe(2);
+    const other = await api("GET", "/api/v1/builds?projectId=other-app-9f8e7d6c");
+    expect(other.json.builds).toEqual([]);
+    const missing = await api("GET", "/api/v1/builds/01JB8Z5K3W6Q2V9X4T7R0M1N2S");
+    expect(missing.status).toBe(404);
   });
 
   it("clears a usage block that comes from a project's ceiling override", async () => {

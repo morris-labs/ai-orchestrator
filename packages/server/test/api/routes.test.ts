@@ -385,6 +385,18 @@ const cases: Case[] = [
     status: 200,
   },
   {
+    key: "builds.list",
+    method: "GET",
+    url: `${V1}/builds?projectId=example-app-1a2b3c4d`,
+    status: 200,
+  },
+  {
+    key: "builds.get",
+    method: "GET",
+    url: `${V1}/builds/01JB8Z5K3W6Q2V9X4T7R0M1N2Q`,
+    status: 200,
+  },
+  {
     key: "builds.usage",
     method: "GET",
     url: `${V1}/builds/01JB8Z5K3W6Q2V9X4T7R0M1N2Q/usage`,

@@ -7,6 +7,7 @@ import {
   type AioEvent,
   type Box,
   type BoxView,
+  type BuildSummary,
   type EventOf,
   type EventType,
   type GlobalSettings,
@@ -78,6 +79,21 @@ export function makeBoxView(
     sideSessions: [],
     targetDirExists: true,
     ...rest,
+  };
+}
+
+export function makeBuild(partial: Partial<BuildSummary> & { id: string }): BuildSummary {
+  const projectId = partial.projectId ?? "example-app-1a2b3c4d";
+  return {
+    slug: "add-export",
+    projectId,
+    container: projectContainerName(projectId),
+    status: "running",
+    step: "tasks",
+    boxId: null,
+    createdAt: T0,
+    updatedAt: T0,
+    ...partial,
   };
 }
 
