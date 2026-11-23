@@ -337,3 +337,98 @@
   overflow: auto;
   border-top: 1px solid var(--ab-border);
 }
+
+.bx-build-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.bx-build-columns {
+  flex: 1;
+  display: flex;
+  gap: 12px;
+  min-height: 0;
+  padding: 6px 10px;
+}
+.bx-build-conversation {
+  flex: 3;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.bx-build-side {
+  flex: 2;
+  min-width: 0;
+  overflow: auto;
+}
+.bx-build-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-bottom: 6px;
+}
+.bx-build-earlier {
+  padding-bottom: 4px;
+}
+.bx-messages {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.bx-build-conversation > .bx-messages {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+}
+.bx-message {
+  padding: 4px 0;
+  border-bottom: 1px solid var(--ab-border);
+}
+.bx-message-body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.bx-build-panel h3 {
+  margin: 4px 0;
+  font-size: 13px;
+}
+.bx-board {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.bx-board-column {
+  min-width: 120px;
+}
+.bx-board-column h4 {
+  margin: 2px 0;
+  font-size: 12px;
+}
+.bx-board-column ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.bx-task {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 4px;
+  border: 1px solid var(--ab-border);
+  margin-bottom: 2px;
+}
+.bx-usage-table {
+  border-collapse: collapse;
+  margin: 4px 0 8px;
+}
+.bx-usage-table th,
+.bx-usage-table td {
+  padding: 2px 8px 2px 0;
+  text-align: right;
+}
+.bx-usage-table th:first-child,
+.bx-usage-table td:first-child {
+  text-align: left;
+}

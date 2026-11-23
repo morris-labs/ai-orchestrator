@@ -1,5 +1,5 @@
 // The Builds page and the build badge on a box, against the fake server.
-import { FakeServer, makeBoxView, makeBuild } from "@aio/ui/testing";
+import { FakeServer, makeBoxView, makeBuild, makeMessage } from "@aio/ui/testing";
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
@@ -115,6 +115,31 @@ describe("Builds page", () => {
     });
     await new Promise((r) => setTimeout(r, 20));
     expect(stateOf("add-export")[0]).toBe("Paused");
+  });
+});
+
+describe("build view on the Builds page", () => {
+  it("shows the selected build's messages under the list", async () => {
+    const user = userEvent.setup();
+    const server = new FakeServer({
+      boxes: [site()],
+      builds: [
+        makeBuild({ id: B1, slug: "add-export" }),
+        makeBuild({ id: B2, slug: "drop-legacy", createdAt: "2026-10-28T10:00:00Z" }),
+      ],
+    });
+    server.state.buildMessages[B1] = [makeMessage({ id: "M1", buildId: B1, body: "Export how?" })];
+    server.state.buildMessages[B2] = [makeMessage({ id: "M1", buildId: B2, body: "Drop what?" })];
+    await renderApp(server);
+    await user.click(screen.getByRole("tab", { name: "Builds" }));
+    await user.click(await within(buildsTable()).findByRole("cell", { name: "add-export" }));
+    const messages = await screen.findByRole("list", { name: "Messages" });
+    await waitFor(() => expect(messages).toHaveTextContent("Export how?"));
+    await user.click(within(buildsTable()).getByRole("cell", { name: "drop-legacy" }));
+    await waitFor(() =>
+      expect(screen.getByRole("list", { name: "Messages" })).toHaveTextContent("Drop what?"),
+    );
+    expect(screen.getByRole("list", { name: "Messages" })).not.toHaveTextContent("Export how?");
   });
 });
 
