@@ -351,33 +351,38 @@ export class BuildContext {
   callSeat(input: SeatCall): Promise<AgentOutcome<Record<string, unknown>>> {
     const role = this.role(input.seat);
     const packs = input.specialties ?? [];
-    return this.sessions.run(input.seat, async () => {
-      const placement = this.seats.place(input.seat, input.placement);
-      const outcome = await this.runTurn(
-        seatCallSpec(role, placement, {
+    const taskIds = input.taskIds ?? [input.task.id];
+    return this.sessions.run(
+      input.seat,
+      async () => {
+        const placement = this.seats.place(input.seat, input.placement);
+        const outcome = await this.runTurn(
+          seatCallSpec(role, placement, {
+            seat: input.seat,
+            key: input.key,
+            step: input.step,
+            task: input.task,
+            repoPath: this.worktree.path,
+            scratchDir: this.store.scratchDir,
+            specialties: packs,
+          }),
+          input.seat,
+          input.task.id,
+        );
+        await this.sessions.started({
           seat: input.seat,
-          key: input.key,
-          step: input.step,
+          taskIds,
           task: input.task,
-          repoPath: this.worktree.path,
-          scratchDir: this.store.scratchDir,
-          specialties: packs,
-        }),
-        input.seat,
-        input.task.id,
-      );
-      await this.sessions.started({
-        seat: input.seat,
-        taskIds: input.taskIds ?? [input.task.id],
-        task: input.task,
-        specialties: packs.map((p) => p.name),
-        step: input.step,
-        key: input.key,
-        placement,
-        outcome,
-      });
-      return outcome;
-    });
+          specialties: packs.map((p) => p.name),
+          step: input.step,
+          key: input.key,
+          placement,
+          outcome,
+        });
+        return outcome;
+      },
+      taskIds,
+    );
   }
 
   /**

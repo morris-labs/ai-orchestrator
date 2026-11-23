@@ -59,8 +59,8 @@ export class SessionDesk {
   readonly registry: SessionRegistryFile;
   /** The end of the last turn queued for each seat; it never rejects. */
   private readonly tails = new Map<string, Promise<void>>();
-  /** The turns queued or under way for each seat. */
-  private readonly busy = new Map<string, number>();
+  /** The tasks of each seat call queued or under way, by seat. */
+  private readonly working = new Map<string, Set<readonly string[]>>();
   /** The messages whose turn is queued or under way. */
   private readonly scheduled = new Set<string>();
   /** Work the desk started that `idle()` waits for. */
@@ -76,11 +76,17 @@ export class SessionDesk {
 
   /**
    * Runs `turn` when every turn queued before it for `seat` has ended, so a
-   * seat takes one turn at a time.
+   * seat takes one turn at a time. A seat call names the plan tasks its
+   * agent works for, so a message for one of them waits for the agent
+   * instead of finding no session.
    */
-  run<T>(seat: string, turn: () => Promise<T>): Promise<T> {
+  run<T>(seat: string, turn: () => Promise<T>, taskIds?: readonly string[]): Promise<T> {
     const before = this.tails.get(seat) ?? Promise.resolve();
-    this.busy.set(seat, (this.busy.get(seat) ?? 0) + 1);
+    const working = this.working.get(seat) ?? new Set<readonly string[]>();
+    // A copy of its own, so two calls with one task list each count.
+    const mine = taskIds ? [...taskIds] : null;
+    if (mine) working.add(mine);
+    this.working.set(seat, working);
     const result = before.then(turn);
     const ended = result.then(
       () => undefined,
@@ -89,12 +95,18 @@ export class SessionDesk {
     this.tails.set(
       seat,
       ended.then(() => {
-        const left = (this.busy.get(seat) ?? 1) - 1;
-        if (left > 0) this.busy.set(seat, left);
-        else this.busy.delete(seat);
+        if (mine) working.delete(mine);
       }),
     );
     return result;
+  }
+
+  /** True when a seat call queued or under way works for `taskId` in `seat`. */
+  private awaited(seat: string, taskId: string | null): boolean {
+    for (const taskIds of this.working.get(seat) ?? []) {
+      if (taskId === null ? taskIds.length === 0 : taskIds.includes(taskId)) return true;
+    }
+    return false;
   }
 
   /**
@@ -134,7 +146,7 @@ export class SessionDesk {
     this.track(
       (async () => {
         const session = await this.registry.current(entry.seat, entry.taskId);
-        if (!session && !this.busy.has(entry.seat)) return;
+        if (!session && !this.awaited(entry.seat, entry.taskId)) return;
         await this.registry.enqueue(entry);
         this.schedule(entry);
       })(),

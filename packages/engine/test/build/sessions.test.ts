@@ -262,4 +262,34 @@ describe("session resume", () => {
     expect(asked().map((c) => c.resumeId)).toEqual([tester.sessionId, tester.sessionId]);
     expect(world.jsonFiles("cart-restart", "messages")).toHaveLength(1);
   });
+
+  it("leaves a message for a seat and task that no agent holds to others", async () => {
+    const world = await buildWorld();
+    world.script({
+      claude: [
+        {
+          ...developer(),
+          busCalls: [
+            {
+              tool: "send_message",
+              arguments: { type: "note", to: "developer", toTask: "T9", body: "For a later task." },
+            },
+            {
+              tool: "send_message",
+              arguments: { type: "contract_question", body: "Which currency?" },
+            },
+          ],
+        },
+      ],
+    });
+
+    await world.start("cart-nobody");
+    await world.settle("cart-nobody");
+
+    expect(world.jsonFiles("cart-nobody", "messages")).toHaveLength(2);
+    const { queue, deliveries } = registry(world, "cart-nobody");
+    expect(queue).toEqual([]);
+    expect(deliveries).toEqual([]);
+    expect(world.calls().filter((c) => c.cli === "claude")).toHaveLength(1);
+  });
 });

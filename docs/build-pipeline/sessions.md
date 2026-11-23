@@ -36,8 +36,9 @@ seat's earlier session for the same tasks: the earlier record gets
 ## Delivery
 
 A message to a seat goes to the newest session that holds the seat for the
-message's task. A message to the owner, or to a seat with no session and no
-turn under way, isn't a session's to take.
+message's task, or waits for the seat call under way for that task. A
+message to the owner, or to a seat and task that no agent holds, isn't a
+session's to take, and the registry doesn't queue it.
 
 Each seat takes one turn at a time. A message for an agent whose turn is
 under way waits in the queue until the turn ends, and two messages for one
