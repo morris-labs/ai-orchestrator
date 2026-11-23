@@ -18,6 +18,7 @@ import {
 import { bridgeAdapters } from "../../src/adapters/bridge.js";
 import { ClaudeAdapter } from "../../src/adapters/claude.js";
 import { CodexAdapter } from "../../src/adapters/codex.js";
+import { CopilotAdapter } from "../../src/adapters/copilot.js";
 import type { CliVendorAdapter } from "../../src/adapters/types.js";
 import {
   BUILD_PIPELINE,
@@ -45,6 +46,15 @@ export interface MockResponse {
   delayMs?: number;
   /** MCP tool calls that the mock CLI makes, such as team chat messages. */
   busCalls?: { tool: string; arguments?: Record<string, unknown>; server?: string }[];
+}
+
+/** One call that reached a mock CLI, as its log line records it. */
+export interface MockCall {
+  cli: string;
+  prompt: string;
+  argv: string[];
+  /** The Codex thread a `codex exec resume` call resumed. */
+  resumeId?: string | null;
 }
 
 /** The project id the build requests name. */
@@ -140,6 +150,8 @@ export interface BuildWorldOptions {
   steps?: readonly BuildStep[];
   /** Runs the review step. Off by default: the build then waits at that step. */
   review?: boolean;
+  /** Adds the Copilot mock CLI to Claude and Codex. */
+  copilot?: boolean;
 }
 
 /** The handlers a build world runs: every step's, without the review's unless `review` is set. */
@@ -166,7 +178,7 @@ export interface BuildWorld {
   /** Sets the mock CLIs' answers, by vendor. */
   script(responses: Partial<Record<Vendor, MockResponse[]>>): void;
   /** The calls that reached a mock CLI, oldest first. */
-  calls(): { cli: string; prompt: string; argv: string[] }[];
+  calls(): MockCall[];
   /** Closes the manager, as an engine shutdown does, and starts a new one over the same files. */
   restart(): Promise<void>;
   /** Waits until the build's state satisfies `done`. */
@@ -199,6 +211,11 @@ export async function buildWorld(options: BuildWorldOptions = {}): Promise<Build
       persistSessions: false,
     }),
     codex: new CodexAdapter({ ...cliOptions, command: join(MOCK_BIN, "codex") }),
+    // The review runs that builds start pick from every vendor, so Copilot
+    // takes part only in the worlds that ask for it.
+    ...(options.copilot
+      ? { copilot: new CopilotAdapter({ ...cliOptions, command: join(MOCK_BIN, "copilot") }) }
+      : {}),
   };
   const team = new TeamBus({ log: silentLogger });
   await team.start();
@@ -260,7 +277,7 @@ export async function buildWorld(options: BuildWorldOptions = {}): Promise<Build
         .trim()
         .split("\n")
         .filter((line) => line !== "")
-        .map((line) => JSON.parse(line) as { cli: string; prompt: string; argv: string[] });
+        .map((line) => JSON.parse(line) as MockCall);
     },
     async restart() {
       await current.manager.close();

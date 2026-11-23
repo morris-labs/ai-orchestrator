@@ -4,6 +4,7 @@
 // event stream the same way.
 import type {
   AgentRole,
+  BuildSessionSettings,
   EngineRunCreate,
   BuildPlan,
   BuildState,
@@ -15,6 +16,7 @@ import type {
   RoleDefinition,
   RoleName,
   RunState,
+  SeatPlacement,
 } from "@aio/contracts";
 import { VendorSchema } from "@aio/contracts";
 import { z } from "zod";
@@ -27,7 +29,7 @@ import {
   type CallDeps,
   type CallLedger,
 } from "../calls/index.js";
-import type { Clock, CommandRunner, EventDraft, EventSink } from "../core.js";
+import type { AdapterOutput, Clock, CommandRunner, EventDraft, EventSink } from "../core.js";
 import type { Logger } from "../api/core-interface.js";
 import { UnknownRoleError, roleAnswerSchema, rolePrompt, type RoleTask } from "./roles/index.js";
 import { SeatPlacements, placeCall, type PlaceOptions } from "./placements/index.js";
@@ -38,6 +40,7 @@ import {
   type SpecialtySources,
 } from "./specialties/index.js";
 import type { TeamBus, TeamChannel } from "../team/index.js";
+import { SessionDesk } from "./sessions/index.js";
 import type { EscalationDraft } from "./escalations.js";
 import { renderStatus } from "./status-file.js";
 import type { BuildStore } from "./store.js";
@@ -84,6 +87,8 @@ export interface BuildServices {
   reviews?: ReviewRuns;
   /** How often the review step reads its run's state, in milliseconds. */
   reviewPollMs?: number;
+  /** When a message resumes a session and when it gets a fresh agent. Default: the schema's defaults. */
+  sessions?: BuildSessionSettings;
 }
 
 /** What a step asks a seat to do. */
@@ -96,6 +101,26 @@ export interface SeatCall {
   /** The task's specialty packs, from `specialties()`. */
   specialties?: readonly SpecialtyPack[];
   placement?: PlaceOptions;
+  /**
+   * The plan tasks the agent works for, which messages to the seat name.
+   * Default: the task's own ID.
+   */
+  taskIds?: readonly string[];
+}
+
+/** One turn of an agent in a seat, with a prompt the caller wrote. */
+export interface TurnCall {
+  seat: RoleName;
+  /** The task whose member token the agent gets on the team chat. */
+  taskId: string | null;
+  key: string;
+  step: BuildStep;
+  prompt: string;
+  placement: SeatPlacement;
+  specialties: readonly SpecialtyPack[];
+  output: AdapterOutput;
+  /** The session to resume; absent, the turn starts a fresh agent. */
+  sessionId?: string;
 }
 
 class FileCallCache implements CallCache {
@@ -115,6 +140,8 @@ export class BuildContext {
   readonly seats: SeatPlacements;
   /** The build's team chat, or `null` when the engine runs no bus. */
   readonly team: TeamChannel | null;
+  /** The session registry, and the message turns it gives each seat. */
+  readonly sessions: SessionDesk;
   /** Aborts the gate's commands when the engine stops; a new drive gets a new one. */
   private driveAbort = new AbortController();
   private writeChain: Promise<void> = Promise.resolve();
@@ -175,6 +202,8 @@ export class BuildContext {
         emit: (draft) => this.emit(draft),
         clock: services.clock,
       }) ?? null;
+    this.sessions = new SessionDesk(this);
+    this.team?.onMessage((message) => this.sessions.receive(message));
   }
 
   /** Aborts when the engine stops the drive or the build is cancelled. */
@@ -327,14 +356,50 @@ export class BuildContext {
    * Starts an agent in `seat` for one task, on the seat's placement, and
    * returns its answer. The call cache returns a finished call's answer
    * without calling again, which is how a restarted build skips the calls
-   * it already made. The agent reaches the team chat with a token of its
-   * own, which ends with the call.
+   * it already made. The agent's session goes into the session registry,
+   * and the seat takes no message turn while the call runs.
    */
-  async callSeat(input: SeatCall): Promise<AgentOutcome<Record<string, unknown>>> {
+  callSeat(input: SeatCall): Promise<AgentOutcome<Record<string, unknown>>> {
     const role = this.role(input.seat);
-    const placement = this.seats.place(input.seat, input.placement);
-    const writes = role.permission.access === "write";
     const packs = input.specialties ?? [];
+    return this.sessions.run(input.seat, async () => {
+      const placement = this.seats.place(input.seat, input.placement);
+      const outcome = await this.callTurn({
+        seat: input.seat,
+        taskId: input.task.id,
+        key: input.key,
+        step: input.step,
+        prompt: rolePrompt(role, { ...input.task, specialties: packs }),
+        placement,
+        specialties: packs,
+        output: {
+          schema: RoleAnswerSchema,
+          json: (roleAnswerSchema(role) as Record<string, unknown> | null) ?? { type: "object" },
+        },
+      });
+      await this.sessions.started({
+        seat: input.seat,
+        taskIds: input.taskIds ?? [input.task.id],
+        task: input.task,
+        specialties: packs.map((p) => p.name),
+        step: input.step,
+        key: input.key,
+        placement,
+        outcome,
+      });
+      return outcome;
+    });
+  }
+
+  /**
+   * Runs one turn of an agent in a seat on `placement`, and returns its
+   * answer. The agent reaches the team chat with a token of its own, which
+   * ends with the turn. Callers that share a seat queue through
+   * `sessions.run()`.
+   */
+  async callTurn(input: TurnCall): Promise<AgentOutcome<Record<string, unknown>>> {
+    const role = this.role(input.seat);
+    const writes = role.permission.access === "write";
     const spec = placeCall(
       specialtyCall(
         {
@@ -342,28 +407,24 @@ export class BuildContext {
           role: agentRoleFor(role),
           method: writes ? "fix" : "review",
           request: {
-            prompt: rolePrompt(role, { ...input.task, specialties: packs }),
+            prompt: input.prompt,
             repoPath: this.worktree.path,
             toolPolicy: writes ? "write" : "read-only",
             scratchDir: this.store.scratchDir,
             timeoutMs: role.turnTimeoutMinutes * 60_000,
-            output: {
-              schema: RoleAnswerSchema,
-              json: (roleAnswerSchema(role) as Record<string, unknown> | null) ?? {
-                type: "object",
-              },
-            },
+            output: input.output,
+            ...(input.sessionId !== undefined ? { sessionId: input.sessionId } : {}),
           },
           groupId: null,
           estimateTokens: SEAT_ESTIMATE_TOKENS,
           seat: input.seat,
           step: input.step,
         },
-        packs,
+        input.specialties,
       ),
-      placement,
+      input.placement,
     );
-    const pass = this.team?.admit({ seat: input.seat, taskId: input.task.id });
+    const pass = this.team?.admit({ seat: input.seat, taskId: input.taskId });
     if (pass) spec.request.team = pass.attachment;
     try {
       return await this.calls.call<Record<string, unknown>>(spec);
