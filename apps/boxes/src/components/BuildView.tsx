@@ -88,10 +88,12 @@ function BuildControls({ build }: { build: BuildSummary }) {
     };
   }, []);
   const { status } = build;
+  const deleted = build.deletedAt !== undefined;
   const canPause = status === "running";
-  const canResume = status === "paused" || status === "cancelled";
+  const canResume = !deleted && (status === "paused" || status === "cancelled");
   const canCancel = status === "running" || status === "paused" || status === "waiting_escalation";
-  const canDelete = status === "finished" || status === "failed" || status === "cancelled";
+  const canDelete =
+    !deleted && (status === "finished" || status === "failed" || status === "cancelled");
 
   const send = async (action: BuildAction) => {
     if (busy) return;
@@ -150,6 +152,9 @@ function BuildControls({ build }: { build: BuildSummary }) {
         <Button disabled={busy} onClick={() => void send("delete")}>
           Delete build
         </Button>
+      ) : null}
+      {deleted ? (
+        <span className="bx-dim">The owner deleted this build's branch and worktree.</span>
       ) : null}
       {error ? (
         <span className="bx-dim" role="alert">

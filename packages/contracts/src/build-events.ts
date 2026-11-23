@@ -79,6 +79,11 @@ export const BuildSummarySchema = z.object({
    * or when the plan has none.
    */
   usageEstimate: z.object({ low: CountSchema, high: CountSchema }).strict().optional(),
+  /**
+   * When the owner deleted the build's branch and worktree. A deleted build
+   * refuses every request. Absent while the build isn't deleted.
+   */
+  deletedAt: IsoDateTimeSchema.optional(),
   createdAt: IsoDateTimeSchema,
   updatedAt: IsoDateTimeSchema,
 });

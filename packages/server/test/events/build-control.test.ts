@@ -2,7 +2,7 @@
 // build that the stop paused, through the engine that runs it.
 import type { AioEvent, BuildState, BuildSummary } from "@aio/contracts";
 import { afterEach, describe, expect, it } from "vitest";
-import { BoxBuildLink } from "../../src/events/build-control.js";
+import { BoxBuildLink, buildSummaryOf } from "../../src/events/build-control.js";
 import { ApiError } from "../../src/api/errors.js";
 import { FakeEngine, FakeEngines } from "../api/harness.js";
 
@@ -217,5 +217,13 @@ describe("the build requests", () => {
     } finally {
       await h.server.close();
     }
+  });
+});
+
+describe("a build's summary", () => {
+  it("carries the delete time of the build's state", () => {
+    const deleted = { ...stateOf(summary({}), "cancelled"), deletedAt: "2026-11-23T10:00:00.000Z" };
+    expect(buildSummaryOf(deleted)).toMatchObject({ deletedAt: "2026-11-23T10:00:00.000Z" });
+    expect(buildSummaryOf(stateOf(summary({}), "running"))).not.toHaveProperty("deletedAt");
   });
 });

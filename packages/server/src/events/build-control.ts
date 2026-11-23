@@ -35,6 +35,7 @@ export function buildSummaryOf(state: BuildState): BuildSummary {
     status: state.status,
     step: state.step,
     boxId: state.boxId,
+    ...(state.deletedAt ? { deletedAt: state.deletedAt } : {}),
     createdAt: state.createdAt,
     updatedAt: state.updatedAt,
   };

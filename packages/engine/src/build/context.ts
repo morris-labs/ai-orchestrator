@@ -161,7 +161,7 @@ export class BuildContext {
   /** Aborts the gate's commands when the engine stops; a new drive gets a new one. */
   private driveAbort = new AbortController();
   private writeChain: Promise<void> = Promise.resolve();
-  /** The status and step that the last `build.changed` showed. */
+  /** The status, step, and delete time that the last `build.changed` showed. */
   private announced: string | null = null;
 
   constructor(
@@ -276,9 +276,10 @@ export class BuildContext {
 
   /**
    * Saves the state, the call ledger, and the status file, then sends
-   * `build.changed` when the status or the step changed since the last one
-   * this context sent. The first save of a context always sends it, so the
-   * server knows the build before any of its agent or lease events.
+   * `build.changed` when the status, the step, or the delete time changed
+   * since the last one this context sent. The first save of a context
+   * always sends it, so the server knows the build before any of its agent
+   * or lease events.
    */
   async persist(): Promise<void> {
     this.state.updatedAt = this.now();
@@ -294,7 +295,7 @@ export class BuildContext {
       });
     });
     await write;
-    const shown = `${state.status}:${state.step}`;
+    const shown = `${state.status}:${state.step}:${state.deletedAt ?? ""}`;
     if (this.announced === shown) return;
     this.announced = shown;
     await this.emit({
@@ -308,6 +309,7 @@ export class BuildContext {
         status: state.status,
         step: state.step,
         ...(this.plan.usageEstimate ? { usageEstimate: this.plan.usageEstimate } : {}),
+        ...(state.deletedAt ? { deletedAt: state.deletedAt } : {}),
         createdAt: state.createdAt,
         updatedAt: state.updatedAt,
       },
