@@ -1,7 +1,7 @@
 // Escalations (#74): an escalation pauses only the task it names and the
 // tasks that depend on it, independent tasks go on, and a resolve request
 // resumes what it paused and records how it was resolved.
-import { mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { BuildPlanInput, Escalation } from "@aio/contracts";
 import { describe, expect, it } from "vitest";
@@ -170,7 +170,6 @@ describe("an escalation that pauses only what it affects", () => {
   });
 });
 
-
 describe("a resolution while other tasks run", () => {
   it("resumes the paused task after the running task, in the same drive's wake", async () => {
     const world = await buildWorld();
@@ -185,9 +184,13 @@ describe("a resolution while other tasks run", () => {
     });
 
     await world.start("checkout", threeTaskPlan());
-    const running = await world.waitFor("checkout", (s) => s.escalations.length === 1);
+    // T3 starts once T1 escalates, and its slow answer keeps the drive busy.
+    const running = await world.waitFor(
+      "checkout",
+      (s) => s.escalations.length === 1 && s.tasks.find((t) => t.id === "T3")?.status === "running",
+    );
     expect(running.status).toBe("running");
-    expect(running.tasks.find((t) => t.id === "T3")?.status).toBe("running");
+    expect(running.tasks.find((t) => t.id === "T1")?.status).toBe("failed");
 
     const resumed = await world.manager.resolve("checkout", { escalation: "E1", action: "retry" });
     expect(resumed.status).toBe("running");
@@ -227,7 +230,9 @@ describe("escalation levels", () => {
     world.script({
       claude: [{ match: "Task T1", output: REPORT, writeFiles: { "src/cart.mjs": CART_DONE } }],
     });
-    const plan = cartPlan({ secrets: [{ name: "SHOP_API_KEY", purpose: "Reads the price list." }] });
+    const plan = cartPlan({
+      secrets: [{ name: "SHOP_API_KEY", purpose: "Reads the price list." }],
+    });
 
     await world.start("cart-total", plan);
     const waiting = await world.settle("cart-total");
@@ -357,6 +362,23 @@ describe("resolutions", () => {
     expect(state.escalations[0]).toMatchObject({ status: "resolved", resolution: { by: "owner" } });
   });
 
+  it("resolves an escalation after an engine restart, and the build goes on", async () => {
+    const world = await buildWorld();
+    await capped(world);
+
+    await world.restart();
+    expect((await world.manager.get("cart-total"))?.status).toBe("waiting_escalation");
+    const resumed = await world.manager.resolve("cart-total", {
+      escalation: "E1",
+      action: "retry",
+    });
+    expect(resumed.status).toBe("running");
+    const state = await world.waitFor("cart-total", (s) => s.step === "review");
+
+    expect(state.tasks[0]).toMatchObject({ status: "done", attempts: 5 });
+    expect(state.escalations[0]).toMatchObject({ status: "resolved" });
+  });
+
   it("hands an escalation to the owner when the Project manager escalates it", async () => {
     const world = await buildWorld();
     await capped(world);
@@ -395,7 +417,9 @@ describe("resolutions", () => {
     const resolve = (request: Parameters<BuildWorld["manager"]["resolve"]>[1]) =>
       world.manager.resolve("cart-total", request);
 
-    await expect(resolve({ escalation: "E9", action: "retry" })).rejects.toThrow(/no escalation E9/);
+    await expect(resolve({ escalation: "E9", action: "retry" })).rejects.toThrow(
+      /no escalation E9/,
+    );
     await expect(resolve({ escalation: "E1", action: "clarify" })).rejects.toThrow(/needs note/);
     await expect(
       resolve({ escalation: "E1", action: "decide", decision: { option: "resume" } }),
@@ -404,7 +428,9 @@ describe("resolutions", () => {
       /no task T9/,
     );
     await resolve({ escalation: "E1", action: "retry" });
-    await expect(resolve({ escalation: "E1", action: "retry" })).rejects.toThrow(/resolved already/);
+    await expect(resolve({ escalation: "E1", action: "retry" })).rejects.toThrow(
+      /resolved already/,
+    );
   });
 
   it("runs the tasks in a new order after a reorder, and refuses one that breaks a dependency", async () => {
@@ -420,7 +446,10 @@ describe("resolutions", () => {
       ],
     });
     const plan = threeTaskPlan();
-    plan.tasks = [...plan.tasks.slice(0, 2), { ...task("T3", "Label", "label"), dependsOn: ["T1"] }];
+    plan.tasks = [
+      ...plan.tasks.slice(0, 2),
+      { ...task("T3", "Label", "label"), dependsOn: ["T1"] },
+    ];
 
     await world.start("checkout", plan);
     const waiting = await world.settle("checkout");
@@ -446,5 +475,125 @@ describe("resolutions", () => {
       .map((c) => taskOf(c.prompt))
       .filter((t) => t !== "T1");
     expect(order).toEqual(["T3", "T2"]);
+  });
+});
+
+describe("resolutions for each step", () => {
+  it("resumes an oscillating task with a clarification while an independent task finishes", async () => {
+    const world = await buildWorld();
+    addModules(world);
+    const broken = { "src/discount.mjs": DISCOUNT_DONE, "src/cart.mjs": CART_WRONG };
+    world.script({
+      claude: [
+        { match: "You are the Debugger", output: DIAGNOSIS },
+        answer("T1", { "src/cart.mjs": CART_DONE }),
+        {
+          ...answer("T2", { "src/discount.mjs": DISCOUNT_DONE, "src/cart.mjs": CART_DONE }),
+          match: "attempt 3 of 6",
+        },
+        answer("T2", broken),
+        answer("T3", { "src/label.mjs": LABEL_DONE }),
+      ],
+    });
+    const plan = threeTaskPlan();
+    plan.tasks = plan.tasks.map((t) =>
+      t.id === "T2" ? { ...t, ownedFiles: ["src/discount.mjs", "src/cart.mjs"] } : t,
+    );
+
+    await world.start("checkout", plan);
+    const waiting = await world.settle("checkout");
+
+    expect(waiting.tasks.map((t) => [t.id, t.status, t.attempts])).toEqual([
+      ["T1", "done", 1],
+      ["T2", "failed", 2],
+      ["T3", "done", 1],
+    ]);
+    expect(waiting.escalations).toEqual([
+      expect.objectContaining({ kind: "oscillation", level: "project_manager", tasks: ["T2"] }),
+    ]);
+
+    await world.manager.resolve("checkout", {
+      escalation: "E1",
+      action: "clarify",
+      note: "Leave total() alone; the discount builds on it.",
+    });
+    const state = await world.waitFor("checkout", (s) => s.step === "review");
+
+    expect(state.tasks.map((t) => [t.id, t.status, t.attempts])).toEqual([
+      ["T1", "done", 1],
+      ["T2", "done", 3],
+      ["T3", "done", 1],
+    ]);
+    const retry = world.calls().find((c) => c.prompt.includes("attempt 3 of 6"));
+    expect(retry?.prompt).toContain("Leave total() alone; the discount builds on it.");
+  });
+
+  it("checks the commands again after a preflight escalation is retried", async () => {
+    const world = await buildWorld();
+    world.script({
+      claude: [{ match: "Task T1", output: REPORT, writeFiles: { "src/cart.mjs": CART_DONE } }],
+    });
+    const plan = cartPlan();
+    plan.commands = { ...plan.commands, lint: [{ command: "./check.sh" }] };
+
+    await world.start("cart-total", plan);
+    const waiting = await world.settle("cart-total");
+    expect(waiting).toMatchObject({ status: "waiting_escalation", step: "preflight" });
+    expect(waiting.escalations[0]).toMatchObject({ kind: "preflight", tasks: [] });
+
+    // The Project manager adds the missing script to the build branch.
+    const script = join(waiting.worktree, "check.sh");
+    writeFileSync(script, "#!/bin/sh\nexit 0\n");
+    chmodSync(script, 0o755);
+    world.git(waiting.worktree, "add", "check.sh");
+    world.git(waiting.worktree, "commit", "-q", "-m", "build: add the lint check");
+    await world.manager.resolve("cart-total", { escalation: "E1", action: "retry" });
+    const state = await world.waitFor("cart-total", (s) => s.step === "review");
+
+    expect(state.tasks[0]).toMatchObject({ status: "done" });
+    expect(state.escalations[0]).toMatchObject({ status: "resolved" });
+  });
+
+  it("pauses only the task whose specialty can't be loaded, and loads it again on a retry", async () => {
+    const world = await buildWorld();
+    addModules(world);
+    const pack = join(world.root, ".aio", "team", "specialties", "labels.md");
+    mkdirSync(dirname(pack), { recursive: true });
+    writeFileSync(pack, "Prefix every label with its kind.\n");
+    world.script({
+      claude: [
+        { ...answer("T1", { "src/cart.mjs": CART_DONE }), delayMs: 300 },
+        answer("T2", { "src/discount.mjs": DISCOUNT_DONE }),
+        answer("T3", { "src/label.mjs": LABEL_DONE }),
+      ],
+    });
+    const plan = threeTaskPlan();
+    plan.tasks = plan.tasks.map((t) => (t.id === "T3" ? { ...t, specialties: ["labels"] } : t));
+
+    await world.start("checkout", plan);
+    // The pack loses its guidance after the plan check, before T3's call.
+    writeFileSync(pack, "");
+    const waiting = await world.settle("checkout");
+
+    expect(waiting.tasks.map((t) => [t.id, t.status])).toEqual([
+      ["T1", "done"],
+      ["T2", "done"],
+      ["T3", "failed"],
+    ]);
+    expect(waiting.escalations).toEqual([
+      expect.objectContaining({ kind: "specialty", taskId: "T3", tasks: ["T3"] }),
+    ]);
+
+    writeFileSync(pack, "Prefix every label with its kind.\n");
+    await world.manager.resolve("checkout", { escalation: "E1", action: "retry" });
+    const state = await world.waitFor("checkout", (s) => s.step === "review");
+
+    expect(state.tasks.map((t) => [t.id, t.status, t.attempts])).toEqual([
+      ["T1", "done", 1],
+      ["T2", "done", 1],
+      ["T3", "done", 1],
+    ]);
+    const labelled = world.calls().filter((c) => taskOf(c.prompt) === "T3");
+    expect(labelled.at(-1)?.prompt).toContain("Prefix every label with its kind.");
   });
 });
