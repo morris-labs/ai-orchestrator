@@ -489,6 +489,9 @@ export class RunController {
    */
   async retry(options: RunRetry = {}): Promise<RunState> {
     const ctx = this.ctx;
+    // The run shows `failed` before its driver stops, and a caller that saw
+    // it failed can retry.
+    if (this.active && ctx.state.status === "failed") await this.settled();
     const status = ctx.state.status;
     if (status === "cancelled") throw new InvalidStateError("A cancelled run is final.");
     if (status !== "failed" || this.active || this.retrying) {

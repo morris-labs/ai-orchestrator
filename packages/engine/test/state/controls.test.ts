@@ -380,6 +380,48 @@ describe("run controls", () => {
     expect(state).toMatchObject({ status: "finished", stopReason: "clean" });
   });
 
+  it("retries a run that a caller sees failed while its driver still winds down", async () => {
+    const repo = buildSampleRepo();
+    const scenario = new Scenario();
+    const adapters = scenario.adapters();
+    const codex = adapters.codex as VendorAdapter;
+    let failures = 2;
+    adapters.codex = {
+      ...codex,
+      vendor: "codex",
+      review: codex.review.bind(codex),
+      continueReview: codex.continueReview.bind(codex),
+      verify: codex.verify.bind(codex),
+      verifyBatch: codex.verifyBatch.bind(codex),
+      fix: codex.fix.bind(codex),
+      sweep: codex.sweep.bind(codex),
+      cluster: codex.cluster.bind(codex),
+      detectLimit: codex.detectLimit.bind(codex),
+      confirm: (req) =>
+        failures-- > 0 ? Promise.reject(new Error("CLI crashed")) : codex.confirm(req),
+    };
+    const { deps, events } = setup(scenario, undefined, adapters);
+    let run: RunController | null = null;
+    let retried: Promise<unknown> | null = null;
+    // A caller that polls the run's state can see it failed before the driver stops.
+    const emit = events.emit.bind(events);
+    events.emit = (draft) => {
+      const event = emit(draft);
+      if (draft.type === "run.changed" && draft.run.status === "failed" && !retried) {
+        retried = run!.retry({});
+        retried.catch(() => undefined);
+      }
+      return event;
+    };
+    run = await create(repo, deps);
+    await run.start();
+    await run.settled();
+    expect(retried).not.toBeNull();
+
+    await expect(retried).resolves.toBeDefined();
+    expect(await run.settled()).toMatchObject({ status: "finished", stopReason: "clean" });
+  });
+
   it("finishes at once, without reviewer calls, when the range has no changes", async () => {
     const repo = buildSampleRepo();
     const scenario = new Scenario();
