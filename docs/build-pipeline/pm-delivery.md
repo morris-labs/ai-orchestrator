@@ -126,7 +126,11 @@ the server marks the item delivered without typing it again.
 The server tries again when a box starts, when the server starts, and once
 a minute for items that wait. Usage watcher alerts take the same path, and
 an alert for a stopped box waits in the server's memory until the box
-starts.
+starts. An alert, a hold or release edits message, and a `boxes.message`
+request have no marker, and their text can repeat an earlier message, so
+the server types each one every time. The transcript confirms such a
+message when it holds one more copy of the text than before the server
+typed it.
 
 The `boxes.message` request, and the messages that the server sends when a
 review run holds or releases a box's edits, use the same checks: a Claude
