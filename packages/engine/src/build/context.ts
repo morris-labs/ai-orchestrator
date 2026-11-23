@@ -202,6 +202,7 @@ export class BuildContext {
         id: state.id,
         slug: state.slug,
         projectId: state.projectId,
+        boxId: state.boxId,
         container: state.container,
         status: state.status,
         step: state.step,

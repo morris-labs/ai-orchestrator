@@ -39,7 +39,13 @@ describe("a one-task build", () => {
     const events = world.events.events;
     expect(events[0]).toMatchObject({
       type: "build.changed",
-      build: { id: started.id, slug: "cart-total", projectId: PROJECT_ID, status: "running" },
+      build: {
+        id: started.id,
+        slug: "cart-total",
+        projectId: PROJECT_ID,
+        boxId: null,
+        status: "running",
+      },
     });
     expect(world.events.ofType("agent.started")).toEqual([
       expect.objectContaining({
