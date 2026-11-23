@@ -8,8 +8,9 @@
 //
 // When tests first locked the tests, the gate also checks the test lock.
 //
-// Later milestones add checks here: the tests that earlier tasks made pass,
-// and the failure fingerprint.
+// Later milestones add checks here: the tests that earlier tasks made pass.
+// The tasks step reads a failed gate's failure fingerprint (see
+// `fingerprint.ts`).
 import type { BuildCommands, PolicyCommand } from "@aio/contracts";
 import type { CommandRunner } from "../core.js";
 import { runGateCommand, type GateCommandResult, type GateOptions } from "../gate/gate.js";

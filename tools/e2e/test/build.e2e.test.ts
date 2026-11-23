@@ -249,6 +249,20 @@ describe("a one-task build", () => {
     expect(lock.files.map((f) => f.path)).toContain("tests/test_tax.py");
   });
 
+  it("gates the build's review run with the plan's commands", () => {
+    // The project has no policy file, so these come only from the plan.
+    const { runId } = JSON.parse(
+      readFileSync(path.join(buildDir("sales-tax"), "review", "run.json"), "utf8"),
+    ) as { runId: string };
+    const preflight = JSON.parse(
+      readFileSync(path.join(stack.repo, ".aio", "runs", runId, "preflight.json"), "utf8"),
+    ) as { baseline: { commands: Array<{ kind: string; command: string }> } };
+    expect(preflight.baseline.commands.map(({ kind, command }) => ({ kind, command }))).toEqual([
+      { kind: "test", command: "python3 -B -m unittest discover -s tests -q" },
+      { kind: "lint", command: "python3 -B lint.py" },
+    ]);
+  });
+
   it("writes a status file that names the step and the task", () => {
     const text = readFileSync(path.join(buildDir("sales-tax"), "STATUS.md"), "utf8");
     expect(text).toContain("Status: paused");

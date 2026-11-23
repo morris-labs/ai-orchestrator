@@ -72,6 +72,11 @@ async function startRun(ctx: BuildContext, runs: ReviewRuns, runId: string): Pro
       build: {
         buildId: ctx.state.id,
         fixer: { placement: { ...placement, fresh: true }, context: reviewTaskContext(ctx) },
+        gate: {
+          tests: ctx.plan.commands.test,
+          typecheck: ctx.plan.commands.typecheck,
+          lint: ctx.plan.commands.lint,
+        },
       },
     }),
   );
