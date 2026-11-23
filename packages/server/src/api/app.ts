@@ -46,6 +46,7 @@ import { installService, serviceInstalled } from "../systemd/service.js";
 import { DockerExecBackend, type ExecBackend } from "../terminals/exec.js";
 import { UsageService } from "../usage/usage-service.js";
 import { UsageStore } from "../usage/usage-store.js";
+import { UsageWatcher, projectManagerBoxes, projectManagerMessage } from "../usage/watcher.js";
 
 export interface AppOptions {
   home: string;
@@ -211,6 +212,21 @@ export async function startApp(options: AppOptions): Promise<App> {
       void core.boxes.message(boxId, RELEASE_EDITS_MESSAGE).catch((err: unknown) => {
         log(`Telling ${boxId} that the run ended failed: ${(err as Error).message}`);
       });
+    },
+  });
+  const usageWatcher = new UsageWatcher({
+    store: usageStore,
+    settings,
+    build: (buildId) => buildMirror.get(buildId),
+    alerted: (buildId) => notifier.hasBuildAlert(buildId),
+    alert: (alert) => {
+      notifier.usageAlert(alert);
+      const text = projectManagerMessage(alert);
+      for (const boxId of projectManagerBoxes(alert, buildMirror.list())) {
+        void core.boxes.message(boxId, text).catch((err: unknown) => {
+          log(`Sending a usage alert to ${boxId} failed: ${(err as Error).message}`);
+        });
+      }
     },
   });
   let apiServer: ApiServer | null = null;
@@ -461,6 +477,8 @@ export async function startApp(options: AppOptions): Promise<App> {
     buildMirror.ingest(event);
     boxBuilds.ingest(event);
     usage.ingest(event);
+    // After the usage service, which records the sample or settlement it reads.
+    usageWatcher.ingest(event);
     vendorHealth.ingest(event);
     notifier.ingest(event);
     if (event.type === "box.changed") syncTunnels();

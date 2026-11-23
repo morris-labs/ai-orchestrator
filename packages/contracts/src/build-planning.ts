@@ -48,6 +48,27 @@ export const FrozenPlanSchema = z.object({
 });
 export type FrozenPlan = z.infer<typeof FrozenPlanSchema>;
 
+/** A meeting's ID in its build: `meeting-1`, `meeting-2`, and so on. */
+export const MeetingIdSchema = z.string().regex(/^meeting-[1-9][0-9]*$/);
+export type MeetingId = z.infer<typeof MeetingIdSchema>;
+
+/**
+ * Where a meeting stands: `running`, `agreed` when no major objection
+ * remains, `round_cap` when it stopped at its round cap with objections
+ * open, or `failed`.
+ */
+export const MeetingStatusSchema = z.enum(["running", "agreed", "round_cap", "failed"]);
+export type MeetingStatus = z.infer<typeof MeetingStatusSchema>;
+
+/** A meeting in the planning record; its file holds the turns. */
+export const PlanningMeetingSchema = z.object({
+  id: MeetingIdSchema,
+  /** The meeting's file, relative to the build directory. */
+  file: z.string().min(1),
+  status: MeetingStatusSchema,
+});
+export type PlanningMeeting = z.infer<typeof PlanningMeetingSchema>;
+
 /** A build's planning record, in `.aio/builds/SLUG/planning.json`. */
 export const BuildPlanningSchema = z.object({
   version: z.literal(1),
@@ -65,13 +86,15 @@ export const BuildPlanningSchema = z.object({
   calls: z.array(PlanningCallSchema),
   /** The frozen versions of the build plan, oldest first. */
   frozen: z.array(FrozenPlanSchema),
+  /** The planning meetings, oldest first. */
+  meetings: z.array(PlanningMeetingSchema).default([]),
   createdAt: IsoDateTimeSchema,
   updatedAt: IsoDateTimeSchema,
 });
 export type BuildPlanning = z.infer<typeof BuildPlanningSchema>;
 
 /** Who asks: every planning request names its project and, from a box session, its box. */
-const scope = {
+export const PlanningScope = {
   projectId: z.string().min(1),
   boxId: z.string().min(1).nullable(),
   slug: BuildSlugSchema,
@@ -80,7 +103,7 @@ const scope = {
 /** A request to call a planning seat. The answer waits for the seat's turn to end. */
 export const BuildSeatRequestSchema = z
   .object({
-    ...scope,
+    ...PlanningScope,
     /** The seat to call, such as `analyst` or `architect`. Its role must be read-only. */
     seat: RoleNameSchema,
     /** What the Project manager asks of the seat: the owner's request, or the changes to make. */
@@ -107,7 +130,7 @@ export type BuildSeatAnswer = z.infer<typeof BuildSeatAnswerSchema>;
  */
 export const BuildFreezeRequestSchema = z
   .object({
-    ...scope,
+    ...PlanningScope,
     plan: z.record(z.unknown()).optional(),
     push: z.boolean().optional(),
   })

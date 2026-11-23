@@ -1,7 +1,7 @@
 // The build socket: a Unix socket inside the project container that accepts
-// only build requests (planning seat calls, the freeze, start, status,
-// pause, resume, and cancel) and needs no engine token. The `aio-build`
-// command in a box's session talks to it; see
+// only build requests (planning seat calls, meetings, the freeze, start,
+// status, pause, resume, and cancel) and needs no engine token. The
+// `aio-build` command in a box's session talks to it; see
 // `@aio/contracts` `build-socket.ts` for the protocol.
 //
 // The socket lives on the container's own file system, so only processes in
@@ -14,6 +14,8 @@ import {
   BUILD_SOCKET_MAX_BODY_BYTES,
   BUILD_SOCKET_ROUTES,
   BuildSocketFreezeSchema,
+  BuildSocketMeetSchema,
+  BuildSocketMeetingPostSchema,
   BuildSocketPlanSchema,
   BuildSocketSlugSchema,
   BuildSocketStartSchema,
@@ -35,7 +37,10 @@ export interface BuildSocketOptions {
   /** The socket path. The engine makes its folder, mode 0700, when it's missing. */
   path: string;
   /** The requests the socket serves. */
-  builds: Pick<BuildManager, "plan" | "freeze" | "start" | "get" | "pause" | "resume" | "cancel">;
+  builds: Pick<
+    BuildManager,
+    "plan" | "freeze" | "meet" | "meetingPost" | "start" | "get" | "pause" | "resume" | "cancel"
+  >;
   /** The engine's project, or `null` when the server didn't name one. */
   projectId: string | null;
   log: Logger;
@@ -154,6 +159,16 @@ export async function serveBuildSocket(options: BuildSocketOptions): Promise<Bui
       const request = BuildSocketFreezeSchema.parse(raw);
       ownProject(request);
       return builds.freeze(request);
+    }
+    if (kind === "meet") {
+      const request = BuildSocketMeetSchema.parse(raw);
+      ownProject(request);
+      return builds.meet(request);
+    }
+    if (kind === "meeting-post") {
+      const request = BuildSocketMeetingPostSchema.parse(raw);
+      ownProject(request);
+      return builds.meetingPost(request);
     }
     if (kind === "start") {
       const request = BuildSocketStartSchema.parse(raw);

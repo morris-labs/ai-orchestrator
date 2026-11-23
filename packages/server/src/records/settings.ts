@@ -13,6 +13,7 @@ import {
   mountProblem,
   SecretRefSchema,
   parseConfig,
+  patchUsageWatch,
   type GlobalSettings,
   type GlobalSettingsPatch,
   type ModelCache,
@@ -179,6 +180,11 @@ export class SettingsService {
       if (v === undefined) continue;
       if (v === null) delete next[key];
       else (next as Record<string, unknown>)[key] = v;
+    }
+    if (p.usageWatch !== undefined) {
+      const watch = patchUsageWatch(next.usageWatch, p.usageWatch);
+      if (watch === undefined) delete next.usageWatch;
+      else next.usageWatch = watch;
     }
     if (p.role !== undefined) next.role = p.role;
     if (p.accountsMode !== undefined) next.accountsMode = p.accountsMode;

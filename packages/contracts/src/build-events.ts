@@ -73,6 +73,12 @@ export const BuildSummarySchema = z.object({
    * does. An event that leaves it out reads as `null`.
    */
   boxId: z.string().min(1).nullable().default(null),
+  /**
+   * The frozen plan's usage estimate in tokens, which the usage watcher
+   * compares the build's usage against. Absent before the plan is frozen,
+   * or when the plan has none.
+   */
+  usageEstimate: z.object({ low: CountSchema, high: CountSchema }).strict().optional(),
   createdAt: IsoDateTimeSchema,
   updatedAt: IsoDateTimeSchema,
 });

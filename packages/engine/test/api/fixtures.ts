@@ -3,6 +3,7 @@ import {
   BuildPlanSchema,
   EngineRunCreateSchema,
   type BuildFreezeAnswer,
+  type BuildMeetingAnswer,
   type BuildPlanning,
   type BuildSeatAnswer,
   type BuildState,
@@ -184,6 +185,7 @@ export const planningRecord: BuildPlanning = {
     },
   ],
   frozen: [],
+  meetings: [],
   createdAt: "2026-11-23T09:00:00.000Z",
   updatedAt: "2026-11-23T09:05:00.000Z",
 };
@@ -234,12 +236,58 @@ export const freezeAnswer: BuildFreezeAnswer = {
 };
 
 /** A build manager whose every method is a `vi.fn` returning sample data. */
+/** The answer to a meeting that ended with a major objection open. */
+export const meetingAnswer: BuildMeetingAnswer = {
+  planning: {
+    ...planningRecord,
+    meetings: [{ id: "meeting-1", file: "meetings/meeting-1.json", status: "round_cap" }],
+  },
+  meeting: {
+    version: 1,
+    id: "meeting-1",
+    proposer: "architect",
+    members: ["critic"],
+    brief: "Attack the design.",
+    roundCap: 1,
+    status: "round_cap",
+    rounds: [
+      {
+        n: 1,
+        proposal: "planning/architect-1.json",
+        turns: [
+          {
+            seat: "critic",
+            status: "done",
+            files: ["planning/critic-1.json"],
+            reply: {
+              position: "object",
+              summary: "The design misses the empty cart.",
+              points: [
+                { severity: "major", point: "No task covers an empty cart.", reason: "AC1." },
+              ],
+            },
+            posts: [],
+          },
+        ],
+      },
+    ],
+    posts: [],
+    open: [
+      { seat: "critic", severity: "major", point: "No task covers an empty cart.", reason: "AC1." },
+    ],
+    startedAt: "2026-11-23T09:06:00.000Z",
+    finishedAt: "2026-11-23T09:08:00.000Z",
+  },
+};
+
 export function fakeBuildManager(): {
   [K in keyof BuildManager]-?: ReturnType<typeof vi.fn>;
 } & BuildManager {
   const m = {
     plan: vi.fn(async () => seatAnswer),
     freeze: vi.fn(async () => freezeAnswer),
+    meet: vi.fn(async () => meetingAnswer),
+    meetingPost: vi.fn(async () => meetingAnswer),
     start: vi.fn(async () => buildState),
     get: vi.fn(async (slug: string) => (slug === buildState.slug ? buildState : null)),
     pause: vi.fn(async () => ({ ...buildState, status: "paused" })),

@@ -1,7 +1,7 @@
 import appPackage from "../package.json";
 // The app shell: navigation, the status line, and the routed screens.
 import { LOCAL_MACHINE_ID } from "@aio/contracts";
-import { UpgradeStatus } from "@aio/ui";
+import { UpgradeStatus, UsageAlerts } from "@aio/ui";
 import { Dashboard, dashboardCss, themeCss } from "@aio/ui/dashboard";
 import { useEffect, useState } from "react";
 import {
@@ -210,6 +210,7 @@ function AppShell() {
               else window.location.reload();
             }}
           />
+          <UsageAlerts />
           {screen}
         </main>
       </div>

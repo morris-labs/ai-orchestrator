@@ -6,7 +6,15 @@ import { GrantingBroker, type EventDraft } from "../../src/core.js";
 import { DecisionNeeded } from "../../src/calls/index.js";
 import { PlacementError, SeatPlacements, placeCall } from "../../src/build/placements/index.js";
 import { buildSampleRepo } from "../state/scenario.js";
-import { answering, gated, limited, makeCaller, spec, type Answer } from "../calls/caller.js";
+import {
+  answering,
+  gated,
+  limited,
+  limitedUntil,
+  makeCaller,
+  spec,
+  type Answer,
+} from "../calls/caller.js";
 
 const roles = new Map<string, { placement: Placement }>([
   ["developer", { placement: { vendor: "claude", tier: "large", effort: "medium" } }],
@@ -119,6 +127,24 @@ describe("placed agent calls", () => {
       calls.call<Answer>(placeCall(spec(repo), seats.place("developer"))),
     ).rejects.toBeInstanceOf(DecisionNeeded);
     expect(codex.calls).toBe(0);
+  });
+
+  it("waits for the reset and calls the same vendor again when a build call hits a limit", async () => {
+    const repo = buildSampleRepo();
+    const seats = new SeatPlacements(roles, {});
+    const resetAt = "2026-10-28T11:00:00.000Z";
+    const claude = limitedUntil("claude", resetAt);
+    const codex = answering("codex");
+    const { calls, broker, statuses } = makeCaller({ claude, codex });
+
+    const outcome = await calls.call<Answer>(placeCall(spec(repo), seats.place("developer")));
+
+    expect(outcome.vendor).toBe("claude");
+    expect(claude.calls).toBe(2);
+    expect(codex.calls).toBe(0);
+    expect(broker.requests.map((r) => r.vendor)).toEqual(["claude", "claude"]);
+    expect(statuses).toEqual([`paused until ${resetAt}`, "running"]);
+    expect(calls.clock.now()).toBeGreaterThanOrEqual(Date.parse(resetAt));
   });
 
   it("refuses a server grant on the other vendor with the single-vendor setting", async () => {
