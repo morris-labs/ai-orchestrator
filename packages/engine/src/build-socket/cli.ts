@@ -18,6 +18,7 @@ import {
   type BuildFreezeAnswer,
   type BuildMeetingAnswer,
   type BuildIssueInput,
+  type BuildPlanning,
   type BuildSeatAnswer,
   type BuildSocketRequestKind,
   type BuildState,
@@ -85,7 +86,8 @@ Requests:
             tag, or commit the build branch starts from; the default is
             HEAD.
   status    Print the state of build SLUG: its status, step, tasks, and
-            escalations.
+            escalations. For a build in planning, print its planning
+            record: the seat calls, the meetings, and the frozen plan.
   pause     Pause build SLUG. The engine finishes the agent call in
             progress first.
   resume    Resume build SLUG after a pause or a cancel.
@@ -594,6 +596,35 @@ function buildFile(repoPath: string, slug: string, file: string): string {
   return posix.join(repoPath, BUILDS_DIR, slug, file);
 }
 
+/** The planning record of a build in planning as text for a person to read. */
+export function formatPlanning(planning: BuildPlanning): string {
+  const lines = [`Build ${planning.slug}: planning`];
+  if (planning.boxId) lines.push(`Box: ${planning.boxId}`);
+  if (planning.issue) lines.push(`Issue: ${planning.issue.url}`);
+  lines.push("Seat calls:");
+  if (planning.calls.length === 0) lines.push("  none");
+  for (const c of planning.calls) {
+    lines.push(
+      `  ${c.seat} ${c.n}: ${c.status} (${buildFile(planning.repoPath, planning.slug, c.file)})`,
+    );
+  }
+  for (const m of planning.meetings) {
+    lines.push(
+      `Meeting ${m.id}: ${m.status} (${buildFile(planning.repoPath, planning.slug, m.file)})`,
+    );
+  }
+  const latest = planning.frozen.at(-1);
+  lines.push(
+    latest
+      ? `Frozen plan: version ${latest.version} (${buildFile(planning.repoPath, planning.slug, latest.file)})`
+      : "Frozen plan: none",
+    `Draft plan, once the spec and the design exist: ${buildFile(planning.repoPath, planning.slug, "planning/draft.json")}`,
+    `Status file: ${buildFile(planning.repoPath, planning.slug, "STATUS.md")}`,
+    "",
+  );
+  return lines.join("\n");
+}
+
 /** A seat's answer as text for a person to read. */
 export function formatSeatAnswer(answer: BuildSeatAnswer): string {
   const { planning, call } = answer;
@@ -771,6 +802,13 @@ export async function buildMain(argv: readonly string[], io: BuildCliIo): Promis
     } else if (command.kind === "decisions") {
       const { decisions } = await client.send("decisions", body);
       io.stdout(command.json ? json(decisions) : formatDecisions(command.slug, decisions));
+    } else if (command.kind === "status") {
+      const answer = await client.send("status", body);
+      if ("planning" in answer) {
+        io.stdout(command.json ? json(answer.planning) : formatPlanning(answer.planning));
+      } else {
+        io.stdout(command.json ? json(answer.build) : formatBuild(answer.build));
+      }
     } else {
       const { build } = await client.send(command.kind, body);
       io.stdout(command.json ? json(build) : formatBuild(build));

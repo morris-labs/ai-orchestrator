@@ -361,6 +361,9 @@ export function fakeBuildManager(): {
     meetingPost: vi.fn(async () => meetingAnswer),
     start: vi.fn(async () => buildState),
     get: vi.fn(async (slug: string) => (slug === buildState.slug ? buildState : null)),
+    planning: vi.fn(async (slug: string) =>
+      slug === "in-planning" ? { ...planningRecord, slug } : null,
+    ),
     pause: vi.fn(async () => ({ ...buildState, status: "paused" })),
     resume: vi.fn(async () => buildState),
     resolve: vi.fn(async () => buildState),

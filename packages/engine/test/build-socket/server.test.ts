@@ -297,6 +297,26 @@ describe("the build socket", () => {
     expect(builds.meetingPost).not.toHaveBeenCalled();
   });
 
+  it("answers a status request for a build in planning with its planning record", async () => {
+    const { path } = await open();
+    const res = await send(path, "POST", BUILD_SOCKET_ROUTES.status, {
+      projectId: "proj-1",
+      boxId: null,
+      slug: "in-planning",
+    });
+    expect(res).toMatchObject({
+      status: 200,
+      body: { planning: { slug: "in-planning", calls: [{ seat: "analyst" }] } },
+    });
+    // Another project's planning stays out of reach.
+    const other = await send(path, "POST", BUILD_SOCKET_ROUTES.status, {
+      projectId: "proj-2",
+      boxId: null,
+      slug: "in-planning",
+    });
+    expect(other.status).toBe(404);
+  });
+
   it("answers not_found for a build the engine doesn't have", async () => {
     const { path } = await open();
     const res = await send(path, "POST", BUILD_SOCKET_ROUTES.status, {

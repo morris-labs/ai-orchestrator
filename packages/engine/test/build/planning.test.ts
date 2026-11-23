@@ -118,6 +118,21 @@ describe("planning a build", () => {
     expect(world.file(SLUG, "STATUS.md")).toMatch(/planning/i);
   });
 
+  it("reads the planning record of a build in planning, and none once it runs", async () => {
+    const world = await planningWorld();
+    expect(await world.manager.planning(SLUG)).toBeNull();
+    await plan(world);
+
+    expect(await world.manager.get(SLUG)).toBeNull();
+    expect(await world.manager.planning(SLUG)).toMatchObject({
+      slug: SLUG,
+      calls: [{ seat: "analyst" }, { seat: "architect" }],
+    });
+    await world.manager.freeze(freeze({ push: false }));
+    await world.manager.start({ projectId: PROJECT_ID, slug: SLUG });
+    expect(await world.manager.planning(SLUG)).toBeNull();
+  });
+
   it("runs the planning calls under leases that name the build, the seat, and the step", async () => {
     const world = await planningWorld();
     const { analyst } = await plan(world);

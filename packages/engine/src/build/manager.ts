@@ -21,6 +21,7 @@ import {
   type BuildMeetingRequestInput,
   type BuildPauseReason,
   type BuildPlan,
+  type BuildPlanning,
   type BuildSeatAnswer,
   type BuildSeatRequestInput,
   type BuildDecision,
@@ -93,6 +94,8 @@ export interface BuildManager {
    */
   start(request: BuildCreateInput): Promise<BuildState>;
   get(slug: string): Promise<BuildState | null>;
+  /** The planning record of a build that is still in planning, or `null` once it runs or without one. */
+  planning(slug: string): Promise<BuildPlanning | null>;
   /** Pauses a running build; `reason` `box` marks a pause for a box stop. */
   pause(slug: string, reason?: BuildPauseReason): Promise<BuildState>;
   /**
@@ -458,6 +461,12 @@ export class EngineBuildManager implements BuildManager {
   async get(slug: string): Promise<BuildState | null> {
     const build = await this.controller(slug);
     return build ? structuredClone(build.state) : null;
+  }
+
+  async planning(slug: string): Promise<BuildPlanning | null> {
+    if (this.loading.has(slug) || (await this.controller(slug))) return null;
+    const planner = await this.planner(slug);
+    return planner ? structuredClone(planner.record) : null;
   }
 
   async pause(slug: string, reason?: BuildPauseReason): Promise<BuildState> {
