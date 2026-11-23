@@ -190,7 +190,8 @@ export class BuildController {
         if ((await handler(ctx)) === "wait") return;
         const next = this.pipeline.steps[this.pipeline.steps.indexOf(step) + 1];
         if (!next) {
-          await ctx.setStatus("finished");
+          // The last step's note, such as where its digest is, stays.
+          await ctx.setStatus("finished", ctx.state.note);
           return;
         }
         await ctx.setStep(next);

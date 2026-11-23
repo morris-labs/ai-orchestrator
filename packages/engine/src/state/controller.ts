@@ -563,7 +563,7 @@ export class RunController {
   }
 
   /** Starts the post-push loop after a finished pre-push run. */
-  async push(options: { title?: string; draft?: boolean } = {}): Promise<RunState> {
+  async push(options: { title?: string; body?: string; draft?: boolean } = {}): Promise<RunState> {
     const ctx = this.ctx;
     if (ctx.state.request.readOnly) throw new InvalidStateError("A read-only run can't push.");
     if (!ctx.deps.github) throw new InvalidStateError("The post-push loop needs the gh client.");
@@ -583,7 +583,11 @@ export class RunController {
     }
     ctx.eng.phase = "post-push";
     ctx.eng.postPushStartRound = ctx.state.round;
-    ctx.eng.push = { title: options.title ?? null, draft: options.draft ?? false };
+    ctx.eng.push = {
+      title: options.title ?? null,
+      draft: options.draft ?? false,
+      ...(options.body ? { body: options.body } : {}),
+    };
     ctx.eng.roundOpen = false;
     ctx.state.decision = null;
     ctx.state.finishedAt = undefined;

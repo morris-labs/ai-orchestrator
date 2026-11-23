@@ -261,9 +261,10 @@ export const BuildPlanSchema = z
     /** Placement overrides by seat, over the role defaults and the single-vendor setting. */
     placements: z.record(RoleNameSchema, PlacementOverrideSchema).default({}),
     /**
-     * The owner's answer to whether the build can push its build branch and
-     * open its pull request: `true` or `false`, or `null` when nobody asked.
-     * A freeze needs it.
+     * The owner's push answer: `true` lets the build push its branch and open
+     * its pull request, and `false` keeps the branch local. `null` means
+     * nobody asked the owner yet, and the build stops at an escalation before
+     * the push. A freeze needs it.
      */
     push: z.boolean().nullable().default(null),
   })
@@ -387,6 +388,11 @@ export const EscalationKindSchema = z.enum([
    * in every round, or revised tests that fail it after the coverage check.
    */
   "tests_first",
+  /**
+   * The build can't become release ready: a criterion without a passing
+   * test, no recorded push answer, or a pull request whose checks don't pass.
+   */
+  "release_ready",
 ]);
 export type EscalationKind = z.infer<typeof EscalationKindSchema>;
 
