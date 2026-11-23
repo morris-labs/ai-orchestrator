@@ -460,4 +460,23 @@ export const events = [
       createdAt: T0,
     },
   },
+  {
+    ...ev(21),
+    type: "build.inbox",
+    buildId: BUILD,
+    slug: "cart-total",
+    boxId: "box-1",
+    item: {
+      id: "I1",
+      kind: "escalation",
+      ref: "E1",
+      summary: "Escalation E1 (attempt_cap, for the project manager): Task T1 failed 4 attempts.",
+      file: "escalations/E1.json",
+      path: "/work/shop/.aio/builds/cart-total/escalations/E1.json",
+      needsAnswer: true,
+      createdAt: T0,
+      deliveredAt: null,
+      answeredAt: null,
+    },
+  },
 ];
