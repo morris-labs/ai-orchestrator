@@ -54,6 +54,7 @@ import {
 } from "./seed.js";
 import { buildAccountInstructions, ensureAccountInstructions } from "./instructions.js";
 import { adoptTranscripts } from "./adopt.js";
+import { installPackagedSkills, type SkillInstallReport } from "./packaged-skills.js";
 import { BYPASS_ACCEPTED_KEY, preacceptClaudeAccount } from "./preaccept.js";
 import {
   RetentionError,
@@ -225,6 +226,18 @@ export class AccountService {
 
   private ensureInstructions(vendor: Platform, dir: string): void {
     ensureAccountInstructions(dir, vendor);
+  }
+
+  /**
+   * Installs the skills the server package ships, such as `aio-build`, into
+   * every Claude account folder. See `packaged-skills.ts`.
+   */
+  installPackagedSkills(): SkillInstallReport {
+    const dirs = this.options.repo
+      .list()
+      .filter((a) => a.vendor === "claude")
+      .map((a) => this.dirOf("claude", a.name));
+    return installPackagedSkills(dirs);
   }
 
   /** Resolve an account and prepare the same instructions for host and box starts. */
@@ -452,6 +465,7 @@ export class AccountService {
       linkProjectsToStore(dir, this.storeRoot());
       preacceptClaudeAccount(dir);
       this.keepTranscripts(dir);
+      installPackagedSkills([dir]);
     }
     if (c.vendor === "codex") {
       fs.writeFileSync(path.join(dir, "config.toml"), `${CODEX_STORE_SETTING}\n`, { mode: 0o600 });

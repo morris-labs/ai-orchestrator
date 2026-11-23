@@ -217,6 +217,24 @@ class NfpmConfigTest(unittest.TestCase):
             self.assertTrue(os.access(path, os.X_OK), f"{path} not executable")
 
 
+class ServerAssetsTest(unittest.TestCase):
+    def test_server_package_ships_its_skills(self):
+        # scripts/build-deb.sh stages the server with `pnpm deploy`, which
+        # copies only the package.json `files` entries. The server installs
+        # the skills in assets/skills/ into Claude accounts at start.
+        package = json.loads((ROOT / "packages/server/package.json").read_text())
+        self.assertIn("assets", package["files"])
+        skills = ROOT / "packages/server/assets/skills"
+        self.assertTrue((skills / "aio-build/SKILL.md").is_file())
+        for skill in skills.iterdir():
+            text = (skill / "SKILL.md").read_text()
+            front = re.match(r"^---\n(.*?)\n---\n", text, re.S)
+            self.assertIsNotNone(front, f"{skill.name}: SKILL.md has no front matter")
+            meta = yaml.safe_load(front.group(1))
+            self.assertEqual(meta["name"], skill.name)
+            self.assertTrue(meta.get("description"), f"{skill.name}: no description")
+
+
 class WorkflowTest(unittest.TestCase):
     def test_every_workflow_parses(self):
         files = sorted(WORKFLOWS.glob("*.yml"))
