@@ -1,5 +1,6 @@
 // The bridge from CLI adapters to the core's VendorAdapter.
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import {
   BridgedAdapter,
   METHOD_SCHEMAS,
@@ -45,6 +46,15 @@ describe("toCliRequest", () => {
     expect(req.outputSchema).toBe(ReviewOutputSchema);
     expect(req).not.toHaveProperty("addDirs");
     expect(req).not.toHaveProperty("model");
+  });
+
+  it("uses the caller's answer shape in place of the method's", () => {
+    const schema = z.object({ summary: z.string() });
+    const json = { type: "object", properties: { summary: { type: "string" } } };
+    const req = toCliRequest("fix", { ...base, output: { schema, json } });
+    expect(req.outputSchema).toBe(schema);
+    expect(req.jsonSchema).toBe(json);
+    expect(req).not.toHaveProperty("output");
   });
 });
 
