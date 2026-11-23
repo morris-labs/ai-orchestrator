@@ -4,7 +4,7 @@
 // worktree, so it can reset it and delete files in it without losing anyone
 // else's work.
 import { existsSync } from "node:fs";
-import { appendFile, mkdir, readFile, rm } from "node:fs/promises";
+import { appendFile, mkdir, readFile, rm, stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import type { CommandRunner } from "../core.js";
 import { Git } from "../range/git.js";
@@ -31,8 +31,14 @@ export class WorktreeConflict extends Error {
 /** The worktree at one moment: its `HEAD` and the blob of each path that differs from it. */
 export interface WorktreeSnapshot {
   head: string;
-  /** Each changed path's content as a Git blob ID, or `"none"` for a deleted path. */
+  /**
+   * Each changed path's content as a Git blob ID, or `"none"` for a deleted
+   * path. The snapshot writes each blob to the object store, so the
+   * content can come back.
+   */
   changed: Map<string, string>;
+  /** Each changed path's Git file mode, such as `100755` for an executable file. */
+  modes: Map<string, string>;
 }
 
 function nul(text: string): string[] {
@@ -153,8 +159,13 @@ export class BuildWorktree {
   async snapshot(): Promise<WorktreeSnapshot> {
     const head = await this.head();
     const changed = new Map<string, string>();
-    for (const path of await this.changedSince(head)) changed.set(path, await this.blobOf(path));
-    return { head, changed };
+    const modes = new Map<string, string>();
+    for (const path of await this.changedSince(head)) {
+      const blob = await this.blobOf(path, true);
+      changed.set(path, blob);
+      if (blob !== "none") modes.set(path, await this.modeOf(path));
+    }
+    return { head, changed, modes };
   }
 
   /**
@@ -186,16 +197,31 @@ export class BuildWorktree {
         await rm(join(this.path, path), { force: true, recursive: true });
         continue;
       }
+      const mode = before.modes.get(path) ?? (await this.modeAt(before.head, path));
       // Through the index, so a binary file comes back byte for byte.
-      await this.git.run(["update-index", "--add", "--cacheinfo", `100644,${blob},${path}`]);
+      await this.git.run(["update-index", "--add", "--cacheinfo", `${mode},${blob},${path}`]);
       await this.git.run(["checkout-index", "-f", "--", path]);
     }
   }
 
-  /** The Git blob ID of a path's working copy, or `"none"` when it doesn't exist. */
-  private async blobOf(path: string): Promise<string> {
+  /**
+   * The Git blob ID of a path's working copy, or `"none"` when it doesn't
+   * exist. With `write`, the blob goes into the object store too.
+   */
+  private async blobOf(path: string, write = false): Promise<string> {
     if (!existsSync(join(this.path, path))) return "none";
-    return (await this.git.run(["hash-object", "--", path])).trim();
+    return (await this.git.run(["hash-object", ...(write ? ["-w"] : []), "--", path])).trim();
+  }
+
+  /** The Git file mode of a path's working copy. */
+  private async modeOf(path: string): Promise<string> {
+    return (await stat(join(this.path, path))).mode & 0o111 ? "100755" : "100644";
+  }
+
+  /** The Git file mode of a path at `sha`, or `100644` when it doesn't have it. */
+  private async modeAt(sha: string, path: string): Promise<string> {
+    const out = await this.git.run(["ls-tree", sha, "--", path]).catch(() => "");
+    return /^(\d{6}) /.exec(out)?.[1] ?? "100644";
   }
 
   /** The Git blob ID of a path at `sha`, or `"none"` when it doesn't have it. */
