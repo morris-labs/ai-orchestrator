@@ -340,6 +340,7 @@ describe("post-push loop", () => {
     const repo = buildSampleRepo();
     const gh = new FakeGitHub(join(dirname(repo), "origin.git"));
     const scenario = new Scenario();
+    const d = deps(scenario, gh);
     const b3 = scenario.bugs.find((b) => b.id === "B3")!;
     const line = lineOf(repo, "shop/pricing.py", "if quantity > 100");
     gh.threads = [
@@ -361,7 +362,7 @@ describe("post-push loop", () => {
         pipeline: "post-push",
       },
       { projectRoot: repo },
-      deps(scenario, gh),
+      d,
     );
     await run.start();
     expect(await run.settled()).toMatchObject({
@@ -371,6 +372,13 @@ describe("post-push loop", () => {
     expect(run.findings.find((f) => f.externalRef?.id === "T1")?.verdict).toBe("fixed");
     expect(gh.resolved.has("T1")).toBe(true);
     expect(gh.reviewRequests).toEqual([]);
+    // No Copilot review runs, so no handoff names Copilot for the poll or the import.
+    const handoffs = d.events.ofType("handoff");
+    const ends = handoffs.flatMap((h) => [h.from, h.to]);
+    expect(ends.filter((e) => e.stage === "poll" || e.stage === "import").length).toBeGreaterThan(
+      0,
+    );
+    expect(ends.filter((e) => e.vendor === "copilot")).toEqual([]);
   });
 
   it("doesn't call a pull request clean when its checks were cancelled", async () => {
