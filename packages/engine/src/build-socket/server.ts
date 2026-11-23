@@ -1,6 +1,7 @@
 // The build socket: a Unix socket inside the project container that accepts
-// only build requests (start, status, pause, resume, and cancel) and needs no
-// engine token. The `aio-build` command in a box's session talks to it; see
+// only build requests (planning seat calls, the freeze, start, status,
+// pause, resume, and cancel) and needs no engine token. The `aio-build`
+// command in a box's session talks to it; see
 // `@aio/contracts` `build-socket.ts` for the protocol.
 //
 // The socket lives on the container's own file system, so only processes in
@@ -12,6 +13,8 @@
 import {
   BUILD_SOCKET_MAX_BODY_BYTES,
   BUILD_SOCKET_ROUTES,
+  BuildSocketFreezeSchema,
+  BuildSocketPlanSchema,
   BuildSocketSlugSchema,
   BuildSocketStartSchema,
   type ApiError,
@@ -32,7 +35,7 @@ export interface BuildSocketOptions {
   /** The socket path. The engine makes its folder, mode 0700, when it's missing. */
   path: string;
   /** The requests the socket serves. */
-  builds: Pick<BuildManager, "start" | "get" | "pause" | "resume" | "cancel">;
+  builds: Pick<BuildManager, "plan" | "freeze" | "start" | "get" | "pause" | "resume" | "cancel">;
   /** The engine's project, or `null` when the server didn't name one. */
   projectId: string | null;
   log: Logger;
@@ -130,7 +133,28 @@ export async function serveBuildSocket(options: BuildSocketOptions): Promise<Bui
     return build;
   };
 
-  const handle = async (kind: BuildSocketRequestKind, raw: unknown): Promise<BuildState> => {
+  /** Refuses a request for a project other than the engine's own. */
+  const ownProject = (request: { projectId: string; slug: string }): void => {
+    if (projectId !== null && request.projectId !== projectId) {
+      throw new EngineError(
+        "not_found",
+        `Project ${request.projectId} has no build ${request.slug}.`,
+      );
+    }
+  };
+
+  /** Handles one request and returns its answer's body. */
+  const handle = async (kind: BuildSocketRequestKind, raw: unknown): Promise<unknown> => {
+    if (kind === "plan") {
+      const request = BuildSocketPlanSchema.parse(raw);
+      ownProject(request);
+      return builds.plan(request);
+    }
+    if (kind === "freeze") {
+      const request = BuildSocketFreezeSchema.parse(raw);
+      ownProject(request);
+      return builds.freeze(request);
+    }
     if (kind === "start") {
       const request = BuildSocketStartSchema.parse(raw);
       if (projectId !== null && request.projectId !== projectId) {
@@ -139,32 +163,28 @@ export async function serveBuildSocket(options: BuildSocketOptions): Promise<Bui
           `This container runs project ${projectId}, not ${request.projectId}.`,
         );
       }
-      return builds.start({
+      const build = await builds.start({
         projectId: request.projectId,
         ...(request.boxId !== null ? { boxId: request.boxId } : {}),
         slug: request.slug,
-        plan: request.plan,
+        ...(request.plan !== undefined ? { plan: request.plan } : {}),
         ...(request.base !== undefined ? { base: request.base } : {}),
       });
+      return { build };
     }
     const request = BuildSocketSlugSchema.parse(raw);
-    if (projectId !== null && request.projectId !== projectId) {
-      throw new EngineError(
-        "not_found",
-        `Project ${request.projectId} has no build ${request.slug}.`,
-      );
-    }
+    ownProject(request);
     const build = await ownBuild(request.projectId, request.slug);
-    if (kind === "status") return build;
+    if (kind === "status") return { build };
     if (build.boxId !== null && build.boxId !== request.boxId) {
       throw new EngineError(
         "conflict",
         `Build ${build.slug} belongs to box ${build.boxId}, so only that box can ${kind} it.`,
       );
     }
-    if (kind === "pause") return builds.pause(request.slug, "owner");
-    if (kind === "resume") return builds.resume(request.slug, "owner");
-    return builds.cancel(request.slug);
+    if (kind === "pause") return { build: await builds.pause(request.slug, "owner") };
+    if (kind === "resume") return { build: await builds.resume(request.slug, "owner") };
+    return { build: await builds.cancel(request.slug) };
   };
 
   const server = http.createServer((req, res) => {
@@ -194,8 +214,8 @@ export async function serveBuildSocket(options: BuildSocketOptions): Promise<Bui
         return;
       }
       try {
-        const build = await handle(kind, raw);
-        reply(res, kind === "start" ? 201 : 200, { build });
+        const body = await handle(kind, raw);
+        reply(res, kind === "start" || kind === "freeze" ? 201 : 200, body);
       } catch (error) {
         if (error instanceof ZodError) {
           reply(

@@ -3,7 +3,7 @@
 // through it, so every change reaches `state.json`, `STATUS.md`, and the
 // event stream the same way.
 import type {
-  AgentRole,
+  BuildSessionSettings,
   EngineRunCreate,
   BuildPlan,
   BuildState,
@@ -15,48 +15,33 @@ import type {
   RoleDefinition,
   RoleName,
   RunState,
+  SeatPlacement,
 } from "@aio/contracts";
 import { VendorSchema } from "@aio/contracts";
-import { z } from "zod";
 import {
   AgentCalls,
   basicRouting,
   type AgentCallHost,
+  type AgentCallSpec,
   type AgentOutcome,
   type CallCache,
   type CallDeps,
   type CallLedger,
 } from "../calls/index.js";
-import type { Clock, CommandRunner, EventDraft, EventSink } from "../core.js";
+import type { AdapterOutput, Clock, CommandRunner, EventDraft, EventSink } from "../core.js";
 import type { Logger, PushOptions } from "../api/core-interface.js";
-import { UnknownRoleError, roleAnswerSchema, rolePrompt, type RoleTask } from "./roles/index.js";
-import { SeatPlacements, placeCall, type PlaceOptions } from "./placements/index.js";
-import {
-  loadSpecialties,
-  specialtyCall,
-  type SpecialtyPack,
-  type SpecialtySources,
-} from "./specialties/index.js";
+import { UnknownRoleError, type RoleTask } from "./roles/index.js";
+import { SeatPlacements, type PlaceOptions } from "./placements/index.js";
+import { seatCallSpec } from "./seat-call.js";
+import { loadSpecialties, type SpecialtyPack, type SpecialtySources } from "./specialties/index.js";
 import type { TeamBus, TeamChannel } from "../team/index.js";
+import { SessionDesk } from "./sessions/index.js";
 import type { EscalationDraft } from "./escalations.js";
 import { renderStatus } from "./status-file.js";
 import type { BuildStore } from "./store.js";
 import type { BuildWorktree } from "./worktree.js";
 
-/** The lease estimate of one seat's turn, in tokens. */
-export const SEAT_ESTIMATE_TOKENS = 100_000;
-
-/** A role's answer: a JSON object, which the step that asked reads. */
-const RoleAnswerSchema = z.record(z.unknown());
-
-/**
- * The review role that a seat's leases and events name, until they name the
- * seat itself (ADR 0007): a seat that writes files is a `fixer`, and a
- * read-only seat a `reviewer`.
- */
-export function agentRoleFor(role: RoleDefinition): AgentRole {
-  return role.permission.access === "write" ? "fixer" : "reviewer";
-}
+export { SEAT_ESTIMATE_TOKENS, agentRoleFor } from "./seat-call.js";
 
 /**
  * The engine's review runs, which the review step starts and reads, and
@@ -93,6 +78,8 @@ export interface BuildServices {
   reviews?: ReviewRuns;
   /** How often the review step reads its run's state, in milliseconds. */
   reviewPollMs?: number;
+  /** When a message resumes a session and when it gets a fresh agent. Default: the schema's defaults. */
+  sessions?: BuildSessionSettings;
 }
 
 /** What a step asks a seat to do. */
@@ -105,9 +92,31 @@ export interface SeatCall {
   /** The task's specialty packs, from `specialties()`. */
   specialties?: readonly SpecialtyPack[];
   placement?: PlaceOptions;
+  /**
+   * The plan tasks the agent works for, which messages to the seat name.
+   * Default: the task's own ID.
+   */
+  taskIds?: readonly string[];
 }
 
-class FileCallCache implements CallCache {
+/** One turn of an agent in a seat, with a prompt the caller wrote. */
+export interface TurnCall {
+  seat: RoleName;
+  /** The task whose member token the agent gets on the team chat. */
+  taskId: string | null;
+  key: string;
+  step: BuildStep;
+  task: RoleTask;
+  prompt: string;
+  placement: SeatPlacement;
+  specialties: readonly SpecialtyPack[];
+  output: AdapterOutput;
+  /** The session to resume; absent, the turn starts a fresh agent. */
+  sessionId?: string;
+}
+
+/** The build's call cache: each finished call in `calls/KEY.json`. */
+export class FileCallCache implements CallCache {
   constructor(private readonly store: BuildStore) {}
 
   async read<T>(key: string): Promise<AgentOutcome<T> | null> {
@@ -125,6 +134,8 @@ export class BuildContext {
   readonly seats: SeatPlacements;
   /** The build's team chat, or `null` when the engine runs no bus. */
   readonly team: TeamChannel | null;
+  /** The session registry, and the message turns it gives each seat. */
+  readonly sessions: SessionDesk;
   /** Aborts the gate's commands when the engine stops; a new drive gets a new one. */
   private driveAbort = new AbortController();
   private writeChain: Promise<void> = Promise.resolve();
@@ -187,6 +198,8 @@ export class BuildContext {
         emit: (draft) => this.emit(draft),
         clock: services.clock,
       }) ?? null;
+    this.sessions = new SessionDesk(this);
+    this.team?.onMessage((message) => this.sessions.receive(message));
   }
 
   /** The agent-call core: leases, the call cache, and the pause and cancel controls. */
@@ -355,43 +368,74 @@ export class BuildContext {
    * Starts an agent in `seat` for one task, on the seat's placement, and
    * returns its answer. The call cache returns a finished call's answer
    * without calling again, which is how a restarted build skips the calls
-   * it already made. The agent reaches the team chat with a token of its
-   * own, which ends with the call.
+   * it already made. The agent's session goes into the session registry,
+   * and the seat takes no message turn while the call runs.
    */
-  async callSeat(input: SeatCall): Promise<AgentOutcome<Record<string, unknown>>> {
+  callSeat(input: SeatCall): Promise<AgentOutcome<Record<string, unknown>>> {
     const role = this.role(input.seat);
-    const placement = this.seats.place(input.seat, input.placement);
-    const writes = role.permission.access === "write";
     const packs = input.specialties ?? [];
-    const spec = placeCall(
-      specialtyCall(
-        {
-          key: input.key,
-          role: agentRoleFor(role),
-          method: writes ? "fix" : "review",
-          request: {
-            prompt: rolePrompt(role, { ...input.task, specialties: packs }),
+    const taskIds = input.taskIds ?? [input.task.id];
+    return this.sessions.run(
+      input.seat,
+      async () => {
+        const placement = this.seats.place(input.seat, input.placement);
+        const outcome = await this.runTurn(
+          seatCallSpec(role, placement, {
+            seat: input.seat,
+            key: input.key,
+            step: input.step,
+            task: input.task,
             repoPath: this.worktree.path,
-            toolPolicy: writes ? "write" : "read-only",
             scratchDir: this.store.scratchDir,
-            timeoutMs: role.turnTimeoutMinutes * 60_000,
-            output: {
-              schema: RoleAnswerSchema,
-              json: (roleAnswerSchema(role) as Record<string, unknown> | null) ?? {
-                type: "object",
-              },
-            },
-          },
-          groupId: null,
-          estimateTokens: SEAT_ESTIMATE_TOKENS,
+            specialties: packs,
+          }),
+          input.seat,
+          input.task.id,
+        );
+        await this.sessions.started({
           seat: input.seat,
+          taskIds,
+          task: input.task,
+          specialties: packs.map((p) => p.name),
           step: input.step,
-        },
-        packs,
-      ),
-      placement,
+          key: input.key,
+          placement,
+          outcome,
+        });
+        return outcome;
+      },
+      taskIds,
     );
-    const pass = this.team?.admit({ seat: input.seat, taskId: input.task.id });
+  }
+
+  /**
+   * Runs one turn of an agent in a seat with a prompt the caller wrote, and
+   * returns its answer. Callers that share a seat queue through
+   * `sessions.run()`.
+   */
+  callTurn(input: TurnCall): Promise<AgentOutcome<Record<string, unknown>>> {
+    const spec = seatCallSpec(this.role(input.seat), input.placement, {
+      seat: input.seat,
+      key: input.key,
+      step: input.step,
+      task: input.task,
+      repoPath: this.worktree.path,
+      scratchDir: this.store.scratchDir,
+      specialties: input.specialties,
+      prompt: input.prompt,
+      output: input.output,
+      ...(input.sessionId !== undefined ? { sessionId: input.sessionId } : {}),
+    });
+    return this.runTurn(spec, input.seat, input.taskId);
+  }
+
+  /** Makes a seat's call; the agent reaches the team chat with a token of its own, which ends with the call. */
+  private async runTurn(
+    spec: AgentCallSpec,
+    seat: RoleName,
+    taskId: string | null,
+  ): Promise<AgentOutcome<Record<string, unknown>>> {
+    const pass = this.team?.admit({ seat, taskId });
     if (pass) spec.request.team = pass.attachment;
     try {
       return await this.calls.call<Record<string, unknown>>(spec);

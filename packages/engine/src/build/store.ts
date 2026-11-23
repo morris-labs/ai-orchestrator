@@ -12,7 +12,12 @@
 //   calls/KEY.json               each finished agent call, so a resume never repeats one
 //   tasks/TASK/attempt-N.json    each attempt: its start, its agent call, and its gate result
 //   escalations/ID.json          each escalation, with its details
+//   messages/ID.json             each team chat message (`team/channel.ts`)
+//   sessions.json                the session registry and its message queue (`sessions/`)
 //   scratch/                     scratch space for agents
+//
+// Planning adds `planning.json`, `planning/`, and the frozen plans in
+// `plans/`; see `planning/planner.ts`.
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import {

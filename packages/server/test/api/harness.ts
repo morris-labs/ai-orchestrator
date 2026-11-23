@@ -331,6 +331,8 @@ export async function createHarness(
               bySpecialty: [],
             }
           : undefined,
+      messages: (buildId) => (builds.some((b) => b.id === buildId) ? [] : undefined),
+      tasks: (buildId) => (builds.some((b) => b.id === buildId) ? [] : undefined),
     },
     notifications: {
       list: (q) => notifications.filter((n) => !q.unread || !n.read),

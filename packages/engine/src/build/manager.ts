@@ -1,14 +1,22 @@
-// The engine build API: the build requests (start, status, pause, resume,
-// cancel, and delete) over one `BuildController` per build, the rule of one
-// active build per box, and the startup scan that continues the builds a
-// stopped engine left running.
+// The engine build API: the planning requests (a planning seat call and the
+// freeze) over one `BuildPlanner` per build, the build requests (start,
+// status, pause, resume, cancel, and delete) over one `BuildController` per
+// build, the rule of one active build per box, and the startup scan that
+// continues the builds a stopped engine left running.
 import {
   BOX_BUILD_STATUSES,
   BuildCreateSchema,
+  BuildFreezeRequestSchema,
+  BuildSeatRequestSchema,
   BuildSlugSchema,
   ENGINE_CONFIG_MOUNT,
   type BuildCreateInput,
+  type BuildFreezeAnswer,
+  type BuildFreezeRequest,
   type BuildPauseReason,
+  type BuildPlan,
+  type BuildSeatAnswer,
+  type BuildSeatRequestInput,
   type BuildState,
 } from "@aio/contracts";
 import { accountDirsFileIn, readAccountDirs } from "../adapters/account-dirs.js";
@@ -17,8 +25,14 @@ import { systemClock } from "../core.js";
 import { PolicyError } from "../policy/load.js";
 import { ExecaRunner, ShellRunner } from "../range/exec.js";
 import { GitError } from "../range/git.js";
-import { BuildController, type BuildLocation, type BuildPipeline } from "./controller.js";
+import {
+  BuildController,
+  type BuildLocation,
+  type BuildOrigin,
+  type BuildPipeline,
+} from "./controller.js";
 import type { BuildServices, ReviewRuns } from "./context.js";
+import { BuildPlanner, planHash } from "./planning/index.js";
 import { RoleError } from "./roles/index.js";
 import { accountSkillDirs } from "./specialties/index.js";
 import { BuildNotFoundError, BuildStore, listBuildSlugs } from "./store.js";
@@ -34,8 +48,21 @@ const SHUTDOWN_WAIT_MS = 5000;
  */
 export interface BuildManager {
   /**
-   * Creates a build from its plan and starts it. Throws `conflict` when the
-   * build exists, or when its box already has an active build.
+   * Calls a planning seat and waits for its answer. Starts the build's
+   * planning record on its first call. Throws `conflict` once the build runs.
+   */
+  plan(request: BuildSeatRequestInput): Promise<BuildSeatAnswer>;
+  /**
+   * Freezes the build plan as its next version, or returns the latest one
+   * when the plan hasn't changed. Throws `validation` without the owner's
+   * push answer, and `conflict` once the build runs.
+   */
+  freeze(request: BuildFreezeRequest): Promise<BuildFreezeAnswer>;
+  /**
+   * Creates a build and starts it, from the request's plan or, absent, the
+   * build's latest frozen plan. Throws `conflict` when the build exists, and
+   * `validation` for a plan that differs from the frozen one. Throws
+   * `conflict` when the request's box already has an active build.
    */
   start(request: BuildCreateInput): Promise<BuildState>;
   get(slug: string): Promise<BuildState | null>;
@@ -85,6 +112,9 @@ function toApiError(error: unknown): unknown {
 export class EngineBuildManager implements BuildManager {
   private readonly controllers = new Map<string, BuildController>();
   private readonly loading = new Map<string, Promise<BuildController | null>>();
+  private readonly planners = new Map<string, Promise<BuildPlanner | null>>();
+  /** The planners this engine opened, whose seat calls keep the container alive. */
+  private readonly openPlanners = new Set<BuildPlanner>();
   private readonly services: Omit<BuildServices, "tierModels">;
   private readonly location: BuildLocation;
   /** Serializes the requests that check a box's builds, so two starts can't both take a box. */
@@ -133,6 +163,8 @@ export class EngineBuildManager implements BuildManager {
       try {
         state = await new BuildStore(this.deps.projectRoot, slug).loadState();
       } catch (error) {
+        // A build in planning has no state until it starts.
+        if (error instanceof BuildNotFoundError) continue;
         this.deps.log.warn("Skipped a build whose state can't be read", {
           build: slug,
           error: String(error),
@@ -200,6 +232,88 @@ export class EngineBuildManager implements BuildManager {
     return build;
   }
 
+  /** The planner of build `slug`, loaded once, or `null` when planning never started. */
+  private planner(slug: string): Promise<BuildPlanner | null> {
+    let planner = this.planners.get(slug);
+    if (!planner) {
+      planner = BuildPlanner.load(slug, this.location, this.services);
+      this.planners.set(slug, planner);
+      planner.catch(() => this.planners.delete(slug));
+    }
+    return planner;
+  }
+
+  /** The planner of build `slug`, started for the request's project when planning never started. */
+  private async openPlanner(request: {
+    slug: string;
+    projectId: string;
+    boxId: string | null;
+  }): Promise<BuildPlanner> {
+    const { slug } = request;
+    if (this.loading.has(slug) || (await this.controller(slug))) {
+      throw new EngineError("conflict", `Build ${slug} runs already, so its planning is over.`);
+    }
+    let planner = await this.planner(slug);
+    if (!planner) {
+      const creating = BuildPlanner.create(request, this.location, this.services);
+      this.planners.set(slug, creating);
+      creating.catch(() => this.planners.delete(slug));
+      planner = await creating;
+    }
+    if (planner.record.projectId !== request.projectId) {
+      throw new EngineError("not_found", `Project ${request.projectId} has no build ${slug}.`);
+    }
+    this.openPlanners.add(planner);
+    return planner;
+  }
+
+  async plan(input: BuildSeatRequestInput): Promise<BuildSeatAnswer> {
+    const request = BuildSeatRequestSchema.parse(input);
+    const planner = await this.openPlanner(request);
+    return planner.callSeat(request);
+  }
+
+  async freeze(input: BuildFreezeRequest): Promise<BuildFreezeAnswer> {
+    const request = BuildFreezeRequestSchema.parse(input);
+    const planner = await this.openPlanner(request);
+    try {
+      return await planner.freeze(request);
+    } catch (error) {
+      throw toApiError(error);
+    }
+  }
+
+  /** The plan a build starts from, and the planning record it keeps. */
+  private async startingPlan(
+    slug: string,
+    given: BuildPlan | undefined,
+  ): Promise<{ plan: BuildPlan; origin?: BuildOrigin }> {
+    const planner = await this.planner(slug);
+    if (planner?.busy) {
+      throw new EngineError(
+        "conflict",
+        `Build ${slug} is waiting for a planning seat's answer. Start it when the answer arrives.`,
+      );
+    }
+    const latest = planner ? await planner.latestFrozen() : null;
+    if (latest && given && planHash(given) !== latest.frozen.hash) {
+      throw new EngineError(
+        "validation",
+        `Build ${slug}'s plan is frozen at version ${latest.frozen.version}, and this plan differs from it. Freeze the change as a new version with aio-build freeze, then start the build without a plan file.`,
+      );
+    }
+    const plan = latest?.plan ?? given;
+    if (!plan) {
+      throw new EngineError(
+        "validation",
+        `Build ${slug} has no frozen plan. Freeze one with aio-build freeze, or start the build with a plan file.`,
+      );
+    }
+    if (!planner) return { plan };
+    const { id, createdAt, boxId } = planner.record;
+    return { plan, origin: { id, createdAt, boxId } };
+  }
+
   /** Runs `work` after every earlier box check and the work that followed it. */
   private inBoxOrder<T>(work: () => Promise<T>): Promise<T> {
     const next = this.boxChain.then(work);
@@ -240,11 +354,13 @@ export class EngineBuildManager implements BuildManager {
     }
     const creating = (async () => {
       try {
+        const { plan, origin } = await this.startingPlan(slug, request.plan);
         const build = await BuildController.create(
-          request,
+          { ...request, plan },
           this.location,
           this.services,
           this.deps.pipeline,
+          origin,
         );
         this.controllers.set(slug, build);
         return build;
@@ -290,10 +406,14 @@ export class EngineBuildManager implements BuildManager {
   }
 
   activeCount(): number {
-    return [...this.controllers.values()].filter((b) => b.state.status === "running").length;
+    return (
+      [...this.controllers.values()].filter((b) => b.state.status === "running").length +
+      [...this.openPlanners].filter((p) => p.busy).length
+    );
   }
 
   async close(): Promise<void> {
+    for (const planner of this.openPlanners) planner.stop();
     await Promise.all(
       [...this.controllers.values()].map((b) => b.stopForShutdown(SHUTDOWN_WAIT_MS)),
     );

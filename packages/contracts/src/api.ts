@@ -98,8 +98,10 @@ import {
   BuildListQuerySchema,
   BuildListSchema,
   BuildSummarySchema,
+  BuildTaskListSchema,
   BuildUsageSchema,
 } from "./build-events.js";
+import { BuildMessageListSchema } from "./messages.js";
 import { BuildControlSchema, BuildCreateSchema, BuildStateSchema } from "./builds.js";
 import { FindingSchema, SeveritySchema, VerdictSchema } from "./findings.js";
 import {
@@ -1879,6 +1881,20 @@ export const serverRoutes = {
     summary:
       "A build's settled usage, in total, by seat, and by step. Returns not_found for a build the server hasn't seen.",
     response: BuildUsageSchema,
+  }),
+  "builds.messages": http({
+    method: "GET",
+    path: `${V1}/builds/:buildId/messages`,
+    summary:
+      "A build's team chat messages, oldest first. Returns not_found for a build the server hasn't seen.",
+    response: BuildMessageListSchema,
+  }),
+  "builds.tasks": http({
+    method: "GET",
+    path: `${V1}/builds/:buildId/tasks`,
+    summary:
+      "A build's tasks with their state and milestone, by task id. Returns not_found for a build the server hasn't seen.",
+    response: BuildTaskListSchema,
   }),
 
   // Machines (multi-host)

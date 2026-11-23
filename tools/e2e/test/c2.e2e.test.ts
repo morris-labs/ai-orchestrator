@@ -291,7 +291,8 @@ describe("C2: server and engine talk", () => {
       });
     const help = await buildCli(projectId, "--help");
     expect(help.code).toBe(0);
-    expect(help.stdout).toContain("aio-build start SLUG PLAN_FILE");
+    expect(help.stdout).toContain("aio-build start SLUG [PLAN_FILE]");
+    expect(help.stdout).toContain("aio-build plan SLUG SEAT BRIEF_FILE");
     const own = await buildCli(projectId, "status", "no-such-build");
     expect(own).toMatchObject({ code: 4 });
     expect(own.stderr).toContain(`Project ${projectId} has no build no-such-build`);

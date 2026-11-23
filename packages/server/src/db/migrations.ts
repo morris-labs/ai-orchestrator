@@ -333,4 +333,26 @@ export const MIGRATIONS: readonly Migration[] = [
   `
   ALTER TABLE svc_lease_settlements ADD COLUMN specialties TEXT;
 `,
+  // 11: a build's team chat messages and its tasks, mirrored from
+  // `message.sent` and `build.task.changed` events. The event log keeps only
+  // recent events, so the build view reads these tables instead.
+  `
+  CREATE TABLE IF NOT EXISTS svc_build_messages (
+    build_id TEXT NOT NULL,
+    id TEXT NOT NULL,
+    num INTEGER NOT NULL,
+    json TEXT NOT NULL,
+    PRIMARY KEY (build_id, id)
+  );
+  CREATE INDEX IF NOT EXISTS svc_build_messages_order ON svc_build_messages (build_id, num);
+
+  CREATE TABLE IF NOT EXISTS svc_build_tasks (
+    build_id TEXT NOT NULL,
+    task_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    milestone TEXT,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (build_id, task_id)
+  );
+`,
 ];

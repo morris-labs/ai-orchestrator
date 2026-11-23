@@ -414,6 +414,18 @@ const cases: Case[] = [
     url: `${V1}/builds/01JB8Z5K3W6Q2V9X4T7R0M1N2Q/usage`,
     status: 200,
   },
+  {
+    key: "builds.messages",
+    method: "GET",
+    url: `${V1}/builds/01JB8Z5K3W6Q2V9X4T7R0M1N2Q/messages`,
+    status: 200,
+  },
+  {
+    key: "builds.tasks",
+    method: "GET",
+    url: `${V1}/builds/01JB8Z5K3W6Q2V9X4T7R0M1N2Q/tasks`,
+    status: 200,
+  },
   { key: "notifications.list", method: "GET", url: `${V1}/notifications?unread=true`, status: 200 },
   { key: "notifications.read", method: "POST", url: `${V1}/notifications/n1/read`, status: 200 },
   { key: "machines.list", method: "GET", url: `${V1}/machines`, status: 200 },
