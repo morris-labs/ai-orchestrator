@@ -170,6 +170,23 @@ describe("planning a build", () => {
     expect(world.calls()).toHaveLength(before + 1);
   });
 
+  it("keeps planning held for a stopped box across an engine restart", async () => {
+    const world = await planningWorld();
+    await world.manager.plan(seat("analyst"));
+    await world.manager.pausePlanning(SLUG);
+    expect(await world.manager.planning(SLUG)).toMatchObject({ pausedBy: "box" });
+    const before = world.calls().length;
+
+    await world.restart();
+    const architect = world.manager.plan(seat("architect"));
+    await new Promise((r) => setTimeout(r, 300));
+    expect(world.calls()).toHaveLength(before);
+
+    await world.manager.resumePlanning(SLUG);
+    expect((await architect).answer).toEqual(DESIGN);
+    expect((await world.manager.planning(SLUG))?.pausedBy).toBeUndefined();
+  });
+
   it("runs the planning calls under leases that name the build, the seat, and the step", async () => {
     const world = await planningWorld();
     const { analyst } = await plan(world);

@@ -473,12 +473,12 @@ export class EngineBuildManager implements BuildManager {
   }
 
   async pausePlanning(slug: string): Promise<BuildPlanningControlAnswer> {
-    (await this.planningOnly(slug)).pause();
+    await (await this.planningOnly(slug)).pause();
     return { paused: true };
   }
 
   async resumePlanning(slug: string): Promise<BuildPlanningControlAnswer> {
-    (await this.planningOnly(slug)).resume();
+    await (await this.planningOnly(slug)).resume();
     return { paused: false };
   }
 

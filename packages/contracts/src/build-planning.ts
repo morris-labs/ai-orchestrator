@@ -88,6 +88,12 @@ export const BuildPlanningSchema = z.object({
   frozen: z.array(FrozenPlanSchema),
   /** The planning meetings, oldest first. */
   meetings: z.array(PlanningMeetingSchema).default([]),
+  /**
+   * `box` while the build's box is stopped: seat calls and meeting turns
+   * wait until the box starts, also across an engine restart. Absent
+   * otherwise.
+   */
+  pausedBy: z.literal("box").optional(),
   createdAt: IsoDateTimeSchema,
   updatedAt: IsoDateTimeSchema,
 });

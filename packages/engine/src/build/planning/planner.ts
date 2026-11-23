@@ -170,6 +170,8 @@ export class BuildPlanner {
     const planning = await store.readJson(store.path(BUILD_PLANNING_FILE), BuildPlanningSchema);
     if (!planning) return null;
     const planner = await BuildPlanner.make(planning, store, location, services);
+    // A box that stopped before the engine did still holds planning.
+    if (planning.pausedBy === "box") planner.calls.requestPause();
     // A call that was under way when an engine stopped never finishes.
     const stopped = planning.calls.filter((c) => c.status === "running");
     for (const call of stopped) {
@@ -235,13 +237,20 @@ export class BuildPlanner {
     return new BuildPlanner(planning, ledger, store, roles, location, services, policy.tierModels);
   }
 
-  /** Holds the seat calls and meeting turns that haven't started, for a box stop. */
-  pause(): void {
+  /**
+   * Holds the seat calls and meeting turns that haven't started, for a box
+   * stop. The record keeps the pause, so it outlasts an engine restart.
+   */
+  async pause(): Promise<void> {
     this.calls.requestPause();
+    this.planning.pausedBy = "box";
+    await this.persist();
   }
 
   /** Lets held seat calls and meeting turns go on. */
-  resume(): void {
+  async resume(): Promise<void> {
+    delete this.planning.pausedBy;
+    await this.persist();
     this.calls.requestResume();
   }
 

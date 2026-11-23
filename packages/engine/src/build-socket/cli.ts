@@ -599,6 +599,7 @@ function buildFile(repoPath: string, slug: string, file: string): string {
 /** The planning record of a build in planning as text for a person to read. */
 export function formatPlanning(planning: BuildPlanning): string {
   const lines = [`Build ${planning.slug}: planning`];
+  if (planning.pausedBy) lines.push("Paused by: a box stop");
   if (planning.boxId) lines.push(`Box: ${planning.boxId}`);
   if (planning.issue) lines.push(`Issue: ${planning.issue.url}`);
   lines.push("Seat calls:");
