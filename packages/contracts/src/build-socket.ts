@@ -10,6 +10,7 @@ import { BuildSlugSchema } from "./build-events.js";
 import {
   BuildFreezeAnswerSchema,
   BuildFreezeRequestSchema,
+  BuildPlanningSchema,
   BuildSeatAnswerSchema,
   BuildSeatRequestSchema,
 } from "./build-planning.js";
@@ -138,6 +139,16 @@ export const BuildSocketMeetingPostSchema = BuildMeetingPostRequestSchema;
 export const BuildSocketResponseSchema = z.object({ build: BuildStateSchema });
 export type BuildSocketResponse = z.infer<typeof BuildSocketResponseSchema>;
 
+/**
+ * The answer to a status request: the build's state, or, for a build that is
+ * still in planning, its planning record.
+ */
+export const BuildSocketStatusSchema = z.union([
+  BuildSocketResponseSchema,
+  z.object({ planning: BuildPlanningSchema }),
+]);
+export type BuildSocketStatus = z.infer<typeof BuildSocketStatusSchema>;
+
 /** The answer to each request, by kind. */
 export const BUILD_SOCKET_RESPONSES = {
   plan: BuildSeatAnswerSchema,
@@ -145,7 +156,7 @@ export const BUILD_SOCKET_RESPONSES = {
   meet: BuildMeetingAnswerSchema,
   "meeting-post": BuildMeetingAnswerSchema,
   start: BuildSocketResponseSchema,
-  status: BuildSocketResponseSchema,
+  status: BuildSocketStatusSchema,
   pause: BuildSocketResponseSchema,
   resume: BuildSocketResponseSchema,
   resolve: BuildSocketResponseSchema,

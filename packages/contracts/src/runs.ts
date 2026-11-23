@@ -237,6 +237,21 @@ export const BuildRunOptionSchema = z.object({
       tests: z.array(PolicyCommandSchema),
       typecheck: z.array(PolicyCommandSchema),
       lint: z.array(PolicyCommandSchema),
+      /**
+       * The build baseline's known failing and flaky tests, as failure lines
+       * of each test command. The run's gate doesn't count a failure on one
+       * of these as a regression. Absent on runs that builds started before
+       * the field existed.
+       */
+      excused: z
+        .array(
+          z.object({
+            command: z.string().min(1),
+            cwd: z.string().min(1).nullable(),
+            failures: z.array(z.string()),
+          }),
+        )
+        .optional(),
     })
     .optional(),
 });

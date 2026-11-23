@@ -44,11 +44,15 @@ export class BuildSocketClient {
     private readonly headers: Record<string, string> = {},
   ) {}
 
-  /** Sends a start, status, pause, or resume request and returns the build's state after it. */
+  /**
+   * Sends a start, pause, resume, cancel, or resolve request and returns the
+   * build's state after it. A status request goes through `send()`: a build
+   * in planning answers with its planning record.
+   */
   async request(
     kind: Exclude<
       BuildSocketRequestKind,
-      "plan" | "freeze" | "meet" | "meeting-post" | "messages" | "decisions" | "inbox"
+      "plan" | "freeze" | "meet" | "meeting-post" | "messages" | "decisions" | "inbox" | "status"
     >,
     body: unknown,
   ): Promise<BuildState> {

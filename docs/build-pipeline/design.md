@@ -472,6 +472,10 @@ A finding that needs a plan change, such as a contract flaw, goes to the
 Project manager instead. The Project manager either sends it to the build
 team, or works it through in a planning meeting first.
 
+A review run that ends clean with follow-ups counts as clean: it passed the
+same test as a clean run, with findings that no vendor would check. The pull
+request lists those findings for the owner to check before the merge.
+
 ## Verification methods
 
 The Analyst gives each acceptance criterion one verification method, and the
@@ -538,7 +542,9 @@ A build runs in one box, next to the Project manager's session. Each box runs
 at most one active build, and stand-alone review runs can run beside it. For
 parallel builds on one project, use another box.
 
-When the box stops, the build pauses. It resumes when the box starts. The
+When the box stops, the build pauses. It resumes when the box starts. A
+build in planning pauses too: its seat calls and meeting turns wait for the
+box start, and a call under way finishes. The
 Project manager is the box's main session, and the engine delivers
 escalations and digests into it as messages. Each delivery is a one-line
 pointer to the file, typed into the session.

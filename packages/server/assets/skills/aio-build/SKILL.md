@@ -85,8 +85,9 @@ The team path, in order:
    every open objection to the owner before anything else. Relay owner
    words to a running meeting with `aio-build meeting-post`.
 4. The engine drafts the plan in `planning/draft.json` and rewrites it after
-   every seat answer. To change the plan by hand, copy the draft to your own
-   file, edit the copy, and freeze that file.
+   every seat answer, unless you edited it: then it keeps your edits and
+   writes its own draft to `planning/draft.engine.json`. To change the plan
+   by hand, edit the draft or a copy of it, and freeze that file.
 
 Every secret the plan lists must be ticked in the box's **Secrets
 (project)** section before approval; tell the owner which ones.

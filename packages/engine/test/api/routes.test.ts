@@ -256,6 +256,22 @@ const cases: Record<string, Case> = {
     body: { reason: "box" },
     check: () => expect(builds.resume).toHaveBeenCalledWith("cart-total", "box"),
   },
+  "engine.builds.planning.pause": {
+    method: "POST",
+    url: "/api/v1/builds/cart-total/planning/pause",
+    check: (j) => {
+      expect(j).toEqual({ paused: true });
+      expect(builds.pausePlanning).toHaveBeenCalledWith("cart-total");
+    },
+  },
+  "engine.builds.planning.resume": {
+    method: "POST",
+    url: "/api/v1/builds/cart-total/planning/resume",
+    check: (j) => {
+      expect(j).toEqual({ paused: false });
+      expect(builds.resumePlanning).toHaveBeenCalledWith("cart-total");
+    },
+  },
   "engine.builds.cancel": {
     method: "POST",
     url: "/api/v1/builds/cart-total/cancel",

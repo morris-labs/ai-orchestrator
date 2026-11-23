@@ -74,6 +74,8 @@ function world(builds: BuildSummary[], engineUp = true) {
         const build = builds.find((b) => b.slug === i.params?.slug) as BuildSummary;
         return stateOf(build, "paused");
       },
+      "engine.builds.planning.pause": () => ({ paused: true }),
+      "engine.builds.planning.resume": () => ({ paused: false }),
       "engine.builds.resume": (i) => {
         const build = builds.find((b) => b.slug === i.params?.slug) as BuildSummary;
         if (build.slug === "owner-paused") {
@@ -101,6 +103,22 @@ async function until(done: () => boolean): Promise<void> {
 }
 
 describe("the box build link", () => {
+  it("pauses a box's build in planning for a box stop, and resumes it for a box start", async () => {
+    const { engine, link } = world([summary({ status: "planning", step: "planning" })]);
+    link.ingest(boxEvent("box-a", "stopped"));
+    await until(() => engine.calls.length === 1);
+    expect(engine.calls[0]).toEqual({
+      key: "engine.builds.planning.pause",
+      input: { params: { slug: "cart-total" } },
+    });
+    link.ingest(boxEvent("box-a", "running"));
+    await until(() => engine.calls.length === 2);
+    expect(engine.calls[1]).toEqual({
+      key: "engine.builds.planning.resume",
+      input: { params: { slug: "cart-total" } },
+    });
+  });
+
   it("pauses the box's running build for a box stop, and leaves other boxes' builds alone", async () => {
     const { engine, link } = world([
       summary({}),

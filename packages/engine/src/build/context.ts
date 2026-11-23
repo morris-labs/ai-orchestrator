@@ -15,6 +15,7 @@ import type {
   BuildTaskProgress,
   BuildTaskStatus,
   Escalation,
+  Finding,
   Message,
   OwnerPost,
   OwnerPostAnswer,
@@ -35,7 +36,7 @@ import {
   type CallLedger,
 } from "../calls/index.js";
 import type { AdapterOutput, Clock, CommandRunner, EventDraft, EventSink } from "../core.js";
-import type { Logger, PushOptions } from "../api/core-interface.js";
+import type { FindingFilter, Logger, PushOptions } from "../api/core-interface.js";
 import { UnknownRoleError, type RoleTask } from "./roles/index.js";
 import { SeatPlacements, type PlaceOptions } from "./placements/index.js";
 import { seatCallSpec } from "./seat-call.js";
@@ -59,6 +60,8 @@ export { SEAT_ESTIMATE_TOKENS, agentRoleFor } from "./seat-call.js";
 export interface ReviewRuns {
   start(request: EngineRunCreate): Promise<RunState>;
   get(runId: string): Promise<RunState | null>;
+  /** The run's findings that match the filter. */
+  findings(runId: string, filter: FindingFilter): Promise<Finding[]>;
   /** Starts a finished run's post-push loop. */
   push(runId: string, options: PushOptions): Promise<RunState>;
   /** Answers the decision a run waits for. */

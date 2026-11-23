@@ -4,6 +4,7 @@
 // box's running build after its current turn, and holds a build in a timed
 // pause or one that waits for an escalation. A box start resumes a build
 // that the box's stop paused. A build that the owner paused stays paused.
+// A box stop holds a build in planning too, and a box start lets it go on.
 import {
   BuildStateSchema,
   type AioEvent,
@@ -91,6 +92,18 @@ function engineOf(engines: Pick<ApiEngines, "get">, build: BuildSummary) {
   return engine;
 }
 
+/** Holds or lets go a build in planning for its box's stop or start. */
+async function controlPlanning(
+  engines: Pick<ApiEngines, "get">,
+  build: BuildSummary,
+  action: "pause" | "resume",
+): Promise<void> {
+  await engineOf(engines, build).call(
+    action === "pause" ? "engine.builds.planning.pause" : "engine.builds.planning.resume",
+    { params: { slug: build.slug } },
+  );
+}
+
 export interface BoxBuildLinkDeps {
   /** The mirrored builds of every project. */
   builds: { list(): BuildSummary[] };
@@ -134,8 +147,11 @@ export class BoxBuildLink {
     // refuses a build that a request or a box stop paused. It reaches a
     // build that waits for an escalation too, so a resolution doesn't run
     // work while the box is stopped.
+    // A build in planning holds its seat calls and meeting turns the same way.
     const want: readonly BuildStatus[] =
-      action === "pause" ? ["running", "paused", "waiting_escalation"] : ["paused"];
+      action === "pause"
+        ? ["running", "paused", "waiting_escalation", "planning"]
+        : ["paused", "planning"];
     const builds = this.deps.builds
       .list()
       .filter((b) => b.boxId === boxId && want.includes(b.status));
@@ -145,7 +161,11 @@ export class BoxBuildLink {
         waiting = true;
         continue;
       }
-      void controlBuild(this.deps.engines, build, action, "box").catch((err: unknown) => {
+      const request =
+        build.status === "planning"
+          ? controlPlanning(this.deps.engines, build, action)
+          : controlBuild(this.deps.engines, build, action, "box");
+      void request.catch((err: unknown) => {
         // A build the owner paused refuses a box start's resume, and a
         // build that changed since the mirror saw it refuses either one.
         if ((err as ApiError).code === "invalid_state") return;

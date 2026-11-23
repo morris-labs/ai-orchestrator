@@ -43,7 +43,8 @@ specialties a task can name. After both the Analyst and the Architect
 answer, the engine drafts the full build plan in
 `.aio/builds/SLUG/planning/draft.json`, with the test, type check, and lint
 commands from the project's policy file. The engine rewrites the draft
-after each answer.
+after each answer, unless you edited it: then it keeps your edits and writes
+its own draft from the latest answers to `planning/draft.engine.json`.
 
 ## Hold the Critic meeting
 
@@ -145,7 +146,8 @@ The engine keeps planning's files beside the build's other files in
 |---|---|
 | `planning.json` | The planning record: the issue, each seat call, each meeting, and each frozen version |
 | `planning/SEAT-N.json` | Each seat call's brief, and its answer or error |
-| `planning/draft.json` | The plan drafted from the latest spec and design |
+| `planning/draft.json` | The plan drafted from the latest spec and design, with your edits |
+| `planning/draft.engine.json` | The engine's own draft from the latest spec and design |
 | `meetings/meeting-N.json` | Each meeting: its rounds, the replies, the owner posts, and the open objections |
 | `messages/MN.json` | Each meeting turn and owner post, as a team chat message |
 | `plans/vN.json` | Each frozen version of the build plan, read-only |

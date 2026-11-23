@@ -18,6 +18,7 @@ inbox survives an engine restart. The engine adds one item for each of these:
 | An escalation | `E1`, `E2`, and so on | `escalations/ID.json` | Yes |
 | A milestone digest | `milestone-ID` | `digests/milestone-ID.md` | No |
 | The release ready digest | `release-ready` | `digests/release-ready.md` | No |
+| A cancelled build's closing record | `closing-record-1`, `closing-record-2`, and so on | `closing-record.md` | No |
 
 A build has at most one item for each kind and ref. An escalation that the
 question cap raises (`question_cap`) is an escalation like any other: its
