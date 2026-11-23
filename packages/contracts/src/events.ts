@@ -21,6 +21,7 @@
 //
 // Event payloads use `null`, not absent fields, for missing values.
 import { z } from "zod";
+import { SeatPlacementSchema } from "./placements.js";
 import { ModelTierSchema } from "./tiers.js";
 import { CountSchema, IsoDateTimeSchema, PortSchema, RunIdSchema, VendorSchema } from "./common.js";
 import { FindingSchema, FindingHistoryVerdictSchema } from "./findings.js";
@@ -198,6 +199,8 @@ const agentFields = {
   tierReason: z.string().optional(),
   /** The reasoning effort the call asked for. Absent means the vendor's own default. */
   effort: z.string().min(1).optional(),
+  /** The build seat's placement that the call ran on. Absent for a review run's calls. */
+  placement: SeatPlacementSchema.optional(),
 };
 
 export const AgentStartedEventSchema = z.object({
@@ -288,6 +291,8 @@ export const LeaseSettledEventSchema = z.object({
   ...base,
   type: z.literal("lease.settled"),
   ...LeaseSettlementSchema.shape,
+  /** The build seat's placement that the call ran on. Absent for a review run's calls. */
+  placement: SeatPlacementSchema.optional(),
 });
 
 export const RunChangedEventSchema = z.object({

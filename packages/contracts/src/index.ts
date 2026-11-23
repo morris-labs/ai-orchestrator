@@ -17,3 +17,4 @@ export * from "./machine-routing.js";
 export * from "./machines.js";
 export * from "./tiers.js";
 export * from "./build-roles.js";
+export * from "./placements.js";

@@ -12,6 +12,7 @@ import {
   resolveReviewEffort,
   type AgentRole,
   type Effort,
+  type SeatPlacement,
   type UsageSample,
   type Vendor,
 } from "@aio/contracts";
@@ -445,6 +446,7 @@ export class AgentCalls {
     vendor: Vendor,
     role: AgentRole,
     actual: LeaseActual,
+    placement?: SeatPlacement,
   ): Promise<void> {
     this.deps.broker.settle(leaseId, actual);
     this.host.observer?.settled?.(vendor, actual);
@@ -457,6 +459,7 @@ export class AgentCalls {
       tokens: actual.tokens,
       premiumRequests: actual.premiumRequests,
       costEstimate: actual.costEstimate,
+      ...(placement ? { placement } : {}),
     });
   }
 
@@ -557,7 +560,7 @@ export class AgentCalls {
       }
       const choice = host.routing.model(vendor, tier, spec.role);
       if (choice.model !== undefined && isBlockedRequestedModel(vendor, choice.model)) {
-        await this.settle(lease.leaseId, vendor, spec.role, ZERO_USE);
+        await this.settle(lease.leaseId, vendor, spec.role, ZERO_USE, spec.placement);
         throw new AgentFailed(spec.role, vendor, blockedModelMessage(vendor, choice.model));
       }
       const requestModel = choice.model;
@@ -579,6 +582,7 @@ export class AgentCalls {
         ...(tier ? { tier } : {}),
         ...(tierReason ? { tierReason } : {}),
         ...(effort ? { effort } : {}),
+        ...(spec.placement ? { placement: spec.placement } : {}),
       };
       if (tier || effort || note) {
         log?.info?.("Chose a call's model", {
@@ -642,11 +646,13 @@ export class AgentCalls {
           premiumRequests: 0,
           costEstimate: 0,
         });
-        await this.settle(lease.leaseId, vendor, spec.role, {
-          tokens: { in: 0, out: 0 },
-          premiumRequests: 0,
-          costEstimate: 0,
-        });
+        await this.settle(
+          lease.leaseId,
+          vendor,
+          spec.role,
+          { tokens: { in: 0, out: 0 }, premiumRequests: 0, costEstimate: 0 },
+          spec.placement,
+        );
         if (outcome === "cancelled") throw new RunCancelled();
         log?.warn("An agent call failed", {
           runId: host.id,
@@ -708,7 +714,7 @@ export class AgentCalls {
         ...(actual.aiCredits !== undefined ? { aiCredits: actual.aiCredits } : {}),
         costEstimate: actual.costEstimate,
       });
-      await this.settle(lease.leaseId, vendor, spec.role, actual);
+      await this.settle(lease.leaseId, vendor, spec.role, actual, spec.placement);
       for (const sample of result.usage) {
         const ceiling = (this.deps.ceilings ?? DEFAULT_CEILINGS)[sample.vendor];
         await host.emit({ type: "usage.sample", ...sample, ceiling, agentId });
