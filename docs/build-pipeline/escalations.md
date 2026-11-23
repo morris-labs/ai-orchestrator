@@ -28,7 +28,7 @@ The file holds the following fields:
 | :--- | :--- | :--- |
 | `attempt_cap` | A task fails its task gate on every attempt. The details list the attempt files and the Debugger's diagnosis files. | Project manager |
 | `oscillation` | A task breaks an earlier task's test again. | Project manager |
-| `agent_call` | An agent call fails twice, a vendor refuses it, or it needs a decision. | Project manager |
+| `agent_call` | An agent call fails twice, a vendor refuses it, or it needs a decision; or a team chat message can't be delivered. | Project manager |
 | `placement` | A seat can't be placed, such as a placement that breaks the single-vendor setting. | Project manager |
 | `specialty` | A task's specialty pack can't be loaded. | Project manager |
 | `preflight` | A test, type check, or lint command of the plan can't run. | Project manager |
@@ -39,6 +39,7 @@ The file holds the following fields:
 | `missing_service` | A Developer reports an external service that it can't reach. | Owner |
 | `question_cap` | An agent asks more questions about a task than the plan's question cap allows. The question goes to the Project manager, and the details hold it. See [Questions](team-chat.md#questions). | Project manager |
 | `test_dispute` | A second test dispute about one test, or a third in one task, which the Project manager rules on; or a Test engineer's fix that changes what a criterion means, which the owner decides. For details, see [Test disputes](test-disputes.md). | Project manager; owner for a criterion change |
+| `set_aside` | A paused task's saved work no longer applies on top of the tasks that ran since. The patch stays in the task's directory. | Project manager |
 
 A Developer never works around a missing secret or service, for example
 with a mock that ships. It stops and reports the gap in the `blocked` field
@@ -49,7 +50,15 @@ of its answer, and the engine skips the task gate for that attempt.
 An escalation with a task pauses that task and every task that depends on
 it. The engine sets the task aside, so the next task starts from a worktree
 without its unfinished work, and then runs the tasks that don't depend on
-it. The paused task gets its work back when it runs again.
+it. The paused task gets its work back when it runs again. A test that one
+of the task's disputes amended stays on the branch, because the test lock
+holds it as amended.
+
+When the saved work no longer applies, such as after a change by hand to
+the same lines, the engine leaves the worktree as it is and raises a
+`set_aside` escalation that names the patch file. Apply the patch by hand
+and commit it before you retry to keep the work. A retry without it starts
+the task from the worktree as it is.
 
 The build waits, with the `waiting_escalation` status, once no task can run.
 An escalation without a task, such as a preflight or review escalation,
@@ -94,7 +103,13 @@ Only the box that started the build can resolve its escalations. The
 engine records the resolution in the escalation file and the build state,
 and resumes the paused tasks. It refuses a resolution that doesn't
 fit the escalation, such as `reorder` for an escalation without a task, and
-a second resolution of one escalation.
+a second resolution of one escalation. It also refuses to run a `placement`
+escalation's work again while the build plan places a seat on a vendor that
+the single-vendor setting excludes, because the seat would fail the same
+way. The refusal names the plan field to change, such as
+`placements.developer.vendor`, for a new build. A build start or a plan
+freeze refuses such a plan up front, so only a build that an older engine
+started can reach this.
 
 ### Decisions for the owner
 

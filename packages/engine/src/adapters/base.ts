@@ -214,17 +214,23 @@ export abstract class CliAdapter implements CliVendorAdapter {
     // a change of default during a call can't split it.
     const continuing = req.sessionId !== undefined;
     // A session started on the home folder is saved as `undefined`, which is
-    // a known folder, not a reason to read the default.
+    // a known folder, not a reason to read the default. A caller that saved
+    // the session's folder, such as a build after an engine restart, names it.
     const pinned = continuing && this.sessionFolders.has(req.sessionId as string);
+    const named = continuing && req.sessionFolder !== undefined;
     const accountFolder = pinned
       ? this.sessionFolders.get(req.sessionId as string)
-      : this.accountDir();
+      : named
+        ? (req.sessionFolder ?? undefined)
+        : this.accountDir();
+    const { sessionFolder: _folder, ...rest } = req;
     const request = {
-      ...req,
+      ...rest,
       accountFolder,
       ...(continuing ? {} : { sessionId: undefined }),
     };
-    const result = await this.call(request, { method, role: METHOD_ROLES[method] });
+    const called = await this.call(request, { method, role: METHOD_ROLES[method] });
+    const result = { ...called, accountFolder: accountFolder ?? null };
     if (result.sessionId) {
       this.sessionFolders.set(result.sessionId, accountFolder);
       if (this.sessionFolders.size > MAX_SESSION_FOLDERS) {

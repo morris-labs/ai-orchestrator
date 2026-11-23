@@ -91,6 +91,8 @@ export interface AgentOutcome<T> {
   vendor: Vendor;
   model: string;
   sessionId: string | null;
+  /** The account folder that holds the session; `null` for the CLI's home folder; absent when unknown. */
+  accountFolder?: string | null;
   output: T;
   tokens: { in: number; out: number; fresh?: number; cacheWrite?: number; cacheRead?: number };
   /** Tool calls that failed during the call, when the vendor reported any. */

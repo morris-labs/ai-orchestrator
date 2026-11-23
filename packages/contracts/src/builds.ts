@@ -489,6 +489,11 @@ export const EscalationKindSchema = z.enum([
    * owner decides.
    */
   "test_dispute",
+  /**
+   * The work that a waiting task set aside no longer applies on top of the
+   * tasks that ran since. The patch stays in the task's directory.
+   */
+  "set_aside",
 ]);
 export type EscalationKind = z.infer<typeof EscalationKindSchema>;
 

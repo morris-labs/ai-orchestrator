@@ -225,6 +225,39 @@ describe("the coverage check", () => {
     });
   });
 
+  it("resumes a single-vendor check's own session for a message", async () => {
+    const world = await buildWorld({ steps: BUILD_PIPELINE });
+    const ask = {
+      tool: "send_message",
+      arguments: {
+        type: "question",
+        to: "coverage-checker",
+        toTask: "coverage-check",
+        body: "Which test covers the quantity?",
+      },
+    };
+    world.script({
+      codex: [
+        { match: "Which test covers the quantity", output: { summary: "Read the message." } },
+        testRound("round 1 of", REVISED_TEST),
+        { ...ALL_CHECKED, match: "Coverage check" },
+        { ...DEVELOPER, match: "Task T1", busCalls: [ask] },
+      ],
+    });
+
+    await world.start("cart-total", { ...twoCriteriaPlan(), singleVendor: "codex" });
+    await world.settle("cart-total");
+
+    const registry = JSON.parse(world.file("cart-total", "sessions.json")) as {
+      sessions: { seat: string; sessionId: string; turns: { messageId: string | null }[] }[];
+    };
+    const checkers = registry.sessions.filter((s) => s.seat === "coverage-checker");
+    expect(checkers).toHaveLength(1);
+    expect(checkers[0]!.turns.map((t) => t.messageId)).toEqual([null, "M1"]);
+    const answered = world.calls().find((c) => c.prompt.includes("Which test covers the quantity"));
+    expect(answered?.resumeId).toBe(checkers[0]!.sessionId);
+  });
+
   it("escalates when the plan places the check on the Test engineer's vendor", async () => {
     const world = await buildWorld({ steps: BUILD_PIPELINE });
     world.script({ codex: [testRound("round 1 of", REVISED_TEST)], claude: [DEVELOPER] });
@@ -237,6 +270,99 @@ describe("the coverage check", () => {
 
     expect(state).toMatchObject({ step: "tests_first", status: "waiting_escalation" });
     expect(state.escalations).toEqual([expect.objectContaining({ kind: "placement" })]);
+  });
+
+  it("moves the check to another vendor when the plan places the Test engineer on the check's default", async () => {
+    const world = await buildWorld({ steps: BUILD_PIPELINE });
+    world.script({
+      claude: [testRound("round 1 of", REVISED_TEST), DEVELOPER],
+      codex: [ALL_CHECKED],
+    });
+
+    await world.start("cart-total", {
+      ...twoCriteriaPlan(),
+      placements: { "test-engineer": { vendor: "claude" } },
+    });
+    const state = await world.settle("cart-total");
+
+    expect(state).toMatchObject({ step: "review", status: "paused", escalations: [] });
+    expect(world.calls().map((c) => c.cli)).toEqual(["claude", "codex", "claude"]);
+    const checker = world.events.ofType("agent.started")[1];
+    expect(checker).toMatchObject({ seat: "coverage-checker", vendor: "codex" });
+    expect(checker?.placement?.note).toMatch(/requires a vendor other than claude/);
+  });
+
+  it("resumes the check's own session on its vendor for a message", async () => {
+    const world = await buildWorld({ steps: BUILD_PIPELINE });
+    const note = {
+      tool: "send_message",
+      arguments: {
+        type: "question",
+        to: "coverage-checker",
+        toTask: "coverage-check",
+        body: "Which test covers AC2?",
+      },
+    };
+    world.script({
+      claude: [testRound("round 1 of", REVISED_TEST), { ...DEVELOPER, busCalls: [note] }],
+      codex: [
+        // The check's turn for the message outlasts the Developer's call, which writes files.
+        {
+          match: "Which test covers AC2?",
+          output: { summary: "Read the message." },
+          delayMs: 1_500,
+        },
+        ALL_CHECKED,
+      ],
+    });
+
+    await world.start("cart-total", {
+      ...twoCriteriaPlan(),
+      placements: { "test-engineer": { vendor: "claude" } },
+    });
+    await world.settle("cart-total");
+
+    const codex = world.calls().filter((c) => c.cli === "codex");
+    // The check's first turn starts its session, and the message turn resumes
+    // it once: no write changes the worktree under the read-only turn.
+    expect(codex).toHaveLength(2);
+    expect(codex[0]!.resumeId).toBeNull();
+    expect(codex[1]!.resumeId).toEqual(expect.any(String));
+    const registry = JSON.parse(world.file("cart-total", "sessions.json")) as {
+      sessions: { seat: string; vendor: string; turns: unknown[] }[];
+    };
+    const checkers = registry.sessions.filter((s) => s.seat === "coverage-checker");
+    expect(checkers).toEqual([expect.objectContaining({ vendor: "codex" })]);
+    expect(checkers[0]!.turns).toHaveLength(2);
+  });
+
+  it("waits before the next step when a message without a plan task can't be delivered", async () => {
+    const world = await buildWorld({ steps: BUILD_PIPELINE });
+    const ask = {
+      tool: "send_message",
+      arguments: {
+        type: "question",
+        to: "coverage-checker",
+        toTask: "coverage-check",
+        body: "Does a quantity of zero count?",
+      },
+    };
+    world.script({
+      codex: [
+        testRound("round 1 of", WEAK_TEST),
+        { ...testRound("coverage revision", REVISED_TEST), busCalls: [ask] },
+      ],
+      claude: [{ match: "Does a quantity of zero count?", error: "crash" }, AC2_GAP, DEVELOPER],
+    });
+
+    await world.start("cart-total", twoCriteriaPlan());
+    const state = await world.settle("cart-total");
+
+    expect(state).toMatchObject({ step: "tasks", status: "waiting_escalation" });
+    expect(state.escalations).toEqual([
+      expect.objectContaining({ kind: "agent_call", taskId: null, status: "open" }),
+    ]);
+    expect(world.events.ofType("agent.started").map((e) => e.seat)).not.toContain("developer");
   });
 
   it("skips the check in a small build", async () => {

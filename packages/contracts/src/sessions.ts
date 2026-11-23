@@ -41,6 +41,12 @@ export const SessionTurnSchema = z
     head: z.string().min(1),
     /** The turn's input tokens, the registry's measure of the session's size. */
     inputTokens: z.number().int().nonnegative(),
+    /**
+     * The worktree paths that a message turn of a seat that writes files
+     * changed. The task gate doesn't count them against another seat's
+     * attempt. Absent when the turn changed none.
+     */
+    changed: z.array(z.string().min(1)).optional(),
   })
   .strict();
 export type SessionTurn = z.infer<typeof SessionTurnSchema>;
@@ -82,8 +88,20 @@ export const SessionRecordSchema = z
     model: z.string().min(1),
     /** The vendor's session ID, or `null` when the vendor reported none. */
     sessionId: z.string().min(1).nullable(),
+    /**
+     * The account folder that holds the vendor session, so a resume after an
+     * engine restart runs there; `null` for the CLI's home folder. Absent for
+     * a session recorded before the engine saved it.
+     */
+    accountFolder: z.string().min(1).nullable().optional(),
     /** The placement the session runs on. A different one for its seat starts a fresh agent. */
     placement: SeatPlacementSchema,
+    /**
+     * The vendor a rule keeps the seat's agents off, such as the Test
+     * engineer's vendor for the coverage check. A message turn places the
+     * seat with it too.
+     */
+    otherThan: VendorSchema.optional(),
     reason: SessionReasonSchema,
     /** The session this one took over from. */
     replaces: SessionIdSchema.nullable().default(null),

@@ -20,7 +20,7 @@ import { taskOrder, type BuildTask, type Escalation } from "@aio/contracts";
 import { RunCancelled } from "../../calls/index.js";
 import { untrusted } from "../../prompts/templates.js";
 import { loadBaseline, quarantine } from "../baseline.js";
-import type { BuildContext } from "../context.js";
+import { SeatCallSkipped, type BuildContext } from "../context.js";
 import { diagnose, diagnosisText, readDiagnosis, type DiagnosisRecord } from "../debugger.js";
 import {
   disputeContext,
@@ -112,6 +112,10 @@ function roleTask(ctx: BuildContext, task: BuildTask, context: string): RoleTask
     contracts: task.contracts,
     criteria: task.criteria.map((id) => ({ id, text: criteria.get(id) ?? "" })),
     tests: task.tests,
+    dependsOn: task.dependsOn.map((id) => ({
+      id,
+      title: ctx.plan.tasks.find((t) => t.id === id)?.title ?? "",
+    })),
     context,
   };
 }
@@ -170,6 +174,29 @@ function otherTasks(
   };
 }
 
+/**
+ * The paths that message turns of other seats, or of the task's seat on
+ * other tasks, changed since the task's base. The task's attempts didn't
+ * change them, so its permission check leaves them be.
+ */
+async function othersTurnPaths(
+  ctx: BuildContext,
+  task: BuildTask,
+  base: string,
+): Promise<string[]> {
+  const { sessions } = await ctx.sessions.registry.snapshot();
+  const paths = new Set<string>();
+  for (const session of sessions) {
+    if (session.seat === task.role && session.taskIds.includes(task.id)) continue;
+    for (const turn of session.turns) {
+      if (turn.messageId === null || !turn.changed?.length) continue;
+      if (!(await ctx.worktree.git.ok(["merge-base", "--is-ancestor", base, turn.head]))) continue;
+      for (const path of turn.changed) paths.add(path);
+    }
+  }
+  return [...paths];
+}
+
 /** The context about the dispute that an attempt runs again after, or `undefined` for none. */
 async function settledDispute(
   ctx: BuildContext,
@@ -211,12 +238,22 @@ async function afterDispute(
   return "again";
 }
 
+/** An attempt whose task an escalation paused during its call; it goes on from the saved answer. */
+const PAUSED = "paused";
+
 /**
  * Runs attempt `n`, or returns its saved result when it already finished.
  * An attempt whose seat reports a missing secret or service ends without
- * the gate.
+ * the gate. An attempt whose task an escalation paused during the call,
+ * such as a question past the cap, returns `PAUSED` without the gate; once
+ * the escalation is resolved, the call cache returns the same answer and
+ * the gate runs then.
  */
-async function attempt(ctx: BuildContext, task: BuildTask, n: number): Promise<FinishedAttempt> {
+async function attempt(
+  ctx: BuildContext,
+  task: BuildTask,
+  n: number,
+): Promise<FinishedAttempt | typeof PAUSED> {
   const path = ctx.store.attemptPath(task.id, n);
   let record = await ctx.store.readJson<AttemptRecord>(path);
   if (record?.gate || record?.blocked || record?.dispute !== undefined) {
@@ -235,25 +272,37 @@ async function attempt(ctx: BuildContext, task: BuildTask, n: number): Promise<F
       : undefined;
   const diagnosis = n > 1 ? await readDiagnosis(ctx, task.id, n - 1) : undefined;
   const specialties = await ctx.specialties(task.specialties);
-  const outcome = await ctx.callSeat({
-    seat: task.role,
-    specialties,
-    key: record.callKey,
-    step: "tasks",
-    task: roleTask(
-      ctx,
-      task,
-      attemptContext(
-        n,
-        capOf(ctx, task.id),
-        previous,
-        diagnosis,
-        clarifications(ctx, task.id),
-        await settledDispute(ctx, task, record.after),
+  let outcome: Awaited<ReturnType<BuildContext["callSeat"]>>;
+  try {
+    outcome = await ctx.callSeat({
+      // A message turn that ran while the drive waited for the seat can pause the task.
+      proceed: () => progress.status === "running",
+      seat: task.role,
+      specialties,
+      key: record.callKey,
+      step: "tasks",
+      task: roleTask(
+        ctx,
+        task,
+        attemptContext(
+          n,
+          capOf(ctx, task.id),
+          previous,
+          diagnosis,
+          clarifications(ctx, task.id),
+          await settledDispute(ctx, task, record.after),
+        ),
       ),
-    ),
-  });
+    });
+  } catch (error) {
+    if (error instanceof SeatCallSkipped) return PAUSED;
+    throw error;
+  }
   record.answer = { vendor: outcome.vendor, model: outcome.model, output: outcome.output };
+  if (progress.status !== "running") {
+    await ctx.store.writeJson(path, record);
+    return PAUSED;
+  }
   const blocked = blockerOf(outcome.output);
   if (blocked) {
     const finished = { ...record, blocked };
@@ -276,10 +325,13 @@ async function attempt(ctx: BuildContext, task: BuildTask, n: number): Promise<F
   // A test that a dispute of this task amended changed since the task's
   // base, but the engine changed it, so the permission check leaves it be.
   const amended = (lock?.amendments ?? []).filter((a) => a.taskId === task.id).map((a) => a.test);
+  const base = progress.base ?? ctx.state.base;
   const gate = await runTaskGate({
     worktree: ctx.worktree,
-    base: progress.base ?? ctx.state.base,
-    writable: [...writablePaths(ctx.role(task.role), roleTask(ctx, task, "")), ...amended],
+    base,
+    writable: writablePaths(ctx.role(task.role), roleTask(ctx, task, "")),
+    // By exact name: a path such as `notes/*.md` must not exempt other notes.
+    exempt: [...amended, ...(await othersTurnPaths(ctx, task, base))],
     commands: ctx.plan.commands,
     lock,
     shell: ctx.services.shell,
@@ -421,26 +473,28 @@ async function runTask(ctx: BuildContext, task: BuildTask): Promise<StepOutcome>
     progress.base = await ctx.worktree.head();
     await ctx.setTaskStatus(task.id, "running");
   }
-  if (progress.setAside) await bringBack(ctx, task, progress.setAside);
+  if (progress.setAside && !(await bringBack(ctx, task, progress.setAside))) return "wait";
   const base = progress.base ?? ctx.state.base;
   const cap = capOf(ctx, task.id);
   const first = Math.max(progress.attempts, progress.resumeAt ?? 1, 1);
   for (let n = first; n <= cap; n += 1) {
     await ctx.calls.checkpoint();
-    let record: FinishedAttempt;
+    let finished: FinishedAttempt | typeof PAUSED;
     try {
-      record = await attempt(ctx, task, n);
+      finished = await attempt(ctx, task, n);
     } catch (error) {
       return failOnCallError(ctx, task.id, error);
     }
+    if (finished === PAUSED) return "wait";
+    const record = finished;
     if (record.blocked) {
       progress.lastFailure = `Needs the ${record.blocked.kind} ${record.blocked.name}.`;
       await ctx.escalate(blockerEscalation(task, n, record.blocked));
       return "wait";
     }
-    // An escalation that came in during the attempt, such as a question past
-    // the seat's question cap, pauses the task. Once it's resolved, the task
-    // goes on from this attempt's saved result.
+    // An escalation that came in after the call, such as during a dispute
+    // or a message turn, pauses the task. Once it's resolved, the task goes
+    // on from this attempt's saved result.
     if (progress.status !== "running") return "wait";
     if (record.dispute !== undefined) {
       let next: "again" | "wait";
@@ -519,6 +573,12 @@ async function runTask(ctx: BuildContext, task: BuildTask): Promise<StepOutcome>
 async function setAsideWaiting(ctx: BuildContext): Promise<void> {
   for (const progress of ctx.state.tasks) {
     if (progress.status !== "failed" || progress.setAside || !progress.base) continue;
+    // A test that a dispute of the task amended is locked as amended, so it
+    // stays: the next task's lock check expects it.
+    const lock = await readTestLock(ctx.store);
+    const amended = (lock?.amendments ?? [])
+      .filter((a) => a.taskId === progress.id)
+      .map((a) => a.test);
     // A task without changes gets an entry too: its base moves past the
     // tasks that run meanwhile, so its permission check leaves their work alone.
     const file = `tasks/${progress.id}/set-aside-${progress.attempts}.patch`;
@@ -526,6 +586,7 @@ async function setAsideWaiting(ctx: BuildContext): Promise<void> {
       progress.base,
       ctx.store.path(file),
       `chore(build): set task ${progress.id} aside while it waits for an escalation`,
+      amended,
     );
     progress.setAside = file;
     await ctx.persist();
@@ -534,21 +595,31 @@ async function setAsideWaiting(ctx: BuildContext): Promise<void> {
 
 /**
  * Gives a task back the work that `setAsideWaiting()` saved, on top of the
- * tasks that ran since, which its new base covers.
+ * tasks that ran since, which its new base covers. Returns false, with a
+ * `set_aside` escalation that pauses the task, when the work no longer
+ * applies; the patch stays for the Project manager.
  */
-async function bringBack(ctx: BuildContext, task: BuildTask, file: string): Promise<void> {
+async function bringBack(ctx: BuildContext, task: BuildTask, file: string): Promise<boolean> {
   const progress = ctx.task(task.id);
   progress.base = await ctx.worktree.head();
   const patch = ctx.store.path(file);
   if (existsSync(patch) && !(await ctx.worktree.bringBack(patch))) {
-    ctx.services.log.warn("A task's set-aside work no longer applies; the task starts without it", {
-      build: ctx.state.slug,
-      task: task.id,
-      patch: file,
+    progress.lastFailure = `The set-aside work in ${file} no longer applies.`;
+    await ctx.escalate({
+      kind: "set_aside",
+      level: "project_manager",
+      taskId: task.id,
+      summary: `Task ${task.id}'s set-aside work no longer applies on top of the tasks that ran since it waited.`,
+      details: [
+        `While task ${task.id} waited for an escalation, the engine saved its work as the patch ${file} in the build directory. The patch no longer applies to the worktree, so the task didn't start.`,
+        `To keep the work, apply the patch to the worktree at ${ctx.worktree.path} by hand, commit it, and resolve this escalation with a retry. To drop it, resolve with a retry: the task then goes on from the worktree as it is.`,
+      ].join("\n\n"),
     });
+    return false;
   }
   delete progress.setAside;
   await ctx.persist();
+  return true;
 }
 
 /** The plan's tasks in the order they run: a resolution's order, else plan order, after their dependencies. */
@@ -605,10 +676,14 @@ const AFTER_ATTEMPT: ReadonlySet<Escalation["kind"]> = new Set([
  * Prepares a task to run again after its escalation was resolved. After an
  * attempt that finished, the task goes on with the next attempt and gets
  * `ATTEMPT_CAP` more; after an agent call that stopped, the attempt runs
- * again.
+ * again. After set-aside work that no longer applied, the task goes on
+ * without it.
  */
 export function reopenTask(ctx: BuildContext, escalation: Escalation): void {
-  if (!escalation.taskId || !AFTER_ATTEMPT.has(escalation.kind)) return;
+  if (!escalation.taskId) return;
+  // The Project manager applied the set-aside work by hand or dropped it.
+  if (escalation.kind === "set_aside") delete ctx.task(escalation.taskId).setAside;
+  if (!AFTER_ATTEMPT.has(escalation.kind)) return;
   const progress = ctx.task(escalation.taskId);
   progress.resumeAt = progress.attempts + 1;
   progress.attemptCap = Math.max(capOf(ctx, progress.id), progress.attempts + ATTEMPT_CAP);

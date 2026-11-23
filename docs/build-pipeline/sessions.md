@@ -17,7 +17,9 @@ the following lists:
 
 - **`sessions`:** every agent session in start order. Each one names its
   seat, the plan tasks it works for, the vendor and its session ID, the
-  placement it runs on, the task brief that its agent got, and its turns.
+  account folder that holds the session, the placement it runs on, the
+  vendor a rule keeps the seat off (for the coverage check), the task brief
+  that its agent got, and its turns.
   Each turn records the agent call key, the message it answered, when it
   ended, the build worktree's `HEAD` commit at that time, and its input
   tokens.
@@ -45,9 +47,33 @@ under way waits in the queue until the turn ends, and two messages for one
 session run as two turns in the order the engine saved them. A build step
 ends only after the message turns that it started finish.
 
+Every message turn also waits for the build worktree. The build holds the
+worktree through each step, its own agent calls included, and lets go of it
+only while it waits for a seat, between steps, and while it waits for an
+escalation. So a resumed agent never changes files while the build's agent
+works or while the task gate, a red check, or a commit reads them, and
+nothing changes the worktree under a read-only turn.
+
+A turn of a seat that writes files may change only what its seat may: its
+writable paths for the session's task, and never a locked test. The engine
+puts back any other file the turn changed, the way it was before the turn,
+and raises an escalation for the Project manager that names the files. The
+turn records the paths it kept with the turn, in `changed`. The task gate doesn't count those paths against the
+attempts of another seat's task, and a task that a turn's escalation paused
+doesn't start its next attempt.
+
+A resumed turn runs in the account folder that holds the session, even when
+the vendor's default account folder changed or the engine restarted since.
+
 A resumed turn's prompt holds the message and a summary of the commits that
 landed on the build branch since the session's last turn, one `SHA subject`
 line for each, oldest first. The agent replies with the `send_message` tool.
+
+When a message turn fails, such as an agent call that fails twice, the
+registry records the delivery as `failed` and the engine raises an
+escalation for the Project manager. The escalation pauses the message's
+task, or the sender's task, when that is a plan task. Otherwise the build
+waits for it before its next step.
 
 ## When a message gets a fresh agent
 

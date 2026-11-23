@@ -302,19 +302,22 @@ describe("escalations from agent calls", () => {
     ]);
   });
 
-  it("escalates a seat whose placement breaks the single-vendor setting, and calls no vendor", async () => {
+  it("refuses a plan whose placement breaks the single-vendor setting, and calls no vendor", async () => {
     const world = await buildWorld();
     world.script({
       claude: [{ match: "Task T1", output: REPORT, writeFiles: { "src/cart.mjs": CART_DONE } }],
     });
 
-    await world.start(
-      "cart-total",
-      cartPlan({ singleVendor: "claude", placements: { developer: { vendor: "codex" } } }),
-    );
-    const state = await world.settle("cart-total");
-
-    expect(state.escalations).toEqual([expect.objectContaining({ kind: "placement" })]);
+    await expect(
+      world.start(
+        "cart-total",
+        cartPlan({ singleVendor: "claude", placements: { developer: { vendor: "codex" } } }),
+      ),
+    ).rejects.toMatchObject({
+      code: "validation",
+      message: expect.stringMatching(/placements\.developer\.vendor.*codex.*singleVendor.*claude/s),
+    });
+    expect(world.git(world.root, "branch", "--list", "build/*")).toBe("");
     expect(world.calls()).toHaveLength(0);
   });
 

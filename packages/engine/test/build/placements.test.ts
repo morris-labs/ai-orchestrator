@@ -93,6 +93,18 @@ describe("resolvePlacement", () => {
     expect(placed).toMatchObject({ vendor: "codex", fresh: false });
   });
 
+  it("moves a seat on its role default off the vendor a rule excludes", () => {
+    const placed = resolvePlacement({
+      seat: "coverage-checker",
+      role: { vendor: "claude", tier: "large", effort: "medium" },
+      otherThan: "claude",
+      movable: true,
+    });
+
+    expect(placed).toMatchObject({ vendor: "codex", tier: "large", fresh: false });
+    expect(placed.note).toMatch(/requires a vendor other than claude/);
+  });
+
   it("refuses a placement that breaks a rule requiring another vendor", () => {
     expect(() =>
       resolvePlacement({

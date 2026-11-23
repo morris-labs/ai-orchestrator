@@ -44,6 +44,8 @@ export interface SeatTurn {
   output?: AdapterOutput;
   /** The session to resume. Absent, the turn starts a fresh agent. */
   sessionId?: string;
+  /** The account folder that holds `sessionId`; `null` for the CLI's home folder. */
+  sessionFolder?: string | null;
 }
 
 /** The agent call for one turn of `role`'s seat on `placement`. */
@@ -73,6 +75,9 @@ export function seatCallSpec(
             },
           },
           ...(turn.sessionId !== undefined ? { sessionId: turn.sessionId } : {}),
+          ...(turn.sessionId !== undefined && turn.sessionFolder !== undefined
+            ? { sessionFolder: turn.sessionFolder }
+            : {}),
         },
         groupId: null,
         estimateTokens: SEAT_ESTIMATE_TOKENS,

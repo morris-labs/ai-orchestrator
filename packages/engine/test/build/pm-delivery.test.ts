@@ -192,5 +192,13 @@ describe("milestone digests", () => {
     // Delivered digests no longer wait: they need no answer.
     for (const item of inbox.items) await world.manager.delivered("cart-label", item.id);
     expect((await world.manager.inbox("cart-label")).items).toEqual([]);
+
+    // Each task change names the task's milestone, so the board groups it.
+    const changes = world.events
+      .ofType("build.task.changed")
+      .map((e) => [e.taskId, e.status, e.milestone]);
+    expect(changes).toContainEqual(["T1", "running", "M1"]);
+    expect(changes).toContainEqual(["T1", "done", "M1"]);
+    expect(changes).toContainEqual(["T2", "done", "M2"]);
   });
 });

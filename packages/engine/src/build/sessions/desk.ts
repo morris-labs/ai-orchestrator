@@ -9,14 +9,21 @@ import {
   OwnerPostTurnAnswerSchema,
   type BuildSessionSettings,
   type BuildStep,
+  type EscalationKind,
   type Message,
+  type RoleDefinition,
   type QueuedMessage,
   type SeatPlacement,
   type SessionBrief,
   type SessionRecord,
+  type Vendor,
 } from "@aio/contracts";
 import { RunCancelled, describeError, type AgentOutcome } from "../../calls/index.js";
 import { readJson } from "../../run/files.js";
+import { escalationForCallError } from "../escalations.js";
+import { outsideWritable } from "../gate.js";
+import { writablePaths } from "../roles/index.js";
+import { readTestLock } from "../test-lock.js";
 import type { BuildContext } from "../context.js";
 import type { RoleTask } from "../roles/index.js";
 import { ownerPostAnswer } from "../owner/index.js";
@@ -34,6 +41,8 @@ export interface SeatSession {
   step: BuildStep;
   key: string;
   placement: SeatPlacement;
+  /** The vendor a rule keeps the seat's agents off, which every later turn keeps. */
+  otherThan?: Vendor;
   outcome: AgentOutcome<unknown>;
 }
 
@@ -125,7 +134,11 @@ export class SessionDesk {
       vendor: input.outcome.vendor,
       model: input.outcome.model,
       sessionId: input.outcome.sessionId,
+      ...(input.outcome.accountFolder !== undefined
+        ? { accountFolder: input.outcome.accountFolder }
+        : {}),
       placement: input.placement,
+      ...(input.otherThan ? { otherThan: input.otherThan } : {}),
       reason: "step",
       turn: {
         key: input.key,
@@ -186,7 +199,17 @@ export class SessionDesk {
     this.track(this.run(entry.seat, () => this.deliver(entry)));
   }
 
-  private async deliver(entry: QueuedMessage): Promise<void> {
+  /**
+   * Delivers a message once the drive lets go of the worktree: a write turn
+   * mustn't change files under the drive, and a read-only turn's tree guard
+   * mustn't see the drive's changes. A failed turn's escalation is raised
+   * before the drive gets the worktree back, so the drive sees what it paused.
+   */
+  private deliver(entry: QueuedMessage): Promise<void> {
+    return this.ctx.worktreeLock.run(() => this.deliverNow(entry));
+  }
+
+  private async deliverNow(entry: QueuedMessage): Promise<void> {
     try {
       await this.turn(entry);
       this.scheduled.delete(entry.messageId);
@@ -209,7 +232,73 @@ export class SessionDesk {
         at: this.now(),
         note: describeError(error),
       });
+      await this.escalateFailure(entry, error);
     }
+  }
+
+  /**
+   * Raises an escalation for a message that its addressee never got. It
+   * pauses the message's task, or the sender's, when that is a plan task;
+   * otherwise the build waits for it.
+   */
+  private async escalateFailure(entry: QueuedMessage, error: unknown): Promise<void> {
+    const addressee = `the ${entry.seat}${entry.taskId ? ` (task ${entry.taskId})` : ""}`;
+    const cause = escalationForCallError(error, null);
+    await this.escalateTurn(entry, {
+      kind: cause?.kind ?? "agent_call",
+      summary: `Message ${entry.messageId} to ${addressee} wasn't delivered: ${describeError(error)}`,
+      details: [
+        `The engine couldn't give message ${entry.messageId} to ${addressee}, so that agent never read it. Answer the sender yourself on the team chat, or fix the cause and resolve the escalation; the sender can then send the message again.`,
+        "",
+        `Error: ${describeError(error)}`,
+      ].join("\n"),
+    });
+  }
+
+  /**
+   * Raises an escalation about a message turn, with the message's body. It
+   * pauses the message's task, or the sender's, when that is a plan task;
+   * otherwise the build waits for it.
+   */
+  private async escalateTurn(
+    entry: QueuedMessage,
+    draft: { kind?: EscalationKind; summary: string; details: string },
+  ): Promise<void> {
+    const { ctx } = this;
+    const message = await readJson(
+      ctx.store.path("messages", `${entry.messageId}.json`),
+      MessageSchema,
+    ).catch(() => null);
+    const planTask = (id: string | null | undefined) =>
+      id && ctx.state.tasks.some((t) => t.id === id) ? id : null;
+    const sender = message?.from.kind === "seat" ? message.from.taskId : null;
+    await ctx.escalate({
+      kind: draft.kind ?? "agent_call",
+      level: "project_manager",
+      taskId: planTask(entry.taskId) ?? planTask(sender),
+      summary: draft.summary,
+      details: [
+        draft.details,
+        "",
+        message ? `Message body:\n\n${message.body}` : "The message file is missing.",
+      ].join("\n"),
+    });
+  }
+
+  /**
+   * The paths of `changed` that the turn's seat may not change: those
+   * outside its writable paths for `task`, and locked tests, which only a
+   * test dispute changes.
+   */
+  private async refusedChanges(
+    role: RoleDefinition,
+    task: RoleTask,
+    changed: readonly string[],
+  ): Promise<string[]> {
+    const outside = outsideWritable(changed, writablePaths(role, task));
+    const lock = await readTestLock(this.ctx.store);
+    const locked = new Set((lock?.files ?? []).map((f) => f.path));
+    return [...new Set([...outside, ...changed.filter((p) => locked.has(p))])].sort();
   }
 
   /** One message turn: a resume of the addressee's session, or a fresh agent that takes it over. */
@@ -228,7 +317,14 @@ export class SessionDesk {
     }
     const key = `message-${message.id}`;
     const role = ctx.role(entry.seat);
-    const placement = ctx.seats.place(entry.seat);
+    // The rule that kept the session's first agent off a vendor holds for
+    // every turn. With the single-vendor setting, that rule only made the
+    // first agent fresh, so it didn't share the other seat's session; the
+    // session a turn resumes is the seat's own.
+    const placement = {
+      ...ctx.seats.place(entry.seat, session.otherThan ? { otherThan: session.otherThan } : {}),
+      fresh: false,
+    };
     const reason = freshReason(session, placement, ctx.services.clock.now(), this.settings);
     const packs = await ctx.specialties(session.brief.specialties);
     const decisions = await ctx.decisionsText(session.taskIds);
@@ -238,6 +334,7 @@ export class SessionDesk {
       branch: ctx.state.branch,
       specialties: packs,
       ...(decisions !== "" ? { decisions } : {}),
+      ...(ctx.team ? { teamChat: true } : {}),
     };
     // An owner post's turn also reports the criteria the post contradicts.
     const fromOwner = message.from.kind === "owner";
@@ -253,6 +350,10 @@ export class SessionDesk {
             message,
             answer,
           });
+    // A turn that writes records what it changed, so the task gate doesn't
+    // count it against another seat's attempt.
+    const writes = role.permission.access === "write";
+    const before = writes ? await ctx.worktree.snapshot() : null;
     const outcome = await ctx.callTurn({
       seat: entry.seat,
       taskId: entry.taskId,
@@ -263,19 +364,37 @@ export class SessionDesk {
       placement,
       specialties: packs,
       output: answer.output,
-      ...(reason === null && session.sessionId !== null ? { sessionId: session.sessionId } : {}),
+      ...(reason === null && session.sessionId !== null
+        ? {
+            sessionId: session.sessionId,
+            ...(session.accountFolder !== undefined
+              ? { sessionFolder: session.accountFolder }
+              : {}),
+          }
+        : {}),
     });
     let taken = session;
+    let refused: string[] = [];
     if (!(await this.registry.hasTurn(key))) {
+      let changed = before ? await ctx.worktree.changedSinceSnapshot(before) : [];
+      // A turn may change only what its seat may: the engine puts back the rest.
+      if (before && changed.length > 0) {
+        refused = await this.refusedChanges(role, task, changed);
+        if (refused.length > 0) {
+          await ctx.worktree.restoreSnapshot(before, refused);
+          changed = changed.filter((p) => !refused.includes(p));
+        }
+      }
       const turn = {
         key,
         messageId: message.id,
         at: this.now(),
         head: await ctx.worktree.head(),
         inputTokens: outcome.tokens.in,
+        ...(changed.length > 0 ? { changed } : {}),
       };
       if (reason === null) {
-        await this.registry.addTurn(session.id, turn, outcome.sessionId);
+        await this.registry.addTurn(session.id, turn, outcome.sessionId, outcome.accountFolder);
       } else {
         taken = await this.registry.start({
           seat: session.seat,
@@ -285,7 +404,9 @@ export class SessionDesk {
           vendor: outcome.vendor,
           model: outcome.model,
           sessionId: outcome.sessionId,
+          ...(outcome.accountFolder !== undefined ? { accountFolder: outcome.accountFolder } : {}),
           placement,
+          ...(session.otherThan ? { otherThan: session.otherThan } : {}),
           reason,
           replaces: session.id,
           turn,
@@ -297,6 +418,16 @@ export class SessionDesk {
       status: "delivered",
       at: this.now(),
     });
+    if (refused.length > 0) {
+      const files = refused.join(", ");
+      await this.escalateTurn(entry, {
+        summary: `The ${entry.seat} changed ${files} in its turn for message ${message.id}, which it may not change. The engine put them back.`,
+        details: [
+          `In its turn for message ${message.id}, the ${entry.seat}${entry.taskId ? ` (task ${entry.taskId})` : ""} changed files outside its writable paths, or locked tests: ${files}. The engine put each one back the way it was before the turn.`,
+          "Tell the agent what it may change, or move the change to the seat that owns the files, then resolve the escalation.",
+        ].join("\n\n"),
+      });
+    }
     if (fromOwner) {
       const answered = OwnerPostTurnAnswerSchema.safeParse(outcome.output);
       const contradicts = answered.success ? answered.data.contradicts : [];

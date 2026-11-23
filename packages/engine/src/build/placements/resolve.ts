@@ -1,5 +1,6 @@
 // Resolves a seat's placement from its levels: the role default, the
 // single-vendor setting, the build plan, and a live change.
+import { VendorSchema } from "@aio/contracts";
 import type {
   Placement,
   PlacementLevel,
@@ -35,14 +36,22 @@ export interface PlacementInput {
    * and runs as a fresh agent instead.
    */
   otherThan?: Vendor | undefined;
+  /**
+   * True when nobody chose the role default's vendor for this project, as
+   * for a role from the shipped library. A rule that excludes that vendor
+   * then moves the seat to another vendor instead of throwing.
+   */
+  movable?: boolean | undefined;
 }
 
 const FIELDS = ["vendor", "tier", "effort"] as const;
 
 /**
- * Applies each level over the one before it. Throws `PlacementError` when a
- * plan or live vendor breaks the single-vendor setting, or when the result
- * breaks a rule that requires another vendor and the setting is off.
+ * Applies each level over the one before it. A seat on a movable role
+ * default moves to the first other vendor when a rule excludes that vendor.
+ * Throws `PlacementError` when a plan or live vendor breaks the single-vendor
+ * setting, or when a vendor that the plan, a live change, or a repository
+ * role chose breaks a rule that requires another vendor and the setting is off.
  */
 export function resolvePlacement(input: PlacementInput): SeatPlacement {
   const placement: Placement = { ...input.role };
@@ -77,6 +86,16 @@ export function resolvePlacement(input: PlacementInput): SeatPlacement {
       ...resolved,
       fresh: true,
       note: `A rule requires a vendor other than ${single}, but the single-vendor setting keeps every seat on ${single}, so a fresh agent takes the ${input.seat} seat.`,
+    };
+  }
+  // Nobody chose the library default's vendor for this build, so the engine
+  // picks another one instead of stopping it.
+  const other = VendorSchema.options.find((v) => v !== input.otherThan);
+  if (input.movable && sources.vendor === "role" && other) {
+    return {
+      ...resolved,
+      vendor: other,
+      note: `A rule requires a vendor other than ${input.otherThan} for the ${input.seat} seat, whose role default is ${placement.vendor}, so the engine places it on ${other}.`,
     };
   }
   throw new PlacementError(

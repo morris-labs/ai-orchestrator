@@ -199,3 +199,58 @@ describe("the test baseline", () => {
     expect(state.escalations).toEqual([expect.objectContaining({ kind: "attempt_cap" })]);
   });
 });
+
+describe("the check baseline", () => {
+  /** A lint script with one error that exists at the base, and one for a `console.log` in the cart. */
+  const LEGACY_LINT = [
+    'import { readFileSync } from "node:fs";',
+    "let failed = false;",
+    'console.error("src/legacy.mjs:3:1  error  Unexpected var, use let or const instead  no-var");',
+    "failed = true;",
+    'if (readFileSync("src/cart.mjs", "utf8").includes("console.log")) {',
+    '  console.error("src/cart.mjs:2:3  error  Unexpected console statement  no-console");',
+    "}",
+    "process.exit(failed ? 1 : 0);",
+    "",
+  ].join("\n");
+
+  it("records a lint failure that exists at the base, and the gate fails only on new lint lines", async () => {
+    const world = await buildWorld();
+    commit(world, { "legacy-lint.mjs": LEGACY_LINT });
+    const noisy = `${CART_DONE}console.log("total");\n`;
+    world.script({
+      claude: [
+        { match: "attempt 2 of", output: REPORT, writeFiles: { "src/cart.mjs": CART_DONE } },
+        { match: "Task T1", output: REPORT, writeFiles: { "src/cart.mjs": noisy } },
+      ],
+    });
+    const plan = cartPlan();
+    plan.commands = { ...plan.commands, lint: [{ command: "node legacy-lint.mjs" }] };
+
+    await world.start("cart-total", plan);
+    const state = await world.settle("cart-total");
+
+    expect(state).toMatchObject({ step: "review" });
+    expect(state.tasks[0]).toMatchObject({ status: "done", attempts: 2 });
+    const baseline = JSON.parse(world.file("cart-total", "baseline.json")) as {
+      checks?: { kind: string; command: string; lines: string[] }[];
+    };
+    expect(baseline.checks).toEqual([
+      expect.objectContaining({
+        kind: "lint",
+        command: "node legacy-lint.mjs",
+        lines: [expect.stringContaining("Unexpected var")],
+      }),
+    ]);
+    const [first, second] = world.jsonFiles("cart-total", "tasks/T1") as {
+      gate: { passed: boolean; commands: { kind: string; passed: boolean; excused?: string[] }[] };
+    }[];
+    expect(first!.gate.passed).toBe(false);
+    expect(first!.gate.commands.find((c) => c.kind === "lint")?.passed).toBe(false);
+    expect(second!.gate.passed).toBe(true);
+    expect(second!.gate.commands.find((c) => c.kind === "lint")).toMatchObject({
+      passed: true,
+      excused: [expect.stringContaining("Unexpected var")],
+    });
+  });
+});

@@ -15,14 +15,19 @@
 //
 // Each dispute saves `tasks/TASK/dispute-N.json` as it goes, so a restarted
 // build continues from the last finished part.
+//
+// The report field is the only way in: the team chat refuses a
+// `test_dispute` message from an agent, so a dispute never reaches the Test
+// engineer as an ordinary turn that the engine doesn't settle.
 import { existsSync } from "node:fs";
 import { mkdir, readdir } from "node:fs/promises";
 import { dirname } from "node:path";
-import type { BuildTask, Escalation } from "@aio/contracts";
+import type { BuildTask, Escalation, Message } from "@aio/contracts";
 import { z } from "zod";
 import { RunCancelled } from "../calls/index.js";
 import type { AdapterOutput } from "../core.js";
 import { untrusted } from "../prompts/templates.js";
+import { MessageRefused } from "../team/index.js";
 import type { BuildContext } from "./context.js";
 import type { EscalationDraft } from "./escalations.js";
 import { outsideWritable } from "./gate.js";
@@ -37,6 +42,17 @@ import {
   writeTestLock,
   type TestLock,
 } from "./test-lock.js";
+
+/**
+ * Refuses a `test_dispute` message from an agent with `MessageRefused`,
+ * which tells the agent to put the dispute in its report instead.
+ */
+export function checkDisputeMessage(message: Message): void {
+  if (message.type !== "test_dispute" || message.from.kind !== "seat") return;
+  throw new MessageRefused(
+    "The engine settles a test dispute only from the `dispute` field of your report, with the test and your reason. Leave the locked test as it is, put the dispute in your report, and finish your turn.",
+  );
+}
 
 /** How a test dispute ended. */
 export type DisputeOutcome = "amended" | "rejected" | "ruled" | "escalated";
@@ -311,43 +327,47 @@ async function callTestEngineer(
   const key = record.callKey ?? `${task.id}-dispute-${record.id}`;
   const specialties = await ctx.specialties(task.specialties);
   const brief = roleTask(ctx, task, record, lock);
-  const outcome = await ctx.sessions.run(TEST_ENGINEER, async () => {
-    const placement = ctx.seats.place(TEST_ENGINEER);
-    const answer = await ctx.callTurn({
-      seat: TEST_ENGINEER,
-      taskId: task.id,
-      key,
-      step: "tasks",
-      task: brief,
-      prompt: rolePrompt(
-        {
-          ...role,
-          outputs: [
-            {
-              name: "verdict",
-              description: "Whether you amended the test or rejected the dispute, and why.",
-              schema: VERDICT_JSON as unknown as Record<string, unknown>,
-            },
-          ],
-        },
-        { ...brief, specialties },
-      ),
-      placement,
-      specialties,
-      output: VERDICT_OUTPUT,
-    });
-    await ctx.sessions.started({
-      seat: TEST_ENGINEER,
-      taskIds: [task.id],
-      task: brief,
-      specialties: specialties.map((p) => p.name),
-      step: "tasks",
-      key,
-      placement,
-      outcome: answer,
-    });
-    return answer;
-  }, [task.id]);
+  // The drive lets go of the worktree while it waits for the seat.
+  const outcome = await ctx.worktreeLock.outside((reclaim) =>
+    ctx.sessions.run(TEST_ENGINEER, async () => {
+      await reclaim();
+      const placement = ctx.seats.place(TEST_ENGINEER);
+      const answer = await ctx.callTurn({
+        seat: TEST_ENGINEER,
+        taskId: task.id,
+        key,
+        step: "tasks",
+        task: brief,
+        prompt: rolePrompt(
+          {
+            ...role,
+            outputs: [
+              {
+                name: "verdict",
+                description: "Whether you amended the test or rejected the dispute, and why.",
+                schema: VERDICT_JSON as unknown as Record<string, unknown>,
+              },
+            ],
+          },
+          { ...brief, specialties },
+        ),
+        placement,
+        specialties,
+        output: VERDICT_OUTPUT,
+      });
+      await ctx.sessions.started({
+        seat: TEST_ENGINEER,
+        taskIds: [task.id],
+        task: brief,
+        specialties: specialties.map((p) => p.name),
+        step: "tasks",
+        key,
+        placement,
+        outcome: answer,
+      });
+      return answer;
+    }, [task.id]),
+  );
   return { vendor: outcome.vendor, model: outcome.model, output: outcome.output };
 }
 

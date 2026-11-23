@@ -25,6 +25,11 @@ export interface GateCommandResult {
   failures: string[];
   /** The last lines of the output, for reports and the fixer prompt. */
   outputTail: string;
+  /**
+   * Every diagnostic line of the output, normalized by `diagnosticLines()`,
+   * when the caller asked for them with `GateOptions.diagnostics`.
+   */
+  diagnostics?: string[];
 }
 
 export interface GateRun {
@@ -92,6 +97,37 @@ export function extractFailures(output: string): string[] {
   return [...seen].sort();
 }
 
+/** The most diagnostic lines that `diagnosticLines()` keeps. */
+export const DIAGNOSTIC_LINE_LIMIT = 5000;
+
+/**
+ * Every line of a type check or lint command's output, so a run can be
+ * compared with an earlier run of the same command: colors, timings, and
+ * addresses removed, line and column numbers replaced with `L:C`, and count
+ * lines, such as `Found 3 errors`, left out. Unlike `extractFailures()`, it
+ * keeps lines without a failure word, such as `error TS2322` or `1:1 error`.
+ */
+export function diagnosticLines(output: string): string[] {
+  const seen = new Set<string>();
+  for (const raw of output.replace(ANSI_RE, "").split("\n")) {
+    let line = raw
+      .replace(/\(?\b\d+(\.\d+)?\s?(ms|s|sec|seconds)\b\)?/g, "")
+      .replace(/0x[0-9a-f]+/gi, "0x")
+      .replace(/\(\d+,\d+\)/g, "(L,C)")
+      .replace(/(^|[\s:])\d+:\d+(?=$|[\s:])/g, "$1L:C")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!line) continue;
+    if (SUMMARY_RE.test(line)) {
+      line = line.replace(/\d+/g, "N");
+      if (isCountLine(line)) continue;
+    }
+    seen.add(line);
+    if (seen.size >= DIAGNOSTIC_LINE_LIMIT) break;
+  }
+  return [...seen].sort();
+}
+
 function tail(text: string, lines = 40): string {
   return text.replace(ANSI_RE, "").trimEnd().split("\n").slice(-lines).join("\n");
 }
@@ -107,6 +143,8 @@ export interface GateOptions {
   git?: CommandRunner;
   timeoutMs?: number;
   signal?: AbortSignal;
+  /** Adds every diagnostic line of the output to the result, as `diagnosticLines()` reads it. */
+  diagnostics?: boolean;
 }
 
 /** Runs one gate command in `options.repoPath` and reports its result. */
@@ -131,6 +169,7 @@ export async function runGateCommand(
     timedOut: result.timedOut,
     failures: extractFailures(output),
     outputTail: tail(output),
+    ...(options.diagnostics ? { diagnostics: diagnosticLines(output) } : {}),
   };
 }
 

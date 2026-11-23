@@ -163,6 +163,10 @@ describe("questions", () => {
       }),
     ]);
     expect(state.tasks[0]).toMatchObject({ id: "T1", status: "failed" });
+    // The task paused during the call, so the attempt keeps the answer and skips the gate.
+    const [attempt] = world.jsonFiles("cart-curious", "tasks/T1") as Record<string, unknown>[];
+    expect(attempt).toMatchObject({ attempt: 1, answer: expect.any(Object) });
+    expect(attempt!.gate).toBeUndefined();
     const details = world.file("cart-curious", state.escalations[0]!.file);
     expect(details).toContain("M6");
     expect(details).toContain("Question 6 about T1?");
@@ -212,8 +216,10 @@ describe("questions", () => {
       note: "Answered the questions in the plan.",
     });
     const state = await world.waitFor("cart-resumed", (s) => s.tasks[0]?.status === "done");
-    // The attempt that asked the questions passed its gate, so the task needs no new call.
+    // The attempt that asked the questions runs its gate from the saved answer, so the task needs no new call.
     expect(state.tasks[0]).toMatchObject({ attempts: 1 });
     expect(world.calls()).toHaveLength(1);
+    const [attempt] = world.jsonFiles("cart-resumed", "tasks/T1") as Record<string, unknown>[];
+    expect(attempt).toMatchObject({ gate: { passed: true } });
   });
 });

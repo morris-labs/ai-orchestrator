@@ -2,19 +2,21 @@
 // agent's session with its seat and tasks, and a message for an agent whose
 // turn ended resumes that session, one turn at a time, with the commits
 // that landed since.
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { SessionRegistrySchema, type SessionRecord } from "@aio/contracts";
 import { describe, expect, it } from "vitest";
 import { BUILD_PIPELINE } from "../../src/build/index.js";
 import {
   CART_DONE,
+  CART_WRONG,
   REPORT,
   buildWorld,
   cartPlan,
   type BuildWorld,
   type MockResponse,
 } from "./harness.js";
+import { tempDir } from "../tmp.js";
 
 const TEST_FILE = "test/cart.test.mjs";
 
@@ -261,6 +263,178 @@ describe("session resume", () => {
     ]);
     expect(asked().map((c) => c.resumeId)).toEqual([tester.sessionId, tester.sessionId]);
     expect(world.jsonFiles("cart-restart", "messages")).toHaveLength(1);
+  });
+
+  it("resumes a session in its account folder after a restart moved the default", async () => {
+    const first = tempDir("aio-codex-first-");
+    const second = tempDir("aio-codex-second-");
+    let current = first;
+    const world = await buildWorld({
+      steps: BUILD_PIPELINE,
+      accountDirs: { codex: () => current },
+    });
+    world.script({
+      codex: [done(QUESTION, { times: 1, delayMs: 20_000 }), done(QUESTION), TESTS_FIRST],
+      claude: [{ ...developer(QUESTION), times: 1 }, developer()],
+    });
+
+    await world.start("cart-folder");
+    const asked = () => world.calls().filter((c) => c.cli === "codex" && c.resumeId);
+    const end = Date.now() + 20_000;
+    while (asked().length === 0 && Date.now() < end) await new Promise((r) => setTimeout(r, 25));
+    const tester = sessionOf(registry(world, "cart-folder").sessions, "test-engineer");
+    expect(tester.accountFolder).toBe(first);
+
+    current = second;
+    await world.restart();
+    await world.settle("cart-folder");
+
+    expect(asked().map((c) => c.resumeId)).toEqual([tester.sessionId, tester.sessionId]);
+    // The resumed turn ran in the folder that holds the session, so the
+    // codex mock wrote nothing to the new default.
+    expect(existsSync(join(second, "sessions"))).toBe(false);
+  });
+
+  it("escalates a message that the engine can't deliver, and pauses the message's task", async () => {
+    const world = await buildWorld({ steps: BUILD_PIPELINE });
+    world.script({
+      codex: [{ match: QUESTION, error: "crash" }, TESTS_FIRST],
+      // The first attempt fails its gate; the message turn fails before the second.
+      claude: [
+        { ...developer(QUESTION), times: 1, writeFiles: { "src/cart.mjs": CART_WRONG } },
+        developer(),
+      ],
+    });
+
+    await world.start("cart-undelivered");
+    const state = await world.settle("cart-undelivered");
+
+    const { deliveries } = registry(world, "cart-undelivered");
+    expect(deliveries).toEqual([expect.objectContaining({ messageId: "M1", status: "failed" })]);
+    expect(state.status).toBe("waiting_escalation");
+    expect(state.escalations).toEqual([
+      expect.objectContaining({
+        id: "E1",
+        kind: "agent_call",
+        level: "project_manager",
+        taskId: "T1",
+        tasks: ["T1"],
+        status: "open",
+      }),
+    ]);
+    expect(state.escalations[0]!.summary).toContain("M1");
+    expect(world.file("cart-undelivered", "escalations/E1.json")).toContain(QUESTION);
+    // The paused task's next attempt doesn't call its seat.
+    expect(state.tasks[0]).toMatchObject({ status: "failed", attempts: 2 });
+    expect(world.calls().filter((c) => c.cli === "claude")).toHaveLength(1);
+  });
+
+  it("keeps a write seat's message turn out of the worktree while the task gate runs", async () => {
+    const world = await buildWorld({ steps: BUILD_PIPELINE });
+    const note = ".aio/tester-note.md";
+    world.script({
+      // The Test engineer's resumed turn writes a note a second after the Developer finishes.
+      codex: [done(QUESTION, { delayMs: 1_500, writeFiles: { [note]: "A note.\n" } }), TESTS_FIRST],
+      claude: [{ ...developer(QUESTION), delayMs: 500 }],
+    });
+    const plan = cartPlan();
+    // The gate's lint runs for two seconds and fails when the tree changes under it.
+    const exists = `[ -e ${note} ] && echo yes || echo no`;
+    plan.commands = {
+      ...plan.commands,
+      lint: [
+        { command: `a=$(${exists}); sleep 2; b=$(${exists}); [ "$a" = "$b" ] && node lint.mjs` },
+      ],
+    };
+
+    await world.start("cart-gated", plan);
+    const state = await world.settle("cart-gated");
+
+    expect(state.tasks[0]).toMatchObject({ status: "done", attempts: 1 });
+    expect(existsSync(join(state.worktree, note))).toBe(true);
+  });
+
+  it("never counts another seat's message turn against a task attempt", async () => {
+    const world = await buildWorld({ steps: BUILD_PIPELINE });
+    // A helper under the task's test paths, which the Test engineer may change and the lock doesn't hold.
+    const note = "test/extra/helper.mjs";
+    world.script({
+      codex: [
+        done(QUESTION, { delayMs: 300, writeFiles: { [note]: "export const helper = 1;\n" } }),
+        TESTS_FIRST,
+      ],
+      claude: [
+        {
+          match: "Task T1",
+          times: 1,
+          output: REPORT,
+          writeFiles: { "src/cart.mjs": CART_WRONG },
+          busCalls: [send("test-engineer", QUESTION)],
+          delayMs: 500,
+        },
+        { match: "Task T1", output: REPORT, writeFiles: { "src/cart.mjs": CART_DONE } },
+      ],
+    });
+
+    const plan = cartPlan();
+    plan.tasks[0]!.tests = [TEST_FILE, "test/extra/**"];
+    await world.start("cart-turns", plan);
+    const state = await world.settle("cart-turns");
+
+    expect(state.tasks[0]).toMatchObject({ status: "done", attempts: 2 });
+    const attempts = world.jsonFiles("cart-turns", "tasks/T1") as {
+      gate: { permission: { outside: string[] } };
+    }[];
+    for (const attempt of attempts) expect(attempt.gate.permission.outside).toEqual([]);
+    // The Test engineer's file stays, and the registry records it with the turn.
+    expect(world.git(world.root, "show", `build/cart-turns:${note}`)).toBe(
+      "export const helper = 1;",
+    );
+    const tester = sessionOf(registry(world, "cart-turns").sessions, "test-engineer");
+    expect(tester.turns.at(-1)).toMatchObject({ messageId: "M1", changed: [note] });
+  });
+
+  it("puts back product code that a Test engineer's message turn changed, and escalates", async () => {
+    const world = await buildWorld({ steps: BUILD_PIPELINE });
+    world.script({
+      codex: [
+        done(QUESTION, { writeFiles: { "src/cart.mjs": CART_WRONG, "notes/ok.md": "x\n" } }),
+        TESTS_FIRST,
+      ],
+      claude: [developer(QUESTION)],
+    });
+
+    await world.start("cart-tester-code");
+    const state = await world.settle("cart-tester-code");
+
+    expect(readFileSync(join(state.worktree, "src/cart.mjs"), "utf8")).toBe(CART_DONE);
+    expect(existsSync(join(state.worktree, "notes/ok.md"))).toBe(false);
+    const turn = sessionOf(registry(world, "cart-tester-code").sessions, "test-engineer").turns.at(
+      -1,
+    );
+    expect(turn).toMatchObject({ messageId: "M1" });
+    expect(turn!.changed).toBeUndefined();
+    expect(state.escalations).toEqual([
+      expect.objectContaining({ kind: "agent_call", taskId: "T1", status: "open" }),
+    ]);
+    expect(state.escalations[0]!.summary).toMatch(/test-engineer.*src\/cart\.mjs/);
+  });
+
+  it("puts back a locked test that a Developer's message turn changed, and escalates", async () => {
+    const world = await buildWorld({ steps: BUILD_PIPELINE });
+    world.script({
+      codex: [done(QUESTION, { busCalls: [send("developer", ANSWER, "answer")] }), TESTS_FIRST],
+      claude: [done(ANSWER, { writeFiles: { [TEST_FILE]: "// weakened\n" } }), developer(QUESTION)],
+    });
+
+    await world.start("cart-dev-test");
+    const state = await world.settle("cart-dev-test");
+
+    expect(readFileSync(join(state.worktree, TEST_FILE), "utf8")).toBe(RED_TEST);
+    expect(state.escalations).toEqual([
+      expect.objectContaining({ kind: "agent_call", taskId: "T1", status: "open" }),
+    ]);
+    expect(state.escalations[0]!.summary).toMatch(/developer.*test\/cart\.test\.mjs/);
   });
 
   it("leaves a message for a seat and task that no agent holds to others", async () => {

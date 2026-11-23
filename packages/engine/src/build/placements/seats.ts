@@ -14,7 +14,10 @@ import {
 import { PlacementError, resolvePlacement } from "./resolve.js";
 
 /** The roles a build seats, by name, as `loadRoles()` returns them. */
-export type SeatRoles = ReadonlyMap<string, { readonly placement: Placement }>;
+export type SeatRoles = ReadonlyMap<
+  string,
+  { readonly placement: Placement; readonly source?: string }
+>;
 
 /** Options for placing one agent in a seat. */
 export interface PlaceOptions {
@@ -46,6 +49,7 @@ export class SeatPlacements {
       plan: this.levels.plan[seat],
       live: this.liveOf(seat),
       otherThan: options.otherThan,
+      movable: this.roles.get(seat)?.source === "library",
     });
   }
 
@@ -69,6 +73,26 @@ export class SeatPlacements {
     const change: LivePlacementChange = { seat, placement: { ...placement }, at };
     this.levels.live.push(change);
     return change;
+  }
+
+  /**
+   * Each seat whose plan or live vendor breaks the single-vendor setting,
+   * which no retry fixes; empty when the setting is off.
+   */
+  singleVendorConflicts(): { seat: RoleName; vendor: Vendor; level: "plan" | "live" }[] {
+    const single = this.levels.singleVendor;
+    if (!single) return [];
+    const conflicts: { seat: RoleName; vendor: Vendor; level: "plan" | "live" }[] = [];
+    for (const [seat, override] of Object.entries(this.levels.plan)) {
+      if (override.vendor && override.vendor !== single) {
+        conflicts.push({ seat, vendor: override.vendor, level: "plan" });
+      }
+    }
+    for (const seat of new Set(this.levels.live.map((c) => c.seat))) {
+      const vendor = this.liveOf(seat)?.vendor;
+      if (vendor && vendor !== single) conflicts.push({ seat, vendor, level: "live" });
+    }
+    return conflicts;
   }
 
   /** The levels to save in the build's state; `new SeatPlacements(roles, saved)` restores them. */

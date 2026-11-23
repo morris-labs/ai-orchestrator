@@ -221,7 +221,11 @@ Copilot is off by default because of its small allowance, and no step
 requires it. The owner can turn
 it on for a build as a second Critic or as a pull request reviewer. With
 the single-vendor setting, a rule that requires another vendor falls back to a
-fresh session on the same vendor.
+fresh session on the same vendor. Without it, a seat on its shipped default
+vendor moves to the first other vendor (Claude, then Codex) when a rule
+excludes that vendor, such as a coverage check whose Test engineer the plan
+places on Claude. A vendor that the plan, a live change, or a repository role
+chose stays, and the engine raises a placement escalation instead.
 
 ## Team chat
 
@@ -334,8 +338,12 @@ from three runs of the repository's tests:
 - **Flaky:** a test whose result differs between runs. The engine quarantines
   it. Its result doesn't block the build, count as a regression, or feed a
   failure fingerprint.
+- **Known check failures:** the lines that a failing type check or lint
+  command prints at preflight, with line and column numbers left out. A
+  later run of that command that prints only those lines doesn't fail the
+  task gate; a new line does.
 
-The Scribe lists both kinds in the pull request.
+The Scribe lists both kinds of test in the pull request.
 
 ### Milestone loop
 

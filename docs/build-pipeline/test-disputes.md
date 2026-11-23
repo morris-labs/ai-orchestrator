@@ -26,6 +26,9 @@ For an answer with a dispute, the engine skips the task gate and keeps the
 task's attempt count. Once the dispute is settled, the same attempt runs
 again with a call of its own, and its context says how the dispute ended.
 
+The report field is the only way to send a dispute. The team chat refuses
+a `test_dispute` message from an agent and tells it to use the report.
+
 A dispute about a file that the lock doesn't hold, or in a build without a
 test lock, ends rejected without a call to the Test engineer.
 

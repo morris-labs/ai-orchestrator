@@ -44,12 +44,14 @@ import { loadSpecialties, type SpecialtyPack, type SpecialtySources } from "./sp
 import type { TeamBus, TeamChannel } from "../team/index.js";
 import { SessionDesk } from "./sessions/index.js";
 import { DecisionLog, checkDirectMessage, decisionsFor, decisionsText } from "./owner/index.js";
+import { checkDisputeMessage } from "./disputes.js";
 import type { EscalationDraft } from "./escalations.js";
 import { PmInboxFile, type PmItemDraft } from "./inbox.js";
 import { capQuestion } from "./questions.js";
 import { renderStatus } from "./status-file.js";
 import type { BuildStore } from "./store.js";
 import type { BuildWorktree } from "./worktree.js";
+import { WorktreeLock } from "./worktree-lock.js";
 
 export { SEAT_ESTIMATE_TOKENS, agentRoleFor } from "./seat-call.js";
 
@@ -118,6 +120,20 @@ export interface SeatCall {
    * Default: the task's own ID.
    */
   taskIds?: readonly string[];
+  /**
+   * Asked once the seat and the worktree are the drive's, before the call.
+   * `false`, such as for a task that a message turn's escalation paused
+   * meanwhile, makes `callSeat()` throw `SeatCallSkipped` without a call.
+   */
+  proceed?: () => boolean;
+}
+
+/** A seat call that `SeatCall.proceed` stopped before it started. */
+export class SeatCallSkipped extends Error {
+  constructor(seat: string) {
+    super(`The ${seat} call didn't start: its work was paused while it waited for the seat.`);
+    this.name = "SeatCallSkipped";
+  }
 }
 
 /** One turn of an agent in a seat, with a prompt the caller wrote. */
@@ -134,6 +150,8 @@ export interface TurnCall {
   output: AdapterOutput;
   /** The session to resume; absent, the turn starts a fresh agent. */
   sessionId?: string;
+  /** The account folder that holds `sessionId`, as the session registry saved it. */
+  sessionFolder?: string | null;
 }
 
 /** The build's call cache: each finished call in `calls/KEY.json`. */
@@ -161,6 +179,8 @@ export class BuildContext {
   readonly decisions: DecisionLog;
   /** The Project manager's inbox: a pointer for each escalation and each digest. */
   readonly inbox: PmInboxFile;
+  /** Keeps write seats' message turns out of the worktree while the drive reads or changes it. */
+  readonly worktreeLock = new WorktreeLock();
   /** Aborts the gate's commands when the engine stops; a new drive gets a new one. */
   private driveAbort = new AbortController();
   private writeChain: Promise<void> = Promise.resolve();
@@ -223,6 +243,7 @@ export class BuildContext {
         emit: (draft) => this.emit(draft),
         check: async (message) => {
           const earlier = () => this.team!.list();
+          checkDisputeMessage(message);
           await checkDirectMessage(message, this.plan, earlier);
           return capQuestion(message, this.plan, earlier, (draft) => this.escalate(draft));
         },
@@ -326,13 +347,20 @@ export class BuildContext {
     if (previous === status) return;
     task.status = status;
     await this.persist();
-    await this.emit({
+    await this.emit(this.taskChanged(id, status, previous));
+  }
+
+  /** The `build.task.changed` event for a task, with the plan milestone it belongs to. */
+  private taskChanged(id: string, status: BuildTaskStatus, previous: BuildTaskStatus): EventDraft {
+    const milestone = this.plan.milestones.find((m) => m.tasks.includes(id))?.id;
+    return {
       type: "build.task.changed",
       buildId: this.state.id,
       taskId: id,
       status,
       previousStatus: previous,
-    });
+      ...(milestone ? { milestone } : {}),
+    };
   }
 
   /** Sends an event and records it in the build's `events.jsonl`. */
@@ -489,13 +517,7 @@ export class BuildContext {
     if (changed.length === 0) return;
     await this.persist();
     for (const { id, status, previous } of changed) {
-      await this.emit({
-        type: "build.task.changed",
-        buildId: this.state.id,
-        taskId: id,
-        status,
-        previousStatus: previous,
-      });
+      await this.emit(this.taskChanged(id, status, previous));
     }
   }
 
@@ -589,23 +611,44 @@ export class BuildContext {
    * returns its answer. The call cache returns a finished call's answer
    * without calling again, which is how a restarted build skips the calls
    * it already made. The agent's session goes into the session registry,
-   * and the seat takes no message turn while the call runs.
+   * and no message turn runs while the call does: queued turns run while
+   * the drive waits for the seat.
    */
   callSeat(input: SeatCall): Promise<AgentOutcome<Record<string, unknown>>> {
     const role = this.role(input.seat);
     const packs = input.specialties ?? [];
     const taskIds = input.taskIds ?? [input.task.id];
+    return this.worktreeLock.outside((reclaim) =>
+      this.seatCall(role, packs, taskIds, input, reclaim),
+    );
+  }
+
+  private seatCall(
+    role: RoleDefinition,
+    packs: readonly SpecialtyPack[],
+    taskIds: readonly string[],
+    input: SeatCall,
+    reclaim: () => Promise<void>,
+  ): Promise<AgentOutcome<Record<string, unknown>>> {
     return this.sessions.run(
       input.seat,
       async () => {
+        // The drive has the worktree back for its agent's whole turn.
+        await reclaim();
+        if (input.proceed && !input.proceed()) throw new SeatCallSkipped(input.seat);
         const placement = this.seats.place(input.seat, input.placement);
         const decisions = await this.decisionsText(taskIds);
+        const task = {
+          ...input.task,
+          ...(decisions !== "" ? { decisions } : {}),
+          ...(this.team ? { teamChat: true } : {}),
+        };
         const outcome = await this.runTurn(
           seatCallSpec(role, placement, {
             seat: input.seat,
             key: input.key,
             step: input.step,
-            task: decisions === "" ? input.task : { ...input.task, decisions },
+            task,
             repoPath: this.worktree.path,
             scratchDir: this.store.scratchDir,
             specialties: packs,
@@ -621,6 +664,7 @@ export class BuildContext {
           step: input.step,
           key: input.key,
           placement,
+          ...(input.placement?.otherThan ? { otherThan: input.placement.otherThan } : {}),
           outcome,
         });
         return outcome;
@@ -646,6 +690,7 @@ export class BuildContext {
       prompt: input.prompt,
       output: input.output,
       ...(input.sessionId !== undefined ? { sessionId: input.sessionId } : {}),
+      ...(input.sessionFolder !== undefined ? { sessionFolder: input.sessionFolder } : {}),
     });
     return this.runTurn(spec, input.seat, input.taskId);
   }

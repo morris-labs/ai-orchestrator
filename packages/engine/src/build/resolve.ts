@@ -63,6 +63,33 @@ function checkOrder(ctx: BuildContext, order: readonly string[]): void {
   }
 }
 
+/**
+ * Refuses to run a placement escalation's work again while the plan breaks
+ * the single-vendor setting: the seat would fail to place the same way.
+ */
+function checkPlacementRetry(ctx: BuildContext, escalation: Escalation): void {
+  const single = ctx.state.placements.singleVendor;
+  const conflicts = ctx.seats.singleVendorConflicts();
+  if (!single || conflicts.length === 0) return;
+  const seats = conflicts
+    .map((c) =>
+      c.level === "plan"
+        ? `the build plan places the ${c.seat} seat on ${c.vendor}`
+        : `a live change places the ${c.seat} seat on ${c.vendor}`,
+    )
+    .join("; ");
+  const fields = conflicts
+    .filter((c) => c.level === "plan")
+    .map((c) => `placements.${c.seat}.vendor`);
+  const change =
+    fields.length > 0
+      ? `Remove ${fields.join(" and ")} from the build plan, or set singleVendor to null, in a new build.`
+      : "Turn off the single-vendor setting or place the seat on it.";
+  refuse(
+    `A retry of escalation ${escalation.id} would fail the same way: ${seats}, but the single-vendor setting places every seat on ${single}. ${change} Cancel this build, or hand the escalation to the owner.`,
+  );
+}
+
 /** Checks that the request fits the escalation. */
 function checkRequest(ctx: BuildContext, escalation: Escalation, request: EscalationResolve): void {
   if (request.action === "reorder") {
@@ -73,6 +100,9 @@ function checkRequest(ctx: BuildContext, escalation: Escalation, request: Escala
     refuse(
       `Escalation ${escalation.id} isn't about a review run, so it has no decision to answer.`,
     );
+  }
+  if (escalation.kind === "placement" && request.action !== "escalate") {
+    checkPlacementRetry(ctx, escalation);
   }
   if (request.push !== undefined && escalation.kind !== "release_ready") {
     refuse("Only a release ready escalation records the push answer.");

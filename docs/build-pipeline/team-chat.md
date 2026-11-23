@@ -41,7 +41,11 @@ When an agent names an addressee, the message goes to that seat, or to the
 owner for `owner`. When it names none, a reply goes to the sender of the
 message it replies to, and the engine routes any other message by type:
 
-- **`test_dispute`:** to the `test-engineer` seat of the message's task.
+- **`test_dispute`:** to the `test-engineer` seat of the message's task. In
+  a build, the team chat refuses a `test_dispute` message from an agent: a
+  Developer disputes a locked test in the `dispute` field of its report,
+  which the engine settles. For details, see
+  [Test disputes](test-disputes.md).
 - **`file_request`:** to the seat that works the task whose owned files cover
   the first of `paths` that a task owns. With no such task, the message goes
   to the Project manager. A file request must name its files.

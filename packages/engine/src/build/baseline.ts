@@ -9,7 +9,7 @@
 // failing or flaky test doesn't fail the task gate, except a test that names
 // one of the task's own tests: the task exists to make those pass.
 import type { PolicyCommand } from "@aio/contracts";
-import { isCountLine, type GateCommandResult } from "../gate/gate.js";
+import { isCountLine, type GateCommandKind, type GateCommandResult } from "../gate/gate.js";
 import type { BuildStore } from "./store.js";
 
 /**
@@ -34,6 +34,15 @@ export interface FlakyTest {
   source: FlakySource;
 }
 
+/** A type check or lint command that failed at preflight, with its diagnostic lines. */
+export interface BaselineCheck {
+  kind: Exclude<GateCommandKind, "test">;
+  command: string;
+  cwd: string | null;
+  /** The lines `diagnosticLines()` read from the command's output. */
+  lines: string[];
+}
+
 /** The build's `baseline.json` file. */
 export interface TestBaseline {
   version: 1;
@@ -41,6 +50,12 @@ export interface TestBaseline {
   knownFailing: BaselineTests[];
   /** Quarantined tests, in the order the engine found them. */
   flaky: FlakyTest[];
+  /**
+   * Type check and lint commands that failed at preflight. A later run that
+   * fails only on these lines doesn't fail the task gate. Absent in a
+   * baseline from before the engine recorded them.
+   */
+  checks?: BaselineCheck[];
 }
 
 /** The baseline file's name in the build directory. */
@@ -88,6 +103,37 @@ export function classifyRuns(runs: readonly (readonly GateCommandResult[])[]): T
     }
   }
   return baseline;
+}
+
+/**
+ * The type check and lint commands that failed at preflight, with their
+ * diagnostic lines. A run that timed out or printed nothing names no
+ * diagnostic, so it isn't recorded.
+ */
+export function baselineChecks(checks: readonly GateCommandResult[]): BaselineCheck[] {
+  return checks.flatMap((c) =>
+    c.kind !== "test" && !c.passed && !c.timedOut && (c.diagnostics?.length ?? 0) > 0
+      ? [{ kind: c.kind, command: c.command, cwd: c.cwd, lines: [...(c.diagnostics ?? [])] }]
+      : [],
+  );
+}
+
+/**
+ * True when a failing type check or lint run prints only lines that the
+ * same command printed at preflight. A run that timed out, or whose
+ * diagnostics are unknown or empty, isn't excused.
+ */
+export function checkFailsOnlyOnBaseline(
+  result: GateCommandResult,
+  baseline: TestBaseline,
+): boolean {
+  if (result.passed || result.timedOut || !result.diagnostics?.length) return false;
+  const known = baseline.checks?.find(
+    (c) => c.kind === result.kind && commandKey(c) === commandKey(result),
+  );
+  if (!known) return false;
+  const lines = new Set(known.lines);
+  return result.diagnostics.every((line) => lines.has(line));
 }
 
 /** Reads the build's baseline; an empty one when the build has none. */

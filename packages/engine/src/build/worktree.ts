@@ -28,6 +28,13 @@ export class WorktreeConflict extends Error {
   }
 }
 
+/** The worktree at one moment: its `HEAD` and the blob of each path that differs from it. */
+export interface WorktreeSnapshot {
+  head: string;
+  /** Each changed path's content as a Git blob ID, or `"none"` for a deleted path. */
+  changed: Map<string, string>;
+}
+
 function nul(text: string): string[] {
   return text.split("\0").filter((p) => p !== "");
 }
@@ -142,6 +149,63 @@ export class BuildWorktree {
     return [...new Set([...tracked, ...(await this.untracked())])].sort();
   }
 
+  /** The worktree's `HEAD` and the content of each path that differs from it. */
+  async snapshot(): Promise<WorktreeSnapshot> {
+    const head = await this.head();
+    const changed = new Map<string, string>();
+    for (const path of await this.changedSince(head)) changed.set(path, await this.blobOf(path));
+    return { head, changed };
+  }
+
+  /**
+   * The paths whose content differs from `before`, whether committed since
+   * or not; the paths whose content is back where it was don't count.
+   */
+  async changedSinceSnapshot(before: WorktreeSnapshot): Promise<string[]> {
+    const now = new Set(await this.changedSince(before.head));
+    const paths: string[] = [];
+    for (const path of new Set([...now, ...before.changed.keys()])) {
+      const at = () => this.blobAt(before.head, path);
+      const was = before.changed.get(path) ?? (await at());
+      // A path that no longer differs from the old `HEAD` has its content there.
+      const is = now.has(path) ? await this.blobOf(path) : await at();
+      if (is !== was) paths.push(path);
+    }
+    return paths.sort();
+  }
+
+  /**
+   * Puts each of `paths` back the way it was at `before`: a path that
+   * didn't exist then is deleted, and any other gets its content back.
+   */
+  async restoreSnapshot(before: WorktreeSnapshot, paths: readonly string[]): Promise<void> {
+    for (const path of paths) {
+      const blob = before.changed.get(path) ?? (await this.blobAt(before.head, path));
+      if (blob === "none") {
+        await this.git.run(["rm", "-q", "--cached", "--ignore-unmatch", "--", path]);
+        await rm(join(this.path, path), { force: true, recursive: true });
+        continue;
+      }
+      // Through the index, so a binary file comes back byte for byte.
+      await this.git.run(["update-index", "--add", "--cacheinfo", `100644,${blob},${path}`]);
+      await this.git.run(["checkout-index", "-f", "--", path]);
+    }
+  }
+
+  /** The Git blob ID of a path's working copy, or `"none"` when it doesn't exist. */
+  private async blobOf(path: string): Promise<string> {
+    if (!existsSync(join(this.path, path))) return "none";
+    return (await this.git.run(["hash-object", "--", path])).trim();
+  }
+
+  /** The Git blob ID of a path at `sha`, or `"none"` when it doesn't have it. */
+  private async blobAt(sha: string, path: string): Promise<string> {
+    const out = await this.git
+      .run(["rev-parse", "-q", "--verify", `${sha}:${path}`])
+      .catch(() => "");
+    return out.trim() || "none";
+  }
+
   /** True when the worktree has changes that aren't committed. */
   async dirty(): Promise<boolean> {
     return (await this.git.statusLines()).length > 0;
@@ -172,12 +236,18 @@ export class BuildWorktree {
   }
 
   /**
-   * Sets aside every change since `base`: saves it as a patch in `patchFile`,
-   * puts the changed paths back the way they are at `base`, and commits that
-   * with `message`. Returns the paths, or an empty list when nothing changed.
+   * Sets aside every change since `base` except the paths in `keep`: saves
+   * it as a patch in `patchFile`, puts the changed paths back the way they
+   * are at `base`, and commits that with `message`. Returns the paths, or an
+   * empty list when nothing changed.
    */
-  async setAside(base: string, patchFile: string, message: string): Promise<string[]> {
-    const paths = await this.changedSince(base);
+  async setAside(
+    base: string,
+    patchFile: string,
+    message: string,
+    keep: readonly string[] = [],
+  ): Promise<string[]> {
+    const paths = (await this.changedSince(base)).filter((p) => !keep.includes(p));
     if (paths.length === 0) return [];
     await mkdir(dirname(patchFile), { recursive: true });
     await this.git.run(["add", "-A", "--", ...paths]);
@@ -196,9 +266,20 @@ export class BuildWorktree {
     return paths;
   }
 
-  /** Applies a patch that `setAside()` saved. Returns false when it no longer applies. */
+  /**
+   * Applies a patch that `setAside()` saved. Returns false when it no longer
+   * applies, with the paths it touches put back the way `HEAD` has them, so
+   * no conflict stays in the worktree.
+   */
   async bringBack(patchFile: string): Promise<boolean> {
-    return this.git.ok(["apply", "--3way", "--whitespace=nowarn", patchFile]);
+    if (await this.git.ok(["apply", "--3way", "--whitespace=nowarn", patchFile])) return true;
+    const numstat = await this.git.run(["apply", "--numstat", "-z", patchFile]).catch(() => "");
+    const paths = numstat
+      .split("\0")
+      .map((entry) => entry.split("\t").at(-1) ?? "")
+      .filter((path) => path !== "");
+    await this.restorePaths("HEAD", paths);
+    return false;
   }
 
   /** Deletes files in the worktree, such as a gate command's leftovers. */

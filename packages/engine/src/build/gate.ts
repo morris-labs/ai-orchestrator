@@ -24,6 +24,7 @@ import { runGateCommand, type GateCommandResult, type GateOptions } from "../gat
 import {
   commandKey,
   emptyBaseline,
+  checkFailsOnlyOnBaseline,
   excusedFailures,
   failsOnlyOnBaseline,
   testFailures,
@@ -101,6 +102,8 @@ export interface TaskGateOptions {
   base: string;
   /** Repository-relative globs that the seat may change. */
   writable: readonly string[];
+  /** Exact paths that other seats changed, which the permission check leaves be. */
+  exempt?: readonly string[];
   commands: BuildCommands;
   /** The build's test lock; the gate fails an attempt that changes a locked file. */
   lock?: TestLock | null;
@@ -239,16 +242,28 @@ function findRegressions(
   return [...found.values()];
 }
 
-/** The changed paths that none of the `writable` globs cover. */
-export function outsideWritable(changed: readonly string[], writable: readonly string[]): string[] {
+/**
+ * The changed paths that none of the `writable` globs cover, other than the
+ * paths in `exempt`, which match only by their exact name.
+ */
+export function outsideWritable(
+  changed: readonly string[],
+  writable: readonly string[],
+  exempt: readonly string[] = [],
+): string[] {
   const patterns = writable.map((glob) => globToRegExp(glob));
-  return changed.filter((path) => !patterns.some((re) => re.test(path)));
+  const exact = new Set(exempt);
+  return changed.filter((path) => !exact.has(path) && !patterns.some((re) => re.test(path)));
 }
 
 /** Runs the task gate in the build worktree. */
 export async function runTaskGate(options: TaskGateOptions): Promise<TaskGateResult> {
   const { worktree } = options;
-  const outside = outsideWritable(await worktree.changedSince(options.base), options.writable);
+  const outside = outsideWritable(
+    await worktree.changedSince(options.base),
+    options.writable,
+    options.exempt,
+  );
   const permission = { passed: outside.length === 0, writable: [...options.writable], outside };
   const lock = options.lock ? await checkLock(worktree, options.lock) : undefined;
   const before = new Set(await worktree.untracked());
@@ -284,7 +299,13 @@ export async function runTaskGate(options: TaskGateOptions): Promise<TaskGateRes
   for (const kind of ["typecheck", "lint"] as const) {
     for (const cmd of options.commands[kind]) {
       if (options.signal?.aborted) break;
-      commands.push(await runGateCommand(kind, cmd, timed));
+      const result = await runGateCommand(kind, cmd, { ...timed, diagnostics: true });
+      // A check that fails only the way it failed at preflight doesn't fail the gate.
+      commands.push(
+        checkFailsOnlyOnBaseline(result, baseline)
+          ? { ...result, passed: true, excused: result.diagnostics ?? [] }
+          : result,
+      );
     }
   }
   const regressions = findRegressions(commands, earlier, lockOwners);
