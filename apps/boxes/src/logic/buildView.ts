@@ -7,6 +7,7 @@ import type {
   EventOf,
   Message,
   MessageParty,
+  OwnerPostInput,
 } from "@aio/contracts";
 
 /** The most messages the conversation renders at first, and how many more each "Show earlier" adds. */
@@ -191,4 +192,70 @@ export function boardOf(tasks: readonly BuildTaskView[]): BoardColumn[] {
     .map((milestone) => ({ milestone, tasks: (byMilestone.get(milestone) ?? []).sort(byId) }));
   if (loose.length > 0) columns.push({ milestone: NO_MILESTONE, tasks: loose.sort(byId) });
   return columns;
+}
+
+/** An agent the owner can post to: a seat, and its task when several agents fill the seat. */
+export interface PostTarget {
+  /** The agent's label, as `partyLabel` writes it. */
+  label: string;
+  seat: string;
+  taskId: string | null;
+}
+
+/**
+ * The seats of planning that the owner can post to before they send a
+ * message. A post to a seat of a meeting under way goes into the meeting.
+ */
+export const PLANNING_SEATS: readonly string[] = [
+  "project-manager",
+  "analyst",
+  "architect",
+  "critic",
+];
+
+/**
+ * The agents the owner can post to: every agent that sent or received a
+ * message, the Developer of each task, and the seats of planning.
+ */
+export function postTargets(
+  messages: readonly Message[],
+  tasks: readonly BuildTaskView[],
+): PostTarget[] {
+  const targets = new Map<string, PostTarget>();
+  const add = (seat: string, taskId: string | null) => {
+    const label = partyLabel({ kind: "seat", seat, taskId });
+    if (!targets.has(label)) targets.set(label, { label, seat, taskId });
+  };
+  for (const m of messages) {
+    for (const p of [m.from, m.to]) if (p.kind === "seat") add(p.seat, p.taskId);
+  }
+  for (const t of tasks) add("developer", t.taskId);
+  for (const seat of PLANNING_SEATS) add(seat, null);
+  return [...targets.values()].sort((a, b) => natural(a.label, b.label));
+}
+
+/**
+ * What a post is about: `""` for the agent's own task, `task:ID`, or
+ * `milestone:NAME`.
+ */
+export type PostAbout = string;
+
+/**
+ * The owner post for `target` about `about`, or `null` when the post names
+ * no task and no milestone: the team chat refuses such a post, so a post to
+ * an agent without a task must say what it is about. During planning, a
+ * post goes into the meeting under way, which needs neither.
+ */
+export function ownerPostFor(
+  target: PostTarget,
+  about: PostAbout,
+  body: string,
+  planning = false,
+): OwnerPostInput | null {
+  const post: OwnerPostInput = { to: target.seat, body };
+  if (target.taskId !== null) post.toTask = target.taskId;
+  if (about.startsWith("task:")) post.taskId = about.slice("task:".length);
+  else if (about.startsWith("milestone:")) post.milestone = about.slice("milestone:".length);
+  else if (target.taskId === null && !planning) return null;
+  return post;
 }
