@@ -170,8 +170,18 @@ export type UsageTotals = z.infer<typeof UsageTotalsSchema>;
 export const BuildUsageSchema = z.object({
   buildId: BuildIdSchema,
   total: UsageTotalsSchema,
-  /** One row per seat, sorted by name; `null`, last, collects calls that named no seat. */
-  bySeat: z.array(UsageTotalsSchema.extend({ seat: SeatSchema.nullable() })),
+  /**
+   * One row per seat, sorted by name; `null`, last, collects calls that
+   * named no seat. A row with `tokensOnly` comes from a session's transcript,
+   * not from settled calls: `calls` counts the session's turns, it has no
+   * cost estimate, and `total` leaves it out.
+   */
+  bySeat: z.array(
+    UsageTotalsSchema.extend({
+      seat: SeatSchema.nullable(),
+      tokensOnly: z.boolean().optional(),
+    }),
+  ),
   /** One row per step, in `BuildStepSchema` order; `null`, last, collects calls that named no step. */
   byStep: z.array(UsageTotalsSchema.extend({ step: BuildStepSchema.nullable() })),
   /**

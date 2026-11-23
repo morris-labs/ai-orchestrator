@@ -479,4 +479,15 @@ export const events = [
       answeredAt: null,
     },
   },
+  {
+    ...ev(22),
+    type: "build.seat.usage",
+    buildId: BUILD,
+    seat: "project-manager",
+    turns: 4,
+    tokensIn: 12000,
+    tokensOut: 800,
+    since: T0,
+    through: T1,
+  },
 ];
