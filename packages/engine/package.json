@@ -25,7 +25,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json && node scripts/write-identity.mjs",
+    "build": "tsc -p tsconfig.build.json && node scripts/copy-roles.mjs && node scripts/write-identity.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "clean": "rm -rf dist *.tsbuildinfo"

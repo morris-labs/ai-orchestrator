@@ -106,6 +106,9 @@ in its `.aio/team/` directory. During planning, the owner can tell the
 Project manager to change a role's rules for one build, and the Scribe
 records the change in the build plan.
 
+For the fields of a role file and how the engine loads it, see
+[Role definition format](roles.md).
+
 ### Specialties
 
 Each agent runs as its own session, which the engine starts from the role
