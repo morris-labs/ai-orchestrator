@@ -10,7 +10,7 @@ import {
   type BuildPlanInput,
   type BuildSeatRequestInput,
 } from "@aio/contracts";
-import { CART_DONE, PROJECT_ID, REPORT, buildWorld, type BuildWorld } from "./harness.js";
+import { CART_DONE, PROJECT_ID, REPORT, buildWorld, cartPlan, type BuildWorld } from "./harness.js";
 
 const SLUG = "cart-total";
 
@@ -264,6 +264,23 @@ describe("starting a frozen build", () => {
     });
     const leases = world.broker.requests.map((r) => r.leaseId);
     expect(new Set(leases).size).toBe(leases.length);
+  });
+
+  it("runs a small build from a plan the Project manager wrote, with no planning seat", async () => {
+    const world = await planningWorld();
+    await world.manager.freeze(freeze({ plan: cartPlan(), push: false }));
+
+    await world.manager.start({ projectId: PROJECT_ID, slug: SLUG });
+    const state = await world.settle(SLUG);
+
+    const prompts = world.calls().map((c) => c.prompt);
+    expect(prompts.some((p) => p.includes("Task T1"))).toBe(true);
+    for (const seat of ["Analyst", "Architect", "Critic"])
+      expect(prompts.some((p) => p.includes(`You are the ${seat}`))).toBe(false);
+    const planning = BuildPlanningSchema.parse(JSON.parse(world.file(SLUG, "planning.json")));
+    expect(planning.calls).toEqual([]);
+    expect(planning.meetings).toEqual([]);
+    expect(state.tasks[0]).toMatchObject({ id: "T1", status: "done" });
   });
 
   it("refuses a start whose plan differs from the frozen one", async () => {

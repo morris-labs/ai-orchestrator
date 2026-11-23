@@ -249,6 +249,15 @@ export function createServerCore(options: CoreOptions): ServerCore {
       fs.mkdirSync(homePaths(env).dataDir, { recursive: true });
       // A bad config file means the defaults apply, so always say so.
       settings.seedFromConfigFile(options.log ?? ((message) => console.warn(message)));
+      const log = options.log ?? ((message: string) => console.warn(message));
+      try {
+        const skills = accounts.installPackagedSkills();
+        if (skills.changed.length > 0)
+          log(`Installed the packaged skills in ${skills.changed.join(", ")}.`);
+        for (const line of skills.skipped) log(line);
+      } catch (err) {
+        log(`Couldn't install the packaged skills: ${(err as Error).message}`);
+      }
       let imported: ImportReport | null = null;
       if ((startOptions.importLegacy ?? true) && needsImport(env, db)) {
         imported = runImport({ env, repos: db });

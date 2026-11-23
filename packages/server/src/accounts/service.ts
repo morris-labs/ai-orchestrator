@@ -54,6 +54,7 @@ import {
 } from "./seed.js";
 import { buildAccountInstructions, ensureAccountInstructions } from "./instructions.js";
 import { adoptTranscripts } from "./adopt.js";
+import { installPackagedSkills, type SkillInstallReport } from "./packaged-skills.js";
 import { BYPASS_ACCEPTED_KEY, preacceptClaudeAccount } from "./preaccept.js";
 import {
   RetentionError,
@@ -227,6 +228,18 @@ export class AccountService {
     ensureAccountInstructions(dir, vendor);
   }
 
+  /**
+   * Installs the skills the server package ships, such as `aio-build`, into
+   * every Claude account folder. See `packaged-skills.ts`.
+   */
+  installPackagedSkills(): SkillInstallReport {
+    const dirs = this.options.repo
+      .list()
+      .filter((a) => a.vendor === "claude")
+      .map((a) => this.dirOf("claude", a.name));
+    return installPackagedSkills(dirs);
+  }
+
   /** Resolve an account and prepare the same instructions for host and box starts. */
   prepareAccount(vendor: Platform, name?: string): { dir: string; problems: string[] } {
     const id =
@@ -250,7 +263,12 @@ export class AccountService {
       );
     }
     this.ensureInstructions(vendor, dir);
-    return { dir, problems: vendor === "claude" ? [] : buildAccountInstructions(dir, vendor) };
+    if (vendor === "claude") {
+      // An account created, seeded, or imported after the server start gets
+      // the packaged skills here, at its first box start.
+      return { dir, problems: installPackagedSkills([dir]).skipped };
+    }
+    return { dir, problems: buildAccountInstructions(dir, vendor) };
   }
 
   /** The least `cleanupPeriodDays` an account keeps. See `retention.ts`. */
