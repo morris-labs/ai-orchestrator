@@ -43,6 +43,7 @@ import { loadSpecialties, type SpecialtyPack, type SpecialtySources } from "./sp
 import type { TeamBus, TeamChannel } from "../team/index.js";
 import { SessionDesk } from "./sessions/index.js";
 import { DecisionLog, checkDirectMessage, decisionsFor, decisionsText } from "./owner/index.js";
+import { checkDisputeMessage } from "./disputes.js";
 import type { EscalationDraft } from "./escalations.js";
 import { PmInboxFile, type PmItemDraft } from "./inbox.js";
 import { capQuestion } from "./questions.js";
@@ -220,6 +221,7 @@ export class BuildContext {
         emit: (draft) => this.emit(draft),
         check: async (message) => {
           const earlier = () => this.team!.list();
+          checkDisputeMessage(message);
           await checkDirectMessage(message, this.plan, earlier);
           return capQuestion(message, this.plan, earlier, (draft) => this.escalate(draft));
         },

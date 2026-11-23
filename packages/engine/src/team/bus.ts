@@ -63,9 +63,11 @@ const sendMessageTool: McpTool<Caller> = {
   description: [
     "Send a message to another seat of the build team, or to the owner.",
     "Name the addressee in `to` (a seat such as `architect`, or `owner`), or leave it out and",
-    "the engine routes the message by its type: a test_dispute goes to the Test engineer, a",
-    "file_request to the Developer of the task that owns the first file in `paths`, a",
-    "contract_question to the Architect, and any other type to the Project manager.",
+    "the engine routes the message by its type: a file_request goes to the Developer of the",
+    "task that owns the first file in `paths`, a contract_question to the Architect, and any",
+    "other type to the Project manager.",
+    "To dispute a locked test, put the dispute in your report's `dispute` field; the engine",
+    "refuses a test_dispute message.",
     "To answer a message, set `replyTo` to its ID; without `to`, the reply goes to its sender.",
     "You can ask a set number of questions about each task; a question past that cap goes to",
     "the Project manager as an escalation.",
@@ -140,7 +142,7 @@ export class TeamBus {
       name: TEAM_SERVER_NAME,
       version: options.version ?? "0.0.0",
       instructions:
-        "The build team's chat. Use send_message to ask, answer, dispute a test, or request a file.",
+        "The build team's chat. Use send_message to ask, answer, or request a file.",
       tools: TOOLS,
     };
   }
