@@ -66,6 +66,9 @@ const sendMessageTool: McpTool<Caller> = {
     "the engine routes the message by its type: a test_dispute goes to the Test engineer, a",
     "file_request to the Developer of the task that owns the first file in `paths`, a",
     "contract_question to the Architect, and any other type to the Project manager.",
+    "To answer a message, set `replyTo` to its ID; without `to`, the reply goes to its sender.",
+    "You can ask a set number of questions about each task; a question past that cap goes to",
+    "the Project manager as an escalation.",
     "The message is about your own task unless you set `taskId` or `milestone`.",
     "The engine records you as the sender.",
   ].join(" "),
@@ -77,8 +80,12 @@ const sendMessageTool: McpTool<Caller> = {
         { kind: "seat", seat: member.seat, taskId: member.taskId },
         args,
       );
+      const text =
+        message.routing === "escalated"
+          ? `Sent message ${message.id} to the Project manager as an escalation: you asked more questions about this task than the build plan allows. Go on with your work as far as you can without the answer.`
+          : `Sent message ${message.id} to ${describeAddressee(message)}.`;
       return {
-        text: `Sent message ${message.id} to ${describeAddressee(message)}.`,
+        text,
         structured: { id: message.id, to: message.to, routing: message.routing },
       };
     } catch (error) {

@@ -17,14 +17,19 @@ defines a message, which holds the following fields:
 - **`from`:** the sender: a seat with its task, or the owner. For an agent,
   the engine sets the sender from the agent's token.
 - **`to`:** the addressee: a seat with its task, or the owner.
-- **`routing`:** `addressed` when the sender named the addressee, and
-  `by_type` when the engine chose it.
+- **`routing`:** `addressed` when the sender named the addressee, `by_type`
+  when the engine chose it by type, `reply` when it went back to the sender
+  of the message it replies to, and `escalated` for a question past the
+  question cap, which went to the Project manager.
 - **`type`:** one of `question`, `answer`, `test_dispute`, `file_request`,
   `contract_question`, `bug_report`, `handoff`, `meeting_reply`, or `note`.
 - **`taskId` and `milestone`:** what the message is about. A message names at
   least one. The task defaults to the sender's task, then to the addressee's.
 - **`paths`:** the repository files that the message is about.
 - **`body`:** the text, at most 20,000 characters.
+- **`replyTo` and `thread`:** for a reply only, the message it replies to
+  and the first message of its thread. A message that replies to none
+  starts a thread whose ID is its own.
 
 Each saved message also goes out as a `message.sent` event, which the build's
 `events.jsonl` file records and the server relays for the builds of the
@@ -33,7 +38,8 @@ engine's project.
 ## Routing
 
 When an agent names an addressee, the message goes to that seat, or to the
-owner for `owner`. When it names none, the engine routes the message by type:
+owner for `owner`. When it names none, a reply goes to the sender of the
+message it replies to, and the engine routes any other message by type:
 
 - **`test_dispute`:** to the `test-engineer` seat of the message's task.
 - **`file_request`:** to the seat that works the task whose owned files cover
@@ -41,6 +47,25 @@ owner for `owner`. When it names none, the engine routes the message by type:
   to the Project manager. A file request must name its files.
 - **`contract_question`:** to the `architect` seat.
 - **Any other type:** to the `project-manager` seat.
+
+## Questions
+
+An agent asks with a `question` message. The addressee answers with a
+message whose `replyTo` field names the question, so the question and its
+answer form one thread in the message files. Without `to`, the answer goes
+back to the agent that asked, and the engine delivers it in that agent's
+resumed session; see [Sessions](sessions.md). A reply's task and milestone
+default to those of the message it replies to. The team chat refuses a
+reply to a message ID that the build doesn't have.
+
+Each agent, a seat on one task, can ask five questions about each task.
+The build plan's `questionsPerTask` field changes the cap. A question past
+the cap doesn't reach its addressee: the team chat saves it addressed to
+the Project manager with `escalated` routing and raises a `question_cap`
+escalation, whose details hold the question. The escalation pauses the
+task when the agent's attempt ends; for how the Project manager resolves
+it, see [Escalations](escalations.md). Only messages of type `question`
+about a task count against the cap.
 
 ## How agents reach the bus
 
@@ -108,8 +133,10 @@ The `TeamChannel` object of a build offers the following methods:
 - **`close()`:** revokes every token of the build.
 
 The channel's `check` option checks each message before the channel saves
-it. The build uses it for the direct message limit; see
-[`owner-posts.md`](owner-posts.md).
+it, and can return a changed message to save instead. The build uses it
+for the direct message limit, see [`owner-posts.md`](owner-posts.md), and
+for the question cap, which routes a question past the cap to the Project
+manager.
 
 The `BuildContext.team` property holds the channel of a build, or `null` when
 the engine runs no bus.
