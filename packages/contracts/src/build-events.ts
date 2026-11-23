@@ -11,6 +11,7 @@
 import { z } from "zod";
 import { RoleNameSchema } from "./build-roles.js";
 import { CountSchema, IsoDateTimeSchema, RunIdSchema, UlidSchema } from "./common.js";
+import { SpecialtyNameSchema } from "./specialties.js";
 
 /** A build id. Engines mint build ids as ULIDs, so one is unique across every engine. */
 export const BuildIdSchema = UlidSchema;
@@ -105,6 +106,11 @@ export const callOwnerFields = {
   seat: SeatSchema.optional(),
   /** The step the call belongs to, for a build call. */
   step: BuildStepSchema.optional(),
+  /**
+   * The specialties of the task the call works on, for a build call whose
+   * task names any. Usage counts the call toward each one.
+   */
+  specialties: z.array(SpecialtyNameSchema).optional(),
 };
 
 /** Settled usage summed over a set of lease settlements. */
@@ -119,7 +125,10 @@ export const UsageTotalsSchema = z.object({
 });
 export type UsageTotals = z.infer<typeof UsageTotalsSchema>;
 
-/** The response of `builds.usage`: one build's settled usage, in total, by seat, and by step. */
+/**
+ * The response of `builds.usage`: one build's settled usage, in total, by
+ * seat, by step, and by specialty.
+ */
 export const BuildUsageSchema = z.object({
   buildId: BuildIdSchema,
   total: UsageTotalsSchema,
@@ -127,5 +136,11 @@ export const BuildUsageSchema = z.object({
   bySeat: z.array(UsageTotalsSchema.extend({ seat: SeatSchema.nullable() })),
   /** One row per step, in `BuildStepSchema` order; `null`, last, collects calls that named no step. */
   byStep: z.array(UsageTotalsSchema.extend({ step: BuildStepSchema.nullable() })),
+  /**
+   * One row per specialty, sorted by name; `null`, last, collects calls that
+   * named no specialty. A call with several specialties counts in each of
+   * their rows, so the rows can add up to more than the total.
+   */
+  bySpecialty: z.array(UsageTotalsSchema.extend({ specialty: SpecialtyNameSchema.nullable() })),
 });
 export type BuildUsage = z.infer<typeof BuildUsageSchema>;
