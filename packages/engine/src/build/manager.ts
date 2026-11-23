@@ -339,7 +339,7 @@ export class EngineBuildManager implements BuildManager {
     }
   }
 
-  start(input: BuildCreateInput): Promise<BuildState> {
+  async start(input: BuildCreateInput): Promise<BuildState> {
     const request = BuildCreateSchema.parse(input);
     return this.inBoxOrder(async () => {
       if (request.boxId !== undefined) await this.requireFreeBox(request.boxId, request.slug);
