@@ -106,6 +106,25 @@ in its `.aio/team/` directory. During planning, the owner can tell the
 Project manager to change a role's rules for one build, and the Scribe
 records the change in the build plan.
 
+### Specialties
+
+Each agent runs as its own session, which the engine starts from the role
+definition. No two agents share a context.
+
+A specialty is a named pack of guidance for one technology, such as Node.js,
+TypeScript, or Go. The Architect tags each task with its specialties, and the
+engine adds those packs to the prompt of every agent that works on the task:
+the Developer, the Test engineer, and the fixer. A task can have several.
+
+A role sets the job and its rules. A specialty adds knowledge of the
+technology. One Developer role therefore covers every technology, and a
+technology that needs different rules gets a role file of its own.
+
+A specialty names a skill in the account's skills folder, and the engine
+reads that skill's text for an agent on any vendor. A repository adds its own
+specialties in its `.aio/team/specialties/` directory. Usage reports break
+down by seat and by specialty.
+
 ### Core team
 
 Every build seats the core team, scaled by build size.

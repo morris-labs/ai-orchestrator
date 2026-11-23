@@ -91,6 +91,12 @@ prompt, rules, permissions, triggers, and output contract. A review run's
 reviewer, disprover, confirmer, and fixer are review roles, a separate set.
 _Avoid_: Agent type, persona
 
+**Specialty**:
+A named pack of guidance for one technology, such as Node.js or Go, that a
+task gives to the agents that work on it. A role sets the job and its rules,
+and a specialty adds knowledge of the technology.
+_Avoid_: Specialist role, skill (for the build concept), stack agent
+
 **Seat**:
 A role that a build activates.
 _Avoid_: Slot, assignment
