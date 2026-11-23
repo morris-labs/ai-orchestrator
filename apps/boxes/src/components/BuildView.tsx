@@ -1,10 +1,12 @@
 // The build view: a build's team chat as a conversation with filters by
 // task, milestone, seat, and slice; the direct messages to the owner; the
-// milestone board; and the usage by seat and by specialty. The conversation
+// milestone board; the usage by seat and by specialty; and the owner's
+// build controls (pause, resume, cancel, and delete). The conversation
 // renders a window of the newest matching messages, so a build with
 // thousands of messages stays responsive.
 import type { BuildSummary, BuildTaskView, BuildUsage, Message, UsageTotals } from "@aio/contracts";
-import { useMemo, useState } from "react";
+import { Button, errorMessage, useApiClient, useMessageBox } from "@aio/ui";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useBuildDetail } from "../app/useBuildDetail";
 import {
   MESSAGE_WINDOW,
@@ -27,6 +29,7 @@ export function BuildView({ build }: BuildViewProps) {
   const detail = useBuildDetail(build.id);
   return (
     <div className="bx-build-view">
+      <BuildControls build={build} />
       {detail.error ? (
         <div className="bx-dim" role="alert">
           Can't load the build: {detail.error}
@@ -40,6 +43,98 @@ export function BuildView({ build }: BuildViewProps) {
           <Usage usage={detail.usage} />
         </div>
       </div>
+    </div>
+  );
+}
+
+type BuildAction = "pause" | "resume" | "cancel" | "delete";
+
+/**
+ * The owner's build requests. A cancel stops every agent and keeps the
+ * branch and the worktree, so the build can resume; a delete removes them
+ * and keeps the build's record. Both ask first.
+ */
+function BuildControls({ build }: { build: BuildSummary }) {
+  const client = useApiClient();
+  const { confirm } = useMessageBox();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const live = useRef(true);
+  useEffect(() => {
+    live.current = true;
+    return () => {
+      live.current = false;
+    };
+  }, []);
+  const { status } = build;
+  const canPause = status === "running";
+  const canResume = status === "paused" || status === "cancelled";
+  const canCancel = status === "running" || status === "paused" || status === "waiting_escalation";
+  const canDelete = status === "finished" || status === "failed" || status === "cancelled";
+
+  const send = async (action: BuildAction) => {
+    if (busy) return;
+    if (action === "cancel") {
+      const ok = await confirm(
+        "Cancel Build",
+        `Cancel the build ${build.slug}?`,
+        "The engine stops every agent and keeps the branch and the worktree. The Scribe writes a closing record, and you can resume the build until you delete it.",
+        true,
+      );
+      if (!ok) return;
+    }
+    if (action === "delete") {
+      const ok = await confirm(
+        "Delete Build",
+        `Delete the build ${build.slug}?`,
+        "The engine removes the build's branch and worktree. The build's record stays, but the build can't resume.",
+        true,
+      );
+      if (!ok) return;
+    }
+    if (!live.current) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const params = { params: { buildId: build.id } };
+      if (action === "pause") await client.call("builds.pause", params);
+      if (action === "resume") await client.call("builds.resume", params);
+      if (action === "cancel") await client.call("builds.cancel", params);
+      if (action === "delete") await client.call("builds.delete", params);
+    } catch (err) {
+      if (live.current) setError(`Couldn't ${action} the build: ${errorMessage(err)}`);
+    } finally {
+      if (live.current) setBusy(false);
+    }
+  };
+
+  return (
+    <div className="bx-build-controls" role="group" aria-label="Build controls">
+      {canPause ? (
+        <Button disabled={busy} onClick={() => void send("pause")}>
+          Pause
+        </Button>
+      ) : null}
+      {canResume ? (
+        <Button disabled={busy} onClick={() => void send("resume")}>
+          Resume
+        </Button>
+      ) : null}
+      {canCancel ? (
+        <Button disabled={busy} onClick={() => void send("cancel")}>
+          Cancel build
+        </Button>
+      ) : null}
+      {canDelete ? (
+        <Button disabled={busy} onClick={() => void send("delete")}>
+          Delete build
+        </Button>
+      ) : null}
+      {error ? (
+        <span className="bx-dim" role="alert">
+          {error}
+        </span>
+      ) : null}
     </div>
   );
 }

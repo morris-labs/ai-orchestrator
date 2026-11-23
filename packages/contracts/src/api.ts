@@ -103,7 +103,7 @@ import {
 } from "./build-events.js";
 import { BuildMessageListSchema } from "./messages.js";
 import { OwnerPostAnswerSchema, OwnerPostSchema } from "./owner-posts.js";
-import { BuildCreateSchema, BuildStateSchema } from "./builds.js";
+import { BuildControlSchema, BuildCreateSchema, BuildStateSchema } from "./builds.js";
 import { FindingSchema, SeveritySchema, VerdictSchema } from "./findings.js";
 import {
   EnrollmentCodeSchema,
@@ -1845,6 +1845,37 @@ export const serverRoutes = {
     summary: "Get a build's latest state. Returns not_found for a build the server hasn't seen.",
     response: BuildSummarySchema,
   }),
+  "builds.pause": http({
+    method: "POST",
+    path: `${V1}/builds/:buildId/pause`,
+    summary: "Pause a running build after its current agent call or gate, and its review run.",
+    response: BuildSummarySchema,
+    errors: ["not_found", "invalid_state"],
+  }),
+  "builds.resume": http({
+    method: "POST",
+    path: `${V1}/builds/:buildId/resume`,
+    summary:
+      "Resume a paused or cancelled build. Refused with conflict while another build holds the build's box.",
+    response: BuildSummarySchema,
+    errors: ["not_found", "invalid_state", "conflict"],
+  }),
+  "builds.cancel": http({
+    method: "POST",
+    path: `${V1}/builds/:buildId/cancel`,
+    summary:
+      "Cancel a build: stop every agent, keep its branch and worktree, and write a closing record. The build stays resumable until you delete it.",
+    response: BuildSummarySchema,
+    errors: ["not_found", "invalid_state"],
+  }),
+  "builds.delete": http({
+    method: "DELETE",
+    path: `${V1}/builds/:buildId`,
+    summary:
+      "Delete a finished, failed, or cancelled build's branch and worktree. The build's record stays.",
+    response: BuildSummarySchema,
+    errors: ["not_found", "invalid_state"],
+  }),
   "builds.usage": http({
     method: "GET",
     path: `${V1}/builds/:buildId/usage`,
@@ -2020,14 +2051,34 @@ export const engineRoutes = {
   "engine.builds.pause": http({
     method: "POST",
     path: `${V1}/builds/:slug/pause`,
-    summary: "Pause a build after its current agent call or gate.",
+    summary:
+      "Pause a build after its current agent call or gate, and its review run. `reason: box` marks a pause for a box stop.",
+    body: BuildControlSchema,
     response: BuildStateSchema,
     errors: ["not_found", "invalid_state"],
   }),
   "engine.builds.resume": http({
     method: "POST",
     path: `${V1}/builds/:slug/resume`,
-    summary: "Resume a paused build.",
+    summary:
+      "Resume a paused or cancelled build, and its review run. `reason: box` resumes only a build that a box stop paused.",
+    body: BuildControlSchema,
+    response: BuildStateSchema,
+    errors: ["not_found", "invalid_state", "conflict"],
+  }),
+  "engine.builds.cancel": http({
+    method: "POST",
+    path: `${V1}/builds/:slug/cancel`,
+    summary:
+      "Cancel a build: stop every agent and its review run, keep its branch and worktree, and have the Scribe write a closing record.",
+    response: BuildStateSchema,
+    errors: ["not_found", "invalid_state"],
+  }),
+  "engine.builds.delete": http({
+    method: "DELETE",
+    path: `${V1}/builds/:slug`,
+    summary:
+      "Delete a finished, failed, or cancelled build's branch and worktree. Its directory, with the closing record, stays.",
     response: BuildStateSchema,
     errors: ["not_found", "invalid_state"],
   }),

@@ -348,6 +348,12 @@ export function fakeBuildManager(): {
       options?.direct ? [directMessage] : [directMessage, ownerPost],
     ),
     decisions: vi.fn(async () => [decision]),
+    cancel: vi.fn(async () => ({ ...buildState, status: "cancelled" })),
+    delete: vi.fn(async () => ({
+      ...buildState,
+      status: "cancelled",
+      deletedAt: buildState.updatedAt,
+    })),
     activeCount: vi.fn(() => 0),
     close: vi.fn(async () => {}),
   };

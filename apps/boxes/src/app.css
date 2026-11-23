@@ -344,6 +344,13 @@
   height: 100%;
   min-height: 0;
 }
+.bx-build-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px 0;
+}
 .bx-build-columns {
   flex: 1;
   display: flex;

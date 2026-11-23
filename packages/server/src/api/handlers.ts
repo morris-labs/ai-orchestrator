@@ -5,6 +5,7 @@ import {
   boxWorkDir,
   READ_ONLY_POST_PUSH_MESSAGE,
   isReadOnlyPostPush,
+  type BuildSummary,
   type EngineRouteKey,
   type Finding,
   type Vendor,
@@ -23,6 +24,7 @@ import { listDirs } from "./fs-dirs.js";
 import { ulid } from "./ulid.js";
 import { readHostTokenSamples } from "../usage/token-samples.js";
 import { commandLine } from "../jobs/process.js";
+import { controlBuild, type BuildAction } from "../events/build-control.js";
 import { externalAttachArgv } from "../terminals/attach.js";
 
 type SR = ServerRoutes;
@@ -189,6 +191,13 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
       }
     }
     throw new ApiError("run_not_found", `No run has the id ${runId}.`);
+  }
+
+  /** Sends an owner's build request to the engine that runs the build. */
+  function buildRequest(buildId: string, action: BuildAction): Promise<BuildSummary> {
+    const build = deps.builds.get(buildId);
+    if (!build) throw new ApiError("not_found", `No build has the id ${buildId}.`);
+    return controlBuild(deps.engines, build, action);
   }
 
   /** A run's mirrored findings, with the filters of `findings.list`. */
@@ -630,6 +639,10 @@ export function createHandlers(deps: ApiDeps): HttpHandlers {
       if (!build) throw new ApiError("not_found", `No build has the id ${params.buildId}.`);
       return build;
     },
+    "builds.pause": ({ params }) => buildRequest(params.buildId, "pause"),
+    "builds.resume": ({ params }) => buildRequest(params.buildId, "resume"),
+    "builds.cancel": ({ params }) => buildRequest(params.buildId, "cancel"),
+    "builds.delete": ({ params }) => buildRequest(params.buildId, "delete"),
     "builds.usage": async ({ params }) => {
       const usage = deps.builds.usage(params.buildId);
       if (!usage) throw new ApiError("not_found", `No build has the id ${params.buildId}.`);

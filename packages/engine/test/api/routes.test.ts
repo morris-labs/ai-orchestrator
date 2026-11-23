@@ -247,13 +247,30 @@ const cases: Record<string, Case> = {
     url: "/api/v1/builds/cart-total/pause",
     check: (j) => {
       expect(j).toMatchObject({ status: "paused" });
-      expect(builds.pause).toHaveBeenCalledWith("cart-total");
+      expect(builds.pause).toHaveBeenCalledWith("cart-total", "owner");
     },
   },
   "engine.builds.resume": {
     method: "POST",
     url: "/api/v1/builds/cart-total/resume",
-    check: () => expect(builds.resume).toHaveBeenCalledWith("cart-total"),
+    body: { reason: "box" },
+    check: () => expect(builds.resume).toHaveBeenCalledWith("cart-total", "box"),
+  },
+  "engine.builds.cancel": {
+    method: "POST",
+    url: "/api/v1/builds/cart-total/cancel",
+    check: (j) => {
+      expect(j).toMatchObject({ status: "cancelled" });
+      expect(builds.cancel).toHaveBeenCalledWith("cart-total");
+    },
+  },
+  "engine.builds.delete": {
+    method: "DELETE",
+    url: "/api/v1/builds/cart-total",
+    check: (j) => {
+      expect(j).toMatchObject({ deletedAt: buildState.updatedAt });
+      expect(builds.delete).toHaveBeenCalledWith("cart-total");
+    },
   },
   "engine.builds.post": {
     method: "POST",

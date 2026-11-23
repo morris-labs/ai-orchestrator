@@ -1,23 +1,28 @@
 // The build controller: one per build. It creates the build's files and
 // worktree, drives the build pipeline step by step, and handles the build
-// requests: pause, resume, and owner posts. Its drive saves after every step, so a
-// restarted engine continues the build from where it stopped.
-import { mkdir } from "node:fs/promises";
+// requests: pause, resume, cancel, delete, and owner posts. Its drive saves
+// after every step, so a restarted engine continues the build from where it
+// stopped.
+import { mkdir, rm } from "node:fs/promises";
 import type {
   BuildCreate,
   BuildDecision,
   BuildPlan,
+  BuildPauseReason,
   BuildState,
+  BuildStatus,
   BuildStep,
   Message,
   OwnerPost,
   OwnerPostAnswer,
+  RunState,
 } from "@aio/contracts";
 import { RunCancelled, describeError } from "../calls/index.js";
 import { MessageRefused } from "../team/index.js";
 import { isDirectMessage } from "./owner/index.js";
 import { EngineError } from "../api/core-interface.js";
 import { loadPolicy } from "../policy/load.js";
+import { writeClosingRecord } from "./closing-record.js";
 import { BuildContext, type BuildServices } from "./context.js";
 import { ulid } from "./ids.js";
 import { loadRoles, type LoadRolesOptions } from "./roles/index.js";
@@ -51,6 +56,17 @@ export interface BuildPipeline {
 
 const DEFAULT_PIPELINE: BuildPipeline = { steps: BUILD_PIPELINE, handlers: STEP_HANDLERS };
 
+/** Statuses a build can be deleted in: nothing runs, and nothing waits to run. */
+const DELETABLE: readonly BuildStatus[] = ["finished", "failed", "cancelled"];
+
+/** Review run statuses that a build pause or cancel reaches. */
+const LIVE_RUN: readonly RunState["status"][] = [
+  "pending",
+  "running",
+  "paused",
+  "waiting_decision",
+];
+
 async function servicesFor(
   location: BuildLocation,
   services: Omit<BuildServices, "tierModels" | "sessions">,
@@ -67,6 +83,10 @@ export class BuildController {
   private driver: Promise<void> | null = null;
   /** True while the engine shuts down: a stopped drive leaves the build as it is. */
   private stopping = false;
+  /** True while a cancel stops the drive: the drive leaves the status to the cancel. */
+  private cancelling = false;
+  /** The closing record under way after a cancel. */
+  private closing: Promise<void> | null = null;
 
   private constructor(
     readonly ctx: BuildContext,
@@ -224,6 +244,7 @@ export class BuildController {
 
   /** Records why a drive stopped. A shutdown leaves the build `running`, for the next engine. */
   private async stopOn(error: unknown): Promise<void> {
+    if (this.cancelling) return;
     if (this.stopping && error instanceof RunCancelled) return;
     if (this.stopping) {
       this.log.warn("A build stopped with an error while the engine shut down", {
@@ -243,32 +264,177 @@ export class BuildController {
     }
   }
 
-  /** Pauses the build after its current agent call or gate. */
-  async pause(): Promise<BuildState> {
-    if (this.state.status !== "running") {
-      throw new EngineError(
-        "invalid_state",
-        `Build ${this.slug} is ${this.state.status}, not running.`,
-      );
+  /**
+   * Pauses the build after its current agent call or gate, and its review
+   * run. `reason` records who paused it: a box start resumes only a build
+   * that its box's stop paused. A build in a timed pause, such as a wait for
+   * a vendor's limit reset, takes the pause too, so it doesn't wake on its
+   * own when the wait ends.
+   */
+  async pause(reason: BuildPauseReason = "owner"): Promise<BuildState> {
+    this.requireLive("pause");
+    const { status, pausedUntil, pausedBy } = this.state;
+    const timed = status === "paused" && pausedUntil !== undefined && pausedBy === undefined;
+    if (status !== "running" && !timed) {
+      throw new EngineError("invalid_state", `Build ${this.slug} is ${status}, not running.`);
     }
     this.ctx.calls.requestPause();
+    this.ctx.state.pausedBy = reason;
+    // The pause lasts until a resume, not until the timed wait ends.
+    delete this.ctx.state.pausedUntil;
     await this.ctx.setStatus("paused");
+    await this.reviewRun("pause", ["running", "pending"]);
     return this.state;
   }
 
-  /** Resumes a paused build. */
-  async resume(): Promise<BuildState> {
-    if (this.state.status !== "paused") {
+  /**
+   * Resumes a paused build, or a cancelled one, and its review run. With
+   * `reason` `box`, resumes only a build that a box stop paused.
+   */
+  async resume(reason: BuildPauseReason = "owner"): Promise<BuildState> {
+    this.requireLive("resume");
+    const { status } = this.state;
+    if (status === "cancelled" && reason === "owner") return this.resumeCancelled();
+    if (status !== "paused") {
+      throw new EngineError("invalid_state", `Build ${this.slug} is ${status}, not paused.`);
+    }
+    if (reason === "box" && this.state.pausedBy !== "box") {
       throw new EngineError(
         "invalid_state",
-        `Build ${this.slug} is ${this.state.status}, not paused.`,
+        `Build ${this.slug} wasn't paused by its box's stop, so the box start leaves it paused.`,
       );
     }
     await this.ctx.setStatus("running");
     this.ctx.calls.requestResume();
     this.ctx.calls.wakePause();
     this.start();
+    await this.reviewRun("resume", ["paused"]);
     return this.state;
+  }
+
+  /** Starts a cancelled build again from the step it stopped at. */
+  private async resumeCancelled(): Promise<BuildState> {
+    await this.closing;
+    // A cancelled review run never resumes: the review step starts a new one.
+    const run = await this.reviewRun();
+    if (run?.status === "cancelled" && this.state.step === "review") {
+      await rm(this.ctx.store.path("review", "run.json"), { force: true });
+    }
+    delete this.ctx.state.closingRecord;
+    await this.ctx.setStatus("running");
+    this.start();
+    return this.state;
+  }
+
+  /**
+   * Cancels the build: stops every agent and the gate's commands, cancels
+   * its review run, and keeps the branch and the worktree. The Scribe then
+   * writes the closing record; `closingRecord` names it once it's written.
+   */
+  async cancel(): Promise<BuildState> {
+    this.requireLive("cancel");
+    const { status, step } = this.state;
+    if (status === "finished" || status === "cancelled") {
+      throw new EngineError("invalid_state", `Build ${this.slug} is ${status} already.`);
+    }
+    this.cancelling = true;
+    try {
+      this.ctx.calls.requestCancel();
+      this.ctx.stopDrive();
+      await this.driver;
+    } finally {
+      this.cancelling = false;
+    }
+    await this.reviewRun("cancel", LIVE_RUN);
+    this.ctx.renewCalls();
+    const why = `The owner cancelled the build at the ${step} step.`;
+    await this.ctx.setStatus("cancelled", `${why} The branch and the worktree stay.`);
+    this.closeRecord(why);
+    return this.state;
+  }
+
+  /** Writes the closing record of a cancelled build that has none, such as after an engine restart. */
+  finishClosing(): void {
+    if (this.state.status !== "cancelled" || this.state.closingRecord || this.state.deletedAt) {
+      return;
+    }
+    this.closeRecord(`The owner cancelled the build at the ${this.state.step} step.`);
+  }
+
+  private closeRecord(why: string): void {
+    if (this.closing) return;
+    this.closing = writeClosingRecord(this.ctx, why)
+      .catch((error: unknown) => {
+        this.log.error("Couldn't write a build's closing record", {
+          build: this.slug,
+          error: describeError(error),
+        });
+      })
+      .finally(() => {
+        this.closing = null;
+      });
+  }
+
+  /**
+   * Deletes a finished, failed, or cancelled build: removes its worktree and
+   * its build branch. The build directory, with the plan, the state, and the
+   * closing record, stays.
+   */
+  async delete(): Promise<BuildState> {
+    this.requireLive("delete");
+    if (!DELETABLE.includes(this.state.status) || this.running) {
+      throw new EngineError(
+        "invalid_state",
+        `Build ${this.slug} is ${this.state.status}. Cancel it before you delete it.`,
+      );
+    }
+    await this.closing;
+    await this.ctx.worktree.destroy();
+    this.ctx.state.deletedAt = new Date(this.ctx.services.clock.now()).toISOString();
+    this.ctx.state.note =
+      "The owner deleted the build: its branch and worktree are gone, and its record stays.";
+    await this.ctx.persist();
+    return this.state;
+  }
+
+  /** Refuses any request on a deleted build. */
+  private requireLive(action: string): void {
+    if (this.state.deletedAt) {
+      throw new EngineError(
+        "invalid_state",
+        `Build ${this.slug} was deleted, so you can't ${action} it.`,
+      );
+    }
+  }
+
+  /**
+   * The build's review run, or `null` when it has none. With `action`, also
+   * pauses, resumes, or cancels the run when its status is one of `when`;
+   * a run that refuses is logged, since the build's own request went
+   * through.
+   */
+  private async reviewRun(
+    action?: "pause" | "resume" | "cancel",
+    when: readonly RunState["status"][] = [],
+  ): Promise<RunState | null> {
+    const runs = this.ctx.services.reviews;
+    if (!runs) return null;
+    const record = await this.ctx.store.readJson<{ runId: string }>(
+      this.ctx.store.path("review", "run.json"),
+    );
+    if (!record) return null;
+    const run = await runs.get(record.runId);
+    if (!run || !action || !when.includes(run.status)) return run;
+    try {
+      return await runs[action](run.id);
+    } catch (error) {
+      this.log.warn(`Couldn't ${action} a build's review run`, {
+        build: this.slug,
+        run: run.id,
+        error: describeError(error),
+      });
+      return run;
+    }
   }
 
   /**

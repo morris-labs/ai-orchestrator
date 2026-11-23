@@ -110,6 +110,20 @@ export class BuildWorktree {
     await this.repo.run(["worktree", "add", "-q", this.path, this.branch]);
   }
 
+  /**
+   * Removes the worktree and the build branch from the repository, such as
+   * when the owner deletes the build. Leaves nothing behind when either is
+   * already gone.
+   */
+  async destroy(): Promise<void> {
+    if (existsSync(this.path)) await this.repo.ok(["worktree", "remove", "--force", this.path]);
+    await rm(this.path, { recursive: true, force: true });
+    await this.repo.ok(["worktree", "prune"]);
+    if (await this.repo.isLocalBranch(this.branch)) {
+      await this.repo.run(["branch", "-D", this.branch]);
+    }
+  }
+
   head(): Promise<string> {
     return this.git.head();
   }
