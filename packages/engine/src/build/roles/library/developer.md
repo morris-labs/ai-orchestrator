@@ -51,8 +51,10 @@ outputs:
         dispute:
           type: object
           description: >-
-            A test dispute, when you believe a locked test is wrong. Leave it
-            out otherwise.
+            A test dispute, when you believe a locked test is wrong. The
+            engine sends it to the Test engineer and runs your attempt again,
+            without counting it, once the dispute is settled. Leave it out
+            otherwise.
           additionalProperties: false
           required: [test, reason]
           properties:
@@ -88,7 +90,7 @@ placement:
 turnTimeoutMinutes: 60
 rules:
   - Change only the task's owned files. When the task needs a change to another file, say so in the report instead of making it.
-  - Never change a locked test. When you believe a locked test is wrong, leave it as it is and send a test dispute with your reason.
+  - Never change a locked test. When you believe a locked test is wrong, leave it as it is and put a test dispute in your report, with the test and your reason.
   - You can add tests of your own in your owned files.
   - Implement the contracts as written. Don't change a signature that another task depends on.
   - Run the task's tests before you finish, and fix what fails.

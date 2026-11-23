@@ -150,7 +150,9 @@ async function allDisputes(ctx: BuildContext): Promise<DisputeRecord[]> {
     if (!existsSync(dir)) continue;
     const names = (await readdir(dir)).filter((n) => /^dispute-\d+\.json$/.test(n));
     for (const name of names) {
-      const record = await ctx.store.readJson<DisputeRecord>(ctx.store.path("tasks", task.id, name));
+      const record = await ctx.store.readJson<DisputeRecord>(
+        ctx.store.path("tasks", task.id, name),
+      );
       if (record) records.push(record);
     }
   }
@@ -264,7 +266,12 @@ function amendedTests(
   return listed.length > 0 ? listed : lock.tests.filter((t) => t.file === record.test);
 }
 
-function roleTask(ctx: BuildContext, task: BuildTask, record: DisputeRecord, lock: TestLock): RoleTask {
+function roleTask(
+  ctx: BuildContext,
+  task: BuildTask,
+  record: DisputeRecord,
+  lock: TestLock,
+): RoleTask {
   const locked = lock.tests.filter((t) => t.file === record.test);
   const ids = new Set([...task.criteria, ...locked.map((t) => t.criterion)]);
   return {
@@ -276,7 +283,9 @@ function roleTask(ctx: BuildContext, task: BuildTask, record: DisputeRecord, loc
     branch: ctx.state.branch,
     ownedFiles: [record.test],
     contracts: task.contracts,
-    criteria: ctx.plan.criteria.filter((c) => ids.has(c.id)).map((c) => ({ id: c.id, text: c.text })),
+    criteria: ctx.plan.criteria
+      .filter((c) => ids.has(c.id))
+      .map((c) => ({ id: c.id, text: c.text })),
     tests: [record.test],
     context: [
       `This is a test dispute: the Developer of task ${task.id} says that ${record.test} is wrong. Its reason follows.`,
@@ -302,47 +311,43 @@ async function callTestEngineer(
   const key = record.callKey ?? `${task.id}-dispute-${record.id}`;
   const specialties = await ctx.specialties(task.specialties);
   const brief = roleTask(ctx, task, record, lock);
-  const outcome = await ctx.sessions.run(
-    TEST_ENGINEER,
-    async () => {
-      const placement = ctx.seats.place(TEST_ENGINEER);
-      const answer = await ctx.callTurn({
-        seat: TEST_ENGINEER,
-        taskId: task.id,
-        key,
-        step: "tasks",
-        task: brief,
-        prompt: rolePrompt(
-          {
-            ...role,
-            outputs: [
-              {
-                name: "verdict",
-                description: "Whether you amended the test or rejected the dispute, and why.",
-                schema: VERDICT_JSON as unknown as Record<string, unknown>,
-              },
-            ],
-          },
-          { ...brief, specialties },
-        ),
-        placement,
-        specialties,
-        output: VERDICT_OUTPUT,
-      });
-      await ctx.sessions.started({
-        seat: TEST_ENGINEER,
-        taskIds: [task.id],
-        task: brief,
-        specialties: specialties.map((p) => p.name),
-        step: "tasks",
-        key,
-        placement,
-        outcome: answer,
-      });
-      return answer;
-    },
-    [task.id],
-  );
+  const outcome = await ctx.sessions.run(TEST_ENGINEER, async () => {
+    const placement = ctx.seats.place(TEST_ENGINEER);
+    const answer = await ctx.callTurn({
+      seat: TEST_ENGINEER,
+      taskId: task.id,
+      key,
+      step: "tasks",
+      task: brief,
+      prompt: rolePrompt(
+        {
+          ...role,
+          outputs: [
+            {
+              name: "verdict",
+              description: "Whether you amended the test or rejected the dispute, and why.",
+              schema: VERDICT_JSON as unknown as Record<string, unknown>,
+            },
+          ],
+        },
+        { ...brief, specialties },
+      ),
+      placement,
+      specialties,
+      output: VERDICT_OUTPUT,
+    });
+    await ctx.sessions.started({
+      seat: TEST_ENGINEER,
+      taskIds: [task.id],
+      task: brief,
+      specialties: specialties.map((p) => p.name),
+      step: "tasks",
+      key,
+      placement,
+      outcome: answer,
+    });
+    return answer;
+  }, [task.id]);
   return { vendor: outcome.vendor, model: outcome.model, output: outcome.output };
 }
 
@@ -430,7 +435,11 @@ async function amend(
 }
 
 /** Commits the task's work, so the Test engineer's changes stand apart from it. Returns `HEAD`. */
-async function saveTaskWork(ctx: BuildContext, task: BuildTask, record: DisputeRecord): Promise<string> {
+async function saveTaskWork(
+  ctx: BuildContext,
+  task: BuildTask,
+  record: DisputeRecord,
+): Promise<string> {
   if (await ctx.worktree.dirty()) {
     await ctx.worktree.commitAll(
       `chore(build): save task ${task.id}'s work before test dispute ${record.id}`,
@@ -491,7 +500,12 @@ export async function settleDispute(
     return "settled";
   }
   if (!lock) {
-    await settle(ctx, record, "rejected", "The build has no locked tests, so there is nothing to dispute.");
+    await settle(
+      ctx,
+      record,
+      "rejected",
+      "The build has no locked tests, so there is nothing to dispute.",
+    );
     return "settled";
   }
   if (!lock.files.some((f) => f.path === record.test)) {
@@ -507,7 +521,12 @@ export async function settleDispute(
   if (ruled) {
     const escalation = await ctx.escalate(ruled);
     record.escalation = escalation.id;
-    await settle(ctx, record, "ruled", `The Project manager rules on the dispute in escalation ${escalation.id}.`);
+    await settle(
+      ctx,
+      record,
+      "ruled",
+      `The Project manager rules on the dispute in escalation ${escalation.id}.`,
+    );
     return "wait";
   }
   if (!record.answer) {
@@ -542,14 +561,7 @@ export async function settleDispute(
     const file = `tasks/${task.id}/dispute-${record.id}.patch`;
     const patch = ctx.store.path(file);
     await mkdir(dirname(patch), { recursive: true });
-    await ctx.worktree.git.run([
-      "diff",
-      "--binary",
-      `--output=${patch}`,
-      start,
-      "--",
-      record.test,
-    ]);
+    await ctx.worktree.git.run(["diff", "--binary", `--output=${patch}`, start, "--", record.test]);
     await ctx.worktree.restorePaths(start, [record.test]);
     record.amendment = file;
     const escalation = await ctx.escalate({
@@ -567,7 +579,12 @@ export async function settleDispute(
       ].join("\n"),
     });
     record.escalation = escalation.id;
-    await settle(ctx, record, "escalated", `The owner decides the fix in escalation ${escalation.id}.`);
+    await settle(
+      ctx,
+      record,
+      "escalated",
+      `The owner decides the fix in escalation ${escalation.id}.`,
+    );
     return "wait";
   }
   await amend(ctx, task, record, lock, output);

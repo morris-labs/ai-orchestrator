@@ -74,9 +74,7 @@ export interface AttemptRecord {
 
 type GatedAttempt = AttemptRecord & { gate: TaskGateResult };
 type FinishedAttempt =
-  | GatedAttempt
-  | (AttemptRecord & { blocked: Blocker })
-  | (AttemptRecord & { dispute: number });
+  GatedAttempt | (AttemptRecord & { blocked: Blocker }) | (AttemptRecord & { dispute: number });
 
 /** The last attempt `task` gets. */
 function capOf(ctx: BuildContext, taskId: string): number {
