@@ -100,6 +100,7 @@ Each response takes these fields, all optional:
 | `costUsd` | Claude only: the call's `total_cost_usd`. |
 | `sessionId` | The session or thread id to report on a fresh call. |
 | `writeFiles` | `{ "relative/path": "content" }` written in the working directory, but only when the call may write: Codex with a writable sandbox, Copilot with `--allow-all-tools`, Claude outside `dontAsk` mode. |
+| `commit` | A commit message. After `writeFiles`, the mock commits every change in the working directory with it, as an agent that commits its work does. Needs `writeFiles` and the same write permission. A clean working directory gets no commit. |
 
 The mocks reject flags their real CLI doesn't have, such as
 `codex exec --full-auto`, which Codex removed, so an adapter that drifts

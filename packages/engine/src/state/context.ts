@@ -155,8 +155,12 @@ export class RunContext {
         chooseCallModel(this.deps.models, this.policy.tierModels, vendor, tier, role),
       timeoutMs: (role) => this.timeouts[role],
     };
+    const build = this.state.request.build;
     return {
       id: this.state.id,
+      // A build's review run names the build on its leases and events, so
+      // its calls count toward the build and skip the usage ceilings.
+      ...(build ? { owner: { runId: this.state.id, buildId: build.buildId } } : {}),
       round: () => this.round,
       ledger: () => this.eng,
       persist: () => this.persist(),

@@ -2,7 +2,13 @@
 // files, the task gate, and the build requests. See
 // `docs/build-pipeline/design.md` and ADR 0007.
 export { BuildController, type BuildLocation, type BuildPipeline } from "./controller.js";
-export { BuildContext, agentRoleFor, type BuildServices, type SeatCall } from "./context.js";
+export {
+  BuildContext,
+  agentRoleFor,
+  type BuildServices,
+  type ReviewRuns,
+  type SeatCall,
+} from "./context.js";
 export { escalationForCallError, type EscalationDraft } from "./escalations.js";
 export { outsideWritable, runTaskGate, type TaskGateResult } from "./gate.js";
 export {

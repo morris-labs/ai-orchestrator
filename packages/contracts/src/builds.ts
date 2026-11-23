@@ -159,6 +159,11 @@ export const EscalationKindSchema = z.enum([
   "placement",
   /** A task's specialty can't be loaded, such as one whose skill was removed. */
   "specialty",
+  /**
+   * The build's review run needs a decision, or ended without reporting the
+   * diff clean, such as at its round cap or with findings left for a person.
+   */
+  "review",
 ]);
 export type EscalationKind = z.infer<typeof EscalationKindSchema>;
 
