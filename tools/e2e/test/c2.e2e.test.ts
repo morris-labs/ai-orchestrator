@@ -4,7 +4,7 @@
 // project container, registered with the server through
 // `AIO_DEV_ENGINES`. The second part sets ceilings through the API and
 // checks that the server's scheduler redirects and pauses runs.
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -19,6 +19,7 @@ import {
 } from "@aio/contracts";
 import { pinFromPem, pinnedFetch } from "@aio/contracts/tls";
 import {
+  BUILD_MAIN,
   ENGINE_MAIN,
   SAMPLE_BUILD,
   SERVER_MAIN,
@@ -165,6 +166,8 @@ beforeAll(async () => {
       AIO_CONTAINER: projectContainerName(projectId),
       AIO_ENGINE_VERSION: engineIdentity(),
       AIO_STATE_DIR: stateDir,
+      AIO_PROJECT_ID: projectId,
+      AIO_BUILD_SOCKET: path.join(stateDir, "build.sock"),
       AIO_MOCK_VENDORS: "1",
       AIO_MOCK_SCRIPT: MOCK_SCRIPT,
     }),
@@ -387,6 +390,35 @@ describe("C2: server and engine talk", () => {
     expect(decided.code, decided.stderr).toBe(0);
     const run = await waitForStatus(id, ["finished"]);
     expect(run.stopReason).toBe("clean");
+  });
+
+  it("answers aio-build over the engine's build socket, for its own project only", async () => {
+    const buildCli = (project: string, ...args: string[]) =>
+      new Promise<{ code: number; stdout: string; stderr: string }>((resolve) => {
+        execFile(
+          process.execPath,
+          [BUILD_MAIN, ...args],
+          {
+            env: childEnv({
+              AIO_BUILD_SOCKET: path.join(dir, "state", "build.sock"),
+              AIO_PROJECT_ID: project,
+              AIO_BOX_ID: "box-e2e",
+            }),
+          },
+          (err, stdout, stderr) => {
+            const code = err ? (typeof err.code === "number" ? err.code : 1) : 0;
+            resolve({ code, stdout, stderr });
+          },
+        );
+      });
+    const help = await buildCli(projectId, "--help");
+    expect(help.code).toBe(0);
+    expect(help.stdout).toContain("aio-build start SLUG PLAN_FILE");
+    const own = await buildCli(projectId, "status", "no-such-build");
+    expect(own).toMatchObject({ code: 4 });
+    expect(own.stderr).toContain(`Project ${projectId} has no build no-such-build`);
+    const other = await buildCli("other-project-00000000", "pause", "no-such-build");
+    expect(other.code).toBe(4);
   });
 
   it("stops both processes with exit code 0 on SIGTERM", async () => {

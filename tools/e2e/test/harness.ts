@@ -11,11 +11,12 @@ export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "
 export const ENGINE_MAIN = path.join(ROOT, "packages/engine/dist/main.js");
 export const SERVER_MAIN = path.join(ROOT, "packages/server/dist/main.js");
 export const CLI_MAIN = path.join(ROOT, "packages/cli/dist/main.js");
+export const BUILD_MAIN = path.join(ROOT, "packages/engine/dist/build-main.js");
 export const SAMPLE_BUILD = path.join(ROOT, "tools/sample-repo/build.sh");
 
 /** Throws when a package the suite runs has not been built. */
 export function requireBuilt(): void {
-  for (const file of [ENGINE_MAIN, SERVER_MAIN, CLI_MAIN]) {
+  for (const file of [ENGINE_MAIN, SERVER_MAIN, CLI_MAIN, BUILD_MAIN]) {
     if (!existsSync(file)) {
       throw new Error(`${file} is missing. Run corepack pnpm -r build first.`);
     }
