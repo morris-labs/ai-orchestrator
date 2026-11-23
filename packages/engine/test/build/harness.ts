@@ -18,9 +18,16 @@ import { bridgeAdapters } from "../../src/adapters/bridge.js";
 import { ClaudeAdapter } from "../../src/adapters/claude.js";
 import { CodexAdapter } from "../../src/adapters/codex.js";
 import type { CliVendorAdapter } from "../../src/adapters/types.js";
-import { createBuildManager, type EngineBuildManager } from "../../src/build/index.js";
+import {
+  BUILD_PIPELINE,
+  STEP_HANDLERS,
+  createBuildManager,
+  type BuildPipeline,
+  type EngineBuildManager,
+} from "../../src/build/index.js";
 import { GrantingBroker, MemoryEventSink } from "../../src/core.js";
 import { silentLogger } from "../../src/main/logger.js";
+import { createRunManager, type EngineRunManager } from "../../src/state/manager.js";
 import { MOCK_BIN } from "../adapters/helpers.js";
 import { tempDir } from "../tmp.js";
 
@@ -30,6 +37,8 @@ export interface MockResponse {
   times?: number;
   output?: unknown;
   writeFiles?: Record<string, string>;
+  /** Commits every change after `writeFiles`, with this message. */
+  commit?: string;
   error?: string;
   delayMs?: number;
 }
@@ -113,9 +122,26 @@ function sampleProject(): string {
   return root;
 }
 
+export interface BuildWorldOptions {
+  /** Runs the review step. Off by default: the build then waits at that step. */
+  review?: boolean;
+}
+
+/** The default pipeline without the review handler, for tests that end at the review step. */
+function withoutReview(): BuildPipeline {
+  return {
+    steps: BUILD_PIPELINE,
+    handlers: Object.fromEntries(
+      Object.entries(STEP_HANDLERS).filter(([step]) => step !== "review"),
+    ),
+  };
+}
+
 export interface BuildWorld {
   root: string;
   manager: EngineBuildManager;
+  /** The review runs that builds start. */
+  runs: EngineRunManager;
   events: MemoryEventSink;
   broker: GrantingBroker;
   /** Starts build `slug` from `plan` (default: `cartPlan()`) with the build request. */
@@ -123,7 +149,7 @@ export interface BuildWorld {
   /** Sets the mock CLIs' answers, by vendor. */
   script(responses: Partial<Record<Vendor, MockResponse[]>>): void;
   /** The calls that reached a mock CLI, oldest first. */
-  calls(): { cli: string; prompt: string }[];
+  calls(): { cli: string; prompt: string; argv: string[] }[];
   /** Closes the manager, as an engine shutdown does, and starts a new one over the same files. */
   restart(): Promise<void>;
   /** Waits until the build's state satisfies `done`. */
@@ -140,36 +166,43 @@ export interface BuildWorld {
 }
 
 /** Starts a build world. Close it with `restart()` or let the test end. */
-export async function buildWorld(): Promise<BuildWorld> {
+export async function buildWorld(options: BuildWorldOptions = {}): Promise<BuildWorld> {
   const root = sampleProject();
   const work = tempDir("aio-build-cli-");
   const scenario = join(work, "scenario.json");
   const log = join(work, "calls.jsonl");
   writeFileSync(scenario, "{}");
   const env = { MOCK_CLI_SCENARIO: scenario, MOCK_CLI_LOG: log, ANTHROPIC_API_KEY: undefined };
-  const options = { env, account: "user@example.com" };
+  const cliOptions = { env, account: "user@example.com" };
   const cli: Partial<Record<Vendor, CliVendorAdapter>> = {
     claude: new ClaudeAdapter({
-      ...options,
+      ...cliOptions,
       command: join(MOCK_BIN, "claude"),
       bare: false,
       persistSessions: false,
     }),
-    codex: new CodexAdapter({ ...options, command: join(MOCK_BIN, "codex") }),
+    codex: new CodexAdapter({ ...cliOptions, command: join(MOCK_BIN, "codex") }),
   };
   const make = async () => {
     const events = new MemoryEventSink("engine:test", "stream-build");
     const broker = new GrantingBroker();
-    const manager = await createBuildManager({
+    const core = {
       projectRoot: root,
       container: "aio-agent-proj-build",
       events,
       leases: broker,
       adapters: bridgeAdapters(cli),
       log: silentLogger,
+    };
+    const runs = await createRunManager(core);
+    const manager = await createBuildManager({
+      ...core,
       skillDirs: () => [],
+      reviews: runs,
+      reviewPollMs: 25,
+      ...(options.review ? {} : { pipeline: withoutReview() }),
     });
-    return { events, broker, manager };
+    return { events, broker, manager, runs };
   };
   let current = await make();
   const dir = (slug: string) => join(root, BUILDS_DIR, slug);
@@ -183,6 +216,9 @@ export async function buildWorld(): Promise<BuildWorld> {
     },
     get broker() {
       return current.broker;
+    },
+    get runs() {
+      return current.runs;
     },
     start(slug, plan = cartPlan()) {
       return current.manager.start({ projectId: PROJECT_ID, slug, plan });
@@ -203,10 +239,11 @@ export async function buildWorld(): Promise<BuildWorld> {
         .trim()
         .split("\n")
         .filter((line) => line !== "")
-        .map((line) => JSON.parse(line) as { cli: string; prompt: string });
+        .map((line) => JSON.parse(line) as { cli: string; prompt: string; argv: string[] });
     },
     async restart() {
       await current.manager.close();
+      await current.runs.close();
       current = await make();
     },
     async waitFor(slug, done, ms = 30_000) {
@@ -221,10 +258,24 @@ export async function buildWorld(): Promise<BuildWorld> {
     },
     settle(slug) {
       // The build's state changes before its `build.changed` event goes out,
-      // so a settled build is one whose last event shows the same status.
+      // and the event reaches `events.jsonl` after the stream, so a settled
+      // build is one whose last event shows the same status and whose file
+      // holds every `build.changed` event the stream sent.
       return world.waitFor(slug, (s) => {
-        const shown = current.events.ofType("build.changed").at(-1)?.build;
-        return s.status !== "running" && shown?.status === s.status && shown.step === s.step;
+        const sent = current.events.ofType("build.changed").filter((e) => e.build.id === s.id);
+        const shown = sent.at(-1)?.build;
+        const file = join(dir(slug), "events.jsonl");
+        const saved = existsSync(file)
+          ? readFileSync(file, "utf8")
+              .split("\n")
+              .filter((line) => line.includes('"type":"build.changed"')).length
+          : 0;
+        return (
+          s.status !== "running" &&
+          shown?.status === s.status &&
+          shown.step === s.step &&
+          saved >= sent.length
+        );
       });
     },
     dir,

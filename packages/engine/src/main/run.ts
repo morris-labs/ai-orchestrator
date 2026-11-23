@@ -176,6 +176,7 @@ export async function startEngine(options: StartOptions): Promise<EngineHandle> 
         leases,
         adapters: options.adapters ?? {},
         log,
+        reviews: runs,
       }));
   } catch (err) {
     await runs.close?.();
