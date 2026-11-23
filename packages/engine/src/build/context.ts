@@ -67,6 +67,10 @@ export interface ReviewRuns {
   get(runId: string): Promise<RunState | null>;
   /** Starts a finished run's post-push loop. */
   push(runId: string, options: PushOptions): Promise<RunState>;
+  /** Pauses, resumes, and cancels the run with the build. */
+  pause(runId: string): Promise<RunState>;
+  resume(runId: string): Promise<RunState>;
+  cancel(runId: string): Promise<RunState>;
 }
 
 /** The engine services a build uses. */
@@ -116,7 +120,8 @@ class FileCallCache implements CallCache {
 }
 
 export class BuildContext {
-  readonly calls: AgentCalls;
+  private agentCalls: AgentCalls;
+  private readonly host: AgentCallHost;
   readonly seats: SeatPlacements;
   /** The build's team chat, or `null` when the engine runs no bus. */
   readonly team: TeamChannel | null;
@@ -155,6 +160,7 @@ export class BuildContext {
         resume: async () => {
           this.state.status = "running";
           delete this.state.pausedUntil;
+          delete this.state.pausedBy;
           await this.persist();
         },
       },
@@ -171,7 +177,8 @@ export class BuildContext {
         resetKeep: (sha) => worktree.git.resetKeep(sha),
       },
     };
-    this.calls = new AgentCalls(host, services.call);
+    this.host = host;
+    this.agentCalls = new AgentCalls(host, services.call);
     this.team =
       services.team?.channel({
         buildId: state.id,
@@ -180,6 +187,19 @@ export class BuildContext {
         emit: (draft) => this.emit(draft),
         clock: services.clock,
       }) ?? null;
+  }
+
+  /** The agent-call core: leases, the call cache, and the pause and cancel controls. */
+  get calls(): AgentCalls {
+    return this.agentCalls;
+  }
+
+  /**
+   * Replaces the agent-call core after a cancel, whose core refuses every
+   * later call, so the closing record and a resumed build can call agents.
+   */
+  renewCalls(): void {
+    this.agentCalls = new AgentCalls(this.host, this.services.call);
   }
 
   /** Aborts when the engine stops the drive or the build is cancelled. */
@@ -268,7 +288,10 @@ export class BuildContext {
     this.state.status = status;
     if (note === undefined) delete this.state.note;
     else this.state.note = note;
-    if (status !== "paused") delete this.state.pausedUntil;
+    if (status !== "paused") {
+      delete this.state.pausedUntil;
+      delete this.state.pausedBy;
+    }
     await this.persist();
   }
 

@@ -101,8 +101,10 @@ export function createHandlers(deps: HandlerDeps): EngineHandlers {
       const slug = param(i, "slug");
       return found(slug, deps.builds.get(slug), "build");
     },
-    "engine.builds.pause": (i) => deps.builds.pause(param(i, "slug")),
-    "engine.builds.resume": (i) => deps.builds.resume(param(i, "slug")),
+    "engine.builds.pause": (i) => deps.builds.pause(param(i, "slug"), i.body.reason),
+    "engine.builds.resume": (i) => deps.builds.resume(param(i, "slug"), i.body.reason),
+    "engine.builds.cancel": (i) => deps.builds.cancel(param(i, "slug")),
+    "engine.builds.delete": (i) => deps.builds.delete(param(i, "slug")),
     "engine.ports": () => ({ listeners: deps.ports.list() }),
   };
 }

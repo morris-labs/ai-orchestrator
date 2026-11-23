@@ -1,12 +1,14 @@
 // The build socket: a Unix socket inside the project container that accepts
-// only build requests (start, status, pause, and resume) and needs no engine
-// token. The `aio-build` command in a box's session talks to it; see
+// only build requests (start, status, pause, resume, and cancel) and needs no
+// engine token. The `aio-build` command in a box's session talks to it; see
 // `@aio/contracts` `build-socket.ts` for the protocol.
 //
 // The socket lives on the container's own file system, so only processes in
 // this project's container reach it. Each request names its project, and
 // the socket refuses a project other than the engine's own, and a build
-// whose saved state belongs to another project.
+// whose saved state belongs to another project. A build that a box started
+// takes pause, resume, and cancel requests only from that box; any box of
+// the project can read its status.
 import {
   BUILD_SOCKET_MAX_BODY_BYTES,
   BUILD_SOCKET_ROUTES,
@@ -30,7 +32,7 @@ export interface BuildSocketOptions {
   /** The socket path. The engine makes its folder, mode 0700, when it's missing. */
   path: string;
   /** The requests the socket serves. */
-  builds: Pick<BuildManager, "start" | "get" | "pause" | "resume">;
+  builds: Pick<BuildManager, "start" | "get" | "pause" | "resume" | "cancel">;
   /** The engine's project, or `null` when the server didn't name one. */
   projectId: string | null;
   log: Logger;
@@ -154,8 +156,15 @@ export async function serveBuildSocket(options: BuildSocketOptions): Promise<Bui
     }
     const build = await ownBuild(request.projectId, request.slug);
     if (kind === "status") return build;
-    if (kind === "pause") return builds.pause(request.slug);
-    return builds.resume(request.slug);
+    if (build.boxId !== null && build.boxId !== request.boxId) {
+      throw new EngineError(
+        "conflict",
+        `Build ${build.slug} belongs to box ${build.boxId}, so only that box can ${kind} it.`,
+      );
+    }
+    if (kind === "pause") return builds.pause(request.slug, "owner");
+    if (kind === "resume") return builds.resume(request.slug, "owner");
+    return builds.cancel(request.slug);
   };
 
   const server = http.createServer((req, res) => {

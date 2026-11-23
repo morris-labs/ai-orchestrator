@@ -1,11 +1,14 @@
-// The engine build API: the build requests (start, status, pause, resume)
-// over one `BuildController` per build, and the startup scan that continues
-// the builds a stopped engine left running.
+// The engine build API: the build requests (start, status, pause, resume,
+// cancel, and delete) over one `BuildController` per build, the rule of one
+// active build per box, and the startup scan that continues the builds a
+// stopped engine left running.
 import {
+  BOX_BUILD_STATUSES,
   BuildCreateSchema,
   BuildSlugSchema,
   ENGINE_CONFIG_MOUNT,
   type BuildCreateInput,
+  type BuildPauseReason,
   type BuildState,
 } from "@aio/contracts";
 import { accountDirsFileIn, readAccountDirs } from "../adapters/account-dirs.js";
@@ -30,11 +33,24 @@ const SHUTDOWN_WAIT_MS = 5000;
  * with `not_found` for an unknown build, except `get`, which returns `null`.
  */
 export interface BuildManager {
-  /** Creates a build from its plan and starts it. Throws `conflict` when the build exists. */
+  /**
+   * Creates a build from its plan and starts it. Throws `conflict` when the
+   * build exists, or when its box already has an active build.
+   */
   start(request: BuildCreateInput): Promise<BuildState>;
   get(slug: string): Promise<BuildState | null>;
-  pause(slug: string): Promise<BuildState>;
-  resume(slug: string): Promise<BuildState>;
+  /** Pauses a running build; `reason` `box` marks a pause for a box stop. */
+  pause(slug: string, reason?: BuildPauseReason): Promise<BuildState>;
+  /**
+   * Resumes a paused build, or a cancelled one. With `reason` `box`, only a
+   * build that a box stop paused. Throws `conflict` when another build holds
+   * the box of a cancelled build.
+   */
+  resume(slug: string, reason?: BuildPauseReason): Promise<BuildState>;
+  /** Cancels a build and has the Scribe write its closing record. */
+  cancel(slug: string): Promise<BuildState>;
+  /** Removes a finished, failed, or cancelled build's branch and worktree, and keeps its record. */
+  delete(slug: string): Promise<BuildState>;
   /** The builds that keep the container alive: the ones the engine works on. */
   activeCount(): number;
   /** Stops every drive and leaves each build's files for the next engine. */
@@ -71,6 +87,8 @@ export class EngineBuildManager implements BuildManager {
   private readonly loading = new Map<string, Promise<BuildController | null>>();
   private readonly services: Omit<BuildServices, "tierModels">;
   private readonly location: BuildLocation;
+  /** Serializes the requests that check a box's builds, so two starts can't both take a box. */
+  private boxChain: Promise<unknown> = Promise.resolve();
 
   constructor(private readonly deps: BuildManagerDeps) {
     const runner = deps.runner ?? new ExecaRunner();
@@ -119,6 +137,18 @@ export class EngineBuildManager implements BuildManager {
           build: slug,
           error: String(error),
         });
+        continue;
+      }
+      if (state.status === "cancelled" && !state.closingRecord && !state.deletedAt) {
+        // The engine stopped before the closing record was written.
+        await this.controller(slug)
+          .then((build) => build?.finishClosing())
+          .catch((error: unknown) => {
+            this.deps.log.warn("Couldn't write a build's closing record", {
+              build: slug,
+              error: String(error),
+            });
+          });
         continue;
       }
       const due = state.status === "running" || (state.status === "paused" && state.pausedUntil);
@@ -170,8 +200,40 @@ export class EngineBuildManager implements BuildManager {
     return build;
   }
 
-  async start(input: BuildCreateInput): Promise<BuildState> {
+  /** Runs `work` after every earlier box check and the work that followed it. */
+  private inBoxOrder<T>(work: () => Promise<T>): Promise<T> {
+    const next = this.boxChain.then(work);
+    this.boxChain = next.catch(() => undefined);
+    return next;
+  }
+
+  /** Throws `conflict` when another build than `slug` holds box `boxId`. */
+  private async requireFreeBox(boxId: string, slug: string): Promise<void> {
+    for (const other of await listBuildSlugs(this.deps.projectRoot)) {
+      if (other === slug) continue;
+      const live = this.controllers.get(other)?.state;
+      const state =
+        live ?? (await new BuildStore(this.deps.projectRoot, other).loadState().catch(() => null));
+      if (!state || state.boxId !== boxId || state.deletedAt) continue;
+      if (BOX_BUILD_STATUSES.includes(state.status)) {
+        throw new EngineError(
+          "conflict",
+          `Box ${boxId} already runs the build ${state.slug}, which is ${state.status}. ` +
+            "A box runs one build at a time: cancel that build, or use another box.",
+        );
+      }
+    }
+  }
+
+  start(input: BuildCreateInput): Promise<BuildState> {
     const request = BuildCreateSchema.parse(input);
+    return this.inBoxOrder(async () => {
+      if (request.boxId !== undefined) await this.requireFreeBox(request.boxId, request.slug);
+      return this.create(request);
+    });
+  }
+
+  private async create(request: ReturnType<typeof BuildCreateSchema.parse>): Promise<BuildState> {
     const slug = request.slug;
     if (this.loading.has(slug) || (await this.controller(slug))) {
       throw new EngineError("conflict", `A build named ${slug} already exists.`);
@@ -203,12 +265,28 @@ export class EngineBuildManager implements BuildManager {
     return build ? structuredClone(build.state) : null;
   }
 
-  async pause(slug: string): Promise<BuildState> {
-    return structuredClone(await (await this.require(slug)).pause());
+  async pause(slug: string, reason?: BuildPauseReason): Promise<BuildState> {
+    return structuredClone(await (await this.require(slug)).pause(reason));
   }
 
-  async resume(slug: string): Promise<BuildState> {
-    return structuredClone(await (await this.require(slug)).resume());
+  async resume(slug: string, reason?: BuildPauseReason): Promise<BuildState> {
+    const build = await this.require(slug);
+    if (build.state.status !== "cancelled" || build.state.boxId === null) {
+      return structuredClone(await build.resume(reason));
+    }
+    const boxId = build.state.boxId;
+    return this.inBoxOrder(async () => {
+      await this.requireFreeBox(boxId, slug);
+      return structuredClone(await build.resume(reason));
+    });
+  }
+
+  async cancel(slug: string): Promise<BuildState> {
+    return structuredClone(await (await this.require(slug)).cancel());
+  }
+
+  async delete(slug: string): Promise<BuildState> {
+    return structuredClone(await (await this.require(slug)).delete());
   }
 
   activeCount(): number {
