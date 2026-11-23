@@ -4,6 +4,7 @@
 import {
   OWNER_ADDRESS,
   TEAM_SEATS,
+  type Message,
   type MessageParty,
   type MessageRouting,
   type SendMessageInput,
@@ -42,6 +43,7 @@ const seat = (name: string, taskId: string | null): MessageParty => ({
  * The addressee of a message that `sender` sends with `input`:
  *
  * - A named addressee (`to`, with `toTask`) as given, and `owner` as the owner.
+ * - A reply: the sender of `replied`, the message it replies to.
  * - A test dispute: the Test engineer of the message's task.
  * - A file request: the seat that works the task owning the first of
  *   `paths` that a task owns, or the Project manager when no task owns one.
@@ -52,6 +54,7 @@ export function routeMessage(
   input: SendMessageInput,
   sender: MessageParty,
   tasks: readonly RouteTask[],
+  replied?: Message,
 ): Route {
   const senderTask = sender.kind === "seat" ? sender.taskId : null;
   if (input.to !== undefined) {
@@ -61,6 +64,7 @@ export function routeMessage(
         : seat(input.to, input.toTask ?? null);
     return { to, routing: "addressed" };
   }
+  if (replied) return { to: replied.from, routing: "reply" };
   const byType = (to: MessageParty): Route => ({ to, routing: "by_type" });
   switch (input.type) {
     case "test_dispute":

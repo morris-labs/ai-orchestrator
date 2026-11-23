@@ -1,0 +1,363 @@
+// Test disputes through the engine build API: a Developer that believes a
+// locked test is wrong disputes it in its report. The Test engineer amends
+// the test or rejects the dispute, the Project manager rules on repeated
+// disputes, and the owner decides an amendment that changes a criterion.
+import { createHash } from "node:crypto";
+import { describe, expect, it } from "vitest";
+import { BUILD_PIPELINE } from "../../src/build/index.js";
+import { CART_DONE, REPORT, buildWorld, cartPlan, type MockResponse } from "./harness.js";
+
+const TEST_FILE = "test/cart.test.mjs";
+const RUN_TEST = "node test/cart.test.mjs";
+
+/** A wrong test for AC1: it wants double the sum, so no right code passes it. */
+const WRONG_TEST = [
+  "// AC1: the cart reports the sum of its item prices.",
+  'import assert from "node:assert/strict";',
+  'import { total } from "../src/cart.mjs";',
+  "assert.equal(total([{ price: 2 }, { price: 3 }]), 10);",
+  "",
+].join("\n");
+
+/** The right test for AC1, which fails on an assertion against the stub. */
+const RIGHT_TEST = [
+  "// AC1: the cart reports the sum of its item prices.",
+  'import assert from "node:assert/strict";',
+  'import { total } from "../src/cart.mjs";',
+  "assert.equal(total([{ price: 2 }, { price: 3 }]), 5);",
+  "",
+].join("\n");
+
+/** A test for AC1 that passes against the stub, so it fails the red check. */
+const GREEN_TEST = [
+  "// AC1: an empty cart totals zero.",
+  'import assert from "node:assert/strict";',
+  'import { total } from "../src/cart.mjs";',
+  "assert.equal(total([]), 0);",
+  "",
+].join("\n");
+
+const AC1_TEST = {
+  file: TEST_FILE,
+  name: "AC1: the cart reports the sum of its item prices",
+  criterion: "AC1",
+  command: RUN_TEST,
+};
+
+/** The Test engineer's tests first round, which locks `content`. */
+function testsFirst(content: string): MockResponse {
+  return {
+    match: "round 1 of",
+    output: { summary: "Wrote the tests first.", tests: [AC1_TEST] },
+    writeFiles: { [TEST_FILE]: content },
+  };
+}
+
+const DISPUTE_REASON = "AC1 asks for the sum of the prices, 5, but the test wants 10.";
+
+/** A Developer answer that writes the right code and disputes the locked test. */
+function disputing(match: string): MockResponse {
+  return {
+    match,
+    output: { ...REPORT, dispute: { test: TEST_FILE, reason: DISPUTE_REASON } },
+    writeFiles: { "src/cart.mjs": CART_DONE },
+  };
+}
+
+/** A Developer answer that writes the right code and reports no dispute. */
+function finishing(match: string): MockResponse {
+  return { match, output: REPORT, writeFiles: { "src/cart.mjs": CART_DONE } };
+}
+
+/** The Test engineer's answer to a dispute. */
+function verdict(
+  answer: { verdict: "amend" | "reject"; reason: string; changesCriterion?: boolean },
+  content?: string,
+): MockResponse {
+  return {
+    match: "test dispute",
+    output: { changesCriterion: false, ...answer },
+    ...(content !== undefined ? { writeFiles: { [TEST_FILE]: content } } : {}),
+  };
+}
+
+interface SavedDispute {
+  id: number;
+  taskId: string;
+  test: string;
+  reason: string;
+  outcome?: string;
+  note?: string;
+  escalation?: string;
+  check?: { passed: boolean; tests: { outcome: string }[] };
+}
+
+interface SavedLock {
+  commit: string;
+  files: { path: string; sha256: string }[];
+  amendments?: { taskId: string; test: string; reason: string; dispute: string; commit: string }[];
+}
+
+function sha256(text: string): string {
+  return createHash("sha256").update(text).digest("hex");
+}
+
+function dispute(world: Awaited<ReturnType<typeof buildWorld>>, n: number): SavedDispute {
+  return JSON.parse(world.file("cart-total", `tasks/T1/dispute-${n}.json`)) as SavedDispute;
+}
+
+function lockOf(world: Awaited<ReturnType<typeof buildWorld>>): SavedLock {
+  return JSON.parse(world.file("cart-total", "test-lock.json")) as SavedLock;
+}
+
+describe("a test dispute", () => {
+  it("ends amended for a wrong test: the fixed test passes the red check and is locked again, and the attempt doesn't count", async () => {
+    const world = await buildWorld({ steps: BUILD_PIPELINE });
+    world.script({
+      codex: [
+        testsFirst(WRONG_TEST),
+        verdict({ verdict: "amend", reason: "The test wanted double the sum." }, RIGHT_TEST),
+      ],
+      claude: [finishing("test dispute 1 .*amended"), disputing("attempt 1 of")],
+    });
+
+    await world.start("cart-total");
+    const state = await world.settle("cart-total");
+
+    expect(state).toMatchObject({ step: "review", status: "paused" });
+    expect(state.tasks[0]).toMatchObject({ status: "done", attempts: 1 });
+    expect(state.escalations).toEqual([]);
+    expect(world.calls().map((c) => c.cli)).toEqual(["codex", "claude", "codex", "claude"]);
+    expect(world.calls()[2]?.prompt).toContain(DISPUTE_REASON);
+    expect(dispute(world, 1)).toMatchObject({
+      id: 1,
+      taskId: "T1",
+      test: TEST_FILE,
+      reason: DISPUTE_REASON,
+      outcome: "amended",
+      check: { passed: true, tests: [{ outcome: "failed" }] },
+    });
+    const lock = lockOf(world);
+    expect(lock.files).toEqual([{ path: TEST_FILE, sha256: sha256(RIGHT_TEST) }]);
+    expect(lock.amendments).toEqual([
+      expect.objectContaining({
+        taskId: "T1",
+        test: TEST_FILE,
+        reason: "The test wanted double the sum.",
+        dispute: "tasks/T1/dispute-1.json",
+        commit: lock.commit,
+      }),
+    ]);
+    expect(world.git(world.root, "show", `${lock.commit}:${TEST_FILE}`)).toBe(RIGHT_TEST.trim());
+    expect(world.git(world.root, "show", `build/cart-total:${TEST_FILE}`)).toBe(RIGHT_TEST.trim());
+    expect(world.git(world.root, "show", "build/cart-total:src/cart.mjs")).toBe(CART_DONE.trim());
+  });
+});
+
+describe("a test dispute that the Test engineer settles", () => {
+  it("ends rejected with the Test engineer's reason, the test stands, and the attempt doesn't count", async () => {
+    const world = await buildWorld({ steps: BUILD_PIPELINE });
+    world.script({
+      codex: [
+        testsFirst(RIGHT_TEST),
+        verdict({ verdict: "reject", reason: "AC1 wants the sum, and the test checks the sum." }),
+      ],
+      claude: [finishing("test dispute 1 .*rejected"), disputing("attempt 1 of")],
+    });
+
+    await world.start("cart-total");
+    const state = await world.settle("cart-total");
+
+    expect(state).toMatchObject({ step: "review", status: "paused" });
+    expect(state.tasks[0]).toMatchObject({ status: "done", attempts: 1 });
+    expect(dispute(world, 1)).toMatchObject({
+      outcome: "rejected",
+      note: expect.stringContaining("AC1 wants the sum, and the test checks the sum."),
+    });
+    expect(world.calls()[3]?.prompt).toContain("AC1 wants the sum, and the test checks the sum.");
+    const lock = lockOf(world);
+    expect(lock.files).toEqual([{ path: TEST_FILE, sha256: sha256(RIGHT_TEST) }]);
+    expect(lock.amendments).toBeUndefined();
+  });
+
+  it("doesn't lock a fix that fails the red check, and the test stands", async () => {
+    const world = await buildWorld({ steps: BUILD_PIPELINE });
+    world.script({
+      codex: [
+        testsFirst(WRONG_TEST),
+        verdict({ verdict: "amend", reason: "Checks an empty cart instead." }, GREEN_TEST),
+      ],
+      claude: [
+        { ...finishing("test dispute 1 .*rejected"), writeFiles: { "src/cart.mjs": CART_DONE } },
+        disputing("attempt 1 of"),
+      ],
+    });
+
+    await world.start("cart-total");
+    await world.settle("cart-total");
+
+    expect(dispute(world, 1)).toMatchObject({
+      outcome: "rejected",
+      check: { passed: false, tests: [{ outcome: "passed" }] },
+      note: expect.stringMatching(/failed the red check.*passes before the code exists/),
+    });
+    const lock = lockOf(world);
+    expect(lock.files).toEqual([{ path: TEST_FILE, sha256: sha256(WRONG_TEST) }]);
+    expect(lock.amendments).toBeUndefined();
+    expect(world.git(world.root, "show", `build/cart-total:${TEST_FILE}`)).toBe(WRONG_TEST.trim());
+  });
+});
+
+describe("a test dispute that the Project manager rules on", () => {
+  it("takes a second dispute about one test, and the ruling reaches the Developer", async () => {
+    const world = await buildWorld({ steps: BUILD_PIPELINE });
+    world.script({
+      codex: [testsFirst(RIGHT_TEST), verdict({ verdict: "reject", reason: "The test is right." })],
+      claude: [finishing("Project manager decided"), disputing("attempt 1 of")],
+    });
+
+    await world.start("cart-total");
+    const waiting = await world.settle("cart-total");
+
+    expect(waiting).toMatchObject({ step: "tasks", status: "waiting_escalation" });
+    expect(waiting.tasks[0]).toMatchObject({ status: "failed", attempts: 1 });
+    expect(waiting.escalations).toEqual([
+      expect.objectContaining({ id: "E1", kind: "test_dispute", level: "project_manager" }),
+    ]);
+    expect(dispute(world, 1)).toMatchObject({ outcome: "rejected" });
+    expect(dispute(world, 2)).toMatchObject({ outcome: "ruled", escalation: "E1" });
+    expect(world.file("cart-total", "escalations/E1.json")).toContain("dispute-1.json");
+    expect(world.calls().map((c) => c.cli)).toEqual(["codex", "claude", "codex", "claude"]);
+
+    await world.manager.resolve("cart-total", {
+      escalation: "E1",
+      action: "clarify",
+      note: "The test is right: AC1 is the plain sum.",
+    });
+    const state = await world.waitFor("cart-total", (s) => s.step === "review");
+
+    expect(state.tasks[0]).toMatchObject({ status: "done", attempts: 1 });
+    expect(world.calls().map((c) => c.cli)).toEqual([
+      "codex",
+      "claude",
+      "codex",
+      "claude",
+      "claude",
+    ]);
+    expect(world.calls()[4]?.prompt).toContain("The test is right: AC1 is the plain sum.");
+  });
+
+  it("takes a third dispute in one task", async () => {
+    const files = ["test/a.test.mjs", "test/b.test.mjs", "test/c.test.mjs"];
+    const world = await buildWorld({ steps: BUILD_PIPELINE });
+    const claims = files.map((file, i) => ({
+      match: i === 0 ? "attempt 1 of" : `test dispute ${i} about ${files[i - 1]} is rejected`,
+      output: { ...REPORT, dispute: { test: file, reason: `Doubts ${file}.` } },
+      writeFiles: { "src/cart.mjs": CART_DONE },
+    }));
+    world.script({
+      codex: [
+        {
+          match: "round 1 of",
+          output: {
+            summary: "Wrote the tests first.",
+            tests: files.map((file) => ({ ...AC1_TEST, file, command: `node ${file}` })),
+          },
+          writeFiles: Object.fromEntries(files.map((file) => [file, RIGHT_TEST])),
+        },
+        { ...verdict({ verdict: "reject", reason: "The test is right." }), times: 2 },
+      ],
+      claude: [...claims].reverse(),
+    });
+    const plan = cartPlan();
+    const task = plan.tasks[0];
+    if (task) task.tests = files;
+
+    await world.start("cart-total", plan);
+    const state = await world.settle("cart-total");
+
+    expect(state).toMatchObject({ step: "tasks", status: "waiting_escalation" });
+    expect(state.tasks[0]).toMatchObject({ attempts: 1 });
+    expect(state.escalations).toEqual([
+      expect.objectContaining({ kind: "test_dispute", level: "project_manager" }),
+    ]);
+    expect(dispute(world, 3)).toMatchObject({ test: "test/c.test.mjs", outcome: "ruled" });
+    expect(world.calls().filter((c) => c.cli === "codex")).toHaveLength(3);
+  });
+});
+
+describe("a test dispute that the owner decides", () => {
+  it("escalates an amendment that changes a criterion, then locks it when the owner changes the criteria", async () => {
+    const world = await buildWorld({ steps: BUILD_PIPELINE });
+    world.script({
+      codex: [
+        testsFirst(WRONG_TEST),
+        verdict(
+          { verdict: "amend", reason: "AC1 should mean the sum.", changesCriterion: true },
+          RIGHT_TEST,
+        ),
+      ],
+      claude: [finishing("test dispute 1 .*amended"), disputing("attempt 1 of")],
+    });
+
+    await world.start("cart-total");
+    const waiting = await world.settle("cart-total");
+
+    expect(waiting).toMatchObject({ step: "tasks", status: "waiting_escalation" });
+    expect(waiting.escalations).toEqual([
+      expect.objectContaining({ id: "E1", kind: "test_dispute", level: "owner" }),
+    ]);
+    expect(dispute(world, 1)).toMatchObject({ outcome: "escalated", escalation: "E1" });
+    expect(lockOf(world).files).toEqual([{ path: TEST_FILE, sha256: sha256(WRONG_TEST) }]);
+    expect(world.file("cart-total", "tasks/T1/dispute-1.patch")).toContain(
+      "total([{ price: 2 }, { price: 3 }]), 5)",
+    );
+
+    await world.manager.resolve("cart-total", {
+      escalation: "E1",
+      action: "retry",
+      by: "owner",
+      changes: ["criteria"],
+      note: "AC1 means the plain sum.",
+    });
+    const state = await world.waitFor("cart-total", (s) => s.step === "review");
+
+    expect(state.tasks[0]).toMatchObject({ status: "done", attempts: 1 });
+    expect(dispute(world, 1)).toMatchObject({ outcome: "amended", check: { passed: true } });
+    const lock = lockOf(world);
+    expect(lock.files).toEqual([{ path: TEST_FILE, sha256: sha256(RIGHT_TEST) }]);
+    expect(lock.amendments).toEqual([
+      expect.objectContaining({ reason: "AC1 should mean the sum." }),
+    ]);
+    expect(world.git(world.root, "show", `build/cart-total:${TEST_FILE}`)).toBe(RIGHT_TEST.trim());
+  });
+
+  it("keeps the test as it is locked when the owner retries without changing the criteria", async () => {
+    const world = await buildWorld({ steps: BUILD_PIPELINE });
+    world.script({
+      codex: [
+        testsFirst(RIGHT_TEST),
+        verdict(
+          { verdict: "amend", reason: "AC1 could mean the count.", changesCriterion: true },
+          WRONG_TEST,
+        ),
+      ],
+      claude: [finishing("owner decided"), disputing("attempt 1 of")],
+    });
+
+    await world.start("cart-total");
+    await world.settle("cart-total");
+    await world.manager.resolve("cart-total", {
+      escalation: "E1",
+      action: "retry",
+      by: "owner",
+      note: "AC1 is the sum; keep the test.",
+    });
+    const state = await world.waitFor("cart-total", (s) => s.step === "review");
+
+    expect(state.tasks[0]).toMatchObject({ status: "done", attempts: 1 });
+    expect(dispute(world, 1)).toMatchObject({ outcome: "escalated" });
+    expect(lockOf(world).files).toEqual([{ path: TEST_FILE, sha256: sha256(RIGHT_TEST) }]);
+    expect(world.calls().at(-1)?.prompt).toContain("AC1 is the sum; keep the test.");
+  });
+});

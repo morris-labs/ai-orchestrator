@@ -18,6 +18,21 @@ export interface LockedFile {
   sha256: string;
 }
 
+/** A locked test that a test dispute changed, as the lock records it. */
+export interface Amendment {
+  /** The dispute's file, relative to the build directory. */
+  dispute: string;
+  /** The task whose Developer disputed the test. */
+  taskId: string;
+  /** The test file, relative to the repository root. */
+  test: string;
+  /** The Test engineer's reason for the change. */
+  reason: string;
+  /** The build branch commit that holds the amended test. */
+  commit: string;
+  at: string;
+}
+
 /** The test lock, as `test-lock.json` saves it. */
 export interface TestLock {
   /** The build branch commit that holds the locked files. */
@@ -28,6 +43,8 @@ export interface TestLock {
   /** The tests the lock covers, each with its criterion. */
   tests: ListedTest[];
   lockedAt: string;
+  /** The locked tests that test disputes changed, oldest first. */
+  amendments?: Amendment[];
 }
 
 /** The test lock check: the locked files whose content differs from the lock. */
@@ -66,6 +83,28 @@ export async function checkLock(worktree: BuildWorktree, lock: TestLock): Promis
     if ((await fileHash(worktree, file.path)) !== file.sha256) changed.push(file.path);
   }
   return { passed: changed.length === 0, changed };
+}
+
+/**
+ * The lock after a test dispute amended `amendment.test`: the file's new
+ * hash, its tests as `tests` lists them, and the amendment, at the
+ * amendment's commit. The other locked files keep their hashes.
+ */
+export function amendLock(
+  lock: TestLock,
+  amendment: Amendment,
+  file: LockedFile,
+  tests: readonly ListedTest[],
+): TestLock {
+  return {
+    ...lock,
+    commit: amendment.commit,
+    files: [...lock.files.filter((f) => f.path !== file.path), file].sort((a, b) =>
+      a.path.localeCompare(b.path),
+    ),
+    tests: [...lock.tests.filter((t) => t.file !== amendment.test), ...tests],
+    amendments: [...(lock.amendments ?? []), amendment],
+  };
 }
 
 /** The build's test lock, or `null` before tests first locked any test. */

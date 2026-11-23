@@ -342,7 +342,7 @@ export function gateReport(result: TaskGateResult): string {
   if (result.lock && !result.lock.passed) {
     parts.push(
       [
-        "Test lock: you changed these locked tests, so the engine put them back. Don't change a locked test; when you believe one is wrong, send a test dispute with your reason.",
+        "Test lock: you changed these locked tests, so the engine put them back. Don't change a locked test; when you believe one is wrong, put a test dispute in your report, with your reason.",
         ...result.lock.changed.map((p) => `  ${p}`),
       ].join("\n"),
     );

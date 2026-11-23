@@ -294,6 +294,12 @@ export const BuildPlanSchema = z
      * milestone. Absent means `DIRECT_MESSAGE_LIMIT`.
      */
     directMessagesPerMilestone: z.number().int().min(0).max(100).optional(),
+    /**
+     * How many questions each agent can ask about one task before a further
+     * question goes to the Project manager as an escalation. Absent means
+     * `QUESTION_CAP`.
+     */
+    questionsPerTask: z.number().int().min(0).max(100).optional(),
   })
   .strict()
   .superRefine((plan, ctx) => {
@@ -470,6 +476,19 @@ export const EscalationKindSchema = z.enum([
   "missing_secret",
   /** The build needs an external service that it can't reach. */
   "missing_service",
+  /**
+   * An agent asked more questions about a task than the build plan's
+   * question cap allows. The question past the cap goes to the Project
+   * manager with the escalation.
+   */
+  "question_cap",
+  /**
+   * A test dispute that the Test engineer doesn't settle: a second dispute
+   * about one test or a third in one task, which the Project manager rules
+   * on, or an amendment that changes what a criterion means, which the
+   * owner decides.
+   */
+  "test_dispute",
 ]);
 export type EscalationKind = z.infer<typeof EscalationKindSchema>;
 
