@@ -28,6 +28,7 @@ import {
 } from "../../src/build/index.js";
 import { GrantingBroker, MemoryEventSink } from "../../src/core.js";
 import { silentLogger } from "../../src/main/logger.js";
+import { TeamBus } from "../../src/team/index.js";
 import { createRunManager, type EngineRunManager } from "../../src/state/manager.js";
 import { MOCK_BIN } from "../adapters/helpers.js";
 import { tempDir } from "../tmp.js";
@@ -42,6 +43,8 @@ export interface MockResponse {
   commit?: string;
   error?: string;
   delayMs?: number;
+  /** MCP tool calls that the mock CLI makes, such as team chat messages. */
+  busCalls?: { tool: string; arguments?: Record<string, unknown>; server?: string }[];
 }
 
 /** The project id the build requests name. */
@@ -156,6 +159,8 @@ export interface BuildWorld {
   runs: EngineRunManager;
   events: MemoryEventSink;
   broker: GrantingBroker;
+  /** The team chat bus that the builds' seat calls reach. */
+  team: TeamBus;
   /** Starts build `slug` from `plan` (default: `cartPlan()`) with the build request. */
   start(slug: string, plan?: BuildPlanInput): Promise<BuildState>;
   /** Sets the mock CLIs' answers, by vendor. */
@@ -195,6 +200,8 @@ export async function buildWorld(options: BuildWorldOptions = {}): Promise<Build
     }),
     codex: new CodexAdapter({ ...cliOptions, command: join(MOCK_BIN, "codex") }),
   };
+  const team = new TeamBus({ log: silentLogger });
+  await team.start();
   const make = async () => {
     const events = new MemoryEventSink("engine:test", "stream-build");
     const broker = new GrantingBroker();
@@ -210,6 +217,7 @@ export async function buildWorld(options: BuildWorldOptions = {}): Promise<Build
     const manager = await createBuildManager({
       ...core,
       skillDirs: () => [],
+      team,
       reviews: runs,
       reviewPollMs: 25,
       pipeline: worldPipeline(options),
@@ -229,6 +237,7 @@ export async function buildWorld(options: BuildWorldOptions = {}): Promise<Build
     get broker() {
       return current.broker;
     },
+    team,
     get runs() {
       return current.runs;
     },

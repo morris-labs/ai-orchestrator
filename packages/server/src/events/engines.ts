@@ -124,8 +124,8 @@ export function foreignRunReason(
 
 /**
  * Why the server must drop an event from the engine at `endpoint`, or `null`
- * to relay it. An engine emits run, build, agent, finding, lease, usage, and
- * port events, and only for its own container, its own project, and runs
+ * to relay it. An engine emits run, build, message, agent, finding, lease, usage,
+ * and port events, and only for its own container, its own project, and runs
  * and builds of that project; a run event needs the run's `run.changed`
  * first, and a build event the build's `build.changed`. An agent or lease
  * event names a run, a build, or both, and each must be the engine's. Boxes,
@@ -173,6 +173,8 @@ export function engineEventRefusal(
       return foreignBuildReason(db, endpoint, event.build);
     case "build.task.changed":
       return ownBuild(event.buildId);
+    case "message.sent":
+      return ownBuild(event.message.buildId);
     case "agent.started":
     case "agent.finished":
     case "lease.settled":

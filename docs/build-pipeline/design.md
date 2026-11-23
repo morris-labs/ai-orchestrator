@@ -723,6 +723,8 @@ The engine types into an interactive Claude Code session only when the
 session shows its input prompt and no dialog, because a dialog takes the
 `Enter` key as its answer. For the evidence behind these rules, see
 [Vendor CLI facts for the build pipeline](vendor-cli-facts.md).
+For the message files, the routing, and the engine API of the bus, see
+[Team chat bus](team-chat.md).
 
 ### Permissions
 

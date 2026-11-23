@@ -14,7 +14,13 @@ import {
 } from "./base.js";
 import { parseStructuredText, toStrictJsonSchema } from "./output.js";
 import { runProcess } from "./process.js";
-import type { CliRequest, CliResult, CliLimitInfo, TokenCounts } from "./types.js";
+import {
+  TEAM_TOKEN_ENV,
+  type CliRequest,
+  type CliResult,
+  type CliLimitInfo,
+  type TokenCounts,
+} from "./types.js";
 
 export interface CodexAdapterOptions extends CliAdapterOptions {
   /**
@@ -112,6 +118,21 @@ export class CodexAdapter extends CliAdapter {
     }
     if (req.model) args.push("--model", req.model);
     if (req.effort) args.push("-c", `model_reasoning_effort="${req.effort}"`);
+    if (req.team) {
+      // Codex reads the server from each call's own configuration, a resume
+      // included, and refuses every tool call that needs approval under
+      // `codex exec` unless the server approves its tools. The token comes
+      // from the child's environment (see `vendor-cli-facts.md`).
+      const key = `mcp_servers.${req.team.server}`;
+      args.push(
+        "-c",
+        `${key}.url=${JSON.stringify(req.team.url)}`,
+        "-c",
+        `${key}.bearer_token_env_var=${JSON.stringify(TEAM_TOKEN_ENV)}`,
+        "-c",
+        `${key}.default_tools_approval_mode="approve"`,
+      );
+    }
     args.push("-");
     return args;
   }
@@ -131,7 +152,9 @@ export class CodexAdapter extends CliAdapter {
         args: this.buildArgs(req, schemaFile),
         cwd: this.workingDir(req),
         input: prompt,
-        env: this.envFor(req),
+        env: req.team
+          ? { ...this.envFor(req), [TEAM_TOKEN_ENV]: req.team.token }
+          : this.envFor(req),
         envProfile: `vendor:${this.vendor}`,
         timeoutMs: req.timeoutMs,
         signal: req.signal,
@@ -342,6 +365,13 @@ export class CodexStreamParser {
             typeof item.aggregated_output === "string" ? item.aggregated_output.trim() : "";
           this.toolErrors.push(
             `${command}: ${output.length > 300 ? output.slice(-300) : output || String(item.status)}`,
+          );
+        } else if (item?.type === "mcp_tool_call" && item.status === "failed") {
+          const error = item.error as { message?: unknown } | undefined;
+          const message =
+            typeof error?.message === "string" ? error.message : "the tool call failed";
+          this.toolErrors.push(
+            `${String(item.server)}.${String(item.tool)}: ${message.slice(-300)}`,
           );
         }
         break;
