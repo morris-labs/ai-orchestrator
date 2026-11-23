@@ -218,6 +218,7 @@ export class BuildContext {
         container: state.container,
         status: state.status,
         step: state.step,
+        ...(this.plan.usageEstimate ? { usageEstimate: this.plan.usageEstimate } : {}),
         createdAt: state.createdAt,
         updatedAt: state.updatedAt,
       },
