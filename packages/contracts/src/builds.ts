@@ -5,15 +5,55 @@
 // its tests, and the test, type check, and lint commands. Later milestones
 // widen it (several tasks, milestones, specialties, placements).
 import { z } from "zod";
-import { CommitShaSchema, IsoDateTimeSchema, UlidSchema } from "./common.js";
+import { CommitShaSchema, IsoDateTimeSchema, UlidSchema, VendorSchema } from "./common.js";
 import { RoleNameSchema } from "./build-roles.js";
+import { BuildPlacementsSchema, PlacementOverrideSchema } from "./placements.js";
 import { PolicyCommandSchema } from "./policy.js";
 
-/** A build's short kebab-case name, which names its directory and its branch. */
-export const BuildSlugSchema = z.string().regex(/^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/, {
-  message: "the slug must use lowercase letters, digits, and inner hyphens, at most 64 characters",
-});
+// The build id, slug, status, step, and task status schemas below match the
+// ones that the build events module (#62) defines; when both modules meet,
+// these move there.
+
+/** A build id. Engines mint build ids as ULIDs, so one is unique across every engine. */
+export const BuildIdSchema = UlidSchema;
+export type BuildId = z.infer<typeof BuildIdSchema>;
+
+/** A build's short kebab-case name; its files live in `.aio/builds/SLUG/`. */
+export const BuildSlugSchema = z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
 export type BuildSlug = z.infer<typeof BuildSlugSchema>;
+
+/**
+ * The part of a build a call or a state belongs to: `planning` before the
+ * build plan is frozen, `preflight` for the baseline, the milestone loop
+ * steps in order, and `release_ready` for the push and CI loop.
+ */
+export const BuildStepSchema = z.enum([
+  "planning",
+  "preflight",
+  "contracts",
+  "tests_first",
+  "tasks",
+  "integrate",
+  "harden",
+  "simplify",
+  "review",
+  "release_ready",
+]);
+export type BuildStep = z.infer<typeof BuildStepSchema>;
+
+export const BuildStatusSchema = z.enum([
+  "planning",
+  "running",
+  "paused",
+  "waiting_escalation",
+  "finished",
+  "failed",
+  "cancelled",
+]);
+export type BuildStatus = z.infer<typeof BuildStatusSchema>;
+
+export const BuildTaskStatusSchema = z.enum(["pending", "running", "done", "failed", "blocked"]);
+export type BuildTaskStatus = z.infer<typeof BuildTaskStatusSchema>;
 
 /** An ID in the build plan, such as `AC2` or `T1`. */
 const PlanIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,31}$/, {
@@ -77,6 +117,10 @@ export const BuildPlanSchema = z
     criteria: z.array(BuildCriterionSchema).min(1),
     tasks: z.array(BuildTaskSchema).min(1).max(1, "a build plan has one task in this version"),
     commands: BuildCommandsSchema,
+    /** Places every seat on this vendor. `null` leaves each seat on its own placement. */
+    singleVendor: VendorSchema.nullable().default(null),
+    /** Placement overrides by seat, over the role defaults and the single-vendor setting. */
+    placements: z.record(RoleNameSchema, PlacementOverrideSchema).default({}),
   })
   .strict()
   .superRefine((plan, ctx) => {
@@ -107,6 +151,8 @@ export type BuildPlanInput = z.input<typeof BuildPlanSchema>;
 /** A request to start a build. */
 export const BuildCreateSchema = z
   .object({
+    /** The project the build belongs to, as the server knows it. */
+    projectId: z.string().min(1),
     slug: BuildSlugSchema,
     plan: BuildPlanSchema,
     /** The repository as the container sees it. Absent means the project root. */
@@ -116,34 +162,18 @@ export const BuildCreateSchema = z
   })
   .strict();
 export type BuildCreate = z.infer<typeof BuildCreateSchema>;
+export type BuildCreateInput = z.input<typeof BuildCreateSchema>;
 
-/**
- * Where a build stands:
- *
- * - `running`: the engine works on it.
- * - `paused`: a person paused it, or it waits for a vendor's limit to reset.
- * - `escalated`: it waits for a decision in an escalation file.
- * - `halted`: it reached a step that this engine version doesn't run yet.
- * - `failed`: the engine hit an error it can't recover from.
- */
-export const BuildStatusSchema = z.enum(["running", "paused", "escalated", "halted", "failed"]);
-export type BuildStatus = z.infer<typeof BuildStatusSchema>;
-
-/** Build statuses that keep the container alive. */
-export const ACTIVE_BUILD_STATUSES: readonly BuildStatus[] = ["running", "paused", "escalated"];
-
-/** The steps of a build, in order. */
-export const BuildStepSchema = z.enum(["setup", "tasks", "review"]);
-export type BuildStep = z.infer<typeof BuildStepSchema>;
-
-export const BuildTaskStateSchema = z.enum(["pending", "running", "passed", "escalated"]);
-export type BuildTaskState = z.infer<typeof BuildTaskStateSchema>;
+/** Build statuses that keep the container alive: the engine works on the build. */
+export const ACTIVE_BUILD_STATUSES: readonly BuildStatus[] = ["running"];
 
 export const BuildTaskProgressSchema = z.object({
   id: PlanIdSchema,
-  state: BuildTaskStateSchema,
+  status: BuildTaskStatusSchema,
   /** Attempts started so far. */
   attempts: z.number().int().nonnegative(),
+  /** The commit the task started from; the permission check covers every change since. */
+  base: CommitShaSchema.optional(),
   /** The build branch's commit after the task passed. */
   commit: CommitShaSchema.nullable(),
   /** Why the last attempt failed, in one line. */
@@ -157,6 +187,8 @@ export const EscalationKindSchema = z.enum([
   "attempt_cap",
   /** An agent call failed, was refused, or needs a person, such as a limit with no reset. */
   "agent_call",
+  /** A seat's placement breaks a rule, such as a vendor that the single-vendor setting excludes. */
+  "placement",
 ]);
 export type EscalationKind = z.infer<typeof EscalationKindSchema>;
 
@@ -182,8 +214,11 @@ export const BuildStateSchema = z.object({
   /** The state file's format version. */
   version: z.literal(1),
   /** Names the build on leases and agent events. */
-  id: UlidSchema,
+  id: BuildIdSchema,
   slug: BuildSlugSchema,
+  projectId: z.string().min(1),
+  /** The project container whose engine runs the build. */
+  container: z.string().min(1),
   title: z.string(),
   /** The project's repository, which the build never changes. */
   repoPath: z.string().min(1),
@@ -196,9 +231,11 @@ export const BuildStateSchema = z.object({
   step: BuildStepSchema,
   tasks: z.array(BuildTaskProgressSchema),
   escalations: z.array(EscalationSchema),
+  /** The placement levels above the role defaults; see `SeatPlacements` in the engine. */
+  placements: BuildPlacementsSchema,
   /** The end of a timed pause, such as a vendor's limit reset. */
   pausedUntil: IsoDateTimeSchema.optional(),
-  /** Why the build halted or failed. */
+  /** Why the build waits or failed, in one or two sentences. */
   note: z.string().optional(),
   createdAt: IsoDateTimeSchema,
   updatedAt: IsoDateTimeSchema,

@@ -28,6 +28,7 @@ describe("BuildPlanSchema", () => {
     expect(parsed.criteria[0]?.verification).toBe("test");
     expect(parsed.tasks[0]).toMatchObject({ role: "developer", contracts: [] });
     expect(parsed.commands.typecheck).toEqual([]);
+    expect(parsed).toMatchObject({ singleVendor: null, placements: {} });
   });
 
   it("refuses a task that names a criterion the plan doesn't have", () => {
@@ -57,9 +58,11 @@ describe("BuildPlanSchema", () => {
 
 describe("BuildCreateSchema", () => {
   it("takes a kebab-case slug and a plan", () => {
-    const parsed = BuildCreateSchema.parse({ slug: "cart-total", plan });
+    const parsed = BuildCreateSchema.parse({ projectId: "p-1", slug: "cart-total", plan });
     expect(parsed.slug).toBe("cart-total");
-    expect(() => BuildCreateSchema.parse({ slug: "Cart Total", plan })).toThrow(/slug/);
+    expect(() => BuildCreateSchema.parse({ projectId: "p-1", slug: "Cart Total", plan })).toThrow(
+      /regex|Invalid/,
+    );
   });
 });
 
@@ -69,6 +72,8 @@ describe("BuildStateSchema", () => {
       version: 1,
       id: "01JD0000000000000000000000",
       slug: "cart-total",
+      projectId: "p-1",
+      container: "aio-agent-proj-shop",
       title: "Add a total to the cart",
       repoPath: "/workspace/shop",
       base: "0123456789abcdef0123456789abcdef01234567",
@@ -76,8 +81,9 @@ describe("BuildStateSchema", () => {
       worktree: "/workspace/shop/.worktrees/build-cart-total",
       status: "running",
       step: "tasks",
-      tasks: [{ id: "T1", state: "running", attempts: 1, commit: null }],
+      tasks: [{ id: "T1", status: "running", attempts: 1, commit: null }],
       escalations: [],
+      placements: { singleVendor: null, plan: {}, live: [] },
       createdAt: "2026-11-23T09:00:00.000Z",
       updatedAt: "2026-11-23T09:00:00.000Z",
     });

@@ -1,6 +1,7 @@
 // Sample documents and fakes shared by the engine service tests.
 import {
   EngineRunCreateSchema,
+  type BuildState,
   type FileGroup,
   type Finding,
   type RoundSummary,
@@ -8,6 +9,7 @@ import {
 } from "@aio/contracts";
 import { vi } from "vitest";
 import type { FindingDetail, RunManager } from "../../src/api/core-interface.js";
+import type { BuildManager } from "../../src/build/manager.js";
 import { EngineLeaseBroker } from "../../src/events/leases.js";
 import { EventHub } from "../../src/events/hub.js";
 import { silentLogger } from "../../src/main/logger.js";
@@ -135,6 +137,41 @@ export function fakeRunManager(): {
   return m as never;
 }
 
+export const buildState: BuildState = {
+  version: 1,
+  id: RUN,
+  slug: "cart-total",
+  projectId: "proj-1",
+  container: CONTAINER,
+  title: "Add a total to the cart",
+  repoPath: PROJECT_ROOT,
+  base: "0123456789abcdef0123456789abcdef01234567",
+  branch: "build/cart-total",
+  worktree: `${PROJECT_ROOT}/.worktrees/build-cart-total`,
+  status: "running",
+  step: "tasks",
+  tasks: [{ id: "T1", status: "running", attempts: 1, commit: null }],
+  escalations: [],
+  placements: { singleVendor: null, plan: {}, live: [] },
+  createdAt: "2026-11-23T09:00:00.000Z",
+  updatedAt: "2026-11-23T09:00:00.000Z",
+};
+
+/** A build manager whose every method is a `vi.fn` returning sample data. */
+export function fakeBuildManager(): {
+  [K in keyof BuildManager]-?: ReturnType<typeof vi.fn>;
+} & BuildManager {
+  const m = {
+    start: vi.fn(async () => buildState),
+    get: vi.fn(async (slug: string) => (slug === buildState.slug ? buildState : null)),
+    pause: vi.fn(async () => ({ ...buildState, status: "paused" })),
+    resume: vi.fn(async () => buildState),
+    activeCount: vi.fn(() => 0),
+    close: vi.fn(async () => {}),
+  };
+  return m as never;
+}
+
 export function newHub(): EventHub {
   return new EventHub({ source: `engine:${CONTAINER}`, streamId: "stream-1" });
 }
@@ -158,6 +195,7 @@ export async function listenEngine(overrides: { hub?: EventHub; leases?: EngineL
     leases,
     log: silentLogger,
     runs: fakeRunManager(),
+    builds: fakeBuildManager(),
     repos: { list: async () => [], refs: async () => ({}) as never },
     ports: { list: () => [] },
   });

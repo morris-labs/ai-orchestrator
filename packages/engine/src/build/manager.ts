@@ -1,0 +1,212 @@
+// The engine build API: the build requests (start, status, pause, resume)
+// over one `BuildController` per build, and the startup scan that continues
+// the builds a stopped engine left running.
+import {
+  BuildCreateSchema,
+  BuildSlugSchema,
+  type BuildCreateInput,
+  type BuildState,
+} from "@aio/contracts";
+import { EngineError, type CoreDeps } from "../api/core-interface.js";
+import { systemClock } from "../core.js";
+import { PolicyError } from "../policy/load.js";
+import { ExecaRunner, ShellRunner } from "../range/exec.js";
+import { GitError } from "../range/git.js";
+import { BuildController, type BuildLocation, type BuildPipeline } from "./controller.js";
+import type { BuildServices } from "./context.js";
+import { RoleError } from "./roles/index.js";
+import { BuildNotFoundError, BuildStore, listBuildSlugs } from "./store.js";
+import { WorktreeConflict } from "./worktree.js";
+
+/** How long `close()` waits for a build's drive to stop. */
+const SHUTDOWN_WAIT_MS = 5000;
+
+/**
+ * The build requests. Every method that names a build throws `EngineError`
+ * with `not_found` for an unknown build, except `get`, which returns `null`.
+ */
+export interface BuildManager {
+  /** Creates a build from its plan and starts it. Throws `conflict` when the build exists. */
+  start(request: BuildCreateInput): Promise<BuildState>;
+  get(slug: string): Promise<BuildState | null>;
+  pause(slug: string): Promise<BuildState>;
+  resume(slug: string): Promise<BuildState>;
+  /** The builds that keep the container alive: the ones the engine works on. */
+  activeCount(): number;
+  /** Stops every drive and leaves each build's files for the next engine. */
+  close(): Promise<void>;
+}
+
+/** What `createBuildManager()` receives: the run manager's deps, and optional test settings. */
+export interface BuildManagerDeps extends CoreDeps {
+  /** Options for loading role definitions, such as a test role library. */
+  roles?: BuildLocation["roles"];
+  /** The steps builds run, for tests and later milestones. */
+  pipeline?: BuildPipeline;
+}
+
+/** Turns a creation error into one the API maps to a status. */
+function toApiError(error: unknown): unknown {
+  if (error instanceof WorktreeConflict) return new EngineError("conflict", error.message);
+  if (error instanceof GitError || error instanceof PolicyError || error instanceof RoleError) {
+    return new EngineError("validation", error.message);
+  }
+  return error;
+}
+
+export class EngineBuildManager implements BuildManager {
+  private readonly controllers = new Map<string, BuildController>();
+  private readonly loading = new Map<string, Promise<BuildController | null>>();
+  private readonly services: Omit<BuildServices, "tierModels">;
+  private readonly location: BuildLocation;
+
+  constructor(private readonly deps: BuildManagerDeps) {
+    const runner = deps.runner ?? new ExecaRunner();
+    const clock = deps.clock ?? systemClock;
+    this.services = {
+      call: {
+        adapters: deps.adapters,
+        broker: deps.leases,
+        runner,
+        clock,
+        log: deps.log,
+        ...(deps.models ? { models: deps.models } : {}),
+      },
+      events: deps.events,
+      runner,
+      shell: new ShellRunner(runner),
+      clock,
+      log: deps.log,
+    };
+    this.location = {
+      projectRoot: deps.projectRoot,
+      container: deps.container,
+      ...(deps.policyPath ? { policyPath: deps.policyPath } : {}),
+      ...(deps.roles ? { roles: deps.roles } : {}),
+    };
+  }
+
+  /**
+   * Continues every build that a stopped engine left running, or paused until
+   * a vendor's limit resets. A build that can't be loaded is skipped and
+   * logged, so one bad build directory never keeps the engine from starting.
+   */
+  async init(): Promise<void> {
+    for (const slug of await listBuildSlugs(this.deps.projectRoot)) {
+      let state: BuildState;
+      try {
+        state = await new BuildStore(this.deps.projectRoot, slug).loadState();
+      } catch (error) {
+        this.deps.log.warn("Skipped a build whose state can't be read", {
+          build: slug,
+          error: String(error),
+        });
+        continue;
+      }
+      const due = state.status === "running" || (state.status === "paused" && state.pausedUntil);
+      if (!due) continue;
+      try {
+        const build = await this.controller(slug);
+        this.deps.log.info("Continuing a build the engine left unfinished", {
+          build: slug,
+          step: state.step,
+        });
+        build?.start();
+      } catch (error) {
+        this.deps.log.warn("Couldn't continue a build", { build: slug, error: String(error) });
+      }
+    }
+  }
+
+  private controller(slug: string): Promise<BuildController | null> {
+    const live = this.controllers.get(slug);
+    if (live) return Promise.resolve(live);
+    if (!BuildSlugSchema.safeParse(slug).success) return Promise.resolve(null);
+    let pending = this.loading.get(slug);
+    if (!pending) {
+      pending = (async () => {
+        try {
+          const build = await BuildController.load(
+            slug,
+            this.location,
+            this.services,
+            this.deps.pipeline,
+          );
+          this.controllers.set(slug, build);
+          return build;
+        } catch (error) {
+          if (error instanceof BuildNotFoundError) return null;
+          throw error;
+        } finally {
+          this.loading.delete(slug);
+        }
+      })();
+      this.loading.set(slug, pending);
+    }
+    return pending;
+  }
+
+  private async require(slug: string): Promise<BuildController> {
+    const build = await this.controller(slug);
+    if (!build) throw new EngineError("not_found", `No build ${slug}.`);
+    return build;
+  }
+
+  async start(input: BuildCreateInput): Promise<BuildState> {
+    const request = BuildCreateSchema.parse(input);
+    const slug = request.slug;
+    if (this.loading.has(slug) || (await this.controller(slug))) {
+      throw new EngineError("conflict", `A build named ${slug} already exists.`);
+    }
+    const creating = (async () => {
+      try {
+        const build = await BuildController.create(
+          request,
+          this.location,
+          this.services,
+          this.deps.pipeline,
+        );
+        this.controllers.set(slug, build);
+        return build;
+      } catch (error) {
+        throw toApiError(error);
+      } finally {
+        this.loading.delete(slug);
+      }
+    })();
+    this.loading.set(slug, creating);
+    const build = await creating;
+    build.start();
+    return structuredClone(build.state);
+  }
+
+  async get(slug: string): Promise<BuildState | null> {
+    const build = await this.controller(slug);
+    return build ? structuredClone(build.state) : null;
+  }
+
+  async pause(slug: string): Promise<BuildState> {
+    return structuredClone(await (await this.require(slug)).pause());
+  }
+
+  async resume(slug: string): Promise<BuildState> {
+    return structuredClone(await (await this.require(slug)).resume());
+  }
+
+  activeCount(): number {
+    return [...this.controllers.values()].filter((b) => b.state.status === "running").length;
+  }
+
+  async close(): Promise<void> {
+    await Promise.all(
+      [...this.controllers.values()].map((b) => b.stopForShutdown(SHUTDOWN_WAIT_MS)),
+    );
+  }
+}
+
+/** Builds the build manager and continues the builds a stopped engine left unfinished. */
+export async function createBuildManager(deps: BuildManagerDeps): Promise<EngineBuildManager> {
+  const manager = new EngineBuildManager(deps);
+  await manager.init();
+  return manager;
+}
