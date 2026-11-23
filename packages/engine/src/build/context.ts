@@ -9,6 +9,7 @@ import type {
   BuildStatus,
   BuildStep,
   BuildTaskProgress,
+  BuildTaskStatus,
   Escalation,
   RoleDefinition,
   RoleName,
@@ -90,6 +91,8 @@ export class BuildContext {
   /** Aborts the gate's commands when the engine stops; a new drive gets a new one. */
   private driveAbort = new AbortController();
   private writeChain: Promise<void> = Promise.resolve();
+  /** The status and step that the last `build.changed` showed. */
+  private announced: string | null = null;
 
   constructor(
     public state: BuildState,
@@ -103,6 +106,7 @@ export class BuildContext {
     this.seats = new SeatPlacements(roles, state.placements);
     const host: AgentCallHost = {
       id: state.id,
+      owner: { runId: null, buildId: state.id },
       round: () => 1,
       ledger: () => this.ledger,
       persist: () => this.persist(),
@@ -159,8 +163,13 @@ export class BuildContext {
     return new Date(this.services.clock.now()).toISOString();
   }
 
-  /** Saves the state, the call ledger, and the status file. Writes run one at a time. */
-  persist(): Promise<void> {
+  /**
+   * Saves the state, the call ledger, and the status file, then sends
+   * `build.changed` when the status or the step changed since the last one
+   * this context sent. The first save of a context always sends it, so the
+   * server knows the build before any of its agent or lease events.
+   */
+  async persist(): Promise<void> {
     this.state.updatedAt = this.now();
     this.state.placements = this.seats.state();
     const state = structuredClone(this.state);
@@ -173,7 +182,39 @@ export class BuildContext {
         error: String(error),
       });
     });
-    return write;
+    await write;
+    const shown = `${state.status}:${state.step}`;
+    if (this.announced === shown) return;
+    this.announced = shown;
+    await this.emit({
+      type: "build.changed",
+      build: {
+        id: state.id,
+        slug: state.slug,
+        projectId: state.projectId,
+        container: state.container,
+        status: state.status,
+        step: state.step,
+        createdAt: state.createdAt,
+        updatedAt: state.updatedAt,
+      },
+    });
+  }
+
+  /** Sets a task's status, saves it, and sends `build.task.changed`. */
+  async setTaskStatus(id: string, status: BuildTaskStatus): Promise<void> {
+    const task = this.task(id);
+    const previous = task.status;
+    if (previous === status) return;
+    task.status = status;
+    await this.persist();
+    await this.emit({
+      type: "build.task.changed",
+      buildId: this.state.id,
+      taskId: id,
+      status,
+      previousStatus: previous,
+    });
   }
 
   /** Sends an event and records it in the build's `events.jsonl`. */
@@ -261,6 +302,8 @@ export class BuildContext {
         },
         groupId: null,
         estimateTokens: SEAT_ESTIMATE_TOKENS,
+        seat: input.seat,
+        step: input.step,
       },
       placement,
     );

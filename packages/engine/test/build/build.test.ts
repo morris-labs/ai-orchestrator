@@ -2,7 +2,7 @@
 import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { CART_DONE, CART_WRONG, REPORT, buildWorld, cartPlan } from "./harness.js";
+import { CART_DONE, CART_WRONG, PROJECT_ID, REPORT, buildWorld, cartPlan } from "./harness.js";
 
 describe("a one-task build", () => {
   it("reaches the review step with the Developer's commit on the build branch", async () => {
@@ -25,6 +25,48 @@ describe("a one-task build", () => {
     expect(world.git(world.root, "rev-list", "--count", "main..build/cart-total")).toBe("1");
     expect(world.calls().map((c) => c.cli)).toEqual(["claude"]);
     expect(world.file("cart-total", "STATUS.md")).toMatch(/review/i);
+  });
+
+  it("sends the build's events, with the build, seat, and step on its calls", async () => {
+    const world = await buildWorld();
+    world.script({
+      claude: [{ match: "Task T1", output: REPORT, writeFiles: { "src/cart.mjs": CART_DONE } }],
+    });
+
+    const started = await world.start("cart-total");
+    await world.settle("cart-total");
+
+    const events = world.events.events;
+    expect(events[0]).toMatchObject({
+      type: "build.changed",
+      build: { id: started.id, slug: "cart-total", projectId: PROJECT_ID, status: "running" },
+    });
+    expect(world.events.ofType("agent.started")).toEqual([
+      expect.objectContaining({
+        runId: null,
+        buildId: started.id,
+        seat: "developer",
+        step: "tasks",
+        role: "fixer",
+      }),
+    ]);
+    expect(world.broker.requests).toEqual([
+      expect.objectContaining({ runId: null, buildId: started.id, seat: "developer" }),
+    ]);
+    expect(world.events.ofType("build.task.changed").map((e) => e.status)).toEqual([
+      "running",
+      "done",
+    ]);
+    expect(world.events.ofType("build.changed").at(-1)?.build).toMatchObject({
+      status: "paused",
+      step: "review",
+    });
+    const saved = world
+      .file("cart-total", "events.jsonl")
+      .trim()
+      .split("\n")
+      .map((line) => (JSON.parse(line) as { type: string }).type);
+    expect(saved).toEqual(events.map((e) => e.type));
   });
 
   it("leaves the project's own checkout untouched", async () => {

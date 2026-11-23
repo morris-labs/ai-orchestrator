@@ -112,9 +112,8 @@ async function runTask(ctx: BuildContext, task: BuildTask): Promise<StepOutcome>
   if (progress.status === "done") return "next";
   if (progress.status === "failed") return "wait";
   if (progress.status === "pending") {
-    progress.status = "running";
     progress.base = await ctx.worktree.head();
-    await ctx.persist();
+    await ctx.setTaskStatus(task.id, "running");
   }
   const base = progress.base ?? ctx.state.base;
   for (let n = Math.max(progress.attempts, 1); n <= ATTEMPT_CAP; n += 1) {
@@ -125,8 +124,8 @@ async function runTask(ctx: BuildContext, task: BuildTask): Promise<StepOutcome>
     } catch (error) {
       const draft = escalationForCallError(error, task.id);
       if (!draft) throw error;
-      progress.status = "failed";
       progress.lastFailure = draft.summary;
+      await ctx.setTaskStatus(task.id, "failed");
       await ctx.escalate(draft);
       return "wait";
     }
@@ -134,10 +133,9 @@ async function runTask(ctx: BuildContext, task: BuildTask): Promise<StepOutcome>
       if (await ctx.worktree.dirty()) {
         await ctx.worktree.commitAll(`chore(build): finish task ${task.id}, ${task.title}`);
       }
-      progress.status = "done";
       progress.commit = await ctx.worktree.head();
       delete progress.lastFailure;
-      await ctx.persist();
+      await ctx.setTaskStatus(task.id, "done");
       return "next";
     }
     // The seat may not change files outside its writable paths: the engine
@@ -149,7 +147,7 @@ async function runTask(ctx: BuildContext, task: BuildTask): Promise<StepOutcome>
     await ctx.persist();
   }
   const last = await ctx.store.readJson<AttemptRecord>(ctx.store.attemptPath(task.id, ATTEMPT_CAP));
-  progress.status = "failed";
+  await ctx.setTaskStatus(task.id, "failed");
   await ctx.escalate({
     kind: "attempt_cap",
     level: "project_manager",

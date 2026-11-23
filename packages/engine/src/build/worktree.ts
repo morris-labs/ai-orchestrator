@@ -141,12 +141,6 @@ export class BuildWorktree {
     return this.head();
   }
 
-  /** Puts the worktree back at `sha` and deletes the untracked files Git doesn't ignore. */
-  async resetTo(sha: string): Promise<void> {
-    await this.git.run(["reset", "-q", "--hard", sha]);
-    await this.git.run(["clean", "-q", "-fd"]);
-  }
-
   /**
    * Puts each of `paths` back the way it is at `sha`: a file that exists
    * there is checked out from it, and any other file is deleted. Other
