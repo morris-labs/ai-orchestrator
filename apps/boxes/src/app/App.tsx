@@ -38,6 +38,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { bridge } from "../bridge";
 import { BoxTable, type BuildBadges } from "../components/BoxTable";
+import { BuildView } from "../components/BuildView";
 import { BuildsView } from "../components/BuildsView";
 import { DetailsPanel } from "../components/DetailsPanel";
 import { ProjectPanel } from "../components/ProjectPanel";
@@ -1554,6 +1555,7 @@ export function App() {
             selectedId={buildId}
             onSelect={setBuildId}
             error={builds.error}
+            detail={(b) => <BuildView key={b.id} build={b} />}
           />
         ) : null}
         <Splitter
