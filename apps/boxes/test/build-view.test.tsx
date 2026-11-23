@@ -379,7 +379,10 @@ describe("build view post box", () => {
       open: [],
       startedAt: "2026-10-28T09:00:00Z",
     };
-    renderWithServer(<BuildView build={{ ...build, status: "planning", step: "planning" }} />, server);
+    renderWithServer(
+      <BuildView build={{ ...build, status: "planning", step: "planning" }} />,
+      server,
+    );
     const form = await screen.findByRole("form", { name: "Post to an agent" });
     await user.selectOptions(within(form).getByRole("combobox", { name: "To" }), "critic");
     await user.type(within(form).getByRole("textbox", { name: "Post" }), "Weigh the cost.");

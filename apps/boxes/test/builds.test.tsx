@@ -1,9 +1,10 @@
 // The Builds page and the build badge on a box, against the fake server.
-import { FakeServer, makeBoxView, makeBuild, makeMessage } from "@aio/ui/testing";
+import { FakeServer, makeBoxView, makeBuild, makeInboxItem, makeMessage } from "@aio/ui/testing";
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "../src/app/App";
+import type { AioBridge } from "../src/bridge";
 import { renderWithServer } from "./helpers";
 
 const B1 = "01JB8Z5K3W6Q2V9X4T7R0M1N2Q";
@@ -199,5 +200,128 @@ describe("build badge", () => {
     expect(screen.getByRole("tab", { name: "Builds" })).toHaveAttribute("aria-selected", "true");
     await waitFor(() => expect(buildRow("add-export")).toHaveAttribute("aria-selected", "true"));
     expect(buildRow("drop-legacy")).toHaveAttribute("aria-selected", "false");
+  });
+});
+
+describe("waiting escalations", () => {
+  afterEach(() => {
+    delete window.aio;
+  });
+
+  /** A running build with an escalation that waits, a digest, and an answered escalation. */
+  function serverWithInbox() {
+    const server = new FakeServer({
+      boxes: [site()],
+      builds: [
+        makeBuild({ id: B1, slug: "add-export", boxId: "aio-agent-site" }),
+        makeBuild({ id: B2, slug: "drop-legacy", createdAt: "2026-10-28T10:00:00Z" }),
+      ],
+    });
+    server.state.buildInbox[B1] = [
+      makeInboxItem({ id: "I1", ref: "E1", summary: "Escalation E1: Task T1 failed 4 attempts." }),
+      makeInboxItem({
+        id: "I2",
+        kind: "digest",
+        ref: "milestone-M1",
+        summary: "Milestone M1 is done.",
+        file: "digests/milestone-M1.md",
+        needsAnswer: false,
+      }),
+      makeInboxItem({
+        id: "I3",
+        ref: "E2",
+        deliveredAt: "2026-10-28T09:01:00Z",
+        answeredAt: "2026-10-28T09:05:00Z",
+      }),
+    ];
+    return server;
+  }
+
+  it("shows a build's open escalations in the list and in the build view", async () => {
+    const user = userEvent.setup();
+    await renderApp(serverWithInbox());
+    await user.click(screen.getByRole("tab", { name: "Builds" }));
+    await screen.findByRole("table", { name: "Builds" });
+    await waitFor(() =>
+      expect(within(buildRow("add-export")).getByText("1 open")).toBeInTheDocument(),
+    );
+    expect(within(buildRow("drop-legacy")).queryByText(/open/)).toBeNull();
+    await user.click(within(buildsTable()).getByRole("cell", { name: "add-export" }));
+    const open = await screen.findByRole("list", { name: "Open escalations" });
+    expect(within(open).getAllByRole("listitem")).toHaveLength(1);
+    expect(open).toHaveTextContent("Escalation E1: Task T1 failed 4 attempts.");
+    expect(open).toHaveTextContent("escalations/E1.json");
+  });
+
+  it("follows the inbox from the event stream", async () => {
+    const user = userEvent.setup();
+    const server = serverWithInbox();
+    await renderApp(server);
+    await user.click(screen.getByRole("tab", { name: "Builds" }));
+    await waitFor(() =>
+      expect(within(buildRow("add-export")).getByText("1 open")).toBeInTheDocument(),
+    );
+    act(() => server.putInboxItem(B1, makeInboxItem({ id: "I4", ref: "E3" })));
+    await waitFor(() =>
+      expect(within(buildRow("add-export")).getByText("2 open")).toBeInTheDocument(),
+    );
+    act(() => {
+      for (const id of ["I1", "I4"]) {
+        const item = server.state.buildInbox[B1]?.find((i) => i.id === id);
+        if (item) {
+          server.putInboxItem(B1, {
+            ...item,
+            deliveredAt: "2026-10-28T09:10:00Z",
+            answeredAt: "2026-10-28T09:20:00Z",
+          });
+        }
+      }
+    });
+    await waitFor(() => expect(within(buildRow("add-export")).queryByText(/open/)).toBeNull());
+  });
+
+  it("notifies the owner once per escalation that didn't reach the session", async () => {
+    const notifyBuild = vi.fn();
+    let select: ((buildId: string, machineId?: string) => void) | undefined;
+    window.aio = {
+      onSelectBox: () => () => undefined,
+      notifyBuild,
+      onSelectBuild: (listener: (buildId: string, machineId?: string) => void) => {
+        select = listener;
+        return () => undefined;
+      },
+    } as unknown as AioBridge;
+    const server = serverWithInbox();
+    // A delivered escalation waits for the Project manager's answer, not for the owner.
+    server.state.buildInbox[B2] = [
+      makeInboxItem({ id: "I1", ref: "E1", deliveredAt: "2026-10-28T09:01:00Z" }),
+    ];
+    await renderApp(server);
+    await waitFor(() => expect(notifyBuild).toHaveBeenCalledTimes(1));
+    expect(notifyBuild).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Escalation waits in add-export",
+        body: "Escalation E1: Task T1 failed 4 attempts.",
+        buildId: B1,
+        machineId: "local",
+      }),
+    );
+
+    // The same escalation again notifies nobody; another one does.
+    act(() => {
+      server.putInboxItem(B1, makeInboxItem({ id: "I1", ref: "E1", summary: "Again." }));
+    });
+    act(() =>
+      server.putInboxItem(B1, makeInboxItem({ id: "I5", ref: "E4", summary: "E4 waits." })),
+    );
+    await waitFor(() => expect(notifyBuild).toHaveBeenCalledTimes(2));
+    expect(notifyBuild).toHaveBeenLastCalledWith(expect.objectContaining({ body: "E4 waits." }));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(notifyBuild).toHaveBeenCalledTimes(2);
+
+    // A click opens the build.
+    act(() => select?.(B1, "local"));
+    expect(screen.getByRole("tab", { name: "Builds" })).toHaveAttribute("aria-selected", "true");
+    await waitFor(() => expect(buildRow("add-export")).toHaveAttribute("aria-selected", "true"));
   });
 });

@@ -79,6 +79,8 @@ import type { DialogState } from "./dialogs";
 import { useMachine } from "./machine";
 import { useBoxesData } from "./useBoxesData";
 import { useBuildsData } from "./useBuildsData";
+import { useEscalationNotices } from "./useEscalationNotices";
+import { useOpenEscalations } from "./useOpenEscalations";
 
 /** Pixels the table pane keeps: the filter box and a few rows. */
 const TABLE_MIN_HEIGHT = 120;
@@ -142,10 +144,13 @@ export function App() {
   const [tabs, setTabs] = useState<TabsState>(emptyTabs);
   const [page, setPage] = useState<Page>("boxes");
   const [buildId, setBuildId] = useState<string | null>(null);
-  const openBuild = useCallback((build: BuildSummary) => {
+  const openBuildId = useCallback((id: string) => {
     setPage("builds");
-    setBuildId(build.id);
+    setBuildId(id);
   }, []);
+  const openBuild = useCallback((build: BuildSummary) => openBuildId(build.id), [openBuildId]);
+  const escalations = useOpenEscalations(builds.builds);
+  useEscalationNotices(escalations, builds.builds, openBuildId);
   const buildBadges = useMemo<BuildBadges>(
     () => ({ byBox: activeBuildsByBox(builds.builds), onOpen: openBuild }),
     [builds.builds, openBuild],
@@ -1557,7 +1562,8 @@ export function App() {
             selectedId={buildId}
             onSelect={setBuildId}
             error={builds.error}
-            detail={(b) => <BuildView key={b.id} build={b} />}
+            escalations={escalations}
+            detail={(b) => <BuildView key={b.id} build={b} escalations={escalations.get(b.id)} />}
           />
         ) : null}
         <Splitter

@@ -1,15 +1,17 @@
 // The build view: a build's team chat as a conversation with filters by
-// task, milestone, seat, and slice; the direct messages to the owner; the
-// milestone board; the usage by seat and by specialty; the owner's post
-// box; and the owner's build controls (pause, resume, cancel, and delete). The conversation
-// renders a window of the newest matching messages, so a build with
-// thousands of messages stays responsive.
+// task, milestone, seat, and slice; the owner's post box; the open
+// escalations; the direct messages to the owner; the milestone board; the
+// usage by seat and by specialty; and the owner's build controls (pause,
+// resume, cancel, and delete). The conversation renders a window of the
+// newest matching messages, so a build with thousands of messages stays
+// responsive.
 import {
   MESSAGE_BODY_MAX,
   type BuildSummary,
   type BuildTaskView,
   type BuildUsage,
   type Message,
+  type PmItem,
   type UsageTotals,
 } from "@aio/contracts";
 import { Button, errorMessage, useApiClient, useMessageBox } from "@aio/ui";
@@ -34,9 +36,11 @@ import {
 
 export interface BuildViewProps {
   build: BuildSummary;
+  /** The build's open escalations, oldest first. */
+  escalations?: readonly PmItem[];
 }
 
-export function BuildView({ build }: BuildViewProps) {
+export function BuildView({ build, escalations = [] }: BuildViewProps) {
   const detail = useBuildDetail(build.id);
   return (
     <div className="bx-build-view">
@@ -54,6 +58,7 @@ export function BuildView({ build }: BuildViewProps) {
           onPosted={detail.addMessages}
         />
         <div className="bx-build-side">
+          {escalations.length > 0 ? <Escalations build={build} items={escalations} /> : null}
           <DirectMessages messages={detail.messages} />
           <Board columns={boardOf(detail.tasks)} />
           <Usage usage={detail.usage} />
@@ -221,7 +226,10 @@ function Conversation(props: {
         <PostBox
           buildId={build.id}
           planning={build.status === "planning"}
-          messages={messages} tasks={tasks} onPosted={onPosted} />
+          messages={messages}
+          tasks={tasks}
+          onPosted={onPosted}
+        />
       ) : null}
     </section>
   );
@@ -382,6 +390,41 @@ function MessageItem({ message: m }: { message: Message }) {
       </div>
       <div className="bx-message-body">{m.body}</div>
     </li>
+  );
+}
+
+/**
+ * The build's open escalations: each one whose pointer didn't reach the
+ * Project manager's session, or that waits for an answer.
+ */
+function Escalations({ build, items }: { build: BuildSummary; items: readonly PmItem[] }) {
+  return (
+    <section className="bx-build-panel bx-build-escalations" aria-label="Escalations">
+      <h3>Open escalations</h3>
+      <ol className="bx-messages" aria-label="Open escalations">
+        {items.map((item) => (
+          <li key={item.id} className="bx-message" title={`${item.id} ${item.createdAt}`}>
+            <div className="bx-message-head">
+              <strong>{item.ref}</strong>
+              <span className="bx-dim">
+                {" "}
+                {item.deliveredAt === null
+                  ? "hasn't reached the Project manager's session"
+                  : "waits for an answer"}
+              </span>
+            </div>
+            <div className="bx-message-body">{item.summary}</div>
+            <div className="bx-dim">
+              <code>{item.file}</code>
+            </div>
+          </li>
+        ))}
+      </ol>
+      <div className="bx-dim">
+        To resolve an escalation, run <code>aio-build resolve {build.slug} ID ACTION</code> in the
+        build's box.
+      </div>
+    </section>
   );
 }
 
