@@ -65,6 +65,24 @@ describe("AgentCalls for a caller that isn't a review run", () => {
     }
   });
 
+  it("passes a named session to the adapter, for a write call as for a continuation", async () => {
+    const repo = buildSampleRepo();
+    const adapter = answering("codex");
+    const seen: (string | undefined)[] = [];
+    const fix = adapter.fix.bind(adapter);
+    adapter.fix = (request) => {
+      seen.push((request as { sessionId?: string }).sessionId);
+      return fix(request);
+    };
+    const { calls } = makeCaller({ codex: adapter });
+    const base = spec(repo);
+
+    await calls.call<Answer>({ ...base, request: { ...base.request, sessionId: "s-1" } });
+    await calls.call<Answer>({ ...base, key: "task-2" });
+
+    expect(seen).toEqual(["s-1", undefined]);
+  });
+
   it("returns a finished call from the cache instead of calling again", async () => {
     const repo = buildSampleRepo();
     const codex = answering("codex");
