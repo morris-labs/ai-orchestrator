@@ -133,6 +133,20 @@ describe("the build socket", () => {
     expect(builds.resolve).toHaveBeenCalledTimes(1);
   });
 
+  it("lets only the build's own box resolve its escalations", async () => {
+    const { builds, path } = await open();
+    builds.get.mockResolvedValue({ ...buildState, boxId: "box-1" });
+    const ask = { projectId: "proj-1", slug: "cart-total", escalation: "E1", action: "retry" };
+    const other = await send(path, "POST", BUILD_SOCKET_ROUTES.resolve, { ...ask, boxId: "box-2" });
+    expect(other).toMatchObject({
+      status: 409,
+      body: { error: { code: "conflict", message: expect.stringContaining("box-1") } },
+    });
+    expect(builds.resolve).not.toHaveBeenCalled();
+    const own = await send(path, "POST", BUILD_SOCKET_ROUTES.resolve, { ...ask, boxId: "box-1" });
+    expect(own.status).toBe(200);
+  });
+
   it("lets the Project manager read the direct messages and the decisions", async () => {
     const { builds, path } = await open();
     const ask = { projectId: "proj-1", boxId: "box-1", slug: "cart-total" };
