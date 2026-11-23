@@ -409,6 +409,13 @@ const cases: Case[] = [
     status: 200,
   },
   {
+    key: "builds.resolve",
+    method: "POST",
+    url: `${V1}/builds/01JB8Z5K3W6Q2V9X4T7R0M1N2Q/resolve`,
+    body: { escalation: "E1", action: "retry", by: "owner" },
+    status: 200,
+  },
+  {
     key: "builds.usage",
     method: "GET",
     url: `${V1}/builds/01JB8Z5K3W6Q2V9X4T7R0M1N2Q/usage`,
@@ -756,7 +763,9 @@ describe("review routes", () => {
     const sent = h.engine.calls.find((c) => c.key === "engine.runs.create");
     expect((sent?.input.body as { runId: string }).runId).toBe(run.id);
     expect(h.runs.get(run.id)?.status).toBe("pending");
-    expect(h.core.calls).toContain(`message:${box.id}:${HOLD_EDITS_MESSAGE.slice(0, 20)}`);
+    // The request goes out through delivery, which waits while the session shows a dialog.
+    await h.deps.sessionMessages.idle?.();
+    expect(h.core.calls).toContain(`deliver:${box.id}:${HOLD_EDITS_MESSAGE.slice(0, 20)}`);
   });
 
   it("passes other projects' token samples into a preview", async () => {

@@ -1,6 +1,6 @@
 // The build view: a build's team chat as a conversation with filters by
 // task, milestone, seat, and slice; the owner's post box; the open
-// escalations; the direct messages to the owner; the milestone board; the
+// escalations, which the owner can resolve; the direct messages to the owner; the milestone board; the
 // usage by seat and by specialty; and the owner's build controls (pause,
 // resume, cancel, and delete). The conversation renders a window of the
 // newest matching messages, so a build with thousands of messages stays
@@ -10,6 +10,7 @@ import {
   type BuildSummary,
   type BuildTaskView,
   type BuildUsage,
+  type DecisionOption,
   type Message,
   type PmItem,
   type UsageTotals,
@@ -18,6 +19,12 @@ import { Button, errorMessage, useApiClient, useMessageBox } from "@aio/ui";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useBuildDetail } from "../app/useBuildDetail";
 import { isBuildActive } from "../logic/builds";
+import {
+  OWNER_ACTIONS,
+  ownerResolution,
+  type OwnerAction,
+  type ResolveForm,
+} from "../logic/escalations";
 import {
   MESSAGE_WINDOW,
   NO_FILTER,
@@ -88,10 +95,12 @@ function BuildControls({ build }: { build: BuildSummary }) {
     };
   }, []);
   const { status } = build;
+  const deleted = build.deletedAt !== undefined;
   const canPause = status === "running";
-  const canResume = status === "paused" || status === "cancelled";
+  const canResume = !deleted && (status === "paused" || status === "cancelled");
   const canCancel = status === "running" || status === "paused" || status === "waiting_escalation";
-  const canDelete = status === "finished" || status === "failed" || status === "cancelled";
+  const canDelete =
+    !deleted && (status === "finished" || status === "failed" || status === "cancelled");
 
   const send = async (action: BuildAction) => {
     if (busy) return;
@@ -150,6 +159,9 @@ function BuildControls({ build }: { build: BuildSummary }) {
         <Button disabled={busy} onClick={() => void send("delete")}>
           Delete build
         </Button>
+      ) : null}
+      {deleted ? (
+        <span className="bx-dim">The owner deleted this build's branch and worktree.</span>
       ) : null}
       {error ? (
         <span className="bx-dim" role="alert">
@@ -395,9 +407,12 @@ function MessageItem({ message: m }: { message: Message }) {
 
 /**
  * The build's open escalations: each one whose pointer didn't reach the
- * Project manager's session, or that waits for an answer.
+ * Project manager's session, or that waits for an answer. The owner can
+ * resolve each one here, like the Project manager does with `aio-build
+ * resolve`.
  */
 function Escalations({ build, items }: { build: BuildSummary; items: readonly PmItem[] }) {
+  const [open, setOpen] = useState<string | null>(null);
   return (
     <section className="bx-build-panel bx-build-escalations" aria-label="Escalations">
       <h3>Open escalations</h3>
@@ -417,14 +432,171 @@ function Escalations({ build, items }: { build: BuildSummary; items: readonly Pm
             <div className="bx-dim">
               <code>{item.file}</code>
             </div>
+            {open === item.ref ? (
+              <ResolveEscalation
+                buildId={build.id}
+                escalation={item.ref}
+                onClose={() => setOpen(null)}
+              />
+            ) : (
+              <Button onClick={() => setOpen(item.ref)}>{`Resolve ${item.ref}`}</Button>
+            )}
           </li>
         ))}
       </ol>
-      <div className="bx-dim">
-        To resolve an escalation, run <code>aio-build resolve {build.slug} ID ACTION</code> in the
-        build's box.
-      </div>
     </section>
+  );
+}
+
+const ACTION_LABELS: Record<OwnerAction, string> = {
+  retry: "Retry the paused work",
+  reorder: "Reorder the tasks, then retry",
+  clarify: "Clarify, then retry",
+  decide: "Answer the review run's decision",
+};
+
+const DECISION_LABELS: Record<DecisionOption, string> = {
+  resume: "Resume the review run",
+  resume_waive: "Resume and waive findings",
+  cancel: "Cancel the review run",
+};
+
+/** The owner's resolve form for one escalation. */
+function ResolveEscalation(props: { buildId: string; escalation: string; onClose: () => void }) {
+  const { buildId, escalation, onClose } = props;
+  const client = useApiClient();
+  const [form, setForm] = useState<ResolveForm>({
+    action: "retry",
+    note: "",
+    order: "",
+    decision: "resume",
+    waive: "",
+    push: "",
+  });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const live = useRef(true);
+  useEffect(() => {
+    live.current = true;
+    return () => {
+      live.current = false;
+    };
+  }, []);
+  const request = ownerResolution(escalation, form);
+  const set = (patch: Partial<ResolveForm>) => setForm((f) => ({ ...f, ...patch }));
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!request || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await client.call("builds.resolve", { params: { buildId }, body: request });
+      if (live.current) onClose();
+    } catch (err) {
+      if (live.current) setError(`Couldn't resolve ${escalation}: ${errorMessage(err)}`);
+    } finally {
+      if (live.current) setBusy(false);
+    }
+  };
+
+  return (
+    <form
+      className="bx-post-box"
+      aria-label={`Resolve ${escalation}`}
+      onSubmit={(e) => void submit(e)}
+    >
+      <div className="bx-build-filters">
+        <label className="bx-build-filter">
+          Action{" "}
+          <select
+            aria-label="Action"
+            value={form.action}
+            onChange={(e) => set({ action: e.target.value as OwnerAction })}
+          >
+            {OWNER_ACTIONS.map((a) => (
+              <option key={a} value={a}>
+                {ACTION_LABELS[a]}
+              </option>
+            ))}
+          </select>
+        </label>
+        {form.action === "reorder" ? (
+          <label className="bx-build-filter">
+            Task order{" "}
+            <input
+              aria-label="Task order"
+              value={form.order}
+              placeholder="T2, T1"
+              onChange={(e) => set({ order: e.target.value })}
+            />
+          </label>
+        ) : null}
+        {form.action === "decide" ? (
+          <label className="bx-build-filter">
+            Decision{" "}
+            <select
+              aria-label="Decision"
+              value={form.decision}
+              onChange={(e) => set({ decision: e.target.value as DecisionOption })}
+            >
+              {(Object.keys(DECISION_LABELS) as DecisionOption[]).map((d) => (
+                <option key={d} value={d}>
+                  {DECISION_LABELS[d]}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+        {form.action === "decide" && form.decision === "resume_waive" ? (
+          <label className="bx-build-filter">
+            Findings to waive{" "}
+            <input
+              aria-label="Findings to waive"
+              value={form.waive}
+              placeholder="F-1, F-2"
+              onChange={(e) => set({ waive: e.target.value })}
+            />
+          </label>
+        ) : null}
+        <label className="bx-build-filter">
+          Push answer{" "}
+          <select
+            aria-label="Push answer"
+            value={form.push}
+            onChange={(e) => set({ push: e.target.value as ResolveForm["push"] })}
+          >
+            <option value="">No answer</option>
+            <option value="yes">Push and open the pull request</option>
+            <option value="no">Don't push</option>
+          </select>
+        </label>
+      </div>
+      <textarea
+        aria-label="Note"
+        rows={2}
+        value={form.note}
+        placeholder={
+          form.action === "clarify"
+            ? "The clarification, which the task's next attempt gets."
+            : "Why (optional)."
+        }
+        onChange={(e) => set({ note: e.target.value })}
+      />
+      <div className="bx-build-filters">
+        <Button type="submit" disabled={busy || !request}>
+          Resolve
+        </Button>
+        <Button type="button" onClick={onClose}>
+          Close
+        </Button>
+        {error ? (
+          <span className="bx-dim" role="alert">
+            {error}
+          </span>
+        ) : null}
+      </div>
+    </form>
   );
 }
 

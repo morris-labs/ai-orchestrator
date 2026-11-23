@@ -9,6 +9,7 @@ import { createApiServer, type ApiServer } from "../../src/api/server.js";
 import type { EngineCallInput } from "../../src/events/engine-client.js";
 import { EventHub } from "../../src/events/hub.js";
 import { RunMirror } from "../../src/events/run-mirror.js";
+import { SessionMessages } from "../../src/boxes/session-messages.js";
 import { JobManager } from "../../src/jobs/jobs.js";
 import type { ExecBackend, ExecRequest, ExecSession } from "../../src/terminals/exec.js";
 import type { DevServerProxy } from "../../src/proxy/proxy.js";
@@ -97,6 +98,7 @@ function buildHandlers(): Partial<Record<EngineRouteKey, (input: EngineCallInput
     "engine.builds.resume": (i) => (known(i), harnessBuildState("running")),
     "engine.builds.cancel": (i) => (known(i), harnessBuildState("cancelled")),
     "engine.builds.delete": (i) => (known(i), harnessBuildState("cancelled")),
+    "engine.builds.resolve": (i) => (known(i), harnessBuildState("running")),
     "engine.builds.inbox": (i) => (
       known(i),
       {
@@ -377,6 +379,10 @@ export async function createHarness(
       messages: (buildId) => (builds.some((b) => b.id === buildId) ? [] : undefined),
       tasks: (buildId) => (builds.some((b) => b.id === buildId) ? [] : undefined),
     },
+    sessionMessages: new SessionMessages({
+      deliver: (boxId, request) => core.boxes.deliver(boxId, request),
+      log: () => undefined,
+    }),
     notifications: {
       list: (q) => notifications.filter((n) => !q.unread || !n.read),
       markRead: (id) => {

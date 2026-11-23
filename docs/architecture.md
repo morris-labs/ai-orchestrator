@@ -284,7 +284,10 @@ The build view also holds the owner's post box, which sends a post to one
 agent through the `POST /api/v1/builds/BUILD_ID/posts` route. The Boxes app
 reads each active build's Project manager inbox through the
 `GET /api/v1/builds/BUILD_ID/inbox` route. The Builds page counts each
-build's open escalations, and the build view lists them. When an
+build's open escalations, and the build view lists them. The owner
+resolves an escalation from the build view, which sends the owner's
+decision through the `POST /api/v1/builds/BUILD_ID/resolve` route to the
+engine that runs the build. When an
 escalation's pointer doesn't reach the Project manager's session within two
 minutes, the app raises one desktop notification for it, and a click opens
 the build.
