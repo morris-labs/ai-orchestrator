@@ -2,7 +2,7 @@
 import { openDatabase } from "../../src/db/index.js";
 import fs from "node:fs";
 import { PassThrough, Duplex } from "node:stream";
-import type { BuildSummary, EngineRouteKey, Job, RunState } from "@aio/contracts";
+import type { BuildState, BuildSummary, EngineRouteKey, Job, RunState } from "@aio/contracts";
 import type { ApiDeps, ApiEngine, ApiEngines } from "../../src/api/deps.js";
 import { ApiError } from "../../src/api/errors.js";
 import { createApiServer, type ApiServer } from "../../src/api/server.js";
@@ -61,6 +61,43 @@ export class FakeEngines implements ApiEngines {
     e.assertVersion();
     return e;
   }
+}
+
+/** The engine state of the harness's build `add-export`, with `status`. */
+export function harnessBuildState(status: BuildState["status"]): BuildState {
+  return {
+    version: 1,
+    id: "01JB8Z5K3W6Q2V9X4T7R0M1N2Q",
+    slug: "add-export",
+    projectId: PROJECT_ID,
+    boxId: null,
+    container: CONTAINER,
+    title: "Add an export",
+    repoPath: "/work/example-app",
+    base: "0123456789abcdef0123456789abcdef01234567",
+    branch: "build/add-export",
+    worktree: "/work/example-app/.worktrees/build-add-export",
+    status,
+    step: "tasks",
+    tasks: [],
+    escalations: [],
+    placements: { singleVendor: null, plan: {}, live: [] },
+    createdAt: T1,
+    updatedAt: T1,
+  };
+}
+
+/** Engine build requests for the build `add-export`. */
+function buildHandlers(): Partial<Record<EngineRouteKey, (input: EngineCallInput) => unknown>> {
+  const known = (input: EngineCallInput) => {
+    if (input.params?.slug !== "add-export") throw new ApiError("not_found", "No such build.");
+  };
+  return {
+    "engine.builds.pause": (i) => (known(i), harnessBuildState("paused")),
+    "engine.builds.resume": (i) => (known(i), harnessBuildState("running")),
+    "engine.builds.cancel": (i) => (known(i), harnessBuildState("cancelled")),
+    "engine.builds.delete": (i) => (known(i), harnessBuildState("cancelled")),
+  };
 }
 
 /** The default engine: knows one run and echoes the rest. */
@@ -128,6 +165,7 @@ export function defaultEngine(): FakeEngine {
         status: "pending",
       }),
       "engine.runs.get": runFor,
+      ...buildHandlers(),
       "engine.runs.pause": (i) => ({
         ...runFor(i),
         status: "paused",

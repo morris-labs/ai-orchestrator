@@ -912,6 +912,16 @@ const defaultHandlers: Partial<Record<HttpRouteKey, FakeHandler>> = {
     if (!build) throw new FakeApiError("not_found", `No build ${r.params.buildId as string}.`, 404);
     return build;
   },
+  "builds.pause": (r, s) => controlBuild(r, s, "running", "paused"),
+  "builds.resume": (r, s) => controlBuild(r, s, ["paused", "cancelled"], "running"),
+  "builds.cancel": (r, s) =>
+    controlBuild(
+      r,
+      s,
+      ["planning", "running", "paused", "waiting_escalation", "failed"],
+      "cancelled",
+    ),
+  "builds.delete": (r, s) => controlBuild(r, s, ["finished", "failed", "cancelled"], null),
   "builds.usage": (r) => ({
     buildId: r.params.buildId as string,
     total: { calls: 0, tokensIn: 0, tokensOut: 0, premiumRequests: 0, costEstimate: 0 },
@@ -922,6 +932,27 @@ const defaultHandlers: Partial<Record<HttpRouteKey, FakeHandler>> = {
   "notifications.list": (_r, s) => ({ notifications: s.state.notifications }),
   "notifications.read": () => ({ ok: true }),
 };
+
+/**
+ * A build request: refuses a build in another status than `from` with
+ * `invalid_state`, then stores the build in `to` (`null` keeps its status)
+ * and sends its `build.changed` event.
+ */
+function controlBuild(
+  r: { params: Record<string, unknown> },
+  s: FakeServer,
+  from: BuildSummary["status"] | BuildSummary["status"][],
+  to: BuildSummary["status"] | null,
+): BuildSummary {
+  const build = s.state.builds.find((b) => b.id === r.params.buildId);
+  if (!build) throw new FakeApiError("not_found", `No build ${r.params.buildId as string}.`, 404);
+  if (!([] as string[]).concat(from).includes(build.status)) {
+    throw new FakeApiError("invalid_state", `Build ${build.slug} is ${build.status}.`, 409);
+  }
+  const next = { ...build, status: to ?? build.status, updatedAt: new Date().toISOString() };
+  s.putBuild(next);
+  return next;
+}
 
 /** Applies a settings patch: nested objects merge, `null` deletes a key, other values replace. */
 function mergePatch(target: Record<string, unknown>, patch: unknown): void {
