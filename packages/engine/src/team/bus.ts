@@ -141,8 +141,7 @@ export class TeamBus {
     this.info = {
       name: TEAM_SERVER_NAME,
       version: options.version ?? "0.0.0",
-      instructions:
-        "The build team's chat. Use send_message to ask, answer, or request a file.",
+      instructions: "The build team's chat. Use send_message to ask, answer, or request a file.",
       tools: TOOLS,
     };
   }

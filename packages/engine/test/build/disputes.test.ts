@@ -376,7 +376,10 @@ const LABEL_TEST = [
 describe("a test dispute in a task that waits", () => {
   it("keeps the amended test on the branch while the task's work is set aside", async () => {
     const world = await buildWorld({ steps: BUILD_PIPELINE });
-    writeFileSync(join(world.root, "src", "label.mjs"), 'export function label() {\n  return "";\n}\n');
+    writeFileSync(
+      join(world.root, "src", "label.mjs"),
+      'export function label() {\n  return "";\n}\n',
+    );
     world.git(world.root, "add", "-A");
     world.git(world.root, "commit", "-q", "-m", "feat: add a label stub");
     const plan = cartPlan({
@@ -437,7 +440,9 @@ describe("a test dispute in a task that waits", () => {
         {
           match: "Task T2",
           output: { summary: "Added the label.", criteria: [{ id: "AC2", met: true }] },
-          writeFiles: { "src/label.mjs": "export function label(name) {\n  return `Item: ${name}`;\n}\n" },
+          writeFiles: {
+            "src/label.mjs": "export function label(name) {\n  return `Item: ${name}`;\n}\n",
+          },
         },
       ],
     });

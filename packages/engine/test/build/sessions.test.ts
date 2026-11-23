@@ -334,7 +334,9 @@ describe("session resume", () => {
     const exists = `[ -e ${note} ] && echo yes || echo no`;
     plan.commands = {
       ...plan.commands,
-      lint: [{ command: `a=$(${exists}); sleep 2; b=$(${exists}); [ "$a" = "$b" ] && node lint.mjs` }],
+      lint: [
+        { command: `a=$(${exists}); sleep 2; b=$(${exists}); [ "$a" = "$b" ] && node lint.mjs` },
+      ],
     };
 
     await world.start("cart-gated", plan);

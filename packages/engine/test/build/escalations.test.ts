@@ -451,7 +451,11 @@ describe("resolutions", () => {
     expect(after?.escalations[0]).toMatchObject({ status: "open" });
     expect(world.calls()).toEqual([]);
     // The Project manager can still hand it to the owner.
-    await world.manager.resolve("cart-total", { escalation: "E1", action: "escalate", note: "Plan fix." });
+    await world.manager.resolve("cart-total", {
+      escalation: "E1",
+      action: "escalate",
+      note: "Plan fix.",
+    });
   });
 
   it("resolves an escalation after an engine restart, and the build goes on", async () => {
