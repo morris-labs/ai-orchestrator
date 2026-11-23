@@ -39,6 +39,13 @@ const api: AioBridge = {
     return () => ipcRenderer.removeListener("aio:select-box", handler);
   },
   notify: (n) => ipcRenderer.send("aio:notify", n),
+  notifyBuild: (n) => ipcRenderer.send("aio:notify-build", n),
+  onSelectBuild: (listener) => {
+    const handler = (_e: unknown, buildId: string, machineId: string) =>
+      listener(buildId, machineId);
+    ipcRenderer.on("aio:select-build", handler);
+    return () => ipcRenderer.removeListener("aio:select-build", handler);
+  },
   quit: () => ipcRenderer.send("aio:quit"),
 };
 

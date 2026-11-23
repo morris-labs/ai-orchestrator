@@ -63,6 +63,14 @@ export interface AioBridge {
     machineId: string;
     notificationId: string;
   }) => void;
+  /**
+   * Raises a desktop notification about a build, such as an escalation that
+   * waits. A click opens the build, through `onSelectBuild`, with the
+   * machine id.
+   */
+  notifyBuild?: (n: { title: string; body: string; buildId: string; machineId: string }) => void;
+  /** Calls `listener` with the build and machine ids when a build notification is clicked. */
+  onSelectBuild?: (listener: (buildId: string, machineId: string) => void) => () => void;
   quit: () => void;
 }
 
