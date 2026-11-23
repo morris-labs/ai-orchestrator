@@ -35,8 +35,17 @@ export const REVIEW_POLL_MS = 2000;
 /** The run statuses the step stops waiting at. */
 const SETTLED: readonly RunStatus[] = ["waiting_decision", "finished", "failed", "cancelled"];
 
-/** The stop reasons that report the build diff clean. */
-const CLEAN: readonly StopReason[] = ["clean", "clean_above_floor"];
+/**
+ * The stop reasons that report the build diff clean. A run that ends clean
+ * with follow-ups passed the same test as a clean one, with findings that no
+ * vendor would check: release ready lists them in the pull request for the
+ * owner, who reviews it before any merge.
+ */
+export const CLEAN_REVIEW: readonly StopReason[] = [
+  "clean",
+  "clean_above_floor",
+  "clean_with_followups",
+];
 
 /** What `review/run.json` holds. */
 interface ReviewRecord {
@@ -166,7 +175,7 @@ export async function runReview(ctx: BuildContext): Promise<StepOutcome> {
     }
   }
   const run = await settled(ctx, runs, record.runId);
-  if (run.status === "finished" && run.stopReason && CLEAN.includes(run.stopReason)) {
+  if (run.status === "finished" && run.stopReason && CLEAN_REVIEW.includes(run.stopReason)) {
     return "next";
   }
   await ctx.escalate({

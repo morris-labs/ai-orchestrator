@@ -69,7 +69,34 @@ function gateCommands(root: string, runId: string): Array<{ kind: string; comman
   return preflight.baseline.commands.map(({ kind, command }) => ({ kind, command }));
 }
 
+/** The text of a vendor's safety refusal. */
+const REFUSED = "This content was flagged for possible cybersecurity risk.";
+
+/** Review answers where every disprover refuses the finding, so it waits for a person. */
+function refusingReviewers(): MockResponse[] {
+  return [
+    DEVELOPER,
+    { match: "[Dd]isprove", error: "crash", errorMessage: REFUSED },
+    { times: 1, output: { findings: [FLAW] } },
+    { output: { findings: [] } },
+  ];
+}
+
 describe("the review step", () => {
+  it("treats a run that ends clean with follow-ups as clean and moves to release ready", async () => {
+    const world = await buildWorld({ review: true });
+    world.script({ claude: refusingReviewers(), codex: refusingReviewers() });
+
+    await world.start("cart-total");
+    const state = await world.settle("cart-total");
+
+    const { runId } = JSON.parse(world.file("cart-total", "review/run.json")) as ReviewFile;
+    const run = await world.runs.get(runId);
+    expect(run).toMatchObject({ status: "finished", stopReason: "clean_with_followups" });
+    expect(state).toMatchObject({ step: "release_ready", status: "paused" });
+    expect(state.escalations).toEqual([]);
+  });
+
   it("finds a planted flaw, has the Developer seat fix it with the task context, confirms it, and moves to release ready", async () => {
     const world = await buildWorld({ review: true });
     const fix: MockResponse = {

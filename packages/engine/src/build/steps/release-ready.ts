@@ -31,6 +31,7 @@ import type {
   BuildCriterion,
   Escalation,
   EscalationResolve,
+  Finding,
   RunState,
   StopReason,
 } from "@aio/contracts";
@@ -52,7 +53,7 @@ import type { ListedTest } from "../red-check.js";
 import { writablePaths, type RoleTask } from "../roles/index.js";
 import { readTestLock } from "../test-lock.js";
 import { reportProjectManagerUsage, type TranscriptUsage } from "../pm-usage.js";
-import { REVIEW_POLL_MS, reopenRun } from "./review.js";
+import { CLEAN_REVIEW, REVIEW_POLL_MS, reopenRun } from "./review.js";
 import type { StepOutcome } from "./types.js";
 
 /** The seat that writes the record. */
@@ -67,9 +68,6 @@ export const RELEASE_FILES = {
   push: "release/push.json",
   digest: "digests/release-ready.md",
 } as const;
-
-/** The review run stop reasons that report the diff clean, before its push. */
-const CLEAN: readonly StopReason[] = ["clean", "clean_above_floor"];
 
 /** One criterion in the trace. */
 export interface TracedCriterion {
@@ -288,6 +286,23 @@ async function runScribe(ctx: BuildContext, baseline: TestBaseline): Promise<Don
   return done;
 }
 
+/**
+ * The build's review run findings that wait for a person: no vendor would
+ * check them, so the run ended clean with follow-ups.
+ */
+async function reviewFollowUps(ctx: BuildContext): Promise<Finding[]> {
+  const runs = ctx.services.reviews;
+  const review = await ctx.store.readJson<{ runId: string }>(ctx.store.path("review", "run.json"));
+  if (!runs || !review || !(await runs.get(review.runId))) return [];
+  const pending = await runs.findings(review.runId, { verdict: "pending" });
+  return pending.filter((f) => f.followUpReason !== undefined);
+}
+
+function followUpLine(f: Finding): string {
+  const where = f.file ? ` \`${f.file}${f.lines ? `:${f.lines[0]}-${f.lines[1]}` : ""}\`` : "";
+  return `- [ ] ${f.id} (${f.severity})${where}: ${f.title}. No vendor checked it: ${f.followUpReason ?? ""}`;
+}
+
 function bullets(lines: readonly string[], none: string): string[] {
   return lines.length === 0 ? [none] : lines.map((line) => `- ${line}`);
 }
@@ -299,6 +314,7 @@ export function pullRequestBody(
   trace: TraceRecord,
   baseline: TestBaseline,
   gate: FinalGateRecord,
+  followUps: readonly Finding[],
 ): string {
   const fixed = knownFailingLines(baseline, gate, true);
   const texts = new Map(ctx.plan.criteria.map((c) => [c.id, c.text]));
@@ -331,6 +347,16 @@ export function pullRequestBody(
     "",
     ...bullets(flakyLines(baseline), "None."),
     "",
+    ...(followUps.length === 0
+      ? []
+      : [
+          "## Review follow-ups",
+          "",
+          "The review run reported these findings, and no vendor would check them. Check each one before you merge.",
+          "",
+          ...followUps.map(followUpLine),
+          "",
+        ]),
     ...(fixed.length === 0
       ? []
       : [
@@ -428,7 +454,9 @@ async function waitForRun(
 
 /** True for a run that finished its pre-push rounds clean and hasn't pushed yet. */
 function cleanBeforePush(run: RunState): boolean {
-  return run.status === "finished" && run.stopReason !== null && CLEAN.includes(run.stopReason);
+  return (
+    run.status === "finished" && run.stopReason !== null && CLEAN_REVIEW.includes(run.stopReason)
+  );
 }
 
 /** True for a run that stopped at a decision or ended, after its push started. */
@@ -581,7 +609,7 @@ export async function runReleaseReady(ctx: BuildContext): Promise<StepOutcome> {
   if (!gate) return "wait";
   // The final gate can quarantine more flaky tests.
   const baseline = await loadBaseline(ctx.store);
-  const body = pullRequestBody(ctx, scribe, trace, baseline, gate);
+  const body = pullRequestBody(ctx, scribe, trace, baseline, gate, await reviewFollowUps(ctx));
   await ctx.store.writeText(ctx.store.path(RELEASE_FILES.pullRequest), body);
   await ctx.calls.checkpoint();
   let push: PushRecord | null = null;

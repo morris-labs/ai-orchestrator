@@ -516,4 +516,50 @@ describe("the release ready step", () => {
       "Known failing tests: 1.",
     );
   });
+
+  it("lists the review run's follow-up findings in the pull request when the run ended clean with follow-ups", async () => {
+    const origin = originPath();
+    const world = await buildWorld({
+      steps: BUILD_PIPELINE,
+      review: true,
+      release: true,
+      github: new FakeGitHub(origin),
+    });
+    releaseProject(world, origin);
+    const refused: MockResponse = {
+      match: "[Dd]isprove",
+      error: "crash",
+      errorMessage: "This content was flagged for possible cybersecurity risk.",
+    };
+    const finder: MockResponse = {
+      times: 1,
+      output: {
+        findings: [
+          {
+            severity: "P2",
+            title: "total() ignores item quantity",
+            file: "src/cart.mjs",
+            lines: [1, 3],
+            failure_case: "A cart with one item of price 2 and quantity 3 totals 2 instead of 6.",
+            category: "correctness",
+            introduced: true,
+          },
+        ],
+      },
+    };
+    world.script({
+      codex: [TEST_ENGINEER, SCRIBE, refused, finder, CLEAN_REVIEW],
+      claude: [DEVELOPER, refused, finder, CLEAN_REVIEW],
+    });
+
+    await world.start("cart-total", releasePlan(false));
+    const state = await world.settle("cart-total");
+
+    expect(state).toMatchObject({ step: "release_ready", status: "finished" });
+    const body = world.file("cart-total", "release/pull-request.md");
+    expect(body).toMatch(
+      /## Review follow-ups\n[\s\S]*- \[ \] F-\d{4} \(P2\) `src\/cart\.mjs:1-3`: total\(\) ignores item quantity/,
+    );
+    expect(body).toMatch(/## Review follow-ups[\s\S]*cybersecurity/);
+  });
 });

@@ -472,6 +472,10 @@ A finding that needs a plan change, such as a contract flaw, goes to the
 Project manager instead. The Project manager either sends it to the build
 team, or works it through in a planning meeting first.
 
+A review run that ends clean with follow-ups counts as clean: it passed the
+same test as a clean run, with findings that no vendor would check. The pull
+request lists those findings for the owner to check before the merge.
+
 ## Verification methods
 
 The Analyst gives each acceptance criterion one verification method, and the
