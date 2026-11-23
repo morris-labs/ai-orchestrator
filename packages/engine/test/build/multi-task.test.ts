@@ -23,7 +23,7 @@ const DISCOUNT_DONE = [
   "}",
   "",
 ].join("\n");
-const RECEIPT_STUB = "export function receipt(items) {\n  return \"\";\n}\n";
+const RECEIPT_STUB = 'export function receipt(items) {\n  return "";\n}\n';
 const RECEIPT_DONE = [
   'import { total } from "./cart.mjs";',
   "export function receipt(items) {",
@@ -171,11 +171,11 @@ describe("a multi-task build", () => {
       "node test/receipt.test.mjs",
     ]);
     expect(gate("T3").deferred).toBeUndefined();
-    expect(gate("T3").commands.filter((c) => c.kind === "test").map((c) => c.passed)).toEqual([
-      true,
-      true,
-      true,
-    ]);
+    expect(
+      gate("T3")
+        .commands.filter((c) => c.kind === "test")
+        .map((c) => c.passed),
+    ).toEqual([true, true, true]);
   });
 
   it("checks each task with one test suite command while later tasks' tests are still red", async () => {
@@ -219,7 +219,10 @@ describe("a multi-task build", () => {
     await world.start("suite", suitePlan());
     const state = await world.settle("suite");
 
-    expect(state.tasks.find((t) => t.id === "T1")).toMatchObject({ status: "failed", attempts: 4 });
+    expect(state.tasks.find((t) => t.id === "T1")).toMatchObject({ status: "failed" });
+    expect(state.status).toBe("waiting_escalation");
+    const first = (world.jsonFiles("suite", "tasks/T1")[0] as { gate: TaskGateResult }).gate;
+    expect(first).toMatchObject({ passed: false, setAside: expect.any(Array) });
     expect(world.git(world.root, "status", "--porcelain")).toBe("");
     expect(world.git(state.worktree, "status", "--porcelain")).not.toMatch(/test\//);
   });
@@ -229,7 +232,9 @@ describe("a multi-task build", () => {
     const plan = threeTaskPlan();
     plan.tasks = plan.tasks.map((t) => (t.id === "T1" ? { ...t, dependsOn: ["T3"] } : t));
 
-    await expect(world.start("checkout", plan)).rejects.toThrow(/dependency cycle: T3 -> T2 -> T1 -> T3/);
+    await expect(world.start("checkout", plan)).rejects.toThrow(
+      /dependency cycle: T3 -> T2 -> T1 -> T3/,
+    );
     expect(world.git(world.root, "branch", "--list", "build/*")).toBe("");
     expect(world.calls()).toEqual([]);
   });

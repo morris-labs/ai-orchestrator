@@ -6,12 +6,18 @@
 // the agent's answer after it, and the gate result last. A restarted build
 // reads those files and continues from the last finished part; the call
 // cache returns a finished agent call without calling again.
+//
+// When the gate fails two attempts in a row on one failure fingerprint, the
+// engine seats the Debugger before the next attempt, and that attempt's
+// prompt carries the diagnosis.
 import { taskOrder, type BuildTask } from "@aio/contracts";
 import { RunCancelled } from "../../calls/index.js";
 import { untrusted } from "../../prompts/templates.js";
 import { loadBaseline, quarantine } from "../baseline.js";
 import type { BuildContext } from "../context.js";
+import { diagnose, diagnosisText, readDiagnosis, type DiagnosisRecord } from "../debugger.js";
 import { escalationForCallError, type EscalationDraft } from "../escalations.js";
+import { failureFingerprint, sameFingerprint } from "../fingerprint.js";
 import {
   gateFailureLine,
   gateReport,
@@ -57,8 +63,16 @@ function roleTask(ctx: BuildContext, task: BuildTask, context: string): RoleTask
   };
 }
 
-/** The context for attempt `n`: the attempt count and the last attempt's gate failures. */
-function attemptContext(n: number, previous: AttemptRecord | undefined): string {
+/**
+ * The context for attempt `n`: the attempt count, the last attempt's gate
+ * failures, and the Debugger's diagnosis when the last two attempts failed
+ * the same way.
+ */
+function attemptContext(
+  n: number,
+  previous: AttemptRecord | undefined,
+  diagnosis: DiagnosisRecord | undefined,
+): string {
   const lines = [`This is attempt ${n} of ${ATTEMPT_CAP} at this task.`];
   if (previous?.gate && !previous.gate.passed) {
     lines.push(
@@ -66,6 +80,14 @@ function attemptContext(n: number, previous: AttemptRecord | undefined): string 
       "The task gate failed the last attempt. Its report follows; your work from that attempt is still in the worktree unless the report says otherwise.",
       "",
       untrusted(gateReport(previous.gate)),
+    );
+  }
+  if (diagnosis) {
+    lines.push(
+      "",
+      `The gate failed attempts ${diagnosis.attempt - 1} and ${diagnosis.attempt} the same way, so the Debugger diagnosed the failure. Apply its fix in this attempt:`,
+      "",
+      untrusted(diagnosisText(diagnosis)),
     );
   }
   return lines.join("\n");
@@ -104,13 +126,14 @@ async function attempt(ctx: BuildContext, task: BuildTask, n: number): Promise<G
     n > 1
       ? await ctx.store.readJson<AttemptRecord>(ctx.store.attemptPath(task.id, n - 1))
       : undefined;
+  const diagnosis = n > 1 ? await readDiagnosis(ctx, task.id, n - 1) : undefined;
   const specialties = await ctx.specialties(task.specialties);
   const outcome = await ctx.callSeat({
     seat: task.role,
     specialties,
     key: record.callKey,
     step: "tasks",
-    task: roleTask(ctx, task, attemptContext(n, previous)),
+    task: roleTask(ctx, task, attemptContext(n, previous, diagnosis)),
   });
   record.answer = { vendor: outcome.vendor, model: outcome.model, output: outcome.output };
   await ctx.store.writeJson(path, record);
@@ -181,6 +204,44 @@ async function oscillation(
 }
 
 /**
+ * Fails the task with the escalation for an agent call's error, and returns
+ * `"wait"`. Throws the error when it isn't one that a person resolves.
+ */
+async function failOnCallError(
+  ctx: BuildContext,
+  taskId: string,
+  error: unknown,
+): Promise<StepOutcome> {
+  const draft = escalationForCallError(error, taskId);
+  if (!draft) throw error;
+  ctx.task(taskId).lastFailure = draft.summary;
+  await ctx.setTaskStatus(taskId, "failed");
+  await ctx.escalate(draft);
+  return "wait";
+}
+
+/**
+ * The fingerprint of attempt `n`'s gate failure when attempt `n - 1` failed
+ * on the same one, and `null` otherwise. Lines that the baseline excuses or
+ * that the gate quarantined don't count.
+ */
+async function repeatedFailure(
+  ctx: BuildContext,
+  task: BuildTask,
+  n: number,
+  gate: TaskGateResult,
+): Promise<string[] | null> {
+  if (n < 2) return null;
+  const previous = await ctx.store.readJson<AttemptRecord>(ctx.store.attemptPath(task.id, n - 1));
+  if (!previous?.gate || previous.gate.passed) return null;
+  const options = { baseline: await loadBaseline(ctx.store), protect: task.tests };
+  const fingerprint = failureFingerprint(gate, options);
+  return sameFingerprint(fingerprint, failureFingerprint(previous.gate, options))
+    ? fingerprint
+    : null;
+}
+
+/**
  * Works one task to a passing gate. Returns `"wait"` when the task
  * escalated, and the build must wait for a decision.
  */
@@ -199,12 +260,7 @@ async function runTask(ctx: BuildContext, task: BuildTask): Promise<StepOutcome>
     try {
       record = await attempt(ctx, task, n);
     } catch (error) {
-      const draft = escalationForCallError(error, task.id);
-      if (!draft) throw error;
-      progress.lastFailure = draft.summary;
-      await ctx.setTaskStatus(task.id, "failed");
-      await ctx.escalate(draft);
-      return "wait";
+      return failOnCallError(ctx, task.id, error);
     }
     if (record.gate.passed) {
       if (await ctx.worktree.dirty()) {
@@ -232,6 +288,15 @@ async function runTask(ctx: BuildContext, task: BuildTask): Promise<StepOutcome>
       await ctx.setTaskStatus(task.id, "failed");
       await ctx.escalate(oscillating);
       return "wait";
+    }
+    if (n === ATTEMPT_CAP) break;
+    const repeated = await repeatedFailure(ctx, task, n, record.gate);
+    if (!repeated) continue;
+    await ctx.calls.checkpoint();
+    try {
+      await diagnose(ctx, task, n, repeated, record.gate);
+    } catch (error) {
+      return failOnCallError(ctx, task.id, error);
     }
   }
   const last = await ctx.store.readJson<AttemptRecord>(ctx.store.attemptPath(task.id, ATTEMPT_CAP));

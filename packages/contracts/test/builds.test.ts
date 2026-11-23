@@ -28,7 +28,12 @@ describe("BuildPlanSchema", () => {
     expect(parsed.criteria[0]).toMatchObject({ verification: "test", alreadyHolds: false });
     expect(parsed.tasks[0]).toMatchObject({ role: "developer", contracts: [], specialties: [] });
     expect(parsed.commands.typecheck).toEqual([]);
-    expect(parsed).toMatchObject({ singleVendor: null, placements: {} });
+    expect(parsed).toMatchObject({ singleVendor: null, placements: {}, size: "medium" });
+  });
+
+  it("takes a small, medium, or large build size", () => {
+    expect(BuildPlanSchema.parse({ ...plan, size: "small" }).size).toBe("small");
+    expect(() => BuildPlanSchema.parse({ ...plan, size: "huge" })).toThrow(/size/);
   });
 
   it("refuses a task that names a criterion the plan doesn't have", () => {

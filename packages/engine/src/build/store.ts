@@ -126,6 +126,11 @@ export class BuildStore {
     return this.path("tasks", fileKey(taskId), `attempt-${attempt}.json`);
   }
 
+  /** The Debugger's diagnosis of the failure that repeated in attempts `attempt - 1` and `attempt`. */
+  diagnosisPath(taskId: string, attempt: number): string {
+    return this.path("tasks", fileKey(taskId), `diagnosis-${attempt}.json`);
+  }
+
   escalationPath(id: string): string {
     return this.path("escalations", `${fileKey(id)}.json`);
   }
@@ -136,5 +141,9 @@ export class BuildStore {
 
   writeJson(path: string, value: unknown): Promise<void> {
     return writeJsonAtomic(path, value);
+  }
+
+  writeText(path: string, text: string): Promise<void> {
+    return writeFileAtomic(path, text);
   }
 }

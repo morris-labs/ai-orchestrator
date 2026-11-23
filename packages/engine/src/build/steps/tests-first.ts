@@ -7,8 +7,11 @@
 // - Each criterion with a test verification has at least one test.
 // - The red check: each test fails on an assertion against the stubs.
 //
-// When a round passes, the engine commits the tests and records the test
-// lock, which the task gate holds every Developer to.
+// When a round passes in a medium or large build, the coverage check reads
+// each criterion with its tests, on another vendor. The Test engineer revises
+// once for the criteria it reports, and the revision goes through the same
+// checks. Then the engine commits the tests and records the test lock, which
+// the task gate holds every Developer to.
 //
 // Every round saves `tests-first/round-N.json` as it goes: its start before
 // the agent call, the answer after it, and the check last. A restarted build
@@ -24,6 +27,7 @@ import { outsideWritable } from "../gate.js";
 import { runRedCheck, type ListedTest, type RedCheck } from "../red-check.js";
 import type { RoleTask } from "../roles/index.js";
 import { lockFiles, readTestLock, writeTestLock } from "../test-lock.js";
+import { COVERAGE_REPORT_FILE, runCoverageCheck, type CoverageReport } from "./coverage-check.js";
 import type { StepOutcome } from "./types.js";
 
 /** Rounds the Test engineer gets before tests first escalates. */
@@ -48,7 +52,7 @@ export interface RoundRecord {
   check?: RoundCheck;
 }
 
-type CheckedRound = RoundRecord & { check: RoundCheck };
+export type CheckedRound = RoundRecord & { check: RoundCheck };
 
 /** A round file, relative to the build directory. */
 export function roundFile(round: number): string {
@@ -56,7 +60,7 @@ export function roundFile(round: number): string {
 }
 
 /** What one tests first run works from. */
-interface Scope {
+export interface Scope {
   /** The commit tests first started from; the permission check covers every change since. */
   base: string;
   /** The criteria that an automated test verifies. */
@@ -100,6 +104,17 @@ function roundReport(check: RoundCheck): string {
     );
   }
   return lines.join("\n");
+}
+
+/** The context of the one revision after the coverage check. */
+function revisionContext(report: CoverageReport): string {
+  return [
+    "This is the coverage revision of tests first: your one revision after the coverage check.",
+    "",
+    "An agent on another vendor read each criterion with your tests and reported the criteria that the tests don't check, in the report that follows. Revise the tests so that each of these criteria has a test that fails when the criterion doesn't hold. Your tests are still in the worktree. Answer with every test, the old ones included.",
+    "",
+    untrusted(report.gaps.map((gap) => `- ${gap.criterion}: ${gap.reason}`).join("\n")),
+  ].join("\n");
 }
 
 function roundContext(n: number, previous: RoundRecord | undefined): string {
@@ -202,8 +217,16 @@ async function checkRound(
   return { passed: all.length === 0, problems: all, tests: red.tests, outside };
 }
 
-/** Runs round `n`, or returns its saved result when it already finished. */
-async function round(ctx: BuildContext, scope: Scope, n: number): Promise<CheckedRound> {
+/**
+ * Runs round `n`, or returns its saved result when it already finished.
+ * `context` gives the round's context from the round before it.
+ */
+async function round(
+  ctx: BuildContext,
+  scope: Scope,
+  n: number,
+  context: (previous: RoundRecord | undefined) => string,
+): Promise<CheckedRound> {
   const path = ctx.store.path(roundFile(n));
   let record = await ctx.store.readJson<RoundRecord>(path);
   if (record?.check) return record as CheckedRound;
@@ -221,7 +244,7 @@ async function round(ctx: BuildContext, scope: Scope, n: number): Promise<Checke
     specialties,
     key: record.callKey,
     step: "tests_first",
-    task: roleTask(ctx, scope, roundContext(n, previous)),
+    task: roleTask(ctx, scope, context(previous)),
   });
   record.answer = { vendor: outcome.vendor, model: outcome.model, output: outcome.output };
   await ctx.store.writeJson(path, record);
@@ -256,6 +279,46 @@ async function lock(ctx: BuildContext, scope: Scope, record: CheckedRound): Prom
   });
 }
 
+/**
+ * Runs the coverage check on the round that passed the red check, except in
+ * a small build, then the Test engineer's one revision when the check found
+ * gaps, and locks the tests that passed.
+ */
+async function afterRedCheck(
+  ctx: BuildContext,
+  scope: Scope,
+  passed: CheckedRound,
+): Promise<StepOutcome> {
+  if (ctx.plan.size === "small") {
+    await lock(ctx, scope, passed);
+    return "next";
+  }
+  await ctx.calls.checkpoint();
+  const report = await runCoverageCheck(ctx, scope, passed);
+  if (report.gaps.length === 0) {
+    await lock(ctx, scope, passed);
+    return "next";
+  }
+  await ctx.calls.checkpoint();
+  const revision = await round(ctx, scope, passed.round + 1, () => revisionContext(report));
+  if (revision.check.passed) {
+    await lock(ctx, scope, revision);
+    return "next";
+  }
+  await ctx.escalate({
+    kind: "tests_first",
+    level: "project_manager",
+    taskId: null,
+    summary: "The Test engineer's revision after the coverage check failed the engine's checks.",
+    details: [
+      roundReport(revision.check),
+      "",
+      `Coverage report: ${COVERAGE_REPORT_FILE}. Revision: ${roundFile(revision.round)}.`,
+    ].join("\n"),
+  });
+  return "wait";
+}
+
 /** The tests first step. */
 export async function runTestsFirst(ctx: BuildContext): Promise<StepOutcome> {
   if (await readTestLock(ctx.store)) return "next";
@@ -274,21 +337,17 @@ export async function runTestsFirst(ctx: BuildContext): Promise<StepOutcome> {
   }
   const first = await ctx.store.readJson<RoundRecord>(ctx.store.path(roundFile(1)));
   const scope: Scope = { base: first?.start ?? (await ctx.worktree.head()), criteria, paths };
-  for (let n = 1; n <= TESTS_FIRST_ROUND_CAP; n += 1) {
-    await ctx.calls.checkpoint();
-    let record: CheckedRound;
-    try {
-      record = await round(ctx, scope, n);
-    } catch (error) {
-      const draft = escalationForCallError(error, null);
-      if (!draft) throw error;
-      await ctx.escalate(draft);
-      return "wait";
+  try {
+    for (let n = 1; n <= TESTS_FIRST_ROUND_CAP; n += 1) {
+      await ctx.calls.checkpoint();
+      const record = await round(ctx, scope, n, (previous) => roundContext(n, previous));
+      if (record.check.passed) return await afterRedCheck(ctx, scope, record);
     }
-    if (record.check.passed) {
-      await lock(ctx, scope, record);
-      return "next";
-    }
+  } catch (error) {
+    const draft = escalationForCallError(error, null);
+    if (!draft) throw error;
+    await ctx.escalate(draft);
+    return "wait";
   }
   const last = await ctx.store.readJson<RoundRecord>(
     ctx.store.path(roundFile(TESTS_FIRST_ROUND_CAP)),

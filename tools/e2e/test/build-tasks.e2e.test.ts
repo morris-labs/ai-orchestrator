@@ -135,6 +135,8 @@ const task = (id: string, criterion: string, module: string, dependsOn: string[]
 /** The plan lists the tasks out of order; checkout needs shipping, which needs tax. */
 const PLAN = {
   title: "Checkout with tax and shipping",
+  // A small build skips the coverage check.
+  size: "small",
   criteria: TESTS.map((t) => ({ id: t.id, text: `${t.name}.` })),
   tasks: [
     task("T3", "AC3", "checkout", ["T2"]),
@@ -224,7 +226,9 @@ describe("a three-task build", () => {
       },
       90_000,
     );
-    expect(state).toMatchObject({ status: "paused", step: "release_ready" });
+    // The plan records no push answer, so release ready stops before the push.
+    expect(state).toMatchObject({ status: "waiting_escalation", step: "release_ready" });
+    expect(state.escalations).toEqual([expect.objectContaining({ kind: "release_ready" })]);
     expect(state.tasks.map((t) => [t.id, t.status, t.attempts])).toEqual([
       ["T3", "done", 1],
       ["T2", "done", 1],

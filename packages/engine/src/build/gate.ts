@@ -14,7 +14,8 @@
 // tests first wrote those tests red. While the test commands run, the gate
 // sets those tests aside, so a command that runs the whole suite skips them.
 //
-// Later milestones add checks here: the failure fingerprint.
+// The tasks step reads a failed gate's failure fingerprint (see
+// `fingerprint.ts`).
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { BuildCommands, PolicyCommand } from "@aio/contracts";

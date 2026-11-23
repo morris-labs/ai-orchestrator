@@ -21,7 +21,7 @@ import { EngineError } from "../api/core-interface.js";
 import type { EngineDeps } from "../core.js";
 import { systemClock } from "../core.js";
 import { DEFAULT_POLICY } from "@aio/contracts";
-import { loadPolicy, loadPolicyExtras } from "../policy/load.js";
+import { loadPolicyExtras, loadRunPolicy } from "../policy/load.js";
 import { Git } from "../range/git.js";
 import { baseWorktreePath, removeBaseWorktree } from "../verify/verify.js";
 import { drivePostPush } from "../postpush/loop.js";
@@ -110,7 +110,7 @@ export class RunController {
     const available = (["claude", "codex", "copilot"] as const).filter((v) => deps.adapters[v]);
     const manual = startingRoles(request.roles, available);
     const clock = deps.clock ?? systemClock;
-    const policy = await loadPolicy(location.projectRoot, location.policyPath);
+    const policy = await loadRunPolicy(location.projectRoot, location.policyPath, request);
     // The run directory goes under `.aio/`, which is inside the
     // working tree when the project root is the repository. The dirty-tree
     // check skips it too, so a failure here only leaves it in `git status`.
@@ -258,7 +258,11 @@ export class RunController {
     this.active = (async () => {
       try {
         await ctx.beginDrive();
-        ctx.policy = await loadPolicy(this.location.projectRoot, this.location.policyPath);
+        ctx.policy = await loadRunPolicy(
+          this.location.projectRoot,
+          this.location.policyPath,
+          ctx.state.request,
+        );
         ctx.extras = await loadPolicyExtras(this.location.projectRoot, this.location.policyPath);
         await ensureWholeBase(ctx);
         if (ctx.state.status !== "running") {
@@ -559,7 +563,7 @@ export class RunController {
   }
 
   /** Starts the post-push loop after a finished pre-push run. */
-  async push(options: { title?: string; draft?: boolean } = {}): Promise<RunState> {
+  async push(options: { title?: string; body?: string; draft?: boolean } = {}): Promise<RunState> {
     const ctx = this.ctx;
     if (ctx.state.request.readOnly) throw new InvalidStateError("A read-only run can't push.");
     if (!ctx.deps.github) throw new InvalidStateError("The post-push loop needs the gh client.");
@@ -579,7 +583,11 @@ export class RunController {
     }
     ctx.eng.phase = "post-push";
     ctx.eng.postPushStartRound = ctx.state.round;
-    ctx.eng.push = { title: options.title ?? null, draft: options.draft ?? false };
+    ctx.eng.push = {
+      title: options.title ?? null,
+      draft: options.draft ?? false,
+      ...(options.body ? { body: options.body } : {}),
+    };
     ctx.eng.roundOpen = false;
     ctx.state.decision = null;
     ctx.state.finishedAt = undefined;
