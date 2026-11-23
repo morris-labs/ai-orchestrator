@@ -10,7 +10,7 @@ how the engine seats them, see the [build pipeline design](design.md).
 The engine reads roles from two places, in this order:
 
 1. The role library, which ships with the engine. It holds the Developer
-   role.
+   and Test engineer roles.
 2. The repository's `.aio/team/` directory.
 
 A repository role replaces the library role of the same name, so you can

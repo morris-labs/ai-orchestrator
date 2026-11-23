@@ -150,7 +150,8 @@ async function checkRound(
   const entries: unknown[] = Array.isArray(output.tests) ? output.tests : [];
   if (!Array.isArray(output.tests)) problems.push("The report has no list of tests.");
   for (const [index, entry] of entries.entries()) {
-    const fields = typeof entry === "object" && entry !== null ? (entry as Record<string, unknown>) : {};
+    const fields =
+      typeof entry === "object" && entry !== null ? (entry as Record<string, unknown>) : {};
     const file = text(fields.file);
     const name = text(fields.name);
     const criterion = text(fields.criterion);

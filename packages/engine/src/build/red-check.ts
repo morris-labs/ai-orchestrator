@@ -73,16 +73,19 @@ export const ASSERTION_PATTERNS: readonly RegExp[] = [
 ];
 
 /** Classifies one finished test command. */
-export function classifyRun(run: {
-  exitCode: number | null;
-  timedOut: boolean;
-  output: string;
-}): { outcome: RedOutcome; reason: string } {
+export function classifyRun(run: { exitCode: number | null; timedOut: boolean; output: string }): {
+  outcome: RedOutcome;
+  reason: string;
+} {
   if (run.timedOut) return { outcome: "error", reason: "the test command timed out" };
   if (run.exitCode === 0) return { outcome: "passed", reason: "the test passed" };
   const error = ERROR_PATTERNS.find((re) => re.test(run.output));
   if (error) {
-    const line = run.output.split("\n").find((l) => error.test(l))?.trim() ?? "";
+    const line =
+      run.output
+        .split("\n")
+        .find((l) => error.test(l))
+        ?.trim() ?? "";
     return { outcome: "error", reason: `the test failed on an error: ${line}` };
   }
   if (ASSERTION_PATTERNS.some((re) => re.test(run.output))) {

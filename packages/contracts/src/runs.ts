@@ -91,6 +91,10 @@ export const BALANCED_CLAUDE_ROUNDS = 2;
  * a fallback, a replacement, or a role with no available default. A person can
  * still name any vendor for a role. Copilot disproves because the `offload`
  * profile relies on it for Codex's findings.
+ *
+ * The matrix covers review runs only. A build seat's call pins the vendor
+ * that its placement names and never moves, so a seat that writes files,
+ * such as the Test engineer on Codex, runs on any vendor.
  */
 export const VENDOR_ROLES: Record<z.infer<typeof VendorSchema>, readonly AgentRole[]> = {
   claude: ["reviewer", "disprover", "fixer", "sweeper"],
