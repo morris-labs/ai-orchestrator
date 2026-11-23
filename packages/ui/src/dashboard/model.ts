@@ -549,6 +549,7 @@ export function applyEvent(prev: DashboardState, event: AioEvent): DashboardStat
     case "build.changed":
     case "build.task.changed":
     case "message.sent":
+    case "build.inbox":
       // The review dashboard shows review runs; builds have their own view.
       return state;
   }

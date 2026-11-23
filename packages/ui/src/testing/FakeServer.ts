@@ -1086,6 +1086,12 @@ const defaultHandlers: Partial<Record<HttpRouteKey, FakeHandler>> = {
     }
     return { tasks: s.state.buildTasks[buildId] ?? [] };
   },
+  "builds.inbox": (r, s) => {
+    const buildId = r.params.buildId as string;
+    const build = s.state.builds.find((b) => b.id === buildId);
+    if (!build) throw new FakeApiError("not_found", `No build ${buildId}.`, 404);
+    return { buildId, slug: build.slug, boxId: build.boxId, items: [] };
+  },
   "notifications.list": (_r, s) => ({ notifications: s.state.notifications }),
   "notifications.read": () => ({ ok: true }),
 };
