@@ -141,4 +141,132 @@ describe("session resume", () => {
     expect(line).toBeDefined();
     expect(resumed.prompt).toContain(line);
   });
+
+  it("resumes a Copilot session for a message", async () => {
+    const world = await buildWorld({ steps: BUILD_PIPELINE, copilot: true });
+    world.script({ copilot: [done(QUESTION), TESTS_FIRST], claude: [developer(QUESTION)] });
+    const plan = cartPlan({ placements: { "test-engineer": { vendor: "copilot" } } });
+
+    await world.start("cart-copilot", plan);
+    await world.settle("cart-copilot");
+
+    const tester = sessionOf(registry(world, "cart-copilot").sessions, "test-engineer");
+    expect(tester.vendor).toBe("copilot");
+    expect(tester.turns.map((t) => t.messageId)).toEqual([null, "M1"]);
+    const copilot = world.calls().filter((c) => c.cli === "copilot");
+    expect(copilot).toHaveLength(2);
+    expect(copilot[0]!.argv.join(" ")).not.toContain("--resume");
+    expect(copilot[1]!.argv).toContain(`--resume=${tester.sessionId}`);
+  });
+
+  it("runs two messages for one session as two turns, in order", async () => {
+    const world = await buildWorld({ steps: BUILD_PIPELINE });
+    world.script({
+      codex: [
+        done("first question", { delayMs: 400 }),
+        done("second question"),
+        TESTS_FIRST,
+      ],
+      claude: [developer("The first question.", "The second question.")],
+    });
+
+    const build = await world.start("cart-two");
+    await world.settle("cart-two");
+
+    const resumed = world.calls().filter((c) => c.cli === "codex" && c.resumeId);
+    expect(resumed.map((c) => /The (\w+) question/.exec(c.prompt)?.[1])).toEqual([
+      "first",
+      "second",
+    ]);
+    const tester = sessionOf(registry(world, "cart-two").sessions, "test-engineer");
+    expect(tester.turns.map((t) => t.messageId)).toEqual([null, "M1", "M2"]);
+    // The second turn starts only after the first ends.
+    const turns = world.events.events
+      .filter((e) => e.type === "agent.started" || e.type === "agent.finished")
+      .filter((e) => e.buildId === build.id && e.seat === "test-engineer")
+      .map((e) => e.type);
+    expect(turns).toEqual([
+      "agent.started",
+      "agent.finished",
+      "agent.started",
+      "agent.finished",
+      "agent.started",
+      "agent.finished",
+    ]);
+  });
+
+  it("starts a fresh agent for a large session whose cache expired, and records the change", async () => {
+    const world = await buildWorld({ steps: BUILD_PIPELINE });
+    // Every Codex session is cold at once, and every turn is over the threshold.
+    policy(world, "  freshAboveTokens: 100\n  cacheWindowMinutes:\n    codex: 0\n");
+    world.script({ codex: [done(QUESTION), TESTS_FIRST], claude: [developer(QUESTION)] });
+
+    await world.start("cart-fresh");
+    await world.settle("cart-fresh");
+
+    const { sessions, deliveries } = registry(world, "cart-fresh");
+    const testers = sessions.filter((s) => s.seat === "test-engineer");
+    expect(testers).toHaveLength(2);
+    const [old, fresh] = testers as [SessionRecord, SessionRecord];
+    expect(old).toMatchObject({ reason: "step", replacedBy: fresh.id });
+    expect(fresh).toMatchObject({ reason: "size", replaces: old.id, replacedBy: null });
+    expect(fresh.sessionId).not.toBe(old.sessionId);
+    expect(fresh.taskIds).toEqual(old.taskIds);
+    expect(fresh.turns.map((t) => t.messageId)).toEqual(["M1"]);
+    expect(deliveries).toEqual([expect.objectContaining({ messageId: "M1", session: fresh.id })]);
+
+    const codex = world.calls().filter((c) => c.cli === "codex");
+    expect(codex).toHaveLength(2);
+    expect(codex[1]!.resumeId).toBeNull();
+    // The fresh agent gets the role prompt, the task's files, and the message.
+    expect(codex[1]!.prompt).toContain("You are the Test engineer");
+    expect(codex[1]!.prompt).toContain(`- ${TEST_FILE}`);
+    expect(codex[1]!.prompt).toContain(QUESTION);
+  });
+
+  it("keeps resuming a large session while the vendor's cache lasts", async () => {
+    const world = await buildWorld({ steps: BUILD_PIPELINE });
+    policy(world, "  freshAboveTokens: 100\n");
+    world.script({ codex: [done(QUESTION), TESTS_FIRST], claude: [developer(QUESTION)] });
+
+    await world.start("cart-warm");
+    await world.settle("cart-warm");
+
+    const testers = registry(world, "cart-warm").sessions.filter((s) => s.seat === "test-engineer");
+    expect(testers).toHaveLength(1);
+    expect(world.calls().filter((c) => c.cli === "codex")[1]!.resumeId).toBe(testers[0]!.sessionId);
+  });
+
+  it("keeps the registry and the queue through an engine restart", async () => {
+    const world = await buildWorld({ steps: BUILD_PIPELINE });
+    world.script({
+      // The first answer to the question outlasts the engine that started it.
+      codex: [done(QUESTION, { times: 1, delayMs: 20_000 }), done(QUESTION), TESTS_FIRST],
+      claude: [{ ...developer(QUESTION), times: 1 }, developer()],
+    });
+
+    await world.start("cart-restart");
+    const asked = () => world.calls().filter((c) => c.cli === "codex" && c.resumeId);
+    const end = Date.now() + 20_000;
+    while (asked().length === 0 && Date.now() < end) await new Promise((r) => setTimeout(r, 25));
+    const before = registry(world, "cart-restart");
+    expect(before.queue).toEqual([{ messageId: "M1", seat: "test-engineer", taskId: "T1" }]);
+    const tester = sessionOf(before.sessions, "test-engineer");
+
+    await world.restart();
+    await world.settle("cart-restart");
+
+    const after = registry(world, "cart-restart");
+    expect(after.queue).toEqual([]);
+    expect(sessionOf(after.sessions, "test-engineer")).toMatchObject({
+      id: tester.id,
+      sessionId: tester.sessionId,
+    });
+    expect(sessionOf(after.sessions, "test-engineer").turns.map((t) => t.messageId)).toEqual([
+      null,
+      "M1",
+    ]);
+    expect(asked().map((c) => c.resumeId)).toEqual([tester.sessionId, tester.sessionId]);
+    expect(world.jsonFiles("cart-restart", "messages")).toHaveLength(1);
+  });
 });
