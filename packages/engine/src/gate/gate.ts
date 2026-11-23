@@ -11,7 +11,7 @@ import { join } from "node:path";
 import type { PolicyCommand, PolicyFile } from "@aio/contracts";
 import type { CommandRunner } from "../core.js";
 
-/** What a gate command checks. The review gate runs tests and lint; a build's task gate adds type checks. */
+/** What a gate command checks. */
 export type GateCommandKind = "test" | "typecheck" | "lint";
 
 export interface GateCommandResult {
@@ -145,7 +145,7 @@ export async function untrackedFiles(
 }
 
 /**
- * Runs every test and lint command of the policy, in order. When
+ * Runs every test, type check, and lint command of the policy, in order. When
  * `options.git` is set, lists the untracked files that appeared meanwhile
  * in `leftovers`, without deleting any.
  */
@@ -153,6 +153,9 @@ export async function runGate(policy: PolicyFile, options: GateOptions): Promise
   const before = options.git ? await untrackedFiles(options.git, options.repoPath) : null;
   const commands: GateCommandResult[] = [];
   for (const cmd of policy.tests) commands.push(await runGateCommand("test", cmd, options));
+  for (const cmd of policy.typecheck ?? []) {
+    commands.push(await runGateCommand("typecheck", cmd, options));
+  }
   for (const cmd of policy.lint) commands.push(await runGateCommand("lint", cmd, options));
   const run: GateRun = { passed: commands.every((c) => c.passed), commands };
   if (options.git && before) {
