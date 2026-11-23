@@ -14,7 +14,10 @@ import {
 import { PlacementError, resolvePlacement } from "./resolve.js";
 
 /** The roles a build seats, by name, as `loadRoles()` returns them. */
-export type SeatRoles = ReadonlyMap<string, { readonly placement: Placement }>;
+export type SeatRoles = ReadonlyMap<
+  string,
+  { readonly placement: Placement; readonly source?: string }
+>;
 
 /** Options for placing one agent in a seat. */
 export interface PlaceOptions {
@@ -46,6 +49,7 @@ export class SeatPlacements {
       plan: this.levels.plan[seat],
       live: this.liveOf(seat),
       otherThan: options.otherThan,
+      movable: this.roles.get(seat)?.source === "library",
     });
   }
 

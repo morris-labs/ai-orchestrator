@@ -239,6 +239,26 @@ describe("the coverage check", () => {
     expect(state.escalations).toEqual([expect.objectContaining({ kind: "placement" })]);
   });
 
+  it("moves the check to another vendor when the plan places the Test engineer on the check's default", async () => {
+    const world = await buildWorld({ steps: BUILD_PIPELINE });
+    world.script({
+      claude: [testRound("round 1 of", REVISED_TEST), DEVELOPER],
+      codex: [ALL_CHECKED],
+    });
+
+    await world.start("cart-total", {
+      ...twoCriteriaPlan(),
+      placements: { "test-engineer": { vendor: "claude" } },
+    });
+    const state = await world.settle("cart-total");
+
+    expect(state).toMatchObject({ step: "review", status: "paused", escalations: [] });
+    expect(world.calls().map((c) => c.cli)).toEqual(["claude", "codex", "claude"]);
+    const checker = world.events.ofType("agent.started")[1];
+    expect(checker).toMatchObject({ seat: "coverage-checker", vendor: "codex" });
+    expect(checker?.placement?.note).toMatch(/requires a vendor other than claude/);
+  });
+
   it("skips the check in a small build", async () => {
     const world = await buildWorld({ steps: BUILD_PIPELINE });
     world.script({ codex: [testRound("round 1 of", REVISED_TEST)], claude: [DEVELOPER] });
