@@ -28,6 +28,13 @@ export class WorktreeConflict extends Error {
   }
 }
 
+/** The worktree at one moment: its `HEAD` and the blob of each path that differs from it. */
+export interface WorktreeSnapshot {
+  head: string;
+  /** Each changed path's content as a Git blob ID, or `"none"` for a deleted path. */
+  changed: Map<string, string>;
+}
+
 function nul(text: string): string[] {
   return text.split("\0").filter((p) => p !== "");
 }
@@ -140,6 +147,45 @@ export class BuildWorktree {
   async changedSince(base: string): Promise<string[]> {
     const tracked = nul(await this.git.run(["diff", "--name-only", "--no-renames", "-z", base]));
     return [...new Set([...tracked, ...(await this.untracked())])].sort();
+  }
+
+  /** The worktree's `HEAD` and the content of each path that differs from it. */
+  async snapshot(): Promise<WorktreeSnapshot> {
+    const head = await this.head();
+    const changed = new Map<string, string>();
+    for (const path of await this.changedSince(head)) changed.set(path, await this.blobOf(path));
+    return { head, changed };
+  }
+
+  /**
+   * The paths whose content differs from `before`, whether committed since
+   * or not; the paths whose content is back where it was don't count.
+   */
+  async changedSinceSnapshot(before: WorktreeSnapshot): Promise<string[]> {
+    const now = new Set(await this.changedSince(before.head));
+    const paths: string[] = [];
+    for (const path of new Set([...now, ...before.changed.keys()])) {
+      const at = () => this.blobAt(before.head, path);
+      const was = before.changed.get(path) ?? (await at());
+      // A path that no longer differs from the old `HEAD` has its content there.
+      const is = now.has(path) ? await this.blobOf(path) : await at();
+      if (is !== was) paths.push(path);
+    }
+    return paths.sort();
+  }
+
+  /** The Git blob ID of a path's working copy, or `"none"` when it doesn't exist. */
+  private async blobOf(path: string): Promise<string> {
+    if (!existsSync(join(this.path, path))) return "none";
+    return (await this.git.run(["hash-object", "--", path])).trim();
+  }
+
+  /** The Git blob ID of a path at `sha`, or `"none"` when it doesn't have it. */
+  private async blobAt(sha: string, path: string): Promise<string> {
+    const out = await this.git
+      .run(["rev-parse", "-q", "--verify", `${sha}:${path}`])
+      .catch(() => "");
+    return out.trim() || "none";
   }
 
   /** True when the worktree has changes that aren't committed. */

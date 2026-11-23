@@ -120,6 +120,20 @@ export interface SeatCall {
    * Default: the task's own ID.
    */
   taskIds?: readonly string[];
+  /**
+   * Asked once the seat and the worktree are the drive's, before the call.
+   * `false`, such as for a task that a message turn's escalation paused
+   * meanwhile, makes `callSeat()` throw `SeatCallSkipped` without a call.
+   */
+  proceed?: () => boolean;
+}
+
+/** A seat call that `SeatCall.proceed` stopped before it started. */
+export class SeatCallSkipped extends Error {
+  constructor(seat: string) {
+    super(`The ${seat} call didn't start: its work was paused while it waited for the seat.`);
+    this.name = "SeatCallSkipped";
+  }
 }
 
 /** One turn of an agent in a seat, with a prompt the caller wrote. */
@@ -597,14 +611,16 @@ export class BuildContext {
    * returns its answer. The call cache returns a finished call's answer
    * without calling again, which is how a restarted build skips the calls
    * it already made. The agent's session goes into the session registry,
-   * and the seat takes no message turn while the call runs. Other seats'
-   * message turns can change the worktree meanwhile.
+   * and no message turn runs while the call does: queued turns run while
+   * the drive waits for the seat.
    */
   callSeat(input: SeatCall): Promise<AgentOutcome<Record<string, unknown>>> {
     const role = this.role(input.seat);
     const packs = input.specialties ?? [];
     const taskIds = input.taskIds ?? [input.task.id];
-    return this.worktreeLock.outside(() => this.seatCall(role, packs, taskIds, input));
+    return this.worktreeLock.outside((reclaim) =>
+      this.seatCall(role, packs, taskIds, input, reclaim),
+    );
   }
 
   private seatCall(
@@ -612,10 +628,14 @@ export class BuildContext {
     packs: readonly SpecialtyPack[],
     taskIds: readonly string[],
     input: SeatCall,
+    reclaim: () => Promise<void>,
   ): Promise<AgentOutcome<Record<string, unknown>>> {
     return this.sessions.run(
       input.seat,
       async () => {
+        // The drive has the worktree back for its agent's whole turn.
+        await reclaim();
+        if (input.proceed && !input.proceed()) throw new SeatCallSkipped(input.seat);
         const placement = this.seats.place(input.seat, input.placement);
         const decisions = await this.decisionsText(taskIds);
         const task = {

@@ -41,6 +41,12 @@ export const SessionTurnSchema = z
     head: z.string().min(1),
     /** The turn's input tokens, the registry's measure of the session's size. */
     inputTokens: z.number().int().nonnegative(),
+    /**
+     * The worktree paths that a message turn of a seat that writes files
+     * changed. The task gate doesn't count them against another seat's
+     * attempt. Absent when the turn changed none.
+     */
+    changed: z.array(z.string().min(1)).optional(),
   })
   .strict();
 export type SessionTurn = z.infer<typeof SessionTurnSchema>;

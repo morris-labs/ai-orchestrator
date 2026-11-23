@@ -20,7 +20,7 @@ import { taskOrder, type BuildTask, type Escalation } from "@aio/contracts";
 import { RunCancelled } from "../../calls/index.js";
 import { untrusted } from "../../prompts/templates.js";
 import { loadBaseline, quarantine } from "../baseline.js";
-import type { BuildContext } from "../context.js";
+import { SeatCallSkipped, type BuildContext } from "../context.js";
 import { diagnose, diagnosisText, readDiagnosis, type DiagnosisRecord } from "../debugger.js";
 import {
   disputeContext,
@@ -174,6 +174,29 @@ function otherTasks(
   };
 }
 
+/**
+ * The paths that message turns of other seats, or of the task's seat on
+ * other tasks, changed since the task's base. The task's attempts didn't
+ * change them, so its permission check leaves them be.
+ */
+async function othersTurnPaths(
+  ctx: BuildContext,
+  task: BuildTask,
+  base: string,
+): Promise<string[]> {
+  const { sessions } = await ctx.sessions.registry.snapshot();
+  const paths = new Set<string>();
+  for (const session of sessions) {
+    if (session.seat === task.role && session.taskIds.includes(task.id)) continue;
+    for (const turn of session.turns) {
+      if (turn.messageId === null || !turn.changed?.length) continue;
+      if (!(await ctx.worktree.git.ok(["merge-base", "--is-ancestor", base, turn.head]))) continue;
+      for (const path of turn.changed) paths.add(path);
+    }
+  }
+  return [...paths];
+}
+
 /** The context about the dispute that an attempt runs again after, or `undefined` for none. */
 async function settledDispute(
   ctx: BuildContext,
@@ -249,24 +272,32 @@ async function attempt(
       : undefined;
   const diagnosis = n > 1 ? await readDiagnosis(ctx, task.id, n - 1) : undefined;
   const specialties = await ctx.specialties(task.specialties);
-  const outcome = await ctx.callSeat({
-    seat: task.role,
-    specialties,
-    key: record.callKey,
-    step: "tasks",
-    task: roleTask(
-      ctx,
-      task,
-      attemptContext(
-        n,
-        capOf(ctx, task.id),
-        previous,
-        diagnosis,
-        clarifications(ctx, task.id),
-        await settledDispute(ctx, task, record.after),
+  let outcome: Awaited<ReturnType<BuildContext["callSeat"]>>;
+  try {
+    outcome = await ctx.callSeat({
+      // A message turn that ran while the drive waited for the seat can pause the task.
+      proceed: () => progress.status === "running",
+      seat: task.role,
+      specialties,
+      key: record.callKey,
+      step: "tasks",
+      task: roleTask(
+        ctx,
+        task,
+        attemptContext(
+          n,
+          capOf(ctx, task.id),
+          previous,
+          diagnosis,
+          clarifications(ctx, task.id),
+          await settledDispute(ctx, task, record.after),
+        ),
       ),
-    ),
-  });
+    });
+  } catch (error) {
+    if (error instanceof SeatCallSkipped) return PAUSED;
+    throw error;
+  }
   record.answer = { vendor: outcome.vendor, model: outcome.model, output: outcome.output };
   if (progress.status !== "running") {
     await ctx.store.writeJson(path, record);
@@ -294,10 +325,15 @@ async function attempt(
   // A test that a dispute of this task amended changed since the task's
   // base, but the engine changed it, so the permission check leaves it be.
   const amended = (lock?.amendments ?? []).filter((a) => a.taskId === task.id).map((a) => a.test);
+  const base = progress.base ?? ctx.state.base;
   const gate = await runTaskGate({
     worktree: ctx.worktree,
-    base: progress.base ?? ctx.state.base,
-    writable: [...writablePaths(ctx.role(task.role), roleTask(ctx, task, "")), ...amended],
+    base,
+    writable: [
+      ...writablePaths(ctx.role(task.role), roleTask(ctx, task, "")),
+      ...amended,
+      ...(await othersTurnPaths(ctx, task, base)),
+    ],
     commands: ctx.plan.commands,
     lock,
     shell: ctx.services.shell,

@@ -47,11 +47,17 @@ under way waits in the queue until the turn ends, and two messages for one
 session run as two turns in the order the engine saved them. A build step
 ends only after the message turns that it started finish.
 
-A message turn of a seat that writes files, such as the Developer or the
-Test engineer, also waits for the build worktree. The build holds the
-worktree through each step and lets go of it only while its own agent call
-runs, so a resumed agent never changes files while the task gate, a red
-check, or a commit reads them.
+Every message turn also waits for the build worktree. The build holds the
+worktree through each step, its own agent calls included, and lets go of it
+only while it waits for a seat, between steps, and while it waits for an
+escalation. So a resumed agent never changes files while the build's agent
+works or while the task gate, a red check, or a commit reads them, and
+nothing changes the worktree under a read-only turn.
+
+A turn of a seat that writes files records the paths it changed with the
+turn, in `changed`. The task gate doesn't count those paths against the
+attempts of another seat's task, and a task that a turn's escalation paused
+doesn't start its next attempt.
 
 A resumed turn runs in the account folder that holds the session, even when
 the vendor's default account folder changed or the engine restarted since.

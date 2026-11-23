@@ -327,9 +327,10 @@ async function callTestEngineer(
   const key = record.callKey ?? `${task.id}-dispute-${record.id}`;
   const specialties = await ctx.specialties(task.specialties);
   const brief = roleTask(ctx, task, record, lock);
-  // The drive lets go of the worktree before it waits for the seat.
-  const outcome = await ctx.worktreeLock.outside(() =>
+  // The drive lets go of the worktree while it waits for the seat.
+  const outcome = await ctx.worktreeLock.outside((reclaim) =>
     ctx.sessions.run(TEST_ENGINEER, async () => {
+      await reclaim();
       const placement = ctx.seats.place(TEST_ENGINEER);
       const answer = await ctx.callTurn({
         seat: TEST_ENGINEER,

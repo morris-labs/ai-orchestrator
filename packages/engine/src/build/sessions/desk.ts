@@ -194,11 +194,19 @@ export class SessionDesk {
     this.track(this.run(entry.seat, () => this.deliver(entry)));
   }
 
-  private async deliver(entry: QueuedMessage): Promise<void> {
+  /**
+   * Delivers a message once the drive lets go of the worktree: a write turn
+   * mustn't change files under the drive, and a read-only turn's tree guard
+   * mustn't see the drive's changes. A failed turn's escalation is raised
+   * before the drive gets the worktree back, so the drive sees what it paused.
+   */
+  private deliver(entry: QueuedMessage): Promise<void> {
+    return this.ctx.worktreeLock.run(() => this.deliverNow(entry));
+  }
+
+  private async deliverNow(entry: QueuedMessage): Promise<void> {
     try {
-      // A seat that writes files waits until the drive lets go of the worktree.
-      const writes = this.ctx.role(entry.seat).permission.access === "write";
-      await (writes ? this.ctx.worktreeLock.run(() => this.turn(entry)) : this.turn(entry));
+      await this.turn(entry);
       this.scheduled.delete(entry.messageId);
     } catch (error) {
       this.scheduled.delete(entry.messageId);
@@ -304,6 +312,10 @@ export class SessionDesk {
             message,
             answer,
           });
+    // A turn that writes records what it changed, so the task gate doesn't
+    // count it against another seat's attempt.
+    const writes = role.permission.access === "write";
+    const before = writes ? await ctx.worktree.snapshot() : null;
     const outcome = await ctx.callTurn({
       seat: entry.seat,
       taskId: entry.taskId,
@@ -325,12 +337,14 @@ export class SessionDesk {
     });
     let taken = session;
     if (!(await this.registry.hasTurn(key))) {
+      const changed = before ? await ctx.worktree.changedSinceSnapshot(before) : [];
       const turn = {
         key,
         messageId: message.id,
         at: this.now(),
         head: await ctx.worktree.head(),
         inputTokens: outcome.tokens.in,
+        ...(changed.length > 0 ? { changed } : {}),
       };
       if (reason === null) {
         await this.registry.addTurn(session.id, turn, outcome.sessionId, outcome.accountFolder);

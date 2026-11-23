@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import { BUILD_PIPELINE } from "../../src/build/index.js";
 import {
   CART_DONE,
+  CART_WRONG,
   REPORT,
   buildWorld,
   cartPlan,
@@ -298,8 +299,11 @@ describe("session resume", () => {
     const world = await buildWorld({ steps: BUILD_PIPELINE });
     world.script({
       codex: [{ match: QUESTION, error: "crash" }, TESTS_FIRST],
-      // The Developer's turn outlasts the failed delivery.
-      claude: [{ ...developer(QUESTION), delayMs: 3_000 }],
+      // The first attempt fails its gate; the message turn fails before the second.
+      claude: [
+        { ...developer(QUESTION), times: 1, writeFiles: { "src/cart.mjs": CART_WRONG } },
+        developer(),
+      ],
     });
 
     await world.start("cart-undelivered");
@@ -314,11 +318,15 @@ describe("session resume", () => {
         kind: "agent_call",
         level: "project_manager",
         taskId: "T1",
+        tasks: ["T1"],
         status: "open",
       }),
     ]);
     expect(state.escalations[0]!.summary).toContain("M1");
     expect(world.file("cart-undelivered", "escalations/E1.json")).toContain(QUESTION);
+    // The paused task's next attempt doesn't call its seat.
+    expect(state.tasks[0]).toMatchObject({ status: "failed", attempts: 2 });
+    expect(world.calls().filter((c) => c.cli === "claude")).toHaveLength(1);
   });
 
   it("keeps a write seat's message turn out of the worktree while the task gate runs", async () => {
@@ -344,6 +352,38 @@ describe("session resume", () => {
 
     expect(state.tasks[0]).toMatchObject({ status: "done", attempts: 1 });
     expect(existsSync(join(state.worktree, note))).toBe(true);
+  });
+
+  it("never counts another seat's message turn against a task attempt", async () => {
+    const world = await buildWorld({ steps: BUILD_PIPELINE });
+    const note = "notes/tester.md";
+    world.script({
+      codex: [done(QUESTION, { delayMs: 300, writeFiles: { [note]: "A note.\n" } }), TESTS_FIRST],
+      claude: [
+        {
+          match: "Task T1",
+          times: 1,
+          output: REPORT,
+          writeFiles: { "src/cart.mjs": CART_WRONG },
+          busCalls: [send("test-engineer", QUESTION)],
+          delayMs: 500,
+        },
+        { match: "Task T1", output: REPORT, writeFiles: { "src/cart.mjs": CART_DONE } },
+      ],
+    });
+
+    await world.start("cart-turns", cartPlan());
+    const state = await world.settle("cart-turns");
+
+    expect(state.tasks[0]).toMatchObject({ status: "done", attempts: 2 });
+    const attempts = world.jsonFiles("cart-turns", "tasks/T1") as {
+      gate: { permission: { outside: string[] } };
+    }[];
+    for (const attempt of attempts) expect(attempt.gate.permission.outside).toEqual([]);
+    // The Test engineer's file stays, and the registry records it with the turn.
+    expect(world.git(world.root, "show", `build/cart-turns:${note}`)).toBe("A note.");
+    const tester = sessionOf(registry(world, "cart-turns").sessions, "test-engineer");
+    expect(tester.turns.at(-1)).toMatchObject({ messageId: "M1", changed: [note] });
   });
 
   it("leaves a message for a seat and task that no agent holds to others", async () => {

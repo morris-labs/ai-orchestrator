@@ -1,12 +1,13 @@
-// Who changes the build worktree at a time: the drive, or the message turn
-// of a seat that writes files. The drive holds the worktree through each
-// step and lets go only while its own agent call runs, so a resumed
-// Developer or Test engineer never changes files while the task gate, a red
-// check, or a commit reads them.
+// Who has the build worktree at a time: the drive, or one message turn. The
+// drive holds the worktree through each step, its own agent calls included,
+// and lets go only while it waits for a seat. So a resumed agent never
+// changes files while the drive's agent works, the task gate, a red check,
+// or a commit reads them, and nothing changes the worktree under a
+// read-only turn, whose tree guard would count the change against it.
 //
 // Lock order: the drive lets go of the worktree before it waits for a seat,
-// and a message turn takes its seat before the worktree, so neither waits
-// for a lock the other holds.
+// and takes it back once it holds the seat; a message turn takes its seat
+// before the worktree. Neither waits for a lock that the other holds.
 
 export class WorktreeLock {
   private locked = false;
@@ -51,19 +52,26 @@ export class WorktreeLock {
   }
 
   /**
-   * Lets message turns have the worktree while `call` runs, such as during
-   * the drive's own agent call, and takes it back after. Outside a drive
-   * step, it only runs `call`.
+   * Lets message turns have the worktree while `call` waits, such as for a
+   * seat, and takes it back after. `call` gets `reclaim`, which takes the
+   * worktree back early, once the seat is the drive's. Outside a drive step,
+   * it only runs `call`.
    */
-  async outside<T>(call: () => Promise<T>): Promise<T> {
-    if (!this.driveHolds) return call();
+  async outside<T>(call: (reclaim: () => Promise<void>) => Promise<T>): Promise<T> {
+    if (!this.driveHolds) return call(() => Promise.resolve());
     this.driveHolds = false;
     this.release();
-    try {
-      return await call();
-    } finally {
+    let back = false;
+    const reclaim = async () => {
+      if (back) return;
+      back = true;
       await this.acquire();
       this.driveHolds = true;
+    };
+    try {
+      return await call(reclaim);
+    } finally {
+      await reclaim();
     }
   }
 }

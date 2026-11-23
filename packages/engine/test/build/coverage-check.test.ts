@@ -306,7 +306,12 @@ describe("the coverage check", () => {
     world.script({
       claude: [testRound("round 1 of", REVISED_TEST), { ...DEVELOPER, busCalls: [note] }],
       codex: [
-        { match: "Which test covers AC2?", output: { summary: "Read the message." } },
+        // The check's turn for the message outlasts the Developer's call, which writes files.
+        {
+          match: "Which test covers AC2?",
+          output: { summary: "Read the message." },
+          delayMs: 1_500,
+        },
         ALL_CHECKED,
       ],
     });
@@ -318,16 +323,17 @@ describe("the coverage check", () => {
     await world.settle("cart-total");
 
     const codex = world.calls().filter((c) => c.cli === "codex");
-    // The check's first turn starts its session; every message turn resumes it.
-    expect(codex.length).toBeGreaterThanOrEqual(2);
+    // The check's first turn starts its session, and the message turn resumes
+    // it once: no write changes the worktree under the read-only turn.
+    expect(codex).toHaveLength(2);
     expect(codex[0]!.resumeId).toBeNull();
-    for (const call of codex.slice(1)) expect(call.resumeId).toEqual(expect.any(String));
+    expect(codex[1]!.resumeId).toEqual(expect.any(String));
     const registry = JSON.parse(world.file("cart-total", "sessions.json")) as {
       sessions: { seat: string; vendor: string; turns: unknown[] }[];
     };
     const checkers = registry.sessions.filter((s) => s.seat === "coverage-checker");
     expect(checkers).toEqual([expect.objectContaining({ vendor: "codex" })]);
-    expect(checkers[0]!.turns.length).toBeGreaterThanOrEqual(2);
+    expect(checkers[0]!.turns).toHaveLength(2);
   });
 
   it("waits before the next step when a message without a plan task can't be delivered", async () => {
