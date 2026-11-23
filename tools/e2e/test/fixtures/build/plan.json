@@ -10,14 +10,22 @@
     {
       "id": "T1",
       "title": "Sales tax",
-      "description": "Add shop/tax.py with add_tax(price, rate), which returns the price plus tax at the rate, rounded to cents.",
+      "description": "Make add_tax(price, rate) in shop/tax.py return the price plus tax at the rate, rounded to cents.",
       "ownedFiles": ["shop/tax.py"],
       "criteria": ["AC1"],
       "tests": ["tests/test_tax.py"]
     }
   ],
   "commands": {
-    "test": [{ "command": "python3 -B -m unittest discover -s tests -q" }],
-    "lint": [{ "command": "python3 -B lint.py" }]
+    "test": [
+      {
+        "command": "python3 -B -m unittest discover -s tests -q"
+      }
+    ],
+    "lint": [
+      {
+        "command": "python3 -B lint.py"
+      }
+    ]
   }
 }

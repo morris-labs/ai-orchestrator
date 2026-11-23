@@ -1,3 +1,4 @@
+# AC1: add_tax returns the price plus tax, rounded to cents.
 import unittest
 
 from shop.tax import add_tax

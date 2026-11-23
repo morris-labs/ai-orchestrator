@@ -1,6 +1,6 @@
 // The build pipeline's walking skeleton (spec #55): a hand-written build
-// plan with one task runs to release ready against the real server and
-// engine. The engine runs the vendor adapters against the mock vendor CLIs
+// plan with one task runs through preflight, tests first, the task, and
+// the review to release ready against the real server and engine. The engine runs the vendor adapters against the mock vendor CLIs
 // in `tools/mock-clis`, which answer from a scenario file and write the
 // files a scripted Developer writes. Builds start over the engine's build
 // socket with `aio-build`, as the Project manager's box session starts them.
@@ -14,12 +14,47 @@ import { startStack, type Stack } from "./stack.js";
 
 const FIXTURES = path.join(import.meta.dirname, "fixtures", "build");
 const MOCK_BIN = path.join(ROOT, "tools", "mock-clis", "bin");
+const TAX_TEST = readFileSync(path.join(FIXTURES, "test_tax.py"), "utf8");
+const TAX_STUB = readFileSync(path.join(FIXTURES, "tax-stub.py"), "utf8");
 const TAX_DONE = readFileSync(path.join(FIXTURES, "tax.py"), "utf8");
 const TAX_WRONG = readFileSync(path.join(FIXTURES, "tax-wrong.py"), "utf8");
 /** The Developer's report, with every criterion met. */
 const REPORT = { summary: "Added add_tax.", criteria: [{ id: "AC1", met: true }] };
 /** What each scripted Developer call reports using. */
 const DEVELOPER_TOKENS = { input: 3000, output: 700 };
+/** What the scripted Test engineer call reports using. */
+const TEST_ENGINEER_TOKENS = { input: 2000, output: 500 };
+
+/**
+ * The Test engineer's answer: it writes the task's test, which fails on an
+ * assertion against the stub, so the red check passes and the engine locks it.
+ */
+const TEST_ENGINEER = {
+  match: "round 1 of",
+  output: {
+    summary: "Wrote the sales tax tests first.",
+    tests: [
+      {
+        file: "tests/test_tax.py",
+        name: "AC1: add_tax adds the tax, rounded to cents",
+        criterion: "AC1",
+        command: "python3 -B -m unittest tests.test_tax -q",
+      },
+    ],
+  },
+  tokens: TEST_ENGINEER_TOKENS,
+  writeFiles: { "tests/test_tax.py": TAX_TEST },
+};
+
+/** The Developer's answer: it writes `content` to the module. */
+function developer(content: string) {
+  return {
+    match: "Task T1",
+    output: REPORT,
+    tokens: DEVELOPER_TOKENS,
+    writeFiles: { "shop/tax.py": content },
+  };
+}
 
 let stack: Stack;
 let buildEnv: NodeJS.ProcessEnv = {};
@@ -136,12 +171,12 @@ beforeAll(async () => {
         MOCK_CLI_LOG: path.join(mock, "calls.jsonl"),
       };
     },
-    // The task's test comes first, so it fails until the Developer adds
-    // the module it tests.
+    // The module starts as a stub, which the Test engineer's test fails
+    // on an assertion and the Developer replaces.
     prepareRepo: (repo) => {
-      copyFileSync(path.join(FIXTURES, "test_tax.py"), path.join(repo, "tests", "test_tax.py"));
-      git(repo, "add", "tests/test_tax.py");
-      git(repo, "commit", "-q", "-m", "Add the sales tax test");
+      copyFileSync(path.join(FIXTURES, "tax-stub.py"), path.join(repo, "shop", "tax.py"));
+      git(repo, "add", "shop/tax.py");
+      git(repo, "commit", "-q", "-m", "Add a sales tax stub");
     },
   });
   await stack.api("POST", "/projects", { root: stack.repo });
@@ -156,16 +191,7 @@ describe("a one-task build", () => {
   let state: BuildState;
 
   it("runs from aio-build start to release ready", async () => {
-    script({
-      claude: [
-        {
-          match: "Task T1",
-          output: REPORT,
-          tokens: DEVELOPER_TOKENS,
-          writeFiles: { "shop/tax.py": TAX_DONE },
-        },
-      ],
-    });
+    script({ codex: [TEST_ENGINEER], claude: [developer(TAX_DONE)] });
     const tail = tailEvents(["--types", "build.changed,build.task.changed"], stack.cliEnv);
     await tail.connected;
 
@@ -193,7 +219,8 @@ describe("a one-task build", () => {
         : undefined;
     });
     tail.child.kill("SIGTERM");
-    expect(seen.map((e) => (e.build as { step: string }).step)).toContain("tasks");
+    const steps = new Set(seen.map((e) => (e.build as { step: string }).step));
+    expect([...steps]).toEqual(["preflight", "tests_first", "tasks", "review", "release_ready"]);
     expect(tail.lines()).toContainEqual(
       expect.objectContaining({
         type: "build.task.changed",
@@ -207,8 +234,19 @@ describe("a one-task build", () => {
   it("commits the task's work on the build branch and leaves the project's checkout alone", () => {
     expect(git(stack.repo, "show", "build/sales-tax:shop/tax.py")).toBe(TAX_DONE.trim());
     expect(git(stack.repo, "merge-base", "--is-ancestor", state.base, "build/sales-tax")).toBe("");
+    expect(git(stack.repo, "show", "build/sales-tax:tests/test_tax.py")).toBe(TAX_TEST.trim());
     expect(git(stack.repo, "status", "--porcelain")).toBe("");
-    expect(existsSync(path.join(stack.repo, "shop", "tax.py"))).toBe(false);
+    expect(readFileSync(path.join(stack.repo, "shop", "tax.py"), "utf8")).toBe(TAX_STUB);
+  });
+
+  it("keeps the preflight baseline and the test lock in the build's folder", () => {
+    for (const file of ["baseline.json", "test-lock.json", "tests-first/round-1.json"]) {
+      expect(existsSync(path.join(buildDir("sales-tax"), file)), file).toBe(true);
+    }
+    const lock = JSON.parse(
+      readFileSync(path.join(buildDir("sales-tax"), "test-lock.json"), "utf8"),
+    ) as { files: Array<{ path: string }> };
+    expect(lock.files.map((f) => f.path)).toContain("tests/test_tax.py");
   });
 
   it("writes a status file that names the step and the task", () => {
@@ -243,23 +281,20 @@ describe("a one-task build", () => {
       tokensIn: DEVELOPER_TOKENS.input,
       tokensOut: DEVELOPER_TOKENS.output,
     });
+    expect(usage.bySeat.find((s) => s.seat === "test-engineer")).toMatchObject({
+      calls: 1,
+      tokensIn: TEST_ENGINEER_TOKENS.input,
+      tokensOut: TEST_ENGINEER_TOKENS.output,
+    });
     expect(usage.byStep.find((s) => s.step === "tasks")).toMatchObject({ calls: 1 });
+    expect(usage.byStep.find((s) => s.step === "tests_first")).toMatchObject({ calls: 1 });
     expect(usage.total.calls).toBeGreaterThanOrEqual(1);
   });
 });
 
 describe("the attempt cap", () => {
   it("escalates a task that fails all four attempts, and the build waits", async () => {
-    script({
-      claude: [
-        {
-          match: "Task T1",
-          output: REPORT,
-          tokens: DEVELOPER_TOKENS,
-          writeFiles: { "shop/tax.py": TAX_WRONG },
-        },
-      ],
-    });
+    script({ codex: [TEST_ENGINEER], claude: [developer(TAX_WRONG)] });
     const started = await startBuild("sales-tax-cap", planFile("sales-tax-cap"));
 
     const state = await settle("sales-tax-cap");
@@ -291,8 +326,14 @@ describe("the attempt cap", () => {
     expect(human.code).toBe(0);
     expect(human.stdout).toContain("E1");
 
-    // No attempt passed the gate, so the build branch stays at its base.
-    expect(git(stack.repo, "rev-parse", "build/sales-tax-cap")).toBe(started.base);
+    // No attempt passed the gate, so the build branch stays at the commit
+    // of the tests first, with the module still the stub.
+    const lock = JSON.parse(
+      readFileSync(path.join(buildDir("sales-tax-cap"), "test-lock.json"), "utf8"),
+    ) as { commit: string };
+    expect(git(stack.repo, "rev-parse", "build/sales-tax-cap")).toBe(lock.commit);
+    expect(git(stack.repo, "rev-parse", `${lock.commit}~1`)).toBe(started.base);
+    expect(git(stack.repo, "show", "build/sales-tax-cap:shop/tax.py")).toBe(TAX_STUB.trim());
 
     const usage = (await stack.api("GET", `/builds/${state.id}/usage`)) as BuildUsage;
     expect(usage.bySeat.find((s) => s.seat === "developer")).toMatchObject({
@@ -314,18 +355,9 @@ describe("the attempt cap", () => {
 
 describe("an engine restart mid-build", () => {
   it("continues the build in the new engine without repeating the agent call", async () => {
-    script({
-      claude: [
-        {
-          match: "Task T1",
-          output: REPORT,
-          tokens: DEVELOPER_TOKENS,
-          writeFiles: { "shop/tax.py": TAX_DONE },
-        },
-      ],
-    });
+    script({ codex: [TEST_ENGINEER], claude: [developer(TAX_DONE)] });
     // The test command holds the task gate while the hold file exists, once
-    // the Developer has written the module.
+    // the Developer has written the module (the stub doesn't round).
     const hold = path.join(stack.dir, "hold");
     const gateStarted = path.join(stack.dir, "gate-started");
     writeFileSync(hold, "");
@@ -333,7 +365,7 @@ describe("an engine restart mid-build", () => {
       const commands = p.commands as { test: Array<{ command: string }> };
       commands.test = [
         {
-          command: `if [ -e shop/tax.py ]; then touch ${gateStarted}; while [ -e ${hold} ]; do sleep 0.05; done; fi; python3 -B -m unittest discover -s tests -q`,
+          command: `if grep -q round shop/tax.py; then touch ${gateStarted}; while [ -e ${hold} ]; do sleep 0.05; done; fi; python3 -B -m unittest discover -s tests -q`,
         },
       ];
     });
