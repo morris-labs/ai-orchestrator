@@ -66,7 +66,7 @@ outputs:
             type: object
             additionalProperties: false
             required:
-              [id, title, description, role, ownedFiles, contracts, criteria, tests, specialties]
+              [id, title, description, role, ownedFiles, contracts, criteria, tests, specialties, dependsOn]
             properties:
               id:
                 type: string
@@ -104,6 +104,11 @@ outputs:
                 description: The specialties whose guidance the task's agents get, from the list you were given.
                 items:
                   type: string
+              dependsOn:
+                type: array
+                description: The IDs of the tasks that must finish before this task starts. Empty when the task can start first.
+                items:
+                  type: string
 permission:
   access: read-only
 placement:
@@ -115,6 +120,8 @@ rules:
   - Fit the design to the code as it is. Reuse what exists before you add a new part.
   - Give every acceptance criterion at least one task, and every task at least one criterion.
   - Give each task the files it owns, and keep two tasks from owning one file.
+  - Give each task test files of its own, so a later task's tests stay apart from an earlier task's.
+  - List in dependsOn every task whose code or contracts a task needs, and never make a dependency cycle.
   - Put each task in exactly one milestone, and make each milestone a working and tested increment.
   - Name only specialties from the list you were given.
   - Keep each criterion ID as the spec numbers it.

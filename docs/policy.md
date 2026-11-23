@@ -89,6 +89,7 @@ names the field that holds it.
 | `commentAuthors` | List of strings | Absent | GitHub logins whose pull request comments the post-push loop imports. The loop always imports Copilot's comments. When you set this field, the loop imports comments from these logins instead of from the repository's collaborators. Logins are case-insensitive. |
 | `tierModels` | Map | Absent | Models per vendor and tier, such as `claude: { small: claude-haiku-5-5 }`, over the built-in mappings. The engine refuses a model that [review runs must not use](review-pipeline.md#blocked-models). |
 | `tierPaths` | List of rules | Absent | Model tiers for paths. Each rule has a `paths` list of globs and a `tier` of `small`, `medium`, or `large`. The first rule that matches a file wins. A `small` rule gives a file that holds code the `medium` tier. |
+| `sessions` | Map | Absent | When a build resumes an agent's session for a team chat message, and when it starts a fresh agent instead. `freshAboveTokens` (default `100000`) is the session size above which a cold session gets a fresh agent. `cacheWindowMinutes` sets how long each vendor's prompt cache lasts after a turn: `claude` (default `60`), `codex` (default `30`), and `copilot` (default `5`). For details, see [Session resume](build-pipeline/sessions.md). |
 
 ## How the pipeline uses the policy
 

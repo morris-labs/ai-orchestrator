@@ -1,5 +1,6 @@
-// The tasks step: each task in plan order, worked by its seat's agent and
-// checked by the task gate, up to the attempt cap.
+// The tasks step: each task in dependency order, one at a time, worked by
+// its seat's agent and checked by the task gate, up to the attempt cap. The
+// gate also runs the tests that earlier tasks made pass.
 //
 // Every attempt saves a file as it goes: its start before the agent call,
 // the agent's answer after it, and the gate result last. A restarted build
@@ -9,15 +10,21 @@
 // When the gate fails two attempts in a row on one failure fingerprint, the
 // engine seats the Debugger before the next attempt, and that attempt's
 // prompt carries the diagnosis.
-import type { BuildTask } from "@aio/contracts";
+import { taskOrder, type BuildTask } from "@aio/contracts";
 import { RunCancelled } from "../../calls/index.js";
 import { untrusted } from "../../prompts/templates.js";
 import { loadBaseline, quarantine } from "../baseline.js";
 import type { BuildContext } from "../context.js";
 import { diagnose, diagnosisText, readDiagnosis, type DiagnosisRecord } from "../debugger.js";
-import { escalationForCallError } from "../escalations.js";
+import { escalationForCallError, type EscalationDraft } from "../escalations.js";
 import { failureFingerprint, sameFingerprint } from "../fingerprint.js";
-import { gateFailureLine, gateReport, runTaskGate, type TaskGateResult } from "../gate.js";
+import {
+  gateFailureLine,
+  gateReport,
+  runTaskGate,
+  type EarlierTask,
+  type TaskGateResult,
+} from "../gate.js";
 import { writablePaths, type RoleTask } from "../roles/index.js";
 import { readTestLock } from "../test-lock.js";
 import type { StepOutcome } from "./types.js";
@@ -86,6 +93,23 @@ function attemptContext(
   return lines.join("\n");
 }
 
+/**
+ * The other tasks, as the gate of `task` sees them: the tasks that finished,
+ * whose tests must still pass, and the test files of the tasks that haven't,
+ * which may still fail.
+ */
+function otherTasks(
+  ctx: BuildContext,
+  task: BuildTask,
+): { earlier: EarlierTask[]; pending: string[] } {
+  const others = ctx.plan.tasks.filter((t) => t.id !== task.id);
+  const done = (t: BuildTask) => ctx.task(t.id).status === "done";
+  return {
+    earlier: others.filter(done).map((t) => ({ id: t.id, tests: t.tests })),
+    pending: others.filter((t) => !done(t)).flatMap((t) => t.tests),
+  };
+}
+
 /** Runs attempt `n`, or returns its saved result when it already finished. */
 async function attempt(ctx: BuildContext, task: BuildTask, n: number): Promise<GatedAttempt> {
   const path = ctx.store.attemptPath(task.id, n);
@@ -124,6 +148,7 @@ async function attempt(ctx: BuildContext, task: BuildTask, n: number): Promise<G
     shell: ctx.services.shell,
     baseline: await loadBaseline(ctx.store),
     protect: task.tests,
+    ...otherTasks(ctx, task),
     signal,
   });
   // A gate that the engine stopped part way says nothing about the attempt.
@@ -138,6 +163,44 @@ async function attempt(ctx: BuildContext, task: BuildTask, n: number): Promise<G
   const gated: GatedAttempt = { ...record, gate };
   await ctx.store.writeJson(path, gated);
   return gated;
+}
+
+/**
+ * The escalation for attempt `n` when it broke a test that an earlier task
+ * made pass, and an earlier attempt at the task broke the same test: the
+ * task oscillates between that test and its own. `null` otherwise.
+ */
+async function oscillation(
+  ctx: BuildContext,
+  task: BuildTask,
+  n: number,
+  gate: TaskGateResult,
+): Promise<EscalationDraft | null> {
+  for (const regression of gate.regressions ?? []) {
+    for (let before = 1; before < n; before += 1) {
+      const record = await ctx.store.readJson<AttemptRecord>(
+        ctx.store.attemptPath(task.id, before),
+      );
+      const again = record?.gate?.regressions?.some(
+        (r) => r.taskId === regression.taskId && r.test === regression.test,
+      );
+      if (!again) continue;
+      return {
+        kind: "oscillation",
+        level: "project_manager",
+        taskId: task.id,
+        summary: `Task ${task.id} broke ${regression.test}, which task ${regression.taskId} made pass, again in attempt ${n} after attempt ${before}.`,
+        details: [
+          `Task ${regression.taskId} made ${regression.test} pass. Task ${task.id} broke it in attempts ${before} and ${n}, so the two tasks pull the code in different directions. Decide which behavior the plan wants, then change the plan or the tasks.`,
+          "",
+          gateReport(gate),
+          "",
+          `Attempt files: tasks/${task.id}/attempt-${before}.json, tasks/${task.id}/attempt-${n}.json`,
+        ].join("\n"),
+      };
+    }
+  }
+  return null;
 }
 
 /**
@@ -220,6 +283,12 @@ async function runTask(ctx: BuildContext, task: BuildTask): Promise<StepOutcome>
     }
     progress.lastFailure = gateFailureLine(record.gate);
     await ctx.persist();
+    const oscillating = await oscillation(ctx, task, n, record.gate);
+    if (oscillating) {
+      await ctx.setTaskStatus(task.id, "failed");
+      await ctx.escalate(oscillating);
+      return "wait";
+    }
     if (n === ATTEMPT_CAP) break;
     const repeated = await repeatedFailure(ctx, task, n, record.gate);
     if (!repeated) continue;
@@ -248,9 +317,9 @@ async function runTask(ctx: BuildContext, task: BuildTask): Promise<StepOutcome>
   return "wait";
 }
 
-/** The tasks step: every task in plan order, one at a time. */
+/** The tasks step: every task in dependency order, one at a time. */
 export async function runTasks(ctx: BuildContext): Promise<StepOutcome> {
-  for (const task of ctx.plan.tasks) {
+  for (const task of taskOrder(ctx.plan.tasks)) {
     if ((await runTask(ctx, task)) === "wait") return "wait";
   }
   return "next";
