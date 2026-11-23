@@ -10,12 +10,14 @@ import {
   MEETING_ROUND_MAX,
   MeetingIdSchema,
   RoleNameSchema,
+  type BuildDecision,
   type BuildFreezeAnswer,
   type BuildMeetingAnswer,
   type BuildIssueInput,
   type BuildSeatAnswer,
   type BuildSocketRequestKind,
   type BuildState,
+  type Message,
 } from "@aio/contracts";
 import { BuildSocketClient, BuildSocketError, buildSocketPath } from "./client.js";
 
@@ -34,6 +36,8 @@ export const BUILD_USAGE = `Usage:
   aio-build status SLUG [--json]
   aio-build pause SLUG [--json]
   aio-build resume SLUG [--json]
+  aio-build messages SLUG [--direct] [--json]
+  aio-build decisions SLUG [--json]
   aio-build help
 
 Plans and drives a build of this box's project through the AI Orchestrator
@@ -75,6 +79,13 @@ Requests:
   pause     Pause build SLUG. The engine finishes the agent call in
             progress first.
   resume    Resume build SLUG after a pause.
+  messages  Print the team chat messages of build SLUG, oldest first. With
+            --direct, print only the direct messages: the ones that agents
+            sent the owner.
+  decisions Print the owner's decisions of build SLUG: one for each owner
+            post, with the task it's attached to. A decision flagged as a
+            plan change contradicts acceptance criteria of the build plan:
+            change the plan's criteria to match it, or ask the owner.
 
 SLUG uses lowercase letters, digits, and single hyphens, such as
 cart-total.
@@ -91,6 +102,7 @@ Options:
   --rounds N     A meeting's round cap, from 1 to ${MEETING_ROUND_MAX}. Default: 3.
   --push yes|no  The owner's answer to whether the build can push its branch
                  and open its pull request.
+  --direct       Print only the direct messages to the owner.
   --json         Print the answer as JSON instead of text.
   --help         Print this help.
 
@@ -139,8 +151,13 @@ export type BuildCommand =
   | { kind: "meeting-post"; slug: string; meeting: string; postFile: string; json: boolean }
   | { kind: "freeze"; slug: string; planFile: string | null; push: boolean | null; json: boolean }
   | { kind: "start"; slug: string; planFile: string | null; base: string | null; json: boolean }
+  | { kind: "messages"; slug: string; direct: boolean; json: boolean }
+  | { kind: "decisions"; slug: string; json: boolean }
   | {
-      kind: Exclude<BuildSocketRequestKind, "start" | "plan" | "freeze" | "meet" | "meeting-post">;
+      kind: Exclude<
+        BuildSocketRequestKind,
+        "start" | "plan" | "freeze" | "meet" | "meeting-post" | "messages" | "decisions"
+      >;
       slug: string;
       json: boolean;
     };
@@ -154,6 +171,8 @@ const KINDS = new Set([
   "status",
   "pause",
   "resume",
+  "messages",
+  "decisions",
 ]);
 
 /** The options each request takes, beyond `--json`. */
@@ -184,12 +203,18 @@ export function parseBuildArgs(argv: readonly string[]): BuildCommand {
   const [kind, ...rest] = argv as [string, ...string[]];
   if (!KINDS.has(kind)) throw new Error(`${kind} isn't a request.`);
   let json = false;
+  let direct = false;
   const values = new Map<string, string>();
   const positional: string[] = [];
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i] as string;
     if (a === "--json") {
       json = true;
+      continue;
+    }
+    if (a === "--direct") {
+      if (kind !== "messages") throw new Error(`${kind} doesn't take --direct.`);
+      direct = true;
       continue;
     }
     const option = ["--base", "--issue", "--push", "--members", "--proposer", "--rounds"].find(
@@ -274,6 +299,8 @@ export function parseBuildArgs(argv: readonly string[]): BuildCommand {
     return { kind, slug, planFile, push: answer === undefined ? null : answer === "yes", json };
   }
   if (positional.length !== 1) throw new Error(`${kind} needs one SLUG.`);
+  if (kind === "messages") return { kind, slug, direct, json };
+  if (kind === "decisions") return { kind, slug, json };
   return { kind: kind as "status" | "pause" | "resume", slug, json };
 }
 
@@ -322,6 +349,57 @@ export function formatBuild(build: BuildState): string {
   }
   lines.push(`Status file: ${posix.join(build.repoPath, BUILDS_DIR, build.slug, "STATUS.md")}`);
   return `${lines.join("\n")}\n`;
+}
+
+/** A team chat party as text: `owner`, or the seat with its task. */
+function partyText(party: Message["from"]): string {
+  if (party.kind === "owner") return "owner";
+  return party.taskId ? `${party.seat} (${party.taskId})` : party.seat;
+}
+
+/** Text indented under a header line. */
+const indent = (text: string): string =>
+  text
+    .trimEnd()
+    .split("\n")
+    .map((line) => `  ${line}`)
+    .join("\n");
+
+/** Team chat messages as text for a person to read. */
+export function formatMessages(
+  slug: string,
+  messages: readonly Message[],
+  direct: boolean,
+): string {
+  if (messages.length === 0) {
+    return `Build ${slug} has no ${direct ? "direct messages" : "team chat messages"}.\n`;
+  }
+  return messages
+    .map((m) => {
+      const about = [m.taskId, m.milestone].filter((x) => x !== null).join(", ");
+      return `${m.id}  ${partyText(m.from)} -> ${partyText(m.to)}  ${m.type}  ${about}  ${m.createdAt}\n${indent(m.body)}\n`;
+    })
+    .join("\n");
+}
+
+/** Decisions as text for a person to read. */
+export function formatDecisions(slug: string, decisions: readonly BuildDecision[]): string {
+  if (decisions.length === 0) return `Build ${slug} has no decisions.\n`;
+  return decisions
+    .map((d) => {
+      const lines = [
+        `${d.id}  owner post ${d.messageId} to ${partyText(d.to)}  ${[d.taskId, d.milestone].filter((x) => x !== null).join(", ")}  ${d.createdAt}`,
+        indent(d.body),
+      ];
+      if (d.planChange) {
+        lines.push(
+          `  Plan change: contradicts ${d.planChange.criteria.join(", ")}, reported by ${partyText(d.planChange.reportedBy)}.`,
+          indent(d.planChange.reason),
+        );
+      }
+      return `${lines.join("\n")}\n`;
+    })
+    .join("\n");
 }
 
 /** A file in the build's directory, as the container sees it. */
@@ -451,6 +529,8 @@ export async function buildMain(argv: readonly string[], io: BuildCliIo): Promis
     body.push = command.push;
   } else if (command.kind === "start" && command.base !== null) {
     body.base = command.base;
+  } else if (command.kind === "messages") {
+    body.direct = command.direct;
   }
   try {
     const client =
@@ -473,6 +553,14 @@ export async function buildMain(argv: readonly string[], io: BuildCliIo): Promis
     } else if (command.kind === "freeze") {
       const answer = await client.send("freeze", body);
       io.stdout(command.json ? json(answer) : formatFreeze(answer));
+    } else if (command.kind === "messages") {
+      const { messages } = await client.send("messages", body);
+      io.stdout(
+        command.json ? json(messages) : formatMessages(command.slug, messages, command.direct),
+      );
+    } else if (command.kind === "decisions") {
+      const { decisions } = await client.send("decisions", body);
+      io.stdout(command.json ? json(decisions) : formatDecisions(command.slug, decisions));
     } else {
       const { build } = await client.send(command.kind, body);
       io.stdout(command.json ? json(build) : formatBuild(build));

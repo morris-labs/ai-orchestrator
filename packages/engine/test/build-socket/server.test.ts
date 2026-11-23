@@ -5,7 +5,13 @@ import { afterEach, describe, expect, it } from "vitest";
 import { BUILD_SOCKET_ROUTES } from "@aio/contracts";
 import { serveBuildSocket, type BuildSocketServer } from "../../src/build-socket/server.js";
 import { silentLogger } from "../../src/main/logger.js";
-import { buildState, fakeBuildManager } from "../api/fixtures.js";
+import {
+  buildState,
+  decision,
+  directMessage,
+  fakeBuildManager,
+  ownerPost,
+} from "../api/fixtures.js";
 import { tempDir } from "../tmp.js";
 import { PLAN, send } from "./helpers.js";
 
@@ -50,6 +56,29 @@ describe("the build socket", () => {
     const resumed = await send(path, "POST", BUILD_SOCKET_ROUTES.resume, ask);
     expect(resumed.status).toBe(200);
     expect(builds.resume).toHaveBeenCalledWith("cart-total");
+  });
+
+  it("lets the Project manager read the direct messages and the decisions", async () => {
+    const { builds, path } = await open();
+    const ask = { projectId: "proj-1", boxId: "box-1", slug: "cart-total" };
+    const direct = await send(path, "POST", BUILD_SOCKET_ROUTES.messages, { ...ask, direct: true });
+    expect(direct.status).toBe(200);
+    expect(direct.body).toEqual({ messages: [directMessage] });
+    expect(builds.messages).toHaveBeenCalledWith("cart-total", { direct: true });
+    const all = await send(path, "POST", BUILD_SOCKET_ROUTES.messages, ask);
+    expect(all.body).toEqual({ messages: [directMessage, ownerPost] });
+    const decisions = await send(path, "POST", BUILD_SOCKET_ROUTES.decisions, ask);
+    expect(decisions).toMatchObject({ status: 200, body: { decisions: [decision] } });
+    const other = await send(path, "POST", BUILD_SOCKET_ROUTES.messages, {
+      ...ask,
+      projectId: "proj-2",
+    });
+    expect(other.status).toBe(404);
+    const unknown = await send(path, "POST", BUILD_SOCKET_ROUTES.decisions, {
+      ...ask,
+      slug: "no-such-build",
+    });
+    expect(unknown.status).toBe(404);
   });
 
   it("calls a planning seat and answers with the seat's answer", async () => {
