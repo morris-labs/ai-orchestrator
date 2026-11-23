@@ -10,6 +10,8 @@ import {
   PROJECT_ROOT,
   RUN,
   TOKEN,
+  buildState,
+  fakeBuildManager,
   fakeRunManager,
   finding,
   newBroker,
@@ -21,11 +23,13 @@ const auth = { authorization: `Bearer ${TOKEN}` };
 const listener = { port: 5173, proto: "tcp" as const, process: "node", boxId: null };
 
 let runs: ReturnType<typeof fakeRunManager>;
+let builds: ReturnType<typeof fakeBuildManager>;
 let app: FastifyInstance;
 
 async function build(expectedVersion = "1.0.0-dev") {
   const hub = newHub();
   runs = fakeRunManager();
+  builds = fakeBuildManager();
   app = await buildEngineApp({
     token: TOKEN,
     container: CONTAINER,
@@ -36,6 +40,7 @@ async function build(expectedVersion = "1.0.0-dev") {
     leases: newBroker(hub),
     log: silentLogger,
     runs,
+    builds,
     repos: {
       list: async () => [
         {
@@ -203,6 +208,53 @@ const cases: Record<string, Case> = {
     url: "/api/v1/usage/samples?vendor=claude",
     check: () => expect(runs.usageSamples).toHaveBeenCalledWith({ vendor: "claude" }),
   },
+  "engine.builds.create": {
+    method: "POST",
+    url: "/api/v1/builds",
+    body: {
+      projectId: "proj-1",
+      slug: "cart-total",
+      plan: {
+        title: "Add a total to the cart",
+        criteria: [{ id: "AC1", text: "The cart reports its total." }],
+        tasks: [
+          {
+            id: "T1",
+            title: "Cart total",
+            description: "Add total().",
+            ownedFiles: ["src/cart.mjs"],
+            criteria: ["AC1"],
+          },
+        ],
+        commands: { test: [{ command: "node --test" }] },
+      },
+    },
+    status: 201,
+    check: (j) => {
+      expect(j).toMatchObject({ slug: "cart-total" });
+      expect(builds.start).toHaveBeenCalledWith(
+        expect.objectContaining({ slug: "cart-total", projectId: "proj-1" }),
+      );
+    },
+  },
+  "engine.builds.get": {
+    method: "GET",
+    url: "/api/v1/builds/cart-total",
+    check: (j) => expect(j).toMatchObject({ id: buildState.id, step: "tasks" }),
+  },
+  "engine.builds.pause": {
+    method: "POST",
+    url: "/api/v1/builds/cart-total/pause",
+    check: (j) => {
+      expect(j).toMatchObject({ status: "paused" });
+      expect(builds.pause).toHaveBeenCalledWith("cart-total");
+    },
+  },
+  "engine.builds.resume": {
+    method: "POST",
+    url: "/api/v1/builds/cart-total/resume",
+    check: () => expect(builds.resume).toHaveBeenCalledWith("cart-total"),
+  },
   "engine.ports": {
     method: "GET",
     url: "/api/v1/ports",
@@ -325,6 +377,12 @@ describe("engine API behavior", () => {
     });
     expect(res.statusCode).toBe(404);
     expect(res.json()).toMatchObject({ error: { code: "run_not_found" } });
+  });
+
+  it("answers not_found for an unknown build", async () => {
+    const res = await app.inject({ method: "GET", url: "/api/v1/builds/no-such", headers: auth });
+    expect(res.statusCode).toBe(404);
+    expect(res.json()).toMatchObject({ error: { code: "not_found" } });
   });
 
   it("answers not_found for an unknown finding", async () => {

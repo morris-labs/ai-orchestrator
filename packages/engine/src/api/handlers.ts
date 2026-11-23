@@ -2,6 +2,7 @@
 // decides which handlers must exist; `server.ts` validates inputs and outputs.
 import type { EngineRouteKey, EngineRoutes, Listener } from "@aio/contracts";
 import type { z } from "zod";
+import type { BuildManager } from "../build/manager.js";
 import { EngineError, type RunManager } from "./core-interface.js";
 import type { RepoInfo, RepoRefs } from "./repos.js";
 
@@ -44,6 +45,7 @@ export interface HealthInfo {
 
 export interface HandlerDeps {
   runs: RunManager;
+  builds: BuildManager;
   repos: { list(): Promise<RepoInfo[]>; refs(repo: string, fetch?: boolean): Promise<RepoRefs> };
   ports: { list(): Listener[] };
   health: () => HealthInfo;
@@ -94,6 +96,13 @@ export function createHandlers(deps: HandlerDeps): EngineHandlers {
     },
     "engine.findings.waive": (i) => runs.waive(run(i), param(i, "findingId"), i.body.reason),
     "engine.usage.samples": async (i) => ({ samples: await runs.usageSamples(i.query) }),
+    "engine.builds.create": (i) => deps.builds.start(i.body),
+    "engine.builds.get": async (i) => {
+      const slug = param(i, "slug");
+      return found(slug, deps.builds.get(slug), "build");
+    },
+    "engine.builds.pause": (i) => deps.builds.pause(param(i, "slug")),
+    "engine.builds.resume": (i) => deps.builds.resume(param(i, "slug")),
     "engine.ports": () => ({ listeners: deps.ports.list() }),
   };
 }

@@ -100,6 +100,7 @@ import {
   BuildSummarySchema,
   BuildUsageSchema,
 } from "./build-events.js";
+import { BuildCreateSchema, BuildStateSchema } from "./builds.js";
 import { FindingSchema, SeveritySchema, VerdictSchema } from "./findings.js";
 import {
   EnrollmentCodeSchema,
@@ -1973,6 +1974,36 @@ export const engineRoutes = {
       "List the engine's usage samples from its run files.",
     ),
   ),
+  "engine.builds.create": http({
+    method: "POST",
+    path: `${V1}/builds`,
+    summary: "Start a build from a build plan.",
+    body: BuildCreateSchema,
+    response: BuildStateSchema,
+    status: 201,
+    errors: ["conflict"],
+  }),
+  "engine.builds.get": http({
+    method: "GET",
+    path: `${V1}/builds/:slug`,
+    summary: "Get a build's state.",
+    response: BuildStateSchema,
+    errors: ["not_found"],
+  }),
+  "engine.builds.pause": http({
+    method: "POST",
+    path: `${V1}/builds/:slug/pause`,
+    summary: "Pause a build after its current agent call or gate.",
+    response: BuildStateSchema,
+    errors: ["not_found", "invalid_state"],
+  }),
+  "engine.builds.resume": http({
+    method: "POST",
+    path: `${V1}/builds/:slug/resume`,
+    summary: "Resume a paused build.",
+    response: BuildStateSchema,
+    errors: ["not_found", "invalid_state"],
+  }),
   "engine.ports": http({
     method: "GET",
     path: `${V1}/ports`,

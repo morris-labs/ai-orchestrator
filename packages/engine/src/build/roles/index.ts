@@ -8,4 +8,10 @@ export {
   loadRoles,
   type LoadRolesOptions,
 } from "./load.js";
-export { OWNED_FILES, rolePrompt, writablePaths, type RoleTask } from "./prompt.js";
+export {
+  OWNED_FILES,
+  roleAnswerSchema,
+  rolePrompt,
+  writablePaths,
+  type RoleTask,
+} from "./prompt.js";

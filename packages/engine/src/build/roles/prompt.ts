@@ -73,7 +73,7 @@ function specialtyGuidance(task: RoleTask): string {
 }
 
 /** The JSON schema of the role's answer, or `null` when no output has one. */
-function answerSchema(role: RoleDefinition): object | null {
+export function roleAnswerSchema(role: RoleDefinition): object | null {
   const structured = role.outputs.filter((output) => output.schema !== undefined);
   if (structured.length === 0) return null;
   if (structured.length === 1) return structured[0]?.schema ?? null;
@@ -87,7 +87,7 @@ function answerSchema(role: RoleDefinition): object | null {
 
 /** Builds the prompt for an agent that fills `role`'s seat for `task`. */
 export function rolePrompt(role: RoleDefinition, task: RoleTask): string {
-  const schema = answerSchema(role);
+  const schema = roleAnswerSchema(role);
   const outputs = role.outputs.map((output) => `${output.name}: ${output.description}`);
   return [
     `You are the ${role.title} on a build team. ${role.purpose.trim()}`,

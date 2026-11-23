@@ -35,6 +35,9 @@ export const HOME_PATHS = {
 /** Run files, relative to the project root: `<project>/.aio/runs/<run id>/`. */
 export const RUNS_DIR = ".aio/runs";
 
+/** Build files, relative to the project root: `<project>/.aio/builds/<slug>/`. */
+export const BUILDS_DIR = ".aio/builds";
+
 /** The file inside the image that names the engine version it carries. */
 export const ENGINE_VERSION_FILE = "/etc/aio-engine-version";
 
