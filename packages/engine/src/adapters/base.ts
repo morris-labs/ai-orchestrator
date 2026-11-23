@@ -208,11 +208,11 @@ export abstract class CliAdapter implements CliVendorAdapter {
   }
 
   private async dispatch<T>(method: AdapterMethod, req: CliRequest<T>): Promise<CliResult<T>> {
-    // A continuation keeps its session and the folder that holds the session;
-    // every other role starts fresh, as the design asks, even when the caller
-    // left a session id on the request. The folder is read once, so a change
-    // of default during a call can't split it.
-    const continuing = method === "continueReview" && req.sessionId !== undefined;
+    // A request that names a session resumes it in the folder that holds
+    // the session, such as a review continuation or a build agent that gets
+    // a message; every other call starts fresh. The folder is read once, so
+    // a change of default during a call can't split it.
+    const continuing = req.sessionId !== undefined;
     // A session started on the home folder is saved as `undefined`, which is
     // a known folder, not a reason to read the default.
     const pinned = continuing && this.sessionFolders.has(req.sessionId as string);
@@ -222,7 +222,7 @@ export abstract class CliAdapter implements CliVendorAdapter {
     const request = {
       ...req,
       accountFolder,
-      ...(method === "continueReview" ? {} : { sessionId: undefined }),
+      ...(continuing ? {} : { sessionId: undefined }),
     };
     const result = await this.call(request, { method, role: METHOD_ROLES[method] });
     if (result.sessionId) {

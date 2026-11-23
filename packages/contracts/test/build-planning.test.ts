@@ -80,6 +80,19 @@ describe("the planning seats' answers", () => {
     };
     expect(() => BuildDesignSchema.parse(bad)).toThrow(/T9/);
   });
+
+  it("refuses a design whose tasks form a dependency cycle", () => {
+    const [task] = architectAnswer.tasks;
+    const bad = {
+      ...architectAnswer,
+      milestones: [{ id: "M1", title: "Cart", goal: "Totals.", tasks: ["T1", "T2"] }],
+      tasks: [
+        { ...task, dependsOn: ["T2"] },
+        { ...task, id: "T2", dependsOn: ["T1"] },
+      ],
+    };
+    expect(() => BuildDesignSchema.parse(bad)).toThrow(/dependency cycle: T1 -> T2 -> T1/);
+  });
 });
 
 describe("the full build plan", () => {
@@ -109,6 +122,25 @@ describe("the full build plan", () => {
     });
     expect(plan.criteria.map((c) => c.id)).toEqual(["AC1", "AC2"]);
     expect(plan.tasks[0]?.specialties).toEqual(["node-dev"]);
+  });
+
+  it("drafts a multi-task plan that keeps the Architect's dependencies", () => {
+    const [task] = architectAnswer.tasks;
+    const design = {
+      ...architectAnswer,
+      milestones: [{ id: "M1", title: "Cart", goal: "Totals.", tasks: ["T1", "T2"] }],
+      tasks: [task, { ...task, id: "T2", ownedFiles: ["src/view.mjs"], dependsOn: ["T1"] }],
+    };
+    const draft = draftBuildPlan(
+      BuildSpecSchema.parse(analystAnswer),
+      BuildDesignSchema.parse(design),
+      { commands },
+    );
+    const plan = BuildPlanSchema.parse(draft);
+    expect(plan.tasks.map((t) => [t.id, t.dependsOn])).toEqual([
+      ["T1", []],
+      ["T2", ["T1"]],
+    ]);
   });
 
   it("records the issue a plan starts from, with a link back to it", () => {

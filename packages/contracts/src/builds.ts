@@ -7,7 +7,7 @@
 // architecture, shared files, milestones, and task graph with specialties),
 // the test, type check, and lint commands, the issue the plan starts from,
 // and the owner's push answer. Execution reads the criteria, the tasks, and
-// the commands; this version runs one task.
+// the commands, and runs the tasks in dependency order.
 import { z } from "zod";
 import {
   CommitShaSchema,
@@ -28,6 +28,7 @@ import { RoleNameSchema } from "./build-roles.js";
 import { BuildPlacementsSchema, PlacementOverrideSchema } from "./placements.js";
 import { PolicyCommandSchema } from "./policy.js";
 import { TaskSpecialtiesSchema } from "./specialties.js";
+import { cycleMessage, dependencyCycle } from "./task-graph.js";
 
 /** An ID in the build plan, such as `AC2` or `T1`. */
 export const PlanIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,31}$/, {
@@ -78,6 +79,8 @@ export const BuildTaskSchema = z
     tests: z.array(RepoPathSchema).default([]),
     /** The specialties whose guidance every agent on the task gets. */
     specialties: TaskSpecialtiesSchema,
+    /** The IDs of the tasks that must finish before this task starts. */
+    dependsOn: z.array(PlanIdSchema).default([]),
   })
   .strict();
 export type BuildTask = z.infer<typeof BuildTaskSchema>;
@@ -156,6 +159,22 @@ export const BuildMilestoneSchema = z
   .strict();
 export type BuildMilestone = z.infer<typeof BuildMilestoneSchema>;
 
+/** Adds an issue for each dependency on a task the list lacks, and for a dependency cycle. */
+function checkTaskGraph(tasks: readonly BuildTask[], ctx: z.RefinementCtx): void {
+  const ids = new Set(tasks.map((t) => t.id));
+  tasks.forEach((task, i) => {
+    for (const id of task.dependsOn.filter((d) => !ids.has(d))) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["tasks", i, "dependsOn"],
+        message: `task ${task.id} depends on ${id}, which the plan doesn't have`,
+      });
+    }
+  });
+  const cycle = dependencyCycle(tasks);
+  if (cycle) ctx.addIssue({ code: "custom", path: ["tasks"], message: cycleMessage(cycle) });
+}
+
 /** Adds an issue for each milestone task the task list lacks, and each task in two milestones. */
 function checkMilestones(
   milestones: readonly BuildMilestone[],
@@ -225,6 +244,7 @@ export const BuildDesignSchema = z
     for (const id of duplicates(design.tasks.map((t) => t.id))) {
       ctx.addIssue({ code: "custom", path: ["tasks"], message: `task ${id} is listed twice` });
     }
+    checkTaskGraph(design.tasks, ctx);
     checkMilestones(design.milestones, design.tasks, ctx);
   });
 export type BuildDesign = z.infer<typeof BuildDesignSchema>;
@@ -254,7 +274,7 @@ export const BuildPlanSchema = z
     architecture: z.string().min(1).nullable().default(null),
     sharedFiles: z.array(RepoPathSchema).default([]),
     milestones: z.array(BuildMilestoneSchema).default([]),
-    tasks: z.array(BuildTaskSchema).min(1).max(1, "a build plan has one task in this version"),
+    tasks: z.array(BuildTaskSchema).min(1),
     commands: BuildCommandsSchema,
     /** Places every seat on this vendor. `null` leaves each seat on its own placement. */
     singleVendor: VendorSchema.nullable().default(null),
@@ -290,6 +310,7 @@ export const BuildPlanSchema = z
         });
       }
     });
+    checkTaskGraph(plan.tasks, ctx);
     checkMilestones(plan.milestones, plan.tasks, ctx);
   });
 export type BuildPlan = z.infer<typeof BuildPlanSchema>;
@@ -393,6 +414,8 @@ export const EscalationKindSchema = z.enum([
    * test, no recorded push answer, or a pull request whose checks don't pass.
    */
   "release_ready",
+  /** A task broke a test that an earlier task made pass, on a second attempt after the first. */
+  "oscillation",
 ]);
 export type EscalationKind = z.infer<typeof EscalationKindSchema>;
 

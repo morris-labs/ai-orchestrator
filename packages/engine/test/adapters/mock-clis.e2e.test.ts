@@ -130,6 +130,25 @@ describe.each(["claude", "codex", "copilot"] as const)(
       if (vendor === "claude") expect(log[0]!.readOnly).toBe(true);
     });
 
+    it("resumes a session for a write call that names it, and starts fresh for one that doesn't", async () => {
+      const { dir, adapters, calls } = setup();
+      const adapter = adapters[vendor];
+      const write = (prompt: string) => ({
+        ...request(dir, prompt),
+        tools: "write" as const,
+        outputSchema: z.object({ done: z.boolean() }),
+      });
+      const first = await adapter.fix(write("FIX it"));
+      expect(first.sessionId).toBeTruthy();
+      const again = await adapter.fix({ ...write("FIX it again"), sessionId: first.sessionId! });
+      expect(again.sessionId).toBe(first.sessionId);
+      const fresh = await adapter.fix(write("FIX it fresh"));
+      expect(fresh.sessionId).not.toBe(first.sessionId);
+      const log = calls();
+      expect(log[1]!.argv.join(" ")).toContain(first.sessionId!);
+      expect(log[2]!.argv.join(" ")).not.toContain(first.sessionId!);
+    });
+
     it("reports a usage limit", async () => {
       const { dir, adapters } = setup();
       const err = (await adapters[vendor]

@@ -5,6 +5,7 @@
 import type { AgentRole, BuildStep, RoleDefinition, RoleName, SeatPlacement } from "@aio/contracts";
 import { z } from "zod";
 import type { AgentCallSpec } from "../calls/index.js";
+import type { AdapterOutput } from "../core.js";
 import { placeCall } from "./placements/index.js";
 import { roleAnswerSchema, rolePrompt, type RoleTask } from "./roles/index.js";
 import { specialtyCall, type SpecialtyPack } from "./specialties/index.js";
@@ -37,6 +38,12 @@ export interface SeatTurn {
   scratchDir: string;
   /** The task's specialty packs. */
   specialties?: readonly SpecialtyPack[];
+  /** The prompt, when the caller wrote one. Default: the role prompt for the task. */
+  prompt?: string;
+  /** The answer's shape. Default: the role's answer schema. */
+  output?: AdapterOutput;
+  /** The session to resume. Absent, the turn starts a fresh agent. */
+  sessionId?: string;
 }
 
 /** The agent call for one turn of `role`'s seat on `placement`. */
@@ -54,17 +61,18 @@ export function seatCallSpec(
         role: agentRoleFor(role),
         method: writes ? "fix" : "review",
         request: {
-          prompt: rolePrompt(role, { ...turn.task, specialties: packs }),
+          prompt: turn.prompt ?? rolePrompt(role, { ...turn.task, specialties: packs }),
           repoPath: turn.repoPath,
           toolPolicy: writes ? "write" : "read-only",
           scratchDir: turn.scratchDir,
           timeoutMs: role.turnTimeoutMinutes * 60_000,
-          output: {
+          output: turn.output ?? {
             schema: RoleAnswerSchema,
             json: (roleAnswerSchema(role) as Record<string, unknown> | null) ?? {
               type: "object",
             },
           },
+          ...(turn.sessionId !== undefined ? { sessionId: turn.sessionId } : {}),
         },
         groupId: null,
         estimateTokens: SEAT_ESTIMATE_TOKENS,

@@ -42,10 +42,14 @@ const DEFAULT_PIPELINE: BuildPipeline = { steps: BUILD_PIPELINE, handlers: STEP_
 
 async function servicesFor(
   location: BuildLocation,
-  services: Omit<BuildServices, "tierModels">,
+  services: Omit<BuildServices, "tierModels" | "sessions">,
 ): Promise<BuildServices> {
   const policy = await loadPolicy(location.projectRoot, location.policyPath);
-  return { ...services, ...(policy.tierModels ? { tierModels: policy.tierModels } : {}) };
+  return {
+    ...services,
+    ...(policy.tierModels ? { tierModels: policy.tierModels } : {}),
+    ...(policy.sessions ? { sessions: policy.sessions } : {}),
+  };
 }
 
 export class BuildController {
@@ -81,7 +85,7 @@ export class BuildController {
   static async create(
     request: BuildCreate & { plan: BuildPlan },
     location: BuildLocation,
-    services: Omit<BuildServices, "tierModels">,
+    services: Omit<BuildServices, "tierModels" | "sessions">,
     pipeline: BuildPipeline = DEFAULT_PIPELINE,
     origin?: BuildOrigin,
   ): Promise<BuildController> {
@@ -142,7 +146,7 @@ export class BuildController {
   static async load(
     slug: string,
     location: BuildLocation,
-    services: Omit<BuildServices, "tierModels">,
+    services: Omit<BuildServices, "tierModels" | "sessions">,
     pipeline: BuildPipeline = DEFAULT_PIPELINE,
   ): Promise<BuildController> {
     const store = new BuildStore(location.projectRoot, slug);
@@ -176,6 +180,8 @@ export class BuildController {
       await ctx.beginDrive();
       await ctx.worktree.ensure();
       if (ctx.state.status !== "running") await ctx.setStatus("running");
+      // Messages that a stopped engine or drive left waiting get their turns.
+      ctx.sessions.resumePending();
       for (;;) {
         await ctx.calls.checkpoint();
         const step = ctx.state.step;
@@ -188,6 +194,10 @@ export class BuildController {
           return;
         }
         if ((await handler(ctx)) === "wait") return;
+        // A step ends when its agents' conversations do: the message turns
+        // it started finish before the next step.
+        await ctx.sessions.idle();
+        await ctx.calls.checkpoint();
         const next = this.pipeline.steps[this.pipeline.steps.indexOf(step) + 1];
         if (!next) {
           // The last step's note, such as where its digest is, stays.
