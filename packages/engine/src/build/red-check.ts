@@ -14,8 +14,8 @@ import type { BuildWorktree } from "./worktree.js";
 
 /**
  * How a test ended against the stubs: `failed` on an assertion (what the red
- * check wants), `passed`, or `error` (a syntax, import, or setup error, a
- * timeout, or output with no assertion failure in it).
+ * check wants), `passed`, or `error` (a syntax, import, load, or setup error,
+ * a run of no tests, a timeout, or output with no assertion failure in it).
  */
 export type RedOutcome = "failed" | "passed" | "error";
 
@@ -48,8 +48,10 @@ export interface RedCheck {
 
 /**
  * Output that shows a failure before any assertion ran: a syntax error, a
- * missing module or export, a name the stubs don't define, or a build or
- * type error, across the common JavaScript, TypeScript, Python, and Go tools.
+ * missing module or export, a native module that fails to load, a name the
+ * stubs don't define, a build or type error, or a test file that fails to
+ * load or collect, across the common JavaScript, TypeScript, Python, and Go
+ * tools.
  */
 export const ERROR_PATTERNS: readonly RegExp[] = [
   /\bSyntaxError\b/,
@@ -64,7 +66,33 @@ export const ERROR_PATTERNS: readonly RegExp[] = [
   /\bFailed to (?:resolve import|load url)\b/,
   /\berror TS\d+\b/,
   /\[(?:build|setup) failed\]/,
+  /\bNODE_MODULE_VERSION\b/,
+  /\bERR_DLOPEN_FAILED\b/,
+  /\bFailed Suites\b/,
+  /\bTest suite failed to run\b/,
+  /\bERROR collecting\b/,
+  /\berrors? during collection\b/,
+  /\bNo test files found\b/,
 ];
+
+/**
+ * Output that shows the command ran no tests: none matched its filter, or
+ * its file has none. Such a run proves nothing, whatever its exit code.
+ */
+export const NO_TEST_PATTERNS: readonly RegExp[] = [
+  /^\s*Tests\s+no tests\b/m,
+  /^\s*Tests\s+(\d+) skipped \(\1\)\s*$/m,
+  /\bNo tests found\b/,
+  /^=+ (?:no tests ran|\d+ deselected) in\b/m,
+  /\bno tests to run\b/,
+  /^\s*0 passing\b(?![\s\S]*^\s*\d+ (?:failing|pending)\b)/m,
+  /^# tests 0\s*$/m,
+];
+
+/** True when a test command's output shows that it ran no tests. */
+export function ranNoTests(output: string): boolean {
+  return NO_TEST_PATTERNS.some((re) => re.test(output));
+}
 
 /** Output that shows a failed assertion. */
 export const ASSERTION_PATTERNS: readonly RegExp[] = [
@@ -81,6 +109,7 @@ export function classifyRun(run: { exitCode: number | null; timedOut: boolean; o
   reason: string;
 } {
   if (run.timedOut) return { outcome: "error", reason: "the test command timed out" };
+  if (ranNoTests(run.output)) return { outcome: "error", reason: "the test command ran no tests" };
   if (run.exitCode === 0) return { outcome: "passed", reason: "the test passed" };
   const error = ERROR_PATTERNS.find((re) => re.test(run.output));
   if (error) {
