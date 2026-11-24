@@ -63,17 +63,32 @@ per-test command's value. An assignment counts only when a command follows
 it, so `A=1; make test` and `A=1 && make test` set nothing. A command that
 starts with `env` sets nothing either.
 
-The `listedTestCommand()` function in the
-`packages/engine/src/build/test-command.ts` file builds the command. Every
-place that runs a per-test command uses it:
+The engine also runs a per-test command in the plan's test directory when
+every plan test command sets the same `cwd`. When the plan's test commands
+set different directories, or one of them sets none, the per-test command
+runs from the repository root. The Test engineer is told to write its
+commands from the repository root, so the root is the only directory that
+fits every test when the plan has no single test directory.
+
+A per-test command that exits 0 but runs no tests fails, such as a name
+filter that no longer matches. A run of no tests proves nothing, so it
+doesn't count as a pass in the task gate or in the criteria trace. The
+gate reports such a command as one that ran no tests.
+
+The `runListedTest()` function in the
+`packages/engine/src/build/test-command.ts` file builds and runs the
+command. Every place that runs a per-test command uses it, or, in the task
+gate, the `listedTestCommand()` and `requireTests()` functions it is made
+of:
 
 - The red check of tests first.
 - The red check of a test dispute's amended test.
 - The task gate's run of an earlier task's locked tests.
 - The criteria trace of the release ready step.
 
-The Test engineer's task description names the assignments, so that it runs
-its tests the same way and lists each command without them.
+The Test engineer's task description names the assignments and the
+directory, so that it runs its tests the same way, writes each command for
+that directory, and lists each command without the assignments.
 
 ### What counts as red
 

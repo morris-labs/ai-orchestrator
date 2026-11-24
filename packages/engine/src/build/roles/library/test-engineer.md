@@ -52,8 +52,9 @@ outputs:
               command:
                 type: string
                 description: >-
-                  A shell command, run from the repository root, that runs this test and no slower suite.
-                  The engine puts the leading NAME=value assignments of the plan's test commands in front of it.
+                  A shell command that runs this test and no slower suite, from the repository root, or from
+                  the directory that the task description names. The engine puts the leading NAME=value
+                  assignments of the plan's test commands in front of it.
 permission:
   access: write
   paths: ["{owned}"]
@@ -90,8 +91,12 @@ The engine runs each test's command against the stubs, and again before the
 release. When the plan's test commands start with `NAME=value` assignments,
 such as `PATH=/usr/bin:$PATH`, the engine puts those assignments in front of
 each of your commands, so your tests run in the same environment as the
-plan's. The task description names them when there are any: run your tests
-with them, and list each command without them.
+plan's. When every plan test command runs in one directory, the engine runs
+your commands there too. The task description names the assignments and the
+directory when there are any: run your tests the same way, write each
+command for that directory, and list each command without the assignments.
+A command that runs no tests fails, so make sure that each command's filter
+matches its test.
 
 A test that passes, a test that fails on an error instead of an assertion, a
 command that runs no tests, and a test with no criterion ID come back to you
