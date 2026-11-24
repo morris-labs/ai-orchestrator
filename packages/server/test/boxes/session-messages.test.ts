@@ -69,6 +69,41 @@ describe("session messages", () => {
     expect(w.typed).toEqual([]);
   });
 
+  it.each([
+    ["sends the release after a hold that went out while it was withdrawn", true, [HOLD, RELEASE]],
+    ["sends neither message when a hold being typed as it was withdrawn didn't go out", false, []],
+  ] as const)("%s", async (_name, takes, expected) => {
+    const typed: string[] = [];
+    const attempts: string[] = [];
+    let answer: (result: DeliveryResult) => void = () => undefined;
+    const messages = new SessionMessages({
+      deliver: async (_boxId: string, request: DeliveryRequest) => {
+        attempts.push(request.text);
+        if (request.text !== HOLD || attempts.length > 1) {
+          typed.push(request.text);
+          return { delivered: true, confirmed: true };
+        }
+        // The first attempt at the hold waits while the session types it.
+        const result = await new Promise<DeliveryResult>((resolve) => (answer = resolve));
+        if (result.delivered) typed.push(request.text);
+        return result;
+      },
+      log: () => undefined,
+      retryMs: 10,
+    });
+    open.push(messages);
+    messages.send("box-a", HOLD);
+    await until(() => attempts.length === 1);
+
+    messages.send("box-a", RELEASE, { withdraws: HOLD });
+    answer(takes ? { delivered: true, confirmed: true } : dialog);
+    await messages.idle();
+    await new Promise((r) => setTimeout(r, 50));
+    await messages.idle();
+
+    expect(typed).toEqual(expected);
+  });
+
   it("drops a message for a stopped box or a session that never takes one, and says why", async () => {
     const w = world([
       { delivered: false, stopped: true, reason: "box-a is not running." },
