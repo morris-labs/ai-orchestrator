@@ -46,7 +46,17 @@ export interface GitOptions {
   literalPathspecs?: boolean;
 }
 
+/**
+ * The tail of each repository's `git worktree` commands, by common Git
+ * directory. Git reads every worktree's admin files while it adds one, and a
+ * parallel add that is still writing its own files makes that read fail, so
+ * the commands of one repository run one at a time.
+ */
+const worktreeQueues = new Map<string, Promise<unknown>>();
+
 export class Git {
+  private commonDir: string | null = null;
+
   constructor(
     private readonly runner: CommandRunner,
     readonly cwd: string,
@@ -67,13 +77,41 @@ export class Git {
     } = {},
   ) {
     const literal = this.options.literalPathspecs ? ["--literal-pathspecs"] : [];
-    return this.runner.run("git", [...NO_HOOKS, ...literal, ...args], {
-      cwd: options.cwd ?? this.cwd,
-      input: options.input,
-      timeoutMs: options.timeoutMs ?? 120_000,
-      envProfile: "untrusted",
-      ...(options.env ? { env: options.env } : {}),
-    });
+    const start = () =>
+      this.runner.run("git", [...NO_HOOKS, ...literal, ...args], {
+        cwd: options.cwd ?? this.cwd,
+        input: options.input,
+        timeoutMs: options.timeoutMs ?? 120_000,
+        envProfile: "untrusted",
+        ...(options.env ? { env: options.env } : {}),
+      });
+    return args[0] === "worktree" ? this.oneWorktreeCommandAtATime(start) : start();
+  }
+
+  /**
+   * The repository's common Git directory, which every worktree of it
+   * shares. Without one, as before `git init`, the client's directory.
+   */
+  private async repositoryKey(): Promise<string> {
+    if (this.commonDir) return this.commonDir;
+    const result = await this.exec(["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+    if (result.exitCode !== 0) return resolve(this.cwd);
+    this.commonDir = result.stdout.trim();
+    return this.commonDir;
+  }
+
+  /** Runs `start` after the repository's other `git worktree` commands end. */
+  private async oneWorktreeCommandAtATime<T>(start: () => Promise<T>): Promise<T> {
+    const key = await this.repositoryKey();
+    const previous = worktreeQueues.get(key) ?? Promise.resolve();
+    const current = previous.then(start, start);
+    const tail = current.catch(() => undefined);
+    worktreeQueues.set(key, tail);
+    try {
+      return await current;
+    } finally {
+      if (worktreeQueues.get(key) === tail) worktreeQueues.delete(key);
+    }
   }
 
   /** Runs git and returns its standard output; throws `GitError` on a non-zero exit. */

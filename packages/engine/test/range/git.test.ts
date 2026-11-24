@@ -117,3 +117,21 @@ describe("excludeEngineDir", () => {
     expect(git(linked, "status", "--porcelain", "--untracked-files=all")).toBe("");
   });
 });
+
+describe("Git worktree commands", () => {
+  it("adds and removes many worktrees of one repository at once", async () => {
+    // Git reads every worktree's admin files while it adds one, so a
+    // parallel add that is still writing them fails the other.
+    const { repo, base } = renamedRepo();
+    const client = new Git(new ExecaRunner(), repo);
+    const root = tempDir("aio-git-trees-");
+    for (let round = 0; round < 5; round += 1) {
+      const paths = Array.from({ length: 8 }, (_, i) => join(root, `tree-${round}-${i}`));
+      await Promise.all(paths.map((path) => client.addDetachedWorktree(path, base)));
+      for (const path of paths)
+        expect(readFileSync(join(path, "other.py"), "utf8")).toBe("x = 1\n");
+      await Promise.all(paths.map((path) => client.removeWorktree(path)));
+    }
+    expect(git(repo, "worktree", "list", "--porcelain")).not.toContain("tree-");
+  });
+});
