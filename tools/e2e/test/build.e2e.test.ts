@@ -376,7 +376,8 @@ describe("an engine restart mid-build", () => {
   it("continues the build in the new engine without repeating the agent call", async () => {
     script({ codex: [TEST_ENGINEER], claude: [developer(TAX_DONE)] });
     // The test command holds the task gate while the hold file exists, once
-    // the Developer has written the module (the stub doesn't round).
+    // the Developer has written the module: only its code calls round(),
+    // while the stub's docstring says "rounded" too.
     const hold = path.join(stack.dir, "hold");
     const gateStarted = path.join(stack.dir, "gate-started");
     writeFileSync(hold, "");
@@ -384,13 +385,15 @@ describe("an engine restart mid-build", () => {
       const commands = p.commands as { test: Array<{ command: string }> };
       commands.test = [
         {
-          command: `if grep -q round shop/tax.py; then touch ${gateStarted}; while [ -e ${hold} ]; do sleep 0.05; done; fi; python3 -B -m unittest discover -s tests -q`,
+          command: `if grep -qF 'round(' shop/tax.py; then touch ${gateStarted}; while [ -e ${hold} ]; do sleep 0.05; done; fi; python3 -B -m unittest discover -s tests -q`,
         },
       ];
     });
     const started = await startBuild("sales-tax-restart", plan, "box-e2e-restart");
     await waitFor("the task gate to start", () => (existsSync(gateStarted) ? true : undefined));
     expect((await status("sales-tax-restart")).status).toBe("running");
+    // The hold is at the task gate, after the Developer's call, not at preflight.
+    expect(developerCalls()).toBe(1);
 
     rmSync(gateStarted);
     await stack.restartEngine();
