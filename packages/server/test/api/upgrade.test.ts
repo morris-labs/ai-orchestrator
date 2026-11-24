@@ -254,19 +254,22 @@ describe("upgrade recovery records", () => {
     const box = await h.core.boxes.create({ targetDir: h.dir("app"), layout: "root", start: true });
     const core = apiCoreOf(h.core, {} as Docker);
     const recreate = core.projects.recreateContainer!;
+    // Only the fake clock runs out the time limit. The limit is long enough
+    // that its real timer never fires, however slow the machine is.
+    const limitMs = 60_000;
     let now = 0;
     const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
     const build = vi.fn(async () => "latest" as const);
     const recreateSpy = vi.fn(async (id: string) => {
       await recreate(id);
-      now = 100;
+      now += limitMs;
     });
     core.projects.recreateContainer = recreateSpy;
     const options = {
       core,
       build,
       recordFile: path.join(h.home, "recovery.json"),
-      restoreTimeoutMs: 50,
+      restoreTimeoutMs: limitMs,
       runs: () => [],
       resume: async () => {},
     };
