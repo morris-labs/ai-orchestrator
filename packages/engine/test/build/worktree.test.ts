@@ -1,6 +1,6 @@
 // Snapshots of a build worktree, and putting refused changes back.
 import { execFileSync } from "node:child_process";
-import { chmodSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { BuildWorktree } from "../../src/build/worktree.js";
@@ -61,4 +61,26 @@ describe("BuildWorktree snapshots", () => {
     expect(readFileSync(join(tree.path, "run.sh"), "utf8")).toBe("#!/bin/sh\necho one\n");
     expect(statSync(join(tree.path, "run.sh")).mode & 0o111).not.toBe(0);
   });
+});
+
+const commit = (cwd: string, message: string) =>
+  git(cwd, "-c", "user.name=Example", "-c", "user.email=dev@example.com", "commit", "-qm", message);
+
+describe("BuildWorktree set-aside", () => {
+  it.each(["staged", "committed"] as const)(
+    "sets aside a file the task deleted with a %s deletion, and brings it back",
+    async (how) => {
+      const tree = await worktree();
+      const base = await tree.head();
+      const file = git(tree.path, "ls-files").split("\n")[0]!;
+      git(tree.path, "rm", "-q", "--", file);
+      if (how === "committed") commit(tree.path, "delete a file");
+      const patch = join(tree.path, "..", `set-aside-${how}.patch`);
+
+      expect(await tree.setAside(base, patch, "set the task aside")).toEqual([file]);
+      expect(existsSync(join(tree.path, file))).toBe(true);
+      expect(await tree.bringBack(patch)).toBe(true);
+      expect(existsSync(join(tree.path, file))).toBe(false);
+    },
+  );
 });

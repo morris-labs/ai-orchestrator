@@ -4,7 +4,7 @@
 // worktree, so it can reset it and delete files in it without losing anyone
 // else's work.
 import { existsSync } from "node:fs";
-import { appendFile, mkdir, readFile, rm, stat } from "node:fs/promises";
+import { appendFile, lstat, mkdir, readFile, rm, stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import type { CommandRunner } from "../core.js";
 import { Git } from "../range/git.js";
@@ -276,7 +276,17 @@ export class BuildWorktree {
     const paths = (await this.changedSince(base)).filter((p) => !keep.includes(p));
     if (paths.length === 0) return [];
     await mkdir(dirname(patchFile), { recursive: true });
-    await this.git.run(["add", "-A", "--", ...paths]);
+    // A deleted path is in neither the worktree nor, once the deletion is
+    // staged or committed, the index, and `git add` refuses it.
+    const exists = async (p: string) =>
+      (await lstat(join(this.path, p)).catch(() => null)) !== null;
+    const present: string[] = [];
+    const deleted: string[] = [];
+    for (const p of paths) ((await exists(p)) ? present : deleted).push(p);
+    if (present.length > 0) await this.git.run(["add", "-A", "--", ...present]);
+    if (deleted.length > 0) {
+      await this.git.run(["rm", "-q", "--cached", "--ignore-unmatch", "--", ...deleted]);
+    }
     await this.git.run([
       "diff",
       "--cached",
