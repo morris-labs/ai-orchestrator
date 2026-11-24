@@ -393,6 +393,7 @@ async function redCheck(
     return await runRedCheck({
       worktree: ctx.worktree,
       tests,
+      commands: ctx.plan.commands,
       holds: new Set(ctx.plan.criteria.filter((c) => c.alreadyHolds).map((c) => c.id)),
       shell: ctx.services.shell,
       signal: ctx.signal,

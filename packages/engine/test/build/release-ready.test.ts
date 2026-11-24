@@ -283,6 +283,50 @@ describe("the release ready step", () => {
     expect(file.details).toMatch(/no locked test/i);
   });
 
+  it("traces a criterion to its locked test run in the environment of the plan's test commands", async () => {
+    // The test fails on a load error unless the plan's assignment is set, as a
+    // native module does under the wrong Node.js.
+    const envTest = [
+      "// AC1: the cart reports the sum of its item prices.",
+      'if (process.env.CART_ENV !== "gate") {',
+      '  console.error("Error: compiled against a different Node.js version using NODE_MODULE_VERSION 127");',
+      "  process.exit(1);",
+      "}",
+      RED_TEST,
+    ].join("\n");
+    const world = await buildWorld({ steps: BUILD_PIPELINE, review: true, release: true });
+    world.script({
+      codex: [
+        { ...TEST_ENGINEER, writeFiles: { "test/cart.test.mjs": envTest } },
+        SCRIBE,
+        CLEAN_REVIEW,
+      ],
+      claude: [DEVELOPER, CLEAN_REVIEW],
+    });
+    const plan = cartPlan({ push: null });
+    plan.commands = {
+      ...plan.commands,
+      test: [{ command: "CART_ENV=gate node test/cart.test.mjs" }],
+    };
+
+    await world.start("cart-total", plan);
+    const state = await world.settle("cart-total");
+
+    const [round] = world.jsonFiles("cart-total", "tests-first") as {
+      check?: { passed: boolean; tests: { command: string; outcome: string }[] };
+    }[];
+    expect(round?.check).toMatchObject({
+      passed: true,
+      tests: [{ command: "node test/cart.test.mjs", outcome: "failed" }],
+    });
+    const trace = JSON.parse(world.file("cart-total", "release/trace.json")) as unknown;
+    expect(trace).toEqual({
+      passed: true,
+      criteria: [expect.objectContaining({ id: "AC1", passed: true })],
+    });
+    expect(state.escalations[0]?.summary).toMatch(/push answer/);
+  });
+
   it("stops before the push without a push answer, with the owner checks and the known failing and flaky tests in the pull request description", async () => {
     const origin = originPath();
     const gh = new FakeGitHub(origin);

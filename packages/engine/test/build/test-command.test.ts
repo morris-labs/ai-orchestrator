@@ -1,0 +1,145 @@
+// How the engine runs a per-test command: in the environment that the plan's
+// test commands set with their leading NAME=value assignments.
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+import { runTaskGate } from "../../src/build/gate.js";
+import { runRedCheck } from "../../src/build/red-check.js";
+import { leadingAssignments, listedTestCommand } from "../../src/build/test-command.js";
+import { BuildWorktree } from "../../src/build/worktree.js";
+import { ExecaRunner, ShellRunner } from "../../src/range/exec.js";
+import { buildSampleRepo } from "../state/scenario.js";
+
+describe("leadingAssignments", () => {
+  it.each([
+    ["PATH=/usr/bin:$PATH corepack pnpm test", ["PATH=/usr/bin:$PATH"]],
+    ["A=1 B='two words' C=\"x y\" D=a\\ b run", ["A=1", "B='two words'", 'C="x y"', "D=a\\ b"]],
+    ["  A=1   run", ["A=1"]],
+    ["corepack pnpm test", []],
+    ["A=1", []],
+    ["A=1; run", []],
+    ["A=1 B=2; run", []],
+    ["A=1 && run", []],
+    ["A='open run", []],
+    ["1A=2 run", []],
+    ["env A=1 run", []],
+  ])("reads %j as %j", (command, expected) => {
+    expect(leadingAssignments(command)).toEqual(expected);
+  });
+});
+
+describe("listedTestCommand", () => {
+  const plan = {
+    test: [
+      { command: "PATH=/usr/bin:$PATH corepack pnpm -r test" },
+      { command: "python3 -m unittest discover" },
+      { command: "PATH=/opt/bin MODE=ci make test" },
+    ],
+  };
+
+  it("runs a per-test command with the plan's test assignments in front", () => {
+    expect(listedTestCommand("corepack pnpm exec vitest run a.test.ts", plan)).toEqual({
+      command: "PATH=/usr/bin:$PATH MODE=ci corepack pnpm exec vitest run a.test.ts",
+    });
+  });
+
+  it("keeps an assignment that the per-test command makes itself", () => {
+    expect(listedTestCommand("MODE=dev PATH=/x vitest run", plan)).toEqual({
+      command: "MODE=dev PATH=/x vitest run",
+    });
+  });
+
+  it("leaves a command alone when the plan's test commands assign nothing", () => {
+    expect(listedTestCommand("node a.test.mjs", { test: [{ command: "node t.mjs" }] })).toEqual({
+      command: "node a.test.mjs",
+    });
+  });
+});
+
+/** A test that fails on a load error unless the plan's environment is set, and on an assertion when it is. */
+const ENV_TEST = [
+  'import assert from "node:assert/strict";',
+  'if (process.env.CART_ENV !== "gate") {',
+  '  console.error("Error: the module was compiled against a different Node.js version using NODE_MODULE_VERSION 127");',
+  "  process.exit(1);",
+  "}",
+  'assert.equal(process.env.CART_RESULT ?? "0", "5");',
+  "",
+].join("\n");
+
+const PLAN = {
+  test: [{ command: "CART_ENV=gate node test/env.test.mjs" }],
+  typecheck: [],
+  lint: [],
+};
+
+async function worktree(name: string): Promise<BuildWorktree> {
+  const repo = buildSampleRepo();
+  const tree = new BuildWorktree(
+    new ExecaRunner(),
+    repo,
+    BuildWorktree.pathFor(repo, name),
+    BuildWorktree.branchFor(name),
+  );
+  await tree.create(await tree.resolveBase(undefined));
+  mkdirSync(join(tree.path, "test"), { recursive: true });
+  writeFileSync(join(tree.path, "test/env.test.mjs"), ENV_TEST);
+  return tree;
+}
+
+const LISTED = {
+  file: "test/env.test.mjs",
+  name: "AC1 totals the cart",
+  criterion: "AC1",
+  command: "node test/env.test.mjs",
+};
+
+describe("per-test commands in the plan's environment", () => {
+  it("runs the red check's commands with the plan's test assignments", async () => {
+    const tree = await worktree("red-env");
+
+    const red = await runRedCheck({
+      worktree: tree,
+      tests: [LISTED],
+      commands: PLAN,
+      holds: new Set(),
+      shell: new ShellRunner(new ExecaRunner()),
+    });
+
+    expect(red.tests.map((t) => [t.command, t.outcome])).toEqual([
+      ["node test/env.test.mjs", "failed"],
+    ]);
+    expect(red.passed).toBe(true);
+  });
+
+  it("runs an earlier task's locked test in the task gate with the plan's test assignments", async () => {
+    const tree = await worktree("gate-env");
+    const base = await tree.resolveBase(undefined);
+
+    const gate = await runTaskGate({
+      worktree: tree,
+      base,
+      writable: ["**"],
+      commands: {
+        test: [{ command: "CART_ENV=gate CART_RESULT=5 true" }],
+        typecheck: [],
+        lint: [],
+      },
+      lock: {
+        commit: base,
+        redCheck: "x",
+        files: [],
+        tests: [LISTED],
+        lockedAt: "2026-01-01T00:00:00Z",
+      },
+      earlier: [{ id: "T1", tests: ["test/env.test.mjs"] }],
+      shell: new ShellRunner(new ExecaRunner()),
+    });
+
+    expect(gate.commands.map((c) => [c.command, c.passed])).toEqual([
+      ["CART_ENV=gate CART_RESULT=5 true", true],
+      ["CART_ENV=gate CART_RESULT=5 node test/env.test.mjs", true],
+    ]);
+    expect(gate.regressions).toBeUndefined();
+  });
+});

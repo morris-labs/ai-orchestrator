@@ -217,6 +217,7 @@ async function checkRound(
   const red = await runRedCheck({
     worktree: ctx.worktree,
     tests: listed,
+    commands: ctx.plan.commands,
     holds: new Set(scope.criteria.filter((c) => c.alreadyHolds).map((c) => c.id)),
     shell: ctx.services.shell,
     signal: ctx.signal,

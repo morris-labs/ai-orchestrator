@@ -3,10 +3,13 @@
 // one that fails on a syntax, import, or setup error, goes back to the Test
 // engineer, unless its criterion already holds, when passing is allowed.
 //
-// The engine runs each test with the command the Test engineer gives for it
-// and reads the command's output to tell an assertion failure from an error.
+// The engine runs each test with the command the Test engineer gives for it,
+// in the environment of the plan's test commands (see `test-command.ts`), and
+// reads the command's output to tell an assertion failure from an error.
+import type { BuildCommands } from "@aio/contracts";
 import type { CommandRunner } from "../core.js";
 import { runGateCommand } from "../gate/gate.js";
+import { listedTestCommand } from "./test-command.js";
 import type { BuildWorktree } from "./worktree.js";
 
 /**
@@ -100,6 +103,8 @@ export function classifyRun(run: { exitCode: number | null; timedOut: boolean; o
 export interface RunRedCheckOptions {
   worktree: BuildWorktree;
   tests: readonly ListedTest[];
+  /** The plan's commands: each test runs with the leading assignments of its test commands. */
+  commands: Pick<BuildCommands, "test">;
   /** The plan's criterion IDs that already hold: their tests may pass. */
   holds: ReadonlySet<string>;
   shell: CommandRunner;
@@ -123,7 +128,11 @@ export async function runRedCheck(options: RunRedCheckOptions): Promise<RedCheck
     if (options.signal?.aborted) break;
     let result = runs.get(test.command);
     if (!result) {
-      result = await runGateCommand("test", { command: test.command }, timed);
+      result = await runGateCommand(
+        "test",
+        listedTestCommand(test.command, options.commands),
+        timed,
+      );
       runs.set(test.command, result);
     }
     const { outcome, reason } = classifyRun({

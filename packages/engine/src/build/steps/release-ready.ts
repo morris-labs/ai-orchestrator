@@ -53,6 +53,7 @@ import type { BuildContext, ReviewRuns } from "../context.js";
 import { escalationForCallError } from "../escalations.js";
 import { gateReport, outsideWritable, runTaskGate, type TaskGateResult } from "../gate.js";
 import type { ListedTest } from "../red-check.js";
+import { listedTestCommand } from "../test-command.js";
 import { writablePaths, type RoleTask } from "../roles/index.js";
 import { readTestLock } from "../test-lock.js";
 import { reportProjectManagerUsage, type TranscriptUsage } from "../pm-usage.js";
@@ -126,7 +127,8 @@ function checkedCriteria(ctx: BuildContext): BuildCriterion[] {
 
 /**
  * Traces each test and UI check criterion to the locked tests that name it,
- * and runs each of those tests' commands once in the worktree.
+ * and runs each of those tests' commands once in the worktree, in the
+ * environment of the plan's test commands.
  */
 async function traceCriteria(ctx: BuildContext): Promise<TraceRecord> {
   const lock = await readTestLock(ctx.store);
@@ -141,7 +143,7 @@ async function traceCriteria(ctx: BuildContext): Promise<TraceRecord> {
       if (passed === undefined) {
         const run = await runGateCommand(
           "test",
-          { command: test.command },
+          listedTestCommand(test.command, ctx.plan.commands),
           { repoPath: ctx.worktree.path, shell: ctx.services.shell, signal: ctx.signal },
         );
         passed = run.passed;
