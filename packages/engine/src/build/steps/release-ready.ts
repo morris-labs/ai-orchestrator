@@ -39,7 +39,7 @@ import type {
   StopReason,
 } from "@aio/contracts";
 import { RunCancelled, describeError } from "../../calls/index.js";
-import { runGateCommand, type GateCommandResult } from "../../gate/gate.js";
+import type { GateCommandResult } from "../../gate/gate.js";
 import { untrusted } from "../../prompts/templates.js";
 import {
   commandKey,
