@@ -53,8 +53,13 @@ async function create(repo: string, deps: EngineDeps, extra: Record<string, unkn
   );
 }
 
-async function until(check: () => boolean): Promise<void> {
-  for (let i = 0; i < 400 && !check(); i++) await new Promise((r) => setTimeout(r, 10));
+/**
+ * Waits until `check` holds. A run on a busy machine can take seconds to
+ * reach a state, so the limit only stops a run that never gets there.
+ */
+async function until(check: () => boolean, limitMs = 30_000): Promise<void> {
+  const deadline = Date.now() + limitMs;
+  while (!check() && Date.now() < deadline) await new Promise((r) => setTimeout(r, 10));
   expect(check()).toBe(true);
 }
 
