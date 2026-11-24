@@ -124,6 +124,38 @@ describe("tests first", () => {
   });
 });
 
+describe("tests first at a path with brackets", () => {
+  it("keeps the Test engineer's test at that exact path and locks it", async () => {
+    const file = "test/[cart]/total.test.mjs";
+    const content = RED_TEST.replace("../src/cart.mjs", "../../src/cart.mjs");
+    const world = await buildWorld({ steps: BUILD_PIPELINE });
+    world.script({
+      codex: [
+        {
+          match: "round 1 of",
+          output: {
+            summary: "Wrote the tests first.",
+            tests: [{ ...AC1_TEST, file, command: `node '${file}'` }],
+          },
+          writeFiles: { [file]: content },
+        },
+      ],
+      claude: [DEVELOPER],
+    });
+    const plan = cartPlan();
+    plan.tasks = plan.tasks.map((t) => ({ ...t, tests: [file] }));
+    plan.commands = { ...plan.commands, test: [{ command: `node '${file}'` }] };
+
+    await world.start("cart-total", plan);
+    const state = await world.settle("cart-total");
+
+    expect(state).toMatchObject({ step: "review", status: "paused" });
+    const lock = JSON.parse(world.file("cart-total", "test-lock.json")) as SavedLock;
+    expect(lock.files).toEqual([{ path: file, sha256: sha256(content) }]);
+    expect(world.git(world.root, "show", `build/cart-total:${file}`)).toBe(content.trim());
+  });
+});
+
 describe("the red check", () => {
   it.each([
     ["passes before the code exists", GREEN_TEST, /passes before the code exists/],

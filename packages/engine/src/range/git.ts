@@ -38,10 +38,19 @@ export function normalizeRepoPath(path: string): string {
 /** The paths `Git.grepFiles` found, or why it stopped. */
 export type GrepResult = string[] | "timeout" | "error";
 
+export interface GitOptions {
+  /**
+   * Reads every pathspec as a literal path, so that a file such as
+   * `app/[slug]/page.ts` never matches `app/s/page.ts` as a glob.
+   */
+  literalPathspecs?: boolean;
+}
+
 export class Git {
   constructor(
     private readonly runner: CommandRunner,
     readonly cwd: string,
+    private readonly options: GitOptions = {},
   ) {}
 
   /**
@@ -57,7 +66,8 @@ export class Git {
       timeoutMs?: number;
     } = {},
   ) {
-    return this.runner.run("git", [...NO_HOOKS, ...args], {
+    const literal = this.options.literalPathspecs ? ["--literal-pathspecs"] : [];
+    return this.runner.run("git", [...NO_HOOKS, ...literal, ...args], {
       cwd: options.cwd ?? this.cwd,
       input: options.input,
       timeoutMs: options.timeoutMs ?? 120_000,

@@ -25,6 +25,9 @@ export interface SendOptions {
    * A message that this one takes back. When that message still waits for
    * the box, the server drops it and doesn't send this one either: a
    * release for a hold that never reached the session tells it nothing.
+   * When an attempt types that message at the time, this one waits for the
+   * outcome: it goes out after a message the session took, and is dropped
+   * with one it didn't.
    */
   withdraws?: string;
 }
@@ -32,10 +35,17 @@ export interface SendOptions {
 interface Waiting {
   text: string;
   since: number;
+  /**
+   * The message that took this one back while an attempt typed it. It goes
+   * out when this one did, and the two drop together when it didn't.
+   */
+  withdrawnBy?: Waiting;
 }
 
 export class SessionMessages {
   private readonly queues = new Map<string, Waiting[]>();
+  /** The message that each box's attempt under way types. */
+  private readonly typing = new Map<string, Waiting>();
   private readonly chains = new Map<string, Promise<void>>();
   private readonly timers = new Map<string, NodeJS.Timeout>();
   /** The last reason each box's message waited, so the log says it once. */
@@ -47,14 +57,19 @@ export class SessionMessages {
   /** Sends `text` to box `boxId`'s session now, or once the session can take it. */
   send(boxId: string, text: string, options: SendOptions = {}): void {
     const queue = this.queues.get(boxId) ?? [];
+    const message: Waiting = { text, since: Date.now() };
     if (options.withdraws !== undefined) {
       const at = queue.findIndex((m) => m.text === options.withdraws);
-      if (at >= 0) {
+      const withdrawn = queue[at];
+      if (withdrawn && withdrawn === this.typing.get(boxId)) {
+        // The session might take it yet, so this message waits for the outcome.
+        withdrawn.withdrawnBy = message;
+      } else if (withdrawn) {
         queue.splice(at, 1);
         return;
       }
     }
-    queue.push({ text, since: Date.now() });
+    queue.push(message);
     this.queues.set(boxId, queue);
     this.kick(boxId);
   }
@@ -92,9 +107,21 @@ export class SessionMessages {
     for (;;) {
       const head = queue[0];
       if (!head || this.closed) return;
-      const result = await this.deps.deliver(boxId, { text: head.text });
-      // A withdrawal can take the head out while the attempt runs.
-      if (queue[0] !== head) continue;
+      this.typing.set(boxId, head);
+      let result: DeliveryResult;
+      try {
+        result = await this.deps.deliver(boxId, { text: head.text });
+      } finally {
+        this.typing.delete(boxId);
+      }
+      if (!result.delivered && head.withdrawnBy) {
+        // Withdrawn while typed, and the session didn't take it: neither goes out.
+        const release = head.withdrawnBy;
+        queue.shift();
+        const at = queue.indexOf(release);
+        if (at >= 0) queue.splice(at, 1);
+        continue;
+      }
       if (result.delivered) {
         queue.shift();
         this.reasons.delete(boxId);

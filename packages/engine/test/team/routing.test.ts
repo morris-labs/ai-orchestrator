@@ -127,4 +127,14 @@ describe("taskOwning", () => {
     expect(taskOwning(tasks, "src/tax/rates/eu.mjs")?.id).toBe("T2");
     expect(taskOwning(tasks, "src/other.mjs")).toBeNull();
   });
+
+  it("finds the task that owns a path with brackets by that exact path", () => {
+    const routes: RouteTask[] = [
+      { id: "T1", role: "developer", ownedFiles: ["app/s/page.ts"] },
+      { id: "T2", role: "developer", ownedFiles: ["app/[slug]/page.ts"] },
+    ];
+
+    expect(taskOwning(routes, "app/[slug]/page.ts")?.id).toBe("T2");
+    expect(taskOwning(routes, "app/s/page.ts")?.id).toBe("T1");
+  });
 });

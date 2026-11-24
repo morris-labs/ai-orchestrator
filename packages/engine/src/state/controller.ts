@@ -473,11 +473,18 @@ export class RunController {
       }
     }
     if (decision.kind === "ceiling") ctx.clearVendorLimits();
-    ctx.state.decision = null;
     // A pause asked for before the run stopped for this decision is
     // answered by the decision; it must not pause the run right after.
     ctx.requestResume();
-    await ctx.persist();
+    // The run shows `running` before its driver starts, so a caller that
+    // polls right after the answer doesn't see the answered decision.
+    await ctx.setStatus("running", {
+      error: undefined,
+      stopReason: null,
+      decision: null,
+      finishedAt: undefined,
+      pausedUntil: undefined,
+    });
     this.drive();
     return this.state;
   }

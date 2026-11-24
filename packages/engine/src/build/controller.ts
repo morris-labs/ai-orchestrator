@@ -208,7 +208,7 @@ export class BuildController {
     this.stopping = false;
     this.driver = this.drive().finally(() => {
       this.driver = null;
-      if (this.again && !this.stopping) {
+      if (this.again && !this.stopping && !this.cancelling) {
         this.again = false;
         // A pause or a new escalation without a task that came in meanwhile holds the build.
         if (this.resumable()) this.start();
@@ -368,6 +368,8 @@ export class BuildController {
       throw new EngineError("invalid_state", `Build ${this.slug} is ${status} already.`);
     }
     this.cancelling = true;
+    // A resolution that came in during the drive doesn't start another one.
+    this.again = false;
     try {
       this.ctx.calls.requestCancel();
       this.ctx.stopDrive();
@@ -478,7 +480,8 @@ export class BuildController {
       throw new EngineError("invalid_state", `Build ${this.slug} stops with the engine.`);
     }
     if ((await resolveEscalation(this.ctx, request)) === "owner") return this.state;
-    if (!this.resumable()) return this.state;
+    // A cancel under way ends the build, so the resolution doesn't resume it.
+    if (!this.resumable() || this.cancelling) return this.state;
     if (this.driver) {
       this.again = true;
       return this.state;

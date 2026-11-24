@@ -4,6 +4,7 @@
 // vendor CLIs.
 import { existsSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { RunCancelled } from "../../src/calls/errors.js";
 import { BUILD_CLOSING_RECORD, type BuildState } from "@aio/contracts";
 import {
   CART_DONE,
@@ -134,6 +135,52 @@ describe("a box stop during a usage limit wait", () => {
 });
 
 describe("cancel, resume, and delete", () => {
+  it("stays cancelled when an escalation was resolved during the drive it stops", async () => {
+    let drives = 0;
+    const world = await buildWorld({
+      handlers: {
+        // A step that escalates about its task, then works until the drive stops.
+        tasks: async (ctx) => {
+          drives += 1;
+          // A slow worktree check, so a drive that starts during the cancel
+          // outlasts it instead of stopping on the cancel request.
+          const ensure = ctx.worktree.ensure.bind(ctx.worktree);
+          ctx.worktree.ensure = async () => {
+            await new Promise((resolve) => setTimeout(resolve, 500));
+            await ensure();
+          };
+          if (ctx.state.escalations.length === 0) {
+            await ctx.escalate({
+              kind: "agent_call",
+              level: "project_manager",
+              taskId: "T1",
+              summary: "The Developer's call needs a person.",
+              details: "",
+            });
+          }
+          await new Promise((_resolve, reject) => {
+            const stop = () => reject(new RunCancelled());
+            if (ctx.signal.aborted) stop();
+            ctx.signal.addEventListener("abort", stop);
+          });
+          return "wait";
+        },
+      },
+    });
+    world.script({ codex: [CLOSING] });
+    await startIn(world, "cart-total", "box-a");
+    await world.waitFor("cart-total", (s) => s.escalations.length === 1);
+    // The resolution comes in while the drive that escalated still works.
+    await world.manager.resolve("cart-total", { escalation: "E1", action: "retry" });
+
+    await world.manager.cancel("cart-total");
+    await world.waitFor("cart-total", (s) => s.closingRecord !== undefined);
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+
+    expect(drives).toBe(1);
+    expect(await world.manager.get("cart-total")).toMatchObject({ status: "cancelled" });
+  });
+
   it("stops the agent, keeps the branch and worktree, and has the Scribe write a closing record", async () => {
     const world = await buildWorld();
     world.script({ claude: [SLOW_DEVELOPER], codex: [CLOSING] });
