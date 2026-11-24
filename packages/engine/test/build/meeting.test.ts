@@ -379,6 +379,30 @@ describe("the Critic meeting", () => {
     await pending;
   });
 
+  it("keeps a stopped engine's meeting from changing the records after the stop", async () => {
+    const world = await meetingWorld([{ match: CRITIC, output: AGREED, delayMs: 1500 }]);
+    const pending = world.manager.meet(request()).catch((error: unknown) => error);
+    // Stop while the Critic's CLI call is under way, so the stopped engine's
+    // meeting gets an answer after the next engine marked it failed.
+    await waitFor(() => prompts(world, CRITIC).length > 0);
+    await world.restart();
+    await expect(
+      world.manager.meetingPost({
+        projectId: PROJECT_ID,
+        boxId: null,
+        slug: SLUG,
+        meeting: "meeting-1",
+        body: "Still there?",
+      }),
+    ).rejects.toMatchObject({ code: "conflict" });
+    await pending;
+    const record = BuildPlanningSchema.parse(JSON.parse(world.file(SLUG, "planning.json")));
+    expect(record.meetings).toEqual([
+      { id: "meeting-1", file: "meetings/meeting-1.json", status: "failed" },
+    ]);
+    expect(meetingFile(world)).toMatchObject({ status: "failed" });
+  });
+
   it("marks a meeting failed when the engine stopped before the planning record listed it", async () => {
     const world = await meetingWorld([{ match: CRITIC, output: AGREED, delayMs: 3000 }]);
     const pending = world.manager.meet(request()).catch((error: unknown) => error);
