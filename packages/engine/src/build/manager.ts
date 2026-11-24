@@ -598,10 +598,10 @@ export class EngineBuildManager implements BuildManager {
   }
 
   async close(): Promise<void> {
-    for (const planner of this.openPlanners) planner.stop();
-    await Promise.all(
-      [...this.controllers.values()].map((b) => b.stopForShutdown(SHUTDOWN_WAIT_MS)),
-    );
+    await Promise.all([
+      ...[...this.openPlanners].map((planner) => planner.stop()),
+      ...[...this.controllers.values()].map((b) => b.stopForShutdown(SHUTDOWN_WAIT_MS)),
+    ]);
   }
 }
 
