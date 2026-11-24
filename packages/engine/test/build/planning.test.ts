@@ -352,6 +352,22 @@ describe("starting a frozen build", () => {
     expect(state.tasks[0]).toMatchObject({ id: "T1", status: "done" });
   });
 
+  it("refuses a start without a box when the box its planning used runs another build", async () => {
+    const world = await planningWorld();
+    await world.manager.freeze(freeze({ plan: cartPlan(), push: false }));
+    await world.manager.start({
+      projectId: PROJECT_ID,
+      boxId: "box-1",
+      slug: "other-build",
+      plan: cartPlan(),
+    });
+
+    await expect(world.manager.start({ projectId: PROJECT_ID, slug: SLUG })).rejects.toMatchObject({
+      code: "conflict",
+      message: expect.stringMatching(/Box box-1 already runs the build other-build/),
+    });
+  });
+
   it("refuses a start whose plan differs from the frozen one", async () => {
     const world = await planningWorld();
     await plan(world);

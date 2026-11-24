@@ -432,10 +432,7 @@ export class EngineBuildManager implements BuildManager {
 
   async start(input: BuildCreateInput): Promise<BuildState> {
     const request = BuildCreateSchema.parse(input);
-    return this.inBoxOrder(async () => {
-      if (request.boxId !== undefined) await this.requireFreeBox(request.boxId, request.slug);
-      return this.create(request);
-    });
+    return this.inBoxOrder(() => this.create(request));
   }
 
   private async create(request: ReturnType<typeof BuildCreateSchema.parse>): Promise<BuildState> {
@@ -446,6 +443,9 @@ export class EngineBuildManager implements BuildManager {
     const creating = (async () => {
       try {
         const { plan, origin } = await this.startingPlan(slug, request.plan);
+        // A start without a box takes the box its planning used, and checks it the same way.
+        const boxId = request.boxId ?? origin?.boxId ?? null;
+        if (boxId !== null) await this.requireFreeBox(boxId, slug);
         const build = await BuildController.create(
           { ...request, plan },
           this.location,
