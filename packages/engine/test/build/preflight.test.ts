@@ -89,6 +89,107 @@ describe("preflight", () => {
   );
 });
 
+describe("the setup commands", () => {
+  it("runs the setup commands before the other commands, with the test commands' assignments", async () => {
+    const world = await buildWorld();
+    commit(world, {
+      ".gitignore": "deps/\n",
+      "setup.mjs": [
+        'import { mkdirSync, writeFileSync } from "node:fs";',
+        'mkdirSync("deps", { recursive: true });',
+        'writeFileSync("deps/env.txt", process.env.DEPS_ENV ?? "unset");',
+        "",
+      ].join("\n"),
+      "test/deps.test.mjs": [
+        'import { readFileSync } from "node:fs";',
+        'if (readFileSync("deps/env.txt", "utf8") !== "plan") {',
+        '  console.log("not ok - dependencies installed in the plan environment");',
+        "  process.exit(1);",
+        "}",
+        'console.log("ok");',
+        "",
+      ].join("\n"),
+    });
+    world.script({ claude: DONE });
+    const plan = withTest("DEPS_ENV=plan node test/deps.test.mjs");
+    plan.commands = { ...plan.commands, setup: [{ command: "node setup.mjs" }] };
+
+    await world.start("cart-total", plan);
+    const state = await world.settle("cart-total");
+
+    expect(state).toMatchObject({ step: "review" });
+    const baseline = JSON.parse(world.file("cart-total", "baseline.json")) as SavedBaseline;
+    expect(baseline.knownFailing.map((e) => e.command)).not.toContain(
+      "DEPS_ENV=plan node test/deps.test.mjs",
+    );
+    const preflight = JSON.parse(world.file("cart-total", "preflight.json")) as {
+      setup: { command: string; passed: boolean }[];
+    };
+    expect(preflight.setup).toEqual([
+      expect.objectContaining({ command: "DEPS_ENV=plan node setup.mjs", passed: true }),
+    ]);
+    // The Developer hears that setup ran, and the command to rerun.
+    const developer = world.calls().find((c) => c.prompt.includes("Task T1"));
+    expect(developer?.prompt).toContain("`DEPS_ENV=plan node setup.mjs`");
+  });
+
+  it("stops the build when a setup command fails, with an escalation that holds its output", async () => {
+    const world = await buildWorld();
+    world.script({ claude: DONE });
+    const plan = cartPlan();
+    const setup = `node -e "console.error('gyp ERR! rebuild failed'); process.exit(1)"`;
+    plan.commands = { ...plan.commands, setup: [{ command: setup }] };
+
+    await world.start("cart-total", plan);
+    const state = await world.settle("cart-total");
+
+    expect(state).toMatchObject({ status: "waiting_escalation", step: "preflight" });
+    expect(state.escalations).toEqual([
+      expect.objectContaining({ kind: "preflight", taskId: null, level: "project_manager" }),
+    ]);
+    expect(state.escalations[0]?.summary).toContain("setup command");
+    const [escalation] = world.jsonFiles("cart-total", "escalations") as Record<string, unknown>[];
+    expect(escalation).toMatchObject({
+      details: expect.stringContaining("gyp ERR! rebuild failed"),
+    });
+    expect(world.calls()).toHaveLength(0);
+    expect(() => world.file("cart-total", "preflight.json")).toThrow();
+  });
+
+  it("warns the Project manager about a lockfile when the plan has no setup commands", async () => {
+    const world = await buildWorld();
+    commit(world, { "package-lock.json": "{}\n" });
+    world.script({ claude: DONE });
+
+    await world.start("cart-total");
+    const state = await world.settle("cart-total");
+
+    expect(state.step).not.toBe("preflight");
+    const preflight = JSON.parse(world.file("cart-total", "preflight.json")) as {
+      warnings: string[];
+    };
+    expect(preflight.warnings).toEqual([expect.stringContaining("package-lock.json")]);
+    const inbox = await world.manager.inbox("cart-total", { all: true });
+    expect(inbox.items).toContainEqual(
+      expect.objectContaining({ kind: "digest", ref: "preflight-setup", file: "preflight.json" }),
+    );
+  });
+
+  it("warns about nothing when the plan has no setup commands and the repository no lockfile", async () => {
+    const world = await buildWorld();
+    world.script({ claude: DONE });
+
+    await world.start("cart-total");
+    await world.settle("cart-total");
+
+    const preflight = JSON.parse(world.file("cart-total", "preflight.json")) as Record<
+      string,
+      unknown
+    >;
+    expect(preflight.warnings).toBeUndefined();
+  });
+});
+
 describe("the test baseline", () => {
   it("records a known failing test, and the task gate doesn't fail the attempt for it", async () => {
     const world = await buildWorld();

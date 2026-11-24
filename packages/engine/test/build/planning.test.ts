@@ -69,7 +69,7 @@ async function planningWorld(): Promise<BuildWorld> {
   writeFileSync(join(world.root, ".aio/team/specialties/node-dev.md"), "Use ES modules.\n");
   writeFileSync(
     join(world.root, ".aio/policy.yaml"),
-    "version: 1\ntests:\n  - command: node test/cart.test.mjs\nlint:\n  - command: node lint.mjs\n",
+    "version: 1\nsetup:\n  - command: node --version\ntests:\n  - command: node test/cart.test.mjs\nlint:\n  - command: node lint.mjs\n",
   );
   world.script({
     claude: [
@@ -107,7 +107,10 @@ describe("planning a build", () => {
       size: "small",
       architecture: DESIGN.architecture,
       milestones: DESIGN.milestones,
-      commands: { test: [{ command: "node test/cart.test.mjs" }] },
+      commands: {
+        setup: [{ command: "node --version" }],
+        test: [{ command: "node test/cart.test.mjs" }],
+      },
       push: null,
     });
     expect(draft.tasks[0]?.specialties).toEqual(["node-dev"]);

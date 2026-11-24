@@ -9,6 +9,7 @@ import {
   leadingAssignments,
   listedTestCommand,
   runListedTest,
+  setupNote,
   testEnvironmentNote,
 } from "../../src/build/test-command.js";
 import { BuildWorktree } from "../../src/build/worktree.js";
@@ -104,6 +105,28 @@ describe("testEnvironmentNote", () => {
 
   it("says nothing when the plan's test commands assign nothing", () => {
     expect(testEnvironmentNote({ test: [{ command: "pnpm test" }] })).toBe("");
+  });
+});
+
+describe("setupNote", () => {
+  it("names each setup command as the engine runs it, with the test commands' assignments", () => {
+    const note = setupNote({
+      setup: [
+        { command: "pnpm install --frozen-lockfile" },
+        { command: "make deps", cwd: "native" },
+      ],
+      test: [{ command: "PATH=/usr/bin:$PATH pnpm test" }],
+    });
+    expect(note).toContain("`PATH=/usr/bin:$PATH pnpm install --frozen-lockfile`");
+    expect(note).toContain("`PATH=/usr/bin:$PATH make deps` in `native`");
+    expect(note).toMatch(/already installed/);
+    expect(note).toMatch(/rerun/i);
+  });
+
+  it("says the build has no setup commands when the plan lists none", () => {
+    const note = setupNote({ setup: [], test: [{ command: "pnpm test" }] });
+    expect(note).toMatch(/no setup commands/);
+    expect(note).not.toMatch(/already installed/);
   });
 });
 

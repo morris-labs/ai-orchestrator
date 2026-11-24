@@ -12,7 +12,8 @@ import type { PolicyCommand, PolicyFile } from "@aio/contracts";
 import type { CommandRunner } from "../core.js";
 
 /** What a gate command checks. */
-export type GateCommandKind = "test" | "typecheck" | "lint";
+/** The kind of a gate command. Only a build's preflight runs `setup` commands. */
+export type GateCommandKind = "setup" | "test" | "typecheck" | "lint";
 
 export interface GateCommandResult {
   kind: GateCommandKind;

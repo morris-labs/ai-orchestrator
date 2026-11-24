@@ -589,7 +589,7 @@ class DocsTest(unittest.TestCase):
         text = (ROOT / "docs/policy.md").read_text()
         example = re.search(r"```yaml\n(.*?)```", text, re.S).group(1)
         policy = yaml.safe_load(example)
-        allowed = {"version", "riskPaths", "rules", "tests", "lint", "environmentLimits", "excludePaths", "groupSizeLimit"}
+        allowed = {"version", "riskPaths", "rules", "setup", "tests", "typecheck", "lint", "environmentLimits", "excludePaths", "groupSizeLimit"}
         self.assertEqual(policy["version"], 1)
         self.assertLessEqual(set(policy), allowed)
         for rule in policy["rules"]:
