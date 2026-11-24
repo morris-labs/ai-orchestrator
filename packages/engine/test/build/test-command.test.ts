@@ -5,7 +5,11 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { runTaskGate } from "../../src/build/gate.js";
 import { runRedCheck } from "../../src/build/red-check.js";
-import { leadingAssignments, listedTestCommand } from "../../src/build/test-command.js";
+import {
+  leadingAssignments,
+  listedTestCommand,
+  testEnvironmentNote,
+} from "../../src/build/test-command.js";
 import { BuildWorktree } from "../../src/build/worktree.js";
 import { ExecaRunner, ShellRunner } from "../../src/range/exec.js";
 import { buildSampleRepo } from "../state/scenario.js";
@@ -53,6 +57,17 @@ describe("listedTestCommand", () => {
     expect(listedTestCommand("node a.test.mjs", { test: [{ command: "node t.mjs" }] })).toEqual({
       command: "node a.test.mjs",
     });
+  });
+});
+
+describe("testEnvironmentNote", () => {
+  it("tells the Test engineer which assignments go in front of its commands", () => {
+    const note = testEnvironmentNote({ test: [{ command: "PATH=/usr/bin:$PATH pnpm test" }] });
+    expect(note).toContain("with `PATH=/usr/bin:$PATH` in front");
+  });
+
+  it("says nothing when the plan's test commands assign nothing", () => {
+    expect(testEnvironmentNote({ test: [{ command: "pnpm test" }] })).toBe("");
   });
 });
 

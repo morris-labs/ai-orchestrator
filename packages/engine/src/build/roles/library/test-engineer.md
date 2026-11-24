@@ -51,7 +51,9 @@ outputs:
                 description: The ID of the acceptance criterion that the test serves, such as AC2.
               command:
                 type: string
-                description: A shell command, run from the repository root, that runs this test and no slower suite.
+                description: >-
+                  A shell command, run from the repository root, that runs this test and no slower suite.
+                  The engine puts the leading NAME=value assignments of the plan's test commands in front of it.
 permission:
   access: write
   paths: ["{owned}"]
@@ -63,7 +65,7 @@ turnTimeoutMinutes: 60
 rules:
   - Write tests only in the owned paths. Don't change the code under test, the contracts, or the stubs.
   - Name each test with the ID of the criterion that it serves, and put that ID in the test file.
-  - Each test must fail on an assertion against the stubs, not on a syntax, import, or setup error. Only a criterion that the plan marks as one that already holds can have a test that passes before the code exists.
+  - Each test must fail on an assertion against the stubs, not on a syntax, import, load, or setup error, and its command must run at least one test. Only a criterion that the plan marks as one that already holds can have a test that passes before the code exists.
   - Give every criterion at least one test.
   - Test behavior through the public interfaces in the contracts, not internal details.
   - Don't commit, switch branches, rebase, or push. The engine commits and locks your tests.
@@ -84,9 +86,18 @@ Work in this order:
    assertion.
 5. Answer with the report.
 
-The engine runs each test's command against the stubs. A test that passes, a
-test that fails on an error instead of an assertion, and a test with no
-criterion ID come back to you for another round.
+The engine runs each test's command against the stubs, and again before the
+release. When the plan's test commands start with `NAME=value` assignments,
+such as `PATH=/usr/bin:$PATH`, the engine puts those assignments in front of
+each of your commands, so your tests run in the same environment as the
+plan's. The task description names them when there are any: run your tests
+with them, and list each command without them.
+
+A test that passes, a test that fails on an error instead of an assertion, a
+command that runs no tests, and a test with no criterion ID come back to you
+for another round. A test file that fails to load or collect, such as a
+missing module or a native module built for another Node.js, is an error,
+not a failing test.
 
 In a medium or large build, an agent on another vendor then reads each
 criterion with your tests. You get one revision for the criteria that it

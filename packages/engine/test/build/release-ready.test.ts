@@ -325,6 +325,8 @@ describe("the release ready step", () => {
       criteria: [expect.objectContaining({ id: "AC1", passed: true })],
     });
     expect(state.escalations[0]?.summary).toMatch(/push answer/);
+    // The Test engineer learns how the engine runs its commands.
+    expect(world.calls()[0]?.prompt).toContain("with `CART_ENV=gate` in front");
   });
 
   it("stops before the push without a push answer, with the owner checks and the known failing and flaky tests in the pull request description", async () => {

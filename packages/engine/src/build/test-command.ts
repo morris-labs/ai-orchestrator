@@ -89,3 +89,14 @@ export function listedTestCommand(
   const prefix = testAssignments(commands).filter((a) => !own.has(nameOf(a)));
   return { command: prefix.length > 0 ? `${prefix.join(" ")} ${command.trimStart()}` : command };
 }
+
+/**
+ * A sentence for the Test engineer's prompt that says how the engine runs
+ * its per-test commands, or an empty string when the plan's test commands
+ * assign nothing.
+ */
+export function testEnvironmentNote(commands: Pick<BuildCommands, "test">): string {
+  const assignments = testAssignments(commands);
+  if (assignments.length === 0) return "";
+  return `The engine runs each test's command from the repository root with \`${assignments.join(" ")}\` in front, as the plan's test commands set the environment. Run your tests the same way, and list each command without those assignments.`;
+}

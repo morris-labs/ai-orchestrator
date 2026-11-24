@@ -394,9 +394,12 @@ before any Developer starts:
 
 - **Criterion IDs:** each test names the acceptance criterion that it serves.
 - **Red check:** the engine runs the tests against the contract stubs. Each
-  test must fail on an assertion, not on a syntax, import, or setup error. A
-  test that passes before the code exists goes back to the Test engineer,
-  unless the build plan marks its criterion as one that already holds.
+  test must fail on an assertion, not on a syntax, import, load, or setup
+  error, and its command must run at least one test. A test that passes
+  before the code exists goes back to the Test engineer, unless the build
+  plan marks its criterion as one that already holds. Each test's command
+  runs with the leading `NAME=value` assignments of the plan's test commands
+  in front; see [Per-test commands](task-graph.md#per-test-commands).
 - **Coverage check:** in medium and large builds, an agent on a different
   vendor from the Test engineer reads each criterion with its tests, one
   time. It reports each criterion that the tests don't check, and the Test

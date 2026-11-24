@@ -32,6 +32,7 @@ import type { BuildContext } from "./context.js";
 import type { EscalationDraft } from "./escalations.js";
 import { outsideWritable } from "./gate.js";
 import { runRedCheck, type ListedTest, type RedCheck } from "./red-check.js";
+import { testEnvironmentNote } from "./test-command.js";
 import { rolePrompt, type RoleTask } from "./roles/index.js";
 import { TEST_ENGINEER } from "./steps/tests-first.js";
 import {
@@ -293,8 +294,12 @@ function roleTask(
   return {
     id: `${task.id}-dispute-${record.id}`,
     title: `Test dispute ${record.id} of task ${task.id} about ${record.test}`,
-    description:
+    description: [
       "The Developer of the task believes a locked test is wrong. Decide whether it is, and fix it when it is.",
+      testEnvironmentNote(ctx.plan.commands),
+    ]
+      .filter(Boolean)
+      .join(" "),
     repoPath: ctx.worktree.path,
     branch: ctx.state.branch,
     ownedFiles: [record.test],
