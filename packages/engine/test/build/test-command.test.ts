@@ -1,13 +1,14 @@
 // How the engine runs a per-test command: in the environment that the plan's
 // test commands set with their leading NAME=value assignments.
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { runTaskGate } from "../../src/build/gate.js";
+import { gateFailureLine, runTaskGate } from "../../src/build/gate.js";
 import { runRedCheck } from "../../src/build/red-check.js";
 import {
   leadingAssignments,
   listedTestCommand,
+  runListedTest,
   testEnvironmentNote,
 } from "../../src/build/test-command.js";
 import { BuildWorktree } from "../../src/build/worktree.js";
@@ -53,6 +54,35 @@ describe("listedTestCommand", () => {
     });
   });
 
+  it("runs a per-test command in the directory that every plan test command sets", () => {
+    const sub = {
+      test: [
+        { command: "PATH=/usr/bin:$PATH pnpm test", cwd: "packages/server" },
+        { command: "pnpm test:unit", cwd: "packages/server" },
+      ],
+    };
+    expect(listedTestCommand("pnpm exec vitest run a.test.ts", sub)).toEqual({
+      command: "PATH=/usr/bin:$PATH pnpm exec vitest run a.test.ts",
+      cwd: "packages/server",
+    });
+  });
+
+  it("runs a per-test command from the repository root when the plan test commands' directories differ", () => {
+    const mixed = {
+      test: [
+        { command: "pnpm test", cwd: "packages/server" },
+        { command: "python3 -m unittest", cwd: "packaging" },
+      ],
+    };
+    expect(listedTestCommand("pnpm exec vitest run a.test.ts", mixed)).toEqual({
+      command: "pnpm exec vitest run a.test.ts",
+    });
+    const partly = {
+      test: [{ command: "pnpm test", cwd: "packages/server" }, { command: "make test" }],
+    };
+    expect(listedTestCommand("make check", partly)).toEqual({ command: "make check" });
+  });
+
   it("leaves a command alone when the plan's test commands assign nothing", () => {
     expect(listedTestCommand("node a.test.mjs", { test: [{ command: "node t.mjs" }] })).toEqual({
       command: "node a.test.mjs",
@@ -64,6 +94,12 @@ describe("testEnvironmentNote", () => {
   it("tells the Test engineer which assignments go in front of its commands", () => {
     const note = testEnvironmentNote({ test: [{ command: "PATH=/usr/bin:$PATH pnpm test" }] });
     expect(note).toContain("with `PATH=/usr/bin:$PATH` in front");
+  });
+
+  it("names the directory that the engine runs the commands in", () => {
+    const note = testEnvironmentNote({ test: [{ command: "pnpm test", cwd: "packages/server" }] });
+    expect(note).toContain("in `packages/server`");
+    expect(note).not.toContain("in front");
   });
 
   it("says nothing when the plan's test commands assign nothing", () => {
@@ -156,5 +192,63 @@ describe("per-test commands in the plan's environment", () => {
       ["CART_ENV=gate CART_RESULT=5 node test/env.test.mjs", true],
     ]);
     expect(gate.regressions).toBeUndefined();
+  });
+});
+
+describe("runListedTest", () => {
+  const shell = new ShellRunner(new ExecaRunner());
+
+  it("fails a run that passes without running a test", async () => {
+    const repo = buildSampleRepo();
+    const run = await runListedTest(
+      "echo ' Tests  3 skipped (3)'",
+      { test: [{ command: "make test" }] },
+      { repoPath: repo, shell },
+    );
+
+    expect(run).toMatchObject({ exitCode: 0, passed: false, noTests: true });
+    expect(run.failures).toContain("the command ran no tests");
+  });
+
+  it("runs the command in the plan test commands' directory", async () => {
+    const repo = buildSampleRepo();
+    mkdirSync(join(repo, "sub"), { recursive: true });
+    const run = await runListedTest(
+      "test -e here.txt || touch here.txt",
+      { test: [{ command: "make test", cwd: "sub" }] },
+      { repoPath: repo, shell },
+    );
+
+    expect(run).toMatchObject({ passed: true, cwd: "sub" });
+    expect(existsSync(join(repo, "sub/here.txt"))).toBe(true);
+  });
+
+  it("fails the task gate on an earlier task's locked test that runs no tests", async () => {
+    const tree = await worktree("gate-empty");
+    const base = await tree.resolveBase(undefined);
+    const listed = { ...LISTED, command: "echo 'No tests found, exiting with code 0'" };
+
+    const gate = await runTaskGate({
+      worktree: tree,
+      base,
+      writable: ["**"],
+      commands: { test: [{ command: "true" }], typecheck: [], lint: [] },
+      lock: {
+        commit: base,
+        redCheck: "x",
+        files: [],
+        tests: [listed],
+        lockedAt: "2026-01-01T00:00:00Z",
+      },
+      earlier: [{ id: "T1", tests: ["test/env.test.mjs"] }],
+      shell,
+    });
+
+    expect(gate.passed).toBe(false);
+    expect(gate.commands.map((c) => [c.command, c.passed])).toEqual([
+      ["true", true],
+      ["echo 'No tests found, exiting with code 0'", false],
+    ]);
+    expect(gateFailureLine(gate)).toContain("ran no tests");
   });
 });

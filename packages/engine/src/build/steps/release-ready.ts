@@ -53,7 +53,7 @@ import type { BuildContext, ReviewRuns } from "../context.js";
 import { escalationForCallError } from "../escalations.js";
 import { gateReport, outsideWritable, runTaskGate, type TaskGateResult } from "../gate.js";
 import type { ListedTest } from "../red-check.js";
-import { listedTestCommand } from "../test-command.js";
+import { runListedTest } from "../test-command.js";
 import { writablePaths, type RoleTask } from "../roles/index.js";
 import { readTestLock } from "../test-lock.js";
 import { reportProjectManagerUsage, type TranscriptUsage } from "../pm-usage.js";
@@ -127,8 +127,8 @@ function checkedCriteria(ctx: BuildContext): BuildCriterion[] {
 
 /**
  * Traces each test and UI check criterion to the locked tests that name it,
- * and runs each of those tests' commands once in the worktree, in the
- * environment of the plan's test commands.
+ * and runs each of those tests' commands once in the worktree with
+ * `runListedTest()`: a run of no tests doesn't count as a pass.
  */
 async function traceCriteria(ctx: BuildContext): Promise<TraceRecord> {
   const lock = await readTestLock(ctx.store);
@@ -141,11 +141,11 @@ async function traceCriteria(ctx: BuildContext): Promise<TraceRecord> {
     for (const test of locked.filter((t) => t.criterion === criterion.id)) {
       let passed = results.get(test.command);
       if (passed === undefined) {
-        const run = await runGateCommand(
-          "test",
-          listedTestCommand(test.command, ctx.plan.commands),
-          { repoPath: ctx.worktree.path, shell: ctx.services.shell, signal: ctx.signal },
-        );
+        const run = await runListedTest(test.command, ctx.plan.commands, {
+          repoPath: ctx.worktree.path,
+          shell: ctx.services.shell,
+          signal: ctx.signal,
+        });
         passed = run.passed;
         results.set(test.command, passed);
       }

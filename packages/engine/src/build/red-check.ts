@@ -8,8 +8,8 @@
 // reads the command's output to tell an assertion failure from an error.
 import type { BuildCommands } from "@aio/contracts";
 import type { CommandRunner } from "../core.js";
-import { runGateCommand } from "../gate/gate.js";
-import { listedTestCommand } from "./test-command.js";
+import type { GateCommandResult } from "../gate/gate.js";
+import { runListedTest } from "./test-command.js";
 import type { BuildWorktree } from "./worktree.js";
 
 /**
@@ -150,18 +150,14 @@ export async function runRedCheck(options: RunRedCheckOptions): Promise<RedCheck
   const before = new Set(await worktree.untracked());
   const run = { repoPath: worktree.path, shell: options.shell, signal: options.signal };
   const timed = options.timeoutMs === undefined ? run : { ...run, timeoutMs: options.timeoutMs };
-  const runs = new Map<string, Awaited<ReturnType<typeof runGateCommand>>>();
+  const runs = new Map<string, GateCommandResult>();
   const tests: RedTestResult[] = [];
   const problems: string[] = [];
   for (const test of options.tests) {
     if (options.signal?.aborted) break;
     let result = runs.get(test.command);
     if (!result) {
-      result = await runGateCommand(
-        "test",
-        listedTestCommand(test.command, options.commands),
-        timed,
-      );
+      result = await runListedTest(test.command, options.commands, timed);
       runs.set(test.command, result);
     }
     const { outcome, reason } = classifyRun({

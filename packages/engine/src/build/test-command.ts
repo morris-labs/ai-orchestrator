@@ -3,9 +3,13 @@
 // `NAME=value` assignments that set up the environment the tests need, such
 // as `PATH=/usr/bin:$PATH` for a Node.js that matches the native modules. A
 // per-test command runs in that same environment: the engine puts the plan's
-// assignments in front of it. Every place that runs a per-test command goes
-// through `listedTestCommand()`.
+// assignments in front of it, and runs it in the plan's test directory when
+// every test command sets the same one. A per-test command that passes
+// without running a test fails. Every place that runs a per-test command goes
+// through `runListedTest()`.
 import type { BuildCommands, PolicyCommand } from "@aio/contracts";
+import { runGateCommand, type GateCommandResult, type GateOptions } from "../gate/gate.js";
+import { ranNoTests } from "./red-check.js";
 
 const NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
 /** Characters that end a word and start a shell operator. */
@@ -78,8 +82,20 @@ export function testAssignments(commands: Pick<BuildCommands, "test">): string[]
 }
 
 /**
+ * The directory of the plan's test commands, relative to the repository:
+ * the `cwd` that every test command sets, or `null` (the repository root)
+ * when they set different ones or one sets none.
+ */
+export function testDirectory(commands: Pick<BuildCommands, "test">): string | null {
+  const dirs = new Set(commands.test.map((cmd) => cmd.cwd ?? ""));
+  const [only] = dirs;
+  return dirs.size === 1 && only ? only : null;
+}
+
+/**
  * The command that runs a per-test `command`: the plan's test assignments,
- * other than the names that `command` assigns itself, then `command`.
+ * other than the names that `command` assigns itself, then `command`, in
+ * the plan's test directory when it has one.
  */
 export function listedTestCommand(
   command: string,
@@ -87,16 +103,54 @@ export function listedTestCommand(
 ): PolicyCommand {
   const own = new Set(leadingAssignments(command).map(nameOf));
   const prefix = testAssignments(commands).filter((a) => !own.has(nameOf(a)));
-  return { command: prefix.length > 0 ? `${prefix.join(" ")} ${command.trimStart()}` : command };
+  const line = prefix.length > 0 ? `${prefix.join(" ")} ${command.trimStart()}` : command;
+  const cwd = testDirectory(commands);
+  return cwd ? { command: line, cwd } : { command: line };
+}
+
+/** The failure line of a per-test command that passed without running a test. */
+export const NO_TESTS_FAILURE = "the command ran no tests";
+
+/**
+ * A per-test command's result, with a run that exited 0 but ran no tests
+ * (see `ranNoTests()`) turned into a failure: such a run proves nothing.
+ */
+export function requireTests(result: GateCommandResult): GateCommandResult {
+  if (!result.passed || !ranNoTests(result.outputTail)) return result;
+  return {
+    ...result,
+    passed: false,
+    noTests: true,
+    failures: [...new Set([...result.failures, NO_TESTS_FAILURE])].sort(),
+  };
+}
+
+/**
+ * Runs a per-test `command` the way every step must: through
+ * `listedTestCommand()`, and failing a run that ran no tests.
+ */
+export async function runListedTest(
+  command: string,
+  commands: Pick<BuildCommands, "test">,
+  options: GateOptions,
+): Promise<GateCommandResult> {
+  return requireTests(await runGateCommand("test", listedTestCommand(command, commands), options));
 }
 
 /**
  * A sentence for the Test engineer's prompt that says how the engine runs
  * its per-test commands, or an empty string when the plan's test commands
- * assign nothing.
+ * set no assignments and no directory.
  */
 export function testEnvironmentNote(commands: Pick<BuildCommands, "test">): string {
   const assignments = testAssignments(commands);
-  if (assignments.length === 0) return "";
-  return `The engine runs each test's command from the repository root with \`${assignments.join(" ")}\` in front, as the plan's test commands set the environment. Run your tests the same way, and list each command without those assignments.`;
+  const cwd = testDirectory(commands);
+  if (assignments.length === 0 && !cwd) return "";
+  const where = cwd ? `in \`${cwd}\`` : "from the repository root";
+  const prefix = assignments.length > 0 ? ` with \`${assignments.join(" ")}\` in front` : "";
+  const list = [
+    cwd ? `write each command to run from \`${cwd}\`` : "",
+    assignments.length > 0 ? "list each command without those assignments" : "",
+  ].filter(Boolean);
+  return `The engine runs each test's command ${where}${prefix}, as the plan's test commands do. Run your tests the same way, and ${list.join(", and ")}.`;
 }

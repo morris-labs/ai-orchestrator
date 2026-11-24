@@ -21,6 +21,8 @@ export interface GateCommandResult {
   exitCode: number;
   passed: boolean;
   timedOut: boolean;
+  /** True when a per-test command exited 0 but ran no tests, which fails it. */
+  noTests?: boolean;
   /** Normalized failure lines, for comparing two runs of a failing command. */
   failures: string[];
   /** The last lines of the output, for reports and the fixer prompt. */
