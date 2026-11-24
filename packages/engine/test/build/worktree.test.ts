@@ -1,6 +1,6 @@
 // Snapshots of a build worktree, and putting refused changes back.
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { BuildWorktree } from "../../src/build/worktree.js";
@@ -83,4 +83,24 @@ describe("BuildWorktree set-aside", () => {
       expect(existsSync(join(tree.path, file))).toBe(false);
     },
   );
+});
+
+describe("BuildWorktree paths", () => {
+  it("puts back a path with brackets without touching the paths it would match as a glob", async () => {
+    const tree = await worktree();
+    mkdirSync(join(tree.path, "app/[slug]"), { recursive: true });
+    mkdirSync(join(tree.path, "app/s"), { recursive: true });
+    writeFileSync(join(tree.path, "app/[slug]/page.ts"), "one\n");
+    writeFileSync(join(tree.path, "app/s/page.ts"), "one\n");
+    git(tree.path, "add", "-A");
+    commit(tree.path, "add the pages");
+    const base = await tree.head();
+    writeFileSync(join(tree.path, "app/[slug]/page.ts"), "two\n");
+    writeFileSync(join(tree.path, "app/s/page.ts"), "two\n");
+
+    await tree.restorePaths(base, ["app/[slug]/page.ts"]);
+
+    expect(readFileSync(join(tree.path, "app/[slug]/page.ts"), "utf8")).toBe("one\n");
+    expect(readFileSync(join(tree.path, "app/s/page.ts"), "utf8")).toBe("two\n");
+  });
 });

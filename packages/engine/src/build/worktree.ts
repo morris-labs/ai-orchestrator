@@ -79,7 +79,8 @@ export class BuildWorktree {
     readonly branch: string,
   ) {
     this.repo = new Git(runner, repoPath);
-    this.git = new Git(runner, path);
+    // The engine names files, never globs: a path such as `app/[slug]/page.ts` is a file.
+    this.git = new Git(runner, path, { literalPathspecs: true });
   }
 
   /** The worktree path of build `slug` in the repository at `repoPath`. */
