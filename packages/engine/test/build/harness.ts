@@ -166,6 +166,8 @@ export interface BuildWorldOptions {
   copilot?: boolean;
   /** The account folder of each vendor's calls, asked on every call. Default: none. */
   accountDirs?: Partial<Record<Vendor, () => string | undefined>>;
+  /** Step handlers that take the place of the pipeline's own. */
+  handlers?: BuildPipeline["handlers"];
 }
 
 /**
@@ -179,7 +181,10 @@ function worldPipeline(options: BuildWorldOptions): BuildPipeline {
   ]);
   return {
     steps: options.steps ?? WORLD_STEPS,
-    handlers: Object.fromEntries(Object.entries(STEP_HANDLERS).filter(([step]) => !skip.has(step))),
+    handlers: {
+      ...Object.fromEntries(Object.entries(STEP_HANDLERS).filter(([step]) => !skip.has(step))),
+      ...options.handlers,
+    },
   };
 }
 
