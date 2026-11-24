@@ -66,6 +66,7 @@ import { seatCallSpec } from "../seat-call.js";
 import { listSpecialties } from "../specialties/index.js";
 import { renderPlanningStatus } from "../status-file.js";
 import { BuildStore } from "../store.js";
+import type { TeamChannel } from "../../team/index.js";
 import { Meeting, type MeetingHost } from "./meeting.js";
 
 /** The engine's own draft plan, beside the one the Project manager can edit. */
@@ -117,7 +118,14 @@ export class BuildPlanner {
   private readonly meetings = new Map<string, BuildMeeting>();
   private pausedUntil: string | undefined;
   private announced = false;
+  /**
+   * Every write to the build's files, in order. After `stop()`, a write that
+   * hasn't started is dropped: the next engine owns the files.
+   */
   private writeChain: Promise<void> = Promise.resolve();
+  private stopped = false;
+  /** The team chat of the meeting under way, which `stop()` closes. */
+  private meetingChannel: TeamChannel | null = null;
 
   private constructor(
     private planning: BuildPlanning,
@@ -288,26 +296,40 @@ export class BuildPlanner {
     return new Date(this.services.clock.now()).toISOString();
   }
 
+  /**
+   * Runs `work` after the writes before it, unless the planner stopped by
+   * then. Rejects with `work`'s error, which doesn't hold up later writes.
+   */
+  private write(work: () => Promise<void>, onError?: (error: unknown) => void): Promise<void> {
+    const write = this.writeChain.then(async () => {
+      if (!this.stopped) await work();
+    });
+    this.writeChain = write.catch((error: unknown) => onError?.(error));
+    return write;
+  }
+
   /** Saves the record, the ledger, and the status file, and sends `build.changed` the first time. */
   async persist(): Promise<void> {
     this.planning.updatedAt = this.now();
     const planning = structuredClone(this.planning);
     const ledger = structuredClone(this.ledger);
-    const write = this.writeChain.then(async () => {
-      await this.store.writeJson(this.store.path("engine.json"), { ledger });
-      await this.store.writeJson(this.store.path(BUILD_PLANNING_FILE), planning);
-      await this.store.writeText(
-        this.store.path("STATUS.md"),
-        renderPlanningStatus(planning, [...this.meetings.values()]),
-      );
-    });
-    this.writeChain = write.catch((error: unknown) => {
-      this.services.log.error("Couldn't save a build's planning record", {
-        build: planning.slug,
-        error: String(error),
-      });
-    });
-    await write;
+    const meetings = [...this.meetings.values()];
+    await this.write(
+      async () => {
+        await this.store.writeJson(this.store.path("engine.json"), { ledger });
+        await this.store.writeJson(this.store.path(BUILD_PLANNING_FILE), planning);
+        await this.store.writeText(
+          this.store.path("STATUS.md"),
+          renderPlanningStatus(planning, meetings),
+        );
+      },
+      (error) => {
+        this.services.log.error("Couldn't save a build's planning record", {
+          build: planning.slug,
+          error: String(error),
+        });
+      },
+    );
     if (this.announced) return;
     this.announced = true;
     await this.emit({
@@ -442,7 +464,7 @@ export class BuildPlanner {
     try {
       this.planning.calls.push(call);
       await this.persist();
-      await this.store.writeJson(this.store.path(call.file), file);
+      await this.saveCallFile(call.file, file);
       const spec = seatCallSpec(role, input.placement, {
         seat,
         key: call.key,
@@ -492,8 +514,8 @@ export class BuildPlanner {
       call.status = "done";
       call.finishedAt = this.now();
       file.finishedAt = call.finishedAt;
-      await this.store.writeJson(this.store.path(call.file), file);
-      await this.writeDraft();
+      await this.saveCallFile(call.file, file);
+      await this.write(() => this.writeDraft());
       await this.persist();
       return { call, answer };
     } finally {
@@ -549,6 +571,7 @@ export class BuildPlanner {
     };
     const meeting = new Meeting(record, host);
     this.meeting = meeting;
+    this.meetingChannel = channel;
     try {
       this.planning.meetings.push({ id, file: `meetings/${id}.json`, status: "running" });
       await this.saveMeeting(record);
@@ -556,6 +579,7 @@ export class BuildPlanner {
       return { planning: this.record, meeting: done };
     } finally {
       this.meeting = null;
+      this.meetingChannel = null;
       channel?.close();
     }
   }
@@ -586,8 +610,14 @@ export class BuildPlanner {
     this.meetings.set(copy.id, copy);
     const entry = this.planning.meetings.find((m) => m.id === copy.id);
     if (entry) entry.status = copy.status;
-    await this.store.writeJson(this.store.path(`meetings/${copy.id}.json`), copy);
+    await this.write(() => this.store.writeJson(this.store.path(`meetings/${copy.id}.json`), copy));
     await this.persist();
+  }
+
+  /** Saves a seat call's file. */
+  private async saveCallFile(path: string, file: CallFile): Promise<void> {
+    const copy = structuredClone(file);
+    await this.write(() => this.store.writeJson(this.store.path(path), copy));
   }
 
   /** Records a failed call and returns the error to throw. */
@@ -603,7 +633,7 @@ export class BuildPlanner {
     call.error = message;
     file.finishedAt = call.finishedAt;
     file.error = message;
-    await this.store.writeJson(this.store.path(call.file), file);
+    await this.saveCallFile(call.file, file);
     await this.persist();
     return new EngineError(code, message, details);
   }
@@ -781,8 +811,17 @@ export class BuildPlanner {
     return plan;
   }
 
-  /** Stops the seat call under way, for an engine shutdown. */
-  stop(): void {
+  /**
+   * Stops the planner for an engine shutdown and resolves once the write
+   * under way, if any, ends. A call under way can still finish, but the
+   * planner writes nothing more and sends no more meeting messages: the next
+   * engine marks the call and the meeting failed, and a late write from this
+   * planner would undo that.
+   */
+  async stop(): Promise<void> {
+    this.stopped = true;
     this.calls.stopCalls();
+    this.meetingChannel?.close();
+    await this.writeChain;
   }
 }
