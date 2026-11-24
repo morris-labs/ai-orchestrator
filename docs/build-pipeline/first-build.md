@@ -12,9 +12,10 @@ Check the following:
 - You run AI Orchestrator in accounts mode, and the box runs Claude Code.
   The Project manager role runs only in a Claude box; the `aio-build` skill
   refuses to run in a Codex or Copilot box.
-- The project has a policy file, `.aio/policy.yaml`, with the test, type
-  check, and lint commands. The build plan takes its commands from it. For
-  more information, see [Policy file](../policy.md).
+- The project has a policy file, `.aio/policy.yaml`, with the setup, test,
+  type check, and lint commands. The build plan takes its commands from it.
+  A build starts in a fresh worktree, so the `setup` list must install the
+  dependencies there. For more information, see [Policy file](../policy.md).
 - The box's container started with this version of AI Orchestrator. A
   container from an earlier version lacks the `aio-build` command or the
   project ID it needs; restart the project's boxes to recreate it.

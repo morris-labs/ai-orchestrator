@@ -47,6 +47,10 @@ rules:
   - id: parameterized-sql
     text: Build every SQL statement with bound parameters, never by string concatenation.
 
+# Commands that install dependencies in a fresh build worktree.
+setup:
+  - command: npm ci
+
 # Commands the gate runs before the first round and after every fix.
 tests:
   - command: npm test
@@ -81,7 +85,9 @@ names the field that holds it.
 | `version` | Integer | Required | The file format version. Must be `1`. |
 | `riskPaths` | List of globs | `[]` | Paths whose file groups always count as major. |
 | `rules` | List of rules | `[]` | Extra review rules. Each rule has an `id`, a `text`, and an optional `appliesTo` list of globs. A rule without `appliesTo` applies to every file. |
+| `setup` | List of commands | Absent | Commands that make a fresh build worktree ready, such as a dependency install, in the same form as `tests`. A build plan's setup commands start from this list. Review runs don't use it. |
 | `tests` | List of commands | `[]` | Test commands for the gate. Each has a `command` and an optional `cwd` relative to the repository root. |
+| `typecheck` | List of commands | Absent | Type check commands, in the same form as `tests`. A build plan's type check commands start from this list. |
 | `lint` | List of commands | `[]` | Lint commands for the gate, in the same form as `tests`. |
 | `environmentLimits` | List of strings | `[]` | Facts about where the code runs, added to every reviewer and disprover prompt. |
 | `groupSizeLimit` | Positive integer | Set by the run's depth | The changed-line count above which a file group splits. A value in the file wins at every depth. The **Policy** editor writes this field when it saves, so a file it saved names a limit. |
@@ -110,3 +116,28 @@ names the field that holds it.
 
 When a repository has no `tests` or `lint` commands, the gate has nothing to
 run and passes.
+
+### Setup commands in a build
+
+A build works in a fresh worktree that has no installed dependencies. The
+build's preflight runs the plan's `setup` commands there once, before every
+other command, so agents never install dependencies or rebuild native
+modules themselves. A setup command fails the preflight with an escalation
+that holds its output tail.
+
+The engine puts the leading `NAME=value` assignments of the plan's test
+commands in front of each setup command, so the install uses the same
+Node.js or interpreter as the tests. For example, with this policy, the
+engine runs `PATH=/usr/bin:$PATH corepack pnpm install --frozen-lockfile`:
+
+```yaml
+setup:
+  - command: corepack pnpm install --frozen-lockfile
+tests:
+  - command: PATH=/usr/bin:$PATH corepack pnpm test
+```
+
+When the plan has no setup commands, preflight runs none. When the
+worktree's root holds a lockfile, such as `package-lock.json`, preflight
+warns the Project manager and names the lockfile. The engine never guesses a
+package manager.

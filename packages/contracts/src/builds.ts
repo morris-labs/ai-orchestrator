@@ -5,7 +5,7 @@
 // stories, edge cases, criteria with their verification methods, size, usage
 // estimate, secrets, and services), the Architect's design (the
 // architecture, shared files, milestones, and task graph with specialties),
-// the test, type check, and lint commands, the issue the plan starts from,
+// the setup, test, type check, and lint commands, the issue the plan starts from,
 // and the owner's push answer. Execution reads the criteria, the tasks, and
 // the commands, and runs the tasks in dependency order.
 import { z } from "zod";
@@ -87,9 +87,15 @@ export const BuildTaskSchema = z
   .strict();
 export type BuildTask = z.infer<typeof BuildTaskSchema>;
 
-/** The commands the task gate runs, which the Project manager seeds from the policy file. */
+/**
+ * The commands the task gate runs, which the Project manager seeds from the
+ * policy file. Preflight runs the `setup` commands once, before every other
+ * command, to make the fresh build worktree ready: to install its
+ * dependencies, for example.
+ */
 export const BuildCommandsSchema = z
   .object({
+    setup: z.array(PolicyCommandSchema).default([]),
     test: z.array(PolicyCommandSchema).min(1, "the plan needs at least one test command"),
     typecheck: z.array(PolicyCommandSchema).default([]),
     lint: z.array(PolicyCommandSchema).default([]),

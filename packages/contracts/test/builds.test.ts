@@ -28,7 +28,14 @@ describe("BuildPlanSchema", () => {
     expect(parsed.criteria[0]).toMatchObject({ verification: "test", alreadyHolds: false });
     expect(parsed.tasks[0]).toMatchObject({ role: "developer", contracts: [], specialties: [] });
     expect(parsed.commands.typecheck).toEqual([]);
+    expect(parsed.commands.setup).toEqual([]);
     expect(parsed).toMatchObject({ singleVendor: null, placements: {}, size: "medium" });
+  });
+
+  it("takes setup commands", () => {
+    const setup = [{ command: "PATH=/usr/bin:$PATH corepack pnpm install --frozen-lockfile" }];
+    const parsed = BuildPlanSchema.parse({ ...plan, commands: { ...plan.commands, setup } });
+    expect(parsed.commands.setup).toEqual(setup);
   });
 
   it("takes a small, medium, or large build size", () => {

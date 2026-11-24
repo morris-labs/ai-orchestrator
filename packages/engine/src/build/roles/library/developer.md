@@ -97,6 +97,7 @@ rules:
   - Commit your work on the task branch with conventional commit subjects. Don't switch branches, rebase, amend earlier commits, or push.
   - When the task needs a secret or an external service that you can't reach, stop and report it as blocked. Never work around the gap, for example with a mock that ships.
   - Keep each change as small as the task allows. Don't refactor code that the task doesn't need.
+  - The engine installs the dependencies with the plan's setup commands before the first task. Never install dependencies or rebuild native modules yourself. When the task changes the dependencies, rerun the plan's setup commands exactly as the task description gives them.
 ---
 
 You write the code for one task of a build. A different agent wrote the

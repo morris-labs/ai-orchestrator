@@ -31,7 +31,7 @@ The file holds the following fields:
 | `agent_call` | An agent call fails twice, a vendor refuses it, or it needs a decision; or a team chat message can't be delivered. | Project manager |
 | `placement` | A seat can't be placed, such as a placement that breaks the single-vendor setting. | Project manager |
 | `specialty` | A task's specialty pack can't be loaded. | Project manager |
-| `preflight` | A test, type check, or lint command of the plan can't run. | Project manager |
+| `preflight` | A setup command of the plan fails, or a test, type check, or lint command of the plan can't run. The details hold each command's output tail. | Project manager |
 | `tests_first` | The Test engineer's tests fail the engine's checks in every round or in the revision after the coverage check, or the plan lists no test paths. | Project manager |
 | `review` | The build's review run doesn't report the diff clean. | Project manager |
 | `release_ready` | A criterion has no passing locked test, the push or CI loop stops, or the plan has no push answer. | Project manager; owner for the push answer |

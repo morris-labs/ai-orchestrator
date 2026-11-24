@@ -63,6 +63,10 @@ per-test command's value. An assignment counts only when a command follows
 it, so `A=1; make test` and `A=1 && make test` set nothing. A command that
 starts with `env` sets nothing either.
 
+The plan's setup commands get the same assignments, so a dependency
+install at preflight builds native modules for the Node.js that the tests
+use. A setup command keeps its own `cwd`.
+
 The engine also runs a per-test command in the plan's test directory when
 every plan test command sets the same `cwd`. When the plan's test commands
 set different directories, or one of them sets none, the per-test command

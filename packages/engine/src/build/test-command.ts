@@ -6,7 +6,8 @@
 // assignments in front of it, and runs it in the plan's test directory when
 // every test command sets the same one. A per-test command that passes
 // without running a test fails. Every place that runs a per-test command goes
-// through `runListedTest()`.
+// through `runListedTest()`. The plan's setup commands get the same
+// assignments, so dependencies install for the Node.js that the tests use.
 import type { BuildCommands, PolicyCommand } from "@aio/contracts";
 import { runGateCommand, type GateCommandResult, type GateOptions } from "../gate/gate.js";
 import { ranNoTests } from "./red-check.js";
@@ -93,17 +94,26 @@ export function testDirectory(commands: Pick<BuildCommands, "test">): string | n
 }
 
 /**
- * The command that runs a per-test `command`: the plan's test assignments,
- * other than the names that `command` assigns itself, then `command`, in
- * the plan's test directory when it has one.
+ * `command` in the environment of the plan's test commands: the plan's test
+ * assignments, other than the names that `command` assigns itself, then
+ * `command`. Per-test commands and the plan's setup commands run this way.
+ */
+export function inTestEnvironment(command: string, commands: Pick<BuildCommands, "test">): string {
+  const own = new Set(leadingAssignments(command).map(nameOf));
+  const prefix = testAssignments(commands).filter((a) => !own.has(nameOf(a)));
+  return prefix.length > 0 ? `${prefix.join(" ")} ${command.trimStart()}` : command;
+}
+
+/**
+ * The command that runs a per-test `command`: `command` in the test
+ * environment (see `inTestEnvironment()`), in the plan's test directory when
+ * it has one.
  */
 export function listedTestCommand(
   command: string,
   commands: Pick<BuildCommands, "test">,
 ): PolicyCommand {
-  const own = new Set(leadingAssignments(command).map(nameOf));
-  const prefix = testAssignments(commands).filter((a) => !own.has(nameOf(a)));
-  const line = prefix.length > 0 ? `${prefix.join(" ")} ${command.trimStart()}` : command;
+  const line = inTestEnvironment(command, commands);
   const cwd = testDirectory(commands);
   return cwd ? { command: line, cwd } : { command: line };
 }
@@ -153,4 +163,24 @@ export function testEnvironmentNote(commands: Pick<BuildCommands, "test">): stri
     assignments.length > 0 ? "list each command without those assignments" : "",
   ].filter(Boolean);
   return `The engine runs each test's command ${where}${prefix}, as the plan's test commands do. Run your tests the same way, and ${list.join(", and ")}.`;
+}
+
+/**
+ * A sentence for the Developer's and the Test engineer's prompts that says
+ * the plan's setup commands, as the engine ran them, already installed the
+ * dependencies, and that the agent must not install or rebuild anything.
+ */
+export function setupNote(commands: Pick<BuildCommands, "setup" | "test">): string {
+  const rule =
+    "Don't install dependencies or rebuild native modules yourself, and don't run a package manager's install under another Node.js or interpreter.";
+  if (commands.setup.length === 0) {
+    return `The plan has no setup commands. ${rule} When a test can't load a dependency, say so in your report.`;
+  }
+  const list = commands.setup
+    .map((cmd) => {
+      const line = `\`${inTestEnvironment(cmd.command, commands)}\``;
+      return cmd.cwd ? `${line} in \`${cmd.cwd}\`` : line;
+    })
+    .join(", then ");
+  return `Before the first task, the engine ran the plan's setup commands in the worktree, so the dependencies are already installed: ${list}. ${rule} When your task changes the dependencies, rerun those setup commands exactly as written.`;
 }

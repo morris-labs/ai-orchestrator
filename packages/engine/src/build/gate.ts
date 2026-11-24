@@ -35,6 +35,9 @@ import { listedTestCommand, requireTests } from "./test-command.js";
 import { checkLock, type LockCheck, type TestLock } from "./test-lock.js";
 import type { BuildWorktree } from "./worktree.js";
 
+/** The plan's commands that the task gate runs. */
+type GateCommands = Omit<BuildCommands, "setup">;
+
 /** The permission check: the changed paths that no writable glob covers. */
 export interface PermissionCheck {
   passed: boolean;
@@ -105,7 +108,8 @@ export interface TaskGateOptions {
   writable: readonly string[];
   /** Exact paths that other seats changed, which the permission check leaves be. */
   exempt?: readonly string[];
-  commands: BuildCommands;
+  /** The plan's commands. The gate never runs the setup commands. */
+  commands: GateCommands;
   /** The build's test lock; the gate fails an attempt that changes a locked file. */
   lock?: TestLock | null;
   /** Runs one command line through a shell. */
@@ -208,7 +212,7 @@ interface LockCommand {
 function earlierLockCommands(
   lock: TestLock | null | undefined,
   earlier: readonly EarlierTask[],
-  commands: BuildCommands,
+  commands: GateCommands,
 ): Map<string, LockCommand> {
   const byCommand = new Map<string, LockCommand>();
   for (const test of lock?.tests ?? []) {

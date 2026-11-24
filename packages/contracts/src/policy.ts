@@ -52,6 +52,11 @@ export const PolicyFileSchema = z
     /** Globs whose files always count as major. */
     riskPaths: z.array(z.string().min(1)).default([]),
     rules: z.array(PolicyRuleSchema).default([]),
+    /**
+     * Commands that make a fresh checkout ready to build and test, such as a
+     * dependency install. A build plan's setup list starts from this one.
+     */
+    setup: z.array(PolicyCommandSchema).optional(),
     tests: z.array(PolicyCommandSchema).default([]),
     /** Type check commands. A build plan's type check list starts from this one. */
     typecheck: z.array(PolicyCommandSchema).optional(),

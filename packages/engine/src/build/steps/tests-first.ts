@@ -25,7 +25,7 @@ import type { BuildContext } from "../context.js";
 import { escalationForCallError } from "../escalations.js";
 import { outsideWritable } from "../gate.js";
 import { runRedCheck, type ListedTest, type RedCheck } from "../red-check.js";
-import { testEnvironmentNote } from "../test-command.js";
+import { setupNote, testEnvironmentNote } from "../test-command.js";
 import type { RoleTask } from "../roles/index.js";
 import { lockFiles, readTestLock, writeTestLock } from "../test-lock.js";
 import { COVERAGE_REPORT_FILE, runCoverageCheck, type CoverageReport } from "./coverage-check.js";
@@ -89,6 +89,7 @@ function roleTask(ctx: BuildContext, scope: Scope, context: string): RoleTask {
     description: [
       "Write the tests for these acceptance criteria before any code for them exists. Each test must fail on an assertion against the stubs.",
       testEnvironmentNote(ctx.plan.commands),
+      setupNote(ctx.plan.commands),
     ]
       .filter(Boolean)
       .join(" "),

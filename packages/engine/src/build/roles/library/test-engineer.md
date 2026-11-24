@@ -70,6 +70,7 @@ rules:
   - Give every criterion at least one test.
   - Test behavior through the public interfaces in the contracts, not internal details.
   - Don't commit, switch branches, rebase, or push. The engine commits and locks your tests.
+  - The engine installs the dependencies with the plan's setup commands before the first task. Never install dependencies or rebuild native modules yourself. When a test can't load a dependency, say so in your report.
 ---
 
 You write a milestone's tests before any code for it exists. The Developers
@@ -102,7 +103,9 @@ A test that passes, a test that fails on an error instead of an assertion, a
 command that runs no tests, and a test with no criterion ID come back to you
 for another round. A test file that fails to load or collect, such as a
 missing module or a native module built for another Node.js, is an error,
-not a failing test.
+not a failing test. The dependencies are already installed in the plan's
+environment, so a load error points at your test or the environment you ran
+it in, not at a missing install.
 
 In a medium or large build, an agent on another vendor then reads each
 criterion with your tests. You get one revision for the criteria that it

@@ -706,7 +706,12 @@ export class BuildPlanner {
     if (!spec || !design) return;
     const policy = await loadPolicy(this.location.projectRoot, this.location.policyPath);
     const draft = draftBuildPlan(spec, design, {
-      commands: { test: policy.tests, typecheck: policy.typecheck ?? [], lint: policy.lint },
+      commands: {
+        setup: policy.setup ?? [],
+        test: policy.tests,
+        typecheck: policy.typecheck ?? [],
+        lint: policy.lint,
+      },
       issue: this.planning.issue,
     });
     const draftPath = this.store.path(BUILD_DRAFT_FILE);

@@ -36,7 +36,7 @@ export interface FlakyTest {
 
 /** A type check or lint command that failed at preflight, with its diagnostic lines. */
 export interface BaselineCheck {
-  kind: Exclude<GateCommandKind, "test">;
+  kind: Exclude<GateCommandKind, "setup" | "test">;
   command: string;
   cwd: string | null;
   /** The lines `diagnosticLines()` read from the command's output. */
@@ -112,7 +112,10 @@ export function classifyRuns(runs: readonly (readonly GateCommandResult[])[]): T
  */
 export function baselineChecks(checks: readonly GateCommandResult[]): BaselineCheck[] {
   return checks.flatMap((c) =>
-    c.kind !== "test" && !c.passed && !c.timedOut && (c.diagnostics?.length ?? 0) > 0
+    (c.kind === "typecheck" || c.kind === "lint") &&
+    !c.passed &&
+    !c.timedOut &&
+    (c.diagnostics?.length ?? 0) > 0
       ? [{ kind: c.kind, command: c.command, cwd: c.cwd, lines: [...(c.diagnostics ?? [])] }]
       : [],
   );

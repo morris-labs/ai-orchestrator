@@ -42,6 +42,7 @@ import {
 } from "../gate.js";
 import { writablePaths, type RoleTask } from "../roles/index.js";
 import { readTestLock } from "../test-lock.js";
+import { setupNote } from "../test-command.js";
 import type { StepOutcome } from "./types.js";
 
 /** Attempts a task gets before it escalates, and the attempts a retry adds. */
@@ -105,7 +106,7 @@ function roleTask(ctx: BuildContext, task: BuildTask, context: string): RoleTask
   return {
     id: task.id,
     title: task.title,
-    description: task.description,
+    description: `${task.description}\n\n${setupNote(ctx.plan.commands)}`,
     repoPath: ctx.worktree.path,
     branch: ctx.state.branch,
     ownedFiles: task.ownedFiles,

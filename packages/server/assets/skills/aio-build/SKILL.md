@@ -62,8 +62,13 @@ unclear, and settle the size first: it decides the path.
 - **Small**: a bug fix or a change that one Developer makes in one task with
   one failing test. You write the plan yourself, with no planning seat and
   no Critic. Copy the `small-plan.json` file beside this skill, fill it in,
-  and go to section 4. Take the `commands` from the `tests`, `typecheck`,
-  and `lint` lists of `$AIO_PROJECT_ROOT/.aio/policy.yaml`. Each task's
+  and go to section 4. Take the `commands` from the `setup`, `tests`,
+  `typecheck`, and `lint` lists of `$AIO_PROJECT_ROOT/.aio/policy.yaml`.
+  The build runs in a fresh worktree, so `setup` must install the
+  dependencies, in the same environment as the test commands. When the
+  policy has no `setup` list and the repository has a lockfile, write the
+  install command into the plan's `setup` and tell the owner to add it to
+  the policy. Each task's
   `specialties` must name packs that exist; leave the list empty when
   unsure.
 - **Medium or large**: run the planning team. Each request waits for the
