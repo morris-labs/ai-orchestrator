@@ -125,14 +125,25 @@ describe("runProcess", () => {
   });
 
   it("escalates to SIGKILL when SIGTERM is ignored", async () => {
+    // The stop starts only once the child ignores SIGTERM. A stop that came
+    // first would end a slow-starting child with SIGTERM instead.
+    const controller = new AbortController();
     const result = await runProcess({
       command: node,
-      args: ["-e", "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"],
+      args: [
+        "-e",
+        "process.on('SIGTERM', () => {}); console.log('ready'); setInterval(() => {}, 1000)",
+      ],
       cwd: process.cwd(),
-      timeoutMs: 300,
+      timeoutMs: 30_000,
       killGraceMs: 200,
+      signal: controller.signal,
+      onLine: (line) => {
+        if (line === "ready") controller.abort();
+      },
     });
-    expect(result.timedOut).toBe(true);
+    expect(result.cancelled).toBe(true);
+    expect(result.timedOut).toBe(false);
     expect(result.signal).toBe("SIGKILL");
   });
 
