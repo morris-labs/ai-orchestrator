@@ -172,6 +172,13 @@ export class BoxService {
   >();
   /** Boxes whose stop a person asked for, so the monitor does not call it unexpected. */
   private readonly requestedStops = new Map<string, number>();
+  /** Boxes whose session a create or start is starting. */
+  private readonly sessionStarts = new Set<string>();
+  /**
+   * Boxes stopped while their session was starting. A stop then finds no
+   * session to end, so the start ends the session once it is up.
+   */
+  private readonly stopsDuringStart = new Set<string>();
   private readonly converting = new Set<string>();
   /** Serializes the part of `create()` that picks a name and saves the record. */
   private readonly createLock = new KeyedMutex();
@@ -775,8 +782,10 @@ export class BoxService {
       );
       // Counted as starting before the lock opens, so a concurrent adoption
       // of the same conversation is refused, not run twice.
-      if (req.start)
+      if (req.start) {
         this.transitions.set(saved.id, { status: "starting", until: Date.now() + TRANSITION_MS });
+        this.sessionStarts.add(saved.id);
+      }
       return { box: saved, openingPrompt, conversationName, createdWorktree };
     });
 
@@ -802,6 +811,7 @@ export class BoxService {
         args = platformArgs(box, project, box.platform, false, openingPrompt, this.hostOs);
       await this.startSession(box, box.platform, args);
     } catch (err) {
+      this.endSessionStart(box.id);
       this.transitions.delete(box.id);
       this.repos.boxes.delete(box.id);
       // Never take a worktree from under another record.
@@ -813,6 +823,7 @@ export class BoxService {
       this.publish(null, "stopped", box.id);
       throw err;
     }
+    const stopAsked = this.endSessionStart(box.id);
     // Re-read: an edit may have landed while the session started.
     const current = this.repos.boxes.get(box.id) ?? box;
     box = this.repos.boxes.put({
@@ -822,8 +833,27 @@ export class BoxService {
       launchedEffort: box.effort,
       updatedAt: this.now(),
     });
+    if (stopAsked) return this.stopStartedSession(box);
     this.publish(box, this.status(box));
     return box;
+  }
+
+  /** Ends a box's session start; returns whether a stop came in during it. */
+  private endSessionStart(id: string): boolean {
+    this.sessionStarts.delete(id);
+    return this.stopsDuringStart.delete(id);
+  }
+
+  /** Ends the session a start just brought up, for a stop that came in during the start. */
+  private async stopStartedSession(box: Box): Promise<Box> {
+    await this.killSession(box.container, boxTmuxSession(box));
+    const saved = this.repos.boxes.put({
+      ...(this.repos.boxes.get(box.id) ?? box),
+      wasRunning: false,
+      updatedAt: this.now(),
+    });
+    this.publish(saved, this.status(saved));
+    return saved;
   }
 
   /**
@@ -933,6 +963,7 @@ export class BoxService {
     }
 
     this.mark(box, "starting");
+    this.sessionStarts.add(box.id);
     try {
       if (first?.forkFrom && box.platform === "claude") {
         await this.copyForkTranscript(first.forkFrom, workDir);
@@ -941,10 +972,12 @@ export class BoxService {
         force: options.force ?? false,
       });
     } catch (err) {
+      this.endSessionStart(box.id);
       this.transitions.delete(box.id);
       this.publish(box, "stopped");
       throw err;
     }
+    const stopAsked = this.endSessionStart(box.id);
     // Re-read: Edit Box and the session watcher write this record while the
     // session starts. Only the fields a start owns change here.
     const current = this.repos.boxes.get(id) ?? box;
@@ -961,6 +994,7 @@ export class BoxService {
     if (next.launchedModel === undefined) delete next.launchedModel;
     if (next.launchedEffort === undefined) delete next.launchedEffort;
     box = this.repos.boxes.put(next);
+    if (stopAsked) return this.stopStartedSession(box);
     this.publish(box, this.status(box));
     return box;
   }
@@ -1009,6 +1043,7 @@ export class BoxService {
   async stop(id: string): Promise<Box> {
     const box = this.get(id);
     this.requestedStops.set(id, Date.now());
+    if (this.sessionStarts.has(id)) this.stopsDuringStart.add(id);
     this.mark(box, "stopping");
     try {
       await this.syncRecordFromSession(id).catch(() => false);
