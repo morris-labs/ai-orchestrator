@@ -278,6 +278,13 @@ A message from a Developer that says a locked test is wrong, with the reason.
 It goes to the Test engineer.
 _Avoid_: Test escalation, appeal
 
+**Setup command**:
+A build plan command that makes the fresh build worktree ready, such as a
+dependency install. Preflight runs each one once, before every other
+command, in the test commands' environment. Agents never install
+dependencies themselves.
+_Avoid_: Install step, bootstrap
+
 **Known failing**:
 A test that fails in every preflight run. It doesn't block the build.
 _Avoid_: Broken test, expected failure

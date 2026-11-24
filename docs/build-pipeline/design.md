@@ -329,9 +329,22 @@ digest. The owner can tell the Project manager to pause after any milestone.
 
 ### Preflight
 
-Before the first milestone, the engine checks that the test, type check, and
-lint commands that the build plan names all run. It then records a baseline
-from three runs of the repository's tests:
+Before the first milestone, the engine makes the fresh build worktree ready
+with the build plan's setup commands, such as a dependency install. Each
+setup command runs once, before every other command, with the leading
+`NAME=value` assignments of the plan's test commands in front, so the
+dependencies install for the same Node.js or interpreter that the tests
+use. A setup command that fails stops the build with a `preflight`
+escalation that holds the command's output tail. A plan without setup
+commands runs none: when the worktree's root holds a lockfile, such as
+`pnpm-lock.yaml`, the engine sends the Project manager a warning that names
+it instead of guessing a package manager. Agents never install
+dependencies or rebuild native modules themselves; a task that changes the
+dependencies reruns the plan's setup commands as written.
+
+The engine then checks that the test, type check, and lint commands that
+the build plan names all run, and records a baseline from three runs of the
+repository's tests:
 
 - **Known failing:** a test that fails in every run. It doesn't block the
   build or count as a regression.
@@ -719,8 +732,8 @@ directory. Tasks, the task gate, and the review run all use that worktree,
 and the Project manager's own checkout stays untouched. A worktree for each
 task arrives with parallel Developers.
 
-The build plan holds its own test, type check, and lint commands, which the
-Project manager seeds from the policy file.
+The build plan holds its own setup, test, type check, and lint commands,
+which the Project manager seeds from the policy file.
 
 ### Review pipeline
 

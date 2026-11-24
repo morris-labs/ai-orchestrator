@@ -26,6 +26,7 @@
     }
   ],
   "commands": {
+    "setup": [{ "command": "npm ci" }],
     "test": [{ "command": "npm test" }],
     "typecheck": [],
     "lint": []

@@ -41,8 +41,8 @@ The seats answer as follows:
 Each seat hears the issue, the spec and the design so far, and the
 specialties a task can name. After both the Analyst and the Architect
 answer, the engine drafts the full build plan in
-`.aio/builds/SLUG/planning/draft.json`, with the test, type check, and lint
-commands from the project's policy file. The engine rewrites the draft
+`.aio/builds/SLUG/planning/draft.json`, with the setup, test, type check,
+and lint commands from the project's policy file. The engine rewrites the draft
 after each answer, unless you edited it: then it keeps your edits and writes
 its own draft from the latest answers to `planning/draft.engine.json`.
 
