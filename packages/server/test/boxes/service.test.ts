@@ -393,6 +393,63 @@ describe("create", () => {
     await starting;
   });
 
+  /** Holds the next session start until the test releases it. */
+  function holdNextStart(h: Harness) {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    let reached!: () => void;
+    const atStart = new Promise<void>((resolve) => (reached = resolve));
+    let blocked = false;
+    h.docker.beforeExec = async (_c, options) => {
+      if (options.cmd[0] === START_SESSION_PATH && !blocked) {
+        blocked = true;
+        reached();
+        await held;
+      }
+    };
+    return { atStart, release };
+  }
+
+  it("leaves a box stopped when a stop arrives while its create still starts it", async () => {
+    const h = makeHarness();
+    const hold = holdNextStart(h);
+    const creating = h.core.boxes.create({ targetDir: h.dir("app"), layout: "root" });
+    await hold.atStart;
+    const [box] = h.core.boxes.list();
+    // The stop ends before the session exists, as a stop request can.
+    await h.core.boxes.stop(box!.id);
+    hold.release();
+    const created = await creating;
+    expect(h.core.boxes.isRunning(created)).toBe(false);
+    expect(created.wasRunning).toBe(false);
+    expect(h.core.boxes.status(created)).toBe("stopped");
+    // Nothing is left behind: the box starts again.
+    await h.core.boxes.start(box!.id);
+    expect(h.core.boxes.isRunning(h.core.boxes.get(box!.id))).toBe(true);
+  });
+
+  it("leaves a box stopped when a stop arrives while a start is under way", async () => {
+    const h = makeHarness();
+    const box = await h.core.boxes.create({
+      targetDir: h.dir("app"),
+      layout: "root",
+      start: false,
+    });
+    const hold = holdNextStart(h);
+    const starting = h.core.boxes.start(box.id);
+    await hold.atStart;
+    await h.core.boxes.stop(box.id);
+    hold.release();
+    const started = await starting;
+    expect(h.core.boxes.isRunning(started)).toBe(false);
+    expect(started.wasRunning).toBe(false);
+    // A later stop and start work as usual.
+    await h.core.boxes.start(box.id);
+    expect(h.core.boxes.isRunning(h.core.boxes.get(box.id))).toBe(true);
+    await h.core.boxes.stop(box.id);
+    expect(h.core.boxes.get(box.id).wasRunning).toBe(false);
+  });
+
   it("forks into a worktree by copying the source transcript first", async () => {
     const h = makeHarness();
     const repo = initRepo(h.dir("repo"));

@@ -42,6 +42,39 @@ import { buildSampleRepo } from "./scenario.js";
 const REFUSED = "This content was flagged for possible cybersecurity risk.";
 type Handler = (request: { prompt: string; model?: string; repoPath: string }) => unknown;
 
+/**
+ * Holds each fake call until `width` calls run at once, so a test sees the
+ * stage's overlap without depending on how fast the machine is. Once the
+ * gate opens, later calls pass through. A stage that never reaches `width`
+ * calls at once releases its calls after `HANG_GUARD_MS`, and the test's
+ * assertion on `most()` then fails.
+ */
+function overlapGate(width: number): { hold: () => Promise<void>; most: () => number } {
+  const HANG_GUARD_MS = 5000;
+  let running = 0;
+  let most = 0;
+  let open!: () => void;
+  const opened = new Promise<void>((resolve) => (open = resolve));
+  return {
+    most: () => most,
+    hold: async () => {
+      running += 1;
+      most = Math.max(most, running);
+      if (running >= width) open();
+      let guard: NodeJS.Timeout | undefined;
+      await Promise.race([
+        opened,
+        new Promise<void>((resolve) => (guard = setTimeout(resolve, HANG_GUARD_MS))),
+      ]);
+      clearTimeout(guard);
+      // Stay busy for a moment, so a stage that starts more calls than its
+      // concurrency allows raises the peak above `width`.
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      running -= 1;
+    },
+  };
+}
+
 function adapter(vendor: Vendor, handlers: Record<string, Handler>): VendorAdapter {
   const call = (method: string) => async (request: never) => {
     const handler = handlers[method];
@@ -257,8 +290,7 @@ describe("batched verification", () => {
   });
 
   it("keeps split batches within the run's concurrency", async () => {
-    let running = 0;
-    let most = 0;
+    const gate = overlapGate(2);
     const made = await makeRun({
       adapters: {
         copilot: adapter("copilot", {}),
@@ -267,10 +299,7 @@ describe("batched verification", () => {
             throw new Error(REFUSED);
           },
           verify: async () => {
-            running += 1;
-            most = Math.max(most, running);
-            await new Promise((resolve) => setTimeout(resolve, 5));
-            running -= 1;
+            await gate.hold();
             return verdict("x");
           },
         }),
@@ -285,12 +314,11 @@ describe("batched verification", () => {
     await ctx.store.saveGroups([], 1);
     await verifyPending(ctx, ctx.store.roundFile(1, "verify"));
     expect(ctx.findings.map((f) => f.verdict)).toEqual(Array(6).fill("disproved"));
-    expect(most).toBe(2);
+    expect(gate.most()).toBe(2);
   });
 
   it("runs a refused batch's single calls in the stage's idle slots", async () => {
-    let running = 0;
-    let most = 0;
+    const gate = overlapGate(4);
     const made = await makeRun({
       adapters: {
         copilot: adapter("copilot", {}),
@@ -299,10 +327,7 @@ describe("batched verification", () => {
             throw new Error(REFUSED);
           },
           verify: async () => {
-            running += 1;
-            most = Math.max(most, running);
-            await new Promise((resolve) => setTimeout(resolve, 5));
-            running -= 1;
+            await gate.hold();
             return verdict("x");
           },
         }),
@@ -317,8 +342,7 @@ describe("batched verification", () => {
     await ctx.store.saveGroups([], 1);
     await verifyPending(ctx, ctx.store.roundFile(1, "verify"));
     expect(ctx.findings.map((f) => f.verdict)).toEqual(Array(4).fill("disproved"));
-    expect(most).toBeGreaterThan(1);
-    expect(most).toBeLessThanOrEqual(4);
+    expect(gate.most()).toBe(4);
   });
 
   it("flags a lone refused finding without a second round of calls", async () => {
