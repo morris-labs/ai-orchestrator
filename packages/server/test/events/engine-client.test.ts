@@ -143,7 +143,8 @@ describe("EngineClient", () => {
   it("reconnects and replays from its cursor", async () => {
     const c = build();
     c.start();
-    await waitFor(() => engine.sockets.length === 1);
+    // The first hello must finish before the drop, or the engine never sees it.
+    await waitFor(() => engine.hellos.length === 1 && resyncs === 1);
     engine.emit(runEvent);
     await waitFor(() => received.length === 1);
     engine.dropSockets();
@@ -390,11 +391,11 @@ describe("EngineSupervisor", () => {
     // Slow retries keep failing without a log line each.
     const failureLines = logs.filter((l) => l.includes("listeners of")).length;
     const slowCalls = engine.portCalls;
-    await waitFor(() => engine.portCalls >= slowCalls + 2, 2000);
+    await waitFor(() => engine.portCalls >= slowCalls + 2);
     expect(logs.filter((l) => l.includes("listeners of"))).toHaveLength(failureLines);
     // The route recovers while the stream stays connected.
     engine.portFailures = engine.portCalls;
-    await waitFor(() => loaded.length >= 1, 2000);
+    await waitFor(() => loaded.length >= 1);
     expect(loaded[0]).toBe(CONTAINER);
     await sup.stop();
   });

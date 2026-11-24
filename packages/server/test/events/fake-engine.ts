@@ -155,7 +155,11 @@ export class FakeEngineServer {
   }
 }
 
-export async function waitFor(predicate: () => boolean, timeoutMs = 2000): Promise<void> {
+/**
+ * Polls until `predicate` holds. A busy machine can take seconds to relay a
+ * frame or reconnect, so the default limit only stops a real hang.
+ */
+export async function waitFor(predicate: () => boolean, timeoutMs = 10_000): Promise<void> {
   const start = Date.now();
   while (!predicate()) {
     if (Date.now() - start > timeoutMs) throw new Error("Timed out.");
