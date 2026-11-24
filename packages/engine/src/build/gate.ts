@@ -31,6 +31,7 @@ import {
   type TestBaseline,
 } from "./baseline.js";
 import { isPathGlob, pathMatcher } from "./paths.js";
+import { listedTestCommand, requireTests } from "./test-command.js";
 import { checkLock, type LockCheck, type TestLock } from "./test-lock.js";
 import type { BuildWorktree } from "./worktree.js";
 
@@ -124,22 +125,27 @@ export interface TaskGateOptions {
 /**
  * Runs one test command, and once more when it fails on a test the baseline
  * doesn't excuse. Lines of the first run that the rerun doesn't have go in
- * `quarantined`.
+ * `quarantined`. A per-test command (`listed`) that runs no tests fails.
  */
 async function runTestCommand(
   cmd: PolicyCommand,
   run: GateOptions,
   baseline: TestBaseline,
   protect: readonly string[],
+  listed = false,
 ): Promise<TaskGateCommand> {
   const excused = excusedFailures(baseline, cmd);
-  const first = await runGateCommand("test", cmd, run);
+  const once = async () => {
+    const result = await runGateCommand("test", cmd, run);
+    return listed ? requireTests(result) : result;
+  };
+  const first = await once();
   if (first.passed) return first;
   if (failsOnlyOnBaseline(first, excused, protect)) {
     return { ...first, passed: true, excused: testFailures(first) };
   }
   if (run.signal?.aborted) return first;
-  const rerun = await runGateCommand("test", cmd, run);
+  const rerun = await once();
   const still = new Set(testFailures(rerun));
   const quarantined = testFailures(first).filter((line) => !still.has(line));
   for (const line of quarantined) excused.add(line);
@@ -196,18 +202,18 @@ interface LockCommand {
 
 /**
  * The test commands that check earlier tasks' tests: each test that the
- * test lock lists for an earlier task, by its command, with the tasks and
- * files it checks.
+ * test lock lists for an earlier task, by its command in the environment of
+ * the plan's test commands, with the tasks and files it checks.
  */
-
 function earlierLockCommands(
   lock: TestLock | null | undefined,
   earlier: readonly EarlierTask[],
+  commands: BuildCommands,
 ): Map<string, LockCommand> {
   const byCommand = new Map<string, LockCommand>();
   for (const test of lock?.tests ?? []) {
     for (const task of earlier.filter((t) => t.tests.includes(test.file))) {
-      const cmd = { command: test.command };
+      const cmd = listedTestCommand(test.command, commands);
       const key = commandKey(cmd);
       const entry: LockCommand = byCommand.get(key) ?? { cmd, owners: [] };
       entry.owners.push({ taskId: task.id, test: test.file });
@@ -277,7 +283,7 @@ export async function runTaskGate(options: TaskGateOptions): Promise<TaskGateRes
   const earlier = options.earlier ?? [];
   const pending = options.pending ?? [];
   const protect = [...(options.protect ?? []), ...earlier.flatMap((t) => t.tests)];
-  const lockOwners = earlierLockCommands(options.lock, earlier);
+  const lockOwners = earlierLockCommands(options.lock, earlier, options.commands);
   const deferred: string[] = [];
   const aside = await setAside(worktree.path, pending, protect);
   try {
@@ -294,7 +300,7 @@ export async function runTaskGate(options: TaskGateOptions): Promise<TaskGateRes
     const ran = new Set(commands.map((c) => commandKey(c)));
     for (const [key, { cmd }] of lockOwners) {
       if (options.signal?.aborted || ran.has(key)) continue;
-      commands.push(await runTestCommand(cmd, timed, baseline, protect));
+      commands.push(await runTestCommand(cmd, timed, baseline, protect, true));
     }
   } finally {
     await aside.restore();
@@ -330,6 +336,12 @@ export async function runTaskGate(options: TaskGateOptions): Promise<TaskGateRes
   };
 }
 
+/** How a failed command ended: a timeout, a run of no tests, or its exit code. */
+function outcome(c: GateCommandResult): string {
+  if (c.timedOut) return "timed out";
+  return c.noTests ? "ran no tests" : `exited ${c.exitCode}`;
+}
+
 /** One line that says why the gate failed. */
 export function gateFailureLine(result: TaskGateResult): string {
   const parts: string[] = [];
@@ -345,9 +357,7 @@ export function gateFailureLine(result: TaskGateResult): string {
     );
   }
   for (const c of result.commands.filter((c) => !c.passed)) {
-    parts.push(
-      `${c.kind} command \`${c.command}\` ${c.timedOut ? "timed out" : `exited ${c.exitCode}`}`,
-    );
+    parts.push(`${c.kind} command \`${c.command}\` ${outcome(c)}`);
   }
   return parts.join("; ") || "the gate passed";
 }
@@ -381,10 +391,9 @@ export function gateReport(result: TaskGateResult): string {
   }
   for (const c of result.commands.filter((c) => !c.passed)) {
     parts.push(
-      [
-        `${c.kind} command: ${c.command} (${c.timedOut ? "timed out" : `exit ${c.exitCode}`})`,
-        `Output tail:\n${c.outputTail}`,
-      ].join("\n"),
+      [`${c.kind} command: ${c.command} (${outcome(c)})`, `Output tail:\n${c.outputTail}`].join(
+        "\n",
+      ),
     );
   }
   return parts.join("\n\n");

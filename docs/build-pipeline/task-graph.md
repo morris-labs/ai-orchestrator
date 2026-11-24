@@ -47,6 +47,66 @@ For a plan with several tasks, the gate works as follows:
 The next attempt's prompt names each broken test and the task that made it
 pass.
 
+## Per-test commands
+
+The Test engineer lists each test with a command that runs that test alone,
+and the test lock keeps those commands. The plan's own test commands can
+start with `NAME=value` assignments that set up the environment the tests
+need. For example, `PATH=/usr/bin:$PATH corepack pnpm -r test` picks the
+system Node.js that the native modules were built for.
+
+The engine runs every per-test command in that same environment. Before it
+runs one, it puts the leading assignments of the plan's test commands in
+front of it. When two test commands assign the same name, the first one's
+value counts, and a name that the per-test command assigns itself keeps the
+per-test command's value. An assignment counts only when a command follows
+it, so `A=1; make test` and `A=1 && make test` set nothing. A command that
+starts with `env` sets nothing either.
+
+The engine also runs a per-test command in the plan's test directory when
+every plan test command sets the same `cwd`. When the plan's test commands
+set different directories, or one of them sets none, the per-test command
+runs from the repository root. The Test engineer is told to write its
+commands from the repository root, so the root is the only directory that
+fits every test when the plan has no single test directory.
+
+A per-test command that exits 0 but runs no tests fails, such as a name
+filter that no longer matches. A run of no tests proves nothing, so it
+doesn't count as a pass in the task gate or in the criteria trace. The
+gate reports such a command as one that ran no tests.
+
+The `runListedTest()` function in the
+`packages/engine/src/build/test-command.ts` file builds and runs the
+command. Every place that runs a per-test command uses it, or, in the task
+gate, the `listedTestCommand()` and `requireTests()` functions it is made
+of:
+
+- The red check of tests first.
+- The red check of a test dispute's amended test.
+- The task gate's run of an earlier task's locked tests.
+- The criteria trace of the release ready step.
+
+The Test engineer's task description names the assignments and the
+directory, so that it runs its tests the same way, writes each command for
+that directory, and lists each command without the assignments.
+
+### What counts as red
+
+The red check proves that each test fails for the right reason: on an
+assertion. It reads a run as an error, not as red, when the output shows
+either of the following:
+
+- The test file failed to load or collect, such as a syntax error, a missing
+  module, a native module built for another Node.js version
+  (`NODE_MODULE_VERSION`), or a suite that the runner couldn't collect.
+- The command ran no tests, such as a name filter that matched nothing or a
+  file with no tests. This holds whatever the exit code, since some runners
+  exit 0 when every test is filtered out.
+
+The `classifyRun()` function in the `packages/engine/src/build/red-check.ts`
+file holds the patterns, for the common JavaScript, TypeScript, Python, and
+Go test runners. A test that errors goes back to the Test engineer.
+
 ## Oscillation
 
 When an attempt breaks an earlier task's test, and an earlier attempt at the
