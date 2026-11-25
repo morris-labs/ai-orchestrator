@@ -32,6 +32,7 @@ The file holds the following fields:
 | `placement` | A seat can't be placed, such as a placement that breaks the single-vendor setting. | Project manager |
 | `specialty` | A task's specialty pack can't be loaded. | Project manager |
 | `preflight` | A setup command of the plan fails, or a test, type check, or lint command of the plan can't run. The details hold each command's output tail. | Project manager |
+| `contracts` | The Contracts step's Developer fails the task gate on every attempt. The details list the attempt files. | Project manager |
 | `tests_first` | The Test engineer's tests fail the engine's checks in every round or in the revision after the coverage check, or the plan lists no test paths. | Project manager |
 | `review` | The build's review run doesn't report the diff clean. | Project manager |
 | `release_ready` | A criterion has no passing locked test, the push or CI loop stops, or the plan has no push answer. | Project manager; owner for the push answer |
@@ -86,7 +87,8 @@ Replace the following:
 - `ESCALATION`: the escalation's ID, such as `E1`.
 - `ACTION`: one of the following:
   - `retry`: runs the paused work again. A task goes on with its next
-    attempt and gets four more. Tests first gets three more rounds. A
+    attempt and gets four more, and so does the Contracts step. Tests
+    first gets three more rounds. A
     failed review run continues. A review run that ended without
     reporting the diff clean, or a push and CI loop that ended without a
     clean pull request or was cancelled, gets a new review run, which

@@ -257,6 +257,12 @@ _Avoid_: Discussion, standup, review
 
 ### Testing
 
+**Contracts step**:
+The step before tests first in a medium or large build. A Developer writes
+the plan's contract files, with stubs, so the tests compile against the real
+signatures.
+_Avoid_: Contracts task, scaffolding
+
 **Red check**:
 The engine's run of the tests before the code exists. Each test must fail on
 an assertion.

@@ -15,6 +15,7 @@ import {
 } from "@aio/contracts";
 import { EngineError } from "../api/core-interface.js";
 import type { BuildContext } from "./context.js";
+import { reopenContracts } from "./steps/contracts.js";
 import { reopenReleaseReady } from "./steps/release-ready.js";
 import { reopenReview } from "./steps/review.js";
 import { reopenTask } from "./steps/tasks.js";
@@ -32,6 +33,7 @@ type Reopen = (
 
 /** The kinds whose step keeps files that a resolution must change before the step runs again. */
 const REOPEN: Partial<Record<EscalationKind, Reopen>> = {
+  contracts: reopenContracts,
   review: reopenReview,
   release_ready: reopenReleaseReady,
   tests_first: reopenTestsFirst,

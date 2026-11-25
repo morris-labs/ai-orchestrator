@@ -2,6 +2,7 @@
 // each. A step in the pipeline without a handler is one this engine version
 // doesn't run yet: the build pauses there with a note.
 import type { BuildStep } from "@aio/contracts";
+import { runContracts } from "./contracts.js";
 import { runPreflight } from "./preflight.js";
 import { runReleaseReady } from "./release-ready.js";
 import { runReview } from "./review.js";
@@ -9,6 +10,13 @@ import { runTasks } from "./tasks.js";
 import { runTestsFirst } from "./tests-first.js";
 import type { StepHandler } from "./types.js";
 
+export {
+  CONTRACTS_SEAT,
+  contractFiles,
+  contractsAttemptFile,
+  runsContracts,
+  type ContractsAttempt,
+} from "./contracts.js";
 export {
   COVERAGE_CHECKER,
   COVERAGE_REPORT_FILE,
@@ -25,6 +33,7 @@ export { TESTS_FIRST_ROUND_CAP, TEST_ENGINEER, type RoundRecord } from "./tests-
 /** The steps a build runs, in order. */
 export const BUILD_PIPELINE: readonly BuildStep[] = [
   "preflight",
+  "contracts",
   "tests_first",
   "tasks",
   "review",
@@ -34,6 +43,7 @@ export const BUILD_PIPELINE: readonly BuildStep[] = [
 /** The handler of each step that this engine version runs. */
 export const STEP_HANDLERS: Partial<Record<BuildStep, StepHandler>> = {
   preflight: runPreflight,
+  contracts: runContracts,
   tests_first: runTestsFirst,
   tasks: runTasks,
   review: runReview,

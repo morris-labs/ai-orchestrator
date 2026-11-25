@@ -36,7 +36,10 @@ The seats answer as follows:
   and the secrets and services the build needs.
 - The Architect writes the design: the architecture, the shared files, the
   milestones, and the task graph. Each task names its specialties, from
-  the list of specialties that the engine gives the Architect.
+  the list of specialties that the engine gives the Architect, and lists
+  the contract files that it implements. No task writes only contracts:
+  in a medium or large build, the Contracts step writes them, with stubs,
+  before tests first; see [Contracts](design.md#contracts).
 
 Each seat hears the issue, the spec and the design so far, and the
 specialties a task can name. After both the Analyst and the Architect

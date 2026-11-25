@@ -225,7 +225,15 @@ describe("a one-task build", () => {
     });
     tail.child.kill("SIGTERM");
     const steps = new Set(seen.map((e) => (e.build as { step: string }).step));
-    expect([...steps]).toEqual(["preflight", "tests_first", "tasks", "review", "release_ready"]);
+    // A one-task build is small, so it passes the Contracts step without a call.
+    expect([...steps]).toEqual([
+      "preflight",
+      "contracts",
+      "tests_first",
+      "tasks",
+      "review",
+      "release_ready",
+    ]);
     expect(tail.lines()).toContainEqual(
       expect.objectContaining({
         type: "build.task.changed",

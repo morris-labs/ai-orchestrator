@@ -449,10 +449,29 @@ export const BuildTaskProgressSchema = z.object({
 });
 export type BuildTaskProgress = z.infer<typeof BuildTaskProgressSchema>;
 
+/**
+ * The Contracts step's progress. A small build, and a plan whose tasks list
+ * no contract files, skip the step.
+ */
+export const BuildContractsProgressSchema = z.object({
+  status: z.enum(["running", "done", "failed", "skipped"]),
+  /** The attempts that started. */
+  attempts: z.number().int().nonnegative(),
+  /** The commit that holds the contracts and their stubs, once the step is done. */
+  commit: CommitShaSchema.optional(),
+  /** The last gate failure, in one line. */
+  lastFailure: z.string().optional(),
+  /** The last attempt the step gets; absent means `ATTEMPT_CAP` in the engine. */
+  attemptCap: z.number().int().positive().optional(),
+});
+export type BuildContractsProgress = z.infer<typeof BuildContractsProgressSchema>;
+
 /** What raised an escalation. */
 export const EscalationKindSchema = z.enum([
   /** A task failed the task gate on every attempt it has. */
   "attempt_cap",
+  /** The Contracts step's Developer failed the task gate on every attempt it has. */
+  "contracts",
   /** An agent call failed, was refused, or needs a person, such as a limit with no reset. */
   "agent_call",
   /** A seat's placement breaks a rule, such as a vendor that the single-vendor setting excludes. */
@@ -648,6 +667,8 @@ export const BuildStateSchema = z.object({
   status: BuildStatusSchema,
   step: BuildStepSchema,
   tasks: z.array(BuildTaskProgressSchema),
+  /** The Contracts step's progress, once the step started. */
+  contracts: BuildContractsProgressSchema.optional(),
   escalations: z.array(EscalationSchema),
   /** The order the tasks run in, which a resolution set. Absent means plan order. */
   taskOrder: z.array(PlanIdSchema).optional(),
