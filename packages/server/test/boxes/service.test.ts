@@ -1127,7 +1127,22 @@ describe("edit, platform, side sessions, messages", () => {
         .callsOf("exec")
         .map((c) => (c.args[1] as { cmd: string[] }).cmd)
         .filter((cmd) => cmd[1] === "capture-pane");
-      expect(captures).toEqual([["tmux", "capture-pane", "-t", `=${box.session}:`, "-p"]]);
+      expect(captures).toEqual([["tmux", "capture-pane", "-t", `=${box.session}:`, "-p", "-e"]]);
+    });
+
+    it("types into an empty input box that shows a dim prompt suggestion", async () => {
+      const h = makeHarness();
+      const { box } = await claudeBox(h);
+      const rule = "─".repeat(60);
+      h.docker.containers
+        .get(box.container)
+        ?.screens?.set(box.session, `${rule}\n❯\u00a0\u001b[2mlet it run\u001b[0m\n${rule}\n`);
+      const result = await h.core.boxes.deliver(box.id, {
+        text: "[aio-build cart I1] Read /work/x.md",
+        marker: "[aio-build cart I1]",
+      });
+      expect(result).toEqual({ delivered: true, confirmed: true });
+      expect(keys(h, box)).toEqual(["-l [aio-build cart I1] Read /work/x.md", "Enter"]);
     });
 
     it("types nothing into a session that shows a dialog or holds unsent text", async () => {

@@ -178,6 +178,11 @@ The run also showed the following delivery details:
   `send-keys` call, Claude Code can take the input as a paste and treat
   `Enter` as a newline. One long line stayed in the input box and joined the
   next message. Send `Enter` in a separate call after a short pause.
+- **Prompt suggestions:** after a turn ends, Claude Code can show a
+  suggested next prompt in the empty input box, drawn dim (SGR 2). A plain
+  `tmux capture-pane -p` prints it like typed text, so read the screen with
+  `-e` and drop dim text from the prompt line. The transcript confirms that
+  the typed line, not the suggestion, arrived.
 - **Multiline text:** a newline inside `send-keys -l` text, or inside a
   bracketed paste (`tmux paste-buffer -p`), stays in the input box as a line
   break. The following `Enter` submits the whole message as one turn.

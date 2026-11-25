@@ -45,6 +45,31 @@ describe("claudeInputState", () => {
     });
   });
 
+  it("reads a dim prompt suggestion in a styled capture as an empty input box", () => {
+    // What `tmux capture-pane -p -e` printed for an idle Project manager
+    // session: Claude Code draws its suggested next prompt dim (SGR 2).
+    const grey = (text: string) => `\u001b[38;5;244m${text}\u001b[39m`;
+    const styled = [
+      "● Done.",
+      "",
+      grey(RULE),
+      `❯${NBSP}\u001b[2mlet it run\u001b[0m`,
+      grey(RULE),
+      "  \u001b[38;5;220m⏵⏵ auto mode on\u001b[39m",
+      "",
+    ].join("\n");
+    expect(claudeInputState(styled)).toEqual({ state: "ready" });
+  });
+
+  it("refuses typed text in a styled capture, even beside a dim suggestion", () => {
+    const styled = (input: string) =>
+      [`\u001b[38;5;244m${RULE}\u001b[39m`, input, RULE, ""].join("\n");
+    expect(claudeInputState(styled(`❯${NBSP}keep both`))).toMatchObject({ state: "draft" });
+    expect(
+      claudeInputState(styled(`❯${NBSP}\u001b[1mlet\u001b[22m\u001b[2m it run\u001b[0m`)),
+    ).toMatchObject({ state: "draft" });
+  });
+
   it("refuses an input box that holds the owner's unsent text", () => {
     expect(claudeInputState(screen(`❯${NBSP}keep both behaviours, continue`))).toMatchObject({
       state: "draft",
