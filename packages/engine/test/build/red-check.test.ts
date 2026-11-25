@@ -1,6 +1,11 @@
 // How the red check reads a test command's result.
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { classifyRun, ranNoTests } from "../../src/build/red-check.js";
+import { classifyRun, ranNoTests, runRedCheck } from "../../src/build/red-check.js";
+import { BuildWorktree } from "../../src/build/worktree.js";
+import { ExecaRunner, ShellRunner } from "../../src/range/exec.js";
+import { buildSampleRepo } from "../state/scenario.js";
 
 describe("classifyRun", () => {
   it.each([
@@ -96,5 +101,50 @@ describe("classifyRun", () => {
       outcome: "error",
       reason: "the test command timed out",
     });
+  });
+});
+
+/** A test that fails on an assertion, then prints a diff longer than the output tail. */
+const LONG_DIFF_TEST = [
+  "console.log(\"AssertionError: expected 'Usage: aio build ...' to contain 'unknown account'\");",
+  'console.log("- Expected");',
+  'console.log("+ Received");',
+  "for (let i = 0; i < 200; i += 1) console.log(`+   --option-${i}  help line ${i}`);",
+  "process.exit(1);",
+  "",
+].join("\n");
+
+describe("runRedCheck", () => {
+  it("reads an assertion failure whose diff pushes the assertion out of the output tail", async () => {
+    const repo = buildSampleRepo();
+    const tree = new BuildWorktree(
+      new ExecaRunner(),
+      repo,
+      BuildWorktree.pathFor(repo, "red-long-diff"),
+      BuildWorktree.branchFor("red-long-diff"),
+    );
+    await tree.create(await tree.resolveBase(undefined));
+    mkdirSync(join(tree.path, "test"), { recursive: true });
+    writeFileSync(join(tree.path, "test/help.test.mjs"), LONG_DIFF_TEST);
+
+    const red = await runRedCheck({
+      worktree: tree,
+      tests: [
+        {
+          file: "test/help.test.mjs",
+          name: "AC18 names the unknown account",
+          criterion: "AC18",
+          command: "node test/help.test.mjs",
+        },
+      ],
+      commands: { test: [{ command: "node --test" }] },
+      holds: new Set(),
+      shell: new ShellRunner(new ExecaRunner()),
+    });
+
+    expect(red.tests.map((t) => [t.outcome, t.reason])).toEqual([
+      ["failed", "the test failed on an assertion"],
+    ]);
+    expect(red.passed).toBe(true);
   });
 });

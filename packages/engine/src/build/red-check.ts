@@ -148,7 +148,14 @@ export interface RunRedCheckOptions {
 export async function runRedCheck(options: RunRedCheckOptions): Promise<RedCheck> {
   const { worktree } = options;
   const before = new Set(await worktree.untracked());
-  const run = { repoPath: worktree.path, shell: options.shell, signal: options.signal };
+  // The red check reads the whole output: a long diff after a failed
+  // assertion can push the assertion's header out of the output tail.
+  const run = {
+    repoPath: worktree.path,
+    shell: options.shell,
+    signal: options.signal,
+    keepOutput: true,
+  };
   const timed = options.timeoutMs === undefined ? run : { ...run, timeoutMs: options.timeoutMs };
   const runs = new Map<string, GateCommandResult>();
   const tests: RedTestResult[] = [];
@@ -163,7 +170,7 @@ export async function runRedCheck(options: RunRedCheckOptions): Promise<RedCheck
     const { outcome, reason } = classifyRun({
       exitCode: result.exitCode,
       timedOut: result.timedOut,
-      output: result.outputTail,
+      output: result.output ?? result.outputTail,
     });
     tests.push({
       ...test,

@@ -6,6 +6,7 @@ import {
   diagnosticLines,
   extractFailures,
   formatRegressions,
+  keptOutput,
   runGate,
   type GateRun,
 } from "../../src/gate/gate.js";
@@ -264,5 +265,22 @@ describe("diagnosticLines", () => {
       "src/a.ts(L,C): error TS2322: Type 'number' is not assignable to type 'string'.",
     ]);
     expect(diagnosticLines(after)).toEqual(diagnosticLines(before));
+  });
+});
+
+describe("keptOutput", () => {
+  it("keeps short output whole, without colors", () => {
+    expect(keptOutput("\u001b[31mAssertionError\u001b[0m: expected 1 to be 2")).toBe(
+      "AssertionError: expected 1 to be 2",
+    );
+  });
+
+  it("keeps the start and the end of output longer than the limit", () => {
+    const output = `AssertionError: head\n${"x".repeat(1000)}\nTests  1 failed`;
+    const kept = keptOutput(output, 100);
+    expect(kept.startsWith("AssertionError: head")).toBe(true);
+    expect(kept.endsWith("Tests  1 failed")).toBe(true);
+    expect(kept).toContain("[... output cut ...]");
+    expect(kept.length).toBeLessThan(150);
   });
 });
