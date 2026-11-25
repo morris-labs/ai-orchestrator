@@ -10,6 +10,9 @@
 // - Text and Enter in one fast `send-keys` call can read as a paste, which
 //   turns Enter into a line break. So Enter goes in its own call after a
 //   pause.
+// - An idle Claude Code session can show a suggested next prompt, dim, in
+//   its empty input box. So the server captures the screen with its styles
+//   and reads dim prompt text as empty; see `session-input.ts`.
 // - Claude Code records each message it takes in the session's transcript,
 //   including one that queues behind a busy turn. So the server confirms a
 //   delivery there. A message whose marker the transcript holds is never
@@ -17,7 +20,7 @@
 //   a hold or a usage alert, so it's always typed, and only a new copy of
 //   its text in the transcript confirms it.
 import type { Platform } from "@aio/contracts";
-import { claudeInputState } from "./session-input.js";
+import { claudeInputState, stripEscapes } from "./session-input.js";
 
 /** How long delivery waits, in milliseconds. */
 export interface DeliveryTiming {
@@ -122,7 +125,7 @@ export async function deliverToSession(
   const seen = (await count(target, marker)) ?? 0;
   if (request.marker !== undefined && seen > 0) return { delivered: true, confirmed: true };
   const before = request.marker !== undefined ? 0 : seen;
-  const input = claudeInputState(await target.tmux(["capture-pane", "-p"]));
+  const input = claudeInputState(await target.tmux(["capture-pane", "-p", "-e"]));
   if (input.state !== "ready") return { delivered: false, reason: input.reason };
   // `--` keeps a message that starts with `-` from being read as flags.
   await target.tmux(["send-keys", "-l", "--", request.text]);
@@ -135,8 +138,11 @@ export async function deliverToSession(
     return { delivered: true, confirmed: true };
   // Enter that read as part of a paste leaves the message in the input box:
   // the input box is ours then, so one more Enter sends it.
-  const screen = await target.tmux(["capture-pane", "-p"]);
-  if (claudeInputState(screen).state === "draft" && screen.includes(marker.slice(0, 40))) {
+  const screen = await target.tmux(["capture-pane", "-p", "-e"]);
+  if (
+    claudeInputState(screen).state === "draft" &&
+    stripEscapes(screen).includes(marker.slice(0, 40))
+  ) {
     await target.tmux(["send-keys", "Enter"]);
     return { delivered: true, confirmed: await confirm(target, marker, before, confirmMs, pollMs) };
   }

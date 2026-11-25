@@ -86,7 +86,10 @@ outputs:
                   type: string
               contracts:
                 type: array
-                description: The contract files the task implements.
+                description: >-
+                  The contract files the task implements or uses. In a medium
+                  or large build, the Contracts step writes them, with stubs,
+                  before tests first.
                 items:
                   type: string
               criteria:
@@ -120,6 +123,7 @@ rules:
   - Fit the design to the code as it is. Reuse what exists before you add a new part.
   - Give every acceptance criterion at least one task, and every task at least one criterion.
   - Give each task the files it owns, and keep two tasks from owning one file.
+  - Don't plan a task whose only job is the shared types, schemas, or interfaces. In a medium or large build, the Contracts step writes every file that a task lists in contracts, with stubs, before tests first. List those files in the contracts of each task that implements or uses them.
   - Give each task test files of its own, so a later task's tests stay apart from an earlier task's.
   - List in dependsOn every task whose code or contracts a task needs, and never make a dependency cycle.
   - Put each task in exactly one milestone, and make each milestone a working and tested increment.

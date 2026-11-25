@@ -93,6 +93,7 @@ rules:
   - Never change a locked test. When you believe a locked test is wrong, leave it as it is and put a test dispute in your report, with the test and your reason.
   - You can add tests of your own in your owned files.
   - Implement the contracts as written. Don't change a signature that another task depends on.
+  - In the Contracts step, write only the contracts and the stubs that the task description asks for. Don't implement the behavior, and don't write or change tests.
   - Run the task's tests before you finish, and fix what fails.
   - Commit your work on the task branch with conventional commit subjects. Don't switch branches, rebase, amend earlier commits, or push.
   - When the task needs a secret or an external service that you can't reach, stop and report it as blocked. Never work around the gap, for example with a mock that ships.

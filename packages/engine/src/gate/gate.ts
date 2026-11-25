@@ -29,6 +29,13 @@ export interface GateCommandResult {
   /** The last lines of the output, for reports and the fixer prompt. */
   outputTail: string;
   /**
+   * The whole output without colors, when the caller asked for it with
+   * `GateOptions.keepOutput`. Output longer than `KEPT_OUTPUT_LIMIT` keeps its
+   * start and its end, so a failure's header and the run's summary both
+   * survive a long diff between them.
+   */
+  output?: string;
+  /**
    * Every diagnostic line of the output, normalized by `diagnosticLines()`,
    * when the caller asked for them with `GateOptions.diagnostics`.
    */
@@ -131,6 +138,17 @@ export function diagnosticLines(output: string): string[] {
   return [...seen].sort();
 }
 
+/** The most characters of a command's output that `GateCommandResult.output` keeps. */
+export const KEPT_OUTPUT_LIMIT = 512 * 1024;
+
+/** `text` without colors, cut to its first and last `limit / 2` characters when longer than `limit`. */
+export function keptOutput(text: string, limit = KEPT_OUTPUT_LIMIT): string {
+  const plain = text.replace(ANSI_RE, "");
+  if (plain.length <= limit) return plain;
+  const half = Math.floor(limit / 2);
+  return `${plain.slice(0, half)}\n[... output cut ...]\n${plain.slice(-half)}`;
+}
+
 function tail(text: string, lines = 40): string {
   return text.replace(ANSI_RE, "").trimEnd().split("\n").slice(-lines).join("\n");
 }
@@ -148,6 +166,8 @@ export interface GateOptions {
   signal?: AbortSignal;
   /** Adds every diagnostic line of the output to the result, as `diagnosticLines()` reads it. */
   diagnostics?: boolean;
+  /** Adds the whole output to the result, as `keptOutput()` cuts it. */
+  keepOutput?: boolean;
 }
 
 /** Runs one gate command in `options.repoPath` and reports its result. */
@@ -172,6 +192,7 @@ export async function runGateCommand(
     timedOut: result.timedOut,
     failures: extractFailures(output),
     outputTail: tail(output),
+    ...(options.keepOutput ? { output: keptOutput(output) } : {}),
     ...(options.diagnostics ? { diagnostics: diagnosticLines(output) } : {}),
   };
 }

@@ -117,6 +117,13 @@ of these hold:
   even approving a tool call; see
   [`vendor-cli-facts.md`](vendor-cli-facts.md).
 
+An idle Claude Code session can show dim text in its empty input box: the
+start-up placeholder, or a suggested next prompt after a turn ends. The
+server captures the screen with its styles (`tmux capture-pane -p -e`) and
+reads dim text on the prompt line as an empty box. Without the styles, a
+suggestion reads as unsent text, and the item waits until someone clears
+the box.
+
 A busy session that shows its input box takes the pointer: Claude Code
 queues it as the next turn. The server types the text, waits, and sends
 Enter in a separate call. The item counts as delivered once the session's

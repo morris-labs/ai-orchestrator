@@ -4,6 +4,7 @@
 // rewrites the file every time it saves the build's state.
 import {
   escalationState,
+  type BuildContractsProgress,
   type BuildMeeting,
   type BuildPlan,
   type BuildPlanning,
@@ -12,6 +13,15 @@ import {
 
 function cell(text: string | undefined): string {
   return (text ?? "").replace(/\|/g, "\\|").replace(/\s+/g, " ").trim();
+}
+
+/** The Contracts step's line: its status, attempts, commit, and last failure. */
+function contractsLine(contracts: BuildContractsProgress): string {
+  if (contracts.status === "skipped") return "- Contracts: skipped";
+  const attempts = `${contracts.attempts} attempt${contracts.attempts === 1 ? "" : "s"}`;
+  const commit = contracts.commit ? `, at \`${contracts.commit.slice(0, 12)}\`` : "";
+  const failure = contracts.lastFailure ? `; last failure: ${cell(contracts.lastFailure)}` : "";
+  return `- Contracts: ${contracts.status} after ${attempts}${commit}${failure}`;
 }
 
 /** Renders the status file for `state`. */
@@ -30,6 +40,7 @@ export function renderStatus(state: BuildState, plan: BuildPlan): string {
     ...(plan.issue ? [`- Issue: ${plan.issue.url}`] : []),
     `- Updated: ${state.updatedAt}`,
     ...(state.note ? [`- Note: ${state.note}`] : []),
+    ...(state.contracts ? [contractsLine(state.contracts)] : []),
     "",
     "## Tasks",
     "",

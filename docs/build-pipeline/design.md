@@ -363,7 +363,8 @@ The Scribe lists both kinds of test in the pull request.
 Each milestone runs these steps in order:
 
 1. **Contracts.** A Developer writes the shared types and interfaces, with
-   stubs, so that tests compile against the real signatures.
+   stubs, so that tests compile against the real signatures. See
+   [Contracts](#contracts).
 2. **Tests first.** The Test engineer writes the milestone's acceptance and
    contract tests from the criteria and the contracts. The engine checks the
    tests and locks them.
@@ -399,6 +400,36 @@ The build size sets which steps run, as the following table shows:
 | Harden | Skipped | Last milestone only | Each milestone |
 | Simplify | Skipped | Last milestone only | Each milestone |
 | Review | Runs | Runs | Runs |
+
+### Contracts
+
+In a medium or large build, the Contracts step runs after preflight and
+before tests first. Without it, the Test engineer can't test a criterion
+whose types, routes, or schemas don't exist yet: its tests fail on imports,
+not on assertions. The step works as follows:
+
+- **Scope:** the contract files are the union of every task's `contracts`
+  list. A small build, and a plan whose tasks list no contract files, skip
+  the step, and `STATUS.md` shows it as skipped.
+- **Work:** a Developer writes each contract file, and a stub with the real
+  signature for each function, route, or command that the tests call. A
+  stub returns a value of its type that doesn't meet the criteria, so a
+  test fails on an assertion. The Developer may change the contract files
+  and the tasks' owned files, but no test path.
+- **Gate:** the task gate runs the plan's test, type check, and lint
+  commands. Each must pass, or fail only the way the preflight baseline
+  records, so the existing suite stays green. A failed attempt goes back
+  with the gate report, up to the attempt cap of a task, and then escalates
+  as `contracts`.
+- **Commit:** the engine commits the contracts and stubs before tests
+  first, and the tasks start from that commit.
+
+The Contracts step owns the contracts, so the Architect doesn't plan a task
+whose only job is to write them. Each task lists, in `contracts`, the
+contract files that it implements, and owns the files of its own code,
+stubs included. A plan that still has such a task, such as a plan frozen
+before the step existed, runs it as an ordinary task after tests first: its
+contract files exist by then, so the task finishes what the step left.
 
 ### Tests first
 

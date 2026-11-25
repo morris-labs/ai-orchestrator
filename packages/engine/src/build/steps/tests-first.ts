@@ -88,6 +88,9 @@ function roleTask(ctx: BuildContext, scope: Scope, context: string): RoleTask {
     title: `Tests first for ${ctx.plan.title}`,
     description: [
       "Write the tests for these acceptance criteria before any code for them exists. Each test must fail on an assertion against the stubs.",
+      ctx.state.contracts?.status === "done"
+        ? "The Contracts step wrote the contracts and their stubs, and committed them: import the real signatures from them, and test through them."
+        : "",
       testEnvironmentNote(ctx.plan.commands),
       setupNote(ctx.plan.commands),
     ]

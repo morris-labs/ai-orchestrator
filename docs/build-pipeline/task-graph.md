@@ -125,3 +125,6 @@ other tasks go on. For how to resolve one, see [Escalations](escalations.md).
 
 The `STATUS.md` file of a build lists every task with its title, the tasks it
 depends on, its status, its attempt count, its commit, and its last failure.
+Its `Contracts` line shows the Contracts step: `skipped`, or its status
+with its attempt count, its commit, and its last failure. See
+[Contracts](design.md#contracts).
