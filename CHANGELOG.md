@@ -28,6 +28,11 @@ section's heading must have the form `## [X.Y.Z]`.
   path that a finished task changed and that still holds the newest finished
   task's content. Before, setting such a task aside committed a revert of the
   finished tasks' files.
+- A test dispute and the release step's Scribe count the agent's changes from
+  the branch head when its turn began. Before, they counted from when the
+  dispute or the release step started, so the engine reverted, in its own
+  commit, any commit that another seat's message turn made while the call
+  waited for its seat.
 
 ## [3.2.3] - 2026-11-22
 

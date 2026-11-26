@@ -56,7 +56,10 @@ this object:
 
 Before the turn, the engine puts back any change that the Developer made to
 a locked test and commits the task's work. After the turn, it puts back any
-file that the Test engineer changed other than the disputed test.
+file that the Test engineer changed other than the disputed test. The
+engine counts those changes from the branch head when the Test engineer's
+turn began, so a commit that another seat's message turn makes while the
+dispute waits for the seat stays on the branch.
 
 ### The red check of an amendment
 
