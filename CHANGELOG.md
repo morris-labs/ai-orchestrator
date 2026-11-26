@@ -23,6 +23,11 @@ section's heading must have the form `## [X.Y.Z]`.
   checks and locks the fix. Before, only the Developer read the ruling, and the
   gate put back any change it made to the locked test, so a ruling against a
   test couldn't take effect.
+- A task whose base is older than other tasks' finished commits no longer
+  reverts their work. Its permission check and its set-aside leave alone each
+  path that a finished task changed and that still holds the newest finished
+  task's content. Before, setting such a task aside committed a revert of the
+  finished tasks' files.
 
 ## [3.2.3] - 2026-11-22
 
