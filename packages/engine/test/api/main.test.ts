@@ -8,7 +8,12 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { startActiveRunsWriter, writeActiveRuns } from "../../src/main/active-runs.js";
 import { MockAdapter } from "../../src/adapters/mock.js";
 import { FixOutputSchema, ReviewOutputSchema } from "../../src/core.js";
-import { createMockAdapters, parseMockVendors, selectAdapters } from "../../src/main/adapters.js";
+import {
+  createMockAdapters,
+  engineConfigDir,
+  parseMockVendors,
+  selectAdapters,
+} from "../../src/main/adapters.js";
 import { silentLogger } from "../../src/main/logger.js";
 import { checkEnv, parseArgs, startEngine } from "../../src/main/run.js";
 import { readPackageVersion } from "../../src/main/version.js";
@@ -97,6 +102,17 @@ describe("parseMockVendors", () => {
 
   it("rejects an unknown vendor", () => {
     expect(() => parseMockVendors("codex,gemini")).toThrow(/unknown vendor "gemini"/);
+  });
+});
+
+describe("engineConfigDir", () => {
+  it("reads the account folders from the server's mount by default", () => {
+    expect(engineConfigDir({})).toBe("/run/aio-config");
+    expect(engineConfigDir({ AIO_ENGINE_CONFIG_DIR: "" })).toBe("/run/aio-config");
+  });
+
+  it("reads them from AIO_ENGINE_CONFIG_DIR when it's set, so a test engine skips the live accounts", () => {
+    expect(engineConfigDir({ AIO_ENGINE_CONFIG_DIR: dir })).toBe(dir);
   });
 });
 

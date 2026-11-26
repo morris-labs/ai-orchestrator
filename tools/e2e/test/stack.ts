@@ -106,7 +106,15 @@ export async function startStack(options: StackOptions): Promise<Stack> {
     JSON.stringify({ serverPort }, null, 2),
   );
 
+  // The engine reads its account folders from a folder of the stack's own,
+  // not the server's mount, so in a project container the mock CLIs never
+  // write into the host's live account folders.
+  const configDir = path.join(dir, "engine-config");
+  mkdirSync(configDir);
+  writeFileSync(path.join(configDir, "account-dirs.json"), "{}\n");
+
   const engineEnv = childEnv({
+    AIO_ENGINE_CONFIG_DIR: configDir,
     AIO_ENGINE_TOKEN_FILE: tokenFile,
     AIO_ENGINE_PORT: String(enginePort),
     AIO_PROJECT_ROOT: repo,
