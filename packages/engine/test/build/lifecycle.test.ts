@@ -118,7 +118,13 @@ describe("a paused build", () => {
     expect(paused.status).toBe("paused");
     expect(paused.idle).toBeUndefined();
 
-    const idle = await world.waitFor("cart-total", (s) => s.idle === true);
+    // The state file changes before the build.changed event goes out, so
+    // wait for both.
+    const idleSent = () =>
+      (world.events.ofType("build.changed") as { build: { idle?: boolean } }[]).some(
+        (e) => e.build.idle === true,
+      );
+    const idle = await world.waitFor("cart-total", (s) => s.idle === true && idleSent());
     expect(idle.status).toBe("paused");
     // The running turn finished before the build went idle.
     expect(world.jsonFiles("cart-total", "calls")).toHaveLength(1);
