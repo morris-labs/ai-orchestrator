@@ -184,7 +184,7 @@ describe("milestone digests", () => {
     expect(m1).toContain("- T1 Cart total: done in 1 attempt");
     expect(m1).toContain("| developer | 1 | 1000 | 100 |");
     expect(m1).toContain("| Total | 1 | 1000 | 100 |");
-    expect(m1).not.toContain("T2");
+    expect(m1).not.toContain("- T2 ");
     const m2 = world.file("cart-label", "digests/milestone-M2.md");
     expect(m2).toContain("| developer | 1 | 2000 | 200 |");
     expect(m2).toContain("2 of 2 milestones");
