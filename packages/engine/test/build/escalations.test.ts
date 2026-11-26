@@ -526,6 +526,61 @@ describe("resolutions", () => {
     expect(retry?.prompt).toContain("total() sums item.price; items have no quantity.");
   });
 
+  it("gives the task more files to change with a resolution, and the next attempt keeps them", async () => {
+    const world = await buildWorld();
+    const FORMAT = "export const format = (n) => n.toFixed(2);\n";
+    world.script({
+      claude: [
+        { match: "You are the Debugger", output: DIAGNOSIS },
+        answer("T1", { "src/cart.mjs": CART_DONE, "src/format.mjs": FORMAT }),
+      ],
+    });
+    const plan = cartPlan({
+      criteria: [{ id: "AC-T1", text: "The cart reports the sum of its item prices." }],
+      tasks: [task("T1", "Cart total", "cart")],
+    });
+    await world.start("cart-total", plan);
+    const waiting = await world.settle("cart-total");
+    expect(waiting.escalations[0]).toMatchObject({ kind: "attempt_cap", taskId: "T1" });
+
+    const resolved = await world.manager.resolve("cart-total", {
+      escalation: "E1",
+      action: "retry",
+      own: ["src/format.mjs"],
+      note: "The total needs a formatter, which no task owns.",
+    });
+    expect(resolved.escalations[0]?.resolution).toMatchObject({ own: ["src/format.mjs"] });
+    const state = await world.waitFor("cart-total", (s) => s.step === "review");
+
+    expect(state.tasks[0]).toMatchObject({ status: "done" });
+    expect(world.git(world.root, "show", "build/cart-total:src/format.mjs")).toBe(FORMAT.trim());
+    const saved = JSON.parse(world.file("cart-total", "plan.json")) as BuildPlanInput;
+    expect(saved.tasks?.[0]?.ownedFiles).toEqual(["src/cart.mjs", "src/format.mjs"]);
+    const retry = world.calls().find((c) => c.prompt.includes("attempt 5 of 8"));
+    expect(retry?.prompt).toContain("src/format.mjs");
+  });
+
+  it("refuses to give files with a resolution that doesn't run the task again", async () => {
+    const world = await buildWorld();
+    await capped(world);
+
+    await expect(
+      world.manager.resolve("cart-total", {
+        escalation: "E1",
+        action: "escalate",
+        note: "Ask the owner.",
+        own: ["src/format.mjs"],
+      }),
+    ).rejects.toThrow(/retry or clarify/);
+    await expect(
+      world.manager.resolve("cart-total", {
+        escalation: "E1",
+        action: "retry",
+        own: ["test/cart.test.mjs"],
+      }),
+    ).rejects.toThrow(/test path/);
+  });
+
   it("refuses a request that doesn't fit the escalation, and a second resolution", async () => {
     const world = await buildWorld();
     await capped(world);

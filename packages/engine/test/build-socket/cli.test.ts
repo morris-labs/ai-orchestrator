@@ -172,6 +172,10 @@ describe("aio-build", () => {
     ).toMatchObject({
       changes: ["criteria", "scope"],
     });
+    expect(await resolve(["retry", "--own", "src/api.ts,test/routes.test.ts"])).toMatchObject({
+      action: "retry",
+      own: ["src/api.ts", "test/routes.test.ts"],
+    });
     expect(builds.resolve.mock.calls[0]?.[0]).toBe("cart-total");
   });
 

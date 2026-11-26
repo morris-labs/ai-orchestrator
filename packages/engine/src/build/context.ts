@@ -550,6 +550,18 @@ export class BuildContext {
     }
   }
 
+  /**
+   * Adds `paths` to task `taskId`'s owned files in the build plan, so its
+   * next attempt may change them. The plan's task object changes in place,
+   * so every step that holds it sees the files.
+   */
+  async recordOwned(taskId: string, paths: readonly string[]): Promise<void> {
+    const task = this.plan.tasks.find((t) => t.id === taskId);
+    if (!task) throw new Error(`The build plan has no task ${taskId}.`);
+    task.ownedFiles = [...new Set([...task.ownedFiles, ...paths])];
+    await this.store.savePlan(this.plan);
+  }
+
   /** Records the owner's push answer in the build plan. */
   async recordPush(push: boolean): Promise<void> {
     this.plan.push = push;

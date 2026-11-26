@@ -574,6 +574,12 @@ const resolutionFields = {
   push: z.boolean().optional(),
   /** The parts of the build plan that the decision changes. */
   changes: z.array(PlanChangeSchema).default([]),
+  /**
+   * With `retry` or `clarify` for an escalation with a task: files or globs
+   * that the task may change from now on, added to its owned files in the
+   * build plan, such as a file that the plan left out of every task.
+   */
+  own: z.array(RepoPathSchema).min(1).optional(),
 };
 
 /** Adds an issue for each field that a resolution's action needs and lacks. */

@@ -573,7 +573,11 @@ bounds. It works as follows:
   continue.
 - The escalation goes to the Project manager, which resolves anything inside
   the plan: retries, task order, seating on-call roles, and clarifications
-  that the plan already implies.
+  that the plan already implies. It can also give the escalation's task
+  more files to change, such as a file that the plan left out of every
+  task, as long as the file isn't a test path and no unfinished task owns
+  it. The engine adds the files to the task's owned files in the build
+  plan.
 - After a planning meeting, the Project manager can approve a change to
   contracts or architecture. The Scribe records that change as a decision,
   with the meeting linked.

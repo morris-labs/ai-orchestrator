@@ -49,7 +49,7 @@ export const BUILD_USAGE = `Usage:
   aio-build cancel SLUG [--json]
   aio-build resolve SLUG ESCALATION ACTION [--note TEXT] [--order TASKS]
                     [--decision OPTION] [--waive FINDINGS] [--push yes|no]
-                    [--changes PARTS] [--owner] [--json]
+                    [--changes PARTS] [--own FILES] [--owner] [--json]
   aio-build help
 
 Plans and drives a build of this box's project through the AI Orchestrator
@@ -129,7 +129,9 @@ Requests:
             A decision that changes the criteria, the scope, or the
             milestones is the owner's: name the changes with --changes, and
             the engine marks the escalation for the owner instead of
-            resolving it. An escalation for the owner, such as a missing
+            resolving it. With retry or clarify, --own gives the
+            escalation's task more files to change, such as a file that
+            the build plan left out of every task. An escalation for the owner, such as a missing
             secret, takes only the owner's decision: ask the owner, then
             pass --owner. For a release ready escalation, ask the owner
             whether the build can push its branch and open its pull
@@ -166,6 +168,11 @@ Options:
                  The parts of the build plan that the decision changes,
                  separated by commas: criteria, scope, milestones,
                  contracts, or architecture.
+  --own FILES    With retry or clarify: files or globs, separated by commas,
+                 that the escalation's task may change from now on. The
+                 engine adds them to the task's owned files in the build
+                 plan. A test path, and a file that another unfinished task
+                 owns, stay out.
   --owner        Record the decision as the owner's, which the Project
                  manager relays.
   --direct       Print only the direct messages to the owner.
@@ -276,7 +283,16 @@ const OPTIONS: Record<string, readonly string[]> = {
   meet: ["--members", "--proposer", "--rounds"],
   freeze: ["--push"],
   start: ["--base"],
-  resolve: ["--note", "--order", "--decision", "--waive", "--push", "--changes", "--owner"],
+  resolve: [
+    "--note",
+    "--order",
+    "--decision",
+    "--waive",
+    "--push",
+    "--changes",
+    "--own",
+    "--owner",
+  ],
   inbox: ["--all"],
 };
 
@@ -293,6 +309,7 @@ const VALUE_OPTIONS = [
   "--decision",
   "--waive",
   "--changes",
+  "--own",
 ];
 
 /** Options that take no value. */
@@ -334,6 +351,7 @@ function resolution(
   const waive = values.get("--waive");
   const push = values.get("--push");
   const changes = values.get("--changes");
+  const own = values.get("--own");
   if (waive !== undefined && option === undefined) throw new Error("--waive needs --decision.");
   return {
     escalation,
@@ -346,6 +364,7 @@ function resolution(
       : {}),
     ...(push !== undefined ? { push: pushAnswer(push) } : {}),
     ...(changes !== undefined ? { changes: list(changes) } : {}),
+    ...(own !== undefined ? { own: list(own) } : {}),
   };
 }
 

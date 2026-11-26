@@ -106,6 +106,14 @@ Replace the following:
   - `escalate`: hands the escalation to the owner, with the reason in
     `--note`.
 
+With `retry` or `clarify`, `--own FILES` gives the escalation's task more
+files to change from its next attempt on, separated by commas, such as
+`--own packages/contracts/src/api.ts`. Use it when the task needs a file that
+the build plan left out of its owned files. The engine adds the files to the
+task's owned files in the build's `plan.json` file and records them in the
+resolution. It refuses a test path, which only the Test engineer changes,
+and a file that another unfinished task owns.
+
 Only the box that started the build can resolve its escalations. The
 engine records the resolution in the escalation file and the build state,
 and resumes the paused tasks. It refuses a resolution that doesn't
