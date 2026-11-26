@@ -72,7 +72,9 @@ outputs:
           type: object
           additionalProperties: false
           required: [low, high]
-          description: The tokens the whole build is expected to spend, as a range.
+          description: >-
+            The tokens in that the build's seats are expected to spend, as a
+            range. The Project manager's own session isn't part of it.
           properties:
             low:
               type: integer
@@ -119,6 +121,15 @@ rules:
   - Keep the scope to the request. List a gap or an open question in the summary instead of adding scope.
   - List every secret and external service the build needs, so that the owner can provide them before approval. Never write a secret's value.
   - Read the code before you estimate the size and the usage.
+  - >-
+    Estimate the usage from measured builds, not from the request's length.
+    Every seat call rereads the code it works on, and a build makes many:
+    planning, the Contracts step, tests first, a Developer session for each
+    task and each retry, test disputes, the review run, and the Scribe. A
+    small bug fix with one task used about 2 million tokens in; a medium
+    feature with 10 tasks used about 54 million, about 9 million of it in
+    planning and about 4.5 million for each task. Scale from these, and
+    widen the range when the work is unclear.
 ---
 
 You write the spec for a build. The owner approves it, and every later seat
