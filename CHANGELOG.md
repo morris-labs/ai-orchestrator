@@ -6,6 +6,13 @@ section's heading must have the form `## [X.Y.Z]`.
 
 ## [Unreleased]
 
+### Fixed
+
+- The build's red check reads a Jest-style matcher failure, such as jest-dom's
+  `expect(received).toBeInTheDocument()` on a missing element, and a Testing
+  Library query that finds no element as assertion failures. Before, it sent
+  correct failing UI tests back to the Test engineer as errors.
+
 ## [3.2.3] - 2026-11-22
 
 ### Fixed

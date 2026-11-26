@@ -94,13 +94,21 @@ export function ranNoTests(output: string): boolean {
   return NO_TEST_PATTERNS.some((re) => re.test(output));
 }
 
-/** Output that shows a failed assertion. */
+/**
+ * Output that shows a failed assertion. Besides plain assertion errors, this
+ * covers a Jest-style matcher hint, such as `expect(received).toBeInTheDocument()`,
+ * which jest-dom prints when it gets a missing element, and a Testing Library
+ * query that finds no element: against the stubs, both mean the tested
+ * element doesn't exist yet.
+ */
 export const ASSERTION_PATTERNS: readonly RegExp[] = [
   /\bAssertionError\b/,
   /\bassertion failed\b/i,
   /^\s*(?:Expected|Received|expected|actual):/m,
   /\bexpected\b.+\b(?:to|but)\b/i,
   /--- FAIL:/,
+  /\bexpect\(received\)(?:\.(?:not|resolves|rejects))*\.\w+\(/,
+  /\bTestingLibraryElementError\b.*\bUnable to find an (?:accessible )?element\b/,
 ];
 
 /** Classifies one finished test command. */
