@@ -5,7 +5,15 @@
 // files a scripted Developer writes. Builds start over the engine's build
 // socket with `aio-build`, as the Project manager's box session starts them.
 import { execFileSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { BuildState, BuildUsage } from "@aio/contracts";
@@ -250,6 +258,14 @@ describe("a one-task build", () => {
     expect(git(stack.repo, "show", "build/sales-tax:tests/test_tax.py")).toBe(TAX_TEST.trim());
     expect(git(stack.repo, "status", "--porcelain")).toBe("");
     expect(readFileSync(path.join(stack.repo, "shop", "tax.py"), "utf8")).toBe(TAX_STUB);
+  });
+
+  it("keeps the mock Codex's rollout in the test's own CODEX_HOME", () => {
+    const sessions = path.join(stack.dir, "mock", "codex_home", "sessions");
+    const rollouts = readdirSync(sessions, { recursive: true, encoding: "utf8" }).filter((f) =>
+      path.basename(f).startsWith("rollout-"),
+    );
+    expect(rollouts.length).toBeGreaterThan(0);
   });
 
   it("keeps the preflight baseline and the test lock in the build's folder", () => {

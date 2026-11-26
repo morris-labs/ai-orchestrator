@@ -6,8 +6,6 @@ import { execFileSync } from "node:child_process";
 import fs, { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   GIT_SAFE_DIRECTORY_SETUP,
@@ -150,7 +148,9 @@ describe("scripts", () => {
   it("gives the user the root-owned parents of a mount under /tmp or home, and nothing else", () => {
     const dir = mkdtempSync(join(tmpdir(), "own-parents-"));
     // The home directory must sit outside /tmp, or /tmp's rule covers it too.
-    const home = mkdtempSync(join(path.dirname(fileURLToPath(import.meta.url)), ".home-"));
+    // /var/tmp is outside /tmp and outside the source tree, so a test that
+    // stops early leaves nothing in the repository.
+    const home = mkdtempSync(join("/var/tmp", "aio-own-parents-home-"));
     try {
       const { bin, log } = fakeRootTools(dir);
       mkdirSync(join(home, "deep", "er"), { recursive: true });

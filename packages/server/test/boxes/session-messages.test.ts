@@ -14,7 +14,7 @@ afterEach(() => {
 });
 
 /** A box whose session answers each attempt with the next result in `answers`, then takes every message. */
-function world(answers: DeliveryResult[], options: { giveUpMs?: number } = {}) {
+function world(answers: DeliveryResult[], options: { giveUpMs?: number; retryMs?: number } = {}) {
   const typed: string[] = [];
   const attempts: string[] = [];
   const logs: string[] = [];
@@ -60,13 +60,16 @@ describe("session messages", () => {
   });
 
   it("sends neither message when a release follows a hold that never went out", async () => {
-    const w = world([dialog, dialog, dialog]);
+    // The next attempt waits far longer than the test runs. With a short
+    // wait, a loaded machine could poll past the first attempt, or let a
+    // later attempt deliver the hold, before the release is sent.
+    const w = world([dialog], { retryMs: 60_000 });
     w.messages.send("box-a", HOLD);
     await until(() => w.attempts.length === 1);
     w.messages.send("box-a", RELEASE, { withdraws: HOLD });
     await w.messages.idle();
-    await new Promise((r) => setTimeout(r, 40));
     expect(w.typed).toEqual([]);
+    expect(w.attempts).toEqual([HOLD]);
   });
 
   it.each([

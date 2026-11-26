@@ -199,6 +199,8 @@ export interface CallObserver {
     state: CallState,
     extra: { vendor?: Vendor; effort?: string | undefined },
   ): Promise<void>;
+  /** A call is about to request a lease on `vendor`, after routing around limits. */
+  leasing?(spec: AgentCallSpec, vendor: Vendor): void;
   /** A call is about to start on `vendor`; the caller's state is saved right after. */
   starting?(spec: AgentCallSpec, vendor: Vendor): void;
   /** A lease was settled with `actual` use. */

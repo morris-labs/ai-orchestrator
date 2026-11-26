@@ -534,6 +534,12 @@ A review run that ends clean with follow-ups counts as clean: it passed the
 same test as a clean run, with findings that no vendor would check. The pull
 request lists those findings for the owner to check before the merge.
 
+A confirmed `nit` never goes to the fixer and doesn't keep a run from ending
+clean, as in the review pipeline. So a build can reach release ready with
+confirmed nits in the code. The pull request lists them under **Review nits**,
+and the release ready digest names them, so the owner can fix or leave each
+one.
+
 ## Verification methods
 
 The Analyst gives each acceptance criterion one verification method, and the
@@ -675,6 +681,15 @@ The engine attributes usage to each seat and each milestone loop step, so the
 owner can see which seats earn their cost. The Analyst's size estimate
 includes an expected usage range, and the watcher alerts when a build passes
 twice that estimate.
+
+The usage range covers the seats' tokens in, not the Project manager's
+session. The Analyst's rules anchor it on two measured builds: a small bug
+fix with one task used about 2 million tokens in, and a medium feature with
+10 tasks used about 54 million, without the usage that engine defects
+caused. Two builds can't calibrate a model of usage, so the anchors only keep
+the estimate in the right order of magnitude; before them, an Analyst
+estimated 1.5 to 3.5 million for the medium build. Replace the anchors with
+a fit once more builds are measured.
 
 ## App
 

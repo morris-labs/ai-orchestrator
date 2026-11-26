@@ -58,6 +58,9 @@ function setup() {
     MOCK_CLI_SCENARIO: file,
     MOCK_CLI_LOG: log,
     CODEX_HOME: codexHome,
+    // A folder of the test's own, so no adapter reads the account folder
+    // that the environment might name.
+    CLAUDE_CONFIG_DIR: join(dir, "claude-config"),
     ANTHROPIC_API_KEY: undefined,
   };
   const options = { env, account: "user@example.com" };
@@ -81,7 +84,7 @@ function setup() {
             readOnly?: boolean;
           },
       );
-  return { dir, adapters, calls };
+  return { dir, env, adapters, calls };
 }
 
 const request = (dir: string, prompt: string) => ({
@@ -238,6 +241,67 @@ describe("codex resume usage", () => {
     // The mock reports the thread's total (6200 and 380) on `turn.completed`,
     // as Codex does, so the adapter must subtract the earlier turns.
     expect(more.tokens).toMatchObject({ input: 1200, output: 80, fresh: 1200, cacheRead: 0 });
+  });
+});
+
+describe("claude resume usage", () => {
+  it("reports only the resumed turn's tokens, not the session's total", async () => {
+    const { dir, adapters } = setup();
+    const first = await adapters.claude.review(request(dir, "FIND bugs"));
+    expect(first.tokens).toMatchObject({ input: 5000, output: 300 });
+    const more = await adapters.claude.continueReview({
+      ...request(dir, "MORE please"),
+      sessionId: first.sessionId!,
+    });
+    // The mock reports the session's total (6500 and 390) in `modelUsage`,
+    // as Claude Code does, so the adapter must subtract the earlier turns.
+    expect(more.tokens).toMatchObject({ input: 1500, output: 90, fresh: 1500, cacheRead: 0 });
+  });
+
+  it("reads the earlier total from the session's transcript after a restart", async () => {
+    const { dir, env, adapters } = setup();
+    const first = await adapters.claude.review(request(dir, "FIND bugs"));
+    // A new adapter, as after an engine restart, knows no earlier total, so
+    // it reads the transcript that Claude Code keeps in the config folder.
+    const config = env.CLAUDE_CONFIG_DIR;
+    const folder = join(config, "projects", "-work-repo");
+    mkdirSync(folder, { recursive: true });
+    const line = (id: string, usage: Record<string, number>) =>
+      JSON.stringify({
+        type: "assistant",
+        timestamp: "2026-11-01T10:00:00.000Z",
+        message: { id, model: "claude-opus-5-5", usage },
+      });
+    writeFileSync(
+      join(folder, `${first.sessionId!}.jsonl`),
+      [
+        line("msg_1", { input_tokens: 3000, output_tokens: 100 }),
+        // Claude Code writes a line per content block; each response counts once.
+        line("msg_1", { input_tokens: 3000, output_tokens: 100 }),
+        line("msg_2", { input_tokens: 2000, output_tokens: 200 }),
+      ].join("\n") + "\n",
+    );
+    const restarted = new ClaudeAdapter({
+      env,
+      account: "user@example.com",
+      command: join(MOCK_BIN, "claude"),
+      bare: false,
+    });
+    const more = await restarted.continueReview({
+      ...request(dir, "MORE please"),
+      sessionId: first.sessionId!,
+    });
+    expect(more.tokens).toMatchObject({ input: 1500, output: 90 });
+  });
+});
+
+describe("claude usage of a failed call", () => {
+  it("puts the tokens a call spent before it failed on the error", async () => {
+    const { dir, adapters } = setup();
+    // The first FLAKY answer is prose, which the schema rejects.
+    const error = await adapters.claude.review(request(dir, "FLAKY")).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(AdapterError);
+    expect((error as AdapterError).tokens).toMatchObject({ input: 1500, output: 90 });
   });
 });
 

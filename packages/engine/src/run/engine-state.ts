@@ -87,6 +87,12 @@ export const EngineStateSchema = z.object({
   /** Vendors the engine called as the fixer this round; the confirmer must be another. */
   roundFixers: z.array(VendorSchema).default([]),
   /**
+   * The vendors each role's calls ran on this round. A cross-vendor call
+   * avoids its finding's vendor, so it can run on a vendor other than the
+   * role's own; a reassignment names these as the vendors that lost the role.
+   */
+  roundRoleVendors: z.record(z.string(), z.array(VendorSchema)).default({}),
+  /**
    * At the `standard` depth, the commit the current round's review diff starts
    * from: where the last round's fixes began. `null` reviews the whole range.
    */

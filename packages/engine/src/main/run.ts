@@ -6,6 +6,7 @@ import {
   BUILD_SOCKET_ENV,
   BUILD_SOCKET_PATH,
   DEFAULT_ENGINE_STATE_DIR,
+  ENGINE_ACCOUNT_KEY_FILE,
   ENGINE_ENV,
   EngineEnvSchema,
   type EngineEnv,
@@ -31,7 +32,16 @@ import { looksLikeCredential } from "../process/env.js";
 import { BrokerClient } from "../secrets/broker-client.js";
 import { moveSecretsOutOfEnviron } from "./environ.js";
 import { startActiveRunsWriter } from "./active-runs.js";
-import { MOCK_SCRIPT_ENV, MOCK_VENDORS_ENV, selectAdapters } from "./adapters.js";
+import { accountDirsFileIn, readAccountDirs } from "../adapters/account-dirs.js";
+import { accountSkillDirs } from "../build/specialties/index.js";
+import { accountKeySource } from "../run/token-history.js";
+import {
+  CONFIG_DIR_ENV,
+  MOCK_SCRIPT_ENV,
+  MOCK_VENDORS_ENV,
+  engineConfigDir,
+  selectAdapters,
+} from "./adapters.js";
 import { LOG_LEVELS, createLogger, isLogLevel } from "./logger.js";
 import { loadEngineToken } from "./token.js";
 import { readPackageVersion } from "./version.js";
@@ -60,6 +70,8 @@ Environment:
   ${ENGINE_ENV.projectId}      The project's ID. The build socket refuses other projects.
   ${BUILD_SOCKET_ENV.socket}    The build socket, which serves only build requests.
                          Default: ${BUILD_SOCKET_PATH}.
+  ${CONFIG_DIR_ENV}  The folder that holds account-dirs.json and the account key.
+                         Default: the server's mount. Tests set it to a folder of their own.
   ${MOCK_VENDORS_ENV}    Vendors whose calls mock scripts answer: 1 for all, or a list
                          such as codex,copilot.
   ${MOCK_SCRIPT_ENV}     With ${MOCK_VENDORS_ENV}: a JSON file of responses per vendor.
@@ -149,6 +161,11 @@ export interface StartOptions {
    */
   secretNames?: () => Promise<string[]>;
   portIntervalMs?: number;
+  /**
+   * The folder whose `account-dirs.json` names the account skills folders
+   * for builds. Default: the build manager's own default, the server's mount.
+   */
+  configDir?: string;
 }
 
 /** Starts every part of the engine and returns a handle that stops them. */
@@ -204,6 +221,12 @@ export async function startEngine(options: StartOptions): Promise<EngineHandle> 
         team,
         reviews: runs,
         ...(options.secretNames ? { secretNames: options.secretNames } : {}),
+        ...(options.configDir !== undefined
+          ? {
+              skillDirs: () =>
+                accountSkillDirs(readAccountDirs(accountDirsFileIn(options.configDir as string))),
+            }
+          : {}),
       }));
   } catch (err) {
     await runs.close?.();
@@ -388,6 +411,10 @@ export async function main(
   }
 
   const secrets = broker;
+  // Every reader of the server's mount goes through one folder, so a test
+  // engine that names its own reads no live account folder.
+  const configDir = engineConfigDir(env);
+  accountKeySource.file = join(configDir, ENGINE_ACCOUNT_KEY_FILE);
   let handle: EngineHandle;
   try {
     const { adapters } = await selectAdapters(env, log);
@@ -397,6 +424,7 @@ export async function main(
       log,
       adapters,
       buildSocket: env[BUILD_SOCKET_ENV.socket] || BUILD_SOCKET_PATH,
+      configDir,
       ...(secrets ? { secretNames: () => secrets.names() } : {}),
     });
   } catch (err) {

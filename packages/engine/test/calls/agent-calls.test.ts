@@ -80,6 +80,42 @@ describe("AgentCalls for a caller that isn't a review run", () => {
     });
   });
 
+  it("settles a failed call's lease with the tokens it spent before it failed", async () => {
+    const repo = buildSampleRepo();
+    let attempts = 0;
+    const ok = answering("codex") as unknown as { fix: () => Promise<unknown> };
+    const failing = {
+      vendor: "codex",
+      fix: () => {
+        attempts += 1;
+        if (attempts > 1) return ok.fix();
+        const error = Object.assign(new Error("malformed answer"), {
+          tokens: {
+            input: 594_000,
+            output: 1_800,
+            fresh: 14,
+            cacheWrite: 126_000,
+            cacheRead: 467_986,
+          },
+        });
+        return Promise.reject(error);
+      },
+      detectLimit: () => null,
+    } as unknown as Parameters<typeof makeCaller>[0]["codex"];
+    const { id, calls, broker, emitted } = makeCaller({ codex: failing });
+
+    await calls.call<Answer>(spec(repo));
+
+    expect(broker.settled[0]).toMatchObject({
+      leaseId: `${id}-L1`,
+      actual: {
+        tokens: { in: 594_000, out: 1_800, fresh: 14, cacheWrite: 126_000, cacheRead: 467_986 },
+      },
+    });
+    const failed = emitted.find((e) => e.type === "agent.finished");
+    expect(failed).toMatchObject({ outcome: "error", tokens: { in: 594_000, out: 1_800 } });
+  });
+
   it("settles a redirected lease when recording the move fails", async () => {
     const repo = buildSampleRepo();
     class Redirecting extends GrantingBroker {

@@ -96,6 +96,32 @@ describe("run controls", () => {
     ).toBe(true);
   });
 
+  it("names the vendor a role's calls ran on as the one that lost the role", async () => {
+    const repo = buildSampleRepo();
+    const ref: { run?: RunController } = {};
+    let first: { vendor: Vendor; role: Vendor } | null = null;
+    const { deps, events } = setup(new Scenario(), (req) => {
+      const role = ref.run?.state.roles.disprover;
+      if (req.role === "disprover" && first === null && role && req.vendor !== role) {
+        first = { vendor: req.vendor, role };
+        void ref.run?.assign("disprover", ["claude"]);
+      }
+    });
+    const run = await create(repo, deps, { profile: "offload", crossVendor: true });
+    ref.run = run;
+    await run.start();
+    await run.settled();
+    // A cross-vendor disprover call avoids the finding's vendor, so it can
+    // run on a vendor other than the role's own.
+    expect(first).not.toBeNull();
+    const manual = events
+      .ofType("role.reassigned")
+      .find((e) => e.role === "disprover" && e.reason === "manual");
+    // Every vendor the role's calls ran on this round lost it.
+    expect(manual).toMatchObject({ to: ["claude"] });
+    expect(manual?.from).toContain(first!.vendor);
+  });
+
   it("starts with the request's roles over the profile's defaults", async () => {
     const repo = buildSampleRepo();
     const { deps, events } = setup(new Scenario());
