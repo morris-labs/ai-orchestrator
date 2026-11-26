@@ -33,6 +33,10 @@ section's heading must have the form `## [X.Y.Z]`.
   dispute or the release step started, so the engine reverted, in its own
   commit, any commit that another seat's message turn made while the call
   waited for its seat.
+- The gate no longer reads a passing test's line, such as vitest's
+  `✓ a failed agent call`, as a failure line. Before, such lines came and
+  went with test timing, so the build's baseline listed passing tests as
+  flaky.
 
 ## [3.2.3] - 2026-11-22
 
