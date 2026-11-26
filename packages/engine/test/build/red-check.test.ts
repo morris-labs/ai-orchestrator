@@ -17,6 +17,26 @@ describe("classifyRun", () => {
     ["a Vitest expectation", "failed", "AssertionError: expected 0 to be 5 // Object.is equality"],
     ["a Python assertion", "failed", "    assert total([2, 3]) == 5\nAssertionError"],
     [
+      "a jest-dom matcher given a missing element",
+      "failed",
+      "Error: expect(received).toBeInTheDocument()\n\nreceived value must be an HTMLElement or an SVGElement.\nReceived has type:  Null\nReceived has value: null",
+    ],
+    [
+      "a negated matcher hint",
+      "failed",
+      "Error: expect(received).not.toHaveTextContent()\n\nreceived value must be an HTMLElement or an SVGElement.",
+    ],
+    [
+      "a Testing Library query that finds no element",
+      "failed",
+      'TestingLibraryElementError: Unable to find an accessible element with the role "tab" and name `/^accounts$/i`',
+    ],
+    [
+      "a Testing Library text query that finds no element",
+      "failed",
+      "TestingLibraryElementError: Unable to find an element with the text: work.",
+    ],
+    [
       "a Go test failure",
       "failed",
       "--- FAIL: TestTotal (0.00s)\n    cart_test.go:9: got 0, want 5",

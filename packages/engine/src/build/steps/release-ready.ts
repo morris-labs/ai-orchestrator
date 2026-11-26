@@ -93,6 +93,12 @@ export interface TraceRecord {
 export interface ScribeRecord {
   /** The worktree's `HEAD` before the Scribe started. */
   start: string;
+  /**
+   * The worktree's `HEAD` when the Scribe's turn began. Message turns can
+   * commit while the call waits for the seat, so the Scribe's changes are
+   * the ones since this commit.
+   */
+  turn?: string;
   callKey: string;
   answer?: { vendor: string; model: string; output: Record<string, unknown> };
   /** Changed files outside the Scribe's paths, which the engine put back. */
@@ -260,6 +266,7 @@ async function runScribe(ctx: BuildContext, baseline: TestBaseline): Promise<Don
     record = { start: await ctx.worktree.head(), callKey: "release-scribe" };
     await ctx.store.writeJson(path, record);
   }
+  const scribe = record;
   const role = ctx.role(SCRIBE);
   const paths = writablePaths(role, scribeTask(ctx, [], ""));
   const outcome = await ctx.callSeat({
@@ -267,12 +274,17 @@ async function runScribe(ctx: BuildContext, baseline: TestBaseline): Promise<Don
     key: record.callKey,
     step: "release_ready",
     task: scribeTask(ctx, paths, await scribeContext(ctx, baseline)),
+    started: async () => {
+      scribe.turn = await ctx.worktree.head();
+      await ctx.store.writeJson(path, scribe);
+    },
   });
   record.answer = { vendor: outcome.vendor, model: outcome.model, output: outcome.output };
   await ctx.store.writeJson(path, record);
   await ctx.calls.checkpoint();
-  const outside = outsideWritable(await ctx.worktree.changedSince(record.start), paths);
-  if (outside.length > 0) await ctx.worktree.restorePaths(record.start, outside);
+  const from = record.turn ?? record.start;
+  const outside = outsideWritable(await ctx.worktree.changedSince(from), paths);
+  if (outside.length > 0) await ctx.worktree.restorePaths(from, outside);
   const commit = (await ctx.worktree.dirty())
     ? await ctx.worktree.commitAll(`docs: record ${ctx.plan.title}`)
     : null;

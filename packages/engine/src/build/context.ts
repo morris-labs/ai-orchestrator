@@ -126,6 +126,12 @@ export interface SeatCall {
    * meanwhile, makes `callSeat()` throw `SeatCallSkipped` without a call.
    */
   proceed?: () => boolean;
+  /**
+   * Runs once the seat and the worktree are the drive's, right before the
+   * call, such as to record the branch head that the agent's changes count
+   * from: message turns can commit while the call waits for the seat.
+   */
+  started?: () => Promise<void>;
 }
 
 /** A seat call that `SeatCall.proceed` stopped before it started. */
@@ -648,6 +654,7 @@ export class BuildContext {
         // The drive has the worktree back for its agent's whole turn.
         await reclaim();
         if (input.proceed && !input.proceed()) throw new SeatCallSkipped(input.seat);
+        await input.started?.();
         const placement = this.seats.place(input.seat, input.placement);
         const decisions = await this.decisionsText(taskIds);
         const task = {

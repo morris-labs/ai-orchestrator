@@ -156,6 +156,26 @@ export class BuildWorktree {
     return [...new Set([...tracked, ...(await this.untracked())])].sort();
   }
 
+  /** The paths that differ between commits `from` and `to`, both sides of a rename included. */
+  async changedBetween(from: string, to: string): Promise<string[]> {
+    return nul(await this.git.run(["diff", "--name-only", "--no-renames", "-z", from, to]));
+  }
+
+  /**
+   * The paths in `paths` whose worktree content matches commit `sha`: the
+   * same content, or absent from both.
+   */
+  async matching(sha: string, paths: readonly string[]): Promise<string[]> {
+    if (paths.length === 0) return [];
+    const differ = new Set([
+      ...nul(
+        await this.git.run(["diff", "--name-only", "--no-renames", "-z", sha, "--", ...paths]),
+      ),
+      ...(await this.untracked()),
+    ]);
+    return paths.filter((p) => !differ.has(p));
+  }
+
   /** The worktree's `HEAD` and the content of each path that differs from it. */
   async snapshot(): Promise<WorktreeSnapshot> {
     const head = await this.head();

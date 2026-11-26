@@ -56,7 +56,10 @@ this object:
 
 Before the turn, the engine puts back any change that the Developer made to
 a locked test and commits the task's work. After the turn, it puts back any
-file that the Test engineer changed other than the disputed test.
+file that the Test engineer changed other than the disputed test. The
+engine counts those changes from the branch head when the Test engineer's
+turn began, so a commit that another seat's message turn makes while the
+dispute waits for the seat stays on the branch.
 
 ### The red check of an amendment
 
@@ -84,8 +87,13 @@ same task amended as the Developer's change.
 
 ## Resolve a dispute escalation
 
-- **Ruled on:** resolve with `clarify` and a note, which the Developer's next
-  try reads, or with `retry` to keep the test as it is locked.
+- **Ruled on:** resolve with `clarify` and the ruling, or with `retry` to keep
+  the test as it is locked. The engine gives a `clarify` ruling to the Test
+  engineer, the only seat that can change a locked test. The Test engineer
+  applies it to the disputed file and answers `amend` or `reject`, and the
+  amendment goes through the red check and the lock like any other. The
+  Developer's next try reads the ruling too. A ruling can change only the
+  disputed file.
 - **Escalated:** the owner resolves with `changes` that include `criteria`
   to accept the fix. The engine then applies the saved patch, runs the red
   check, and locks the fix. A resolution without `criteria` keeps the locked

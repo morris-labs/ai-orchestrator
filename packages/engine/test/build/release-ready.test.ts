@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { BuildPlanInput } from "@aio/contracts";
 import { BUILD_PIPELINE } from "../../src/build/index.js";
+import { BuildWorktree } from "../../src/build/worktree.js";
 import type {
   CheckRun,
   CreatePrInput,
@@ -263,6 +264,47 @@ class FakeGitHub implements GitHubClient {
     return [];
   }
 }
+
+describe("the release ready step's Scribe", () => {
+  it("keeps a commit that lands on the branch before the Scribe's turn starts", async () => {
+    const world = await buildWorld({ steps: BUILD_PIPELINE, review: true, release: true });
+    world.script({
+      codex: [
+        TEST_ENGINEER,
+        { match: "Task release", times: 2, error: "crash" },
+        SCRIBE,
+        CLEAN_REVIEW,
+      ],
+      claude: [DEVELOPER, CLEAN_REVIEW],
+    });
+
+    await world.start("cart-total", cartPlan({ push: false }));
+    const waiting = await world.settle("cart-total");
+    expect(waiting).toMatchObject({ step: "release_ready", status: "waiting_escalation" });
+    const escalation = waiting.escalations.find((e) => e.status === "open");
+    expect(escalation).toMatchObject({ kind: "agent_call" });
+
+    // Another seat's message turn commits while the Scribe waits for its seat.
+    const tree = BuildWorktree.pathFor(world.root, "cart-total");
+    writeFileSync(join(tree, "NOTES.md"), "An answer from another seat.\n");
+    git(tree, "add", "NOTES.md");
+    git(tree, "commit", "-q", "-m", "docs: answer another seat");
+
+    await world.manager.resolve("cart-total", { escalation: escalation!.id, action: "retry" });
+    const state = await world.settle("cart-total");
+
+    expect(state).toMatchObject({ step: "release_ready", status: "finished" });
+    expect(git(world.root, "show", "build/cart-total:NOTES.md").trim()).toBe(
+      "An answer from another seat.",
+    );
+    expect(git(world.root, "show", "build/cart-total:CHANGELOG.md")).toContain(
+      "Add the cart total.",
+    );
+    expect(git(world.root, "show", "build/cart-total:src/cart.mjs")).not.toContain(
+      "The Scribe may not change code.",
+    );
+  });
+});
 
 describe("the release ready step", () => {
   it("escalates a criterion that no locked test traces to a passing test", async () => {

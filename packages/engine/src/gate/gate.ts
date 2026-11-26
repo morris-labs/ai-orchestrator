@@ -67,6 +67,12 @@ export interface GateComparison {
 }
 
 const FAILURE_RE = /\b(FAIL(?:ED|URE)?|ERROR|Error|failed|AssertionError|Traceback|not ok)\b|✗|✖|×/;
+// A passing test's line, such as vitest's `✓ retries a failed call`, the
+// Node.js test runner's `✔`, TAP's `ok 4 - ...`, or jest's `PASS file`, after
+// an optional `pnpm -r` prefix such as `packages/engine test: `. Its name can
+// hold a failure word, and vitest lists only the slow passing tests, so such
+// a line comes and goes between runs and would look flaky.
+const PASS_RE = /^(?:\S+ \S+: )?\s*(?:[✓✔√]|ok \d+\b|PASS\b)/;
 // eslint-disable-next-line no-control-regex
 const ANSI_RE = /\u001b\[[0-9;]*[A-Za-z]/g;
 // A runner's count line, such as vitest's `Tests  2 failed | 40 passed (42)`,
@@ -95,7 +101,7 @@ export function isCountLine(line: string): boolean {
 export function extractFailures(output: string): string[] {
   const seen = new Set<string>();
   for (const raw of output.replace(ANSI_RE, "").split("\n")) {
-    if (!FAILURE_RE.test(raw)) continue;
+    if (!FAILURE_RE.test(raw) || PASS_RE.test(raw)) continue;
     let line = raw
       .replace(/\(?\b\d+(\.\d+)?\s?(ms|s|sec|seconds)\b\)?/g, "")
       .replace(/0x[0-9a-f]+/gi, "0x")
